@@ -12,40 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package bursa
 
 import (
 	"fmt"
 
+	"github.com/blinklabs-io/bursa/internal/config"
 	// TODO: replace these w/ gOuroboros (blinklabs-io/gouroboros#364)
 	"github.com/fivebinaries/go-cardano-serialization/address"
 	"github.com/fivebinaries/go-cardano-serialization/bip32"
 	"github.com/fivebinaries/go-cardano-serialization/network"
-	"github.com/kelseyhightower/envconfig"
 	bip39 "github.com/tyler-smith/go-bip39"
 )
-
-type Config struct {
-	Mnemonic string `envconfig:"MNEMONIC"`
-	Network  string `envconfig:"NETWORK"`
-}
-
-// We use a singleton for the config for convenience
-var globalConfig = Config{
-	Mnemonic: "",
-	Network:  "mainnet",
-}
-
-func GetConfig() *Config {
-	return &globalConfig
-}
-
-func LoadConfig() (*Config, error) {
-	if err := envconfig.Process("bursa", &globalConfig); err != nil {
-		return nil, fmt.Errorf("failed loading config from environment: %s", err)
-	}
-	return &globalConfig, nil
-}
 
 func NewMnemonic() (string, error) {
 	entropy, err := bip39.NewEntropy(256)
@@ -80,22 +58,22 @@ func GetAccountKey(rootKey bip32.XPrv, num uint) bip32.XPrv {
 		Derive(uint32(harden + num))
 }
 
-func GetPaymentKey(accountKey bip32.XPrv) bip32.XPrv {
-	return accountKey.Derive(0).Derive(0)
+func GetPaymentKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
+	return accountKey.Derive(0).Derive(num)
 }
 
-func GetStakeKey(accountKey bip32.XPrv) bip32.XPrv {
-	return accountKey.Derive(2).Derive(0)
+func GetStakeKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
+	return accountKey.Derive(2).Derive(num)
 }
 
-func GetAddress(accountKey bip32.XPrv) *address.BaseAddress {
-	cfg := GetConfig()
+func GetAddress(accountKey bip32.XPrv, num uint32) *address.BaseAddress {
+	cfg := config.GetConfig()
 	net := network.TestNet()
 	if cfg.Network == "mainnet" {
 		net = network.MainNet()
 	}
-	paymentKeyPublicHash := GetPaymentKey(accountKey).Public().PublicKey().Hash()
-	stakeKeyPublicHash := GetStakeKey(accountKey).Public().PublicKey().Hash()
+	paymentKeyPublicHash := GetPaymentKey(accountKey, num).Public().PublicKey().Hash()
+	stakeKeyPublicHash := GetStakeKey(accountKey, num).Public().PublicKey().Hash()
 	addr := address.NewBaseAddress(
 		net,
 		&address.StakeCredential{
@@ -110,9 +88,9 @@ func GetAddress(accountKey bip32.XPrv) *address.BaseAddress {
 	return addr
 }
 
-func main() {
+func Run() {
 	// Load Config
-	cfg, err := LoadConfig()
+	cfg, err := config.LoadConfig()
 	if err != nil {
 		panic(err)
 	}
@@ -129,7 +107,8 @@ func main() {
 		panic(err)
 	}
 	accountKey := GetAccountKey(rootKey, 0) // TODO: more accounts
-	addr := GetAddress(accountKey)
+	addr := GetAddress(accountKey, 0) // TODO: more addresses
+
 	fmt.Println("Loaded mnemonic and generated address...")
 	fmt.Println(fmt.Sprintf("MNEMONIC=%s", mnemonic))
 	fmt.Println(fmt.Sprintf("PAYMENT_ADDRESS=%s", addr.String()))
