@@ -116,7 +116,7 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
           repository: blinklabs/bursa
           readme-filepath: ./README.md
-          short-description: "Snek is a tool for tailing the Cardano blockchain and emitting events"
+          short-description: "Bursa is a programmatic Cardano wallet and CLI tool"
 
   finalize-release:
     runs-on: ubuntu-latest
