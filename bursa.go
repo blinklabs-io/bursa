@@ -66,16 +66,15 @@ func GetStakeKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
 	return accountKey.Derive(2).Derive(num)
 }
 
-func GetAddress(accountKey bip32.XPrv, num uint32) *address.BaseAddress {
-	cfg := config.GetConfig()
-	net := network.TestNet()
-	if cfg.Network == "mainnet" {
-		net = network.MainNet()
+func GetAddress(accountKey bip32.XPrv, net string, num uint32) *address.BaseAddress {
+	nw := network.TestNet()
+	if net == "mainnet" {
+		nw = network.MainNet()
 	}
 	paymentKeyPublicHash := GetPaymentKey(accountKey, num).Public().PublicKey().Hash()
 	stakeKeyPublicHash := GetStakeKey(accountKey, num).Public().PublicKey().Hash()
 	addr := address.NewBaseAddress(
-		net,
+		nw,
 		&address.StakeCredential{
 			Kind:    address.KeyStakeCredentialType,
 			Payload: paymentKeyPublicHash[:],
@@ -115,7 +114,7 @@ func Run() {
 		panic(err)
 	}
 	accountKey := GetAccountKey(rootKey, 0) // TODO: more accounts
-	addr := GetAddress(accountKey, 0)       // TODO: more addresses
+	addr := GetAddress(accountKey, cfg.Network, 0) // TODO: more addresses
 
 	fmt.Println("Loaded mnemonic and generated address...")
 	fmt.Println(fmt.Sprintf("MNEMONIC=%s", mnemonic))
