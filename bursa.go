@@ -87,6 +87,14 @@ func GetAddress(accountKey bip32.XPrv, net string, num uint32) *address.BaseAddr
 	return addr
 }
 
+func GetExtendedPrivateKey(privateKey []byte, publicKey []byte) bip32.XPrv {
+	xprv := bip32.XPrv{}
+	xprv = append(xprv, privateKey[:64]...)
+	xprv = append(xprv, publicKey...)
+	xprv = append(xprv, privateKey[64:]...)
+	return xprv
+}
+
 func Run() {
 	// Load Config
 	cfg, err := config.LoadConfig()

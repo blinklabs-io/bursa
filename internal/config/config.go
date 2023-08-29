@@ -41,4 +41,3 @@ func LoadConfig() (*Config, error) {
 	}
 	return &globalConfig, nil
 }
-
