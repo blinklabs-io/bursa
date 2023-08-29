@@ -117,7 +117,7 @@ func Run() {
 	addr := GetAddress(accountKey, cfg.Network, 0) // TODO: more addresses
 
 	fmt.Println("Loaded mnemonic and generated address...")
-	fmt.Println(fmt.Sprintf("MNEMONIC=%s", mnemonic))
-	fmt.Println(fmt.Sprintf("PAYMENT_ADDRESS=%s", addr.String()))
-	fmt.Println(fmt.Sprintf("STAKE_ADDRESS=%s", addr.ToReward().String()))
+	fmt.Printf("MNEMONIC=%s", mnemonic)
+	fmt.Printf("PAYMENT_ADDRESS=%s", addr.String())
+	fmt.Printf("STAKE_ADDRESS=%s", addr.ToReward().String())
 }
