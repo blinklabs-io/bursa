@@ -15,6 +15,7 @@
 package bursa
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -22,8 +23,25 @@ import (
 	"github.com/fivebinaries/go-cardano-serialization/address"
 	"github.com/fivebinaries/go-cardano-serialization/bip32"
 	"github.com/fivebinaries/go-cardano-serialization/network"
+	"github.com/fxamacker/cbor/v2"
 	bip39 "github.com/tyler-smith/go-bip39"
 )
+
+type KeyFile struct {
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	CborHex     string `json:"cborHex"`
+}
+
+type Wallet struct {
+	Mnemonic       string  `json:"mnemonic"`
+	PaymentAddress string  `json:"payment_address"`
+	StakeAddress   string  `json:"stake_address"`
+	PaymentVKey    KeyFile `json:"-"`
+	PaymentSKey    KeyFile `json:"-"`
+	StakeVKey      KeyFile `json:"-"`
+	StakeSKey      KeyFile `json:"-"`
+}
 
 func NewMnemonic() (string, error) {
 	entropy, err := bip39.NewEntropy(256)
@@ -62,8 +80,56 @@ func GetPaymentKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
 	return accountKey.Derive(0).Derive(num)
 }
 
+func GetPaymentVKey(paymentKey bip32.XPrv) string {
+	keyCbor, err := cbor.Marshal(paymentKey.Public().PublicKey())
+	if err != nil {
+		panic(err)
+	}
+	return GetKeyFile(
+		"PaymentVerificationKeyShelley_ed25519",
+		"Payment Verification Key",
+		keyCbor,
+	)
+}
+
+func GetPaymentSKey(paymentKey bip32.XPrv) string {
+	keyCbor, err := cbor.Marshal(GetExtendedPrivateKey(paymentKey, paymentKey.Public().PublicKey()))
+	if err != nil {
+		panic(err)
+	}
+	return GetKeyFile(
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
+		"Payment Signing Key",
+		keyCbor,
+	)
+}
+
 func GetStakeKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
 	return accountKey.Derive(2).Derive(num)
+}
+
+func GetStakeVKey(stakeKey bip32.XPrv) string {
+	keyCbor, err := cbor.Marshal(stakeKey.Public().PublicKey())
+	if err != nil {
+		panic(err)
+	}
+	return GetKeyFile(
+		"StakeVerificationKeyShelley_ed25519",
+		"Stake Verification Key",
+		keyCbor,
+	)
+}
+
+func GetStakeSKey(stakeKey bip32.XPrv) string {
+	keyCbor, err := cbor.Marshal(GetExtendedPrivateKey(stakeKey, stakeKey.Public().PublicKey()))
+	if err != nil {
+		panic(err)
+	}
+	return GetKeyFile(
+		"StakeExtendedSigningKeyShelley_ed25519_bip32",
+		"Stake Signing Key",
+		keyCbor,
+	)
 }
 
 func GetAddress(accountKey bip32.XPrv, net string, num uint32) *address.BaseAddress {
@@ -95,6 +161,21 @@ func GetExtendedPrivateKey(privateKey []byte, publicKey []byte) bip32.XPrv {
 	return xprv
 }
 
+func GetKeyFile(keyType string, desc string, data []byte) string {
+	tmp := KeyFile{
+		Type: keyType,
+		Description: desc,
+		CborHex: fmt.Sprintf("%x", data),
+	}
+	// Use 4 spaces for indent
+	ret, err := json.MarshalIndent(tmp, "", "    ")
+	if err != nil {
+		return ""
+	}
+	// Append newline
+	return fmt.Sprintf("%s\n", ret)
+}
+
 func Run() {
 	// Load Config
 	cfg, err := config.LoadConfig()
@@ -117,7 +198,12 @@ func Run() {
 	addr := GetAddress(accountKey, cfg.Network, 0) // TODO: more addresses
 
 	fmt.Println("Loaded mnemonic and generated address...")
-	fmt.Printf("MNEMONIC=%s", mnemonic)
-	fmt.Printf("PAYMENT_ADDRESS=%s", addr.String())
-	fmt.Printf("STAKE_ADDRESS=%s", addr.ToReward().String())
+	fmt.Printf("MNEMONIC=%s\n", mnemonic)
+	fmt.Printf("PAYMENT_ADDRESS=%s\n", addr.String())
+	fmt.Printf("STAKE_ADDRESS=%s\n", addr.ToReward().String())
+
+	fmt.Printf("payment.vkey=%s", GetPaymentVKey(GetPaymentKey(accountKey, 0)))
+	fmt.Printf("payment.skey=%s", GetPaymentSKey(GetPaymentKey(accountKey, 0)))
+	fmt.Printf("stake.vkey=%s", GetStakeVKey(GetStakeKey(accountKey, 0)))
+	fmt.Printf("stake.vkey=%s", GetStakeSKey(GetStakeKey(accountKey, 0)))
 }
