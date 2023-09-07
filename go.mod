@@ -1,6 +1,6 @@
 module github.com/blinklabs-io/bursa
 
-go 1.19
+go 1.20
 
 require (
 	github.com/fivebinaries/go-cardano-serialization v0.0.0-20220907134105-ec9b85086588
