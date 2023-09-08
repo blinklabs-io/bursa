@@ -80,56 +80,56 @@ func GetPaymentKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
 	return accountKey.Derive(0).Derive(num)
 }
 
-func GetPaymentVKey(paymentKey bip32.XPrv) string {
+func GetPaymentVKey(paymentKey bip32.XPrv) KeyFile {
 	keyCbor, err := cbor.Marshal(paymentKey.Public().PublicKey())
 	if err != nil {
 		panic(err)
 	}
-	return GetKeyFile(
-		"PaymentVerificationKeyShelley_ed25519",
-		"Payment Verification Key",
-		keyCbor,
-	)
+	return KeyFile{
+		Type: "PaymentVerificationKeyShelley_ed25519",
+		Description: "Payment Verification Key",
+		CborHex: fmt.Sprintf("%x", keyCbor),
+	}
 }
 
-func GetPaymentSKey(paymentKey bip32.XPrv) string {
+func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
 	keyCbor, err := cbor.Marshal(GetExtendedPrivateKey(paymentKey, paymentKey.Public().PublicKey()))
 	if err != nil {
 		panic(err)
 	}
-	return GetKeyFile(
-		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
-		"Payment Signing Key",
-		keyCbor,
-	)
+	return KeyFile{
+		Type: "PaymentExtendedSigningKeyShelley_ed25519_bip32",
+		Description: "Payment Signing Key",
+		CborHex: fmt.Sprintf("%x", keyCbor),
+	}
 }
 
 func GetStakeKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
 	return accountKey.Derive(2).Derive(num)
 }
 
-func GetStakeVKey(stakeKey bip32.XPrv) string {
+func GetStakeVKey(stakeKey bip32.XPrv) KeyFile {
 	keyCbor, err := cbor.Marshal(stakeKey.Public().PublicKey())
 	if err != nil {
 		panic(err)
 	}
-	return GetKeyFile(
-		"StakeVerificationKeyShelley_ed25519",
-		"Stake Verification Key",
-		keyCbor,
-	)
+	return KeyFile{
+		Type: "StakeVerificationKeyShelley_ed25519",
+		Description: "Stake Verification Key",
+		CborHex: fmt.Sprintf("%x", keyCbor),
+	}
 }
 
-func GetStakeSKey(stakeKey bip32.XPrv) string {
+func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
 	keyCbor, err := cbor.Marshal(GetExtendedPrivateKey(stakeKey, stakeKey.Public().PublicKey()))
 	if err != nil {
 		panic(err)
 	}
-	return GetKeyFile(
-		"StakeExtendedSigningKeyShelley_ed25519_bip32",
-		"Stake Signing Key",
-		keyCbor,
-	)
+	return KeyFile{
+		Type: "StakeExtendedSigningKeyShelley_ed25519_bip32",
+		Description: "Stake Signing Key",
+		CborHex: fmt.Sprintf("%x", keyCbor),
+	}
 }
 
 func GetAddress(accountKey bip32.XPrv, net string, num uint32) *address.BaseAddress {
@@ -161,14 +161,9 @@ func GetExtendedPrivateKey(privateKey []byte, publicKey []byte) bip32.XPrv {
 	return xprv
 }
 
-func GetKeyFile(keyType string, desc string, data []byte) string {
-	tmp := KeyFile{
-		Type: keyType,
-		Description: desc,
-		CborHex: fmt.Sprintf("%x", data),
-	}
+func GetKeyFile(keyFile KeyFile) string {
 	// Use 4 spaces for indent
-	ret, err := json.MarshalIndent(tmp, "", "    ")
+	ret, err := json.MarshalIndent(keyFile, "", "    ")
 	if err != nil {
 		return ""
 	}
@@ -202,8 +197,8 @@ func Run() {
 	fmt.Printf("PAYMENT_ADDRESS=%s\n", addr.String())
 	fmt.Printf("STAKE_ADDRESS=%s\n", addr.ToReward().String())
 
-	fmt.Printf("payment.vkey=%s", GetPaymentVKey(GetPaymentKey(accountKey, 0)))
-	fmt.Printf("payment.skey=%s", GetPaymentSKey(GetPaymentKey(accountKey, 0)))
-	fmt.Printf("stake.vkey=%s", GetStakeVKey(GetStakeKey(accountKey, 0)))
-	fmt.Printf("stake.vkey=%s", GetStakeSKey(GetStakeKey(accountKey, 0)))
+	fmt.Printf("payment.vkey=%s", GetKeyFile(GetPaymentVKey(GetPaymentKey(accountKey, 0))))
+	fmt.Printf("payment.skey=%s", GetKeyFile(GetPaymentSKey(GetPaymentKey(accountKey, 0))))
+	fmt.Printf("stake.vkey=%s", GetKeyFile(GetStakeVKey(GetStakeKey(accountKey, 0))))
+	fmt.Printf("stake.vkey=%s", GetKeyFile(GetStakeSKey(GetStakeKey(accountKey, 0))))
 }
