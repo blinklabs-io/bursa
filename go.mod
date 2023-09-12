@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	github.com/fivebinaries/go-cardano-serialization v0.0.0-20220907134105-ec9b85086588
-	github.com/fxamacker/cbor/v2 v2.4.0
+	github.com/fxamacker/cbor/v2 v2.5.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/tyler-smith/go-bip39 v1.1.0
 )
