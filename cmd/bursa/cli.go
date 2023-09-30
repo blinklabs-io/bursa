@@ -15,24 +15,9 @@
 package main
 
 import (
-	"fmt"
-	"os"
+	"github.com/blinklabs-io/bursa/internal/cli"
 )
 
-func main() {
-	var subCommand string
-	// Parse subcommand (default: "cli")
-	if len(os.Args) < 2 {
-		subCommand = "cli"
-	} else {
-		subCommand = os.Args[1]
-	}
-
-	switch subCommand {
-	case "cli":
-		cliRun()
-	default:
-		fmt.Printf("Unknown subcommand: %s\n", subCommand)
-		os.Exit(1)
-	}
+func cliRun() {
+	cli.Run()
 }

@@ -21,12 +21,20 @@ import (
 )
 
 type Config struct {
-	Mnemonic string `envconfig:"MNEMONIC"`
-	Network  string `envconfig:"NETWORK"`
+	Logging  LoggingConfig `yaml:"logging"`
+	Mnemonic string        `envconfig:"MNEMONIC"`
+	Network  string        `envconfig:"NETWORK"`
+}
+
+type LoggingConfig struct {
+	Level string `yaml:"level" envconfig:"LOGGING_LEVEL"`
 }
 
 // We use a singleton for the config for convenience
 var globalConfig = Config{
+	Logging: LoggingConfig{
+		Level: "info",
+	},
 	Mnemonic: "",
 	Network:  "mainnet",
 }
