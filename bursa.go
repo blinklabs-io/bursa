@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/blinklabs-io/bursa/internal/config"
 	// TODO: replace these w/ gOuroboros (blinklabs-io/gouroboros#364)
 	"github.com/fivebinaries/go-cardano-serialization/address"
 	"github.com/fivebinaries/go-cardano-serialization/bip32"
@@ -86,9 +85,9 @@ func GetPaymentVKey(paymentKey bip32.XPrv) KeyFile {
 		panic(err)
 	}
 	return KeyFile{
-		Type: "PaymentVerificationKeyShelley_ed25519",
+		Type:        "PaymentVerificationKeyShelley_ed25519",
 		Description: "Payment Verification Key",
-		CborHex: fmt.Sprintf("%x", keyCbor),
+		CborHex:     fmt.Sprintf("%x", keyCbor),
 	}
 }
 
@@ -98,9 +97,9 @@ func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
 		panic(err)
 	}
 	return KeyFile{
-		Type: "PaymentExtendedSigningKeyShelley_ed25519_bip32",
+		Type:        "PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		Description: "Payment Signing Key",
-		CborHex: fmt.Sprintf("%x", keyCbor),
+		CborHex:     fmt.Sprintf("%x", keyCbor),
 	}
 }
 
@@ -114,9 +113,9 @@ func GetStakeVKey(stakeKey bip32.XPrv) KeyFile {
 		panic(err)
 	}
 	return KeyFile{
-		Type: "StakeVerificationKeyShelley_ed25519",
+		Type:        "StakeVerificationKeyShelley_ed25519",
 		Description: "Stake Verification Key",
-		CborHex: fmt.Sprintf("%x", keyCbor),
+		CborHex:     fmt.Sprintf("%x", keyCbor),
 	}
 }
 
@@ -126,9 +125,9 @@ func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
 		panic(err)
 	}
 	return KeyFile{
-		Type: "StakeExtendedSigningKeyShelley_ed25519_bip32",
+		Type:        "StakeExtendedSigningKeyShelley_ed25519_bip32",
 		Description: "Stake Signing Key",
-		CborHex: fmt.Sprintf("%x", keyCbor),
+		CborHex:     fmt.Sprintf("%x", keyCbor),
 	}
 }
 
@@ -169,36 +168,4 @@ func GetKeyFile(keyFile KeyFile) string {
 	}
 	// Append newline
 	return fmt.Sprintf("%s\n", ret)
-}
-
-func Run() {
-	// Load Config
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		panic(err)
-	}
-
-	mnemonic := cfg.Mnemonic
-	if mnemonic == "" {
-		mnemonic, err = NewMnemonic()
-		if err != nil {
-			panic(err)
-		}
-	}
-	rootKey, err := GetRootKeyFromMnemonic(mnemonic)
-	if err != nil {
-		panic(err)
-	}
-	accountKey := GetAccountKey(rootKey, 0) // TODO: more accounts
-	addr := GetAddress(accountKey, cfg.Network, 0) // TODO: more addresses
-
-	fmt.Println("Loaded mnemonic and generated address...")
-	fmt.Printf("MNEMONIC=%s\n", mnemonic)
-	fmt.Printf("PAYMENT_ADDRESS=%s\n", addr.String())
-	fmt.Printf("STAKE_ADDRESS=%s\n", addr.ToReward().String())
-
-	fmt.Printf("payment.vkey=%s", GetKeyFile(GetPaymentVKey(GetPaymentKey(accountKey, 0))))
-	fmt.Printf("payment.skey=%s", GetKeyFile(GetPaymentSKey(GetPaymentKey(accountKey, 0))))
-	fmt.Printf("stake.vkey=%s", GetKeyFile(GetStakeVKey(GetStakeKey(accountKey, 0))))
-	fmt.Printf("stake.vkey=%s", GetKeyFile(GetStakeSKey(GetStakeKey(accountKey, 0))))
 }
