@@ -3,7 +3,7 @@ name: Docker CI
 on:
   pull_request:
     branches: ['main']
-    paths: ['Dockerfile','*.go','internal/**','go.*','.github/workflows/ci-docker.yml']
+    paths: ['Dockerfile','*.go','cmd/**','internal/**','go.*','.github/workflows/ci-docker.yml']
 
 env:
   GHCR_IMAGE_NAME: ghcr.io/blinklabs-io/bursa
