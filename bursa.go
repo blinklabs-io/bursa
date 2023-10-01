@@ -24,6 +24,8 @@ import (
 	"github.com/fivebinaries/go-cardano-serialization/network"
 	"github.com/fxamacker/cbor/v2"
 	bip39 "github.com/tyler-smith/go-bip39"
+
+	"github.com/blinklabs-io/bursa/internal/config"
 )
 
 type KeyFile struct {
@@ -36,10 +38,40 @@ type Wallet struct {
 	Mnemonic       string  `json:"mnemonic"`
 	PaymentAddress string  `json:"payment_address"`
 	StakeAddress   string  `json:"stake_address"`
-	PaymentVKey    KeyFile `json:"-"`
-	PaymentSKey    KeyFile `json:"-"`
-	StakeVKey      KeyFile `json:"-"`
-	StakeSKey      KeyFile `json:"-"`
+	PaymentVKey    KeyFile `json:"payment_kvey"`
+	PaymentSKey    KeyFile `json:"payment_skey"`
+	StakeVKey      KeyFile `json:"stake_vkey"`
+	StakeSKey      KeyFile `json:"stake_skey"`
+}
+
+func NewWallet(mnemonic, network string, accountId uint, paymentId, stakeId, addressId uint32) (*Wallet, error) {
+	rootKey, err := GetRootKeyFromMnemonic(mnemonic)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get root key from mnemonic: %s", err)
+	}
+	accountKey := GetAccountKey(rootKey, accountId)
+	paymentKey := GetPaymentKey(accountKey, paymentId)
+	stakeKey := GetStakeKey(accountKey, stakeId)
+	addr := GetAddress(accountKey, network, addressId)
+	w := &Wallet{
+		Mnemonic:       mnemonic,
+		PaymentAddress: addr.String(),
+		StakeAddress:   addr.ToReward().String(),
+		PaymentVKey:    GetPaymentVKey(paymentKey),
+		PaymentSKey:    GetPaymentSKey(paymentKey),
+		StakeVKey:      GetStakeVKey(stakeKey),
+		StakeSKey:      GetStakeSKey(stakeKey),
+	}
+	return w, nil
+}
+
+func NewDefaultWallet(mnemonic string) (*Wallet, error) {
+	cfg := config.GetConfig()
+	w, err := NewWallet(mnemonic, cfg.Network, 0, 0, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create default wallet: %s", err)
+	}
+	return w, nil
 }
 
 func NewMnemonic() (string, error) {

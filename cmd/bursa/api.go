@@ -15,9 +15,20 @@
 package main
 
 import (
-	"github.com/blinklabs-io/bursa/internal/cli"
+	"github.com/blinklabs-io/bursa/internal/api"
+	"github.com/blinklabs-io/bursa/internal/config"
+	"github.com/blinklabs-io/bursa/internal/logging"
 )
 
-func cliMain() {
-	cli.Run()
+func apiMain() {
+	cfg := config.GetConfig()
+	logger := logging.GetLogger()
+	// Start API listener
+	logger.Infof("starting API listener on %s:%d", cfg.Api.ListenAddress, cfg.Api.ListenPort)
+	if err := api.Start(cfg); err != nil {
+		logger.Fatalf("failed to start API: %s", err)
+	}
+
+	// Wait forever
+	select {}
 }
