@@ -24,31 +24,6 @@ import (
 	"github.com/blinklabs-io/bursa/internal/logging"
 )
 
-func NewDefaultWallet(mnemonic string) (*bursa.Wallet, error) {
-	cfg := config.GetConfig()
-	logger := logging.GetLogger()
-
-	rootKey, err := bursa.GetRootKeyFromMnemonic(mnemonic)
-	if err != nil {
-		logger.Errorf("failed to get root key from mnemonic")
-		return nil, fmt.Errorf("failed to get root key from mnemonic: %s", err)
-	}
-	accountKey := bursa.GetAccountKey(rootKey, 0)
-	paymentKey := bursa.GetPaymentKey(accountKey, 0)
-	stakeKey := bursa.GetStakeKey(accountKey, 0)
-	addr := bursa.GetAddress(accountKey, cfg.Network, 0)
-	w := &bursa.Wallet{
-		Mnemonic:       mnemonic,
-		PaymentAddress: addr.String(),
-		StakeAddress:   addr.ToReward().String(),
-		PaymentVKey:    bursa.GetPaymentVKey(paymentKey),
-		PaymentSKey:    bursa.GetPaymentSKey(paymentKey),
-		StakeVKey:      bursa.GetStakeVKey(stakeKey),
-		StakeSKey:      bursa.GetStakeSKey(stakeKey),
-	}
-	return w, nil
-}
-
 func Run() {
 	fs := flag.NewFlagSet("cli", flag.ExitOnError)
 	flagOutput := fs.String("output", "", "output directory for files, otherwise uses STDOUT")
@@ -67,7 +42,7 @@ func Run() {
 			logger.Fatalf("failed to load mnemonic: %s", err)
 		}
 	}
-	w, err := NewDefaultWallet(mnemonic)
+	w, err := bursa.NewDefaultWallet(mnemonic)
 	if err != nil {
 		logger.Fatalf("failed to initialize wallet: %s", err)
 	}

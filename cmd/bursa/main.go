@@ -65,8 +65,10 @@ func main() {
 	}
 
 	switch subCommand {
+	case "api":
+		apiMain()
 	case "cli":
-		cliRun()
+		cliMain()
 	default:
 		fmt.Printf("Unknown subcommand: %s\n", subCommand)
 		os.Exit(1)
