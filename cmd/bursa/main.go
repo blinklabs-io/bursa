@@ -33,6 +33,12 @@ func main() {
 		fmt.Fprintf(
 			flag.CommandLine.Output(),
 			" - %-18s  %s\n",
+			"api",
+			"run an API server",
+		)
+		fmt.Fprintf(
+			flag.CommandLine.Output(),
+			" - %-18s  %s\n",
 			"cli",
 			"run a terminal command",
 		)
