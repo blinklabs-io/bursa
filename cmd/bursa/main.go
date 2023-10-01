@@ -15,17 +15,53 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
+
+	"github.com/blinklabs-io/bursa/internal/config"
+	"github.com/blinklabs-io/bursa/internal/logging"
 )
 
 func main() {
+	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(
+			flag.CommandLine.Output(),
+			"Usage: bursa [-h] [subcommand] [args]\n\nSubcommands:\n\n",
+		)
+		fmt.Fprintf(
+			flag.CommandLine.Output(),
+			" - %-18s  %s\n",
+			"cli",
+			"run a terminal command",
+		)
+	}
+	_ = fs.Parse(os.Args[1:]) // ignore parse errors
+
+	// Load Config
+	_, err := config.LoadConfig()
+	if err != nil {
+		fmt.Printf("Failed to load config: %s\n", err)
+		os.Exit(1)
+	}
+	// Configure logging
+	logging.Setup()
+	logger := logging.GetLogger()
+	// Sync logger on exit
+	defer func() {
+		if err := logger.Sync(); err != nil {
+			// ignore error
+			return
+		}
+	}()
+
 	var subCommand string
 	// Parse subcommand (default: "cli")
-	if len(os.Args) < 2 {
+	if len(fs.Args()) < 1 {
 		subCommand = "cli"
 	} else {
-		subCommand = os.Args[1]
+		subCommand = fs.Arg(0)
 	}
 
 	switch subCommand {

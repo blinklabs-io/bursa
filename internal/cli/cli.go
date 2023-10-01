@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -49,24 +50,16 @@ func NewDefaultWallet(mnemonic string) (*bursa.Wallet, error) {
 }
 
 func Run() {
-	// Load Config
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		fmt.Printf("Failed to load config: %s\n", err)
-		os.Exit(1)
+	fs := flag.NewFlagSet("cli", flag.ExitOnError)
+	flagOutput := fs.String("output", "", "output directory for files, otherwise uses STDOUT")
+	if len(os.Args) >= 2 {
+		_ = fs.Parse(os.Args[2:]) // ignore parse errors
 	}
-	// Configure logging
-	logging.Setup()
-	logger := logging.GetLogger()
-	// Sync logger on exit
-	defer func() {
-		if err := logger.Sync(); err != nil {
-			// ignore error
-			return
-		}
-	}()
 
+	cfg := config.GetConfig()
+	logger := logging.GetLogger()
 	// Load mnemonic
+	var err error
 	mnemonic := cfg.Mnemonic
 	if mnemonic == "" {
 		mnemonic, err = bursa.NewMnemonic()
@@ -80,12 +73,15 @@ func Run() {
 	}
 
 	logger.Infof("Loaded mnemonic and generated address...")
-	fmt.Printf("MNEMONIC=%s\n", w.Mnemonic)
-	fmt.Printf("PAYMENT_ADDRESS=%s\n", w.PaymentAddress)
-	fmt.Printf("STAKE_ADDRESS=%s\n", w.StakeAddress)
 
-	fmt.Printf("payment.vkey=%s\n", w.PaymentVKey)
-	fmt.Printf("payment.skey=%s\n", w.PaymentSKey)
-	fmt.Printf("stake.vkey=%s\n", w.StakeVKey)
-	fmt.Printf("stake.skey=%s\n", w.StakeSKey)
+	if *flagOutput == "" {
+		fmt.Printf("MNEMONIC=%s\n", w.Mnemonic)
+		fmt.Printf("PAYMENT_ADDRESS=%s\n", w.PaymentAddress)
+		fmt.Printf("STAKE_ADDRESS=%s\n", w.StakeAddress)
+
+		fmt.Printf("payment.vkey=%s\n", bursa.GetKeyFile(w.PaymentVKey))
+		fmt.Printf("payment.skey=%s\n", bursa.GetKeyFile(w.PaymentSKey))
+		fmt.Printf("stake.vkey=%s\n", bursa.GetKeyFile(w.StakeVKey))
+		fmt.Printf("stake.skey=%s\n", bursa.GetKeyFile(w.StakeSKey))
+	} // TODO: output to files
 }
