@@ -1,0 +1,54 @@
+basePath: /
+definitions:
+  bursa.KeyFile:
+    properties:
+      cborHex:
+        type: string
+      description:
+        type: string
+      type:
+        type: string
+    type: object
+  bursa.Wallet:
+    properties:
+      mnemonic:
+        type: string
+      payment_address:
+        type: string
+      payment_kvey:
+        $ref: '#/definitions/bursa.KeyFile'
+      payment_skey:
+        $ref: '#/definitions/bursa.KeyFile'
+      stake_address:
+        type: string
+      stake_skey:
+        $ref: '#/definitions/bursa.KeyFile'
+      stake_vkey:
+        $ref: '#/definitions/bursa.KeyFile'
+    type: object
+info:
+  contact:
+    email: support@blinklabs.io
+    name: Blink Labs
+    url: https://blinklabs.io
+  description: Programmable Cardano Wallet API
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  title: bursa
+  version: v0
+paths:
+  /api/wallet/create:
+    get:
+      description: Create a wallet and return details
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Ok
+          schema:
+            $ref: '#/definitions/bursa.Wallet'
+      summary: CreateWallet
+schemes:
+- http
+swagger: "2.0"
