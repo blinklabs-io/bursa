@@ -18,6 +18,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -58,5 +61,45 @@ func Run() {
 		fmt.Printf("payment.skey=%s\n", bursa.GetKeyFile(w.PaymentSKey))
 		fmt.Printf("stake.vkey=%s\n", bursa.GetKeyFile(w.StakeVKey))
 		fmt.Printf("stake.skey=%s\n", bursa.GetKeyFile(w.StakeSKey))
-	} // TODO: output to files
+	} else {
+		fmt.Printf("Output dir: %v\n", *flagOutput)
+		_, err := os.Stat(*flagOutput)
+		if os.IsNotExist(err) {
+			err = os.MkdirAll(*flagOutput, 0755)
+			if err != nil {
+				panic(err)
+			}
+		}
+		var fileMap = []map[string]string{
+			{"seed.txt": w.Mnemonic},
+			{"payment.addr": w.PaymentAddress},
+			{"stake.addr": w.StakeAddress},
+			{"payment.vkey": bursa.GetKeyFile(w.PaymentVKey)},
+			{"payment.skey": bursa.GetKeyFile(w.PaymentSKey)},
+			{"stake.vkey": bursa.GetKeyFile(w.StakeVKey)},
+			{"stake.skey": bursa.GetKeyFile(w.StakeSKey)},
+		}
+		var g errgroup.Group
+		for _, m := range fileMap {
+			for k, v := range m {
+				k := k
+				v := v
+				g.Go(func() error {
+					path := filepath.Join(*flagOutput, k)
+					err = os.WriteFile(path, []byte(v), 0666)
+					if err != nil {
+						return err
+					}
+					return err
+				})
+			}
+		}
+		err = g.Wait()
+		if err != nil {
+			logger.Fatalf("error occurred: %s", err)
+			os.Exit(1)
+		}
+		logger.Infof("wrote output files to %s", *flagOutput)
+
+	}
 }
