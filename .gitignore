@@ -22,3 +22,12 @@ go.work
 
 # binary
 /bursa
+
+# output files
+payment.addr
+payment.skey
+payment.vkey
+seed.txt
+stake.addr
+stake.skey
+stake.vkey

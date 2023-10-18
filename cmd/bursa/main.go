@@ -28,7 +28,7 @@ func main() {
 	fs.Usage = func() {
 		fmt.Fprintf(
 			flag.CommandLine.Output(),
-			"Usage: bursa [-h] [subcommand] [args]\n\nSubcommands:\n\n",
+			"Usage: bursa [-h] <subcommand> [args]\n\nSubcommands:\n\n",
 		)
 		fmt.Fprintf(
 			flag.CommandLine.Output(),
@@ -63,9 +63,10 @@ func main() {
 	}()
 
 	var subCommand string
-	// Parse subcommand (default: "cli")
+	// Parse subcommand
 	if len(fs.Args()) < 1 {
-		subCommand = "cli"
+		fs.Usage()
+		os.Exit(1)
 	} else {
 		subCommand = fs.Arg(0)
 	}
