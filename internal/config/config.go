@@ -23,17 +23,23 @@ import (
 type Config struct {
 	Api      ApiConfig     `yaml:"api"`
 	Logging  LoggingConfig `yaml:"logging"`
+	Metrics  MetricsConfig `yaml:"metrics"`
 	Mnemonic string        `yaml:"mnemonic" envconfig:"MNEMONIC"`
-	Network  string        `yaml:"network" envconfig:"NETWORK"`
+	Network  string        `yaml:"network"  envconfig:"NETWORK"`
 }
 
 type ApiConfig struct {
 	ListenAddress string `yaml:"address" envconfig:"API_LISTEN_ADDRESS"`
-	ListenPort    uint   `yaml:"port" envconfig:"API_LISTEN_PORT"`
+	ListenPort    uint   `yaml:"port"    envconfig:"API_LISTEN_PORT"`
 }
 
 type LoggingConfig struct {
 	Level string `yaml:"level" envconfig:"LOGGING_LEVEL"`
+}
+
+type MetricsConfig struct {
+	ListenAddress string `yaml:"address" envconfig:"METRICS_LISTEN_ADDRESS"`
+	ListenPort    uint   `yaml:"port"    envconfig:"METRICS_LISTEN_PORT"`
 }
 
 // We use a singleton for the config for convenience
@@ -44,6 +50,10 @@ var globalConfig = Config{
 	},
 	Logging: LoggingConfig{
 		Level: "info",
+	},
+	Metrics: MetricsConfig{
+		ListenAddress: "",
+		ListenPort:    8081,
 	},
 	Mnemonic: "",
 	Network:  "mainnet",

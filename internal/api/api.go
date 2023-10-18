@@ -20,7 +20,8 @@ import (
 
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
-	swaggerFiles "github.com/swaggo/files" // swagger embed files
+	"github.com/penglongli/gin-metrics/ginmetrics"
+	swaggerFiles "github.com/swaggo/files"     // swagger embed files
 	ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
 
 	"github.com/blinklabs-io/bursa"
@@ -40,8 +41,8 @@ import (
 //	@contact.url	https://blinklabs.io
 //	@contact.email	support@blinklabs.io
 
-//	@license.name	Apache 2.0
-//	@license.url	http://www.apache.org/licenses/LICENSE-2.0.html
+// @license.name	Apache 2.0
+// @license.url	http://www.apache.org/licenses/LICENSE-2.0.html
 func Start(cfg *config.Config) error {
 	// Disable gin debug and color output
 	gin.SetMode(gin.ReleaseMode)
@@ -51,6 +52,8 @@ func Start(cfg *config.Config) error {
 	router := gin.New()
 	// Catch panics and return a 500
 	router.Use(gin.Recovery())
+	// Standard logging
+	logger := logging.GetLogger()
 	// Access logging
 	accessLogger := logging.GetAccessLogger()
 	router.Use(ginzap.GinzapWithConfig(accessLogger, &ginzap.Config{
@@ -62,8 +65,49 @@ func Start(cfg *config.Config) error {
 
 	// Create a healthcheck
 	router.GET("/healthcheck", handleHealthcheck)
-	// Create a swagger endopint
+	// Create a swagger endpoint
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// Metrics
+	metricsRouter := gin.New()
+	metrics := ginmetrics.GetMonitor()
+	// Set metrics path
+	metrics.SetMetricPath("/")
+	// Set metrics router
+	metrics.Expose(metricsRouter)
+	// Use metrics middleware without exposing path in main app router
+	metrics.UseWithoutExposingEndpoint(router)
+
+	// Custom metrics
+	createdMetric := &ginmetrics.Metric{
+		Type:        ginmetrics.Counter,
+		Name:        "bursa_wallets_created_count",
+		Description: "total number of wallets created",
+		Labels:      nil,
+	}
+	failureMetric := &ginmetrics.Metric{
+		Type:        ginmetrics.Counter,
+		Name:        "bursa_wallets_fail_count",
+		Description: "total number of wallet failures",
+		Labels:      nil,
+	}
+	// Add to global monitor object
+	_ = ginmetrics.GetMonitor().AddMetric(createdMetric)
+	_ = ginmetrics.GetMonitor().AddMetric(failureMetric)
+
+	// Start metrics listener
+	go func() {
+		// TODO: return error if we cannot initialize metrics
+		logger.Infof("starting metrics listener on %s:%d",
+			cfg.Metrics.ListenAddress,
+			cfg.Metrics.ListenPort,
+		)
+		_ = metricsRouter.Run(fmt.Sprintf("%s:%d",
+			cfg.Metrics.ListenAddress,
+			cfg.Metrics.ListenPort,
+		))
+	}()
+
 	// Configure API routes
 	router.GET("/api/wallet/create", handleWalletCreate)
 
@@ -93,6 +137,7 @@ func handleWalletCreate(c *gin.Context) {
 	if err != nil {
 		logger.Errorf("failed to load mnemonic: %s", err)
 		c.JSON(500, fmt.Sprintf("failed to load mnemonic: %s", err))
+		_= ginmetrics.GetMonitor().GetMetric("bursa_wallets_fail_count").Inc(nil)
 		return
 	}
 
@@ -100,7 +145,9 @@ func handleWalletCreate(c *gin.Context) {
 	if err != nil {
 		logger.Errorf("failed to initialize wallet: %s", err)
 		c.JSON(500, fmt.Sprintf("failed to initialize wallet: %s", err))
+		_= ginmetrics.GetMonitor().GetMetric("bursa_wallets_fail_count").Inc(nil)
 		return
 	}
 	c.JSON(200, w)
+	_ = ginmetrics.GetMonitor().GetMetric("bursa_wallets_create_count").Inc(nil)
 }
