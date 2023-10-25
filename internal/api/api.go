@@ -137,7 +137,9 @@ func handleWalletCreate(c *gin.Context) {
 	if err != nil {
 		logger.Errorf("failed to load mnemonic: %s", err)
 		c.JSON(500, fmt.Sprintf("failed to load mnemonic: %s", err))
-		_= ginmetrics.GetMonitor().GetMetric("bursa_wallets_fail_count").Inc(nil)
+		_ = ginmetrics.GetMonitor().
+			GetMetric("bursa_wallets_fail_count").
+			Inc(nil)
 		return
 	}
 
@@ -145,7 +147,9 @@ func handleWalletCreate(c *gin.Context) {
 	if err != nil {
 		logger.Errorf("failed to initialize wallet: %s", err)
 		c.JSON(500, fmt.Sprintf("failed to initialize wallet: %s", err))
-		_= ginmetrics.GetMonitor().GetMetric("bursa_wallets_fail_count").Inc(nil)
+		_ = ginmetrics.GetMonitor().
+			GetMetric("bursa_wallets_fail_count").
+			Inc(nil)
 		return
 	}
 	c.JSON(200, w)

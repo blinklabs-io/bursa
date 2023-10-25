@@ -29,7 +29,11 @@ import (
 
 func Run() {
 	fs := flag.NewFlagSet("cli", flag.ExitOnError)
-	flagOutput := fs.String("output", "", "output directory for files, otherwise uses STDOUT")
+	flagOutput := fs.String(
+		"output",
+		"",
+		"output directory for files, otherwise uses STDOUT",
+	)
 	if len(os.Args) >= 2 {
 		_ = fs.Parse(os.Args[2:]) // ignore parse errors
 	}

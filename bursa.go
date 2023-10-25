@@ -44,7 +44,11 @@ type Wallet struct {
 	StakeSKey      KeyFile `json:"stake_skey"`
 }
 
-func NewWallet(mnemonic, network string, accountId uint, paymentId, stakeId, addressId uint32) (*Wallet, error) {
+func NewWallet(
+	mnemonic, network string,
+	accountId uint,
+	paymentId, stakeId, addressId uint32,
+) (*Wallet, error) {
 	rootKey, err := GetRootKeyFromMnemonic(mnemonic)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get root key from mnemonic: %s", err)
@@ -124,7 +128,9 @@ func GetPaymentVKey(paymentKey bip32.XPrv) KeyFile {
 }
 
 func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
-	keyCbor, err := cbor.Marshal(GetExtendedPrivateKey(paymentKey, paymentKey.Public().PublicKey()))
+	keyCbor, err := cbor.Marshal(
+		GetExtendedPrivateKey(paymentKey, paymentKey.Public().PublicKey()),
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -152,7 +158,9 @@ func GetStakeVKey(stakeKey bip32.XPrv) KeyFile {
 }
 
 func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
-	keyCbor, err := cbor.Marshal(GetExtendedPrivateKey(stakeKey, stakeKey.Public().PublicKey()))
+	keyCbor, err := cbor.Marshal(
+		GetExtendedPrivateKey(stakeKey, stakeKey.Public().PublicKey()),
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -163,13 +171,27 @@ func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
 	}
 }
 
-func GetAddress(accountKey bip32.XPrv, net string, num uint32) *address.BaseAddress {
+func GetAddress(
+	accountKey bip32.XPrv,
+	net string,
+	num uint32,
+) *address.BaseAddress {
 	nw := network.TestNet()
 	if net == "mainnet" {
 		nw = network.MainNet()
 	}
-	paymentKeyPublicHash := GetPaymentKey(accountKey, num).Public().PublicKey().Hash()
-	stakeKeyPublicHash := GetStakeKey(accountKey, num).Public().PublicKey().Hash()
+	paymentKeyPublicHash := GetPaymentKey(
+		accountKey,
+		num,
+	).Public().
+		PublicKey().
+		Hash()
+	stakeKeyPublicHash := GetStakeKey(
+		accountKey,
+		num,
+	).Public().
+		PublicKey().
+		Hash()
 	addr := address.NewBaseAddress(
 		nw,
 		&address.StakeCredential{
