@@ -14,7 +14,7 @@ require (
 	github.com/swaggo/swag v1.16.2
 	github.com/tyler-smith/go-bip39 v1.1.0
 	go.uber.org/zap v1.26.0
-	golang.org/x/sync v0.4.0
+	golang.org/x/sync v0.5.0
 )
 
 require (
