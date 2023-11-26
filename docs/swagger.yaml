@@ -1,5 +1,12 @@
 basePath: /
 definitions:
+  api.WalletRestoreRequest:
+    properties:
+      mnemonic:
+        type: string
+    required:
+    - mnemonic
+    type: object
   bursa.KeyFile:
     properties:
       cborHex:
@@ -49,6 +56,35 @@ paths:
           schema:
             $ref: '#/definitions/bursa.Wallet'
       summary: CreateWallet
+  /api/wallet/restore:
+    post:
+      consumes:
+      - application/json
+      description: Restores a wallet using the provided mnemonic seed phrase and returns
+        wallet details.
+      parameters:
+      - description: Wallet Restore Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.WalletRestoreRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Wallet successfully restored
+          schema:
+            $ref: '#/definitions/bursa.Wallet'
+        "400":
+          description: Invalid request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Restore a wallet using a mnemonic seed phrase
 schemes:
 - http
 swagger: "2.0"

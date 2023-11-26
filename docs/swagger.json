@@ -35,9 +35,63 @@
                     }
                 }
             }
+        },
+        "/api/wallet/restore": {
+            "post": {
+                "description": "Restores a wallet using the provided mnemonic seed phrase and returns wallet details.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Restore a wallet using a mnemonic seed phrase",
+                "parameters": [
+                    {
+                        "description": "Wallet Restore Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.WalletRestoreRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Wallet successfully restored",
+                        "schema": {
+                            "$ref": "#/definitions/bursa.Wallet"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "api.WalletRestoreRequest": {
+            "type": "object",
+            "required": [
+                "mnemonic"
+            ],
+            "properties": {
+                "mnemonic": {
+                    "type": "string"
+                }
+            }
+        },
         "bursa.KeyFile": {
             "type": "object",
             "properties": {
