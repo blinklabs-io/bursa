@@ -63,8 +63,10 @@ func Run() {
 
 		fmt.Printf("payment.vkey=%s\n", bursa.GetKeyFile(w.PaymentVKey))
 		fmt.Printf("payment.skey=%s\n", bursa.GetKeyFile(w.PaymentSKey))
+		fmt.Printf("paymentExtended.skey=%s\n", bursa.GetKeyFile(w.PaymentESKey))
 		fmt.Printf("stake.vkey=%s\n", bursa.GetKeyFile(w.StakeVKey))
 		fmt.Printf("stake.skey=%s\n", bursa.GetKeyFile(w.StakeSKey))
+		fmt.Printf("stakeExtended.skey=%s\n", bursa.GetKeyFile(w.StakeESKey))
 	} else {
 		fmt.Printf("Output dir: %v\n", *flagOutput)
 		_, err := os.Stat(*flagOutput)
@@ -80,8 +82,10 @@ func Run() {
 			{"stake.addr": w.StakeAddress},
 			{"payment.vkey": bursa.GetKeyFile(w.PaymentVKey)},
 			{"payment.skey": bursa.GetKeyFile(w.PaymentSKey)},
+			{"paymentExtended.skey": bursa.GetKeyFile(w.PaymentESKey)},
 			{"stake.vkey": bursa.GetKeyFile(w.StakeVKey)},
 			{"stake.skey": bursa.GetKeyFile(w.StakeSKey)},
+			{"stakeExtended.skey": bursa.GetKeyFile(w.StakeESKey)},
 		}
 		var g errgroup.Group
 		for _, m := range fileMap {

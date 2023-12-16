@@ -40,8 +40,10 @@ type Wallet struct {
 	StakeAddress   string  `json:"stake_address"`
 	PaymentVKey    KeyFile `json:"payment_kvey"`
 	PaymentSKey    KeyFile `json:"payment_skey"`
+	PaymentESKey   KeyFile `json:"payment_extended_skey"`
 	StakeVKey      KeyFile `json:"stake_vkey"`
 	StakeSKey      KeyFile `json:"stake_skey"`
+	StakeESKey     KeyFile `json:"stake_extended_skey"`
 }
 
 func NewWallet(
@@ -63,8 +65,10 @@ func NewWallet(
 		StakeAddress:   addr.ToReward().String(),
 		PaymentVKey:    GetPaymentVKey(paymentKey),
 		PaymentSKey:    GetPaymentSKey(paymentKey),
+		PaymentESKey:   GetPaymentExtendedSKey(paymentKey),
 		StakeVKey:      GetStakeVKey(stakeKey),
 		StakeSKey:      GetStakeSKey(stakeKey),
+		StakeESKey:     GetStakeExtendedSKey(stakeKey),
 	}
 	return w, nil
 }
@@ -128,6 +132,18 @@ func GetPaymentVKey(paymentKey bip32.XPrv) KeyFile {
 }
 
 func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
+	keyCbor, err := cbor.Marshal(paymentKey[:32])
+	if err != nil {
+		panic(err)
+	}
+	return KeyFile{
+		Type:        "PaymentSigningKeyShelley_ed25519",
+		Description: "Payment Signing Key",
+		CborHex:     fmt.Sprintf("%x", keyCbor),
+	}
+}
+
+func GetPaymentExtendedSKey(paymentKey bip32.XPrv) KeyFile {
 	keyCbor, err := cbor.Marshal(
 		GetExtendedPrivateKey(paymentKey, paymentKey.Public().PublicKey()),
 	)
@@ -136,11 +152,10 @@ func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
 	}
 	return KeyFile{
 		Type:        "PaymentExtendedSigningKeyShelley_ed25519_bip32",
-		Description: "Payment Signing Key",
+		Description: "Payment Extended Signing Key (BIP32)",
 		CborHex:     fmt.Sprintf("%x", keyCbor),
 	}
 }
-
 func GetStakeKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
 	return accountKey.Derive(2).Derive(num)
 }
@@ -158,6 +173,18 @@ func GetStakeVKey(stakeKey bip32.XPrv) KeyFile {
 }
 
 func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
+	keyCbor, err := cbor.Marshal(stakeKey[:32])
+	if err != nil {
+		panic(err)
+	}
+	return KeyFile{
+		Type:        "StakeSigningKeyShelley_ed25519",
+		Description: "Stake Signing Key",
+		CborHex:     fmt.Sprintf("%x", keyCbor),
+	}
+}
+
+func GetStakeExtendedSKey(stakeKey bip32.XPrv) KeyFile {
 	keyCbor, err := cbor.Marshal(
 		GetExtendedPrivateKey(stakeKey, stakeKey.Public().PublicKey()),
 	)
@@ -166,7 +193,7 @@ func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
 	}
 	return KeyFile{
 		Type:        "StakeExtendedSigningKeyShelley_ed25519_bip32",
-		Description: "Stake Signing Key",
+		Description: "Stake Extended Signing Key (BIP32)",
 		CborHex:     fmt.Sprintf("%x", keyCbor),
 	}
 }
