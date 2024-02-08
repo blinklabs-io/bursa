@@ -11,7 +11,7 @@ require (
 	github.com/penglongli/gin-metrics v0.1.10
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.0
-	github.com/swaggo/swag v1.16.2
+	github.com/swaggo/swag v1.16.3
 	github.com/tyler-smith/go-bip39 v1.1.0
 	go.uber.org/zap v1.26.0
 	golang.org/x/sync v0.6.0
