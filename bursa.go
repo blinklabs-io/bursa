@@ -35,15 +35,15 @@ type KeyFile struct {
 }
 
 type Wallet struct {
-	Mnemonic       string  `json:"mnemonic"`
-	PaymentAddress string  `json:"payment_address"`
-	StakeAddress   string  `json:"stake_address"`
-	PaymentVKey    KeyFile `json:"payment_kvey"`
-	PaymentSKey    KeyFile `json:"payment_skey"`
-	PaymentESKey   KeyFile `json:"payment_extended_skey"`
-	StakeVKey      KeyFile `json:"stake_vkey"`
-	StakeSKey      KeyFile `json:"stake_skey"`
-	StakeESKey     KeyFile `json:"stake_extended_skey"`
+	Mnemonic            string  `json:"mnemonic"`
+	PaymentAddress      string  `json:"payment_address"`
+	StakeAddress        string  `json:"stake_address"`
+	PaymentVKey         KeyFile `json:"payment_kvey"`
+	PaymentSKey         KeyFile `json:"payment_skey"`
+	PaymentExtendedSKey KeyFile `json:"payment_extended_skey"`
+	StakeVKey           KeyFile `json:"stake_vkey"`
+	StakeSKey           KeyFile `json:"stake_skey"`
+	StakeExtendedSKey   KeyFile `json:"stake_extended_skey"`
 }
 
 func NewWallet(
@@ -60,15 +60,15 @@ func NewWallet(
 	stakeKey := GetStakeKey(accountKey, stakeId)
 	addr := GetAddress(accountKey, network, addressId)
 	w := &Wallet{
-		Mnemonic:       mnemonic,
-		PaymentAddress: addr.String(),
-		StakeAddress:   addr.ToReward().String(),
-		PaymentVKey:    GetPaymentVKey(paymentKey),
-		PaymentSKey:    GetPaymentSKey(paymentKey),
-		PaymentESKey:   GetPaymentExtendedSKey(paymentKey),
-		StakeVKey:      GetStakeVKey(stakeKey),
-		StakeSKey:      GetStakeSKey(stakeKey),
-		StakeESKey:     GetStakeExtendedSKey(stakeKey),
+		Mnemonic:            mnemonic,
+		PaymentAddress:      addr.String(),
+		StakeAddress:        addr.ToReward().String(),
+		PaymentVKey:         GetPaymentVKey(paymentKey),
+		PaymentSKey:         GetPaymentSKey(paymentKey),
+		PaymentExtendedSKey: GetPaymentExtendedSKey(paymentKey),
+		StakeVKey:           GetStakeVKey(stakeKey),
+		StakeSKey:           GetStakeSKey(stakeKey),
+		StakeExtendedSKey:   GetStakeExtendedSKey(stakeKey),
 	}
 	return w, nil
 }
