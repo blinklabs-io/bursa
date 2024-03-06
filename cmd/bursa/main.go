@@ -24,11 +24,18 @@ import (
 )
 
 func main() {
-	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	var appName string
+	if os.Args == nil {
+		appName = "bursa"
+	} else {
+		appName = os.Args[0]
+	}
+	fs := flag.NewFlagSet(appName, flag.ExitOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(
 			flag.CommandLine.Output(),
-			"Usage: bursa [-h] <subcommand> [args]\n\nSubcommands:\n\n",
+			"Usage: %s [-h] <subcommand> [args]\n\nSubcommands:\n\n",
+			appName,
 		)
 		fmt.Fprintf(
 			flag.CommandLine.Output(),
@@ -42,6 +49,10 @@ func main() {
 			"cli",
 			"run a terminal command",
 		)
+	}
+	if os.Args == nil {
+		fs.Usage()
+		os.Exit(1)
 	}
 	_ = fs.Parse(os.Args[1:]) // ignore parse errors
 
