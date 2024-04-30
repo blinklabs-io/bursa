@@ -132,7 +132,7 @@ func GetPaymentVKey(paymentKey bip32.XPrv) KeyFile {
 }
 
 func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
-	keyCbor, err := cbor.Marshal(paymentKey[:32])
+	keyCbor, err := cbor.Marshal(paymentKey)
 	if err != nil {
 		panic(err)
 	}
@@ -173,7 +173,7 @@ func GetStakeVKey(stakeKey bip32.XPrv) KeyFile {
 }
 
 func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
-	keyCbor, err := cbor.Marshal(stakeKey[:32])
+	keyCbor, err := cbor.Marshal(stakeKey)
 	if err != nil {
 		panic(err)
 	}
