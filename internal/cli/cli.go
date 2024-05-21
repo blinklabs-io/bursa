@@ -17,6 +17,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -24,7 +25,6 @@ import (
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
-	"github.com/blinklabs-io/bursa/internal/logging"
 )
 
 func Run() {
@@ -39,22 +39,23 @@ func Run() {
 	}
 
 	cfg := config.GetConfig()
-	logger := logging.GetLogger()
 	// Load mnemonic
 	var err error
 	mnemonic := cfg.Mnemonic
 	if mnemonic == "" {
 		mnemonic, err = bursa.NewMnemonic()
 		if err != nil {
-			logger.Fatalf("failed to load mnemonic: %s", err)
+			slog.Error("failed to load mnemonic: %s", err)
+			return
 		}
 	}
 	w, err := bursa.NewDefaultWallet(mnemonic)
 	if err != nil {
-		logger.Fatalf("failed to initialize wallet: %s", err)
+		slog.Error("failed to initialize wallet: %s", err)
+		return
 	}
 
-	logger.Infof("Loaded mnemonic and generated address...")
+	slog.Info("Loaded mnemonic and generated address...")
 
 	if *flagOutput == "" {
 		fmt.Printf("MNEMONIC=%s\n", w.Mnemonic)
@@ -104,10 +105,10 @@ func Run() {
 		}
 		err = g.Wait()
 		if err != nil {
-			logger.Fatalf("error occurred: %s", err)
+			slog.Error("error occurred: %s", err)
 			os.Exit(1)
 		}
-		logger.Infof("wrote output files to %s", *flagOutput)
+		slog.Info("wrote output files to %s", *flagOutput)
 
 	}
 }

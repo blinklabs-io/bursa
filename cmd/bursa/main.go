@@ -15,80 +15,49 @@
 package main
 
 import (
-	"flag"
-	"fmt"
+	"log/slog"
 	"os"
 
-	"github.com/blinklabs-io/bursa/internal/config"
-	"github.com/blinklabs-io/bursa/internal/logging"
+	"github.com/blinklabs-io/bursa/internal/consolelog"
+	"github.com/spf13/cobra"
+)
+
+const (
+	programName = "bursa"
 )
 
 func main() {
-	var appName string
-	if os.Args == nil {
-		appName = "bursa"
-	} else {
-		appName = os.Args[0]
-	}
-	fs := flag.NewFlagSet(appName, flag.ExitOnError)
-	fs.Usage = func() {
-		fmt.Fprintf(
-			flag.CommandLine.Output(),
-			"Usage: %s [-h] <subcommand> [args]\n\nSubcommands:\n\n",
-			appName,
-		)
-		fmt.Fprintf(
-			flag.CommandLine.Output(),
-			" - %-18s  %s\n",
-			"api",
-			"run an API server",
-		)
-		fmt.Fprintf(
-			flag.CommandLine.Output(),
-			" - %-18s  %s\n",
-			"cli",
-			"run a terminal command",
-		)
-	}
-	if os.Args == nil {
-		fs.Usage()
-		os.Exit(1)
-	}
-	_ = fs.Parse(os.Args[1:]) // ignore parse errors
+	globalFlags := struct {
+		debug bool
+	}{}
 
-	// Load Config
-	_, err := config.LoadConfig()
-	if err != nil {
-		fmt.Printf("Failed to load config: %s\n", err)
-		os.Exit(1)
-	}
-	// Configure logging
-	logging.Setup()
-	logger := logging.GetLogger()
-	// Sync logger on exit
-	defer func() {
-		if err := logger.Sync(); err != nil {
-			// ignore error
-			return
-		}
-	}()
-
-	var subCommand string
-	// Parse subcommand
-	if len(fs.Args()) < 1 {
-		fs.Usage()
-		os.Exit(1)
-	} else {
-		subCommand = fs.Arg(0)
+	rootCmd := &cobra.Command{
+		Use: programName,
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			// Configure default logger
+			logLevel := slog.LevelInfo
+			if globalFlags.debug {
+				logLevel = slog.LevelDebug
+			}
+			logger := slog.New(
+				consolelog.NewHandler(os.Stdout, &slog.HandlerOptions{
+					Level: logLevel,
+				}),
+			)
+			slog.SetDefault(logger)
+		},
 	}
 
-	switch subCommand {
-	case "api":
-		apiMain()
-	case "cli":
-		cliMain()
-	default:
-		fmt.Printf("Unknown subcommand: %s\n", subCommand)
+	// Global flags
+	rootCmd.PersistentFlags().BoolVarP(&globalFlags.debug, "debug", "D", false, "enable debug logging")
+
+	rootCmd.AddCommand(
+		newCommand(),
+		apiCommand(),
+	)
+
+	if err := rootCmd.Execute(); err != nil {
+		// NOTE: we purposely don't display the error, since cobra will have already displayed it
 		os.Exit(1)
 	}
 }
