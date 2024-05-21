@@ -1,4 +1,4 @@
-// Copyright 2023 Blink Labs Software
+// Copyright 2024 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,8 +16,35 @@ package main
 
 import (
 	"github.com/blinklabs-io/bursa/internal/cli"
+	"github.com/spf13/cobra"
 )
 
-func cliMain() {
-	cli.Run()
+var (
+	output   string
+)
+
+func newCommand() *cobra.Command {
+	newCommand := &cobra.Command{
+		Use:   "new",
+	}
+
+	newCommand.AddCommand(
+		newWalletCommand(),
+	)
+	return newCommand
 }
+
+func newWalletCommand() *cobra.Command {
+	newWalletCommand := cobra.Command{
+		Use:   "wallet",
+		Short: "Creates a new wallet",
+		Run: func(cmd *cobra.Command, args []string) {
+			cli.Run(output)
+		},
+	}
+
+	newWalletCommand.PersistentFlags().StringVar(&output, "output", "", "")
+
+	return &newWalletCommand
+}
+
