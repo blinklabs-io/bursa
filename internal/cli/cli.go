@@ -41,6 +41,11 @@ func Run(output string) {
 	w, err := bursa.NewDefaultWallet(mnemonic)
 	if err != nil {
 		logger.Fatalf("failed to initialize wallet: %s", err)
+		os.Exit(1)
+	}
+	if w == nil {
+		logger.Fatalf("wallet empty after init... this shouldn't happen")
+		os.Exit(1)
 	}
 
 	logger.Info("Loaded mnemonic and generated address...")
