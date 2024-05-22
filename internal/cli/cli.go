@@ -15,7 +15,6 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,17 +26,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/logging"
 )
 
-func Run() {
-	fs := flag.NewFlagSet("cli", flag.ExitOnError)
-	flagOutput := fs.String(
-		"output",
-		"",
-		"output directory for files, otherwise uses STDOUT",
-	)
-	if len(os.Args) >= 2 {
-		_ = fs.Parse(os.Args[2:]) // ignore parse errors
-	}
-
+func Run(output string) {
 	cfg := config.GetConfig()
 	logger := logging.GetLogger()
 	// Load mnemonic
@@ -54,9 +43,9 @@ func Run() {
 		logger.Fatalf("failed to initialize wallet: %s", err)
 	}
 
-	logger.Infof("Loaded mnemonic and generated address...")
+	logger.Info("Loaded mnemonic and generated address...")
 
-	if *flagOutput == "" {
+	if output == "" {
 		fmt.Printf("MNEMONIC=%s\n", w.Mnemonic)
 		fmt.Printf("PAYMENT_ADDRESS=%s\n", w.PaymentAddress)
 		fmt.Printf("STAKE_ADDRESS=%s\n", w.StakeAddress)
@@ -68,10 +57,10 @@ func Run() {
 		fmt.Printf("stake.skey=%s\n", bursa.GetKeyFile(w.StakeSKey))
 		fmt.Printf("stakeExtended.skey=%s\n", bursa.GetKeyFile(w.StakeExtendedSKey))
 	} else {
-		fmt.Printf("Output dir: %v\n", *flagOutput)
-		_, err := os.Stat(*flagOutput)
+		fmt.Printf("Output dir: %v\n", output)
+		_, err := os.Stat(output)
 		if os.IsNotExist(err) {
-			err = os.MkdirAll(*flagOutput, 0755)
+			err = os.MkdirAll(output, 0755)
 			if err != nil {
 				panic(err)
 			}
@@ -93,7 +82,7 @@ func Run() {
 				k := k
 				v := v
 				g.Go(func() error {
-					path := filepath.Join(*flagOutput, k)
+					path := filepath.Join(output, k)
 					err = os.WriteFile(path, []byte(v), 0666)
 					if err != nil {
 						return err
@@ -107,7 +96,7 @@ func Run() {
 			logger.Fatalf("error occurred: %s", err)
 			os.Exit(1)
 		}
-		logger.Infof("wrote output files to %s", *flagOutput)
+		logger.Infof("wrote output files to %s", output)
 
 	}
 }

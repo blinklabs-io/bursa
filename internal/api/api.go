@@ -20,6 +20,7 @@ import (
 	"time"
 
 	ginzap "github.com/gin-contrib/zap"
+
 	"github.com/gin-gonic/gin"
 	"github.com/penglongli/gin-metrics/ginmetrics"
 	swaggerFiles "github.com/swaggo/files"     // swagger embed files
@@ -53,7 +54,6 @@ func Start(cfg *config.Config) error {
 	// Disable gin debug and color output
 	gin.SetMode(gin.ReleaseMode)
 	gin.DisableConsoleColor()
-
 	// Configure API router
 	router := gin.New()
 	// Catch panics and return a 500

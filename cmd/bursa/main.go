@@ -15,57 +15,20 @@
 package main
 
 import (
-	"flag"
-	"fmt"
 	"os"
 
-	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	"github.com/spf13/cobra"
+)
+
+const (
+	programName = "bursa"
 )
 
 func main() {
-	var appName string
-	if os.Args == nil {
-		appName = "bursa"
-	} else {
-		appName = os.Args[0]
-	}
-	fs := flag.NewFlagSet(appName, flag.ExitOnError)
-	fs.Usage = func() {
-		fmt.Fprintf(
-			flag.CommandLine.Output(),
-			"Usage: %s [-h] <subcommand> [args]\n\nSubcommands:\n\n",
-			appName,
-		)
-		fmt.Fprintf(
-			flag.CommandLine.Output(),
-			" - %-18s  %s\n",
-			"api",
-			"run an API server",
-		)
-		fmt.Fprintf(
-			flag.CommandLine.Output(),
-			" - %-18s  %s\n",
-			"cli",
-			"run a terminal command",
-		)
-	}
-	if os.Args == nil {
-		fs.Usage()
-		os.Exit(1)
-	}
-	_ = fs.Parse(os.Args[1:]) // ignore parse errors
-
-	// Load Config
-	_, err := config.LoadConfig()
-	if err != nil {
-		fmt.Printf("Failed to load config: %s\n", err)
-		os.Exit(1)
-	}
 	// Configure logging
 	logging.Setup()
 	logger := logging.GetLogger()
-	// Sync logger on exit
 	defer func() {
 		if err := logger.Sync(); err != nil {
 			// ignore error
@@ -73,22 +36,19 @@ func main() {
 		}
 	}()
 
-	var subCommand string
-	// Parse subcommand
-	if len(fs.Args()) < 1 {
-		fs.Usage()
-		os.Exit(1)
-	} else {
-		subCommand = fs.Arg(0)
+	rootCmd := &cobra.Command{
+		Use: programName,
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
 	}
 
-	switch subCommand {
-	case "api":
-		apiMain()
-	case "cli":
-		cliMain()
-	default:
-		fmt.Printf("Unknown subcommand: %s\n", subCommand)
+	rootCmd.AddCommand(
+		walletCommand(),
+		apiCommand(),
+	)
+
+	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
