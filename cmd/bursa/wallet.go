@@ -23,27 +23,28 @@ var (
 	output string
 )
 
-func newCommand() *cobra.Command {
-	newCommand := &cobra.Command{
-		Use: "new",
+func walletCommand() *cobra.Command {
+	walletCommand := cobra.Command{
+		Use:   "wallet",
+		Short: "Wallet commands",
 	}
 
-	newCommand.AddCommand(
-		newWalletCommand(),
+	walletCommand.AddCommand(
+		walletCreateCommand(),
 	)
-	return newCommand
+	return &walletCommand
 }
 
-func newWalletCommand() *cobra.Command {
-	newWalletCommand := cobra.Command{
-		Use:   "wallet",
+func walletCreateCommand() *cobra.Command {
+	walletCreateCommand := cobra.Command{
+		Use:   "create",
 		Short: "Creates a new wallet",
 		Run: func(cmd *cobra.Command, args []string) {
 			cli.Run(output)
 		},
 	}
 
-	newWalletCommand.PersistentFlags().StringVar(&output, "output", "", "")
+	walletCreateCommand.PersistentFlags().StringVar(&output, "output", "", "")
 
-	return &newWalletCommand
+	return &walletCreateCommand
 }

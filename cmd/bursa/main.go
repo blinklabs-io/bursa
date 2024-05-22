@@ -44,7 +44,7 @@ func main() {
 	}
 
 	rootCmd.AddCommand(
-		newCommand(),
+		walletCommand(),
 		apiCommand(),
 	)
 
