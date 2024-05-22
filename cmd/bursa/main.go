@@ -15,10 +15,9 @@
 package main
 
 import (
-	"log/slog"
 	"os"
 
-	"github.com/blinklabs-io/bursa/internal/consolelog"
+	"github.com/blinklabs-io/bursa/internal/logging"
 	"github.com/spf13/cobra"
 )
 
@@ -27,32 +26,22 @@ const (
 )
 
 func main() {
-	globalFlags := struct {
-		debug bool
-	}{}
+	// Configure logging
+	logging.Setup()
+	logger := logging.GetLogger()
+	defer func() {
+		if err := logger.Sync(); err != nil {
+			// ignore error
+			return
+		}
+	}()
 
 	rootCmd := &cobra.Command{
 		Use: programName,
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			// Configure default logger
-			logLevel := slog.LevelInfo
-			if globalFlags.debug {
-				logLevel = slog.LevelDebug
-			}
-			logger := slog.New(
-				consolelog.NewHandler(os.Stdout, &slog.HandlerOptions{
-					Level: logLevel,
-				}),
-			)
-			slog.SetDefault(logger)
-		},
 	}
-
-	// Global flags
-	rootCmd.PersistentFlags().BoolVarP(&globalFlags.debug, "debug", "D", false, "enable debug logging")
 
 	rootCmd.AddCommand(
 		newCommand(),
@@ -60,7 +49,6 @@ func main() {
 	)
 
 	if err := rootCmd.Execute(); err != nil {
-		// NOTE: we purposely don't display the error, since cobra will have already displayed it
 		os.Exit(1)
 	}
 }

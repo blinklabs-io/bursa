@@ -15,12 +15,9 @@
 package main
 
 import (
-	"fmt"
-	"log/slog"
-	"os"
-
 	"github.com/blinklabs-io/bursa/internal/api"
 	"github.com/blinklabs-io/bursa/internal/config"
+	"github.com/blinklabs-io/bursa/internal/logging"
 	"github.com/spf13/cobra"
 )
 
@@ -31,14 +28,15 @@ func apiCommand() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			cfg := config.GetConfig()
 			// Start API listener
-			slog.Info(fmt.Sprintf(
+			logger := logging.GetLogger()
+			// Start API listener
+			logger.Infof(
 				"starting API listener on %s:%d",
 				cfg.Api.ListenAddress,
 				cfg.Api.ListenPort,
-			))
+			)
 			if err := api.Start(cfg); err != nil {
-				slog.Error("failed to start API: %s", err)
-				os.Exit(1)
+				logger.Fatalf("failed to start API: %s", err)
 			}
 
 			// Wait forever
