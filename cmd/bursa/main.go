@@ -33,6 +33,9 @@ func main() {
 
 	rootCmd := &cobra.Command{
 		Use: programName,
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			// Configure default logger
 			logLevel := slog.LevelInfo

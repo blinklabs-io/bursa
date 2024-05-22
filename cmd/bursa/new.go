@@ -20,12 +20,12 @@ import (
 )
 
 var (
-	output   string
+	output string
 )
 
 func newCommand() *cobra.Command {
 	newCommand := &cobra.Command{
-		Use:   "new",
+		Use: "new",
 	}
 
 	newCommand.AddCommand(
@@ -47,4 +47,3 @@ func newWalletCommand() *cobra.Command {
 
 	return &newWalletCommand
 }
-
