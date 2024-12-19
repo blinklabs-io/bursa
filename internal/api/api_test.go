@@ -42,25 +42,27 @@ func TestRestoreWallet(t *testing.T) {
 		t.Parallel()
 
 		// Create a mock server
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/wallet/restore" && r.Method == "POST" {
-				var request WalletRestoreRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					http.Error(w, "Invalid request", http.StatusBadRequest)
-					return
-				}
+		server := httptest.NewServer(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/wallet/restore" && r.Method == "POST" {
+					var request WalletRestoreRequest
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						http.Error(w, "Invalid request", http.StatusBadRequest)
+						return
+					}
 
-				// Respond with the mock wallet JSON data
-				w.WriteHeader(http.StatusOK)
-				_, err := w.Write([]byte(mockWalletResponseJSON))
-				if err != nil {
-					t.Fatalf("Failed to write response: %v", err)
-				}
+					// Respond with the mock wallet JSON data
+					w.WriteHeader(http.StatusOK)
+					_, err := w.Write([]byte(mockWalletResponseJSON))
+					if err != nil {
+						t.Fatalf("Failed to write response: %v", err)
+					}
 
-			} else {
-				w.WriteHeader(http.StatusNotFound)
-			}
-		}))
+				} else {
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}),
+		)
 		defer server.Close()
 
 		// Prepare the request body
@@ -68,7 +70,11 @@ func TestRestoreWallet(t *testing.T) {
 			Mnemonic: "depth kitchen crystal history rabbit brief harbor palace tent frog city charge inflict tiger negative young furnace solid august educate bounce canal someone erode",
 		})
 
-		resp, err := http.Post(server.URL+"/api/wallet/restore", "application/json", bytes.NewBuffer(requestBody))
+		resp, err := http.Post(
+			server.URL+"/api/wallet/restore",
+			"application/json",
+			bytes.NewBuffer(requestBody),
+		)
 		if err != nil {
 			t.Fatalf("Failed to make request: %v", err)
 		}
@@ -89,7 +95,11 @@ func TestRestoreWallet(t *testing.T) {
 		}
 
 		if !reflect.DeepEqual(expectedResponse, actualResponse) {
-			t.Errorf("Expected response %v, got %v", expectedResponse, actualResponse)
+			t.Errorf(
+				"Expected response %v, got %v",
+				expectedResponse,
+				actualResponse,
+			)
 		}
 	})
 

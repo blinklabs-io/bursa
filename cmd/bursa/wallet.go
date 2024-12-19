@@ -44,7 +44,8 @@ func walletCreateCommand() *cobra.Command {
 		},
 	}
 
-	walletCreateCommand.PersistentFlags().StringVar(&output, "output", "", "optional path to write files")
+	walletCreateCommand.PersistentFlags().
+		StringVar(&output, "output", "", "optional path to write files")
 
 	return &walletCreateCommand
 }

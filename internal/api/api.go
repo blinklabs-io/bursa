@@ -194,7 +194,10 @@ func handleWalletRestore(c *gin.Context) {
 	// Restore the wallet using the mnemonic
 	wallet, err := bursa.NewDefaultWallet(request.Mnemonic)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(
+			http.StatusInternalServerError,
+			gin.H{"error": "Internal server error"},
+		)
 		_ = ginmetrics.GetMonitor().
 			GetMetric("bursa_wallets_fail_count").
 			Inc(nil)
@@ -203,5 +206,7 @@ func handleWalletRestore(c *gin.Context) {
 
 	// Return the wallet details
 	c.JSON(http.StatusOK, wallet)
-	_ = ginmetrics.GetMonitor().GetMetric("bursa_wallets_restore_count").Inc(nil)
+	_ = ginmetrics.GetMonitor().
+		GetMetric("bursa_wallets_restore_count").
+		Inc(nil)
 }

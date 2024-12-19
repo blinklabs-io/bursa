@@ -57,10 +57,16 @@ func Run(output string) {
 
 		fmt.Printf("payment.vkey=%s\n", bursa.GetKeyFile(w.PaymentVKey))
 		fmt.Printf("payment.skey=%s\n", bursa.GetKeyFile(w.PaymentSKey))
-		fmt.Printf("paymentExtended.skey=%s\n", bursa.GetKeyFile(w.PaymentExtendedSKey))
+		fmt.Printf(
+			"paymentExtended.skey=%s\n",
+			bursa.GetKeyFile(w.PaymentExtendedSKey),
+		)
 		fmt.Printf("stake.vkey=%s\n", bursa.GetKeyFile(w.StakeVKey))
 		fmt.Printf("stake.skey=%s\n", bursa.GetKeyFile(w.StakeSKey))
-		fmt.Printf("stakeExtended.skey=%s\n", bursa.GetKeyFile(w.StakeExtendedSKey))
+		fmt.Printf(
+			"stakeExtended.skey=%s\n",
+			bursa.GetKeyFile(w.StakeExtendedSKey),
+		)
 	} else {
 		fmt.Printf("Output dir: %v\n", output)
 		_, err := os.Stat(output)
