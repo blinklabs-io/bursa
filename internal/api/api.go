@@ -1,4 +1,4 @@
-// Copyright 2023 Blink Labs Software
+// Copyright 2024 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,9 +17,6 @@ package api
 import (
 	"fmt"
 	"net/http"
-	"time"
-
-	ginzap "github.com/gin-contrib/zap"
 
 	"github.com/gin-gonic/gin"
 	"github.com/penglongli/gin-metrics/ginmetrics"
@@ -62,12 +59,13 @@ func Start(cfg *config.Config) error {
 	logger := logging.GetLogger()
 	// Access logging
 	accessLogger := logging.GetAccessLogger()
-	router.Use(ginzap.GinzapWithConfig(accessLogger, &ginzap.Config{
-		TimeFormat: time.RFC3339,
-		UTC:        true,
-		SkipPaths:  []string{},
-	}))
-	router.Use(ginzap.RecoveryWithZap(accessLogger, true))
+	accessMiddleware := func(c *gin.Context) {
+		accessLogger.Info("request received", "method", c.Request.Method, "path", c.Request.URL.Path, "remote_addr", c.ClientIP())
+		c.Next()
+		statusCode := c.Writer.Status()
+		accessLogger.Info("response sent", "status", statusCode, "method", c.Request.Method, "path", c.Request.URL.Path, "remote_addr", c.ClientIP())
+	}
+	router.Use(accessMiddleware)
 
 	// Create a healthcheck
 	router.GET("/healthcheck", handleHealthcheck)
@@ -111,10 +109,7 @@ func Start(cfg *config.Config) error {
 	// Start metrics listener
 	go func() {
 		// TODO: return error if we cannot initialize metrics
-		logger.Infof("starting metrics listener on %s:%d",
-			cfg.Metrics.ListenAddress,
-			cfg.Metrics.ListenPort,
-		)
+		logger.Info("starting metrics listener", "address", cfg.Metrics.ListenAddress, ":", cfg.Metrics.ListenPort)
 		_ = metricsRouter.Run(fmt.Sprintf("%s:%d",
 			cfg.Metrics.ListenAddress,
 			cfg.Metrics.ListenPort,
@@ -149,7 +144,7 @@ func handleWalletCreate(c *gin.Context) {
 
 	mnemonic, err := bursa.NewMnemonic()
 	if err != nil {
-		logger.Errorf("failed to load mnemonic: %s", err)
+		logger.Error("failed to load mnemonic", "error", err)
 		c.JSON(500, fmt.Sprintf("failed to load mnemonic: %s", err))
 		_ = ginmetrics.GetMonitor().
 			GetMetric("bursa_wallets_fail_count").
@@ -159,7 +154,7 @@ func handleWalletCreate(c *gin.Context) {
 
 	w, err := bursa.NewDefaultWallet(mnemonic)
 	if err != nil {
-		logger.Errorf("failed to initialize wallet: %s", err)
+		logger.Error("failed to initialize wallet", "error", err)
 		c.JSON(500, fmt.Sprintf("failed to initialize wallet: %s", err))
 		_ = ginmetrics.GetMonitor().
 			GetMetric("bursa_wallets_fail_count").
