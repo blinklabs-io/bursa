@@ -1,4 +1,4 @@
-// Copyright 2023 Blink Labs Software
+// Copyright 2024 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/blinklabs-io/bursa/internal/api"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
@@ -30,13 +32,10 @@ func apiCommand() *cobra.Command {
 			// Start API listener
 			logger := logging.GetLogger()
 			// Start API listener
-			logger.Infof(
-				"starting API listener on %s:%d",
-				cfg.Api.ListenAddress,
-				cfg.Api.ListenPort,
-			)
+			logger.Info("starting API listener on", "address", cfg.Api.ListenAddress, "port", cfg.Api.ListenPort)
 			if err := api.Start(cfg); err != nil {
-				logger.Fatalf("failed to start API: %s", err)
+				logger.Error("failed to start API:", "error", err)
+				os.Exit(1)
 			}
 
 			// Wait forever

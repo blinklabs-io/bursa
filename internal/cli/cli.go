@@ -1,4 +1,4 @@
-// Copyright 2023 Blink Labs Software
+// Copyright 2024 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,20 +35,21 @@ func Run(output string) {
 	if mnemonic == "" {
 		mnemonic, err = bursa.NewMnemonic()
 		if err != nil {
-			logger.Fatalf("failed to load mnemonic: %s", err)
+			logger.Error("failed to load mnemonic", "error", err)
+			os.Exit(1)
 		}
 	}
 	w, err := bursa.NewDefaultWallet(mnemonic)
 	if err != nil {
-		logger.Fatalf("failed to initialize wallet: %s", err)
+		logger.Error("failed to initialize wallet", "error", err)
 		os.Exit(1)
 	}
 	if w == nil {
-		logger.Fatalf("wallet empty after init... this shouldn't happen")
+		logger.Error("wallet empty after init... this shouldn't happen")
 		os.Exit(1)
 	}
 
-	logger.Info("Loaded mnemonic and generated address...")
+	logger.Info("Loaded mnemonic and generated address")
 
 	if output == "" {
 		fmt.Printf("MNEMONIC=%s\n", w.Mnemonic)
@@ -104,10 +105,9 @@ func Run(output string) {
 		}
 		err = g.Wait()
 		if err != nil {
-			logger.Fatalf("error occurred: %s", err)
+			logger.Error("error occurred", "error", err)
 			os.Exit(1)
 		}
-		logger.Infof("wrote output files to %s", output)
-
+		logger.Info("wrote output files", "directory", output)
 	}
 }
