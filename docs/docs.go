@@ -29,7 +29,7 @@ const docTemplate = `{
                 "produces": [
                     "application/json"
                 ],
-                "summary": "CreateWallet",
+                "summary": "Create a wallet",
                 "responses": {
                     "200": {
                         "description": "Ok",
@@ -119,6 +119,9 @@ const docTemplate = `{
                 "payment_address": {
                     "type": "string"
                 },
+                "payment_extended_skey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
                 "payment_kvey": {
                     "$ref": "#/definitions/bursa.KeyFile"
                 },
@@ -127,6 +130,9 @@ const docTemplate = `{
                 },
                 "stake_address": {
                     "type": "string"
+                },
+                "stake_extended_skey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
                 },
                 "stake_skey": {
                     "$ref": "#/definitions/bursa.KeyFile"
