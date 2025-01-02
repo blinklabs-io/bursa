@@ -15,13 +15,16 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-	"github.com/penglongli/gin-metrics/ginmetrics"
-	swaggerFiles "github.com/swaggo/files"     // swagger embed files
-	ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	httpSwagger "github.com/swaggo/http-swagger"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -47,122 +50,189 @@ type WalletRestoreRequest struct {
 
 // @license.name	Apache 2.0
 // @license.url	http://www.apache.org/licenses/LICENSE-2.0.html
-func Start(cfg *config.Config) error {
-	// Disable gin debug and color output
-	gin.SetMode(gin.ReleaseMode)
-	gin.DisableConsoleColor()
-	// Configure API router
-	router := gin.New()
-	// Catch panics and return a 500
-	router.Use(gin.Recovery())
-	// Standard logging
+
+// Define Prometheus metrics
+var (
+	walletsCreatedCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "bursa_wallets_created_count",
+		Help: "Total number of wallets created",
+	})
+	walletsFailCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "bursa_wallets_fail_count",
+		Help: "Total number of wallet creation or restoration failures",
+	})
+	walletsRestoreCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "bursa_wallets_restore_count",
+		Help: "Total number of wallets restored",
+	})
+)
+
+// Register Prometheus metrics
+func init() {
+	prometheus.MustRegister(walletsCreatedCounter)
+	prometheus.MustRegister(walletsFailCounter)
+	prometheus.MustRegister(walletsRestoreCounter)
+}
+
+// Start initializes and starts the HTTP servers for the API and metrics
+// Listeners can be passed in for testing purposes to provide ephermeral ports
+func Start(ctx context.Context, cfg *config.Config, apiListener, metricsListener net.Listener) error {
 	logger := logging.GetLogger()
-	// Access logging
 	accessLogger := logging.GetAccessLogger()
-	accessMiddleware := func(c *gin.Context) {
-		accessLogger.Info("request received", "method", c.Request.Method, "path", c.Request.URL.Path, "remote_addr", c.ClientIP())
-		c.Next()
-		statusCode := c.Writer.Status()
-		accessLogger.Info("response sent", "status", statusCode, "method", c.Request.Method, "path", c.Request.URL.Path, "remote_addr", c.ClientIP())
-	}
-	router.Use(accessMiddleware)
 
-	// Create a healthcheck
-	router.GET("/healthcheck", handleHealthcheck)
-	// Create a swagger endpoint
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	logger.Info("initializing API server")
 
-	// Metrics
-	metricsRouter := gin.New()
-	metrics := ginmetrics.GetMonitor()
-	// Set metrics path
-	metrics.SetMetricPath("/")
-	// Set metrics router
-	metrics.Expose(metricsRouter)
-	// Use metrics middleware without exposing path in main app router
-	metrics.UseWithoutExposingEndpoint(router)
+	//
+	// Main HTTP server for API endpoints
+	//
+	mainMux := http.NewServeMux()
 
-	// Custom metrics
-	createdMetric := &ginmetrics.Metric{
-		Type:        ginmetrics.Counter,
-		Name:        "bursa_wallets_created_count",
-		Description: "total number of wallets created",
-		Labels:      nil,
-	}
-	failureMetric := &ginmetrics.Metric{
-		Type:        ginmetrics.Counter,
-		Name:        "bursa_wallets_fail_count",
-		Description: "total number of wallet failures",
-		Labels:      nil,
-	}
-	restoreMetric := &ginmetrics.Metric{
-		Type:        ginmetrics.Counter,
-		Name:        "bursa_wallets_restore_count",
-		Description: "total number of wallets restored",
-		Labels:      nil,
-	}
-	// Add to global monitor object
-	_ = ginmetrics.GetMonitor().AddMetric(createdMetric)
-	_ = ginmetrics.GetMonitor().AddMetric(failureMetric)
-	_ = ginmetrics.GetMonitor().AddMetric(restoreMetric)
+	// Healthcheck
+	mainMux.HandleFunc("/healthcheck", handleHealthcheck)
 
-	// Start metrics listener
+	// Swagger endpoint
+	mainMux.HandleFunc("/swagger/", httpSwagger.WrapHandler)
+
+	// API routes
+	mainMux.HandleFunc("/api/wallet/create", handleWalletCreate)
+	mainMux.HandleFunc("/api/wallet/restore", handleWalletRestore)
+
+	// Wrap the mainMux with an access-logging middleware
+	mainHandler := logMiddleware(mainMux, accessLogger)
+
+	//
+	// Metrics HTTP server
+	//
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+
+	// Start metrics server
 	go func() {
-		// TODO: return error if we cannot initialize metrics
-		logger.Info("starting metrics listener", "address", cfg.Metrics.ListenAddress, ":", cfg.Metrics.ListenPort)
-		_ = metricsRouter.Run(fmt.Sprintf("%s:%d",
-			cfg.Metrics.ListenAddress,
-			cfg.Metrics.ListenPort,
-		))
+		logger.Info("starting metrics listener",
+			"address", cfg.Metrics.ListenAddress,
+			"port", cfg.Metrics.ListenPort,
+		)
+		var err error
+		if metricsListener == nil {
+			err = http.ListenAndServe(
+				fmt.Sprintf("%s:%d", cfg.Metrics.ListenAddress, cfg.Metrics.ListenPort),
+				metricsMux,
+			)
+		} else {
+			server := &http.Server{
+				Handler: metricsMux,
+			}
+			err = server.Serve(metricsListener)
+		}
+		if err != nil && err != http.ErrServerClosed {
+			logger.Error("metrics listener failed to start", "error", err)
+		}
 	}()
 
-	// Configure API routes
-	router.GET("/api/wallet/create", handleWalletCreate)
-	router.POST("/api/wallet/restore", handleWalletRestore)
-
-	// Start API listener
-	err := router.Run(fmt.Sprintf("%s:%d",
-		cfg.Api.ListenAddress,
-		cfg.Api.ListenPort,
-	))
+	// Start API server
+	logger.Info("starting API listener",
+		"address", cfg.Api.ListenAddress,
+		"port", cfg.Api.ListenPort,
+	)
+	var err error
+	if apiListener == nil {
+		err = http.ListenAndServe(
+			fmt.Sprintf("%s:%d", cfg.Api.ListenAddress, cfg.Api.ListenPort),
+			mainHandler,
+		)
+	} else {
+		server := &http.Server{
+			Handler: mainHandler,
+		}
+		err = server.Serve(apiListener)
+	}
 	return err
 }
 
-func handleHealthcheck(c *gin.Context) {
-	c.JSON(200, gin.H{"healthy": true})
+func logMiddleware(next http.Handler, accessLogger *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accessLogger.Info("request received",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+		)
+
+		// Wrap the ResponseWriter to capture status code
+		rec := &statusRecorder{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+		}
+		next.ServeHTTP(rec, r)
+
+		accessLogger.Info("response sent",
+			"status", rec.statusCode,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+		)
+	})
 }
 
-// handleCreateWallet godoc
+// statusRecorder helps to record the response status code
+type statusRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.statusCode = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// handleHealthcheck responds to GET /healthcheck
+func handleHealthcheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"healthy": true}`))
+}
+
+// handleWalletCreate godoc
 //
-//	@Summary		CreateWallet
+//	@Summary		Create a wallet
 //	@Description	Create a wallet and return details
 //	@Produce		json
 //	@Success		200	{object}	bursa.Wallet	"Ok"
 //	@Router			/api/wallet/create [get]
-func handleWalletCreate(c *gin.Context) {
+func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	logger := logging.GetLogger()
 
 	mnemonic, err := bursa.NewMnemonic()
 	if err != nil {
 		logger.Error("failed to load mnemonic", "error", err)
-		c.JSON(500, fmt.Sprintf("failed to load mnemonic: %s", err))
-		_ = ginmetrics.GetMonitor().
-			GetMetric("bursa_wallets_fail_count").
-			Inc(nil)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(fmt.Sprintf("failed to load mnemonic: %s", err)))
+		walletsFailCounter.Inc()
 		return
 	}
 
-	w, err := bursa.NewDefaultWallet(mnemonic)
+	wallet, err := bursa.NewDefaultWallet(mnemonic)
 	if err != nil {
 		logger.Error("failed to initialize wallet", "error", err)
-		c.JSON(500, fmt.Sprintf("failed to initialize wallet: %s", err))
-		_ = ginmetrics.GetMonitor().
-			GetMetric("bursa_wallets_fail_count").
-			Inc(nil)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(fmt.Sprintf("failed to initialize wallet: %s", err)))
+		// Increment fail counter
+		walletsFailCounter.Inc()
 		return
 	}
-	c.JSON(200, w)
-	_ = ginmetrics.GetMonitor().GetMetric("bursa_wallets_create_count").Inc(nil)
+
+	w.Header().Set("Content-Type", "application/json")
+	resp, _ := json.Marshal(wallet)
+	_, _ = w.Write(resp)
+	// Increment creation counter
+	walletsCreatedCounter.Inc()
 }
 
 // handleWalletRestore handles the wallet restoration request.
@@ -176,32 +246,32 @@ func handleWalletCreate(c *gin.Context) {
 //	@Failure		400		{string}	string					"Invalid request"
 //	@Failure		500		{string}	string					"Internal server error"
 //	@Router			/api/wallet/restore [post]
-func handleWalletRestore(c *gin.Context) {
-	var request WalletRestoreRequest
-	if err := c.BindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-		_ = ginmetrics.GetMonitor().
-			GetMetric("bursa_wallets_fail_count").
-			Inc(nil)
+func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Restore the wallet using the mnemonic
-	wallet, err := bursa.NewDefaultWallet(request.Mnemonic)
+	var req WalletRestoreRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"Invalid request"}`))
+		// Increment fail counter
+		walletsFailCounter.Inc()
+		return
+	}
+
+	wallet, err := bursa.NewDefaultWallet(req.Mnemonic)
 	if err != nil {
-		c.JSON(
-			http.StatusInternalServerError,
-			gin.H{"error": "Internal server error"},
-		)
-		_ = ginmetrics.GetMonitor().
-			GetMetric("bursa_wallets_fail_count").
-			Inc(nil)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+		walletsFailCounter.Inc()
 		return
 	}
 
-	// Return the wallet details
-	c.JSON(http.StatusOK, wallet)
-	_ = ginmetrics.GetMonitor().
-		GetMetric("bursa_wallets_restore_count").
-		Inc(nil)
+	w.Header().Set("Content-Type", "application/json")
+	resp, _ := json.Marshal(wallet)
+	_, _ = w.Write(resp)
+	// Increment restore counter
+	walletsRestoreCounter.Inc()
 }

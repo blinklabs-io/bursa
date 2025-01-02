@@ -15,7 +15,10 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/blinklabs-io/bursa/internal/api"
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -29,17 +32,25 @@ func apiCommand() *cobra.Command {
 		Short: "Runs the api",
 		Run: func(cmd *cobra.Command, args []string) {
 			cfg := config.GetConfig()
+
+			// Create a context that can be canceled for graceful shutdown
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			// Handle interrupt signals for graceful shutdown
+			go func() {
+				sigChan := make(chan os.Signal, 1)
+				signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+				<-sigChan
+				cancel()
+			}()
+
 			// Start API listener
 			logger := logging.GetLogger()
-			// Start API listener
-			logger.Info("starting API listener on", "address", cfg.Api.ListenAddress, "port", cfg.Api.ListenPort)
-			if err := api.Start(cfg); err != nil {
+			if err := api.Start(ctx, cfg, nil, nil); err != nil {
 				logger.Error("failed to start API:", "error", err)
 				os.Exit(1)
 			}
-
-			// Wait forever
-			select {}
 		},
 	}
 	return &apiCommand

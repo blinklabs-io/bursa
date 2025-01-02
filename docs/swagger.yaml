@@ -22,12 +22,16 @@ definitions:
         type: string
       payment_address:
         type: string
+      payment_extended_skey:
+        $ref: '#/definitions/bursa.KeyFile'
       payment_kvey:
         $ref: '#/definitions/bursa.KeyFile'
       payment_skey:
         $ref: '#/definitions/bursa.KeyFile'
       stake_address:
         type: string
+      stake_extended_skey:
+        $ref: '#/definitions/bursa.KeyFile'
       stake_skey:
         $ref: '#/definitions/bursa.KeyFile'
       stake_vkey:
@@ -55,7 +59,7 @@ paths:
           description: Ok
           schema:
             $ref: '#/definitions/bursa.Wallet'
-      summary: CreateWallet
+      summary: Create a wallet
   /api/wallet/restore:
     post:
       consumes:
