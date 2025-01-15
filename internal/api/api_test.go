@@ -61,7 +61,9 @@ var mockWalletResponseJSON = `{
   }
 }`
 
-func startAPI(t *testing.T) (apiBaseURL, metricsBaseURL string, cleanup func()) {
+func startAPI(
+	t *testing.T,
+) (apiBaseURL, metricsBaseURL string, cleanup func()) {
 	t.Helper()
 
 	// Create listeners for API and metrics with ephemeral ports
@@ -292,7 +294,9 @@ func TestWalletCreateIncrementsCounter(t *testing.T) {
 		"Expected `bursa_wallets_created_count` to be registered initially")
 
 	// Call /api/wallet/create to create a wallet
-	createWalletResp, err := http.Get(fmt.Sprintf("%s/api/wallet/create", apiBaseURL))
+	createWalletResp, err := http.Get(
+		fmt.Sprintf("%s/api/wallet/create", apiBaseURL),
+	)
 	assert.NoError(t, err, "failed to call /api/wallet/create endpoint")
 	assert.Equal(t, http.StatusOK, createWalletResp.StatusCode,
 		"expected /api/wallet/create to return 200 on success")
@@ -311,8 +315,12 @@ func TestWalletCreateIncrementsCounter(t *testing.T) {
 
 	// Verify that the counter incremented by 1
 	expected := initialCount + 1
-	assert.Equal(t, expected, newCount,
-		"bursa_wallets_created_count should have incremented by 1 after creating a wallet")
+	assert.Equal(
+		t,
+		expected,
+		newCount,
+		"bursa_wallets_created_count should have incremented by 1 after creating a wallet",
+	)
 }
 
 func TestCreateWalletReturnsMnemonic(t *testing.T) {
@@ -341,7 +349,9 @@ func TestCreateWalletReturnsMnemonic(t *testing.T) {
 
 	mnemonicVal, ok := createWalletResponse["mnemonic"]
 	if !ok {
-		t.Errorf("Expected key 'mnemonic' in createWalletResponse, but it was missing")
+		t.Errorf(
+			"Expected key 'mnemonic' in createWalletResponse, but it was missing",
+		)
 	} else {
 		mnemonicStr, isString := mnemonicVal.(string)
 		if !isString || mnemonicStr == "" {

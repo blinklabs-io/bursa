@@ -58,8 +58,8 @@ type WalletRestoreRequest struct {
 //	@contact.url	https://blinklabs.io
 //	@contact.email	support@blinklabs.io
 
-// @license.name	Apache 2.0
-// @license.url	http://www.apache.org/licenses/LICENSE-2.0.html
+//	@license.name	Apache 2.0
+//	@license.url	http://www.apache.org/licenses/LICENSE-2.0.html
 
 // Define Prometheus metrics
 var (
@@ -86,7 +86,11 @@ func init() {
 
 // Start initializes and starts the HTTP servers for the API and metrics
 // Listeners can be passed in for testing purposes to provide ephermeral ports
-func Start(ctx context.Context, cfg *config.Config, apiListener, metricsListener net.Listener) error {
+func Start(
+	ctx context.Context,
+	cfg *config.Config,
+	apiListener, metricsListener net.Listener,
+) error {
 	logger := logging.GetLogger()
 	accessLogger := logging.GetAccessLogger()
 
@@ -125,7 +129,11 @@ func Start(ctx context.Context, cfg *config.Config, apiListener, metricsListener
 		var err error
 		if metricsListener == nil {
 			err = http.ListenAndServe(
-				fmt.Sprintf("%s:%d", cfg.Metrics.ListenAddress, cfg.Metrics.ListenPort),
+				fmt.Sprintf(
+					"%s:%d",
+					cfg.Metrics.ListenAddress,
+					cfg.Metrics.ListenPort,
+				),
 				metricsMux,
 			)
 		} else {
@@ -232,7 +240,9 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logger.Error("failed to initialize wallet", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(fmt.Sprintf("failed to initialize wallet: %s", err)))
+		_, _ = w.Write(
+			[]byte(fmt.Sprintf("failed to initialize wallet: %s", err)),
+		)
 		// Increment fail counter
 		walletsFailCounter.Inc()
 		return
