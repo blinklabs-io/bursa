@@ -47,11 +47,11 @@ type Wallet struct {
 }
 
 func NewWallet(
-	mnemonic, network string,
+	mnemonic, network, password string,
 	accountId uint,
 	paymentId, stakeId, addressId uint32,
 ) (*Wallet, error) {
-	rootKey, err := GetRootKeyFromMnemonic(mnemonic)
+	rootKey, err := GetRootKeyFromMnemonic(mnemonic, password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get root key from mnemonic: %s", err)
 	}
@@ -75,7 +75,7 @@ func NewWallet(
 
 func NewDefaultWallet(mnemonic string) (*Wallet, error) {
 	cfg := config.GetConfig()
-	w, err := NewWallet(mnemonic, cfg.Network, 0, 0, 0, 0)
+	w, err := NewWallet(mnemonic, "", cfg.Network, 0, 0, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create default wallet: %s", err)
 	}
@@ -94,12 +94,16 @@ func NewMnemonic() (string, error) {
 	return mnemonic, nil
 }
 
-func GetRootKeyFromMnemonic(mnemonic string) (bip32.XPrv, error) {
+func GetRootKeyFromMnemonic(mnemonic, password string) (bip32.XPrv, error) {
 	entropy, err := bip39.EntropyFromMnemonic(mnemonic)
 	if err != nil {
 		return nil, err
 	}
-	rootKey := GetRootKey(entropy, []byte{}) // TODO: support password
+	pwBytes := []byte{}
+	if password != "" {
+		pwBytes = []byte(password)
+	}
+	rootKey := GetRootKey(entropy, pwBytes)
 	return rootKey, nil
 }
 

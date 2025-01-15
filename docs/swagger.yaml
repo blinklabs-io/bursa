@@ -2,8 +2,18 @@ basePath: /
 definitions:
   api.WalletRestoreRequest:
     properties:
+      account_id:
+        type: integer
+      address_id:
+        type: integer
       mnemonic:
         type: string
+      password:
+        type: string
+      payment_id:
+        type: integer
+      stake_id:
+        type: integer
     required:
     - mnemonic
     type: object
@@ -64,8 +74,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Restores a wallet using the provided mnemonic seed phrase and returns
-        wallet details.
+      description: Restores a wallet using the provided mnemonic seed phrase and optional
+        password and returns wallet details.
       parameters:
       - description: Wallet Restore Request
         in: body

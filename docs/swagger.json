@@ -38,7 +38,7 @@
         },
         "/api/wallet/restore": {
             "post": {
-                "description": "Restores a wallet using the provided mnemonic seed phrase and returns wallet details.",
+                "description": "Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details.",
                 "consumes": [
                     "application/json"
                 ],
@@ -87,8 +87,23 @@
                 "mnemonic"
             ],
             "properties": {
+                "account_id": {
+                    "type": "integer"
+                },
+                "address_id": {
+                    "type": "integer"
+                },
                 "mnemonic": {
                     "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "payment_id": {
+                    "type": "integer"
+                },
+                "stake_id": {
+                    "type": "integer"
                 }
             }
         },
