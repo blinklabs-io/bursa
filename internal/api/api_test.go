@@ -125,6 +125,9 @@ func waitForServer(apiBaseURL string) {
 
 	for i := 0; i < maxRetries; i++ {
 		resp, err := http.Get(fmt.Sprintf("%s/healthcheck", apiBaseURL))
+		if resp == nil {
+			continue
+		}
 		if err == nil && resp.StatusCode == http.StatusOK {
 			return // Server is ready
 		}
@@ -141,6 +144,9 @@ func TestMetricsEndpoint(t *testing.T) {
 
 	// Test the /metrics endpoint
 	resp, err := http.Get(fmt.Sprintf("%s/metrics", metricsBaseURL))
+	if resp == nil {
+		t.Fatal("failed to get response from metrics endpoint")
+	}
 	if err != nil {
 		t.Fatalf("failed to call metrics endpoint: %v", err)
 	}
@@ -281,6 +287,7 @@ func TestWalletCreateIncrementsCounter(t *testing.T) {
 
 	// Fetch the metrics once to get the current count
 	resp, err := http.Get(fmt.Sprintf("%s/metrics", metricsBaseURL))
+	assert.NotEqual(t, resp, nil)
 	assert.NoError(t, err, "failed to call initial metrics endpoint")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -297,6 +304,7 @@ func TestWalletCreateIncrementsCounter(t *testing.T) {
 	createWalletResp, err := http.Get(
 		fmt.Sprintf("%s/api/wallet/create", apiBaseURL),
 	)
+	assert.NotEqual(t, createWalletResp, nil)
 	assert.NoError(t, err, "failed to call /api/wallet/create endpoint")
 	assert.Equal(t, http.StatusOK, createWalletResp.StatusCode,
 		"expected /api/wallet/create to return 200 on success")
@@ -304,6 +312,7 @@ func TestWalletCreateIncrementsCounter(t *testing.T) {
 
 	// Fetch the metrics again
 	resp2, err := http.Get(fmt.Sprintf("%s/metrics", metricsBaseURL))
+	assert.NotEqual(t, resp2, nil)
 	assert.NoError(t, err, "failed to call second metrics endpoint")
 	assert.Equal(t, http.StatusOK, resp2.StatusCode)
 
@@ -328,6 +337,9 @@ func TestCreateWalletReturnsMnemonic(t *testing.T) {
 	defer cleanup()
 
 	resp, err := http.Get(fmt.Sprintf("%s/api/wallet/create", apiBaseURL))
+	if resp == nil {
+		t.Fatal("Failed calling /api/wallet/create")
+	}
 	if err != nil {
 		t.Fatalf("Failed to call /api/wallet/create: %v", err)
 	}
