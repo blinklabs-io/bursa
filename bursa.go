@@ -1,4 +1,4 @@
-// Copyright 2023 Blink Labs Software
+// Copyright 2025 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,10 +18,10 @@ import (
 	"encoding/json"
 	"fmt"
 
-	// TODO: replace these w/ gOuroboros (blinklabs-io/gouroboros#364)
-	"github.com/fivebinaries/go-cardano-serialization/address"
+	ouroboros "github.com/blinklabs-io/gouroboros"
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	// TODO: create our own bip32 implementation, see #132
 	"github.com/fivebinaries/go-cardano-serialization/bip32"
-	"github.com/fivebinaries/go-cardano-serialization/network"
 	"github.com/fxamacker/cbor/v2"
 	bip39 "github.com/tyler-smith/go-bip39"
 
@@ -62,7 +62,7 @@ func NewWallet(
 	w := &Wallet{
 		Mnemonic:            mnemonic,
 		PaymentAddress:      addr.String(),
-		StakeAddress:        addr.ToReward().String(),
+		StakeAddress:        addr.StakeAddress().String(),
 		PaymentVKey:         GetPaymentVKey(paymentKey),
 		PaymentSKey:         GetPaymentSKey(paymentKey),
 		PaymentExtendedSKey: GetPaymentExtendedSKey(paymentKey),
@@ -75,7 +75,7 @@ func NewWallet(
 
 func NewDefaultWallet(mnemonic string) (*Wallet, error) {
 	cfg := config.GetConfig()
-	w, err := NewWallet(mnemonic, "", cfg.Network, 0, 0, 0, 0)
+	w, err := NewWallet(mnemonic, cfg.Network, "", 0, 0, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create default wallet: %s", err)
 	}
@@ -204,12 +204,13 @@ func GetStakeExtendedSKey(stakeKey bip32.XPrv) KeyFile {
 
 func GetAddress(
 	accountKey bip32.XPrv,
-	net string,
+	networkName string,
 	num uint32,
-) *address.BaseAddress {
-	nw := network.TestNet()
-	if net == "mainnet" {
-		nw = network.MainNet()
+) *lcommon.Address {
+	network, ok := ouroboros.NetworkByName(networkName)
+	if !ok {
+		fmt.Println("couldn't get network")
+		return nil
 	}
 	paymentKeyPublicHash := GetPaymentKey(
 		accountKey,
@@ -223,18 +224,17 @@ func GetAddress(
 	).Public().
 		PublicKey().
 		Hash()
-	addr := address.NewBaseAddress(
-		nw,
-		&address.StakeCredential{
-			Kind:    address.KeyStakeCredentialType,
-			Payload: paymentKeyPublicHash[:],
-		},
-		&address.StakeCredential{
-			Kind:    address.KeyStakeCredentialType,
-			Payload: stakeKeyPublicHash[:],
-		},
+	addr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeKeyKey,
+		network.Id,
+		paymentKeyPublicHash[:],
+		stakeKeyPublicHash[:],
 	)
-	return addr
+	if err != nil {
+		fmt.Println("error creating address", err)
+		return nil
+	}
+	return &addr
 }
 
 func GetExtendedPrivateKey(privateKey []byte, publicKey []byte) bip32.XPrv {
