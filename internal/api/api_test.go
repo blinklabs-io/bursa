@@ -144,15 +144,9 @@ func TestMetricsEndpoint(t *testing.T) {
 
 	// Test the /metrics endpoint
 	resp, err := http.Get(fmt.Sprintf("%s/metrics", metricsBaseURL))
-	if resp == nil {
-		t.Fatal("failed to get response from metrics endpoint")
-	}
-	if err != nil {
-		t.Fatalf("failed to call metrics endpoint: %v", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected status 200, got %v", resp.StatusCode)
-	}
+	assert.NotEqual(t, resp, nil)
+	assert.NoError(t, err, "failed to call metrics endpoint")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func TestMetricsRegistered(t *testing.T) {
@@ -337,22 +331,13 @@ func TestCreateWalletReturnsMnemonic(t *testing.T) {
 	defer cleanup()
 
 	resp, err := http.Get(fmt.Sprintf("%s/api/wallet/create", apiBaseURL))
-	if resp == nil {
-		t.Fatal("Failed calling /api/wallet/create")
-	}
-	if err != nil {
-		t.Fatalf("Failed to call /api/wallet/create: %v", err)
-	}
-	defer resp.Body.Close()
+	assert.NotEqual(t, resp, nil)
+	assert.NoError(t, err, "failed to call wallet create endpoint")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("Failed to read create wallet response body: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Expected 200, got %d: %s", resp.StatusCode, string(body))
-	}
+	resp.Body.Close()
+	assert.NoError(t, err, "failed to read wallet create response")
 
 	var createWalletResponse map[string]interface{}
 	if err := json.Unmarshal(body, &createWalletResponse); err != nil {
