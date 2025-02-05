@@ -59,10 +59,17 @@ func NewWallet(
 	paymentKey := GetPaymentKey(accountKey, paymentId)
 	stakeKey := GetStakeKey(accountKey, stakeId)
 	addr := GetAddress(accountKey, network, addressId)
+	if addr == nil {
+		return nil, fmt.Errorf("unable to get address")
+	}
+	stakeAddr := addr.StakeAddress()
+	if stakeAddr == nil {
+		return nil, fmt.Errorf("unable to get stake address")
+	}
 	w := &Wallet{
 		Mnemonic:            mnemonic,
 		PaymentAddress:      addr.String(),
-		StakeAddress:        addr.StakeAddress().String(),
+		StakeAddress:        stakeAddr.String(),
 		PaymentVKey:         GetPaymentVKey(paymentKey),
 		PaymentSKey:         GetPaymentSKey(paymentKey),
 		PaymentExtendedSKey: GetPaymentExtendedSKey(paymentKey),
