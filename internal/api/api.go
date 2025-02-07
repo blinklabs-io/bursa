@@ -104,6 +104,9 @@ func Start(
 	// Healthcheck
 	mainMux.HandleFunc("/healthcheck", handleHealthcheck)
 
+	// Prometheus endpoint
+	mainMux.Handle("/metrics", promhttp.Handler())
+
 	// Swagger endpoint
 	mainMux.HandleFunc("/swagger/", httpSwagger.WrapHandler)
 
