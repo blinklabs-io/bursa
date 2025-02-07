@@ -38,7 +38,7 @@ type Wallet struct {
 	Mnemonic            string  `json:"mnemonic"`
 	PaymentAddress      string  `json:"payment_address"`
 	StakeAddress        string  `json:"stake_address"`
-	PaymentVKey         KeyFile `json:"payment_kvey"`
+	PaymentVKey         KeyFile `json:"payment_vkey"`
 	PaymentSKey         KeyFile `json:"payment_skey"`
 	PaymentExtendedSKey KeyFile `json:"payment_extended_skey"`
 	StakeVKey           KeyFile `json:"stake_vkey"`
