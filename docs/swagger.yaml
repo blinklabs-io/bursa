@@ -70,6 +70,19 @@ paths:
           schema:
             $ref: '#/definitions/bursa.Wallet'
       summary: Create a wallet
+  /api/wallet/list:
+    get:
+      description: List all wallets stored in secret storage matching our prefix
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Ok
+          schema:
+            items:
+              type: string
+            type: array
+      summary: Lists wallets
   /api/wallet/restore:
     post:
       consumes:
