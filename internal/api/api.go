@@ -1,4 +1,4 @@
-// Copyright 2024 Blink Labs Software
+// Copyright 2025 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,7 +21,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	httpSwagger "github.com/swaggo/http-swagger"
@@ -113,6 +115,14 @@ func Start(
 	// API routes
 	mainMux.HandleFunc("/api/wallet/create", handleWalletCreate)
 	mainMux.HandleFunc("/api/wallet/restore", handleWalletRestore)
+
+	// GCP routes
+	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+		mainMux.HandleFunc("/api/wallet/list", handleWalletList)
+		mainMux.HandleFunc("/api/wallet/get", handleWalletGet)
+		mainMux.HandleFunc("/api/wallet/update", handleWalletUpdate)
+		mainMux.HandleFunc("/api/wallet/delete", handleWalletDelete)
+	}
 
 	// Wrap the mainMux with an access-logging middleware
 	mainHandler := logMiddleware(mainMux, accessLogger)
@@ -228,6 +238,7 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cfg := config.GetConfig()
 	logger := logging.GetLogger()
 
 	mnemonic, err := bursa.NewMnemonic()
@@ -249,6 +260,27 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 		// Increment fail counter
 		walletsFailCounter.Inc()
 		return
+	}
+
+	// Persistence
+	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+		name := uuid.NewString()
+		g := NewGoogleWallet(name)
+		g.SetDescription(fmt.Sprintf(
+			"automatically generated at %s",
+			time.Now().String(),
+		))
+		g.Populate(wallet)
+		if err := g.Save(); err != nil {
+			logger.Error("failed to save wallet", "error", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write(
+				[]byte(fmt.Sprintf("failed to save wallet: %s", err)),
+			)
+			// Increment fail counter
+			walletsFailCounter.Inc()
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -285,6 +317,7 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := config.GetConfig()
+	logger := logging.GetLogger()
 	wallet, err := bursa.NewWallet(
 		req.Mnemonic,
 		req.Password,
@@ -301,9 +334,36 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Persistence
+	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+		name := uuid.NewString()
+		g := NewGoogleWallet(name)
+		g.SetDescription(fmt.Sprintf(
+			"restored at %s",
+			time.Now().String(),
+		))
+		g.Populate(wallet)
+		if err := g.Save(); err != nil {
+			logger.Error("failed to save wallet", "error", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write(
+				[]byte(fmt.Sprintf("failed to save wallet: %s", err)),
+			)
+			// Increment fail counter
+			walletsFailCounter.Inc()
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	resp, _ := json.Marshal(wallet)
 	_, _ = w.Write(resp)
 	// Increment restore counter
 	walletsRestoreCounter.Inc()
 }
+
+// TODO: implement full versions of these
+func handleWalletList(w http.ResponseWriter, r *http.Request)   {} // #143
+func handleWalletGet(w http.ResponseWriter, r *http.Request)    {} // #144
+func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {} // #145
+func handleWalletDelete(w http.ResponseWriter, r *http.Request) {} // #146

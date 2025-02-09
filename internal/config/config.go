@@ -22,6 +22,7 @@ import (
 
 type Config struct {
 	Api      ApiConfig     `yaml:"api"`
+	Google   GoogleConfig  `yaml:"google"`
 	Logging  LoggingConfig `yaml:"logging"`
 	Metrics  MetricsConfig `yaml:"metrics"`
 	Mnemonic string        `yaml:"mnemonic" envconfig:"MNEMONIC"`
@@ -31,6 +32,12 @@ type Config struct {
 type ApiConfig struct {
 	ListenAddress string `yaml:"address" envconfig:"API_LISTEN_ADDRESS"`
 	ListenPort    uint   `yaml:"port"    envconfig:"API_LISTEN_PORT"`
+}
+
+type GoogleConfig struct {
+	Project    string `yaml:"project"         envconfig:"GOOGLE_PROJECT"`
+	ResourceId string `yaml:"kms_resource_id" envconfig:"GCP_KMS_RESOURCE_ID"`
+	Prefix     string `yaml:"secret_prefix"   envconfig:"GCP_SECRET_PREFIX"`
 }
 
 type LoggingConfig struct {
@@ -47,6 +54,9 @@ var globalConfig = Config{
 	Api: ApiConfig{
 		ListenAddress: "",
 		ListenPort:    8080,
+	},
+	Google: GoogleConfig{
+		Prefix: "bursa-wallet-",
 	},
 	Logging: LoggingConfig{
 		Level: "info",

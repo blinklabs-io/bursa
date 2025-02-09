@@ -138,10 +138,10 @@ const docTemplate = `{
                 "payment_extended_skey": {
                     "$ref": "#/definitions/bursa.KeyFile"
                 },
-                "payment_kvey": {
+                "payment_skey": {
                     "$ref": "#/definitions/bursa.KeyFile"
                 },
-                "payment_skey": {
+                "payment_vkey": {
                     "$ref": "#/definitions/bursa.KeyFile"
                 },
                 "stake_address": {
