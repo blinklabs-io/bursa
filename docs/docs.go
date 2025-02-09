@@ -41,6 +41,26 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/wallet/list": {
+            "get": {
+                "description": "List all wallets stored in secret storage matching our prefix",
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Lists wallets",
+                "responses": {
+                    "200": {
+                        "description": "Ok",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/wallet/restore": {
             "post": {
                 "description": "Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details.",

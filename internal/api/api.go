@@ -362,8 +362,38 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 	walletsRestoreCounter.Inc()
 }
 
+// handleWalletList godoc
+//
+//	@Summary		Lists wallets
+//	@Description	List all wallets stored in secret storage matching our prefix
+//	@Produce		json
+//	@Success		200	{object}	[]string	"Ok"
+//	@Router			/api/wallet/list [get]
+func handleWalletList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	logger := logging.GetLogger()
+
+	wallets, err := ListGoogleWallets(nil)
+	if err != nil {
+		logger.Error("failed to load google wallets", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(
+			[]byte(fmt.Sprintf("failed to load google wallets: %s", err)),
+		)
+		walletsFailCounter.Inc()
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	resp, _ := json.Marshal(wallets)
+	_, _ = w.Write(resp)
+}
+
 // TODO: implement full versions of these
-func handleWalletList(w http.ResponseWriter, r *http.Request)   {} // #143
 func handleWalletGet(w http.ResponseWriter, r *http.Request)    {} // #144
 func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {} // #145
 func handleWalletDelete(w http.ResponseWriter, r *http.Request) {} // #146
