@@ -128,7 +128,7 @@ func (g *GoogleWallet) DeleteItem(name string) {
 	delete(g.items, name)
 }
 
-func (g *GoogleWallet) Populate(wallet *bursa.Wallet) {
+func (g *GoogleWallet) PopulateFrom(wallet *bursa.Wallet) {
 	if wallet == nil {
 		return
 	}
@@ -143,6 +143,50 @@ func (g *GoogleWallet) Populate(wallet *bursa.Wallet) {
 	g.items["stake.vkey"] = bursa.GetKeyFile(wallet.StakeVKey)
 	g.items["stake.skey"] = bursa.GetKeyFile(wallet.StakeSKey)
 	g.items["stake.extended.skey"] = bursa.GetKeyFile(wallet.StakeExtendedSKey)
+}
+
+func (g *GoogleWallet) PopulateTo(wallet *bursa.Wallet) error {
+	if g == nil {
+		return fmt.Errorf("nil google wallet")
+	}
+	if wallet == nil {
+		return fmt.Errorf("nil bursa wallet")
+	}
+	wallet.Mnemonic = g.items["mnemonic"]
+	wallet.PaymentAddress = g.items["payment.addr"]
+	wallet.StakeAddress = g.items["stake.addr"]
+	var keyfile bursa.KeyFile
+	err := json.Unmarshal([]byte(g.items["payment.vkey"]), &keyfile)
+	if err != nil {
+		return err
+	}
+	wallet.PaymentVKey = keyfile
+	err = json.Unmarshal([]byte(g.items["payment.skey"]), &keyfile)
+	if err != nil {
+		return err
+	}
+	wallet.PaymentSKey = keyfile
+	err = json.Unmarshal([]byte(g.items["payment.extended.skey"]), &keyfile)
+	if err != nil {
+		return err
+	}
+	wallet.PaymentExtendedSKey = keyfile
+	err = json.Unmarshal([]byte(g.items["stake.vkey"]), &keyfile)
+	if err != nil {
+		return err
+	}
+	wallet.StakeVKey = keyfile
+	err = json.Unmarshal([]byte(g.items["stake.skey"]), &keyfile)
+	if err != nil {
+		return err
+	}
+	wallet.StakeSKey = keyfile
+	err = json.Unmarshal([]byte(g.items["stake.extended.skey"]), &keyfile)
+	if err != nil {
+		return err
+	}
+	wallet.StakeExtendedSKey = keyfile
+	return nil
 }
 
 func (g *GoogleWallet) Load() error {
