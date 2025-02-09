@@ -168,6 +168,9 @@ func (g *GoogleWallet) Load() error {
 	if err != nil {
 		return fmt.Errorf("failed to get secret: %v", err)
 	}
+	if contentResult == nil {
+		return fmt.Errorf("failed to get secret")
+	}
 
 	// decrypt
 	decryptData, err := sops.Decrypt(contentResult.Payload.Data)
