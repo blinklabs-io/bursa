@@ -40,6 +40,12 @@ type WalletCreateRequest struct {
 	Password string `json:"password"`
 }
 
+// WalletDeleteRequest defines the request payload for wallet deletion
+type WalletDeleteRequest struct {
+	Name     string `json:"name"     binding:"required"`
+	Password string `json:"password"`
+}
+
 // WalletGetRequest defines the request payload for wallet loading
 type WalletGetRequest struct {
 	Name     string `json:"name"     binding:"required"`
@@ -75,6 +81,10 @@ var (
 		Name: "bursa_wallets_created_count",
 		Help: "Total number of wallets created",
 	})
+	walletsDeletedCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "bursa_wallets_deleted_count",
+		Help: "Total number of wallets deleted",
+	})
 	walletsFailCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "bursa_wallets_fail_count",
 		Help: "Total number of wallet creation or restoration failures",
@@ -88,6 +98,7 @@ var (
 // Register Prometheus metrics
 func init() {
 	prometheus.MustRegister(walletsCreatedCounter)
+	prometheus.MustRegister(walletsDeletedCounter)
 	prometheus.MustRegister(walletsFailCounter)
 	prometheus.MustRegister(walletsRestoreCounter)
 }
@@ -455,10 +466,54 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	resp, _ := json.Marshal(wallet)
 	_, _ = w.Write(resp)
-	// Increment creation counter
-	walletsCreatedCounter.Inc()
+}
+
+// handleWalletDelete handles the wallet delete request.
+//
+//	@Summary		Delete wallet from persistent storage
+//	@Description	Deletes a wallet from persistent storage and optional password and returns wallet details.
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		WalletDeleteRequest	true	"Wallet Restore Request"
+//	@Success		200		{object}	string		"Wallet successfully loaded"
+//	@Failure		400		{string}	string				"Invalid request"
+//	@Failure		500		{string}	string				"Internal server error"
+//	@Router			/api/wallet/delete [post]
+func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req WalletDeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"Invalid request"}`))
+		// Increment fail counter
+		walletsFailCounter.Inc()
+		return
+	}
+
+	logger := logging.GetLogger()
+
+	// Load wallet from Google
+	g := NewGoogleWallet(req.Name)
+	if err := g.Delete(); err != nil {
+		logger.Error("failed to delete google wallet", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(
+			[]byte(fmt.Sprintf("failed to delete google wallet: %s", err)),
+		)
+		walletsFailCounter.Inc()
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	resp, _ := json.Marshal("OK")
+	_, _ = w.Write(resp)
+	// Increment delete counter
+	walletsDeletedCounter.Inc()
 }
 
 // TODO: implement full versions of these
 func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {} // #145
-func handleWalletDelete(w http.ResponseWriter, r *http.Request) {} // #146

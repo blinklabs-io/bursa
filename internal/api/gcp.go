@@ -301,3 +301,29 @@ func (g *GoogleWallet) Save() error {
 	}
 	return nil
 }
+
+func (g *GoogleWallet) Delete() error {
+	ctx := context.Background()
+	client, err := secretmanagerclient.NewClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	cfg := config.GetConfig()
+
+	// setup request
+	deleteRequest := &secretmanager.DeleteSecretRequest{
+		Name: fmt.Sprintf(
+			"projects/%s/secrets/%s%s",
+			cfg.Google.Project,
+			cfg.Google.Prefix,
+			g.name,
+		),
+	}
+	err = client.DeleteSecret(ctx, deleteRequest)
+	if err != nil {
+		return fmt.Errorf("failed to deletesecret: %v", err)
+	}
+	return nil
+}
