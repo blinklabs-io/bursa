@@ -40,6 +40,12 @@ type WalletCreateRequest struct {
 	Password string `json:"password"`
 }
 
+// WalletGetRequest defines the request payload for wallet loading
+type WalletGetRequest struct {
+	Name     string `json:"name"     binding:"required"`
+	Password string `json:"password"`
+}
+
 // WalletRestoreRequest defines the request payload for wallet restoration
 type WalletRestoreRequest struct {
 	Mnemonic  string `json:"mnemonic"   binding:"required"`
@@ -270,7 +276,7 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 			"automatically generated at %s",
 			time.Now().String(),
 		))
-		g.Populate(wallet)
+		g.PopulateFrom(wallet)
 		if err := g.Save(); err != nil {
 			logger.Error("failed to save wallet", "error", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -342,7 +348,7 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 			"restored at %s",
 			time.Now().String(),
 		))
-		g.Populate(wallet)
+		g.PopulateFrom(wallet)
 		if err := g.Save(); err != nil {
 			logger.Error("failed to save wallet", "error", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -393,7 +399,66 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(resp)
 }
 
+// handleWalletGet handles the wallet get request.
+//
+//	@Summary		Get wallet from persistent storage
+//	@Description	Gets a wallet from persistent storage and optional password and returns wallet details.
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		WalletGetRequest	true	"Wallet Restore Request"
+//	@Success		200		{object}	bursa.Wallet		"Wallet successfully loaded"
+//	@Failure		400		{string}	string				"Invalid request"
+//	@Failure		500		{string}	string				"Internal server error"
+//	@Router			/api/wallet/get [post]
+func handleWalletGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req WalletGetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"Invalid request"}`))
+		// Increment fail counter
+		walletsFailCounter.Inc()
+		return
+	}
+
+	logger := logging.GetLogger()
+
+	// Load wallet from Google
+	g := NewGoogleWallet(req.Name)
+	if err := g.Load(); err != nil {
+		logger.Error("failed to load google wallet", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(
+			[]byte(fmt.Sprintf("failed to load google wallet: %s", err)),
+		)
+		walletsFailCounter.Inc()
+		return
+	}
+
+	// Populate bursa wallet
+	wallet := &bursa.Wallet{}
+	err := g.PopulateTo(wallet)
+	if err != nil {
+		logger.Error("failed to convert google wallet", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(
+			[]byte(fmt.Sprintf("failed to convert google wallet: %s", err)),
+		)
+		walletsFailCounter.Inc()
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	resp, _ := json.Marshal(wallet)
+	_, _ = w.Write(resp)
+	// Increment creation counter
+	walletsCreatedCounter.Inc()
+}
+
 // TODO: implement full versions of these
-func handleWalletGet(w http.ResponseWriter, r *http.Request)    {} // #144
 func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {} // #145
 func handleWalletDelete(w http.ResponseWriter, r *http.Request) {} // #146

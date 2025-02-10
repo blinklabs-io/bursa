@@ -41,6 +41,49 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/wallet/get": {
+            "post": {
+                "description": "Gets a wallet from persistent storage and optional password and returns wallet details.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Get wallet from persistent storage",
+                "parameters": [
+                    {
+                        "description": "Wallet Restore Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.WalletGetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Wallet successfully loaded",
+                        "schema": {
+                            "$ref": "#/definitions/bursa.Wallet"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/wallet/list": {
             "get": {
                 "description": "List all wallets stored in secret storage matching our prefix",
@@ -106,6 +149,20 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "api.WalletGetRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
         "api.WalletRestoreRequest": {
             "type": "object",
             "required": [
