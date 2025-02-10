@@ -26,7 +26,7 @@ type Config struct {
 	Logging  LoggingConfig `yaml:"logging"`
 	Metrics  MetricsConfig `yaml:"metrics"`
 	Mnemonic string        `yaml:"mnemonic" envconfig:"MNEMONIC"`
-	Network  string        `yaml:"network"  envconfig:"NETWORK"`
+	Network  string        `yaml:"cardano_network"  envconfig:"CARDANO_NETWORK"`
 }
 
 type ApiConfig struct {
