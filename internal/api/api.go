@@ -62,6 +62,13 @@ type WalletRestoreRequest struct {
 	AddressId uint32 `json:"address_id"`
 }
 
+// WalletUpdateRequest defines the request payload for wallet update
+type WalletUpdateRequest struct {
+	Name        string `json:"name"        binding:"required"`
+	Password    string `json:"password"`
+	Description string `json:"description"`
+}
+
 //	@title			bursa
 //	@version		v0
 //	@description	Programmable Cardano Wallet API
@@ -93,6 +100,10 @@ var (
 		Name: "bursa_wallets_restore_count",
 		Help: "Total number of wallets restored",
 	})
+	walletsUpdatedCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "bursa_wallets_updateid_count",
+		Help: "Total number of wallets updatedd",
+	})
 )
 
 // Register Prometheus metrics
@@ -101,6 +112,7 @@ func init() {
 	prometheus.MustRegister(walletsDeletedCounter)
 	prometheus.MustRegister(walletsFailCounter)
 	prometheus.MustRegister(walletsRestoreCounter)
+	prometheus.MustRegister(walletsUpdatedCounter)
 }
 
 // Start initializes and starts the HTTP servers for the API and metrics
@@ -471,11 +483,11 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 // handleWalletDelete handles the wallet delete request.
 //
 //	@Summary		Delete wallet from persistent storage
-//	@Description	Deletes a wallet from persistent storage and optional password and returns wallet details.
+//	@Description	Deletes a wallet from persistent storage and optional password.
 //	@Accept			json
 //	@Produce		json
-//	@Param			request	body		WalletDeleteRequest	true	"Wallet Restore Request"
-//	@Success		200		{object}	string		"Wallet successfully loaded"
+//	@Param			request	body		WalletDeleteRequest	true	"Wallet Delete Request"
+//	@Success		200		{object}	string				"Wallet successfully deleted"
 //	@Failure		400		{string}	string				"Invalid request"
 //	@Failure		500		{string}	string				"Internal server error"
 //	@Router			/api/wallet/delete [post]
@@ -515,5 +527,62 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 	walletsDeletedCounter.Inc()
 }
 
-// TODO: implement full versions of these
-func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {} // #145
+// handleWalletUpdate handles the wallet update request.
+//
+//	@Summary		Update a wallet in persistent storage
+//	@Description	Updates a wallet from persistent storage and optional password and returns wallet details.
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		WalletUpdateRequest	true	"Wallet Update Request"
+//	@Success		200		{object}	string				"Wallet successfully updated"
+//	@Failure		400		{string}	string				"Invalid request"
+//	@Failure		500		{string}	string				"Internal server error"
+//	@Router			/api/wallet/update [post]
+func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req WalletUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"Invalid request"}`))
+		// Increment fail counter
+		walletsFailCounter.Inc()
+		return
+	}
+
+	logger := logging.GetLogger()
+
+	// Load wallet from Google
+	g := NewGoogleWallet(req.Name)
+	if err := g.Load(); err != nil {
+		logger.Error("failed to load google wallet", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(
+			[]byte(fmt.Sprintf("failed to load google wallet: %s", err)),
+		)
+		walletsFailCounter.Inc()
+		return
+	}
+
+	if g.Description() != req.Description {
+		g.SetDescription(req.Description)
+		if err := g.Save(); err != nil {
+			logger.Error("failed to save google wallet", "error", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write(
+				[]byte(fmt.Sprintf("failed to save google wallet: %s", err)),
+			)
+			walletsFailCounter.Inc()
+			return
+		}
+		// Increment update counter
+		walletsUpdatedCounter.Inc()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	resp, _ := json.Marshal("OK")
+	_, _ = w.Write(resp)
+}
