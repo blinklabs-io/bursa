@@ -25,8 +25,8 @@ type Config struct {
 	Google   GoogleConfig  `yaml:"google"`
 	Logging  LoggingConfig `yaml:"logging"`
 	Metrics  MetricsConfig `yaml:"metrics"`
-	Mnemonic string        `yaml:"mnemonic" envconfig:"MNEMONIC"`
-	Network  string        `yaml:"cardano_network"  envconfig:"CARDANO_NETWORK"`
+	Mnemonic string        `yaml:"mnemonic"        envconfig:"MNEMONIC"`
+	Network  string        `yaml:"cardano_network" envconfig:"CARDANO_NETWORK"`
 }
 
 type ApiConfig struct {

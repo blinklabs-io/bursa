@@ -1,5 +1,14 @@
 basePath: /
 definitions:
+  api.WalletDeleteRequest:
+    properties:
+      name:
+        type: string
+      password:
+        type: string
+    required:
+    - name
+    type: object
   api.WalletGetRequest:
     properties:
       name:
@@ -25,6 +34,17 @@ definitions:
         type: integer
     required:
     - mnemonic
+    type: object
+  api.WalletUpdateRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      password:
+        type: string
+    required:
+    - name
     type: object
   bursa.KeyFile:
     properties:
@@ -79,6 +99,34 @@ paths:
           schema:
             $ref: '#/definitions/bursa.Wallet'
       summary: Create a wallet
+  /api/wallet/delete:
+    post:
+      consumes:
+      - application/json
+      description: Deletes a wallet from persistent storage and optional password.
+      parameters:
+      - description: Wallet Delete Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.WalletDeleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Wallet successfully deleted
+          schema:
+            type: string
+        "400":
+          description: Invalid request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Delete wallet from persistent storage
   /api/wallet/get:
     post:
       consumes:
@@ -150,6 +198,35 @@ paths:
           schema:
             type: string
       summary: Restore a wallet using a mnemonic seed phrase
+  /api/wallet/update:
+    post:
+      consumes:
+      - application/json
+      description: Updates a wallet from persistent storage and optional password
+        and returns wallet details.
+      parameters:
+      - description: Wallet Update Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.WalletUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Wallet successfully updated
+          schema:
+            type: string
+        "400":
+          description: Invalid request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Update a wallet in persistent storage
 schemes:
 - http
 swagger: "2.0"
