@@ -36,6 +36,49 @@
                 }
             }
         },
+        "/api/wallet/delete": {
+            "post": {
+                "description": "Deletes a wallet from persistent storage and optional password.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Delete wallet from persistent storage",
+                "parameters": [
+                    {
+                        "description": "Wallet Delete Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.WalletDeleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Wallet successfully deleted",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/wallet/get": {
             "post": {
                 "description": "Gets a wallet from persistent storage and optional password and returns wallet details.",
@@ -141,9 +184,66 @@
                     }
                 }
             }
+        },
+        "/api/wallet/update": {
+            "post": {
+                "description": "Updates a wallet from persistent storage and optional password and returns wallet details.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Update a wallet in persistent storage",
+                "parameters": [
+                    {
+                        "description": "Wallet Update Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.WalletUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Wallet successfully updated",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "api.WalletDeleteRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
         "api.WalletGetRequest": {
             "type": "object",
             "required": [
@@ -181,6 +281,23 @@
                 },
                 "stake_id": {
                     "type": "integer"
+                }
+            }
+        },
+        "api.WalletUpdateRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
                 }
             }
         },
