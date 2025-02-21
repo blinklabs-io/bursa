@@ -95,7 +95,7 @@ func Run(output string) {
 				v := v
 				g.Go(func() error {
 					path := filepath.Join(output, k)
-					err = os.WriteFile(path, []byte(v), 0666)
+					err = os.WriteFile(path, []byte(v), 0600)
 					if err != nil {
 						return err
 					}
