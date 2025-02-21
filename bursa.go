@@ -17,6 +17,7 @@ package bursa
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 
 	ouroboros "github.com/blinklabs-io/gouroboros"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
@@ -120,10 +121,14 @@ func GetRootKey(entropy []byte, password []byte) bip32.XPrv {
 
 func GetAccountKey(rootKey bip32.XPrv, num uint) bip32.XPrv {
 	const harden = 0x80000000
+	hardNum := harden + num
+	if hardNum > math.MaxUint32 {
+		panic("num out of bounds")
+	}
 	return rootKey.
 		Derive(uint32(harden + 1852)).
 		Derive(uint32(harden + 1815)).
-		Derive(uint32(harden + num))
+		Derive(uint32(hardNum))
 }
 
 func GetPaymentKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
