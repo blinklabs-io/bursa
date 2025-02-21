@@ -170,17 +170,20 @@ func Start(
 		)
 		var err error
 		if metricsListener == nil {
-			err = http.ListenAndServe(
-				fmt.Sprintf(
+			server := &http.Server{
+				Addr: fmt.Sprintf(
 					"%s:%d",
 					cfg.Metrics.ListenAddress,
 					cfg.Metrics.ListenPort,
 				),
-				metricsMux,
-			)
+				Handler:           metricsMux,
+				ReadHeaderTimeout: 60 * time.Second,
+			}
+			err = server.ListenAndServe()
 		} else {
 			server := &http.Server{
-				Handler: metricsMux,
+				Handler:           metricsMux,
+				ReadHeaderTimeout: 60 * time.Second,
 			}
 			err = server.Serve(metricsListener)
 		}
@@ -196,13 +199,20 @@ func Start(
 	)
 	var err error
 	if apiListener == nil {
-		err = http.ListenAndServe(
-			fmt.Sprintf("%s:%d", cfg.Api.ListenAddress, cfg.Api.ListenPort),
-			mainHandler,
-		)
+		server := &http.Server{
+			Addr: fmt.Sprintf(
+				"%s:%d",
+				cfg.Api.ListenAddress,
+				cfg.Api.ListenPort,
+			),
+			Handler:           mainHandler,
+			ReadHeaderTimeout: 60 * time.Second,
+		}
+		err = server.ListenAndServe()
 	} else {
 		server := &http.Server{
-			Handler: mainHandler,
+			Handler:           mainHandler,
+			ReadHeaderTimeout: 60 * time.Second,
 		}
 		err = server.Serve(apiListener)
 	}
