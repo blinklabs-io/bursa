@@ -11,6 +11,8 @@ concurrency: ${{ github.ref }}
 jobs:
   create-draft-release:
     runs-on: ubuntu-latest
+    permissions:
+      content: write
     outputs:
       RELEASE_ID: ${{ steps.create-release.outputs.result }}
     steps:
@@ -269,6 +271,8 @@ jobs:
 
   finalize-release:
     runs-on: ubuntu-latest
+    permissions:
+      content: write
     needs: [create-draft-release, build-binaries, build-images]
     steps:
       - uses: actions/github-script@v7
