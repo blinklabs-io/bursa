@@ -15,7 +15,9 @@
 package bursa
 
 import (
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 
@@ -61,11 +63,11 @@ func NewWallet(
 	stakeKey := GetStakeKey(accountKey, stakeId)
 	addr := GetAddress(accountKey, network, addressId)
 	if addr == nil {
-		return nil, fmt.Errorf("unable to get address")
+		return nil, errors.New("unable to get address")
 	}
 	stakeAddr := addr.StakeAddress()
 	if stakeAddr == nil {
-		return nil, fmt.Errorf("unable to get stake address")
+		return nil, errors.New("unable to get stake address")
 	}
 	w := &Wallet{
 		Mnemonic:            mnemonic,
@@ -143,7 +145,7 @@ func GetPaymentVKey(paymentKey bip32.XPrv) KeyFile {
 	return KeyFile{
 		Type:        "PaymentVerificationKeyShelley_ed25519",
 		Description: "Payment Verification Key",
-		CborHex:     fmt.Sprintf("%x", keyCbor),
+		CborHex:     hex.EncodeToString(keyCbor),
 	}
 }
 
@@ -155,7 +157,7 @@ func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
 	return KeyFile{
 		Type:        "PaymentSigningKeyShelley_ed25519",
 		Description: "Payment Signing Key",
-		CborHex:     fmt.Sprintf("%x", keyCbor),
+		CborHex:     hex.EncodeToString(keyCbor),
 	}
 }
 
@@ -169,7 +171,7 @@ func GetPaymentExtendedSKey(paymentKey bip32.XPrv) KeyFile {
 	return KeyFile{
 		Type:        "PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		Description: "Payment Extended Signing Key (BIP32)",
-		CborHex:     fmt.Sprintf("%x", keyCbor),
+		CborHex:     hex.EncodeToString(keyCbor),
 	}
 }
 func GetStakeKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
@@ -184,7 +186,7 @@ func GetStakeVKey(stakeKey bip32.XPrv) KeyFile {
 	return KeyFile{
 		Type:        "StakeVerificationKeyShelley_ed25519",
 		Description: "Stake Verification Key",
-		CborHex:     fmt.Sprintf("%x", keyCbor),
+		CborHex:     hex.EncodeToString(keyCbor),
 	}
 }
 
@@ -196,7 +198,7 @@ func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
 	return KeyFile{
 		Type:        "StakeSigningKeyShelley_ed25519",
 		Description: "Stake Signing Key",
-		CborHex:     fmt.Sprintf("%x", keyCbor),
+		CborHex:     hex.EncodeToString(keyCbor),
 	}
 }
 
@@ -210,7 +212,7 @@ func GetStakeExtendedSKey(stakeKey bip32.XPrv) KeyFile {
 	return KeyFile{
 		Type:        "StakeExtendedSigningKeyShelley_ed25519_bip32",
 		Description: "Stake Extended Signing Key (BIP32)",
-		CborHex:     fmt.Sprintf("%x", keyCbor),
+		CborHex:     hex.EncodeToString(keyCbor),
 	}
 }
 
