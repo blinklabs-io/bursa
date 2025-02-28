@@ -15,6 +15,7 @@
 package sops
 
 import (
+	"errors"
 	"fmt"
 
 	sops "github.com/getsops/sops/v3"
@@ -49,7 +50,7 @@ func Encrypt(data []byte) ([]byte, error) {
 	for _, branch := range branches {
 		for _, b := range branch {
 			if b.Key == "sops" {
-				return nil, fmt.Errorf("already encrypted")
+				return nil, errors.New("already encrypted")
 			}
 		}
 	}

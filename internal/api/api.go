@@ -305,10 +305,7 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
 		name := uuid.NewString()
 		g := NewGoogleWallet(name)
-		g.SetDescription(fmt.Sprintf(
-			"automatically generated at %s",
-			time.Now().String(),
-		))
+		g.SetDescription("automatically generated at " + time.Now().String())
 		g.PopulateFrom(wallet)
 		if err := g.Save(); err != nil {
 			logger.Error("failed to save wallet", "error", err)
@@ -377,10 +374,7 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
 		name := uuid.NewString()
 		g := NewGoogleWallet(name)
-		g.SetDescription(fmt.Sprintf(
-			"restored at %s",
-			time.Now().String(),
-		))
+		g.SetDescription("restored at " + time.Now().String())
 		g.PopulateFrom(wallet)
 		if err := g.Save(); err != nil {
 			logger.Error("failed to save wallet", "error", err)

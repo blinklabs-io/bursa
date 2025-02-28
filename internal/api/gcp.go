@@ -17,6 +17,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 
@@ -67,9 +68,9 @@ func ListGoogleWallets(client *secretmanagerclient.Client) ([]string, error) {
 	cfg := config.GetConfig()
 	// Create our gRPC request
 	req := &secretmanager.ListSecretsRequest{
-		Parent:   fmt.Sprintf("projects/%s", cfg.Google.Project),
+		Parent:   "projects/" + cfg.Google.Project,
 		PageSize: 100,
-		Filter:   fmt.Sprintf("/%s", cfg.Google.Prefix),
+		Filter:   "/" + cfg.Google.Prefix,
 	}
 	secrets := client.ListSecrets(ctx, req)
 
@@ -82,7 +83,7 @@ func ListGoogleWallets(client *secretmanagerclient.Client) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		name := regexp.MustCompile(fmt.Sprintf("^.*/%s", cfg.Google.Prefix)).
+		name := regexp.MustCompile("^.*/"+cfg.Google.Prefix).
 			ReplaceAllString(secret.Name, "")
 		ret = append(ret, name)
 	}
@@ -147,10 +148,10 @@ func (g *GoogleWallet) PopulateFrom(wallet *bursa.Wallet) {
 
 func (g *GoogleWallet) PopulateTo(wallet *bursa.Wallet) error {
 	if g == nil {
-		return fmt.Errorf("nil google wallet")
+		return errors.New("nil google wallet")
 	}
 	if wallet == nil {
-		return fmt.Errorf("nil bursa wallet")
+		return errors.New("nil bursa wallet")
 	}
 	wallet.Mnemonic = g.items["mnemonic"]
 	wallet.PaymentAddress = g.items["payment.addr"]
@@ -213,7 +214,7 @@ func (g *GoogleWallet) Load() error {
 		return fmt.Errorf("failed to get secret: %v", err)
 	}
 	if contentResult == nil {
-		return fmt.Errorf("failed to get secret")
+		return errors.New("failed to get secret")
 	}
 
 	// decrypt
@@ -256,7 +257,7 @@ func (g *GoogleWallet) Save() error {
 		if status.Code(err) == codes.NotFound {
 			// create it
 			createRequest := &secretmanager.CreateSecretRequest{
-				Parent:   fmt.Sprintf("projects/%s", cfg.Google.Project),
+				Parent:   "projects/" + cfg.Google.Project,
 				SecretId: fmt.Sprintf("%s%s", cfg.Google.Prefix, g.name),
 				Secret: &secretmanager.Secret{
 					Replication: &secretmanager.Replication{
