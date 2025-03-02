@@ -76,7 +76,7 @@ func GetConfig() *Config {
 func LoadConfig() (*Config, error) {
 	if err := envconfig.Process("bursa", &globalConfig); err != nil {
 		return nil, fmt.Errorf(
-			"failed loading config from environment: %s",
+			"failed loading config from environment: %w",
 			err,
 		)
 	}

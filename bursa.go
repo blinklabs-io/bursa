@@ -56,7 +56,7 @@ func NewWallet(
 ) (*Wallet, error) {
 	rootKey, err := GetRootKeyFromMnemonic(mnemonic, password)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get root key from mnemonic: %s", err)
+		return nil, fmt.Errorf("failed to get root key from mnemonic: %w", err)
 	}
 	accountKey := GetAccountKey(rootKey, accountId)
 	paymentKey := GetPaymentKey(accountKey, paymentId)
@@ -87,7 +87,7 @@ func NewDefaultWallet(mnemonic string) (*Wallet, error) {
 	cfg := config.GetConfig()
 	w, err := NewWallet(mnemonic, cfg.Network, "", 0, 0, 0, 0)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create default wallet: %s", err)
+		return nil, fmt.Errorf("failed to create default wallet: %w", err)
 	}
 	return w, nil
 }

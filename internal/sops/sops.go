@@ -45,7 +45,7 @@ func Encrypt(data []byte) ([]byte, error) {
 	// prevent double encryption
 	branches, err := input.LoadPlainFile(data)
 	if err != nil {
-		return nil, fmt.Errorf("error loading data: %v", err)
+		return nil, fmt.Errorf("error loading data: %w", err)
 	}
 	for _, branch := range branches {
 		for _, b := range branch {
@@ -83,11 +83,11 @@ func Encrypt(data []byte) ([]byte, error) {
 		Cipher:  aes.NewCipher(),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed encrypt: %v", err)
+		return nil, fmt.Errorf("failed encrypt: %w", err)
 	}
 	encryptData, err := output.EmitEncryptedFile(tree)
 	if err != nil {
-		return nil, fmt.Errorf("failed output: %v", err)
+		return nil, fmt.Errorf("failed output: %w", err)
 	}
 	return encryptData, nil
 }
