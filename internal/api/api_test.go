@@ -160,7 +160,7 @@ func TestMetricsRegistered(t *testing.T) {
 	foundWalletsRestore := false
 
 	for _, mf := range metricFamilies {
-		switch *mf.Name {
+		switch mf.GetName() {
 		case "bursa_wallets_created_count":
 			foundWalletsCreated = true
 		case "bursa_wallets_fail_count":

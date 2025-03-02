@@ -84,7 +84,7 @@ func ListGoogleWallets(client *secretmanagerclient.Client) ([]string, error) {
 			return nil, err
 		}
 		name := regexp.MustCompile("^.*/"+cfg.Google.Prefix).
-			ReplaceAllString(secret.Name, "")
+			ReplaceAllString(secret.GetName(), "")
 		ret = append(ret, name)
 	}
 	return ret, nil
@@ -218,7 +218,7 @@ func (g *GoogleWallet) Load() error {
 	}
 
 	// decrypt
-	decryptData, err := sops.Decrypt(contentResult.Payload.Data)
+	decryptData, err := sops.Decrypt(contentResult.GetPayload().GetData())
 	if err != nil {
 		return fmt.Errorf("failed to decrypt data: %v", err)
 	}
