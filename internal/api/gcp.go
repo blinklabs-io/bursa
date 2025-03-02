@@ -46,17 +46,16 @@ func NewGoogleWallet(name string) *GoogleWallet {
 	return g
 }
 
-func GetGoogleWallet(name string) (*GoogleWallet, error) {
+func GetGoogleWallet(ctx context.Context, name string) (*GoogleWallet, error) {
 	g := NewGoogleWallet(name)
-	if err := g.Load(); err != nil {
+	if err := g.Load(ctx); err != nil {
 		return nil, err
 	}
 	return g, nil
 }
 
-func ListGoogleWallets(client *secretmanagerclient.Client) ([]string, error) {
+func ListGoogleWallets(ctx context.Context, client *secretmanagerclient.Client) ([]string, error) {
 	ret := []string{}
-	ctx := context.Background()
 	if client == nil {
 		client, err := secretmanagerclient.NewClient(ctx)
 		if err != nil {
@@ -190,8 +189,7 @@ func (g *GoogleWallet) PopulateTo(wallet *bursa.Wallet) error {
 	return nil
 }
 
-func (g *GoogleWallet) Load() error {
-	ctx := context.Background()
+func (g *GoogleWallet) Load(ctx context.Context) error {
 	client, err := secretmanagerclient.NewClient(ctx)
 	if err != nil {
 		return err
@@ -234,8 +232,7 @@ func (g *GoogleWallet) Load() error {
 	return nil
 }
 
-func (g *GoogleWallet) Save() error {
-	ctx := context.Background()
+func (g *GoogleWallet) Save(ctx context.Context) error {
 	client, err := secretmanagerclient.NewClient(ctx)
 	if err != nil {
 		return err
@@ -303,8 +300,7 @@ func (g *GoogleWallet) Save() error {
 	return nil
 }
 
-func (g *GoogleWallet) Delete() error {
-	ctx := context.Background()
+func (g *GoogleWallet) Delete(ctx context.Context) error {
 	client, err := secretmanagerclient.NewClient(ctx)
 	if err != nil {
 		return err

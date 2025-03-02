@@ -307,7 +307,7 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 		g := NewGoogleWallet(name)
 		g.SetDescription("automatically generated at " + time.Now().String())
 		g.PopulateFrom(wallet)
-		if err := g.Save(); err != nil {
+		if err := g.Save(r.Context()); err != nil {
 			logger.Error("failed to save wallet", "error", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write(
@@ -376,7 +376,7 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 		g := NewGoogleWallet(name)
 		g.SetDescription("restored at " + time.Now().String())
 		g.PopulateFrom(wallet)
-		if err := g.Save(); err != nil {
+		if err := g.Save(r.Context()); err != nil {
 			logger.Error("failed to save wallet", "error", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write(
@@ -410,7 +410,7 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 
 	logger := logging.GetLogger()
 
-	wallets, err := ListGoogleWallets(nil)
+	wallets, err := ListGoogleWallets(r.Context(), nil)
 	if err != nil {
 		logger.Error("failed to load google wallets", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -456,7 +456,7 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 
 	// Load wallet from Google
 	g := NewGoogleWallet(req.Name)
-	if err := g.Load(); err != nil {
+	if err := g.Load(r.Context()); err != nil {
 		logger.Error("failed to load google wallet", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write(
@@ -514,7 +514,7 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 
 	// Load wallet from Google
 	g := NewGoogleWallet(req.Name)
-	if err := g.Delete(); err != nil {
+	if err := g.Delete(r.Context()); err != nil {
 		logger.Error("failed to delete google wallet", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write(
@@ -561,7 +561,7 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// Load wallet from Google
 	g := NewGoogleWallet(req.Name)
-	if err := g.Load(); err != nil {
+	if err := g.Load(r.Context()); err != nil {
 		logger.Error("failed to load google wallet", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write(
@@ -573,7 +573,7 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 
 	if g.Description() != req.Description {
 		g.SetDescription(req.Description)
-		if err := g.Save(); err != nil {
+		if err := g.Save(r.Context()); err != nil {
 			logger.Error("failed to save google wallet", "error", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write(
