@@ -320,7 +320,16 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	resp, _ := json.Marshal(wallet)
+	resp, err := json.Marshal(wallet)
+	if err != nil {
+		logger.Error("failed to serialize google wallet", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(
+			[]byte(fmt.Sprintf("failed to serialize google wallet: %s", err)),
+		)
+		walletsFailCounter.Inc()
+		return
+	}
 	_, _ = w.Write(resp)
 	// Increment creation counter
 	walletsCreatedCounter.Inc()
@@ -389,7 +398,16 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	resp, _ := json.Marshal(wallet)
+	resp, err := json.Marshal(wallet)
+	if err != nil {
+		logger.Error("failed to serialize google wallet", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(
+			[]byte(fmt.Sprintf("failed to serialize google wallet: %s", err)),
+		)
+		walletsFailCounter.Inc()
+		return
+	}
 	_, _ = w.Write(resp)
 	// Increment restore counter
 	walletsRestoreCounter.Inc()
@@ -422,7 +440,16 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	resp, _ := json.Marshal(wallets)
+	resp, err := json.Marshal(wallets)
+	if err != nil {
+		logger.Error("failed to deserialize google wallets", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(
+			[]byte(fmt.Sprintf("failed to deserialize google wallets: %s", err)),
+		)
+		walletsFailCounter.Inc()
+		return
+	}
 	_, _ = w.Write(resp)
 }
 
@@ -480,7 +507,16 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	resp, _ := json.Marshal(wallet)
+	resp, err := json.Marshal(wallet)
+	if err != nil {
+		logger.Error("failed to serialize google wallet", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(
+			[]byte(fmt.Sprintf("failed to serialize google wallet: %s", err)),
+		)
+		walletsFailCounter.Inc()
+		return
+	}
 	_, _ = w.Write(resp)
 }
 
@@ -525,8 +561,7 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	resp, _ := json.Marshal("OK")
-	_, _ = w.Write(resp)
+	_, _ = w.Write([]byte("\"OK\""))
 	// Increment delete counter
 	walletsDeletedCounter.Inc()
 }
@@ -587,6 +622,5 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	resp, _ := json.Marshal("OK")
-	_, _ = w.Write(resp)
+	_, _ = w.Write([]byte("\"OK\""))
 }
