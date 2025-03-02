@@ -211,7 +211,7 @@ func (g *GoogleWallet) Load() error {
 	}
 	contentResult, err := client.AccessSecretVersion(ctx, contentRequest)
 	if err != nil {
-		return fmt.Errorf("failed to get secret: %v", err)
+		return fmt.Errorf("failed to get secret: %w", err)
 	}
 	if contentResult == nil {
 		return errors.New("failed to get secret")
@@ -220,11 +220,11 @@ func (g *GoogleWallet) Load() error {
 	// decrypt
 	decryptData, err := sops.Decrypt(contentResult.GetPayload().GetData())
 	if err != nil {
-		return fmt.Errorf("failed to decrypt data: %v", err)
+		return fmt.Errorf("failed to decrypt data: %w", err)
 	}
 	data := map[string]string{}
 	if err := json.Unmarshal(decryptData, &data); err != nil {
-		return fmt.Errorf("failed to decode json: %v", err)
+		return fmt.Errorf("failed to decode json: %w", err)
 	}
 
 	// load each item into our GoogleWallet
@@ -269,7 +269,7 @@ func (g *GoogleWallet) Save() error {
 			}
 			_, createErr := client.CreateSecret(ctx, createRequest)
 			if createErr != nil {
-				return fmt.Errorf("failed to create secret: %v", createErr)
+				return fmt.Errorf("failed to create secret: %w", createErr)
 			}
 		}
 	}
@@ -277,11 +277,11 @@ func (g *GoogleWallet) Save() error {
 	// encrypt
 	data, err := json.Marshal(g.items)
 	if err != nil {
-		return fmt.Errorf("failed to create payload: %v", err)
+		return fmt.Errorf("failed to create payload: %w", err)
 	}
 	encryptData, err := sops.Encrypt(data)
 	if err != nil {
-		return fmt.Errorf("failed to encrypt data: %v", err)
+		return fmt.Errorf("failed to encrypt data: %w", err)
 	}
 
 	// send it
@@ -298,7 +298,7 @@ func (g *GoogleWallet) Save() error {
 	}
 	_, err = client.AddSecretVersion(ctx, addRequest)
 	if err != nil {
-		return fmt.Errorf("failed to add secret: %v", err)
+		return fmt.Errorf("failed to add secret: %w", err)
 	}
 	return nil
 }
@@ -324,7 +324,7 @@ func (g *GoogleWallet) Delete() error {
 	}
 	err = client.DeleteSecret(ctx, deleteRequest)
 	if err != nil {
-		return fmt.Errorf("failed to deletesecret: %v", err)
+		return fmt.Errorf("failed to deletesecret: %w", err)
 	}
 	return nil
 }
