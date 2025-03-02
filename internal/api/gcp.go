@@ -77,7 +77,7 @@ func ListGoogleWallets(client *secretmanagerclient.Client) ([]string, error) {
 	// Loop through secrets
 	for {
 		secret, err := secrets.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break // No more secrets
 		}
 		if err != nil {
