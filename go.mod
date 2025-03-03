@@ -4,7 +4,7 @@ go 1.23.6
 
 require (
 	cloud.google.com/go/secretmanager v1.14.5
-	github.com/blinklabs-io/gouroboros v0.110.0
+	github.com/blinklabs-io/gouroboros v0.111.0
 	github.com/fivebinaries/go-cardano-serialization v0.0.0-20220907134105-ec9b85086588
 	github.com/fxamacker/cbor/v2 v2.7.0
 	github.com/getsops/sops/v3 v3.9.4
@@ -140,7 +140,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.34.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.33.0 // indirect
 	go.opentelemetry.io/otel/trace v1.34.0 // indirect
-	golang.org/x/crypto v0.33.0 // indirect
+	golang.org/x/crypto v0.35.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/oauth2 v0.26.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
