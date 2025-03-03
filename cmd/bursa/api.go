@@ -31,7 +31,11 @@ func apiCommand() *cobra.Command {
 		Use:   "api",
 		Short: "Runs the api",
 		Run: func(cmd *cobra.Command, args []string) {
-			cfg := config.GetConfig()
+			cfg, err := config.LoadConfig()
+			if err != nil {
+				logging.GetLogger().Error("failed to load config", "error", err)
+				os.Exit(1)
+			}
 
 			// Create a context that can be canceled for graceful shutdown
 			ctx, cancel := context.WithCancel(context.Background())
@@ -46,9 +50,8 @@ func apiCommand() *cobra.Command {
 			}()
 
 			// Start API listener
-			logger := logging.GetLogger()
 			if err := api.Start(ctx, cfg, nil, nil); err != nil {
-				logger.Error("failed to start API:", "error", err)
+				logging.GetLogger().Error("failed to start API:", "error", err)
 				os.Exit(1)
 			}
 		},
