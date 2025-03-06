@@ -445,7 +445,9 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 		logger.Error("failed to deserialize google wallets", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write(
-			[]byte(fmt.Sprintf("failed to deserialize google wallets: %s", err)),
+			[]byte(
+				fmt.Sprintf("failed to deserialize google wallets: %s", err),
+			),
 		)
 		walletsFailCounter.Inc()
 		return

@@ -54,7 +54,10 @@ func GetGoogleWallet(ctx context.Context, name string) (*GoogleWallet, error) {
 	return g, nil
 }
 
-func ListGoogleWallets(ctx context.Context, client *secretmanagerclient.Client) ([]string, error) {
+func ListGoogleWallets(
+	ctx context.Context,
+	client *secretmanagerclient.Client,
+) ([]string, error) {
 	ret := []string{}
 	if client == nil {
 		client, err := secretmanagerclient.NewClient(ctx)
