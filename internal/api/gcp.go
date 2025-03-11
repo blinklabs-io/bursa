@@ -56,8 +56,9 @@ func GetGoogleWallet(ctx context.Context, name string) (*GoogleWallet, error) {
 
 func ListGoogleWallets(ctx context.Context, client *secretmanagerclient.Client) ([]string, error) {
 	ret := []string{}
+	var err error
 	if client == nil {
-		client, err := secretmanagerclient.NewClient(ctx)
+		client, err = secretmanagerclient.NewClient(ctx)
 		if err != nil {
 			return ret, err
 		}
@@ -73,6 +74,7 @@ func ListGoogleWallets(ctx context.Context, client *secretmanagerclient.Client) 
 	}
 	secrets := client.ListSecrets(ctx, req)
 
+	re := regexp.MustCompile("^.*/" + regexp.QuoteMeta(cfg.Google.Prefix))
 	// Loop through secrets
 	for {
 		secret, err := secrets.Next()
@@ -82,8 +84,7 @@ func ListGoogleWallets(ctx context.Context, client *secretmanagerclient.Client) 
 		if err != nil {
 			return nil, err
 		}
-		name := regexp.MustCompile("^.*/"+cfg.Google.Prefix).
-			ReplaceAllString(secret.GetName(), "")
+		name := re.ReplaceAllString(secret.GetName(), "")
 		ret = append(ret, name)
 	}
 	return ret, nil
