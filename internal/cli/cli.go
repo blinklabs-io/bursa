@@ -91,8 +91,7 @@ func Run(output string) {
 		var g errgroup.Group
 		for _, m := range fileMap {
 			for k, v := range m {
-				k := k
-				v := v
+
 				g.Go(func() error {
 					path := filepath.Join(output, k)
 					err = os.WriteFile(path, []byte(v), 0600)
