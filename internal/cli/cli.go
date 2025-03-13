@@ -19,11 +19,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"golang.org/x/sync/errgroup"
-
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	"golang.org/x/sync/errgroup"
 )
 
 func Run(output string) {
@@ -72,12 +71,12 @@ func Run(output string) {
 		fmt.Printf("Output dir: %v\n", output)
 		_, err := os.Stat(output)
 		if os.IsNotExist(err) {
-			err = os.MkdirAll(output, 0755)
+			err = os.MkdirAll(output, 0o755)
 			if err != nil {
 				panic(err)
 			}
 		}
-		var fileMap = []map[string]string{
+		fileMap := []map[string]string{
 			{"seed.txt": w.Mnemonic},
 			{"payment.addr": w.PaymentAddress},
 			{"stake.addr": w.StakeAddress},
@@ -93,7 +92,7 @@ func Run(output string) {
 			for k, v := range m {
 				g.Go(func() error {
 					path := filepath.Join(output, k)
-					err = os.WriteFile(path, []byte(v), 0600)
+					err = os.WriteFile(path, []byte(v), 0o600)
 					if err != nil {
 						return err
 					}

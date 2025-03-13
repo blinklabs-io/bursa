@@ -19,9 +19,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	output string
-)
+var output string
 
 func walletCommand() *cobra.Command {
 	walletCommand := cobra.Command{

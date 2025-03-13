@@ -23,13 +23,12 @@ import (
 
 	secretmanagerclient "cloud.google.com/go/secretmanager/apiv1"
 	secretmanager "cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
-	"google.golang.org/api/iterator"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/sops"
+	"google.golang.org/api/iterator"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type GoogleWallet struct {
