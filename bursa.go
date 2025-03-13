@@ -21,14 +21,13 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/blinklabs-io/bursa/internal/config"
 	ouroboros "github.com/blinklabs-io/gouroboros"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	// TODO: create our own bip32 implementation, see #132
 	"github.com/fivebinaries/go-cardano-serialization/bip32"
 	"github.com/fxamacker/cbor/v2"
 	bip39 "github.com/tyler-smith/go-bip39"
-
-	"github.com/blinklabs-io/bursa/internal/config"
 )
 
 type KeyFile struct {
@@ -174,6 +173,7 @@ func GetPaymentExtendedSKey(paymentKey bip32.XPrv) KeyFile {
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
 }
+
 func GetStakeKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
 	return accountKey.Derive(2).Derive(num)
 }

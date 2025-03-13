@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/blinklabs-io/bursa/internal/config"
 	sops "github.com/getsops/sops/v3"
 	"github.com/getsops/sops/v3/aes"
 	scommon "github.com/getsops/sops/v3/cmd/sops/common"
@@ -26,8 +27,6 @@ import (
 	skeys "github.com/getsops/sops/v3/keys"
 	json "github.com/getsops/sops/v3/stores/json"
 	"github.com/getsops/sops/v3/version"
-
-	"github.com/blinklabs-io/bursa/internal/config"
 )
 
 func Decrypt(data []byte) ([]byte, error) {
