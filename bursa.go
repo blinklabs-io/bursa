@@ -24,7 +24,6 @@ import (
 	"github.com/blinklabs-io/bursa/internal/config"
 	ouroboros "github.com/blinklabs-io/gouroboros"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
-	// TODO: create our own bip32 implementation, see #132
 	"github.com/fivebinaries/go-cardano-serialization/bip32"
 	"github.com/fxamacker/cbor/v2"
 	bip39 "github.com/tyler-smith/go-bip39"
