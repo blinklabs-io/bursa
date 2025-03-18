@@ -131,21 +131,24 @@ func (g *GoogleWallet) DeleteItem(name string) {
 	delete(g.items, name)
 }
 
-func (g *GoogleWallet) PopulateFrom(wallet *bursa.Wallet) {
+func (g *GoogleWallet) PopulateFrom(wallet *bursa.Wallet) error {
 	if wallet == nil {
-		return
+		return errors.New("no wallet provided")
 	}
 	g.items["mnemonic"] = wallet.Mnemonic
 	g.items["payment.addr"] = wallet.PaymentAddress
 	g.items["stake.addr"] = wallet.StakeAddress
-	g.items["payment.vkey"] = bursa.GetKeyFile(wallet.PaymentVKey)
-	g.items["payment.skey"] = bursa.GetKeyFile(wallet.PaymentSKey)
-	g.items["payment.extended.skey"] = bursa.GetKeyFile(
-		wallet.PaymentExtendedSKey,
-	)
-	g.items["stake.vkey"] = bursa.GetKeyFile(wallet.StakeVKey)
-	g.items["stake.skey"] = bursa.GetKeyFile(wallet.StakeSKey)
-	g.items["stake.extended.skey"] = bursa.GetKeyFile(wallet.StakeExtendedSKey)
+
+	keyFiles, err := bursa.ExtractKeyFiles(wallet)
+	if err != nil {
+		return fmt.Errorf("failed to extract key files: %w", err)
+	}
+
+	for key, value := range keyFiles {
+		g.items[key] = value
+	}
+
+	return nil
 }
 
 func (g *GoogleWallet) PopulateTo(wallet *bursa.Wallet) error {

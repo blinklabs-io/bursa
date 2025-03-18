@@ -50,23 +50,19 @@ func Run(output string) {
 
 	logger.Info("Loaded mnemonic and generated address")
 
-	if output == "" {
-		fmt.Printf("MNEMONIC=%s\n", w.Mnemonic)
-		fmt.Printf("PAYMENT_ADDRESS=%s\n", w.PaymentAddress)
-		fmt.Printf("STAKE_ADDRESS=%s\n", w.StakeAddress)
+	keyFiles, err := bursa.ExtractKeyFiles(w)
+	if err != nil {
+		logger.Error("failed to extract key files", "error", err)
+		os.Exit(1)
+	}
 
-		fmt.Printf("payment.vkey=%s\n", bursa.GetKeyFile(w.PaymentVKey))
-		fmt.Printf("payment.skey=%s\n", bursa.GetKeyFile(w.PaymentSKey))
-		fmt.Printf(
-			"paymentExtended.skey=%s\n",
-			bursa.GetKeyFile(w.PaymentExtendedSKey),
-		)
-		fmt.Printf("stake.vkey=%s\n", bursa.GetKeyFile(w.StakeVKey))
-		fmt.Printf("stake.skey=%s\n", bursa.GetKeyFile(w.StakeSKey))
-		fmt.Printf(
-			"stakeExtended.skey=%s\n",
-			bursa.GetKeyFile(w.StakeExtendedSKey),
-		)
+	if output == "" {
+		logger.Info("MNEMONIC", "mnemonic", w.Mnemonic)
+		logger.Info("PAYMENT_ADDRESS", "payment_address", w.PaymentAddress)
+		logger.Info("STAKE_ADDRESS", "stake_address", w.StakeAddress)
+		for key, value := range keyFiles {
+			logger.Info(key, key, value)
+		}
 	} else {
 		fmt.Printf("Output dir: %v\n", output)
 		_, err := os.Stat(output)
@@ -80,12 +76,9 @@ func Run(output string) {
 			{"seed.txt": w.Mnemonic},
 			{"payment.addr": w.PaymentAddress},
 			{"stake.addr": w.StakeAddress},
-			{"payment.vkey": bursa.GetKeyFile(w.PaymentVKey)},
-			{"payment.skey": bursa.GetKeyFile(w.PaymentSKey)},
-			{"paymentExtended.skey": bursa.GetKeyFile(w.PaymentExtendedSKey)},
-			{"stake.vkey": bursa.GetKeyFile(w.StakeVKey)},
-			{"stake.skey": bursa.GetKeyFile(w.StakeSKey)},
-			{"stakeExtended.skey": bursa.GetKeyFile(w.StakeExtendedSKey)},
+		}
+		for key, value := range keyFiles {
+			fileMap = append(fileMap, map[string]string{key: value})
 		}
 		var g errgroup.Group
 		for _, m := range fileMap {

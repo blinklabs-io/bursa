@@ -59,9 +59,9 @@ func NewWallet(
 	accountKey := GetAccountKey(rootKey, accountId)
 	paymentKey := GetPaymentKey(accountKey, paymentId)
 	stakeKey := GetStakeKey(accountKey, stakeId)
-	addr := GetAddress(accountKey, network, addressId)
-	if addr == nil {
-		return nil, errors.New("unable to get address")
+	addr, err := GetAddress(accountKey, network, addressId)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get address: %w", err)
 	}
 	stakeAddr := addr.StakeAddress()
 	if stakeAddr == nil {
@@ -79,6 +79,27 @@ func NewWallet(
 		StakeExtendedSKey:   GetStakeExtendedSKey(stakeKey),
 	}
 	return w, nil
+}
+
+func ExtractKeyFiles(wallet *Wallet) (map[string]string, error) {
+	keyMap := map[string]KeyFile{
+		"payment.vkey":         wallet.PaymentVKey,
+		"payment.skey":         wallet.PaymentSKey,
+		"paymentExtended.skey": wallet.PaymentExtendedSKey,
+		"stake.vkey":           wallet.StakeVKey,
+		"stake.skey":           wallet.StakeSKey,
+		"stakeExtended.skey":   wallet.StakeExtendedSKey,
+	}
+
+	result := make(map[string]string)
+	for name, kf := range keyMap {
+		keyStr, err := GetKeyFile(kf)
+		if err != nil {
+			return nil, fmt.Errorf("unable to get %s: %w", name, err)
+		}
+		result[name] = keyStr
+	}
+	return result, nil
 }
 
 func NewDefaultWallet(mnemonic string) (*Wallet, error) {
@@ -219,11 +240,10 @@ func GetAddress(
 	accountKey bip32.XPrv,
 	networkName string,
 	num uint32,
-) *lcommon.Address {
+) (*lcommon.Address, error) {
 	network, ok := ouroboros.NetworkByName(networkName)
 	if !ok {
-		fmt.Println("couldn't get network")
-		return nil
+		return nil, fmt.Errorf("couldn't get network for network name %q", networkName)
 	}
 	paymentKeyPublicHash := GetPaymentKey(
 		accountKey,
@@ -244,10 +264,9 @@ func GetAddress(
 		stakeKeyPublicHash[:],
 	)
 	if err != nil {
-		fmt.Println("error creating address", err)
-		return nil
+		return nil, fmt.Errorf("error creating address: %w", err)
 	}
-	return &addr
+	return &addr, nil
 }
 
 func GetExtendedPrivateKey(privateKey []byte, publicKey []byte) bip32.XPrv {
@@ -258,12 +277,12 @@ func GetExtendedPrivateKey(privateKey []byte, publicKey []byte) bip32.XPrv {
 	return xprv
 }
 
-func GetKeyFile(keyFile KeyFile) string {
+func GetKeyFile(keyFile KeyFile) (string, error) {
 	// Use 4 spaces for indent
 	ret, err := json.MarshalIndent(keyFile, "", "    ")
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("failed to marshal key file: %w", err)
 	}
 	// Append newline
-	return fmt.Sprintf("%s\n", ret)
+	return fmt.Sprintf("%s\n", ret), nil
 }
