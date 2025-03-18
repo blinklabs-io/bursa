@@ -306,7 +306,13 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 		name := uuid.NewString()
 		g := NewGoogleWallet(name)
 		g.SetDescription("automatically generated at " + time.Now().String())
-		g.PopulateFrom(wallet)
+		if err := g.PopulateFrom(wallet); err != nil {
+			logger.Error("failed to populate wallet", "error", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(fmt.Sprintf("failed to populate wallet: %s", err)))
+			walletsFailCounter.Inc()
+			return
+		}
 		if err := g.Save(r.Context()); err != nil {
 			logger.Error("failed to save wallet", "error", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -384,7 +390,13 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 		name := uuid.NewString()
 		g := NewGoogleWallet(name)
 		g.SetDescription("restored at " + time.Now().String())
-		g.PopulateFrom(wallet)
+		if err := g.PopulateFrom(wallet); err != nil {
+			logger.Error("failed to populate wallet", "error", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(fmt.Sprintf("failed to populate wallet: %s", err)))
+			walletsFailCounter.Inc()
+			return
+		}
 		if err := g.Save(r.Context()); err != nil {
 			logger.Error("failed to save wallet", "error", err)
 			w.WriteHeader(http.StatusInternalServerError)
