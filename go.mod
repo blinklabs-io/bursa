@@ -17,7 +17,7 @@ require (
 	github.com/swaggo/swag v1.16.4
 	github.com/tyler-smith/go-bip39 v1.1.0
 	golang.org/x/sync v0.12.0
-	google.golang.org/api v0.225.0
+	google.golang.org/api v0.226.0
 	google.golang.org/grpc v1.71.0
 )
 
