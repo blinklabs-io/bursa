@@ -4,7 +4,7 @@ go 1.23.6
 
 require (
 	cloud.google.com/go/secretmanager v1.14.6
-	github.com/blinklabs-io/gouroboros v0.113.1
+	github.com/blinklabs-io/gouroboros v0.114.1
 	github.com/fivebinaries/go-cardano-serialization v0.0.0-20220907134105-ec9b85086588
 	github.com/fxamacker/cbor/v2 v2.7.0
 	github.com/getsops/sops/v3 v3.9.4
