@@ -1,4 +1,4 @@
-// Copyright 2024 Blink Labs Software
+// Copyright 2025 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,7 +15,11 @@
 package main
 
 import (
+	"os"
+
 	"github.com/blinklabs-io/bursa/internal/cli"
+	"github.com/blinklabs-io/bursa/internal/config"
+	"github.com/blinklabs-io/bursa/internal/logging"
 	"github.com/spf13/cobra"
 )
 
@@ -38,7 +42,12 @@ func walletCreateCommand() *cobra.Command {
 		Use:   "create",
 		Short: "Creates a new wallet",
 		Run: func(cmd *cobra.Command, args []string) {
-			cli.Run(output)
+			cfg, err := config.LoadConfig()
+			if err != nil {
+				logging.GetLogger().Error("failed to load config", "error", err)
+				os.Exit(1)
+			}
+			cli.Run(cfg, output)
 		},
 	}
 
