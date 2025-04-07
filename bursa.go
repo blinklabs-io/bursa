@@ -63,6 +63,9 @@ func NewWallet(
 	if err != nil {
 		return nil, fmt.Errorf("unable to get address: %w", err)
 	}
+	if addr == nil {
+		return nil, errors.New("unable to get address")
+	}
 	stakeAddr := addr.StakeAddress()
 	if stakeAddr == nil {
 		return nil, errors.New("unable to get stake address")
