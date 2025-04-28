@@ -246,7 +246,10 @@ func GetAddress(
 ) (*lcommon.Address, error) {
 	network, ok := ouroboros.NetworkByName(networkName)
 	if !ok {
-		return nil, fmt.Errorf("couldn't get network for network name %q", networkName)
+		return nil, fmt.Errorf(
+			"couldn't get network for network name %q",
+			networkName,
+		)
 	}
 	paymentKeyPublicHash := GetPaymentKey(
 		accountKey,
