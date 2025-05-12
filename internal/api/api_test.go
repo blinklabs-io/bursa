@@ -123,7 +123,7 @@ func waitForServer(apiBaseURL string) {
 	const maxRetries = 50
 	const retryInterval = 10 * time.Millisecond
 
-	for i := 0; i < maxRetries; i++ {
+	for range maxRetries {
 		resp, err := http.Get(fmt.Sprintf("%s/healthcheck", apiBaseURL))
 		if resp == nil {
 			continue
@@ -227,7 +227,7 @@ func TestRestoreWallet(t *testing.T) {
 			t.Fatalf("Failed to read response body: %v", err)
 		}
 
-		var expectedResponse, actualResponse map[string]interface{}
+		var expectedResponse, actualResponse map[string]any
 
 		if err := json.Unmarshal([]byte(mockWalletResponseJSON), &expectedResponse); err != nil {
 			t.Fatalf("Failed to unmarshal expected response: %v", err)
@@ -339,7 +339,7 @@ func TestCreateWalletReturnsMnemonic(t *testing.T) {
 	resp.Body.Close()
 	assert.NoError(t, err, "failed to read wallet create response")
 
-	var createWalletResponse map[string]interface{}
+	var createWalletResponse map[string]any
 	if err := json.Unmarshal(body, &createWalletResponse); err != nil {
 		t.Fatalf("Failed to unmarshal create wallet response: %v", err)
 	}
