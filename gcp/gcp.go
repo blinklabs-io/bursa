@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 
 	secretmanagerclient "cloud.google.com/go/secretmanager/apiv1"
@@ -144,9 +145,7 @@ func (g *GoogleWallet) PopulateFrom(wallet *bursa.Wallet) error {
 		return fmt.Errorf("failed to extract key files: %w", err)
 	}
 
-	for key, value := range keyFiles {
-		g.items[key] = value
-	}
+	maps.Copy(g.items, keyFiles)
 
 	return nil
 }
