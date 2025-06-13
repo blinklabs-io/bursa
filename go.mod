@@ -20,11 +20,11 @@ require (
 	github.com/tyler-smith/go-bip39 v1.1.0
 	golang.org/x/sync v0.15.0
 	google.golang.org/api v0.235.0
-	google.golang.org/grpc v1.72.2
+	google.golang.org/grpc v1.73.0
 )
 
 require (
-	cel.dev/expr v0.22.1 // indirect
+	cel.dev/expr v0.23.0 // indirect
 	cloud.google.com/go v0.120.0 // indirect
 	cloud.google.com/go/auth v0.16.1 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
