@@ -5,7 +5,7 @@ go 1.23.6
 toolchain go1.24.1
 
 require (
-	cloud.google.com/go/secretmanager v1.14.7
+	cloud.google.com/go/secretmanager v1.15.0
 	github.com/blinklabs-io/gouroboros v0.125.1
 	github.com/fivebinaries/go-cardano-serialization v0.0.0-20220907134105-ec9b85086588
 	github.com/fxamacker/cbor/v2 v2.8.0
@@ -152,7 +152,7 @@ require (
 	golang.org/x/time v0.12.0 // indirect
 	golang.org/x/tools v0.33.0 // indirect
 	google.golang.org/genproto v0.0.0-20250505200425-f936aa4a68b2 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20250505200425-f936aa4a68b2 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20250603155806-513f23925822 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250603155806-513f23925822 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
