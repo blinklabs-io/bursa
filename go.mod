@@ -18,7 +18,7 @@ require (
 	github.com/swaggo/http-swagger v1.3.4
 	github.com/swaggo/swag v1.16.4
 	github.com/tyler-smith/go-bip39 v1.1.0
-	golang.org/x/sync v0.15.0
+	golang.org/x/sync v0.16.0
 	google.golang.org/api v0.240.0
 	google.golang.org/grpc v1.73.0
 )
