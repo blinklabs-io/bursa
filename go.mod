@@ -16,7 +16,7 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
 	github.com/swaggo/http-swagger v1.3.4
-	github.com/swaggo/swag v1.16.4
+	github.com/swaggo/swag v1.16.5
 	github.com/tyler-smith/go-bip39 v1.1.0
 	golang.org/x/sync v0.16.0
 	google.golang.org/api v0.240.0
@@ -144,6 +144,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.36.0 // indirect
 	go.opentelemetry.io/otel/trace v1.36.0 // indirect
 	golang.org/x/crypto v0.39.0 // indirect
+	golang.org/x/mod v0.25.0 // indirect
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
