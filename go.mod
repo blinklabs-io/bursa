@@ -1,12 +1,12 @@
 module github.com/blinklabs-io/bursa
 
-go 1.23.6
+go 1.24.0
 
 toolchain go1.24.1
 
 require (
 	cloud.google.com/go/secretmanager v1.15.0
-	github.com/blinklabs-io/gouroboros v0.127.0
+	github.com/blinklabs-io/gouroboros v0.129.0
 	github.com/fivebinaries/go-cardano-serialization v0.0.0-20220907134105-ec9b85086588
 	github.com/fxamacker/cbor/v2 v2.9.0
 	github.com/getsops/sops/v3 v3.10.2
@@ -69,6 +69,7 @@ require (
 	github.com/aws/smithy-go v1.22.3 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
+	github.com/blinklabs-io/plutigo v0.0.2-0.20250717183329-b331a97fb319 // indirect
 	github.com/btcsuite/btcd/btcutil v1.1.6 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -131,7 +132,7 @@ require (
 	github.com/spiffe/go-spiffe/v2 v2.5.0 // indirect
 	github.com/swaggo/files v1.0.1 // indirect
 	github.com/urfave/cli v1.22.16 // indirect
-	github.com/utxorpc/go-codegen v0.16.0 // indirect
+	github.com/utxorpc/go-codegen v0.17.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/zeebo/errs v1.4.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
