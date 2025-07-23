@@ -1,0 +1,277 @@
+openapi: 3.0.1
+info:
+  contact:
+    email: support@blinklabs.io
+    name: Blink Labs
+    url: https://blinklabs.io
+  description: Programmable Cardano Wallet API
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  title: bursa
+  version: v0
+servers:
+- url: /
+paths:
+  /api/wallet/create:
+    get:
+      description: Create a wallet and return details
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/bursa.Wallet"
+          description: Ok
+      summary: Create a wallet
+  /api/wallet/delete:
+    post:
+      description: Deletes a wallet from persistent storage and optional password.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.WalletDeleteRequest"
+        description: Wallet Delete Request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Wallet successfully deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Invalid request
+        "500":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Internal server error
+      summary: Delete wallet from persistent storage
+      x-codegen-request-body-name: request
+  /api/wallet/get:
+    post:
+      description: Gets a wallet from persistent storage and optional password and
+        returns wallet details.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.WalletGetRequest"
+        description: Wallet Restore Request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/bursa.Wallet"
+          description: Wallet successfully loaded
+        "400":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Invalid request
+        "500":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Internal server error
+      summary: Get wallet from persistent storage
+      x-codegen-request-body-name: request
+  /api/wallet/list:
+    get:
+      description: List all wallets stored in secret storage matching our prefix
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  type: string
+                type: array
+          description: Ok
+      summary: Lists wallets
+  /api/wallet/restore:
+    post:
+      description: Restores a wallet using the provided mnemonic seed phrase and optional
+        password and returns wallet details.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.WalletRestoreRequest"
+        description: Wallet Restore Request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/bursa.Wallet"
+          description: Wallet successfully restored
+        "400":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Invalid request
+        "500":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Internal server error
+      summary: Restore a wallet using a mnemonic seed phrase
+      x-codegen-request-body-name: request
+  /api/wallet/update:
+    post:
+      description: Updates a wallet from persistent storage and optional password
+        and returns wallet details.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.WalletUpdateRequest"
+        description: Wallet Update Request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Wallet successfully updated
+        "400":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Invalid request
+        "500":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Internal server error
+      summary: Update a wallet in persistent storage
+      x-codegen-request-body-name: request
+components:
+  schemas:
+    api.WalletDeleteRequest:
+      properties:
+        name:
+          type: string
+        password:
+          type: string
+      required:
+      - name
+      type: object
+    api.WalletGetRequest:
+      properties:
+        name:
+          type: string
+        password:
+          type: string
+      required:
+      - name
+      type: object
+    api.WalletRestoreRequest:
+      properties:
+        account_id:
+          type: integer
+        address_id:
+          type: integer
+        mnemonic:
+          type: string
+        password:
+          type: string
+        payment_id:
+          type: integer
+        stake_id:
+          type: integer
+      required:
+      - mnemonic
+      type: object
+    api.WalletUpdateRequest:
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+        password:
+          type: string
+      required:
+      - name
+      type: object
+    bursa.KeyFile:
+      example:
+        description: description
+        type: type
+        cborHex: cborHex
+      properties:
+        cborHex:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+      type: object
+    bursa.Wallet:
+      example:
+        payment_vkey:
+          description: description
+          type: type
+          cborHex: cborHex
+        payment_extended_skey:
+          description: description
+          type: type
+          cborHex: cborHex
+        stake_address: stake_address
+        payment_skey:
+          description: description
+          type: type
+          cborHex: cborHex
+        stake_vkey:
+          description: description
+          type: type
+          cborHex: cborHex
+        payment_address: payment_address
+        stake_skey:
+          description: description
+          type: type
+          cborHex: cborHex
+        mnemonic: mnemonic
+        stake_extended_skey:
+          description: description
+          type: type
+          cborHex: cborHex
+      properties:
+        mnemonic:
+          type: string
+        payment_address:
+          type: string
+        payment_extended_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        payment_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        payment_vkey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        stake_address:
+          type: string
+        stake_extended_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        stake_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        stake_vkey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+      type: object
+x-original-swagger-version: "2.0"
