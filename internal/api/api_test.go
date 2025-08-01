@@ -248,8 +248,8 @@ func TestRestoreWallet(t *testing.T) {
 }
 
 func parseMetric(metricsData []byte, metricName string) float64 {
-	lines := strings.Split(string(metricsData), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(metricsData), "\n")
+	for line := range lines {
 		// Skip empty lines or comment lines that start with "#"
 		if len(line) == 0 || strings.HasPrefix(line, "#") {
 			continue
