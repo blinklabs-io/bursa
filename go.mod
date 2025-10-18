@@ -20,7 +20,7 @@ require (
 	github.com/tyler-smith/go-bip39 v1.1.0
 	golang.org/x/sync v0.17.0
 	google.golang.org/api v0.252.0
-	google.golang.org/grpc v1.75.1
+	google.golang.org/grpc v1.76.0
 )
 
 require (
@@ -88,7 +88,7 @@ require (
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/getsops/gopgagent v0.0.0-20241224165529-7044f28e491e // indirect
-	github.com/go-jose/go-jose/v4 v4.1.1 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.2 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v0.19.5 // indirect
