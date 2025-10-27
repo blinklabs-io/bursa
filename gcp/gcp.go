@@ -33,9 +33,9 @@ import (
 )
 
 type GoogleWallet struct {
+	items       map[string]string
 	name        string
 	description string
-	items       map[string]string
 }
 
 func NewGoogleWallet(name string) *GoogleWallet {
