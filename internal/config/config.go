@@ -21,12 +21,12 @@ import (
 )
 
 type Config struct {
-	Api      ApiConfig     `yaml:"api"`
 	Google   GoogleConfig  `yaml:"google"`
 	Logging  LoggingConfig `yaml:"logging"`
-	Metrics  MetricsConfig `yaml:"metrics"`
 	Mnemonic string        `yaml:"mnemonic"        envconfig:"MNEMONIC"`
 	Network  string        `yaml:"cardano_network" envconfig:"CARDANO_NETWORK"`
+	Api      ApiConfig     `yaml:"api"`
+	Metrics  MetricsConfig `yaml:"metrics"`
 }
 
 type ApiConfig struct {
