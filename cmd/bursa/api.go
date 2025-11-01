@@ -16,9 +16,14 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	_ "net/http/pprof" // #nosec G108
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/blinklabs-io/bursa/internal/api"
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -35,6 +40,34 @@ func apiCommand() *cobra.Command {
 			if err != nil {
 				logging.GetLogger().Error("failed to load config", "error", err)
 				os.Exit(1)
+			}
+
+			// Start debug listener
+			if cfg.Debug.ListenPort > 0 {
+				slog.Info(
+					fmt.Sprintf(
+						"starting debug listener on %s:%d",
+						cfg.Debug.ListenAddress,
+						cfg.Debug.ListenPort,
+					),
+				)
+				go func() {
+					debugger := &http.Server{
+						Addr: fmt.Sprintf(
+							"%s:%d",
+							cfg.Debug.ListenAddress,
+							cfg.Debug.ListenPort,
+						),
+						ReadHeaderTimeout: 60 * time.Second,
+					}
+					err := debugger.ListenAndServe()
+					if err != nil {
+						slog.Error(
+							fmt.Sprintf("failed to start debug listener: %s", err),
+						)
+						return
+					}
+				}()
 			}
 
 			// Create a context that can be canceled for graceful shutdown
