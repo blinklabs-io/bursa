@@ -1,0 +1,5 @@
+{
+    "type": "StakeExtendedSigningKeyShelley_ed25519_bip32",
+    "description": "Stake Extended Signing Key (BIP32)",
+    "cborHex": "588030edcc0ae4c829a5e3025af9954dafa0d0dde2df0b82675c65646fffa182c25a18277a094433e78d72f2f953e5614eea46862bb85b1b63e767a5a3c72e09d56632e96e582a027c844a80c8b59ac6fb6752e42c48243144c6c8d8ac42d583216be473d02878aca8faefcbc60ef5eec53836fbc5dce4a5b08504bca1243a43ba32"
+}
