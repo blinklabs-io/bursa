@@ -396,19 +396,19 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 }
 
 func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
-	var out []*LoadedKey
 	var lines []string
+	out := make([]*LoadedKey, 0)
 
-	entries, err := os.ReadDir(dir)
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	for _, e := range entries {
+	for _, e := range files {
 		if e.IsDir() {
 			continue
 		}
 		n := e.Name()
-		if !(strings.HasSuffix(n, ".vkey") || strings.HasSuffix(n, ".skey")) {
+		if !(strings.HasSuffix(n, ".vkey")) || !(strings.HasSuffix(n, ".skey")) {
 			continue
 		}
 		p := filepath.Join(dir, n)
