@@ -451,5 +451,4 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 	}
 
 	return nil, nil
-
 }
