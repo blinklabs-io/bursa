@@ -33,6 +33,7 @@ func walletCommand() *cobra.Command {
 
 	walletCommand.AddCommand(
 		walletCreateCommand(),
+		walletLoadCommand(),
 	)
 	return &walletCommand
 }
@@ -55,4 +56,21 @@ func walletCreateCommand() *cobra.Command {
 		StringVar(&output, "output", "", "optional path to write files")
 
 	return &walletCreateCommand
+}
+
+func walletLoadCommand() *cobra.Command {
+	var dir string
+	var showSecrets bool
+
+	walletLoadCommand := cobra.Command{
+		Use:   "load",
+		Short: "Loads and decodes wallet key files from a directory",
+		Run: func(cmd *cobra.Command, args []string) {
+			cli.RunLoad(dir, showSecrets)
+		},
+	}
+	walletLoadCommand.Flags().StringVar(&dir, "dir", ".", "Directory containing wallet key files (Ex: *.vkey, *.skey)")
+	walletLoadCommand.Flags().BoolVar(&showSecrets, "show-secrets", false, "Display private key hex values (use with caution)")
+
+	return &walletLoadCommand
 }
