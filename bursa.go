@@ -408,7 +408,7 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 			continue
 		}
 		n := e.Name()
-		if !(strings.HasSuffix(n, ".vkey")) || !(strings.HasSuffix(n, ".skey")) {
+		if !(strings.HasSuffix(n, ".vkey")) && !(strings.HasSuffix(n, ".skey")) {
 			continue
 		}
 		p := filepath.Join(dir, n)
