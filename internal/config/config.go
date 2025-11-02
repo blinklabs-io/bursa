@@ -69,7 +69,7 @@ var globalConfig = Config{
 	},
 	Debug: DebugConfig{
 		ListenAddress: "",
-		ListenPort:    6000,
+		ListenPort:    0,
 	},
 	Metrics: MetricsConfig{
 		ListenAddress: "",
