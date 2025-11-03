@@ -27,11 +27,17 @@ type Config struct {
 	Network  string        `yaml:"cardano_network" envconfig:"CARDANO_NETWORK"`
 	Api      ApiConfig     `yaml:"api"`
 	Metrics  MetricsConfig `yaml:"metrics"`
+	Debug    DebugConfig   `yaml:"debug"`
 }
 
 type ApiConfig struct {
 	ListenAddress string `yaml:"address" envconfig:"API_LISTEN_ADDRESS"`
 	ListenPort    uint   `yaml:"port"    envconfig:"API_LISTEN_PORT"`
+}
+
+type DebugConfig struct {
+	ListenAddress string `yaml:"address" envconfig:"DEBUG_LISTEN_ADDRESS"`
+	ListenPort    uint   `yaml:"port"    envconfig:"DEBUG_LISTEN_PORT"`
 }
 
 type GoogleConfig struct {
@@ -60,6 +66,10 @@ var globalConfig = Config{
 	},
 	Logging: LoggingConfig{
 		Level: "info",
+	},
+	Debug: DebugConfig{
+		ListenAddress: "",
+		ListenPort:    0,
 	},
 	Metrics: MetricsConfig{
 		ListenAddress: "",
