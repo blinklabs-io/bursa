@@ -318,7 +318,7 @@ func decodeNonExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
 		}
 		key := ed25519.NewKeyFromSeed(skeyBytes[2:])
 		return key[:], key[32:], nil
-	// Adding this because bursa is emits 58 60 (CBor byte string of length 96 bytes)
+	// Adding this because bursa emits 58 60 (CBor byte string of length 96 bytes)
 	case 0x60:
 		if len(skeyBytes) != 98 {
 			return nil, nil, errors.New("invalid xprv skey length")
