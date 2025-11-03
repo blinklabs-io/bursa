@@ -111,9 +111,10 @@ func RunLoad(dir string, showSecrets bool) {
 	if dir == "" {
 		dir = "."
 	}
-	_, err := bursa.LoadWalletDir(dir, showSecrets)
+	keys, err := bursa.LoadWalletDir(dir, showSecrets)
 	if err != nil {
 		logger.Error("failed to load wallet keys", "dir", dir, "error", err)
 		os.Exit(1)
 	}
+	bursa.PrintLoadedKeys(keys, showSecrets)
 }

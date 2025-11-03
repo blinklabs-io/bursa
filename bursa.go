@@ -400,7 +400,6 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 }
 
 func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
-	var lines []string
 	out := make([]*LoadedKey, 0)
 
 	files, err := os.ReadDir(dir)
@@ -431,8 +430,13 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 		return nil, fs.ErrNotExist
 	}
 
+	return out, nil
+}
+
+func PrintLoadedKeys(keys []*LoadedKey, showSecrets bool) {
 	// Printing out all loaded key files one by one after decoding successfully
-	for _, k := range out {
+	var lines []string
+	for _, k := range keys {
 		switch {
 		case len(k.SKey) > 0 && len(k.VKey) > 0:
 			if showSecrets {
@@ -453,6 +457,4 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 	for _, line := range lines {
 		fmt.Println(line)
 	}
-
-	return nil, nil
 }
