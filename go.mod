@@ -6,8 +6,8 @@ toolchain go1.24.1
 
 require (
 	cloud.google.com/go/secretmanager v1.16.0
+	filippo.io/edwards25519 v1.1.0
 	github.com/blinklabs-io/gouroboros v0.137.1
-	github.com/fivebinaries/go-cardano-serialization v0.0.0-20220907134105-ec9b85086588
 	github.com/fxamacker/cbor/v2 v2.9.0
 	github.com/getsops/sops/v3 v3.11.0
 	github.com/google/uuid v1.6.0
@@ -18,6 +18,7 @@ require (
 	github.com/swaggo/http-swagger v1.3.4
 	github.com/swaggo/swag v1.16.6
 	github.com/tyler-smith/go-bip39 v1.1.0
+	golang.org/x/crypto v0.43.0
 	golang.org/x/sync v0.17.0
 	google.golang.org/api v0.254.0
 	google.golang.org/grpc v1.76.0
@@ -35,7 +36,6 @@ require (
 	cloud.google.com/go/monitoring v1.24.2 // indirect
 	cloud.google.com/go/storage v1.57.0 // indirect
 	filippo.io/age v1.2.1 // indirect
-	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.19.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.12.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.2 // indirect
@@ -152,7 +152,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.37.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.43.0 // indirect
 	golang.org/x/mod v0.28.0 // indirect
 	golang.org/x/net v0.46.0 // indirect
 	golang.org/x/oauth2 v0.32.0 // indirect
