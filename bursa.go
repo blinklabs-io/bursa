@@ -15,11 +15,16 @@
 package bursa
 
 import (
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -33,6 +38,15 @@ type KeyFile struct {
 	Type        string `json:"type"`
 	Description string `json:"description"`
 	CborHex     string `json:"cborHex"`
+}
+
+type LoadedKey struct {
+	File        string
+	Type        string
+	Description string
+	RawCBOR     []byte
+	VKey        []byte
+	SKey        []byte
 }
 
 type Wallet struct {
@@ -288,4 +302,154 @@ func GetKeyFile(keyFile KeyFile) (string, error) {
 	}
 	// Append newline
 	return fmt.Sprintf("%s\n", ret), nil
+}
+
+func decodeNonExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
+	if len(skeyBytes) < 3 || skeyBytes[0] != 0x58 {
+		return nil, nil, errors.New("invalid signing key cbor")
+	}
+	switch skeyBytes[1] {
+	case 0x20:
+		if len(skeyBytes) != 34 {
+			return nil, nil, errors.New("invalid cbor skey hex length")
+		}
+		key := ed25519.NewKeyFromSeed(skeyBytes[2:])
+		return key[:], key[32:], nil
+	// Adding this because bursa emits 58 60 (CBor byte string of length 96 bytes)
+	case 0x60:
+		if len(skeyBytes) != 98 {
+			return nil, nil, errors.New("invalid xprv skey length")
+		}
+		x := bip32.XPrv{}
+		x = append(x, skeyBytes[2:]...)
+		pub := x.Public().PublicKey()
+		return skeyBytes[2:], pub, nil
+	default:
+		return nil, nil, errors.New("unsupported non-extended skey cbor")
+	}
+}
+
+func decodeExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
+	if len(skeyBytes) != 130 {
+		return nil, nil, errors.New("invalid cbor skey hex length")
+	}
+	if skeyBytes[0] != 0x58 || skeyBytes[1] != 0x80 {
+		return nil, nil, errors.New("invalid cbor skey hex prefix")
+	}
+
+	// Return full 128-byte extended key (64B private + 32B public + 32B chain)
+	return skeyBytes[2:130], skeyBytes[66:98], nil
+}
+
+func decodeVerificationKey(vkeyBytes []byte) ([]byte, error) {
+	if len(vkeyBytes) != 34 {
+		return nil, errors.New("invalid cbor vkey hex length")
+	}
+	if vkeyBytes[0] != 0x58 || vkeyBytes[1] != 0x20 {
+		return nil, errors.New("invalid cbor vkey hex prefix")
+	}
+	return vkeyBytes[2:], nil
+}
+
+func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
+	var env KeyFile
+	if err := json.Unmarshal(fileBytes, &env); err != nil {
+		return nil, errors.New("could not parse key file envelope")
+	}
+	// Convert cbor hex to raw bytes
+	cbor, err := hex.DecodeString(env.CborHex)
+	if err != nil {
+		return nil, fmt.Errorf("could not decode key from hex: %w", err)
+	}
+	lk := &LoadedKey{
+		Type:        env.Type,
+		Description: env.Description,
+		RawCBOR:     cbor,
+	}
+	// Decode cbor encoded key bytes
+	switch env.Type {
+	case "PaymentVerificationKeyShelley_ed25519", "StakeVerificationKeyShelley_ed25519":
+		vk, err := decodeVerificationKey(cbor)
+		if err != nil {
+			return nil, err
+		}
+		lk.VKey = vk
+		return lk, nil
+	case "PaymentSigningKeyShelley_ed25519", "StakeSigningKeyShelley_ed25519":
+		sk, vk, err := decodeNonExtendedCborKey(cbor)
+		if err != nil {
+			return nil, err
+		}
+		lk.SKey, lk.VKey = sk, vk
+		return lk, nil
+	case "PaymentExtendedSigningKeyShelley_ed25519_bip32", "StakeExtendedSigningKeyShelley_ed25519_bip32":
+		sk, vk, err := decodeExtendedCborKey(cbor)
+		if err != nil {
+			return nil, err
+		}
+		lk.SKey, lk.VKey = sk, vk
+		return lk, nil
+	default:
+		return nil, fmt.Errorf("unknown key type: %s", env.Type)
+	}
+}
+
+func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
+	out := make([]*LoadedKey, 0)
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range files {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if !(strings.HasSuffix(n, ".vkey")) && !(strings.HasSuffix(n, ".skey")) {
+			continue
+		}
+		p := filepath.Join(dir, n)
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", p, err)
+		}
+		loadedKeyFile, err := parseKeyEnvelope(b)
+		if err != nil {
+			return nil, fmt.Errorf("decode %s: %w", p, err)
+		}
+		loadedKeyFile.File = n
+		out = append(out, loadedKeyFile)
+	}
+	if len(out) == 0 {
+		return nil, fs.ErrNotExist
+	}
+
+	return out, nil
+}
+
+func PrintLoadedKeys(keys []*LoadedKey, showSecrets bool) {
+	// Printing out all loaded key files one by one after decoding successfully
+	var lines []string
+	for _, k := range keys {
+		switch {
+		case len(k.SKey) > 0 && len(k.VKey) > 0:
+			if showSecrets {
+				lines = append(lines, fmt.Sprintf("\n%s | %s | Private Key (skey): %dB %s | Public Key (vkey): 32B %s",
+					k.File, k.Type, len(k.SKey), hex.EncodeToString(k.SKey), hex.EncodeToString(k.VKey)))
+			} else {
+				lines = append(lines, fmt.Sprintf("\n%s | %s | skey=%dB | vkey=32B %s",
+					k.File, k.Type, len(k.SKey), hex.EncodeToString(k.VKey)))
+			}
+		case len(k.VKey) == 32:
+			lines = append(lines, fmt.Sprintf("\n%s | %s | Public Key (vkey): 32B %s",
+				k.File, k.Type, hex.EncodeToString(k.VKey)))
+		default:
+			lines = append(lines, fmt.Sprintf("%s | %s | unsupported", k.File, k.Type))
+		}
+	}
+
+	for _, line := range lines {
+		fmt.Println(line)
+	}
 }

@@ -25,7 +25,12 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// It remains a default entrypoint for creation
 func Run(cfg *config.Config, output string) {
+	RunCreate(cfg, output)
+}
+
+func RunCreate(cfg *config.Config, output string) {
 	logger := logging.GetLogger()
 	// Load mnemonic
 	var err error
@@ -99,4 +104,17 @@ func Run(cfg *config.Config, output string) {
 		}
 		logger.Info("wrote output files", "directory", output)
 	}
+}
+
+func RunLoad(dir string, showSecrets bool) {
+	logger := logging.GetLogger()
+	if dir == "" {
+		dir = "."
+	}
+	keys, err := bursa.LoadWalletDir(dir, showSecrets)
+	if err != nil {
+		logger.Error("failed to load wallet keys", "dir", dir, "error", err)
+		os.Exit(1)
+	}
+	bursa.PrintLoadedKeys(keys, showSecrets)
 }
