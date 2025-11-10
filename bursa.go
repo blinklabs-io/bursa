@@ -339,11 +339,9 @@ func decodeExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
 	if skeyBytes[0] != 0x58 || skeyBytes[1] != 0x80 {
 		return nil, nil, errors.New("invalid cbor skey hex prefix")
 	}
-	epk := skeyBytes[2:66]
-	chainc := skeyBytes[98:130]
-	skey := append(epk, chainc...)
 
-	return skey, skeyBytes[66:98], nil
+	// Return full 128-byte extended key (64B private + 32B public + 32B chain)
+	return skeyBytes[2:130], skeyBytes[66:98], nil
 }
 
 func decodeVerificationKey(vkeyBytes []byte) ([]byte, error) {
