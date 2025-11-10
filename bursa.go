@@ -21,10 +21,10 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/internal/config"
 	ouroboros "github.com/blinklabs-io/gouroboros"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
-	"github.com/fivebinaries/go-cardano-serialization/bip32"
 	"github.com/fxamacker/cbor/v2"
 	bip39 "github.com/tyler-smith/go-bip39"
 )
@@ -171,21 +171,25 @@ func GetPaymentVKey(paymentKey bip32.XPrv) KeyFile {
 	}
 }
 
-func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
-	keyCbor, err := cbor.Marshal(paymentKey)
+func getSigningKeyFile(key bip32.XPrv, keyType, description string) KeyFile {
+	keyCbor, err := cbor.Marshal(key.PrivateKey()[:32])
 	if err != nil {
 		panic(err)
 	}
 	return KeyFile{
-		Type:        "PaymentSigningKeyShelley_ed25519",
-		Description: "Payment Signing Key",
+		Type:        keyType,
+		Description: description,
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
 }
 
+func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
+	return getSigningKeyFile(paymentKey, "PaymentSigningKeyShelley_ed25519", "Payment Signing Key")
+}
+
 func GetPaymentExtendedSKey(paymentKey bip32.XPrv) KeyFile {
 	keyCbor, err := cbor.Marshal(
-		GetExtendedPrivateKey(paymentKey, paymentKey.Public().PublicKey()),
+		GetExtendedPrivateKey(paymentKey),
 	)
 	if err != nil {
 		panic(err)
@@ -214,20 +218,12 @@ func GetStakeVKey(stakeKey bip32.XPrv) KeyFile {
 }
 
 func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
-	keyCbor, err := cbor.Marshal(stakeKey)
-	if err != nil {
-		panic(err)
-	}
-	return KeyFile{
-		Type:        "StakeSigningKeyShelley_ed25519",
-		Description: "Stake Signing Key",
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
+	return getSigningKeyFile(stakeKey, "StakeSigningKeyShelley_ed25519", "Stake Signing Key")
 }
 
 func GetStakeExtendedSKey(stakeKey bip32.XPrv) KeyFile {
 	keyCbor, err := cbor.Marshal(
-		GetExtendedPrivateKey(stakeKey, stakeKey.Public().PublicKey()),
+		GetExtendedPrivateKey(stakeKey),
 	)
 	if err != nil {
 		panic(err)
@@ -275,11 +271,12 @@ func GetAddress(
 	return &addr, nil
 }
 
-func GetExtendedPrivateKey(privateKey []byte, publicKey []byte) bip32.XPrv {
-	xprv := bip32.XPrv{}
-	xprv = append(xprv, privateKey[:64]...)
-	xprv = append(xprv, publicKey...)
-	xprv = append(xprv, privateKey[64:]...)
+func GetExtendedPrivateKey(privateKey bip32.XPrv) bip32.XPrv {
+	// Create a defensive copy to prevent accidental mutation of the input key
+	xprv := make([]byte, 96)
+	copy(xprv[:32], privateKey[:32])
+	copy(xprv[32:64], privateKey[32:64]) // preserve k_R
+	copy(xprv[64:], privateKey[64:])
 	return xprv
 }
 
