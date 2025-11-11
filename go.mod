@@ -7,7 +7,7 @@ toolchain go1.24.1
 require (
 	cloud.google.com/go/secretmanager v1.16.0
 	filippo.io/edwards25519 v1.1.0
-	github.com/blinklabs-io/gouroboros v0.137.1
+	github.com/blinklabs-io/gouroboros v0.138.0
 	github.com/fxamacker/cbor/v2 v2.9.0
 	github.com/getsops/sops/v3 v3.11.0
 	github.com/google/uuid v1.6.0
