@@ -181,7 +181,7 @@ func add256bits(x, y []byte) []byte {
 	var carry uint16
 
 	out := make([]byte, 32)
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		r := uint16(x[i]) + uint16(y[i]) + carry
 		out[i] = byte(r & 0xff)
 		carry = r >> 8
@@ -193,7 +193,7 @@ func add28mul8(x, y []byte) []byte {
 	var carry uint16
 
 	out := make([]byte, 32)
-	for i := 0; i < 28; i++ {
+	for i := range 28 {
 		r := uint16(x[i]) + (uint16(y[i]) << 3) + carry
 		out[i] = byte(r & 0xff)
 		carry = r >> 8
