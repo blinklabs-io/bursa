@@ -100,8 +100,8 @@ var (
 		Help: "Total number of wallets restored",
 	})
 	walletsUpdatedCounter = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "bursa_wallets_updateid_count",
-		Help: "Total number of wallets updatedd",
+		Name: "bursa_wallets_updated_count",
+		Help: "Total number of wallets updated",
 	})
 )
 
