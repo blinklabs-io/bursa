@@ -36,13 +36,13 @@ func RunCreate(cfg *config.Config, output string) {
 	var err error
 	mnemonic := cfg.Mnemonic
 	if mnemonic == "" {
-		mnemonic, err = bursa.NewMnemonic()
+		mnemonic, err = bursa.GenerateMnemonic()
 		if err != nil {
-			logger.Error("failed to load mnemonic", "error", err)
+			logger.Error("failed to generate mnemonic", "error", err)
 			os.Exit(1)
 		}
 	}
-	w, err := bursa.NewDefaultWallet(mnemonic)
+	w, err := bursa.NewWallet(mnemonic, cfg.Network, "", 0, 0, 0, 0)
 	if err != nil {
 		logger.Error("failed to initialize wallet", "error", err)
 		os.Exit(1)

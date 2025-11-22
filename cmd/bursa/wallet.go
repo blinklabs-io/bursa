@@ -48,7 +48,7 @@ func walletCreateCommand() *cobra.Command {
 				logging.GetLogger().Error("failed to load config", "error", err)
 				os.Exit(1)
 			}
-			cli.Run(cfg, output)
+			cli.RunCreate(cfg, output)
 		},
 	}
 

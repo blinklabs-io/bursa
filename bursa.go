@@ -15,22 +15,22 @@
 package bursa
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/blinklabs-io/bursa/bip32"
-	"github.com/blinklabs-io/bursa/internal/config"
 	ouroboros "github.com/blinklabs-io/gouroboros"
+	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
-	"github.com/fxamacker/cbor/v2"
 	bip39 "github.com/tyler-smith/go-bip39"
 )
 
@@ -38,6 +38,8 @@ type KeyFile struct {
 	Type        string `json:"type"`
 	Description string `json:"description"`
 	CborHex     string `json:"cborHex"`
+	// Embedded CBOR storage for automatic caching
+	cbor.DecodeStoreCbor
 }
 
 type LoadedKey struct {
@@ -47,6 +49,13 @@ type LoadedKey struct {
 	RawCBOR     []byte
 	VKey        []byte
 	SKey        []byte
+}
+
+// Buffer pool for JSON marshaling
+var jsonBufferPool = sync.Pool{
+	New: func() any {
+		return &bytes.Buffer{}
+	},
 }
 
 type Wallet struct {
@@ -61,11 +70,35 @@ type Wallet struct {
 	StakeExtendedSKey   KeyFile `json:"stake_extended_skey"`
 }
 
+// GenerateMnemonic generates a new BIP39 mnemonic phrase
+func GenerateMnemonic() (string, error) {
+	entropy, err := bip39.NewEntropy(256)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate entropy: %w", err)
+	}
+	mnemonic, err := bip39.NewMnemonic(entropy)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate mnemonic: %w", err)
+	}
+	return mnemonic, nil
+}
+
+// NewWallet creates a new wallet from a BIP39 mnemonic phrase.
+// All derivation indices (accountId, paymentId, stakeId, addressId) must be less than 2^31 (0x80000000).
+// This constraint ensures compatibility with BIP32/BIP44 derivation standards.
 func NewWallet(
 	mnemonic, network, password string,
-	accountId uint,
+	accountId uint32,
 	paymentId, stakeId, addressId uint32,
 ) (*Wallet, error) {
+	if !bip39.IsMnemonicValid(mnemonic) {
+		return nil, errors.New("invalid mnemonic")
+	}
+	if accountId >= 0x80000000 || paymentId >= 0x80000000 ||
+		stakeId >= 0x80000000 ||
+		addressId >= 0x80000000 {
+		return nil, errors.New("derivation indices must be less than 2^31")
+	}
 	rootKey, err := GetRootKeyFromMnemonic(mnemonic, password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get root key from mnemonic: %w", err)
@@ -119,27 +152,6 @@ func ExtractKeyFiles(wallet *Wallet) (map[string]string, error) {
 	return result, nil
 }
 
-func NewDefaultWallet(mnemonic string) (*Wallet, error) {
-	cfg := config.GetConfig()
-	w, err := NewWallet(mnemonic, cfg.Network, "", 0, 0, 0, 0)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create default wallet: %w", err)
-	}
-	return w, nil
-}
-
-func NewMnemonic() (string, error) {
-	entropy, err := bip39.NewEntropy(256)
-	if err != nil {
-		return "", err
-	}
-	mnemonic, err := bip39.NewMnemonic(entropy)
-	if err != nil {
-		return "", err
-	}
-	return mnemonic, nil
-}
-
 func GetRootKeyFromMnemonic(mnemonic, password string) (bip32.XPrv, error) {
 	entropy, err := bip39.EntropyFromMnemonic(mnemonic)
 	if err != nil {
@@ -157,12 +169,12 @@ func GetRootKey(entropy []byte, password []byte) bip32.XPrv {
 	return bip32.FromBip39Entropy(entropy, password)
 }
 
-func GetAccountKey(rootKey bip32.XPrv, num uint) bip32.XPrv {
+func GetAccountKey(rootKey bip32.XPrv, num uint32) bip32.XPrv {
 	const harden = 0x80000000
-	hardNum := harden + num
-	if hardNum > math.MaxUint32 {
+	if num > 0x7FFFFFFF {
 		panic("num out of bounds")
 	}
+	hardNum := harden + num
 	return rootKey.
 		Derive(uint32(harden + 1852)).
 		Derive(uint32(harden + 1815)).
@@ -174,45 +186,59 @@ func GetPaymentKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
 }
 
 func GetPaymentVKey(paymentKey bip32.XPrv) KeyFile {
-	keyCbor, err := cbor.Marshal(paymentKey.Public().PublicKey())
-	if err != nil {
-		panic(err)
-	}
-	return KeyFile{
-		Type:        "PaymentVerificationKeyShelley_ed25519",
-		Description: "Payment Verification Key",
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
-}
-
-func getSigningKeyFile(key bip32.XPrv, keyType, description string) KeyFile {
-	keyCbor, err := cbor.Marshal(key.PrivateKey()[:32])
-	if err != nil {
-		panic(err)
-	}
-	return KeyFile{
-		Type:        keyType,
-		Description: description,
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
-}
-
-func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
-	return getSigningKeyFile(paymentKey, "PaymentSigningKeyShelley_ed25519", "Payment Signing Key")
-}
-
-func GetPaymentExtendedSKey(paymentKey bip32.XPrv) KeyFile {
-	keyCbor, err := cbor.Marshal(
-		GetExtendedPrivateKey(paymentKey),
+	keyCbor, err := cbor.Encode(
+		[]any{0, paymentKey.Public().PublicKey()},
 	)
 	if err != nil {
 		panic(err)
 	}
-	return KeyFile{
+	kf := KeyFile{
+		Type:        "PaymentVerificationKeyShelley_ed25519",
+		Description: "Payment Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf
+}
+
+func getSigningKeyFile(key bip32.XPrv, keyType, description string) KeyFile {
+	keyCbor, err := cbor.Encode([]any{0, key.PrivateKey()[:32]})
+	if err != nil {
+		panic(err)
+	}
+	kf := KeyFile{
+		Type:        keyType,
+		Description: description,
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf
+}
+
+func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
+	return getSigningKeyFile(
+		paymentKey,
+		"PaymentSigningKeyShelley_ed25519",
+		"Payment Signing Key",
+	)
+}
+
+func GetPaymentExtendedSKey(paymentKey bip32.XPrv) KeyFile {
+	keyCbor, err := cbor.Encode([]any{
+		0,
+		paymentKey.PrivateKey(),
+		paymentKey.ChainCode(),
+	})
+	if err != nil {
+		panic(err)
+	}
+	kf := KeyFile{
 		Type:        "PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		Description: "Payment Extended Signing Key (BIP32)",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
+	kf.SetCbor(keyCbor)
+	return kf
 }
 
 func GetStakeKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
@@ -220,33 +246,45 @@ func GetStakeKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
 }
 
 func GetStakeVKey(stakeKey bip32.XPrv) KeyFile {
-	keyCbor, err := cbor.Marshal(stakeKey.Public().PublicKey())
-	if err != nil {
-		panic(err)
-	}
-	return KeyFile{
-		Type:        "StakeVerificationKeyShelley_ed25519",
-		Description: "Stake Verification Key",
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
-}
-
-func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
-	return getSigningKeyFile(stakeKey, "StakeSigningKeyShelley_ed25519", "Stake Signing Key")
-}
-
-func GetStakeExtendedSKey(stakeKey bip32.XPrv) KeyFile {
-	keyCbor, err := cbor.Marshal(
-		GetExtendedPrivateKey(stakeKey),
+	keyCbor, err := cbor.Encode(
+		[]any{0, stakeKey.Public().PublicKey()},
 	)
 	if err != nil {
 		panic(err)
 	}
-	return KeyFile{
+	kf := KeyFile{
+		Type:        "StakeVerificationKeyShelley_ed25519",
+		Description: "Stake Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf
+}
+
+func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
+	return getSigningKeyFile(
+		stakeKey,
+		"StakeSigningKeyShelley_ed25519",
+		"Stake Signing Key",
+	)
+}
+
+func GetStakeExtendedSKey(stakeKey bip32.XPrv) KeyFile {
+	keyCbor, err := cbor.Encode([]any{
+		0,
+		stakeKey.PrivateKey(),
+		stakeKey.ChainCode(),
+	})
+	if err != nil {
+		panic(err)
+	}
+	kf := KeyFile{
 		Type:        "StakeExtendedSigningKeyShelley_ed25519_bip32",
 		Description: "Stake Extended Signing Key (BIP32)",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
+	kf.SetCbor(keyCbor)
+	return kf
 }
 
 func GetAddress(
@@ -295,60 +333,76 @@ func GetExtendedPrivateKey(privateKey bip32.XPrv) bip32.XPrv {
 }
 
 func GetKeyFile(keyFile KeyFile) (string, error) {
+	// Use buffer pool to avoid allocations
+	buf := jsonBufferPool.Get().(*bytes.Buffer)
+	defer func() {
+		buf.Reset()
+		jsonBufferPool.Put(buf)
+	}()
+
 	// Use 4 spaces for indent
-	ret, err := json.MarshalIndent(keyFile, "", "    ")
-	if err != nil {
+	encoder := json.NewEncoder(buf)
+	encoder.SetIndent("", "    ")
+	if err := encoder.Encode(keyFile); err != nil {
 		return "", fmt.Errorf("failed to marshal key file: %w", err)
 	}
-	// Append newline
-	return fmt.Sprintf("%s\n", ret), nil
+
+	// Return the string with trailing newline for backward compatibility
+	result := buf.String()
+	return result, nil
 }
 
 func decodeNonExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
-	if len(skeyBytes) < 3 || skeyBytes[0] != 0x58 {
-		return nil, nil, errors.New("invalid signing key cbor")
+	var data []any
+	if _, err := cbor.Decode(skeyBytes, &data); err != nil {
+		return nil, nil, fmt.Errorf("failed to unmarshal skey CBOR: %w", err)
 	}
-	switch skeyBytes[1] {
-	case 0x20:
-		if len(skeyBytes) != 34 {
-			return nil, nil, errors.New("invalid cbor skey hex length")
-		}
-		key := ed25519.NewKeyFromSeed(skeyBytes[2:])
-		return key[:], key[32:], nil
-	// Adding this because bursa emits 58 60 (CBor byte string of length 96 bytes)
-	case 0x60:
-		if len(skeyBytes) != 98 {
-			return nil, nil, errors.New("invalid xprv skey length")
-		}
-		x := bip32.XPrv{}
-		x = append(x, skeyBytes[2:]...)
-		pub := x.Public().PublicKey()
-		return skeyBytes[2:], pub, nil
-	default:
-		return nil, nil, errors.New("unsupported non-extended skey cbor")
+	if len(data) != 2 || data[0] != uint64(0) {
+		return nil, nil, errors.New("invalid skey CBOR structure")
 	}
+	keyBytes, ok := data[1].([]byte)
+	if !ok || len(keyBytes) != 32 {
+		return nil, nil, errors.New("invalid skey bytes")
+	}
+	key := ed25519.NewKeyFromSeed(keyBytes)
+	return key[:], key[32:], nil
 }
 
 func decodeExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
-	if len(skeyBytes) != 130 {
-		return nil, nil, errors.New("invalid cbor skey hex length")
+	var data []any
+	if _, err := cbor.Decode(skeyBytes, &data); err != nil {
+		return nil, nil, fmt.Errorf(
+			"failed to unmarshal extended skey CBOR: %w",
+			err,
+		)
 	}
-	if skeyBytes[0] != 0x58 || skeyBytes[1] != 0x80 {
-		return nil, nil, errors.New("invalid cbor skey hex prefix")
+	if len(data) != 3 || data[0] != uint64(0) {
+		return nil, nil, errors.New("invalid extended skey CBOR structure")
 	}
-
-	// Return full 128-byte extended key (64B private + 32B public + 32B chain)
-	return skeyBytes[2:130], skeyBytes[66:98], nil
+	privBytes, ok1 := data[1].([]byte)
+	chainBytes, ok2 := data[2].([]byte)
+	if !ok1 || !ok2 || len(privBytes) != 64 || len(chainBytes) != 32 {
+		return nil, nil, errors.New("invalid extended skey bytes")
+	}
+	xprv := append(privBytes, chainBytes...)
+	x := bip32.XPrv(xprv)
+	pub := x.Public().PublicKey()
+	return xprv, pub, nil
 }
 
 func decodeVerificationKey(vkeyBytes []byte) ([]byte, error) {
-	if len(vkeyBytes) != 34 {
-		return nil, errors.New("invalid cbor vkey hex length")
+	var data []any
+	if _, err := cbor.Decode(vkeyBytes, &data); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vkey CBOR: %w", err)
 	}
-	if vkeyBytes[0] != 0x58 || vkeyBytes[1] != 0x20 {
-		return nil, errors.New("invalid cbor vkey hex prefix")
+	if len(data) != 2 || data[0] != uint64(0) {
+		return nil, errors.New("invalid vkey CBOR structure")
 	}
-	return vkeyBytes[2:], nil
+	keyBytes, ok := data[1].([]byte)
+	if !ok || len(keyBytes) != 32 {
+		return nil, errors.New("invalid vkey bytes")
+	}
+	return keyBytes, nil
 }
 
 func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
@@ -356,34 +410,46 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 	if err := json.Unmarshal(fileBytes, &env); err != nil {
 		return nil, errors.New("could not parse key file envelope")
 	}
-	// Convert cbor hex to raw bytes
-	cbor, err := hex.DecodeString(env.CborHex)
-	if err != nil {
-		return nil, fmt.Errorf("could not decode key from hex: %w", err)
+
+	// Use cached CBOR data if available, otherwise decode from hex
+	var cborData []byte
+	if cached := env.Cbor(); len(cached) > 0 {
+		cborData = cached
+	} else {
+		var err error
+		cborData, err = hex.DecodeString(env.CborHex)
+		if err != nil {
+			return nil, fmt.Errorf("could not decode key from hex: %w", err)
+		}
+		// Cache the decoded CBOR data
+		env.SetCbor(cborData)
 	}
+
 	lk := &LoadedKey{
 		Type:        env.Type,
 		Description: env.Description,
-		RawCBOR:     cbor,
+		RawCBOR:     cborData,
 	}
 	// Decode cbor encoded key bytes
 	switch env.Type {
-	case "PaymentVerificationKeyShelley_ed25519", "StakeVerificationKeyShelley_ed25519":
-		vk, err := decodeVerificationKey(cbor)
+	case "PaymentVerificationKeyShelley_ed25519",
+		"StakeVerificationKeyShelley_ed25519":
+		vk, err := decodeVerificationKey(cborData)
 		if err != nil {
 			return nil, err
 		}
 		lk.VKey = vk
 		return lk, nil
 	case "PaymentSigningKeyShelley_ed25519", "StakeSigningKeyShelley_ed25519":
-		sk, vk, err := decodeNonExtendedCborKey(cbor)
+		sk, vk, err := decodeNonExtendedCborKey(cborData)
 		if err != nil {
 			return nil, err
 		}
 		lk.SKey, lk.VKey = sk, vk
 		return lk, nil
-	case "PaymentExtendedSigningKeyShelley_ed25519_bip32", "StakeExtendedSigningKeyShelley_ed25519_bip32":
-		sk, vk, err := decodeExtendedCborKey(cbor)
+	case "PaymentExtendedSigningKeyShelley_ed25519_bip32",
+		"StakeExtendedSigningKeyShelley_ed25519_bip32":
+		sk, vk, err := decodeExtendedCborKey(cborData)
 		if err != nil {
 			return nil, err
 		}
@@ -395,28 +461,34 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 }
 
 func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
-	out := make([]*LoadedKey, 0)
-
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
+
+	// Pre-allocate slice with estimated capacity to reduce allocations
+	// Most wallets have around 6 key files
+	out := make([]*LoadedKey, 0, 8)
+
 	for _, e := range files {
 		if e.IsDir() {
 			continue
 		}
 		n := e.Name()
-		if !(strings.HasSuffix(n, ".vkey")) && !(strings.HasSuffix(n, ".skey")) {
+		if !(strings.HasSuffix(n, ".vkey")) &&
+			!(strings.HasSuffix(n, ".skey")) {
 			continue
 		}
 		p := filepath.Join(dir, n)
 		b, err := os.ReadFile(p)
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", p, err)
+			// Skip files that can't be read
+			continue
 		}
 		loadedKeyFile, err := parseKeyEnvelope(b)
 		if err != nil {
-			return nil, fmt.Errorf("decode %s: %w", p, err)
+			// Skip files that can't be parsed
+			continue
 		}
 		loadedKeyFile.File = n
 		out = append(out, loadedKeyFile)
@@ -429,27 +501,35 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 }
 
 func PrintLoadedKeys(keys []*LoadedKey, showSecrets bool) {
-	// Printing out all loaded key files one by one after decoding successfully
-	var lines []string
+	// Pre-allocate buffer for output to reduce allocations
+	var buf bytes.Buffer
+	buf.Grow(4096) // Pre-allocate reasonable size
+
 	for _, k := range keys {
 		switch {
 		case len(k.SKey) > 0 && len(k.VKey) > 0:
 			if showSecrets {
-				lines = append(lines, fmt.Sprintf("\n%s | %s | Private Key (skey): %dB %s | Public Key (vkey): 32B %s",
-					k.File, k.Type, len(k.SKey), hex.EncodeToString(k.SKey), hex.EncodeToString(k.VKey)))
+				fmt.Fprintf(
+					&buf,
+					"%s | %s | Private Key (skey): %dB %s | Public Key (vkey): 32B %s\n",
+					k.File,
+					k.Type,
+					len(k.SKey),
+					hex.EncodeToString(k.SKey),
+					hex.EncodeToString(k.VKey),
+				)
 			} else {
-				lines = append(lines, fmt.Sprintf("\n%s | %s | skey=%dB | vkey=32B %s",
-					k.File, k.Type, len(k.SKey), hex.EncodeToString(k.VKey)))
+				fmt.Fprintf(&buf, "%s | %s | skey=%dB | vkey=32B %s\n",
+					k.File, k.Type, len(k.SKey), hex.EncodeToString(k.VKey))
 			}
 		case len(k.VKey) == 32:
-			lines = append(lines, fmt.Sprintf("\n%s | %s | Public Key (vkey): 32B %s",
-				k.File, k.Type, hex.EncodeToString(k.VKey)))
+			fmt.Fprintf(&buf,
+				"%s | %s | Public Key (vkey): 32B %s\n",
+				k.File, k.Type, hex.EncodeToString(k.VKey))
 		default:
-			lines = append(lines, fmt.Sprintf("%s | %s | unsupported", k.File, k.Type))
+			fmt.Fprintf(&buf, "%s | %s | unsupported\n", k.File, k.Type)
 		}
 	}
 
-	for _, line := range lines {
-		fmt.Println(line)
-	}
+	fmt.Print(buf.String())
 }
