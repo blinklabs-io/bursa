@@ -367,8 +367,8 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 	logger := logging.GetLogger()
 	wallet, err := bursa.NewWallet(
 		req.Mnemonic,
-		req.Password,
 		cfg.Network,
+		req.Password,
 		req.AccountId,
 		req.PaymentId,
 		req.StakeId,
