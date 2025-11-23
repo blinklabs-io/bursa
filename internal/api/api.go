@@ -55,7 +55,7 @@ type WalletGetRequest struct {
 type WalletRestoreRequest struct {
 	Mnemonic  string `json:"mnemonic"   binding:"required"`
 	Password  string `json:"password"`
-	AccountId uint   `json:"account_id"`
+	AccountId uint32 `json:"account_id"`
 	PaymentId uint32 `json:"payment_id"`
 	StakeId   uint32 `json:"stake_id"`
 	AddressId uint32 `json:"address_id"`
@@ -279,16 +279,16 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 	cfg := config.GetConfig()
 	logger := logging.GetLogger()
 
-	mnemonic, err := bursa.NewMnemonic()
+	mnemonic, err := bursa.GenerateMnemonic()
 	if err != nil {
-		logger.Error("failed to load mnemonic", "error", err)
+		logger.Error("failed to generate mnemonic", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = fmt.Fprintf(w, "failed to load mnemonic: %s", err)
+		_, _ = fmt.Fprintf(w, "failed to generate mnemonic: %s", err)
 		walletsFailCounter.Inc()
 		return
 	}
 
-	wallet, err := bursa.NewDefaultWallet(mnemonic)
+	wallet, err := bursa.NewWallet(mnemonic, cfg.Network, "", 0, 0, 0, 0)
 	if err != nil {
 		logger.Error("failed to initialize wallet", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
