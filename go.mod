@@ -7,7 +7,7 @@ toolchain go1.24.1
 require (
 	cloud.google.com/go/secretmanager v1.16.0
 	filippo.io/edwards25519 v1.1.0
-	github.com/blinklabs-io/gouroboros v0.138.0
+	github.com/blinklabs-io/gouroboros v0.140.0
 	github.com/getsops/sops/v3 v3.11.0
 	github.com/google/uuid v1.6.0
 	github.com/kelseyhightower/envconfig v1.4.0
@@ -138,7 +138,7 @@ require (
 	github.com/spiffe/go-spiffe/v2 v2.5.0 // indirect
 	github.com/swaggo/files v1.0.1 // indirect
 	github.com/urfave/cli v1.22.17 // indirect
-	github.com/utxorpc/go-codegen v0.17.0 // indirect
+	github.com/utxorpc/go-codegen v0.18.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/zeebo/errs v1.4.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
