@@ -62,7 +62,11 @@ func apiCommand() *cobra.Command {
 					}
 					err := debugger.ListenAndServe()
 					if err != nil {
-						slog.Error("failed to start debug listener", "error", err)
+						slog.Error(
+							"failed to start debug listener",
+							"error",
+							err,
+						)
 						return
 					}
 				}()

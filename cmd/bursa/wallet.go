@@ -69,8 +69,10 @@ func walletLoadCommand() *cobra.Command {
 			cli.RunLoad(dir, showSecrets)
 		},
 	}
-	walletLoadCommand.Flags().StringVar(&dir, "dir", ".", "Directory containing wallet key files (Ex: *.vkey, *.skey)")
-	walletLoadCommand.Flags().BoolVar(&showSecrets, "show-secrets", false, "Display private key hex values (use with caution)")
+	walletLoadCommand.Flags().
+		StringVar(&dir, "dir", ".", "Directory containing wallet key files (Ex: *.vkey, *.skey)")
+	walletLoadCommand.Flags().
+		BoolVar(&showSecrets, "show-secrets", false, "Display private key hex values (use with caution)")
 
 	return &walletLoadCommand
 }

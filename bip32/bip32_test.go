@@ -44,8 +44,40 @@ func TestFromBip39Entropy(t *testing.T) {
 
 func TestDerive(t *testing.T) {
 	// Start with a known root key
-	entropy := []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-		0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f}
+	entropy := []byte{
+		0x00,
+		0x01,
+		0x02,
+		0x03,
+		0x04,
+		0x05,
+		0x06,
+		0x07,
+		0x08,
+		0x09,
+		0x0a,
+		0x0b,
+		0x0c,
+		0x0d,
+		0x0e,
+		0x0f,
+		0x10,
+		0x11,
+		0x12,
+		0x13,
+		0x14,
+		0x15,
+		0x16,
+		0x17,
+		0x18,
+		0x19,
+		0x1a,
+		0x1b,
+		0x1c,
+		0x1d,
+		0x1e,
+		0x1f,
+	}
 	password := []byte{}
 	root := FromBip39Entropy(entropy, password)
 
@@ -138,7 +170,10 @@ func TestCardanoWalletVectors(t *testing.T) {
 	// Verify payment key derivation
 	paymentPubKey := child5.PublicKey()
 	if len(paymentPubKey) != 32 {
-		t.Errorf("Expected payment public key length 32, got %d", len(paymentPubKey))
+		t.Errorf(
+			"Expected payment public key length 32, got %d",
+			len(paymentPubKey),
+		)
 	}
 
 	// Test non-hardened derivation: m/1852'/1815'/0'/0'/0'/0
@@ -147,7 +182,10 @@ func TestCardanoWalletVectors(t *testing.T) {
 	// Verify stake key derivation
 	stakePubKey := child6.PublicKey()
 	if len(stakePubKey) != 32 {
-		t.Errorf("Expected stake public key length 32, got %d", len(stakePubKey))
+		t.Errorf(
+			"Expected stake public key length 32, got %d",
+			len(stakePubKey),
+		)
 	}
 
 	// Verify that payment and stake keys are different
@@ -179,7 +217,12 @@ func TestHardenedIndex(t *testing.T) {
 	for _, test := range tests {
 		result := HardenedIndex(test.input)
 		if result != test.expected {
-			t.Errorf("HardenedIndex(%d) = %x, want %x", test.input, result, test.expected)
+			t.Errorf(
+				"HardenedIndex(%d) = %x, want %x",
+				test.input,
+				result,
+				test.expected,
+			)
 		}
 	}
 }
