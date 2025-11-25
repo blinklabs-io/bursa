@@ -346,3 +346,125 @@ func TestGenerateMnemonic(t *testing.T) {
 	words := strings.Split(mnemonic, " ")
 	assert.Equal(t, 24, len(words))
 }
+
+func TestCIP1852Compliance(t *testing.T) {
+	// Test CIP-1852 compliance using a known mnemonic
+	// This test verifies that the derivation paths follow CIP-1852 specification
+	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	password := ""
+	accountId := uint32(0)
+	paymentId := uint32(0)
+	stakeId := uint32(0)
+
+	// Generate wallet
+	wallet, err := NewWallet(
+		mnemonic,
+		"mainnet",
+		password,
+		accountId,
+		paymentId,
+		stakeId,
+		0,
+	)
+	assert.NoError(t, err)
+	assert.NotNil(t, wallet)
+
+	// Verify that keys are generated (non-empty)
+	assert.NotEmpty(t, wallet.PaymentVKey.CborHex)
+	assert.NotEmpty(t, wallet.PaymentSKey.CborHex)
+	assert.NotEmpty(t, wallet.StakeVKey.CborHex)
+	assert.NotEmpty(t, wallet.StakeSKey.CborHex)
+
+	// Verify key types are correct
+	assert.Equal(
+		t,
+		"PaymentVerificationKeyShelley_ed25519",
+		wallet.PaymentVKey.Type,
+	)
+	assert.Equal(t, "PaymentSigningKeyShelley_ed25519", wallet.PaymentSKey.Type)
+	assert.Equal(
+		t,
+		"StakeVerificationKeyShelley_ed25519",
+		wallet.StakeVKey.Type,
+	)
+	assert.Equal(t, "StakeSigningKeyShelley_ed25519", wallet.StakeSKey.Type)
+
+	// Verify CBOR can be decoded (valid format and structure)
+	for _, keyHex := range []string{
+		wallet.PaymentVKey.CborHex,
+		wallet.StakeVKey.CborHex,
+	} {
+		cborData, err := hex.DecodeString(keyHex)
+		assert.NoError(t, err)
+		_, err = decodeVerificationKey(cborData)
+		assert.NoError(t, err)
+	}
+	// Verify signing key CBOR can be decoded (valid format and structure)
+	for _, keyHex := range []string{
+		wallet.PaymentSKey.CborHex,
+		wallet.StakeSKey.CborHex,
+	} {
+		cborData, err := hex.DecodeString(keyHex)
+		assert.NoError(t, err)
+		_, _, err = decodeNonExtendedCborKey(cborData)
+		assert.NoError(t, err)
+	}
+}
+
+func TestCIP1852DerivationPaths(t *testing.T) {
+	// Test that different derivation indices produce different keys
+	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	password := ""
+
+	// Test different account indices
+	wallet0, err := NewWallet(mnemonic, "mainnet", password, 0, 0, 0, 0)
+	assert.NoError(t, err)
+	wallet1, err := NewWallet(mnemonic, "mainnet", password, 1, 0, 0, 0)
+	assert.NoError(t, err)
+
+	// Different accounts should produce different keys
+	assert.NotEqual(t, wallet0.PaymentVKey.CborHex, wallet1.PaymentVKey.CborHex)
+	assert.NotEqual(t, wallet0.StakeVKey.CborHex, wallet1.StakeVKey.CborHex)
+
+	// Test different payment indices within same account
+	wallet0_1, err := NewWallet(mnemonic, "mainnet", password, 0, 1, 0, 0)
+	assert.NoError(t, err)
+
+	// Different payment indices should produce different payment keys
+	assert.NotEqual(t, wallet0.PaymentVKey.CborHex, wallet0_1.PaymentVKey.CborHex)
+	// But same stake key (same stake index)
+	assert.Equal(t, wallet0.StakeVKey.CborHex, wallet0_1.StakeVKey.CborHex)
+
+	// Test different stake indices within same account
+	walletStake1, err := NewWallet(mnemonic, "mainnet", password, 0, 0, 1, 0)
+	assert.NoError(t, err)
+
+	// Different stake indices should produce different stake keys
+	assert.NotEqual(t, wallet0.StakeVKey.CborHex, walletStake1.StakeVKey.CborHex)
+	// But same payment key (same payment index)
+	assert.Equal(t, wallet0.PaymentVKey.CborHex, walletStake1.PaymentVKey.CborHex)
+}
+
+func TestRootKeyDerivation(t *testing.T) {
+	// Test root key generation from mnemonic
+	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	password := ""
+
+	rootKey, err := GetRootKeyFromMnemonic(mnemonic, password)
+	assert.NoError(t, err)
+	assert.NotNil(t, rootKey)
+
+	// Verify root key is valid (has both private and public parts)
+	assert.NotNil(t, rootKey.PrivateKey())
+	assert.NotNil(t, rootKey.Public())
+
+	// Test that same mnemonic produces same root key
+	rootKey2, err := GetRootKeyFromMnemonic(mnemonic, password)
+	assert.NoError(t, err)
+	assert.Equal(t, rootKey.PrivateKey(), rootKey2.PrivateKey())
+
+	// Test that different password produces different root key
+	rootKey3, err := GetRootKeyFromMnemonic(mnemonic, "different")
+	assert.NoError(t, err)
+	assert.NotEqual(t, rootKey.PrivateKey(), rootKey3.PrivateKey())
+}

@@ -103,7 +103,10 @@ func NewWallet(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get root key from mnemonic: %w", err)
 	}
-	accountKey := GetAccountKey(rootKey, accountId)
+	accountKey, err := GetAccountKey(rootKey, accountId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive account key: %w", err)
+	}
 	paymentKey := GetPaymentKey(accountKey, paymentId)
 	stakeKey := GetStakeKey(accountKey, stakeId)
 	addr, err := GetAddress(accountKey, network, addressId)
@@ -117,16 +120,55 @@ func NewWallet(
 	if stakeAddr == nil {
 		return nil, errors.New("unable to get stake address")
 	}
+	paymentVKey, err := GetPaymentVKey(paymentKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to generate payment verification key: %w",
+			err,
+		)
+	}
+	paymentSKey, err := GetPaymentSKey(paymentKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to generate payment signing key: %w",
+			err,
+		)
+	}
+	paymentExtendedSKey, err := GetPaymentExtendedSKey(paymentKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to generate payment extended signing key: %w",
+			err,
+		)
+	}
+	stakeVKey, err := GetStakeVKey(stakeKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to generate stake verification key: %w",
+			err,
+		)
+	}
+	stakeSKey, err := GetStakeSKey(stakeKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate stake signing key: %w", err)
+	}
+	stakeExtendedSKey, err := GetStakeExtendedSKey(stakeKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to generate stake extended signing key: %w",
+			err,
+		)
+	}
 	w := &Wallet{
 		Mnemonic:            mnemonic,
 		PaymentAddress:      addr.String(),
 		StakeAddress:        stakeAddr.String(),
-		PaymentVKey:         GetPaymentVKey(paymentKey),
-		PaymentSKey:         GetPaymentSKey(paymentKey),
-		PaymentExtendedSKey: GetPaymentExtendedSKey(paymentKey),
-		StakeVKey:           GetStakeVKey(stakeKey),
-		StakeSKey:           GetStakeSKey(stakeKey),
-		StakeExtendedSKey:   GetStakeExtendedSKey(stakeKey),
+		PaymentVKey:         paymentVKey,
+		PaymentSKey:         paymentSKey,
+		PaymentExtendedSKey: paymentExtendedSKey,
+		StakeVKey:           stakeVKey,
+		StakeSKey:           stakeSKey,
+		StakeExtendedSKey:   stakeExtendedSKey,
 	}
 	return w, nil
 }
@@ -169,28 +211,31 @@ func GetRootKey(entropy []byte, password []byte) bip32.XPrv {
 	return bip32.FromBip39Entropy(entropy, password)
 }
 
-func GetAccountKey(rootKey bip32.XPrv, num uint32) bip32.XPrv {
+func GetAccountKey(rootKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
 	const harden = 0x80000000
 	if num > 0x7FFFFFFF {
-		panic("num out of bounds")
+		return nil, errors.New("account index out of bounds")
 	}
 	hardNum := harden + num
 	return rootKey.
 		Derive(uint32(harden + 1852)).
 		Derive(uint32(harden + 1815)).
-		Derive(uint32(hardNum))
+		Derive(uint32(hardNum)), nil
 }
 
 func GetPaymentKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
 	return accountKey.Derive(0).Derive(num)
 }
 
-func GetPaymentVKey(paymentKey bip32.XPrv) KeyFile {
+func GetPaymentVKey(paymentKey bip32.XPrv) (KeyFile, error) {
 	keyCbor, err := cbor.Encode(
 		[]any{0, paymentKey.Public().PublicKey()},
 	)
 	if err != nil {
-		panic(err)
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode payment verification key: %w",
+			err,
+		)
 	}
 	kf := KeyFile{
 		Type:        "PaymentVerificationKeyShelley_ed25519",
@@ -198,13 +243,20 @@ func GetPaymentVKey(paymentKey bip32.XPrv) KeyFile {
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
 	kf.SetCbor(keyCbor)
-	return kf
+	return kf, nil
 }
 
-func getSigningKeyFile(key bip32.XPrv, keyType, description string) KeyFile {
+func getSigningKeyFile(
+	key bip32.XPrv,
+	keyType, description string,
+) (KeyFile, error) {
 	keyCbor, err := cbor.Encode([]any{0, key.PrivateKey()[:32]})
 	if err != nil {
-		panic(err)
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode %s: %w",
+			description,
+			err,
+		)
 	}
 	kf := KeyFile{
 		Type:        keyType,
@@ -212,10 +264,10 @@ func getSigningKeyFile(key bip32.XPrv, keyType, description string) KeyFile {
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
 	kf.SetCbor(keyCbor)
-	return kf
+	return kf, nil
 }
 
-func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
+func GetPaymentSKey(paymentKey bip32.XPrv) (KeyFile, error) {
 	return getSigningKeyFile(
 		paymentKey,
 		"PaymentSigningKeyShelley_ed25519",
@@ -223,14 +275,17 @@ func GetPaymentSKey(paymentKey bip32.XPrv) KeyFile {
 	)
 }
 
-func GetPaymentExtendedSKey(paymentKey bip32.XPrv) KeyFile {
+func GetPaymentExtendedSKey(paymentKey bip32.XPrv) (KeyFile, error) {
 	keyCbor, err := cbor.Encode([]any{
 		0,
 		paymentKey.PrivateKey(),
 		paymentKey.ChainCode(),
 	})
 	if err != nil {
-		panic(err)
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode payment extended signing key: %w",
+			err,
+		)
 	}
 	kf := KeyFile{
 		Type:        "PaymentExtendedSigningKeyShelley_ed25519_bip32",
@@ -238,19 +293,22 @@ func GetPaymentExtendedSKey(paymentKey bip32.XPrv) KeyFile {
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
 	kf.SetCbor(keyCbor)
-	return kf
+	return kf, nil
 }
 
 func GetStakeKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
 	return accountKey.Derive(2).Derive(num)
 }
 
-func GetStakeVKey(stakeKey bip32.XPrv) KeyFile {
+func GetStakeVKey(stakeKey bip32.XPrv) (KeyFile, error) {
 	keyCbor, err := cbor.Encode(
 		[]any{0, stakeKey.Public().PublicKey()},
 	)
 	if err != nil {
-		panic(err)
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode stake verification key: %w",
+			err,
+		)
 	}
 	kf := KeyFile{
 		Type:        "StakeVerificationKeyShelley_ed25519",
@@ -258,10 +316,10 @@ func GetStakeVKey(stakeKey bip32.XPrv) KeyFile {
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
 	kf.SetCbor(keyCbor)
-	return kf
+	return kf, nil
 }
 
-func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
+func GetStakeSKey(stakeKey bip32.XPrv) (KeyFile, error) {
 	return getSigningKeyFile(
 		stakeKey,
 		"StakeSigningKeyShelley_ed25519",
@@ -269,14 +327,17 @@ func GetStakeSKey(stakeKey bip32.XPrv) KeyFile {
 	)
 }
 
-func GetStakeExtendedSKey(stakeKey bip32.XPrv) KeyFile {
+func GetStakeExtendedSKey(stakeKey bip32.XPrv) (KeyFile, error) {
 	keyCbor, err := cbor.Encode([]any{
 		0,
 		stakeKey.PrivateKey(),
 		stakeKey.ChainCode(),
 	})
 	if err != nil {
-		panic(err)
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode stake extended signing key: %w",
+			err,
+		)
 	}
 	kf := KeyFile{
 		Type:        "StakeExtendedSigningKeyShelley_ed25519_bip32",
@@ -284,7 +345,7 @@ func GetStakeExtendedSKey(stakeKey bip32.XPrv) KeyFile {
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
 	kf.SetCbor(keyCbor)
-	return kf
+	return kf, nil
 }
 
 func GetAddress(
