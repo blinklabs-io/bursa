@@ -74,7 +74,7 @@ type Store interface {
 	ListWallets(ctx context.Context) ([]Wallet, error)
 
 	// CreateWallet creates a new wallet with the given name.
-	CreateWallet(name string) Wallet
+	CreateWallet(name string) (Wallet, error)
 
 	// DeleteWallet removes a wallet from the storage backend.
 	DeleteWallet(ctx context.Context, name string) error

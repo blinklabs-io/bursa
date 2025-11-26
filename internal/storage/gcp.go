@@ -65,9 +65,9 @@ func (s *GCPStore) ListWallets(ctx context.Context) ([]Wallet, error) {
 
 // CreateWallet creates a new wallet instance for GCP storage.
 // The wallet is not persisted until Save() is called.
-func (s *GCPStore) CreateWallet(name string) Wallet {
+func (s *GCPStore) CreateWallet(name string) (Wallet, error) {
 	gcpWallet := gcp.NewGoogleWallet(name)
-	return &gcpWalletAdapter{wallet: gcpWallet}
+	return &gcpWalletAdapter{wallet: gcpWallet}, nil
 }
 
 // DeleteWallet removes a wallet from GCP Secret Manager.

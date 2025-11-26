@@ -34,6 +34,17 @@ import (
 	bip39 "github.com/tyler-smith/go-bip39"
 )
 
+var (
+	// ErrInvalidMnemonic indicates the provided mnemonic is not valid BIP39
+	ErrInvalidMnemonic = errors.New("invalid mnemonic")
+	// ErrInvalidDerivationIndex indicates a derivation index exceeds the maximum allowed value
+	ErrInvalidDerivationIndex = errors.New(
+		"derivation indices must be less than 2^31",
+	)
+	// ErrInvalidNetwork indicates the provided network name is not recognized
+	ErrInvalidNetwork = errors.New("invalid network name")
+)
+
 type KeyFile struct {
 	Type        string `json:"type"`
 	Description string `json:"description"`
@@ -92,12 +103,12 @@ func NewWallet(
 	paymentId, stakeId, addressId uint32,
 ) (*Wallet, error) {
 	if !bip39.IsMnemonicValid(mnemonic) {
-		return nil, errors.New("invalid mnemonic")
+		return nil, ErrInvalidMnemonic
 	}
 	if accountId >= 0x80000000 || paymentId >= 0x80000000 ||
 		stakeId >= 0x80000000 ||
 		addressId >= 0x80000000 {
-		return nil, errors.New("derivation indices must be less than 2^31")
+		return nil, ErrInvalidDerivationIndex
 	}
 	rootKey, err := GetRootKeyFromMnemonic(mnemonic, password)
 	if err != nil {
@@ -105,10 +116,16 @@ func NewWallet(
 	}
 	accountKey, err := GetAccountKey(rootKey, accountId)
 	if err != nil {
-		return nil, fmt.Errorf("failed to derive account key: %w", err)
+		return nil, fmt.Errorf("failed to get account key: %w", err)
 	}
-	paymentKey := GetPaymentKey(accountKey, paymentId)
-	stakeKey := GetStakeKey(accountKey, stakeId)
+	paymentKey, err := GetPaymentKey(accountKey, paymentId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get payment key: %w", err)
+	}
+	stakeKey, err := GetStakeKey(accountKey, stakeId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stake key: %w", err)
+	}
 	addr, err := GetAddress(accountKey, network, addressId)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get address: %w", err)
@@ -123,39 +140,33 @@ func NewWallet(
 	paymentVKey, err := GetPaymentVKey(paymentKey)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"failed to generate payment verification key: %w",
+			"failed to get payment verification key: %w",
 			err,
 		)
 	}
 	paymentSKey, err := GetPaymentSKey(paymentKey)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"failed to generate payment signing key: %w",
-			err,
-		)
+		return nil, fmt.Errorf("failed to get payment signing key: %w", err)
 	}
 	paymentExtendedSKey, err := GetPaymentExtendedSKey(paymentKey)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"failed to generate payment extended signing key: %w",
+			"failed to get payment extended signing key: %w",
 			err,
 		)
 	}
 	stakeVKey, err := GetStakeVKey(stakeKey)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"failed to generate stake verification key: %w",
-			err,
-		)
+		return nil, fmt.Errorf("failed to get stake verification key: %w", err)
 	}
 	stakeSKey, err := GetStakeSKey(stakeKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate stake signing key: %w", err)
+		return nil, fmt.Errorf("failed to get stake signing key: %w", err)
 	}
 	stakeExtendedSKey, err := GetStakeExtendedSKey(stakeKey)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"failed to generate stake extended signing key: %w",
+			"failed to get stake extended signing key: %w",
 			err,
 		)
 	}
@@ -174,6 +185,9 @@ func NewWallet(
 }
 
 func ExtractKeyFiles(wallet *Wallet) (map[string]string, error) {
+	if wallet == nil {
+		return nil, errors.New("wallet cannot be nil")
+	}
 	keyMap := map[string]KeyFile{
 		"payment.vkey":         wallet.PaymentVKey,
 		"payment.skey":         wallet.PaymentSKey,
@@ -195,6 +209,9 @@ func ExtractKeyFiles(wallet *Wallet) (map[string]string, error) {
 }
 
 func GetRootKeyFromMnemonic(mnemonic, password string) (bip32.XPrv, error) {
+	if !bip39.IsMnemonicValid(mnemonic) {
+		return nil, ErrInvalidMnemonic
+	}
 	entropy, err := bip39.EntropyFromMnemonic(mnemonic)
 	if err != nil {
 		return nil, err
@@ -214,7 +231,7 @@ func GetRootKey(entropy []byte, password []byte) bip32.XPrv {
 func GetAccountKey(rootKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
 	const harden = 0x80000000
 	if num > 0x7FFFFFFF {
-		return nil, errors.New("account index out of bounds")
+		return nil, ErrInvalidDerivationIndex
 	}
 	hardNum := harden + num
 	return rootKey.
@@ -223,8 +240,11 @@ func GetAccountKey(rootKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
 		Derive(uint32(hardNum)), nil
 }
 
-func GetPaymentKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
-	return accountKey.Derive(0).Derive(num)
+func GetPaymentKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
+	if num >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	return accountKey.Derive(0).Derive(num), nil
 }
 
 func GetPaymentVKey(paymentKey bip32.XPrv) (KeyFile, error) {
@@ -233,7 +253,7 @@ func GetPaymentVKey(paymentKey bip32.XPrv) (KeyFile, error) {
 	)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
-			"failed to encode payment verification key: %w",
+			"failed to encode payment verification key CBOR: %w",
 			err,
 		)
 	}
@@ -253,7 +273,7 @@ func getSigningKeyFile(
 	keyCbor, err := cbor.Encode([]any{0, key.PrivateKey()[:32]})
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
-			"failed to encode %s: %w",
+			"failed to encode %s CBOR: %w",
 			description,
 			err,
 		)
@@ -283,7 +303,7 @@ func GetPaymentExtendedSKey(paymentKey bip32.XPrv) (KeyFile, error) {
 	})
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
-			"failed to encode payment extended signing key: %w",
+			"failed to encode payment extended signing key CBOR: %w",
 			err,
 		)
 	}
@@ -296,8 +316,11 @@ func GetPaymentExtendedSKey(paymentKey bip32.XPrv) (KeyFile, error) {
 	return kf, nil
 }
 
-func GetStakeKey(accountKey bip32.XPrv, num uint32) bip32.XPrv {
-	return accountKey.Derive(2).Derive(num)
+func GetStakeKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
+	if num >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	return accountKey.Derive(2).Derive(num), nil
 }
 
 func GetStakeVKey(stakeKey bip32.XPrv) (KeyFile, error) {
@@ -306,7 +329,7 @@ func GetStakeVKey(stakeKey bip32.XPrv) (KeyFile, error) {
 	)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
-			"failed to encode stake verification key: %w",
+			"failed to encode stake verification key CBOR: %w",
 			err,
 		)
 	}
@@ -335,7 +358,7 @@ func GetStakeExtendedSKey(stakeKey bip32.XPrv) (KeyFile, error) {
 	})
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
-			"failed to encode stake extended signing key: %w",
+			"failed to encode stake extended signing key CBOR: %w",
 			err,
 		)
 	}
@@ -353,25 +376,26 @@ func GetAddress(
 	networkName string,
 	num uint32,
 ) (*lcommon.Address, error) {
+	if networkName == "" {
+		return nil, ErrInvalidNetwork
+	}
 	network, ok := ouroboros.NetworkByName(networkName)
 	if !ok {
-		return nil, fmt.Errorf(
-			"couldn't get network for network name %q",
-			networkName,
-		)
+		return nil, ErrInvalidNetwork
 	}
-	paymentKeyPublicHash := GetPaymentKey(
-		accountKey,
-		num,
-	).Public().
-		PublicKey().
-		Hash()
-	stakeKeyPublicHash := GetStakeKey(
-		accountKey,
-		num,
-	).Public().
-		PublicKey().
-		Hash()
+	if num >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	paymentKey, err := GetPaymentKey(accountKey, num)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get payment key: %w", err)
+	}
+	paymentKeyPublicHash := paymentKey.Public().PublicKey().Hash()
+	stakeKey, err := GetStakeKey(accountKey, num)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stake key: %w", err)
+	}
+	stakeKeyPublicHash := stakeKey.Public().PublicKey().Hash()
 	addr, err := lcommon.NewAddressFromParts(
 		lcommon.AddressTypeKeyKey,
 		network.Id,
@@ -522,9 +546,12 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 }
 
 func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
+	if dir == "" {
+		return nil, errors.New("directory path cannot be empty")
+	}
 	files, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read directory %q: %w", dir, err)
 	}
 
 	// Pre-allocate slice with estimated capacity to reduce allocations
