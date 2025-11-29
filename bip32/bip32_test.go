@@ -16,6 +16,7 @@ package bip32
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -224,5 +225,42 @@ func TestHardenedIndex(t *testing.T) {
 				test.expected,
 			)
 		}
+	}
+}
+
+// TestStringMethods tests the String methods for XPrv, XPub, and PublicKey.
+func TestStringMethods(t *testing.T) {
+	// Test with zero entropy
+	entropy := make([]byte, 32)
+	password := []byte{}
+	xprv := FromBip39Entropy(entropy, password)
+
+	// Test XPrv String
+	xprvStr := xprv.String()
+	if xprvStr == "" {
+		t.Error("XPrv String should not be empty")
+	}
+	if !strings.HasPrefix(xprvStr, "root_xsk") {
+		t.Errorf("XPrv String should start with 'root_xsk', got %s", xprvStr)
+	}
+
+	// Test XPub String
+	xpub := xprv.Public()
+	xpubStr := xpub.String()
+	if xpubStr == "" {
+		t.Error("XPub String should not be empty")
+	}
+	if !strings.HasPrefix(xpubStr, "root_xvk") {
+		t.Errorf("XPub String should start with 'root_xvk', got %s", xpubStr)
+	}
+
+	// Test PublicKey String
+	pubKey := xpub.PublicKey()
+	pubKeyStr := pubKey.String()
+	if pubKeyStr == "" {
+		t.Error("PublicKey String should not be empty")
+	}
+	if !strings.HasPrefix(pubKeyStr, "addr_vk") {
+		t.Errorf("PublicKey String should start with 'addr_vk', got %s", pubKeyStr)
 	}
 }

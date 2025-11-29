@@ -34,6 +34,7 @@ import (
 	"encoding/binary"
 
 	"filippo.io/edwards25519"
+	"github.com/btcsuite/btcd/btcutil/bech32"
 	"github.com/tyler-smith/go-bip39"
 	"golang.org/x/crypto/blake2b"
 )
@@ -46,6 +47,54 @@ type XPub []byte
 
 // PublicKey represents a 32-byte Ed25519 public key.
 type PublicKey []byte
+
+// String returns the Bech32-encoded representation of the extended private key as root_xsk
+func (x XPrv) String() string {
+	if len(x) != 96 {
+		return ""
+	}
+	converted, err := bech32.ConvertBits(x, 8, 5, true)
+	if err != nil {
+		return ""
+	}
+	encoded, err := bech32.Encode("root_xsk", converted)
+	if err != nil {
+		return ""
+	}
+	return encoded
+}
+
+// String returns the Bech32-encoded representation of the extended public key as root_xvk
+func (x XPub) String() string {
+	if len(x) != 64 {
+		return ""
+	}
+	converted, err := bech32.ConvertBits(x, 8, 5, true)
+	if err != nil {
+		return ""
+	}
+	encoded, err := bech32.Encode("root_xvk", converted)
+	if err != nil {
+		return ""
+	}
+	return encoded
+}
+
+// String returns the Bech32-encoded representation of the public key as addr_vk
+func (p PublicKey) String() string {
+	if len(p) != 32 {
+		return ""
+	}
+	converted, err := bech32.ConvertBits(p, 8, 5, true)
+	if err != nil {
+		return ""
+	}
+	encoded, err := bech32.Encode("addr_vk", converted)
+	if err != nil {
+		return ""
+	}
+	return encoded
+}
 
 // PrivateKey returns the 64-byte private key portion (k_L + k_R) of the extended private key.
 func (x XPrv) PrivateKey() []byte {

@@ -8,6 +8,7 @@ require (
 	cloud.google.com/go/secretmanager v1.16.0
 	filippo.io/edwards25519 v1.1.0
 	github.com/blinklabs-io/gouroboros v0.140.0
+	github.com/btcsuite/btcd/btcutil v1.1.6
 	github.com/getsops/sops/v3 v3.11.0
 	github.com/google/uuid v1.6.0
 	github.com/kelseyhightower/envconfig v1.4.0
@@ -71,7 +72,6 @@ require (
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/blinklabs-io/plutigo v0.0.13 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5 // indirect
-	github.com/btcsuite/btcd/btcutil v1.1.6 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
