@@ -109,7 +109,8 @@ func RunCreate(cfg *config.Config, output string) {
 func RunLoad(dir string, showSecrets bool) {
 	logger := logging.GetLogger()
 	if dir == "" {
-		dir = "."
+		logger.Error("directory path cannot be empty")
+		os.Exit(1)
 	}
 	keys, err := bursa.LoadWalletDir(dir, showSecrets)
 	if err != nil {

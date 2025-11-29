@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,17 +154,16 @@ func (s *FileStore) ListWallets(ctx context.Context) ([]Wallet, error) {
 
 // CreateWallet creates a new wallet instance for file storage.
 // The wallet is not persisted until Save() is called.
-func (s *FileStore) CreateWallet(name string) Wallet {
+func (s *FileStore) CreateWallet(name string) (Wallet, error) {
 	if err := validateWalletName(name); err != nil {
-		// This is a programming error - panic to catch it early
-		panic(fmt.Sprintf("invalid wallet name in CreateWallet: %v", err))
+		return nil, fmt.Errorf("invalid wallet name: %w", err)
 	}
 
 	return &fileWallet{
 		name:  name,
 		items: make(map[string]string),
 		store: s,
-	}
+	}, nil
 }
 
 // DeleteWallet removes a wallet from the file system.
@@ -182,17 +182,17 @@ func (s *FileStore) DeleteWallet(ctx context.Context, name string) error {
 
 // fileWallet implements the Wallet interface for file-based storage
 type fileWallet struct {
-	name        string
-	description string
 	items       map[string]string
 	store       *FileStore
+	name        string
+	description string
 	mu          sync.RWMutex
 }
 
 // fileWalletData represents the JSON structure for file storage
 type fileWalletData struct {
-	Description string            `json:"description"`
 	Items       map[string]string `json:"items"`
+	Description string            `json:"description"`
 }
 
 func (w *fileWallet) Name() string {
@@ -213,9 +213,7 @@ func (w *fileWallet) Items() map[string]string {
 
 	// Return a copy to prevent external modification
 	result := make(map[string]string)
-	for k, v := range w.items {
-		result[k] = v
-	}
+	maps.Copy(result, w.items)
 	return result
 }
 

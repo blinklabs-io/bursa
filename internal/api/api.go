@@ -17,6 +17,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -28,11 +29,68 @@ import (
 	"github.com/blinklabs-io/bursa/gcp"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	httpSwagger "github.com/swaggo/http-swagger"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+var validate *validator.Validate
+
+// formatValidationErrors converts validator errors into a user-friendly JSON format
+func formatValidationErrors(errs validator.ValidationErrors) string {
+	errors := make(map[string]string)
+	for _, err := range errs {
+		fieldName := err.Field()
+		// Use generic validation messages instead of exposing internal field details
+		switch err.Tag() {
+		case "required":
+			errors[fieldName] = "this field is required"
+		case "min":
+			errors[fieldName] = "value is too short"
+		case "max":
+			errors[fieldName] = "value is too long"
+		default:
+			errors[fieldName] = "validation failed"
+		}
+	}
+	jsonBytes, err := json.Marshal(errors)
+	if err != nil {
+		// Fallback to a simple error message if JSON marshaling fails
+		return `"marshaling failed"`
+	}
+	return string(jsonBytes)
+}
+
+// mapGRPCToHTTPError maps gRPC status codes to appropriate HTTP status codes and error messages
+func mapGRPCToHTTPError(w http.ResponseWriter, grpcStatus *status.Status) {
+	//nolint:exhaustive // We intentionally handle unknown codes as internal server errors
+	switch grpcStatus.Code() {
+	case codes.NotFound:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"Wallet not found"}`))
+	case codes.Unauthenticated:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"Authentication required"}`))
+	case codes.PermissionDenied:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"Permission denied"}`))
+	case codes.Internal, codes.Unavailable, codes.Unknown:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+	}
+}
 
 // WalletCreateRequest defines the request payload for wallet creation
 type WalletCreateRequest struct {
@@ -41,31 +99,31 @@ type WalletCreateRequest struct {
 
 // WalletDeleteRequest defines the request payload for wallet deletion
 type WalletDeleteRequest struct {
-	Name     string `json:"name"     binding:"required"`
+	Name     string `json:"name"     validate:"required,min=1,max=100"`
 	Password string `json:"password"`
 }
 
 // WalletGetRequest defines the request payload for wallet loading
 type WalletGetRequest struct {
-	Name     string `json:"name"     binding:"required"`
+	Name     string `json:"name"     validate:"required,min=1,max=100"`
 	Password string `json:"password"`
 }
 
 // WalletRestoreRequest defines the request payload for wallet restoration
 type WalletRestoreRequest struct {
-	Mnemonic  string `json:"mnemonic"   binding:"required"`
+	Mnemonic  string `json:"mnemonic"   validate:"required,min=1"`
 	Password  string `json:"password"`
-	AccountId uint32 `json:"account_id"`
-	PaymentId uint32 `json:"payment_id"`
-	StakeId   uint32 `json:"stake_id"`
-	AddressId uint32 `json:"address_id"`
+	AccountId uint32 `json:"account_id" validate:"max=2147483647"`
+	PaymentId uint32 `json:"payment_id" validate:"max=2147483647"`
+	StakeId   uint32 `json:"stake_id"   validate:"max=2147483647"`
+	AddressId uint32 `json:"address_id" validate:"max=2147483647"`
 }
 
 // WalletUpdateRequest defines the request payload for wallet update
 type WalletUpdateRequest struct {
-	Name        string `json:"name"        binding:"required"`
+	Name        string `json:"name"        validate:"required,min=1,max=100"`
 	Password    string `json:"password"`
-	Description string `json:"description"`
+	Description string `json:"description" validate:"max=500"`
 }
 
 //	@title			bursa
@@ -107,6 +165,7 @@ var (
 
 // Register Prometheus metrics
 func init() {
+	validate = validator.New()
 	prometheus.MustRegister(walletsCreatedCounter)
 	prometheus.MustRegister(walletsDeletedCounter)
 	prometheus.MustRegister(walletsFailCounter)
@@ -325,6 +384,7 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	resp, err := json.Marshal(wallet)
 	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		logger.Error("failed to serialize google wallet", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = fmt.Fprintf(w,
@@ -356,9 +416,29 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 
 	var req WalletRestoreRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid request"}`))
+		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
 		// Increment fail counter
+		walletsFailCounter.Inc()
+		return
+	}
+
+	// Validate the request
+	if err := validate.Struct(req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		// Parse validator errors for cleaner response
+		var validationErrors validator.ValidationErrors
+		if errors.As(err, &validationErrors) {
+			_, _ = fmt.Fprintf(
+				w,
+				`{"error":"Validation failed","fields":%s}`,
+				formatValidationErrors(validationErrors),
+			)
+		} else {
+			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
+		}
 		walletsFailCounter.Inc()
 		return
 	}
@@ -375,8 +455,19 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 		req.AddressId,
 	)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+		// Check for client validation errors vs server errors
+		if errors.Is(err, bursa.ErrInvalidMnemonic) ||
+			errors.Is(err, bursa.ErrInvalidDerivationIndex) ||
+			errors.Is(err, bursa.ErrInvalidNetwork) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprintf(w, `{"error":"%s"}`, err.Error())
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			logger.Error("failed to create wallet", "error", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+		}
 		walletsFailCounter.Inc()
 		return
 	}
@@ -387,6 +478,7 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 		g := gcp.NewGoogleWallet(name)
 		g.SetDescription("restored at " + time.Now().String())
 		if err := g.PopulateFrom(wallet); err != nil {
+			w.Header().Set("Content-Type", "application/json")
 			logger.Error("failed to populate wallet", "error", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprintf(w, "failed to populate wallet: %s", err)
@@ -394,6 +486,7 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := g.Save(r.Context()); err != nil {
+			w.Header().Set("Content-Type", "application/json")
 			logger.Error("failed to save wallet", "error", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprintf(w,
@@ -477,9 +570,29 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 
 	var req WalletGetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid request"}`))
+		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
 		// Increment fail counter
+		walletsFailCounter.Inc()
+		return
+	}
+
+	// Validate the request
+	if err := validate.Struct(req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		// Parse validator errors for cleaner response
+		var validationErrors validator.ValidationErrors
+		if errors.As(err, &validationErrors) {
+			_, _ = fmt.Fprintf(
+				w,
+				`{"error":"Validation failed","fields":%s}`,
+				formatValidationErrors(validationErrors),
+			)
+		} else {
+			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
+		}
 		walletsFailCounter.Inc()
 		return
 	}
@@ -489,10 +602,23 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 	// Load wallet from Google
 	g := gcp.NewGoogleWallet(req.Name)
 	if err := g.Load(r.Context()); err != nil {
-		logger.Error("failed to load google wallet", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = fmt.Fprintf(w,
-			"failed to load google wallet: %s", err)
+		logger.Error(
+			"failed to load google wallet",
+			"error",
+			err,
+			"name",
+			req.Name,
+		)
+
+		// Check GCP error codes for proper HTTP status mapping
+		if grpcStatus, ok := status.FromError(err); ok {
+			mapGRPCToHTTPError(w, grpcStatus)
+		} else {
+			// Non-gRPC error, treat as internal server error
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+		}
 		walletsFailCounter.Inc()
 		return
 	}
@@ -501,6 +627,7 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 	wallet := &bursa.Wallet{}
 	err := g.PopulateTo(wallet)
 	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		logger.Error("failed to convert google wallet", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = fmt.Fprintf(w,
@@ -512,6 +639,7 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	resp, err := json.Marshal(wallet)
 	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		logger.Error("failed to serialize google wallet", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = fmt.Fprintf(w,
@@ -541,9 +669,29 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 
 	var req WalletDeleteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid request"}`))
+		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
 		// Increment fail counter
+		walletsFailCounter.Inc()
+		return
+	}
+
+	// Validate the request
+	if err := validate.Struct(req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		// Parse validator errors for cleaner response
+		var validationErrors validator.ValidationErrors
+		if errors.As(err, &validationErrors) {
+			_, _ = fmt.Fprintf(
+				w,
+				`{"error":"Validation failed","fields":%s}`,
+				formatValidationErrors(validationErrors),
+			)
+		} else {
+			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
+		}
 		walletsFailCounter.Inc()
 		return
 	}
@@ -553,10 +701,23 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 	// Load wallet from Google
 	g := gcp.NewGoogleWallet(req.Name)
 	if err := g.Delete(r.Context()); err != nil {
-		logger.Error("failed to delete google wallet", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = fmt.Fprintf(w,
-			"failed to delete google wallet: %s", err)
+		logger.Error(
+			"failed to delete google wallet",
+			"error",
+			err,
+			"name",
+			req.Name,
+		)
+
+		// Check GCP error codes for proper HTTP status mapping
+		if grpcStatus, ok := status.FromError(err); ok {
+			mapGRPCToHTTPError(w, grpcStatus)
+		} else {
+			// Non-gRPC error, treat as internal server error
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+		}
 		walletsFailCounter.Inc()
 		return
 	}
@@ -586,9 +747,29 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 
 	var req WalletUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid request"}`))
+		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
 		// Increment fail counter
+		walletsFailCounter.Inc()
+		return
+	}
+
+	// Validate the request
+	if err := validate.Struct(req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		// Parse validator errors for cleaner response
+		var validationErrors validator.ValidationErrors
+		if errors.As(err, &validationErrors) {
+			_, _ = fmt.Fprintf(
+				w,
+				`{"error":"Validation failed","fields":%s}`,
+				formatValidationErrors(validationErrors),
+			)
+		} else {
+			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
+		}
 		walletsFailCounter.Inc()
 		return
 	}
@@ -598,10 +779,23 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 	// Load wallet from Google
 	g := gcp.NewGoogleWallet(req.Name)
 	if err := g.Load(r.Context()); err != nil {
-		logger.Error("failed to load google wallet", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = fmt.Fprintf(w,
-			"failed to load google wallet: %s", err)
+		logger.Error(
+			"failed to load google wallet",
+			"error",
+			err,
+			"name",
+			req.Name,
+		)
+
+		// Check GCP error codes for proper HTTP status mapping
+		if grpcStatus, ok := status.FromError(err); ok {
+			mapGRPCToHTTPError(w, grpcStatus)
+		} else {
+			// Non-gRPC error, treat as internal server error
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+		}
 		walletsFailCounter.Inc()
 		return
 	}
@@ -609,6 +803,7 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 	if g.Description() != req.Description {
 		g.SetDescription(req.Description)
 		if err := g.Save(r.Context()); err != nil {
+			w.Header().Set("Content-Type", "application/json")
 			logger.Error("failed to save google wallet", "error", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprintf(w,

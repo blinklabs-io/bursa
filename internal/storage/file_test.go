@@ -35,13 +35,15 @@ func TestFileStore(t *testing.T) {
 	store := NewFileStore(tempDir)
 
 	t.Run("CreateWallet", func(t *testing.T) {
-		wallet := store.CreateWallet("test-wallet")
+		wallet, err := store.CreateWallet("test-wallet")
+		assert.NoError(t, err)
 		assert.Equal(t, "test-wallet", wallet.Name())
 		assert.Empty(t, wallet.Description())
 	})
 
 	t.Run("SaveAndLoadWallet", func(t *testing.T) {
-		wallet := store.CreateWallet("save-test")
+		wallet, err := store.CreateWallet("save-test")
+		assert.NoError(t, err)
 
 		// Create a bursa wallet to populate from
 		bursaWallet, err := bursa.NewWallet(
@@ -81,7 +83,8 @@ func TestFileStore(t *testing.T) {
 	})
 
 	t.Run("PopulateTo", func(t *testing.T) {
-		wallet := store.CreateWallet("populate-to-test")
+		wallet, err := store.CreateWallet("populate-to-test")
+		assert.NoError(t, err)
 
 		// Create a bursa wallet to populate from
 		originalWallet, err := bursa.NewWallet(
@@ -121,10 +124,12 @@ func TestFileStore(t *testing.T) {
 
 	t.Run("ListWallets", func(t *testing.T) {
 		// Create a few wallets
-		wallet1 := store.CreateWallet("list-test-1")
-		wallet2 := store.CreateWallet("list-test-2")
+		wallet1, err := store.CreateWallet("list-test-1")
+		assert.NoError(t, err)
+		wallet2, err := store.CreateWallet("list-test-2")
+		assert.NoError(t, err)
 
-		err := wallet1.Save(context.Background())
+		err = wallet1.Save(context.Background())
 		require.NoError(t, err)
 		err = wallet2.Save(context.Background())
 		require.NoError(t, err)
@@ -142,8 +147,9 @@ func TestFileStore(t *testing.T) {
 	})
 
 	t.Run("DeleteWallet", func(t *testing.T) {
-		wallet := store.CreateWallet("delete-test")
-		err := wallet.Save(context.Background())
+		wallet, err := store.CreateWallet("delete-test")
+		assert.NoError(t, err)
+		err = wallet.Save(context.Background())
 		require.NoError(t, err)
 
 		// Verify it exists
@@ -171,7 +177,8 @@ func TestFileStoreWalletOperations(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	store := NewFileStore(tempDir)
-	wallet := store.CreateWallet("ops-test")
+	wallet, err := store.CreateWallet("ops-test")
+	assert.NoError(t, err)
 
 	t.Run("ItemOperations", func(t *testing.T) {
 		// Test PutItem and GetItem
@@ -202,7 +209,8 @@ func TestFileStoreDirectoryStructure(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	store := NewFileStore(tempDir)
-	wallet := store.CreateWallet("dir-test")
+	wallet, err := store.CreateWallet("dir-test")
+	assert.NoError(t, err)
 	wallet.PutItem("test", "data")
 
 	err = wallet.Save(context.Background())
@@ -236,9 +244,13 @@ func TestFileStoreInvalidWalletNames(t *testing.T) {
 
 	t.Run("CreateWalletRejectsInvalidNames", func(t *testing.T) {
 		for _, name := range invalidNames {
-			assert.Panics(t, func() {
-				store.CreateWallet(name)
-			}, "CreateWallet should panic for invalid name: %s", name)
+			_, err := store.CreateWallet(name)
+			assert.Error(
+				t,
+				err,
+				"CreateWallet should reject invalid name: %s",
+				name,
+			)
 		}
 	})
 
@@ -278,10 +290,11 @@ func TestFileStoreInvalidWalletNames(t *testing.T) {
 
 	t.Run("ValidNamesWork", func(t *testing.T) {
 		for _, name := range validNames {
-			wallet := store.CreateWallet(name)
+			wallet, err := store.CreateWallet(name)
+			assert.NoError(t, err)
 			assert.Equal(t, name, wallet.Name())
 
-			err := wallet.Save(context.Background())
+			err = wallet.Save(context.Background())
 			assert.NoError(t, err, "Save should work for valid name: %s", name)
 
 			loaded, err := store.GetWallet(context.Background(), name)
