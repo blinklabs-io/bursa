@@ -261,6 +261,9 @@ func TestStringMethods(t *testing.T) {
 		t.Error("PublicKey String should not be empty")
 	}
 	if !strings.HasPrefix(pubKeyStr, "addr_vk") {
-		t.Errorf("PublicKey String should start with 'addr_vk', got %s", pubKeyStr)
+		t.Errorf(
+			"PublicKey String should start with 'addr_vk', got %s",
+			pubKeyStr,
+		)
 	}
 }

@@ -237,7 +237,9 @@
             ],
             "properties": {
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
                 },
                 "password": {
                     "type": "string"
@@ -251,7 +253,9 @@
             ],
             "properties": {
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
                 },
                 "password": {
                     "type": "string"
@@ -265,22 +269,39 @@
             ],
             "properties": {
                 "account_id": {
-                    "type": "integer"
+                    "type": "integer",
+                    "maximum": 2147483647
                 },
                 "address_id": {
-                    "type": "integer"
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
+                "committee_cold_id": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
+                "committee_hot_id": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
+                "drep_id": {
+                    "type": "integer",
+                    "maximum": 2147483647
                 },
                 "mnemonic": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 },
                 "password": {
                     "type": "string"
                 },
                 "payment_id": {
-                    "type": "integer"
+                    "type": "integer",
+                    "maximum": 2147483647
                 },
                 "stake_id": {
-                    "type": "integer"
+                    "type": "integer",
+                    "maximum": 2147483647
                 }
             }
         },
@@ -291,10 +312,13 @@
             ],
             "properties": {
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 500
                 },
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
                 },
                 "password": {
                     "type": "string"
@@ -305,24 +329,56 @@
             "type": "object",
             "properties": {
                 "cborHex": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880"
                 },
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "Payment Verification Key"
                 },
                 "type": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "PaymentVerificationKeyShelley_ed25519"
                 }
             }
         },
         "bursa.Wallet": {
             "type": "object",
             "properties": {
+                "committee_cold_extended_skey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
+                "committee_cold_skey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
+                "committee_cold_vkey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
+                "committee_hot_extended_skey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
+                "committee_hot_skey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
+                "committee_hot_vkey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
+                "drep_extended_skey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
+                "drep_skey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
+                "drep_vkey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
                 "mnemonic": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
                 },
                 "payment_address": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "addr1qxqs59lphg8g6qndelq8xwqn60ag3aeyfcp33c2kdp46a429mg32v29q3cg4sdj5c9ts5vxknc0yutnj8x8r8qy2l2q9sgds2"
                 },
                 "payment_extended_skey": {
                     "$ref": "#/definitions/bursa.KeyFile"
@@ -334,7 +390,8 @@
                     "$ref": "#/definitions/bursa.KeyFile"
                 },
                 "stake_address": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "stake1uy9ggsc9qls4pu9qvyyacwnmr9tt0gzcdt5s0zj4au8qkqc65ge8t"
                 },
                 "stake_extended_skey": {
                     "$ref": "#/definitions/bursa.KeyFile"

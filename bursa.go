@@ -47,11 +47,11 @@ var (
 )
 
 type KeyFile struct {
-	Type        string `json:"type"`
-	Description string `json:"description"`
-	CborHex     string `json:"cborHex"`
+	Type        string `json:"type"        example:"PaymentVerificationKeyShelley_ed25519"`
+	Description string `json:"description" example:"Payment Verification Key"`
+	CborHex     string `json:"cborHex"     example:"5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880"`
 	// Embedded CBOR storage for automatic caching
-	cbor.DecodeStoreCbor
+	cbor.DecodeStoreCbor `                                                                                                         swaggerignore:"true"`
 }
 
 type LoadedKey struct {
@@ -79,6 +79,24 @@ func (kf KeyFile) String() string {
 		prefix = "stake_sk"
 	case "StakeExtendedSigningKeyShelley_ed25519_bip32":
 		prefix = "stake_xsk"
+	case "DRepVerificationKeyShelley_ed25519":
+		prefix = "drep_vk"
+	case "DRepSigningKeyShelley_ed25519":
+		prefix = "drep_sk"
+	case "DRepExtendedSigningKeyShelley_ed25519_bip32":
+		prefix = "drep_xsk"
+	case "CommitteeColdVerificationKeyShelley_ed25519":
+		prefix = "cc_cold_vk"
+	case "CommitteeColdSigningKeyShelley_ed25519":
+		prefix = "cc_cold_sk"
+	case "CommitteeColdExtendedSigningKeyShelley_ed25519_bip32":
+		prefix = "cc_cold_xsk"
+	case "CommitteeHotVerificationKeyShelley_ed25519":
+		prefix = "cc_hot_vk"
+	case "CommitteeHotSigningKeyShelley_ed25519":
+		prefix = "cc_hot_sk"
+	case "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32":
+		prefix = "cc_hot_xsk"
 	default:
 		// Fallback to CBOR hex if type not recognized
 		return kf.CborHex
@@ -134,16 +152,26 @@ var jsonBufferPool = sync.Pool{
 	},
 }
 
+// Wallet represents a complete HD wallet with all key types
 type Wallet struct {
-	Mnemonic            string  `json:"mnemonic"`
-	PaymentAddress      string  `json:"payment_address"`
-	StakeAddress        string  `json:"stake_address"`
-	PaymentVKey         KeyFile `json:"payment_vkey"`
-	PaymentSKey         KeyFile `json:"payment_skey"`
-	PaymentExtendedSKey KeyFile `json:"payment_extended_skey"`
-	StakeVKey           KeyFile `json:"stake_vkey"`
-	StakeSKey           KeyFile `json:"stake_skey"`
-	StakeExtendedSKey   KeyFile `json:"stake_extended_skey"`
+	Mnemonic                  string  `json:"mnemonic"                     example:"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"`
+	PaymentAddress            string  `json:"payment_address"              example:"addr1qxqs59lphg8g6qndelq8xwqn60ag3aeyfcp33c2kdp46a429mg32v29q3cg4sdj5c9ts5vxknc0yutnj8x8r8qy2l2q9sgds2"`
+	StakeAddress              string  `json:"stake_address"                example:"stake1uy9ggsc9qls4pu9qvyyacwnmr9tt0gzcdt5s0zj4au8qkqc65ge8t"`
+	PaymentVKey               KeyFile `json:"payment_vkey"`
+	PaymentSKey               KeyFile `json:"payment_skey"`
+	PaymentExtendedSKey       KeyFile `json:"payment_extended_skey"`
+	StakeVKey                 KeyFile `json:"stake_vkey"`
+	StakeSKey                 KeyFile `json:"stake_skey"`
+	StakeExtendedSKey         KeyFile `json:"stake_extended_skey"`
+	DRepVKey                  KeyFile `json:"drep_vkey"`
+	DRepSKey                  KeyFile `json:"drep_skey"`
+	DRepExtendedSKey          KeyFile `json:"drep_extended_skey"`
+	CommitteeColdVKey         KeyFile `json:"committee_cold_vkey"`
+	CommitteeColdSKey         KeyFile `json:"committee_cold_skey"`
+	CommitteeColdExtendedSKey KeyFile `json:"committee_cold_extended_skey"`
+	CommitteeHotVKey          KeyFile `json:"committee_hot_vkey"`
+	CommitteeHotSKey          KeyFile `json:"committee_hot_skey"`
+	CommitteeHotExtendedSKey  KeyFile `json:"committee_hot_extended_skey"`
 }
 
 // GenerateMnemonic generates a new BIP39 mnemonic phrase
@@ -160,18 +188,19 @@ func GenerateMnemonic() (string, error) {
 }
 
 // NewWallet creates a new wallet from a BIP39 mnemonic phrase.
-// All derivation indices (accountId, paymentId, stakeId, addressId) must be less than 2^31 (0x80000000).
+// All derivation indices (accountId, paymentId, stakeId, drepId, committeeColdId, committeeHotId, addressId) must be less than 2^31 (0x80000000).
 // This constraint ensures compatibility with BIP32/BIP44 derivation standards.
 func NewWallet(
 	mnemonic, network, password string,
 	accountId uint32,
-	paymentId, stakeId, addressId uint32,
+	paymentId, stakeId, drepId, committeeColdId, committeeHotId, addressId uint32,
 ) (*Wallet, error) {
 	if !bip39.IsMnemonicValid(mnemonic) {
 		return nil, ErrInvalidMnemonic
 	}
 	if accountId >= 0x80000000 || paymentId >= 0x80000000 ||
-		stakeId >= 0x80000000 ||
+		stakeId >= 0x80000000 || drepId >= 0x80000000 ||
+		committeeColdId >= 0x80000000 || committeeHotId >= 0x80000000 ||
 		addressId >= 0x80000000 {
 		return nil, ErrInvalidDerivationIndex
 	}
@@ -190,6 +219,18 @@ func NewWallet(
 	stakeKey, err := GetStakeKey(accountKey, stakeId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stake key: %w", err)
+	}
+	drepKey, err := GetDRepKey(accountKey, drepId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get DRep key: %w", err)
+	}
+	committeeColdKey, err := GetCommitteeColdKey(accountKey, committeeColdId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get committee cold key: %w", err)
+	}
+	committeeHotKey, err := GetCommitteeHotKey(accountKey, committeeHotId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get committee hot key: %w", err)
 	}
 	addr, err := GetAddress(accountKey, network, addressId)
 	if err != nil {
@@ -235,16 +276,86 @@ func NewWallet(
 			err,
 		)
 	}
+	drepVKey, err := GetDRepVKey(drepKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get DRep verification key: %w", err)
+	}
+	drepSKey, err := GetDRepSKey(drepKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get DRep signing key: %w", err)
+	}
+	drepExtendedSKey, err := GetDRepExtendedSKey(drepKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get DRep extended signing key: %w",
+			err,
+		)
+	}
+	committeeColdVKey, err := GetCommitteeColdVKey(committeeColdKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get committee cold verification key: %w",
+			err,
+		)
+	}
+	committeeColdSKey, err := GetCommitteeColdSKey(committeeColdKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get committee cold signing key: %w",
+			err,
+		)
+	}
+	committeeColdExtendedSKey, err := GetCommitteeColdExtendedSKey(
+		committeeColdKey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get committee cold extended signing key: %w",
+			err,
+		)
+	}
+	committeeHotVKey, err := GetCommitteeHotVKey(committeeHotKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get committee hot verification key: %w",
+			err,
+		)
+	}
+	committeeHotSKey, err := GetCommitteeHotSKey(committeeHotKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get committee hot signing key: %w",
+			err,
+		)
+	}
+	committeeHotExtendedSKey, err := GetCommitteeHotExtendedSKey(
+		committeeHotKey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get committee hot extended signing key: %w",
+			err,
+		)
+	}
 	w := &Wallet{
-		Mnemonic:            mnemonic,
-		PaymentAddress:      addr.String(),
-		StakeAddress:        stakeAddr.String(),
-		PaymentVKey:         paymentVKey,
-		PaymentSKey:         paymentSKey,
-		PaymentExtendedSKey: paymentExtendedSKey,
-		StakeVKey:           stakeVKey,
-		StakeSKey:           stakeSKey,
-		StakeExtendedSKey:   stakeExtendedSKey,
+		Mnemonic:                  mnemonic,
+		PaymentAddress:            addr.String(),
+		StakeAddress:              stakeAddr.String(),
+		PaymentVKey:               paymentVKey,
+		PaymentSKey:               paymentSKey,
+		PaymentExtendedSKey:       paymentExtendedSKey,
+		StakeVKey:                 stakeVKey,
+		StakeSKey:                 stakeSKey,
+		StakeExtendedSKey:         stakeExtendedSKey,
+		DRepVKey:                  drepVKey,
+		DRepSKey:                  drepSKey,
+		DRepExtendedSKey:          drepExtendedSKey,
+		CommitteeColdVKey:         committeeColdVKey,
+		CommitteeColdSKey:         committeeColdSKey,
+		CommitteeColdExtendedSKey: committeeColdExtendedSKey,
+		CommitteeHotVKey:          committeeHotVKey,
+		CommitteeHotSKey:          committeeHotSKey,
+		CommitteeHotExtendedSKey:  committeeHotExtendedSKey,
 	}
 	return w, nil
 }
@@ -254,12 +365,21 @@ func ExtractKeyFiles(wallet *Wallet) (map[string]string, error) {
 		return nil, errors.New("wallet cannot be nil")
 	}
 	keyMap := map[string]KeyFile{
-		"payment.vkey":         wallet.PaymentVKey,
-		"payment.skey":         wallet.PaymentSKey,
-		"paymentExtended.skey": wallet.PaymentExtendedSKey,
-		"stake.vkey":           wallet.StakeVKey,
-		"stake.skey":           wallet.StakeSKey,
-		"stakeExtended.skey":   wallet.StakeExtendedSKey,
+		"payment.vkey":                 wallet.PaymentVKey,
+		"payment.skey":                 wallet.PaymentSKey,
+		"paymentExtended.skey":         wallet.PaymentExtendedSKey,
+		"stake.vkey":                   wallet.StakeVKey,
+		"stake.skey":                   wallet.StakeSKey,
+		"stakeExtended.skey":           wallet.StakeExtendedSKey,
+		"drep.vkey":                    wallet.DRepVKey,
+		"drep.skey":                    wallet.DRepSKey,
+		"drepExtended.skey":            wallet.DRepExtendedSKey,
+		"committee-cold.vkey":          wallet.CommitteeColdVKey,
+		"committee-cold.skey":          wallet.CommitteeColdSKey,
+		"committee-cold-extended.skey": wallet.CommitteeColdExtendedSKey,
+		"committee-hot.vkey":           wallet.CommitteeHotVKey,
+		"committee-hot.skey":           wallet.CommitteeHotSKey,
+		"committee-hot-extended.skey":  wallet.CommitteeHotExtendedSKey,
 	}
 
 	result := make(map[string]string)
@@ -436,6 +556,174 @@ func GetStakeExtendedSKey(stakeKey bip32.XPrv) (KeyFile, error) {
 	return kf, nil
 }
 
+func GetDRepKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
+	if num >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	return accountKey.Derive(3).Derive(num), nil
+}
+
+func GetDRepVKey(drepKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode(
+		[]any{0, drepKey.Public().PublicKey()},
+	)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode DRep verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "DRepVerificationKeyShelley_ed25519",
+		Description: "DRep Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+func GetDRepSKey(drepKey bip32.XPrv) (KeyFile, error) {
+	return getSigningKeyFile(
+		drepKey,
+		"DRepSigningKeyShelley_ed25519",
+		"DRep Signing Key",
+	)
+}
+
+func GetDRepExtendedSKey(drepKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode([]any{
+		0,
+		drepKey.PrivateKey(),
+		drepKey.ChainCode(),
+	})
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode DRep extended signing key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "DRepExtendedSigningKeyShelley_ed25519_bip32",
+		Description: "DRep Extended Signing Key (BIP32)",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+func GetCommitteeColdKey(
+	accountKey bip32.XPrv,
+	num uint32,
+) (bip32.XPrv, error) {
+	if num >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	return accountKey.Derive(4).Derive(num), nil
+}
+
+func GetCommitteeColdVKey(committeeKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode(
+		[]any{0, committeeKey.Public().PublicKey()},
+	)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode Committee Cold verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "CommitteeColdVerificationKeyShelley_ed25519",
+		Description: "Committee Cold Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+func GetCommitteeColdSKey(committeeKey bip32.XPrv) (KeyFile, error) {
+	return getSigningKeyFile(
+		committeeKey,
+		"CommitteeColdSigningKeyShelley_ed25519",
+		"Committee Cold Signing Key",
+	)
+}
+
+func GetCommitteeColdExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode([]any{
+		0,
+		committeeKey.PrivateKey(),
+		committeeKey.ChainCode(),
+	})
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode Committee Cold extended signing key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
+		Description: "Committee Cold Extended Signing Key (BIP32)",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+func GetCommitteeHotKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
+	if num >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	return accountKey.Derive(5).Derive(num), nil
+}
+
+func GetCommitteeHotVKey(committeeKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode(
+		[]any{0, committeeKey.Public().PublicKey()},
+	)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode Committee Hot verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "CommitteeHotVerificationKeyShelley_ed25519",
+		Description: "Committee Hot Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+func GetCommitteeHotSKey(committeeKey bip32.XPrv) (KeyFile, error) {
+	return getSigningKeyFile(
+		committeeKey,
+		"CommitteeHotSigningKeyShelley_ed25519",
+		"Committee Hot Signing Key",
+	)
+}
+
+func GetCommitteeHotExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode([]any{
+		0,
+		committeeKey.PrivateKey(),
+		committeeKey.ChainCode(),
+	})
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode Committee Hot extended signing key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
+		Description: "Committee Hot Extended Signing Key (BIP32)",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
 func GetAddress(
 	accountKey bip32.XPrv,
 	networkName string,
@@ -583,14 +871,21 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 	// Decode cbor encoded key bytes
 	switch env.Type {
 	case "PaymentVerificationKeyShelley_ed25519",
-		"StakeVerificationKeyShelley_ed25519":
+		"StakeVerificationKeyShelley_ed25519",
+		"DRepVerificationKeyShelley_ed25519",
+		"CommitteeColdVerificationKeyShelley_ed25519",
+		"CommitteeHotVerificationKeyShelley_ed25519":
 		vk, err := decodeVerificationKey(cborData)
 		if err != nil {
 			return nil, err
 		}
 		lk.VKey = vk
 		return lk, nil
-	case "PaymentSigningKeyShelley_ed25519", "StakeSigningKeyShelley_ed25519":
+	case "PaymentSigningKeyShelley_ed25519",
+		"StakeSigningKeyShelley_ed25519",
+		"DRepSigningKeyShelley_ed25519",
+		"CommitteeColdSigningKeyShelley_ed25519",
+		"CommitteeHotSigningKeyShelley_ed25519":
 		sk, vk, err := decodeNonExtendedCborKey(cborData)
 		if err != nil {
 			return nil, err
@@ -598,7 +893,10 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		lk.SKey, lk.VKey = sk, vk
 		return lk, nil
 	case "PaymentExtendedSigningKeyShelley_ed25519_bip32",
-		"StakeExtendedSigningKeyShelley_ed25519_bip32":
+		"StakeExtendedSigningKeyShelley_ed25519_bip32",
+		"DRepExtendedSigningKeyShelley_ed25519_bip32",
+		"CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
+		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32":
 		sk, vk, err := decodeExtendedCborKey(cborData)
 		if err != nil {
 			return nil, err

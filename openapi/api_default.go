@@ -32,7 +32,7 @@ type DefaultAPI interface {
 	ApiWalletCreateGet(ctx context.Context) DefaultAPIApiWalletCreateGetRequest
 
 	// ApiWalletCreateGetExecute executes the request
-	//  @return BursaWallet
+	//	@return	BursaWallet
 	ApiWalletCreateGetExecute(
 		r DefaultAPIApiWalletCreateGetRequest,
 	) (*BursaWallet, *http.Response, error)
@@ -50,7 +50,7 @@ type DefaultAPI interface {
 	) DefaultAPIApiWalletDeletePostRequest
 
 	// ApiWalletDeletePostExecute executes the request
-	//  @return string
+	//	@return	string
 	ApiWalletDeletePostExecute(
 		r DefaultAPIApiWalletDeletePostRequest,
 	) (string, *http.Response, error)
@@ -66,7 +66,7 @@ type DefaultAPI interface {
 	ApiWalletGetPost(ctx context.Context) DefaultAPIApiWalletGetPostRequest
 
 	// ApiWalletGetPostExecute executes the request
-	//  @return BursaWallet
+	//	@return	BursaWallet
 	ApiWalletGetPostExecute(
 		r DefaultAPIApiWalletGetPostRequest,
 	) (*BursaWallet, *http.Response, error)
@@ -82,7 +82,7 @@ type DefaultAPI interface {
 	ApiWalletListGet(ctx context.Context) DefaultAPIApiWalletListGetRequest
 
 	// ApiWalletListGetExecute executes the request
-	//  @return []string
+	//	@return	[]string
 	ApiWalletListGetExecute(
 		r DefaultAPIApiWalletListGetRequest,
 	) ([]string, *http.Response, error)
@@ -100,7 +100,7 @@ type DefaultAPI interface {
 	) DefaultAPIApiWalletRestorePostRequest
 
 	// ApiWalletRestorePostExecute executes the request
-	//  @return BursaWallet
+	//	@return	BursaWallet
 	ApiWalletRestorePostExecute(
 		r DefaultAPIApiWalletRestorePostRequest,
 	) (*BursaWallet, *http.Response, error)
@@ -118,7 +118,7 @@ type DefaultAPI interface {
 	) DefaultAPIApiWalletUpdatePostRequest
 
 	// ApiWalletUpdatePostExecute executes the request
-	//  @return string
+	//	@return	string
 	ApiWalletUpdatePostExecute(
 		r DefaultAPIApiWalletUpdatePostRequest,
 	) (string, *http.Response, error)
@@ -155,7 +155,7 @@ func (a *DefaultAPIService) ApiWalletCreateGet(
 
 // Execute executes the request
 //
-//	@return BursaWallet
+//	@return	BursaWallet
 func (a *DefaultAPIService) ApiWalletCreateGetExecute(
 	r DefaultAPIApiWalletCreateGetRequest,
 ) (*BursaWallet, *http.Response, error) {
@@ -286,7 +286,7 @@ func (a *DefaultAPIService) ApiWalletDeletePost(
 
 // Execute executes the request
 //
-//	@return string
+//	@return	string
 func (a *DefaultAPIService) ApiWalletDeletePostExecute(
 	r DefaultAPIApiWalletDeletePostRequest,
 ) (string, *http.Response, error) {
@@ -453,7 +453,7 @@ func (a *DefaultAPIService) ApiWalletGetPost(
 
 // Execute executes the request
 //
-//	@return BursaWallet
+//	@return	BursaWallet
 func (a *DefaultAPIService) ApiWalletGetPostExecute(
 	r DefaultAPIApiWalletGetPostRequest,
 ) (*BursaWallet, *http.Response, error) {
@@ -611,7 +611,7 @@ func (a *DefaultAPIService) ApiWalletListGet(
 
 // Execute executes the request
 //
-//	@return []string
+//	@return	[]string
 func (a *DefaultAPIService) ApiWalletListGetExecute(
 	r DefaultAPIApiWalletListGetRequest,
 ) ([]string, *http.Response, error) {
@@ -742,7 +742,7 @@ func (a *DefaultAPIService) ApiWalletRestorePost(
 
 // Execute executes the request
 //
-//	@return BursaWallet
+//	@return	BursaWallet
 func (a *DefaultAPIService) ApiWalletRestorePostExecute(
 	r DefaultAPIApiWalletRestorePostRequest,
 ) (*BursaWallet, *http.Response, error) {
@@ -909,7 +909,7 @@ func (a *DefaultAPIService) ApiWalletUpdatePost(
 
 // Execute executes the request
 //
-//	@return string
+//	@return	string
 func (a *DefaultAPIService) ApiWalletUpdatePostExecute(
 	r DefaultAPIApiWalletUpdatePostRequest,
 ) (string, *http.Response, error) {

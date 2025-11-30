@@ -98,6 +98,60 @@ func TestExtractKeyFiles(t *testing.T) {
     "cborHex": "ada123"
 }
 `,
+		"drep.vkey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
+		"drep.skey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
+		"drepExtended.skey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
+		"committee-cold.vkey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
+		"committee-cold.skey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
+		"committee-cold-extended.skey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
+		"committee-hot.vkey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
+		"committee-hot.skey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
+		"committee-hot-extended.skey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
 	}
 
 	result, err := ExtractKeyFiles(wallet)
@@ -111,7 +165,7 @@ func TestLoadWalletDir(t *testing.T) {
 
 	// Create a wallet
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0)
+	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0)
 	assert.NoError(t, err)
 
 	// Extract key files
@@ -128,7 +182,11 @@ func TestLoadWalletDir(t *testing.T) {
 	// Load the wallet dir
 	loadedKeys, err := LoadWalletDir(tmpDir, true)
 	assert.NoError(t, err)
-	assert.Len(t, loadedKeys, 6) // 3 vkeys + 3 skeys
+	assert.Len(
+		t,
+		loadedKeys,
+		15,
+	) // 3 vkeys + 3 skeys per key type (payment, stake, drep, committee cold, committee hot)
 
 	// Check that keys are loaded correctly
 	keyMap := make(map[string]*LoadedKey)
@@ -167,7 +225,7 @@ func TestLoadWalletDirPartial(t *testing.T) {
 
 	// Create a wallet
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0)
+	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0)
 	assert.NoError(t, err)
 
 	// Extract key files
@@ -229,7 +287,7 @@ func BenchmarkNewWallet(b *testing.B) {
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
 	for b.Loop() {
-		_, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0)
+		_, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -242,6 +300,9 @@ func BenchmarkExtractKeyFiles(b *testing.B) {
 		mnemonic,
 		"mainnet",
 		"",
+		0,
+		0,
+		0,
 		0,
 		0,
 		0,
@@ -266,6 +327,9 @@ func BenchmarkCBORDecode(b *testing.B) {
 		mnemonic,
 		"mainnet",
 		"",
+		0,
+		0,
+		0,
 		0,
 		0,
 		0,
@@ -295,7 +359,7 @@ func BenchmarkLoadWalletDir(b *testing.B) {
 	tmpDir := b.TempDir()
 
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0)
+	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -324,14 +388,14 @@ func BenchmarkLoadWalletDir(b *testing.B) {
 }
 
 func TestNewWalletInvalidMnemonic(t *testing.T) {
-	_, err := NewWallet("invalid mnemonic", "mainnet", "", 0, 0, 0, 0)
+	_, err := NewWallet("invalid mnemonic", "mainnet", "", 0, 0, 0, 0, 0, 0, 0)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid mnemonic")
 }
 
 func TestNewWalletInvalidIndices(t *testing.T) {
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	_, err := NewWallet(mnemonic, "mainnet", "", 0x80000000, 0, 0, 0)
+	_, err := NewWallet(mnemonic, "mainnet", "", 0x80000000, 0, 0, 0, 0, 0, 0)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "derivation indices must be less than 2^31")
 }
@@ -364,6 +428,9 @@ func TestCIP1852Compliance(t *testing.T) {
 		accountId,
 		paymentId,
 		stakeId,
+		0,
+		0,
+		0,
 		0,
 	)
 	assert.NoError(t, err)

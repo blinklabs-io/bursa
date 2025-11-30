@@ -6,6 +6,9 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **AccountId** | Pointer to **int32** |  | [optional] 
 **AddressId** | Pointer to **int32** |  | [optional] 
+**CommitteeColdId** | Pointer to **int32** |  | [optional] 
+**CommitteeHotId** | Pointer to **int32** |  | [optional] 
+**DrepId** | Pointer to **int32** |  | [optional] 
 **Mnemonic** | **string** |  | 
 **Password** | Pointer to **string** |  | [optional] 
 **PaymentId** | Pointer to **int32** |  | [optional] 
@@ -79,6 +82,81 @@ SetAddressId sets AddressId field to given value.
 `func (o *ApiWalletRestoreRequest) HasAddressId() bool`
 
 HasAddressId returns a boolean if a field has been set.
+
+### GetCommitteeColdId
+
+`func (o *ApiWalletRestoreRequest) GetCommitteeColdId() int32`
+
+GetCommitteeColdId returns the CommitteeColdId field if non-nil, zero value otherwise.
+
+### GetCommitteeColdIdOk
+
+`func (o *ApiWalletRestoreRequest) GetCommitteeColdIdOk() (*int32, bool)`
+
+GetCommitteeColdIdOk returns a tuple with the CommitteeColdId field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCommitteeColdId
+
+`func (o *ApiWalletRestoreRequest) SetCommitteeColdId(v int32)`
+
+SetCommitteeColdId sets CommitteeColdId field to given value.
+
+### HasCommitteeColdId
+
+`func (o *ApiWalletRestoreRequest) HasCommitteeColdId() bool`
+
+HasCommitteeColdId returns a boolean if a field has been set.
+
+### GetCommitteeHotId
+
+`func (o *ApiWalletRestoreRequest) GetCommitteeHotId() int32`
+
+GetCommitteeHotId returns the CommitteeHotId field if non-nil, zero value otherwise.
+
+### GetCommitteeHotIdOk
+
+`func (o *ApiWalletRestoreRequest) GetCommitteeHotIdOk() (*int32, bool)`
+
+GetCommitteeHotIdOk returns a tuple with the CommitteeHotId field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCommitteeHotId
+
+`func (o *ApiWalletRestoreRequest) SetCommitteeHotId(v int32)`
+
+SetCommitteeHotId sets CommitteeHotId field to given value.
+
+### HasCommitteeHotId
+
+`func (o *ApiWalletRestoreRequest) HasCommitteeHotId() bool`
+
+HasCommitteeHotId returns a boolean if a field has been set.
+
+### GetDrepId
+
+`func (o *ApiWalletRestoreRequest) GetDrepId() int32`
+
+GetDrepId returns the DrepId field if non-nil, zero value otherwise.
+
+### GetDrepIdOk
+
+`func (o *ApiWalletRestoreRequest) GetDrepIdOk() (*int32, bool)`
+
+GetDrepIdOk returns a tuple with the DrepId field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetDrepId
+
+`func (o *ApiWalletRestoreRequest) SetDrepId(v int32)`
+
+SetDrepId sets DrepId field to given value.
+
+### HasDrepId
+
+`func (o *ApiWalletRestoreRequest) HasDrepId() bool`
+
+HasDrepId returns a boolean if a field has been set.
 
 ### GetMnemonic
 

@@ -3,6 +3,8 @@ definitions:
   api.WalletDeleteRequest:
     properties:
       name:
+        maxLength: 100
+        minLength: 1
         type: string
       password:
         type: string
@@ -12,6 +14,8 @@ definitions:
   api.WalletGetRequest:
     properties:
       name:
+        maxLength: 100
+        minLength: 1
         type: string
       password:
         type: string
@@ -21,16 +25,30 @@ definitions:
   api.WalletRestoreRequest:
     properties:
       account_id:
+        maximum: 2147483647
         type: integer
       address_id:
+        maximum: 2147483647
+        type: integer
+      committee_cold_id:
+        maximum: 2147483647
+        type: integer
+      committee_hot_id:
+        maximum: 2147483647
+        type: integer
+      drep_id:
+        maximum: 2147483647
         type: integer
       mnemonic:
+        minLength: 1
         type: string
       password:
         type: string
       payment_id:
+        maximum: 2147483647
         type: integer
       stake_id:
+        maximum: 2147483647
         type: integer
     required:
     - mnemonic
@@ -38,8 +56,11 @@ definitions:
   api.WalletUpdateRequest:
     properties:
       description:
+        maxLength: 500
         type: string
       name:
+        maxLength: 100
+        minLength: 1
         type: string
       password:
         type: string
@@ -49,17 +70,41 @@ definitions:
   bursa.KeyFile:
     properties:
       cborHex:
+        example: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
         type: string
       description:
+        example: Payment Verification Key
         type: string
       type:
+        example: PaymentVerificationKeyShelley_ed25519
         type: string
     type: object
   bursa.Wallet:
     properties:
+      committee_cold_extended_skey:
+        $ref: '#/definitions/bursa.KeyFile'
+      committee_cold_skey:
+        $ref: '#/definitions/bursa.KeyFile'
+      committee_cold_vkey:
+        $ref: '#/definitions/bursa.KeyFile'
+      committee_hot_extended_skey:
+        $ref: '#/definitions/bursa.KeyFile'
+      committee_hot_skey:
+        $ref: '#/definitions/bursa.KeyFile'
+      committee_hot_vkey:
+        $ref: '#/definitions/bursa.KeyFile'
+      drep_extended_skey:
+        $ref: '#/definitions/bursa.KeyFile'
+      drep_skey:
+        $ref: '#/definitions/bursa.KeyFile'
+      drep_vkey:
+        $ref: '#/definitions/bursa.KeyFile'
       mnemonic:
+        example: abandon abandon abandon abandon abandon abandon abandon abandon abandon
+          abandon abandon about
         type: string
       payment_address:
+        example: addr1qxqs59lphg8g6qndelq8xwqn60ag3aeyfcp33c2kdp46a429mg32v29q3cg4sdj5c9ts5vxknc0yutnj8x8r8qy2l2q9sgds2
         type: string
       payment_extended_skey:
         $ref: '#/definitions/bursa.KeyFile'
@@ -68,6 +113,7 @@ definitions:
       payment_vkey:
         $ref: '#/definitions/bursa.KeyFile'
       stake_address:
+        example: stake1uy9ggsc9qls4pu9qvyyacwnmr9tt0gzcdt5s0zj4au8qkqc65ge8t
         type: string
       stake_extended_skey:
         $ref: '#/definitions/bursa.KeyFile'
