@@ -111,12 +111,15 @@ type WalletGetRequest struct {
 
 // WalletRestoreRequest defines the request payload for wallet restoration
 type WalletRestoreRequest struct {
-	Mnemonic  string `json:"mnemonic"   validate:"required,min=1"`
-	Password  string `json:"password"`
-	AccountId uint32 `json:"account_id" validate:"max=2147483647"`
-	PaymentId uint32 `json:"payment_id" validate:"max=2147483647"`
-	StakeId   uint32 `json:"stake_id"   validate:"max=2147483647"`
-	AddressId uint32 `json:"address_id" validate:"max=2147483647"`
+	Mnemonic        string `json:"mnemonic"          validate:"required,min=1"`
+	Password        string `json:"password"`
+	AccountId       uint32 `json:"account_id"        validate:"max=2147483647"`
+	PaymentId       uint32 `json:"payment_id"        validate:"max=2147483647"`
+	StakeId         uint32 `json:"stake_id"          validate:"max=2147483647"`
+	DrepId          uint32 `json:"drep_id"           validate:"max=2147483647"`
+	CommitteeColdId uint32 `json:"committee_cold_id" validate:"max=2147483647"`
+	CommitteeHotId  uint32 `json:"committee_hot_id"  validate:"max=2147483647"`
+	AddressId       uint32 `json:"address_id"        validate:"max=2147483647"`
 }
 
 // WalletUpdateRequest defines the request payload for wallet update
@@ -347,7 +350,18 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wallet, err := bursa.NewWallet(mnemonic, cfg.Network, "", 0, 0, 0, 0)
+	wallet, err := bursa.NewWallet(
+		mnemonic,
+		cfg.Network,
+		"",
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+	)
 	if err != nil {
 		logger.Error("failed to initialize wallet", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -452,6 +466,9 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 		req.AccountId,
 		req.PaymentId,
 		req.StakeId,
+		req.DrepId,
+		req.CommitteeColdId,
+		req.CommitteeHotId,
 		req.AddressId,
 	)
 	if err != nil {

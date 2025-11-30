@@ -22,12 +22,15 @@ var _ MappedNullable = &ApiWalletRestoreRequest{}
 
 // ApiWalletRestoreRequest struct for ApiWalletRestoreRequest
 type ApiWalletRestoreRequest struct {
-	AccountId *int32  `json:"account_id,omitempty"`
-	AddressId *int32  `json:"address_id,omitempty"`
-	Mnemonic  string  `json:"mnemonic"`
-	Password  *string `json:"password,omitempty"`
-	PaymentId *int32  `json:"payment_id,omitempty"`
-	StakeId   *int32  `json:"stake_id,omitempty"`
+	AccountId       *int32  `json:"account_id,omitempty"`
+	AddressId       *int32  `json:"address_id,omitempty"`
+	CommitteeColdId *int32  `json:"committee_cold_id,omitempty"`
+	CommitteeHotId  *int32  `json:"committee_hot_id,omitempty"`
+	DrepId          *int32  `json:"drep_id,omitempty"`
+	Mnemonic        string  `json:"mnemonic"`
+	Password        *string `json:"password,omitempty"`
+	PaymentId       *int32  `json:"payment_id,omitempty"`
+	StakeId         *int32  `json:"stake_id,omitempty"`
 }
 
 type _ApiWalletRestoreRequest ApiWalletRestoreRequest
@@ -112,6 +115,102 @@ func (o *ApiWalletRestoreRequest) HasAddressId() bool {
 // SetAddressId gets a reference to the given int32 and assigns it to the AddressId field.
 func (o *ApiWalletRestoreRequest) SetAddressId(v int32) {
 	o.AddressId = &v
+}
+
+// GetCommitteeColdId returns the CommitteeColdId field value if set, zero value otherwise.
+func (o *ApiWalletRestoreRequest) GetCommitteeColdId() int32 {
+	if o == nil || IsNil(o.CommitteeColdId) {
+		var ret int32
+		return ret
+	}
+	return *o.CommitteeColdId
+}
+
+// GetCommitteeColdIdOk returns a tuple with the CommitteeColdId field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ApiWalletRestoreRequest) GetCommitteeColdIdOk() (*int32, bool) {
+	if o == nil || IsNil(o.CommitteeColdId) {
+		return nil, false
+	}
+	return o.CommitteeColdId, true
+}
+
+// HasCommitteeColdId returns a boolean if a field has been set.
+func (o *ApiWalletRestoreRequest) HasCommitteeColdId() bool {
+	if o != nil && !IsNil(o.CommitteeColdId) {
+		return true
+	}
+
+	return false
+}
+
+// SetCommitteeColdId gets a reference to the given int32 and assigns it to the CommitteeColdId field.
+func (o *ApiWalletRestoreRequest) SetCommitteeColdId(v int32) {
+	o.CommitteeColdId = &v
+}
+
+// GetCommitteeHotId returns the CommitteeHotId field value if set, zero value otherwise.
+func (o *ApiWalletRestoreRequest) GetCommitteeHotId() int32 {
+	if o == nil || IsNil(o.CommitteeHotId) {
+		var ret int32
+		return ret
+	}
+	return *o.CommitteeHotId
+}
+
+// GetCommitteeHotIdOk returns a tuple with the CommitteeHotId field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ApiWalletRestoreRequest) GetCommitteeHotIdOk() (*int32, bool) {
+	if o == nil || IsNil(o.CommitteeHotId) {
+		return nil, false
+	}
+	return o.CommitteeHotId, true
+}
+
+// HasCommitteeHotId returns a boolean if a field has been set.
+func (o *ApiWalletRestoreRequest) HasCommitteeHotId() bool {
+	if o != nil && !IsNil(o.CommitteeHotId) {
+		return true
+	}
+
+	return false
+}
+
+// SetCommitteeHotId gets a reference to the given int32 and assigns it to the CommitteeHotId field.
+func (o *ApiWalletRestoreRequest) SetCommitteeHotId(v int32) {
+	o.CommitteeHotId = &v
+}
+
+// GetDrepId returns the DrepId field value if set, zero value otherwise.
+func (o *ApiWalletRestoreRequest) GetDrepId() int32 {
+	if o == nil || IsNil(o.DrepId) {
+		var ret int32
+		return ret
+	}
+	return *o.DrepId
+}
+
+// GetDrepIdOk returns a tuple with the DrepId field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ApiWalletRestoreRequest) GetDrepIdOk() (*int32, bool) {
+	if o == nil || IsNil(o.DrepId) {
+		return nil, false
+	}
+	return o.DrepId, true
+}
+
+// HasDrepId returns a boolean if a field has been set.
+func (o *ApiWalletRestoreRequest) HasDrepId() bool {
+	if o != nil && !IsNil(o.DrepId) {
+		return true
+	}
+
+	return false
+}
+
+// SetDrepId gets a reference to the given int32 and assigns it to the DrepId field.
+func (o *ApiWalletRestoreRequest) SetDrepId(v int32) {
+	o.DrepId = &v
 }
 
 // GetMnemonic returns the Mnemonic field value
@@ -249,6 +348,15 @@ func (o ApiWalletRestoreRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.AddressId) {
 		toSerialize["address_id"] = o.AddressId
+	}
+	if !IsNil(o.CommitteeColdId) {
+		toSerialize["committee_cold_id"] = o.CommitteeColdId
+	}
+	if !IsNil(o.CommitteeHotId) {
+		toSerialize["committee_hot_id"] = o.CommitteeHotId
+	}
+	if !IsNil(o.DrepId) {
+		toSerialize["drep_id"] = o.DrepId
 	}
 	toSerialize["mnemonic"] = o.Mnemonic
 	if !IsNil(o.Password) {

@@ -190,6 +190,12 @@ components:
           type: integer
         address_id:
           type: integer
+        committee_cold_id:
+          type: integer
+        committee_hot_id:
+          type: integer
+        drep_id:
+          type: integer
         mnemonic:
           type: string
         password:

@@ -30,7 +30,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	openapiclient "github.com/blinklabs-io/cardano-node-api/openapi"
+	openapiclient "github.com/blinklabs-io/bursa/openapi"
 )
 
 func main() {
@@ -91,7 +91,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	openapiclient "github.com/blinklabs-io/cardano-node-api/openapi"
+	openapiclient "github.com/blinklabs-io/bursa/openapi"
 )
 
 func main() {
@@ -157,7 +157,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	openapiclient "github.com/blinklabs-io/cardano-node-api/openapi"
+	openapiclient "github.com/blinklabs-io/bursa/openapi"
 )
 
 func main() {
@@ -223,7 +223,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	openapiclient "github.com/blinklabs-io/cardano-node-api/openapi"
+	openapiclient "github.com/blinklabs-io/bursa/openapi"
 )
 
 func main() {
@@ -284,7 +284,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	openapiclient "github.com/blinklabs-io/cardano-node-api/openapi"
+	openapiclient "github.com/blinklabs-io/bursa/openapi"
 )
 
 func main() {
@@ -350,7 +350,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	openapiclient "github.com/blinklabs-io/cardano-node-api/openapi"
+	openapiclient "github.com/blinklabs-io/bursa/openapi"
 )
 
 func main() {
