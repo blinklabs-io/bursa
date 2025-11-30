@@ -31,6 +31,7 @@ import (
 	ouroboros "github.com/blinklabs-io/gouroboros"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/btcsuite/btcd/btcutil/bech32"
 	bip39 "github.com/tyler-smith/go-bip39"
 )
 
@@ -60,6 +61,70 @@ type LoadedKey struct {
 	RawCBOR     []byte
 	VKey        []byte
 	SKey        []byte
+}
+
+// String returns the Bech32-encoded representation of the key according to CIP-0005
+func (kf KeyFile) String() string {
+	var prefix string
+	switch kf.Type {
+	case "PaymentVerificationKeyShelley_ed25519":
+		prefix = "addr_vk"
+	case "PaymentSigningKeyShelley_ed25519":
+		prefix = "addr_sk"
+	case "PaymentExtendedSigningKeyShelley_ed25519_bip32":
+		prefix = "addr_xsk"
+	case "StakeVerificationKeyShelley_ed25519":
+		prefix = "stake_vk"
+	case "StakeSigningKeyShelley_ed25519":
+		prefix = "stake_sk"
+	case "StakeExtendedSigningKeyShelley_ed25519_bip32":
+		prefix = "stake_xsk"
+	default:
+		// Fallback to CBOR hex if type not recognized
+		return kf.CborHex
+	}
+
+	cborData, err := hex.DecodeString(kf.CborHex)
+	if err != nil {
+		return kf.CborHex
+	}
+	var decoded []any
+	_, err = cbor.Decode(cborData, &decoded)
+	if err != nil {
+		return kf.CborHex
+	}
+	if len(decoded) < 2 {
+		return kf.CborHex
+	}
+
+	var data []byte
+	if strings.Contains(kf.Type, "_bip32") {
+		if len(decoded) < 3 {
+			return kf.CborHex
+		}
+		priv, ok1 := decoded[1].([]byte)
+		chain, ok2 := decoded[2].([]byte)
+		if !ok1 || !ok2 {
+			return kf.CborHex
+		}
+		data = append(priv, chain...)
+	} else {
+		key, ok := decoded[1].([]byte)
+		if !ok {
+			return kf.CborHex
+		}
+		data = key
+	}
+
+	converted, err := bech32.ConvertBits(data, 8, 5, true)
+	if err != nil {
+		return kf.CborHex
+	}
+	encoded, err := bech32.Encode(prefix, converted)
+	if err != nil {
+		return kf.CborHex
+	}
+	return encoded
 }
 
 // Buffer pool for JSON marshaling
