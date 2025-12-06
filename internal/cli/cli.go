@@ -15,6 +15,8 @@
 package cli
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -118,4 +120,234 @@ func RunLoad(dir string, showSecrets bool) {
 		os.Exit(1)
 	}
 	bursa.PrintLoadedKeys(keys, showSecrets)
+}
+
+func RunScriptCreate(
+	required int,
+	keyHashes []string,
+	output, network string,
+	all, any bool,
+	timelockBefore, timelockAfter uint64,
+) {
+	logger := logging.GetLogger()
+
+	// Validate parameters
+	if all && any {
+		logger.Error("cannot specify both --all and --any")
+		os.Exit(1)
+	}
+	if all && required > 0 {
+		logger.Error("cannot specify --required with --all")
+		os.Exit(1)
+	}
+	if any && required > 0 {
+		logger.Error("cannot specify --required with --any")
+		os.Exit(1)
+	}
+	if !all && !any && required == 0 {
+		logger.Error("must specify --required, --all, or --any")
+		os.Exit(1)
+	}
+	if len(keyHashes) == 0 {
+		logger.Error("must provide at least one key hash")
+		os.Exit(1)
+	}
+	if timelockBefore > 0 && timelockAfter > 0 {
+		logger.Error(
+			"cannot specify both --timelock-before and --timelock-after",
+		)
+		os.Exit(1)
+	}
+
+	// Parse key hashes
+	hashes := make([][]byte, len(keyHashes))
+	for i, hashStr := range keyHashes {
+		hash, err := hex.DecodeString(hashStr)
+		if err != nil {
+			logger.Error(
+				"invalid key hash format",
+				"hash",
+				hashStr,
+				"error",
+				err,
+			)
+			os.Exit(1)
+		}
+		hashes[i] = hash
+	}
+
+	// Create the script
+	var script bursa.Script
+	if all {
+		script = bursa.NewAllMultiSigScript(hashes...)
+	} else if any {
+		script = bursa.NewAnyMultiSigScript(hashes...)
+	} else {
+		script = bursa.NewMultiSigScript(required, hashes...)
+	}
+
+	// Apply timelock if specified
+	if timelockBefore > 0 {
+		script = bursa.NewTimelockedScript(timelockBefore, true, script)
+	} else if timelockAfter > 0 {
+		script = bursa.NewTimelockedScript(timelockAfter, false, script)
+	}
+
+	// Marshal script data
+	scriptData, err := bursa.MarshalScript(script, network)
+	if err != nil {
+		logger.Error("failed to marshal script", "error", err)
+		os.Exit(1)
+	}
+
+	// Output the script
+	if output != "" {
+		// Write to file
+		file, err := os.Create(output)
+		if err != nil {
+			logger.Error(
+				"failed to create output file",
+				"file",
+				output,
+				"error",
+				err,
+			)
+			os.Exit(1)
+		}
+		defer file.Close()
+
+		encoder := json.NewEncoder(file)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(scriptData); err != nil {
+			logger.Error("failed to write script to file", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("script written to file", "file", output)
+	} else {
+		// Print to stdout
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(scriptData); err != nil {
+			logger.Error("failed to encode script", "error", err)
+			os.Exit(1)
+		}
+	}
+}
+
+func RunScriptValidate(scriptFile string, signatures []string, slot uint64) {
+	logger := logging.GetLogger()
+
+	// Read script file
+	file, err := os.Open(scriptFile)
+	if err != nil {
+		logger.Error(
+			"failed to open script file",
+			"file",
+			scriptFile,
+			"error",
+			err,
+		)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	var scriptData bursa.ScriptData
+	if err := json.NewDecoder(file).Decode(&scriptData); err != nil {
+		logger.Error("failed to parse script file", "error", err)
+		os.Exit(1)
+	}
+
+	// Unmarshal script
+	script, err := bursa.UnmarshalScript(&scriptData)
+	if err != nil {
+		logger.Error("failed to unmarshal script", "error", err)
+		os.Exit(1)
+	}
+
+	// Parse signatures
+	sigBytes := make([][]byte, 0, len(signatures))
+	for _, sigStr := range signatures {
+		sig, err := hex.DecodeString(sigStr)
+		if err != nil {
+			logger.Error(
+				"invalid signature format",
+				"signature",
+				sigStr,
+				"error",
+				err,
+			)
+			os.Exit(1)
+		}
+		sigBytes = append(sigBytes, sig)
+	}
+
+	// Validate script
+	valid := bursa.ValidateScript(script, sigBytes, slot)
+
+	// Output result
+	result := map[string]any{
+		"valid":      valid,
+		"slot":       slot,
+		"signatures": len(signatures),
+		"scriptHash": scriptData.Hash,
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(result); err != nil {
+		logger.Error("failed to encode result", "error", err)
+		os.Exit(1)
+	}
+}
+
+func RunScriptAddress(scriptFile, network string) {
+	logger := logging.GetLogger()
+
+	// Read script file
+	file, err := os.Open(scriptFile)
+	if err != nil {
+		logger.Error(
+			"failed to open script file",
+			"file",
+			scriptFile,
+			"error",
+			err,
+		)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	var scriptData bursa.ScriptData
+	if err := json.NewDecoder(file).Decode(&scriptData); err != nil {
+		logger.Error("failed to parse script file", "error", err)
+		os.Exit(1)
+	}
+
+	// Unmarshal script
+	script, err := bursa.UnmarshalScript(&scriptData)
+	if err != nil {
+		logger.Error("failed to unmarshal script", "error", err)
+		os.Exit(1)
+	}
+
+	// Generate address
+	address, err := bursa.GetScriptAddress(script, network)
+	if err != nil {
+		logger.Error("failed to generate script address", "error", err)
+		os.Exit(1)
+	}
+
+	// Output result
+	result := map[string]any{
+		"address":    address,
+		"network":    network,
+		"scriptHash": scriptData.Hash,
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(result); err != nil {
+		logger.Error("failed to encode result", "error", err)
+		os.Exit(1)
+	}
 }
