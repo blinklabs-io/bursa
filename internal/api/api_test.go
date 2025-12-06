@@ -125,11 +125,11 @@ func waitForServer(apiBaseURL string) {
 
 	for range maxRetries {
 		resp, err := http.Get(fmt.Sprintf("%s/healthcheck", apiBaseURL))
-		if resp == nil {
-			continue
-		}
-		if err == nil && resp.StatusCode == http.StatusOK {
-			return // Server is ready
+		if err == nil && resp != nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return // Server is ready
+			}
 		}
 		time.Sleep(retryInterval)
 	}
@@ -355,4 +355,302 @@ func TestCreateWalletReturnsMnemonic(t *testing.T) {
 			t.Errorf("Expected 'mnemonic' to be a non-empty string, got %v", mnemonicVal)
 		}
 	}
+}
+
+func TestWalletCreateMethodNotAllowed(t *testing.T) {
+	// Start the API
+	apiBaseURL, _, cleanup := startAPI(t)
+	defer cleanup()
+
+	// Test POST method (should fail)
+	resp, err := http.Post(
+		fmt.Sprintf("%s/api/wallet/create", apiBaseURL),
+		"application/json",
+		nil,
+	)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+func TestWalletRestoreMethodNotAllowed(t *testing.T) {
+	// Start the API
+	apiBaseURL, _, cleanup := startAPI(t)
+	defer cleanup()
+
+	// Test GET method (should fail)
+	resp, err := http.Get(fmt.Sprintf("%s/api/wallet/restore", apiBaseURL))
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+func TestHealthcheckEndpoint(t *testing.T) {
+	// Start the API
+	apiBaseURL, _, cleanup := startAPI(t)
+	defer cleanup()
+
+	// Test the /healthcheck endpoint
+	resp, err := http.Get(fmt.Sprintf("%s/healthcheck", apiBaseURL))
+	assert.NoError(t, err, "failed to call healthcheck endpoint")
+	assert.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Check response body
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, `{"healthy": true}`, string(body))
+	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
+}
+
+func TestSwaggerEndpoint(t *testing.T) {
+	// Start the API
+	apiBaseURL, _, cleanup := startAPI(t)
+	defer cleanup()
+
+	// Test the /swagger/ endpoint
+	resp, err := http.Get(fmt.Sprintf("%s/swagger/", apiBaseURL))
+	assert.NoError(t, err, "failed to call swagger endpoint")
+	assert.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Swagger should return HTML content
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Contains(
+		t,
+		string(body),
+		"swagger",
+		"response should contain swagger content",
+	)
+}
+
+func TestHealthcheckMethodNotAllowed(t *testing.T) {
+	// Start the API
+	apiBaseURL, _, cleanup := startAPI(t)
+	defer cleanup()
+
+	// Test POST method (should fail)
+	resp, err := http.Post(
+		fmt.Sprintf("%s/healthcheck", apiBaseURL),
+		"application/json",
+		nil,
+	)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+func TestWalletListEndpointGCPNotConfigured(t *testing.T) {
+	// Start the API
+	apiBaseURL, _, cleanup := startAPI(t)
+	defer cleanup()
+
+	// Test the /api/wallet/list endpoint
+	resp, err := http.Get(fmt.Sprintf("%s/api/wallet/list", apiBaseURL))
+	assert.NoError(t, err, "failed to call wallet list endpoint")
+	assert.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	// GCP routes are only registered if GCP is configured
+	// Since test setup doesn't configure GCP, expect 404
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestWalletListMethodGCPNotConfigured(t *testing.T) {
+	// Start the API
+	apiBaseURL, _, cleanup := startAPI(t)
+	defer cleanup()
+
+	// Test POST method (should return 404 since GCP not configured)
+	resp, err := http.Post(
+		fmt.Sprintf("%s/api/wallet/list", apiBaseURL),
+		"application/json",
+		nil,
+	)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestWalletGetEndpointGCPNotConfigured(t *testing.T) {
+	t.Run("Invalid JSON", func(t *testing.T) {
+		// Start the API
+		apiBaseURL, _, cleanup := startAPI(t)
+		defer cleanup()
+
+		// Test with invalid JSON (should return 404 since GCP not configured)
+		resp, err := http.Post(
+			fmt.Sprintf("%s/api/wallet/get", apiBaseURL),
+			"application/json",
+			strings.NewReader("invalid json"),
+		)
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("Validation Error", func(t *testing.T) {
+		// Start the API
+		apiBaseURL, _, cleanup := startAPI(t)
+		defer cleanup()
+
+		// Test with empty request (should return 404 since GCP not configured)
+		req := WalletGetRequest{}
+		reqBody, _ := json.Marshal(req)
+
+		resp, err := http.Post(
+			fmt.Sprintf("%s/api/wallet/get", apiBaseURL),
+			"application/json",
+			bytes.NewReader(reqBody),
+		)
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("Nonexistent Wallet", func(t *testing.T) {
+		// Start the API
+		apiBaseURL, _, cleanup := startAPI(t)
+		defer cleanup()
+
+		// Test with valid request but nonexistent wallet (should return 404 since GCP not configured)
+		req := WalletGetRequest{Name: "nonexistent-wallet"}
+		reqBody, _ := json.Marshal(req)
+
+		resp, err := http.Post(
+			fmt.Sprintf("%s/api/wallet/get", apiBaseURL),
+			"application/json",
+			bytes.NewReader(reqBody),
+		)
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+}
+
+func TestWalletGetMethodGCPNotConfigured(t *testing.T) {
+	// Start the API
+	apiBaseURL, _, cleanup := startAPI(t)
+	defer cleanup()
+
+	// Test GET method (should return 404 since GCP not configured)
+	resp, err := http.Get(fmt.Sprintf("%s/api/wallet/get", apiBaseURL))
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestWalletDeleteEndpointGCPNotConfigured(t *testing.T) {
+	t.Run("Invalid JSON", func(t *testing.T) {
+		// Start the API
+		apiBaseURL, _, cleanup := startAPI(t)
+		defer cleanup()
+
+		// Test with invalid JSON (should return 404 since GCP not configured)
+		resp, err := http.Post(
+			fmt.Sprintf("%s/api/wallet/delete", apiBaseURL),
+			"application/json",
+			strings.NewReader("invalid json"),
+		)
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("Validation Error", func(t *testing.T) {
+		// Start the API
+		apiBaseURL, _, cleanup := startAPI(t)
+		defer cleanup()
+
+		// Test with empty request (should return 404 since GCP not configured)
+		req := WalletDeleteRequest{}
+		reqBody, _ := json.Marshal(req)
+
+		resp, err := http.Post(
+			fmt.Sprintf("%s/api/wallet/delete", apiBaseURL),
+			"application/json",
+			bytes.NewReader(reqBody),
+		)
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+}
+
+func TestWalletDeleteMethodGCPNotConfigured(t *testing.T) {
+	// Start the API
+	apiBaseURL, _, cleanup := startAPI(t)
+	defer cleanup()
+
+	// Test GET method (should return 404 since GCP not configured)
+	resp, err := http.Get(fmt.Sprintf("%s/api/wallet/delete", apiBaseURL))
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestWalletUpdateEndpointGCPNotConfigured(t *testing.T) {
+	t.Run("Invalid JSON", func(t *testing.T) {
+		// Start the API
+		apiBaseURL, _, cleanup := startAPI(t)
+		defer cleanup()
+
+		// Test with invalid JSON (should return 404 since GCP not configured)
+		resp, err := http.Post(
+			fmt.Sprintf("%s/api/wallet/update", apiBaseURL),
+			"application/json",
+			strings.NewReader("invalid json"),
+		)
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("Validation Error", func(t *testing.T) {
+		// Start the API
+		apiBaseURL, _, cleanup := startAPI(t)
+		defer cleanup()
+
+		// Test with empty request (should return 404 since GCP not configured)
+		req := WalletUpdateRequest{}
+		reqBody, _ := json.Marshal(req)
+
+		resp, err := http.Post(
+			fmt.Sprintf("%s/api/wallet/update", apiBaseURL),
+			"application/json",
+			bytes.NewReader(reqBody),
+		)
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+}
+
+func TestWalletUpdateMethodGCPNotConfigured(t *testing.T) {
+	// Start the API
+	apiBaseURL, _, cleanup := startAPI(t)
+	defer cleanup()
+
+	// Test GET method (should return 404 since GCP not configured)
+	resp, err := http.Get(fmt.Sprintf("%s/api/wallet/update", apiBaseURL))
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
