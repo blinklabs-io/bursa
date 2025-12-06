@@ -4,6 +4,9 @@ All URIs are relative to *http://localhost*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
+[**ApiScriptAddressPost**](DefaultAPI.md#ApiScriptAddressPost) | **Post** /api/script/address | Generate script address
+[**ApiScriptCreatePost**](DefaultAPI.md#ApiScriptCreatePost) | **Post** /api/script/create | Create a multi-signature script
+[**ApiScriptValidatePost**](DefaultAPI.md#ApiScriptValidatePost) | **Post** /api/script/validate | Validate a script
 [**ApiWalletCreateGet**](DefaultAPI.md#ApiWalletCreateGet) | **Get** /api/wallet/create | Create a wallet
 [**ApiWalletDeletePost**](DefaultAPI.md#ApiWalletDeletePost) | **Post** /api/wallet/delete | Delete wallet from persistent storage
 [**ApiWalletGetPost**](DefaultAPI.md#ApiWalletGetPost) | **Post** /api/wallet/get | Get wallet from persistent storage
@@ -11,6 +14,204 @@ Method | HTTP request | Description
 [**ApiWalletRestorePost**](DefaultAPI.md#ApiWalletRestorePost) | **Post** /api/wallet/restore | Restore a wallet using a mnemonic seed phrase
 [**ApiWalletUpdatePost**](DefaultAPI.md#ApiWalletUpdatePost) | **Post** /api/wallet/update | Update a wallet in persistent storage
 
+
+
+## ApiScriptAddressPost
+
+> ApiScriptAddressResponse ApiScriptAddressPost(ctx).Request(request).Execute()
+
+Generate script address
+
+
+
+### Example
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	openapiclient "github.com/blinklabs-io/bursa/openapi"
+)
+
+func main() {
+	request := *openapiclient.NewApiScriptAddressRequest("Network_example", map[string]map[string]interface{}{"key": map[string]interface{}(123)}) // ApiScriptAddressRequest | Script Address Request
+
+	configuration := openapiclient.NewConfiguration()
+	apiClient := openapiclient.NewAPIClient(configuration)
+	resp, r, err := apiClient.DefaultAPI.ApiScriptAddressPost(context.Background()).Request(request).Execute()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error when calling `DefaultAPI.ApiScriptAddressPost``: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Full HTTP response: %v\n", r)
+	}
+	// response from `ApiScriptAddressPost`: ApiScriptAddressResponse
+	fmt.Fprintf(os.Stdout, "Response from `DefaultAPI.ApiScriptAddressPost`: %v\n", resp)
+}
+```
+
+### Path Parameters
+
+
+
+### Other Parameters
+
+Other parameters are passed through a pointer to a apiApiScriptAddressPostRequest struct via the builder pattern
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **request** | [**ApiScriptAddressRequest**](ApiScriptAddressRequest.md) | Script Address Request | 
+
+### Return type
+
+[**ApiScriptAddressResponse**](ApiScriptAddressResponse.md)
+
+### Authorization
+
+No authorization required
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints)
+[[Back to Model list]](../README.md#documentation-for-models)
+[[Back to README]](../README.md)
+
+
+## ApiScriptCreatePost
+
+> ApiScriptResponse ApiScriptCreatePost(ctx).Request(request).Execute()
+
+Create a multi-signature script
+
+
+
+### Example
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	openapiclient "github.com/blinklabs-io/bursa/openapi"
+)
+
+func main() {
+	request := *openapiclient.NewApiScriptCreateRequest([]string{"KeyHashes_example"}, "Network_example", "Type_example") // ApiScriptCreateRequest | Script Create Request
+
+	configuration := openapiclient.NewConfiguration()
+	apiClient := openapiclient.NewAPIClient(configuration)
+	resp, r, err := apiClient.DefaultAPI.ApiScriptCreatePost(context.Background()).Request(request).Execute()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error when calling `DefaultAPI.ApiScriptCreatePost``: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Full HTTP response: %v\n", r)
+	}
+	// response from `ApiScriptCreatePost`: ApiScriptResponse
+	fmt.Fprintf(os.Stdout, "Response from `DefaultAPI.ApiScriptCreatePost`: %v\n", resp)
+}
+```
+
+### Path Parameters
+
+
+
+### Other Parameters
+
+Other parameters are passed through a pointer to a apiApiScriptCreatePostRequest struct via the builder pattern
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **request** | [**ApiScriptCreateRequest**](ApiScriptCreateRequest.md) | Script Create Request | 
+
+### Return type
+
+[**ApiScriptResponse**](ApiScriptResponse.md)
+
+### Authorization
+
+No authorization required
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints)
+[[Back to Model list]](../README.md#documentation-for-models)
+[[Back to README]](../README.md)
+
+
+## ApiScriptValidatePost
+
+> ApiScriptValidateResponse ApiScriptValidatePost(ctx).Request(request).Execute()
+
+Validate a script
+
+
+
+### Example
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	openapiclient "github.com/blinklabs-io/bursa/openapi"
+)
+
+func main() {
+	request := *openapiclient.NewApiScriptValidateRequest(map[string]map[string]interface{}{"key": map[string]interface{}(123)}) // ApiScriptValidateRequest | Script Validate Request
+
+	configuration := openapiclient.NewConfiguration()
+	apiClient := openapiclient.NewAPIClient(configuration)
+	resp, r, err := apiClient.DefaultAPI.ApiScriptValidatePost(context.Background()).Request(request).Execute()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error when calling `DefaultAPI.ApiScriptValidatePost``: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Full HTTP response: %v\n", r)
+	}
+	// response from `ApiScriptValidatePost`: ApiScriptValidateResponse
+	fmt.Fprintf(os.Stdout, "Response from `DefaultAPI.ApiScriptValidatePost`: %v\n", resp)
+}
+```
+
+### Path Parameters
+
+
+
+### Other Parameters
+
+Other parameters are passed through a pointer to a apiApiScriptValidatePostRequest struct via the builder pattern
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **request** | [**ApiScriptValidateRequest**](ApiScriptValidateRequest.md) | Script Validate Request | 
+
+### Return type
+
+[**ApiScriptValidateResponse**](ApiScriptValidateResponse.md)
+
+### Authorization
+
+No authorization required
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints)
+[[Back to Model list]](../README.md#documentation-for-models)
+[[Back to README]](../README.md)
 
 
 ## ApiWalletCreateGet

@@ -5,6 +5,13 @@ api/openapi.yaml
 api_default.go
 client.go
 configuration.go
+docs/ApiErrorResponse.md
+docs/ApiScriptAddressRequest.md
+docs/ApiScriptAddressResponse.md
+docs/ApiScriptCreateRequest.md
+docs/ApiScriptResponse.md
+docs/ApiScriptValidateRequest.md
+docs/ApiScriptValidateResponse.md
 docs/ApiWalletDeleteRequest.md
 docs/ApiWalletGetRequest.md
 docs/ApiWalletRestoreRequest.md
@@ -15,6 +22,13 @@ docs/DefaultAPI.md
 git_push.sh
 go.mod
 go.sum
+model_api_error_response.go
+model_api_script_address_request.go
+model_api_script_address_response.go
+model_api_script_create_request.go
+model_api_script_response.go
+model_api_script_validate_request.go
+model_api_script_validate_response.go
 model_api_wallet_delete_request.go
 model_api_wallet_get_request.go
 model_api_wallet_restore_request.go

@@ -654,3 +654,279 @@ func TestWalletUpdateMethodGCPNotConfigured(t *testing.T) {
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
+
+func TestHandleScriptCreate(t *testing.T) {
+	// Setup
+	reqBody := `{
+		"type": "nOf",
+		"required": 2,
+		"key_hashes": [
+			"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c",
+			"02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d",
+			"030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e"
+		],
+		"network": "mainnet"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/create",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleScriptCreate(w, req)
+
+	// Assert
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Decode JSON response for stronger assertions
+	var response ScriptResponse
+	err = json.Unmarshal(body, &response)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "NativeScript", response.Type)
+	scriptType, ok := response.Script["type"]
+	assert.True(t, ok)
+	assert.Equal(t, "nOf", scriptType)
+	assert.NotEmpty(t, response.Address)
+	assert.NotEmpty(t, response.ScriptHash)
+	assert.Contains(t, response.Address, "addr1")
+}
+
+func TestHandleScriptCreateAllAndAny(t *testing.T) {
+	tests := []struct {
+		name         string
+		reqBody      string
+		expectedType string
+	}{
+		{
+			name: "all script type",
+			reqBody: `{
+				"type": "all",
+				"key_hashes": [
+					"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c",
+					"02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d"
+				],
+				"network": "mainnet"
+			}`,
+			expectedType: "all",
+		},
+		{
+			name: "any script type",
+			reqBody: `{
+				"type": "any",
+				"key_hashes": [
+					"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c",
+					"02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d"
+				],
+				"network": "mainnet"
+			}`,
+			expectedType: "any",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/script/create",
+				strings.NewReader(tt.reqBody),
+			)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			// Execute
+			handleScriptCreate(w, req)
+
+			// Assert
+			resp := w.Result()
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			assert.NoError(t, err)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			// Decode JSON response for stronger assertions
+			var response ScriptResponse
+			err = json.Unmarshal(body, &response)
+			assert.NoError(t, err)
+
+			// Verify response structure
+			assert.Equal(t, "NativeScript", response.Type)
+			assert.NotEmpty(t, response.Script)
+			assert.NotEmpty(t, response.Address)
+			assert.NotEmpty(t, response.ScriptHash)
+
+			// Verify script structure contains the expected type
+			scriptType, ok := response.Script["type"].(string)
+			assert.True(t, ok, "script.type should be a string")
+			assert.Equal(t, tt.expectedType, scriptType)
+		})
+	}
+}
+
+func TestHandleScriptValidate(t *testing.T) {
+	// Setup
+	reqBody := `{
+		"script": {
+			"type": "nOf",
+			"n": 2,
+			"scripts": [
+				{"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"},
+				{"type": "sig", "keyHash": "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d"},
+				{"type": "sig", "keyHash": "030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e"}
+			]
+		},
+		"require_signatures": false
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/validate",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleScriptValidate(w, req)
+
+	// Assert
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(body), "scriptHash")
+	assert.Contains(t, string(body), "valid")
+
+	// Decode JSON to check valid field specifically
+	var result map[string]any
+	err = json.Unmarshal(body, &result)
+	assert.NoError(t, err)
+	assert.Equal(t, true, result["valid"])
+}
+
+func TestHandleScriptValidateErrors(t *testing.T) {
+	tests := []struct {
+		name           string
+		reqBody        string
+		expectedStatus int
+		expectedError  string
+	}{
+		{
+			name: "invalid keyHash format",
+			reqBody: `{
+				"script": {
+					"type": "nOf",
+					"n": 2,
+					"scripts": [
+						{"type": "sig", "keyHash": "invalid-hex"}
+					]
+				}
+			}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "Invalid script format",
+		},
+		{
+			name: "missing required fields",
+			reqBody: `{
+				"script": {
+					"type": "nOf"
+				}
+			}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "Invalid script format",
+		},
+		{
+			name: "unsupported script type",
+			reqBody: `{
+				"script": {
+					"type": "invalid",
+					"n": 2,
+					"scripts": [
+						{"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"}
+					]
+				}
+			}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "Invalid script format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/script/validate",
+				strings.NewReader(tt.reqBody),
+			)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			handleScriptValidate(w, req)
+
+			resp := w.Result()
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			assert.NoError(t, err)
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			assert.Contains(t, string(body), tt.expectedError)
+		})
+	}
+}
+
+func TestHandleScriptAddress(t *testing.T) {
+	// Setup
+	reqBody := `{
+		"script": {
+			"type": "nOf",
+			"n": 2,
+			"scripts": [
+				{"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"},
+				{"type": "sig", "keyHash": "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d"},
+				{"type": "sig", "keyHash": "030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e"}
+			]
+		},
+		"network": "mainnet"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/address",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleScriptAddress(w, req)
+
+	// Assert
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Decode JSON response for stronger assertions
+	var response ScriptAddressResponse
+	err = json.Unmarshal(body, &response)
+	assert.NoError(t, err)
+
+	assert.NotEmpty(t, response.Address)
+	assert.Equal(t, "mainnet", response.Network)
+	assert.NotEmpty(t, response.ScriptHash)
+	assert.Contains(t, response.Address, "addr1")
+}

@@ -24,6 +24,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -33,6 +34,7 @@ import (
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/btcsuite/btcd/btcutil/bech32"
 	bip39 "github.com/tyler-smith/go-bip39"
+	"golang.org/x/crypto/blake2b"
 )
 
 var (
@@ -47,11 +49,11 @@ var (
 )
 
 type KeyFile struct {
-	Type        string `json:"type"        example:"PaymentVerificationKeyShelley_ed25519"`
-	Description string `json:"description" example:"Payment Verification Key"`
-	CborHex     string `json:"cborHex"     example:"5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	CborHex     string `json:"cborHex"`
 	// Embedded CBOR storage for automatic caching
-	cbor.DecodeStoreCbor `                                                                                                         swaggerignore:"true"`
+	cbor.DecodeStoreCbor `                          swaggerignore:"true"`
 }
 
 type LoadedKey struct {
@@ -61,6 +63,41 @@ type LoadedKey struct {
 	RawCBOR     []byte
 	VKey        []byte
 	SKey        []byte
+}
+
+// Script represents a native script for multi-signature wallets
+// This is an alias for gouroboros ledger common Script for compatibility
+type Script = lcommon.Script
+
+// Native script type aliases for gouroboros types
+type (
+	NativeScript                 = lcommon.NativeScript
+	NativeScriptPubkey           = lcommon.NativeScriptPubkey
+	NativeScriptAll              = lcommon.NativeScriptAll
+	NativeScriptAny              = lcommon.NativeScriptAny
+	NativeScriptNofK             = lcommon.NativeScriptNofK
+	NativeScriptInvalidBefore    = lcommon.NativeScriptInvalidBefore
+	NativeScriptInvalidHereafter = lcommon.NativeScriptInvalidHereafter
+)
+
+// GetScriptType returns the script type identifier for a native script.
+// Only accepts *NativeScript types; returns an error for other script types.
+func GetScriptType(script Script) (int, error) {
+	nativeScript, ok := script.(*NativeScript)
+	if !ok {
+		return 0, errors.New("script is not a native script")
+	}
+	// We need to determine the type from the CBOR data
+	// Since NativeScript stores the CBOR, we can decode the first byte to get the type
+	cborData := nativeScript.Cbor()
+	if len(cborData) == 0 {
+		return 0, errors.New("script CBOR data is empty")
+	}
+	id, err := cbor.DecodeIdFromList(cborData)
+	if err != nil {
+		return 0, fmt.Errorf("failed to decode script type from CBOR: %w", err)
+	}
+	return id, nil
 }
 
 // String returns the Bech32-encoded representation of the key according to CIP-0005
@@ -724,6 +761,652 @@ func GetCommitteeHotExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
 	return kf, nil
 }
 
+// GetMultiSigAccountKey derives a multi-signature account key using CIP-1854 path
+func GetMultiSigAccountKey(rootKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
+	const harden = 0x80000000
+	if num > 0x7FFFFFFF {
+		return nil, ErrInvalidDerivationIndex
+	}
+	hardNum := harden + num
+	return rootKey.
+		Derive(uint32(harden + 1854)).
+		Derive(uint32(harden + 1815)).
+		Derive(uint32(hardNum)), nil
+}
+
+// GetMultiSigPaymentKey derives a multi-signature payment key
+func GetMultiSigPaymentKey(
+	accountKey bip32.XPrv,
+	num uint32,
+) (bip32.XPrv, error) {
+	if num >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	return accountKey.Derive(0).Derive(num), nil
+}
+
+// createVerificationKeyFile creates a verification key file for the given key and type
+func createVerificationKeyFile(
+	key bip32.XPrv,
+	keyType, description string,
+) (KeyFile, error) {
+	keyCbor, err := cbor.Encode(
+		[]any{0, key.Public().PublicKey()},
+	)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode %s CBOR: %w",
+			strings.ToLower(description),
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        keyType,
+		Description: description,
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+// GetMultiSigPaymentVKey creates a verification key file for multi-sig payment key
+func GetMultiSigPaymentVKey(paymentKey bip32.XPrv) (KeyFile, error) {
+	return createVerificationKeyFile(
+		paymentKey,
+		"PaymentVerificationKeyShelley_ed25519",
+		"Multi-Sig Payment Verification Key",
+	)
+}
+
+// GetMultiSigPaymentSKey creates a signing key file for multi-sig payment key
+func GetMultiSigPaymentSKey(paymentKey bip32.XPrv) (KeyFile, error) {
+	return getSigningKeyFile(
+		paymentKey,
+		"PaymentSigningKeyShelley_ed25519",
+		"Multi-Sig Payment Signing Key",
+	)
+}
+
+// GetMultiSigStakeKey derives a multi-signature stake key
+func GetMultiSigStakeKey(
+	accountKey bip32.XPrv,
+	num uint32,
+) (bip32.XPrv, error) {
+	if num >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	return accountKey.Derive(2).Derive(num), nil
+}
+
+// GetMultiSigStakeVKey creates a verification key file for multi-sig stake key
+func GetMultiSigStakeVKey(stakeKey bip32.XPrv) (KeyFile, error) {
+	return createVerificationKeyFile(
+		stakeKey,
+		"StakeVerificationKeyShelley_ed25519",
+		"Multi-Sig Stake Verification Key",
+	)
+}
+
+// GetMultiSigStakeSKey creates a signing key file for multi-sig stake key
+func GetMultiSigStakeSKey(stakeKey bip32.XPrv) (KeyFile, error) {
+	return getSigningKeyFile(
+		stakeKey,
+		"StakeSigningKeyShelley_ed25519",
+		"Multi-Sig Stake Signing Key",
+	)
+}
+
+// NewScriptSig creates a signature script requiring the given key hash
+// keyHash must be 28 bytes (Blake2b-224 hash of public key per CIP-1854)
+func NewScriptSig(keyHash []byte) (*NativeScript, error) {
+	if len(keyHash) != 28 {
+		return nil, fmt.Errorf(
+			"invalid key hash length: got %d bytes, expected 28 bytes (Blake2b-224)",
+			len(keyHash),
+		)
+	}
+	concrete := &NativeScriptPubkey{
+		Type: 0,
+		Hash: keyHash,
+	}
+	cborData, err := cbor.Encode(concrete)
+	if err != nil {
+		return nil, err
+	}
+	var script NativeScript
+	if _, err := cbor.Decode(cborData, &script); err != nil {
+		return nil, err
+	}
+	return &script, nil
+}
+
+// NewScriptAll creates an "all" script requiring all sub-scripts to be satisfied
+func NewScriptAll(scripts ...Script) (*NativeScript, error) {
+	if len(scripts) == 0 {
+		return nil, errors.New("at least one script required for all script")
+	}
+	nativeScripts := make([]NativeScript, len(scripts))
+	for i, script := range scripts {
+		nativeScript, ok := script.(*NativeScript)
+		if !ok {
+			return nil, errors.New("script must be a *NativeScript")
+		}
+		nativeScripts[i] = *nativeScript
+	}
+	concrete := &NativeScriptAll{
+		Type:    1,
+		Scripts: nativeScripts,
+	}
+	cborData, err := cbor.Encode(concrete)
+	if err != nil {
+		return nil, err
+	}
+	var script NativeScript
+	if _, err := cbor.Decode(cborData, &script); err != nil {
+		return nil, err
+	}
+	return &script, nil
+}
+
+// NewScriptAny creates an "any" script requiring any sub-script to be satisfied
+func NewScriptAny(scripts ...Script) (*NativeScript, error) {
+	if len(scripts) == 0 {
+		return nil, errors.New("at least one script required for any script")
+	}
+	nativeScripts := make([]NativeScript, len(scripts))
+	for i, script := range scripts {
+		nativeScript, ok := script.(*NativeScript)
+		if !ok {
+			return nil, errors.New("script must be a *NativeScript")
+		}
+		nativeScripts[i] = *nativeScript
+	}
+	concrete := &NativeScriptAny{
+		Type:    2,
+		Scripts: nativeScripts,
+	}
+	cborData, err := cbor.Encode(concrete)
+	if err != nil {
+		return nil, err
+	}
+	var script NativeScript
+	if _, err := cbor.Decode(cborData, &script); err != nil {
+		return nil, err
+	}
+	return &script, nil
+}
+
+// NewScriptNOf creates an "N-of-K" script requiring N out of K sub-scripts to be satisfied
+func NewScriptNOf(n int, scripts ...Script) (*NativeScript, error) {
+	if n < 1 || n > len(scripts) {
+		return nil, fmt.Errorf(
+			"invalid n value %d: must be between 1 and %d",
+			n,
+			len(scripts),
+		)
+	}
+	nativeScripts := make([]NativeScript, len(scripts))
+	for i, script := range scripts {
+		nativeScript, ok := script.(*NativeScript)
+		if !ok {
+			return nil, errors.New("script must be a *NativeScript")
+		}
+		nativeScripts[i] = *nativeScript
+	}
+	concrete := &NativeScriptNofK{
+		Type:    3,
+		N:       uint(n),
+		Scripts: nativeScripts,
+	}
+	cborData, err := cbor.Encode(concrete)
+	if err != nil {
+		return nil, err
+	}
+	var script NativeScript
+	if _, err := cbor.Decode(cborData, &script); err != nil {
+		return nil, err
+	}
+	return &script, nil
+}
+
+// NewScriptBefore creates a "before" script valid before the given slot
+// Per CIP-1854: InvalidHereafter means the script is invalid from this slot onwards (valid before)
+func NewScriptBefore(slot uint64) (*NativeScript, error) {
+	concrete := &NativeScriptInvalidHereafter{
+		Type: 5,
+		Slot: slot,
+	}
+	cborData, err := cbor.Encode(concrete)
+	if err != nil {
+		return nil, err
+	}
+	var script NativeScript
+	if _, err := cbor.Decode(cborData, &script); err != nil {
+		return nil, err
+	}
+	return &script, nil
+}
+
+// NewScriptAfter creates an "after" script valid after the given slot
+// Per CIP-1854: InvalidBefore means the script is invalid before this slot (valid after/at)
+func NewScriptAfter(slot uint64) (*NativeScript, error) {
+	concrete := &NativeScriptInvalidBefore{
+		Type: 4,
+		Slot: slot,
+	}
+	cborData, err := cbor.Encode(concrete)
+	if err != nil {
+		return nil, err
+	}
+	var script NativeScript
+	if _, err := cbor.Decode(cborData, &script); err != nil {
+		return nil, err
+	}
+	return &script, nil
+}
+
+// NewMultiSigScript creates an N-of-M multi-signature script
+// For example, NewMultiSigScript(2, keyHash1, keyHash2, keyHash3) creates a 2-of-3 script
+func NewMultiSigScript(
+	required int,
+	keyHashes ...[]byte,
+) (*NativeScript, error) {
+	if len(keyHashes) == 0 {
+		return nil, errors.New("at least one key hash required")
+	}
+	if required < 1 || required > len(keyHashes) {
+		return nil, fmt.Errorf(
+			"invalid required signatures count: %d (must be 1-%d)",
+			required,
+			len(keyHashes),
+		)
+	}
+
+	scripts := make([]Script, len(keyHashes))
+	for i, keyHash := range keyHashes {
+		script, err := NewScriptSig(keyHash)
+		if err != nil {
+			return nil, err
+		}
+		scripts[i] = script
+	}
+
+	return NewScriptNOf(required, scripts...)
+}
+
+// NewAllMultiSigScript creates an all-of multi-signature script (all keys must sign)
+func NewAllMultiSigScript(keyHashes ...[]byte) (*NativeScript, error) {
+	if len(keyHashes) == 0 {
+		return nil, errors.New("at least one key hash required")
+	}
+
+	scripts := make([]Script, len(keyHashes))
+	for i, keyHash := range keyHashes {
+		script, err := NewScriptSig(keyHash)
+		if err != nil {
+			return nil, err
+		}
+		scripts[i] = script
+	}
+
+	return NewScriptAll(scripts...)
+}
+
+// NewAnyMultiSigScript creates an any-of multi-signature script (any key can sign)
+func NewAnyMultiSigScript(keyHashes ...[]byte) (*NativeScript, error) {
+	if len(keyHashes) == 0 {
+		return nil, errors.New("at least one key hash required")
+	}
+
+	scripts := make([]Script, len(keyHashes))
+	for i, keyHash := range keyHashes {
+		script, err := NewScriptSig(keyHash)
+		if err != nil {
+			return nil, err
+		}
+		scripts[i] = script
+	}
+
+	return NewScriptAny(scripts...)
+}
+
+// NewTimelockedScript wraps a script with a timelock condition
+func NewTimelockedScript(
+	slot uint64,
+	before bool,
+	script Script,
+) (Script, error) {
+	// Validate that the script is a native script
+	nativeScript, ok := script.(*NativeScript)
+	if !ok {
+		return nil, errors.New("timelock wrapper only supports native scripts")
+	}
+
+	var timelockScript *NativeScript
+	var err error
+	if before {
+		timelockScript, err = NewScriptBefore(slot)
+	} else {
+		timelockScript, err = NewScriptAfter(slot)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return NewScriptAll(timelockScript, nativeScript)
+}
+
+// NewMultiSigScriptFromKeys creates an N-of-M script from public key hashes
+// This is a convenience function that extracts key hashes from Ed25519 public keys
+func NewMultiSigScriptFromKeys(
+	required int,
+	pubKeys ...ed25519.PublicKey,
+) (*NativeScript, error) {
+	keyHashes := make([][]byte, len(pubKeys))
+	for i, pubKey := range pubKeys {
+		// For Ed25519, the key hash is typically the Blake2b-224 hash of the public key
+		hasher, err := blake2b.New(28, nil)
+		if err != nil {
+			// This should never happen with valid parameters
+			return nil, fmt.Errorf("failed to create blake2b hasher: %w", err)
+		}
+		hasher.Write(pubKey)
+		keyHashes[i] = hasher.Sum(nil)
+	}
+	return NewMultiSigScript(required, keyHashes...)
+}
+
+// GetScriptHash computes the hash of a script for use in addresses
+func GetScriptHash(script Script) ([]byte, error) {
+	if script == nil {
+		return nil, errors.New("script cannot be nil")
+	}
+	scriptCBOR := script.RawScriptBytes()
+	hasher, err := blake2b.New(28, nil)
+	if err != nil {
+		// This should never happen with valid parameters
+		return nil, fmt.Errorf("failed to create blake2b hasher: %w", err)
+	}
+	hasher.Write(scriptCBOR)
+	return hasher.Sum(nil), nil
+}
+
+// GetScriptAddress creates an address from a script
+func GetScriptAddress(script Script, networkName string) (string, error) {
+	if networkName == "" {
+		return "", ErrInvalidNetwork
+	}
+	network, ok := ouroboros.NetworkByName(networkName)
+	if !ok {
+		return "", ErrInvalidNetwork
+	}
+	scriptHash, err := GetScriptHash(script)
+	if err != nil {
+		return "", fmt.Errorf("failed to get script hash: %w", err)
+	}
+	addr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeScriptNone,
+		network.Id,
+		scriptHash,
+		nil, // no stake part for script addresses
+	)
+	if err != nil {
+		return "", fmt.Errorf("error creating script address: %w", err)
+	}
+	return addr.String(), nil
+}
+
+// Maximum recursion depth for script validation to prevent stack overflow
+const maxScriptDepth = 20
+
+// ValidateScript checks if a script is satisfied given signatures and current slot
+// If requireSignatures is true, requires signatures for ScriptSig scripts and validates format.
+// If false, allows empty signatures for structural validation only.
+func ValidateScript(
+	script Script,
+	signatures [][]byte,
+	slot uint64,
+	requireSignatures bool,
+) bool {
+	return validateScriptWithDepth(
+		script,
+		signatures,
+		slot,
+		requireSignatures,
+		0,
+	)
+}
+
+// minSignaturesRequired returns the minimum number of signatures required to satisfy the script
+func minSignaturesRequired(script *NativeScript) int {
+	switch s := script.Item().(type) {
+	case *NativeScriptPubkey:
+		return 1
+	case *NativeScriptAll:
+		total := 0
+		for _, subScript := range s.Scripts {
+			total += minSignaturesRequired(&subScript)
+		}
+		return total
+	case *NativeScriptAny:
+		min := 0
+		for _, subScript := range s.Scripts {
+			subMin := minSignaturesRequired(&subScript)
+			if min == 0 || subMin < min {
+				min = subMin
+			}
+		}
+		return min
+	case *NativeScriptNofK:
+		// For NofK, we need to satisfy N out of K sub-scripts
+		// To minimize signatures, we choose the N sub-scripts with the smallest min sigs
+		// But since it's complex, for now, assume we need at least N signatures if any sub needs sigs
+		// Actually, properly: sort the min sigs of sub-scripts, sum the smallest N
+		subMins := make([]int, len(s.Scripts))
+		for i, subScript := range s.Scripts {
+			subMins[i] = minSignaturesRequired(&subScript)
+		}
+		// Sort ascending
+		sort.Ints(subMins)
+		total := 0
+		for i := range subMins {
+			if uint(i) >= s.N { //nolint:gosec
+				break
+			}
+			total += subMins[i]
+		}
+		return total
+	case *NativeScriptInvalidBefore, *NativeScriptInvalidHereafter:
+		return 0
+	default:
+		return 0
+	}
+}
+
+// validateScriptWithDepth is the internal recursive validator with depth tracking
+func validateScriptWithDepth(
+	script Script,
+	signatures [][]byte,
+	slot uint64,
+	requireSignatures bool,
+	depth int,
+) bool {
+	// Prevent stack overflow from deeply nested scripts
+	if depth > maxScriptDepth {
+		return false
+	}
+
+	nativeScript, ok := script.(*NativeScript)
+	if !ok {
+		return false
+	}
+
+	switch s := nativeScript.Item().(type) {
+	case *NativeScriptPubkey:
+		return validateScriptSig(s, signatures, requireSignatures)
+	case *NativeScriptAll:
+		return validateScriptAllWithDepth(s, signatures, slot, requireSignatures, depth+1)
+	case *NativeScriptAny:
+		return validateScriptAnyWithDepth(s, signatures, slot, requireSignatures, depth+1)
+	case *NativeScriptNofK:
+		return validateScriptNOfWithDepth(s, signatures, slot, requireSignatures, depth+1)
+	case *NativeScriptInvalidBefore:
+		return validateScriptInvalidBefore(s, slot)
+	case *NativeScriptInvalidHereafter:
+		return validateScriptInvalidHereafter(s, slot)
+	default:
+		return false
+	}
+}
+
+// validateScriptSig checks if a signature script is satisfied
+//
+// SECURITY WARNING: This function currently allows empty signatures for structural validation.
+// In production spending validation, signatures MUST be provided and cryptographically verified.
+// This implementation is a placeholder for testing script logic and should not be used
+// for actual transaction validation without proper Ed25519 signature verification.
+//
+// TODO: Implement full Ed25519 signature verification against transaction hash and script.Hash
+func validateScriptSig(
+	_ *NativeScriptPubkey,
+	signatures [][]byte,
+	requireSignatures bool,
+) bool {
+	if requireSignatures {
+		// Require signatures for format validation
+		if len(signatures) == 0 {
+			return false
+		}
+		// TODO: Implement proper Ed25519 signature verification against script.Hash
+		// For now, check basic signature format (64 bytes for Ed25519)
+		for _, sig := range signatures {
+			if len(sig) != 64 {
+				return false // Invalid Ed25519 signature length
+			}
+		}
+		return len(signatures) >= 1
+	} else {
+		// For structural validation, ignore all signature checks
+		// Only validate the script structure itself
+		return true
+	}
+}
+
+// validateScriptAllWithDepth checks if all sub-scripts are satisfied
+func validateScriptAllWithDepth(
+	script *NativeScriptAll,
+	signatures [][]byte,
+	slot uint64,
+	requireSignatures bool,
+	depth int,
+) bool {
+	if requireSignatures {
+		total := 0
+		for _, subScript := range script.Scripts {
+			total += minSignaturesRequired(&subScript)
+		}
+		if len(signatures) < total {
+			return false
+		}
+	}
+	for _, subScript := range script.Scripts {
+		if !validateScriptWithDepth(
+			&subScript,
+			signatures,
+			slot,
+			requireSignatures,
+			depth,
+		) {
+			return false
+		}
+	}
+	return true
+}
+
+// validateScriptAnyWithDepth checks if any sub-script is satisfied
+func validateScriptAnyWithDepth(
+	script *NativeScriptAny,
+	signatures [][]byte,
+	slot uint64,
+	requireSignatures bool,
+	depth int,
+) bool {
+	for _, subScript := range script.Scripts {
+		if validateScriptWithDepth(
+			&subScript,
+			signatures,
+			slot,
+			requireSignatures,
+			depth,
+		) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateScriptNOfWithDepth checks if at least N sub-scripts are satisfied
+func validateScriptNOfWithDepth(
+	script *NativeScriptNofK,
+	signatures [][]byte,
+	slot uint64,
+	requireSignatures bool,
+	depth int,
+) bool {
+	// Safety check: N should be reasonable for cryptographic purposes
+	if script.N > 255 {
+		return false
+	}
+	if requireSignatures {
+		// Lower bound on signatures needed for this node (accounts for 0-sig leaves like timelocks)
+		// Create a temporary NativeScript to call minSignaturesRequired
+		cborData, err := cbor.Encode(script)
+		if err != nil {
+			return false
+		}
+		var tempScript NativeScript
+		if _, err := cbor.Decode(cborData, &tempScript); err != nil {
+			return false
+		}
+		minReq := minSignaturesRequired(&tempScript)
+		if len(signatures) < minReq {
+			return false
+		}
+	}
+	satisfied := 0
+	for _, subScript := range script.Scripts {
+		if validateScriptWithDepth(
+			&subScript,
+			signatures,
+			slot,
+			requireSignatures,
+			depth,
+		) {
+			satisfied++
+		}
+	}
+	return satisfied >= int(script.N)
+}
+
+// validateScriptBefore checks if current slot is before the specified slot
+// Per CIP-1854: InvalidHereafter means script is invalid from this slot onwards (valid before)
+// validateScriptInvalidHereafter checks if current slot is before the specified slot
+// Per CIP-1854: InvalidHereafter means script is invalid at/after this slot (valid before)
+func validateScriptInvalidHereafter(
+	script *NativeScriptInvalidHereafter,
+	slot uint64,
+) bool {
+	return slot < script.Slot
+}
+
+// validateScriptInvalidBefore checks if current slot is at/after the specified slot
+// Per CIP-1854: InvalidBefore means script is invalid before this slot (valid at/after)
+func validateScriptInvalidBefore(
+	script *NativeScriptInvalidBefore,
+	slot uint64,
+) bool {
+	return slot >= script.Slot
+}
+
 func GetAddress(
 	accountKey bip32.XPrv,
 	networkName string,
@@ -983,4 +1666,273 @@ func PrintLoadedKeys(keys []*LoadedKey, showSecrets bool) {
 	}
 
 	fmt.Print(buf.String())
+}
+
+// ScriptData represents a script with metadata for serialization
+type ScriptData struct {
+	Type    string         `json:"type"`
+	Script  map[string]any `json:"script"`
+	Address string         `json:"address,omitempty"`
+	Hash    string         `json:"hash,omitempty"`
+}
+
+// MarshalScript serializes a script to JSON with metadata
+func MarshalScript(script Script, network string) (*ScriptData, error) {
+	scriptMap, err := scriptToMap(script)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert script to map: %w", err)
+	}
+
+	data := &ScriptData{
+		Type:   "NativeScript",
+		Script: scriptMap,
+	}
+
+	// Generate address if network is provided
+	if network != "" {
+		address, err := GetScriptAddress(script, network)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate script address: %w", err)
+		}
+		data.Address = address
+	}
+
+	// Generate script hash
+	hash, err := GetScriptHash(script)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate script hash: %w", err)
+	}
+	data.Hash = hex.EncodeToString(hash)
+
+	return data, nil
+}
+
+// UnmarshalScript deserializes a script from JSON
+func UnmarshalScript(data *ScriptData) (Script, error) {
+	if data.Type != "NativeScript" {
+		return nil, fmt.Errorf("unsupported script type: %s", data.Type)
+	}
+	return mapToScript(data.Script)
+}
+
+// scriptToMap converts a Script to a map for JSON serialization
+func scriptToMap(script Script) (map[string]any, error) {
+	if script == nil {
+		return nil, errors.New("script cannot be nil")
+	}
+	nativeScript, ok := script.(*NativeScript)
+	if !ok {
+		return nil, errors.New("unsupported script type")
+	}
+
+	switch s := nativeScript.Item().(type) {
+	case *NativeScriptPubkey:
+		return map[string]any{
+			"type":    "sig",
+			"keyHash": hex.EncodeToString(s.Hash),
+		}, nil
+	case *NativeScriptAll:
+		scripts := make([]any, len(s.Scripts))
+		for i, subScript := range s.Scripts {
+			subMap, err := scriptToMap(&subScript)
+			if err != nil {
+				return nil, err
+			}
+			scripts[i] = subMap
+		}
+		return map[string]any{
+			"type":    "all",
+			"scripts": scripts,
+		}, nil
+	case *NativeScriptAny:
+		scripts := make([]any, len(s.Scripts))
+		for i, subScript := range s.Scripts {
+			subMap, err := scriptToMap(&subScript)
+			if err != nil {
+				return nil, err
+			}
+			scripts[i] = subMap
+		}
+		return map[string]any{
+			"type":    "any",
+			"scripts": scripts,
+		}, nil
+	case *NativeScriptNofK:
+		scripts := make([]any, len(s.Scripts))
+		for i, subScript := range s.Scripts {
+			subMap, err := scriptToMap(&subScript)
+			if err != nil {
+				return nil, err
+			}
+			scripts[i] = subMap
+		}
+		return map[string]any{
+			"type":    "nOf",
+			"n":       s.N,
+			"scripts": scripts,
+		}, nil
+	case *NativeScriptInvalidBefore:
+		return map[string]any{
+			"type": "after",
+			"slot": s.Slot,
+		}, nil
+	case *NativeScriptInvalidHereafter:
+		return map[string]any{
+			"type": "before",
+			"slot": s.Slot,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported script type: %T", script)
+	}
+}
+
+// mapToScript converts a map back to a Script
+func mapToScript(m map[string]any) (Script, error) {
+	scriptType, ok := m["type"].(string)
+	if !ok {
+		return nil, errors.New("missing or invalid script type")
+	}
+
+	switch scriptType {
+	case "sig":
+		keyHashStr, ok := m["keyHash"].(string)
+		if !ok {
+			return nil, errors.New("missing or invalid keyHash for sig script")
+		}
+		keyHash, err := hex.DecodeString(keyHashStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid keyHash hex: %w", err)
+		}
+		script, err := NewScriptSig(keyHash)
+		if err != nil {
+			return nil, err
+		}
+		return script, nil
+	case "all":
+		scriptsInterface, ok := m["scripts"].([]any)
+		if !ok {
+			return nil, errors.New("missing or invalid scripts for all script")
+		}
+		scripts := make([]Script, len(scriptsInterface))
+		for i, scriptInterface := range scriptsInterface {
+			scriptMap, ok := scriptInterface.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid script at index %d", i)
+			}
+			script, err := mapToScript(scriptMap)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"failed to parse script at index %d: %w",
+					i,
+					err,
+				)
+			}
+			scripts[i] = script
+		}
+		return NewScriptAll(scripts...)
+	case "any":
+		scriptsInterface, ok := m["scripts"].([]any)
+		if !ok {
+			return nil, errors.New("missing or invalid scripts for any script")
+		}
+		scripts := make([]Script, len(scriptsInterface))
+		for i, scriptInterface := range scriptsInterface {
+			scriptMap, ok := scriptInterface.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid script at index %d", i)
+			}
+			script, err := mapToScript(scriptMap)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"failed to parse script at index %d: %w",
+					i,
+					err,
+				)
+			}
+			scripts[i] = script
+		}
+		return NewScriptAny(scripts...)
+	case "nOf":
+		nFloat, ok := m["n"].(float64)
+		if !ok {
+			return nil, errors.New("missing or invalid n for nOf script")
+		}
+		// Validate integer precision and reasonable range
+		if nFloat < 1 || nFloat > 255 || nFloat != float64(int(nFloat)) {
+			return nil, errors.New(
+				"n must be an integer between 1 and 255 for nOf script",
+			)
+		}
+		n := int(nFloat)
+		scriptsInterface, ok := m["scripts"].([]any)
+		if !ok {
+			return nil, errors.New("missing or invalid scripts for nOf script")
+		}
+		if n < 1 || n > len(scriptsInterface) {
+			return nil, fmt.Errorf(
+				"invalid n value %d: must be between 1 and %d",
+				n,
+				len(scriptsInterface),
+			)
+		}
+		scripts := make([]Script, len(scriptsInterface))
+		for i, scriptInterface := range scriptsInterface {
+			scriptMap, ok := scriptInterface.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid script at index %d", i)
+			}
+			script, err := mapToScript(scriptMap)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"failed to parse script at index %d: %w",
+					i,
+					err,
+				)
+			}
+			scripts[i] = script
+		}
+		return NewScriptNOf(n, scripts...)
+	case "before":
+		slotFloat, ok := m["slot"].(float64)
+		if !ok {
+			return nil, errors.New("missing or invalid slot for before script")
+		}
+		// Check for overflow: float64 loses precision above 2^53-1
+		const maxExactInt = 9007199254740991.0 // (1<<53) - 1
+		if slotFloat < 0 || slotFloat > maxExactInt {
+			return nil, errors.New(
+				"invalid slot: must be a non-negative integer <= 9007199254740991 (within float64 exact integer range)",
+			)
+		}
+		// Verify integer precision
+		if slotFloat != float64(uint64(slotFloat)) {
+			return nil, errors.New(
+				"invalid slot: must be an integer value",
+			)
+		}
+		slot := uint64(slotFloat)
+		return NewScriptBefore(slot)
+	case "after":
+		slotFloat, ok := m["slot"].(float64)
+		if !ok {
+			return nil, errors.New("missing or invalid slot for after script")
+		}
+		// Check for overflow: float64 loses precision above 2^53-1
+		const maxExactInt = 9007199254740991.0 // (1<<53) - 1
+		if slotFloat < 0 || slotFloat > maxExactInt {
+			return nil, errors.New(
+				"invalid slot: must be a non-negative integer <= 9007199254740991 (within float64 exact integer range)",
+			)
+		}
+		// Verify integer precision
+		if slotFloat != float64(uint64(slotFloat)) {
+			return nil, errors.New(
+				"invalid slot: must be an integer value",
+			)
+		}
+		slot := uint64(slotFloat)
+		return NewScriptAfter(slot)
+	default:
+		return nil, fmt.Errorf("unsupported script type: %s", scriptType)
+	}
 }

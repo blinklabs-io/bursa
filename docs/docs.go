@@ -23,6 +23,135 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/script/address": {
+            "post": {
+                "description": "Generate an address for a script on the specified network",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Generate script address",
+                "parameters": [
+                    {
+                        "description": "Script Address Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.ScriptAddressRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Script address generated",
+                        "schema": {
+                            "$ref": "#/definitions/api.ScriptAddressResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/script/create": {
+            "post": {
+                "description": "Create a new multi-signature script with the specified parameters",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Create a multi-signature script",
+                "parameters": [
+                    {
+                        "description": "Script Create Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.ScriptCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Script successfully created",
+                        "schema": {
+                            "$ref": "#/definitions/api.ScriptResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/script/validate": {
+            "post": {
+                "description": "Validate a script's structure and requirements",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Validate a script",
+                "parameters": [
+                    {
+                        "description": "Script Validate Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.ScriptValidateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Script validation result",
+                        "schema": {
+                            "$ref": "#/definitions/api.ScriptValidateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/wallet/create": {
             "get": {
                 "description": "Create a wallet and return details",
@@ -71,13 +200,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "type": "string"
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "type": "string"
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     }
                 }
@@ -114,13 +243,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "type": "string"
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "type": "string"
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     }
                 }
@@ -177,13 +306,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "type": "string"
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "type": "string"
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     }
                 }
@@ -234,6 +363,159 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "api.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "fields": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "api.ScriptAddressRequest": {
+            "type": "object",
+            "required": [
+                "network",
+                "script"
+            ],
+            "properties": {
+                "network": {
+                    "type": "string",
+                    "enum": [
+                        "mainnet",
+                        "testnet"
+                    ]
+                },
+                "script": {
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
+        "api.ScriptAddressResponse": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string"
+                },
+                "scriptHash": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ScriptCreateRequest": {
+            "type": "object",
+            "required": [
+                "key_hashes",
+                "network",
+                "type"
+            ],
+            "properties": {
+                "key_hashes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "network": {
+                    "type": "string",
+                    "enum": [
+                        "mainnet",
+                        "testnet"
+                    ]
+                },
+                "required": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "timelock_after": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "timelock_before": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "nOf",
+                        "all",
+                        "any"
+                    ]
+                }
+            }
+        },
+        "api.ScriptResponse": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "script": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "scriptHash": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ScriptValidateRequest": {
+            "type": "object",
+            "required": [
+                "script"
+            ],
+            "properties": {
+                "require_signatures": {
+                    "type": "boolean"
+                },
+                "script": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "signatures": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "slot": {
+                    "type": "integer",
+                    "format": "int64"
+                }
+            }
+        },
+        "api.ScriptValidateResponse": {
+            "type": "object",
+            "properties": {
+                "scriptHash": {
+                    "type": "string"
+                },
+                "signatures": {
+                    "type": "integer"
+                },
+                "slot": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "valid": {
+                    "type": "boolean"
+                }
+            }
+        },
         "api.WalletDeleteRequest": {
             "type": "object",
             "required": [
@@ -333,16 +615,13 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "cborHex": {
-                    "type": "string",
-                    "example": "5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880"
+                    "type": "string"
                 },
                 "description": {
-                    "type": "string",
-                    "example": "Payment Verification Key"
+                    "type": "string"
                 },
                 "type": {
-                    "type": "string",
-                    "example": "PaymentVerificationKeyShelley_ed25519"
+                    "type": "string"
                 }
             }
         },

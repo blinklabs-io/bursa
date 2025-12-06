@@ -13,6 +13,99 @@ info:
 servers:
 - url: /
 paths:
+  /api/script/address:
+    post:
+      description: Generate an address for a script on the specified network
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.ScriptAddressRequest"
+        description: Script Address Request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ScriptAddressResponse"
+          description: Script address generated
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Invalid request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Internal server error
+      summary: Generate script address
+      x-codegen-request-body-name: request
+  /api/script/create:
+    post:
+      description: Create a new multi-signature script with the specified parameters
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.ScriptCreateRequest"
+        description: Script Create Request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ScriptResponse"
+          description: Script successfully created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Invalid request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Internal server error
+      summary: Create a multi-signature script
+      x-codegen-request-body-name: request
+  /api/script/validate:
+    post:
+      description: Validate a script's structure and requirements
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.ScriptValidateRequest"
+        description: Script Validate Request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ScriptValidateResponse"
+          description: Script validation result
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Invalid request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Internal server error
+      summary: Validate a script
+      x-codegen-request-body-name: request
   /api/wallet/create:
     get:
       description: Create a wallet and return details
@@ -45,13 +138,13 @@ paths:
           content:
             application/json:
               schema:
-                type: string
+                $ref: "#/components/schemas/api.ErrorResponse"
           description: Invalid request
         "500":
           content:
             application/json:
               schema:
-                type: string
+                $ref: "#/components/schemas/api.ErrorResponse"
           description: Internal server error
       summary: Delete wallet from persistent storage
       x-codegen-request-body-name: request
@@ -77,13 +170,13 @@ paths:
           content:
             application/json:
               schema:
-                type: string
+                $ref: "#/components/schemas/api.ErrorResponse"
           description: Invalid request
         "500":
           content:
             application/json:
               schema:
-                type: string
+                $ref: "#/components/schemas/api.ErrorResponse"
           description: Internal server error
       summary: Get wallet from persistent storage
       x-codegen-request-body-name: request
@@ -122,13 +215,13 @@ paths:
           content:
             application/json:
               schema:
-                type: string
+                $ref: "#/components/schemas/api.ErrorResponse"
           description: Invalid request
         "500":
           content:
             application/json:
               schema:
-                type: string
+                $ref: "#/components/schemas/api.ErrorResponse"
           description: Internal server error
       summary: Restore a wallet using a mnemonic seed phrase
       x-codegen-request-body-name: request
@@ -166,9 +259,138 @@ paths:
       x-codegen-request-body-name: request
 components:
   schemas:
+    api.ErrorResponse:
+      example:
+        error: error
+        fields:
+          key: fields
+      properties:
+        error:
+          type: string
+        fields:
+          additionalProperties:
+            type: string
+          type: object
+      type: object
+    api.ScriptAddressRequest:
+      properties:
+        network:
+          enum:
+          - mainnet
+          - testnet
+          type: string
+        script:
+          additionalProperties:
+            type: object
+          type: object
+      required:
+      - network
+      - script
+      type: object
+    api.ScriptAddressResponse:
+      example:
+        address: address
+        scriptHash: scriptHash
+        network: network
+      properties:
+        address:
+          type: string
+        network:
+          type: string
+        scriptHash:
+          type: string
+      type: object
+    api.ScriptCreateRequest:
+      properties:
+        key_hashes:
+          items:
+            type: string
+          minItems: 1
+          type: array
+        network:
+          enum:
+          - mainnet
+          - testnet
+          type: string
+        required:
+          minimum: 1
+          type: integer
+        timelock_after:
+          format: int64
+          type: integer
+        timelock_before:
+          format: int64
+          type: integer
+        type:
+          enum:
+          - nOf
+          - all
+          - any
+          type: string
+      required:
+      - key_hashes
+      - network
+      - type
+      type: object
+    api.ScriptResponse:
+      example:
+        address: address
+        scriptHash: scriptHash
+        type: type
+        script:
+          key: "{}"
+      properties:
+        address:
+          type: string
+        script:
+          additionalProperties:
+            type: object
+          type: object
+        scriptHash:
+          type: string
+        type:
+          type: string
+      type: object
+    api.ScriptValidateRequest:
+      properties:
+        require_signatures:
+          type: boolean
+        script:
+          additionalProperties:
+            type: object
+          type: object
+        signatures:
+          items:
+            type: string
+          type: array
+        slot:
+          format: int64
+          type: integer
+      required:
+      - script
+      type: object
+    api.ScriptValidateResponse:
+      example:
+        valid: true
+        scriptHash: scriptHash
+        slot: 6
+        signatures: 0
+      properties:
+        scriptHash:
+          type: string
+        signatures:
+          type: integer
+        slot:
+          format: int64
+          type: integer
+        valid:
+          type: boolean
+      type: object
     api.WalletDeleteRequest:
       properties:
         name:
+          maxLength: 100
+          minLength: 1
           type: string
         password:
           type: string
@@ -178,6 +400,8 @@ components:
     api.WalletGetRequest:
       properties:
         name:
+          maxLength: 100
+          minLength: 1
           type: string
         password:
           type: string
@@ -187,22 +411,37 @@ components:
     api.WalletRestoreRequest:
       properties:
         account_id:
+          maximum: 2147483647
+          minimum: 0
           type: integer
         address_id:
+          maximum: 2147483647
+          minimum: 0
           type: integer
         committee_cold_id:
+          maximum: 2147483647
+          minimum: 0
           type: integer
         committee_hot_id:
+          maximum: 2147483647
+          minimum: 0
           type: integer
         drep_id:
+          maximum: 2147483647
+          minimum: 0
           type: integer
         mnemonic:
+          minLength: 1
           type: string
         password:
           type: string
         payment_id:
+          maximum: 2147483647
+          minimum: 0
           type: integer
         stake_id:
+          maximum: 2147483647
+          minimum: 0
           type: integer
       required:
       - mnemonic
@@ -210,8 +449,11 @@ components:
     api.WalletUpdateRequest:
       properties:
         description:
+          maxLength: 500
           type: string
         name:
+          maxLength: 100
+          minLength: 1
           type: string
         password:
           type: string
@@ -237,12 +479,40 @@ components:
           description: description
           type: type
           cborHex: cborHex
+        payment_skey:
+          description: description
+          type: type
+          cborHex: cborHex
+        committee_hot_extended_skey:
+          description: description
+          type: type
+          cborHex: cborHex
+        committee_hot_vkey:
+          description: description
+          type: type
+          cborHex: cborHex
+        stake_skey:
+          description: description
+          type: type
+          cborHex: cborHex
+        drep_vkey:
+          description: description
+          type: type
+          cborHex: cborHex
+        committee_cold_vkey:
+          description: description
+          type: type
+          cborHex: cborHex
         payment_extended_skey:
           description: description
           type: type
           cborHex: cborHex
-        stake_address: stake_address
-        payment_skey:
+        drep_skey:
+          description: description
+          type: type
+          cborHex: cborHex
+        stake_address: stake1uy9ggsc9qls4pu9qvyyacwnmr9tt0gzcdt5s0zj4au8qkqc65ge8t
+        committee_cold_extended_skey:
           description: description
           type: type
           cborHex: cborHex
@@ -250,20 +520,50 @@ components:
           description: description
           type: type
           cborHex: cborHex
-        payment_address: payment_address
-        stake_skey:
+        committee_cold_skey:
           description: description
           type: type
           cborHex: cborHex
-        mnemonic: mnemonic
+        payment_address: addr1qxqs59lphg8g6qndelq8xwqn60ag3aeyfcp33c2kdp46a429mg32v29q3cg4sdj5c9ts5vxknc0yutnj8x8r8qy2l2q9sgds2
+        committee_hot_skey:
+          description: description
+          type: type
+          cborHex: cborHex
+        mnemonic: abandon abandon abandon abandon abandon abandon abandon abandon
+          abandon abandon abandon about
         stake_extended_skey:
           description: description
           type: type
           cborHex: cborHex
+        drep_extended_skey:
+          description: description
+          type: type
+          cborHex: cborHex
       properties:
+        committee_cold_extended_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        committee_cold_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        committee_cold_vkey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        committee_hot_extended_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        committee_hot_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        committee_hot_vkey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        drep_extended_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        drep_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        drep_vkey:
+          $ref: "#/components/schemas/bursa.KeyFile"
         mnemonic:
+          example: abandon abandon abandon abandon abandon abandon abandon abandon
+            abandon abandon abandon about
           type: string
         payment_address:
+          example: addr1qxqs59lphg8g6qndelq8xwqn60ag3aeyfcp33c2kdp46a429mg32v29q3cg4sdj5c9ts5vxknc0yutnj8x8r8qy2l2q9sgds2
           type: string
         payment_extended_skey:
           $ref: "#/components/schemas/bursa.KeyFile"
@@ -272,6 +572,7 @@ components:
         payment_vkey:
           $ref: "#/components/schemas/bursa.KeyFile"
         stake_address:
+          example: stake1uy9ggsc9qls4pu9qvyyacwnmr9tt0gzcdt5s0zj4au8qkqc65ge8t
           type: string
         stake_extended_skey:
           $ref: "#/components/schemas/bursa.KeyFile"
