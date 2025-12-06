@@ -20,15 +20,24 @@ var _ MappedNullable = &BursaWallet{}
 
 // BursaWallet struct for BursaWallet
 type BursaWallet struct {
-	Mnemonic            *string       `json:"mnemonic,omitempty"`
-	PaymentAddress      *string       `json:"payment_address,omitempty"`
-	PaymentExtendedSkey *BursaKeyFile `json:"payment_extended_skey,omitempty"`
-	PaymentSkey         *BursaKeyFile `json:"payment_skey,omitempty"`
-	PaymentVkey         *BursaKeyFile `json:"payment_vkey,omitempty"`
-	StakeAddress        *string       `json:"stake_address,omitempty"`
-	StakeExtendedSkey   *BursaKeyFile `json:"stake_extended_skey,omitempty"`
-	StakeSkey           *BursaKeyFile `json:"stake_skey,omitempty"`
-	StakeVkey           *BursaKeyFile `json:"stake_vkey,omitempty"`
+	CommitteeColdExtendedSkey *BursaKeyFile `json:"committee_cold_extended_skey,omitempty"`
+	CommitteeColdSkey         *BursaKeyFile `json:"committee_cold_skey,omitempty"`
+	CommitteeColdVkey         *BursaKeyFile `json:"committee_cold_vkey,omitempty"`
+	CommitteeHotExtendedSkey  *BursaKeyFile `json:"committee_hot_extended_skey,omitempty"`
+	CommitteeHotSkey          *BursaKeyFile `json:"committee_hot_skey,omitempty"`
+	CommitteeHotVkey          *BursaKeyFile `json:"committee_hot_vkey,omitempty"`
+	DrepExtendedSkey          *BursaKeyFile `json:"drep_extended_skey,omitempty"`
+	DrepSkey                  *BursaKeyFile `json:"drep_skey,omitempty"`
+	DrepVkey                  *BursaKeyFile `json:"drep_vkey,omitempty"`
+	Mnemonic                  *string       `json:"mnemonic,omitempty"`
+	PaymentAddress            *string       `json:"payment_address,omitempty"`
+	PaymentExtendedSkey       *BursaKeyFile `json:"payment_extended_skey,omitempty"`
+	PaymentSkey               *BursaKeyFile `json:"payment_skey,omitempty"`
+	PaymentVkey               *BursaKeyFile `json:"payment_vkey,omitempty"`
+	StakeAddress              *string       `json:"stake_address,omitempty"`
+	StakeExtendedSkey         *BursaKeyFile `json:"stake_extended_skey,omitempty"`
+	StakeSkey                 *BursaKeyFile `json:"stake_skey,omitempty"`
+	StakeVkey                 *BursaKeyFile `json:"stake_vkey,omitempty"`
 }
 
 // NewBursaWallet instantiates a new BursaWallet object
@@ -46,6 +55,294 @@ func NewBursaWallet() *BursaWallet {
 func NewBursaWalletWithDefaults() *BursaWallet {
 	this := BursaWallet{}
 	return &this
+}
+
+// GetCommitteeColdExtendedSkey returns the CommitteeColdExtendedSkey field value if set, zero value otherwise.
+func (o *BursaWallet) GetCommitteeColdExtendedSkey() BursaKeyFile {
+	if o == nil || IsNil(o.CommitteeColdExtendedSkey) {
+		var ret BursaKeyFile
+		return ret
+	}
+	return *o.CommitteeColdExtendedSkey
+}
+
+// GetCommitteeColdExtendedSkeyOk returns a tuple with the CommitteeColdExtendedSkey field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaWallet) GetCommitteeColdExtendedSkeyOk() (*BursaKeyFile, bool) {
+	if o == nil || IsNil(o.CommitteeColdExtendedSkey) {
+		return nil, false
+	}
+	return o.CommitteeColdExtendedSkey, true
+}
+
+// HasCommitteeColdExtendedSkey returns a boolean if a field has been set.
+func (o *BursaWallet) HasCommitteeColdExtendedSkey() bool {
+	if o != nil && !IsNil(o.CommitteeColdExtendedSkey) {
+		return true
+	}
+
+	return false
+}
+
+// SetCommitteeColdExtendedSkey gets a reference to the given BursaKeyFile and assigns it to the CommitteeColdExtendedSkey field.
+func (o *BursaWallet) SetCommitteeColdExtendedSkey(v BursaKeyFile) {
+	o.CommitteeColdExtendedSkey = &v
+}
+
+// GetCommitteeColdSkey returns the CommitteeColdSkey field value if set, zero value otherwise.
+func (o *BursaWallet) GetCommitteeColdSkey() BursaKeyFile {
+	if o == nil || IsNil(o.CommitteeColdSkey) {
+		var ret BursaKeyFile
+		return ret
+	}
+	return *o.CommitteeColdSkey
+}
+
+// GetCommitteeColdSkeyOk returns a tuple with the CommitteeColdSkey field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaWallet) GetCommitteeColdSkeyOk() (*BursaKeyFile, bool) {
+	if o == nil || IsNil(o.CommitteeColdSkey) {
+		return nil, false
+	}
+	return o.CommitteeColdSkey, true
+}
+
+// HasCommitteeColdSkey returns a boolean if a field has been set.
+func (o *BursaWallet) HasCommitteeColdSkey() bool {
+	if o != nil && !IsNil(o.CommitteeColdSkey) {
+		return true
+	}
+
+	return false
+}
+
+// SetCommitteeColdSkey gets a reference to the given BursaKeyFile and assigns it to the CommitteeColdSkey field.
+func (o *BursaWallet) SetCommitteeColdSkey(v BursaKeyFile) {
+	o.CommitteeColdSkey = &v
+}
+
+// GetCommitteeColdVkey returns the CommitteeColdVkey field value if set, zero value otherwise.
+func (o *BursaWallet) GetCommitteeColdVkey() BursaKeyFile {
+	if o == nil || IsNil(o.CommitteeColdVkey) {
+		var ret BursaKeyFile
+		return ret
+	}
+	return *o.CommitteeColdVkey
+}
+
+// GetCommitteeColdVkeyOk returns a tuple with the CommitteeColdVkey field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaWallet) GetCommitteeColdVkeyOk() (*BursaKeyFile, bool) {
+	if o == nil || IsNil(o.CommitteeColdVkey) {
+		return nil, false
+	}
+	return o.CommitteeColdVkey, true
+}
+
+// HasCommitteeColdVkey returns a boolean if a field has been set.
+func (o *BursaWallet) HasCommitteeColdVkey() bool {
+	if o != nil && !IsNil(o.CommitteeColdVkey) {
+		return true
+	}
+
+	return false
+}
+
+// SetCommitteeColdVkey gets a reference to the given BursaKeyFile and assigns it to the CommitteeColdVkey field.
+func (o *BursaWallet) SetCommitteeColdVkey(v BursaKeyFile) {
+	o.CommitteeColdVkey = &v
+}
+
+// GetCommitteeHotExtendedSkey returns the CommitteeHotExtendedSkey field value if set, zero value otherwise.
+func (o *BursaWallet) GetCommitteeHotExtendedSkey() BursaKeyFile {
+	if o == nil || IsNil(o.CommitteeHotExtendedSkey) {
+		var ret BursaKeyFile
+		return ret
+	}
+	return *o.CommitteeHotExtendedSkey
+}
+
+// GetCommitteeHotExtendedSkeyOk returns a tuple with the CommitteeHotExtendedSkey field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaWallet) GetCommitteeHotExtendedSkeyOk() (*BursaKeyFile, bool) {
+	if o == nil || IsNil(o.CommitteeHotExtendedSkey) {
+		return nil, false
+	}
+	return o.CommitteeHotExtendedSkey, true
+}
+
+// HasCommitteeHotExtendedSkey returns a boolean if a field has been set.
+func (o *BursaWallet) HasCommitteeHotExtendedSkey() bool {
+	if o != nil && !IsNil(o.CommitteeHotExtendedSkey) {
+		return true
+	}
+
+	return false
+}
+
+// SetCommitteeHotExtendedSkey gets a reference to the given BursaKeyFile and assigns it to the CommitteeHotExtendedSkey field.
+func (o *BursaWallet) SetCommitteeHotExtendedSkey(v BursaKeyFile) {
+	o.CommitteeHotExtendedSkey = &v
+}
+
+// GetCommitteeHotSkey returns the CommitteeHotSkey field value if set, zero value otherwise.
+func (o *BursaWallet) GetCommitteeHotSkey() BursaKeyFile {
+	if o == nil || IsNil(o.CommitteeHotSkey) {
+		var ret BursaKeyFile
+		return ret
+	}
+	return *o.CommitteeHotSkey
+}
+
+// GetCommitteeHotSkeyOk returns a tuple with the CommitteeHotSkey field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaWallet) GetCommitteeHotSkeyOk() (*BursaKeyFile, bool) {
+	if o == nil || IsNil(o.CommitteeHotSkey) {
+		return nil, false
+	}
+	return o.CommitteeHotSkey, true
+}
+
+// HasCommitteeHotSkey returns a boolean if a field has been set.
+func (o *BursaWallet) HasCommitteeHotSkey() bool {
+	if o != nil && !IsNil(o.CommitteeHotSkey) {
+		return true
+	}
+
+	return false
+}
+
+// SetCommitteeHotSkey gets a reference to the given BursaKeyFile and assigns it to the CommitteeHotSkey field.
+func (o *BursaWallet) SetCommitteeHotSkey(v BursaKeyFile) {
+	o.CommitteeHotSkey = &v
+}
+
+// GetCommitteeHotVkey returns the CommitteeHotVkey field value if set, zero value otherwise.
+func (o *BursaWallet) GetCommitteeHotVkey() BursaKeyFile {
+	if o == nil || IsNil(o.CommitteeHotVkey) {
+		var ret BursaKeyFile
+		return ret
+	}
+	return *o.CommitteeHotVkey
+}
+
+// GetCommitteeHotVkeyOk returns a tuple with the CommitteeHotVkey field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaWallet) GetCommitteeHotVkeyOk() (*BursaKeyFile, bool) {
+	if o == nil || IsNil(o.CommitteeHotVkey) {
+		return nil, false
+	}
+	return o.CommitteeHotVkey, true
+}
+
+// HasCommitteeHotVkey returns a boolean if a field has been set.
+func (o *BursaWallet) HasCommitteeHotVkey() bool {
+	if o != nil && !IsNil(o.CommitteeHotVkey) {
+		return true
+	}
+
+	return false
+}
+
+// SetCommitteeHotVkey gets a reference to the given BursaKeyFile and assigns it to the CommitteeHotVkey field.
+func (o *BursaWallet) SetCommitteeHotVkey(v BursaKeyFile) {
+	o.CommitteeHotVkey = &v
+}
+
+// GetDrepExtendedSkey returns the DrepExtendedSkey field value if set, zero value otherwise.
+func (o *BursaWallet) GetDrepExtendedSkey() BursaKeyFile {
+	if o == nil || IsNil(o.DrepExtendedSkey) {
+		var ret BursaKeyFile
+		return ret
+	}
+	return *o.DrepExtendedSkey
+}
+
+// GetDrepExtendedSkeyOk returns a tuple with the DrepExtendedSkey field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaWallet) GetDrepExtendedSkeyOk() (*BursaKeyFile, bool) {
+	if o == nil || IsNil(o.DrepExtendedSkey) {
+		return nil, false
+	}
+	return o.DrepExtendedSkey, true
+}
+
+// HasDrepExtendedSkey returns a boolean if a field has been set.
+func (o *BursaWallet) HasDrepExtendedSkey() bool {
+	if o != nil && !IsNil(o.DrepExtendedSkey) {
+		return true
+	}
+
+	return false
+}
+
+// SetDrepExtendedSkey gets a reference to the given BursaKeyFile and assigns it to the DrepExtendedSkey field.
+func (o *BursaWallet) SetDrepExtendedSkey(v BursaKeyFile) {
+	o.DrepExtendedSkey = &v
+}
+
+// GetDrepSkey returns the DrepSkey field value if set, zero value otherwise.
+func (o *BursaWallet) GetDrepSkey() BursaKeyFile {
+	if o == nil || IsNil(o.DrepSkey) {
+		var ret BursaKeyFile
+		return ret
+	}
+	return *o.DrepSkey
+}
+
+// GetDrepSkeyOk returns a tuple with the DrepSkey field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaWallet) GetDrepSkeyOk() (*BursaKeyFile, bool) {
+	if o == nil || IsNil(o.DrepSkey) {
+		return nil, false
+	}
+	return o.DrepSkey, true
+}
+
+// HasDrepSkey returns a boolean if a field has been set.
+func (o *BursaWallet) HasDrepSkey() bool {
+	if o != nil && !IsNil(o.DrepSkey) {
+		return true
+	}
+
+	return false
+}
+
+// SetDrepSkey gets a reference to the given BursaKeyFile and assigns it to the DrepSkey field.
+func (o *BursaWallet) SetDrepSkey(v BursaKeyFile) {
+	o.DrepSkey = &v
+}
+
+// GetDrepVkey returns the DrepVkey field value if set, zero value otherwise.
+func (o *BursaWallet) GetDrepVkey() BursaKeyFile {
+	if o == nil || IsNil(o.DrepVkey) {
+		var ret BursaKeyFile
+		return ret
+	}
+	return *o.DrepVkey
+}
+
+// GetDrepVkeyOk returns a tuple with the DrepVkey field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaWallet) GetDrepVkeyOk() (*BursaKeyFile, bool) {
+	if o == nil || IsNil(o.DrepVkey) {
+		return nil, false
+	}
+	return o.DrepVkey, true
+}
+
+// HasDrepVkey returns a boolean if a field has been set.
+func (o *BursaWallet) HasDrepVkey() bool {
+	if o != nil && !IsNil(o.DrepVkey) {
+		return true
+	}
+
+	return false
+}
+
+// SetDrepVkey gets a reference to the given BursaKeyFile and assigns it to the DrepVkey field.
+func (o *BursaWallet) SetDrepVkey(v BursaKeyFile) {
+	o.DrepVkey = &v
 }
 
 // GetMnemonic returns the Mnemonic field value if set, zero value otherwise.
@@ -346,6 +643,33 @@ func (o BursaWallet) MarshalJSON() ([]byte, error) {
 
 func (o BursaWallet) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
+	if !IsNil(o.CommitteeColdExtendedSkey) {
+		toSerialize["committee_cold_extended_skey"] = o.CommitteeColdExtendedSkey
+	}
+	if !IsNil(o.CommitteeColdSkey) {
+		toSerialize["committee_cold_skey"] = o.CommitteeColdSkey
+	}
+	if !IsNil(o.CommitteeColdVkey) {
+		toSerialize["committee_cold_vkey"] = o.CommitteeColdVkey
+	}
+	if !IsNil(o.CommitteeHotExtendedSkey) {
+		toSerialize["committee_hot_extended_skey"] = o.CommitteeHotExtendedSkey
+	}
+	if !IsNil(o.CommitteeHotSkey) {
+		toSerialize["committee_hot_skey"] = o.CommitteeHotSkey
+	}
+	if !IsNil(o.CommitteeHotVkey) {
+		toSerialize["committee_hot_vkey"] = o.CommitteeHotVkey
+	}
+	if !IsNil(o.DrepExtendedSkey) {
+		toSerialize["drep_extended_skey"] = o.DrepExtendedSkey
+	}
+	if !IsNil(o.DrepSkey) {
+		toSerialize["drep_skey"] = o.DrepSkey
+	}
+	if !IsNil(o.DrepVkey) {
+		toSerialize["drep_vkey"] = o.DrepVkey
+	}
 	if !IsNil(o.Mnemonic) {
 		toSerialize["mnemonic"] = o.Mnemonic
 	}

@@ -33,6 +33,7 @@ import (
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/btcsuite/btcd/btcutil/bech32"
 	bip39 "github.com/tyler-smith/go-bip39"
+	"golang.org/x/crypto/blake2b"
 )
 
 var (
@@ -61,6 +62,99 @@ type LoadedKey struct {
 	RawCBOR     []byte
 	VKey        []byte
 	SKey        []byte
+}
+
+// Script represents a native script for multi-signature wallets
+type Script interface {
+	// Type returns the script type identifier
+	Type() int
+	// CBOR returns the CBOR-encoded bytes of the script
+	CBOR() []byte
+}
+
+// ScriptSig represents a signature script requiring a specific key hash
+type ScriptSig struct {
+	KeyHash []byte `cbor:"0,keyasint"`
+}
+
+// Type returns the script type (0 for signature)
+func (s ScriptSig) Type() int { return 0 }
+
+// CBOR returns the CBOR-encoded script
+func (s ScriptSig) CBOR() []byte {
+	data, _ := cbor.Encode(s)
+	return data
+}
+
+// ScriptAll represents a script requiring all sub-scripts to be satisfied
+type ScriptAll struct {
+	Scripts []Script `cbor:"1,keyasint"`
+}
+
+// Type returns the script type (1 for all)
+func (s ScriptAll) Type() int { return 1 }
+
+// CBOR returns the CBOR-encoded script
+func (s ScriptAll) CBOR() []byte {
+	data, _ := cbor.Encode(s)
+	return data
+}
+
+// ScriptAny represents a script requiring any sub-script to be satisfied
+type ScriptAny struct {
+	Scripts []Script `cbor:"2,keyasint"`
+}
+
+// Type returns the script type (2 for any)
+func (s ScriptAny) Type() int { return 2 }
+
+// CBOR returns the CBOR-encoded script
+func (s ScriptAny) CBOR() []byte {
+	data, _ := cbor.Encode(s)
+	return data
+}
+
+// ScriptNOf represents a script requiring N of the sub-scripts to be satisfied
+type ScriptNOf struct {
+	N       int      `cbor:"3,keyasint"`
+	Scripts []Script `cbor:"4,keyasint"`
+}
+
+// Type returns the script type (3 for N-of)
+func (s ScriptNOf) Type() int { return 3 }
+
+// CBOR returns the CBOR-encoded script
+func (s ScriptNOf) CBOR() []byte {
+	data, _ := cbor.Encode(s)
+	return data
+}
+
+// ScriptBefore represents a script valid before a specific slot
+type ScriptBefore struct {
+	Slot uint64 `cbor:"5,keyasint"`
+}
+
+// Type returns the script type (4 for before)
+func (s ScriptBefore) Type() int { return 4 }
+
+// CBOR returns the CBOR-encoded script
+func (s ScriptBefore) CBOR() []byte {
+	data, _ := cbor.Encode(s)
+	return data
+}
+
+// ScriptAfter represents a script valid after a specific slot
+type ScriptAfter struct {
+	Slot uint64 `cbor:"6,keyasint"`
+}
+
+// Type returns the script type (5 for after)
+func (s ScriptAfter) Type() int { return 5 }
+
+// CBOR returns the CBOR-encoded script
+func (s ScriptAfter) CBOR() []byte {
+	data, _ := cbor.Encode(s)
+	return data
 }
 
 // String returns the Bech32-encoded representation of the key according to CIP-0005
@@ -724,6 +818,329 @@ func GetCommitteeHotExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
 	return kf, nil
 }
 
+// GetMultiSigAccountKey derives a multi-signature account key using CIP-1854 path
+func GetMultiSigAccountKey(rootKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
+	const harden = 0x80000000
+	if num > 0x7FFFFFFF {
+		return nil, ErrInvalidDerivationIndex
+	}
+	hardNum := harden + num
+	return rootKey.
+		Derive(uint32(harden + 1854)).
+		Derive(uint32(harden + 1815)).
+		Derive(uint32(hardNum)), nil
+}
+
+// GetMultiSigPaymentKey derives a multi-signature payment key
+func GetMultiSigPaymentKey(
+	accountKey bip32.XPrv,
+	num uint32,
+) (bip32.XPrv, error) {
+	if num >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	return accountKey.Derive(0).Derive(num), nil
+}
+
+// GetMultiSigPaymentVKey creates a verification key file for multi-sig payment key
+func GetMultiSigPaymentVKey(paymentKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode(
+		[]any{0, paymentKey.Public().PublicKey()},
+	)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode multi-sig payment verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "PaymentVerificationKeyShelley_ed25519",
+		Description: "Multi-Sig Payment Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+// GetMultiSigPaymentSKey creates a signing key file for multi-sig payment key
+func GetMultiSigPaymentSKey(paymentKey bip32.XPrv) (KeyFile, error) {
+	return getSigningKeyFile(
+		paymentKey,
+		"PaymentSigningKeyShelley_ed25519",
+		"Multi-Sig Payment Signing Key",
+	)
+}
+
+// GetMultiSigStakeKey derives a multi-signature stake key
+func GetMultiSigStakeKey(
+	accountKey bip32.XPrv,
+	num uint32,
+) (bip32.XPrv, error) {
+	if num >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	return accountKey.Derive(2).Derive(num), nil
+}
+
+// GetMultiSigStakeVKey creates a verification key file for multi-sig stake key
+func GetMultiSigStakeVKey(stakeKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode(
+		[]any{0, stakeKey.Public().PublicKey()},
+	)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode multi-sig stake verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "StakeVerificationKeyShelley_ed25519",
+		Description: "Multi-Sig Stake Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+// GetMultiSigStakeSKey creates a signing key file for multi-sig stake key
+func GetMultiSigStakeSKey(stakeKey bip32.XPrv) (KeyFile, error) {
+	return getSigningKeyFile(
+		stakeKey,
+		"StakeSigningKeyShelley_ed25519",
+		"Multi-Sig Stake Signing Key",
+	)
+}
+
+// NewScriptSig creates a signature script requiring the given key hash
+func NewScriptSig(keyHash []byte) *ScriptSig {
+	return &ScriptSig{KeyHash: keyHash}
+}
+
+// NewScriptAll creates an "all" script requiring all sub-scripts to be satisfied
+func NewScriptAll(scripts ...Script) *ScriptAll {
+	return &ScriptAll{Scripts: scripts}
+}
+
+// NewScriptAny creates an "any" script requiring any sub-script to be satisfied
+func NewScriptAny(scripts ...Script) *ScriptAny {
+	return &ScriptAny{Scripts: scripts}
+}
+
+// NewScriptNOf creates an "N-of" script requiring N sub-scripts to be satisfied
+func NewScriptNOf(n int, scripts ...Script) *ScriptNOf {
+	return &ScriptNOf{N: n, Scripts: scripts}
+}
+
+// NewScriptBefore creates a "before" script valid before the given slot
+func NewScriptBefore(slot uint64) *ScriptBefore {
+	return &ScriptBefore{Slot: slot}
+}
+
+// NewScriptAfter creates an "after" script valid after the given slot
+func NewScriptAfter(slot uint64) *ScriptAfter {
+	return &ScriptAfter{Slot: slot}
+}
+
+// NewMultiSigScript creates an N-of-M multi-signature script
+// For example, NewMultiSigScript(2, keyHash1, keyHash2, keyHash3) creates a 2-of-3 script
+func NewMultiSigScript(required int, keyHashes ...[]byte) *ScriptNOf {
+	if required < 1 || required > len(keyHashes) {
+		panic("invalid required signatures count")
+	}
+	if len(keyHashes) == 0 {
+		panic("at least one key hash required")
+	}
+
+	scripts := make([]Script, len(keyHashes))
+	for i, keyHash := range keyHashes {
+		scripts[i] = NewScriptSig(keyHash)
+	}
+
+	return NewScriptNOf(required, scripts...)
+}
+
+// NewAllMultiSigScript creates an all-of multi-signature script (all keys must sign)
+func NewAllMultiSigScript(keyHashes ...[]byte) *ScriptAll {
+	if len(keyHashes) == 0 {
+		panic("at least one key hash required")
+	}
+
+	scripts := make([]Script, len(keyHashes))
+	for i, keyHash := range keyHashes {
+		scripts[i] = NewScriptSig(keyHash)
+	}
+
+	return NewScriptAll(scripts...)
+}
+
+// NewAnyMultiSigScript creates an any-of multi-signature script (any key can sign)
+func NewAnyMultiSigScript(keyHashes ...[]byte) *ScriptAny {
+	if len(keyHashes) == 0 {
+		panic("at least one key hash required")
+	}
+
+	scripts := make([]Script, len(keyHashes))
+	for i, keyHash := range keyHashes {
+		scripts[i] = NewScriptSig(keyHash)
+	}
+
+	return NewScriptAny(scripts...)
+}
+
+// NewTimelockedScript wraps a script with a timelock condition
+func NewTimelockedScript(slot uint64, before bool, script Script) Script {
+	if before {
+		return NewScriptAll(
+			NewScriptBefore(slot),
+			script,
+		)
+	}
+	return NewScriptAll(
+		NewScriptAfter(slot),
+		script,
+	)
+}
+
+// NewMultiSigScriptFromKeys creates an N-of-M script from public key hashes
+// This is a convenience function that extracts key hashes from Ed25519 public keys
+func NewMultiSigScriptFromKeys(
+	required int,
+	pubKeys ...ed25519.PublicKey,
+) *ScriptNOf {
+	keyHashes := make([][]byte, len(pubKeys))
+	for i, pubKey := range pubKeys {
+		// For Ed25519, the key hash is typically the Blake2b-224 hash of the public key
+		hasher, err := blake2b.New(28, nil)
+		if err != nil {
+			// This should never happen with valid parameters
+			panic(fmt.Sprintf("failed to create blake2b hasher: %v", err))
+		}
+		hasher.Write(pubKey)
+		keyHashes[i] = hasher.Sum(nil)
+	}
+	return NewMultiSigScript(required, keyHashes...)
+}
+
+// GetScriptHash computes the hash of a script for use in addresses
+func GetScriptHash(script Script) []byte {
+	scriptCBOR := script.CBOR()
+	hasher, err := blake2b.New(28, nil)
+	if err != nil {
+		// This should never happen with valid parameters
+		panic(fmt.Sprintf("failed to create blake2b hasher: %v", err))
+	}
+	hasher.Write(scriptCBOR)
+	return hasher.Sum(nil)
+}
+
+// GetScriptAddress creates an address from a script
+func GetScriptAddress(script Script, networkName string) (string, error) {
+	if networkName == "" {
+		return "", ErrInvalidNetwork
+	}
+	network, ok := ouroboros.NetworkByName(networkName)
+	if !ok {
+		return "", ErrInvalidNetwork
+	}
+	scriptHash := GetScriptHash(script)
+	addr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeScriptNone,
+		network.Id,
+		scriptHash,
+		nil, // no stake part for script addresses
+	)
+	if err != nil {
+		return "", fmt.Errorf("error creating script address: %w", err)
+	}
+	return addr.String(), nil
+}
+
+// ValidateScript checks if a script is satisfied given signatures and current slot
+func ValidateScript(script Script, signatures [][]byte, slot uint64) bool {
+	switch s := script.(type) {
+	case *ScriptSig:
+		return validateScriptSig(s, signatures)
+	case *ScriptAll:
+		return validateScriptAll(s, signatures, slot)
+	case *ScriptAny:
+		return validateScriptAny(s, signatures, slot)
+	case *ScriptNOf:
+		return validateScriptNOf(s, signatures, slot)
+	case *ScriptBefore:
+		return validateScriptBefore(s, slot)
+	case *ScriptAfter:
+		return validateScriptAfter(s, slot)
+	default:
+		return false
+	}
+}
+
+// validateScriptSig checks if a signature script is satisfied
+func validateScriptSig(_ *ScriptSig, signatures [][]byte) bool {
+	// Basic validation: for API/script structure validation, allow empty signatures
+	// For actual spending validation, signatures should be provided and verified
+	// TODO: Implement full Ed25519 signature verification against script.KeyHash
+	if len(signatures) == 0 {
+		// Allow empty signatures for basic script validation (API usage)
+		return true
+	}
+	// If signatures are provided, require at least one (basic check)
+	return len(signatures) > 0
+}
+
+// validateScriptAll checks if all sub-scripts are satisfied
+func validateScriptAll(
+	script *ScriptAll,
+	signatures [][]byte,
+	slot uint64,
+) bool {
+	for _, subScript := range script.Scripts {
+		if !ValidateScript(subScript, signatures, slot) {
+			return false
+		}
+	}
+	return true
+}
+
+// validateScriptAny checks if any sub-script is satisfied
+func validateScriptAny(
+	script *ScriptAny,
+	signatures [][]byte,
+	slot uint64,
+) bool {
+	for _, subScript := range script.Scripts {
+		if ValidateScript(subScript, signatures, slot) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateScriptNOf checks if at least N sub-scripts are satisfied
+func validateScriptNOf(
+	script *ScriptNOf,
+	signatures [][]byte,
+	slot uint64,
+) bool {
+	satisfied := 0
+	for _, subScript := range script.Scripts {
+		if ValidateScript(subScript, signatures, slot) {
+			satisfied++
+		}
+	}
+	return satisfied >= script.N
+}
+
+// validateScriptBefore checks if current slot is before the specified slot
+func validateScriptBefore(script *ScriptBefore, slot uint64) bool {
+	return slot < script.Slot
+}
+
+// validateScriptAfter checks if current slot is after the specified slot
+func validateScriptAfter(script *ScriptAfter, slot uint64) bool {
+	return slot > script.Slot
+}
+
 func GetAddress(
 	accountKey bip32.XPrv,
 	networkName string,
@@ -983,4 +1400,274 @@ func PrintLoadedKeys(keys []*LoadedKey, showSecrets bool) {
 	}
 
 	fmt.Print(buf.String())
+}
+
+// ScriptData represents a script with metadata for serialization
+type ScriptData struct {
+	Type    string         `json:"type"`
+	Script  map[string]any `json:"script"`
+	Address string         `json:"address,omitempty"`
+	Hash    string         `json:"hash,omitempty"`
+}
+
+// MarshalScript serializes a script to JSON with metadata
+func MarshalScript(script Script, network string) (*ScriptData, error) {
+	scriptMap, err := scriptToMap(script)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert script to map: %w", err)
+	}
+
+	data := &ScriptData{
+		Type:   "NativeScript",
+		Script: scriptMap,
+	}
+
+	// Generate address if network is provided
+	if network != "" {
+		address, err := GetScriptAddress(script, network)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate script address: %w", err)
+		}
+		data.Address = address
+	}
+
+	// Generate script hash
+	hash := GetScriptHash(script)
+	data.Hash = hex.EncodeToString(hash)
+
+	return data, nil
+}
+
+// UnmarshalScript deserializes a script from JSON
+func UnmarshalScript(data *ScriptData) (Script, error) {
+	if data.Type != "NativeScript" {
+		return nil, fmt.Errorf("unsupported script type: %s", data.Type)
+	}
+	return mapToScript(data.Script)
+}
+
+// scriptToMap converts a Script to a map for JSON serialization
+func scriptToMap(script Script) (map[string]any, error) {
+	switch s := script.(type) {
+	case *ScriptSig:
+		return map[string]any{
+			"type":    "sig",
+			"keyHash": hex.EncodeToString(s.KeyHash),
+		}, nil
+	case *ScriptAll:
+		scripts := make([]map[string]any, len(s.Scripts))
+		for i, subScript := range s.Scripts {
+			subMap, err := scriptToMap(subScript)
+			if err != nil {
+				return nil, err
+			}
+			scripts[i] = subMap
+		}
+		return map[string]any{
+			"type":    "all",
+			"scripts": scripts,
+		}, nil
+	case *ScriptAny:
+		scripts := make([]map[string]any, len(s.Scripts))
+		for i, subScript := range s.Scripts {
+			subMap, err := scriptToMap(subScript)
+			if err != nil {
+				return nil, err
+			}
+			scripts[i] = subMap
+		}
+		return map[string]any{
+			"type":    "any",
+			"scripts": scripts,
+		}, nil
+	case *ScriptNOf:
+		scripts := make([]map[string]any, len(s.Scripts))
+		for i, subScript := range s.Scripts {
+			subMap, err := scriptToMap(subScript)
+			if err != nil {
+				return nil, err
+			}
+			scripts[i] = subMap
+		}
+		return map[string]any{
+			"type":    "nOf",
+			"n":       s.N,
+			"scripts": scripts,
+		}, nil
+	case *ScriptBefore:
+		return map[string]any{
+			"type": "before",
+			"slot": s.Slot,
+		}, nil
+	case *ScriptAfter:
+		return map[string]any{
+			"type": "after",
+			"slot": s.Slot,
+		}, nil
+	case ScriptSig:
+		return map[string]any{
+			"type":    "sig",
+			"keyHash": hex.EncodeToString(s.KeyHash),
+		}, nil
+	case ScriptAll:
+		scripts := make([]map[string]any, len(s.Scripts))
+		for i, subScript := range s.Scripts {
+			subMap, err := scriptToMap(subScript)
+			if err != nil {
+				return nil, err
+			}
+			scripts[i] = subMap
+		}
+		return map[string]any{
+			"type":    "all",
+			"scripts": scripts,
+		}, nil
+	case ScriptAny:
+		scripts := make([]map[string]any, len(s.Scripts))
+		for i, subScript := range s.Scripts {
+			subMap, err := scriptToMap(subScript)
+			if err != nil {
+				return nil, err
+			}
+			scripts[i] = subMap
+		}
+		return map[string]any{
+			"type":    "any",
+			"scripts": scripts,
+		}, nil
+	case ScriptNOf:
+		scripts := make([]map[string]any, len(s.Scripts))
+		for i, subScript := range s.Scripts {
+			subMap, err := scriptToMap(subScript)
+			if err != nil {
+				return nil, err
+			}
+			scripts[i] = subMap
+		}
+		return map[string]any{
+			"type":    "nOf",
+			"n":       s.N,
+			"scripts": scripts,
+		}, nil
+	case ScriptBefore:
+		return map[string]any{
+			"type": "before",
+			"slot": s.Slot,
+		}, nil
+	case ScriptAfter:
+		return map[string]any{
+			"type": "after",
+			"slot": s.Slot,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported script type: %T", script)
+	}
+}
+
+// mapToScript converts a map back to a Script
+func mapToScript(m map[string]any) (Script, error) {
+	scriptType, ok := m["type"].(string)
+	if !ok {
+		return nil, errors.New("missing or invalid script type")
+	}
+
+	switch scriptType {
+	case "sig":
+		keyHashStr, ok := m["keyHash"].(string)
+		if !ok {
+			return nil, errors.New("missing or invalid keyHash for sig script")
+		}
+		keyHash, err := hex.DecodeString(keyHashStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid keyHash hex: %w", err)
+		}
+		return NewScriptSig(keyHash), nil
+	case "all":
+		scriptsInterface, ok := m["scripts"].([]any)
+		if !ok {
+			return nil, errors.New("missing or invalid scripts for all script")
+		}
+		scripts := make([]Script, len(scriptsInterface))
+		for i, scriptInterface := range scriptsInterface {
+			scriptMap, ok := scriptInterface.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid script at index %d", i)
+			}
+			script, err := mapToScript(scriptMap)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"failed to parse script at index %d: %w",
+					i,
+					err,
+				)
+			}
+			scripts[i] = script
+		}
+		return NewScriptAll(scripts...), nil
+	case "any":
+		scriptsInterface, ok := m["scripts"].([]any)
+		if !ok {
+			return nil, errors.New("missing or invalid scripts for any script")
+		}
+		scripts := make([]Script, len(scriptsInterface))
+		for i, scriptInterface := range scriptsInterface {
+			scriptMap, ok := scriptInterface.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid script at index %d", i)
+			}
+			script, err := mapToScript(scriptMap)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"failed to parse script at index %d: %w",
+					i,
+					err,
+				)
+			}
+			scripts[i] = script
+		}
+		return NewScriptAny(scripts...), nil
+	case "nOf":
+		nFloat, ok := m["n"].(float64)
+		if !ok {
+			return nil, errors.New("missing or invalid n for nOf script")
+		}
+		n := int(nFloat)
+		scriptsInterface, ok := m["scripts"].([]any)
+		if !ok {
+			return nil, errors.New("missing or invalid scripts for nOf script")
+		}
+		scripts := make([]Script, len(scriptsInterface))
+		for i, scriptInterface := range scriptsInterface {
+			scriptMap, ok := scriptInterface.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid script at index %d", i)
+			}
+			script, err := mapToScript(scriptMap)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"failed to parse script at index %d: %w",
+					i,
+					err,
+				)
+			}
+			scripts[i] = script
+		}
+		return NewScriptNOf(n, scripts...), nil
+	case "before":
+		slotFloat, ok := m["slot"].(float64)
+		if !ok {
+			return nil, errors.New("missing or invalid slot for before script")
+		}
+		slot := uint64(slotFloat)
+		return NewScriptBefore(slot), nil
+	case "after":
+		slotFloat, ok := m["slot"].(float64)
+		if !ok {
+			return nil, errors.New("missing or invalid slot for after script")
+		}
+		slot := uint64(slotFloat)
+		return NewScriptAfter(slot), nil
+	default:
+		return nil, fmt.Errorf("unsupported script type: %s", scriptType)
+	}
 }

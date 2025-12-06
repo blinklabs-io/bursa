@@ -654,3 +654,111 @@ func TestWalletUpdateMethodGCPNotConfigured(t *testing.T) {
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
+
+func TestHandleScriptCreate(t *testing.T) {
+	// Setup
+	reqBody := `{
+		"type": "nOf",
+		"required": 2,
+		"key_hashes": [
+			"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			"02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021",
+			"030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122"
+		],
+		"network": "mainnet"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/create",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleScriptCreate(w, req)
+
+	// Assert
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(body), "type")
+	assert.Contains(t, string(body), "script")
+	assert.Contains(t, string(body), "address")
+	assert.Contains(t, string(body), "hash")
+}
+
+func TestHandleScriptValidate(t *testing.T) {
+	// Setup
+	reqBody := `{
+		"script": {
+			"type": "nOf",
+			"n": 2,
+			"scripts": [
+				{"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"},
+				{"type": "sig", "keyHash": "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021"},
+				{"type": "sig", "keyHash": "030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122"}
+			]
+		},
+		"network": "mainnet"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/validate",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleScriptValidate(w, req)
+
+	// Assert
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(body), "scriptHash")
+	assert.Contains(t, string(body), "valid")
+	assert.Contains(t, string(body), "true")
+}
+
+func TestHandleScriptAddress(t *testing.T) {
+	// Setup
+	reqBody := `{
+		"script": {
+			"type": "nOf",
+			"n": 2,
+			"scripts": [
+				{"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"},
+				{"type": "sig", "keyHash": "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021"},
+				{"type": "sig", "keyHash": "030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122"}
+			]
+		},
+		"network": "mainnet"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/address",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleScriptAddress(w, req)
+
+	// Assert
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(body), "address")
+	assert.Contains(t, string(body), "network")
+	assert.Contains(t, string(body), "scriptHash")
+	assert.Contains(t, string(body), "addr1")
+}

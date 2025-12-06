@@ -169,6 +169,8 @@ components:
     api.WalletDeleteRequest:
       properties:
         name:
+          maxLength: 100
+          minLength: 1
           type: string
         password:
           type: string
@@ -178,6 +180,8 @@ components:
     api.WalletGetRequest:
       properties:
         name:
+          maxLength: 100
+          minLength: 1
           type: string
         password:
           type: string
@@ -187,22 +191,30 @@ components:
     api.WalletRestoreRequest:
       properties:
         account_id:
+          maximum: 2147483647
           type: integer
         address_id:
+          maximum: 2147483647
           type: integer
         committee_cold_id:
+          maximum: 2147483647
           type: integer
         committee_hot_id:
+          maximum: 2147483647
           type: integer
         drep_id:
+          maximum: 2147483647
           type: integer
         mnemonic:
+          minLength: 1
           type: string
         password:
           type: string
         payment_id:
+          maximum: 2147483647
           type: integer
         stake_id:
+          maximum: 2147483647
           type: integer
       required:
       - mnemonic
@@ -210,8 +222,11 @@ components:
     api.WalletUpdateRequest:
       properties:
         description:
+          maxLength: 500
           type: string
         name:
+          maxLength: 100
+          minLength: 1
           type: string
         password:
           type: string
@@ -220,50 +235,111 @@ components:
       type: object
     bursa.KeyFile:
       example:
-        description: description
-        type: type
-        cborHex: cborHex
+        description: Payment Verification Key
+        type: PaymentVerificationKeyShelley_ed25519
+        cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
       properties:
         cborHex:
+          example: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
           type: string
         description:
+          example: Payment Verification Key
           type: string
         type:
+          example: PaymentVerificationKeyShelley_ed25519
           type: string
       type: object
     bursa.Wallet:
       example:
         payment_vkey:
-          description: description
-          type: type
-          cborHex: cborHex
-        payment_extended_skey:
-          description: description
-          type: type
-          cborHex: cborHex
-        stake_address: stake_address
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
         payment_skey:
-          description: description
-          type: type
-          cborHex: cborHex
-        stake_vkey:
-          description: description
-          type: type
-          cborHex: cborHex
-        payment_address: payment_address
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
+        committee_hot_extended_skey:
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
+        committee_hot_vkey:
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
         stake_skey:
-          description: description
-          type: type
-          cborHex: cborHex
-        mnemonic: mnemonic
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
+        drep_vkey:
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
+        committee_cold_vkey:
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
+        payment_extended_skey:
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
+        drep_skey:
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
+        stake_address: stake1uy9ggsc9qls4pu9qvyyacwnmr9tt0gzcdt5s0zj4au8qkqc65ge8t
+        committee_cold_extended_skey:
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
+        stake_vkey:
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
+        committee_cold_skey:
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
+        payment_address: addr1qxqs59lphg8g6qndelq8xwqn60ag3aeyfcp33c2kdp46a429mg32v29q3cg4sdj5c9ts5vxknc0yutnj8x8r8qy2l2q9sgds2
+        committee_hot_skey:
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
+        mnemonic: abandon abandon abandon abandon abandon abandon abandon abandon
+          abandon abandon abandon about
         stake_extended_skey:
-          description: description
-          type: type
-          cborHex: cborHex
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
+        drep_extended_skey:
+          description: Payment Verification Key
+          type: PaymentVerificationKeyShelley_ed25519
+          cborHex: 5820a9ebe2e435c03608fbdec443686d23661a796ab6d4dea71734c69b6dde310880
       properties:
+        committee_cold_extended_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        committee_cold_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        committee_cold_vkey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        committee_hot_extended_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        committee_hot_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        committee_hot_vkey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        drep_extended_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        drep_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        drep_vkey:
+          $ref: "#/components/schemas/bursa.KeyFile"
         mnemonic:
+          example: abandon abandon abandon abandon abandon abandon abandon abandon
+            abandon abandon abandon about
           type: string
         payment_address:
+          example: addr1qxqs59lphg8g6qndelq8xwqn60ag3aeyfcp33c2kdp46a429mg32v29q3cg4sdj5c9ts5vxknc0yutnj8x8r8qy2l2q9sgds2
           type: string
         payment_extended_skey:
           $ref: "#/components/schemas/bursa.KeyFile"
@@ -272,6 +348,7 @@ components:
         payment_vkey:
           $ref: "#/components/schemas/bursa.KeyFile"
         stake_address:
+          example: stake1uy9ggsc9qls4pu9qvyyacwnmr9tt0gzcdt5s0zj4au8qkqc65ge8t
           type: string
         stake_extended_skey:
           $ref: "#/components/schemas/bursa.KeyFile"

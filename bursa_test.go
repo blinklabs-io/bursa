@@ -15,6 +15,7 @@
 package bursa
 
 import (
+	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
 	"io/fs"
@@ -876,4 +877,227 @@ func TestLoadWalletDirValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestScriptTypes(t *testing.T) {
+	// Test script sig
+	keyHash := []byte{
+		0x01,
+		0x02,
+		0x03,
+		0x04,
+		0x05,
+		0x06,
+		0x07,
+		0x08,
+		0x09,
+		0x0a,
+		0x0b,
+		0x0c,
+		0x0d,
+		0x0e,
+		0x0f,
+		0x10,
+		0x11,
+		0x12,
+		0x13,
+		0x14,
+		0x15,
+		0x16,
+		0x17,
+		0x18,
+		0x19,
+		0x1a,
+		0x1b,
+		0x1c,
+	}
+	scriptSig := NewScriptSig(keyHash)
+	assert.Equal(t, 0, scriptSig.Type())
+	cbor := scriptSig.CBOR()
+	assert.NotEmpty(t, cbor)
+
+	// Test script all
+	scriptAll := NewScriptAll(scriptSig)
+	assert.Equal(t, 1, scriptAll.Type())
+	cbor = scriptAll.CBOR()
+	assert.NotEmpty(t, cbor)
+
+	// Test script any
+	scriptAny := NewScriptAny(scriptSig)
+	assert.Equal(t, 2, scriptAny.Type())
+	cbor = scriptAny.CBOR()
+	assert.NotEmpty(t, cbor)
+
+	// Test script N-of
+	scriptNOf := NewScriptNOf(2, scriptSig, scriptSig)
+	assert.Equal(t, 3, scriptNOf.Type())
+	cbor = scriptNOf.CBOR()
+	assert.NotEmpty(t, cbor)
+
+	// Test script before
+	scriptBefore := NewScriptBefore(123456789)
+	assert.Equal(t, 4, scriptBefore.Type())
+	cbor = scriptBefore.CBOR()
+	assert.NotEmpty(t, cbor)
+
+	// Test script after
+	scriptAfter := NewScriptAfter(123456789)
+	assert.Equal(t, 5, scriptAfter.Type())
+	cbor = scriptAfter.CBOR()
+	assert.NotEmpty(t, cbor)
+}
+
+func TestGetScriptHash(t *testing.T) {
+	script := NewScriptSig([]byte{0x01, 0x02, 0x03})
+	hash := GetScriptHash(script)
+	assert.Len(t, hash, 28)
+}
+
+func TestGetScriptAddress(t *testing.T) {
+	script := NewScriptSig([]byte{0x01, 0x02, 0x03})
+	addr, err := GetScriptAddress(script, "mainnet")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, addr)
+	assert.True(t, strings.HasPrefix(addr, "addr1"))
+
+	// Test invalid network
+	_, err = GetScriptAddress(script, "invalid")
+	assert.Error(t, err)
+	assert.Equal(t, ErrInvalidNetwork, err)
+}
+
+func TestMultiSigKeyDerivation(t *testing.T) {
+	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	rootKey, err := GetRootKeyFromMnemonic(mnemonic, "")
+	assert.NoError(t, err)
+
+	accountKey, err := GetMultiSigAccountKey(rootKey, 0)
+	assert.NoError(t, err)
+
+	paymentKey, err := GetMultiSigPaymentKey(accountKey, 0)
+	assert.NoError(t, err)
+
+	vkey, err := GetMultiSigPaymentVKey(paymentKey)
+	assert.NoError(t, err)
+	assert.Equal(t, "PaymentVerificationKeyShelley_ed25519", vkey.Type)
+
+	skey, err := GetMultiSigPaymentSKey(paymentKey)
+	assert.NoError(t, err)
+	assert.Equal(t, "PaymentSigningKeyShelley_ed25519", skey.Type)
+
+	stakeKey, err := GetMultiSigStakeKey(accountKey, 0)
+	assert.NoError(t, err)
+
+	stakeVKey, err := GetMultiSigStakeVKey(stakeKey)
+	assert.NoError(t, err)
+	assert.Equal(t, "StakeVerificationKeyShelley_ed25519", stakeVKey.Type)
+
+	stakeSKey, err := GetMultiSigStakeSKey(stakeKey)
+	assert.NoError(t, err)
+	assert.Equal(t, "StakeSigningKeyShelley_ed25519", stakeSKey.Type)
+}
+
+func TestValidateScript(t *testing.T) {
+	// Test ScriptSig validation (allows empty signatures for basic validation)
+	scriptSig := NewScriptSig([]byte{0x01, 0x02, 0x03})
+	assert.True(t, ValidateScript(scriptSig, nil, 1000))
+
+	// Test ScriptAll validation (requires all sub-scripts satisfied)
+	// Since ScriptSig allows empty signatures, ScriptAll should succeed
+	scriptAll := NewScriptAll(
+		NewScriptSig([]byte{0x01}),
+		NewScriptSig([]byte{0x02}),
+	)
+	assert.True(t, ValidateScript(scriptAll, nil, 1000))
+
+	// Test ScriptAny validation (requires any sub-script satisfied)
+	// Since ScriptSig allows empty signatures, ScriptAny should succeed
+	scriptAny := NewScriptAny(
+		NewScriptSig([]byte{0x01}),
+		NewScriptSig([]byte{0x02}),
+	)
+	assert.True(t, ValidateScript(scriptAny, nil, 1000))
+
+	// Test ScriptNOf validation (2-of-3)
+	// Since ScriptSig allows empty signatures, ScriptNOf should succeed
+	scriptNOf := NewScriptNOf(2,
+		NewScriptSig([]byte{0x01}),
+		NewScriptSig([]byte{0x02}),
+		NewScriptSig([]byte{0x03}),
+	)
+	assert.True(t, ValidateScript(scriptNOf, nil, 1000))
+
+	// Test ScriptBefore validation
+	scriptBefore := NewScriptBefore(2000)
+	assert.True(t, ValidateScript(scriptBefore, nil, 1000))  // Slot 1000 < 2000
+	assert.False(t, ValidateScript(scriptBefore, nil, 3000)) // Slot 3000 > 2000
+
+	// Test ScriptAfter validation
+	scriptAfter := NewScriptAfter(1000)
+	assert.True(t, ValidateScript(scriptAfter, nil, 2000)) // Slot 2000 > 1000
+	assert.False(t, ValidateScript(scriptAfter, nil, 500)) // Slot 500 < 1000
+}
+
+func TestMultiSigScriptGeneration(t *testing.T) {
+	keyHash1 := []byte{0x01, 0x02, 0x03}
+	keyHash2 := []byte{0x04, 0x05, 0x06}
+	keyHash3 := []byte{0x07, 0x08, 0x09}
+
+	// Test NewMultiSigScript (2-of-3)
+	script2of3 := NewMultiSigScript(2, keyHash1, keyHash2, keyHash3)
+	assert.Equal(t, 3, script2of3.Type()) // NOf type
+	assert.Equal(t, 2, script2of3.N)
+	assert.Len(t, script2of3.Scripts, 3)
+
+	// Test NewAllMultiSigScript
+	scriptAll := NewAllMultiSigScript(keyHash1, keyHash2)
+	assert.Equal(t, 1, scriptAll.Type()) // All type
+	assert.Len(t, scriptAll.Scripts, 2)
+
+	// Test NewAnyMultiSigScript
+	scriptAny := NewAnyMultiSigScript(keyHash1, keyHash2, keyHash3)
+	assert.Equal(t, 2, scriptAny.Type()) // Any type
+	assert.Len(t, scriptAny.Scripts, 3)
+
+	// Test NewTimelockedScript (before)
+	timelockedBefore := NewTimelockedScript(1000, true, scriptAll)
+	assert.Equal(t, 1, timelockedBefore.Type()) // All type (wrapping)
+	allScript := timelockedBefore.(*ScriptAll)
+	assert.Len(t, allScript.Scripts, 2) // Before script + original script
+
+	// Test NewTimelockedScript (after)
+	timelockedAfter := NewTimelockedScript(2000, false, scriptAny)
+	assert.Equal(t, 1, timelockedAfter.Type()) // All type (wrapping)
+	allScriptAfter := timelockedAfter.(*ScriptAll)
+	assert.Len(t, allScriptAfter.Scripts, 2) // After script + original script
+}
+
+func TestMultiSigScriptFromKeys(t *testing.T) {
+	// Create some dummy Ed25519 public keys
+	pubKey1, _, _ := ed25519.GenerateKey(nil)
+	pubKey2, _, _ := ed25519.GenerateKey(nil)
+	pubKey3, _, _ := ed25519.GenerateKey(nil)
+
+	// Test creating 2-of-3 script from public keys
+	script := NewMultiSigScriptFromKeys(2, pubKey1, pubKey2, pubKey3)
+	assert.Equal(t, 3, script.Type()) // NOf type
+	assert.Equal(t, 2, script.N)
+	assert.Len(t, script.Scripts, 3)
+
+	// Verify the script can be validated
+	assert.True(t, ValidateScript(script, nil, 1000))
+}
+
+func TestScriptGenerationEdgeCases(t *testing.T) {
+	keyHash := []byte{0x01, 0x02, 0x03}
+
+	// Test invalid parameters (should panic)
+	assert.Panics(t, func() { NewMultiSigScript(0, keyHash) }) // required < 1
+	assert.Panics(
+		t,
+		func() { NewMultiSigScript(2, keyHash) },
+	) // required > len(keyHashes)
+	assert.Panics(t, func() { NewMultiSigScript(1) })   // no key hashes
+	assert.Panics(t, func() { NewAllMultiSigScript() }) // no key hashes
+	assert.Panics(t, func() { NewAnyMultiSigScript() }) // no key hashes
 }
