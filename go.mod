@@ -7,7 +7,7 @@ toolchain go1.24.1
 require (
 	cloud.google.com/go/secretmanager v1.16.0
 	filippo.io/edwards25519 v1.1.0
-	github.com/blinklabs-io/gouroboros v0.142.0
+	github.com/blinklabs-io/gouroboros v0.143.0
 	github.com/btcsuite/btcd/btcutil v1.1.6
 	github.com/getsops/sops/v3 v3.11.0
 	github.com/go-playground/validator/v10 v10.28.0
@@ -72,7 +72,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.20.0 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
-	github.com/blinklabs-io/plutigo v0.0.15 // indirect
+	github.com/blinklabs-io/plutigo v0.0.16 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.6 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
