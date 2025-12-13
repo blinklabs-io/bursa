@@ -4,6 +4,15 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
+**CommitteeColdExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
+**CommitteeColdSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
+**CommitteeColdVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
+**CommitteeHotExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
+**CommitteeHotSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
+**CommitteeHotVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
+**DrepExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
+**DrepSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
+**DrepVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
 **Mnemonic** | Pointer to **string** |  | [optional] 
 **PaymentAddress** | Pointer to **string** |  | [optional] 
 **PaymentExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
@@ -32,6 +41,231 @@ will change when the set of required properties is changed
 NewBursaWalletWithDefaults instantiates a new BursaWallet object
 This constructor will only assign default values to properties that have it defined,
 but it doesn't guarantee that properties required by API are set
+
+### GetCommitteeColdExtendedSkey
+
+`func (o *BursaWallet) GetCommitteeColdExtendedSkey() BursaKeyFile`
+
+GetCommitteeColdExtendedSkey returns the CommitteeColdExtendedSkey field if non-nil, zero value otherwise.
+
+### GetCommitteeColdExtendedSkeyOk
+
+`func (o *BursaWallet) GetCommitteeColdExtendedSkeyOk() (*BursaKeyFile, bool)`
+
+GetCommitteeColdExtendedSkeyOk returns a tuple with the CommitteeColdExtendedSkey field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCommitteeColdExtendedSkey
+
+`func (o *BursaWallet) SetCommitteeColdExtendedSkey(v BursaKeyFile)`
+
+SetCommitteeColdExtendedSkey sets CommitteeColdExtendedSkey field to given value.
+
+### HasCommitteeColdExtendedSkey
+
+`func (o *BursaWallet) HasCommitteeColdExtendedSkey() bool`
+
+HasCommitteeColdExtendedSkey returns a boolean if a field has been set.
+
+### GetCommitteeColdSkey
+
+`func (o *BursaWallet) GetCommitteeColdSkey() BursaKeyFile`
+
+GetCommitteeColdSkey returns the CommitteeColdSkey field if non-nil, zero value otherwise.
+
+### GetCommitteeColdSkeyOk
+
+`func (o *BursaWallet) GetCommitteeColdSkeyOk() (*BursaKeyFile, bool)`
+
+GetCommitteeColdSkeyOk returns a tuple with the CommitteeColdSkey field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCommitteeColdSkey
+
+`func (o *BursaWallet) SetCommitteeColdSkey(v BursaKeyFile)`
+
+SetCommitteeColdSkey sets CommitteeColdSkey field to given value.
+
+### HasCommitteeColdSkey
+
+`func (o *BursaWallet) HasCommitteeColdSkey() bool`
+
+HasCommitteeColdSkey returns a boolean if a field has been set.
+
+### GetCommitteeColdVkey
+
+`func (o *BursaWallet) GetCommitteeColdVkey() BursaKeyFile`
+
+GetCommitteeColdVkey returns the CommitteeColdVkey field if non-nil, zero value otherwise.
+
+### GetCommitteeColdVkeyOk
+
+`func (o *BursaWallet) GetCommitteeColdVkeyOk() (*BursaKeyFile, bool)`
+
+GetCommitteeColdVkeyOk returns a tuple with the CommitteeColdVkey field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCommitteeColdVkey
+
+`func (o *BursaWallet) SetCommitteeColdVkey(v BursaKeyFile)`
+
+SetCommitteeColdVkey sets CommitteeColdVkey field to given value.
+
+### HasCommitteeColdVkey
+
+`func (o *BursaWallet) HasCommitteeColdVkey() bool`
+
+HasCommitteeColdVkey returns a boolean if a field has been set.
+
+### GetCommitteeHotExtendedSkey
+
+`func (o *BursaWallet) GetCommitteeHotExtendedSkey() BursaKeyFile`
+
+GetCommitteeHotExtendedSkey returns the CommitteeHotExtendedSkey field if non-nil, zero value otherwise.
+
+### GetCommitteeHotExtendedSkeyOk
+
+`func (o *BursaWallet) GetCommitteeHotExtendedSkeyOk() (*BursaKeyFile, bool)`
+
+GetCommitteeHotExtendedSkeyOk returns a tuple with the CommitteeHotExtendedSkey field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCommitteeHotExtendedSkey
+
+`func (o *BursaWallet) SetCommitteeHotExtendedSkey(v BursaKeyFile)`
+
+SetCommitteeHotExtendedSkey sets CommitteeHotExtendedSkey field to given value.
+
+### HasCommitteeHotExtendedSkey
+
+`func (o *BursaWallet) HasCommitteeHotExtendedSkey() bool`
+
+HasCommitteeHotExtendedSkey returns a boolean if a field has been set.
+
+### GetCommitteeHotSkey
+
+`func (o *BursaWallet) GetCommitteeHotSkey() BursaKeyFile`
+
+GetCommitteeHotSkey returns the CommitteeHotSkey field if non-nil, zero value otherwise.
+
+### GetCommitteeHotSkeyOk
+
+`func (o *BursaWallet) GetCommitteeHotSkeyOk() (*BursaKeyFile, bool)`
+
+GetCommitteeHotSkeyOk returns a tuple with the CommitteeHotSkey field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCommitteeHotSkey
+
+`func (o *BursaWallet) SetCommitteeHotSkey(v BursaKeyFile)`
+
+SetCommitteeHotSkey sets CommitteeHotSkey field to given value.
+
+### HasCommitteeHotSkey
+
+`func (o *BursaWallet) HasCommitteeHotSkey() bool`
+
+HasCommitteeHotSkey returns a boolean if a field has been set.
+
+### GetCommitteeHotVkey
+
+`func (o *BursaWallet) GetCommitteeHotVkey() BursaKeyFile`
+
+GetCommitteeHotVkey returns the CommitteeHotVkey field if non-nil, zero value otherwise.
+
+### GetCommitteeHotVkeyOk
+
+`func (o *BursaWallet) GetCommitteeHotVkeyOk() (*BursaKeyFile, bool)`
+
+GetCommitteeHotVkeyOk returns a tuple with the CommitteeHotVkey field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCommitteeHotVkey
+
+`func (o *BursaWallet) SetCommitteeHotVkey(v BursaKeyFile)`
+
+SetCommitteeHotVkey sets CommitteeHotVkey field to given value.
+
+### HasCommitteeHotVkey
+
+`func (o *BursaWallet) HasCommitteeHotVkey() bool`
+
+HasCommitteeHotVkey returns a boolean if a field has been set.
+
+### GetDrepExtendedSkey
+
+`func (o *BursaWallet) GetDrepExtendedSkey() BursaKeyFile`
+
+GetDrepExtendedSkey returns the DrepExtendedSkey field if non-nil, zero value otherwise.
+
+### GetDrepExtendedSkeyOk
+
+`func (o *BursaWallet) GetDrepExtendedSkeyOk() (*BursaKeyFile, bool)`
+
+GetDrepExtendedSkeyOk returns a tuple with the DrepExtendedSkey field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetDrepExtendedSkey
+
+`func (o *BursaWallet) SetDrepExtendedSkey(v BursaKeyFile)`
+
+SetDrepExtendedSkey sets DrepExtendedSkey field to given value.
+
+### HasDrepExtendedSkey
+
+`func (o *BursaWallet) HasDrepExtendedSkey() bool`
+
+HasDrepExtendedSkey returns a boolean if a field has been set.
+
+### GetDrepSkey
+
+`func (o *BursaWallet) GetDrepSkey() BursaKeyFile`
+
+GetDrepSkey returns the DrepSkey field if non-nil, zero value otherwise.
+
+### GetDrepSkeyOk
+
+`func (o *BursaWallet) GetDrepSkeyOk() (*BursaKeyFile, bool)`
+
+GetDrepSkeyOk returns a tuple with the DrepSkey field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetDrepSkey
+
+`func (o *BursaWallet) SetDrepSkey(v BursaKeyFile)`
+
+SetDrepSkey sets DrepSkey field to given value.
+
+### HasDrepSkey
+
+`func (o *BursaWallet) HasDrepSkey() bool`
+
+HasDrepSkey returns a boolean if a field has been set.
+
+### GetDrepVkey
+
+`func (o *BursaWallet) GetDrepVkey() BursaKeyFile`
+
+GetDrepVkey returns the DrepVkey field if non-nil, zero value otherwise.
+
+### GetDrepVkeyOk
+
+`func (o *BursaWallet) GetDrepVkeyOk() (*BursaKeyFile, bool)`
+
+GetDrepVkeyOk returns a tuple with the DrepVkey field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetDrepVkey
+
+`func (o *BursaWallet) SetDrepVkey(v BursaKeyFile)`
+
+SetDrepVkey sets DrepVkey field to given value.
+
+### HasDrepVkey
+
+`func (o *BursaWallet) HasDrepVkey() bool`
+
+HasDrepVkey returns a boolean if a field has been set.
 
 ### GetMnemonic
 
