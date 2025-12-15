@@ -128,6 +128,12 @@ func TestExtractKeyFiles(t *testing.T) {
     "cborHex": ""
 }
 `,
+		"committee-cold-extended.vkey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
 		"committee-cold-extended.skey": `{
     "type": "",
     "description": "",
@@ -141,6 +147,12 @@ func TestExtractKeyFiles(t *testing.T) {
 }
 `,
 		"committee-hot.skey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
+		"committee-hot-extended.vkey": `{
     "type": "",
     "description": "",
     "cborHex": ""
@@ -185,8 +197,8 @@ func TestLoadWalletDir(t *testing.T) {
 	assert.Len(
 		t,
 		loadedKeys,
-		15,
-	) // 3 vkeys + 3 skeys per key type (payment, stake, drep, committee cold, committee hot)
+		17,
+	) // 3 vkeys + 3 skeys per key type (payment, stake, drep) + 4 each for committee cold/hot (vkey, skey, extended-vkey, extended-skey)
 
 	// Check that keys are loaded correctly
 	keyMap := make(map[string]*LoadedKey)

@@ -97,6 +97,14 @@ func (kf KeyFile) String() string {
 		prefix = "cc_hot_sk"
 	case "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32":
 		prefix = "cc_hot_xsk"
+	case "ConstitutionalCommitteeColdExtendedVerificationKey_ed25519_bip32":
+		prefix = "cc_cold_vk"
+	case "ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32":
+		prefix = "cc_cold_sk"
+	case "ConstitutionalCommitteeHotExtendedVerificationKey_ed25519_bip32":
+		prefix = "cc_hot_vk"
+	case "ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32":
+		prefix = "cc_hot_sk"
 	default:
 		// Fallback to CBOR hex if type not recognized
 		return kf.CborHex
@@ -166,12 +174,14 @@ type Wallet struct {
 	DRepVKey                  KeyFile `json:"drep_vkey"`
 	DRepSKey                  KeyFile `json:"drep_skey"`
 	DRepExtendedSKey          KeyFile `json:"drep_extended_skey"`
-	CommitteeColdVKey         KeyFile `json:"committee_cold_vkey"`
-	CommitteeColdSKey         KeyFile `json:"committee_cold_skey"`
-	CommitteeColdExtendedSKey KeyFile `json:"committee_cold_extended_skey"`
-	CommitteeHotVKey          KeyFile `json:"committee_hot_vkey"`
-	CommitteeHotSKey          KeyFile `json:"committee_hot_skey"`
-	CommitteeHotExtendedSKey  KeyFile `json:"committee_hot_extended_skey"`
+	CommitteeColdVKey           KeyFile `json:"committee_cold_vkey"`
+	CommitteeColdSKey           KeyFile `json:"committee_cold_skey"`
+	CommitteeColdExtendedVKey   KeyFile `json:"committee_cold_extended_vkey"`
+	CommitteeColdExtendedSKey   KeyFile `json:"committee_cold_extended_skey"`
+	CommitteeHotVKey            KeyFile `json:"committee_hot_vkey"`
+	CommitteeHotSKey            KeyFile `json:"committee_hot_skey"`
+	CommitteeHotExtendedVKey    KeyFile `json:"committee_hot_extended_vkey"`
+	CommitteeHotExtendedSKey    KeyFile `json:"committee_hot_extended_skey"`
 }
 
 // GenerateMnemonic generates a new BIP39 mnemonic phrase
@@ -314,6 +324,15 @@ func NewWallet(
 			err,
 		)
 	}
+	committeeColdExtendedVKey, err := GetCommitteeColdExtendedVKey(
+		committeeColdKey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get committee cold extended verification key: %w",
+			err,
+		)
+	}
 	committeeHotVKey, err := GetCommitteeHotVKey(committeeHotKey)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -337,6 +356,15 @@ func NewWallet(
 			err,
 		)
 	}
+	committeeHotExtendedVKey, err := GetCommitteeHotExtendedVKey(
+		committeeHotKey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get committee hot extended verification key: %w",
+			err,
+		)
+	}
 	w := &Wallet{
 		Mnemonic:                  mnemonic,
 		PaymentAddress:            addr.String(),
@@ -352,9 +380,11 @@ func NewWallet(
 		DRepExtendedSKey:          drepExtendedSKey,
 		CommitteeColdVKey:         committeeColdVKey,
 		CommitteeColdSKey:         committeeColdSKey,
+		CommitteeColdExtendedVKey: committeeColdExtendedVKey,
 		CommitteeColdExtendedSKey: committeeColdExtendedSKey,
 		CommitteeHotVKey:          committeeHotVKey,
 		CommitteeHotSKey:          committeeHotSKey,
+		CommitteeHotExtendedVKey:  committeeHotExtendedVKey,
 		CommitteeHotExtendedSKey:  committeeHotExtendedSKey,
 	}
 	return w, nil
@@ -376,9 +406,11 @@ func ExtractKeyFiles(wallet *Wallet) (map[string]string, error) {
 		"drepExtended.skey":            wallet.DRepExtendedSKey,
 		"committee-cold.vkey":          wallet.CommitteeColdVKey,
 		"committee-cold.skey":          wallet.CommitteeColdSKey,
+		"committee-cold-extended.vkey": wallet.CommitteeColdExtendedVKey,
 		"committee-cold-extended.skey": wallet.CommitteeColdExtendedSKey,
 		"committee-hot.vkey":           wallet.CommitteeHotVKey,
 		"committee-hot.skey":           wallet.CommitteeHotSKey,
+		"committee-hot-extended.vkey":  wallet.CommitteeHotExtendedVKey,
 		"committee-hot-extended.skey":  wallet.CommitteeHotExtendedSKey,
 	}
 
@@ -622,51 +654,39 @@ func GetCommitteeColdKey(
 }
 
 func GetCommitteeColdVKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode(
-		[]any{0, committeeKey.Public().PublicKey()},
-	)
-	if err != nil {
-		return KeyFile{}, fmt.Errorf(
-			"failed to encode Committee Cold verification key CBOR: %w",
-			err,
-		)
-	}
+	// Constitutional Committee keys use raw key format (no CBOR envelope)
+	// XPub is already 64 bytes: 32-byte pubkey + 32-byte chaincode
+	keyBytes := []byte(committeeKey.Public())
 	kf := KeyFile{
-		Type:        "CommitteeColdVerificationKeyShelley_ed25519",
-		Description: "Committee Cold Verification Key",
-		CborHex:     hex.EncodeToString(keyCbor),
+		Type:        "ConstitutionalCommitteeColdExtendedVerificationKey_ed25519_bip32",
+		Description: "Constitutional Committee Cold Extended Verification Key",
+		CborHex:     hex.EncodeToString(keyBytes),
 	}
-	kf.SetCbor(keyCbor)
+	kf.SetCbor(keyBytes)
 	return kf, nil
+}
+
+func GetCommitteeColdExtendedVKey(committeeKey bip32.XPrv) (KeyFile, error) {
+	// For backward compatibility, this is the same as GetCommitteeColdVKey
+	return GetCommitteeColdVKey(committeeKey)
 }
 
 func GetCommitteeColdSKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
-		committeeKey,
-		"CommitteeColdSigningKeyShelley_ed25519",
-		"Committee Cold Signing Key",
-	)
+	// Constitutional Committee keys use raw key format (no CBOR envelope)
+	// XPrv is already 96 bytes: 64-byte privkey + 32-byte chaincode
+	keyBytes := []byte(committeeKey)
+	kf := KeyFile{
+		Type:        "ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32",
+		Description: "Constitutional Committee Cold Extended Signing Key",
+		CborHex:     hex.EncodeToString(keyBytes),
+	}
+	kf.SetCbor(keyBytes)
+	return kf, nil
 }
 
 func GetCommitteeColdExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode([]any{
-		0,
-		committeeKey.PrivateKey(),
-		committeeKey.ChainCode(),
-	})
-	if err != nil {
-		return KeyFile{}, fmt.Errorf(
-			"failed to encode Committee Cold extended signing key CBOR: %w",
-			err,
-		)
-	}
-	kf := KeyFile{
-		Type:        "CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
-		Description: "Committee Cold Extended Signing Key (BIP32)",
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
-	kf.SetCbor(keyCbor)
-	return kf, nil
+	// For backward compatibility, this is the same as GetCommitteeColdSKey
+	return GetCommitteeColdSKey(committeeKey)
 }
 
 func GetCommitteeHotKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
@@ -677,51 +697,39 @@ func GetCommitteeHotKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
 }
 
 func GetCommitteeHotVKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode(
-		[]any{0, committeeKey.Public().PublicKey()},
-	)
-	if err != nil {
-		return KeyFile{}, fmt.Errorf(
-			"failed to encode Committee Hot verification key CBOR: %w",
-			err,
-		)
-	}
+	// Constitutional Committee keys use raw key format (no CBOR envelope)
+	// XPub is already 64 bytes: 32-byte pubkey + 32-byte chaincode
+	keyBytes := []byte(committeeKey.Public())
 	kf := KeyFile{
-		Type:        "CommitteeHotVerificationKeyShelley_ed25519",
-		Description: "Committee Hot Verification Key",
-		CborHex:     hex.EncodeToString(keyCbor),
+		Type:        "ConstitutionalCommitteeHotExtendedVerificationKey_ed25519_bip32",
+		Description: "Constitutional Committee Hot Extended Verification Key",
+		CborHex:     hex.EncodeToString(keyBytes),
 	}
-	kf.SetCbor(keyCbor)
+	kf.SetCbor(keyBytes)
 	return kf, nil
+}
+
+func GetCommitteeHotExtendedVKey(committeeKey bip32.XPrv) (KeyFile, error) {
+	// For backward compatibility, this is the same as GetCommitteeHotVKey
+	return GetCommitteeHotVKey(committeeKey)
 }
 
 func GetCommitteeHotSKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
-		committeeKey,
-		"CommitteeHotSigningKeyShelley_ed25519",
-		"Committee Hot Signing Key",
-	)
+	// Constitutional Committee keys use raw key format (no CBOR envelope)
+	// XPrv is already 96 bytes: 64-byte privkey + 32-byte chaincode
+	keyBytes := []byte(committeeKey)
+	kf := KeyFile{
+		Type:        "ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32",
+		Description: "Constitutional Committee Hot Extended Signing Key",
+		CborHex:     hex.EncodeToString(keyBytes),
+	}
+	kf.SetCbor(keyBytes)
+	return kf, nil
 }
 
 func GetCommitteeHotExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode([]any{
-		0,
-		committeeKey.PrivateKey(),
-		committeeKey.ChainCode(),
-	})
-	if err != nil {
-		return KeyFile{}, fmt.Errorf(
-			"failed to encode Committee Hot extended signing key CBOR: %w",
-			err,
-		)
-	}
-	kf := KeyFile{
-		Type:        "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
-		Description: "Committee Hot Extended Signing Key (BIP32)",
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
-	kf.SetCbor(keyCbor)
-	return kf, nil
+	// For backward compatibility, this is the same as GetCommitteeHotSKey
+	return GetCommitteeHotSKey(committeeKey)
 }
 
 func GetAddress(
@@ -807,6 +815,16 @@ func decodeNonExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
 }
 
 func decodeExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
+	// Constitutional Committee keys use raw format (96 bytes: 64 privkey + 32 chaincode)
+	if len(skeyBytes) == 96 {
+		// Raw format
+		xprv := skeyBytes
+		x := bip32.XPrv(xprv)
+		pub := x.Public().PublicKey()
+		return xprv, pub, nil
+	}
+	
+	// Try CBOR format for backward compatibility
 	var data []any
 	if _, err := cbor.Decode(skeyBytes, &data); err != nil {
 		return nil, nil, fmt.Errorf(
@@ -828,12 +846,34 @@ func decodeExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
 	return xprv, pub, nil
 }
 
+func decodeExtendedVerificationKey(vkeyBytes []byte) ([]byte, error) {
+	// Constitutional Committee keys use raw format (64 bytes: 32 pubkey + 32 chaincode)
+	if len(vkeyBytes) == 64 {
+		// Raw format: just return the public key part
+		return vkeyBytes[:32], nil
+	}
+	
+	// Try CBOR format for backward compatibility
+	var data []any
+	if _, err := cbor.Decode(vkeyBytes, &data); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal extended vkey CBOR: %w", err)
+	}
+	if len(data) != 3 || data[0] != uint64(0) {
+		return nil, errors.New("invalid extended vkey CBOR structure")
+	}
+	keyBytes, ok := data[1].([]byte)
+	if !ok || len(keyBytes) != 32 {
+		return nil, errors.New("invalid extended vkey public key bytes")
+	}
+	return keyBytes, nil
+}
+
 func decodeVerificationKey(vkeyBytes []byte) ([]byte, error) {
 	var data []any
 	if _, err := cbor.Decode(vkeyBytes, &data); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal vkey CBOR: %w", err)
 	}
-	if len(data) != 2 || data[0] != uint64(0) {
+	if len(data) < 2 || data[0] != uint64(0) {
 		return nil, errors.New("invalid vkey CBOR structure")
 	}
 	keyBytes, ok := data[1].([]byte)
@@ -881,6 +921,14 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		}
 		lk.VKey = vk
 		return lk, nil
+	case "ConstitutionalCommitteeColdExtendedVerificationKey_ed25519_bip32",
+		"ConstitutionalCommitteeHotExtendedVerificationKey_ed25519_bip32":
+		vk, err := decodeExtendedVerificationKey(cborData)
+		if err != nil {
+			return nil, err
+		}
+		lk.VKey = vk
+		return lk, nil
 	case "PaymentSigningKeyShelley_ed25519",
 		"StakeSigningKeyShelley_ed25519",
 		"DRepSigningKeyShelley_ed25519",
@@ -896,7 +944,9 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"StakeExtendedSigningKeyShelley_ed25519_bip32",
 		"DRepExtendedSigningKeyShelley_ed25519_bip32",
 		"CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
-		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32":
+		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
+		"ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32",
+		"ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32":
 		sk, vk, err := decodeExtendedCborKey(cborData)
 		if err != nil {
 			return nil, err
