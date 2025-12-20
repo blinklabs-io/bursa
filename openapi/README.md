@@ -79,6 +79,9 @@ All URIs are relative to *http://localhost*
 
 Class | Method | HTTP request | Description
 ------------ | ------------- | ------------- | -------------
+*DefaultAPI* | [**ApiScriptAddressPost**](docs/DefaultAPI.md#apiscriptaddresspost) | **Post** /api/script/address | Generate script address
+*DefaultAPI* | [**ApiScriptCreatePost**](docs/DefaultAPI.md#apiscriptcreatepost) | **Post** /api/script/create | Create a multi-signature script
+*DefaultAPI* | [**ApiScriptValidatePost**](docs/DefaultAPI.md#apiscriptvalidatepost) | **Post** /api/script/validate | Validate a script
 *DefaultAPI* | [**ApiWalletCreateGet**](docs/DefaultAPI.md#apiwalletcreateget) | **Get** /api/wallet/create | Create a wallet
 *DefaultAPI* | [**ApiWalletDeletePost**](docs/DefaultAPI.md#apiwalletdeletepost) | **Post** /api/wallet/delete | Delete wallet from persistent storage
 *DefaultAPI* | [**ApiWalletGetPost**](docs/DefaultAPI.md#apiwalletgetpost) | **Post** /api/wallet/get | Get wallet from persistent storage
@@ -89,6 +92,13 @@ Class | Method | HTTP request | Description
 
 ## Documentation For Models
 
+ - [ApiErrorResponse](docs/ApiErrorResponse.md)
+ - [ApiScriptAddressRequest](docs/ApiScriptAddressRequest.md)
+ - [ApiScriptAddressResponse](docs/ApiScriptAddressResponse.md)
+ - [ApiScriptCreateRequest](docs/ApiScriptCreateRequest.md)
+ - [ApiScriptResponse](docs/ApiScriptResponse.md)
+ - [ApiScriptValidateRequest](docs/ApiScriptValidateRequest.md)
+ - [ApiScriptValidateResponse](docs/ApiScriptValidateResponse.md)
  - [ApiWalletDeleteRequest](docs/ApiWalletDeleteRequest.md)
  - [ApiWalletGetRequest](docs/ApiWalletGetRequest.md)
  - [ApiWalletRestoreRequest](docs/ApiWalletRestoreRequest.md)

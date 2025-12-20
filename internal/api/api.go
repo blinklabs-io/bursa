@@ -16,12 +16,15 @@ package api
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"reflect"
+	"strings"
 	"time"
 
 	"github.com/blinklabs-io/bursa"
@@ -40,21 +43,62 @@ import (
 
 var validate *validator.Validate
 
+// writeJSONError writes a JSON error response safely
+// nolint:unparam // statusCode currently is always a bad request in some call sites but kept for future use
+func writeJSONError(
+	w http.ResponseWriter,
+	logger *slog.Logger,
+	errorResp map[string]string,
+	statusCode int,
+) {
+	if jsonBytes, jsonErr := json.Marshal(errorResp); jsonErr == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		_, _ = w.Write(jsonBytes)
+	} else {
+		logger.Error("failed to marshal error response", "error", jsonErr)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+	}
+}
+
 // formatValidationErrors converts validator errors into a user-friendly JSON format
 func formatValidationErrors(errs validator.ValidationErrors) string {
 	errors := make(map[string]string)
 	for _, err := range errs {
-		fieldName := err.Field()
-		// Use generic validation messages instead of exposing internal field details
+		// Convert Go field name to JSON field name
+		fieldName := toJSONFieldName(err.Field())
+
+		// Create appropriate error message based on validation tag
 		switch err.Tag() {
 		case "required":
 			errors[fieldName] = "this field is required"
 		case "min":
-			errors[fieldName] = "value is too short"
+			// Provide more specific messages based on field and type
+			switch fieldName {
+			case "required":
+				errors[fieldName] = "must be at least 1"
+			case "key_hashes":
+				errors[fieldName] = "must contain at least 1 key hash"
+			default:
+				kind := err.Kind()
+				if kind == reflect.String {
+					errors[fieldName] = "value is too short"
+				} else {
+					errors[fieldName] = "value is too small"
+				}
+			}
 		case "max":
-			errors[fieldName] = "value is too long"
+			errors[fieldName] = "value is too long or too large"
+		case "oneof":
+			errors[fieldName] = "must be one of: " + err.Param()
+		case "hexadecimal":
+			errors[fieldName] = "must be a valid hexadecimal string"
+		case "len":
+			errors[fieldName] = "must be exactly " + err.Param() + " characters long"
 		default:
-			errors[fieldName] = "validation failed"
+			errors[fieldName] = "invalid value"
 		}
 	}
 	jsonBytes, err := json.Marshal(errors)
@@ -63,6 +107,65 @@ func formatValidationErrors(errs validator.ValidationErrors) string {
 		return `"marshaling failed"`
 	}
 	return string(jsonBytes)
+}
+
+// toJSONFieldName converts Go struct field names to their JSON equivalents
+func toJSONFieldName(goFieldName string) string {
+	// Common field name mappings from Go to JSON
+	fieldMappings := map[string]string{
+		"KeyHashes":         "key_hashes",
+		"TimelockBefore":    "timelock_before",
+		"TimelockAfter":     "timelock_after",
+		"RequireSignatures": "require_signatures",
+		"AccountId":         "account_id",
+		"PaymentId":         "payment_id",
+		"StakeId":           "stake_id",
+		"DrepId":            "drep_id",
+		"CommitteeColdId":   "committee_cold_id",
+		"CommitteeHotId":    "committee_hot_id",
+		"AddressId":         "address_id",
+	}
+
+	if jsonName, ok := fieldMappings[goFieldName]; ok {
+		return jsonName
+	}
+
+	// Default: convert to snake_case for unmapped fields
+	return toSnakeCase(goFieldName)
+}
+
+// toSnakeCase converts PascalCase to snake_case
+func toSnakeCase(s string) string {
+	// Convert PascalCase/UpperCamelCase to snake_case while treating
+	// consecutive uppercase letters as acronyms (XMLParser -> xml_parser)
+	out := []rune{}
+	runes := []rune(s)
+	n := len(runes)
+	for i := range n {
+		r := runes[i]
+		// If current rune is uppercase and previous was lowercase/digit, add underscore
+		if i > 0 {
+			prev := runes[i-1]
+			if isLower(prev) && isUpper(r) {
+				out = append(out, '_')
+			} else if isUpper(prev) && isUpper(r) {
+				// If next rune exists and is lowercase, this marks the end of an acronym
+				if i+1 < n && isLower(runes[i+1]) {
+					out = append(out, '_')
+				}
+			}
+		}
+		out = append(out, r)
+	}
+	return strings.ToLower(string(out))
+}
+
+func isUpper(r rune) bool {
+	return r >= 'A' && r <= 'Z'
+}
+
+func isLower(r rune) bool {
+	return r >= 'a' && r <= 'z'
 }
 
 // mapGRPCToHTTPError maps gRPC status codes to appropriate HTTP status codes and error messages
@@ -90,6 +193,12 @@ func mapGRPCToHTTPError(w http.ResponseWriter, grpcStatus *status.Status) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
 	}
+}
+
+// ErrorResponse defines the standard error payload returned by the API
+type ErrorResponse struct {
+	Error  string            `json:"error"`
+	Fields map[string]string `json:"fields,omitempty"`
 }
 
 // WalletCreateRequest defines the request payload for wallet creation
@@ -127,6 +236,53 @@ type WalletUpdateRequest struct {
 	Name        string `json:"name"        validate:"required,min=1,max=100"`
 	Password    string `json:"password"`
 	Description string `json:"description" validate:"max=500"`
+}
+
+// ScriptCreateRequest defines the request payload for script creation
+type ScriptCreateRequest struct {
+	Type           string   `json:"type"                      validate:"required,oneof=nOf all any"`
+	Required       int      `json:"required"                  validate:"omitempty,min=1"`
+	KeyHashes      []string `json:"key_hashes"                validate:"required,min=1,dive,hexadecimal,len=56"`
+	TimelockBefore uint64   `json:"timelock_before,omitempty"                                                   swaggertype:"integer" format:"int64"`
+	TimelockAfter  uint64   `json:"timelock_after,omitempty"                                                    swaggertype:"integer" format:"int64"`
+	Network        string   `json:"network"                   validate:"required,oneof=mainnet testnet"`
+}
+
+// ScriptValidateRequest defines the request payload for script validation
+type ScriptValidateRequest struct {
+	Script            map[string]any `json:"script"                       validate:"required"`
+	Signatures        []string       `json:"signatures,omitempty"         validate:"dive,hexadecimal,len=128"`
+	Slot              uint64         `json:"slot,omitempty"                                                   swaggertype:"integer" format:"int64"`
+	RequireSignatures bool           `json:"require_signatures,omitempty"`
+}
+
+// ScriptAddressRequest defines the request payload for script address generation
+type ScriptAddressRequest struct {
+	Script  map[string]any `json:"script"  validate:"required"`
+	Network string         `json:"network" validate:"required,oneof=mainnet testnet"`
+}
+
+// ScriptResponse defines the response payload for script operations
+type ScriptResponse struct {
+	Type       string         `json:"type"`
+	Script     map[string]any `json:"script"`
+	Address    string         `json:"address,omitempty"`
+	ScriptHash string         `json:"scriptHash,omitempty"`
+}
+
+// ScriptValidateResponse defines the response payload for script validation
+type ScriptValidateResponse struct {
+	ScriptHash string `json:"scriptHash"`
+	Signatures int    `json:"signatures"`
+	Slot       uint64 `json:"slot"       swaggertype:"integer" format:"int64"`
+	Valid      bool   `json:"valid"`
+}
+
+// ScriptAddressResponse defines the response payload for script address generation
+type ScriptAddressResponse struct {
+	Address    string `json:"address"`
+	Network    string `json:"network"`
+	ScriptHash string `json:"scriptHash"`
 }
 
 //	@title			bursa
@@ -205,6 +361,11 @@ func Start(
 	// API routes
 	mainMux.HandleFunc("/api/wallet/create", handleWalletCreate)
 	mainMux.HandleFunc("/api/wallet/restore", handleWalletRestore)
+
+	// Script routes
+	mainMux.HandleFunc("/api/script/create", handleScriptCreate)
+	mainMux.HandleFunc("/api/script/validate", handleScriptValidate)
+	mainMux.HandleFunc("/api/script/address", handleScriptAddress)
 
 	// GCP routes
 	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
@@ -419,8 +580,8 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Param			request	body		WalletRestoreRequest	true	"Wallet Restore Request"
 //	@Success		200		{object}	bursa.Wallet			"Wallet successfully restored"
-//	@Failure		400		{string}	string					"Invalid request"
-//	@Failure		500		{string}	string					"Internal server error"
+//	@Failure		400		{object}	ErrorResponse			"Invalid request"
+//	@Failure		500		{object}	ErrorResponse			"Internal server error"
 //	@Router			/api/wallet/restore [post]
 func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -476,12 +637,15 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, bursa.ErrInvalidMnemonic) ||
 			errors.Is(err, bursa.ErrInvalidDerivationIndex) ||
 			errors.Is(err, bursa.ErrInvalidNetwork) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprintf(w, `{"error":"%s"}`, err.Error())
+			writeJSONError(
+				w,
+				logger,
+				map[string]string{"error": err.Error()},
+				http.StatusBadRequest,
+			)
 		} else {
-			w.Header().Set("Content-Type", "application/json")
 			logger.Error("failed to create wallet", "error", err)
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
 		}
@@ -576,8 +740,8 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Param			request	body		WalletGetRequest	true	"Wallet Restore Request"
 //	@Success		200		{object}	bursa.Wallet		"Wallet successfully loaded"
-//	@Failure		400		{string}	string				"Invalid request"
-//	@Failure		500		{string}	string				"Internal server error"
+//	@Failure		400		{object}	ErrorResponse		"Invalid request"
+//	@Failure		500		{object}	ErrorResponse		"Internal server error"
 //	@Router			/api/wallet/get [post]
 func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -675,8 +839,8 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Param			request	body		WalletDeleteRequest	true	"Wallet Delete Request"
 //	@Success		200		{object}	string				"Wallet successfully deleted"
-//	@Failure		400		{string}	string				"Invalid request"
-//	@Failure		500		{string}	string				"Internal server error"
+//	@Failure		400		{object}	ErrorResponse		"Invalid request"
+//	@Failure		500		{object}	ErrorResponse		"Internal server error"
 //	@Router			/api/wallet/delete [post]
 func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -834,4 +998,381 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte("\"OK\""))
+}
+
+// handleScriptCreate godoc
+//
+//	@Summary		Create a multi-signature script
+//	@Description	Create a new multi-signature script with the specified parameters
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		ScriptCreateRequest	true	"Script Create Request"
+//	@Success		200		{object}	ScriptResponse		"Script successfully created"
+//	@Failure		400		{object}	ErrorResponse		"Invalid request"
+//	@Failure		500		{object}	ErrorResponse		"Internal server error"
+//	@Router			/api/script/create [post]
+func handleScriptCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ScriptCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
+		return
+	}
+
+	// Validate the request
+	if err := validate.Struct(req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		var validationErrors validator.ValidationErrors
+		if errors.As(err, &validationErrors) {
+			_, _ = fmt.Fprintf(
+				w,
+				`{"error":"Validation failed","fields":%s}`,
+				formatValidationErrors(validationErrors),
+			)
+		} else {
+			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
+		}
+		return
+	}
+
+	logger := logging.GetLogger()
+
+	// Parse key hashes
+	hashes := make([][]byte, len(req.KeyHashes))
+	for i, hashStr := range req.KeyHashes {
+		hash, err := hex.DecodeString(hashStr)
+		if err != nil {
+			writeJSONError(w, logger, map[string]string{
+				"error": "Invalid key hash format: " + hashStr,
+			}, http.StatusBadRequest)
+			return
+		}
+		hashes[i] = hash
+	}
+
+	// Create the script
+	var script bursa.Script
+	var err error
+	switch req.Type {
+	case "nOf":
+		if req.Required <= 0 || req.Required > len(hashes) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write(
+				[]byte(`{"error":"Invalid required signatures count"}`),
+			)
+			return
+		}
+		script, err = bursa.NewMultiSigScript(req.Required, hashes...)
+	case "all":
+		script, err = bursa.NewAllMultiSigScript(hashes...)
+	case "any":
+		script, err = bursa.NewAnyMultiSigScript(hashes...)
+	default:
+		writeJSONError(w, logger, map[string]string{
+			"error": "Unsupported script type: " + req.Type,
+		}, http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		logger.Error("failed to create script", "error", err)
+		// Do not expose internal error details to clients. If the error is a
+		// known validation error from the bursa package, return a concise
+		// client-friendly message; otherwise return a generic message.
+		// Don't expose internal error details to API clients.
+		writeJSONError(
+			w,
+			logger,
+			map[string]string{"error": "Failed to create script"},
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	// Apply timelock if specified
+	if req.TimelockBefore > 0 && req.TimelockAfter > 0 {
+		writeJSONError(w, logger, map[string]string{
+			"error": "cannot specify both timelock_before and timelock_after",
+		}, http.StatusBadRequest)
+		return
+	}
+	if req.TimelockBefore > 0 {
+		script, err = bursa.NewTimelockedScript(
+			req.TimelockBefore,
+			true,
+			script,
+		)
+		if err != nil {
+			logger.Error("failed to create timelocked script", "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write(
+				[]byte(`{"error":"Failed to create timelocked script"}`),
+			)
+			return
+		}
+	} else if req.TimelockAfter > 0 {
+		script, err = bursa.NewTimelockedScript(req.TimelockAfter, false, script)
+		if err != nil {
+			logger.Error("failed to create timelocked script", "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"Failed to create timelocked script"}`))
+			return
+		}
+	}
+
+	// Marshal script data
+	scriptData, err := bursa.MarshalScript(script, req.Network)
+	if err != nil {
+		logger.Error("failed to marshal script", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+		return
+	}
+
+	// Return ScriptResponse with consistent field naming
+	response := ScriptResponse{
+		Type:       scriptData.Type,
+		Script:     scriptData.Script,
+		Address:    scriptData.Address,
+		ScriptHash: scriptData.Hash,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	resp, err := json.Marshal(response)
+	if err != nil {
+		logger.Error("failed to serialize script response", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+		return
+	}
+	_, _ = w.Write(resp)
+}
+
+// handleScriptValidate godoc
+//
+//	@Summary		Validate a script
+//	@Description	Validate a script's structure and requirements
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		ScriptValidateRequest	true	"Script Validate Request"
+//	@Success		200		{object}	ScriptValidateResponse	"Script validation result"
+//	@Failure		400		{object}	ErrorResponse			"Invalid request"
+//	@Failure		500		{object}	ErrorResponse			"Internal server error"
+//	@Router			/api/script/validate [post]
+func handleScriptValidate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ScriptValidateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
+		return
+	}
+
+	// Validate the request
+	if err := validate.Struct(req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		var validationErrors validator.ValidationErrors
+		if errors.As(err, &validationErrors) {
+			_, _ = fmt.Fprintf(
+				w,
+				`{"error":"Validation failed","fields":%s}`,
+				formatValidationErrors(validationErrors),
+			)
+		} else {
+			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
+		}
+		return
+	}
+
+	logger := logging.GetLogger()
+
+	// Unmarshal the script
+	script, err := bursa.UnmarshalScript(&bursa.ScriptData{
+		Type:   "NativeScript",
+		Script: req.Script,
+	})
+	if err != nil {
+		logger.Error("failed to unmarshal script", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"Invalid script format"}`))
+		return
+	}
+
+	// Parse signatures if provided
+	var signatures [][]byte
+	if len(req.Signatures) > 0 {
+		signatures = make([][]byte, len(req.Signatures))
+		for i, sigStr := range req.Signatures {
+			sig, err := hex.DecodeString(sigStr)
+			if err != nil {
+				logger.Error(
+					"invalid signature format",
+					"signature",
+					sigStr,
+					"error",
+					err,
+				)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"Invalid signature format"}`))
+				return
+			}
+			signatures[i] = sig
+		}
+	}
+
+	// Validate the script
+	valid := bursa.ValidateScript(
+		script,
+		signatures,
+		req.Slot,
+		req.RequireSignatures,
+	)
+	hash, err := bursa.GetScriptHash(script)
+	if err != nil {
+		logger.Error("failed to get script hash", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+		return
+	}
+
+	response := ScriptValidateResponse{
+		ScriptHash: hex.EncodeToString(hash),
+		Signatures: len(signatures),
+		Slot:       req.Slot,
+		Valid:      valid,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	resp, err := json.Marshal(response)
+	if err != nil {
+		logger.Error("failed to serialize validation response", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+		return
+	}
+	_, _ = w.Write(resp)
+}
+
+// handleScriptAddress godoc
+//
+//	@Summary		Generate script address
+//	@Description	Generate an address for a script on the specified network
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		ScriptAddressRequest	true	"Script Address Request"
+//	@Success		200		{object}	ScriptAddressResponse	"Script address generated"
+//	@Failure		400		{object}	ErrorResponse			"Invalid request"
+//	@Failure		500		{object}	ErrorResponse			"Internal server error"
+//	@Router			/api/script/address [post]
+func handleScriptAddress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ScriptAddressRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
+		return
+	}
+
+	// Validate the request
+	if err := validate.Struct(req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		var validationErrors validator.ValidationErrors
+		if errors.As(err, &validationErrors) {
+			_, _ = fmt.Fprintf(
+				w,
+				`{"error":"Validation failed","fields":%s}`,
+				formatValidationErrors(validationErrors),
+			)
+		} else {
+			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
+		}
+		return
+	}
+
+	logger := logging.GetLogger()
+
+	// Unmarshal the script
+	script, err := bursa.UnmarshalScript(&bursa.ScriptData{
+		Type:   "NativeScript",
+		Script: req.Script,
+	})
+	if err != nil {
+		logger.Error("failed to unmarshal script", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"Invalid script format"}`))
+		return
+	}
+
+	// Generate address
+	address, err := bursa.GetScriptAddress(script, req.Network)
+	if err != nil {
+		logger.Error("failed to generate script address", "error", err)
+		// If the error is a known client error, return its message; otherwise
+		// return a generic message to avoid leaking internal details.
+		if errors.Is(err, bursa.ErrInvalidNetwork) {
+			writeJSONError(
+				w,
+				logger,
+				map[string]string{"error": "Invalid network"},
+				http.StatusBadRequest,
+			)
+		} else {
+			writeJSONError(w, logger, map[string]string{"error": "Failed to generate script address"}, http.StatusInternalServerError)
+		}
+		return
+	}
+
+	hash, err := bursa.GetScriptHash(script)
+	if err != nil {
+		logger.Error("failed to get script hash", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+		return
+	}
+
+	response := ScriptAddressResponse{
+		Address:    address,
+		Network:    req.Network,
+		ScriptHash: hex.EncodeToString(hash),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	resp, err := json.Marshal(response)
+	if err != nil {
+		logger.Error("failed to serialize address response", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
+		return
+	}
+	_, _ = w.Write(resp)
 }

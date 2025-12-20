@@ -22,6 +22,60 @@ import (
 type DefaultAPI interface {
 
 	/*
+		ApiScriptAddressPost Generate script address
+
+		Generate an address for a script on the specified network
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiScriptAddressPostRequest
+	*/
+	ApiScriptAddressPost(
+		ctx context.Context,
+	) DefaultAPIApiScriptAddressPostRequest
+
+	// ApiScriptAddressPostExecute executes the request
+	//	@return	ApiScriptAddressResponse
+	ApiScriptAddressPostExecute(
+		r DefaultAPIApiScriptAddressPostRequest,
+	) (*ApiScriptAddressResponse, *http.Response, error)
+
+	/*
+		ApiScriptCreatePost Create a multi-signature script
+
+		Create a new multi-signature script with the specified parameters
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiScriptCreatePostRequest
+	*/
+	ApiScriptCreatePost(
+		ctx context.Context,
+	) DefaultAPIApiScriptCreatePostRequest
+
+	// ApiScriptCreatePostExecute executes the request
+	//	@return	ApiScriptResponse
+	ApiScriptCreatePostExecute(
+		r DefaultAPIApiScriptCreatePostRequest,
+	) (*ApiScriptResponse, *http.Response, error)
+
+	/*
+		ApiScriptValidatePost Validate a script
+
+		Validate a script's structure and requirements
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiScriptValidatePostRequest
+	*/
+	ApiScriptValidatePost(
+		ctx context.Context,
+	) DefaultAPIApiScriptValidatePostRequest
+
+	// ApiScriptValidatePostExecute executes the request
+	//	@return	ApiScriptValidateResponse
+	ApiScriptValidatePostExecute(
+		r DefaultAPIApiScriptValidatePostRequest,
+	) (*ApiScriptValidateResponse, *http.Response, error)
+
+	/*
 		ApiWalletCreateGet Create a wallet
 
 		Create a wallet and return details
@@ -126,6 +180,507 @@ type DefaultAPI interface {
 
 // DefaultAPIService DefaultAPI service
 type DefaultAPIService service
+
+type DefaultAPIApiScriptAddressPostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiScriptAddressRequest
+}
+
+// Script Address Request
+func (r DefaultAPIApiScriptAddressPostRequest) Request(
+	request ApiScriptAddressRequest,
+) DefaultAPIApiScriptAddressPostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiScriptAddressPostRequest) Execute() (*ApiScriptAddressResponse, *http.Response, error) {
+	return r.ApiService.ApiScriptAddressPostExecute(r)
+}
+
+/*
+ApiScriptAddressPost Generate script address
+
+# Generate an address for a script on the specified network
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiScriptAddressPostRequest
+*/
+func (a *DefaultAPIService) ApiScriptAddressPost(
+	ctx context.Context,
+) DefaultAPIApiScriptAddressPostRequest {
+	return DefaultAPIApiScriptAddressPostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return	ApiScriptAddressResponse
+func (a *DefaultAPIService) ApiScriptAddressPostExecute(
+	r DefaultAPIApiScriptAddressPostRequest,
+) (*ApiScriptAddressResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *ApiScriptAddressResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(
+		r.ctx,
+		"DefaultAPIService.ApiScriptAddressPost",
+	)
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{
+			error: err.Error(),
+		}
+	}
+
+	localVarPath := localBasePath + "/api/script/address"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError(
+			"request is required and must be specified",
+		)
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	req, err := a.client.prepareRequest(
+		r.ctx,
+		localVarPath,
+		localVarHTTPMethod,
+		localVarPostBody,
+		localVarHeaderParams,
+		localVarQueryParams,
+		localVarFormParams,
+		formFiles,
+	)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(
+				&v,
+				localVarBody,
+				localVarHTTPResponse.Header.Get("Content-Type"),
+			)
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 500 {
+			var v ApiErrorResponse
+			err = a.client.decode(
+				&v,
+				localVarBody,
+				localVarHTTPResponse.Header.Get("Content-Type"),
+			)
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(
+		&localVarReturnValue,
+		localVarBody,
+		localVarHTTPResponse.Header.Get("Content-Type"),
+	)
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type DefaultAPIApiScriptCreatePostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiScriptCreateRequest
+}
+
+// Script Create Request
+func (r DefaultAPIApiScriptCreatePostRequest) Request(
+	request ApiScriptCreateRequest,
+) DefaultAPIApiScriptCreatePostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiScriptCreatePostRequest) Execute() (*ApiScriptResponse, *http.Response, error) {
+	return r.ApiService.ApiScriptCreatePostExecute(r)
+}
+
+/*
+ApiScriptCreatePost Create a multi-signature script
+
+# Create a new multi-signature script with the specified parameters
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiScriptCreatePostRequest
+*/
+func (a *DefaultAPIService) ApiScriptCreatePost(
+	ctx context.Context,
+) DefaultAPIApiScriptCreatePostRequest {
+	return DefaultAPIApiScriptCreatePostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return	ApiScriptResponse
+func (a *DefaultAPIService) ApiScriptCreatePostExecute(
+	r DefaultAPIApiScriptCreatePostRequest,
+) (*ApiScriptResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *ApiScriptResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(
+		r.ctx,
+		"DefaultAPIService.ApiScriptCreatePost",
+	)
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{
+			error: err.Error(),
+		}
+	}
+
+	localVarPath := localBasePath + "/api/script/create"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError(
+			"request is required and must be specified",
+		)
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	req, err := a.client.prepareRequest(
+		r.ctx,
+		localVarPath,
+		localVarHTTPMethod,
+		localVarPostBody,
+		localVarHeaderParams,
+		localVarQueryParams,
+		localVarFormParams,
+		formFiles,
+	)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(
+				&v,
+				localVarBody,
+				localVarHTTPResponse.Header.Get("Content-Type"),
+			)
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 500 {
+			var v ApiErrorResponse
+			err = a.client.decode(
+				&v,
+				localVarBody,
+				localVarHTTPResponse.Header.Get("Content-Type"),
+			)
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(
+		&localVarReturnValue,
+		localVarBody,
+		localVarHTTPResponse.Header.Get("Content-Type"),
+	)
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type DefaultAPIApiScriptValidatePostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiScriptValidateRequest
+}
+
+// Script Validate Request
+func (r DefaultAPIApiScriptValidatePostRequest) Request(
+	request ApiScriptValidateRequest,
+) DefaultAPIApiScriptValidatePostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiScriptValidatePostRequest) Execute() (*ApiScriptValidateResponse, *http.Response, error) {
+	return r.ApiService.ApiScriptValidatePostExecute(r)
+}
+
+/*
+ApiScriptValidatePost Validate a script
+
+# Validate a script's structure and requirements
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiScriptValidatePostRequest
+*/
+func (a *DefaultAPIService) ApiScriptValidatePost(
+	ctx context.Context,
+) DefaultAPIApiScriptValidatePostRequest {
+	return DefaultAPIApiScriptValidatePostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return	ApiScriptValidateResponse
+func (a *DefaultAPIService) ApiScriptValidatePostExecute(
+	r DefaultAPIApiScriptValidatePostRequest,
+) (*ApiScriptValidateResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *ApiScriptValidateResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(
+		r.ctx,
+		"DefaultAPIService.ApiScriptValidatePost",
+	)
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{
+			error: err.Error(),
+		}
+	}
+
+	localVarPath := localBasePath + "/api/script/validate"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError(
+			"request is required and must be specified",
+		)
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	req, err := a.client.prepareRequest(
+		r.ctx,
+		localVarPath,
+		localVarHTTPMethod,
+		localVarPostBody,
+		localVarHeaderParams,
+		localVarQueryParams,
+		localVarFormParams,
+		formFiles,
+	)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(
+				&v,
+				localVarBody,
+				localVarHTTPResponse.Header.Get("Content-Type"),
+			)
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 500 {
+			var v ApiErrorResponse
+			err = a.client.decode(
+				&v,
+				localVarBody,
+				localVarHTTPResponse.Header.Get("Content-Type"),
+			)
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(
+		&localVarReturnValue,
+		localVarBody,
+		localVarHTTPResponse.Header.Get("Content-Type"),
+	)
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
 
 type DefaultAPIApiWalletCreateGetRequest struct {
 	ctx        context.Context
@@ -369,7 +924,7 @@ func (a *DefaultAPIService) ApiWalletDeletePostExecute(
 			error: localVarHTTPResponse.Status,
 		}
 		if localVarHTTPResponse.StatusCode == 400 {
-			var v string
+			var v ApiErrorResponse
 			err = a.client.decode(
 				&v,
 				localVarBody,
@@ -384,7 +939,7 @@ func (a *DefaultAPIService) ApiWalletDeletePostExecute(
 			return localVarReturnValue, localVarHTTPResponse, newErr
 		}
 		if localVarHTTPResponse.StatusCode == 500 {
-			var v string
+			var v ApiErrorResponse
 			err = a.client.decode(
 				&v,
 				localVarBody,
@@ -536,7 +1091,7 @@ func (a *DefaultAPIService) ApiWalletGetPostExecute(
 			error: localVarHTTPResponse.Status,
 		}
 		if localVarHTTPResponse.StatusCode == 400 {
-			var v string
+			var v ApiErrorResponse
 			err = a.client.decode(
 				&v,
 				localVarBody,
@@ -551,7 +1106,7 @@ func (a *DefaultAPIService) ApiWalletGetPostExecute(
 			return localVarReturnValue, localVarHTTPResponse, newErr
 		}
 		if localVarHTTPResponse.StatusCode == 500 {
-			var v string
+			var v ApiErrorResponse
 			err = a.client.decode(
 				&v,
 				localVarBody,
@@ -825,7 +1380,7 @@ func (a *DefaultAPIService) ApiWalletRestorePostExecute(
 			error: localVarHTTPResponse.Status,
 		}
 		if localVarHTTPResponse.StatusCode == 400 {
-			var v string
+			var v ApiErrorResponse
 			err = a.client.decode(
 				&v,
 				localVarBody,
@@ -840,7 +1395,7 @@ func (a *DefaultAPIService) ApiWalletRestorePostExecute(
 			return localVarReturnValue, localVarHTTPResponse, newErr
 		}
 		if localVarHTTPResponse.StatusCode == 500 {
-			var v string
+			var v ApiErrorResponse
 			err = a.client.decode(
 				&v,
 				localVarBody,
