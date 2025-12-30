@@ -6,6 +6,20 @@
 
 Programmatic Cardano Wallet
 
+## Supported CIPs
+
+Bursa implements the following Cardano Improvement Proposals:
+
+- **CIP-0003**: Wallet Key Generation - Complete BIP39 seed generation and key derivation
+- **CIP-0005**: Bech32 Address Format - Bech32 encoding/decoding for addresses and keys
+- **CIP-0011**: Staking Key Delegation - Stake key derivation and reward address generation
+- **CIP-0016**: Cryptographic Key Serialization - CBOR serialization for all key types
+- **CIP-0018**: Multi-Stake Keys - Support for multiple stake keys per wallet
+- **CIP-0019**: Cardano Addresses - Full address format support (mainnet/testnet)
+- **CIP-0105**: Conway Era Key Chains - Governance key derivation (DRep, Committee)
+- **CIP-1852**: HD Wallets - Hierarchical deterministic wallet structure
+- **CIP-1854**: Multi-signature Scripts - Native script support and validation
+
 Start a Bursa wallet and interact with it using the Bursa API.
 
 ```golang

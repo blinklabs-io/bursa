@@ -1444,12 +1444,59 @@ func GetAddress(
 	return &addr, nil
 }
 
+func GetRewardAddress(
+	stakeVKey KeyFile,
+	networkName string,
+) (*lcommon.Address, error) {
+	if networkName == "" {
+		return nil, ErrInvalidNetwork
+	}
+	network, ok := ouroboros.NetworkByName(networkName)
+	if !ok {
+		return nil, ErrInvalidNetwork
+	}
+
+	// Decode the stake verification key CBOR to get the public key
+	cborData, err := hex.DecodeString(stakeVKey.CborHex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode stake vkey CBOR: %w", err)
+	}
+	var decoded []any
+	_, err = cbor.Decode(cborData, &decoded)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode stake vkey: %w", err)
+	}
+	if len(decoded) < 2 {
+		return nil, errors.New("invalid stake vkey CBOR structure")
+	}
+	stakePubKeyBytes, ok := decoded[1].([]byte)
+	if !ok || len(stakePubKeyBytes) != 32 {
+		return nil, errors.New("invalid stake public key")
+	}
+
+	// Create stake public key and hash it
+	stakePubKey := bip32.PublicKey(stakePubKeyBytes)
+	stakeKeyPublicHash := stakePubKey.Hash()
+
+	// Create reward address (AddressTypeNoneKey with only stake key hash)
+	addr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeNoneKey,
+		network.Id,
+		nil, // no payment part for reward addresses
+		stakeKeyPublicHash[:],
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error creating reward address: %w", err)
+	}
+	return &addr, nil
+}
+
 func GetExtendedPrivateKey(privateKey bip32.XPrv) bip32.XPrv {
 	// Create a defensive copy to prevent accidental mutation of the input key
 	xprv := make([]byte, 96)
-	copy(xprv[:32], privateKey[:32])
-	copy(xprv[32:64], privateKey[32:64]) // preserve k_R
-	copy(xprv[64:], privateKey[64:])
+	// Copy the 64-byte private key (k_L || k_R) and the 32-byte chain code
+	copy(xprv[:64], privateKey.PrivateKey())
+	copy(xprv[64:], privateKey.ChainCode())
 	return xprv
 }
 
