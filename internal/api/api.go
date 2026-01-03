@@ -123,6 +123,7 @@ func toJSONFieldName(goFieldName string) string {
 		"DrepId":            "drep_id",
 		"CommitteeColdId":   "committee_cold_id",
 		"CommitteeHotId":    "committee_hot_id",
+		"PoolColdId":        "pool_cold_id",
 		"AddressId":         "address_id",
 	}
 
@@ -228,6 +229,7 @@ type WalletRestoreRequest struct {
 	DrepId          uint32 `json:"drep_id"           validate:"max=2147483647"`
 	CommitteeColdId uint32 `json:"committee_cold_id" validate:"max=2147483647"`
 	CommitteeHotId  uint32 `json:"committee_hot_id"  validate:"max=2147483647"`
+	PoolColdId      uint32 `json:"pool_cold_id"      validate:"max=2147483647"`
 	AddressId       uint32 `json:"address_id"        validate:"max=2147483647"`
 }
 
@@ -522,6 +524,7 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 		0,
 		0,
 		0,
+		0,
 	)
 	if err != nil {
 		logger.Error("failed to initialize wallet", "error", err)
@@ -630,6 +633,7 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 		req.DrepId,
 		req.CommitteeColdId,
 		req.CommitteeHotId,
+		req.PoolColdId,
 		req.AddressId,
 	)
 	if err != nil {

@@ -152,6 +152,9 @@ definitions:
       payment_id:
         maximum: 2147483647
         type: integer
+      pool_cold_id:
+        maximum: 2147483647
+        type: integer
       stake_id:
         maximum: 2147483647
         type: integer
@@ -213,6 +216,12 @@ definitions:
       payment_skey:
         $ref: '#/definitions/bursa.KeyFile'
       payment_vkey:
+        $ref: '#/definitions/bursa.KeyFile'
+      pool_cold_extended_skey:
+        $ref: '#/definitions/bursa.KeyFile'
+      pool_cold_skey:
+        $ref: '#/definitions/bursa.KeyFile'
+      pool_cold_vkey:
         $ref: '#/definitions/bursa.KeyFile'
       stake_address:
         example: stake1uy9ggsc9qls4pu9qvyyacwnmr9tt0gzcdt5s0zj4au8qkqc65ge8t

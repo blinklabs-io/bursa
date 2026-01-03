@@ -134,6 +134,12 @@ func (kf KeyFile) String() string {
 		prefix = "cc_hot_sk"
 	case "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32":
 		prefix = "cc_hot_xsk"
+	case "StakePoolVerificationKeyShelley_ed25519":
+		prefix = "pool_vk"
+	case "StakePoolSigningKeyShelley_ed25519":
+		prefix = "pool_sk"
+	case "StakePoolExtendedSigningKeyShelley_ed25519_bip32":
+		prefix = "pool_xsk"
 	default:
 		// Fallback to CBOR hex if type not recognized
 		return kf.CborHex
@@ -209,6 +215,9 @@ type Wallet struct {
 	CommitteeHotVKey          KeyFile `json:"committee_hot_vkey"`
 	CommitteeHotSKey          KeyFile `json:"committee_hot_skey"`
 	CommitteeHotExtendedSKey  KeyFile `json:"committee_hot_extended_skey"`
+	PoolColdVKey              KeyFile `json:"pool_cold_vkey"`
+	PoolColdSKey              KeyFile `json:"pool_cold_skey"`
+	PoolColdExtendedSKey      KeyFile `json:"pool_cold_extended_skey"`
 }
 
 // GenerateMnemonic generates a new BIP39 mnemonic phrase
@@ -225,12 +234,12 @@ func GenerateMnemonic() (string, error) {
 }
 
 // NewWallet creates a new wallet from a BIP39 mnemonic phrase.
-// All derivation indices (accountId, paymentId, stakeId, drepId, committeeColdId, committeeHotId, addressId) must be less than 2^31 (0x80000000).
+// All derivation indices (accountId, paymentId, stakeId, drepId, committeeColdId, committeeHotId, poolColdId, addressId) must be less than 2^31 (0x80000000).
 // This constraint ensures compatibility with BIP32/BIP44 derivation standards.
 func NewWallet(
 	mnemonic, network, password string,
 	accountId uint32,
-	paymentId, stakeId, drepId, committeeColdId, committeeHotId, addressId uint32,
+	paymentId, stakeId, drepId, committeeColdId, committeeHotId, poolColdId, addressId uint32,
 ) (*Wallet, error) {
 	if !bip39.IsMnemonicValid(mnemonic) {
 		return nil, ErrInvalidMnemonic
@@ -238,7 +247,7 @@ func NewWallet(
 	if accountId >= 0x80000000 || paymentId >= 0x80000000 ||
 		stakeId >= 0x80000000 || drepId >= 0x80000000 ||
 		committeeColdId >= 0x80000000 || committeeHotId >= 0x80000000 ||
-		addressId >= 0x80000000 {
+		poolColdId >= 0x80000000 || addressId >= 0x80000000 {
 		return nil, ErrInvalidDerivationIndex
 	}
 	rootKey, err := GetRootKeyFromMnemonic(mnemonic, password)
@@ -268,6 +277,12 @@ func NewWallet(
 	committeeHotKey, err := GetCommitteeHotKey(accountKey, committeeHotId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get committee hot key: %w", err)
+	}
+	// CIP-1853: Derive pool cold key using m/1853'/1815'/0'/index'
+	// usecase is fixed to 0 as per CIP-1853 specification
+	poolColdKey, err := GetPoolColdKey(rootKey, 0, poolColdId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pool cold key: %w", err)
 	}
 	addr, err := GetAddress(accountKey, network, addressId)
 	if err != nil {
@@ -374,6 +389,27 @@ func NewWallet(
 			err,
 		)
 	}
+	poolColdVKey, err := GetPoolColdVKey(poolColdKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get pool cold verification key: %w",
+			err,
+		)
+	}
+	poolColdSKey, err := GetPoolColdSKey(poolColdKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get pool cold signing key: %w",
+			err,
+		)
+	}
+	poolColdExtendedSKey, err := GetPoolColdExtendedSKey(poolColdKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get pool cold extended signing key: %w",
+			err,
+		)
+	}
 	w := &Wallet{
 		Mnemonic:                  mnemonic,
 		PaymentAddress:            addr.String(),
@@ -393,6 +429,9 @@ func NewWallet(
 		CommitteeHotVKey:          committeeHotVKey,
 		CommitteeHotSKey:          committeeHotSKey,
 		CommitteeHotExtendedSKey:  committeeHotExtendedSKey,
+		PoolColdVKey:              poolColdVKey,
+		PoolColdSKey:              poolColdSKey,
+		PoolColdExtendedSKey:      poolColdExtendedSKey,
 	}
 	return w, nil
 }
@@ -417,6 +456,9 @@ func ExtractKeyFiles(wallet *Wallet) (map[string]string, error) {
 		"committee-hot.vkey":           wallet.CommitteeHotVKey,
 		"committee-hot.skey":           wallet.CommitteeHotSKey,
 		"committee-hot-extended.skey":  wallet.CommitteeHotExtendedSKey,
+		"pool-cold.vkey":               wallet.PoolColdVKey,
+		"pool-cold.skey":               wallet.PoolColdSKey,
+		"pool-cold-extended.skey":      wallet.PoolColdExtendedSKey,
 	}
 
 	result := make(map[string]string)
@@ -755,6 +797,78 @@ func GetCommitteeHotExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
 	kf := KeyFile{
 		Type:        "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
 		Description: "Committee Hot Extended Signing Key (BIP32)",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+// GetPoolColdKey derives a stake pool cold key using CIP-1853 path: m/1853'/1815'/usecase'/index'
+// The usecase parameter is currently fixed to 0 as per CIP-1853 specification.
+// This function implements HD (Hierarchical Deterministic) derivation for stake pool cold keys.
+func GetPoolColdKey(
+	rootKey bip32.XPrv,
+	usecase uint32,
+	index uint32,
+) (bip32.XPrv, error) {
+	const harden = 0x80000000
+	// CIP-1853: All indices in the path must be hardened
+	if usecase >= 0x80000000 || index >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	// m/1853'/1815'/usecase'/index'
+	return rootKey.
+		Derive(harden + 1853).
+		Derive(harden + 1815).
+		Derive(harden + usecase).
+		Derive(harden + index), nil
+}
+
+// GetPoolColdVKey creates a stake pool cold verification key file
+func GetPoolColdVKey(poolColdKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode(
+		[]any{0, poolColdKey.Public().PublicKey()},
+	)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode pool cold verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "StakePoolVerificationKeyShelley_ed25519",
+		Description: "Stake Pool Cold Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+// GetPoolColdSKey creates a stake pool cold signing key file
+func GetPoolColdSKey(poolColdKey bip32.XPrv) (KeyFile, error) {
+	return getSigningKeyFile(
+		poolColdKey,
+		"StakePoolSigningKeyShelley_ed25519",
+		"Stake Pool Cold Signing Key",
+	)
+}
+
+// GetPoolColdExtendedSKey creates a stake pool cold extended signing key file (BIP32)
+func GetPoolColdExtendedSKey(poolColdKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode([]any{
+		0,
+		poolColdKey.PrivateKey(),
+		poolColdKey.ChainCode(),
+	})
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode pool cold extended signing key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "StakePoolExtendedSigningKeyShelley_ed25519_bip32",
+		Description: "Stake Pool Cold Extended Signing Key (BIP32)",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
 	kf.SetCbor(keyCbor)
@@ -1604,7 +1718,8 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"StakeVerificationKeyShelley_ed25519",
 		"DRepVerificationKeyShelley_ed25519",
 		"CommitteeColdVerificationKeyShelley_ed25519",
-		"CommitteeHotVerificationKeyShelley_ed25519":
+		"CommitteeHotVerificationKeyShelley_ed25519",
+		"StakePoolVerificationKeyShelley_ed25519":
 		vk, err := decodeVerificationKey(cborData)
 		if err != nil {
 			return nil, err
@@ -1615,7 +1730,8 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"StakeSigningKeyShelley_ed25519",
 		"DRepSigningKeyShelley_ed25519",
 		"CommitteeColdSigningKeyShelley_ed25519",
-		"CommitteeHotSigningKeyShelley_ed25519":
+		"CommitteeHotSigningKeyShelley_ed25519",
+		"StakePoolSigningKeyShelley_ed25519":
 		sk, vk, err := decodeNonExtendedCborKey(cborData)
 		if err != nil {
 			return nil, err
@@ -1626,7 +1742,8 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"StakeExtendedSigningKeyShelley_ed25519_bip32",
 		"DRepExtendedSigningKeyShelley_ed25519_bip32",
 		"CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
-		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32":
+		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
+		"StakePoolExtendedSigningKeyShelley_ed25519_bip32":
 		sk, vk, err := decodeExtendedCborKey(cborData)
 		if err != nil {
 			return nil, err

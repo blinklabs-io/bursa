@@ -47,7 +47,7 @@ func RunCreate(cfg *config.Config, output string) {
 			os.Exit(1)
 		}
 	}
-	w, err := bursa.NewWallet(mnemonic, cfg.Network, "", 0, 0, 0, 0, 0, 0, 0)
+	w, err := bursa.NewWallet(mnemonic, cfg.Network, "", 0, 0, 0, 0, 0, 0, 0, 0)
 	if err != nil {
 		logger.Error("failed to initialize wallet", "error", err)
 		os.Exit(1)
