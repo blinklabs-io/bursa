@@ -585,6 +585,10 @@ const docTemplate = `{
                     "type": "integer",
                     "maximum": 2147483647
                 },
+                "pool_cold_id": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
                 "stake_id": {
                     "type": "integer",
                     "maximum": 2147483647
@@ -670,6 +674,15 @@ const docTemplate = `{
                     "$ref": "#/definitions/bursa.KeyFile"
                 },
                 "payment_vkey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
+                "pool_cold_extended_skey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
+                "pool_cold_skey": {
+                    "$ref": "#/definitions/bursa.KeyFile"
+                },
+                "pool_cold_vkey": {
                     "$ref": "#/definitions/bursa.KeyFile"
                 },
                 "stake_address": {

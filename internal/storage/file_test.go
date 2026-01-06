@@ -57,6 +57,7 @@ func TestFileStore(t *testing.T) {
 			0,
 			0,
 			0,
+			0,
 		)
 		require.NoError(t, err)
 
@@ -94,6 +95,7 @@ func TestFileStore(t *testing.T) {
 			"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
 			"mainnet",
 			"",
+			0,
 			0,
 			0,
 			0,

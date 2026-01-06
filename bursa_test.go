@@ -166,6 +166,24 @@ func TestExtractKeyFiles(t *testing.T) {
     "cborHex": ""
 }
 `,
+		"pool-cold.vkey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
+		"pool-cold.skey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
+		"pool-cold-extended.skey": `{
+    "type": "",
+    "description": "",
+    "cborHex": ""
+}
+`,
 	}
 
 	result, err := ExtractKeyFiles(wallet)
@@ -179,7 +197,7 @@ func TestLoadWalletDir(t *testing.T) {
 
 	// Create a wallet
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0)
+	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0, 0)
 	assert.NoError(t, err)
 
 	// Extract key files
@@ -199,8 +217,8 @@ func TestLoadWalletDir(t *testing.T) {
 	assert.Len(
 		t,
 		loadedKeys,
-		15,
-	) // 3 vkeys + 3 skeys per key type (payment, stake, drep, committee cold, committee hot)
+		18,
+	) // 3 vkeys + 3 skeys per key type (payment, stake, drep, committee cold, committee hot, pool cold)
 
 	// Check that keys are loaded correctly
 	keyMap := make(map[string]*LoadedKey)
@@ -239,7 +257,7 @@ func TestLoadWalletDirPartial(t *testing.T) {
 
 	// Create a wallet
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0)
+	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0, 0)
 	assert.NoError(t, err)
 
 	// Extract key files
@@ -301,7 +319,7 @@ func BenchmarkNewWallet(b *testing.B) {
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
 	for b.Loop() {
-		_, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0)
+		_, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0, 0)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -314,6 +332,7 @@ func BenchmarkExtractKeyFiles(b *testing.B) {
 		mnemonic,
 		"mainnet",
 		"",
+		0,
 		0,
 		0,
 		0,
@@ -348,6 +367,7 @@ func BenchmarkCBORDecode(b *testing.B) {
 		0,
 		0,
 		0,
+		0,
 	)
 	if err != nil {
 		b.Fatal(err)
@@ -373,7 +393,7 @@ func BenchmarkLoadWalletDir(b *testing.B) {
 	tmpDir := b.TempDir()
 
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0)
+	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0, 0)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -402,14 +422,38 @@ func BenchmarkLoadWalletDir(b *testing.B) {
 }
 
 func TestNewWalletInvalidMnemonic(t *testing.T) {
-	_, err := NewWallet("invalid mnemonic", "mainnet", "", 0, 0, 0, 0, 0, 0, 0)
+	_, err := NewWallet(
+		"invalid mnemonic",
+		"mainnet",
+		"",
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+	)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid mnemonic")
 }
 
 func TestNewWalletInvalidIndices(t *testing.T) {
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	_, err := NewWallet(mnemonic, "mainnet", "", 0x80000000, 0, 0, 0, 0, 0, 0)
+	_, err := NewWallet(
+		mnemonic,
+		"mainnet",
+		"",
+		0x80000000,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+	)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "derivation indices must be less than 2^31")
 }
@@ -442,6 +486,7 @@ func TestCIP1852Compliance(t *testing.T) {
 		accountId,
 		paymentId,
 		stakeId,
+		0,
 		0,
 		0,
 		0,
@@ -693,6 +738,7 @@ func TestCIP0003KeyGeneration(t *testing.T) {
 		drepId := uint32(0)
 		committeeColdId := uint32(0)
 		committeeHotId := uint32(0)
+		poolColdId := uint32(0)
 		addressId := uint32(0)
 
 		wallet, err := NewWallet(
@@ -705,6 +751,7 @@ func TestCIP0003KeyGeneration(t *testing.T) {
 			drepId,
 			committeeColdId,
 			committeeHotId,
+			poolColdId,
 			addressId,
 		)
 		assert.NoError(t, err)
@@ -1658,7 +1705,19 @@ func TestCIP0018MultiStakeKeys(t *testing.T) {
 	password := ""
 
 	// Create wallet with multiple stake keys
-	wallet, err := NewWallet(mnemonic, "mainnet", password, 0, 0, 0, 0, 0, 0, 0)
+	wallet, err := NewWallet(
+		mnemonic,
+		"mainnet",
+		password,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+	)
 	assert.NoError(t, err)
 	assert.NotNil(t, wallet)
 
@@ -2084,4 +2143,271 @@ func TestCIP1854NativeScriptTestVectors(t *testing.T) {
 	assert.NotEqual(t, script2of3, scriptAll)
 	assert.NotEqual(t, scriptAll, scriptAny)
 	assert.NotEqual(t, script2of3, nestedScript)
+}
+
+// TestCIP1853PoolColdKeyDerivation validates CIP-1853 stake pool cold key derivation.
+// CIP-1853 defines HD derivation paths for stake pool cold keys: m/1853'/1815'/usecase'/index'
+func TestCIP1853PoolColdKeyDerivation(t *testing.T) {
+	// Test basic pool cold key derivation
+	rootKey, err := GetRootKeyFromMnemonic(
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+		"",
+	)
+	assert.NoError(t, err)
+
+	// Test pool cold key derivation: m/1853'/1815'/0'/0'
+	// CIP-1853: Pool cold keys use purpose 1853', coin type 1815', usecase 0' (fixed), index'
+	poolColdKey0, err := GetPoolColdKey(rootKey, 0, 0)
+	assert.NoError(t, err)
+	assert.NotNil(t, poolColdKey0)
+
+	poolColdKey1, err := GetPoolColdKey(rootKey, 0, 1)
+	assert.NoError(t, err)
+	assert.NotNil(t, poolColdKey1)
+
+	poolColdKey2, err := GetPoolColdKey(rootKey, 0, 2)
+	assert.NoError(t, err)
+	assert.NotNil(t, poolColdKey2)
+
+	// Verify pool cold keys are different
+	poolColdPubKey0 := poolColdKey0.PublicKey()
+	poolColdPubKey1 := poolColdKey1.PublicKey()
+	poolColdPubKey2 := poolColdKey2.PublicKey()
+
+	assert.Len(
+		t,
+		poolColdPubKey0,
+		32,
+		"Pool cold public key 0 should be 32 bytes",
+	)
+	assert.Len(
+		t,
+		poolColdPubKey1,
+		32,
+		"Pool cold public key 1 should be 32 bytes",
+	)
+	assert.Len(
+		t,
+		poolColdPubKey2,
+		32,
+		"Pool cold public key 2 should be 32 bytes",
+	)
+
+	// Keys should be different
+	assert.NotEqual(
+		t,
+		poolColdPubKey0,
+		poolColdPubKey1,
+		"Pool cold keys 0 and 1 should be different",
+	)
+	assert.NotEqual(
+		t,
+		poolColdPubKey1,
+		poolColdPubKey2,
+		"Pool cold keys 1 and 2 should be different",
+	)
+	assert.NotEqual(
+		t,
+		poolColdPubKey0,
+		poolColdPubKey2,
+		"Pool cold keys 0 and 2 should be different",
+	)
+
+	// Verify pool cold keys are different from wallet keys
+	accountKey, err := GetAccountKey(rootKey, 0)
+	assert.NoError(t, err)
+
+	stakeKey, err := GetStakeKey(accountKey, 0)
+	assert.NoError(t, err)
+	stakePubKey := stakeKey.PublicKey()
+
+	assert.NotEqual(
+		t,
+		poolColdPubKey0,
+		stakePubKey,
+		"Pool cold key should be different from stake key",
+	)
+
+	// Test usecase parameter (should be fixed to 0)
+	poolColdKeyUsecase1, err := GetPoolColdKey(rootKey, 1, 0)
+	assert.NoError(t, err)
+	poolColdPubKeyUsecase1 := poolColdKeyUsecase1.PublicKey()
+	assert.NotEqual(
+		t,
+		poolColdPubKey0,
+		poolColdPubKeyUsecase1,
+		"Different usecases should produce different keys",
+	)
+
+	// Test invalid indices (>= 0x80000000)
+	_, err = GetPoolColdKey(rootKey, 0x80000000, 0)
+	assert.Error(t, err, "Should reject invalid usecase index")
+	assert.ErrorIs(t, err, ErrInvalidDerivationIndex)
+
+	_, err = GetPoolColdKey(rootKey, 0, 0x80000000)
+	assert.Error(t, err, "Should reject invalid pool index")
+	assert.ErrorIs(t, err, ErrInvalidDerivationIndex)
+}
+
+// TestCIP1853KeyFileGeneration validates key file generation for pool cold keys
+func TestCIP1853KeyFileGeneration(t *testing.T) {
+	rootKey, err := GetRootKeyFromMnemonic(
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+		"",
+	)
+	assert.NoError(t, err)
+
+	poolColdKey, err := GetPoolColdKey(rootKey, 0, 0)
+	assert.NoError(t, err)
+
+	// Test verification key generation
+	vkey, err := GetPoolColdVKey(poolColdKey)
+	assert.NoError(t, err)
+	assert.Equal(t, "StakePoolVerificationKeyShelley_ed25519", vkey.Type)
+	assert.Equal(t, "Stake Pool Cold Verification Key", vkey.Description)
+	assert.NotEmpty(t, vkey.CborHex)
+
+	// Test signing key generation
+	skey, err := GetPoolColdSKey(poolColdKey)
+	assert.NoError(t, err)
+	assert.Equal(t, "StakePoolSigningKeyShelley_ed25519", skey.Type)
+	assert.Equal(t, "Stake Pool Cold Signing Key", skey.Description)
+	assert.NotEmpty(t, skey.CborHex)
+
+	// Test extended signing key generation
+	extendedSkey, err := GetPoolColdExtendedSKey(poolColdKey)
+	assert.NoError(t, err)
+	assert.Equal(
+		t,
+		"StakePoolExtendedSigningKeyShelley_ed25519_bip32",
+		extendedSkey.Type,
+	)
+	assert.Equal(
+		t,
+		"Stake Pool Cold Extended Signing Key (BIP32)",
+		extendedSkey.Description,
+	)
+	assert.NotEmpty(t, extendedSkey.CborHex)
+
+	// Verify CBOR decoding
+	vkeyCbor, err := hex.DecodeString(vkey.CborHex)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, vkeyCbor)
+
+	skeyCbor, err := hex.DecodeString(skey.CborHex)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, skeyCbor)
+
+	extendedSkeyCbor, err := hex.DecodeString(extendedSkey.CborHex)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, extendedSkeyCbor)
+}
+
+// TestCIP1853WalletIntegration validates pool cold key integration in Wallet struct
+func TestCIP1853WalletIntegration(t *testing.T) {
+	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+
+	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0, 0)
+	assert.NoError(t, err)
+	assert.NotNil(t, wallet)
+
+	// Verify pool cold key fields are populated
+	assert.NotEmpty(
+		t,
+		wallet.PoolColdVKey.CborHex,
+		"Pool cold verification key should be populated",
+	)
+	assert.NotEmpty(
+		t,
+		wallet.PoolColdSKey.CborHex,
+		"Pool cold signing key should be populated",
+	)
+	assert.NotEmpty(
+		t,
+		wallet.PoolColdExtendedSKey.CborHex,
+		"Pool cold extended signing key should be populated",
+	)
+
+	// Verify key types
+	assert.Equal(
+		t,
+		"StakePoolVerificationKeyShelley_ed25519",
+		wallet.PoolColdVKey.Type,
+	)
+	assert.Equal(
+		t,
+		"StakePoolSigningKeyShelley_ed25519",
+		wallet.PoolColdSKey.Type,
+	)
+	assert.Equal(
+		t,
+		"StakePoolExtendedSigningKeyShelley_ed25519_bip32",
+		wallet.PoolColdExtendedSKey.Type,
+	)
+
+	// Verify ExtractKeyFiles includes pool cold keys
+	keyFiles, err := ExtractKeyFiles(wallet)
+	assert.NoError(t, err)
+	assert.Contains(t, keyFiles, "pool-cold.vkey")
+	assert.Contains(t, keyFiles, "pool-cold.skey")
+	assert.Contains(t, keyFiles, "pool-cold-extended.skey")
+}
+
+// TestCIP1853MultiplePoolKeys validates multiple pool cold key derivation
+func TestCIP1853MultiplePoolKeys(t *testing.T) {
+	rootKey, err := GetRootKeyFromMnemonic(
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+		"",
+	)
+	assert.NoError(t, err)
+
+	// Test multiple pool cold keys with different indices
+	pools := make([]bip32.XPrv, 5)
+	pubKeys := make([][]byte, 5)
+
+	for i := range 5 {
+		pool, err := GetPoolColdKey(rootKey, 0, uint32(i))
+		assert.NoError(t, err)
+		assert.NotNil(t, pool)
+		pools[i] = pool
+		pubKeys[i] = pool.PublicKey()
+	}
+
+	// Verify all keys are unique
+	for i := range 5 {
+		for j := i + 1; j < 5; j++ {
+			assert.NotEqual(t, pubKeys[i], pubKeys[j],
+				"Pool cold keys %d and %d should be different", i, j)
+		}
+	}
+
+	// Verify key files can be generated for all pools
+	for i, pool := range pools {
+		vkey, err := GetPoolColdVKey(pool)
+		assert.NoError(t, err)
+		assert.NotEmpty(
+			t,
+			vkey.CborHex,
+			"Pool %d verification key should be valid",
+			i,
+		)
+
+		skey, err := GetPoolColdSKey(pool)
+		assert.NoError(t, err)
+		assert.NotEmpty(
+			t,
+			skey.CborHex,
+			"Pool %d signing key should be valid",
+			i,
+		)
+
+		extSkey, err := GetPoolColdExtendedSKey(pool)
+		assert.NoError(t, err)
+		assert.NotEmpty(
+			t,
+			extSkey.CborHex,
+			"Pool %d extended signing key should be valid",
+			i,
+		)
+	}
 }
