@@ -515,16 +515,7 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 
 	wallet, err := bursa.NewWallet(
 		mnemonic,
-		cfg.Network,
-		"",
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
+		bursa.WithNetwork(cfg.Network),
 	)
 	if err != nil {
 		logger.Error("failed to initialize wallet", "error", err)
@@ -625,16 +616,16 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 	logger := logging.GetLogger()
 	wallet, err := bursa.NewWallet(
 		req.Mnemonic,
-		cfg.Network,
-		req.Password,
-		req.AccountId,
-		req.PaymentId,
-		req.StakeId,
-		req.DrepId,
-		req.CommitteeColdId,
-		req.CommitteeHotId,
-		req.PoolColdId,
-		req.AddressId,
+		bursa.WithNetwork(cfg.Network),
+		bursa.WithPassword(req.Password),
+		bursa.WithAccountID(req.AccountId),
+		bursa.WithPaymentID(req.PaymentId),
+		bursa.WithStakeID(req.StakeId),
+		bursa.WithDRepID(req.DrepId),
+		bursa.WithCommitteeColdID(req.CommitteeColdId),
+		bursa.WithCommitteeHotID(req.CommitteeHotId),
+		bursa.WithPoolColdID(req.PoolColdId),
+		bursa.WithAddressID(req.AddressId),
 	)
 	if err != nil {
 		// Check for client validation errors vs server errors
