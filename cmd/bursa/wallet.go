@@ -33,6 +33,7 @@ func walletCommand() *cobra.Command {
 
 	walletCommand.AddCommand(
 		walletCreateCommand(),
+		walletRestoreCommand(),
 		walletLoadCommand(),
 	)
 	return &walletCommand
@@ -56,6 +57,58 @@ func walletCreateCommand() *cobra.Command {
 		StringVar(&output, "output", "", "optional path to write files")
 
 	return &walletCreateCommand
+}
+
+func walletRestoreCommand() *cobra.Command {
+	var mnemonic string
+	var mnemonicFile string
+	var password string
+	var restoreOutput string
+
+	walletRestoreCommand := cobra.Command{
+		Use:   "restore",
+		Short: "Restores a wallet from an existing mnemonic",
+		Long: `Restores a wallet from an existing mnemonic phrase.
+
+The mnemonic can be provided via (in order of precedence):
+  1. --mnemonic flag (direct string)
+  2. MNEMONIC environment variable
+  3. --mnemonic-file flag (path to file containing mnemonic)
+  4. Default file "seed.txt" in current directory
+
+The mnemonic should be a valid BIP-39 mnemonic (typically 24 words).
+An optional password can be provided for additional security.
+
+Examples:
+  bursa wallet restore --mnemonic "word1 word2 ... word24"
+  bursa wallet restore --mnemonic-file /path/to/seed.txt
+  bursa wallet restore  # reads from MNEMONIC env var or seed.txt
+  bursa wallet restore --password "secret" --output ./wallet-keys`,
+		Run: func(cmd *cobra.Command, args []string) {
+			cfg, err := config.LoadConfig()
+			if err != nil {
+				logging.GetLogger().Error("failed to load config", "error", err)
+				os.Exit(1)
+			}
+			cli.RunRestore(cfg, mnemonic, mnemonicFile, password, restoreOutput)
+		},
+	}
+
+	walletRestoreCommand.Flags().
+		StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
+	walletRestoreCommand.Flags().
+		StringVar(
+			&mnemonicFile,
+			"mnemonic-file",
+			"",
+			"Path to file containing mnemonic (default: seed.txt)",
+		)
+	walletRestoreCommand.Flags().
+		StringVar(&password, "password", "", "Optional password for key derivation")
+	walletRestoreCommand.Flags().
+		StringVar(&restoreOutput, "output", "", "Optional path to write key files")
+
+	return &walletRestoreCommand
 }
 
 func walletLoadCommand() *cobra.Command {
