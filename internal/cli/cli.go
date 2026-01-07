@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -83,6 +84,130 @@ func RunCreate(cfg *config.Config, output string) {
 		}
 		fileMap := []map[string]string{
 			{"seed.txt": w.Mnemonic},
+			{"payment.addr": w.PaymentAddress},
+			{"stake.addr": w.StakeAddress},
+		}
+		for key, value := range keyFiles {
+			fileMap = append(fileMap, map[string]string{key: value})
+		}
+		var g errgroup.Group
+		for _, m := range fileMap {
+			for k, v := range m {
+				g.Go(func() error {
+					path := filepath.Join(output, k)
+					err = os.WriteFile(path, []byte(v), 0o600)
+					if err != nil {
+						return err
+					}
+					return err
+				})
+			}
+		}
+		err = g.Wait()
+		if err != nil {
+			logger.Error("error occurred", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("wrote output files", "directory", output)
+	}
+}
+
+// resolveMnemonic loads a mnemonic from various sources in order of precedence:
+// 1. Direct mnemonic string (--mnemonic flag)
+// 2. MNEMONIC environment variable
+// 3. File specified by mnemonicFile (--mnemonic-file flag)
+// 4. Default file "seed.txt" in current directory
+func resolveMnemonic(mnemonic, mnemonicFile string) (string, error) {
+	// 1. Direct mnemonic string takes highest precedence
+	if mnemonic != "" {
+		return strings.TrimSpace(mnemonic), nil
+	}
+
+	// 2. Check MNEMONIC environment variable
+	if envMnemonic := os.Getenv("MNEMONIC"); envMnemonic != "" {
+		return strings.TrimSpace(envMnemonic), nil
+	}
+
+	// 3. Read from specified file or default to seed.txt
+	filePath := mnemonicFile
+	if filePath == "" {
+		filePath = "seed.txt"
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if mnemonicFile != "" {
+			// User explicitly specified a file that doesn't exist
+			return "", fmt.Errorf(
+				"failed to read mnemonic file %q: %w",
+				mnemonicFile,
+				err,
+			)
+		}
+		// Default seed.txt not found and no other source available
+		return "", errors.New(
+			"no mnemonic provided: use --mnemonic, --mnemonic-file, " +
+				"set MNEMONIC env var, or create seed.txt",
+		)
+	}
+
+	return strings.TrimSpace(string(data)), nil
+}
+
+func RunRestore(
+	cfg *config.Config,
+	mnemonic, mnemonicFile, password, output string,
+) {
+	logger := logging.GetLogger()
+
+	// Load mnemonic from various sources (in order of precedence)
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		logger.Error("failed to load mnemonic", "error", err)
+		os.Exit(1)
+	}
+
+	w, err := bursa.NewWallet(
+		resolvedMnemonic,
+		cfg.Network,
+		password,
+		0, 0, 0, 0, 0, 0, 0, 0,
+	)
+	if err != nil {
+		logger.Error("failed to restore wallet", "error", err)
+		os.Exit(1)
+	}
+	if w == nil {
+		logger.Error("wallet empty after restore... this shouldn't happen")
+		os.Exit(1)
+	}
+
+	logger.Info("Restored wallet from mnemonic")
+
+	keyFiles, err := bursa.ExtractKeyFiles(w)
+	if err != nil {
+		logger.Error("failed to extract key files", "error", err)
+		os.Exit(1)
+	}
+
+	if output == "" {
+		// Don't output the mnemonic since the user already has it
+		logger.Info("PAYMENT_ADDRESS", "payment_address", w.PaymentAddress)
+		logger.Info("STAKE_ADDRESS", "stake_address", w.StakeAddress)
+		for key, value := range keyFiles {
+			logger.Info(key, key, value)
+		}
+	} else {
+		fmt.Printf("Output dir: %v\n", output)
+		_, err := os.Stat(output)
+		if os.IsNotExist(err) {
+			err = os.MkdirAll(output, 0o755)
+			if err != nil {
+				logger.Error("failed to create output directory", "error", err)
+				os.Exit(1)
+			}
+		}
+		fileMap := []map[string]string{
 			{"payment.addr": w.PaymentAddress},
 			{"stake.addr": w.StakeAddress},
 		}
