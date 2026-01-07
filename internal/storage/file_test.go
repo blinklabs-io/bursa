@@ -48,16 +48,6 @@ func TestFileStore(t *testing.T) {
 		// Create a bursa wallet to populate from
 		bursaWallet, err := bursa.NewWallet(
 			"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-			"mainnet",
-			"",
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
 		)
 		require.NoError(t, err)
 
@@ -93,16 +83,6 @@ func TestFileStore(t *testing.T) {
 		// Create a bursa wallet to populate from
 		originalWallet, err := bursa.NewWallet(
 			"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-			"mainnet",
-			"",
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
 		)
 		require.NoError(t, err)
 

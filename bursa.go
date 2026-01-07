@@ -195,6 +195,121 @@ var jsonBufferPool = sync.Pool{
 	},
 }
 
+// WalletConfig holds configuration options for wallet creation.
+// All index fields default to 0 and must be less than 2^31.
+type WalletConfig struct {
+	Network         string // Network name: "mainnet" or "testnet"
+	Password        string // Optional password for key derivation
+	AccountID       uint32 // Account derivation index
+	PaymentID       uint32 // Payment key derivation index
+	StakeID         uint32 // Stake key derivation index
+	DRepID          uint32 // DRep key derivation index (CIP-105)
+	CommitteeColdID uint32 // Committee cold key derivation index (CIP-105)
+	CommitteeHotID  uint32 // Committee hot key derivation index (CIP-105)
+	PoolColdID      uint32 // Pool cold key derivation index (CIP-1853)
+	AddressID       uint32 // Address derivation index
+}
+
+// WalletOption is a functional option for configuring wallet creation
+type WalletOption func(*WalletConfig)
+
+// WithNetwork sets the network for the wallet.
+// Valid values are "mainnet" and "testnet".
+// Default: "mainnet"
+func WithNetwork(network string) WalletOption {
+	return func(c *WalletConfig) {
+		c.Network = network
+	}
+}
+
+// WithPassword sets the password for key derivation.
+// This provides additional entropy for the master key derivation.
+// Default: "" (empty string)
+func WithPassword(password string) WalletOption {
+	return func(c *WalletConfig) {
+		c.Password = password
+	}
+}
+
+// WithAccountID sets the account derivation index.
+// Must be less than 2^31 for BIP32 compatibility.
+// Default: 0
+func WithAccountID(id uint32) WalletOption {
+	return func(c *WalletConfig) {
+		c.AccountID = id
+	}
+}
+
+// WithPaymentID sets the payment key derivation index.
+// Must be less than 2^31 for BIP32 compatibility.
+// Default: 0
+func WithPaymentID(id uint32) WalletOption {
+	return func(c *WalletConfig) {
+		c.PaymentID = id
+	}
+}
+
+// WithStakeID sets the stake key derivation index.
+// Must be less than 2^31 for BIP32 compatibility.
+// Default: 0
+func WithStakeID(id uint32) WalletOption {
+	return func(c *WalletConfig) {
+		c.StakeID = id
+	}
+}
+
+// WithDRepID sets the DRep key derivation index (CIP-105).
+// Must be less than 2^31 for BIP32 compatibility.
+// Default: 0
+func WithDRepID(id uint32) WalletOption {
+	return func(c *WalletConfig) {
+		c.DRepID = id
+	}
+}
+
+// WithCommitteeColdID sets the committee cold key derivation index (CIP-105).
+// Must be less than 2^31 for BIP32 compatibility.
+// Default: 0
+func WithCommitteeColdID(id uint32) WalletOption {
+	return func(c *WalletConfig) {
+		c.CommitteeColdID = id
+	}
+}
+
+// WithCommitteeHotID sets the committee hot key derivation index (CIP-105).
+// Must be less than 2^31 for BIP32 compatibility.
+// Default: 0
+func WithCommitteeHotID(id uint32) WalletOption {
+	return func(c *WalletConfig) {
+		c.CommitteeHotID = id
+	}
+}
+
+// WithPoolColdID sets the pool cold key derivation index (CIP-1853).
+// Must be less than 2^31 for BIP32 compatibility.
+// Default: 0
+func WithPoolColdID(id uint32) WalletOption {
+	return func(c *WalletConfig) {
+		c.PoolColdID = id
+	}
+}
+
+// WithAddressID sets the address derivation index.
+// Must be less than 2^31 for BIP32 compatibility.
+// Default: 0
+func WithAddressID(id uint32) WalletOption {
+	return func(c *WalletConfig) {
+		c.AddressID = id
+	}
+}
+
+// defaultWalletConfig returns the default wallet configuration
+func defaultWalletConfig() *WalletConfig {
+	return &WalletConfig{
+		Network: "mainnet",
+	}
+}
+
 // Wallet represents a complete HD wallet with all key types
 type Wallet struct {
 	Mnemonic                  string  `json:"mnemonic"                     example:"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"`
@@ -234,57 +349,69 @@ func GenerateMnemonic() (string, error) {
 }
 
 // NewWallet creates a new wallet from a BIP39 mnemonic phrase.
-// All derivation indices (accountId, paymentId, stakeId, drepId, committeeColdId, committeeHotId, poolColdId, addressId) must be less than 2^31 (0x80000000).
-// This constraint ensures compatibility with BIP32/BIP44 derivation standards.
-func NewWallet(
-	mnemonic, network, password string,
-	accountId uint32,
-	paymentId, stakeId, drepId, committeeColdId, committeeHotId, poolColdId, addressId uint32,
-) (*Wallet, error) {
+// Use functional options to configure the wallet:
+//
+//	wallet, err := bursa.NewWallet(mnemonic,
+//	    bursa.WithNetwork("mainnet"),
+//	    bursa.WithPassword("optional-password"),
+//	    bursa.WithAccountID(0),
+//	)
+//
+// All derivation indices must be less than 2^31 (0x80000000) for BIP32 compatibility.
+func NewWallet(mnemonic string, opts ...WalletOption) (*Wallet, error) {
+	// Apply default configuration
+	cfg := defaultWalletConfig()
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	if !bip39.IsMnemonicValid(mnemonic) {
 		return nil, ErrInvalidMnemonic
 	}
-	if accountId >= 0x80000000 || paymentId >= 0x80000000 ||
-		stakeId >= 0x80000000 || drepId >= 0x80000000 ||
-		committeeColdId >= 0x80000000 || committeeHotId >= 0x80000000 ||
-		poolColdId >= 0x80000000 || addressId >= 0x80000000 {
+	if cfg.AccountID >= 0x80000000 || cfg.PaymentID >= 0x80000000 ||
+		cfg.StakeID >= 0x80000000 || cfg.DRepID >= 0x80000000 ||
+		cfg.CommitteeColdID >= 0x80000000 || cfg.CommitteeHotID >= 0x80000000 ||
+		cfg.PoolColdID >= 0x80000000 || cfg.AddressID >= 0x80000000 {
 		return nil, ErrInvalidDerivationIndex
 	}
-	rootKey, err := GetRootKeyFromMnemonic(mnemonic, password)
+	rootKey, err := GetRootKeyFromMnemonic(mnemonic, cfg.Password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get root key from mnemonic: %w", err)
 	}
-	accountKey, err := GetAccountKey(rootKey, accountId)
+	accountKey, err := GetAccountKey(rootKey, cfg.AccountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get account key: %w", err)
 	}
-	paymentKey, err := GetPaymentKey(accountKey, paymentId)
+	paymentKey, err := GetPaymentKey(accountKey, cfg.PaymentID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get payment key: %w", err)
 	}
-	stakeKey, err := GetStakeKey(accountKey, stakeId)
+	stakeKey, err := GetStakeKey(accountKey, cfg.StakeID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stake key: %w", err)
 	}
-	drepKey, err := GetDRepKey(accountKey, drepId)
+	drepKey, err := GetDRepKey(accountKey, cfg.DRepID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get DRep key: %w", err)
 	}
-	committeeColdKey, err := GetCommitteeColdKey(accountKey, committeeColdId)
+	committeeColdKey, err := GetCommitteeColdKey(
+		accountKey,
+		cfg.CommitteeColdID,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get committee cold key: %w", err)
 	}
-	committeeHotKey, err := GetCommitteeHotKey(accountKey, committeeHotId)
+	committeeHotKey, err := GetCommitteeHotKey(accountKey, cfg.CommitteeHotID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get committee hot key: %w", err)
 	}
 	// CIP-1853: Derive pool cold key using m/1853'/1815'/0'/index'
 	// usecase is fixed to 0 as per CIP-1853 specification
-	poolColdKey, err := GetPoolColdKey(rootKey, 0, poolColdId)
+	poolColdKey, err := GetPoolColdKey(rootKey, 0, cfg.PoolColdID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pool cold key: %w", err)
 	}
-	addr, err := GetAddress(accountKey, network, addressId)
+	addr, err := GetAddress(accountKey, cfg.Network, cfg.AddressID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get address: %w", err)
 	}

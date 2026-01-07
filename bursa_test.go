@@ -197,7 +197,7 @@ func TestLoadWalletDir(t *testing.T) {
 
 	// Create a wallet
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0, 0)
+	wallet, err := NewWallet(mnemonic)
 	assert.NoError(t, err)
 
 	// Extract key files
@@ -257,7 +257,7 @@ func TestLoadWalletDirPartial(t *testing.T) {
 
 	// Create a wallet
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0, 0)
+	wallet, err := NewWallet(mnemonic)
 	assert.NoError(t, err)
 
 	// Extract key files
@@ -319,7 +319,7 @@ func BenchmarkNewWallet(b *testing.B) {
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
 	for b.Loop() {
-		_, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0, 0)
+		_, err := NewWallet(mnemonic)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -328,19 +328,7 @@ func BenchmarkNewWallet(b *testing.B) {
 
 func BenchmarkExtractKeyFiles(b *testing.B) {
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	wallet, err := NewWallet(
-		mnemonic,
-		"mainnet",
-		"",
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-	)
+	wallet, err := NewWallet(mnemonic)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -356,19 +344,7 @@ func BenchmarkExtractKeyFiles(b *testing.B) {
 
 func BenchmarkCBORDecode(b *testing.B) {
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	wallet, err := NewWallet(
-		mnemonic,
-		"mainnet",
-		"",
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-	)
+	wallet, err := NewWallet(mnemonic)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -393,7 +369,7 @@ func BenchmarkLoadWalletDir(b *testing.B) {
 	tmpDir := b.TempDir()
 
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0, 0)
+	wallet, err := NewWallet(mnemonic)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -422,38 +398,14 @@ func BenchmarkLoadWalletDir(b *testing.B) {
 }
 
 func TestNewWalletInvalidMnemonic(t *testing.T) {
-	_, err := NewWallet(
-		"invalid mnemonic",
-		"mainnet",
-		"",
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-	)
+	_, err := NewWallet("invalid mnemonic")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid mnemonic")
 }
 
 func TestNewWalletInvalidIndices(t *testing.T) {
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	_, err := NewWallet(
-		mnemonic,
-		"mainnet",
-		"",
-		0x80000000,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-	)
+	_, err := NewWallet(mnemonic, WithAccountID(0x80000000))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "derivation indices must be less than 2^31")
 }
@@ -473,25 +425,9 @@ func TestCIP1852Compliance(t *testing.T) {
 	// Test CIP-1852 compliance using a known mnemonic
 	// This test verifies that the derivation paths follow CIP-1852 specification
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	password := ""
-	accountId := uint32(0)
-	paymentId := uint32(0)
-	stakeId := uint32(0)
 
-	// Generate wallet
-	wallet, err := NewWallet(
-		mnemonic,
-		"mainnet",
-		password,
-		accountId,
-		paymentId,
-		stakeId,
-		0,
-		0,
-		0,
-		0,
-		0,
-	)
+	// Generate wallet with default indices (all 0)
+	wallet, err := NewWallet(mnemonic)
 	assert.NoError(t, err)
 	assert.NotNil(t, wallet)
 
@@ -730,30 +666,9 @@ func TestCIP0003KeyGeneration(t *testing.T) {
 	// Test Vector 4: Complete wallet generation pipeline
 	t.Run("TestVector4_FullWallet", func(t *testing.T) {
 		mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-		password := ""
-		network := "mainnet"
-		accountId := uint32(0)
-		paymentId := uint32(0)
-		stakeId := uint32(0)
-		drepId := uint32(0)
-		committeeColdId := uint32(0)
-		committeeHotId := uint32(0)
-		poolColdId := uint32(0)
-		addressId := uint32(0)
 
-		wallet, err := NewWallet(
-			mnemonic,
-			network,
-			password,
-			accountId,
-			paymentId,
-			stakeId,
-			drepId,
-			committeeColdId,
-			committeeHotId,
-			poolColdId,
-			addressId,
-		)
+		// Use defaults: mainnet, no password, all indices = 0
+		wallet, err := NewWallet(mnemonic)
 		assert.NoError(t, err)
 		assert.NotNil(t, wallet)
 
@@ -1702,22 +1617,9 @@ func TestCIP0018MultiStakeKeys(t *testing.T) {
 	// delegating to different stake pools
 
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	password := ""
 
-	// Create wallet with multiple stake keys
-	wallet, err := NewWallet(
-		mnemonic,
-		"mainnet",
-		password,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-	)
+	// Create wallet with defaults
+	wallet, err := NewWallet(mnemonic)
 	assert.NoError(t, err)
 	assert.NotNil(t, wallet)
 
@@ -1726,7 +1628,7 @@ func TestCIP0018MultiStakeKeys(t *testing.T) {
 	assert.NotEmpty(t, wallet.StakeSKey.CborHex)
 
 	// Test creating additional stake keys by deriving from account key
-	rootKey, err := GetRootKeyFromMnemonic(mnemonic, password)
+	rootKey, err := GetRootKeyFromMnemonic(mnemonic, "")
 	assert.NoError(t, err)
 
 	// Get account key (following CIP-1852 derivation path)
@@ -2307,7 +2209,7 @@ func TestCIP1853KeyFileGeneration(t *testing.T) {
 func TestCIP1853WalletIntegration(t *testing.T) {
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
-	wallet, err := NewWallet(mnemonic, "mainnet", "", 0, 0, 0, 0, 0, 0, 0, 0)
+	wallet, err := NewWallet(mnemonic)
 	assert.NoError(t, err)
 	assert.NotNil(t, wallet)
 
