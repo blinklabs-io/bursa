@@ -110,7 +110,7 @@ func (g *GoogleWallet) SetDescription(description string) {
 }
 
 func (g *GoogleWallet) ListItems() []string {
-	items := []string{}
+	items := make([]string, 0, len(g.items))
 	for name := range g.items {
 		items = append(items, name)
 	}

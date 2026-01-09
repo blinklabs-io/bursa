@@ -28,6 +28,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/btcsuite/btcd/btcutil/bech32"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -82,11 +83,12 @@ func RunCreate(cfg *config.Config, output string) {
 				panic(err)
 			}
 		}
-		fileMap := []map[string]string{
-			{"seed.txt": w.Mnemonic},
-			{"payment.addr": w.PaymentAddress},
-			{"stake.addr": w.StakeAddress},
-		}
+		fileMap := make([]map[string]string, 0, 3+len(keyFiles))
+		fileMap = append(fileMap,
+			map[string]string{"seed.txt": w.Mnemonic},
+			map[string]string{"payment.addr": w.PaymentAddress},
+			map[string]string{"stake.addr": w.StakeAddress},
+		)
 		for key, value := range keyFiles {
 			fileMap = append(fileMap, map[string]string{key: value})
 		}
@@ -206,10 +208,11 @@ func RunRestore(
 				os.Exit(1)
 			}
 		}
-		fileMap := []map[string]string{
-			{"payment.addr": w.PaymentAddress},
-			{"stake.addr": w.StakeAddress},
-		}
+		fileMap := make([]map[string]string, 0, 2+len(keyFiles))
+		fileMap = append(fileMap,
+			map[string]string{"payment.addr": w.PaymentAddress},
+			map[string]string{"stake.addr": w.StakeAddress},
+		)
 		for key, value := range keyFiles {
 			fileMap = append(fileMap, map[string]string{key: value})
 		}
@@ -247,6 +250,159 @@ func RunLoad(dir string, showSecrets bool) {
 		os.Exit(1)
 	}
 	bursa.PrintLoadedKeys(keys, showSecrets)
+}
+
+// RunKeyRoot derives and outputs the root extended private key from a mnemonic
+func RunKeyRoot(mnemonic, mnemonicFile, password string) error {
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	// Output in bech32 format
+	fmt.Println(rootKey.String())
+	return nil
+}
+
+// RunKeyAccount derives and outputs an account extended private key
+func RunKeyAccount(
+	mnemonic, mnemonicFile, password string,
+	accountIndex uint32,
+) error {
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	accountKey, err := bursa.GetAccountKey(rootKey, accountIndex)
+	if err != nil {
+		return fmt.Errorf("failed to derive account key: %w", err)
+	}
+
+	// Output in bech32 format with acct_xsk prefix
+	encoded, err := encodeAccountKey(accountKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode account key: %w", err)
+	}
+	fmt.Println(encoded)
+	return nil
+}
+
+// RunKeyPayment derives and outputs a payment extended private key
+func RunKeyPayment(
+	mnemonic, mnemonicFile, password string,
+	accountIndex, paymentIndex uint32,
+) error {
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	accountKey, err := bursa.GetAccountKey(rootKey, accountIndex)
+	if err != nil {
+		return fmt.Errorf("failed to derive account key: %w", err)
+	}
+
+	paymentKey, err := bursa.GetPaymentKey(accountKey, paymentIndex)
+	if err != nil {
+		return fmt.Errorf("failed to derive payment key: %w", err)
+	}
+
+	// Output in bech32 format with addr_xsk prefix
+	encoded, err := encodePaymentKey(paymentKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode payment key: %w", err)
+	}
+	fmt.Println(encoded)
+	return nil
+}
+
+// RunKeyStake derives and outputs a stake extended private key
+func RunKeyStake(
+	mnemonic, mnemonicFile, password string,
+	accountIndex, stakeIndex uint32,
+) error {
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	accountKey, err := bursa.GetAccountKey(rootKey, accountIndex)
+	if err != nil {
+		return fmt.Errorf("failed to derive account key: %w", err)
+	}
+
+	stakeKey, err := bursa.GetStakeKey(accountKey, stakeIndex)
+	if err != nil {
+		return fmt.Errorf("failed to derive stake key: %w", err)
+	}
+
+	// Output in bech32 format with stake_xsk prefix
+	encoded, err := encodeStakeKey(stakeKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode stake key: %w", err)
+	}
+	fmt.Println(encoded)
+	return nil
+}
+
+// encodeAccountKey encodes an account extended private key in bech32 format
+func encodeAccountKey(key []byte) (string, error) {
+	converted, err := bech32.ConvertBits(key, 8, 5, true)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert bits: %w", err)
+	}
+	encoded, err := bech32.Encode("acct_xsk", converted)
+	if err != nil {
+		return "", fmt.Errorf("failed to bech32 encode: %w", err)
+	}
+	return encoded, nil
+}
+
+// encodePaymentKey encodes a payment extended private key in bech32 format
+func encodePaymentKey(key []byte) (string, error) {
+	converted, err := bech32.ConvertBits(key, 8, 5, true)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert bits: %w", err)
+	}
+	encoded, err := bech32.Encode("addr_xsk", converted)
+	if err != nil {
+		return "", fmt.Errorf("failed to bech32 encode: %w", err)
+	}
+	return encoded, nil
+}
+
+// encodeStakeKey encodes a stake extended private key in bech32 format
+func encodeStakeKey(key []byte) (string, error) {
+	converted, err := bech32.ConvertBits(key, 8, 5, true)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert bits: %w", err)
+	}
+	encoded, err := bech32.Encode("stake_xsk", converted)
+	if err != nil {
+		return "", fmt.Errorf("failed to bech32 encode: %w", err)
+	}
+	return encoded, nil
 }
 
 func RunScriptCreate(
