@@ -7,7 +7,7 @@ toolchain go1.24.1
 require (
 	cloud.google.com/go/secretmanager v1.16.0
 	filippo.io/edwards25519 v1.1.0
-	github.com/blinklabs-io/gouroboros v0.146.0
+	github.com/blinklabs-io/gouroboros v0.147.0
 	github.com/btcsuite/btcd/btcutil v1.1.6
 	github.com/getsops/sops/v3 v3.11.0
 	github.com/go-playground/validator/v10 v10.30.1
