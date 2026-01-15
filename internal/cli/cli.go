@@ -366,6 +366,35 @@ func RunKeyStake(
 	return nil
 }
 
+// RunKeyPolicy derives a policy key from a mnemonic and outputs it in bech32
+func RunKeyPolicy(
+	mnemonic, mnemonicFile, password string,
+	index uint32,
+) error {
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	policyKey, err := bursa.GetPolicyKey(rootKey, index)
+	if err != nil {
+		return fmt.Errorf("failed to derive policy key: %w", err)
+	}
+
+	// Output in bech32 format with policy_xsk prefix
+	encoded, err := encodePolicyKey(policyKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode policy key: %w", err)
+	}
+	fmt.Println(encoded)
+	return nil
+}
+
 // encodeAccountKey encodes an account extended private key in bech32 format
 func encodeAccountKey(key []byte) (string, error) {
 	converted, err := bech32.ConvertBits(key, 8, 5, true)
@@ -399,6 +428,19 @@ func encodeStakeKey(key []byte) (string, error) {
 		return "", fmt.Errorf("failed to convert bits: %w", err)
 	}
 	encoded, err := bech32.Encode("stake_xsk", converted)
+	if err != nil {
+		return "", fmt.Errorf("failed to bech32 encode: %w", err)
+	}
+	return encoded, nil
+}
+
+// encodePolicyKey encodes a policy extended private key in bech32 format
+func encodePolicyKey(key []byte) (string, error) {
+	converted, err := bech32.ConvertBits(key, 8, 5, true)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert bits: %w", err)
+	}
+	encoded, err := bech32.Encode("policy_xsk", converted)
 	if err != nil {
 		return "", fmt.Errorf("failed to bech32 encode: %w", err)
 	}
