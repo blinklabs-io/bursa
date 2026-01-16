@@ -47,6 +47,7 @@ Examples:
 		keyPaymentCommand(),
 		keyStakeCommand(),
 		keyPolicyCommand(),
+		keyPoolColdCommand(),
 	)
 	return &keyCommand
 }
@@ -331,6 +332,61 @@ Examples:
 		"Optional password for key derivation",
 	)
 	cmd.Flags().Uint32Var(&index, "index", 0, "Policy key index (default: 0)")
+
+	return &cmd
+}
+
+func keyPoolColdCommand() *cobra.Command {
+	var mnemonic string
+	var mnemonicFile string
+	var password string
+	var index uint32
+
+	cmd := cobra.Command{
+		Use:   "pool-cold",
+		Short: "Derive stake pool cold key from mnemonic",
+		Long: `Derives a stake pool cold extended private key from a BIP-39 mnemonic.
+
+The pool cold key follows CIP-1853 path: m/1853'/1815'/0'/index'
+These keys are used as the long-term identity keys for stake pool operators.
+Output is in bech32 format (pool_xsk prefix).
+
+Examples:
+  bursa key pool-cold --mnemonic "word1 word2 ... word24"
+  bursa key pool-cold --mnemonic "word1 word2 ..." --index 0
+  bursa key pool-cold --mnemonic-file seed.txt --index 1`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunKeyPoolCold(
+				mnemonic,
+				mnemonicFile,
+				password,
+				index,
+			); err != nil {
+				logging.GetLogger().Error(
+					"failed to derive pool cold key",
+					"error",
+					err,
+				)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
+	cmd.Flags().StringVar(
+		&mnemonicFile,
+		"mnemonic-file",
+		"",
+		"Path to file containing mnemonic (default: seed.txt)",
+	)
+	cmd.Flags().StringVar(
+		&password,
+		"password",
+		"",
+		"Optional password for key derivation",
+	)
+	cmd.Flags().
+		Uint32Var(&index, "index", 0, "Pool cold key index (default: 0)")
 
 	return &cmd
 }
