@@ -447,6 +447,49 @@ func encodePolicyKey(key []byte) (string, error) {
 	return encoded, nil
 }
 
+// RunKeyPoolCold derives a pool cold key from a mnemonic and outputs in bech32
+func RunKeyPoolCold(
+	mnemonic, mnemonicFile, password string,
+	index uint32,
+) error {
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	// CIP-1853: usecase is fixed to 0 as per specification
+	poolColdKey, err := bursa.GetPoolColdKey(rootKey, 0, index)
+	if err != nil {
+		return fmt.Errorf("failed to derive pool cold key: %w", err)
+	}
+
+	// Output in bech32 format with pool_xsk prefix
+	encoded, err := encodePoolColdKey(poolColdKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode pool cold key: %w", err)
+	}
+	fmt.Println(encoded)
+	return nil
+}
+
+// encodePoolColdKey encodes a pool cold extended private key in bech32 format
+func encodePoolColdKey(key []byte) (string, error) {
+	converted, err := bech32.ConvertBits(key, 8, 5, true)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert bits: %w", err)
+	}
+	encoded, err := bech32.Encode("pool_xsk", converted)
+	if err != nil {
+		return "", fmt.Errorf("failed to bech32 encode: %w", err)
+	}
+	return encoded, nil
+}
+
 func RunScriptCreate(
 	required int,
 	keyHashes []string,
