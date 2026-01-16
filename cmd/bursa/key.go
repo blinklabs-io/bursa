@@ -46,6 +46,7 @@ Examples:
 		keyAccountCommand(),
 		keyPaymentCommand(),
 		keyStakeCommand(),
+		keyPolicyCommand(),
 	)
 	return &keyCommand
 }
@@ -276,6 +277,60 @@ Examples:
 	)
 	cmd.Flags().
 		Uint32Var(&stakeIndex, "index", 0, "Stake key index (default: 0)")
+
+	return &cmd
+}
+
+func keyPolicyCommand() *cobra.Command {
+	var mnemonic string
+	var mnemonicFile string
+	var password string
+	var index uint32
+
+	cmd := cobra.Command{
+		Use:   "policy",
+		Short: "Derive forging policy key from mnemonic",
+		Long: `Derives a forging policy extended private key from a BIP-39 mnemonic.
+
+The policy key follows CIP-1855 path: m/1855'/1815'/policy_ix'
+These keys are used for native asset minting/burning policies.
+Output is in bech32 format (policy_xsk prefix).
+
+Examples:
+  bursa key policy --mnemonic "word1 word2 ... word24"
+  bursa key policy --mnemonic "word1 word2 ..." --index 0
+  bursa key policy --mnemonic-file seed.txt --index 1`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunKeyPolicy(
+				mnemonic,
+				mnemonicFile,
+				password,
+				index,
+			); err != nil {
+				logging.GetLogger().Error(
+					"failed to derive policy key",
+					"error",
+					err,
+				)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
+	cmd.Flags().StringVar(
+		&mnemonicFile,
+		"mnemonic-file",
+		"",
+		"Path to file containing mnemonic (default: seed.txt)",
+	)
+	cmd.Flags().StringVar(
+		&password,
+		"password",
+		"",
+		"Optional password for key derivation",
+	)
+	cmd.Flags().Uint32Var(&index, "index", 0, "Policy key index (default: 0)")
 
 	return &cmd
 }

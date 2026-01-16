@@ -19,6 +19,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -2312,4 +2313,365 @@ func TestCIP1853MultiplePoolKeys(t *testing.T) {
 			i,
 		)
 	}
+}
+
+// TestCIP1855PolicyKeyDerivation validates CIP-1855 forging policy key derivation.
+// CIP-1855 defines HD derivation paths for native asset policy keys: m/1855'/1815'/policy_ix'
+func TestCIP1855PolicyKeyDerivation(t *testing.T) {
+	// Test basic policy key derivation
+	rootKey, err := GetRootKeyFromMnemonic(
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+		"",
+	)
+	assert.NoError(t, err)
+
+	// Test policy key derivation: m/1855'/1815'/0'
+	// CIP-1855: Policy keys use purpose 1855', coin type 1815', index'
+	policyKey0, err := GetPolicyKey(rootKey, 0)
+	assert.NoError(t, err)
+	assert.NotNil(t, policyKey0)
+
+	policyKey1, err := GetPolicyKey(rootKey, 1)
+	assert.NoError(t, err)
+	assert.NotNil(t, policyKey1)
+
+	policyKey2, err := GetPolicyKey(rootKey, 2)
+	assert.NoError(t, err)
+	assert.NotNil(t, policyKey2)
+
+	// Verify policy keys are different
+	policyPubKey0 := policyKey0.PublicKey()
+	policyPubKey1 := policyKey1.PublicKey()
+	policyPubKey2 := policyKey2.PublicKey()
+
+	assert.Len(t, policyPubKey0, 32, "Policy public key 0 should be 32 bytes")
+	assert.Len(t, policyPubKey1, 32, "Policy public key 1 should be 32 bytes")
+	assert.Len(t, policyPubKey2, 32, "Policy public key 2 should be 32 bytes")
+
+	// Keys should be different
+	assert.NotEqual(
+		t,
+		policyPubKey0,
+		policyPubKey1,
+		"Policy keys 0 and 1 should be different",
+	)
+	assert.NotEqual(
+		t,
+		policyPubKey1,
+		policyPubKey2,
+		"Policy keys 1 and 2 should be different",
+	)
+	assert.NotEqual(
+		t,
+		policyPubKey0,
+		policyPubKey2,
+		"Policy keys 0 and 2 should be different",
+	)
+
+	// Verify policy keys are different from wallet keys
+	accountKey, err := GetAccountKey(rootKey, 0)
+	assert.NoError(t, err)
+
+	stakeKey, err := GetStakeKey(accountKey, 0)
+	assert.NoError(t, err)
+	stakePubKey := stakeKey.PublicKey()
+
+	assert.NotEqual(
+		t,
+		policyPubKey0,
+		stakePubKey,
+		"Policy key should be different from stake key",
+	)
+
+	// Verify policy keys are different from pool cold keys
+	poolColdKey, err := GetPoolColdKey(rootKey, 0, 0)
+	assert.NoError(t, err)
+	poolColdPubKey := poolColdKey.PublicKey()
+
+	assert.NotEqual(
+		t,
+		policyPubKey0,
+		poolColdPubKey,
+		"Policy key should be different from pool cold key",
+	)
+
+	// Test invalid index (>= 0x80000000)
+	_, err = GetPolicyKey(rootKey, 0x80000000)
+	assert.Error(t, err, "Should reject invalid policy index")
+	assert.ErrorIs(t, err, ErrInvalidDerivationIndex)
+}
+
+// TestCIP1855KeyFileGeneration validates key file generation for policy keys
+func TestCIP1855KeyFileGeneration(t *testing.T) {
+	rootKey, err := GetRootKeyFromMnemonic(
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+		"",
+	)
+	assert.NoError(t, err)
+
+	policyKey, err := GetPolicyKey(rootKey, 0)
+	assert.NoError(t, err)
+
+	// Test verification key generation
+	vkey, err := GetPolicyVKey(policyKey)
+	assert.NoError(t, err)
+	assert.Equal(t, "PolicyVerificationKeyShelley_ed25519", vkey.Type)
+	assert.Equal(t, "Policy Verification Key", vkey.Description)
+	assert.NotEmpty(t, vkey.CborHex)
+
+	// Test signing key generation
+	skey, err := GetPolicySKey(policyKey)
+	assert.NoError(t, err)
+	assert.Equal(t, "PolicySigningKeyShelley_ed25519", skey.Type)
+	assert.Equal(t, "Policy Signing Key", skey.Description)
+	assert.NotEmpty(t, skey.CborHex)
+
+	// Test extended signing key generation
+	extendedSkey, err := GetPolicyExtendedSKey(policyKey)
+	assert.NoError(t, err)
+	assert.Equal(
+		t,
+		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		extendedSkey.Type,
+	)
+	assert.Equal(
+		t,
+		"Policy Extended Signing Key (BIP32)",
+		extendedSkey.Description,
+	)
+	assert.NotEmpty(t, extendedSkey.CborHex)
+
+	// Verify CBOR decoding
+	vkeyCbor, err := hex.DecodeString(vkey.CborHex)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, vkeyCbor)
+
+	skeyCbor, err := hex.DecodeString(skey.CborHex)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, skeyCbor)
+
+	extendedSkeyCbor, err := hex.DecodeString(extendedSkey.CborHex)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, extendedSkeyCbor)
+
+	// Verify bech32 encoding works
+	vkeyBech32 := vkey.String()
+	assert.True(
+		t,
+		strings.HasPrefix(vkeyBech32, "policy_vk"),
+		"Verification key should have policy_vk prefix",
+	)
+
+	skeyBech32 := skey.String()
+	assert.True(
+		t,
+		strings.HasPrefix(skeyBech32, "policy_sk"),
+		"Signing key should have policy_sk prefix",
+	)
+
+	extSkeyBech32 := extendedSkey.String()
+	assert.True(
+		t,
+		strings.HasPrefix(extSkeyBech32, "policy_xsk"),
+		"Extended signing key should have policy_xsk prefix",
+	)
+}
+
+// TestCIP1855PolicyKeyHash validates blake2b_224 hash generation for policy keys
+func TestCIP1855PolicyKeyHash(t *testing.T) {
+	rootKey, err := GetRootKeyFromMnemonic(
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+		"",
+	)
+	assert.NoError(t, err)
+
+	policyKey, err := GetPolicyKey(rootKey, 0)
+	assert.NoError(t, err)
+
+	// Test policy key hash (blake2b_224)
+	hash, err := GetPolicyKeyHash(policyKey)
+	assert.NoError(t, err)
+	assert.Len(t, hash, 28, "Policy key hash should be 28 bytes (224 bits)")
+
+	// Test that different keys produce different hashes
+	policyKey1, err := GetPolicyKey(rootKey, 1)
+	assert.NoError(t, err)
+
+	hash1, err := GetPolicyKeyHash(policyKey1)
+	assert.NoError(t, err)
+	assert.NotEqual(
+		t,
+		hash,
+		hash1,
+		"Different policy keys should have different hashes",
+	)
+}
+
+// TestCIP1855MultiplePolicyKeys validates multiple policy key derivation
+func TestCIP1855MultiplePolicyKeys(t *testing.T) {
+	rootKey, err := GetRootKeyFromMnemonic(
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+		"",
+	)
+	assert.NoError(t, err)
+
+	// Test multiple policy keys with different indices
+	policies := make([]bip32.XPrv, 5)
+	pubKeys := make([][]byte, 5)
+
+	for i := range 5 {
+		policy, err := GetPolicyKey(rootKey, uint32(i))
+		assert.NoError(t, err)
+		assert.NotNil(t, policy)
+		policies[i] = policy
+		pubKeys[i] = policy.PublicKey()
+	}
+
+	// Verify all keys are unique
+	for i := range 5 {
+		for j := i + 1; j < 5; j++ {
+			assert.NotEqual(
+				t,
+				pubKeys[i],
+				pubKeys[j],
+				"Policy keys %d and %d should be different",
+				i,
+				j,
+			)
+		}
+	}
+
+	// Verify key files can be generated for all policies
+	for i, policy := range policies {
+		vkey, err := GetPolicyVKey(policy)
+		assert.NoError(t, err)
+		assert.NotEmpty(
+			t,
+			vkey.CborHex,
+			"Policy %d verification key should be valid",
+			i,
+		)
+
+		skey, err := GetPolicySKey(policy)
+		assert.NoError(t, err)
+		assert.NotEmpty(
+			t,
+			skey.CborHex,
+			"Policy %d signing key should be valid",
+			i,
+		)
+
+		extSkey, err := GetPolicyExtendedSKey(policy)
+		assert.NoError(t, err)
+		assert.NotEmpty(
+			t,
+			extSkey.CborHex,
+			"Policy %d extended signing key should be valid",
+			i,
+		)
+
+		hash, err := GetPolicyKeyHash(policy)
+		assert.NoError(t, err)
+		assert.Len(
+			t,
+			hash,
+			28,
+			"Policy %d key hash should be 28 bytes",
+			i,
+		)
+	}
+}
+
+// TestCIP1855PolicyKeyRoundTrip verifies that policy keys can be serialized
+// to files and loaded back via LoadWalletDir
+func TestCIP1855PolicyKeyRoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	rootKey, err := GetRootKeyFromMnemonic(
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+		"",
+	)
+	assert.NoError(t, err)
+
+	policyKey, err := GetPolicyKey(rootKey, 0)
+	assert.NoError(t, err)
+
+	// Generate all three policy key file types
+	vkey, err := GetPolicyVKey(policyKey)
+	assert.NoError(t, err)
+
+	skey, err := GetPolicySKey(policyKey)
+	assert.NoError(t, err)
+
+	extSkey, err := GetPolicyExtendedSKey(policyKey)
+	assert.NoError(t, err)
+
+	// Serialize and write key files to temp directory
+	keyFiles := map[string]KeyFile{
+		"policy.vkey":         vkey,
+		"policy.skey":         skey,
+		"policyExtended.skey": extSkey,
+	}
+
+	for filename, kf := range keyFiles {
+		content, err := json.MarshalIndent(&kf, "", "  ")
+		assert.NoError(t, err)
+		path := filepath.Join(tmpDir, filename)
+		err = os.WriteFile(path, content, 0o600)
+		assert.NoError(t, err)
+	}
+
+	// Load the wallet dir - this should now work with policy keys
+	loadedKeys, err := LoadWalletDir(tmpDir, true)
+	assert.NoError(t, err)
+	assert.Len(t, loadedKeys, 3, "Should load all 3 policy key files")
+
+	// Build map for easier verification
+	keyMap := make(map[string]*LoadedKey)
+	for _, lk := range loadedKeys {
+		keyMap[lk.File] = lk
+	}
+
+	// Verify policy verification key
+	pvkey := keyMap["policy.vkey"]
+	assert.NotNil(t, pvkey, "policy.vkey should be loaded")
+	assert.Equal(t, "PolicyVerificationKeyShelley_ed25519", pvkey.Type)
+	assert.Len(t, pvkey.VKey, 32, "Verification key should be 32 bytes")
+
+	// Verify policy signing key
+	pskey := keyMap["policy.skey"]
+	assert.NotNil(t, pskey, "policy.skey should be loaded")
+	assert.Equal(t, "PolicySigningKeyShelley_ed25519", pskey.Type)
+	assert.Len(t, pskey.SKey, 64, "Signing key should be 64 bytes")
+	assert.Len(t, pskey.VKey, 32, "Derived verification key should be 32 bytes")
+
+	// Verify policy extended signing key
+	pextSkey := keyMap["policyExtended.skey"]
+	assert.NotNil(t, pextSkey, "policyExtended.skey should be loaded")
+	assert.Equal(
+		t,
+		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		pextSkey.Type,
+	)
+	assert.Len(
+		t,
+		pextSkey.SKey,
+		96,
+		"Extended signing key should be 96 bytes (64 key + 32 chaincode)",
+	)
+	assert.Len(
+		t,
+		pextSkey.VKey,
+		32,
+		"Derived verification key should be 32 bytes",
+	)
+
+	// Verify that extended skey and vkey produce the same verification key
+	// (both use BIP32 derivation)
+	assert.Equal(
+		t,
+		pvkey.VKey,
+		pextSkey.VKey,
+		"Verification key from vkey and extended skey should match",
+	)
 }

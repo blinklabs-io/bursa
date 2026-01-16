@@ -140,6 +140,12 @@ func (kf KeyFile) String() string {
 		prefix = "pool_sk"
 	case "StakePoolExtendedSigningKeyShelley_ed25519_bip32":
 		prefix = "pool_xsk"
+	case "PolicyVerificationKeyShelley_ed25519":
+		prefix = "policy_vk"
+	case "PolicySigningKeyShelley_ed25519":
+		prefix = "policy_sk"
+	case "PolicyExtendedSigningKeyShelley_ed25519_bip32":
+		prefix = "policy_xsk"
 	default:
 		// Fallback to CBOR hex if type not recognized
 		return kf.CborHex
@@ -1002,6 +1008,87 @@ func GetPoolColdExtendedSKey(poolColdKey bip32.XPrv) (KeyFile, error) {
 	return kf, nil
 }
 
+// GetPolicyKey derives a forging policy key using CIP-1855 path: m/1855'/1815'/policy_ix'
+// This function implements HD derivation for native asset minting/burning policy keys.
+// All indices in the path are hardened as per CIP-1855 specification.
+func GetPolicyKey(rootKey bip32.XPrv, index uint32) (bip32.XPrv, error) {
+	const harden = 0x80000000
+	// CIP-1855: All indices in the path must be hardened
+	if index >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	// m/1855'/1815'/policy_ix'
+	return rootKey.
+		Derive(harden + 1855).
+		Derive(harden + 1815).
+		Derive(harden + index), nil
+}
+
+// GetPolicyVKey creates a policy verification key file
+func GetPolicyVKey(policyKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode(
+		[]any{0, policyKey.Public().PublicKey()},
+	)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode policy verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "PolicyVerificationKeyShelley_ed25519",
+		Description: "Policy Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+// GetPolicySKey creates a policy signing key file
+func GetPolicySKey(policyKey bip32.XPrv) (KeyFile, error) {
+	return getSigningKeyFile(
+		policyKey,
+		"PolicySigningKeyShelley_ed25519",
+		"Policy Signing Key",
+	)
+}
+
+// GetPolicyExtendedSKey creates a policy extended signing key file (BIP32)
+func GetPolicyExtendedSKey(policyKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode([]any{
+		0,
+		policyKey.PrivateKey(),
+		policyKey.ChainCode(),
+	})
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode policy extended signing key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		Description: "Policy Extended Signing Key (BIP32)",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+// GetPolicyKeyHash returns the blake2b_224 hash of the policy verification key
+func GetPolicyKeyHash(policyKey bip32.XPrv) ([]byte, error) {
+	pubKey := policyKey.Public().PublicKey()
+	hash, err := blake2b.New(28, nil) // 224 bits = 28 bytes
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blake2b hasher: %w", err)
+	}
+	_, err = hash.Write(pubKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash policy key: %w", err)
+	}
+	return hash.Sum(nil), nil
+}
+
 // GetMultiSigAccountKey derives a multi-signature account key using CIP-1854 path
 func GetMultiSigAccountKey(rootKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
 	const harden = 0x80000000
@@ -1846,7 +1933,8 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"DRepVerificationKeyShelley_ed25519",
 		"CommitteeColdVerificationKeyShelley_ed25519",
 		"CommitteeHotVerificationKeyShelley_ed25519",
-		"StakePoolVerificationKeyShelley_ed25519":
+		"StakePoolVerificationKeyShelley_ed25519",
+		"PolicyVerificationKeyShelley_ed25519":
 		vk, err := decodeVerificationKey(cborData)
 		if err != nil {
 			return nil, err
@@ -1858,7 +1946,8 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"DRepSigningKeyShelley_ed25519",
 		"CommitteeColdSigningKeyShelley_ed25519",
 		"CommitteeHotSigningKeyShelley_ed25519",
-		"StakePoolSigningKeyShelley_ed25519":
+		"StakePoolSigningKeyShelley_ed25519",
+		"PolicySigningKeyShelley_ed25519":
 		sk, vk, err := decodeNonExtendedCborKey(cborData)
 		if err != nil {
 			return nil, err
@@ -1870,7 +1959,8 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"DRepExtendedSigningKeyShelley_ed25519_bip32",
 		"CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
 		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
-		"StakePoolExtendedSigningKeyShelley_ed25519_bip32":
+		"StakePoolExtendedSigningKeyShelley_ed25519_bip32",
+		"PolicyExtendedSigningKeyShelley_ed25519_bip32":
 		sk, vk, err := decodeExtendedCborKey(cborData)
 		if err != nil {
 			return nil, err
