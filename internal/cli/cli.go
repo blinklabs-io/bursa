@@ -490,6 +490,148 @@ func encodePoolColdKey(key []byte) (string, error) {
 	return encoded, nil
 }
 
+// RunKeyVRF derives a VRF key pair from a mnemonic and outputs it
+func RunKeyVRF(
+	mnemonic, mnemonicFile, password string,
+	index uint32,
+) error {
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	// Derive VRF seed from root key
+	vrfSeed, err := bursa.GetVRFSeed(rootKey, index)
+	if err != nil {
+		return fmt.Errorf("failed to derive VRF seed: %w", err)
+	}
+
+	// Generate VRF key pair
+	vrfPubKey, vrfSecKey, err := bursa.GetVRFKeyPair(vrfSeed)
+	if err != nil {
+		return fmt.Errorf("failed to generate VRF key pair: %w", err)
+	}
+
+	// Output VRF keys in bech32 format
+	// VRF signing key (secret key / seed)
+	vrfSkEncoded, err := encodeVRFSigningKey(vrfSecKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode VRF signing key: %w", err)
+	}
+
+	// VRF verification key (public key)
+	vrfVkEncoded, err := encodeVRFVerificationKey(vrfPubKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode VRF verification key: %w", err)
+	}
+
+	fmt.Printf("vrf_skey: %s\n", vrfSkEncoded)
+	fmt.Printf("vrf_vkey: %s\n", vrfVkEncoded)
+	return nil
+}
+
+// encodeVRFSigningKey encodes a VRF signing key in bech32 format
+func encodeVRFSigningKey(key []byte) (string, error) {
+	converted, err := bech32.ConvertBits(key, 8, 5, true)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert bits: %w", err)
+	}
+	encoded, err := bech32.Encode("vrf_sk", converted)
+	if err != nil {
+		return "", fmt.Errorf("failed to bech32 encode: %w", err)
+	}
+	return encoded, nil
+}
+
+// encodeVRFVerificationKey encodes a VRF verification key in bech32 format
+func encodeVRFVerificationKey(key []byte) (string, error) {
+	converted, err := bech32.ConvertBits(key, 8, 5, true)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert bits: %w", err)
+	}
+	encoded, err := bech32.Encode("vrf_vk", converted)
+	if err != nil {
+		return "", fmt.Errorf("failed to bech32 encode: %w", err)
+	}
+	return encoded, nil
+}
+
+// RunKeyKES derives a KES key pair from a mnemonic and outputs it
+func RunKeyKES(
+	mnemonic, mnemonicFile, password string,
+	index uint32,
+) error {
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	// Derive KES seed from root key
+	kesSeed, err := bursa.GetKESSeed(rootKey, index)
+	if err != nil {
+		return fmt.Errorf("failed to derive KES seed: %w", err)
+	}
+
+	// Generate KES key pair
+	kesSecKey, kesPubKey, err := bursa.GetKESKeyPair(kesSeed)
+	if err != nil {
+		return fmt.Errorf("failed to generate KES key pair: %w", err)
+	}
+
+	// Output KES keys in bech32 format
+	// KES signing key (secret key)
+	kesSkEncoded, err := encodeKESSigningKey(kesSecKey.Data)
+	if err != nil {
+		return fmt.Errorf("failed to encode KES signing key: %w", err)
+	}
+
+	// KES verification key (public key)
+	kesVkEncoded, err := encodeKESVerificationKey(kesPubKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode KES verification key: %w", err)
+	}
+
+	fmt.Printf("kes_skey: %s\n", kesSkEncoded)
+	fmt.Printf("kes_vkey: %s\n", kesVkEncoded)
+	return nil
+}
+
+// encodeKESSigningKey encodes a KES signing key in bech32 format
+func encodeKESSigningKey(key []byte) (string, error) {
+	converted, err := bech32.ConvertBits(key, 8, 5, true)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert bits: %w", err)
+	}
+	encoded, err := bech32.Encode("kes_sk", converted)
+	if err != nil {
+		return "", fmt.Errorf("failed to bech32 encode: %w", err)
+	}
+	return encoded, nil
+}
+
+// encodeKESVerificationKey encodes a KES verification key in bech32 format
+func encodeKESVerificationKey(key []byte) (string, error) {
+	converted, err := bech32.ConvertBits(key, 8, 5, true)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert bits: %w", err)
+	}
+	encoded, err := bech32.Encode("kes_vk", converted)
+	if err != nil {
+		return "", fmt.Errorf("failed to bech32 encode: %w", err)
+	}
+	return encoded, nil
+}
+
 func RunScriptCreate(
 	required int,
 	keyHashes []string,

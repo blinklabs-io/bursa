@@ -48,6 +48,8 @@ Examples:
 		keyStakeCommand(),
 		keyPolicyCommand(),
 		keyPoolColdCommand(),
+		keyVRFCommand(),
+		keyKESCommand(),
 	)
 	return &keyCommand
 }
@@ -387,6 +389,123 @@ Examples:
 	)
 	cmd.Flags().
 		Uint32Var(&index, "index", 0, "Pool cold key index (default: 0)")
+
+	return &cmd
+}
+
+func keyVRFCommand() *cobra.Command {
+	var mnemonic string
+	var mnemonicFile string
+	var password string
+	var index uint32
+
+	cmd := cobra.Command{
+		Use:   "vrf",
+		Short: "Derive VRF key pair from mnemonic",
+		Long: `Derives a VRF (Verifiable Random Function) key pair from a BIP-39 mnemonic.
+
+VRF keys are used by stake pool operators for leader election in the Praos
+consensus protocol. The seed is derived deterministically from the mnemonic,
+allowing for key recovery.
+
+Output includes both signing key (vrf_sk) and verification key (vrf_vk)
+in bech32 format.
+
+Examples:
+  bursa key vrf --mnemonic "word1 word2 ... word24"
+  bursa key vrf --mnemonic "word1 word2 ..." --index 0
+  bursa key vrf --mnemonic-file seed.txt --index 1`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunKeyVRF(
+				mnemonic,
+				mnemonicFile,
+				password,
+				index,
+			); err != nil {
+				logging.GetLogger().Error(
+					"failed to derive VRF key",
+					"error",
+					err,
+				)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
+	cmd.Flags().StringVar(
+		&mnemonicFile,
+		"mnemonic-file",
+		"",
+		"Path to file containing mnemonic (default: seed.txt)",
+	)
+	cmd.Flags().StringVar(
+		&password,
+		"password",
+		"",
+		"Optional password for key derivation",
+	)
+	cmd.Flags().Uint32Var(&index, "index", 0, "VRF key index (default: 0)")
+
+	return &cmd
+}
+
+func keyKESCommand() *cobra.Command {
+	var mnemonic string
+	var mnemonicFile string
+	var password string
+	var index uint32
+
+	cmd := cobra.Command{
+		Use:   "kes",
+		Short: "Derive KES key pair from mnemonic",
+		Long: `Derives a KES (Key Evolving Signature) key pair from a BIP-39 mnemonic.
+
+KES keys are used by stake pool operators for block signing in the Praos
+consensus protocol. KES provides forward-secure signatures where compromising
+the current key does not compromise past signatures.
+
+This implementation uses Cardano's depth 6, providing 64 time periods.
+The seed is derived deterministically from the mnemonic, allowing for key recovery.
+
+Output includes both signing key (kes_sk, 608 bytes) and verification key
+(kes_vk, 32 bytes) in bech32 format.
+
+Examples:
+  bursa key kes --mnemonic "word1 word2 ... word24"
+  bursa key kes --mnemonic "word1 word2 ..." --index 0
+  bursa key kes --mnemonic-file seed.txt --index 1`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunKeyKES(
+				mnemonic,
+				mnemonicFile,
+				password,
+				index,
+			); err != nil {
+				logging.GetLogger().Error(
+					"failed to derive KES key",
+					"error",
+					err,
+				)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
+	cmd.Flags().StringVar(
+		&mnemonicFile,
+		"mnemonic-file",
+		"",
+		"Path to file containing mnemonic (default: seed.txt)",
+	)
+	cmd.Flags().StringVar(
+		&password,
+		"password",
+		"",
+		"Optional password for key derivation",
+	)
+	cmd.Flags().Uint32Var(&index, "index", 0, "KES key index (default: 0)")
 
 	return &cmd
 }
