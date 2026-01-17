@@ -39,6 +39,7 @@ func main() {
 	rootCmd.AddCommand(
 		walletCommand(),
 		keyCommand(),
+		certCommand(),
 		apiCommand(),
 		scriptCommand(),
 	)
