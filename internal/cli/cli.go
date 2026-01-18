@@ -470,6 +470,16 @@ func encodeDRepKey(key []byte) (string, error) {
 	return encodeExtendedPrivateKey(key, "drep_xsk")
 }
 
+// encodeCommitteeColdKey encodes a committee cold extended private key
+func encodeCommitteeColdKey(key []byte) (string, error) {
+	return encodeExtendedPrivateKey(key, "cc_cold_xsk")
+}
+
+// encodeCommitteeHotKey encodes a committee hot extended private key
+func encodeCommitteeHotKey(key []byte) (string, error) {
+	return encodeExtendedPrivateKey(key, "cc_hot_xsk")
+}
+
 // RunKeyDRep derives a DRep key from a mnemonic and outputs it in bech32
 func RunKeyDRep(
 	mnemonic, mnemonicFile, password string,
@@ -500,6 +510,76 @@ func RunKeyDRep(
 	encoded, err := encodeDRepKey(drepKey)
 	if err != nil {
 		return fmt.Errorf("failed to encode DRep key: %w", err)
+	}
+	fmt.Println(encoded)
+	return nil
+}
+
+// RunKeyCommitteeCold derives a committee cold key and outputs it in bech32
+func RunKeyCommitteeCold(
+	mnemonic, mnemonicFile, password string,
+	accountIndex, index uint32,
+) error {
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	accountKey, err := bursa.GetAccountKey(rootKey, accountIndex)
+	if err != nil {
+		return fmt.Errorf("failed to derive account key: %w", err)
+	}
+
+	// CIP-0105: Committee cold key derivation from account key (role 4)
+	committeeColdKey, err := bursa.GetCommitteeColdKey(accountKey, index)
+	if err != nil {
+		return fmt.Errorf("failed to derive committee cold key: %w", err)
+	}
+
+	// Output in bech32 format with cc_cold_xsk prefix
+	encoded, err := encodeCommitteeColdKey(committeeColdKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode committee cold key: %w", err)
+	}
+	fmt.Println(encoded)
+	return nil
+}
+
+// RunKeyCommitteeHot derives a committee hot key and outputs it in bech32
+func RunKeyCommitteeHot(
+	mnemonic, mnemonicFile, password string,
+	accountIndex, index uint32,
+) error {
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	accountKey, err := bursa.GetAccountKey(rootKey, accountIndex)
+	if err != nil {
+		return fmt.Errorf("failed to derive account key: %w", err)
+	}
+
+	// CIP-0105: Committee hot key derivation from account key (role 5)
+	committeeHotKey, err := bursa.GetCommitteeHotKey(accountKey, index)
+	if err != nil {
+		return fmt.Errorf("failed to derive committee hot key: %w", err)
+	}
+
+	// Output in bech32 format with cc_hot_xsk prefix
+	encoded, err := encodeCommitteeHotKey(committeeHotKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode committee hot key: %w", err)
 	}
 	fmt.Println(encoded)
 	return nil
