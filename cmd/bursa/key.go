@@ -28,17 +28,23 @@ func keyCommand() *cobra.Command {
 		Short: "Key derivation commands",
 		Long: `Commands for deriving individual keys from a mnemonic.
 
-These commands follow CIP-1852 key derivation paths and output keys
-in bech32 format suitable for use with cardano-cli and other tools.
+Keys are derived following Cardano CIP standards and output in bech32 format
+suitable for use with cardano-cli and other tools.
 
-Key derivation hierarchy:
-  mnemonic -> root -> account -> payment/stake
+Derivation paths by key type:
+  CIP-1852: root, account, payment, stake (m/1852'/1815'/...)
+  CIP-1853: pool-cold (m/1853'/1815'/...)
+  CIP-1855: policy (m/1855'/1815'/...)
+  CIP-0105: drep (m/1852'/1815'/account'/3/...)
 
 Examples:
   bursa key root --mnemonic "word1 word2 ..."
   bursa key account --mnemonic "word1 word2 ..." --index 0
   bursa key payment --mnemonic "word1 word2 ..."
-  bursa key stake --mnemonic "word1 word2 ..."`,
+  bursa key stake --mnemonic "word1 word2 ..."
+  bursa key pool-cold --mnemonic "word1 word2 ..."
+  bursa key policy --mnemonic "word1 word2 ..."
+  bursa key drep --mnemonic "word1 word2 ..."`,
 	}
 
 	keyCommand.AddCommand(
@@ -50,6 +56,7 @@ Examples:
 		keyPoolColdCommand(),
 		keyVRFCommand(),
 		keyKESCommand(),
+		keyDRepCommand(),
 	)
 	return &keyCommand
 }
@@ -506,6 +513,68 @@ Examples:
 		"Optional password for key derivation",
 	)
 	cmd.Flags().Uint32Var(&index, "index", 0, "KES key index (default: 0)")
+
+	return &cmd
+}
+
+func keyDRepCommand() *cobra.Command {
+	var mnemonic string
+	var mnemonicFile string
+	var password string
+	var accountIndex uint32
+	var index uint32
+
+	cmd := cobra.Command{
+		Use:   "drep",
+		Short: "Derive DRep key from mnemonic",
+		Long: `Derives a DRep (Delegated Representative) extended private key from a mnemonic.
+
+The DRep key follows CIP-0105 path: m/1852'/1815'/account'/3/index
+These keys are used for governance participation as a Delegated Representative.
+Output is in bech32 format (drep_xsk prefix).
+
+Examples:
+  bursa key drep --mnemonic "word1 word2 ... word24"
+  bursa key drep --mnemonic "word1 word2 ..." --account-index 0 --index 0
+  bursa key drep --mnemonic-file seed.txt --index 1`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunKeyDRep(
+				mnemonic,
+				mnemonicFile,
+				password,
+				accountIndex,
+				index,
+			); err != nil {
+				logging.GetLogger().Error(
+					"failed to derive DRep key",
+					"error",
+					err,
+				)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
+	cmd.Flags().StringVar(
+		&mnemonicFile,
+		"mnemonic-file",
+		"",
+		"Path to file containing mnemonic (default: seed.txt)",
+	)
+	cmd.Flags().StringVar(
+		&password,
+		"password",
+		"",
+		"Optional password for key derivation",
+	)
+	cmd.Flags().Uint32Var(
+		&accountIndex,
+		"account-index",
+		0,
+		"Account index (default: 0)",
+	)
+	cmd.Flags().Uint32Var(&index, "index", 0, "DRep key index (default: 0)")
 
 	return &cmd
 }

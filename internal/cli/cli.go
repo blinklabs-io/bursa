@@ -395,56 +395,38 @@ func RunKeyPolicy(
 	return nil
 }
 
-// encodeAccountKey encodes an account extended private key in bech32 format
-func encodeAccountKey(key []byte) (string, error) {
+// encodeExtendedPrivateKey encodes an extended private key in bech32 format
+// with the specified human-readable prefix (hrp).
+func encodeExtendedPrivateKey(key []byte, hrp string) (string, error) {
 	converted, err := bech32.ConvertBits(key, 8, 5, true)
 	if err != nil {
 		return "", fmt.Errorf("failed to convert bits: %w", err)
 	}
-	encoded, err := bech32.Encode("acct_xsk", converted)
+	encoded, err := bech32.Encode(hrp, converted)
 	if err != nil {
 		return "", fmt.Errorf("failed to bech32 encode: %w", err)
 	}
 	return encoded, nil
+}
+
+// encodeAccountKey encodes an account extended private key in bech32 format
+func encodeAccountKey(key []byte) (string, error) {
+	return encodeExtendedPrivateKey(key, "acct_xsk")
 }
 
 // encodePaymentKey encodes a payment extended private key in bech32 format
 func encodePaymentKey(key []byte) (string, error) {
-	converted, err := bech32.ConvertBits(key, 8, 5, true)
-	if err != nil {
-		return "", fmt.Errorf("failed to convert bits: %w", err)
-	}
-	encoded, err := bech32.Encode("addr_xsk", converted)
-	if err != nil {
-		return "", fmt.Errorf("failed to bech32 encode: %w", err)
-	}
-	return encoded, nil
+	return encodeExtendedPrivateKey(key, "addr_xsk")
 }
 
 // encodeStakeKey encodes a stake extended private key in bech32 format
 func encodeStakeKey(key []byte) (string, error) {
-	converted, err := bech32.ConvertBits(key, 8, 5, true)
-	if err != nil {
-		return "", fmt.Errorf("failed to convert bits: %w", err)
-	}
-	encoded, err := bech32.Encode("stake_xsk", converted)
-	if err != nil {
-		return "", fmt.Errorf("failed to bech32 encode: %w", err)
-	}
-	return encoded, nil
+	return encodeExtendedPrivateKey(key, "stake_xsk")
 }
 
 // encodePolicyKey encodes a policy extended private key in bech32 format
 func encodePolicyKey(key []byte) (string, error) {
-	converted, err := bech32.ConvertBits(key, 8, 5, true)
-	if err != nil {
-		return "", fmt.Errorf("failed to convert bits: %w", err)
-	}
-	encoded, err := bech32.Encode("policy_xsk", converted)
-	if err != nil {
-		return "", fmt.Errorf("failed to bech32 encode: %w", err)
-	}
-	return encoded, nil
+	return encodeExtendedPrivateKey(key, "policy_xsk")
 }
 
 // RunKeyPoolCold derives a pool cold key from a mnemonic and outputs in bech32
@@ -479,15 +461,47 @@ func RunKeyPoolCold(
 
 // encodePoolColdKey encodes a pool cold extended private key in bech32 format
 func encodePoolColdKey(key []byte) (string, error) {
-	converted, err := bech32.ConvertBits(key, 8, 5, true)
+	return encodeExtendedPrivateKey(key, "pool_xsk")
+}
+
+// encodeDRepKey encodes a DRep extended private key in bech32 format
+func encodeDRepKey(key []byte) (string, error) {
+	return encodeExtendedPrivateKey(key, "drep_xsk")
+}
+
+// RunKeyDRep derives a DRep key from a mnemonic and outputs it in bech32
+func RunKeyDRep(
+	mnemonic, mnemonicFile, password string,
+	accountIndex, index uint32,
+) error {
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
-		return "", fmt.Errorf("failed to convert bits: %w", err)
+		return err
 	}
-	encoded, err := bech32.Encode("pool_xsk", converted)
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
 	if err != nil {
-		return "", fmt.Errorf("failed to bech32 encode: %w", err)
+		return fmt.Errorf("failed to derive root key: %w", err)
 	}
-	return encoded, nil
+
+	accountKey, err := bursa.GetAccountKey(rootKey, accountIndex)
+	if err != nil {
+		return fmt.Errorf("failed to derive account key: %w", err)
+	}
+
+	// CIP-0105: DRep key derivation from account key
+	drepKey, err := bursa.GetDRepKey(accountKey, index)
+	if err != nil {
+		return fmt.Errorf("failed to derive DRep key: %w", err)
+	}
+
+	// Output in bech32 format with drep_xsk prefix
+	encoded, err := encodeDRepKey(drepKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode DRep key: %w", err)
+	}
+	fmt.Println(encoded)
+	return nil
 }
 
 // RunKeyVRF derives a VRF key pair from a mnemonic and outputs it
