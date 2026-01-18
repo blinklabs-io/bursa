@@ -31,7 +31,9 @@ import (
 	"github.com/blinklabs-io/bursa/bip32"
 	ouroboros "github.com/blinklabs-io/gouroboros"
 	"github.com/blinklabs-io/gouroboros/cbor"
+	"github.com/blinklabs-io/gouroboros/kes"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/blinklabs-io/gouroboros/vrf"
 	"github.com/btcsuite/btcd/btcutil/bech32"
 	bip39 "github.com/tyler-smith/go-bip39"
 	"golang.org/x/crypto/blake2b"
@@ -1087,6 +1089,92 @@ func GetPolicyKeyHash(policyKey bip32.XPrv) ([]byte, error) {
 		return nil, fmt.Errorf("failed to hash policy key: %w", err)
 	}
 	return hash.Sum(nil), nil
+}
+
+// GetVRFSeed derives a 32-byte VRF seed from a root key and index.
+// This provides deterministic VRF key generation from a mnemonic.
+// The seed is derived using blake2b-256 with a domain separator to ensure
+// it cannot collide with other key derivations.
+func GetVRFSeed(rootKey bip32.XPrv, index uint32) ([]byte, error) {
+	if index >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	// Use blake2b-256 to derive a 32-byte seed from the root key
+	// Domain separator: "bursa-vrf-seed" || index (4 bytes big-endian)
+	hasher, err := blake2b.New256(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blake2b hasher: %w", err)
+	}
+	// Write domain separator
+	hasher.Write([]byte("bursa-vrf-seed"))
+	// Write index as 4 bytes big-endian
+	indexBytes := make([]byte, 4)
+	indexBytes[0] = byte(index >> 24)
+	indexBytes[1] = byte(index >> 16)
+	indexBytes[2] = byte(index >> 8)
+	indexBytes[3] = byte(index)
+	hasher.Write(indexBytes)
+	// Write the root key's private key material
+	hasher.Write(rootKey.PrivateKey())
+	return hasher.Sum(nil), nil
+}
+
+// GetVRFKeyPair generates a VRF key pair from a seed.
+// Returns (publicKey, secretKey, error) where:
+//   - publicKey is 32 bytes (VRF verification key)
+//   - secretKey is 32 bytes (VRF signing key/seed)
+func GetVRFKeyPair(seed []byte) ([]byte, []byte, error) {
+	if len(seed) != vrf.SeedSize {
+		return nil, nil, fmt.Errorf(
+			"invalid seed size: got %d, expected %d",
+			len(seed),
+			vrf.SeedSize,
+		)
+	}
+	return vrf.KeyGen(seed)
+}
+
+// GetKESSeed derives a 32-byte KES seed from a root key and index.
+// This provides deterministic KES key generation from a mnemonic.
+// The seed is derived using blake2b-256 with a domain separator to ensure
+// it cannot collide with other key derivations.
+func GetKESSeed(rootKey bip32.XPrv, index uint32) ([]byte, error) {
+	if index >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	// Use blake2b-256 to derive a 32-byte seed from the root key
+	// Domain separator: "bursa-kes-seed" || index (4 bytes big-endian)
+	hasher, err := blake2b.New256(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blake2b hasher: %w", err)
+	}
+	// Write domain separator
+	hasher.Write([]byte("bursa-kes-seed"))
+	// Write index as 4 bytes big-endian
+	indexBytes := make([]byte, 4)
+	indexBytes[0] = byte(index >> 24)
+	indexBytes[1] = byte(index >> 16)
+	indexBytes[2] = byte(index >> 8)
+	indexBytes[3] = byte(index)
+	hasher.Write(indexBytes)
+	// Write the root key's private key material
+	hasher.Write(rootKey.PrivateKey())
+	return hasher.Sum(nil), nil
+}
+
+// GetKESKeyPair generates a KES key pair from a seed using Cardano's depth (6).
+// Returns (secretKey, publicKey, error) where:
+//   - secretKey is 608 bytes (KES secret key for depth 6)
+//   - publicKey is 32 bytes (KES verification key)
+func GetKESKeyPair(seed []byte) (*kes.SecretKey, []byte, error) {
+	if len(seed) != kes.SeedSize {
+		return nil, nil, fmt.Errorf(
+			"invalid seed size: got %d, expected %d",
+			len(seed),
+			kes.SeedSize,
+		)
+	}
+	return kes.KeyGen(kes.CardanoKesDepth, seed)
 }
 
 // GetMultiSigAccountKey derives a multi-signature account key using CIP-1854 path
