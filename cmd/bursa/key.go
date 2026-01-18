@@ -35,7 +35,7 @@ Derivation paths by key type:
   CIP-1852: root, account, payment, stake (m/1852'/1815'/...)
   CIP-1853: pool-cold (m/1853'/1815'/...)
   CIP-1855: policy (m/1855'/1815'/...)
-  CIP-0105: drep (m/1852'/1815'/account'/3/...)
+  CIP-0105: drep, committee-cold, committee-hot (m/1852'/1815'/account'/role/...)
 
 Examples:
   bursa key root --mnemonic "word1 word2 ..."
@@ -44,7 +44,9 @@ Examples:
   bursa key stake --mnemonic "word1 word2 ..."
   bursa key pool-cold --mnemonic "word1 word2 ..."
   bursa key policy --mnemonic "word1 word2 ..."
-  bursa key drep --mnemonic "word1 word2 ..."`,
+  bursa key drep --mnemonic "word1 word2 ..."
+  bursa key committee-cold --mnemonic "word1 word2 ..."
+  bursa key committee-hot --mnemonic "word1 word2 ..."`,
 	}
 
 	keyCommand.AddCommand(
@@ -57,6 +59,8 @@ Examples:
 		keyVRFCommand(),
 		keyKESCommand(),
 		keyDRepCommand(),
+		keyCommitteeColdCommand(),
+		keyCommitteeHotCommand(),
 	)
 	return &keyCommand
 }
@@ -575,6 +579,132 @@ Examples:
 		"Account index (default: 0)",
 	)
 	cmd.Flags().Uint32Var(&index, "index", 0, "DRep key index (default: 0)")
+
+	return &cmd
+}
+
+func keyCommitteeColdCommand() *cobra.Command {
+	var mnemonic string
+	var mnemonicFile string
+	var password string
+	var accountIndex uint32
+	var index uint32
+
+	cmd := cobra.Command{
+		Use:   "committee-cold",
+		Short: "Derive committee cold key from mnemonic",
+		Long: `Derives a Constitutional Committee cold extended private key from a mnemonic.
+
+The committee cold key follows CIP-0105 path: m/1852'/1815'/account'/4/index
+These keys are used for Constitutional Committee membership (long-term identity).
+Output is in bech32 format (cc_cold_xsk prefix).
+
+Examples:
+  bursa key committee-cold --mnemonic "word1 word2 ... word24"
+  bursa key committee-cold --mnemonic "word1 word2 ..." --account-index 0 --index 0
+  bursa key committee-cold --mnemonic-file seed.txt --index 1`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunKeyCommitteeCold(
+				mnemonic,
+				mnemonicFile,
+				password,
+				accountIndex,
+				index,
+			); err != nil {
+				logging.GetLogger().Error(
+					"failed to derive committee cold key",
+					"error",
+					err,
+				)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
+	cmd.Flags().StringVar(
+		&mnemonicFile,
+		"mnemonic-file",
+		"",
+		"Path to file containing mnemonic (default: seed.txt)",
+	)
+	cmd.Flags().StringVar(
+		&password,
+		"password",
+		"",
+		"Optional password for key derivation",
+	)
+	cmd.Flags().Uint32Var(
+		&accountIndex,
+		"account-index",
+		0,
+		"Account index (default: 0)",
+	)
+	cmd.Flags().
+		Uint32Var(&index, "index", 0, "Committee cold key index (default: 0)")
+
+	return &cmd
+}
+
+func keyCommitteeHotCommand() *cobra.Command {
+	var mnemonic string
+	var mnemonicFile string
+	var password string
+	var accountIndex uint32
+	var index uint32
+
+	cmd := cobra.Command{
+		Use:   "committee-hot",
+		Short: "Derive committee hot key from mnemonic",
+		Long: `Derives a Constitutional Committee hot extended private key from a mnemonic.
+
+The committee hot key follows CIP-0105 path: m/1852'/1815'/account'/5/index
+These keys are used for Constitutional Committee voting (operational key).
+Output is in bech32 format (cc_hot_xsk prefix).
+
+Examples:
+  bursa key committee-hot --mnemonic "word1 word2 ... word24"
+  bursa key committee-hot --mnemonic "word1 word2 ..." --account-index 0 --index 0
+  bursa key committee-hot --mnemonic-file seed.txt --index 1`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunKeyCommitteeHot(
+				mnemonic,
+				mnemonicFile,
+				password,
+				accountIndex,
+				index,
+			); err != nil {
+				logging.GetLogger().Error(
+					"failed to derive committee hot key",
+					"error",
+					err,
+				)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
+	cmd.Flags().StringVar(
+		&mnemonicFile,
+		"mnemonic-file",
+		"",
+		"Path to file containing mnemonic (default: seed.txt)",
+	)
+	cmd.Flags().StringVar(
+		&password,
+		"password",
+		"",
+		"Optional password for key derivation",
+	)
+	cmd.Flags().Uint32Var(
+		&accountIndex,
+		"account-index",
+		0,
+		"Account index (default: 0)",
+	)
+	cmd.Flags().
+		Uint32Var(&index, "index", 0, "Committee hot key index (default: 0)")
 
 	return &cmd
 }
