@@ -27,6 +27,7 @@ import (
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/btcsuite/btcd/btcutil/bech32"
 	"golang.org/x/sync/errgroup"
@@ -644,6 +645,257 @@ func encodeKESVerificationKey(key []byte) (string, error) {
 		return "", fmt.Errorf("failed to bech32 encode: %w", err)
 	}
 	return encoded, nil
+}
+
+// RunCertOpCert creates an operational certificate linking a KES key to a pool cold key
+func RunCertOpCert(
+	kesVkeyFile, coldSkeyFile, outputFile string,
+	counter, kesPeriod uint64,
+) error {
+	// Read KES verification key
+	kesVkeyData, err := os.ReadFile(kesVkeyFile)
+	if err != nil {
+		return fmt.Errorf("failed to read KES vkey file: %w", err)
+	}
+
+	// Parse KES vkey - expect 32 bytes hex or bech32
+	kesVkey, err := parseVerificationKey(kesVkeyData)
+	if err != nil {
+		return fmt.Errorf("failed to parse KES vkey: %w", err)
+	}
+
+	// Read pool cold signing key
+	coldSkeyData, err := os.ReadFile(coldSkeyFile)
+	if err != nil {
+		return fmt.Errorf("failed to read cold skey file: %w", err)
+	}
+
+	// Parse cold signing key - expect 32 or 64 bytes hex or bech32
+	coldSkey, err := parseSigningKey(coldSkeyData)
+	if err != nil {
+		return fmt.Errorf("failed to parse cold skey: %w", err)
+	}
+
+	// Create operational certificate
+	opCert, err := bursa.CreateOperationalCertificate(
+		kesVkey,
+		counter,
+		kesPeriod,
+		coldSkey,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create operational certificate: %w", err)
+	}
+
+	// Output the certificate
+	if outputFile != "" {
+		// Encode certificate to CBOR
+		cborHex, err := encodeOpCertCBOR(opCert)
+		if err != nil {
+			return err
+		}
+		// Write to file in JSON format (similar to cardano-cli)
+		certJSON := fmt.Sprintf(`{
+    "type": "NodeOperationalCertificate",
+    "description": "Operational Certificate",
+    "cborHex": "%s"
+}`, cborHex)
+		if err := os.WriteFile(outputFile, []byte(certJSON), 0o600); err != nil {
+			return fmt.Errorf("failed to write certificate file: %w", err)
+		}
+		fmt.Printf("Operational certificate written to %s\n", outputFile)
+	} else {
+		// Output to stdout
+		fmt.Printf("KES vkey:    %x\n", opCert.KesVkey)
+		fmt.Printf("Counter:     %d\n", opCert.IssueNumber)
+		fmt.Printf("KES period:  %d\n", opCert.KesPeriod)
+		fmt.Printf("Signature:   %x\n", opCert.ColdSignature)
+	}
+
+	return nil
+}
+
+// keyEnvelope represents a JSON key file envelope
+type keyEnvelope struct {
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	CborHex     string `json:"cborHex"`
+}
+
+// parseVerificationKey parses a verification key from various formats
+func parseVerificationKey(data []byte) ([]byte, error) {
+	str := strings.TrimSpace(string(data))
+
+	// Try JSON envelope first
+	var env keyEnvelope
+	if err := json.Unmarshal(data, &env); err == nil && env.CborHex != "" {
+		cborData, err := hex.DecodeString(env.CborHex)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to decode cborHex from envelope: %w",
+				err,
+			)
+		}
+		// Decode CBOR to extract raw key bytes
+		// cardano-cli uses simple CBOR byte string encoding
+		var keyBytes []byte
+		if _, err := cbor.Decode(cborData, &keyBytes); err == nil {
+			if len(keyBytes) == 32 {
+				return keyBytes, nil
+			}
+			return nil, fmt.Errorf(
+				"invalid key length in envelope: got %d, expected 32",
+				len(keyBytes),
+			)
+		}
+		// Try array structure: [0, key_bytes] for some key types
+		var decoded []any
+		if _, err := cbor.Decode(cborData, &decoded); err == nil {
+			if len(decoded) == 2 {
+				if keyBytes, ok := decoded[1].([]byte); ok {
+					if len(keyBytes) == 32 {
+						return keyBytes, nil
+					}
+				}
+			}
+		}
+		// If CBOR structure doesn't match, try using raw bytes
+		if len(cborData) == 32 {
+			return cborData, nil
+		}
+		return nil, errors.New(
+			"invalid CBOR structure in key envelope",
+		)
+	}
+
+	// Try bech32 - only accept KES verification keys for operational certificates
+	if strings.HasPrefix(str, "kes_vk") {
+		_, decoded, err := bech32.Decode(str)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode bech32: %w", err)
+		}
+		key, err := bech32.ConvertBits(decoded, 5, 8, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert bits: %w", err)
+		}
+		if len(key) != 32 {
+			return nil, fmt.Errorf(
+				"invalid bech32 key length: got %d bytes, expected 32",
+				len(key),
+			)
+		}
+		return key, nil
+	}
+
+	// Try hex
+	key, err := hex.DecodeString(str)
+	if err == nil && len(key) == 32 {
+		return key, nil
+	}
+
+	return nil, errors.New(
+		"invalid verification key format (expected JSON envelope, bech32, " +
+			"or 32-byte hex)",
+	)
+}
+
+// parseSigningKey parses a signing key from various formats
+func parseSigningKey(data []byte) ([]byte, error) {
+	str := strings.TrimSpace(string(data))
+
+	// Try JSON envelope first
+	var env keyEnvelope
+	if err := json.Unmarshal(data, &env); err == nil && env.CborHex != "" {
+		cborData, err := hex.DecodeString(env.CborHex)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to decode cborHex from envelope: %w",
+				err,
+			)
+		}
+		// Decode CBOR to extract raw key bytes
+		// Extended signing keys are CBOR-encoded as raw bytes
+		var keyBytes []byte
+		if _, err := cbor.Decode(cborData, &keyBytes); err == nil {
+			// Extended key: 64 bytes (32 seed + 32 chain code)
+			// Non-extended key: 32 bytes
+			if len(keyBytes) == 64 {
+				return keyBytes[:32], nil
+			}
+			if len(keyBytes) == 32 {
+				return keyBytes, nil
+			}
+			return nil, fmt.Errorf(
+				"invalid key length in envelope: got %d, expected 32 or 64",
+				len(keyBytes),
+			)
+		}
+		// If direct CBOR decode fails, try using raw bytes
+		if len(cborData) == 64 {
+			return cborData[:32], nil
+		}
+		if len(cborData) == 32 {
+			return cborData, nil
+		}
+		return nil, errors.New(
+			"invalid CBOR structure in signing key envelope",
+		)
+	}
+
+	// Try bech32
+	if strings.HasPrefix(str, "pool_xsk") || strings.HasPrefix(str, "pool_sk") {
+		_, decoded, err := bech32.Decode(str)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode bech32: %w", err)
+		}
+		key, err := bech32.ConvertBits(decoded, 5, 8, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert bits: %w", err)
+		}
+		// Validate and extract the 32-byte seed from extended keys
+		if len(key) == 64 {
+			return key[:32], nil
+		}
+		if len(key) == 32 {
+			return key, nil
+		}
+		return nil, fmt.Errorf(
+			"invalid bech32 key length: got %d bytes, expected 32 or 64",
+			len(key),
+		)
+	}
+
+	// Try hex
+	key, err := hex.DecodeString(str)
+	if err == nil && (len(key) == 32 || len(key) == 64) {
+		if len(key) == 64 {
+			return key[:32], nil
+		}
+		return key, nil
+	}
+
+	return nil, errors.New(
+		"invalid signing key format (expected JSON envelope, bech32, " +
+			"or 32/64-byte hex)",
+	)
+}
+
+// encodeOpCertCBOR encodes an operational certificate to CBOR hex
+func encodeOpCertCBOR(
+	opCert *bursa.OperationalCertificate,
+) (string, error) {
+	// OpCert CBOR: [kes_vkey, counter, kes_period, signature]
+	certData := []any{
+		opCert.KesVkey,
+		opCert.IssueNumber,
+		opCert.KesPeriod,
+		opCert.ColdSignature,
+	}
+	cborBytes, err := cbor.Encode(certData)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode certificate to CBOR: %w", err)
+	}
+	return hex.EncodeToString(cborBytes), nil
 }
 
 func RunScriptCreate(

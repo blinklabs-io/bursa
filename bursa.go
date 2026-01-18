@@ -32,6 +32,7 @@ import (
 	ouroboros "github.com/blinklabs-io/gouroboros"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/blinklabs-io/gouroboros/kes"
+	"github.com/blinklabs-io/gouroboros/ledger"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/blinklabs-io/gouroboros/vrf"
 	"github.com/btcsuite/btcd/btcutil/bech32"
@@ -1175,6 +1176,51 @@ func GetKESKeyPair(seed []byte) (*kes.SecretKey, []byte, error) {
 		)
 	}
 	return kes.KeyGen(kes.CardanoKesDepth, seed)
+}
+
+// OperationalCertificate represents an operational certificate for SPO block production.
+// It binds a KES verification key to the pool's cold key.
+type OperationalCertificate struct {
+	KesVkey       []byte // KES verification key (32 bytes)
+	IssueNumber   uint64 // Certificate sequence/issue number
+	KesPeriod     uint64 // KES period at certificate creation
+	ColdSignature []byte // Cold key signature (64 bytes)
+}
+
+// CreateOperationalCertificate creates a new operational certificate by signing
+// the KES verification key with the pool cold signing key.
+//
+// Parameters:
+//   - kesVkey: the KES verification key (32 bytes)
+//   - issueNumber: the certificate issue/sequence number (increments each time)
+//   - kesPeriod: the KES period at which this certificate becomes valid
+//   - coldSkey: the pool's cold signing key (32 or 64 bytes)
+//
+// Returns the operational certificate or an error if signing fails.
+func CreateOperationalCertificate(
+	kesVkey []byte,
+	issueNumber uint64,
+	kesPeriod uint64,
+	coldSkey []byte,
+) (*OperationalCertificate, error) {
+	opCert, err := ledger.CreateOpCert(
+		kesVkey,
+		issueNumber,
+		kesPeriod,
+		coldSkey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to create operational certificate: %w",
+			err,
+		)
+	}
+	return &OperationalCertificate{
+		KesVkey:       opCert.KesVkey,
+		IssueNumber:   opCert.IssueNumber,
+		KesPeriod:     opCert.KesPeriod,
+		ColdSignature: opCert.ColdSignature,
+	}, nil
 }
 
 // GetMultiSigAccountKey derives a multi-signature account key using CIP-1854 path
