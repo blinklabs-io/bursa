@@ -40,6 +40,7 @@ func main() {
 		walletCommand(),
 		keyCommand(),
 		certCommand(),
+		addressCommand(),
 		apiCommand(),
 		scriptCommand(),
 	)

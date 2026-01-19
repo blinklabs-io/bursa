@@ -1235,6 +1235,209 @@ func RunScriptValidate(
 	}
 }
 
+// RunAddressInfo parses a Cardano address and displays its components
+func RunAddressInfo(addressStr string) error {
+	addr, err := lcommon.NewAddress(addressStr)
+	if err != nil {
+		return fmt.Errorf("invalid address: %w", err)
+	}
+
+	// Print address
+	fmt.Printf("Address: %s\n", addressStr)
+
+	// Determine and print address type
+	addrType := addr.Type()
+	typeName, typeDesc := getAddressTypeInfo(addrType)
+	fmt.Printf("Type:    %s (%s)\n", typeName, typeDesc)
+
+	// Print network (skip for Byron which handles it differently)
+	if addrType != lcommon.AddressTypeByron {
+		networkName := "mainnet"
+		if addr.NetworkId() == lcommon.AddressNetworkTestnet {
+			networkName = "testnet"
+		}
+		fmt.Printf("Network: %s\n", networkName)
+	}
+
+	// Print credentials based on address type
+	if err := printAddressCredentials(&addr, addrType); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// printAddressCredentials prints the credentials for an address
+func printAddressCredentials(addr *lcommon.Address, addrType uint8) error {
+	// Handle Byron addresses separately
+	if addrType == lcommon.AddressTypeByron {
+		return printByronAddress(addr)
+	}
+
+	// Check if payment credential exists and is a script
+	hasPayment := addrType != lcommon.AddressTypeNoneKey &&
+		addrType != lcommon.AddressTypeNoneScript
+	paymentIsScript := addrType == lcommon.AddressTypeScriptKey ||
+		addrType == lcommon.AddressTypeScriptScript ||
+		addrType == lcommon.AddressTypeScriptPointer ||
+		addrType == lcommon.AddressTypeScriptNone
+
+	// Check if stake credential exists and is a script
+	hasStake := addrType == lcommon.AddressTypeKeyKey ||
+		addrType == lcommon.AddressTypeScriptKey ||
+		addrType == lcommon.AddressTypeKeyScript ||
+		addrType == lcommon.AddressTypeScriptScript ||
+		addrType == lcommon.AddressTypeNoneKey ||
+		addrType == lcommon.AddressTypeNoneScript
+	stakeIsScript := addrType == lcommon.AddressTypeKeyScript ||
+		addrType == lcommon.AddressTypeScriptScript ||
+		addrType == lcommon.AddressTypeNoneScript
+
+	// Check for pointer addresses
+	isPointer := addrType == lcommon.AddressTypeKeyPointer ||
+		addrType == lcommon.AddressTypeScriptPointer
+
+	// Print payment credential
+	if hasPayment {
+		paymentHash := addr.PaymentKeyHash()
+		credType := "key hash"
+		if paymentIsScript {
+			credType = "script hash"
+		}
+		bech32Str, hexStr, err := formatPaymentCredential(
+			paymentHash,
+			paymentIsScript,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to format payment credential: %w", err)
+		}
+		fmt.Printf("\nPayment Credential (%s):\n", credType)
+		fmt.Printf("  Bech32: %s\n", bech32Str)
+		fmt.Printf("  Hex:    %s\n", hexStr)
+	}
+
+	// Print stake credential
+	if hasStake && !isPointer {
+		stakeHash := addr.StakeKeyHash()
+		credType := "key hash"
+		if stakeIsScript {
+			credType = "script hash"
+		}
+		bech32Str, hexStr, err := formatStakeCredential(
+			stakeHash,
+			stakeIsScript,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to format stake credential: %w", err)
+		}
+		fmt.Printf("\nStake Credential (%s):\n", credType)
+		fmt.Printf("  Bech32: %s\n", bech32Str)
+		fmt.Printf("  Hex:    %s\n", hexStr)
+	}
+
+	// Print pointer for pointer addresses
+	if isPointer {
+		fmt.Printf("\nStake Pointer:\n")
+		fmt.Printf("  (pointer details not yet implemented)\n")
+	}
+
+	return nil
+}
+
+// printByronAddress prints Byron address details
+func printByronAddress(addr *lcommon.Address) error {
+	fmt.Printf("\nByron Address Details:\n")
+	byronType := addr.ByronType()
+	switch byronType {
+	case lcommon.ByronAddressTypePubkey:
+		fmt.Printf("  Type: Public Key\n")
+	case lcommon.ByronAddressTypeScript:
+		fmt.Printf("  Type: Script\n")
+	case lcommon.ByronAddressTypeRedeem:
+		fmt.Printf("  Type: Redeem\n")
+	default:
+		fmt.Printf("  Type: Unknown (%d)\n", byronType)
+	}
+	return nil
+}
+
+// getAddressTypeInfo returns the name and description for an address type
+func getAddressTypeInfo(addrType uint8) (name, description string) {
+	switch addrType {
+	case lcommon.AddressTypeKeyKey:
+		return "Base", "payment key + stake key"
+	case lcommon.AddressTypeScriptKey:
+		return "Base", "payment script + stake key"
+	case lcommon.AddressTypeKeyScript:
+		return "Base", "payment key + stake script"
+	case lcommon.AddressTypeScriptScript:
+		return "Base", "payment script + stake script"
+	case lcommon.AddressTypeKeyPointer:
+		return "Pointer", "payment key + stake pointer"
+	case lcommon.AddressTypeScriptPointer:
+		return "Pointer", "payment script + stake pointer"
+	case lcommon.AddressTypeKeyNone:
+		return "Enterprise", "payment key only"
+	case lcommon.AddressTypeScriptNone:
+		return "Enterprise", "payment script only"
+	case lcommon.AddressTypeByron:
+		return "Byron", "legacy bootstrap"
+	case lcommon.AddressTypeNoneKey:
+		return "Reward", "stake key"
+	case lcommon.AddressTypeNoneScript:
+		return "Reward", "stake script"
+	default:
+		return "Unknown", fmt.Sprintf("type %d", addrType)
+	}
+}
+
+// encodeCredentialBech32 encodes a credential hash in bech32 format
+func encodeCredentialBech32(hash []byte, hrp string) (string, error) {
+	converted, err := bech32.ConvertBits(hash, 8, 5, true)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert bits: %w", err)
+	}
+	encoded, err := bech32.Encode(hrp, converted)
+	if err != nil {
+		return "", fmt.Errorf("failed to bech32 encode: %w", err)
+	}
+	return encoded, nil
+}
+
+// formatPaymentCredential formats a payment credential for display
+func formatPaymentCredential(
+	hash lcommon.Blake2b224,
+	isScript bool,
+) (bech32Str, hexStr string, err error) {
+	hrp := "addr_vkh"
+	if isScript {
+		hrp = "script"
+	}
+	bech32Str, err = encodeCredentialBech32(hash[:], hrp)
+	if err != nil {
+		return "", "", err
+	}
+	hexStr = hex.EncodeToString(hash[:])
+	return bech32Str, hexStr, nil
+}
+
+// formatStakeCredential formats a stake credential for display
+func formatStakeCredential(
+	hash lcommon.Blake2b224,
+	isScript bool,
+) (bech32Str, hexStr string, err error) {
+	hrp := "stake_vkh"
+	if isScript {
+		hrp = "script"
+	}
+	bech32Str, err = encodeCredentialBech32(hash[:], hrp)
+	if err != nil {
+		return "", "", err
+	}
+	hexStr = hex.EncodeToString(hash[:])
+	return bech32Str, hexStr, nil
+}
+
 func RunScriptAddress(scriptFile, network string) {
 	logger := logging.GetLogger()
 
