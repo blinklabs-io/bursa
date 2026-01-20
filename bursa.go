@@ -158,32 +158,29 @@ func (kf KeyFile) String() string {
 	if err != nil {
 		return kf.CborHex
 	}
-	var decoded []any
-	_, err = cbor.Decode(cborData, &decoded)
+	// cardano-cli format: CBOR-encoded raw bytes
+	var keyBytes []byte
+	_, err = cbor.Decode(cborData, &keyBytes)
 	if err != nil {
-		return kf.CborHex
-	}
-	if len(decoded) < 2 {
 		return kf.CborHex
 	}
 
 	var data []byte
 	if strings.Contains(kf.Type, "_bip32") {
-		if len(decoded) < 3 {
+		// Extended key: 128 bytes (privKey 64 | pubKey 32 | chainCode 32)
+		// For bech32: need privKey (64) + chainCode (32) = 96 bytes
+		if len(keyBytes) != 128 {
 			return kf.CborHex
 		}
-		priv, ok1 := decoded[1].([]byte)
-		chain, ok2 := decoded[2].([]byte)
-		if !ok1 || !ok2 {
-			return kf.CborHex
-		}
-		data = append(priv, chain...)
+		privKey := keyBytes[0:64]
+		chainCode := keyBytes[96:128]
+		data = append(privKey, chainCode...)
 	} else {
-		key, ok := decoded[1].([]byte)
-		if !ok {
+		// Non-extended key: 32 bytes
+		if len(keyBytes) != 32 {
 			return kf.CborHex
 		}
-		data = key
+		data = keyBytes
 	}
 
 	converted, err := bech32.ConvertBits(data, 8, 5, true)
@@ -648,9 +645,8 @@ func GetPaymentKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
 }
 
 func GetPaymentVKey(paymentKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode(
-		[]any{0, paymentKey.Public().PublicKey()},
-	)
+	// Encode just the raw public key bytes (cardano-cli compatible format)
+	keyCbor, err := cbor.Encode(paymentKey.Public().PublicKey())
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode payment verification key CBOR: %w",
@@ -670,7 +666,9 @@ func getSigningKeyFile(
 	key bip32.XPrv,
 	keyType, description string,
 ) (KeyFile, error) {
-	keyCbor, err := cbor.Encode([]any{0, key.PrivateKey()[:32]})
+	// Encode just the raw private key bytes (cardano-cli compatible format)
+	// Use first 32 bytes (k_L) of the 64-byte extended private key
+	keyCbor, err := cbor.Encode(key.PrivateKey()[:32])
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode %s CBOR: %w",
@@ -696,11 +694,13 @@ func GetPaymentSKey(paymentKey bip32.XPrv) (KeyFile, error) {
 }
 
 func GetPaymentExtendedSKey(paymentKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode([]any{
-		0,
-		paymentKey.PrivateKey(),
-		paymentKey.ChainCode(),
-	})
+	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
+	extKeyBytes := make([]byte, 128)
+	copy(extKeyBytes[0:64], paymentKey.PrivateKey())
+	copy(extKeyBytes[64:96], paymentKey.Public().PublicKey())
+	copy(extKeyBytes[96:128], paymentKey.ChainCode())
+
+	keyCbor, err := cbor.Encode(extKeyBytes)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode payment extended signing key CBOR: %w",
@@ -724,9 +724,8 @@ func GetStakeKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
 }
 
 func GetStakeVKey(stakeKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode(
-		[]any{0, stakeKey.Public().PublicKey()},
-	)
+	// Encode just the raw public key bytes (cardano-cli compatible format)
+	keyCbor, err := cbor.Encode(stakeKey.Public().PublicKey())
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode stake verification key CBOR: %w",
@@ -751,11 +750,13 @@ func GetStakeSKey(stakeKey bip32.XPrv) (KeyFile, error) {
 }
 
 func GetStakeExtendedSKey(stakeKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode([]any{
-		0,
-		stakeKey.PrivateKey(),
-		stakeKey.ChainCode(),
-	})
+	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
+	extKeyBytes := make([]byte, 128)
+	copy(extKeyBytes[0:64], stakeKey.PrivateKey())
+	copy(extKeyBytes[64:96], stakeKey.Public().PublicKey())
+	copy(extKeyBytes[96:128], stakeKey.ChainCode())
+
+	keyCbor, err := cbor.Encode(extKeyBytes)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode stake extended signing key CBOR: %w",
@@ -779,9 +780,8 @@ func GetDRepKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
 }
 
 func GetDRepVKey(drepKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode(
-		[]any{0, drepKey.Public().PublicKey()},
-	)
+	// Encode just the raw public key bytes (cardano-cli compatible format)
+	keyCbor, err := cbor.Encode(drepKey.Public().PublicKey())
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode DRep verification key CBOR: %w",
@@ -806,11 +806,13 @@ func GetDRepSKey(drepKey bip32.XPrv) (KeyFile, error) {
 }
 
 func GetDRepExtendedSKey(drepKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode([]any{
-		0,
-		drepKey.PrivateKey(),
-		drepKey.ChainCode(),
-	})
+	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
+	extKeyBytes := make([]byte, 128)
+	copy(extKeyBytes[0:64], drepKey.PrivateKey())
+	copy(extKeyBytes[64:96], drepKey.Public().PublicKey())
+	copy(extKeyBytes[96:128], drepKey.ChainCode())
+
+	keyCbor, err := cbor.Encode(extKeyBytes)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode DRep extended signing key CBOR: %w",
@@ -837,9 +839,8 @@ func GetCommitteeColdKey(
 }
 
 func GetCommitteeColdVKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode(
-		[]any{0, committeeKey.Public().PublicKey()},
-	)
+	// Encode just the raw public key bytes (cardano-cli compatible format)
+	keyCbor, err := cbor.Encode(committeeKey.Public().PublicKey())
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode Committee Cold verification key CBOR: %w",
@@ -864,11 +865,13 @@ func GetCommitteeColdSKey(committeeKey bip32.XPrv) (KeyFile, error) {
 }
 
 func GetCommitteeColdExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode([]any{
-		0,
-		committeeKey.PrivateKey(),
-		committeeKey.ChainCode(),
-	})
+	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
+	extKeyBytes := make([]byte, 128)
+	copy(extKeyBytes[0:64], committeeKey.PrivateKey())
+	copy(extKeyBytes[64:96], committeeKey.Public().PublicKey())
+	copy(extKeyBytes[96:128], committeeKey.ChainCode())
+
+	keyCbor, err := cbor.Encode(extKeyBytes)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode Committee Cold extended signing key CBOR: %w",
@@ -892,9 +895,8 @@ func GetCommitteeHotKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
 }
 
 func GetCommitteeHotVKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode(
-		[]any{0, committeeKey.Public().PublicKey()},
-	)
+	// Encode just the raw public key bytes (cardano-cli compatible format)
+	keyCbor, err := cbor.Encode(committeeKey.Public().PublicKey())
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode Committee Hot verification key CBOR: %w",
@@ -919,11 +921,13 @@ func GetCommitteeHotSKey(committeeKey bip32.XPrv) (KeyFile, error) {
 }
 
 func GetCommitteeHotExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode([]any{
-		0,
-		committeeKey.PrivateKey(),
-		committeeKey.ChainCode(),
-	})
+	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
+	extKeyBytes := make([]byte, 128)
+	copy(extKeyBytes[0:64], committeeKey.PrivateKey())
+	copy(extKeyBytes[64:96], committeeKey.Public().PublicKey())
+	copy(extKeyBytes[96:128], committeeKey.ChainCode())
+
+	keyCbor, err := cbor.Encode(extKeyBytes)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode Committee Hot extended signing key CBOR: %w",
@@ -962,9 +966,8 @@ func GetPoolColdKey(
 
 // GetPoolColdVKey creates a stake pool cold verification key file
 func GetPoolColdVKey(poolColdKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode(
-		[]any{0, poolColdKey.Public().PublicKey()},
-	)
+	// Encode just the raw public key bytes (cardano-cli compatible format)
+	keyCbor, err := cbor.Encode(poolColdKey.Public().PublicKey())
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode pool cold verification key CBOR: %w",
@@ -991,11 +994,12 @@ func GetPoolColdSKey(poolColdKey bip32.XPrv) (KeyFile, error) {
 
 // GetPoolColdExtendedSKey creates a stake pool cold extended signing key file (BIP32)
 func GetPoolColdExtendedSKey(poolColdKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode([]any{
-		0,
-		poolColdKey.PrivateKey(),
-		poolColdKey.ChainCode(),
-	})
+	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
+	extKeyBytes := make([]byte, 128)
+	copy(extKeyBytes[0:64], poolColdKey.PrivateKey())
+	copy(extKeyBytes[64:96], poolColdKey.Public().PublicKey())
+	copy(extKeyBytes[96:128], poolColdKey.ChainCode())
+	keyCbor, err := cbor.Encode(extKeyBytes)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode pool cold extended signing key CBOR: %w",
@@ -1029,9 +1033,8 @@ func GetPolicyKey(rootKey bip32.XPrv, index uint32) (bip32.XPrv, error) {
 
 // GetPolicyVKey creates a policy verification key file
 func GetPolicyVKey(policyKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode(
-		[]any{0, policyKey.Public().PublicKey()},
-	)
+	// Encode just the raw public key bytes (cardano-cli compatible format)
+	keyCbor, err := cbor.Encode(policyKey.Public().PublicKey())
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode policy verification key CBOR: %w",
@@ -1058,11 +1061,12 @@ func GetPolicySKey(policyKey bip32.XPrv) (KeyFile, error) {
 
 // GetPolicyExtendedSKey creates a policy extended signing key file (BIP32)
 func GetPolicyExtendedSKey(policyKey bip32.XPrv) (KeyFile, error) {
-	keyCbor, err := cbor.Encode([]any{
-		0,
-		policyKey.PrivateKey(),
-		policyKey.ChainCode(),
-	})
+	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
+	extKeyBytes := make([]byte, 128)
+	copy(extKeyBytes[0:64], policyKey.PrivateKey())
+	copy(extKeyBytes[64:96], policyKey.Public().PublicKey())
+	copy(extKeyBytes[96:128], policyKey.ChainCode())
+	keyCbor, err := cbor.Encode(extKeyBytes)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode policy extended signing key CBOR: %w",
@@ -1252,9 +1256,8 @@ func createVerificationKeyFile(
 	key bip32.XPrv,
 	keyType, description string,
 ) (KeyFile, error) {
-	keyCbor, err := cbor.Encode(
-		[]any{0, key.Public().PublicKey()},
-	)
+	// Encode just the raw public key bytes (cardano-cli compatible format)
+	keyCbor, err := cbor.Encode(key.Public().PublicKey())
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode %s CBOR: %w",
@@ -1923,17 +1926,14 @@ func GetRewardAddress(
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode stake vkey CBOR: %w", err)
 	}
-	var decoded []any
-	_, err = cbor.Decode(cborData, &decoded)
+	// cardano-cli format: CBOR-encoded raw 32-byte public key
+	var stakePubKeyBytes []byte
+	_, err = cbor.Decode(cborData, &stakePubKeyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode stake vkey: %w", err)
 	}
-	if len(decoded) < 2 {
-		return nil, errors.New("invalid stake vkey CBOR structure")
-	}
-	stakePubKeyBytes, ok := decoded[1].([]byte)
-	if !ok || len(stakePubKeyBytes) != 32 {
-		return nil, errors.New("invalid stake public key")
+	if len(stakePubKeyBytes) != 32 {
+		return nil, errors.New("invalid stake public key: expected 32 bytes")
 	}
 
 	// Create stake public key and hash it
@@ -1983,54 +1983,50 @@ func GetKeyFile(keyFile KeyFile) (string, error) {
 }
 
 func decodeNonExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
-	var data []any
-	if _, err := cbor.Decode(skeyBytes, &data); err != nil {
+	// cardano-cli format: CBOR-encoded raw 32-byte seed
+	var keyBytes []byte
+	if _, err := cbor.Decode(skeyBytes, &keyBytes); err != nil {
 		return nil, nil, fmt.Errorf("failed to unmarshal skey CBOR: %w", err)
 	}
-	if len(data) != 2 || data[0] != uint64(0) {
-		return nil, nil, errors.New("invalid skey CBOR structure")
-	}
-	keyBytes, ok := data[1].([]byte)
-	if !ok || len(keyBytes) != 32 {
-		return nil, nil, errors.New("invalid skey bytes")
+	if len(keyBytes) != 32 {
+		return nil, nil, errors.New("invalid skey bytes: expected 32 bytes")
 	}
 	key := ed25519.NewKeyFromSeed(keyBytes)
 	return key[:], key[32:], nil
 }
 
 func decodeExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
-	var data []any
-	if _, err := cbor.Decode(skeyBytes, &data); err != nil {
+	// cardano-cli format: CBOR-encoded 128-byte blob
+	// privKey (64) || pubKey (32) || chainCode (32)
+	var keyBytes []byte
+	if _, err := cbor.Decode(skeyBytes, &keyBytes); err != nil {
 		return nil, nil, fmt.Errorf(
 			"failed to unmarshal extended skey CBOR: %w",
 			err,
 		)
 	}
-	if len(data) != 3 || data[0] != uint64(0) {
-		return nil, nil, errors.New("invalid extended skey CBOR structure")
+	if len(keyBytes) != 128 {
+		return nil, nil, errors.New("invalid extended skey: expected 128 bytes")
 	}
-	privBytes, ok1 := data[1].([]byte)
-	chainBytes, ok2 := data[2].([]byte)
-	if !ok1 || !ok2 || len(privBytes) != 64 || len(chainBytes) != 32 {
-		return nil, nil, errors.New("invalid extended skey bytes")
-	}
-	xprv := append(privBytes, chainBytes...)
-	x := bip32.XPrv(xprv)
-	pub := x.Public().PublicKey()
-	return xprv, pub, nil
+	// Extract components: privKey (64) | pubKey (32) | chainCode (32)
+	// Important: make copies to avoid slice aliasing issues with append
+	pubBytes := make([]byte, 32)
+	copy(pubBytes, keyBytes[64:96])
+	// Create XPrv: privKey (64) || chainCode (32)
+	xprv := make([]byte, 96)
+	copy(xprv[0:64], keyBytes[0:64])
+	copy(xprv[64:96], keyBytes[96:128])
+	return xprv, pubBytes, nil
 }
 
 func decodeVerificationKey(vkeyBytes []byte) ([]byte, error) {
-	var data []any
-	if _, err := cbor.Decode(vkeyBytes, &data); err != nil {
+	// cardano-cli format: CBOR-encoded raw 32-byte public key
+	var keyBytes []byte
+	if _, err := cbor.Decode(vkeyBytes, &keyBytes); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal vkey CBOR: %w", err)
 	}
-	if len(data) != 2 || data[0] != uint64(0) {
-		return nil, errors.New("invalid vkey CBOR structure")
-	}
-	keyBytes, ok := data[1].([]byte)
-	if !ok || len(keyBytes) != 32 {
-		return nil, errors.New("invalid vkey bytes")
+	if len(keyBytes) != 32 {
+		return nil, errors.New("invalid vkey bytes: expected 32 bytes")
 	}
 	return keyBytes, nil
 }
