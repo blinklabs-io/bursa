@@ -43,10 +43,12 @@ Usage:
   bursa [command]
 
 Available Commands:
+  address     Address utility commands
   api         Runs the api
+  cert        Certificate generation commands
   help        Help about any command
   key         Key derivation commands
-  script      Multi-signature script commands
+  script      Script commands for multi-signature operations
   wallet      Wallet commands
 
 Flags:
@@ -67,6 +69,48 @@ bursa key stake --mnemonic "..."          # Stake key (CIP-1852)
 bursa key policy --mnemonic "..."         # Forging policy key (CIP-1855)
 bursa key pool-cold --mnemonic "..."      # Pool cold key (CIP-1853)
 bursa key drep --mnemonic "..."           # DRep key (CIP-0105)
+bursa key committee-cold --mnemonic "..." # Committee cold key (CIP-0105)
+bursa key committee-hot --mnemonic "..."  # Committee hot key (CIP-0105)
+bursa key vrf --mnemonic "..."            # VRF key pair for block production
+bursa key kes --mnemonic "..."            # KES key pair for block production
 ```
 
-All keys are output in bech32 format with appropriate prefixes (`root_xsk`, `acct_xsk`, `addr_xsk`, `stake_xsk`, `policy_xsk`, `pool_xsk`, `drep_xsk`).
+All keys are output in bech32 format with appropriate prefixes (`root_xsk`, `acct_xsk`, `addr_xsk`, `stake_xsk`, `policy_xsk`, `pool_xsk`, `drep_xsk`, `cc_cold_xsk`, `cc_hot_xsk`, `vrf_sk`, `kes_sk`).
+
+### Address Commands
+
+Inspect Cardano addresses and display their components:
+
+```bash
+bursa address info <address>    # Display address type, network, credentials, etc.
+```
+
+Supports all CIP-0019 address types including base, enterprise, pointer, reward, and legacy Byron addresses.
+
+### Certificate Commands
+
+Generate certificates for stake pool operations and block production:
+
+```bash
+bursa cert op-cert --kes-vkey kes.vkey --cold-skey cold.skey \
+  --counter 0 --kes-period 200 --out node.cert    # Operational certificate for block production
+```
+
+Operational certificates link KES keys to stake pool cold keys for secure block production.
+
+## Cardano-CLI Compatibility
+
+Bursa generates key files that are fully compatible with cardano-cli. Use `bursa wallet create` or `bursa wallet restore` to generate key files, then use them directly with cardano-cli commands:
+
+```bash
+# Create a wallet with Bursa
+bursa wallet create --name mywallet
+
+# Use the generated keys with cardano-cli
+cardano-cli address build \
+  --payment-verification-key-file mywallet/payment.vkey \
+  --stake-verification-key-file mywallet/stake.vkey \
+  --mainnet
+```
+
+This enables Bursa as a drop-in replacement for key generation while maintaining full compatibility with the Cardano ecosystem.
