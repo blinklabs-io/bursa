@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
 	"github.com/blinklabs-io/gouroboros/cbor"
@@ -1235,6 +1236,152 @@ func RunScriptValidate(
 	}
 }
 
+// RunAddressBuild builds a Cardano address from verification keys
+func RunAddressBuild(paymentKey, stakeKey, network, addrType string) error {
+	// Validate network
+	var networkId uint8
+	switch network {
+	case "mainnet":
+		networkId = lcommon.AddressNetworkMainnet
+	case "testnet":
+		networkId = lcommon.AddressNetworkTestnet
+	default:
+		return fmt.Errorf(
+			"invalid network: %s (must be mainnet or testnet)",
+			network,
+		)
+	}
+
+	// Parse keys based on address type
+	switch addrType {
+	case "base":
+		if paymentKey == "" || stakeKey == "" {
+			return errors.New(
+				"base addresses require both payment and stake keys",
+			)
+		}
+		paymentHash, err := parseBech32VerificationKey(paymentKey, true)
+		if err != nil {
+			return fmt.Errorf("invalid payment key: %w", err)
+		}
+		stakeHash, err := parseBech32VerificationKey(stakeKey, false)
+		if err != nil {
+			return fmt.Errorf("invalid stake key: %w", err)
+		}
+		addr, err := lcommon.NewAddressFromParts(
+			lcommon.AddressTypeKeyKey,
+			networkId,
+			paymentHash[:],
+			stakeHash[:],
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create address: %w", err)
+		}
+		fmt.Println(addr.String())
+		return nil
+
+	case "enterprise":
+		if paymentKey == "" {
+			return errors.New("enterprise addresses require a payment key")
+		}
+		paymentHash, err := parseBech32VerificationKey(paymentKey, true)
+		if err != nil {
+			return fmt.Errorf("invalid payment key: %w", err)
+		}
+		addr, err := lcommon.NewAddressFromParts(
+			lcommon.AddressTypeKeyNone,
+			networkId,
+			paymentHash[:],
+			nil,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create address: %w", err)
+		}
+		fmt.Println(addr.String())
+		return nil
+
+	case "reward":
+		if stakeKey == "" {
+			return errors.New("reward addresses require a stake key")
+		}
+		stakeHash, err := parseBech32VerificationKey(stakeKey, false)
+		if err != nil {
+			return fmt.Errorf("invalid stake key: %w", err)
+		}
+		addr, err := lcommon.NewAddressFromParts(
+			lcommon.AddressTypeNoneKey,
+			networkId,
+			nil,
+			stakeHash[:],
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create address: %w", err)
+		}
+		fmt.Println(addr.String())
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported address type: %s", addrType)
+	}
+}
+
+// RunAddressEnterprise generates an enterprise address from a payment key
+func RunAddressEnterprise(paymentKey, paymentKeyFile, network string) error {
+	// Validate network
+	var networkId uint8
+	switch network {
+	case "mainnet":
+		networkId = lcommon.AddressNetworkMainnet
+	case "testnet":
+		networkId = lcommon.AddressNetworkTestnet
+	default:
+		return fmt.Errorf(
+			"invalid network: %s (must be mainnet or testnet)",
+			network,
+		)
+	}
+
+	// Load payment key
+	var paymentHash [28]byte
+	var err error
+	if paymentKey != "" {
+		// Direct bech32 key
+		paymentHash, err = parseBech32VerificationKey(paymentKey, true)
+		if err != nil {
+			return fmt.Errorf("invalid payment key: %w", err)
+		}
+	} else if paymentKeyFile != "" {
+		// Key from file
+		data, err := os.ReadFile(paymentKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read payment key file: %w", err)
+		}
+		paymentKeyBytes, err := parseVerificationKey(data)
+		if err != nil {
+			return fmt.Errorf("invalid payment key file: %w", err)
+		}
+		// Hash the verification key to get the credential, matching bech32 path
+		pubKey := bip32.PublicKey(paymentKeyBytes)
+		copy(paymentHash[:], pubKey.Hash())
+	} else {
+		return errors.New("payment key or payment key file must be specified")
+	}
+
+	// Generate enterprise address
+	addr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeKeyNone,
+		networkId,
+		paymentHash[:],
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create enterprise address: %w", err)
+	}
+
+	fmt.Println(addr.String())
+	return nil
+}
+
 // RunAddressInfo parses a Cardano address and displays its components
 func RunAddressInfo(addressStr string) error {
 	addr, err := lcommon.NewAddress(addressStr)
@@ -1502,4 +1649,48 @@ func RunScriptAddress(scriptFile, network string) {
 		logger.Error("failed to encode result", "error", err)
 		os.Exit(1)
 	}
+}
+
+// parseBech32VerificationKey parses a bech32-encoded verification key and returns its hash
+func parseBech32VerificationKey(
+	keyStr string,
+	isPayment bool,
+) ([28]byte, error) {
+	var hash [28]byte
+
+	// Decode bech32
+	hrp, data, err := bech32.Decode(keyStr)
+	if err != nil {
+		return hash, fmt.Errorf("failed to decode bech32: %w", err)
+	}
+
+	// Verify HRP
+	expectedHrp := "addr_vk"
+	if !isPayment {
+		expectedHrp = "stake_vk"
+	}
+	if hrp != expectedHrp {
+		return hash, fmt.Errorf(
+			"invalid key type, expected %s, got %s",
+			expectedHrp,
+			hrp,
+		)
+	}
+
+	// Convert from 5-bit to 8-bit
+	converted, err := bech32.ConvertBits(data, 5, 8, false)
+	if err != nil {
+		return hash, fmt.Errorf("failed to convert bits: %w", err)
+	}
+
+	// Verify length (32 bytes for ed25519 public key)
+	if len(converted) != 32 {
+		return hash, errors.New("invalid key length, expected 32 bytes")
+	}
+
+	// Create public key and hash it
+	pubKey := bip32.PublicKey(converted)
+	copy(hash[:], pubKey.Hash())
+
+	return hash, nil
 }

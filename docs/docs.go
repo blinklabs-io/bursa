@@ -23,6 +23,92 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/address/build": {
+            "post": {
+                "description": "Builds a Cardano address from verification keys",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Build Cardano address",
+                "parameters": [
+                    {
+                        "description": "Address Build Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.AddressBuildRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Address built successfully",
+                        "schema": {
+                            "$ref": "#/definitions/api.AddressBuildResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request or keys",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/address/parse": {
+            "post": {
+                "description": "Parses a Cardano address and returns its components and metadata",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Parse Cardano address",
+                "parameters": [
+                    {
+                        "description": "Address Parse Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.AddressParseRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Address parsed successfully",
+                        "schema": {
+                            "$ref": "#/definitions/api.AddressParseResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request or address",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/script/address": {
             "post": {
                 "description": "Generate an address for a script on the specified network",
@@ -363,6 +449,118 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "api.AddressBuildRequest": {
+            "type": "object",
+            "required": [
+                "network"
+            ],
+            "properties": {
+                "network": {
+                    "type": "string",
+                    "enum": [
+                        "mainnet",
+                        "testnet"
+                    ]
+                },
+                "paymentKey": {
+                    "description": "bech32-encoded verification key (required for base and enterprise address types)",
+                    "type": "string"
+                },
+                "stakeKey": {
+                    "description": "bech32-encoded verification key (required for base and reward address types)",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "defaults to \"base\" - determines which keys are required: base requires both paymentKey and stakeKey, enterprise requires paymentKey only, reward requires stakeKey only",
+                    "type": "string",
+                    "enum": [
+                        "base",
+                        "enterprise",
+                        "reward"
+                    ]
+                }
+            }
+        },
+        "api.AddressBuildResponse": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.AddressParseRequest": {
+            "type": "object",
+            "required": [
+                "address"
+            ],
+            "properties": {
+                "address": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.AddressParseResponse": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "byron": {
+                    "$ref": "#/definitions/api.ByronAddressInfo"
+                },
+                "network": {
+                    "type": "string"
+                },
+                "payment": {
+                    "$ref": "#/definitions/api.CredentialInfo"
+                },
+                "pointer": {
+                    "$ref": "#/definitions/api.PointerInfo"
+                },
+                "stake": {
+                    "$ref": "#/definitions/api.CredentialInfo"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "typeDescription": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ByronAddressInfo": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "description": "\"pubkey\", \"script\", or \"redeem\"",
+                    "type": "string"
+                }
+            }
+        },
+        "api.CredentialInfo": {
+            "type": "object",
+            "properties": {
+                "bech32": {
+                    "description": "bech32-encoded credential",
+                    "type": "string"
+                },
+                "hex": {
+                    "description": "hex-encoded credential",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"key\" or \"script\"",
+                    "type": "string"
+                }
+            }
+        },
         "api.ErrorResponse": {
             "type": "object",
             "properties": {
@@ -374,6 +572,21 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "api.PointerInfo": {
+            "type": "object",
+            "properties": {
+                "certIndex": {
+                    "type": "integer"
+                },
+                "slot": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "txIndex": {
+                    "type": "integer"
                 }
             }
         },

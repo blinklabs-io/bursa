@@ -222,7 +222,8 @@ func TestEnterpriseAddressFormat(t *testing.T) {
 	// Verify the base address starts with addr1q (has stake component)
 	assert.True(
 		t,
-		len(wallet.PaymentAddress) > 0 && wallet.PaymentAddress[0:6] == "addr1q",
+		len(wallet.PaymentAddress) > 0 &&
+			wallet.PaymentAddress[0:6] == "addr1q",
 		"Base address should start with addr1q",
 	)
 
@@ -230,7 +231,8 @@ func TestEnterpriseAddressFormat(t *testing.T) {
 	// We verify the golden value format is correct
 	assert.True(
 		t,
-		len(goldenEnterpriseAddress) > 0 && goldenEnterpriseAddress[0:6] == "addr1v",
+		len(goldenEnterpriseAddress) > 0 &&
+			goldenEnterpriseAddress[0:6] == "addr1v",
 		"Enterprise address should start with addr1v",
 	)
 }

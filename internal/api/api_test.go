@@ -23,6 +23,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -929,4 +931,238 @@ func TestHandleScriptAddress(t *testing.T) {
 	assert.Equal(t, "mainnet", response.Network)
 	assert.NotEmpty(t, response.ScriptHash)
 	assert.Contains(t, response.Address, "addr1")
+}
+
+// readTestData reads test data from a file in the testdata directory
+func readTestData(filename string) string {
+	data, err := os.ReadFile(filepath.Join("testdata", filename))
+	if err != nil {
+		panic(fmt.Sprintf("failed to read test data file %s: %v", filename, err))
+	}
+	return string(data)
+}
+
+func TestHandleAddressParse(t *testing.T) {
+	// Test parsing a mainnet base address
+	reqBody := `{
+		"address": "addr1qxwqkfd3qz5pdwmemtv2llmetegdyku4ffxuldjcfrs05nfjtw33ktf3j6amgxsgnj9u3fa5nrle79nv2g24npnth0esk2dy7q"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/parse",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleAddressParse(w, req)
+
+	// Assert
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Decode JSON response
+	var response AddressParseResponse
+	err = json.Unmarshal(body, &response)
+	assert.NoError(t, err)
+
+	assert.Equal(
+		t,
+		"addr1qxwqkfd3qz5pdwmemtv2llmetegdyku4ffxuldjcfrs05nfjtw33ktf3j6amgxsgnj9u3fa5nrle79nv2g24npnth0esk2dy7q",
+		response.Address,
+	)
+	assert.Equal(t, "base", response.Type)
+	assert.Equal(t, "payment key + stake key", response.TypeDesc)
+	assert.Equal(t, "mainnet", response.Network)
+	assert.NotNil(t, response.Payment)
+	assert.NotNil(t, response.Stake)
+	assert.Equal(t, "key", response.Payment.Type)
+	assert.Equal(t, "key", response.Stake.Type)
+}
+
+func TestHandleAddressParseTestnet(t *testing.T) {
+	// Test parsing a testnet address
+	reqBody := `{
+		"address": "addr_test1qqqcea9cpx0480yjvvklp0tw4yw56r6q9qc437gpqwg6swwc3w03xmxfgcfw6v7asa6vdapakdr6ukq5mrhawfwnjvfsqeaxws"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/parse",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleAddressParse(w, req)
+
+	// Assert
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Decode JSON response
+	var response AddressParseResponse
+	err = json.Unmarshal(body, &response)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "testnet", response.Network)
+}
+
+func TestHandleAddressParseEnterprise(t *testing.T) {
+	// Test parsing an enterprise address
+	reqBody := `{
+		"address": "addr_test1vqqcea9cpx0480yjvvklp0tw4yw56r6q9qc437gpqwg6swg560kjv"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/parse",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleAddressParse(w, req)
+
+	// Assert
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Decode JSON response
+	var response AddressParseResponse
+	err = json.Unmarshal(body, &response)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "enterprise", response.Type)
+	assert.Equal(t, "payment key only", response.TypeDesc)
+	assert.NotNil(t, response.Payment)
+	assert.Nil(t, response.Stake)
+}
+
+func TestHandleAddressParseInvalid(t *testing.T) {
+	// Test parsing an invalid address
+	reqBody := `{
+		"address": "invalid_address"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/parse",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleAddressParse(w, req)
+
+	// Assert
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleAddressBuild(t *testing.T) {
+	// Test building a base address
+	reqBody := readTestData("address_build_base.json")
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/build",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleAddressBuild(w, req)
+
+	// Assert
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Decode JSON response
+	var response AddressBuildResponse
+	err = json.Unmarshal(body, &response)
+	assert.NoError(t, err)
+
+	assert.NotEmpty(t, response.Address)
+	assert.Equal(t, "mainnet", response.Network)
+	assert.Equal(t, "base", response.Type)
+	assert.Contains(t, response.Address, "addr1")
+}
+
+func TestHandleAddressBuildEnterprise(t *testing.T) {
+	// Test building an enterprise address
+	reqBody := readTestData("address_build_enterprise.json")
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/build",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleAddressBuild(w, req)
+
+	// Assert
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Decode JSON response
+	var response AddressBuildResponse
+	err = json.Unmarshal(body, &response)
+	assert.NoError(t, err)
+
+	assert.NotEmpty(t, response.Address)
+	assert.Equal(t, "mainnet", response.Network)
+	assert.Equal(t, "enterprise", response.Type)
+	assert.Contains(t, response.Address, "addr1")
+}
+
+func TestHandleAddressBuildInvalidKey(t *testing.T) {
+	// Test building with invalid key
+	reqBody := readTestData("address_build_invalid.json")
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/build",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Execute
+	handleAddressBuild(w, req)
+
+	// Assert
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }

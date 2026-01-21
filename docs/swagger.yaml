@@ -1,5 +1,85 @@
 basePath: /
 definitions:
+  api.AddressBuildRequest:
+    properties:
+      network:
+        enum:
+        - mainnet
+        - testnet
+        type: string
+      paymentKey:
+        description: bech32-encoded verification key (required for base and enterprise
+          address types)
+        type: string
+      stakeKey:
+        description: bech32-encoded verification key (required for base and reward
+          address types)
+        type: string
+      type:
+        description: 'defaults to "base" - determines which keys are required: base
+          requires both paymentKey and stakeKey, enterprise requires paymentKey only,
+          reward requires stakeKey only'
+        enum:
+        - base
+        - enterprise
+        - reward
+        type: string
+    required:
+    - network
+    type: object
+  api.AddressBuildResponse:
+    properties:
+      address:
+        type: string
+      network:
+        type: string
+      type:
+        type: string
+    type: object
+  api.AddressParseRequest:
+    properties:
+      address:
+        type: string
+    required:
+    - address
+    type: object
+  api.AddressParseResponse:
+    properties:
+      address:
+        type: string
+      byron:
+        $ref: '#/definitions/api.ByronAddressInfo'
+      network:
+        type: string
+      payment:
+        $ref: '#/definitions/api.CredentialInfo'
+      pointer:
+        $ref: '#/definitions/api.PointerInfo'
+      stake:
+        $ref: '#/definitions/api.CredentialInfo'
+      type:
+        type: string
+      typeDescription:
+        type: string
+    type: object
+  api.ByronAddressInfo:
+    properties:
+      type:
+        description: '"pubkey", "script", or "redeem"'
+        type: string
+    type: object
+  api.CredentialInfo:
+    properties:
+      bech32:
+        description: bech32-encoded credential
+        type: string
+      hex:
+        description: hex-encoded credential
+        type: string
+      type:
+        description: '"key" or "script"'
+        type: string
+    type: object
   api.ErrorResponse:
     properties:
       error:
@@ -8,6 +88,16 @@ definitions:
         additionalProperties:
           type: string
         type: object
+    type: object
+  api.PointerInfo:
+    properties:
+      certIndex:
+        type: integer
+      slot:
+        format: int64
+        type: integer
+      txIndex:
+        type: integer
     type: object
   api.ScriptAddressRequest:
     properties:
@@ -245,6 +335,62 @@ info:
   title: bursa
   version: v0
 paths:
+  /api/address/build:
+    post:
+      consumes:
+      - application/json
+      description: Builds a Cardano address from verification keys
+      parameters:
+      - description: Address Build Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.AddressBuildRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Address built successfully
+          schema:
+            $ref: '#/definitions/api.AddressBuildResponse'
+        "400":
+          description: Invalid request or keys
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Build Cardano address
+  /api/address/parse:
+    post:
+      consumes:
+      - application/json
+      description: Parses a Cardano address and returns its components and metadata
+      parameters:
+      - description: Address Parse Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.AddressParseRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Address parsed successfully
+          schema:
+            $ref: '#/definitions/api.AddressParseResponse'
+        "400":
+          description: Invalid request or address
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Parse Cardano address
   /api/script/address:
     post:
       consumes:

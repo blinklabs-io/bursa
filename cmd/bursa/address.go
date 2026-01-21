@@ -38,6 +38,8 @@ Examples:
 
 	addressCmd.AddCommand(
 		addressInfoCommand(),
+		addressBuildCommand(),
+		addressEnterpriseCommand(),
 	)
 	return &addressCmd
 }
@@ -70,6 +72,85 @@ Examples:
 			}
 		},
 	}
+
+	return &cmd
+}
+
+func addressBuildCommand() *cobra.Command {
+	cmd := cobra.Command{
+		Use:   "build",
+		Short: "Build a Cardano address from verification keys",
+		Long: `Builds a Cardano address from verification keys.
+
+Supports building base, enterprise, and reward addresses.
+
+Examples:
+  bursa address build --payment-key addr_vk1... --stake-key stake_vk1... --network mainnet
+  bursa address build --payment-key addr_vk1... --network mainnet --type enterprise
+  bursa address build --stake-key stake_vk1... --network mainnet --type reward`,
+		Run: func(cmd *cobra.Command, args []string) {
+			paymentKey, _ := cmd.Flags().GetString("payment-key")
+			stakeKey, _ := cmd.Flags().GetString("stake-key")
+			network, _ := cmd.Flags().GetString("network")
+			addrType, _ := cmd.Flags().GetString("type")
+
+			if err := cli.RunAddressBuild(paymentKey, stakeKey, network, addrType); err != nil {
+				logging.GetLogger().
+					Error("failed to build address", "error", err)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().
+		String("payment-key", "", "Bech32-encoded payment verification key")
+	cmd.Flags().String("stake-key", "", "Bech32-encoded stake verification key")
+	cmd.Flags().String("network", "mainnet", "Network (mainnet or testnet)")
+	cmd.Flags().
+		String("type", "base", "Address type (base, enterprise, reward)")
+
+	if err := cmd.MarkFlagRequired("network"); err != nil {
+		panic(err)
+	}
+
+	return &cmd
+}
+
+func addressEnterpriseCommand() *cobra.Command {
+	cmd := cobra.Command{
+		Use:   "enterprise",
+		Short: "Generate enterprise (payment-only) address",
+		Long: `Generate an enterprise address from a payment verification key.
+
+Enterprise addresses contain only a payment credential and no stake credential.
+They are useful for simple payments without staking delegation.
+
+Examples:
+  bursa address enterprise --payment-key addr_vk1... --network mainnet
+  bursa address enterprise --payment-key-file payment.vkey --network testnet`,
+		Run: func(cmd *cobra.Command, args []string) {
+			paymentKey, _ := cmd.Flags().GetString("payment-key")
+			paymentKeyFile, _ := cmd.Flags().GetString("payment-key-file")
+			network, _ := cmd.Flags().GetString("network")
+
+			if err := cli.RunAddressEnterprise(paymentKey, paymentKeyFile, network); err != nil {
+				logging.GetLogger().
+					Error("failed to generate enterprise address", "error", err)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().
+		String("payment-key", "", "Bech32-encoded payment verification key")
+	cmd.Flags().
+		String("payment-key-file", "", "Path to payment verification key file")
+	cmd.Flags().String("network", "mainnet", "Network (mainnet or testnet)")
+
+	if err := cmd.MarkFlagRequired("network"); err != nil {
+		panic(err)
+	}
+	cmd.MarkFlagsMutuallyExclusive("payment-key", "payment-key-file")
 
 	return &cmd
 }

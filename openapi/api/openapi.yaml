@@ -106,6 +106,37 @@ paths:
           description: Internal server error
       summary: Validate a script
       x-codegen-request-body-name: request
+  /api/address/build:
+    post:
+      description: Build a Cardano address from verification keys
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.AddressBuildRequest"
+        description: Address Build Request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.AddressBuildResponse"
+          description: Address built successfully
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Invalid request or keys
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Internal server error
+      summary: Build Cardano address
+      x-codegen-request-body-name: request
   /api/wallet/create:
     get:
       description: Create a wallet and return details
@@ -385,6 +416,89 @@ components:
           type: integer
         valid:
           type: boolean
+      type: object
+    api.AddressBuildRequest:
+      oneOf:
+      - $ref: "#/components/schemas/api.AddressBuildRequestBase"
+      - $ref: "#/components/schemas/api.AddressBuildRequestEnterprise"
+      - $ref: "#/components/schemas/api.AddressBuildRequestReward"
+      discriminator:
+        propertyName: type
+        mapping:
+          base: "#/components/schemas/api.AddressBuildRequestBase"
+          enterprise: "#/components/schemas/api.AddressBuildRequestEnterprise"
+          reward: "#/components/schemas/api.AddressBuildRequestReward"
+    api.AddressBuildRequestBase:
+      properties:
+        network:
+          enum:
+          - mainnet
+          - testnet
+          type: string
+        paymentKey:
+          description: bech32-encoded verification key
+          type: string
+        stakeKey:
+          description: bech32-encoded verification key
+          type: string
+        type:
+          description: Address type (defaults to "base")
+          enum:
+          - base
+          type: string
+      required:
+      - network
+      - paymentKey
+      - stakeKey
+      type: object
+    api.AddressBuildRequestEnterprise:
+      properties:
+        network:
+          enum:
+          - mainnet
+          - testnet
+          type: string
+        paymentKey:
+          description: bech32-encoded verification key
+          type: string
+        type:
+          description: Address type
+          enum:
+          - enterprise
+          type: string
+      required:
+      - network
+      - paymentKey
+      - type
+      type: object
+    api.AddressBuildRequestReward:
+      properties:
+        network:
+          enum:
+          - mainnet
+          - testnet
+          type: string
+        stakeKey:
+          description: bech32-encoded verification key
+          type: string
+        type:
+          description: Address type
+          enum:
+          - reward
+          type: string
+      required:
+      - network
+      - stakeKey
+      - type
+      type: object
+    api.AddressBuildResponse:
+      properties:
+        address:
+          type: string
+        network:
+          type: string
+        type:
+          type: string
       type: object
     api.WalletDeleteRequest:
       properties:
