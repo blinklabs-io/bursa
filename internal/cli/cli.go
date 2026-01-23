@@ -19,10 +19,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
@@ -31,6 +34,8 @@ import (
 	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/btcsuite/btcd/btcutil/bech32"
+	"github.com/gowebpki/jcs"
+	"golang.org/x/crypto/blake2b"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -1693,4 +1698,171 @@ func parseBech32VerificationKey(
 	copy(hash[:], pubKey.Hash())
 
 	return hash, nil
+}
+
+// RunHashMetadata generates a Blake2b-256 hash of metadata JSON file
+func RunHashMetadata(filePath, metadataType string) error {
+	logger := logging.GetLogger()
+
+	// Read the metadata file
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read metadata file: %w", err)
+	}
+
+	// Validate it's valid JSON
+	if !json.Valid(data) {
+		return errors.New("invalid JSON in metadata file")
+	}
+
+	// For Cardano metadata, we need to canonicalize the JSON using RFC 8785 (JCS)
+	// This ensures consistent ordering and formatting for reproducible hashing
+	canonicalJSON, err := jcs.Transform(data)
+	if err != nil {
+		return fmt.Errorf("failed to canonicalize JSON using RFC 8785: %w", err)
+	}
+
+	// Generate Blake2b-256 hash
+	hash, err := blake2b.New256(nil)
+	if err != nil {
+		return fmt.Errorf("failed to create Blake2b hasher: %w", err)
+	}
+
+	_, err = hash.Write(canonicalJSON)
+	if err != nil {
+		return fmt.Errorf("failed to hash metadata: %w", err)
+	}
+
+	hashBytes := hash.Sum(nil)
+	hashHex := hex.EncodeToString(hashBytes)
+
+	// Output the hash
+	logger.Info("Metadata hash generated",
+		"file", filePath,
+		"type", metadataType,
+		"hash", hashHex)
+
+	fmt.Printf("%s\n", hashHex)
+
+	return nil
+}
+
+// fetchURLContent fetches content from a URL with timeout and proper error handling
+func fetchURLContent(url string) ([]byte, error) {
+	const maxURLBody = 10 << 20 // 10MB limit
+
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch URL: %w", err)
+	}
+	if resp == nil {
+		return nil, errors.New("received nil response from URL")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP request failed with status: %s", resp.Status)
+	}
+
+	// Limit the response body size to prevent OOM
+	limitedReader := io.LimitReader(resp.Body, maxURLBody)
+	data, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check if the response was truncated due to size limit
+	if int64(len(data)) == maxURLBody {
+		// Try to read one more byte to confirm truncation
+		extra := make([]byte, 1)
+		n, _ := resp.Body.Read(extra)
+		if n > 0 {
+			return nil, fmt.Errorf("response body too large (maximum allowed: %d bytes)", maxURLBody)
+		}
+	}
+
+	return data, nil
+}
+
+// RunHashAnchorData generates a Blake2b-256 hash of anchor data
+func RunHashAnchorData(text, fileText, fileBinary, url, expectedHash, outFile string) error {
+	logger := logging.GetLogger()
+
+	var data []byte
+	var source string
+
+	// Determine input source and read data
+	switch {
+	case text != "":
+		data = []byte(text)
+		source = "text input"
+	case fileText != "":
+		var err error
+		data, err = os.ReadFile(fileText)
+		if err != nil {
+			return fmt.Errorf("failed to read text file: %w", err)
+		}
+		source = "text file: " + fileText
+	case fileBinary != "":
+		var err error
+		data, err = os.ReadFile(fileBinary)
+		if err != nil {
+			return fmt.Errorf("failed to read binary file: %w", err)
+		}
+		source = "binary file: " + fileBinary
+	case url != "":
+		var err error
+		data, err = fetchURLContent(url)
+		if err != nil {
+			return fmt.Errorf("failed to fetch URL content: %w", err)
+		}
+		source = "URL: " + url
+	default:
+		return errors.New("no input source specified (use --text, --file-text, --file-binary, or --url)")
+	}
+
+	// Generate Blake2b-256 hash
+	hash, err := blake2b.New256(nil)
+	if err != nil {
+		return fmt.Errorf("failed to create Blake2b hasher: %w", err)
+	}
+
+	_, err = hash.Write(data)
+	if err != nil {
+		return fmt.Errorf("failed to hash data: %w", err)
+	}
+
+	hashBytes := hash.Sum(nil)
+	hashHex := hex.EncodeToString(hashBytes)
+
+	// Verify expected hash if provided
+	if expectedHash != "" {
+		if !strings.EqualFold(hashHex, expectedHash) {
+			return fmt.Errorf("hash verification failed: expected %s, got %s", expectedHash, hashHex)
+		}
+		logger.Info("Hash verification successful", "expected", expectedHash, "actual", hashHex)
+	}
+
+	// Output the hash
+	if outFile != "" {
+		err := os.WriteFile(outFile, []byte(hashHex+"\n"), 0o600)
+		if err != nil {
+			return fmt.Errorf("failed to write hash to file: %w", err)
+		}
+		logger.Info("Anchor data hash written to file",
+			"source", source,
+			"file", outFile,
+			"hash", hashHex)
+	} else {
+		logger.Info("Anchor data hash generated",
+			"source", source,
+			"hash", hashHex)
+		fmt.Printf("%s\n", hashHex)
+	}
+
+	return nil
 }
