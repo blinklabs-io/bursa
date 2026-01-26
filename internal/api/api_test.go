@@ -937,7 +937,9 @@ func TestHandleScriptAddress(t *testing.T) {
 func readTestData(filename string) string {
 	data, err := os.ReadFile(filepath.Join("testdata", filename))
 	if err != nil {
-		panic(fmt.Sprintf("failed to read test data file %s: %v", filename, err))
+		panic(
+			fmt.Sprintf("failed to read test data file %s: %v", filename, err),
+		)
 	}
 	return string(data)
 }

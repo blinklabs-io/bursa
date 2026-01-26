@@ -41,6 +41,7 @@ func main() {
 		keyCommand(),
 		certCommand(),
 		addressCommand(),
+		hashCommand(),
 		apiCommand(),
 		scriptCommand(),
 	)
