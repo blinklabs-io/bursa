@@ -625,6 +625,14 @@ func GetRootKey(entropy []byte, password []byte) bip32.XPrv {
 	return bip32.FromBip39Entropy(entropy, password)
 }
 
+func GetRootSKey(rootKey bip32.XPrv) (KeyFile, error) {
+	return getSigningKeyFile(
+		rootKey,
+		"SigningKeyShelley_ed25519",
+		"Root Signing Key",
+	)
+}
+
 func GetAccountKey(rootKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
 	const harden = 0x80000000
 	if num > 0x7FFFFFFF {
@@ -635,6 +643,32 @@ func GetAccountKey(rootKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
 		Derive(uint32(harden + 1852)).
 		Derive(uint32(harden + 1815)).
 		Derive(uint32(hardNum)), nil
+}
+
+func GetAccountVKey(accountKey bip32.XPrv) (KeyFile, error) {
+	// Encode just the raw public key bytes (cardano-cli compatible format)
+	keyCbor, err := cbor.Encode(accountKey.Public().PublicKey())
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode account verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "AccountVerificationKeyShelley_ed25519",
+		Description: "Account Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+func GetAccountSKey(accountKey bip32.XPrv) (KeyFile, error) {
+	return getSigningKeyFile(
+		accountKey,
+		"AccountSigningKeyShelley_ed25519",
+		"Account Signing Key",
+	)
 }
 
 func GetPaymentKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
@@ -1139,6 +1173,42 @@ func GetVRFKeyPair(seed []byte) ([]byte, []byte, error) {
 	return vrf.KeyGen(seed)
 }
 
+// GetVRFVKey creates a KeyFile for a VRF verification key
+func GetVRFVKey(vrfPubKey []byte) (KeyFile, error) {
+	keyCbor, err := cbor.Encode(vrfPubKey)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode VRF verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "VRFVerificationKey_PraosVRF",
+		Description: "VRF Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+// GetVRFSKey creates a KeyFile for a VRF signing key
+func GetVRFSKey(vrfSecKey []byte) (KeyFile, error) {
+	keyCbor, err := cbor.Encode(vrfSecKey)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode VRF signing key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "VRFSigningKey_PraosVRF",
+		Description: "VRF Signing Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
 // GetKESSeed derives a 32-byte KES seed from a root key and index.
 // This provides deterministic KES key generation from a mnemonic.
 // The seed is derived using blake2b-256 with a domain separator to ensure
@@ -1180,6 +1250,46 @@ func GetKESKeyPair(seed []byte) (*kes.SecretKey, []byte, error) {
 		)
 	}
 	return kes.KeyGen(kes.CardanoKesDepth, seed)
+}
+
+// GetKESVKey creates a KeyFile for a KES verification key
+func GetKESVKey(kesPubKey []byte) (KeyFile, error) {
+	keyCbor, err := cbor.Encode(kesPubKey)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode KES verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "KESVerificationKey_PraosV2",
+		Description: "KES Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+// GetKESSKey creates a KeyFile for a KES signing key
+func GetKESSKey(kesSecKey *kes.SecretKey) (KeyFile, error) {
+	if kesSecKey == nil {
+		return KeyFile{}, errors.New("KES secret key cannot be nil")
+	}
+
+	keyCbor, err := cbor.Encode(kesSecKey.Data)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode KES signing key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "KESSigningKey_PraosV2",
+		Description: "KES Signing Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
 }
 
 // OperationalCertificate represents an operational certificate for SPO block production.

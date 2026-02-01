@@ -2675,3 +2675,9 @@ func TestCIP1855PolicyKeyRoundTrip(t *testing.T) {
 		"Verification key from vkey and extended skey should match",
 	)
 }
+
+func TestGetKESSKeyNilCheck(t *testing.T) {
+	_, err := GetKESSKey(nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "KES secret key cannot be nil")
+}
