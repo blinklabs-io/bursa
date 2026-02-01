@@ -29,6 +29,7 @@ import (
 
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	bip39 "github.com/tyler-smith/go-bip39"
 )
 
@@ -2674,4 +2675,10 @@ func TestCIP1855PolicyKeyRoundTrip(t *testing.T) {
 		pextSkey.VKey,
 		"Verification key from vkey and extended skey should match",
 	)
+}
+
+func TestGetKESSKeyNilCheck(t *testing.T) {
+	_, err := GetKESSKey(nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "KES secret key cannot be nil")
 }
