@@ -260,7 +260,7 @@ func RunLoad(dir string, showSecrets bool) {
 }
 
 // RunKeyRoot derives and outputs the root extended private key from a mnemonic
-func RunKeyRoot(mnemonic, mnemonicFile, password string) error {
+func RunKeyRoot(mnemonic, mnemonicFile, password, signingKeyFile string) error {
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -271,14 +271,28 @@ func RunKeyRoot(mnemonic, mnemonicFile, password string) error {
 		return fmt.Errorf("failed to derive root key: %w", err)
 	}
 
-	// Output in bech32 format
-	fmt.Println(rootKey.String())
+	// If signing key file is specified, write to file
+	if signingKeyFile != "" {
+		// Create KeyFile for root signing key
+		rootSKey, err := bursa.GetRootSKey(rootKey)
+		if err != nil {
+			return fmt.Errorf("failed to create root signing key file: %w", err)
+		}
+
+		if err := writeKeyFile(rootSKey, signingKeyFile); err != nil {
+			return err
+		}
+	} else {
+		// Output in bech32 format
+		fmt.Println(rootKey.String())
+	}
+
 	return nil
 }
 
 // RunKeyAccount derives and outputs an account extended private key
 func RunKeyAccount(
-	mnemonic, mnemonicFile, password string,
+	mnemonic, mnemonicFile, password, signingKeyFile string,
 	accountIndex uint32,
 ) error {
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
@@ -296,18 +310,32 @@ func RunKeyAccount(
 		return fmt.Errorf("failed to derive account key: %w", err)
 	}
 
-	// Output in bech32 format with acct_xsk prefix
-	encoded, err := encodeAccountKey(accountKey)
-	if err != nil {
-		return fmt.Errorf("failed to encode account key: %w", err)
+	// If signing key file is specified, write to file
+	if signingKeyFile != "" {
+		// Create KeyFile for account signing key
+		accountSKey, err := bursa.GetAccountSKey(accountKey)
+		if err != nil {
+			return fmt.Errorf("failed to create account signing key file: %w", err)
+		}
+
+		if err := writeKeyFile(accountSKey, signingKeyFile); err != nil {
+			return err
+		}
+	} else {
+		// Output in bech32 format with acct_xsk prefix
+		encoded, err := encodeAccountKey(accountKey)
+		if err != nil {
+			return fmt.Errorf("failed to encode account key: %w", err)
+		}
+		fmt.Println(encoded)
 	}
-	fmt.Println(encoded)
+
 	return nil
 }
 
 // RunKeyPayment derives and outputs a payment extended private key
 func RunKeyPayment(
-	mnemonic, mnemonicFile, password string,
+	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	accountIndex, paymentIndex uint32,
 ) error {
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
@@ -330,18 +358,42 @@ func RunKeyPayment(
 		return fmt.Errorf("failed to derive payment key: %w", err)
 	}
 
-	// Output in bech32 format with addr_xsk prefix
-	encoded, err := encodePaymentKey(paymentKey)
-	if err != nil {
-		return fmt.Errorf("failed to encode payment key: %w", err)
+	// If key files are specified, write to files
+	if signingKeyFile != "" || verificationKeyFile != "" {
+		if signingKeyFile != "" {
+			paymentSKey, err := bursa.GetPaymentSKey(paymentKey)
+			if err != nil {
+				return fmt.Errorf("failed to create payment signing key file: %w", err)
+			}
+			if err := writeKeyFile(paymentSKey, signingKeyFile); err != nil {
+				return err
+			}
+		}
+
+		if verificationKeyFile != "" {
+			paymentVKey, err := bursa.GetPaymentVKey(paymentKey)
+			if err != nil {
+				return fmt.Errorf("failed to create payment verification key file: %w", err)
+			}
+			if err := writeKeyFile(paymentVKey, verificationKeyFile); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Output in bech32 format with addr_xsk prefix
+		encoded, err := encodePaymentKey(paymentKey)
+		if err != nil {
+			return fmt.Errorf("failed to encode payment key: %w", err)
+		}
+		fmt.Println(encoded)
 	}
-	fmt.Println(encoded)
+
 	return nil
 }
 
 // RunKeyStake derives and outputs a stake extended private key
 func RunKeyStake(
-	mnemonic, mnemonicFile, password string,
+	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	accountIndex, stakeIndex uint32,
 ) error {
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
@@ -364,18 +416,42 @@ func RunKeyStake(
 		return fmt.Errorf("failed to derive stake key: %w", err)
 	}
 
-	// Output in bech32 format with stake_xsk prefix
-	encoded, err := encodeStakeKey(stakeKey)
-	if err != nil {
-		return fmt.Errorf("failed to encode stake key: %w", err)
+	// If key files are specified, write to files
+	if signingKeyFile != "" || verificationKeyFile != "" {
+		if signingKeyFile != "" {
+			stakeSKey, err := bursa.GetStakeSKey(stakeKey)
+			if err != nil {
+				return fmt.Errorf("failed to create stake signing key file: %w", err)
+			}
+			if err := writeKeyFile(stakeSKey, signingKeyFile); err != nil {
+				return err
+			}
+		}
+
+		if verificationKeyFile != "" {
+			stakeVKey, err := bursa.GetStakeVKey(stakeKey)
+			if err != nil {
+				return fmt.Errorf("failed to create stake verification key file: %w", err)
+			}
+			if err := writeKeyFile(stakeVKey, verificationKeyFile); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Output in bech32 format with stake_xsk prefix
+		encoded, err := encodeStakeKey(stakeKey)
+		if err != nil {
+			return fmt.Errorf("failed to encode stake key: %w", err)
+		}
+		fmt.Println(encoded)
 	}
-	fmt.Println(encoded)
+
 	return nil
 }
 
 // RunKeyPolicy derives a policy key from a mnemonic and outputs it in bech32
 func RunKeyPolicy(
-	mnemonic, mnemonicFile, password string,
+	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	index uint32,
 ) error {
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
@@ -393,12 +469,36 @@ func RunKeyPolicy(
 		return fmt.Errorf("failed to derive policy key: %w", err)
 	}
 
-	// Output in bech32 format with policy_xsk prefix
-	encoded, err := encodePolicyKey(policyKey)
-	if err != nil {
-		return fmt.Errorf("failed to encode policy key: %w", err)
+	// If key files are specified, write to files
+	if signingKeyFile != "" || verificationKeyFile != "" {
+		if signingKeyFile != "" {
+			policySKey, err := bursa.GetPolicySKey(policyKey)
+			if err != nil {
+				return fmt.Errorf("failed to create policy signing key file: %w", err)
+			}
+			if err := writeKeyFile(policySKey, signingKeyFile); err != nil {
+				return err
+			}
+		}
+
+		if verificationKeyFile != "" {
+			policyVKey, err := bursa.GetPolicyVKey(policyKey)
+			if err != nil {
+				return fmt.Errorf("failed to create policy verification key file: %w", err)
+			}
+			if err := writeKeyFile(policyVKey, verificationKeyFile); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Output in bech32 format with policy_xsk prefix
+		encoded, err := encodePolicyKey(policyKey)
+		if err != nil {
+			return fmt.Errorf("failed to encode policy key: %w", err)
+		}
+		fmt.Println(encoded)
 	}
-	fmt.Println(encoded)
+
 	return nil
 }
 
@@ -438,7 +538,7 @@ func encodePolicyKey(key []byte) (string, error) {
 
 // RunKeyPoolCold derives a pool cold key from a mnemonic and outputs in bech32
 func RunKeyPoolCold(
-	mnemonic, mnemonicFile, password string,
+	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	index uint32,
 ) error {
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
@@ -457,12 +557,36 @@ func RunKeyPoolCold(
 		return fmt.Errorf("failed to derive pool cold key: %w", err)
 	}
 
-	// Output in bech32 format with pool_xsk prefix
-	encoded, err := encodePoolColdKey(poolColdKey)
-	if err != nil {
-		return fmt.Errorf("failed to encode pool cold key: %w", err)
+	// If key files are specified, write to files
+	if signingKeyFile != "" || verificationKeyFile != "" {
+		if signingKeyFile != "" {
+			poolColdSKey, err := bursa.GetPoolColdSKey(poolColdKey)
+			if err != nil {
+				return fmt.Errorf("failed to create pool cold signing key file: %w", err)
+			}
+			if err := writeKeyFile(poolColdSKey, signingKeyFile); err != nil {
+				return err
+			}
+		}
+
+		if verificationKeyFile != "" {
+			poolColdVKey, err := bursa.GetPoolColdVKey(poolColdKey)
+			if err != nil {
+				return fmt.Errorf("failed to create pool cold verification key file: %w", err)
+			}
+			if err := writeKeyFile(poolColdVKey, verificationKeyFile); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Output in bech32 format with pool_xsk prefix
+		encoded, err := encodePoolColdKey(poolColdKey)
+		if err != nil {
+			return fmt.Errorf("failed to encode pool cold key: %w", err)
+		}
+		fmt.Println(encoded)
 	}
-	fmt.Println(encoded)
+
 	return nil
 }
 
@@ -488,7 +612,7 @@ func encodeCommitteeHotKey(key []byte) (string, error) {
 
 // RunKeyDRep derives a DRep key from a mnemonic and outputs it in bech32
 func RunKeyDRep(
-	mnemonic, mnemonicFile, password string,
+	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	accountIndex, index uint32,
 ) error {
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
@@ -512,18 +636,42 @@ func RunKeyDRep(
 		return fmt.Errorf("failed to derive DRep key: %w", err)
 	}
 
-	// Output in bech32 format with drep_xsk prefix
-	encoded, err := encodeDRepKey(drepKey)
-	if err != nil {
-		return fmt.Errorf("failed to encode DRep key: %w", err)
+	// If key files are specified, write to files
+	if signingKeyFile != "" || verificationKeyFile != "" {
+		if signingKeyFile != "" {
+			drepSKey, err := bursa.GetDRepSKey(drepKey)
+			if err != nil {
+				return fmt.Errorf("failed to create DRep signing key file: %w", err)
+			}
+			if err := writeKeyFile(drepSKey, signingKeyFile); err != nil {
+				return err
+			}
+		}
+
+		if verificationKeyFile != "" {
+			drepVKey, err := bursa.GetDRepVKey(drepKey)
+			if err != nil {
+				return fmt.Errorf("failed to create DRep verification key file: %w", err)
+			}
+			if err := writeKeyFile(drepVKey, verificationKeyFile); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Output in bech32 format with drep_xsk prefix
+		encoded, err := encodeDRepKey(drepKey)
+		if err != nil {
+			return fmt.Errorf("failed to encode DRep key: %w", err)
+		}
+		fmt.Println(encoded)
 	}
-	fmt.Println(encoded)
+
 	return nil
 }
 
 // RunKeyCommitteeCold derives a committee cold key and outputs it in bech32
 func RunKeyCommitteeCold(
-	mnemonic, mnemonicFile, password string,
+	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	accountIndex, index uint32,
 ) error {
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
@@ -547,18 +695,42 @@ func RunKeyCommitteeCold(
 		return fmt.Errorf("failed to derive committee cold key: %w", err)
 	}
 
-	// Output in bech32 format with cc_cold_xsk prefix
-	encoded, err := encodeCommitteeColdKey(committeeColdKey)
-	if err != nil {
-		return fmt.Errorf("failed to encode committee cold key: %w", err)
+	// If key files are specified, write to files
+	if signingKeyFile != "" || verificationKeyFile != "" {
+		if signingKeyFile != "" {
+			committeeColdSKey, err := bursa.GetCommitteeColdSKey(committeeColdKey)
+			if err != nil {
+				return fmt.Errorf("failed to create committee cold signing key file: %w", err)
+			}
+			if err := writeKeyFile(committeeColdSKey, signingKeyFile); err != nil {
+				return err
+			}
+		}
+
+		if verificationKeyFile != "" {
+			committeeColdVKey, err := bursa.GetCommitteeColdVKey(committeeColdKey)
+			if err != nil {
+				return fmt.Errorf("failed to create committee cold verification key file: %w", err)
+			}
+			if err := writeKeyFile(committeeColdVKey, verificationKeyFile); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Output in bech32 format with cc_cold_xsk prefix
+		encoded, err := encodeCommitteeColdKey(committeeColdKey)
+		if err != nil {
+			return fmt.Errorf("failed to encode committee cold key: %w", err)
+		}
+		fmt.Println(encoded)
 	}
-	fmt.Println(encoded)
+
 	return nil
 }
 
 // RunKeyCommitteeHot derives a committee hot key and outputs it in bech32
 func RunKeyCommitteeHot(
-	mnemonic, mnemonicFile, password string,
+	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	accountIndex, index uint32,
 ) error {
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
@@ -582,18 +754,42 @@ func RunKeyCommitteeHot(
 		return fmt.Errorf("failed to derive committee hot key: %w", err)
 	}
 
-	// Output in bech32 format with cc_hot_xsk prefix
-	encoded, err := encodeCommitteeHotKey(committeeHotKey)
-	if err != nil {
-		return fmt.Errorf("failed to encode committee hot key: %w", err)
+	// If key files are specified, write to files
+	if signingKeyFile != "" || verificationKeyFile != "" {
+		if signingKeyFile != "" {
+			committeeHotSKey, err := bursa.GetCommitteeHotSKey(committeeHotKey)
+			if err != nil {
+				return fmt.Errorf("failed to create committee hot signing key file: %w", err)
+			}
+			if err := writeKeyFile(committeeHotSKey, signingKeyFile); err != nil {
+				return err
+			}
+		}
+
+		if verificationKeyFile != "" {
+			committeeHotVKey, err := bursa.GetCommitteeHotVKey(committeeHotKey)
+			if err != nil {
+				return fmt.Errorf("failed to create committee hot verification key file: %w", err)
+			}
+			if err := writeKeyFile(committeeHotVKey, verificationKeyFile); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Output in bech32 format with cc_hot_xsk prefix
+		encoded, err := encodeCommitteeHotKey(committeeHotKey)
+		if err != nil {
+			return fmt.Errorf("failed to encode committee hot key: %w", err)
+		}
+		fmt.Println(encoded)
 	}
-	fmt.Println(encoded)
+
 	return nil
 }
 
 // RunKeyVRF derives a VRF key pair from a mnemonic and outputs it
 func RunKeyVRF(
-	mnemonic, mnemonicFile, password string,
+	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	index uint32,
 ) error {
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
@@ -618,21 +814,45 @@ func RunKeyVRF(
 		return fmt.Errorf("failed to generate VRF key pair: %w", err)
 	}
 
-	// Output VRF keys in bech32 format
-	// VRF signing key (secret key / seed)
-	vrfSkEncoded, err := encodeVRFSigningKey(vrfSecKey)
-	if err != nil {
-		return fmt.Errorf("failed to encode VRF signing key: %w", err)
+	// If key files are specified, write to files
+	if signingKeyFile != "" || verificationKeyFile != "" {
+		if signingKeyFile != "" {
+			vrfSKey, err := bursa.GetVRFSKey(vrfSecKey)
+			if err != nil {
+				return fmt.Errorf("failed to create VRF signing key file: %w", err)
+			}
+			if err := writeKeyFile(vrfSKey, signingKeyFile); err != nil {
+				return err
+			}
+		}
+
+		if verificationKeyFile != "" {
+			vrfVKey, err := bursa.GetVRFVKey(vrfPubKey)
+			if err != nil {
+				return fmt.Errorf("failed to create VRF verification key file: %w", err)
+			}
+			if err := writeKeyFile(vrfVKey, verificationKeyFile); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Output VRF keys in bech32 format
+		// VRF signing key (secret key / seed)
+		vrfSkEncoded, err := encodeVRFSigningKey(vrfSecKey)
+		if err != nil {
+			return fmt.Errorf("failed to encode VRF signing key: %w", err)
+		}
+
+		// VRF verification key (public key)
+		vrfVkEncoded, err := encodeVRFVerificationKey(vrfPubKey)
+		if err != nil {
+			return fmt.Errorf("failed to encode VRF verification key: %w", err)
+		}
+
+		fmt.Printf("vrf_skey: %s\n", vrfSkEncoded)
+		fmt.Printf("vrf_vkey: %s\n", vrfVkEncoded)
 	}
 
-	// VRF verification key (public key)
-	vrfVkEncoded, err := encodeVRFVerificationKey(vrfPubKey)
-	if err != nil {
-		return fmt.Errorf("failed to encode VRF verification key: %w", err)
-	}
-
-	fmt.Printf("vrf_skey: %s\n", vrfSkEncoded)
-	fmt.Printf("vrf_vkey: %s\n", vrfVkEncoded)
 	return nil
 }
 
@@ -664,7 +884,7 @@ func encodeVRFVerificationKey(key []byte) (string, error) {
 
 // RunKeyKES derives a KES key pair from a mnemonic and outputs it
 func RunKeyKES(
-	mnemonic, mnemonicFile, password string,
+	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	index uint32,
 ) error {
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
@@ -689,21 +909,45 @@ func RunKeyKES(
 		return fmt.Errorf("failed to generate KES key pair: %w", err)
 	}
 
-	// Output KES keys in bech32 format
-	// KES signing key (secret key)
-	kesSkEncoded, err := encodeKESSigningKey(kesSecKey.Data)
-	if err != nil {
-		return fmt.Errorf("failed to encode KES signing key: %w", err)
+	// If key files are specified, write to files
+	if signingKeyFile != "" || verificationKeyFile != "" {
+		if signingKeyFile != "" {
+			kesSKey, err := bursa.GetKESSKey(kesSecKey)
+			if err != nil {
+				return fmt.Errorf("failed to create KES signing key file: %w", err)
+			}
+			if err := writeKeyFile(kesSKey, signingKeyFile); err != nil {
+				return err
+			}
+		}
+
+		if verificationKeyFile != "" {
+			kesVKey, err := bursa.GetKESVKey(kesPubKey)
+			if err != nil {
+				return fmt.Errorf("failed to create KES verification key file: %w", err)
+			}
+			if err := writeKeyFile(kesVKey, verificationKeyFile); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Output KES keys in bech32 format
+		// KES signing key (secret key)
+		kesSkEncoded, err := encodeKESSigningKey(kesSecKey.Data)
+		if err != nil {
+			return fmt.Errorf("failed to encode KES signing key: %w", err)
+		}
+
+		// KES verification key (public key)
+		kesVkEncoded, err := encodeKESVerificationKey(kesPubKey)
+		if err != nil {
+			return fmt.Errorf("failed to encode KES verification key: %w", err)
+		}
+
+		fmt.Printf("kes_skey: %s\n", kesSkEncoded)
+		fmt.Printf("kes_vkey: %s\n", kesVkEncoded)
 	}
 
-	// KES verification key (public key)
-	kesVkEncoded, err := encodeKESVerificationKey(kesPubKey)
-	if err != nil {
-		return fmt.Errorf("failed to encode KES verification key: %w", err)
-	}
-
-	fmt.Printf("kes_skey: %s\n", kesSkEncoded)
-	fmt.Printf("kes_vkey: %s\n", kesVkEncoded)
 	return nil
 }
 
@@ -1862,6 +2106,27 @@ func RunHashAnchorData(text, fileText, fileBinary, url, expectedHash, outFile st
 			"source", source,
 			"hash", hashHex)
 		fmt.Printf("%s\n", hashHex)
+	}
+
+	return nil
+}
+
+// writeKeyFile writes a KeyFile to the specified path in JSON format
+func writeKeyFile(kf bursa.KeyFile, path string) error {
+	keyStr, err := bursa.GetKeyFile(kf)
+	if err != nil {
+		return fmt.Errorf("failed to format key file: %w", err)
+	}
+
+	err = os.WriteFile(path, []byte(keyStr), 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to write key file %s: %w", path, err)
+	}
+
+	// Ensure secure permissions even if file already existed
+	err = os.Chmod(path, 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to set secure permissions on key file %s: %w", path, err)
 	}
 
 	return nil
