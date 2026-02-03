@@ -66,6 +66,13 @@ type LoadedKey struct {
 	RawCBOR     []byte
 	VKey        []byte
 	SKey        []byte
+	// OpCert fields (only populated for NodeOperationalCertificate type)
+	OpCertIssueNumber uint64 // Certificate sequence/issue number
+	OpCertKesPeriod   uint64 // KES period at certificate creation
+	OpCertSignature   []byte // Cold key signature (64 bytes)
+	OpCertColdVKey    []byte // Cold verification key (32 bytes)
+	// KES metadata
+	KESPeriod uint64 // Current period for KES keys (track key evolution)
 }
 
 // Script represents a native script for multi-signature wallets
@@ -2141,6 +2148,186 @@ func decodeVerificationKey(vkeyBytes []byte) ([]byte, error) {
 	return keyBytes, nil
 }
 
+// decodeVRFSKey decodes a VRF signing key from CBOR.
+// VRF signing keys can be stored as:
+// - 32 bytes: just the seed (bursa format)
+// - 64 bytes: seed (32) + public key (32) (cardano-cli format)
+func decodeVRFSKey(skeyBytes []byte) ([]byte, []byte, error) {
+	var keyBytes []byte
+	if _, err := cbor.Decode(skeyBytes, &keyBytes); err != nil {
+		return nil, nil, fmt.Errorf("failed to unmarshal VRF skey CBOR: %w", err)
+	}
+
+	switch len(keyBytes) {
+	case vrf.SeedSize:
+		// Just the seed - generate public key
+		pubKey, _, err := vrf.KeyGen(keyBytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to derive VRF public key: %w", err)
+		}
+		return keyBytes, pubKey, nil
+	case vrf.SeedSize + vrf.PublicKeySize:
+		// Seed + public key (cardano-cli format)
+		seed := keyBytes[:vrf.SeedSize]
+		pubKey := keyBytes[vrf.SeedSize:]
+		return seed, pubKey, nil
+	default:
+		return nil, nil, fmt.Errorf(
+			"invalid VRF skey bytes: expected %d or %d, got %d",
+			vrf.SeedSize,
+			vrf.SeedSize+vrf.PublicKeySize,
+			len(keyBytes),
+		)
+	}
+}
+
+// decodeKESSKey decodes a KES signing key from CBOR.
+// KES signing keys for depth 6 (Cardano) are 608 bytes.
+func decodeKESSKey(skeyBytes []byte) ([]byte, []byte, error) {
+	var keyBytes []byte
+	if _, err := cbor.Decode(skeyBytes, &keyBytes); err != nil {
+		return nil, nil, fmt.Errorf("failed to unmarshal KES skey CBOR: %w", err)
+	}
+	if len(keyBytes) != kes.CardanoKesSecretKeySize {
+		return nil, nil, fmt.Errorf(
+			"invalid KES skey bytes: expected %d, got %d",
+			kes.CardanoKesSecretKeySize,
+			len(keyBytes),
+		)
+	}
+	// Create a SecretKey struct to extract the public key
+	sk := &kes.SecretKey{
+		Depth:  kes.CardanoKesDepth,
+		Period: 0, // Period is not encoded in the key file
+		Data:   keyBytes,
+	}
+	pubKey := kes.PublicKey(sk)
+	return keyBytes, pubKey, nil
+}
+
+// decodeOpCert decodes an operational certificate from CBOR.
+// OpCert CBOR format: [[kes_vkey, issue_number, kes_period, signature], cold_vkey]
+// The outer array has 2 elements:
+//   - Inner 4-element array with the certificate data
+//   - Cold verification key (32 bytes)
+//
+// Returns: kesVkey, issueNumber, kesPeriod, signature, coldVkey, error
+func decodeOpCert(
+	certBytes []byte,
+) ([]byte, uint64, uint64, []byte, []byte, error) {
+	var outerData []any
+	if _, err := cbor.Decode(certBytes, &outerData); err != nil {
+		return nil, 0, 0, nil, nil, fmt.Errorf(
+			"failed to unmarshal OpCert CBOR: %w",
+			err,
+		)
+	}
+	if len(outerData) != 2 {
+		return nil, 0, 0, nil, nil, fmt.Errorf(
+			"invalid OpCert: expected 2-element outer array, got %d",
+			len(outerData),
+		)
+	}
+
+	// Extract inner certificate array
+	certData, ok := outerData[0].([]any)
+	if !ok {
+		return nil, 0, 0, nil, nil, errors.New(
+			"invalid OpCert: first element is not an array",
+		)
+	}
+	if len(certData) != 4 {
+		return nil, 0, 0, nil, nil, fmt.Errorf(
+			"invalid OpCert: expected 4-element cert array, got %d",
+			len(certData),
+		)
+	}
+
+	// Extract cold vkey
+	coldVkey, ok := outerData[1].([]byte)
+	if !ok {
+		return nil, 0, 0, nil, nil, errors.New(
+			"invalid OpCert: cold_vkey is not bytes",
+		)
+	}
+	if len(coldVkey) != 32 {
+		return nil, 0, 0, nil, nil, fmt.Errorf(
+			"invalid OpCert: cold_vkey expected 32 bytes, got %d",
+			len(coldVkey),
+		)
+	}
+
+	// Extract KES vkey from inner array
+	kesVkey, ok := certData[0].([]byte)
+	if !ok {
+		return nil, 0, 0, nil, nil, errors.New(
+			"invalid OpCert: kes_vkey is not bytes",
+		)
+	}
+	if len(kesVkey) != 32 {
+		return nil, 0, 0, nil, nil, fmt.Errorf(
+			"invalid OpCert: kes_vkey expected 32 bytes, got %d",
+			len(kesVkey),
+		)
+	}
+
+	// Extract issue number (can be uint64 or int64 depending on CBOR encoding)
+	var issueNumber uint64
+	switch v := certData[1].(type) {
+	case uint64:
+		issueNumber = v
+	case int64:
+		if v < 0 {
+			return nil, 0, 0, nil, nil, fmt.Errorf(
+				"invalid OpCert: issue_number cannot be negative, got %d",
+				v,
+			)
+		}
+		issueNumber = uint64(v) // #nosec G115
+	default:
+		return nil, 0, 0, nil, nil, fmt.Errorf(
+			"invalid OpCert: issue_number has unexpected type %T",
+			certData[1],
+		)
+	}
+
+	// Extract KES period
+	var kesPeriod uint64
+	switch v := certData[2].(type) {
+	case uint64:
+		kesPeriod = v
+	case int64:
+		if v < 0 {
+			return nil, 0, 0, nil, nil, fmt.Errorf(
+				"invalid OpCert: kes_period cannot be negative, got %d",
+				v,
+			)
+		}
+		kesPeriod = uint64(v) // #nosec G115
+	default:
+		return nil, 0, 0, nil, nil, fmt.Errorf(
+			"invalid OpCert: kes_period has unexpected type %T",
+			certData[2],
+		)
+	}
+
+	// Extract cold signature
+	signature, ok := certData[3].([]byte)
+	if !ok {
+		return nil, 0, 0, nil, nil, errors.New(
+			"invalid OpCert: cold_signature is not bytes",
+		)
+	}
+	if len(signature) != 64 {
+		return nil, 0, 0, nil, nil, fmt.Errorf(
+			"invalid OpCert: cold_signature expected 64 bytes, got %d",
+			len(signature),
+		)
+	}
+
+	return kesVkey, issueNumber, kesPeriod, signature, coldVkey, nil
+}
+
 func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 	var env KeyFile
 	if err := json.Unmarshal(fileBytes, &env); err != nil {
@@ -2207,9 +2394,78 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		}
 		lk.SKey, lk.VKey = sk, vk
 		return lk, nil
+	// VRF keys (both cardano-cli and bursa naming conventions)
+	case "VrfVerificationKey_PraosVRF",
+		"VRFVerificationKey_PraosVRF":
+		vk, err := decodeVerificationKey(cborData)
+		if err != nil {
+			return nil, err
+		}
+		lk.VKey = vk
+		return lk, nil
+	case "VrfSigningKey_PraosVRF",
+		"VRFSigningKey_PraosVRF":
+		sk, vk, err := decodeVRFSKey(cborData)
+		if err != nil {
+			return nil, err
+		}
+		lk.SKey, lk.VKey = sk, vk
+		return lk, nil
+	// KES keys (both cardano-cli and bursa naming conventions)
+	case "KesVerificationKey_ed25519_kes_2^6",
+		"KESVerificationKey_PraosV2":
+		vk, err := decodeVerificationKey(cborData)
+		if err != nil {
+			return nil, err
+		}
+		lk.VKey = vk
+		return lk, nil
+	case "KesSigningKey_ed25519_kes_2^6",
+		"KESSigningKey_PraosV2":
+		sk, vk, err := decodeKESSKey(cborData)
+		if err != nil {
+			return nil, err
+		}
+		lk.SKey, lk.VKey = sk, vk
+		return lk, nil
+	// Operational Certificate
+	case "NodeOperationalCertificate":
+		kesVkey, issueNumber, kesPeriod, signature, coldVkey, err := decodeOpCert(
+			cborData,
+		)
+		if err != nil {
+			return nil, err
+		}
+		lk.VKey = kesVkey
+		lk.OpCertIssueNumber = issueNumber
+		lk.OpCertKesPeriod = kesPeriod
+		lk.OpCertSignature = signature
+		lk.OpCertColdVKey = coldVkey
+		return lk, nil
 	default:
 		return nil, fmt.Errorf("unknown key type: %s", env.Type)
 	}
+}
+
+// LoadKeyFromBytes loads a key from JSON-encoded bytes (cardano-cli format).
+// Supports all key types including VRF, KES, and operational certificates.
+func LoadKeyFromBytes(data []byte) (*LoadedKey, error) {
+	return parseKeyEnvelope(data)
+}
+
+// LoadKeyFromFile loads a key from a file path (cardano-cli format).
+// Supports all key types including VRF, KES, and operational certificates.
+func LoadKeyFromFile(path string) (*LoadedKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read key file %q: %w", path, err)
+	}
+	key, err := parseKeyEnvelope(data)
+	if err != nil {
+		return nil, err
+	}
+	key.File = filepath.Base(path)
+	return key, nil
 }
 
 func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
