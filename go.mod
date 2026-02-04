@@ -7,6 +7,7 @@ toolchain go1.24.1
 require (
 	cloud.google.com/go/secretmanager v1.16.0
 	filippo.io/edwards25519 v1.1.0
+	github.com/blinklabs-io/go-bip39 v0.2.0
 	github.com/blinklabs-io/gouroboros v0.152.2
 	github.com/btcsuite/btcd/btcutil v1.1.6
 	github.com/fxamacker/cbor/v2 v2.9.0
@@ -20,7 +21,6 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/swaggo/http-swagger v1.3.4
 	github.com/swaggo/swag v1.16.6
-	github.com/tyler-smith/go-bip39 v1.1.0
 	golang.org/x/crypto v0.47.0
 	golang.org/x/sync v0.19.0
 	google.golang.org/api v0.264.0

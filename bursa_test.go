@@ -1,4 +1,4 @@
-// Copyright 2025 Blink Labs Software
+// Copyright 2026 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import (
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	bip39 "github.com/tyler-smith/go-bip39"
+	bip39 "github.com/blinklabs-io/go-bip39"
 )
 
 // testKeyHash returns a 28-byte test key hash for use in tests
