@@ -1,4 +1,4 @@
-// Copyright 2025 Blink Labs Software
+// Copyright 2026 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import (
 	"sync"
 
 	"github.com/blinklabs-io/bursa/bip32"
+	bip39 "github.com/blinklabs-io/go-bip39"
 	ouroboros "github.com/blinklabs-io/gouroboros"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/blinklabs-io/gouroboros/kes"
@@ -36,7 +37,6 @@ import (
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/blinklabs-io/gouroboros/vrf"
 	"github.com/btcsuite/btcd/btcutil/bech32"
-	bip39 "github.com/tyler-smith/go-bip39"
 	"golang.org/x/crypto/blake2b"
 )
 
