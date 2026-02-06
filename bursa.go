@@ -156,6 +156,12 @@ func (kf KeyFile) String() string {
 		prefix = "policy_sk"
 	case "PolicyExtendedSigningKeyShelley_ed25519_bip32":
 		prefix = "policy_xsk"
+	case "CalidusVerificationKeyShelley_ed25519":
+		prefix = "calidus_vk"
+	case "CalidusSigningKeyShelley_ed25519":
+		prefix = "calidus_sk"
+	case "CalidusExtendedSigningKeyShelley_ed25519_bip32":
+		prefix = "calidus_xsk"
 	default:
 		// Fallback to CBOR hex if type not recognized
 		return kf.CborHex
@@ -757,6 +763,76 @@ func GetPaymentExtendedSKey(paymentKey bip32.XPrv) (KeyFile, error) {
 	return kf, nil
 }
 
+// GetCalidusKey derives a Calidus key (CIP-88/CIP-151) for SPO on-chain
+// authentication. Uses the same derivation path as payment key:
+// m/1852'/1815'/account'/0/0
+// The key is functionally identical to the payment key but uses different
+// bech32 prefixes (calidus_xsk/calidus_xvk) and different cardano-cli
+// text envelope types for SPO identity purposes.
+func GetCalidusKey(
+	accountKey bip32.XPrv,
+	num uint32,
+) (bip32.XPrv, error) {
+	if num >= 0x80000000 {
+		return nil, ErrInvalidDerivationIndex
+	}
+	// Same derivation as payment: role=0, index=num
+	return accountKey.Derive(0).Derive(num), nil
+}
+
+// GetCalidusVKey creates a Calidus verification key file
+func GetCalidusVKey(calidusKey bip32.XPrv) (KeyFile, error) {
+	keyCbor, err := cbor.Encode(calidusKey.Public().PublicKey())
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode Calidus verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "CalidusVerificationKeyShelley_ed25519",
+		Description: "Calidus Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
+// GetCalidusSKey creates a Calidus signing key file
+func GetCalidusSKey(calidusKey bip32.XPrv) (KeyFile, error) {
+	return getSigningKeyFile(
+		calidusKey,
+		"CalidusSigningKeyShelley_ed25519",
+		"Calidus Signing Key",
+	)
+}
+
+// GetCalidusExtendedSKey creates a Calidus extended signing key file
+func GetCalidusExtendedSKey(
+	calidusKey bip32.XPrv,
+) (KeyFile, error) {
+	extKeyBytes := make([]byte, 128)
+	copy(extKeyBytes[0:64], calidusKey.PrivateKey())
+	copy(extKeyBytes[64:96], calidusKey.Public().PublicKey())
+	copy(extKeyBytes[96:128], calidusKey.ChainCode())
+
+	keyCbor, err := cbor.Encode(extKeyBytes)
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode Calidus extended signing key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type: "CalidusExtendedSigningKeyShelley" +
+			"_ed25519_bip32",
+		Description: "Calidus Extended Signing Key (BIP32)",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
 func GetStakeKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
 	if num >= 0x80000000 {
 		return nil, ErrInvalidDerivationIndex
@@ -1342,6 +1418,115 @@ func CreateOperationalCertificate(
 		KesPeriod:     opCert.KesPeriod,
 		ColdSignature: opCert.ColdSignature,
 	}, nil
+}
+
+// PoolRegistrationCertificate represents a stake pool registration
+// certificate (cert type 3).
+type PoolRegistrationCertificate struct {
+	Operator      lcommon.PoolKeyHash // Pool operator key hash
+	VrfKeyHash    lcommon.VrfKeyHash  // VRF key hash
+	Pledge        uint64              // Pledge amount in lovelace
+	Cost          uint64              // Fixed cost per epoch in lovelace
+	MarginNum     int64               // Margin numerator
+	MarginDenom   int64               // Margin denominator
+	RewardAccount []byte              // Reward account raw bytes
+	PoolOwners    []lcommon.AddrKeyHash
+	Relays        []lcommon.PoolRelay
+	MetadataURL   string
+	MetadataHash  lcommon.PoolMetadataHash
+}
+
+// CreatePoolRegistrationCertificate creates a CBOR-encoded pool
+// registration certificate. The reward account should be provided
+// as raw address bytes (decoded from bech32).
+func CreatePoolRegistrationCertificate(
+	cert *PoolRegistrationCertificate,
+) ([]byte, error) {
+	// Build the CBOR structure per Shelley spec:
+	// [3, operator, vrf_keyhash, pledge, cost, margin,
+	//  reward_account, pool_owners, relays, pool_metadata]
+	if cert.MarginDenom == 0 {
+		return nil, errors.New("margin denominator must not be zero")
+	}
+	margin := lcommon.NewGenesisRat(
+		cert.MarginNum,
+		cert.MarginDenom,
+	)
+
+	// Pool owners as a set
+	owners := make(
+		[]cbor.ByteString,
+		len(cert.PoolOwners),
+	)
+	for i, owner := range cert.PoolOwners {
+		owners[i] = cbor.NewByteString(owner[:])
+	}
+
+	// Build relays array
+	relays := make([]any, len(cert.Relays))
+	for i, relay := range cert.Relays {
+		relays[i] = relay
+	}
+
+	// Build pool metadata (nullable)
+	var metadata any
+	if cert.MetadataURL != "" {
+		metadata = []any{
+			cert.MetadataURL,
+			cbor.NewByteString(cert.MetadataHash[:]),
+		}
+	}
+
+	certData := []any{
+		uint(3), // cert type: pool registration
+		cbor.NewByteString(cert.Operator[:]),
+		cbor.NewByteString(cert.VrfKeyHash[:]),
+		cert.Pledge,
+		cert.Cost,
+		margin,
+		cbor.NewByteString(cert.RewardAccount),
+		owners,
+		relays,
+		metadata,
+	}
+
+	cborBytes, err := cbor.Encode(certData)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to encode pool registration certificate: %w",
+			err,
+		)
+	}
+	return cborBytes, nil
+}
+
+// PoolRetirementCertificateParams holds parameters for creating
+// a pool retirement certificate.
+type PoolRetirementCertificateParams struct {
+	PoolKeyHash lcommon.PoolKeyHash // Pool operator key hash
+	Epoch       uint64              // Retirement epoch
+}
+
+// CreatePoolRetirementCertificate creates a CBOR-encoded pool
+// retirement certificate (cert type 4).
+func CreatePoolRetirementCertificate(
+	params *PoolRetirementCertificateParams,
+) ([]byte, error) {
+	// CBOR structure: [4, pool_keyhash, epoch]
+	certData := []any{
+		uint(4), // cert type: pool retirement
+		cbor.NewByteString(params.PoolKeyHash[:]),
+		params.Epoch,
+	}
+
+	cborBytes, err := cbor.Encode(certData)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to encode pool retirement certificate: %w",
+			err,
+		)
+	}
+	return cborBytes, nil
 }
 
 // GetMultiSigAccountKey derives a multi-signature account key using CIP-1854 path

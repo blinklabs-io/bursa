@@ -1,4 +1,4 @@
-// Copyright 2025 Blink Labs Software
+// Copyright 2026 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -595,6 +596,88 @@ func encodePoolColdKey(key []byte) (string, error) {
 	return encodeExtendedPrivateKey(key, "pool_xsk")
 }
 
+// RunKeyCalidus derives a Calidus key and outputs it in bech32
+func RunKeyCalidus(
+	mnemonic, mnemonicFile, password,
+	signingKeyFile, verificationKeyFile string,
+	accountIndex, index uint32,
+) error {
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(
+		resolvedMnemonic,
+		password,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	accountKey, err := bursa.GetAccountKey(rootKey, accountIndex)
+	if err != nil {
+		return fmt.Errorf("failed to derive account key: %w", err)
+	}
+
+	calidusKey, err := bursa.GetCalidusKey(accountKey, index)
+	if err != nil {
+		return fmt.Errorf("failed to derive Calidus key: %w", err)
+	}
+
+	// If key files are specified, write to files
+	if signingKeyFile != "" || verificationKeyFile != "" {
+		if signingKeyFile != "" {
+			calidusSKey, err := bursa.GetCalidusSKey(calidusKey)
+			if err != nil {
+				return fmt.Errorf(
+					"failed to create Calidus signing key file: %w",
+					err,
+				)
+			}
+			if err := writeKeyFile(
+				calidusSKey,
+				signingKeyFile,
+			); err != nil {
+				return err
+			}
+		}
+
+		if verificationKeyFile != "" {
+			calidusVKey, err := bursa.GetCalidusVKey(calidusKey)
+			if err != nil {
+				return fmt.Errorf(
+					"failed to create Calidus verification key file: %w",
+					err,
+				)
+			}
+			if err := writeKeyFile(
+				calidusVKey,
+				verificationKeyFile,
+			); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Output in bech32 format with calidus_xsk prefix
+		encoded, err := encodeCalidusKey(calidusKey)
+		if err != nil {
+			return fmt.Errorf(
+				"failed to encode Calidus key: %w",
+				err,
+			)
+		}
+		fmt.Println(encoded)
+	}
+
+	return nil
+}
+
+// encodeCalidusKey encodes a Calidus extended private key in bech32
+func encodeCalidusKey(key []byte) (string, error) {
+	return encodeExtendedPrivateKey(key, "calidus_xsk")
+}
+
 // encodeDRepKey encodes a DRep extended private key in bech32 format
 func encodeDRepKey(key []byte) (string, error) {
 	return encodeExtendedPrivateKey(key, "drep_xsk")
@@ -1043,6 +1126,325 @@ func RunCertOpCert(
 	}
 
 	return nil
+}
+
+// RunCertPoolRegistration creates a pool registration certificate
+func RunCertPoolRegistration(
+	coldVkeyFile, vrfVkeyFile, rewardAccount, outputFile string,
+	pledge, cost uint64,
+	marginFloat float64,
+	metadataURL, metadataHash string,
+) error {
+	// Validate margin is within [0, 1]
+	if marginFloat < 0 || marginFloat > 1 {
+		return errors.New(
+			"pool margin must be between 0.0 and 1.0",
+		)
+	}
+
+	// Validate metadata URL and hash are provided together
+	if (metadataURL != "") != (metadataHash != "") {
+		return errors.New(
+			"--metadata-url and --metadata-hash " +
+				"must be provided together",
+		)
+	}
+
+	// Read and parse cold verification key
+	coldVkeyData, err := os.ReadFile(coldVkeyFile)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to read cold vkey file: %w",
+			err,
+		)
+	}
+	coldVkey, err := parseVerificationKey(coldVkeyData)
+	if err != nil {
+		return fmt.Errorf("failed to parse cold vkey: %w", err)
+	}
+
+	// Read and parse VRF verification key
+	vrfVkeyData, err := os.ReadFile(vrfVkeyFile)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to read VRF vkey file: %w",
+			err,
+		)
+	}
+	vrfVkey, err := parseVRFVerificationKey(vrfVkeyData)
+	if err != nil {
+		return fmt.Errorf("failed to parse VRF vkey: %w", err)
+	}
+
+	// Compute pool key hash (Blake2b-224 of cold vkey)
+	poolKeyHash := lcommon.Blake2b224Hash(coldVkey)
+
+	// Compute VRF key hash (Blake2b-256 of VRF vkey)
+	vrfKeyHash := lcommon.Blake2b256Hash(vrfVkey)
+
+	// Parse reward account bech32 address
+	rewardAddr, err := lcommon.NewAddress(rewardAccount)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to parse reward account address: %w",
+			err,
+		)
+	}
+	rewardAddrBytes, err := rewardAddr.Bytes()
+	if err != nil {
+		return fmt.Errorf(
+			"failed to encode reward account address: %w",
+			err,
+		)
+	}
+
+	// Convert margin float to rational number
+	marginNum, marginDenom := floatToRational(marginFloat)
+
+	// Build pool registration certificate
+	cert := &bursa.PoolRegistrationCertificate{
+		Operator:      poolKeyHash,
+		VrfKeyHash:    vrfKeyHash,
+		Pledge:        pledge,
+		Cost:          cost,
+		MarginNum:     marginNum,
+		MarginDenom:   marginDenom,
+		RewardAccount: rewardAddrBytes,
+		PoolOwners:    []lcommon.AddrKeyHash{poolKeyHash},
+		Relays:        []lcommon.PoolRelay{},
+	}
+
+	// Set metadata if provided
+	if metadataURL != "" {
+		cert.MetadataURL = metadataURL
+		hashBytes, err := hex.DecodeString(metadataHash)
+		if err != nil {
+			return fmt.Errorf(
+				"failed to decode metadata hash: %w",
+				err,
+			)
+		}
+		if len(hashBytes) != 32 {
+			return fmt.Errorf(
+				"metadata hash must be exactly 32 bytes, "+
+					"got %d",
+				len(hashBytes),
+			)
+		}
+		cert.MetadataHash = lcommon.NewBlake2b256(hashBytes)
+	}
+
+	cborBytes, err := bursa.CreatePoolRegistrationCertificate(cert)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to create pool registration certificate: %w",
+			err,
+		)
+	}
+
+	cborHex := hex.EncodeToString(cborBytes)
+
+	if outputFile != "" {
+		certJSON := fmt.Sprintf(
+			"{\n"+
+				"    \"type\": \"CertificateShelley\",\n"+
+				"    \"description\": "+
+				"\"Stake Pool Registration Certificate\",\n"+
+				"    \"cborHex\": \"%s\"\n"+
+				"}",
+			cborHex,
+		)
+		if err := os.WriteFile(
+			outputFile,
+			[]byte(certJSON),
+			0o600,
+		); err != nil {
+			return fmt.Errorf(
+				"failed to write certificate file: %w",
+				err,
+			)
+		}
+		fmt.Printf(
+			"Pool registration certificate written to %s\n",
+			outputFile,
+		)
+	} else {
+		fmt.Printf("Pool ID:     %s\n", poolKeyHash.String())
+		fmt.Printf("VRF hash:    %s\n", vrfKeyHash.String())
+		fmt.Printf("Pledge:      %d\n", pledge)
+		fmt.Printf("Cost:        %d\n", cost)
+		fmt.Printf("Margin:      %d/%d\n", marginNum, marginDenom)
+		fmt.Printf("CBOR hex:    %s\n", cborHex)
+	}
+
+	return nil
+}
+
+// RunCertPoolRetirement creates a pool retirement certificate
+func RunCertPoolRetirement(
+	coldVkeyFile, outputFile string,
+	epoch uint64,
+) error {
+	// Read and parse cold verification key
+	coldVkeyData, err := os.ReadFile(coldVkeyFile)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to read cold vkey file: %w",
+			err,
+		)
+	}
+	coldVkey, err := parseVerificationKey(coldVkeyData)
+	if err != nil {
+		return fmt.Errorf("failed to parse cold vkey: %w", err)
+	}
+
+	// Compute pool key hash (Blake2b-224 of cold vkey)
+	poolKeyHash := lcommon.Blake2b224Hash(coldVkey)
+
+	params := &bursa.PoolRetirementCertificateParams{
+		PoolKeyHash: poolKeyHash,
+		Epoch:       epoch,
+	}
+
+	cborBytes, err := bursa.CreatePoolRetirementCertificate(params)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to create pool retirement certificate: %w",
+			err,
+		)
+	}
+
+	cborHex := hex.EncodeToString(cborBytes)
+
+	if outputFile != "" {
+		certJSON := fmt.Sprintf(
+			"{\n"+
+				"    \"type\": \"CertificateShelley\",\n"+
+				"    \"description\": "+
+				"\"Stake Pool Retirement Certificate\",\n"+
+				"    \"cborHex\": \"%s\"\n"+
+				"}",
+			cborHex,
+		)
+		if err := os.WriteFile(
+			outputFile,
+			[]byte(certJSON),
+			0o600,
+		); err != nil {
+			return fmt.Errorf(
+				"failed to write certificate file: %w",
+				err,
+			)
+		}
+		fmt.Printf(
+			"Pool retirement certificate written to %s\n",
+			outputFile,
+		)
+	} else {
+		fmt.Printf("Pool ID:  %s\n", poolKeyHash.String())
+		fmt.Printf("Epoch:    %d\n", epoch)
+		fmt.Printf("CBOR hex: %s\n", cborHex)
+	}
+
+	return nil
+}
+
+// parseVRFVerificationKey parses a VRF verification key from formats
+func parseVRFVerificationKey(data []byte) ([]byte, error) {
+	str := strings.TrimSpace(string(data))
+
+	// Try JSON envelope first
+	var env keyEnvelope
+	if err := json.Unmarshal(data, &env); err == nil &&
+		env.CborHex != "" {
+		cborData, err := hex.DecodeString(env.CborHex)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to decode cborHex from envelope: %w",
+				err,
+			)
+		}
+		var keyBytes []byte
+		if _, err := cbor.Decode(cborData, &keyBytes); err == nil {
+			if len(keyBytes) == 32 {
+				return keyBytes, nil
+			}
+			return nil, fmt.Errorf(
+				"invalid VRF vkey length in envelope: "+
+					"got %d, expected 32",
+				len(keyBytes),
+			)
+		}
+		if len(cborData) == 32 {
+			return cborData, nil
+		}
+		return nil, errors.New(
+			"invalid CBOR structure in VRF key envelope",
+		)
+	}
+
+	// Try bech32
+	if strings.HasPrefix(str, "vrf_vk") {
+		_, decoded, err := bech32.Decode(str)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to decode bech32: %w",
+				err,
+			)
+		}
+		key, err := bech32.ConvertBits(decoded, 5, 8, false)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to convert bits: %w",
+				err,
+			)
+		}
+		if len(key) != 32 {
+			return nil, fmt.Errorf(
+				"invalid bech32 VRF key length: "+
+					"got %d bytes, expected 32",
+				len(key),
+			)
+		}
+		return key, nil
+	}
+
+	// Try hex
+	key, err := hex.DecodeString(str)
+	if err == nil && len(key) == 32 {
+		return key, nil
+	}
+
+	return nil, errors.New(
+		"invalid VRF verification key format " +
+			"(expected JSON envelope, bech32, or 32-byte hex)",
+	)
+}
+
+// floatToRational converts a floating-point margin to a rational
+// number (numerator/denominator) with reasonable precision.
+func floatToRational(f float64) (int64, int64) {
+	// Use 10000 as denominator for pool margins
+	// This gives 0.01% precision which is sufficient
+	const denom = 10000
+	num := int64(math.Round(f * denom))
+	// Simplify if possible
+	g := gcd(abs64(num), denom)
+	return num / g, denom / g
+}
+
+func gcd(a, b int64) int64 {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+func abs64(x int64) int64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // keyEnvelope represents a JSON key file envelope
