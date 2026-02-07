@@ -28,9 +28,9 @@ import (
 	"testing"
 
 	"github.com/blinklabs-io/bursa/bip32"
+	bip39 "github.com/blinklabs-io/go-bip39"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	bip39 "github.com/blinklabs-io/go-bip39"
 )
 
 // testKeyHash returns a 28-byte test key hash for use in tests

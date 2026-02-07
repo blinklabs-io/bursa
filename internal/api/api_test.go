@@ -1,4 +1,4 @@
-// Copyright 2024 Blink Labs Software
+// Copyright 2026 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/config"
+	"github.com/go-playground/validator/v10"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 )
@@ -306,20 +307,38 @@ func TestWalletCreateIncrementsCounter(t *testing.T) {
 		"expected /api/wallet/create to return 200 on success")
 	createWalletResp.Body.Close()
 
-	// Fetch the metrics again
-	resp2, err := http.Get(fmt.Sprintf("%s/metrics", metricsBaseURL))
-	assert.NotEqual(t, resp2, nil)
-	assert.NoError(t, err, "failed to call second metrics endpoint")
-	assert.Equal(t, http.StatusOK, resp2.StatusCode)
-
-	secondBody, err := io.ReadAll(resp2.Body)
-	resp2.Body.Close()
-	assert.NoError(t, err, "failed to read second metrics response")
-
-	newCount := parseMetric(secondBody, "bursa_wallets_created_count")
-
-	// Verify that the counter incremented by 1
+	// Poll metrics until the counter increments or timeout.
+	// The handler increments the Prometheus counter after writing
+	// the response, so there is a brief window where the client
+	// has received the 200 but the counter has not yet been
+	// incremented on the server side.
 	expected := initialCount + 1
+	var newCount float64
+	for range 20 {
+		resp2, err := http.Get(
+			fmt.Sprintf("%s/metrics", metricsBaseURL),
+		)
+		assert.NotEqual(t, resp2, nil)
+		assert.NoError(
+			t, err, "failed to call second metrics endpoint",
+		)
+		assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+		secondBody, err := io.ReadAll(resp2.Body)
+		resp2.Body.Close()
+		assert.NoError(
+			t, err, "failed to read second metrics response",
+		)
+
+		newCount = parseMetric(
+			secondBody, "bursa_wallets_created_count",
+		)
+		if newCount >= expected {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	assert.Equal(
 		t,
 		expected,
@@ -1167,4 +1186,1118 @@ func TestHandleAddressBuildInvalidKey(t *testing.T) {
 	resp := w.Result()
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+// --- Additional tests for increased coverage ---
+
+func TestHandleWalletRestore_ValidMnemonic(t *testing.T) {
+	mnemonic := "depth kitchen crystal history rabbit brief " +
+		"harbor palace tent frog city charge inflict tiger " +
+		"negative young furnace solid august educate bounce " +
+		"canal someone erode"
+	reqBody, _ := json.Marshal(WalletRestoreRequest{
+		Mnemonic: mnemonic,
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/wallet/restore",
+		bytes.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleWalletRestore(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var wallet map[string]any
+	err = json.Unmarshal(body, &wallet)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, wallet["payment_address"])
+	assert.NotEmpty(t, wallet["stake_address"])
+	assert.Equal(t, mnemonic, wallet["mnemonic"])
+}
+
+func TestHandleWalletRestore_InvalidMnemonic(t *testing.T) {
+	reqBody, _ := json.Marshal(WalletRestoreRequest{
+		Mnemonic: "invalid mnemonic words that are not valid",
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/wallet/restore",
+		bytes.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleWalletRestore(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Contains(t, string(body), "error")
+}
+
+func TestHandleWalletRestore_MissingMnemonic(t *testing.T) {
+	reqBody, _ := json.Marshal(WalletRestoreRequest{})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/wallet/restore",
+		bytes.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleWalletRestore(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Contains(t, string(body), "Validation failed")
+}
+
+func TestHandleWalletRestore_InvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/wallet/restore",
+		strings.NewReader("not valid json"),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleWalletRestore(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Contains(t, string(body), "Invalid JSON request")
+}
+
+func TestHandleWalletRestore_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/wallet/restore",
+		nil,
+	)
+	w := httptest.NewRecorder()
+
+	handleWalletRestore(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+func TestHandleWalletRestore_WithPassword(t *testing.T) {
+	mnemonic := "depth kitchen crystal history rabbit brief " +
+		"harbor palace tent frog city charge inflict tiger " +
+		"negative young furnace solid august educate bounce " +
+		"canal someone erode"
+	reqBody, _ := json.Marshal(WalletRestoreRequest{
+		Mnemonic: mnemonic,
+		Password: "testpassword",
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/wallet/restore",
+		bytes.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleWalletRestore(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestHandleWalletRestore_WithDerivationIndices(t *testing.T) {
+	mnemonic := "depth kitchen crystal history rabbit brief " +
+		"harbor palace tent frog city charge inflict tiger " +
+		"negative young furnace solid august educate bounce " +
+		"canal someone erode"
+	reqBody, _ := json.Marshal(WalletRestoreRequest{
+		Mnemonic:  mnemonic,
+		AccountId: 1,
+		PaymentId: 2,
+		StakeId:   3,
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/wallet/restore",
+		bytes.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleWalletRestore(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestHandleWalletCreate_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/wallet/create",
+		nil,
+	)
+	w := httptest.NewRecorder()
+
+	handleWalletCreate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+func TestHandleWalletCreate_Success(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/wallet/create",
+		nil,
+	)
+	w := httptest.NewRecorder()
+
+	handleWalletCreate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var wallet map[string]any
+	err = json.Unmarshal(body, &wallet)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, wallet["mnemonic"])
+	assert.NotEmpty(t, wallet["payment_address"])
+	assert.NotEmpty(t, wallet["stake_address"])
+}
+
+func TestHandleScriptCreate_InvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/create",
+		strings.NewReader("not valid json"),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptCreate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Contains(t, string(body), "Invalid JSON request")
+}
+
+func TestHandleScriptCreate_ValidationError(t *testing.T) {
+	// Missing required fields
+	reqBody := `{"type": "invalid_type"}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/create",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptCreate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Contains(t, string(body), "Validation failed")
+}
+
+func TestHandleScriptCreate_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/script/create",
+		nil,
+	)
+	w := httptest.NewRecorder()
+
+	handleScriptCreate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+func TestHandleScriptCreate_NOfInvalidRequired(t *testing.T) {
+	// required = 0 for nOf is invalid (exceeds key count)
+	reqBody := `{
+		"type": "nOf",
+		"required": 5,
+		"key_hashes": [
+			"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"
+		],
+		"network": "mainnet"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/create",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptCreate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Contains(
+		t,
+		string(body),
+		"Invalid required signatures count",
+	)
+}
+
+func TestHandleScriptCreate_WithTimelockBefore(t *testing.T) {
+	reqBody := `{
+		"type": "all",
+		"key_hashes": [
+			"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"
+		],
+		"network": "mainnet",
+		"timelock_before": 1000000
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/create",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptCreate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response ScriptResponse
+	err = json.Unmarshal(body, &response)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, response.Address)
+}
+
+func TestHandleScriptCreate_WithTimelockAfter(t *testing.T) {
+	reqBody := `{
+		"type": "any",
+		"key_hashes": [
+			"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"
+		],
+		"network": "mainnet",
+		"timelock_after": 500000
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/create",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptCreate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response ScriptResponse
+	err = json.Unmarshal(body, &response)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, response.Address)
+}
+
+func TestHandleScriptCreate_BothTimelocks(t *testing.T) {
+	reqBody := `{
+		"type": "all",
+		"key_hashes": [
+			"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"
+		],
+		"network": "mainnet",
+		"timelock_before": 1000000,
+		"timelock_after": 500000
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/create",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptCreate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Contains(t, string(body), "cannot specify both")
+}
+
+func TestHandleScriptCreate_TestnetNetworkError(t *testing.T) {
+	// "testnet" passes validation but fails in
+	// bursa.MarshalScript because gouroboros does not
+	// recognize "testnet" as a network name. This covers
+	// the MarshalScript error path.
+	reqBody := `{
+		"type": "nOf",
+		"required": 1,
+		"key_hashes": [
+			"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"
+		],
+		"network": "testnet"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/create",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptCreate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	// MarshalScript fails because testnet is not valid
+	assert.Equal(
+		t, http.StatusInternalServerError, resp.StatusCode,
+	)
+}
+
+func TestHandleScriptValidate_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/script/validate",
+		nil,
+	)
+	w := httptest.NewRecorder()
+
+	handleScriptValidate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+func TestHandleScriptValidate_InvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/validate",
+		strings.NewReader("not valid json"),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptValidate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleScriptValidate_AllScript(t *testing.T) {
+	reqBody := `{
+		"script": {
+			"type": "all",
+			"scripts": [
+				{"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"},
+				{"type": "sig", "keyHash": "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d"}
+			]
+		},
+		"require_signatures": false
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/validate",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptValidate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result ScriptValidateResponse
+	err = json.Unmarshal(body, &result)
+	assert.NoError(t, err)
+	assert.True(t, result.Valid)
+	assert.NotEmpty(t, result.ScriptHash)
+}
+
+func TestHandleScriptValidate_AnyScript(t *testing.T) {
+	reqBody := `{
+		"script": {
+			"type": "any",
+			"scripts": [
+				{"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"}
+			]
+		},
+		"require_signatures": false
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/validate",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptValidate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result ScriptValidateResponse
+	err = json.Unmarshal(body, &result)
+	assert.NoError(t, err)
+	assert.True(t, result.Valid)
+}
+
+func TestHandleScriptAddress_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/script/address",
+		nil,
+	)
+	w := httptest.NewRecorder()
+
+	handleScriptAddress(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+func TestHandleScriptAddress_InvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/address",
+		strings.NewReader("not json"),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptAddress(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleScriptAddress_MissingNetwork(t *testing.T) {
+	reqBody := `{
+		"script": {
+			"type": "all",
+			"scripts": [
+				{"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"}
+			]
+		}
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/address",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptAddress(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Contains(t, string(body), "Validation failed")
+}
+
+func TestHandleScriptAddress_InvalidScript(t *testing.T) {
+	reqBody := `{
+		"script": {
+			"type": "invalid"
+		},
+		"network": "mainnet"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/address",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptAddress(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Contains(t, string(body), "Invalid script format")
+}
+
+func TestHandleScriptAddress_TestnetError(t *testing.T) {
+	// "testnet" is not recognized by gouroboros
+	// GetScriptAddress. This exercises the error path.
+	reqBody := `{
+		"script": {
+			"type": "all",
+			"scripts": [
+				{"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"}
+			]
+		},
+		"network": "testnet"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/address",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptAddress(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Contains(t, string(body), "Invalid network")
+}
+
+func TestHandleAddressParse_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/address/parse",
+		nil,
+	)
+	w := httptest.NewRecorder()
+
+	handleAddressParse(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+func TestHandleAddressParse_InvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/parse",
+		strings.NewReader("not json"),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleAddressParse(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleAddressParse_EmptyAddress(t *testing.T) {
+	reqBody := `{"address": ""}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/parse",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleAddressParse(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleAddressParse_StakeAddress(t *testing.T) {
+	reqBody := `{
+		"address": "stake1uye9hgcm95cedwa5rgyfez7g576f3lulzek9y92ese4mhucu439t0"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/parse",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleAddressParse(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response AddressParseResponse
+	err = json.Unmarshal(body, &response)
+	assert.NoError(t, err)
+	assert.Equal(t, "reward", response.Type)
+	assert.Equal(t, "mainnet", response.Network)
+	assert.Nil(t, response.Payment)
+	assert.NotNil(t, response.Stake)
+}
+
+func TestHandleAddressBuild_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/address/build",
+		nil,
+	)
+	w := httptest.NewRecorder()
+
+	handleAddressBuild(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+func TestHandleAddressBuild_InvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/build",
+		strings.NewReader("not json"),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleAddressBuild(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleAddressBuild_MissingNetwork(t *testing.T) {
+	reqBody := `{
+		"paymentKey": "addr_vk18nqps65rh0azud77qruff3dctszahutmrhkxg87mlfny0addcles83lnyc"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/build",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleAddressBuild(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleAddressBuild_RewardType(t *testing.T) {
+	reqBody := `{
+		"stakeKey": "stake_vk1swf4qsf28mzdn2kexqumas5fj43psj674xathpv45mcj04y2lv5scvw4uv",
+		"network": "mainnet",
+		"type": "reward"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/build",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleAddressBuild(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response AddressBuildResponse
+	err = json.Unmarshal(body, &response)
+	assert.NoError(t, err)
+	assert.Equal(t, "reward", response.Type)
+	assert.NotEmpty(t, response.Address)
+	assert.Equal(t, "mainnet", response.Network)
+}
+
+func TestHandleAddressBuild_BaseMissingStakeKey(t *testing.T) {
+	reqBody := `{
+		"paymentKey": "addr_vk18nqps65rh0azud77qruff3dctszahutmrhkxg87mlfny0addcles83lnyc",
+		"network": "mainnet",
+		"type": "base"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/build",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleAddressBuild(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Contains(t, string(body), "require both")
+}
+
+func TestHandleAddressBuild_EnterpriseMissingPaymentKey(
+	t *testing.T,
+) {
+	reqBody := `{
+		"network": "mainnet",
+		"type": "enterprise"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/build",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleAddressBuild(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleAddressBuild_RewardMissingStakeKey(t *testing.T) {
+	reqBody := `{
+		"network": "mainnet",
+		"type": "reward"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/build",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleAddressBuild(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleAddressBuild_TestnetReturnsError(t *testing.T) {
+	// Note: buildAddressFromKeys uses ouroboros.NetworkByName
+	// which does not recognize "testnet" (only mainnet,
+	// preprod, preview, sanchonet). Validation accepts
+	// "testnet" but the build step fails. This tests the
+	// error path.
+	reqBody := `{
+		"paymentKey": "addr_vk18nqps65rh0azud77qruff3dctszahutmrhkxg87mlfny0addcles83lnyc",
+		"stakeKey": "stake_vk1swf4qsf28mzdn2kexqumas5fj43psj674xathpv45mcj04y2lv5scvw4uv",
+		"network": "testnet"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/build",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleAddressBuild(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	// testnet is not recognized by gouroboros NetworkByName
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleAddressBuild_DefaultType(t *testing.T) {
+	// When type is not specified, default to base
+	reqBody := `{
+		"paymentKey": "addr_vk18nqps65rh0azud77qruff3dctszahutmrhkxg87mlfny0addcles83lnyc",
+		"stakeKey": "stake_vk1swf4qsf28mzdn2kexqumas5fj43psj674xathpv45mcj04y2lv5scvw4uv",
+		"network": "mainnet"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/build",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleAddressBuild(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response AddressBuildResponse
+	err = json.Unmarshal(body, &response)
+	assert.NoError(t, err)
+	assert.Equal(t, "base", response.Type)
+}
+
+func TestToSnakeCase(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"KeyHashes", "key_hashes"},
+		{"TimelockBefore", "timelock_before"},
+		{"RequireSignatures", "require_signatures"},
+		{"simple", "simple"},
+		{"XMLParser", "xml_parser"},
+		{"ID", "id"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := toSnakeCase(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestToJSONFieldName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"KeyHashes", "key_hashes"},
+		{"TimelockBefore", "timelock_before"},
+		{"RequireSignatures", "require_signatures"},
+		{"AccountId", "account_id"},
+		{"PaymentId", "payment_id"},
+		{"StakeId", "stake_id"},
+		{"DrepId", "drep_id"},
+		{"CommitteeColdId", "committee_cold_id"},
+		{"CommitteeHotId", "committee_hot_id"},
+		{"PoolColdId", "pool_cold_id"},
+		{"AddressId", "address_id"},
+		{"Unknown", "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := toJSONFieldName(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestFormatValidationErrors(t *testing.T) {
+	// Test by actually validating a struct with known errors
+	type testStruct struct {
+		Name     string `validate:"required"`
+		Required int    `validate:"min=1"`
+	}
+
+	err := validate.Struct(testStruct{})
+	assert.Error(t, err)
+
+	result := formatValidationErrors(
+		err.(validator.ValidationErrors),
+	)
+	assert.Contains(t, result, "required")
+}
+
+func TestGetAddressTypeInfo(t *testing.T) {
+	tests := []struct {
+		name         string
+		addrType     uint8
+		expectedName string
+		expectedDesc string
+	}{
+		{"KeyKey", 0x00, "base", "payment key + stake key"},
+		{"ScriptKey", 0x01, "base", "payment script + stake key"},
+		{"KeyScript", 0x02, "base", "payment key + stake script"},
+		{
+			"ScriptScript", 0x03, "base",
+			"payment script + stake script",
+		},
+		{
+			"KeyPointer", 0x04, "pointer",
+			"payment key + stake pointer",
+		},
+		{
+			"ScriptPointer", 0x05, "pointer",
+			"payment script + stake pointer",
+		},
+		{"KeyNone", 0x06, "enterprise", "payment key only"},
+		{
+			"ScriptNone", 0x07, "enterprise",
+			"payment script only",
+		},
+		{"Byron", 0x08, "byron", "legacy bootstrap"},
+		{"NoneKey", 0x0e, "reward", "stake key"},
+		{"NoneScript", 0x0f, "reward", "stake script"},
+		{"Unknown", 0xff, "unknown", "type 255"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			name, desc := getAddressTypeInfo(tt.addrType)
+			assert.Equal(t, tt.expectedName, name)
+			assert.Equal(t, tt.expectedDesc, desc)
+		})
+	}
+}
+
+func TestHealthcheck_DirectHandler(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/healthcheck", nil)
+	w := httptest.NewRecorder()
+
+	handleHealthcheck(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, `{"healthy": true}`, string(body))
+	assert.Equal(
+		t,
+		"application/json",
+		resp.Header.Get("Content-Type"),
+	)
+}
+
+func TestHandleScriptCreate_InvalidKeyHashLength(t *testing.T) {
+	// key_hash with wrong length should fail validation
+	reqBody := `{
+		"type": "all",
+		"key_hashes": ["0102030405"],
+		"network": "mainnet"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/create",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptCreate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleScriptValidate_WithSlot(t *testing.T) {
+	reqBody := `{
+		"script": {
+			"type": "all",
+			"scripts": [
+				{"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"}
+			]
+		},
+		"slot": 12345,
+		"require_signatures": false
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/validate",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptValidate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result ScriptValidateResponse
+	err = json.Unmarshal(body, &result)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(12345), result.Slot)
 }
