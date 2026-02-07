@@ -28,6 +28,13 @@ type Config struct {
 	Api      ApiConfig     `yaml:"api"`
 	Metrics  MetricsConfig `yaml:"metrics"`
 	Debug    DebugConfig   `yaml:"debug"`
+	Storage  StorageConfig `yaml:"storage"`
+}
+
+type StorageConfig struct {
+	Backend string `yaml:"backend" envconfig:"STORAGE_BACKEND"`
+	Dir     string `yaml:"dir"     envconfig:"STORAGE_DIR"`
+	DSN     string `yaml:"dsn"     envconfig:"STORAGE_DSN"`
 }
 
 type ApiConfig struct {
@@ -77,6 +84,9 @@ var globalConfig = Config{
 	},
 	Mnemonic: "",
 	Network:  "mainnet",
+	Storage: StorageConfig{
+		Backend: "",
+	},
 }
 
 func GetConfig() *Config {
