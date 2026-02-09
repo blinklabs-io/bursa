@@ -306,20 +306,38 @@ func TestWalletCreateIncrementsCounter(t *testing.T) {
 		"expected /api/wallet/create to return 200 on success")
 	createWalletResp.Body.Close()
 
-	// Fetch the metrics again
-	resp2, err := http.Get(fmt.Sprintf("%s/metrics", metricsBaseURL))
-	assert.NotEqual(t, resp2, nil)
-	assert.NoError(t, err, "failed to call second metrics endpoint")
-	assert.Equal(t, http.StatusOK, resp2.StatusCode)
-
-	secondBody, err := io.ReadAll(resp2.Body)
-	resp2.Body.Close()
-	assert.NoError(t, err, "failed to read second metrics response")
-
-	newCount := parseMetric(secondBody, "bursa_wallets_created_count")
-
-	// Verify that the counter incremented by 1
+	// Poll metrics until the counter increments or timeout.
+	// The handler increments the Prometheus counter after writing
+	// the response, so there is a brief window where the client
+	// has received the 200 but the counter has not yet been
+	// incremented on the server side.
 	expected := initialCount + 1
+	var newCount float64
+	for range 20 {
+		resp2, err := http.Get(
+			fmt.Sprintf("%s/metrics", metricsBaseURL),
+		)
+		assert.NotEqual(t, resp2, nil)
+		assert.NoError(
+			t, err, "failed to call second metrics endpoint",
+		)
+		assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+		secondBody, err := io.ReadAll(resp2.Body)
+		resp2.Body.Close()
+		assert.NoError(
+			t, err, "failed to read second metrics response",
+		)
+
+		newCount = parseMetric(
+			secondBody, "bursa_wallets_created_count",
+		)
+		if newCount >= expected {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	assert.Equal(
 		t,
 		expected,
