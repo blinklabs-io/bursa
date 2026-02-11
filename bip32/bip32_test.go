@@ -470,6 +470,65 @@ func TestEd25519EncodeDecodeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSign(t *testing.T) {
+	entropy := make([]byte, 32)
+	xprv := FromBip39Entropy(entropy, []byte{})
+	pub := ed25519.PublicKey(xprv.PublicKey())
+
+	// Sign a message and verify with standard ed25519.Verify
+	msg := []byte("hello cardano")
+	sig := xprv.Sign(msg)
+
+	if len(sig) != 64 {
+		t.Fatalf("Expected signature length 64, got %d", len(sig))
+	}
+
+	if !ed25519.Verify(pub, msg, sig) {
+		t.Fatal("Signature verification failed")
+	}
+
+	// Signing different message should produce different signature
+	sig2 := xprv.Sign([]byte("different message"))
+	if bytes.Equal(sig, sig2) {
+		t.Error("Different messages should produce different signatures")
+	}
+
+	// Different key should produce different signature for same message
+	entropy2 := make([]byte, 32)
+	entropy2[0] = 0x01
+	xprv2 := FromBip39Entropy(entropy2, []byte{})
+	sig3 := xprv2.Sign(msg)
+	if bytes.Equal(sig, sig3) {
+		t.Error("Different keys should produce different signatures")
+	}
+
+	// Verify deterministic: signing same message twice gives same signature
+	sig4 := xprv.Sign(msg)
+	if !bytes.Equal(sig, sig4) {
+		t.Error("Signing should be deterministic")
+	}
+
+	// Verify with wrong key should fail
+	pub2 := ed25519.PublicKey(xprv2.PublicKey())
+	if ed25519.Verify(pub2, msg, sig) {
+		t.Error("Verification with wrong key should fail")
+	}
+
+	// Verify with derived key
+	child := xprv.Derive(HardenedIndex(1852)).Derive(HardenedIndex(1815)).Derive(HardenedIndex(0))
+	childPub := ed25519.PublicKey(child.PublicKey())
+	childSig := child.Sign(msg)
+	if !ed25519.Verify(childPub, msg, childSig) {
+		t.Fatal("Derived key signature verification failed")
+	}
+
+	// Empty message
+	emptySig := xprv.Sign([]byte{})
+	if !ed25519.Verify(pub, []byte{}, emptySig) {
+		t.Fatal("Empty message signature verification failed")
+	}
+}
+
 func TestLenientBech32Decode(t *testing.T) {
 	// Generate a valid Bech32 string using the existing code
 	entropy := make([]byte, 32)
