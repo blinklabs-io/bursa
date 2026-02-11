@@ -1,4 +1,4 @@
-// Copyright 2025 Blink Labs Software
+// Copyright 2026 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ Derivation paths by key type:
   CIP-1853: pool-cold (m/1853'/1815'/...)
   CIP-1855: policy (m/1855'/1815'/...)
   CIP-0105: drep, committee-cold, committee-hot (m/1852'/1815'/account'/role/...)
+  CIP-88/151: calidus (m/1852'/1815'/account'/0/index, SPO authentication)
 
 Examples:
   bursa key root --mnemonic "word1 word2 ..."
@@ -44,6 +45,7 @@ Examples:
   bursa key stake --mnemonic "word1 word2 ..."
   bursa key pool-cold --mnemonic "word1 word2 ..."
   bursa key policy --mnemonic "word1 word2 ..."
+  bursa key calidus --mnemonic "word1 word2 ..."
   bursa key drep --mnemonic "word1 word2 ..."
   bursa key committee-cold --mnemonic "word1 word2 ..."
   bursa key committee-hot --mnemonic "word1 word2 ..."`,
@@ -56,6 +58,7 @@ Examples:
 		keyStakeCommand(),
 		keyPolicyCommand(),
 		keyPoolColdCommand(),
+		keyCalidusCommand(),
 		keyVRFCommand(),
 		keyKESCommand(),
 		keyDRepCommand(),
@@ -468,6 +471,92 @@ Examples:
 	)
 	cmd.Flags().
 		Uint32Var(&index, "index", 0, "Pool cold key index (default: 0)")
+	cmd.Flags().StringVar(
+		&signingKeyFile,
+		"signing-key-file",
+		"",
+		"Path to write signing key in cardano-cli compatible JSON format",
+	)
+	cmd.Flags().StringVar(
+		&verificationKeyFile,
+		"verification-key-file",
+		"",
+		"Path to write verification key in cardano-cli compatible JSON format",
+	)
+
+	return &cmd
+}
+
+func keyCalidusCommand() *cobra.Command {
+	var mnemonic string
+	var mnemonicFile string
+	var password string
+	var accountIndex uint32
+	var index uint32
+	var signingKeyFile string
+	var verificationKeyFile string
+
+	cmd := cobra.Command{
+		Use:   "calidus",
+		Short: "Derive Calidus key from mnemonic (CIP-88/CIP-151)",
+		Long: `Derives a Calidus extended private key from a BIP-39 mnemonic.
+
+The Calidus key is the SPO on-chain authentication hot key defined by
+CIP-88/CIP-151. It uses the same derivation path as the payment key:
+m/1852'/1815'/account'/0/index
+
+The key is functionally identical to the payment key but uses different
+bech32 prefixes (calidus_xsk/calidus_xvk) and different cardano-cli
+text envelope types for SPO identity purposes.
+
+Output is in bech32 format (calidus_xsk prefix) unless key files are specified.
+
+Examples:
+  bursa key calidus --mnemonic "word1 word2 ... word24"
+  bursa key calidus --mnemonic "word1 word2 ..." --account-index 0 --index 0
+  bursa key calidus --signing-key-file calidus.skey --verification-key-file calidus.vkey`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunKeyCalidus(
+				mnemonic,
+				mnemonicFile,
+				password,
+				signingKeyFile,
+				verificationKeyFile,
+				accountIndex,
+				index,
+			); err != nil {
+				logging.GetLogger().Error(
+					"failed to derive Calidus key",
+					"error",
+					err,
+				)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().
+		StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
+	cmd.Flags().StringVar(
+		&mnemonicFile,
+		"mnemonic-file",
+		"",
+		"Path to file containing mnemonic (default: seed.txt)",
+	)
+	cmd.Flags().StringVar(
+		&password,
+		"password",
+		"",
+		"Optional password for key derivation",
+	)
+	cmd.Flags().Uint32Var(
+		&accountIndex,
+		"account-index",
+		0,
+		"Account index (default: 0)",
+	)
+	cmd.Flags().
+		Uint32Var(&index, "index", 0, "Calidus key index (default: 0)")
 	cmd.Flags().StringVar(
 		&signingKeyFile,
 		"signing-key-file",

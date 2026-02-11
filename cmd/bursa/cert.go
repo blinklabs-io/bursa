@@ -1,4 +1,4 @@
-// Copyright 2025 Blink Labs Software
+// Copyright 2026 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,15 +32,24 @@ These commands create certificates for stake pool operations,
 stake delegation, and Conway era governance.
 
 Certificate types:
-  op-cert    - Operational certificate for block production
+  op-cert            - Operational certificate for block production
+  pool-registration  - Pool registration certificate
+  pool-retirement    - Pool retirement certificate
 
 Examples:
   bursa cert op-cert --kes-vkey kes.vkey --cold-skey cold.skey \
-    --counter 0 --kes-period 200 --out node.cert`,
+    --counter 0 --kes-period 200 --out node.cert
+  bursa cert pool-registration --cold-vkey cold.vkey --vrf-vkey vrf.vkey \
+    --pledge 500000000 --cost 340000000 --margin 0.05 \
+    --reward-account stake1... --out pool-reg.cert
+  bursa cert pool-retirement --cold-vkey cold.vkey --epoch 300 \
+    --out pool-retire.cert`,
 	}
 
 	certCommand.AddCommand(
 		certOpCertCommand(),
+		certPoolRegistrationCommand(),
+		certPoolRetirementCommand(),
 	)
 	return &certCommand
 }
@@ -135,6 +144,206 @@ Examples:
 	_ = cmd.MarkFlagRequired("cold-skey")
 	_ = cmd.MarkFlagRequired("counter")
 	_ = cmd.MarkFlagRequired("kes-period")
+
+	return &cmd
+}
+
+func certPoolRegistrationCommand() *cobra.Command {
+	var coldVkeyFile string
+	var vrfVkeyFile string
+	var pledge uint64
+	var cost uint64
+	var margin float64
+	var rewardAccount string
+	var metadataURL string
+	var metadataHash string
+	var outputFile string
+
+	cmd := cobra.Command{
+		Use:   "pool-registration",
+		Short: "Generate a pool registration certificate",
+		Long: `Generates a stake pool registration certificate.
+
+The pool registration certificate registers a new stake pool or
+updates an existing registration on the Cardano blockchain.
+
+Required inputs:
+  --cold-vkey       Pool cold verification key file
+  --vrf-vkey        VRF verification key file
+  --pledge          Pledge amount in lovelace
+  --cost            Fixed cost per epoch in lovelace
+  --margin          Pool margin (0.0 to 1.0)
+  --reward-account  Reward account address (bech32 stake address)
+
+Optional inputs:
+  --metadata-url    Pool metadata URL
+  --metadata-hash   Pool metadata hash (hex)
+
+Output format is compatible with cardano-cli certificates.
+
+Examples:
+  bursa cert pool-registration \
+    --cold-vkey cold.vkey --vrf-vkey vrf.vkey \
+    --pledge 500000000 --cost 340000000 --margin 0.05 \
+    --reward-account stake1... --out pool-reg.cert
+
+  bursa cert pool-registration \
+    --cold-vkey cold.vkey --vrf-vkey vrf.vkey \
+    --pledge 1000000000 --cost 340000000 --margin 0.01 \
+    --reward-account stake1... \
+    --metadata-url "https://example.com/pool.json" \
+    --metadata-hash "abc123..." --out pool-reg.cert`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunCertPoolRegistration(
+				coldVkeyFile,
+				vrfVkeyFile,
+				rewardAccount,
+				outputFile,
+				pledge,
+				cost,
+				margin,
+				metadataURL,
+				metadataHash,
+			); err != nil {
+				logging.GetLogger().Error(
+					"failed to create pool registration certificate",
+					"error",
+					err,
+				)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(
+		&coldVkeyFile,
+		"cold-vkey",
+		"",
+		"Path to pool cold verification key file",
+	)
+	cmd.Flags().StringVar(
+		&vrfVkeyFile,
+		"vrf-vkey",
+		"",
+		"Path to VRF verification key file",
+	)
+	cmd.Flags().Uint64Var(
+		&pledge,
+		"pledge",
+		0,
+		"Pledge amount in lovelace",
+	)
+	cmd.Flags().Uint64Var(
+		&cost,
+		"cost",
+		0,
+		"Fixed cost per epoch in lovelace",
+	)
+	cmd.Flags().Float64Var(
+		&margin,
+		"margin",
+		0,
+		"Pool margin (0.0 to 1.0)",
+	)
+	cmd.Flags().StringVar(
+		&rewardAccount,
+		"reward-account",
+		"",
+		"Reward account address (bech32 stake address)",
+	)
+	cmd.Flags().StringVar(
+		&metadataURL,
+		"metadata-url",
+		"",
+		"Pool metadata URL (optional)",
+	)
+	cmd.Flags().StringVar(
+		&metadataHash,
+		"metadata-hash",
+		"",
+		"Pool metadata hash in hex (optional)",
+	)
+	cmd.Flags().StringVarP(
+		&outputFile,
+		"out",
+		"o",
+		"",
+		"Output file for certificate (stdout if not specified)",
+	)
+
+	_ = cmd.MarkFlagRequired("cold-vkey")
+	_ = cmd.MarkFlagRequired("vrf-vkey")
+	_ = cmd.MarkFlagRequired("pledge")
+	_ = cmd.MarkFlagRequired("cost")
+	_ = cmd.MarkFlagRequired("margin")
+	_ = cmd.MarkFlagRequired("reward-account")
+
+	return &cmd
+}
+
+func certPoolRetirementCommand() *cobra.Command {
+	var coldVkeyFile string
+	var epoch uint64
+	var outputFile string
+
+	cmd := cobra.Command{
+		Use:   "pool-retirement",
+		Short: "Generate a pool retirement certificate",
+		Long: `Generates a stake pool retirement certificate.
+
+The pool retirement certificate signals that a stake pool will
+retire at the specified epoch boundary.
+
+Required inputs:
+  --cold-vkey  Pool cold verification key file
+  --epoch      Retirement epoch
+
+Output format is compatible with cardano-cli certificates.
+
+Examples:
+  bursa cert pool-retirement --cold-vkey cold.vkey \
+    --epoch 300 --out pool-retire.cert
+
+  bursa cert pool-retirement --cold-vkey cold.vkey \
+    --epoch 350`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunCertPoolRetirement(
+				coldVkeyFile,
+				outputFile,
+				epoch,
+			); err != nil {
+				logging.GetLogger().Error(
+					"failed to create pool retirement certificate",
+					"error",
+					err,
+				)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(
+		&coldVkeyFile,
+		"cold-vkey",
+		"",
+		"Path to pool cold verification key file",
+	)
+	cmd.Flags().Uint64Var(
+		&epoch,
+		"epoch",
+		0,
+		"Retirement epoch",
+	)
+	cmd.Flags().StringVarP(
+		&outputFile,
+		"out",
+		"o",
+		"",
+		"Output file for certificate (stdout if not specified)",
+	)
+
+	_ = cmd.MarkFlagRequired("cold-vkey")
+	_ = cmd.MarkFlagRequired("epoch")
 
 	return &cmd
 }
