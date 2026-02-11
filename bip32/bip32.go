@@ -41,6 +41,62 @@ import (
 	"golang.org/x/crypto/blake2b"
 )
 
+// Sign produces a 64-byte Ed25519-BIP32 signature over the given message.
+// This follows the extended signing algorithm used by Cardano (CIP-1852),
+// where the nonce is derived from k_R (bytes 32-63) rather than by hashing a
+// 32-byte seed as in standard Ed25519.
+func (x XPrv) Sign(message []byte) []byte {
+	if len(x) != 96 {
+		panic("XPrv must be 96 bytes")
+	}
+	kL := x[:32]
+	kR := x[32:64]
+	publicKey := makePublicKey(kL)
+
+	// 1. Compute nonce: r = SHA-512(k_R || message) reduced mod L
+	nonceHash := sha512.New()
+	nonceHash.Write(kR)
+	nonceHash.Write(message)
+	nonceDigest := nonceHash.Sum(nil) // 64 bytes
+
+	r, err := edwards25519.NewScalar().SetUniformBytes(nonceDigest)
+	if err != nil {
+		panic(err)
+	}
+
+	// 2. R = r * B
+	R := edwards25519.NewIdentityPoint().ScalarBaseMult(r)
+
+	// 3. Compute challenge: SHA-512(R || public_key || message) reduced mod L
+	challengeHash := sha512.New()
+	challengeHash.Write(R.Bytes())
+	challengeHash.Write(publicKey)
+	challengeHash.Write(message)
+	challengeDigest := challengeHash.Sum(nil) // 64 bytes
+
+	h, err := edwards25519.NewScalar().SetUniformBytes(challengeDigest)
+	if err != nil {
+		panic(err)
+	}
+
+	// 4. Compute k_L as scalar (same approach as makePublicKey)
+	padded := make([]byte, 64)
+	copy(padded[:32], kL)
+	s, err := edwards25519.NewScalar().SetUniformBytes(padded)
+	if err != nil {
+		panic(err)
+	}
+
+	// 5. S = r + h * k_L mod L
+	S := edwards25519.NewScalar().MultiplyAdd(h, s, r)
+
+	// 6. Signature = R || S (64 bytes)
+	sig := make([]byte, 64)
+	copy(sig[:32], R.Bytes())
+	copy(sig[32:], S.Bytes())
+	return sig
+}
+
 // XPrv represents an extended private key (32 bytes k_L + 32 bytes k_R + 32 bytes chain code).
 type XPrv []byte
 
