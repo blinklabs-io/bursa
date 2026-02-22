@@ -349,7 +349,7 @@ func lenientBech32DecodeNoValidation(s string) (string, []byte, error) {
 		if pos < 0 {
 			return "", nil, errors.New("invalid bech32 character")
 		}
-		decoded[i] = byte(pos)
+		decoded[i] = byte(pos) //nolint:gosec // G115: pos is 0-31 from bech32 charset lookup
 	}
 
 	// Validate checksum
@@ -372,8 +372,8 @@ func validateBech32Checksum(hrp string, data []byte) bool {
 func expandHrp(hrp string) []byte {
 	expanded := make([]byte, len(hrp)*2+1)
 	for i, r := range hrp {
-		expanded[i] = byte(r >> 5)
-		expanded[i+len(hrp)+1] = byte(r & 31)
+		expanded[i] = byte(r >> 5)            //nolint:gosec // G115: intentional byte conversion for bech32
+		expanded[i+len(hrp)+1] = byte(r & 31) //nolint:gosec // G115: masked to 5 bits
 	}
 	return expanded
 }
