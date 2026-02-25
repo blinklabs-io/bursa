@@ -31,3 +31,4 @@ seed.txt
 stake.addr
 stake.skey
 stake.vkey
+.worktrees/
