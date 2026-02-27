@@ -28,31 +28,32 @@ import (
 // Test mnemonic - CIP-1852 test vector (DO NOT USE FOR REAL FUNDS)
 const testMnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
-// Golden samples generated using cardano-cli 10.14.0.0 with the test mnemonic above.
-// These values are the expected outputs from cardano-cli commands when given
-// bursa-generated key files.
+// Golden samples verified against bip_utils (Python) reference implementation
+// using CIP-3 Icarus + BIP32-Ed25519 (Khovratovich/Law) derivation.
+// Mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 const (
 	// Payment verification key cborHex (32-byte public key, CBOR encoded)
-	goldenPaymentVKeyCborHex = "58203cc0186a83bbfa2e37de00f894c5b85c05dbf17b1dec641fdbfa6647f5adc7f3"
+	// Derived via CIP-3 Icarus + CIP-1852 path m/1852'/1815'/0'/0/0
+	goldenPaymentVKeyCborHex = "58207ea09a34aebb13c9841c71397b1cabfec5ddf950405293dee496cac2f437480a"
 
 	// Stake verification key cborHex (32-byte public key, CBOR encoded)
-	goldenStakeVKeyCborHex = "5820839350412a3ec4d9aad93039bec2899562184b5ea9babb8595a6f127d48afb29"
+	// Derived via CIP-3 Icarus + CIP-1852 path m/1852'/1815'/0'/2/0
+	goldenStakeVKeyCborHex = "5820012f5dc3115b8a07981e6e50f5a671e2c6fbb26c3ffde1cd1dcaf40a7fe8f160"
 
-	// cardano-cli address build --payment-verification-key-file payment.vkey --mainnet
-	goldenEnterpriseAddress = "addr1vyqcea9cpx0480yjvvklp0tw4yw56r6q9qc437gpqwg6swg0jm2af"
+	// Enterprise address (payment key only, mainnet)
+	goldenEnterpriseAddress = "addr1vy8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7ss7lxrqp"
 
-	// cardano-cli address build --payment-verification-key-file payment.vkey \
-	//   --stake-verification-key-file stake.vkey --mainnet
-	goldenBaseAddress = "addr1qyqcea9cpx0480yjvvklp0tw4yw56r6q9qc437gpqwg6swwc3w03xmxfgcfw6v7asa6vdapakdr6ukq5mrhawfwnjvfsr0qxz0"
+	// Base address (payment + stake keys, mainnet)
+	goldenBaseAddress = "addr1qy8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mq4afdhv"
 
-	// cardano-cli address key-hash --payment-verification-key-file payment.vkey
-	goldenPaymentKeyHash = "018cf4b8099f53bc92632df0bd6ea91d4d0f40283158f9010391a839"
+	// Payment key hash (Blake2b-224 of payment verification key)
+	goldenPaymentKeyHash = "0fdc780023d8be7c9ff3a6bdc0d8d3b263bd0cc12448c40948efbf42"
 
-	// cardano-cli conway stake-address build --stake-verification-key-file stake.vkey --mainnet
-	goldenStakeAddress = "stake1u8vgh8cndny5vyhdx0wcwaxx7s7mx3awtq2d3m7hyhfexycdskv40"
+	// Stake address (mainnet)
+	goldenStakeAddress = "stake1u8j40zgr2gy4788kl54h6x3gu0pukq5lfr8nflufpg5dzaskqlx2l"
 
-	// cardano-cli conway stake-address key-hash --stake-verification-key-file stake.vkey
-	goldenStakeKeyHash = "d88b9f136cc94612ed33dd8774c6f43db347ae5814d8efd725d39313"
+	// Stake key hash (Blake2b-224 of stake verification key)
+	goldenStakeKeyHash = "e557890352095f1cf6fd2b7d1a28e3c3cb029f48cf34ff890a28d176"
 )
 
 func TestPaymentKeyFileFormat(t *testing.T) {

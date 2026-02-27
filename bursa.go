@@ -17,6 +17,7 @@ package bursa
 import (
 	"bytes"
 	"crypto/ed25519"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -218,7 +219,7 @@ var jsonBufferPool = sync.Pool{
 // All index fields default to 0 and must be less than 2^31.
 type WalletConfig struct {
 	Network         string // Network name: "mainnet" or "testnet"
-	Password        string //nolint:gosec // G117: intentional field for BIP39 passphrase
+	Password        string //nolint:gosec // G117: password field is intentional for key derivation
 	AccountID       uint32 // Account derivation index
 	PaymentID       uint32 // Payment key derivation index
 	StakeID         uint32 // Stake key derivation index
@@ -1231,10 +1232,7 @@ func GetVRFSeed(rootKey bip32.XPrv, index uint32) ([]byte, error) {
 	hasher.Write([]byte("bursa-vrf-seed"))
 	// Write index as 4 bytes big-endian
 	indexBytes := make([]byte, 4)
-	indexBytes[0] = byte(index >> 24) //nolint:gosec // G115: intentional big-endian byte extraction
-	indexBytes[1] = byte(index >> 16) //nolint:gosec // G115: intentional big-endian byte extraction
-	indexBytes[2] = byte(index >> 8)  //nolint:gosec // G115: intentional big-endian byte extraction
-	indexBytes[3] = byte(index)       //nolint:gosec // G115: intentional big-endian byte extraction
+	binary.BigEndian.PutUint32(indexBytes, index)
 	hasher.Write(indexBytes)
 	// Write the root key's private key material
 	hasher.Write(rootKey.PrivateKey())
@@ -1310,10 +1308,7 @@ func GetKESSeed(rootKey bip32.XPrv, index uint32) ([]byte, error) {
 	hasher.Write([]byte("bursa-kes-seed"))
 	// Write index as 4 bytes big-endian
 	indexBytes := make([]byte, 4)
-	indexBytes[0] = byte(index >> 24) //nolint:gosec // G115: intentional big-endian byte extraction
-	indexBytes[1] = byte(index >> 16) //nolint:gosec // G115: intentional big-endian byte extraction
-	indexBytes[2] = byte(index >> 8)  //nolint:gosec // G115: intentional big-endian byte extraction
-	indexBytes[3] = byte(index)       //nolint:gosec // G115: intentional big-endian byte extraction
+	binary.BigEndian.PutUint32(indexBytes, index)
 	hasher.Write(indexBytes)
 	// Write the root key's private key material
 	hasher.Write(rootKey.PrivateKey())
