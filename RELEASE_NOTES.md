@@ -8,7 +8,7 @@ title: Release notes
 
 - Date: 2026-02-28
 - Version: v0.16.0
-- Summary: This release introduces CLI support for certificate generation, updates wallet key derivation behavior, and refreshes build and security dependencies.
+- Summary: This release includes CLI support for certificate generation, updated wallet key derivation behavior, and updated build and security dependencies.
 
 ### New Features
 
