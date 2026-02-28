@@ -19,7 +19,7 @@ This release includes CLI support for generating stake and Conway governance cer
 
 ### Breaking Changes
 
-- Updated wallet root key derivation to follow Cardano `CIP-3` Icarus (PBKDF2), so you must regenerate derived keys and update any stored test vectors.
+- Updated wallet root key derivation to follow Cardano `CIP-3` Icarus (PBKDF2), which requires regenerating derived keys and updating any stored test vectors.
 
 ### Security
 
