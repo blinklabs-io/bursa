@@ -208,25 +208,25 @@ type ErrorResponse struct {
 
 // WalletCreateRequest defines the request payload for wallet creation
 type WalletCreateRequest struct {
-	Password string `json:"password"`
+	Password string `json:"password"` //nolint:gosec // G117: intentional field for BIP39 passphrase
 }
 
 // WalletDeleteRequest defines the request payload for wallet deletion
 type WalletDeleteRequest struct {
 	Name     string `json:"name"     validate:"required,min=1,max=100"`
-	Password string `json:"password"`
+	Password string `json:"password"` //nolint:gosec // G117: intentional field for BIP39 passphrase
 }
 
 // WalletGetRequest defines the request payload for wallet loading
 type WalletGetRequest struct {
 	Name     string `json:"name"     validate:"required,min=1,max=100"`
-	Password string `json:"password"`
+	Password string `json:"password"` //nolint:gosec // G117: intentional field for BIP39 passphrase
 }
 
 // WalletRestoreRequest defines the request payload for wallet restoration
 type WalletRestoreRequest struct {
 	Mnemonic        string `json:"mnemonic"          validate:"required,min=1"`
-	Password        string `json:"password"`
+	Password        string `json:"password"` //nolint:gosec // G117: intentional field for BIP39 passphrase
 	AccountId       uint32 `json:"account_id"        validate:"max=2147483647"`
 	PaymentId       uint32 `json:"payment_id"        validate:"max=2147483647"`
 	StakeId         uint32 `json:"stake_id"          validate:"max=2147483647"`
@@ -240,7 +240,7 @@ type WalletRestoreRequest struct {
 // WalletUpdateRequest defines the request payload for wallet update
 type WalletUpdateRequest struct {
 	Name        string `json:"name"        validate:"required,min=1,max=100"`
-	Password    string `json:"password"`
+	Password    string `json:"password"` //nolint:gosec // G117: intentional field for BIP39 passphrase
 	Description string `json:"description" validate:"max=500"`
 }
 
@@ -783,7 +783,7 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 		walletsFailCounter.Inc()
 		return
 	}
-	_, _ = w.Write(resp)
+	_, _ = w.Write(resp) //nolint:gosec // G705: resp is json.Marshal output, not user-tainted
 }
 
 // handleWalletGet handles the wallet get request.
