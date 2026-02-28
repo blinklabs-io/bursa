@@ -17,6 +17,7 @@ package bip32
 import (
 	"bytes"
 	"crypto/ed25519"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -614,5 +615,41 @@ func TestLenientBech32Decode(t *testing.T) {
 	}
 	if !bytes.Equal(data, data3) {
 		t.Error("Uppercase and lowercase should decode to same data")
+	}
+}
+
+// TestCIP3IcarusTestVectors validates CIP-3 Icarus master key derivation against
+// official test vectors from https://cips.cardano.org/cip/CIP-0003
+func TestCIP3IcarusTestVectors(t *testing.T) {
+	// CIP-3 Icarus test vector
+	// Mnemonic: "eight country switch draw meat scout mystery blade tip drift useless good keep usage title"
+	// Entropy (hex): 46e62370a138a182a498b8e2885bc032379ddf38
+	entropy, err := hex.DecodeString("46e62370a138a182a498b8e2885bc032379ddf38")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Test without passphrase
+	expectedNoPass := "c065afd2832cd8b087c4d9ab7011f481ee1e0721e78ea5dd609f3ab3f156d245d176bd8fd4ec60b4731c3918a2a72a0226c0cd119ec35b47e4d55884667f552a23f7fdcd4a10c6cd2c7393ac61d877873e248f417634aa3d812af327ffe9d620"
+	rootKey := FromBip39Entropy(entropy, []byte{})
+	actual := hex.EncodeToString(rootKey)
+	if actual != expectedNoPass {
+		t.Errorf("CIP-3 Icarus (no passphrase) mismatch:\ngot:  %s\nwant: %s", actual, expectedNoPass)
+	}
+
+	// Test with passphrase "foo"
+	expectedWithPass := "70531039904019351e1afb361cd1b312a4d0565d4ff9f8062d38acf4b15cce41d7b5738d9c893feea55512a3004acb0d222c35d3e3d5cde943a15a9824cbac59443cf67e589614076ba01e354b1a432e0e6db3b59e37fc56b5fb0222970a010e"
+	rootKeyFoo := FromBip39Entropy(entropy, []byte("foo"))
+	actualFoo := hex.EncodeToString(rootKeyFoo)
+	if actualFoo != expectedWithPass {
+		t.Errorf("CIP-3 Icarus (passphrase 'foo') mismatch:\ngot:  %s\nwant: %s", actualFoo, expectedWithPass)
+	}
+
+	// Verify clamping properties
+	if (rootKey[0] & 0b0000_0111) != 0 {
+		t.Errorf("kL not clamped: first byte low bits should be clear, got %08b", rootKey[0])
+	}
+	if (rootKey[31] & 0b1110_0000) != 0b0100_0000 {
+		t.Errorf("kL not clamped: byte 31 high bits should be 010xxxxx, got %08b", rootKey[31])
 	}
 }

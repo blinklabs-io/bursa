@@ -29,16 +29,15 @@ package bip32
 
 import (
 	"crypto/hmac"
-	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
 	"errors"
 	"strings"
 
 	"filippo.io/edwards25519"
-	"github.com/blinklabs-io/go-bip39"
 	"github.com/btcsuite/btcd/btcutil/bech32"
 	"golang.org/x/crypto/blake2b"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 // Sign produces a 64-byte Ed25519-BIP32 signature over the given message.
@@ -349,7 +348,7 @@ func lenientBech32DecodeNoValidation(s string) (string, []byte, error) {
 		if pos < 0 {
 			return "", nil, errors.New("invalid bech32 character")
 		}
-		decoded[i] = byte(pos) //nolint:gosec // G115: pos is 0-31 (bech32 charset index)
+		decoded[i] = byte(pos & 0xFF) //nolint:gosec // G115: pos is 0-31 from bech32 charset, fits in byte
 	}
 
 	// Validate checksum
@@ -372,7 +371,7 @@ func validateBech32Checksum(hrp string, data []byte) bool {
 func expandHrp(hrp string) []byte {
 	expanded := make([]byte, len(hrp)*2+1)
 	for i, r := range hrp {
-		expanded[i] = byte(r >> 5) //nolint:gosec // G115: r is ASCII (0-127), r>>5 fits in byte
+		expanded[i] = byte((r >> 5) & 0xFF) //nolint:gosec // G115: r is ASCII, r>>5 fits in byte
 		expanded[i+len(hrp)+1] = byte(r & 31)
 	}
 	return expanded
@@ -401,44 +400,17 @@ func polymod(values []byte) uint32 {
 }
 
 // FromBip39Entropy derives the root extended private key from BIP39 entropy and password.
-// Follows CIP-1852: generates BIP39 seed, derives master key via HMAC-SHA512,
-// computes separate chain code via HMAC-SHA256, and applies Ed25519 clamping.
+// Follows CIP-3 Icarus: PBKDF2-HMAC-SHA512(password, entropy, 4096, 96) with Ed25519-BIP32 clamping.
 func FromBip39Entropy(entropy []byte, password []byte) XPrv {
-	// Generate BIP39 mnemonic from entropy
-	mnemonic, err := bip39.NewMnemonic(entropy)
-	if err != nil {
-		panic(err) // Should not happen with valid entropy
-	}
+	// CIP-3 Icarus: PBKDF2-HMAC-SHA512(password, entropy, 4096, 96)
+	master := pbkdf2.Key(password, entropy, 4096, 96, sha512.New)
 
-	// Generate BIP39 seed (64 bytes)
-	seed := bip39.NewSeed(mnemonic, string(password))
+	// Ed25519-BIP32 clamping on kL (first 32 bytes)
+	master[0] &= 0b1111_1000
+	master[31] &= 0b0001_1111
+	master[31] |= 0b0100_0000
 
-	// Derive master key as per SLIP-0010
-	h := hmac.New(sha512.New, []byte("ed25519 seed"))
-	h.Write(seed)
-	master := h.Sum(nil)
-
-	priv := make([]byte, 32)
-	copy(priv, master[:32])
-	kr := make([]byte, 32)
-	copy(kr, master[32:])
-
-	// Compute chain code as HMAC-SHA256("ed25519 seed", 0x01 || seed)
-	ccMac := hmac.New(sha256.New, []byte("ed25519 seed"))
-	ccMac.Write([]byte{0x01})
-	ccMac.Write(seed)
-	chainCode := ccMac.Sum(nil)
-
-	// Clamp the private key
-	priv[0] &= 0b1111_1000
-	priv[31] &= 0b0001_1111
-	priv[31] |= 0b0100_0000
-
-	xprv := make([]byte, 96)
-	copy(xprv[:32], priv)
-	copy(xprv[32:64], kr)
-	copy(xprv[64:], chainCode)
-	return xprv
+	return XPrv(master)
 }
 
 func makePublicKey(priv []byte) []byte {
@@ -499,10 +471,10 @@ func (key XPrv) Derive(index uint32) XPrv {
 
 	if hardened(index) {
 		keyHmac.Write([]byte{0x00})
-		keyHmac.Write(key[:32]) // left 32 bytes of private key (k_L)
+		keyHmac.Write(key[:64]) // full extended private key (k_L || k_R)
 		keyHmac.Write(serializedIndex)
 		chainHmac.Write([]byte{0x01})
-		chainHmac.Write(key[:32]) // left 32 bytes of private key (k_L)
+		chainHmac.Write(key[:64]) // full extended private key (k_L || k_R)
 		chainHmac.Write(serializedIndex)
 	} else {
 		pk := makePublicKey(key[:32]) // pub from k_L (left 32 bytes of private key)
