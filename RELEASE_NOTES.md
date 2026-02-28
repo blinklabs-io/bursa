@@ -4,32 +4,28 @@ title: Release Notes
 
 # Release Notes
 
-## v0.16.0
+## v0.16.0 - certificates and key derivation
 
 - **Date:** 2026-02-28
 - **Version:** v0.16.0
 
 ### Summary
 
-This release includes the changes described in the sections below.
+This release includes CLI support for generating stake and Conway governance certificates and updates wallet root key derivation to Cardano `CIP-3` Icarus, along with security and dependency updates.
 
-### Generated notes (source)
+### New Features
 
-```json
-{
-  "Additional Changes": [
-    "Project dependencies and build tooling were refreshed to keep the build and CI environment current.",
-    "Repository hygiene and static-analysis configuration were adjusted to better align with development workflows."
-  ],
-  "Breaking Changes": [
-    "Wallet root key derivation now follows the Cardano CIP-3 Icarus approach instead of the previous behavior, which can change derived keys and expected test vectors."
-  ],
-  "New Features": [
-    "You can now generate stake and Conway governance certificates using the command-line interface."
-  ],
-  "Security": [
-    "Cryptography and secret-management components were updated to incorporate upstream security and maintenance fixes."
-  ]
-}
+- Added CLI support for generating stake and Conway governance certificates.
 
-```
+### Breaking Changes
+
+- Updated wallet root key derivation to follow Cardano `CIP-3` Icarus (PBKDF2), so you must regenerate derived keys and update any stored test vectors.
+
+### Security
+
+- Updated cryptography and secret-management dependencies including `filippo.io/edwards25519` to `v1.2.0`, `github.com/cloudflare/circl` to `v1.6.3`, `github.com/ethereum/go-ethereum` to `v1.17.0`, and `sops` to `v3.12.1`.
+
+### Additional Changes
+
+- Updated Go modules including `gouroboros`, `plutigo`, and `grpc`, bumped GitHub Actions `docker/build-push-action` to `v6.19.2`, and updated the `blinklabs-io/go` Docker base image to `1.25.7-1`.
+- Updated lint-suppression annotations for selected security checks and updated `.gitignore` to exclude `.worktrees/`.
