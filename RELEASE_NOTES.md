@@ -4,10 +4,10 @@ title: Release Notes
 
 # Release Notes
 
-## v0.16.0 - certificates and key derivation
+## v0.16.0 - certificate generation and key derivation
 
 - **Date:** 2026-02-28
-- **Version:** v0.16.0
+- **Version:** 0.16.0
 
 ### Summary
 
