@@ -24,7 +24,7 @@ require (
 	golang.org/x/crypto v0.48.0
 	golang.org/x/sync v0.19.0
 	google.golang.org/api v0.266.0
-	google.golang.org/grpc v1.79.2
+	google.golang.org/grpc v1.79.3
 )
 
 require (
