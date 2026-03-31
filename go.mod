@@ -10,7 +10,7 @@ require (
 	github.com/blinklabs-io/go-bip39 v0.2.0
 	github.com/blinklabs-io/gouroboros v0.160.3
 	github.com/btcsuite/btcd/btcutil v1.1.6
-	github.com/fxamacker/cbor/v2 v2.9.0
+	github.com/fxamacker/cbor/v2 v2.9.1
 	github.com/getsops/sops/v3 v3.12.2
 	github.com/go-playground/validator/v10 v10.30.1
 	github.com/google/uuid v1.6.0
