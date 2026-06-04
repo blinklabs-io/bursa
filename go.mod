@@ -3,7 +3,7 @@ module github.com/blinklabs-io/bursa
 go 1.25.8
 
 require (
-	cloud.google.com/go/secretmanager v1.16.0
+	cloud.google.com/go/secretmanager v1.20.0
 	filippo.io/edwards25519 v1.2.0
 	github.com/blinklabs-io/go-bip39 v0.2.0
 	github.com/blinklabs-io/gouroboros v0.180.0
@@ -32,7 +32,7 @@ require (
 	cloud.google.com/go/auth v0.20.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
-	cloud.google.com/go/iam v1.5.3 // indirect
+	cloud.google.com/go/iam v1.7.0 // indirect
 	cloud.google.com/go/kms v1.26.0 // indirect
 	cloud.google.com/go/longrunning v0.8.0 // indirect
 	cloud.google.com/go/monitoring v1.24.3 // indirect
@@ -184,7 +184,7 @@ require (
 	golang.org/x/tools v0.44.0 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260319201613-d00831a3d3e7 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260523011958-0a33c5d7ca68 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/ini.v1 v1.67.1 // indirect
