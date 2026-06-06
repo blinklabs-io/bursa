@@ -40,6 +40,7 @@ Examples:
 		addressInfoCommand(),
 		addressBuildCommand(),
 		addressEnterpriseCommand(),
+		addressListCommand(),
 	)
 	return &addressCmd
 }
@@ -153,4 +154,28 @@ Examples:
 	cmd.MarkFlagsMutuallyExclusive("payment-key", "payment-key-file")
 
 	return &cmd
+}
+
+func addressListCommand() *cobra.Command {
+	var mnemonic, mnemonicFile, password, network string
+	var account, start, count uint32
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "Enumerate derived addresses for a wallet",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunAddressList(mnemonic, mnemonicFile, password, network, account, start, count); err != nil {
+				logging.GetLogger().Error("failed to list addresses", "error", err)
+				os.Exit(1)
+			}
+		},
+	}
+	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
+	cmd.Flags().StringVar(&mnemonicFile, "mnemonic-file", "", "Path to mnemonic file")
+	cmd.Flags().StringVar(&password, "password", "", "Optional derivation password")
+	cmd.Flags().StringVar(&network, "network", "mainnet", "Network (mainnet|preprod|preview)")
+	cmd.Flags().Uint32Var(&account, "account", 0, "Account index")
+	cmd.Flags().Uint32Var(&start, "start", 0, "Starting address index")
+	cmd.Flags().Uint32Var(&count, "count", 20, "Number of addresses to derive")
+	return cmd
 }

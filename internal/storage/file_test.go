@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -210,6 +211,66 @@ func TestFileStoreDirectoryStructure(t *testing.T) {
 
 	walletFile := filepath.Join(walletDir, "wallet.json")
 	assert.FileExists(t, walletFile)
+}
+
+func TestFileStoreRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	store := NewFileStore(dir)
+	ctx := context.Background()
+
+	w, err := store.CreateWallet("w1")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	w.PutItem("my-key", "my-value")
+	if err := w.Save(ctx); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	w2, err := store.GetWallet(ctx, "w1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	got, err := w2.GetItem("my-key")
+	if err != nil {
+		t.Fatalf("get item: %v", err)
+	}
+	if got != "my-value" {
+		t.Fatalf("round trip mismatch: got %q", got)
+	}
+}
+
+func TestFileStoreSaveRefusesEncryptedWalletWithoutKMS(t *testing.T) {
+	cfg := config.GetConfig()
+	previousResourceID := cfg.Google.ResourceId
+	cfg.Google.ResourceId = ""
+	t.Cleanup(func() {
+		cfg.Google.ResourceId = previousResourceID
+	})
+
+	dir := t.TempDir()
+	store := NewFileStore(dir)
+	ctx := context.Background()
+
+	wallet := &fileWallet{
+		name:            "kms-required",
+		items:           map[string]string{"mnemonic": "secret seed phrase"},
+		store:           store,
+		encryptedAtRest: true,
+	}
+
+	walletPath := store.walletPath(wallet.name)
+	require.NoError(t, os.MkdirAll(filepath.Dir(walletPath), 0o700))
+	original := []byte(`{"sops":{"kms":[]}}` + "\n")
+	require.NoError(t, os.WriteFile(walletPath, original, 0o600))
+
+	wallet.PutItem("payment_address", "addr_test1changed")
+	err := wallet.Save(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "google kms resource id")
+
+	got, err := os.ReadFile(walletPath)
+	require.NoError(t, err)
+	assert.Equal(t, original, got)
 }
 
 func TestFileStoreInvalidWalletNames(t *testing.T) {

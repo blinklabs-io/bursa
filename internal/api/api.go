@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -47,6 +48,8 @@ import (
 
 var validate *validator.Validate
 
+const maxRequestBodyBytes = 1 << 20
+
 // writeJSONError writes a JSON error response safely
 // nolint:unparam // statusCode currently is always a bad request in some call sites but kept for future use
 func writeJSONError(
@@ -67,12 +70,76 @@ func writeJSONError(
 	}
 }
 
+// writeJSON writes a JSON-encoded value with Content-Type application/json
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	resp, err := json.Marshal(v)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	_, _ = w.Write(resp)
+}
+
+// writeError writes a JSON error response with the given status code
+func writeError(w http.ResponseWriter, code int, err error) {
+	message := err.Error()
+	if code >= http.StatusInternalServerError {
+		message = "Internal server error"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_, _ = fmt.Fprintf(w, `{"error":%q}`, message)
+}
+
+// decodeAndValidate decodes a JSON request body and validates it.
+// Returns true on success; writes an error response and returns false on failure.
+func decodeAndValidate(w http.ResponseWriter, r *http.Request, dst any) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
+	if err := decoder.Decode(dst); err != nil {
+		writeDecodeError(w, err)
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeDecodeError(w, err)
+		return false
+	}
+	if err := validate.Struct(dst); err != nil {
+		writeValidationError(w, err)
+		return false
+	}
+	return true
+}
+
+func writeDecodeError(w http.ResponseWriter, err error) {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		writeError(w, http.StatusRequestEntityTooLarge, errors.New("request body too large"))
+		return
+	}
+	writeError(w, http.StatusBadRequest, errors.New("invalid JSON request"))
+}
+
+func writeValidationError(w http.ResponseWriter, err error) {
+	var validationErrors validator.ValidationErrors
+	if errors.As(err, &validationErrors) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(
+			w,
+			`{"error":"Validation failed","fields":%s}`,
+			formatValidationErrors(validationErrors),
+		)
+		return
+	}
+	writeError(w, http.StatusBadRequest, errors.New("invalid request format"))
+}
+
 // formatValidationErrors converts validator errors into a user-friendly JSON format
 func formatValidationErrors(errs validator.ValidationErrors) string {
 	errors := make(map[string]string)
 	for _, err := range errs {
-		// Convert Go field name to JSON field name
-		fieldName := toJSONFieldName(err.Field())
+		fieldName := validationFieldName(err)
 
 		// Create appropriate error message based on validation tag
 		switch err.Tag() {
@@ -111,6 +178,17 @@ func formatValidationErrors(errs validator.ValidationErrors) string {
 		return `"marshaling failed"`
 	}
 	return string(jsonBytes)
+}
+
+func validationFieldName(err validator.FieldError) string {
+	fieldName := err.Field()
+	if fieldName == "" {
+		fieldName = err.StructField()
+	}
+	if fieldName == err.StructField() {
+		return toJSONFieldName(err.StructField())
+	}
+	return fieldName
 }
 
 // toJSONFieldName converts Go struct field names to their JSON equivalents
@@ -342,6 +420,85 @@ type AddressBuildResponse struct {
 	Type    string `json:"type"`
 }
 
+// TxSignRequest defines the request payload for transaction signing
+type TxSignRequest struct {
+	TxCbor      string   `json:"tx_cbor"      validate:"required"` // raw hex CBOR or JSON text envelope
+	SigningKeys []string `json:"signing_keys" validate:"required,min=1,dive,required"`
+}
+
+// TxWitnessRequest defines the request payload for witness generation
+type TxWitnessRequest struct {
+	TxCbor     string `json:"tx_cbor"     validate:"required"` // raw hex CBOR or JSON text envelope
+	SigningKey string `json:"signing_key" validate:"required"`
+}
+
+// TxAssembleRequest defines the request payload for transaction assembly
+type TxAssembleRequest struct {
+	TxCbor    string   `json:"tx_cbor"   validate:"required"` // raw hex CBOR or JSON text envelope
+	Witnesses []string `json:"witnesses" validate:"required,min=1,dive,required,hexadecimal"`
+}
+
+// TxDecodeRequest defines the request payload for transaction decoding
+type TxDecodeRequest struct {
+	TxCbor string `json:"tx_cbor" validate:"required"` // raw hex CBOR or JSON text envelope
+}
+
+// TxIDRequest defines the request payload for transaction id calculation
+type TxIDRequest struct {
+	TxCbor string `json:"tx_cbor" validate:"required"` // raw hex CBOR or JSON text envelope
+}
+
+// AddressEnumerateRequest defines the request payload for address enumeration
+type AddressEnumerateRequest struct {
+	Mnemonic string `json:"mnemonic" validate:"required"`
+	Password string `json:"password,omitempty"`
+	Network  string `json:"network"  validate:"required,oneof=mainnet preprod preview"`
+	Account  uint32 `json:"account"  validate:"max=2147483647"`
+	Start    uint32 `json:"start"    validate:"max=2147483647"`
+	Count    uint32 `json:"count"    validate:"required,min=1,max=1000"`
+}
+
+// SignDataRequest defines the request payload for CIP-8/CIP-30 message signing
+type SignDataRequest struct {
+	Address    string `json:"address"     validate:"required,hexadecimal"`
+	Payload    string `json:"payload"     validate:"required,hexadecimal"`
+	SigningKey string `json:"signing_key" validate:"required"`
+}
+
+// SignDataResponse defines the response payload for CIP-8/CIP-30 message signing
+type SignDataResponse struct {
+	Signature string `json:"signature"`
+	Key       string `json:"key"`
+}
+
+// VerifyDataRequest defines the request payload for CIP-8/CIP-30 signature verification
+type VerifyDataRequest struct {
+	Signature string `json:"signature" validate:"required,hexadecimal"`
+	Key       string `json:"key"       validate:"required,hexadecimal"`
+	Payload   string `json:"payload"   validate:"required,hexadecimal"`
+}
+
+// VerifyDataResponse defines the response payload for CIP-8/CIP-30 signature verification
+type VerifyDataResponse struct {
+	Valid bool `json:"valid"`
+}
+
+// TxCborResponse defines the response payload for signed/assembled transactions
+type TxCborResponse struct {
+	TxCbor string `json:"tx_cbor"`
+	TxId   string `json:"tx_id"`
+}
+
+// TxIDResponse defines the response payload for transaction id calculation
+type TxIDResponse struct {
+	TxId string `json:"tx_id"`
+}
+
+// TxWitnessResponse defines the response payload for witness generation
+type TxWitnessResponse struct {
+	Witness string `json:"witness"`
+}
+
 //	@title			bursa
 //	@version		v0
 //	@description	Programmable Cardano Wallet API
@@ -382,6 +539,13 @@ var (
 // Register Prometheus metrics
 func init() {
 	validate = validator.New()
+	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
+		name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
+		if name == "-" {
+			return ""
+		}
+		return name
+	})
 	prometheus.MustRegister(walletsCreatedCounter)
 	prometheus.MustRegister(walletsDeletedCounter)
 	prometheus.MustRegister(walletsFailCounter)
@@ -427,6 +591,18 @@ func Start(
 	// Address routes
 	mainMux.HandleFunc("/api/address/parse", handleAddressParse)
 	mainMux.HandleFunc("/api/address/build", handleAddressBuild)
+	mainMux.HandleFunc("/api/address/enumerate", handleAddressEnumerate)
+
+	// Transaction routes
+	mainMux.HandleFunc("/api/tx/sign", handleTxSign)
+	mainMux.HandleFunc("/api/tx/witness", handleTxWitness)
+	mainMux.HandleFunc("/api/tx/assemble", handleTxAssemble)
+	mainMux.HandleFunc("/api/tx/decode", handleTxDecode)
+	mainMux.HandleFunc("/api/tx/id", handleTxID)
+
+	// Sign routes
+	mainMux.HandleFunc("/api/sign/data", handleSignData)
+	mainMux.HandleFunc("/api/sign/verify", handleVerifyData)
 
 	// GCP routes
 	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
@@ -643,30 +819,7 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req WalletRestoreRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
-		// Increment fail counter
-		walletsFailCounter.Inc()
-		return
-	}
-
-	// Validate the request
-	if err := validate.Struct(req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		// Parse validator errors for cleaner response
-		var validationErrors validator.ValidationErrors
-		if errors.As(err, &validationErrors) {
-			_, _ = fmt.Fprintf(
-				w,
-				`{"error":"Validation failed","fields":%s}`,
-				formatValidationErrors(validationErrors),
-			)
-		} else {
-			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
-		}
+	if !decodeAndValidate(w, r, &req) {
 		walletsFailCounter.Inc()
 		return
 	}
@@ -804,30 +957,7 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req WalletGetRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
-		// Increment fail counter
-		walletsFailCounter.Inc()
-		return
-	}
-
-	// Validate the request
-	if err := validate.Struct(req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		// Parse validator errors for cleaner response
-		var validationErrors validator.ValidationErrors
-		if errors.As(err, &validationErrors) {
-			_, _ = fmt.Fprintf(
-				w,
-				`{"error":"Validation failed","fields":%s}`,
-				formatValidationErrors(validationErrors),
-			)
-		} else {
-			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
-		}
+	if !decodeAndValidate(w, r, &req) {
 		walletsFailCounter.Inc()
 		return
 	}
@@ -903,30 +1033,7 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req WalletDeleteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
-		// Increment fail counter
-		walletsFailCounter.Inc()
-		return
-	}
-
-	// Validate the request
-	if err := validate.Struct(req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		// Parse validator errors for cleaner response
-		var validationErrors validator.ValidationErrors
-		if errors.As(err, &validationErrors) {
-			_, _ = fmt.Fprintf(
-				w,
-				`{"error":"Validation failed","fields":%s}`,
-				formatValidationErrors(validationErrors),
-			)
-		} else {
-			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
-		}
+	if !decodeAndValidate(w, r, &req) {
 		walletsFailCounter.Inc()
 		return
 	}
@@ -981,30 +1088,7 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req WalletUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
-		// Increment fail counter
-		walletsFailCounter.Inc()
-		return
-	}
-
-	// Validate the request
-	if err := validate.Struct(req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		// Parse validator errors for cleaner response
-		var validationErrors validator.ValidationErrors
-		if errors.As(err, &validationErrors) {
-			_, _ = fmt.Fprintf(
-				w,
-				`{"error":"Validation failed","fields":%s}`,
-				formatValidationErrors(validationErrors),
-			)
-		} else {
-			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
-		}
+	if !decodeAndValidate(w, r, &req) {
 		walletsFailCounter.Inc()
 		return
 	}
@@ -1072,27 +1156,7 @@ func handleScriptCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ScriptCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
-		return
-	}
-
-	// Validate the request
-	if err := validate.Struct(req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		var validationErrors validator.ValidationErrors
-		if errors.As(err, &validationErrors) {
-			_, _ = fmt.Fprintf(
-				w,
-				`{"error":"Validation failed","fields":%s}`,
-				formatValidationErrors(validationErrors),
-			)
-		} else {
-			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
-		}
+	if !decodeAndValidate(w, r, &req) {
 		return
 	}
 
@@ -1231,27 +1295,7 @@ func handleScriptValidate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ScriptValidateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
-		return
-	}
-
-	// Validate the request
-	if err := validate.Struct(req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		var validationErrors validator.ValidationErrors
-		if errors.As(err, &validationErrors) {
-			_, _ = fmt.Fprintf(
-				w,
-				`{"error":"Validation failed","fields":%s}`,
-				formatValidationErrors(validationErrors),
-			)
-		} else {
-			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
-		}
+	if !decodeAndValidate(w, r, &req) {
 		return
 	}
 
@@ -1346,27 +1390,7 @@ func handleScriptAddress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ScriptAddressRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
-		return
-	}
-
-	// Validate the request
-	if err := validate.Struct(req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		var validationErrors validator.ValidationErrors
-		if errors.As(err, &validationErrors) {
-			_, _ = fmt.Fprintf(
-				w,
-				`{"error":"Validation failed","fields":%s}`,
-				formatValidationErrors(validationErrors),
-			)
-		} else {
-			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
-		}
+	if !decodeAndValidate(w, r, &req) {
 		return
 	}
 
@@ -1449,27 +1473,7 @@ func handleAddressParse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req AddressParseRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
-		return
-	}
-
-	// Validate the request
-	if err := validate.Struct(req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		var validationErrors validator.ValidationErrors
-		if errors.As(err, &validationErrors) {
-			_, _ = fmt.Fprintf(
-				w,
-				`{"error":"Validation failed","fields":%s}`,
-				formatValidationErrors(validationErrors),
-			)
-		} else {
-			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
-		}
+	if !decodeAndValidate(w, r, &req) {
 		return
 	}
 
@@ -1537,33 +1541,13 @@ func handleAddressBuild(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req AddressBuildRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"Invalid JSON request"}`))
+	if !decodeAndValidate(w, r, &req) {
 		return
 	}
 
 	// Set default type if not specified
 	if req.Type == "" {
 		req.Type = "base"
-	}
-
-	// Validate the request
-	if err := validate.Struct(req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		var validationErrors validator.ValidationErrors
-		if errors.As(err, &validationErrors) {
-			_, _ = fmt.Fprintf(
-				w,
-				`{"error":"Validation failed","fields":%s}`,
-				formatValidationErrors(validationErrors),
-			)
-		} else {
-			_, _ = w.Write([]byte(`{"error":"Invalid request format"}`))
-		}
-		return
 	}
 
 	logger := logging.GetLogger()
@@ -1597,6 +1581,316 @@ func handleAddressBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write(resp)
+}
+
+// handleTxSign godoc
+//
+//	@Summary		Sign a transaction
+//	@Description	Add vkey witnesses for the provided signing keys (body preserved)
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		TxSignRequest	true	"Transaction + signing keys"
+//	@Success		200		{object}	TxCborResponse	"Signed transaction"
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		500		{object}	ErrorResponse
+//	@Router			/api/tx/sign [post]
+func handleTxSign(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req TxSignRequest
+	if !decodeAndValidate(w, r, &req) {
+		return
+	}
+	txBytes, err := bursa.ReadCborInput([]byte(req.TxCbor))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	signers := make([]*bursa.LoadedKey, 0, len(req.SigningKeys))
+	for _, k := range req.SigningKeys {
+		lk, err := bursa.LoadKeyFromBytes([]byte(k))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		signers = append(signers, lk)
+	}
+	signed, err := bursa.SignTransaction(txBytes, signers)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var id string
+	id, err = bursa.TransactionID(signed)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, TxCborResponse{TxCbor: hex.EncodeToString(signed), TxId: id})
+}
+
+// handleTxWitness godoc
+//
+//	@Summary		Produce a transaction witness
+//	@Description	Produce a detached vkey witness for a transaction body
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		TxWitnessRequest	true	"Transaction + signing key"
+//	@Success		200		{object}	TxWitnessResponse	"Detached witness"
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		500		{object}	ErrorResponse
+//	@Router			/api/tx/witness [post]
+func handleTxWitness(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req TxWitnessRequest
+	if !decodeAndValidate(w, r, &req) {
+		return
+	}
+	txBytes, err := bursa.ReadCborInput([]byte(req.TxCbor))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	lk, err := bursa.LoadKeyFromBytes([]byte(req.SigningKey))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	wit, err := bursa.WitnessTransaction(txBytes, lk)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	witCbor, err := bursa.EncodeWitness(wit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, TxWitnessResponse{Witness: hex.EncodeToString(witCbor)})
+}
+
+// handleTxAssemble godoc
+//
+//	@Summary		Assemble a signed transaction
+//	@Description	Merge detached witnesses into a transaction
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		TxAssembleRequest	true	"Transaction + witnesses"
+//	@Success		200		{object}	TxCborResponse		"Assembled signed transaction"
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		500		{object}	ErrorResponse
+//	@Router			/api/tx/assemble [post]
+func handleTxAssemble(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req TxAssembleRequest
+	if !decodeAndValidate(w, r, &req) {
+		return
+	}
+	txBytes, err := bursa.ReadCborInput([]byte(req.TxCbor))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	wits := make([]lcommon.VkeyWitness, 0, len(req.Witnesses))
+	for _, witHex := range req.Witnesses {
+		raw, err := hex.DecodeString(witHex)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		w2, err := bursa.DecodeWitness(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		wits = append(wits, w2)
+	}
+	assembled, err := bursa.AssembleTransaction(txBytes, wits)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var id string
+	id, err = bursa.TransactionID(assembled)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, TxCborResponse{TxCbor: hex.EncodeToString(assembled), TxId: id})
+}
+
+// handleTxDecode godoc
+//
+//	@Summary		Decode a transaction
+//	@Description	Decode and inspect a transaction
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		TxDecodeRequest	true	"Transaction"
+//	@Success		200		{object}	bursa.TxInspection
+//	@Failure		400		{object}	ErrorResponse
+//	@Router			/api/tx/decode [post]
+func handleTxDecode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req TxDecodeRequest
+	if !decodeAndValidate(w, r, &req) {
+		return
+	}
+	txBytes, err := bursa.ReadCborInput([]byte(req.TxCbor))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	insp, err := bursa.InspectTransaction(txBytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, insp)
+}
+
+// handleTxID godoc
+//
+//	@Summary		Get a transaction id
+//	@Description	Calculate the transaction id from a transaction body
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		TxIDRequest		true	"Transaction"
+//	@Success		200		{object}	TxIDResponse	"Transaction id"
+//	@Failure		400		{object}	ErrorResponse
+//	@Router			/api/tx/id [post]
+func handleTxID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req TxIDRequest
+	if !decodeAndValidate(w, r, &req) {
+		return
+	}
+	txBytes, err := bursa.ReadCborInput([]byte(req.TxCbor))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	id, err := bursa.TransactionID(txBytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, TxIDResponse{TxId: id})
+}
+
+// handleSignData godoc
+//
+//	@Summary		Sign a message (CIP-8/CIP-30 signData)
+//	@Description	Sign a payload using a signing key, producing a COSE_Sign1 structure
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		SignDataRequest		true	"Sign Data Request"
+//	@Success		200		{object}	SignDataResponse	"COSE_Sign1 signature and COSE_Key"
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		500		{object}	ErrorResponse
+//	@Router			/api/sign/data [post]
+func handleSignData(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req SignDataRequest
+	if !decodeAndValidate(w, r, &req) {
+		return
+	}
+	addr, err := hex.DecodeString(req.Address)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid address hex: %w", err))
+		return
+	}
+	payload, err := hex.DecodeString(req.Payload)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid payload hex: %w", err))
+		return
+	}
+	lk, err := bursa.LoadKeyFromBytes([]byte(req.SigningKey))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	sig, key, err := bursa.SignData(addr, payload, lk)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, SignDataResponse{Signature: sig, Key: key})
+}
+
+// handleVerifyData godoc
+//
+//	@Summary		Verify a CIP-8/CIP-30 signData signature
+//	@Description	Verify a COSE_Sign1 signature against a COSE_Key and expected payload
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		VerifyDataRequest	true	"Verify Data Request"
+//	@Success		200		{object}	VerifyDataResponse	"Verification result"
+//	@Failure		400		{object}	ErrorResponse
+//	@Router			/api/sign/verify [post]
+func handleVerifyData(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req VerifyDataRequest
+	if !decodeAndValidate(w, r, &req) {
+		return
+	}
+	payload, err := hex.DecodeString(req.Payload)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid payload hex: %w", err))
+		return
+	}
+	ok, err := bursa.VerifyData(req.Signature, req.Key, payload)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, VerifyDataResponse{Valid: ok})
+}
+
+// handleAddressEnumerate godoc
+//
+//	@Summary		Enumerate derived addresses for a wallet
+//	@Description	Derives consecutive base addresses from a mnemonic for the given account and network
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		AddressEnumerateRequest		true	"Address Enumerate Request"
+//	@Success		200		{object}	[]bursa.EnumeratedAddress	"Enumerated addresses"
+//	@Failure		400		{object}	ErrorResponse				"Invalid request"
+//	@Router			/api/address/enumerate [post]
+func handleAddressEnumerate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req AddressEnumerateRequest
+	if !decodeAndValidate(w, r, &req) {
+		return
+	}
+	addrs, err := bursa.EnumerateAddresses(req.Mnemonic, req.Password, req.Network, req.Account, req.Start, req.Count)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, addrs)
 }
 
 // buildAddressParseResponse builds the response for address parsing

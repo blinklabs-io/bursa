@@ -62,6 +62,46 @@
                 }
             }
         },
+        "/api/address/enumerate": {
+            "post": {
+                "description": "Derives consecutive base addresses from a mnemonic for the given account and network",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Enumerate derived addresses for a wallet",
+                "parameters": [
+                    {
+                        "description": "Address Enumerate Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.AddressEnumerateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Enumerated addresses",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/bursa.EnumeratedAddress"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/address/parse": {
             "post": {
                 "description": "Parses a Cardano address and returns its components and metadata",
@@ -227,6 +267,289 @@
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sign/data": {
+            "post": {
+                "description": "Sign a payload using a signing key, producing a COSE_Sign1 structure",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Sign a message (CIP-8/CIP-30 signData)",
+                "parameters": [
+                    {
+                        "description": "Sign Data Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.SignDataRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "COSE_Sign1 signature and COSE_Key",
+                        "schema": {
+                            "$ref": "#/definitions/api.SignDataResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sign/verify": {
+            "post": {
+                "description": "Verify a COSE_Sign1 signature against a COSE_Key and expected payload",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Verify a CIP-8/CIP-30 signData signature",
+                "parameters": [
+                    {
+                        "description": "Verify Data Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.VerifyDataRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Verification result",
+                        "schema": {
+                            "$ref": "#/definitions/api.VerifyDataResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tx/assemble": {
+            "post": {
+                "description": "Merge detached witnesses into a transaction",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Assemble a signed transaction",
+                "parameters": [
+                    {
+                        "description": "Transaction + witnesses",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.TxAssembleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Assembled signed transaction",
+                        "schema": {
+                            "$ref": "#/definitions/api.TxCborResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tx/decode": {
+            "post": {
+                "description": "Decode and inspect a transaction",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Decode a transaction",
+                "parameters": [
+                    {
+                        "description": "Transaction",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.TxDecodeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/bursa.TxInspection"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tx/id": {
+            "post": {
+                "description": "Calculate the transaction id from a transaction body",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Get a transaction id",
+                "parameters": [
+                    {
+                        "description": "Transaction",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.TxIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Transaction id",
+                        "schema": {
+                            "$ref": "#/definitions/api.TxIDResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tx/sign": {
+            "post": {
+                "description": "Add vkey witnesses for the provided signing keys (body preserved)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Sign a transaction",
+                "parameters": [
+                    {
+                        "description": "Transaction + signing keys",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.TxSignRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Signed transaction",
+                        "schema": {
+                            "$ref": "#/definitions/api.TxCborResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tx/witness": {
+            "post": {
+                "description": "Produce a detached vkey witness for a transaction body",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Produce a transaction witness",
+                "parameters": [
+                    {
+                        "description": "Transaction + signing key",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.TxWitnessRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Detached witness",
+                        "schema": {
+                            "$ref": "#/definitions/api.TxWitnessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
@@ -491,6 +814,43 @@
                 }
             }
         },
+        "api.AddressEnumerateRequest": {
+            "type": "object",
+            "required": [
+                "count",
+                "mnemonic",
+                "network"
+            ],
+            "properties": {
+                "account": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
+                "count": {
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
+                },
+                "mnemonic": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string",
+                    "enum": [
+                        "mainnet",
+                        "preprod",
+                        "preview"
+                    ]
+                },
+                "password": {
+                    "type": "string"
+                },
+                "start": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                }
+            }
+        },
         "api.AddressParseRequest": {
             "type": "object",
             "required": [
@@ -725,6 +1085,170 @@
                 }
             }
         },
+        "api.SignDataRequest": {
+            "type": "object",
+            "required": [
+                "address",
+                "payload",
+                "signing_key"
+            ],
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "payload": {
+                    "type": "string"
+                },
+                "signing_key": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.SignDataResponse": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "signature": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.TxAssembleRequest": {
+            "type": "object",
+            "required": [
+                "tx_cbor",
+                "witnesses"
+            ],
+            "properties": {
+                "tx_cbor": {
+                    "description": "raw hex CBOR or JSON text envelope",
+                    "type": "string"
+                },
+                "witnesses": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "api.TxCborResponse": {
+            "type": "object",
+            "properties": {
+                "tx_cbor": {
+                    "type": "string"
+                },
+                "tx_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.TxDecodeRequest": {
+            "type": "object",
+            "required": [
+                "tx_cbor"
+            ],
+            "properties": {
+                "tx_cbor": {
+                    "description": "raw hex CBOR or JSON text envelope",
+                    "type": "string"
+                }
+            }
+        },
+        "api.TxIDRequest": {
+            "type": "object",
+            "required": [
+                "tx_cbor"
+            ],
+            "properties": {
+                "tx_cbor": {
+                    "description": "raw hex CBOR or JSON text envelope",
+                    "type": "string"
+                }
+            }
+        },
+        "api.TxIDResponse": {
+            "type": "object",
+            "properties": {
+                "tx_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.TxSignRequest": {
+            "type": "object",
+            "required": [
+                "signing_keys",
+                "tx_cbor"
+            ],
+            "properties": {
+                "signing_keys": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tx_cbor": {
+                    "description": "raw hex CBOR or JSON text envelope",
+                    "type": "string"
+                }
+            }
+        },
+        "api.TxWitnessRequest": {
+            "type": "object",
+            "required": [
+                "signing_key",
+                "tx_cbor"
+            ],
+            "properties": {
+                "signing_key": {
+                    "type": "string"
+                },
+                "tx_cbor": {
+                    "description": "raw hex CBOR or JSON text envelope",
+                    "type": "string"
+                }
+            }
+        },
+        "api.TxWitnessResponse": {
+            "type": "object",
+            "properties": {
+                "witness": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.VerifyDataRequest": {
+            "type": "object",
+            "required": [
+                "key",
+                "payload",
+                "signature"
+            ],
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "payload": {
+                    "type": "string"
+                },
+                "signature": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.VerifyDataResponse": {
+            "type": "object",
+            "properties": {
+                "valid": {
+                    "type": "boolean"
+                }
+            }
+        },
         "api.WalletDeleteRequest": {
             "type": "object",
             "required": [
@@ -824,6 +1348,17 @@
                 }
             }
         },
+        "bursa.EnumeratedAddress": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "index": {
+                    "type": "integer"
+                }
+            }
+        },
         "bursa.KeyFile": {
             "type": "object",
             "properties": {
@@ -834,6 +1369,87 @@
                     "type": "string"
                 },
                 "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "bursa.TxInput": {
+            "type": "object",
+            "properties": {
+                "index": {
+                    "type": "integer"
+                },
+                "tx_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "bursa.TxInspection": {
+            "type": "object",
+            "properties": {
+                "certificate_count": {
+                    "type": "integer"
+                },
+                "era": {
+                    "type": "string"
+                },
+                "fee": {
+                    "type": "string"
+                },
+                "has_metadata": {
+                    "type": "boolean"
+                },
+                "has_mint": {
+                    "type": "boolean"
+                },
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/bursa.TxInput"
+                    }
+                },
+                "is_valid": {
+                    "type": "boolean"
+                },
+                "native_scripts": {
+                    "type": "integer"
+                },
+                "outputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/bursa.TxOutput"
+                    }
+                },
+                "required_signers": {
+                    "type": "integer"
+                },
+                "size_bytes": {
+                    "type": "integer"
+                },
+                "ttl": {
+                    "type": "integer"
+                },
+                "tx_id": {
+                    "type": "string"
+                },
+                "validity_interval_start": {
+                    "type": "integer"
+                },
+                "vkey_witnesses": {
+                    "type": "integer"
+                },
+                "withdrawal_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "bursa.TxOutput": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "lovelace": {
                     "type": "string"
                 }
             }

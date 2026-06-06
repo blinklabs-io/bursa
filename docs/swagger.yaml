@@ -36,6 +36,33 @@ definitions:
       type:
         type: string
     type: object
+  api.AddressEnumerateRequest:
+    properties:
+      account:
+        maximum: 2147483647
+        type: integer
+      count:
+        maximum: 1000
+        minimum: 1
+        type: integer
+      mnemonic:
+        type: string
+      network:
+        enum:
+        - mainnet
+        - preprod
+        - preview
+        type: string
+      password:
+        type: string
+      start:
+        maximum: 2147483647
+        type: integer
+    required:
+    - count
+    - mnemonic
+    - network
+    type: object
   api.AddressParseRequest:
     properties:
       address:
@@ -195,6 +222,116 @@ definitions:
       valid:
         type: boolean
     type: object
+  api.SignDataRequest:
+    properties:
+      address:
+        type: string
+      payload:
+        type: string
+      signing_key:
+        type: string
+    required:
+    - address
+    - payload
+    - signing_key
+    type: object
+  api.SignDataResponse:
+    properties:
+      key:
+        type: string
+      signature:
+        type: string
+    type: object
+  api.TxAssembleRequest:
+    properties:
+      tx_cbor:
+        description: raw hex CBOR or JSON text envelope
+        type: string
+      witnesses:
+        items:
+          type: string
+        minItems: 1
+        type: array
+    required:
+    - tx_cbor
+    - witnesses
+    type: object
+  api.TxCborResponse:
+    properties:
+      tx_cbor:
+        type: string
+      tx_id:
+        type: string
+    type: object
+  api.TxDecodeRequest:
+    properties:
+      tx_cbor:
+        description: raw hex CBOR or JSON text envelope
+        type: string
+    required:
+    - tx_cbor
+    type: object
+  api.TxIDRequest:
+    properties:
+      tx_cbor:
+        description: raw hex CBOR or JSON text envelope
+        type: string
+    required:
+    - tx_cbor
+    type: object
+  api.TxIDResponse:
+    properties:
+      tx_id:
+        type: string
+    type: object
+  api.TxSignRequest:
+    properties:
+      signing_keys:
+        items:
+          type: string
+        minItems: 1
+        type: array
+      tx_cbor:
+        description: raw hex CBOR or JSON text envelope
+        type: string
+    required:
+    - signing_keys
+    - tx_cbor
+    type: object
+  api.TxWitnessRequest:
+    properties:
+      signing_key:
+        type: string
+      tx_cbor:
+        description: raw hex CBOR or JSON text envelope
+        type: string
+    required:
+    - signing_key
+    - tx_cbor
+    type: object
+  api.TxWitnessResponse:
+    properties:
+      witness:
+        type: string
+    type: object
+  api.VerifyDataRequest:
+    properties:
+      key:
+        type: string
+      payload:
+        type: string
+      signature:
+        type: string
+    required:
+    - key
+    - payload
+    - signature
+    type: object
+  api.VerifyDataResponse:
+    properties:
+      valid:
+        type: boolean
+    type: object
   api.WalletDeleteRequest:
     properties:
       name:
@@ -265,6 +402,13 @@ definitions:
     required:
     - name
     type: object
+  bursa.EnumeratedAddress:
+    properties:
+      address:
+        type: string
+      index:
+        type: integer
+    type: object
   bursa.KeyFile:
     properties:
       cborHex:
@@ -272,6 +416,59 @@ definitions:
       description:
         type: string
       type:
+        type: string
+    type: object
+  bursa.TxInput:
+    properties:
+      index:
+        type: integer
+      tx_id:
+        type: string
+    type: object
+  bursa.TxInspection:
+    properties:
+      certificate_count:
+        type: integer
+      era:
+        type: string
+      fee:
+        type: string
+      has_metadata:
+        type: boolean
+      has_mint:
+        type: boolean
+      inputs:
+        items:
+          $ref: '#/definitions/bursa.TxInput'
+        type: array
+      is_valid:
+        type: boolean
+      native_scripts:
+        type: integer
+      outputs:
+        items:
+          $ref: '#/definitions/bursa.TxOutput'
+        type: array
+      required_signers:
+        type: integer
+      size_bytes:
+        type: integer
+      ttl:
+        type: integer
+      tx_id:
+        type: string
+      validity_interval_start:
+        type: integer
+      vkey_witnesses:
+        type: integer
+      withdrawal_count:
+        type: integer
+    type: object
+  bursa.TxOutput:
+    properties:
+      address:
+        type: string
+      lovelace:
         type: string
     type: object
   bursa.Wallet:
@@ -363,6 +560,33 @@ paths:
           schema:
             $ref: '#/definitions/api.ErrorResponse'
       summary: Build Cardano address
+  /api/address/enumerate:
+    post:
+      consumes:
+      - application/json
+      description: Derives consecutive base addresses from a mnemonic for the given
+        account and network
+      parameters:
+      - description: Address Enumerate Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.AddressEnumerateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Enumerated addresses
+          schema:
+            items:
+              $ref: '#/definitions/bursa.EnumeratedAddress'
+            type: array
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Enumerate derived addresses for a wallet
   /api/address/parse:
     post:
       consumes:
@@ -475,6 +699,190 @@ paths:
           schema:
             $ref: '#/definitions/api.ErrorResponse'
       summary: Validate a script
+  /api/sign/data:
+    post:
+      consumes:
+      - application/json
+      description: Sign a payload using a signing key, producing a COSE_Sign1 structure
+      parameters:
+      - description: Sign Data Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.SignDataRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: COSE_Sign1 signature and COSE_Key
+          schema:
+            $ref: '#/definitions/api.SignDataResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Sign a message (CIP-8/CIP-30 signData)
+  /api/sign/verify:
+    post:
+      consumes:
+      - application/json
+      description: Verify a COSE_Sign1 signature against a COSE_Key and expected payload
+      parameters:
+      - description: Verify Data Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.VerifyDataRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Verification result
+          schema:
+            $ref: '#/definitions/api.VerifyDataResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Verify a CIP-8/CIP-30 signData signature
+  /api/tx/assemble:
+    post:
+      consumes:
+      - application/json
+      description: Merge detached witnesses into a transaction
+      parameters:
+      - description: Transaction + witnesses
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.TxAssembleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Assembled signed transaction
+          schema:
+            $ref: '#/definitions/api.TxCborResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Assemble a signed transaction
+  /api/tx/decode:
+    post:
+      consumes:
+      - application/json
+      description: Decode and inspect a transaction
+      parameters:
+      - description: Transaction
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.TxDecodeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/bursa.TxInspection'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Decode a transaction
+  /api/tx/id:
+    post:
+      consumes:
+      - application/json
+      description: Calculate the transaction id from a transaction body
+      parameters:
+      - description: Transaction
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.TxIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Transaction id
+          schema:
+            $ref: '#/definitions/api.TxIDResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get a transaction id
+  /api/tx/sign:
+    post:
+      consumes:
+      - application/json
+      description: Add vkey witnesses for the provided signing keys (body preserved)
+      parameters:
+      - description: Transaction + signing keys
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.TxSignRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Signed transaction
+          schema:
+            $ref: '#/definitions/api.TxCborResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Sign a transaction
+  /api/tx/witness:
+    post:
+      consumes:
+      - application/json
+      description: Produce a detached vkey witness for a transaction body
+      parameters:
+      - description: Transaction + signing key
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.TxWitnessRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Detached witness
+          schema:
+            $ref: '#/definitions/api.TxWitnessResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Produce a transaction witness
   /api/wallet/create:
     get:
       description: Create a wallet and return details
