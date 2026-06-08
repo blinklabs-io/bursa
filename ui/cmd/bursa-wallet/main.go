@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,7 +29,10 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa/ui/internal/api"
+	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
+	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
+	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
 
 func main() {
@@ -47,22 +50,26 @@ func run() error {
 		return err
 	}
 	network := envOr("BURSA_NETWORK", "preview")
-	if !validNetwork(network) {
-		return fmt.Errorf("invalid BURSA_NETWORK %q: must be one of preview, preprod, mainnet", network)
+	if !cardanonet.ValidNetwork(network) {
+		return fmt.Errorf("invalid BURSA_NETWORK %q: must be one of %s", network, cardanonet.SupportedNetworks())
 	}
 	dataDir := filepath.Join(home, ".bursa-wallet", network)
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
 	}
 
+	const blockfrostPort uint = 5556
 	sup := supervisor.New(supervisor.Config{
 		Network:        network,
 		DataDir:        filepath.Join(dataDir, "db"),
 		SocketPath:     filepath.Join(dataDir, "node.socket"),
 		UtxorpcPort:    5555,
-		BlockfrostPort: 5556,
+		BlockfrostPort: blockfrostPort,
 		Logger:         logger,
 	})
+
+	// The wallet queries the node's own loopback Blockfrost endpoint.
+	walletSvc := wallet.NewService(chain.NewClient(blockfrostPort))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -74,7 +81,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              "127.0.0.1:8090", // loopback only
-		Handler:           api.NewHandler(sup),
+		Handler:           api.NewHandler(sup, walletSvc, network),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	srvErr := make(chan error, 1)
@@ -102,17 +109,4 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
-}
-
-// validNetwork reports whether name is a supported Cardano network. network is
-// used unescaped as a path segment under ~/.bursa-wallet (and for the node's
-// data dir and socket), so it must be restricted to a fixed allowlist to
-// prevent path traversal from a hostile BURSA_NETWORK value.
-func validNetwork(name string) bool {
-	switch name {
-	case "preview", "preprod", "mainnet":
-		return true
-	default:
-		return false
-	}
 }
