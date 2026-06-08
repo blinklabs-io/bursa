@@ -20,7 +20,7 @@ require (
 	github.com/swaggo/http-swagger v1.3.4
 	github.com/swaggo/swag v1.16.6
 	golang.org/x/crypto v0.52.0
-	golang.org/x/sync v0.20.0
+	golang.org/x/sync v0.21.0
 	google.golang.org/api v0.283.0
 	google.golang.org/grpc v1.81.1
 	modernc.org/sqlite v1.51.0
