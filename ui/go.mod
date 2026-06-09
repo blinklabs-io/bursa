@@ -2,7 +2,11 @@ module github.com/blinklabs-io/bursa/ui
 
 go 1.26.0
 
-require github.com/blinklabs-io/dingo v0.50.2
+require (
+	github.com/blinklabs-io/bursa v0.16.0
+	github.com/blinklabs-io/dingo v0.50.2
+	github.com/blinklabs-io/gouroboros v0.179.0
+)
 
 require (
 	cel.dev/expr v0.25.1 // indirect
@@ -60,9 +64,7 @@ require (
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/blinklabs-io/bark v0.0.2 // indirect
-	github.com/blinklabs-io/bursa v0.16.0 // indirect
 	github.com/blinklabs-io/go-bip39 v0.2.0 // indirect
-	github.com/blinklabs-io/gouroboros v0.179.0 // indirect
 	github.com/blinklabs-io/plutigo v0.1.13 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.6 // indirect
 	github.com/btcsuite/btcd/btcutil v1.2.0 // indirect
