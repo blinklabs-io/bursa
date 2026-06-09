@@ -23,7 +23,7 @@ require (
 	golang.org/x/sync v0.21.0
 	google.golang.org/api v0.283.0
 	google.golang.org/grpc v1.81.1
-	modernc.org/sqlite v1.51.0
+	modernc.org/sqlite v1.52.0
 )
 
 require (
