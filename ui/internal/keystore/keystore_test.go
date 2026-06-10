@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,7 +77,7 @@ func TestUnlockWrongPassword(t *testing.T) {
 	if err := ks.Create("abandon about", "right-password"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := ks.Unlock("wrong-password"); err == nil {
+	if _, err := ks.Unlock("wrong-password"); !errors.Is(err, ErrDecryptFailed) {
 		t.Fatal("Unlock with wrong password should fail")
 	}
 }
@@ -182,6 +183,8 @@ func TestUnlockRejectsUnknownVersion(t *testing.T) {
 	}
 	if _, err := ks.Unlock("longpassword"); err == nil {
 		t.Fatal("Unlock should reject an unknown container version")
+	} else if errors.Is(err, ErrDecryptFailed) {
+		t.Fatalf("unsupported version should not be ErrDecryptFailed: %v", err)
 	}
 }
 

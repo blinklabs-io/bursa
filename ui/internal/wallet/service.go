@@ -78,11 +78,22 @@ func (s *Service) SetWallet(mnemonic, network string, windowN int) (*Account, er
 	if err != nil {
 		return nil, err
 	}
+	if err := s.SetAccount(acct); err != nil {
+		return nil, err
+	}
+	return cloneAccount(acct), nil
+}
+
+// SetAccount stores an already-derived active account.
+func (s *Service) SetAccount(acct *Account) error {
+	if acct == nil {
+		return errors.New("account is nil")
+	}
 	stored := cloneAccount(acct)
 	s.mu.Lock()
 	s.account = stored
 	s.mu.Unlock()
-	return cloneAccount(stored), nil
+	return nil
 }
 
 func (s *Service) currentAccount() (*Account, error) {
