@@ -43,6 +43,7 @@ func main() {
 		addressCommand(),
 		hashCommand(),
 		apiCommand(),
+		signerCommand(),
 		scriptCommand(),
 		txCommand(),
 		signCommand(),

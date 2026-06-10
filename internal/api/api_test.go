@@ -2501,7 +2501,12 @@ func TestTxIDRouteRegistered(t *testing.T) {
 		"application/json",
 		bytes.NewReader(reqBody),
 	)
-	assert.NoError(t, err)
+	if err != nil {
+		t.Fatalf("http.Post: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("http.Post returned nil response")
+	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err)

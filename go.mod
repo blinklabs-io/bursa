@@ -11,6 +11,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/getsops/sops/v3 v3.13.1
 	github.com/go-playground/validator/v10 v10.30.3
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/gowebpki/jcs v1.0.1
 	github.com/kelseyhightower/envconfig v1.4.0
@@ -21,8 +22,10 @@ require (
 	github.com/swaggo/swag v1.16.6
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sync v0.21.0
+	golang.org/x/term v0.44.0
 	google.golang.org/api v0.283.0
 	google.golang.org/grpc v1.81.1
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0
 )
 
@@ -106,7 +109,6 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
@@ -178,7 +180,6 @@ require (
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/term v0.44.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.45.0 // indirect
@@ -188,7 +189,6 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/ini.v1 v1.67.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

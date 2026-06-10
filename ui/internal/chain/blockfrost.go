@@ -98,6 +98,9 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	if err != nil {
 		return fmt.Errorf("GET %s: %w", path, err)
 	}
+	if resp == nil {
+		return fmt.Errorf("GET %s: nil response", path)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return ErrNotFound

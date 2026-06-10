@@ -322,3 +322,51 @@ func TestAssembleTransaction_DeduplicatesExistingWitnesses(t *testing.T) {
 		t.Fatalf("expected existing duplicate witness to remain 1, got %d", len(wits))
 	}
 }
+
+func TestSignDigest_Standard(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	lk := &LoadedKey{SKey: []byte(priv), VKey: pub}
+	msg := make([]byte, 32)
+	for i := range msg {
+		msg[i] = byte(i)
+	}
+	sig, err := SignDigest(lk, msg)
+	if err != nil {
+		t.Fatalf("SignDigest: %v", err)
+	}
+	if !ed25519.Verify(pub, msg, sig) {
+		t.Fatalf("signature does not verify")
+	}
+	gotPub, err := PublicKeyOf(lk)
+	if err != nil {
+		t.Fatalf("PublicKeyOf: %v", err)
+	}
+	if !bytes.Equal(gotPub, pub) {
+		t.Fatalf("PublicKeyOf mismatch: got %x, want %x", gotPub, pub)
+	}
+}
+
+func TestSignDigest_Extended(t *testing.T) {
+	root := bip32.FromBip39Entropy(make([]byte, 32), nil)
+	x := bip32.XPrv(root)
+	lk := &LoadedKey{SKey: []byte(x), VKey: x.PublicKey()}
+	msg := make([]byte, 32)
+	sig, err := SignDigest(lk, msg)
+	if err != nil {
+		t.Fatalf("SignDigest: %v", err)
+	}
+	if len(sig) != 64 {
+		t.Fatalf("expected 64-byte sig, got %d", len(sig))
+	}
+	pub, err := PublicKeyOf(lk)
+	if err != nil {
+		t.Fatalf("PublicKeyOf: %v", err)
+	}
+	// Extended-key signatures verify against the 32-byte public key with standard ed25519.
+	if !ed25519.Verify(ed25519.PublicKey(pub), msg, sig) {
+		t.Fatalf("extended signature does not verify against pubkey")
+	}
+}

@@ -168,7 +168,7 @@ func TestUnlockRejectsUnknownVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	var m map[string]any
+	m := make(map[string]any)
 	if err := json.Unmarshal(blob, &m); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
