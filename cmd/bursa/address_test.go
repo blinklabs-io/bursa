@@ -1,4 +1,4 @@
-// Copyright 2024 Blink Labs Software
+// Copyright 2026 Blink Labs Software
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,40 +15,17 @@
 package main
 
 import (
-	"os"
-
-	"github.com/blinklabs-io/bursa/internal/logging"
-	"github.com/spf13/cobra"
+	"io"
+	"testing"
 )
 
-const (
-	programName = "bursa"
-)
+func TestAddressListRejectsPositionalArgs(t *testing.T) {
+	cmd := addressListCommand()
+	cmd.SetArgs([]string{"mnemonic.txt"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
 
-func main() {
-	// Configure logging
-	logging.Configure()
-
-	rootCmd := &cobra.Command{
-		Use: programName,
-		CompletionOptions: cobra.CompletionOptions{
-			DisableDefaultCmd: true,
-		},
-	}
-
-	rootCmd.AddCommand(
-		walletCommand(),
-		keyCommand(),
-		certCommand(),
-		addressCommand(),
-		hashCommand(),
-		apiCommand(),
-		scriptCommand(),
-		txCommand(),
-		signCommand(),
-	)
-
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("expected address list to reject positional args")
 	}
 }

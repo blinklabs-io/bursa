@@ -64,6 +64,8 @@ Examples:
 		keyDRepCommand(),
 		keyCommitteeColdCommand(),
 		keyCommitteeHotCommand(),
+		keyEncryptCommand(),
+		keyDecryptCommand(),
 	)
 	return &keyCommand
 }

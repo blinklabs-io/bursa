@@ -17,6 +17,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,7 +32,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/go-playground/validator/v10"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
@@ -63,6 +66,113 @@ var mockWalletResponseJSON = `{
       "cborHex": "5880b0a9a8bcddc391c2cc79dbbac792e21f21fa8a3572e8591235bdc802c9aa6c4210eee620765fb6f569ab6b2916001cdd6d289067b022847d62ea19160463bcf72a786a251854a5f459a856e7ae8f9289be9a3a7a1bf421e35bfaab815868e0fd258df1a6eb6b51f6769afcdf4634594b13dba6433ec3670ea9ea742a09e8711e"
   }
 }`
+
+func TestWriteErrorSanitizesServerErrors(t *testing.T) {
+	t.Run("server error", func(t *testing.T) {
+		w := httptest.NewRecorder()
+
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("database secret"))
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.JSONEq(t, `{"error":"Internal server error"}`, w.Body.String())
+	})
+
+	t.Run("client error", func(t *testing.T) {
+		w := httptest.NewRecorder()
+
+		writeError(w, http.StatusBadRequest, fmt.Errorf("client validation detail"))
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.JSONEq(t, `{"error":"client validation detail"}`, w.Body.String())
+	})
+}
+
+func TestDecodeAndValidateConsumesFullRequest(t *testing.T) {
+	type request struct {
+		Name string `json:"name" validate:"required"`
+	}
+
+	tests := []struct {
+		name       string
+		body       string
+		wantOK     bool
+		wantStatus int
+	}{
+		{
+			name:   "trailing whitespace",
+			body:   `{"name":"ok"}` + " \n\t",
+			wantOK: true,
+		},
+		{
+			name:       "multiple JSON values",
+			body:       `{"name":"ok"}{"name":"extra"}`,
+			wantOK:     false,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "trailing garbage",
+			body:       `{"name":"ok"}not-json`,
+			wantOK:     false,
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			var req request
+
+			gotOK := decodeAndValidate(w, r, &req)
+
+			assert.Equal(t, tt.wantOK, gotOK)
+			if tt.wantOK {
+				assert.Equal(t, "ok", req.Name)
+				return
+			}
+			assert.Equal(t, tt.wantStatus, w.Code)
+			assert.JSONEq(t, `{"error":"invalid JSON request"}`, w.Body.String())
+		})
+	}
+}
+
+func TestDecodeAndValidateCapsRequestBody(t *testing.T) {
+	type request struct {
+		Name string `json:"name" validate:"required"`
+	}
+	body := `{"name":"` + strings.Repeat("a", maxRequestBodyBytes) + `"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	var req request
+
+	gotOK := decodeAndValidate(w, r, &req)
+
+	assert.False(t, gotOK)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+	assert.JSONEq(t, `{"error":"request body too large"}`, w.Body.String())
+}
+
+func TestDecodeAndValidateSanitizesValidationErrors(t *testing.T) {
+	type request struct {
+		TxCbor string `json:"tx_cbor" validate:"required"`
+	}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
+	var req request
+
+	gotOK := decodeAndValidate(w, r, &req)
+
+	assert.False(t, gotOK)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.JSONEq(
+		t,
+		`{"error":"Validation failed","fields":{"tx_cbor":"this field is required"}}`,
+		w.Body.String(),
+	)
+	assert.NotContains(t, w.Body.String(), "Key:")
+	assert.NotContains(t, w.Body.String(), "TxCbor")
+	assert.NotContains(t, w.Body.String(), "validate")
+}
 
 func startAPI(
 	t *testing.T,
@@ -1286,7 +1396,7 @@ func TestHandleWalletRestore_InvalidJSON(t *testing.T) {
 
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err)
-	assert.Contains(t, string(body), "Invalid JSON request")
+	assert.Contains(t, string(body), "invalid JSON request")
 }
 
 func TestHandleWalletRestore_MethodNotAllowed(t *testing.T) {
@@ -1412,7 +1522,7 @@ func TestHandleScriptCreate_InvalidJSON(t *testing.T) {
 
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err)
-	assert.Contains(t, string(body), "Invalid JSON request")
+	assert.Contains(t, string(body), "invalid JSON request")
 }
 
 func TestHandleScriptCreate_ValidationError(t *testing.T) {
@@ -2300,4 +2410,385 @@ func TestHandleScriptValidate_WithSlot(t *testing.T) {
 	err = json.Unmarshal(body, &result)
 	assert.NoError(t, err)
 	assert.Equal(t, uint64(12345), result.Slot)
+}
+
+func TestHandleTxDecode(t *testing.T) {
+	// Read the unsigned transaction fixture
+	txHex, err := os.ReadFile("../../testdata/conway-unsigned.tx")
+	assert.NoError(t, err)
+
+	reqBody, err := json.Marshal(TxDecodeRequest{
+		TxCbor: string(bytes.TrimSpace(txHex)),
+	})
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/tx/decode",
+		bytes.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleTxDecode(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "expected 200, body: %s", string(body))
+
+	var insp bursa.TxInspection
+	err = json.Unmarshal(body, &insp)
+	assert.NoError(t, err)
+	assert.Equal(
+		t,
+		"c599a51234a1ee8570b60438d7eedd55a6fa1ed3cf3b6c1da01fb1703762632b",
+		insp.TxId,
+		"tx id must match the fixture",
+	)
+	assert.Equal(t, "Conway", insp.Era, "era must be Conway")
+}
+
+func TestHandleTxID(t *testing.T) {
+	txHex, err := os.ReadFile("../../testdata/conway-unsigned.tx")
+	assert.NoError(t, err)
+
+	reqBody, err := json.Marshal(TxIDRequest{
+		TxCbor: string(bytes.TrimSpace(txHex)),
+	})
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/tx/id",
+		bytes.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleTxID(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "expected 200, body: %s", string(body))
+
+	var txResp TxIDResponse
+	err = json.Unmarshal(body, &txResp)
+	assert.NoError(t, err)
+	assert.Equal(
+		t,
+		"c599a51234a1ee8570b60438d7eedd55a6fa1ed3cf3b6c1da01fb1703762632b",
+		txResp.TxId,
+	)
+}
+
+func TestTxIDRouteRegistered(t *testing.T) {
+	apiBaseURL, _, cleanup := startAPI(t)
+	defer cleanup()
+
+	txHex, err := os.ReadFile("../../testdata/conway-unsigned.tx")
+	assert.NoError(t, err)
+	reqBody, err := json.Marshal(TxIDRequest{
+		TxCbor: string(bytes.TrimSpace(txHex)),
+	})
+	assert.NoError(t, err)
+
+	resp, err := http.Post(
+		fmt.Sprintf("%s/api/tx/id", apiBaseURL),
+		"application/json",
+		bytes.NewReader(reqBody),
+	)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "expected 200, body: %s", string(body))
+
+	var txResp TxIDResponse
+	err = json.Unmarshal(body, &txResp)
+	assert.NoError(t, err)
+	assert.Equal(
+		t,
+		"c599a51234a1ee8570b60438d7eedd55a6fa1ed3cf3b6c1da01fb1703762632b",
+		txResp.TxId,
+	)
+}
+
+func TestHandleTxSign(t *testing.T) {
+	// Generate a wallet to sign with
+	mnemonic, err := bursa.GenerateMnemonic()
+	assert.NoError(t, err)
+	wallet, err := bursa.NewWallet(mnemonic, bursa.WithNetwork("mainnet"))
+	assert.NoError(t, err)
+
+	// Marshal the payment extended signing key as cardano-cli envelope JSON
+	skeyJSON, err := json.Marshal(wallet.PaymentExtendedSKey)
+	assert.NoError(t, err)
+
+	// Read the unsigned transaction fixture
+	txHex, err := os.ReadFile("../../testdata/conway-unsigned.tx")
+	assert.NoError(t, err)
+
+	reqBody, err := json.Marshal(TxSignRequest{
+		TxCbor:      string(bytes.TrimSpace(txHex)),
+		SigningKeys: []string{string(skeyJSON)},
+	})
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/tx/sign",
+		bytes.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleTxSign(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "expected 200, body: %s", string(body))
+
+	var txResp TxCborResponse
+	err = json.Unmarshal(body, &txResp)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, txResp.TxCbor)
+	assert.Equal(
+		t,
+		"c599a51234a1ee8570b60438d7eedd55a6fa1ed3cf3b6c1da01fb1703762632b",
+		txResp.TxId,
+		"tx id must match the fixture",
+	)
+}
+
+func TestHandleTxOperationsRejectMalformedTransactionInput(t *testing.T) {
+	mnemonic, err := bursa.GenerateMnemonic()
+	assert.NoError(t, err)
+	wallet, err := bursa.NewWallet(mnemonic, bursa.WithNetwork("mainnet"))
+	assert.NoError(t, err)
+	skeyJSON, err := json.Marshal(wallet.PaymentExtendedSKey)
+	assert.NoError(t, err)
+
+	witnessCBOR, err := bursa.EncodeWitness(lcommon.VkeyWitness{
+		Vkey:      make([]byte, 32),
+		Signature: make([]byte, 64),
+	})
+	assert.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		path    string
+		handler http.HandlerFunc
+		body    any
+	}{
+		{
+			name:    "sign",
+			path:    "/api/tx/sign",
+			handler: handleTxSign,
+			body: TxSignRequest{
+				TxCbor:      "80",
+				SigningKeys: []string{string(skeyJSON)},
+			},
+		},
+		{
+			name:    "witness",
+			path:    "/api/tx/witness",
+			handler: handleTxWitness,
+			body: TxWitnessRequest{
+				TxCbor:     "80",
+				SigningKey: string(skeyJSON),
+			},
+		},
+		{
+			name:    "assemble",
+			path:    "/api/tx/assemble",
+			handler: handleTxAssemble,
+			body: TxAssembleRequest{
+				TxCbor:    "80",
+				Witnesses: []string{hex.EncodeToString(witnessCBOR)},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reqBody, err := json.Marshal(tt.body)
+			assert.NoError(t, err)
+
+			req := httptest.NewRequest(
+				http.MethodPost,
+				tt.path,
+				bytes.NewReader(reqBody),
+			)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			tt.handler(w, req)
+
+			resp := w.Result()
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			assert.NoError(t, err)
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.NotContains(t, string(body), "Internal server error")
+		})
+	}
+}
+
+func TestHandleSignData(t *testing.T) {
+	// Generate a wallet to sign with
+	mnemonic, err := bursa.GenerateMnemonic()
+	assert.NoError(t, err)
+	wallet, err := bursa.NewWallet(mnemonic, bursa.WithNetwork("mainnet"))
+	assert.NoError(t, err)
+
+	// Marshal the payment extended signing key as cardano-cli envelope JSON
+	skeyJSON, err := json.Marshal(wallet.PaymentExtendedSKey)
+	assert.NoError(t, err)
+
+	addr, err := lcommon.NewAddress(wallet.PaymentAddress)
+	assert.NoError(t, err)
+	addrBytes, err := addr.Bytes()
+	assert.NoError(t, err)
+	addrHex := hex.EncodeToString(addrBytes)
+	payloadHex := fmt.Sprintf("%x", []byte("hi"))
+
+	reqBody, err := json.Marshal(SignDataRequest{
+		Address:    addrHex,
+		Payload:    payloadHex,
+		SigningKey: string(skeyJSON),
+	})
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/sign/data",
+		bytes.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleSignData(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "expected 200, body: %s", string(body))
+
+	var signResp SignDataResponse
+	err = json.Unmarshal(body, &signResp)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, signResp.Signature)
+	assert.NotEmpty(t, signResp.Key)
+}
+
+func TestHandleSignDataRejectsMalformedHex(t *testing.T) {
+	tests := []struct {
+		name string
+		req  SignDataRequest
+	}{
+		{
+			name: "address",
+			req: SignDataRequest{
+				Address:    "0",
+				Payload:    "00",
+				SigningKey: "{}",
+			},
+		},
+		{
+			name: "payload",
+			req: SignDataRequest{
+				Address:    "00",
+				Payload:    "0",
+				SigningKey: "{}",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reqBody, err := json.Marshal(tt.req)
+			assert.NoError(t, err)
+
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/sign/data",
+				bytes.NewReader(reqBody),
+			)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			handleSignData(w, req)
+
+			resp := w.Result()
+			defer resp.Body.Close()
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		})
+	}
+}
+
+func TestHandleVerifyDataRejectsMalformedPayloadHex(t *testing.T) {
+	reqBody, err := json.Marshal(VerifyDataRequest{
+		Signature: "00",
+		Key:       "00",
+		Payload:   "0",
+	})
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/sign/verify",
+		bytes.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleVerifyData(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleAddressEnumerate(t *testing.T) {
+	m, err := bursa.GenerateMnemonic()
+	if err != nil {
+		t.Fatalf("failed to generate mnemonic: %v", err)
+	}
+
+	reqBody, _ := json.Marshal(AddressEnumerateRequest{
+		Mnemonic: m,
+		Network:  "preview",
+		Count:    3,
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/address/enumerate",
+		bytes.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleAddressEnumerate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "expected 200, body: %s", string(body))
+
+	var addrs []bursa.EnumeratedAddress
+	err = json.Unmarshal(body, &addrs)
+	assert.NoError(t, err)
+	assert.Len(t, addrs, 3)
+	assert.Equal(t, uint32(0), addrs[0].Index)
+	assert.Equal(t, uint32(1), addrs[1].Index)
+	assert.Equal(t, uint32(2), addrs[2].Index)
 }

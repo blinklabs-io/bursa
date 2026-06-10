@@ -26,7 +26,9 @@ import (
 	"sync"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	"github.com/blinklabs-io/bursa/internal/sops"
 )
 
 // FileStore implements the Store interface using local file system.
@@ -102,22 +104,29 @@ func (s *FileStore) GetWallet(
 		return nil, fmt.Errorf("wallet %s not found", name)
 	}
 
-	file, err := os.Open(walletPath)
+	raw, err := os.ReadFile(walletPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open wallet file: %w", err)
+		return nil, fmt.Errorf("failed to read wallet file: %w", err)
 	}
-	defer file.Close()
-
+	encryptedAtRest := sops.IsEncrypted(raw)
+	if encryptedAtRest {
+		dec, err := sops.Decrypt(raw)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt wallet at rest: %w", err)
+		}
+		raw = dec
+	}
 	var data fileWalletData
-	if err := json.NewDecoder(file).Decode(&data); err != nil {
+	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, fmt.Errorf("failed to decode wallet data: %w", err)
 	}
 
 	return &fileWallet{
-		name:        name,
-		description: data.Description,
-		items:       data.Items,
-		store:       s,
+		name:            name,
+		description:     data.Description,
+		items:           data.Items,
+		store:           s,
+		encryptedAtRest: encryptedAtRest,
 	}, nil
 }
 
@@ -182,11 +191,12 @@ func (s *FileStore) DeleteWallet(ctx context.Context, name string) error {
 
 // fileWallet implements the Wallet interface for file-based storage
 type fileWallet struct {
-	items       map[string]string
-	store       *FileStore
-	name        string
-	description string
-	mu          sync.RWMutex
+	items           map[string]string
+	store           *FileStore
+	name            string
+	description     string
+	encryptedAtRest bool
+	mu              sync.RWMutex
 }
 
 // fileWalletData represents the JSON structure for file storage
@@ -322,39 +332,50 @@ func (w *fileWallet) Save(ctx context.Context) error {
 		return fmt.Errorf("invalid wallet name: %w", err)
 	}
 
+	w.mu.RLock()
+	var items map[string]string
+	if w.items != nil {
+		items = make(map[string]string, len(w.items))
+		maps.Copy(items, w.items)
+	}
+	data := fileWalletData{
+		Description: w.description,
+		Items:       items,
+	}
+	encryptedAtRest := w.encryptedAtRest
+	w.mu.RUnlock()
+
+	resourceID := config.GetConfig().Google.ResourceId
+	if encryptedAtRest && resourceID == "" {
+		return errors.New(
+			"wallet encryption is required but google kms resource id is not configured",
+		)
+	}
+
 	// Ensure directory exists with secure permissions (0700)
 	walletDir := w.store.walletDir(w.name)
 	if err := os.MkdirAll(walletDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create wallet directory: %w", err)
 	}
 
-	// Write wallet data
-	w.mu.RLock()
-	data := fileWalletData{
-		Description: w.description,
-		Items:       w.items,
-	}
-	w.mu.RUnlock()
-
-	// Write wallet data with secure file permissions (0600)
-	// TODO: Encrypt wallet data at rest using SOPS or similar encryption
-	// SECURITY: Currently storing sensitive data (mnemonics, private keys) in plain JSON
-	file, err := os.OpenFile(
-		w.store.walletPath(w.name),
-		os.O_RDWR|os.O_CREATE|os.O_TRUNC,
-		0o600,
-	)
+	raw, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to create wallet file: %w", err)
-	}
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(data); err != nil {
 		return fmt.Errorf("failed to encode wallet data: %w", err)
 	}
-
+	raw = append(raw, '\n')
+	if resourceID != "" {
+		enc, err := sops.Encrypt(raw)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt wallet at rest: %w", err)
+		}
+		raw = enc
+	}
+	if err := writeSecretFileAtomic(w.store.walletPath(w.name), raw, 0o600); err != nil {
+		return fmt.Errorf("failed to write wallet file: %w", err)
+	}
+	w.mu.Lock()
+	w.encryptedAtRest = resourceID != ""
+	w.mu.Unlock()
 	return nil
 }
 
@@ -378,4 +399,48 @@ func (s *FileStore) walletPath(name string) string {
 		panic(fmt.Sprintf("invalid wallet name in walletPath: %v", err))
 	}
 	return filepath.Join(s.walletDir(name), "wallet.json")
+}
+
+func writeSecretFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	if dirFile, err := os.Open(dir); err == nil {
+		if syncErr := dirFile.Sync(); syncErr != nil {
+			_ = dirFile.Close()
+			return syncErr
+		}
+		if err := dirFile.Close(); err != nil {
+			return err
+		}
+	}
+	removeTmp = false
+	return nil
 }
