@@ -208,13 +208,16 @@ func fetchLatestBlock(ctx context.Context, c *http.Client, url string) (slot uin
 		return 0, time.Time{}, false
 	}
 	resp, err := c.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		if resp != nil {
-			resp.Body.Close()
-		}
+	if err != nil {
+		return 0, time.Time{}, false
+	}
+	if resp == nil {
 		return 0, time.Time{}, false
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, time.Time{}, false
+	}
 	var body struct {
 		Slot uint64 `json:"slot"`
 		Time int64  `json:"time"` // unix seconds (Blockfrost block time)

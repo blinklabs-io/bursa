@@ -255,6 +255,11 @@ type TxInput struct {
 type TxOutput struct {
 	Address  string `json:"address"`
 	Lovelace string `json:"lovelace"`
+	// HasAssets is true when the output carries native (multi-)assets in
+	// addition to lovelace. The policy engine treats native-asset movement as
+	// a distinct, deny-by-default operation because lovelace limits do not
+	// bound token quantities.
+	HasAssets bool `json:"has_assets,omitempty"`
 }
 
 // TxInspection is the decoded, human-readable view of a transaction.
@@ -275,6 +280,14 @@ type TxInspection struct {
 	RequiredSigners  int        `json:"required_signers"`
 	VkeyWitnesses    int        `json:"vkey_witnesses"`
 	NativeScripts    int        `json:"native_scripts"`
+	// Conway governance and treasury components. These authorize
+	// high-impact actions (casting DRep/committee votes, submitting
+	// governance proposals, donating to the treasury) that are independent
+	// of outputs/certificates/withdrawals, so the policy engine must inspect
+	// and gate them explicitly.
+	VotingProcedureCount   int  `json:"voting_procedure_count,omitempty"`
+	ProposalProcedureCount int  `json:"proposal_procedure_count,omitempty"`
+	HasTreasuryDonation    bool `json:"has_treasury_donation,omitempty"`
 }
 
 func eraName(txType uint) string {
@@ -332,9 +345,14 @@ func InspectTransaction(txCbor []byte) (*TxInspection, error) {
 		if amt := out.Amount(); amt != nil {
 			lovelace = amt.String()
 		}
+		hasAssets := false
+		if assets := out.Assets(); assets != nil && len(assets.Policies()) > 0 {
+			hasAssets = true
+		}
 		insp.Outputs = append(insp.Outputs, TxOutput{
-			Address:  out.Address().String(),
-			Lovelace: lovelace,
+			Address:   out.Address().String(),
+			Lovelace:  lovelace,
+			HasAssets: hasAssets,
 		})
 	}
 	insp.CertificateCount = len(tx.Certificates())
@@ -342,6 +360,11 @@ func InspectTransaction(txCbor []byte) (*TxInspection, error) {
 	insp.HasMint = tx.AssetMint() != nil
 	insp.HasMetadata = tx.Metadata() != nil
 	insp.RequiredSigners = len(tx.RequiredSigners())
+	insp.VotingProcedureCount = len(tx.VotingProcedures())
+	insp.ProposalProcedureCount = len(tx.ProposalProcedures())
+	if d := tx.Donation(); d != nil && d.Sign() > 0 {
+		insp.HasTreasuryDonation = true
+	}
 	if ws := tx.Witnesses(); ws != nil {
 		insp.VkeyWitnesses = len(ws.Vkey())
 		insp.NativeScripts = len(ws.NativeScripts())
@@ -381,4 +404,26 @@ func MinFee(sizeBytes int, params ProtocolParams) uint64 {
 		return params.TxFeeFixed
 	}
 	return params.TxFeePerByte*uint64(sizeBytes) + params.TxFeeFixed
+}
+
+// SignDigest signs an arbitrary message with the loaded key and returns the raw
+// 64-byte signature. Standard ed25519 keys use crypto/ed25519; extended
+// BIP32-Ed25519 keys use the Cardano signing routine. This is the low-level
+// signing primitive used by the remote signer's custody backends.
+func SignDigest(lk *LoadedKey, msg []byte) ([]byte, error) {
+	_, sign, err := signerForKey(lk)
+	if err != nil {
+		return nil, err
+	}
+	return sign(msg), nil
+}
+
+// PublicKeyOf returns the canonical 32-byte Ed25519 verification key for the
+// loaded key (the value placed in a vkey witness and hashed for the key hash).
+func PublicKeyOf(lk *LoadedKey) ([]byte, error) {
+	vkey, _, err := signerForKey(lk)
+	if err != nil {
+		return nil, err
+	}
+	return vkey, nil
 }
