@@ -50,7 +50,7 @@ func EnumerateAddresses(mnemonic, password, network string, account, start, coun
 		return nil, err
 	}
 	out := make([]EnumeratedAddress, 0, count)
-	for i := uint32(0); i < count; i++ {
+	for i := range count {
 		idx := start + i
 		addr, err := GetAddress(accountKey, network, idx)
 		if err != nil {

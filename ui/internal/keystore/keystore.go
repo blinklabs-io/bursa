@@ -31,6 +31,11 @@ const (
 	maxContainerLen = 64 * 1024
 )
 
+// ErrDecryptFailed is returned when the keystore ciphertext cannot be
+// authenticated with the supplied password. AES-GCM cannot distinguish a wrong
+// password from ciphertext corruption.
+var ErrDecryptFailed = errors.New("keystore decryption failed")
+
 // kdfParams is the scrypt cost Create writes plus the range Unlock accepts,
 // so cost can be raised in future releases without a format break, while
 // refusing absurd params from a crafted file.
@@ -212,7 +217,7 @@ func (k *Keystore) Unlock(password string) ([]byte, error) {
 	}
 	pt, err := gcm.Open(nil, nonce, ct, nil)
 	if err != nil {
-		return nil, errors.New("decryption failed (wrong password or corrupt keystore)")
+		return nil, fmt.Errorf("%w: wrong password or corrupt keystore", ErrDecryptFailed)
 	}
 	return pt, nil
 }

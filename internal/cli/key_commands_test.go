@@ -240,11 +240,11 @@ func TestRunKeyVRF_Bech32Output(t *testing.T) {
 	assert.Contains(t, output, "vrf_skey:")
 	assert.Contains(t, output, "vrf_vkey:")
 	// Extract the vrf_skey value
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "vrf_skey:") {
+	lines := strings.SplitSeq(output, "\n")
+	for line := range lines {
+		if after, ok := strings.CutPrefix(line, "vrf_skey:"); ok {
 			key := strings.TrimSpace(
-				strings.TrimPrefix(line, "vrf_skey:"),
+				after,
 			)
 			assert.True(
 				t,
@@ -252,9 +252,9 @@ func TestRunKeyVRF_Bech32Output(t *testing.T) {
 				"VRF signing key should have vrf_sk prefix",
 			)
 		}
-		if strings.HasPrefix(line, "vrf_vkey:") {
+		if after, ok := strings.CutPrefix(line, "vrf_vkey:"); ok {
 			key := strings.TrimSpace(
-				strings.TrimPrefix(line, "vrf_vkey:"),
+				after,
 			)
 			assert.True(
 				t,
@@ -279,11 +279,11 @@ func TestRunKeyKES_Bech32Output(t *testing.T) {
 	})
 	assert.Contains(t, output, "kes_skey:")
 	assert.Contains(t, output, "kes_vkey:")
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "kes_skey:") {
+	lines := strings.SplitSeq(output, "\n")
+	for line := range lines {
+		if after, ok := strings.CutPrefix(line, "kes_skey:"); ok {
 			key := strings.TrimSpace(
-				strings.TrimPrefix(line, "kes_skey:"),
+				after,
 			)
 			assert.True(
 				t,
@@ -291,9 +291,9 @@ func TestRunKeyKES_Bech32Output(t *testing.T) {
 				"KES signing key should have kes_sk prefix",
 			)
 		}
-		if strings.HasPrefix(line, "kes_vkey:") {
+		if after, ok := strings.CutPrefix(line, "kes_vkey:"); ok {
 			key := strings.TrimSpace(
-				strings.TrimPrefix(line, "kes_vkey:"),
+				after,
 			)
 			assert.True(
 				t,

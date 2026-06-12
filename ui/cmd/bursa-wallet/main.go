@@ -28,9 +28,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/blinklabs-io/apollo/v2/backend/utxorpc"
 	"github.com/blinklabs-io/bursa/ui/internal/api"
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
@@ -50,7 +53,8 @@ func run() error {
 		return err
 	}
 	network := envOr("BURSA_NETWORK", "preview")
-	if !cardanonet.ValidNetwork(network) {
+	netID, err := cardanonet.AddressNetworkID(network)
+	if err != nil {
 		return fmt.Errorf("invalid BURSA_NETWORK %q: must be one of %s", network, cardanonet.SupportedNetworks())
 	}
 	dataDir := filepath.Join(home, ".bursa-wallet", network)
@@ -58,18 +62,29 @@ func run() error {
 		return err
 	}
 
-	const blockfrostPort uint = 5556
+	const (
+		utxorpcPort    uint = 5555
+		blockfrostPort uint = 5556
+	)
 	sup := supervisor.New(supervisor.Config{
 		Network:        network,
 		DataDir:        filepath.Join(dataDir, "db"),
 		SocketPath:     filepath.Join(dataDir, "node.socket"),
-		UtxorpcPort:    5555,
+		UtxorpcPort:    utxorpcPort,
 		BlockfrostPort: blockfrostPort,
 		Logger:         logger,
 	})
 
 	// The wallet queries the node's own loopback Blockfrost endpoint.
 	walletSvc := wallet.NewService(chain.NewClient(blockfrostPort))
+
+	// Spending builds/signs/submits through the node's loopback UTxO-RPC
+	// endpoint; the mnemonic is encrypted at rest under the data dir.
+	chainCtx := utxorpc.NewUtxoRpcChainContext(
+		fmt.Sprintf("http://127.0.0.1:%d", utxorpcPort), netID, nil,
+	)
+	keyStore := keystore.New(filepath.Join(dataDir, "keystore.json"))
+	spendSvc := spend.NewService(chainCtx, keyStore, nil)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -81,7 +96,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              "127.0.0.1:8090", // loopback only
-		Handler:           api.NewHandler(sup, walletSvc, network),
+		Handler:           api.NewHandler(sup, walletSvc, spendSvc, network),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	srvErr := make(chan error, 1)
