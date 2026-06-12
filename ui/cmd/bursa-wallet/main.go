@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -66,6 +67,8 @@ func run() error {
 		utxorpcPort    uint = 5555
 		blockfrostPort uint = 5556
 	)
+	// Mithril fast-sync is on by default; BURSA_SYNC=genesis opts out.
+	mithrilEnabled := !strings.EqualFold(envOr("BURSA_SYNC", "mithril"), "genesis")
 	sup := supervisor.New(supervisor.Config{
 		Network:        network,
 		DataDir:        filepath.Join(dataDir, "db"),
@@ -73,6 +76,7 @@ func run() error {
 		UtxorpcPort:    utxorpcPort,
 		BlockfrostPort: blockfrostPort,
 		Logger:         logger,
+		MithrilEnabled: mithrilEnabled,
 	})
 
 	// The wallet queries the node's own loopback Blockfrost endpoint.

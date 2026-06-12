@@ -150,6 +150,17 @@ func TestWalletGatedWhileStarting(t *testing.T) {
 	}
 }
 
+func TestWalletGatedWhileBootstrapping(t *testing.T) {
+	// Mithril bootstrap is not a servable state: reads must be gated (503).
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateBootstrapping}}
+	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/balance", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /wallet/balance while bootstrapping = %d, want 503", rec.Code)
+	}
+}
+
 func TestWalletNoWalletConflict(t *testing.T) {
 	// No POST /wallet first: the natural no-wallet path must yield 409.
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}

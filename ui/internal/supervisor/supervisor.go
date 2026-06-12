@@ -38,17 +38,23 @@ type Config struct {
 	Logger         *slog.Logger
 	// CaughtUpThreshold is how recent the latest block must be to be "ready".
 	CaughtUpThreshold time.Duration
+	// MithrilEnabled bootstraps a fresh node DB from a Mithril snapshot before
+	// serving. The zero value is false (genesis sync); main.go enables it by
+	// default and BURSA_SYNC=genesis opts out.
+	MithrilEnabled bool
 }
 
 // Supervisor owns the embedded Dingo node's lifecycle and exposes its status.
 type Supervisor struct {
 	cfg    Config
 	cancel context.CancelFunc
+	runID  uint64
 
 	mu     sync.RWMutex
 	status Status
 
-	now func() time.Time // injectable clock for tests
+	now          func() time.Time // injectable clock for tests
+	bootstrapper Bootstrapper     // injectable for tests
 }
 
 func New(cfg Config) *Supervisor {
@@ -59,9 +65,10 @@ func New(cfg Config) *Supervisor {
 		cfg.Logger = slog.Default()
 	}
 	return &Supervisor{
-		cfg:    cfg,
-		status: Status{State: StateStopped},
-		now:    time.Now,
+		cfg:          cfg,
+		status:       Status{State: StateStopped},
+		now:          time.Now,
+		bootstrapper: mithrilBootstrapper{logger: cfg.Logger},
 	}
 }
 
@@ -76,6 +83,8 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		return errors.New("supervisor already started")
 	}
 	runCtx, cancel := context.WithCancel(ctx)
+	s.runID++
+	runID := s.runID
 	s.cancel = cancel
 	s.mu.Unlock()
 
@@ -83,7 +92,9 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	// before the node goroutine is launched.
 	fail := func(err error) error {
 		s.mu.Lock()
-		s.cancel = nil
+		if s.activeRunLocked(runID) {
+			s.cancel = nil
+		}
 		s.mu.Unlock()
 		cancel()
 		return err
@@ -114,19 +125,94 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		}),
 		dingo.WithLogger(s.cfg.Logger),
 	)
-	node, err := dingo.New(nodeCfg)
-	if err != nil {
-		return fail(fmt.Errorf("create node: %w", err))
-	}
-	s.setState(StateStarting)
-
-	go func() {
-		if err := node.Run(runCtx); err != nil && runCtx.Err() == nil {
-			s.setError(err)
+	// launch creates the node, marks it starting, and begins serving + polling.
+	// Used by both the direct and post-bootstrap paths.
+	launch := func() error {
+		node, err := dingo.New(nodeCfg)
+		if err != nil {
+			return err
 		}
-	}()
-	go s.pollLoop(runCtx)
+		s.setStateForRun(runID, StateStarting)
+		go func() {
+			if err := node.Run(runCtx); err != nil && runCtx.Err() == nil {
+				s.setErrorForRun(runID, err)
+			}
+		}()
+		go s.pollLoop(runCtx, runID)
+		return nil
+	}
+
+	if !shouldBootstrap(s.cfg.MithrilEnabled, s.cfg.DataDir) {
+		if err := launch(); err != nil {
+			return fail(fmt.Errorf("create node: %w", err))
+		}
+		return nil
+	}
+
+	// Mithril bootstrap path: run asynchronously so /status stays live; node
+	// creation is deferred until the snapshot import finishes (mithril.Sync and
+	// the node cannot both hold the DB).
+	s.setStateForRun(runID, StateBootstrapping)
+	go s.bootstrapThenLaunch(runCtx, runID, launch)
 	return nil
+}
+
+// bootstrapThenLaunch runs the Mithril bootstrap and, on success, records the
+// completion marker and launches the node. Any failure → StateError (no fallback).
+func (s *Supervisor) bootstrapThenLaunch(ctx context.Context, runID uint64, launch func() error) {
+	err := s.bootstrapper.Bootstrap(ctx, BootstrapParams{
+		Network: s.cfg.Network,
+		DataDir: s.cfg.DataDir,
+		OnProgress: func(bp BootstrapProgress) {
+			s.onProgressForRun(runID, bp)
+		},
+	})
+	if err != nil {
+		// A bootstrap aborted by context cancellation (Stop or parent shutdown)
+		// is an orderly wind-down, not a failure — same guard as node.Run.
+		if ctx.Err() == nil {
+			s.setErrorForRun(runID, fmt.Errorf("mithril bootstrap: %w", err))
+		}
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	// Record completion before launch, deliberately: mithril.Sync's success
+	// contract is a complete, servable DB, while a launch failure (dingo.New
+	// only validates config) is not something a re-bootstrap can fix. An
+	// unwritten marker here would make the next start re-download the entire
+	// snapshot over an already-complete DB.
+	if err := markBootstrapDone(s.cfg.DataDir); err != nil {
+		if ctx.Err() == nil {
+			s.setErrorForRun(runID, fmt.Errorf("record bootstrap completion: %w", err))
+		}
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	if err := launch(); err != nil {
+		if ctx.Err() == nil {
+			s.setErrorForRun(runID, fmt.Errorf("create node: %w", err))
+		}
+	}
+}
+
+// onProgress stores the latest bootstrap progress on the status snapshot.
+func (s *Supervisor) onProgress(bp BootstrapProgress) {
+	s.onProgressForRun(s.currentRunID(), bp)
+}
+
+func (s *Supervisor) onProgressForRun(runID uint64, bp BootstrapProgress) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Once the supervisor is torn down or a newer run has started, a late
+	// callback from an old bootstrap must not write into the current snapshot.
+	if !s.activeRunLocked(runID) || s.status.State != StateBootstrapping {
+		return
+	}
+	s.status.Bootstrap = &bp
 }
 
 // Stop cancels the node's context and marks the supervisor stopped.
@@ -138,6 +224,7 @@ func (s *Supervisor) Stop() {
 	// can't race between the unlock and the state write.
 	s.cancel = nil
 	s.status.State = StateStopped
+	s.status.Bootstrap = nil // a clean shutdown is not a diagnostic failure
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -152,22 +239,61 @@ func (s *Supervisor) Status() Status {
 }
 
 func (s *Supervisor) setState(st NodeState) {
+	s.setStateForRun(s.currentRunID(), st)
+}
+
+func (s *Supervisor) setStateForRun(runID uint64, st NodeState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Once the supervisor is torn down or a newer run has started, a late
+	// goroutine must not resurrect or mutate the current run's state.
+	if !s.activeRunLocked(runID) {
+		return
+	}
 	s.status.State = st
+	if st != StateBootstrapping {
+		s.status.Bootstrap = nil
+	}
 }
 
 func (s *Supervisor) setError(err error) {
+	s.setErrorForRun(s.currentRunID(), err)
+}
+
+func (s *Supervisor) setErrorForRun(runID uint64, err error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	// If the supervisor was already torn down or a newer run has started, don't
+	// override the current run's terminal state.
+	if !s.activeRunLocked(runID) {
+		s.mu.Unlock()
+		return
+	}
+	cancel := s.cancel
+	s.cancel = nil
 	s.status.State = StateError
+	// Status.Bootstrap is intentionally retained on error so /status shows how
+	// far a bootstrap got before failing (diagnostics).
 	s.status.Err = err.Error()
+	s.mu.Unlock()
+	// Wind down the node/poll-loop goroutines and free the start guard so the
+	// supervisor can be started again after the failure.
+	cancel()
+}
+
+func (s *Supervisor) currentRunID() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.runID
+}
+
+func (s *Supervisor) activeRunLocked(runID uint64) bool {
+	return s.cancel != nil && s.runID == runID
 }
 
 // pollLoop polls the node's own loopback Blockfrost endpoint for the latest
 // block and updates Status. Reaching the node over the wire (not via internals)
 // is deliberate — it is the same pattern every subsystem uses.
-func (s *Supervisor) pollLoop(ctx context.Context) {
+func (s *Supervisor) pollLoop(ctx context.Context, runID uint64) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	url := fmt.Sprintf("http://127.0.0.1:%d/api/v0/blocks/latest", s.cfg.BlockfrostPort)
@@ -182,7 +308,7 @@ func (s *Supervisor) pollLoop(ctx context.Context) {
 			s.mu.Lock()
 			// Don't move off a terminal/stopped state; once Stop sets
 			// StateStopped, a late poll must not revert it to syncing/ready.
-			if s.status.State != StateError && s.status.State != StateStopped {
+			if s.activeRunLocked(runID) && s.status.State != StateError && s.status.State != StateStopped {
 				s.status.State = deriveState(ok, isCaughtUp)
 				// CaughtUp must reflect every poll, not just successful ones: a
 				// failed poll yields isCaughtUp=false, so updating it here keeps
