@@ -14,6 +14,8 @@
 package supervisor
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -57,5 +59,33 @@ func TestDeriveState(t *testing.T) {
 				t.Fatalf("deriveState() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestStatusBootstrapSerialisation(t *testing.T) {
+	// Omitted when nil.
+	b, err := json.Marshal(Status{State: StateSyncing})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), "bootstrap") {
+		t.Fatalf("nil Bootstrap should be omitted, got %s", b)
+	}
+
+	// Present (with progress) when bootstrapping.
+	s := Status{
+		State:     StateBootstrapping,
+		Bootstrap: &BootstrapProgress{Phase: "ledger_import", Percent: 42.5, BytesDownloaded: 10, TotalBytes: 20, BytesPerSecond: 5},
+	}
+	b, err = json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(b)
+	if !strings.Contains(got, `"state":"bootstrapping"`) {
+		t.Fatalf("missing bootstrapping state: %s", got)
+	}
+	if !strings.Contains(got, `"phase":"ledger_import"`) || !strings.Contains(got, `"percent":42.5`) {
+		t.Fatalf("missing bootstrap progress: %s", got)
 	}
 }

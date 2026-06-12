@@ -20,7 +20,9 @@ import (
 )
 
 // denylist is import-path substrings for external services the wallet must
-// never reach. The only sanctioned outbound link is the embedded node's P2P.
+// never reach. Sanctioned outbound links: the embedded node's P2P, and a
+// one-time Mithril snapshot download at bootstrap (first-party Cardano infra,
+// certificate-verified, leaks no wallet data — see internal/supervisor/bootstrap.go).
 var denylist = []string{
 	"coingecko",
 	"coinmarketcap",

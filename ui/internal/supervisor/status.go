@@ -19,20 +19,34 @@ import "time"
 type NodeState string
 
 const (
-	StateStopped  NodeState = "stopped"
-	StateStarting NodeState = "starting"
-	StateSyncing  NodeState = "syncing"
-	StateReady    NodeState = "ready"
-	StateError    NodeState = "error"
+	StateStopped       NodeState = "stopped"
+	StateStarting      NodeState = "starting"
+	StateBootstrapping NodeState = "bootstrapping"
+	StateSyncing       NodeState = "syncing"
+	StateReady         NodeState = "ready"
+	StateError         NodeState = "error"
 )
+
+// BootstrapProgress is a snapshot of an in-flight Mithril bootstrap, flattened
+// from dingo's mithril.SyncProgress for the API. It is set while
+// StateBootstrapping and retained in StateError as a diagnostic (how far the
+// bootstrap got before failing); any other state clears it.
+type BootstrapProgress struct {
+	Phase           string  `json:"phase"`
+	Percent         float64 `json:"percent"`
+	BytesDownloaded int64   `json:"bytes_downloaded,omitempty"`
+	TotalBytes      int64   `json:"total_bytes,omitempty"`
+	BytesPerSecond  float64 `json:"bytes_per_second,omitempty"`
+}
 
 // Status is a point-in-time snapshot of the embedded node, serialised by the API.
 type Status struct {
-	State           NodeState  `json:"state"`
-	Tip             uint64     `json:"tip"` // latest block slot known to the node
-	LatestBlockTime *time.Time `json:"latestBlockTime,omitempty"`
-	CaughtUp        bool       `json:"caughtUp"`
-	Err             string     `json:"error,omitempty"`
+	State           NodeState          `json:"state"`
+	Tip             uint64             `json:"tip"` // latest block slot known to the node
+	LatestBlockTime *time.Time         `json:"latestBlockTime,omitempty"`
+	CaughtUp        bool               `json:"caughtUp"`
+	Bootstrap       *BootstrapProgress `json:"bootstrap,omitempty"`
+	Err             string             `json:"error,omitempty"`
 }
 
 // caughtUp reports whether the latest block is recent enough to consider the

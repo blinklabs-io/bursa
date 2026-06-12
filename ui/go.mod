@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/blinklabs-io/apollo/v2 v2.0.0-20260610185853-0c47e0b38bd5
 	github.com/blinklabs-io/bursa v0.16.0
-	github.com/blinklabs-io/dingo v0.52.1
+	github.com/blinklabs-io/dingo v0.53.0
 	github.com/blinklabs-io/gouroboros v0.182.0
 	github.com/blinklabs-io/plutigo v0.1.15
 	github.com/utxorpc/go-codegen v0.19.2
