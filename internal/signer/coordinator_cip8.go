@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
@@ -35,17 +36,20 @@ func (c *Coordinator) SignCIP8(ctx context.Context, payload []byte, address, key
 	if err != nil {
 		c.deps.Logger.Info("sign", "type", "cip8", "caller-key", keyID, "address", address, "result", "denied", "reason", "invalid key id")
 		c.deps.Metrics.observe("cip8", string(CodeBadRequest))
+		c.deps.Metrics.observeDeny(string(CodeBadRequest))
 		return nil, CodeBadRequest, fmt.Errorf("invalid key id: %w", err)
 	}
 	ref, err := c.deps.Resolver.Resolve(ctx, hash)
 	if errors.Is(err, backend.ErrKeyNotFound) {
 		c.deps.Logger.Info("sign", "type", "cip8", "caller-key", hash.String(), "address", address, "result", "denied", "reason", "key not found")
 		c.deps.Metrics.observe("cip8", string(CodeNotFound))
+		c.deps.Metrics.observeDeny(string(CodeNotFound))
 		return nil, CodeNotFound, errors.New("key not found")
 	}
 	if err != nil {
 		c.deps.Logger.Info("sign", "type", "cip8", "caller-key", hash.String(), "address", address, "result", "error", "reason", err.Error())
 		c.deps.Metrics.observe("cip8", string(CodeBackend))
+		c.deps.Metrics.observeBackendError("resolver")
 		return nil, CodeBackend, err
 	}
 
@@ -56,6 +60,7 @@ func (c *Coordinator) SignCIP8(ctx context.Context, payload []byte, address, key
 	if !ok {
 		c.deps.Logger.Info("sign", "type", "cip8", "caller-key", hash.String(), "address", address, "result", "denied", "reason", "unsupported backend for CIP-8")
 		c.deps.Metrics.observe("cip8", string(CodeUnsupported))
+		c.deps.Metrics.observeDeny(string(CodeUnsupported))
 		return nil, CodeUnsupported, fmt.Errorf("CIP-8 signing is not supported for keys held in the %q backend", ref.Backend())
 	}
 	lk := provider.LoadedKey()
@@ -64,6 +69,7 @@ func (c *Coordinator) SignCIP8(ctx context.Context, payload []byte, address, key
 	if err != nil {
 		c.deps.Logger.Info("sign", "type", "cip8", "caller-key", hash.String(), "address", address, "result", "denied", "reason", "invalid address")
 		c.deps.Metrics.observe("cip8", string(CodeBadRequest))
+		c.deps.Metrics.observeDeny(string(CodeBadRequest))
 		return nil, CodeBadRequest, fmt.Errorf("invalid address: %w", err)
 	}
 	// Mirror message.go validateAddressForVKey: payment-key addresses use
@@ -84,6 +90,7 @@ func (c *Coordinator) SignCIP8(ctx context.Context, payload []byte, address, key
 	if dec := c.deps.Policy.EvaluateCIP8(hash, len(payload), addressMatches); !dec.Allow {
 		c.deps.Logger.Info("sign", "type", "cip8", "caller-key", hash.String(), "address", address, "result", "denied", "reason", dec.Reason)
 		c.deps.Metrics.observe("cip8", string(CodeDenied))
+		c.deps.Metrics.observeDeny(string(CodeDenied))
 		return nil, CodeDenied, fmt.Errorf("%s", dec.Reason)
 	}
 
@@ -96,10 +103,14 @@ func (c *Coordinator) SignCIP8(ctx context.Context, payload []byte, address, key
 		return nil, CodeInternal, fmt.Errorf("address bytes: %w", err)
 	}
 
+	signStart := time.Now()
 	sigHex, keyHex, err := bursa.SignData(addrBytes, payload, lk)
+	// Attempt latency, including failures — not successful-sign latency.
+	c.deps.Metrics.observeSignDuration(ref.Backend(), time.Since(signStart).Seconds())
 	if err != nil {
 		c.deps.Logger.Info("sign", "type", "cip8", "caller-key", hash.String(), "address", address, "result", "error", "reason", err.Error())
 		c.deps.Metrics.observe("cip8", string(CodeBackend))
+		c.deps.Metrics.observeBackendError(ref.Backend())
 		return nil, CodeBackend, fmt.Errorf("cip8 sign: %w", err)
 	}
 

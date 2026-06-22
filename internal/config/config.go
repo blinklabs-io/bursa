@@ -39,11 +39,22 @@ type SignerConfig struct {
 	ListenAddress string                `yaml:"listen_address" envconfig:"SIGNER_LISTEN_ADDRESS"`
 	ListenPort    uint                  `yaml:"listen_port"    envconfig:"SIGNER_LISTEN_PORT"`
 	JWTSecret     string                `yaml:"jwt_secret"     envconfig:"SIGNER_JWT_SECRET"`
+	JWKSURL       string                `yaml:"jwks_url"       envconfig:"SIGNER_JWKS_URL"`
+	JWTIssuer     string                `yaml:"jwt_issuer"     envconfig:"SIGNER_JWT_ISSUER"`
+	JWTAudience   string                `yaml:"jwt_audience"   envconfig:"SIGNER_JWT_AUDIENCE"`
 	TLSCertFile   string                `yaml:"tls_cert_file"  envconfig:"SIGNER_TLS_CERT_FILE"`
 	TLSKeyFile    string                `yaml:"tls_key_file"   envconfig:"SIGNER_TLS_KEY_FILE"`
 	Watermark     SignerWatermarkConfig `yaml:"watermark"`
 	Backends      []SignerBackendConfig `yaml:"backends"`
 	Keys          []SignerKeyConfig     `yaml:"keys"`
+	Callers       []SignerCallerConfig  `yaml:"callers"`
+}
+
+// SignerCallerConfig grants a JWT subject access to specific keys.
+// When any callers are configured, unlisted subjects are denied all keys.
+type SignerCallerConfig struct {
+	Subject string   `yaml:"subject"`
+	Keys    []string `yaml:"keys"` // key hashes (hex blake2b-224)
 }
 
 // SignerWatermarkConfig configures the anti-double-sign watermark store.
@@ -55,13 +66,21 @@ type SignerWatermarkConfig struct {
 
 // SignerBackendConfig configures a key-custody backend.
 type SignerBackendConfig struct {
-	Name          string `yaml:"name"`
-	Type          string `yaml:"type"`           // "software" | "sops" | "vault"
-	Path          string `yaml:"path"`           // software: key dir
-	PassphraseEnv string `yaml:"passphrase_env"` // reserved for sops follow-up; not yet honored
-	SecretPrefix  string `yaml:"secret_prefix"`  // sops
-	Address       string `yaml:"address"`        // vault
-	TransitMount  string `yaml:"transit_mount"`  // vault
+	Name          string                   `yaml:"name"`
+	Type          string                   `yaml:"type"`           // "software" | "sops" | "vault"
+	Path          string                   `yaml:"path"`           // software: key dir
+	PassphraseEnv string                   `yaml:"passphrase_env"` // software: env var holding the key-file passphrase
+	SecretPrefix  string                   `yaml:"secret_prefix"`  // sops: secret short-name prefix within google.project
+	Address       string                   `yaml:"address"`        // vault
+	TransitMount  string                   `yaml:"transit_mount"`  // vault
+	TokenEnv      string                   `yaml:"token_env"`      // vault: env var holding the token (default VAULT_TOKEN)
+	Keys          []SignerBackendKeyConfig `yaml:"keys"`           // vault: explicit transit key list
+}
+
+// SignerBackendKeyConfig names a remote key and its Cardano key type.
+type SignerBackendKeyConfig struct {
+	Name string `yaml:"name"`
+	Type string `yaml:"type"` // payment|stake|drep|cc-hot|cc-cold|pool|policy
 }
 
 // SignerKeyConfig mirrors policy.KeyPolicy in YAML; mapped at setup time.

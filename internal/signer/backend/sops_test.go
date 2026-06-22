@@ -120,3 +120,31 @@ func TestSopsBackend_Load_NilDependencies(t *testing.T) {
 		t.Fatalf("nil decrypt: got %v", err)
 	}
 }
+
+func TestSopsBackend_DerivesTypeFromEnvelope(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	seed := []byte(priv)[:32]
+	cborEncoded, err := cbor.Encode(seed)
+	if err != nil {
+		t.Fatalf("cbor.Encode seed: %v", err)
+	}
+	envelope := fmt.Sprintf(
+		`{"type":"StakeSigningKeyShelley_ed25519","description":"","cborHex":"%s"}`,
+		hex.EncodeToString(cborEncoded),
+	)
+	src := &fakeSecretSource{secrets: map[string][]byte{
+		"stake-1": []byte(envelope),
+	}}
+	b := NewSopsBackend("sops", src, func(d []byte) ([]byte, error) { return d, nil })
+	b.Register("stake-1", "")
+	if err := b.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	keys, _ := b.ListKeys(context.Background())
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+	if keys[0].Type() != KeyTypeStake {
+		t.Fatalf("expected derived type stake, got %q", keys[0].Type())
+	}
+}

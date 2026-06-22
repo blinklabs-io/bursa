@@ -108,7 +108,8 @@ func NewEngine(policies []KeyPolicy) (*Engine, error) {
 	return &Engine{byHash: byHash}, nil
 }
 
-// PolicyFor returns the policy for a key hash, if any.
+// PolicyFor returns the policy for a key hash, if any. The returned value
+// shares slices/pointers with engine state; callers must treat it as read-only.
 func (e *Engine) PolicyFor(hash backend.KeyHash) (KeyPolicy, bool) {
 	p, ok := e.byHash[hash]
 	return p, ok

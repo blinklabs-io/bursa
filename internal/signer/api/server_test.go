@@ -30,6 +30,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/policy"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // minimal fake Cardano returning a fixed inspection/txid/assembled blob
@@ -57,7 +58,7 @@ func newTestServer(t *testing.T) (*Server, backend.KeyHash) {
 		Watermark: watermark.NewMemWatermark(),
 		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
 	})
-	return NewServer(coord, backend.NewResolver(b), func(string) (string, error) { return "tester", nil }), h
+	return NewServer(coord, backend.NewResolver(b), eng, nil, func(string) (string, error) { return "tester", nil }), h
 }
 
 func TestHandleSignTx(t *testing.T) {
@@ -206,6 +207,372 @@ func TestHandleGetKey(t *testing.T) {
 		handler.ServeHTTP(rr, req)
 		if rr.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+}
+
+// withCaller returns a copy of r with the given caller subject injected into
+// its context (mimics what JWTMiddleware does).
+func withCaller(r *http.Request, subject string) *http.Request {
+	ctx := context.WithValue(r.Context(), callerKey, subject)
+	return r.WithContext(ctx)
+}
+
+// gatherDenyACL gathers the current bursa_signer_deny_total{reason="acl"}
+// sample value from g.
+func gatherDenyACL(t *testing.T, g prometheus.Gatherer) float64 {
+	t.Helper()
+	mfs, err := g.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != "bursa_signer_deny_total" {
+			continue
+		}
+		for _, mm := range mf.GetMetric() {
+			for _, lp := range mm.GetLabel() {
+				if lp.GetName() == "reason" && lp.GetValue() == "acl" {
+					return mm.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// TestCallerACLEnforcement verifies per-caller key scoping (design §12).
+func TestCallerACLEnforcement(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	b := backend.NewSoftwareBackend("software")
+	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePayment)
+	if err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	pol := policy.KeyPolicy{Hash: h.String(), AllowedRequests: []string{"tx", "cip8"}, Tx: &policy.TxPolicy{}, CIP8: &policy.CIP8Policy{}}
+	eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
+	coord := signer.New(signer.Deps{
+		Resolver:  backend.NewResolver(b),
+		Policy:    eng,
+		Watermark: watermark.NewMemWatermark(),
+		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
+	})
+
+	// Register metrics once into a dedicated registry for all sub-tests.
+	metricsReg := prometheus.NewRegistry()
+	coord.Metrics().Register(metricsReg)
+
+	// ACL: only "alice" may use the test key; "bob" is unlisted.
+	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {h}})
+	srv := NewServer(coord, backend.NewResolver(b), eng, acl, func(string) (string, error) { return "tester", nil })
+
+	t.Run("bob: sign tx returns 403 with denied signer error and increments deny_total", func(t *testing.T) {
+		before := gatherDenyACL(t, metricsReg)
+		body, _ := json.Marshal(SignRequest{Type: "tx", Cbor: "83a0a0f5f6", Signers: []string{h.String()}})
+		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		req = withCaller(req, "bob")
+		rr := httptest.NewRecorder()
+		srv.handleSign(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 for bob, got %d: %s", rr.Code, rr.Body.String())
+		}
+		var resp SignTxResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(resp.Errors) == 0 || resp.Errors[0].Code != signer.CodeDenied {
+			t.Fatalf("expected denied signer error, got %+v", resp.Errors)
+		}
+		after := gatherDenyACL(t, metricsReg)
+		if delta := after - before; delta != 1 {
+			t.Fatalf("expected deny_total{reason=acl} to increase by 1, got delta %v", delta)
+		}
+	})
+
+	t.Run("bob: cip8 sign returns 403 and increments deny_total", func(t *testing.T) {
+		before := gatherDenyACL(t, metricsReg)
+		body, _ := json.Marshal(SignRequest{
+			Type:    "cip8",
+			Payload: "abcd",
+			Address: "addr1q8gg9j5vkzsgz4dz3gfr4kz0f2nwzrqq0yfktqmwwpmaprkl43c7c4d9rg9rmk6z03rl4xt9gjtywtx0m09flxmqzq46ugh",
+			Key:     h.String(),
+		})
+		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		req = withCaller(req, "bob")
+		rr := httptest.NewRecorder()
+		srv.handleSign(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 for bob cip8, got %d: %s", rr.Code, rr.Body.String())
+		}
+		after := gatherDenyACL(t, metricsReg)
+		if delta := after - before; delta != 1 {
+			t.Fatalf("expected deny_total{reason=acl} to increase by 1, got delta %v", delta)
+		}
+	})
+
+	t.Run("bob: list keys returns empty list (view filter, not counted)", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/keys", nil)
+		req = withCaller(req, "bob")
+		rr := httptest.NewRecorder()
+		srv.handleListKeys(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		var keys []KeyInfo
+		if err := json.Unmarshal(rr.Body.Bytes(), &keys); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(keys) != 0 {
+			t.Fatalf("expected empty key list for bob, got %d keys", len(keys))
+		}
+	})
+
+	t.Run("bob: get key by hash returns 404 (no existence oracle)", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/keys/"+h.String(), nil)
+		req.SetPathValue("hash", h.String())
+		req = withCaller(req, "bob")
+		rr := httptest.NewRecorder()
+		srv.handleGetKey(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 for bob on key detail, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("alice: list keys returns the key", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/keys", nil)
+		req = withCaller(req, "alice")
+		rr := httptest.NewRecorder()
+		srv.handleListKeys(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		var keys []KeyInfo
+		if err := json.Unmarshal(rr.Body.Bytes(), &keys); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(keys) != 1 || keys[0].Hash != h.String() {
+			t.Fatalf("expected alice to see test key, got %+v", keys)
+		}
+	})
+
+	t.Run("alice: get key by hash returns 200", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/keys/"+h.String(), nil)
+		req.SetPathValue("hash", h.String())
+		req = withCaller(req, "alice")
+		rr := httptest.NewRecorder()
+		srv.handleGetKey(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200 for alice on key detail, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+}
+
+// TestCallerACL_PartialAllow verifies that a request with two signers — one
+// ACL-allowed (signed successfully) and one ACL-denied — returns 200 with one
+// witness and one error entry with code "denied".
+func TestCallerACL_PartialAllow(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	b := backend.NewSoftwareBackend("software")
+	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePayment)
+	if err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	pol := policy.KeyPolicy{Hash: h.String(), AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}
+	eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
+	coord := signer.New(signer.Deps{
+		Resolver:  backend.NewResolver(b),
+		Policy:    eng,
+		Watermark: watermark.NewMemWatermark(),
+		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
+	})
+
+	// Second signer: valid 56-hex key hash that is not in the backend and not
+	// ACL-allowed for "alice". Any all-zero-ish unique hash works.
+	var deniedHash backend.KeyHash
+	deniedHash[0] = 0xde
+	deniedHash[1] = 0xad
+
+	// ACL: alice may use h but NOT deniedHash.
+	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {h}})
+	srv := NewServer(coord, backend.NewResolver(b), eng, acl, func(string) (string, error) { return "tester", nil })
+
+	body, _ := json.Marshal(SignRequest{
+		Type:    "tx",
+		Cbor:    "83a0a0f5f6",
+		Signers: []string{h.String(), deniedHash.String()},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req = withCaller(req, "alice")
+	rr := httptest.NewRecorder()
+	srv.handleSign(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for partial allow, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp SignTxResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Witnesses) != 1 {
+		t.Fatalf("expected exactly 1 witness for the allowed signer, got %d", len(resp.Witnesses))
+	}
+	if len(resp.Errors) != 1 {
+		t.Fatalf("expected exactly 1 error for the denied signer, got %d: %+v", len(resp.Errors), resp.Errors)
+	}
+	if resp.Errors[0].Code != signer.CodeDenied {
+		t.Fatalf("expected denied error code, got %q: %+v", resp.Errors[0].Code, resp.Errors[0])
+	}
+	if resp.Errors[0].Reason != "caller is not authorized for this key" {
+		t.Fatalf("unexpected deny reason: %q", resp.Errors[0].Reason)
+	}
+}
+
+// TestSignTx_StatusFromCoordinatorNotACL verifies that when a tx fully fails
+// with a mix of an ACL pre-filter denial (always 403) and a coordinator
+// per-signer error, the HTTP status reflects the coordinator error rather than
+// the ACL denial. Prepending the ACL denial used to mask, e.g., a 404 as a 403.
+func TestSignTx_StatusFromCoordinatorNotACL(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	b := backend.NewSoftwareBackend("software")
+	if _, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePayment); err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	eng, _ := policy.NewEngine(nil)
+	coord := signer.New(signer.Deps{
+		Resolver:  backend.NewResolver(b),
+		Policy:    eng,
+		Watermark: watermark.NewMemWatermark(),
+		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
+	})
+
+	// allowedMissing: ACL-allowed for "alice" but absent from the backend, so the
+	// coordinator returns not_found (404). deniedHash: not ACL-allowed (403).
+	var allowedMissing backend.KeyHash
+	allowedMissing[0] = 0xa1
+	var deniedHash backend.KeyHash
+	deniedHash[0] = 0xde
+	deniedHash[1] = 0xad
+
+	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {allowedMissing}})
+	srv := NewServer(coord, backend.NewResolver(b), eng, acl, func(string) (string, error) { return "tester", nil })
+
+	body, _ := json.Marshal(SignRequest{
+		Type:    "tx",
+		Cbor:    "83a0a0f5f6",
+		Signers: []string{allowedMissing.String(), deniedHash.String()},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req = withCaller(req, "alice")
+	rr := httptest.NewRecorder()
+	srv.handleSign(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 from coordinator not_found, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp SignTxResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// Both failures must still be reported in the body.
+	var sawDenied, sawNotFound bool
+	for _, e := range resp.Errors {
+		switch e.Code {
+		case signer.CodeDenied:
+			sawDenied = true
+		case signer.CodeNotFound:
+			sawNotFound = true
+		}
+	}
+	if !sawDenied || !sawNotFound {
+		t.Fatalf("expected both denied and not_found errors in body, got %+v", resp.Errors)
+	}
+}
+
+// TestGetKey_PolicySummary verifies that GET /v1/keys/{hash} includes the
+// effective policy when a policy entry exists, and omits it (null/absent) when
+// the engine has no entry for the key (deny-by-default, design §8 + §10).
+func TestGetKey_PolicySummary(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	b := backend.NewSoftwareBackend("software")
+	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePayment)
+	if err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+
+	t.Run("key with policy returns policy summary", func(t *testing.T) {
+		eng, err := policy.NewEngine([]policy.KeyPolicy{{
+			Hash:            h.String(),
+			AllowedRequests: []string{"tx"},
+			Tx:              &policy.TxPolicy{MaxOutputAda: 5000},
+		}})
+		if err != nil {
+			t.Fatalf("NewEngine: %v", err)
+		}
+		coord := signer.New(signer.Deps{
+			Resolver:  backend.NewResolver(b),
+			Policy:    eng,
+			Watermark: watermark.NewMemWatermark(),
+			Cardano:   operation.Cardano(fakeCardano{pub: pub}),
+		})
+		srv := NewServer(coord, backend.NewResolver(b), eng, nil, func(string) (string, error) { return "tester", nil })
+		handler := srv.Handler()
+
+		req := httptest.NewRequest(http.MethodGet, "/v1/keys/"+h.String(), nil)
+		req.Header.Set("Authorization", "Bearer x")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+		}
+		var info KeyInfo
+		if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if info.Policy == nil {
+			t.Fatal("expected non-nil policy summary")
+		}
+		if len(info.Policy.AllowedRequests) != 1 || info.Policy.AllowedRequests[0] != "tx" {
+			t.Errorf("expected AllowedRequests=[tx], got %v", info.Policy.AllowedRequests)
+		}
+		if info.Policy.Tx == nil {
+			t.Fatal("expected non-nil Tx policy")
+		}
+		if info.Policy.Tx.MaxOutputAda != 5000 {
+			t.Errorf("expected MaxOutputAda=5000, got %d", info.Policy.Tx.MaxOutputAda)
+		}
+		if info.Policy.CIP8 != nil {
+			t.Errorf("expected nil CIP8 policy, got %+v", info.Policy.CIP8)
+		}
+	})
+
+	t.Run("key without policy entry returns null policy (deny-by-default)", func(t *testing.T) {
+		// Engine has no entry for h — deny-by-default.
+		eng, err := policy.NewEngine([]policy.KeyPolicy{})
+		if err != nil {
+			t.Fatalf("NewEngine: %v", err)
+		}
+		coord := signer.New(signer.Deps{
+			Resolver:  backend.NewResolver(b),
+			Policy:    eng,
+			Watermark: watermark.NewMemWatermark(),
+			Cardano:   operation.Cardano(fakeCardano{pub: pub}),
+		})
+		srv := NewServer(coord, backend.NewResolver(b), eng, nil, func(string) (string, error) { return "tester", nil })
+		handler := srv.Handler()
+
+		req := httptest.NewRequest(http.MethodGet, "/v1/keys/"+h.String(), nil)
+		req.Header.Set("Authorization", "Bearer x")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+		}
+		var info KeyInfo
+		if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if info.Policy != nil {
+			t.Errorf("expected nil policy for key with no policy entry, got %+v", info.Policy)
 		}
 	})
 }

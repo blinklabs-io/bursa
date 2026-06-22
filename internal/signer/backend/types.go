@@ -18,9 +18,22 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
+	"net/netip"
+	"strings"
 
 	"golang.org/x/crypto/blake2b"
 )
+
+// IsLoopbackHost reports whether host is localhost or a loopback IP.
+// Plaintext transport to a non-loopback host is a credential/key-substitution
+// vector; callers use this to gate http:// endpoints.
+func IsLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	addr, err := netip.ParseAddr(host)
+	return err == nil && addr.IsLoopback()
+}
 
 // KeyHash is the blake2b-224 hash of an Ed25519 public key — the canonical
 // cross-backend key identifier (the same value Cardano uses in addresses and
@@ -79,5 +92,30 @@ func (t KeyType) Valid() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// KeyTypeFromEnvelope maps a cardano-cli key envelope Type string to the
+// KeyType used by the signer. Only signing-key (.skey) types are expected;
+// unknown types default to payment.
+func KeyTypeFromEnvelope(envelopeType string) KeyType {
+	switch {
+	case strings.HasPrefix(envelopeType, "Payment"):
+		return KeyTypePayment
+	case strings.HasPrefix(envelopeType, "StakePool"):
+		return KeyTypePool
+	case strings.HasPrefix(envelopeType, "Stake"):
+		return KeyTypeStake
+	case strings.HasPrefix(envelopeType, "DRep"):
+		return KeyTypeDRep
+	case strings.HasPrefix(envelopeType, "CommitteeHot"):
+		return KeyTypeCCHot
+	case strings.HasPrefix(envelopeType, "CommitteeCold"):
+		return KeyTypeCCCold
+	case strings.HasPrefix(envelopeType, "Policy"),
+		strings.HasPrefix(envelopeType, "Calidus"):
+		return KeyTypePolicy
+	default:
+		return KeyTypePayment
 	}
 }
