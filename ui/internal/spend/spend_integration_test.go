@@ -90,7 +90,7 @@ func runSpendBuildLivePreview(t *testing.T, dir string, attempt int) error {
 	if err != nil {
 		return fmt.Errorf("Derive: %w", err)
 	}
-	pv, err := svc.Build(ctx, spend.SendRequest{To: acct.ReceiveAddresses[1], Lovelace: 1_000_000})
+	pv, err := svc.Build(ctx, spend.SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
 	if err != nil {
 		// Unfunded wallet (or partial UTxO view while syncing) → insufficient
 		// funds. That is the expected outcome here, not a failure.
@@ -101,7 +101,7 @@ func runSpendBuildLivePreview(t *testing.T, dir string, attempt int) error {
 		}
 		return fmt.Errorf("Build: unexpected error: %w", err)
 	}
-	t.Logf("Build produced a preview: pending=%s fee=%d", pv.PendingID, pv.Fee)
+	t.Logf("Build produced a preview: pending=%s fee=%s", pv.PendingID, pv.Fee)
 	return nil
 }
 

@@ -51,21 +51,24 @@ const pendingTTL = 5 * time.Minute
 
 // Asset represents a native asset unit + quantity within a send request or output.
 type Asset struct {
-	Unit     string `json:"unit"` // policyId (56 hex chars) + assetName (hex)
-	Quantity uint64 `json:"quantity"`
+	Unit string `json:"unit"` // policyId (56 hex chars) + assetName (hex)
+	// Quantity is a decimal string, not a JSON number, so uint64 values beyond
+	// the JS safe-integer range (2^53) survive the round-trip to the browser
+	// without precision loss — matching the read-side balance API.
+	Quantity string `json:"quantity"`
 }
 
 // SendRequest is the caller-supplied parameters for a single send.
 type SendRequest struct {
 	To       string  `json:"to"`
-	Lovelace uint64  `json:"lovelace"`
+	Lovelace string  `json:"lovelace"` // decimal lovelace string; see Asset.Quantity
 	Assets   []Asset `json:"assets,omitempty"`
 }
 
 // Output is one output as presented in the preview.
 type Output struct {
 	Address  string  `json:"address"`
-	Lovelace uint64  `json:"lovelace"`
+	Lovelace string  `json:"lovelace"` // decimal lovelace string; see Asset.Quantity
 	Assets   []Asset `json:"assets,omitempty"`
 }
 
@@ -75,8 +78,8 @@ type Preview struct {
 	PendingID string   `json:"pending_id"`
 	Inputs    []string `json:"inputs"` // "txhash#index" of selected inputs
 	Outputs   []Output `json:"outputs"`
-	Fee       uint64   `json:"fee"`
-	Change    uint64   `json:"change"` // lovelace of the change output (0 if absorbed as fee)
+	Fee       string   `json:"fee"`    // decimal lovelace string; see Asset.Quantity
+	Change    string   `json:"change"` // decimal lovelace string ("0" if absorbed as fee)
 }
 
 // TxResult is returned from Confirm after successful submission.
@@ -234,10 +237,11 @@ func (s *Service) Build(_ context.Context, req SendRequest) (Preview, error) {
 	if err != nil {
 		return Preview{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
-	if req.Lovelace > math.MaxInt64 {
-		return Preview{}, fmt.Errorf("%w: lovelace %d exceeds int64 range", ErrInvalidRequest, req.Lovelace)
+	lovelace, err := parseAmount(req.Lovelace)
+	if err != nil {
+		return Preview{}, fmt.Errorf("%w: lovelace: %w", ErrInvalidRequest, err)
 	}
-	a = a.PayToAddress(recvAddr, int64(req.Lovelace), units...) //nolint:gosec // caller-supplied, validated above
+	a = a.PayToAddress(recvAddr, int64(lovelace), units...) //nolint:gosec // validated by parseAmount
 
 	// Complete: coin selection + fee estimation.
 	a, err = a.Complete()
@@ -296,12 +300,27 @@ func assetsToUnits(assets []Asset) ([]apollo.Unit, error) {
 		if _, err := hex.DecodeString(nameHex); err != nil {
 			return nil, fmt.Errorf("asset name %q is not valid hex: %w", nameHex, err)
 		}
-		if a.Quantity > math.MaxInt64 {
-			return nil, fmt.Errorf("asset quantity %d exceeds int64 range", a.Quantity)
+		qty, err := parseAmount(a.Quantity)
+		if err != nil {
+			return nil, fmt.Errorf("asset quantity: %w", err)
 		}
-		units = append(units, apollo.NewUnit(policyHex, nameHex, int64(a.Quantity))) //nolint:gosec // validated above
+		units = append(units, apollo.NewUnit(policyHex, nameHex, int64(qty))) //nolint:gosec // validated by parseAmount
 	}
 	return units, nil
+}
+
+// parseAmount parses a decimal uint64 amount string (lovelace or asset quantity)
+// supplied in a request, rejecting non-numeric input and values beyond the int64
+// range Apollo accepts.
+func parseAmount(s string) (uint64, error) {
+	v, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%q is not a valid amount", s)
+	}
+	if v > math.MaxInt64 {
+		return 0, fmt.Errorf("amount %s exceeds int64 range", s)
+	}
+	return v, nil
 }
 
 func isInsufficientFundsError(err error) bool {
@@ -340,11 +359,13 @@ func toPreview(id string, a *apollo.Apollo) Preview {
 		inputs = append(inputs, ref)
 	}
 
-	// Enumerate outputs.
+	// Enumerate outputs. Amounts are emitted as decimal strings (see the struct
+	// docs); lastLov keeps the final output's raw lovelace for the change heuristic.
 	var outputs []Output
-	var changeLov uint64
+	var lastLov uint64
 	for _, out := range tx.Body.TxOutputs {
 		lov := out.OutputAmount.Amount
+		lastLov = lov
 		var assets []Asset
 		if out.OutputAmount.Assets != nil {
 			for _, pol := range out.OutputAmount.Assets.Policies() {
@@ -352,8 +373,9 @@ func toPreview(id string, a *apollo.Apollo) Preview {
 					qty := out.OutputAmount.Assets.Asset(pol, name)
 					if qty != nil && qty.Sign() > 0 {
 						assets = append(assets, Asset{
-							Unit:     hex.EncodeToString(pol.Bytes()) + hex.EncodeToString(name),
-							Quantity: qty.Uint64(),
+							Unit: hex.EncodeToString(pol.Bytes()) + hex.EncodeToString(name),
+							// big.Int.String() preserves the full uint64 range.
+							Quantity: qty.String(),
 						})
 					}
 				}
@@ -361,22 +383,23 @@ func toPreview(id string, a *apollo.Apollo) Preview {
 		}
 		outputs = append(outputs, Output{
 			Address:  out.OutputAddress.String(),
-			Lovelace: lov,
+			Lovelace: strconv.FormatUint(lov, 10),
 			Assets:   assets,
 		})
 	}
 	// Apollo puts change last; only label it as change when it differs from the
 	// first payment output address. This is a display-only heuristic.
+	var changeLov uint64
 	if len(outputs) > 1 && outputs[len(outputs)-1].Address != outputs[0].Address {
-		changeLov = outputs[len(outputs)-1].Lovelace
+		changeLov = lastLov
 	}
 
 	return Preview{
 		PendingID: id,
 		Inputs:    inputs,
 		Outputs:   outputs,
-		Fee:       tx.Body.TxFee,
-		Change:    changeLov,
+		Fee:       strconv.FormatUint(tx.Body.TxFee, 10),
+		Change:    strconv.FormatUint(changeLov, 10),
 	}
 }
 

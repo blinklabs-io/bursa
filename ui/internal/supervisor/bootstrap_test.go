@@ -34,6 +34,10 @@ func TestSyncConfigForMapsFields(t *testing.T) {
 	if !sc.VerifyCertChain || !sc.CleanupAfterLoad {
 		t.Fatalf("verify/cleanup should be true: %+v", sc)
 	}
+	// dingo's API-mode backfill rejects a zero batch size, so we must set one.
+	if sc.BackfillBatchSize <= 0 {
+		t.Fatalf("BackfillBatchSize must be positive, got %d", sc.BackfillBatchSize)
+	}
 }
 
 func TestSyncConfigForWiresProgress(t *testing.T) {

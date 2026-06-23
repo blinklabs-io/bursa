@@ -66,7 +66,19 @@ func syncConfigFor(p BootstrapParams, logger *slog.Logger) mithril.SyncConfig {
 		MetadataPlugin:   database.DefaultConfig.MetadataPlugin,
 		VerifyCertChain:  true,
 		CleanupAfterLoad: true,
-		Logger:           logger,
+		// dingo v0.55.0's API-mode backfill phase requires a positive batch size
+		// and applies no default of its own when the SyncConfig is built directly
+		// (only dingo's config layer defaults it). Mirror dingo's own default
+		// (node.DefaultBackfillBatchSize == 100, unexported) or the backfill phase
+		// fails with "backfill batch size must be positive".
+		BackfillBatchSize: 100,
+		// Size the metadata DB connection pool to dingo's own default (5); like
+		// BackfillBatchSize, mithril.Sync applies no default when the SyncConfig
+		// is built directly, leaving it 0 (a single connection). This mainly aids
+		// read concurrency during import — SQLite serialises writes, so it is not
+		// a cure for the inherently slow backfill replay.
+		DatabaseWorkers: 5,
+		Logger:          logger,
 		OnProgress: func(sp mithril.SyncProgress) {
 			if p.OnProgress != nil {
 				p.OnProgress(toBootstrapProgress(sp))

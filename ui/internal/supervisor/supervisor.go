@@ -20,12 +20,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path"
 	"sync"
 	"time"
 
 	"github.com/blinklabs-io/dingo"
 	"github.com/blinklabs-io/dingo/config/cardano"
 	"github.com/blinklabs-io/dingo/connmanager"
+	"github.com/blinklabs-io/dingo/topology"
 )
 
 // Config configures the embedded node. All network endpoints bind to loopback.
@@ -110,9 +112,24 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	if err != nil {
 		return fail(fmt.Errorf("load Dingo network config: %w", err))
 	}
+
+	// Outbound peers: load the network's embedded topology (bootstrap peers +
+	// peer snapshot) so the node can follow the chain to the live tip once the
+	// Mithril snapshot is loaded. Without a topology, Dingo configures no
+	// outbound peers and the node never advances past the bootstrap tip (stuck
+	// in "syncing"). Mirrors how Dingo's own node wires topology from its
+	// embedded config.
+	topologyCfg, err := topology.NewTopologyConfigFromFS(
+		cardano.EmbeddedConfigFS, path.Join(s.cfg.Network, "topology.json"),
+	)
+	if err != nil {
+		return fail(fmt.Errorf("load Dingo topology config: %w", err))
+	}
+
 	nodeCfg := dingo.NewConfig(
 		dingo.WithNetwork(s.cfg.Network),
 		dingo.WithCardanoNodeConfig(cardanoCfg),
+		dingo.WithTopologyConfig(topologyCfg),
 		dingo.WithDatabasePath(s.cfg.DataDir),
 		dingo.WithStorageMode(dingo.StorageModeAPI),
 		dingo.WithBindAddr("127.0.0.1"),
@@ -200,7 +217,8 @@ func (s *Supervisor) bootstrapThenLaunch(ctx context.Context, runID uint64, laun
 }
 
 // onProgress stores the latest bootstrap progress on the status snapshot.
-func (s *Supervisor) onProgress(bp BootstrapProgress) {
+// Only called from test code; nolint:unused because lint runs with tests:false.
+func (s *Supervisor) onProgress(bp BootstrapProgress) { //nolint:unused
 	s.onProgressForRun(s.currentRunID(), bp)
 }
 
@@ -238,7 +256,8 @@ func (s *Supervisor) Status() Status {
 	return s.status
 }
 
-func (s *Supervisor) setState(st NodeState) {
+// Only called from test code; nolint:unused because lint runs with tests:false.
+func (s *Supervisor) setState(st NodeState) { //nolint:unused
 	s.setStateForRun(s.currentRunID(), st)
 }
 
@@ -256,7 +275,8 @@ func (s *Supervisor) setStateForRun(runID uint64, st NodeState) {
 	}
 }
 
-func (s *Supervisor) setError(err error) {
+// Only called from test code; nolint:unused because lint runs with tests:false.
+func (s *Supervisor) setError(err error) { //nolint:unused
 	s.setErrorForRun(s.currentRunID(), err)
 }
 
@@ -280,7 +300,8 @@ func (s *Supervisor) setErrorForRun(runID uint64, err error) {
 	cancel()
 }
 
-func (s *Supervisor) currentRunID() uint64 {
+// Only called from test code; nolint:unused because lint runs with tests:false.
+func (s *Supervisor) currentRunID() uint64 { //nolint:unused
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.runID
