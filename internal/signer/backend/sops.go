@@ -61,7 +61,9 @@ func NewSopsBackend(name string, source SecretSource, decrypt DecryptFunc) *Sops
 	}
 }
 
-// Register declares a secret name to load and the key type it holds.
+// Register declares a secret name to load and the key type it holds. An empty
+// typ means the type is derived from the decrypted cardano-cli envelope at
+// Load time (see KeyTypeFromEnvelope).
 func (b *SopsBackend) Register(secretName string, typ KeyType) {
 	b.mu.Lock()
 	b.registered = append(b.registered, registered{name: secretName, typ: typ})
@@ -107,12 +109,17 @@ func (b *SopsBackend) Load(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("derive pubkey %q: %w", r.name, err)
 		}
+		// Empty registered type => infer from the envelope.
+		typ := r.typ
+		if typ == "" {
+			typ = KeyTypeFromEnvelope(lk.Type)
+		}
 		hash := HashPublicKey(pub)
 		newKeys[hash] = &softwareKey{
 			lk:          lk,
 			pub:         ed25519.PublicKey(pub),
 			hash:        hash,
-			typ:         r.typ,
+			typ:         typ,
 			extended:    len(lk.SKey) == 96,
 			backendName: b.name,
 		}

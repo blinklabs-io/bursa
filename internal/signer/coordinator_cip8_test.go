@@ -69,7 +69,7 @@ func (k *loadedFakeKey) LoadedKey() *bursa.LoadedKey { return k.lk }
 // (Vault) key: CIP-8 must be rejected as unsupported.
 func TestSignCIP8_UnsupportedOnRemoteKey(t *testing.T) {
 	k := newFakeKey(t)
-	c := newCoordinator(t, k,
+	c, _ := newCoordinator(t, k,
 		policy.KeyPolicy{AllowedRequests: []string{"cip8"}, CIP8: &policy.CIP8Policy{}},
 		watermark.NewMemWatermark(), fakeCardano{})
 	_, code, err := c.SignCIP8(context.Background(), []byte("hi"), "addr1xyz", k.hash.String())

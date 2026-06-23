@@ -20,10 +20,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
+	"github.com/MicahParks/keyfunc/v3"
+	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -41,13 +45,21 @@ func CallerFromContext(ctx context.Context) string {
 type Validator func(token string) (subject string, err error)
 
 // HS256Validator validates HS256 tokens against a shared secret (dev/simple mode).
-// Production deployments use a JWKS-backed validator (RS256/ES256); the interface
-// is identical.
-//
-// Single trust domain: Phase 1 HS256 auth grants ANY holder of a valid token
-// access to ANY configured key. Per-caller key scoping arrives with the JWKS
-// follow-up.
-func HS256Validator(secret []byte) Validator {
+// Production deployments should prefer JWKSValidator. issuer and audience are
+// enforced when non-empty, identically to JWKSValidator. Without a configured
+// caller ACL (signer.callers), any holder of a valid token may use any
+// configured key.
+func HS256Validator(secret []byte, issuer, audience string) Validator {
+	opts := []jwt.ParserOption{
+		jwt.WithExpirationRequired(),
+		jwt.WithValidMethods([]string{"HS256"}),
+	}
+	if issuer != "" {
+		opts = append(opts, jwt.WithIssuer(issuer))
+	}
+	if audience != "" {
+		opts = append(opts, jwt.WithAudience(audience))
+	}
 	return func(token string) (string, error) {
 		claims := jwt.RegisteredClaims{}
 		_, err := jwt.ParseWithClaims(token, &claims, func(t *jwt.Token) (any, error) {
@@ -56,14 +68,56 @@ func HS256Validator(secret []byte) Validator {
 			}
 			return secret, nil
 		},
-			jwt.WithExpirationRequired(),
-			jwt.WithValidMethods([]string{"HS256"}),
+			opts...,
 		)
 		if err != nil {
 			return "", err
 		}
 		return claims.Subject, nil
 	}
+}
+
+// JWKSValidator validates RS256/ES256/EdDSA bearer tokens against a remote
+// JWKS endpoint. The JWKS is fetched at construction — a misconfigured or
+// unreachable endpoint fails boot — and refreshed in the background by keyfunc
+// (1 h interval, rate-limited unknown-kid refresh). issuer and audience are
+// enforced when non-empty. This is the production validator (design §12);
+// HS256Validator remains for dev/simple deployments.
+//
+// Plain http is rejected unless the host is loopback (dev escape hatch).
+func JWKSValidator(ctx context.Context, jwksURL, issuer, audience string) (Validator, error) {
+	u, err := url.Parse(jwksURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid jwks url: %w", err)
+	}
+	if u.Scheme != "https" && !backend.IsLoopbackHost(u.Hostname()) {
+		return nil, errors.New("jwks_url must use https; plain http is allowed only for loopback addresses")
+	}
+
+	noError := false
+	kf, err := keyfunc.NewDefaultOverrideCtx(ctx, []string{jwksURL}, keyfunc.Override{
+		NoErrorReturnFirstHTTPReq: &noError,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fetch jwks %q: %w", jwksURL, err)
+	}
+	opts := []jwt.ParserOption{
+		jwt.WithExpirationRequired(),
+		jwt.WithValidMethods([]string{"RS256", "ES256", "EdDSA"}),
+	}
+	if issuer != "" {
+		opts = append(opts, jwt.WithIssuer(issuer))
+	}
+	if audience != "" {
+		opts = append(opts, jwt.WithAudience(audience))
+	}
+	return func(token string) (string, error) {
+		claims := jwt.RegisteredClaims{}
+		if _, err := jwt.ParseWithClaims(token, &claims, kf.Keyfunc, opts...); err != nil {
+			return "", err
+		}
+		return claims.Subject, nil
+	}, nil
 }
 
 // write401 sends a properly-formed JSON 401 with WWW-Authenticate header.

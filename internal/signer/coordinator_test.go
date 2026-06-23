@@ -25,6 +25,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/policy"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // --- fakes ---
@@ -85,20 +86,22 @@ func newFakeKey(t *testing.T) *fakeKey {
 	return &fakeKey{pub: pub, priv: priv, hash: backend.HashPublicKey(pub)}
 }
 
-func newCoordinator(t *testing.T, k *fakeKey, pol policy.KeyPolicy, wm watermark.Watermark, card operation.Cardano) *Coordinator {
+func newCoordinator(t *testing.T, k *fakeKey, pol policy.KeyPolicy, wm watermark.Watermark, card operation.Cardano) (*Coordinator, *Metrics) {
 	t.Helper()
 	pol.Hash = k.hash.String()
 	eng, err := policy.NewEngine([]policy.KeyPolicy{pol})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
+	m := NewMetrics()
 	return New(Deps{
 		Resolver:  backend.NewResolver(fakeBackend{key: k}),
 		Policy:    eng,
 		Watermark: wm,
 		WMMode:    watermark.ModeEnforce,
 		Cardano:   card,
-	})
+		Metrics:   m,
+	}), m
 }
 
 func TestSignTx_HappyPath(t *testing.T) {
@@ -108,7 +111,7 @@ func TestSignTx_HappyPath(t *testing.T) {
 		txid:      make([]byte, 32),
 		assembled: []byte{0x01, 0x02},
 	}
-	c := newCoordinator(t, k,
+	c, _ := newCoordinator(t, k,
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
 		watermark.NewMemWatermark(), card)
 
@@ -127,7 +130,7 @@ func TestSignTx_HappyPath(t *testing.T) {
 func TestSignTx_PolicyDeny(t *testing.T) {
 	k := newFakeKey(t)
 	card := fakeCardano{insp: &bursa.TxInspection{CertificateCount: 1}, txid: make([]byte, 32)}
-	c := newCoordinator(t, k,
+	c, m := newCoordinator(t, k,
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}, // certs not allowed
 		watermark.NewMemWatermark(), card)
 
@@ -138,12 +141,15 @@ func TestSignTx_PolicyDeny(t *testing.T) {
 	if len(res.Witnesses) != 0 || len(perr) != 1 || perr[0].Code != CodeDenied {
 		t.Fatalf("expected one denied signer, got res=%+v perr=%+v", res, perr)
 	}
+	if got := testutil.ToFloat64(m.denials.WithLabelValues(string(CodeDenied))); got != 1 {
+		t.Fatalf("expected 1 policy denial metric, got %v", got)
+	}
 }
 
 func TestSignTx_UnknownKey(t *testing.T) {
 	k := newFakeKey(t)
 	card := fakeCardano{insp: &bursa.TxInspection{}, txid: make([]byte, 32)}
-	c := newCoordinator(t, k,
+	c, _ := newCoordinator(t, k,
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
 		watermark.NewMemWatermark(), card)
 
@@ -158,7 +164,7 @@ func TestSignTx_ExtendedOnUnsupportedBackend(t *testing.T) {
 	k := newFakeKey(t)
 	k.signErr = backend.ErrUnsupportedExtended
 	card := fakeCardano{insp: &bursa.TxInspection{}, txid: make([]byte, 32)}
-	c := newCoordinator(t, k,
+	c, _ := newCoordinator(t, k,
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
 		watermark.NewMemWatermark(), card)
 	_, perr, _ := c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
@@ -180,12 +186,15 @@ func (conflictWatermark) Commit(context.Context, backend.KeyHash, string, []byte
 func TestSignTx_WatermarkConflict(t *testing.T) {
 	k := newFakeKey(t)
 	card := fakeCardano{insp: &bursa.TxInspection{}, txid: make([]byte, 32)}
-	c := newCoordinator(t, k,
+	c, m := newCoordinator(t, k,
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
 		conflictWatermark{}, card)
 	_, perr, _ := c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
 	if len(perr) != 1 || perr[0].Code != CodeConflict {
 		t.Fatalf("expected conflict, got %+v", perr)
+	}
+	if got := testutil.ToFloat64(m.watermarkConflicts); got != 1 {
+		t.Fatalf("expected 1 watermark conflict metric, got %v", got)
 	}
 }
 
@@ -223,7 +232,7 @@ func stakeAddrForKey(t *testing.T, pub ed25519.PublicKey) string {
 	return addr.String()
 }
 
-// TestResolveSigner_Address verifies that resolveSigner accepts payment addresses,
+// TestResolveSigner_Address verifies that ResolveSigner accepts payment addresses,
 // stake addresses, and rejects garbage strings.
 func TestResolveSigner_Address(t *testing.T) {
 	pub, _, err := ed25519.GenerateKey(nil)
@@ -234,9 +243,9 @@ func TestResolveSigner_Address(t *testing.T) {
 
 	t.Run("payment address", func(t *testing.T) {
 		addr := paymentAddrForKey(t, pub)
-		got, err := resolveSigner(addr)
+		got, err := ResolveSigner(addr)
 		if err != nil {
-			t.Fatalf("resolveSigner(%q): %v", addr, err)
+			t.Fatalf("ResolveSigner(%q): %v", addr, err)
 		}
 		if got != wantHash {
 			t.Fatalf("payment addr: want %s, got %s", wantHash, got)
@@ -245,9 +254,9 @@ func TestResolveSigner_Address(t *testing.T) {
 
 	t.Run("stake address", func(t *testing.T) {
 		addr := stakeAddrForKey(t, pub)
-		got, err := resolveSigner(addr)
+		got, err := ResolveSigner(addr)
 		if err != nil {
-			t.Fatalf("resolveSigner(%q): %v", addr, err)
+			t.Fatalf("ResolveSigner(%q): %v", addr, err)
 		}
 		if got != wantHash {
 			t.Fatalf("stake addr: want %s, got %s", wantHash, got)
@@ -255,7 +264,7 @@ func TestResolveSigner_Address(t *testing.T) {
 	})
 
 	t.Run("garbage string", func(t *testing.T) {
-		_, err := resolveSigner("not-a-valid-anything")
+		_, err := ResolveSigner("not-a-valid-anything")
 		if err == nil {
 			t.Fatal("expected error for garbage signer string, got nil")
 		}
@@ -376,7 +385,7 @@ func TestSignTx_PartialSuccess(t *testing.T) {
 		txid:      make([]byte, 32),
 		assembled: []byte{0xAB},
 	}
-	c := newCoordinator(t, k,
+	c, _ := newCoordinator(t, k,
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
 		watermark.NewMemWatermark(), card)
 
@@ -397,7 +406,7 @@ func TestSignTx_PartialSuccess(t *testing.T) {
 func TestSignTx_NoSigners(t *testing.T) {
 	k := newFakeKey(t)
 	card := fakeCardano{insp: &bursa.TxInspection{}, txid: make([]byte, 32)}
-	c := newCoordinator(t, k,
+	c, _ := newCoordinator(t, k,
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
 		watermark.NewMemWatermark(), card)
 

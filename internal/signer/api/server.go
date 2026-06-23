@@ -24,6 +24,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/logging"
 	"github.com/blinklabs-io/bursa/internal/signer"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/blinklabs-io/bursa/internal/signer/policy"
 	"github.com/google/uuid"
 )
 
@@ -53,27 +54,40 @@ type SignCIP8Response struct {
 	Key       string `json:"key"`
 }
 
+// KeyPolicySummary is the effective policy returned on the key-detail
+// endpoint. Absent policy means the key can sign nothing (deny-by-default).
+type KeyPolicySummary struct {
+	AllowedRequests []string           `json:"allowed_requests"`
+	Tx              *policy.TxPolicy   `json:"tx_policy,omitempty"`
+	CIP8            *policy.CIP8Policy `json:"cip8_policy,omitempty"`
+}
+
 // KeyInfo describes an available key.
 type KeyInfo struct {
-	Hash     string `json:"hash"`
-	Type     string `json:"type"`
-	Extended bool   `json:"extended"`
-	Backend  string `json:"backend"`
+	Hash     string            `json:"hash"`
+	Type     string            `json:"type"`
+	Extended bool              `json:"extended"`
+	Backend  string            `json:"backend"`
+	Policy   *KeyPolicySummary `json:"policy,omitempty"` // detail endpoint only
 }
 
 // Server holds the HTTP dependencies.
 type Server struct {
 	coord    *signer.Coordinator
 	resolver *backend.Resolver
+	policies *policy.Engine
+	acl      *CallerACL
 	validate Validator
 	logger   *slog.Logger
 }
 
 // NewServer builds the API server. The logger defaults to logging.GetLogger().
-func NewServer(coord *signer.Coordinator, resolver *backend.Resolver, validate Validator) *Server {
+func NewServer(coord *signer.Coordinator, resolver *backend.Resolver, policies *policy.Engine, acl *CallerACL, validate Validator) *Server {
 	return &Server{
 		coord:    coord,
 		resolver: resolver,
+		policies: policies,
+		acl:      acl,
 		validate: validate,
 		logger:   logging.GetLogger(),
 	}
@@ -140,7 +154,31 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Type {
 	case "tx":
-		res, perr, err := s.coord.SignTx(r.Context(), []byte(req.Cbor), req.Signers)
+		signers := req.Signers
+		var aclDenied []signer.SignerError
+		if s.acl.Restricted() {
+			signers = make([]string, 0, len(req.Signers))
+			for _, sg := range req.Signers {
+				// Must stay consistent with the coordinator's own ResolveSigner resolution.
+				h, err := signer.ResolveSigner(sg)
+				if err == nil && !s.acl.Allows(caller, h) {
+					// Sign-path ACL denials are counted; list/get-key filtering is view filtering, not a deny event.
+					s.coord.Metrics().ObserveDeny("acl")
+					aclDenied = append(aclDenied, signer.SignerError{
+						Signer: sg, Code: signer.CodeDenied, Reason: "caller is not authorized for this key",
+					})
+					continue
+				}
+				// Unresolvable signers fall through; the coordinator reports them.
+				signers = append(signers, sg)
+			}
+			if len(signers) == 0 && len(aclDenied) > 0 {
+				s.audit(r, caller, "tx", "denied", "audit_id", auditID, "signers", req.Signers, "reason", "caller ACL")
+				writeJSON(w, http.StatusForbidden, SignTxResponse{AuditID: auditID, Errors: aclDenied})
+				return
+			}
+		}
+		res, perr, err := s.coord.SignTx(r.Context(), []byte(req.Cbor), signers)
 		if err != nil {
 			if signer.IsBadRequest(err) {
 				s.audit(r, caller, "tx", "bad_request", "audit_id", auditID, "signers", req.Signers, "error", err.Error())
@@ -157,24 +195,36 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
-		// If nothing signed and we have errors, surface the first error's status.
-		if len(res.Witnesses) == 0 && len(perr) > 0 {
-			st := codeToStatus(perr[0].Code)
-			masked := maskSignerErrors(perr)
+		// ACL pre-filter denials are reported in the response body alongside the
+		// coordinator's per-signer results, but they must NOT drive HTTP status
+		// selection: an ACL denial is always 403, so prepending it would mask a
+		// coordinator bad_request/not_found/backend error (e.g. report 400 as
+		// 403). Keep them separate and pick status from the coordinator errors.
+		allErrs := append(aclDenied, perr...)
+		// If nothing signed and we have errors, surface a representative status.
+		if len(res.Witnesses) == 0 && len(allErrs) > 0 {
+			// Prefer the coordinator's actual signing errors; only fall back to
+			// the ACL denials when there are no coordinator errors.
+			primary := allErrs[0]
+			if len(perr) > 0 {
+				primary = perr[0]
+			}
+			st := codeToStatus(primary.Code)
+			masked := maskSignerErrors(allErrs)
 			// Log original (unmasked) reasons server-side before sending masked response.
 			s.logger.Error("SignTx signer errors",
 				"caller", caller,
 				"audit_id", auditID,
 				"tx_id", res.TxID,
-				"errors", perr,
+				"errors", allErrs,
 			)
-			s.audit(r, caller, "tx", string(perr[0].Code), "audit_id", auditID, "tx_id", res.TxID, "signers", req.Signers, "signer_errors", len(perr))
+			s.audit(r, caller, "tx", string(primary.Code), "audit_id", auditID, "tx_id", res.TxID, "signers", req.Signers, "signer_errors", len(allErrs))
 			writeJSON(w, st, SignTxResponse{AuditID: auditID, TxID: res.TxID, Errors: masked})
 			return
 		}
-		masked := maskSignerErrors(perr)
-		if len(perr) > 0 {
-			s.logger.Warn("SignTx partial failure", "audit_id", auditID, "errors", perr, "caller", caller)
+		masked := maskSignerErrors(allErrs)
+		if len(allErrs) > 0 {
+			s.logger.Warn("SignTx partial failure", "audit_id", auditID, "errors", allErrs, "caller", caller)
 		}
 		resp := SignTxResponse{AuditID: auditID, TxID: res.TxID, Errors: masked}
 		for _, wit := range res.Witnesses {
@@ -197,6 +247,15 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 			s.audit(r, caller, "cip8", "bad_request", "audit_id", auditID, "key", req.Key, "address", req.Address)
 			writeErr(w, http.StatusBadRequest, "invalid payload hex")
 			return
+		}
+		if s.acl.Restricted() {
+			h, err := backend.ParseKeyHash(req.Key)
+			if err == nil && !s.acl.Allows(caller, h) {
+				s.coord.Metrics().ObserveDeny("acl")
+				s.audit(r, caller, "cip8", "denied", "audit_id", auditID, "key", req.Key, "reason", "caller ACL")
+				writeErr(w, http.StatusForbidden, "caller is not authorized for this key")
+				return
+			}
 		}
 		res, code, err := s.coord.SignCIP8(r.Context(), payload, req.Address, req.Key)
 		if err != nil {
@@ -266,8 +325,12 @@ func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	caller := CallerFromContext(r.Context())
 	out := make([]KeyInfo, 0, len(keys))
 	for _, k := range keys {
+		if !s.acl.Allows(caller, k.Hash()) {
+			continue
+		}
 		out = append(out, KeyInfo{Hash: k.Hash().String(), Type: string(k.Type()), Extended: k.Extended(), Backend: k.Backend()})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -278,6 +341,11 @@ func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request) {
 	h, err := backend.ParseKeyHash(hashStr)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid key hash")
+		return
+	}
+	if !s.acl.Allows(CallerFromContext(r.Context()), h) {
+		// 404 (not 403) so restricted callers cannot probe for key existence.
+		writeErr(w, http.StatusNotFound, "key not found")
 		return
 	}
 	ref, err := s.resolver.Resolve(r.Context(), h)
@@ -291,7 +359,23 @@ func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	writeJSON(w, http.StatusOK, KeyInfo{Hash: ref.Hash().String(), Type: string(ref.Type()), Extended: ref.Extended(), Backend: ref.Backend()})
+	info := KeyInfo{Hash: ref.Hash().String(), Type: string(ref.Type()), Extended: ref.Extended(), Backend: ref.Backend()}
+	if s.policies != nil {
+		if p, ok := s.policies.PolicyFor(h); ok {
+			// Normalize to a non-nil slice so the wire format is always an
+			// array, never null.
+			reqs := p.AllowedRequests
+			if reqs == nil {
+				reqs = []string{}
+			}
+			info.Policy = &KeyPolicySummary{
+				AllowedRequests: reqs,
+				Tx:              p.Tx,
+				CIP8:            p.CIP8,
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, info)
 }
 
 // Handler returns the authenticated mux for the signer API.

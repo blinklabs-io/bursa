@@ -15,9 +15,13 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,7 +52,7 @@ func TestJWTMiddleware(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	h := JWTMiddleware(HS256Validator(secret), next)
+	h := JWTMiddleware(HS256Validator(secret, "", ""), next)
 
 	// valid
 	req := httptest.NewRequest(http.MethodGet, "/v1/keys", nil)
@@ -82,7 +86,7 @@ func Test401JSON(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	h := JWTMiddleware(HS256Validator(secret), next)
+	h := JWTMiddleware(HS256Validator(secret, "", ""), next)
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/keys", nil))
@@ -110,7 +114,7 @@ func TestNegativeAuthCases(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	h := JWTMiddleware(HS256Validator(secret), next)
+	h := JWTMiddleware(HS256Validator(secret, "", ""), next)
 
 	t.Run("alg=none", func(t *testing.T) {
 		// Mint a "none" token; HS256Validator must reject it.
@@ -201,7 +205,7 @@ func TestHandlerIntegration(t *testing.T) {
 	srv, _ := newTestServer(t)
 
 	// Replace the validator so it validates our secret.
-	srv.validate = HS256Validator(secret)
+	srv.validate = HS256Validator(secret, "", "")
 
 	handler := srv.Handler()
 
@@ -212,5 +216,204 @@ func TestHandlerIntegration(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("integration GET /v1/keys: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func rsaJWKSServer(t *testing.T, pub *rsa.PublicKey, kid string) *httptest.Server {
+	t.Helper()
+	n := base64.RawURLEncoding.EncodeToString(pub.N.Bytes())
+	e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes())
+	body := fmt.Sprintf(`{"keys":[{"kty":"RSA","kid":"%s","alg":"RS256","use":"sig","n":"%s","e":"%s"}]}`, kid, n, e)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, body)
+	}))
+}
+
+func rs256Token(t *testing.T, priv *rsa.PrivateKey, kid string, claims jwt.RegisteredClaims) string {
+	t.Helper()
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = kid
+	s, err := tok.SignedString(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestJWKSValidator(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := rsaJWKSServer(t, &priv.PublicKey, "test-kid")
+	defer ts.Close()
+
+	validate, err := JWKSValidator(context.Background(), ts.URL, "https://issuer.example", "")
+	if err != nil {
+		t.Fatalf("JWKSValidator: %v", err)
+	}
+
+	good := jwt.RegisteredClaims{
+		Subject:   "alice",
+		Issuer:    "https://issuer.example",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}
+	sub, err := validate(rs256Token(t, priv, "test-kid", good))
+	if err != nil {
+		t.Fatalf("valid token rejected: %v", err)
+	}
+	if sub != "alice" {
+		t.Fatalf("expected subject alice, got %q", sub)
+	}
+
+	wrongIssuer := good
+	wrongIssuer.Issuer = "https://evil.example"
+	if _, err := validate(rs256Token(t, priv, "test-kid", wrongIssuer)); err == nil {
+		t.Fatal("wrong issuer accepted")
+	}
+
+	expired := good
+	expired.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-time.Hour))
+	if _, err := validate(rs256Token(t, priv, "test-kid", expired)); err == nil {
+		t.Fatal("expired token accepted")
+	}
+
+	// HS256 tokens must be rejected even if "signed" with something.
+	hsTok := jwt.NewWithClaims(jwt.SigningMethodHS256, good)
+	hs, _ := hsTok.SignedString([]byte("0123456789abcdef0123456789abcdef"))
+	if _, err := validate(hs); err == nil {
+		t.Fatal("HS256 token accepted by JWKS validator")
+	}
+
+	if _, err := validate(rs256Token(t, priv, "unknown-kid", good)); err == nil {
+		t.Fatal("unknown kid accepted")
+	}
+}
+
+// TestJWKSValidator_RejectsPlainHTTPNonLoopback verifies that JWKSValidator
+// refuses to construct when the JWKS URL uses plain http on a non-loopback host.
+// Added as the failing test for Fix 1 (HTTPS enforcement).
+func TestJWKSValidator_RejectsPlainHTTPNonLoopback(t *testing.T) {
+	_, err := JWKSValidator(context.Background(), "http://idp.example.com/jwks.json", "", "")
+	if err == nil {
+		t.Fatal("expected error for plain http JWKS URL on non-loopback host")
+	}
+}
+
+// TestJWKSValidator_FailsFastOnUnreachableJWKS verifies that JWKSValidator
+// returns an error at construction time when the JWKS endpoint is unreachable.
+// Added as the failing test for Fix 2 (fail-fast boot).
+func TestJWKSValidator_FailsFastOnUnreachableJWKS(t *testing.T) {
+	_, err := JWKSValidator(context.Background(), "http://127.0.0.1:1/jwks.json", "", "")
+	if err == nil {
+		t.Fatal("expected construction error for unreachable JWKS endpoint")
+	}
+}
+
+// TestJWKSValidator_NoKidSingleKey pins the behavior for tokens without a kid
+// header when the JWKS contains a single key. keyfunc falls back to trying the
+// full key set, so these tokens should verify successfully.
+// Added as the pinning test for Fix 4.
+func TestJWKSValidator_NoKidSingleKey(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := rsaJWKSServer(t, &priv.PublicKey, "test-kid")
+	defer ts.Close()
+
+	validate, err := JWKSValidator(context.Background(), ts.URL, "", "")
+	if err != nil {
+		t.Fatalf("JWKSValidator: %v", err)
+	}
+	claims := jwt.RegisteredClaims{
+		Subject:   "alice",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims) // no kid header
+	s, err := tok.SignedString(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// keyfunc falls back to the full key set when kid is absent; with a single
+	// JWKS key this verifies. Pinned so a keyfunc bump can't silently change it.
+	if sub, err := validate(s); err != nil || sub != "alice" {
+		t.Fatalf("no-kid token against single-key JWKS: sub=%q err=%v", sub, err)
+	}
+}
+
+func TestJWKSValidator_Audience(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := rsaJWKSServer(t, &priv.PublicKey, "test-kid")
+	defer ts.Close()
+
+	validate, err := JWKSValidator(context.Background(), ts.URL, "", "bursa-signer")
+	if err != nil {
+		t.Fatalf("JWKSValidator: %v", err)
+	}
+	good := jwt.RegisteredClaims{
+		Subject:   "alice",
+		Audience:  jwt.ClaimStrings{"bursa-signer"},
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}
+	if _, err := validate(rs256Token(t, priv, "test-kid", good)); err != nil {
+		t.Fatalf("valid audience rejected: %v", err)
+	}
+	bad := good
+	bad.Audience = jwt.ClaimStrings{"other-service"}
+	if _, err := validate(rs256Token(t, priv, "test-kid", bad)); err == nil {
+		t.Fatal("wrong audience accepted")
+	}
+}
+
+// hs256Token mints an HS256 token with the given registered claims.
+func hs256Token(t *testing.T, secret []byte, claims jwt.RegisteredClaims) string {
+	t.Helper()
+	s, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	return s
+}
+
+// TestHS256Validator_IssuerAudience verifies the shared-secret validator
+// enforces issuer and audience claims when configured, matching JWKSValidator.
+func TestHS256Validator_IssuerAudience(t *testing.T) {
+	secret := []byte("0123456789abcdef0123456789abcdef")
+	validate := HS256Validator(secret, "https://issuer.example", "bursa-signer")
+
+	good := jwt.RegisteredClaims{
+		Subject:   "alice",
+		Issuer:    "https://issuer.example",
+		Audience:  jwt.ClaimStrings{"bursa-signer"},
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}
+	if _, err := validate(hs256Token(t, secret, good)); err != nil {
+		t.Fatalf("valid issuer+audience rejected: %v", err)
+	}
+
+	wrongIssuer := good
+	wrongIssuer.Issuer = "https://evil.example"
+	if _, err := validate(hs256Token(t, secret, wrongIssuer)); err == nil {
+		t.Fatal("wrong issuer accepted")
+	}
+
+	wrongAudience := good
+	wrongAudience.Audience = jwt.ClaimStrings{"other-service"}
+	if _, err := validate(hs256Token(t, secret, wrongAudience)); err == nil {
+		t.Fatal("wrong audience accepted")
+	}
+
+	// A token missing the configured claims must also be rejected.
+	missing := jwt.RegisteredClaims{
+		Subject:   "alice",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}
+	if _, err := validate(hs256Token(t, secret, missing)); err == nil {
+		t.Fatal("token missing issuer/audience accepted")
 	}
 }

@@ -48,9 +48,10 @@ func signerCommand() *cobra.Command {
 		Short: "Run the Cardano remote signing service",
 		Long: `Run the Cardano remote signing service.
 
-Authentication note: Phase 1 uses HS256 JWT (single trust domain) — ANY
-valid token may use ANY configured key. Per-caller key scoping arrives with
-the JWKS follow-up.`,
+Authentication: configure exactly one of signer.jwt_secret (HS256, dev/simple)
+or signer.jwks_url (RS256/ES256/EdDSA via JWKS, production). Optional
+signer.jwt_issuer / signer.jwt_audience are enforced when set. Without a
+signer.callers ACL, any valid token may use any configured key.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			logger := logging.GetLogger()
 
@@ -63,6 +64,23 @@ the JWKS follow-up.`,
 			if err != nil {
 				logger.Error("failed to load config", "error", err)
 				os.Exit(1)
+			}
+
+			// Cheap config validation before any expensive I/O.
+			hasSecret := cfg.Signer.JWTSecret != ""
+			hasJWKS := cfg.Signer.JWKSURL != ""
+			if hasSecret == hasJWKS {
+				logger.Error("exactly one of signer.jwt_secret and signer.jwks_url must be set")
+				os.Exit(1)
+			}
+			aclMap, err := signer.BuildCallerACL(cfg.Signer.Callers)
+			if err != nil {
+				logger.Error("invalid signer.callers", "error", err)
+				os.Exit(1)
+			}
+			acl := api.NewCallerACL(aclMap)
+			if !acl.Restricted() {
+				logger.Warn("no signer.callers configured; any valid token may use any configured key")
 			}
 
 			// Signal-cancellable root context for graceful shutdown.
@@ -117,20 +135,32 @@ the JWKS follow-up.`,
 				Metrics:   m,
 			})
 
-			if cfg.Signer.JWTSecret == "" {
-				logger.Error("signer.jwt_secret is required")
-				os.Exit(1)
+			var validate api.Validator
+			if hasJWKS {
+				validate, err = api.JWKSValidator(ctx, cfg.Signer.JWKSURL, cfg.Signer.JWTIssuer, cfg.Signer.JWTAudience)
+				if err != nil {
+					logger.Error("failed to initialize JWKS validator", "error", err)
+					os.Exit(1)
+				}
+			} else {
+				// Require a minimum of 32 bytes so the shared secret is not
+				// trivially brute-forceable.
+				if len(cfg.Signer.JWTSecret) < 32 {
+					logger.Error("signer.jwt_secret must be at least 32 bytes")
+					os.Exit(1)
+				}
+				validate = api.HS256Validator([]byte(cfg.Signer.JWTSecret), cfg.Signer.JWTIssuer, cfg.Signer.JWTAudience)
 			}
-			// Fix 3: require a minimum of 32 bytes so the shared secret is not
-			// trivially brute-forceable.
-			if len(cfg.Signer.JWTSecret) < 32 {
-				logger.Error("signer.jwt_secret must be at least 32 bytes")
-				os.Exit(1)
+			// Both auth modes enforce jwt_issuer/jwt_audience when set; warn when
+			// either is unset so operators know any-issuer / any-audience tokens
+			// are accepted.
+			if cfg.Signer.JWTIssuer == "" {
+				logger.Warn("signer.jwt_issuer is not set; tokens from any issuer signed by a trusted key will be accepted")
 			}
-			// Phase 1 HS256 auth is a single trust domain — ANY valid token may
-			// use ANY configured key; per-caller key scoping arrives with the
-			// JWKS follow-up.
-			srv := api.NewServer(coord, resolver, api.HS256Validator([]byte(cfg.Signer.JWTSecret)))
+			if cfg.Signer.JWTAudience == "" {
+				logger.Warn("signer.jwt_audience is not set; tokens for any audience signed by a trusted key will be accepted")
+			}
+			srv := api.NewServer(coord, resolver, eng, acl, validate)
 
 			mux := http.NewServeMux()
 			mux.Handle("/v1/", srv.Handler())

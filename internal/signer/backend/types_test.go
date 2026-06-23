@@ -61,3 +61,23 @@ func TestKeyType_Valid(t *testing.T) {
 		t.Fatalf("bogus should be invalid")
 	}
 }
+
+func TestKeyTypeFromEnvelope(t *testing.T) {
+	cases := map[string]KeyType{
+		"PaymentSigningKeyShelley_ed25519":               KeyTypePayment,
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32": KeyTypePayment,
+		"StakePoolSigningKey_ed25519":                    KeyTypePool,
+		"StakeSigningKeyShelley_ed25519":                 KeyTypeStake,
+		"DRepSigningKey_ed25519":                         KeyTypeDRep,
+		"CommitteeHotSigningKey_ed25519":                 KeyTypeCCHot,
+		"CommitteeColdSigningKey_ed25519":                KeyTypeCCCold,
+		"PolicySigningKey_ed25519":                       KeyTypePolicy,
+		"CalidusSigningKey_ed25519":                      KeyTypePolicy,
+		"SomethingUnknown":                               KeyTypePayment,
+	}
+	for in, want := range cases {
+		if got := KeyTypeFromEnvelope(in); got != want {
+			t.Errorf("KeyTypeFromEnvelope(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
