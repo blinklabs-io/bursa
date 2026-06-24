@@ -17,6 +17,7 @@ package policy
 import (
 	"fmt"
 	"math/big"
+	"slices"
 	"strings"
 
 	"github.com/blinklabs-io/bursa"
@@ -56,12 +57,7 @@ type KeyPolicy struct {
 }
 
 func (p KeyPolicy) allows(reqType string) bool {
-	for _, r := range p.AllowedRequests {
-		if r == reqType {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(p.AllowedRequests, reqType)
 }
 
 // Decision is the outcome of a policy evaluation.
@@ -136,12 +132,7 @@ func networkOfAddress(addr string) string {
 }
 
 func contains(set []string, v string) bool {
-	for _, s := range set {
-		if s == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(set, v)
 }
 
 // EvaluateTx authorizes (or denies) signing the inspected transaction with the

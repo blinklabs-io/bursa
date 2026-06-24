@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bursa Wallet</title>
+  </head>
+  <body>
+    <!--
+      Pre-build placeholder.
+
+      This file is the only thing under ui/internal/webui/dist/ that is tracked
+      in git (the hashed JS/CSS bundles are .gitignore'd build output). It exists
+      so `//go:embed dist` compiles from a clean checkout, and it is served as-is
+      if the binary is run before the web UI has been built — hence the message
+      below. `npm run build` (vite, emptyOutDir) overwrites this with the real
+      compiled index.html and its assets; do not commit that build output.
+
+      No inline CSS/JS on purpose: the server sends Content-Security-Policy
+      `default-src 'self'`, which blocks inline styles and scripts, so this page
+      stays intentionally plain.
+    -->
+    <h1>Bursa Wallet — web UI not built yet</h1>
+    <p>
+      The single-page app that ships embedded in <code>bursa-wallet</code> has
+      not been built. You are seeing the placeholder that is committed in its
+      place.
+    </p>
+    <p>To build the web UI, run:</p>
+    <pre>cd ui/web
+npm install
+npm run build</pre>
+    <p>
+      That compiles the app into <code>ui/internal/webui/dist/</code> (replacing
+      this file). Rebuild the <code>bursa-wallet</code> binary afterwards so the
+      embedded assets are picked up.
+    </p>
+  </body>
+</html>

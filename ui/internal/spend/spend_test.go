@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"math"
 	"math/big"
 	"path/filepath"
 	"strings"
@@ -208,15 +207,15 @@ func TestBuildProducesPreview(t *testing.T) {
 	fc := newFakeChain(5_000_000, addr0)
 	s := NewService(fc, nil, acct)
 
-	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: 1_000_000})
+	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	if pv.PendingID == "" {
 		t.Fatal("expected non-empty PendingID")
 	}
-	if pv.Fee == 0 {
-		t.Fatal("expected non-zero Fee")
+	if pv.Fee == "" || pv.Fee == "0" {
+		t.Fatalf("expected non-zero Fee, got %q", pv.Fee)
 	}
 	if len(pv.Outputs) == 0 {
 		t.Fatal("expected at least one Output")
@@ -231,7 +230,7 @@ func TestBuildInsufficientFunds(t *testing.T) {
 	fc := newFakeChain(100_000, addr0)
 	s := NewService(fc, nil, acct)
 
-	_, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: 1_000_000})
+	_, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
 	if !errors.Is(err, ErrInsufficientFunds) {
 		t.Fatalf("expected ErrInsufficientFunds, got %v", err)
 	}
@@ -298,7 +297,7 @@ func TestBuildCompleteErrorDoesNotMapToInsufficientFunds(t *testing.T) {
 	fc.maxTxFeeErr = errors.New("fee unavailable")
 	s := NewService(fc, nil, acct)
 
-	_, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: 1_000_000})
+	_, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
 	if err == nil {
 		t.Fatal("expected Build error")
 	}
@@ -319,8 +318,10 @@ func TestBuildRejectsLovelaceOverflow(t *testing.T) {
 	s := NewService(fc, nil, acct)
 
 	_, err := s.Build(context.Background(), SendRequest{
-		To:       recvAddr,
-		Lovelace: uint64(math.MaxInt64) + 1,
+		To: recvAddr,
+		// 2^63 = MaxInt64 + 1: parses as a uint64 but exceeds the int64 range
+		// Apollo accepts, so Build must reject it.
+		Lovelace: "9223372036854775808",
 	})
 	if !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("expected ErrInvalidRequest, got %v", err)
@@ -348,8 +349,8 @@ func TestBuildRejectsMalformedAssetUnit(t *testing.T) {
 
 			_, err := s.Build(context.Background(), SendRequest{
 				To:       recvAddr,
-				Lovelace: 1_000_000,
-				Assets:   []Asset{{Unit: tt.unit, Quantity: 1}},
+				Lovelace: "1000000",
+				Assets:   []Asset{{Unit: tt.unit, Quantity: "1"}},
 			})
 			if !errors.Is(err, ErrInvalidRequest) {
 				t.Fatalf("expected ErrInvalidRequest, got %v", err)
@@ -397,7 +398,7 @@ func TestConfirmSignsAndSubmits(t *testing.T) {
 	s := NewService(fc, ks, acct)
 
 	ctx := context.Background()
-	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: 1_000_000})
+	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: "1000000"})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -438,7 +439,7 @@ func TestConfirmConsumesPendingBeforeSubmit(t *testing.T) {
 	defer release()
 
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
-	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: 1_000_000})
+	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -497,7 +498,7 @@ func TestConfirmWrongPassword(t *testing.T) {
 	s := NewService(fc, ks, acct)
 
 	ctx := context.Background()
-	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: 1_000_000})
+	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: "1000000"})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -522,7 +523,7 @@ func TestConfirmUnlockInfrastructureErrorIsNotWrongPassword(t *testing.T) {
 	s := NewService(fc, ks, acct)
 
 	ctx := context.Background()
-	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: 1_000_000})
+	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: "1000000"})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -555,7 +556,7 @@ func TestConfirmExpiredPending(t *testing.T) {
 	fc := newFakeChain(5_000_000, acct.ReceiveAddresses[0])
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
 
-	pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[2], Lovelace: 1_000_000})
+	pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -586,7 +587,7 @@ func TestConfirmMultiInput(t *testing.T) {
 
 	ctx := context.Background()
 	// Request 4 ADA to force use of both UTxOs (each addr only has 3 ADA).
-	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: 4_000_000})
+	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: "4000000"})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -629,7 +630,7 @@ func TestSetWalletCreatesKeystoreAndEnablesBuild(t *testing.T) {
 
 	// No account yet: Build must report ErrNoWallet.
 	s := NewService(fc, ks, nil)
-	if _, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: 1_000_000}); !errors.Is(err, ErrNoWallet) {
+	if _, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"}); !errors.Is(err, ErrNoWallet) {
 		t.Fatalf("Build before SetWallet: got %v, want ErrNoWallet", err)
 	}
 
@@ -646,7 +647,7 @@ func TestSetWalletCreatesKeystoreAndEnablesBuild(t *testing.T) {
 	}
 
 	// Build now succeeds.
-	if pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: 1_000_000}); err != nil {
+	if pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"}); err != nil {
 		t.Fatalf("Build after SetWallet: %v", err)
 	} else if pv.PendingID == "" {
 		t.Fatal("expected non-empty pending id")

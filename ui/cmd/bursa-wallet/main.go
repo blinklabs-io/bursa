@@ -37,6 +37,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
+	"github.com/blinklabs-io/bursa/ui/internal/webui"
 )
 
 func main() {
@@ -100,7 +101,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              "127.0.0.1:8090", // loopback only
-		Handler:           api.NewHandler(sup, walletSvc, spendSvc, network),
+		Handler:           api.NewHandler(sup, walletSvc, spendSvc, network, webui.Handler()),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	srvErr := make(chan error, 1)

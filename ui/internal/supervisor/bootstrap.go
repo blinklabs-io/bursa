@@ -66,7 +66,19 @@ func syncConfigFor(p BootstrapParams, logger *slog.Logger) mithril.SyncConfig {
 		MetadataPlugin:   database.DefaultConfig.MetadataPlugin,
 		VerifyCertChain:  true,
 		CleanupAfterLoad: true,
-		Logger:           logger,
+		// dingo v0.55.0's API-mode backfill phase requires a positive batch size
+		// and applies no default of its own when the SyncConfig is built directly
+		// (only dingo's config layer defaults it). Mirror dingo's own default
+		// (node.DefaultBackfillBatchSize == 100, unexported) or the backfill phase
+		// fails with "backfill batch size must be positive".
+		BackfillBatchSize: 100,
+		// DatabaseWorkers is deliberately left unset (0). It sizes the SQLite
+		// read-connection pool; during the write-heavy backfill, extra readers
+		// cause WAL-checkpoint contention that roughly HALVED throughput
+		// (~119→~61 blocks/s when set to dingo's config default of 5). It also
+		// only affects bootstrap — the running node config doesn't set it — so a
+		// non-zero value is pure downside here.
+		Logger: logger,
 		OnProgress: func(sp mithril.SyncProgress) {
 			if p.OnProgress != nil {
 				p.OnProgress(toBootstrapProgress(sp))

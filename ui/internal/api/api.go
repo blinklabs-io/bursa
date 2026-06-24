@@ -57,7 +57,9 @@ const (
 
 // NewHandler returns the loopback control-surface mux. network is the network
 // the embedded node runs on; wallet requests must match it (or omit it).
-func NewHandler(st Statuser, wl Wallet, sp Spender, network string) http.Handler {
+// spa is the handler for the embedded SPA; it is registered as the catch-all
+// route so that the specific API routes above take precedence on the mux.
+func NewHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -161,6 +163,10 @@ func NewHandler(st Statuser, wl Wallet, sp Spender, network string) http.Handler
 		res, err := sp.Confirm(r.Context(), r.PathValue("id"), req.Password)
 		serve(w, res, err)
 	}))
+
+	// SPA catch-all: the specific API routes above take precedence on the mux;
+	// everything else is served by the embedded frontend.
+	mux.Handle("/", spa)
 
 	return mux
 }
