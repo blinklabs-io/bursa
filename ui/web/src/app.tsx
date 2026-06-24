@@ -90,9 +90,8 @@ export function App() {
                 key={key}
                 className={active ? "nav-item active" : "nav-item"}
                 aria-current={active ? "page" : undefined}
-                aria-disabled={gated ? "true" : undefined}
-                onClick={gated ? undefined : () => navigate(key)}
-                style={gated ? { pointerEvents: "none" } : undefined}
+                disabled={gated}
+                onClick={() => navigate(key)}
               >
                 {label}
               </button>

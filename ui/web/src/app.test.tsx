@@ -30,7 +30,7 @@ test("Send nav is disabled until the node is ready", async () => {
   stubStatus("syncing");
   render(<App />);
   // The Send entry is present but disabled while not ready.
-  await waitFor(() => expect(screen.getByText("Send").closest("button,a")).toHaveAttribute("aria-disabled", "true"));
+  await waitFor(() => expect(screen.getByText("Send").closest("button")).toBeDisabled());
 });
 
 test("deep-linking #/send while syncing falls back to Portfolio (guard)", async () => {
@@ -93,7 +93,7 @@ test("read-only wallet cannot reach Send even when the node is ready", async () 
   await waitFor(() => expect(screen.queryByRole("button", { name: /load wallet/i })).not.toBeInTheDocument());
   // Send screen is NOT shown (falls back to Portfolio), and the nav item is disabled.
   expect(screen.queryByText("Send ADA")).not.toBeInTheDocument();
-  expect(screen.getByText("Send").closest("button,a")).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByText("Send").closest("button")).toBeDisabled();
 });
 
 test("spending-enabled wallet on a ready node can reach Send", async () => {

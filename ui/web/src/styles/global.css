@@ -81,7 +81,7 @@ a:hover {
   transition: background 0.12s ease, color 0.12s ease;
 }
 
-.nav-item:hover {
+.nav-item:hover:not(:disabled) {
   background: var(--bg);
   color: var(--text);
 }
@@ -92,7 +92,7 @@ a:hover {
   font-weight: 600;
 }
 
-.nav-item[aria-disabled="true"] {
+.nav-item:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
