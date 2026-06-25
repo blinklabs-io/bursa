@@ -15,6 +15,7 @@
 package logging
 
 import (
+	"io"
 	"log/slog"
 	"os"
 	"time"
@@ -29,6 +30,27 @@ var (
 
 // Configure initializes the global logger.
 func Configure() {
+	ConfigureJSON()
+}
+
+// ConfigureJSON initializes the global logger with JSON output.
+func ConfigureJSON() {
+	configure(func(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
+		return slog.NewJSONHandler(w, opts)
+	}, os.Stdout)
+}
+
+// ConfigureText initializes the global logger with plain text output.
+func ConfigureText() {
+	configure(func(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
+		return slog.NewTextHandler(w, opts)
+	}, os.Stderr)
+}
+
+func configure(
+	newHandler func(io.Writer, *slog.HandlerOptions) slog.Handler,
+	output *os.File,
+) {
 	cfg := config.GetConfig()
 	var level slog.Level
 	switch cfg.Logging.Level {
@@ -44,7 +66,7 @@ func Configure() {
 		level = slog.LevelInfo
 	}
 
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	handler := newHandler(output, &slog.HandlerOptions{
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				return slog.String(
@@ -57,6 +79,7 @@ func Configure() {
 		Level: level,
 	})
 	globalLogger = slog.New(handler).With("component", "main")
+	slog.SetDefault(globalLogger)
 
 	// Configure access logger
 	accessHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{

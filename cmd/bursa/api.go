@@ -36,11 +36,14 @@ func apiCommand() *cobra.Command {
 		Use:   "api",
 		Short: "Runs the api",
 		Run: func(cmd *cobra.Command, args []string) {
+			logging.ConfigureJSON()
+
 			cfg, err := config.LoadConfig()
 			if err != nil {
 				logging.GetLogger().Error("failed to load config", "error", err)
 				os.Exit(1)
 			}
+			logging.ConfigureJSON()
 
 			// Start debug listener
 			if cfg.Debug.ListenPort > 0 {

@@ -26,8 +26,8 @@ const (
 )
 
 func main() {
-	// Configure logging
-	logging.Configure()
+	// CLI commands default to text logs. Server commands override this to JSON.
+	logging.ConfigureText()
 
 	rootCmd := &cobra.Command{
 		Use: programName,

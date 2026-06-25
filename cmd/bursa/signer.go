@@ -53,6 +53,8 @@ or signer.jwks_url (RS256/ES256/EdDSA via JWKS, production). Optional
 signer.jwt_issuer / signer.jwt_audience are enforced when set. Without a
 signer.callers ACL, any valid token may use any configured key.`,
 		Run: func(cmd *cobra.Command, args []string) {
+			logging.ConfigureJSON()
+
 			logger := logging.GetLogger()
 
 			// Honor BURSA_CONFIG env if --config was not provided.
@@ -65,6 +67,8 @@ signer.callers ACL, any valid token may use any configured key.`,
 				logger.Error("failed to load config", "error", err)
 				os.Exit(1)
 			}
+			logging.ConfigureJSON()
+			logger = logging.GetLogger()
 
 			// Cheap config validation before any expensive I/O.
 			hasSecret := cfg.Signer.JWTSecret != ""
