@@ -67,6 +67,8 @@ signer.callers ACL, any valid token may use any configured key.`,
 				logger.Error("failed to load config", "error", err)
 				os.Exit(1)
 			}
+			logging.ConfigureJSON()
+			logger = logging.GetLogger()
 
 			// Cheap config validation before any expensive I/O.
 			hasSecret := cfg.Signer.JWTSecret != ""

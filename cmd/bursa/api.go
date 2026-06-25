@@ -43,6 +43,7 @@ func apiCommand() *cobra.Command {
 				logging.GetLogger().Error("failed to load config", "error", err)
 				os.Exit(1)
 			}
+			logging.ConfigureJSON()
 
 			// Start debug listener
 			if cfg.Debug.ListenPort > 0 {
