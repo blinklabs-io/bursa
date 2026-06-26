@@ -34,7 +34,7 @@ export function SyncBanner({ status }: SyncBannerProps) {
   }
 
   return (
-    <div className="sync-banner">
+    <div className="sync-banner" role="status" aria-live="polite">
       <span className={`dot dot-${tone}`} aria-hidden="true" />
       <span className="sync-state">{status.state}</span>
       {detail && <span className="sync-detail">{detail}</span>}

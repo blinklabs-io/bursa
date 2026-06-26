@@ -24,6 +24,13 @@ export function SignMessage({ account }: SignMessageProps) {
 
   const addressOptions = account.receive_addresses.map((a) => ({ value: a, label: a }));
 
+  // Editing any field invalidates a previous result/error — clear it so the
+  // displayed signature always matches the current inputs.
+  function clearResult() {
+    setResult(null);
+    setError(null);
+  }
+
   async function handleSign() {
     setError(null);
     setResult(null);
@@ -51,7 +58,10 @@ export function SignMessage({ account }: SignMessageProps) {
           id="sign-address"
           options={addressOptions}
           value={address}
-          onChange={(e) => setAddress(e.target.value)}
+          onChange={(e) => {
+            setAddress(e.target.value);
+            clearResult();
+          }}
           disabled={loading}
         />
 
@@ -61,7 +71,10 @@ export function SignMessage({ account }: SignMessageProps) {
           className="field"
           rows={4}
           value={message}
-          onChange={(e) => setMessage(e.target.value)}
+          onChange={(e) => {
+            setMessage(e.target.value);
+            clearResult();
+          }}
           placeholder="Enter a message to sign…"
           aria-label="Message"
           disabled={loading}
@@ -72,7 +85,10 @@ export function SignMessage({ account }: SignMessageProps) {
           id="sign-password"
           type="password"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={(e) => {
+            setPassword(e.target.value);
+            clearResult();
+          }}
           placeholder="Spending password"
           aria-label="Spending password"
           disabled={loading}

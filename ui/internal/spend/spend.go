@@ -19,6 +19,7 @@ import (
 	apollo "github.com/blinklabs-io/apollo/v2"
 	"github.com/blinklabs-io/apollo/v2/backend"
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
@@ -290,9 +291,10 @@ func (s *Service) SignData(addrStr string, message []byte, password string) (sig
 	if acct == nil {
 		return "", "", ErrNoWallet
 	}
-	// The address must be one this wallet owns (in the derived receive window),
-	// so we can derive the matching signing key and so the COSE "address" header
-	// validates against the vkey.
+	// The address must be one this wallet owns: a derived receive address (signed
+	// by the payment key at its window index) or the account's reward/stake
+	// address (signed by the staking key). CIP-30 signData is used with both, and
+	// bursa.SignData validates the address-vs-vkey correspondence either way.
 	idx := -1
 	for i, a := range acct.ReceiveAddresses {
 		if a == addrStr {
@@ -300,9 +302,10 @@ func (s *Service) SignData(addrStr string, message []byte, password string) (sig
 			break
 		}
 	}
-	if idx < 0 {
+	isStake := addrStr == acct.StakeAddress
+	if idx < 0 && !isStake {
 		return "", "", fmt.Errorf(
-			"%w: address %q is not in the wallet's address window",
+			"%w: address %q is not one this wallet owns",
 			ErrInvalidRequest, addrStr,
 		)
 	}
@@ -322,27 +325,39 @@ func (s *Service) SignData(addrStr string, message []byte, password string) (sig
 		}
 		return "", "", fmt.Errorf("unlock keystore: %w", err)
 	}
+	// The mnemonic and the derived XPrvs (bip32.XPrv is []byte) all hold secret
+	// material; zero them on every exit, including the error paths below. lk.SKey
+	// aliases signKey, so this also clears the key handed to bursa.SignData.
+	var rootKey, acctKey, signKey bip32.XPrv
 	defer func() {
-		// Zero the decrypted mnemonic as best-effort cleanup.
+		for _, k := range []bip32.XPrv{rootKey, acctKey, signKey} {
+			for i := range k {
+				k[i] = 0
+			}
+		}
 		for i := range mnemonicBytes {
 			mnemonicBytes[i] = 0
 		}
 	}()
 
-	rootKey, err := bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
 	if err != nil {
 		return "", "", fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err := bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, 0)
 	if err != nil {
 		return "", "", fmt.Errorf("account key: %w", err)
 	}
-	payKey, err := bursa.GetPaymentKey(acctKey, uint32(idx)) //nolint:gosec // bounded by window size
+	if isStake {
+		signKey, err = bursa.GetStakeKey(acctKey, 0)
+	} else {
+		signKey, err = bursa.GetPaymentKey(acctKey, uint32(idx)) //nolint:gosec // bounded by window size
+	}
 	if err != nil {
-		return "", "", fmt.Errorf("payment key idx %d: %w", idx, err)
+		return "", "", fmt.Errorf("derive signing key: %w", err)
 	}
 	// signerForKey accepts a 96-byte bip32 XPrv as SKey.
-	lk := &bursa.LoadedKey{SKey: []byte(payKey)}
+	lk := &bursa.LoadedKey{SKey: []byte(signKey)}
 	return bursa.SignData(addrBytes, message, lk)
 }
 
@@ -614,7 +629,11 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	// --- step 7: submit ---
 	// The node's structured rejection reason (the failing ledger rule, via the
 	// utxorpc backend) rides along in the wrapped message.
-	txHash, err := a.SubmitContext(ctx)
+	//
+	// Detach from the request context: the pending entry has already been
+	// consumed and the tx signed, so a client disconnect here must not cancel the
+	// broadcast and strand a transaction that can no longer be replayed.
+	txHash, err := a.SubmitContext(context.WithoutCancel(ctx))
 	if err != nil {
 		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}

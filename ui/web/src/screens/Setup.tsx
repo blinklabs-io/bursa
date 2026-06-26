@@ -38,7 +38,10 @@ export function Setup({ network, onLoaded }: SetupProps) {
     const cleanMnemonic = mnemonic.trim().replace(/\s+/g, " ");
     // A whitespace-only password isn't a real password — treat it as read-only.
     const hasPassword = password.trim() !== "";
-    if (hasPassword && password.length < MIN_PASSWORD_LEN) {
+    // Count code points (spread), not UTF-16 units, to match the server's
+    // utf8.RuneCountInString — otherwise an astral-char password could pass here
+    // and be rejected by /wallet/keystore.
+    if (hasPassword && [...password].length < MIN_PASSWORD_LEN) {
       setError(`Spending password must be at least ${MIN_PASSWORD_LEN} characters`);
       setLoading(false);
       return;
