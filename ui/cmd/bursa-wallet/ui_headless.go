@@ -18,7 +18,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 )
 
@@ -30,6 +29,6 @@ func awaitUI(ctx context.Context, _ string, _ *slog.Logger, srvErr <-chan error)
 	case <-ctx.Done():
 		return nil
 	case err := <-srvErr:
-		return fmt.Errorf("control surface: %w", err)
+		return controlSurfaceError(err)
 	}
 }

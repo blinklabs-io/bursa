@@ -22,9 +22,7 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"net/http"
 	"runtime"
 	"time"
 
@@ -40,42 +38,45 @@ func init() { runtime.LockOSThread() }
 // terminates the window, which unblocks the loop.
 func awaitUI(ctx context.Context, url string, logger *slog.Logger, srvErr <-chan error) error {
 	// Don't paint a connection error before the control surface is listening.
-	waitReachable(ctx, url, 15*time.Second)
+	if err := waitReachable(ctx, url, 15*time.Second, srvErr); err != nil {
+		return err
+	}
 
 	w := webview.New(false)
-	defer w.Destroy()
 	w.SetTitle("Bursa")
 	w.SetSize(1120, 760, webview.HintNone)
 
-	var uiErr error
+	uiErr := make(chan error, 1)
+	done := make(chan struct{})
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
+
+		var err error
 		select {
+		case <-done:
+			return
 		case <-ctx.Done():
-		case err := <-srvErr:
-			uiErr = fmt.Errorf("control surface: %w", err)
+		case err = <-srvErr:
+			err = controlSurfaceError(err)
 		}
+		uiErr <- err
 		w.Terminate() // safe from another goroutine; unblocks w.Run()
+	}()
+	defer func() {
+		close(done)
+		<-stopped
+		w.Destroy()
 	}()
 
 	logger.Info("opening webview window", "url", url)
 	w.Navigate(url)
 	w.Run()
-	return uiErr
-}
 
-// waitReachable polls url until it answers or the timeout elapses.
-func waitReachable(ctx context.Context, url string, timeout time.Duration) {
-	client := &http.Client{Timeout: time.Second}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if ctx.Err() != nil {
-			return
-		}
-		resp, err := client.Get(url) //nolint:noctx // loopback readiness probe
-		if err == nil {
-			_ = resp.Body.Close()
-			return
-		}
-		time.Sleep(200 * time.Millisecond)
+	select {
+	case err := <-uiErr:
+		return err
+	default:
+		return nil
 	}
 }
