@@ -9,6 +9,7 @@ import { Portfolio } from "./screens/Portfolio";
 import { Receive } from "./screens/Receive";
 import { Activity } from "./screens/Activity";
 import { Send } from "./screens/Send";
+import { SignMessage } from "./screens/SignMessage";
 import { Settings } from "./screens/Settings";
 
 // A Map (not a plain object) so a crafted hash like "#/constructor" or
@@ -26,6 +27,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "receive", label: "Receive" },
   { key: "activity", label: "Activity" },
   { key: "send", label: "Send" },
+  { key: "sign", label: "Sign" },
   { key: "settings", label: "Settings" },
 ];
 
@@ -47,6 +49,7 @@ export function App() {
   if (account !== null) {
     if (route === "settings") activeRoute = "settings";
     else if (route === "send" && canSend) activeRoute = "send";
+    else if (route === "sign" && spendingEnabled) activeRoute = "sign";
     else if (ROUTES.has(route) && route !== "send") activeRoute = route;
     else activeRoute = "portfolio";
   }
@@ -71,6 +74,10 @@ export function App() {
     // needs a synced node AND a spending-enabled (password) wallet, so fall back
     // to Portfolio otherwise.
     content = <Portfolio />;
+  } else if (route === "sign") {
+    // Message signing needs a spending-enabled (keystore) wallet but no node;
+    // a read-only wallet falls back to Portfolio.
+    content = spendingEnabled ? <SignMessage account={account} /> : <Portfolio />;
   } else {
     const Screen = ROUTES.get(route) ?? Portfolio;
     content = <Screen />;
@@ -81,9 +88,13 @@ export function App() {
       {status.data && <SyncBanner status={status.data} />}
       <div className="layout">
         <nav className="sidebar">
-          <div className="brand">Bursa</div>
+          <div className="brand">
+            <span className="brand-mark">BVRSA</span>
+            <span className="brand-motto">nodvs tvvs · claves tvæ</span>
+          </div>
           {NAV.map(({ key, label }) => {
-            const gated = key === "send" && !canSend;
+            const gated =
+              (key === "send" && !canSend) || (key === "sign" && !spendingEnabled);
             const active = key === activeRoute;
             return (
               <button

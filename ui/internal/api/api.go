@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"unicode/utf8"
 
+	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
@@ -48,12 +49,10 @@ type Spender interface {
 	SetWallet(mnemonic, network, password string) (*wallet.Account, error)
 	Build(ctx context.Context, req spend.SendRequest) (spend.Preview, error)
 	Confirm(ctx context.Context, pendingID, password string) (spend.TxResult, error)
+	SignData(addr string, message []byte, password string) (signatureHex, keyHex string, err error)
 }
 
-const (
-	defaultWindow  = 20
-	minPasswordLen = 8
-)
+const defaultWindow = 20
 
 // NewHandler returns the loopback control-surface mux. network is the network
 // the embedded node runs on; wallet requests must match it (or omit it).
@@ -124,9 +123,9 @@ func NewHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Han
 		if !ok {
 			return
 		}
-		if utf8.RuneCountInString(req.Password) < minPasswordLen {
+		if utf8.RuneCountInString(req.Password) < keystore.MinPasswordLen {
 			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": fmt.Sprintf("password must be at least %d characters", minPasswordLen),
+				"error": fmt.Sprintf("password must be at least %d characters", keystore.MinPasswordLen),
 			})
 			return
 		}
@@ -163,6 +162,23 @@ func NewHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Han
 		res, err := sp.Confirm(r.Context(), r.PathValue("id"), req.Password)
 		serve(w, res, err)
 	}))
+
+	// CIP-8 / CIP-30 message signing. Ungated: signing is fully offline (no node
+	// needed) — it requires only the keystore (spending password) to unlock the
+	// key. A read-only wallet has no keystore and gets 409.
+	mux.HandleFunc("POST /wallet/sign-data", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Address  string `json:"address"`
+			Message  string `json:"message"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		sig, key, err := sp.SignData(req.Address, []byte(req.Message), req.Password)
+		serve(w, map[string]string{"signature": sig, "key": key}, err)
+	})
 
 	// SPA catch-all: the specific API routes above take precedence on the mux;
 	// everything else is served by the embedded frontend.

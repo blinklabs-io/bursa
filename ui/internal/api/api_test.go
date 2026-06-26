@@ -18,8 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
@@ -223,6 +225,10 @@ type fakeSpender struct {
 	setCalled  bool
 	gotNetwork string
 	confirmID  string
+	signSig    string
+	signKey    string
+	signErr    error
+	signAddr   string
 }
 
 func (f *fakeSpender) SetWallet(_, network, _ string) (*wallet.Account, error) {
@@ -249,6 +255,43 @@ func (f *fakeSpender) Confirm(_ context.Context, pendingID, _ string) (spend.TxR
 	return f.result, nil
 }
 
+func (f *fakeSpender) SignData(addr string, _ []byte, _ string) (string, string, error) {
+	f.signAddr = addr
+	if f.signErr != nil {
+		return "", "", f.signErr
+	}
+	return f.signSig, f.signKey, nil
+}
+
+func TestSignDataReturnsSignature(t *testing.T) {
+	// Ungated: message signing needs no synced node, only the keystore.
+	sp := &fakeSpender{signSig: "84a1deadbeef", signKey: "a4010103"}
+	h := NewHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"address":"addr_test1xyz","message":"hello","password":"pw"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/sign-data", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /wallet/sign-data = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "84a1deadbeef") || !strings.Contains(rec.Body.String(), "a4010103") {
+		t.Fatalf("response missing signature/key: %s", rec.Body.String())
+	}
+	if sp.signAddr != "addr_test1xyz" {
+		t.Fatalf("address not passed through: %q", sp.signAddr)
+	}
+}
+
+func TestSignDataWrongPasswordReturns401(t *testing.T) {
+	sp := &fakeSpender{signErr: fmt.Errorf("%w: bad", spend.ErrWrongPassword)}
+	h := NewHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"address":"a","message":"m","password":"bad"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/sign-data", body))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("sign-data with wrong password = %d, want 401", rec.Code)
+	}
+}
+
 func TestKeystoreSetupDoesNotRequireReady(t *testing.T) {
 	// Setting up the keystore derives + encrypts; it must not need a synced node.
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
@@ -256,7 +299,7 @@ func TestKeystoreSetupDoesNotRequireReady(t *testing.T) {
 	sp := &fakeSpender{}
 	h := NewHandler(st, fw, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
-	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"preview","password":"spendpw1"}`)
+	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"preview","password":"valid-spend-password"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/keystore", body))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /wallet/keystore = %d, want 200", rec.Code)
@@ -275,7 +318,7 @@ func TestKeystoreSetupEnablesReadWallet(t *testing.T) {
 	h := NewHandler(st, fw, &fakeSpender{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
-	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"preview","password":"spendpw1"}`)
+	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"preview","password":"valid-spend-password"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/keystore", body))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /wallet/keystore = %d, want 200", rec.Code)
@@ -333,7 +376,7 @@ func TestKeystoreNetworkMismatch(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
-	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"mainnet","password":"spendpw1"}`)
+	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"mainnet","password":"valid-spend-password"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/keystore", body))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("POST /wallet/keystore with mismatched network = %d, want 400", rec.Code)
@@ -388,7 +431,7 @@ func TestSpendConfirmReadyReturnsTxHash(t *testing.T) {
 	sp := &fakeSpender{result: spend.TxResult{TxHash: "deadbeef"}}
 	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
-	body := bytes.NewBufferString(`{"password":"spendpw1"}`)
+	body := bytes.NewBufferString(`{"password":"valid-spend-password"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/send/pend123/confirm", body))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST confirm while ready = %d, want 200", rec.Code)
@@ -409,7 +452,7 @@ func TestSpendConfirmGatedWhileSyncing(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
 	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
-	body := bytes.NewBufferString(`{"password":"spendpw1"}`)
+	body := bytes.NewBufferString(`{"password":"valid-spend-password"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/send/pend123/confirm", body))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("POST confirm while syncing = %d, want 503", rec.Code)
@@ -441,7 +484,7 @@ func TestSpendErrorStatusCodes(t *testing.T) {
 			if tc.confirm {
 				sp.confirmErr = tc.err
 				req = httptest.NewRequest(http.MethodPost, "/wallet/send/pend123/confirm",
-					bytes.NewBufferString(`{"password":"spendpw1"}`))
+					bytes.NewBufferString(`{"password":"valid-spend-password"}`))
 			} else {
 				sp.buildErr = tc.err
 				req = httptest.NewRequest(http.MethodPost, "/wallet/send",

@@ -1,4 +1,3 @@
-import { StatusPill } from "./StatusPill";
 import type { Tone } from "./StatusPill";
 import type { Status, NodeState } from "../api/types";
 
@@ -20,22 +19,25 @@ function stateToTone(state: NodeState): Tone {
   }
 }
 
+// SyncBanner is the cockpit's node-health strip: a lit status dot, the node
+// state, and a monospace readout (bootstrap progress, chain tip, or error).
 export function SyncBanner({ status }: SyncBannerProps) {
   const tone = stateToTone(status.state);
 
-  let label: string = status.state;
+  let detail = "";
   if (status.bootstrap) {
-    label = `${status.bootstrap.phase} ${status.bootstrap.percent.toFixed(0)}%`;
+    detail = `${status.bootstrap.phase} ${status.bootstrap.percent.toFixed(1)}%`;
+  } else if (status.state === "ready") {
+    detail = `tip ${status.tip} · ${status.caughtUp ? "caught up" : "catching up"}`;
+  } else if (status.error) {
+    detail = status.error;
   }
 
   return (
     <div className="sync-banner">
-      <StatusPill tone={tone}>{label}</StatusPill>
-      {status.state === "ready" && (
-        <span>
-          tip: {status.tip} &mdash; {status.caughtUp ? "caught up" : "syncing"}
-        </span>
-      )}
+      <span className={`dot dot-${tone}`} aria-hidden="true" />
+      <span className="sync-state">{status.state}</span>
+      {detail && <span className="sync-detail">{detail}</span>}
     </div>
   );
 }

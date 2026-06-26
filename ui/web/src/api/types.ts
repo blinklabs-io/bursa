@@ -88,6 +88,18 @@ export interface TxResult {
   tx_hash: string;
 }
 
+// CIP-8/CIP-30 signData: sign an arbitrary message with a wallet address's key.
+export interface SignDataRequest {
+  address: string;
+  message: string;
+  password: string;
+}
+
+export interface SignDataResult {
+  signature: string; // COSE_Sign1, hex
+  key: string; // COSE_Key, hex
+}
+
 export interface LoadWalletRequest {
   mnemonic: string;
   network: string;

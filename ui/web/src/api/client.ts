@@ -10,6 +10,8 @@ import type {
   SendRequest,
   LoadWalletRequest,
   CreateKeystoreRequest,
+  SignDataRequest,
+  SignDataResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -71,3 +73,4 @@ export const getDelegation = () => apiGet<DelegationView>("/wallet/delegation");
 export const buildSend = (req: SendRequest) => apiPost<Preview>("/wallet/send", req);
 export const confirmSend = (id: string, password: string) =>
   apiPost<TxResult>(`/wallet/send/${encodeURIComponent(id)}/confirm`, { password });
+export const signData = (req: SignDataRequest) => apiPost<SignDataResult>("/wallet/sign-data", req);

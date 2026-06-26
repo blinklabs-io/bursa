@@ -12,22 +12,34 @@ body {
   font-family: var(--font);
   background: var(--bg);
   color: var(--text);
-  margin: 0;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 a {
   color: var(--accent);
   text-decoration: none;
 }
-
 a:hover {
   text-decoration: underline;
 }
 
-/* App shell layout (matches the className rendered by App): a fixed sync bar on
-   top, then the sidebar + content row filling the rest of the viewport. */
+/* Thin dark scrollbars, in keeping with the cockpit. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 99px;
+}
+
+/* ----------------------------------------------------------------- shell -- */
 .app {
   display: flex;
   flex-direction: column;
@@ -41,30 +53,43 @@ a:hover {
 }
 
 .sidebar {
-  width: 220px;
+  width: 232px;
   flex-shrink: 0;
   background: var(--surface);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: var(--space-3) var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-4);
 }
 
-/* Sidebar wordmark */
+/* Classical Roman-inscription wordmark: BVRSA (V for U), letter-spaced gold. */
 .brand {
-  padding: var(--space-2) var(--space-3);
-  margin-bottom: var(--space-2);
-  font-size: 1.0625rem;
+  padding: var(--space-2) var(--space-2) var(--space-4);
+}
+.brand-mark {
+  display: block;
+  font-size: 1.35rem;
   font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--text);
+  letter-spacing: 0.34em;
+  text-indent: 0.34em; /* balance the trailing tracking */
+  color: var(--accent);
+}
+.brand-motto {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }
 
-/* Sidebar navigation items (plain <button>s, styled to look like nav links) */
+/* Sidebar nav — instrument switches: muted, with a lit gold bar when active. */
 .nav-item {
   appearance: none;
   -webkit-appearance: none;
+  position: relative;
   display: block;
   width: 100%;
   text-align: left;
@@ -78,28 +103,36 @@ a:hover {
   font-weight: 500;
   line-height: 1.4;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
-
 .nav-item:hover:not(:disabled) {
-  background: var(--bg);
+  background: var(--inset);
   color: var(--text);
 }
-
 .nav-item.active {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: var(--accent-dim);
   color: var(--accent);
   font-weight: 600;
 }
-
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 18%;
+  bottom: 18%;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
 .nav-item:disabled {
-  opacity: 0.4;
+  opacity: 0.38;
   cursor: not-allowed;
 }
-
 .nav-item:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: -1px;
+  outline-offset: -2px;
 }
 
 .content {
@@ -108,158 +141,383 @@ a:hover {
   overflow-y: auto;
 }
 
-/* Card */
+/* Screen containers stack their panels with consistent rhythm. */
+.portfolio,
+.receive,
+.activity,
+.screen-settings,
+.send-form,
+.sign-form,
+.preview-details,
+.done-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 880px;
+}
+
+/* ---------------------------------------------------------------- panels -- */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
 }
-
+/* Panel label — a small monospace instrument caption. */
 .card h2 {
-  font-size: 1rem;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
   font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
   margin-bottom: var(--space-3);
-  color: var(--text);
 }
 
-/* Button */
+/* Hero readout — the balance, in big gold monospace. */
+.balance-ada {
+  font-family: var(--mono);
+  font-size: clamp(2rem, 5vw, 2.75rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--accent);
+}
+
+/* ----------------------------------------------------------------- forms -- */
+.field-group {
+  margin-bottom: var(--space-3);
+}
+/* Field labels are instrument captions too. */
+.send-form label,
+.sign-form label,
+.field-group label,
+.field-label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: var(--space-1);
+}
+
+.field {
+  display: block;
+  width: 100%;
+  padding: 10px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  color: var(--text);
+  background: var(--inset);
+  appearance: none;
+  -webkit-appearance: none;
+}
+.field::placeholder {
+  color: var(--text-faint);
+}
+.field:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.field:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+/* Forms: inputs carry the rhythm; labels hug the input above them. */
+.send-form .field,
+.sign-form .field {
+  margin-bottom: var(--space-3);
+}
+
+.helper-text {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  margin-bottom: var(--space-2);
+}
+.error-text {
+  color: var(--error);
+  font-size: 0.875rem;
+  margin: var(--space-1) 0;
+}
+.muted {
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------- buttons -- */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-2) var(--space-3);
+  padding: 10px var(--space-4);
   border-radius: var(--radius);
   border: 1px solid transparent;
   font-family: var(--font);
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.15s ease;
-  line-height: 1.25;
+  line-height: 1.2;
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease,
+    opacity 0.14s ease;
 }
-
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
-
 .btn.primary {
   background: var(--accent);
   color: var(--accent-text);
   border-color: var(--accent);
 }
-
 .btn.primary:hover:not(:disabled) {
-  opacity: 0.88;
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
 }
-
 .btn.ghost {
   background: transparent;
   color: var(--accent);
   border-color: var(--border);
 }
-
 .btn.ghost:hover:not(:disabled) {
-  background: var(--bg);
+  border-color: var(--accent);
+  background: var(--accent-dim);
 }
-
-/* Field (Input / Select) */
-.field {
-  display: block;
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font-family: var(--font);
-  font-size: 0.875rem;
-  color: var(--text);
-  background: var(--surface);
-  appearance: none;
-  -webkit-appearance: none;
-}
-
-.field:focus {
+.btn:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: -1px;
+  outline-offset: 2px;
 }
 
-/* Monospace text (addresses, tx hashes) */
-.mono {
+/* ----------------------------------------------------------------- data --- */
+.mono,
+.tx-hash,
+.address-full,
+.hash-cell {
   font-family: var(--mono);
   font-size: 0.8125rem;
   word-break: break-all;
+  color: var(--text);
 }
 
-/* Table */
+/* Labeled readout rows (delegation, tx preview summary, settings stats). */
+.dl-row,
+.stat-list > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.dl-row:last-child,
+.stat-list > div:last-child {
+  border-bottom: none;
+}
+.dl-row dt,
+.stat-list dt {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.dl-row dd,
+.stat-list dd {
+  font-family: var(--mono);
+  text-align: right;
+  color: var(--text);
+}
+.provisional-notice dd {
+  font-family: var(--font);
+  font-size: 0.8125rem;
+}
+
+/* Copyable data rows (tx hash, address, signature output). */
+.tx-hash-row,
+.row-copy {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.tx-hash-row .tx-hash,
+.row-copy {
+  flex: 1;
+  min-width: 0;
+}
+.sign-result {
+  margin-top: var(--space-3);
+}
+
+/* ---------------------------------------------------------------- tables -- */
 .table-wrap {
   overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
-
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-family: var(--mono);
+  font-size: 0.8125rem;
 }
-
 .table th {
   text-align: left;
   font-weight: 600;
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   padding: var(--space-2) var(--space-3);
-  border-bottom: 2px solid var(--border);
+  border-bottom: 1px solid var(--border);
   color: var(--text-muted);
   white-space: nowrap;
+  background: var(--inset);
 }
-
 .table td {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   vertical-align: top;
+  color: var(--text);
 }
-
 .table tr:last-child td {
   border-bottom: none;
 }
 
-/* Status pill */
+/* ------------------------------------------------------------ status dots - */
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-faint);
+}
+.dot-ok {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent);
+}
+.dot-warn {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.dot-error {
+  background: var(--error);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--error) 22%, transparent);
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Status pill — monospace tag with a leading dot. */
 .pill {
   display: inline-flex;
   align-items: center;
-  padding: 2px var(--space-2);
+  gap: 6px;
+  padding: 3px 9px;
   border-radius: 999px;
-  font-size: 0.75rem;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
   font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   line-height: 1.4;
+  border: 1px solid transparent;
 }
-
+.pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
 .pill-ok {
-  background: color-mix(in srgb, var(--ok) 12%, transparent);
   color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 35%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
 }
-
 .pill-warn {
-  background: color-mix(in srgb, var(--warn) 12%, transparent);
   color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
 }
-
 .pill-error {
-  background: color-mix(in srgb, var(--error) 12%, transparent);
   color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 35%, transparent);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
 }
-
 .pill-muted {
-  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
   color: var(--text-muted);
+  border-color: var(--border);
+  background: var(--inset);
 }
 
-/* Sync banner — top status bar spanning the full width above the layout */
+/* ------------------------------------------------- node-status top strip -- */
 .sync-banner {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
+  padding: 10px var(--space-4);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  font-size: 0.875rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+.sync-state {
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.sync-detail {
   color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+.sync-detail::before {
+  content: "· ";
+  color: var(--text-faint);
+}
+
+/* --------------------------------------------------------------- actions -- */
+.preview-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.asset-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.asset-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.asset-row .field {
+  margin-bottom: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot-warn {
+    animation: none;
+  }
+  * {
+    transition: none !important;
+  }
 }
