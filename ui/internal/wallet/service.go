@@ -144,6 +144,9 @@ func (s *Service) Balance(ctx context.Context) (Balance, error) {
 	var all []chain.UTxO
 	for _, a := range addrs {
 		us, err := s.chain.AddressUTxOs(ctx, a)
+		if errors.Is(err, chain.ErrNotFound) {
+			continue
+		}
 		if err != nil {
 			return Balance{}, err
 		}
@@ -180,7 +183,7 @@ func (s *Service) Addresses(ctx context.Context) (AddressView, error) {
 }
 
 // Transactions returns the merged, newest-first history across the account's
-// chain-seen addresses.
+// chain-seen and derived addresses.
 func (s *Service) Transactions(ctx context.Context) ([]Tx, error) {
 	acct, err := s.currentAccount()
 	if err != nil {
@@ -193,6 +196,9 @@ func (s *Service) Transactions(ctx context.Context) ([]Tx, error) {
 	var per [][]chain.AddressTx
 	for _, a := range addrs {
 		ts, err := s.chain.AddressTransactions(ctx, a)
+		if errors.Is(err, chain.ErrNotFound) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}

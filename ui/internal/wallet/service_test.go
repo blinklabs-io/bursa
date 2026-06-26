@@ -14,7 +14,9 @@ type fakeChain struct {
 	addresses    []string
 	addressesErr error
 	utxos        map[string][]chain.UTxO
+	utxoErrs     map[string]error
 	txs          map[string][]chain.AddressTx
+	txErrs       map[string]error
 }
 
 func (f *fakeChain) Account(_ context.Context, _ string) (chain.AccountInfo, error) {
@@ -26,10 +28,16 @@ func (f *fakeChain) AccountAddresses(_ context.Context, _ string) ([]string, err
 }
 
 func (f *fakeChain) AddressUTxOs(_ context.Context, addr string) ([]chain.UTxO, error) {
+	if err := f.utxoErrs[addr]; err != nil {
+		return nil, err
+	}
 	return f.utxos[addr], nil
 }
 
 func (f *fakeChain) AddressTransactions(_ context.Context, addr string) ([]chain.AddressTx, error) {
+	if err := f.txErrs[addr]; err != nil {
+		return nil, err
+	}
 	return f.txs[addr], nil
 }
 
@@ -143,5 +151,47 @@ func TestServiceEmptyAccount(t *testing.T) {
 	}
 	if dv.PoolID != nil || dv.Active || dv.RewardsSum != "0" || dv.Withdrawable != "0" {
 		t.Fatalf("delegation on empty account = %+v, want not active / no pool / zero amounts", dv)
+	}
+}
+
+func TestServiceIgnoresUnusedDerivedAddressNotFound(t *testing.T) {
+	fc := &fakeChain{
+		addresses: []string{"addr_test1used"},
+		utxos: map[string][]chain.UTxO{
+			"addr_test1used": {{Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}}},
+		},
+		txs: map[string][]chain.AddressTx{
+			"addr_test1used": {{TxHash: "tx-used", BlockHeight: 42}},
+		},
+	}
+	s := NewService(fc)
+	acct, err := s.SetWallet(testMnemonic, "preview", 3)
+	if err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	fc.utxoErrs = map[string]error{
+		acct.ReceiveAddresses[0]: chain.ErrNotFound,
+		acct.ReceiveAddresses[1]: chain.ErrNotFound,
+		acct.ReceiveAddresses[2]: chain.ErrNotFound,
+	}
+	fc.txErrs = map[string]error{
+		acct.ReceiveAddresses[0]: chain.ErrNotFound,
+		acct.ReceiveAddresses[1]: chain.ErrNotFound,
+		acct.ReceiveAddresses[2]: chain.ErrNotFound,
+	}
+
+	bal, err := s.Balance(context.Background())
+	if err != nil {
+		t.Fatalf("Balance: %v", err)
+	}
+	if bal.Lovelace != "3000000" {
+		t.Fatalf("lovelace = %q, want 3000000", bal.Lovelace)
+	}
+	txs, err := s.Transactions(context.Background())
+	if err != nil {
+		t.Fatalf("Transactions: %v", err)
+	}
+	if len(txs) != 1 || txs[0].TxHash != "tx-used" {
+		t.Fatalf("transactions = %+v, want tx-used only", txs)
 	}
 }
