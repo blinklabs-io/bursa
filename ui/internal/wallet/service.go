@@ -105,17 +105,42 @@ func (s *Service) currentAccount() (*Account, error) {
 	return cloneAccount(s.account), nil
 }
 
-// Balance aggregates the UTxO set across the account's chain-seen addresses.
+// scanAddresses returns the addresses to query for funds and history: the
+// node-reported account addresses (used/change addresses, available once the
+// stake key is registered on chain) unioned with the wallet's derived receive
+// addresses. The derived set is essential — a self-sovereign wallet whose stake
+// key is not yet registered on chain gets a 404 (ErrNotFound) from the node's
+// account index, but it still holds funds at its derived receive addresses. The
+// account-reported set still matters once registered: it surfaces used/change
+// addresses outside the derived receive window.
+func (s *Service) scanAddresses(ctx context.Context, acct *Account) ([]string, error) {
+	discovered, err := s.chain.AccountAddresses(ctx, acct.StakeAddress)
+	if err != nil && !errors.Is(err, chain.ErrNotFound) {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(discovered)+len(acct.ReceiveAddresses))
+	out := make([]string, 0, len(discovered)+len(acct.ReceiveAddresses))
+	for _, a := range append(discovered, acct.ReceiveAddresses...) {
+		if a == "" || seen[a] {
+			continue
+		}
+		seen[a] = true
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// Balance aggregates the UTxO set across the account's addresses (chain-seen and
+// derived; see scanAddresses).
 func (s *Service) Balance(ctx context.Context) (Balance, error) {
 	acct, err := s.currentAccount()
 	if err != nil {
 		return Balance{}, err
 	}
-	addrs, err := s.chain.AccountAddresses(ctx, acct.StakeAddress)
-	if err != nil && !errors.Is(err, chain.ErrNotFound) {
+	addrs, err := s.scanAddresses(ctx, acct)
+	if err != nil {
 		return Balance{}, err
 	}
-	// ErrNotFound: the stake credential isn't on chain yet → empty wallet (zero balance).
 	var all []chain.UTxO
 	for _, a := range addrs {
 		us, err := s.chain.AddressUTxOs(ctx, a)
@@ -161,11 +186,10 @@ func (s *Service) Transactions(ctx context.Context) ([]Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	addrs, err := s.chain.AccountAddresses(ctx, acct.StakeAddress)
-	if err != nil && !errors.Is(err, chain.ErrNotFound) {
+	addrs, err := s.scanAddresses(ctx, acct)
+	if err != nil {
 		return nil, err
 	}
-	// ErrNotFound: no chain-seen addresses yet → empty history.
 	var per [][]chain.AddressTx
 	for _, a := range addrs {
 		ts, err := s.chain.AddressTransactions(ctx, a)
