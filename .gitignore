@@ -8,6 +8,9 @@
 *.so
 *.dylib
 
+# Compiled command binary for ./ui/cmd/bursa-wallet when built without -o
+/ui/bursa-wallet
+
 # Test binary, built with `go test -c`
 *.test
 

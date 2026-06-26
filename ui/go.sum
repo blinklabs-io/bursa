@@ -502,6 +502,8 @@ github.com/utxorpc/go-codegen v0.19.2 h1:IG8OhSc0GILy6emTeUM1/+t/PXbzJTmpJuRAhoW
 github.com/utxorpc/go-codegen v0.19.2/go.mod h1:QG/UEOXM8HVrm6H7LhuYAeMSA1OFgL2kTjzIeNUWFNg=
 github.com/utxorpc/go-sdk v0.0.4 h1:taU2B2FXXuokcXu+Zb33BrvSm13Q+dM3Ij+fJ3mv9mU=
 github.com/utxorpc/go-sdk v0.0.4/go.mod h1:zTghoIs70MW8yobU/ZH+ZuNdzc40FsPeqyAXv5D+KoQ=
+github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6 h1:VQpB2SpK88C6B5lPHTuSZKb2Qee1QWwiFlC5CKY4AW0=
+github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6/go.mod h1:yE65LFCeWf4kyWD5re+h4XNvOHJEXOCOuJZ4v8l5sgk=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
 github.com/xdg-go/pbkdf2 v1.0.0/go.mod h1:jrpuAogTd400dnrH08LKmI/xc1MbPOebTwRqcT5RDeI=
