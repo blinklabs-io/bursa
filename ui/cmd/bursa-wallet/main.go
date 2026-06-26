@@ -112,16 +112,16 @@ func run() error {
 		}
 	}()
 
-	select {
-	case <-ctx.Done():
-		logger.Info("shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-		return nil
-	case err := <-srvErr:
-		return fmt.Errorf("control surface: %w", err)
-	}
+	// Block until it's time to shut down. The default (headless) build waits for a
+	// signal and serves the UI over loopback for a browser; the `webview` build
+	// opens a native window onto the same loopback UI and waits for it to close.
+	uiErr := awaitUI(ctx, "http://"+srv.Addr, logger, srvErr)
+
+	logger.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
+	return uiErr
 }
 
 func envOr(key, def string) string {
