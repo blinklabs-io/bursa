@@ -69,7 +69,7 @@ function fmtBehind(latest: string | undefined, nowMs: number): string {
 function Bar({ percent, indeterminate }: { percent?: number; indeterminate?: boolean }) {
   if (indeterminate) {
     return (
-      <div className="sync-bar">
+      <div className="sync-bar" role="progressbar" aria-label="Syncing…">
         <div className="sync-bar-fill sync-bar-indeterminate" />
       </div>
     );
@@ -207,7 +207,7 @@ export function Syncing({ status, onLoadAnyway }: SyncingProps) {
   }
 
   let detail;
-  if (status.bootstrap) {
+  if (status.state === "bootstrapping" && status.bootstrap) {
     detail = <BootstrapDetail bp={status.bootstrap} />;
   } else if (status.state === "syncing") {
     detail = <ChainSyncDetail status={status} />;

@@ -84,7 +84,18 @@ test("(d) chain sync shows how far behind the tip and the block slot", () => {
   expect(screen.getByText("115,748,244")).toBeInTheDocument();
 });
 
-test("(e) error state surfaces the node error in an alert", () => {
+test("(e) indeterminate sync progress is announced to assistive technology", () => {
+  render(
+    <Syncing
+      status={{ state: "starting", tip: 0, caughtUp: false }}
+      onLoadAnyway={noop}
+    />,
+  );
+  const bar = screen.getByRole("progressbar", { name: "Syncing…" });
+  expect(bar).not.toHaveAttribute("aria-valuenow");
+});
+
+test("(f) error state surfaces the node error in an alert", () => {
   render(
     <Syncing
       status={{ state: "error", tip: 0, caughtUp: false, error: "genesis import failed" }}
@@ -94,7 +105,25 @@ test("(e) error state surfaces the node error in an alert", () => {
   expect(screen.getByRole("alert")).toHaveTextContent("genesis import failed");
 });
 
-test("(f) the escape hatch invokes onLoadAnyway", () => {
+test("(g) retained bootstrap diagnostics do not override an error state", () => {
+  render(
+    <Syncing
+      status={{
+        state: "error",
+        tip: 0,
+        caughtUp: false,
+        error: "mithril bootstrap: download failed",
+        bootstrap: { phase: "bootstrap", percent: 40 },
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+  expect(screen.getByRole("heading", { name: "Sync interrupted" })).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("mithril bootstrap: download failed");
+  expect(screen.queryByText("40.0%")).not.toBeInTheDocument();
+});
+
+test("(h) the escape hatch invokes onLoadAnyway", () => {
   const onLoadAnyway = vi.fn();
   render(
     <Syncing status={{ state: "syncing", tip: 0, caughtUp: false }} onLoadAnyway={onLoadAnyway} />,
