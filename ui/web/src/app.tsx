@@ -9,6 +9,7 @@ import { useHashRoute, navigate } from "./router";
 import { CreateVault } from "./screens/CreateVault";
 import { UnlockVault } from "./screens/UnlockVault";
 import { AddWallet } from "./screens/AddWallet";
+import { MigrateLegacyKeystore } from "./screens/MigrateLegacyKeystore";
 import { Portfolio } from "./screens/Portfolio";
 import { Receive } from "./screens/Receive";
 import { Activity } from "./screens/Activity";
@@ -60,6 +61,7 @@ export function App() {
   const [unlocked, setUnlocked] = useState(false);
   // addingWallet overlays the Add-wallet form on top of the unlocked UI.
   const [addingWallet, setAddingWallet] = useState(false);
+  const [skipLegacyImport, setSkipLegacyImport] = useState(false);
 
   const activeWallet = wallets.find((w) => w.id === activeId) ?? null;
   const isReady = status.data?.state === "ready";
@@ -117,7 +119,17 @@ export function App() {
   const network = "preview";
 
   // No vault yet → first-run: create vault + add first wallet.
-  if (vault && !vault.exists) {
+  if (vault && !vault.exists && !unlocked) {
+    if (vault.legacy_keystore && !skipLegacyImport) {
+      return (
+        <FullScreen status={status.data}>
+          <MigrateLegacyKeystore
+            onReady={(wallet) => applyWallets([{ ...wallet, active: true }])}
+            onCreateNew={() => setSkipLegacyImport(true)}
+          />
+        </FullScreen>
+      );
+    }
     return (
       <FullScreen status={status.data}>
         <CreateVault network={network} onReady={applyAdded} />

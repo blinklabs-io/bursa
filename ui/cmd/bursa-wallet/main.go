@@ -33,6 +33,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/api"
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
@@ -55,6 +56,10 @@ func (k vaultKeystore) Create(string, string) error {
 
 func (k vaultKeystore) Unlock(password string) ([]byte, error) {
 	return k.v.UnlockSeed(password)
+}
+
+func (k vaultKeystore) UnlockFor(walletID, password string) ([]byte, error) {
+	return k.v.UnlockSeedFor(walletID, password)
 }
 
 func main() {
@@ -105,6 +110,7 @@ func run() error {
 	// wallet's seed (encrypted under its own spending password). It replaces the
 	// old single plaintext/keystore model — no plaintext seeds at rest.
 	vlt := vault.New(filepath.Join(dataDir, "vault.json"))
+	legacyKeyStore := keystore.New(filepath.Join(dataDir, "keystore.json"))
 
 	// Spending builds/signs/submits through the node's loopback UTxO-RPC
 	// endpoint; the active wallet's seed is decrypted from the vault on demand.
@@ -123,7 +129,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              "127.0.0.1:8090", // loopback only
-		Handler:           api.NewHandler(sup, vlt, walletSvc, spendSvc, network, webui.Handler()),
+		Handler:           api.NewHandler(sup, vlt, walletSvc, spendSvc, network, webui.Handler(), api.WithLegacyKeystore(legacyKeyStore)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	srvErr := make(chan error, 1)

@@ -49,6 +49,9 @@ type fakeChain struct {
 
 	submitStarted chan struct{}
 	releaseSubmit chan struct{}
+	utxosStarted  chan struct{}
+	releaseUtxos  chan struct{}
+	utxoBlockOnce sync.Once
 }
 
 // cannedSubmitHash is the deterministic tx hash returned by fakeChain.SubmitTx.
@@ -151,6 +154,15 @@ func (fc *fakeChain) MaxTxFee(_ context.Context) (uint64, error) {
 }
 func (fc *fakeChain) Tip(_ context.Context) (uint64, error) { return 10_000_000, nil }
 func (fc *fakeChain) Utxos(_ context.Context, address lcommon.Address) ([]lcommon.Utxo, error) {
+	if fc.utxosStarted != nil && fc.releaseUtxos != nil {
+		fc.utxoBlockOnce.Do(func() {
+			select {
+			case fc.utxosStarted <- struct{}{}:
+			default:
+			}
+			<-fc.releaseUtxos
+		})
+	}
 	return fc.utxos[address.String()], nil
 }
 
@@ -380,6 +392,27 @@ func (fk fakeKeystore) Unlock(_ string) ([]byte, error) {
 	return []byte(fk.mnemonic), nil
 }
 
+type blockingSeedStore struct {
+	mnemonicByID map[string]string
+	unlockForID  chan string
+	release      chan struct{}
+}
+
+func (b *blockingSeedStore) Exists() bool             { return true }
+func (b *blockingSeedStore) Create(_, _ string) error { return nil }
+func (b *blockingSeedStore) Unlock(string) ([]byte, error) {
+	return nil, errors.New("unexpected active-wallet unlock")
+}
+func (b *blockingSeedStore) UnlockFor(id, _ string) ([]byte, error) {
+	b.unlockForID <- id
+	<-b.release
+	mnemonic, ok := b.mnemonicByID[id]
+	if !ok {
+		return nil, errors.New("unknown wallet id")
+	}
+	return []byte(mnemonic), nil
+}
+
 // mustDeriveConfirmAccount derives the test account with windowN=5 for Confirm tests.
 func mustDeriveConfirmAccount(t *testing.T) *wallet.Account {
 	t.Helper()
@@ -423,6 +456,85 @@ func TestConfirmSignsAndSubmits(t *testing.T) {
 		t.Fatal("expected error on second Confirm with same pending id, got nil")
 	}
 	t.Logf("second Confirm correctly rejected: %v", err)
+}
+
+func TestBuildRejectsWalletChangedBeforeStore(t *testing.T) {
+	acctA := mustDeriveConfirmAccount(t)
+	acctB, err := wallet.Derive(differentMnemonic, "preview", 5)
+	if err != nil {
+		t.Fatalf("derive account B: %v", err)
+	}
+	fc := newFakeChain(5_000_000, acctA.ReceiveAddresses[0])
+	fc.utxosStarted = make(chan struct{}, 1)
+	fc.releaseUtxos = make(chan struct{})
+
+	s := NewService(fc, nil, nil)
+	s.SetAccount("a", acctA)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Build(context.Background(), SendRequest{To: acctA.ReceiveAddresses[2], Lovelace: "1000000"})
+		done <- err
+	}()
+
+	select {
+	case <-fc.utxosStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Build did not reach Utxos")
+	}
+	s.SetAccount("b", acctB)
+	close(fc.releaseUtxos)
+
+	err = <-done
+	if !errors.Is(err, ErrWalletChanged) {
+		t.Fatalf("Build after wallet switch = %v, want ErrWalletChanged", err)
+	}
+}
+
+func TestConfirmUsesPendingWalletAfterAccountSwitch(t *testing.T) {
+	acctA := mustDeriveConfirmAccount(t)
+	acctB, err := wallet.Derive(differentMnemonic, "preview", 5)
+	if err != nil {
+		t.Fatalf("derive account B: %v", err)
+	}
+	fc := newFakeChain(5_000_000, acctA.ReceiveAddresses[0])
+	ks := &blockingSeedStore{
+		mnemonicByID: map[string]string{"a": testMnemonic, "b": differentMnemonic},
+		unlockForID:  make(chan string, 1),
+		release:      make(chan struct{}),
+	}
+	s := NewService(fc, ks, nil)
+	s.SetAccount("a", acctA)
+
+	pv, err := s.Build(context.Background(), SendRequest{To: acctA.ReceiveAddresses[2], Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Confirm(context.Background(), pv.PendingID, "pw")
+		done <- err
+	}()
+
+	var unlockID string
+	select {
+	case unlockID = <-ks.unlockForID:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Confirm did not request seed unlock")
+	}
+	if unlockID != "a" {
+		t.Fatalf("Confirm unlocked wallet %q, want pending wallet a", unlockID)
+	}
+
+	s.SetAccount("b", acctB)
+	close(ks.release)
+	if err := <-done; err != nil {
+		t.Fatalf("Confirm after account switch: %v", err)
+	}
+	if fc.submitCalls != 1 {
+		t.Fatalf("SubmitTx calls = %d, want 1", fc.submitCalls)
+	}
 }
 
 func TestSignDataRoundTrip(t *testing.T) {

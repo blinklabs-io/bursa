@@ -6,9 +6,7 @@ import { Button } from "../components/Button";
 import { createVault, ApiError } from "../api/client";
 import { AddWallet } from "./AddWallet";
 import type { WalletView } from "../api/types";
-
-// Mirrors keystore.MinPasswordLen on the node.
-const MIN_PASSWORD_LEN = 12;
+import { MIN_PASSWORD_LEN, passwordLength } from "../password";
 
 interface CreateVaultProps {
   network: string;
@@ -31,7 +29,7 @@ export function CreateVault({ network, onReady }: CreateVaultProps) {
     e.preventDefault();
     setError(null);
 
-    if ([...password].length < MIN_PASSWORD_LEN) {
+    if (passwordLength(password) < MIN_PASSWORD_LEN) {
       setError(`Vault password must be at least ${MIN_PASSWORD_LEN} characters`);
       return;
     }

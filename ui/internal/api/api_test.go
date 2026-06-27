@@ -17,13 +17,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
@@ -46,9 +46,28 @@ type fakeVault struct {
 	unlockErr error
 	addErr    error
 	addCalled bool
+	importErr error
+	imported  bool
 	gotName   string
 	gotSpend  string
 	gotVault  string
+}
+
+type fakeLegacyKeystore struct {
+	exists   bool
+	mnemonic []byte
+	err      error
+	gotPw    string
+}
+
+func (f *fakeLegacyKeystore) Exists() bool { return f.exists }
+
+func (f *fakeLegacyKeystore) Unlock(password string) ([]byte, error) {
+	f.gotPw = password
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]byte(nil), f.mnemonic...), nil
 }
 
 func sampleAccount(net string) *wallet.Account {
@@ -102,6 +121,22 @@ func (f *fakeVault) AddWallet(name, _, network, vaultPw, spendPw string, _ int) 
 	f.gotVault = vaultPw
 	meta := vault.WalletMeta{ID: "w1", Name: name, Network: network, Account: sampleAccount(network)}
 	f.wallets = append(f.wallets, meta)
+	f.activeID = meta.ID
+	return meta, nil
+}
+
+func (f *fakeVault) ImportWallet(name, _, network, vaultPw, spendPw string, _ int) (vault.WalletMeta, error) {
+	if f.importErr != nil {
+		return vault.WalletMeta{}, f.importErr
+	}
+	f.imported = true
+	f.exists = true
+	f.locked = false
+	f.gotName = name
+	f.gotSpend = spendPw
+	f.gotVault = vaultPw
+	meta := vault.WalletMeta{ID: "legacy1", Name: name, Network: network, Account: sampleAccount(network)}
+	f.wallets = []vault.WalletMeta{meta}
 	f.activeID = meta.ID
 	return meta, nil
 }
@@ -185,7 +220,10 @@ type fakeWallet struct {
 
 func (f *fakeWallet) SetAccount(acct *wallet.Account) error {
 	if acct == nil {
-		return errors.New("nil account")
+		f.set = false
+		f.setAccountCalled = true
+		f.gotNetwork = ""
+		return nil
 	}
 	f.set = true
 	f.setAccountCalled = true
@@ -237,6 +275,27 @@ func TestVaultStatusReports(t *testing.T) {
 	}
 	if !got.Exists || !got.Locked || got.WalletCount != 2 {
 		t.Fatalf("status = %+v, want exists/locked/count=2", got)
+	}
+	if got.LegacyKeystore {
+		t.Fatal("legacy keystore should not be advertised when a vault exists")
+	}
+}
+
+func TestVaultStatusReportsLegacyKeystore(t *testing.T) {
+	fv := &fakeVault{exists: false, locked: true}
+	legacy := &fakeLegacyKeystore{exists: true}
+	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler(), WithLegacyKeystore(legacy))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/vault/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /vault/status = %d, want 200", rec.Code)
+	}
+	var got vaultStatus
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Exists || !got.LegacyKeystore {
+		t.Fatalf("status = %+v, want no vault and legacy_keystore=true", got)
 	}
 }
 
@@ -322,7 +381,9 @@ func TestVaultUnlockWrongPassword(t *testing.T) {
 
 func TestVaultLock(t *testing.T) {
 	fv := &fakeVault{exists: true, locked: false}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	fw := &fakeWallet{set: true}
+	sp := &fakeSpender{set: true}
+	h := NewHandler(fakeStatuser{}, fv, fw, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/lock", nil))
 	if rec.Code != http.StatusOK {
@@ -330,6 +391,56 @@ func TestVaultLock(t *testing.T) {
 	}
 	if !fv.locked {
 		t.Fatal("vault should be locked after POST /vault/lock")
+	}
+	if fw.set || sp.set {
+		t.Fatal("vault lock should clear read and spend service bindings")
+	}
+}
+
+func TestMigrateLegacyKeystoreImportsAndBinds(t *testing.T) {
+	fv := &fakeVault{exists: false, locked: true}
+	fw := &fakeWallet{}
+	sp := &fakeSpender{}
+	legacy := &fakeLegacyKeystore{exists: true, mnemonic: []byte("abandon abandon about")}
+	h := NewHandler(fakeStatuser{}, fv, fw, sp, "preview", http.NotFoundHandler(), WithLegacyKeystore(legacy))
+
+	body := `{"name":"Imported","vault_password":"valid-vault-password","spend_password":"legacy-spend-password"}`
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/migrate-legacy", bytes.NewBufferString(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /vault/migrate-legacy = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !fv.imported || fv.gotName != "Imported" || fv.gotVault != "valid-vault-password" || fv.gotSpend != "legacy-spend-password" {
+		t.Fatalf("legacy import not called as expected: %+v", fv)
+	}
+	if legacy.gotPw != "legacy-spend-password" {
+		t.Fatalf("legacy unlock password = %q", legacy.gotPw)
+	}
+	if !fw.set || !sp.set || sp.gotID != "legacy1" {
+		t.Fatalf("imported wallet should be bound: wallet set=%v spend set=%v id=%q", fw.set, sp.set, sp.gotID)
+	}
+	var got walletView
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ID != "legacy1" || !got.Active {
+		t.Fatalf("migration response = %+v, want active legacy wallet", got)
+	}
+}
+
+func TestMigrateLegacyKeystoreWrongPassword(t *testing.T) {
+	fv := &fakeVault{exists: false, locked: true}
+	legacy := &fakeLegacyKeystore{exists: true, err: keystore.ErrDecryptFailed}
+	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler(), WithLegacyKeystore(legacy))
+
+	body := `{"name":"Imported","vault_password":"valid-vault-password","spend_password":"wrong-password"}`
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/migrate-legacy", bytes.NewBufferString(body)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong legacy password = %d, want 401", rec.Code)
+	}
+	if fv.imported || fv.exists {
+		t.Fatal("wrong legacy password should not create a vault")
 	}
 }
 
@@ -470,8 +581,13 @@ func TestDeleteWalletRequiresVaultPassword(t *testing.T) {
 }
 
 func TestDeleteWalletOK(t *testing.T) {
-	fv := &fakeVault{exists: true, locked: false, wallets: []vault.WalletMeta{{ID: "w1"}}}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	fv := &fakeVault{
+		exists: true, locked: false, activeID: "w1",
+		wallets: []vault.WalletMeta{{ID: "w1", Account: sampleAccount("preview")}},
+	}
+	fw := &fakeWallet{set: true}
+	sp := &fakeSpender{set: true}
+	h := NewHandler(fakeStatuser{}, fv, fw, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/wallet/w1", bytes.NewBufferString(`{"vault_password":"valid-vault-password"}`)))
 	if rec.Code != http.StatusOK {
@@ -479,6 +595,9 @@ func TestDeleteWalletOK(t *testing.T) {
 	}
 	if len(fv.wallets) != 0 {
 		t.Fatalf("wallet not removed: %+v", fv.wallets)
+	}
+	if fw.set || sp.set {
+		t.Fatal("deleting the active wallet should clear stale service bindings")
 	}
 }
 
@@ -529,6 +648,8 @@ type fakeSpender struct {
 	preview          spend.Preview
 	result           spend.TxResult
 	setAccountCalled bool
+	set              bool
+	gotID            string
 	confirmID        string
 	signSig          string
 	signKey          string
@@ -536,7 +657,11 @@ type fakeSpender struct {
 	signAddr         string
 }
 
-func (f *fakeSpender) SetAccount(_ *wallet.Account) { f.setAccountCalled = true }
+func (f *fakeSpender) SetAccount(id string, acct *wallet.Account) {
+	f.setAccountCalled = true
+	f.gotID = id
+	f.set = acct != nil
+}
 
 func (f *fakeSpender) Build(_ context.Context, _ spend.SendRequest) (spend.Preview, error) {
 	if f.buildErr != nil {

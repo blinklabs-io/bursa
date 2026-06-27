@@ -252,11 +252,7 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 		return WalletMeta{}, ErrLocked
 	}
 
-	acct, err := wallet.Derive(mnemonic, network, windowN)
-	if err != nil {
-		return WalletMeta{}, err
-	}
-	xpub, err := wallet.AccountXpub(mnemonic)
+	meta, seed, err := v.prepareWallet(name, mnemonic, network, spendPassword, windowN)
 	if err != nil {
 		return WalletMeta{}, err
 	}
@@ -264,27 +260,9 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 	// Reject a duplicate seed: two wallets sharing a stake address are the same
 	// wallet, and would collide in read-only views.
 	for _, w := range v.idx.Wallets {
-		if w.Account != nil && w.Account.StakeAddress == acct.StakeAddress {
+		if w.Account != nil && meta.Account != nil && w.Account.StakeAddress == meta.Account.StakeAddress {
 			return WalletMeta{}, fmt.Errorf("%w: %q", ErrDuplicateWallet, w.Name)
 		}
-	}
-
-	seedBlob, err := v.seal([]byte(mnemonic), spendPassword)
-	if err != nil {
-		return WalletMeta{}, err
-	}
-	var seed keystore.Container
-	if err := json.Unmarshal(seedBlob, &seed); err != nil {
-		return WalletMeta{}, err
-	}
-
-	id := newID()
-	meta := WalletMeta{
-		ID:          id,
-		Name:        name,
-		Network:     network,
-		AccountXpub: xpub,
-		Account:     acct,
 	}
 
 	// Load the current seed map (the cached index does not hold seeds), append
@@ -298,12 +276,35 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 		seeds = map[string]keystore.Container{}
 	}
 	newIdx := &index{Wallets: append(cloneWallets(v.idx.Wallets), meta)}
-	seeds[id] = seed
+	seeds[meta.ID] = seed
 	if err := v.persistLocked(newIdx, seeds, vaultPassword); err != nil {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
-	v.activeID = id
+	v.activeID = meta.ID
+	return meta, nil
+}
+
+// ImportWallet creates a new vault containing a single wallet. It is used for
+// legacy keystore migration so the final vault is written in one atomic persist:
+// failure leaves no empty vault behind to block a retry.
+func (v *Vault) ImportWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (WalletMeta, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.Exists() {
+		return WalletMeta{}, ErrVaultExists
+	}
+	meta, seed, err := v.prepareWallet(name, mnemonic, network, spendPassword, windowN)
+	if err != nil {
+		return WalletMeta{}, err
+	}
+	idx := &index{Wallets: []WalletMeta{meta}}
+	seeds := map[string]keystore.Container{meta.ID: seed}
+	if err := v.persistLocked(idx, seeds, vaultPassword); err != nil {
+		return WalletMeta{}, err
+	}
+	v.idx = idx
+	v.activeID = meta.ID
 	return meta, nil
 }
 
@@ -513,6 +514,33 @@ func (v *Vault) decodeIndex(c keystore.Container, vaultPassword string) (*index,
 	return &idx, nil
 }
 
+func (v *Vault) prepareWallet(name, mnemonic, network, spendPassword string, windowN int) (WalletMeta, keystore.Container, error) {
+	acct, err := wallet.Derive(mnemonic, network, windowN)
+	if err != nil {
+		return WalletMeta{}, keystore.Container{}, err
+	}
+	xpub, err := wallet.AccountXpub(mnemonic)
+	if err != nil {
+		return WalletMeta{}, keystore.Container{}, err
+	}
+	seedBlob, err := v.seal([]byte(mnemonic), spendPassword)
+	if err != nil {
+		return WalletMeta{}, keystore.Container{}, err
+	}
+	var seed keystore.Container
+	if err := json.Unmarshal(seedBlob, &seed); err != nil {
+		return WalletMeta{}, keystore.Container{}, err
+	}
+	meta := WalletMeta{
+		ID:          newID(),
+		Name:        name,
+		Network:     network,
+		AccountXpub: xpub,
+		Account:     acct,
+	}
+	return meta, seed, nil
+}
+
 // writeFileAtomic writes data to path via a temp file + rename, so a crash mid
 // write cannot leave a half-written (and thus unopenable) vault.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
@@ -544,6 +572,14 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		cleanup()
+		return err
+	}
+	dirFile, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer dirFile.Close()
+	if err := dirFile.Sync(); err != nil {
 		return err
 	}
 	return nil

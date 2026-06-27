@@ -90,6 +90,33 @@ func TestCreateRefusesOverwrite(t *testing.T) {
 	}
 }
 
+func TestImportWalletCreatesSingleWalletVault(t *testing.T) {
+	v := newTestVault(t)
+	meta, err := v.ImportWallet("legacy", mnemonicA, "preview", vaultPw, spendPwA, window)
+	if err != nil {
+		t.Fatalf("ImportWallet: %v", err)
+	}
+	if !v.Exists() || v.Locked() {
+		t.Fatal("import should create an unlocked vault")
+	}
+	if v.ActiveID() != meta.ID {
+		t.Fatalf("active = %q, want imported wallet %q", v.ActiveID(), meta.ID)
+	}
+	if v.WalletCount() != 1 {
+		t.Fatalf("WalletCount = %d, want 1", v.WalletCount())
+	}
+	seed, err := v.UnlockSeed(spendPwA)
+	if err != nil {
+		t.Fatalf("UnlockSeed after import: %v", err)
+	}
+	if string(seed) != mnemonicA {
+		t.Fatal("imported seed mismatch")
+	}
+	if _, err := v.ImportWallet("again", mnemonicB, "preview", vaultPw, spendPwB, window); !errors.Is(err, ErrVaultExists) {
+		t.Fatalf("second ImportWallet = %v, want ErrVaultExists", err)
+	}
+}
+
 func TestUnlockNoVault(t *testing.T) {
 	v := newTestVault(t)
 	if _, err := v.Unlock(vaultPw); !errors.Is(err, ErrNoVault) {

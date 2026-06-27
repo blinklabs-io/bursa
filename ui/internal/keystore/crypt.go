@@ -48,15 +48,16 @@ type container = Container
 // encrypt seals plaintext under password using scrypt (cost kdf) + AES-256-GCM,
 // returning a self-describing Container. This is the single encrypt primitive
 // reused by both the mnemonic keystore and the vault index.
-func encrypt(plaintext []byte, password string, kdf kdfParams) (Container, error) {
+func encrypt(plaintext []byte, password []byte, kdf kdfParams) (Container, error) {
 	salt := make([]byte, saltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return Container{}, err
 	}
-	key, err := scrypt.Key([]byte(password), salt, kdf.n, kdf.r, kdf.p, keyLen)
+	key, err := scrypt.Key(password, salt, kdf.n, kdf.r, kdf.p, keyLen)
 	if err != nil {
 		return Container{}, fmt.Errorf("scrypt: %w", err)
 	}
+	defer Zero(key)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return Container{}, err
@@ -82,7 +83,7 @@ func encrypt(plaintext []byte, password string, kdf kdfParams) (Container, error
 // params within the allowed range. A wrong password or tampered blob returns
 // ErrDecryptFailed (AES-GCM authentication). Callers should Zero the returned
 // bytes once the plaintext is no longer needed.
-func decrypt(c Container, password string, kdf kdfParams) ([]byte, error) {
+func decrypt(c Container, password []byte, kdf kdfParams) ([]byte, error) {
 	if c.Version != containerVersion {
 		return nil, fmt.Errorf("unsupported container version %d", c.Version)
 	}
@@ -107,10 +108,11 @@ func decrypt(c Container, password string, kdf kdfParams) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	key, err := scrypt.Key([]byte(password), salt, c.N, c.R, c.P, keyLen)
+	key, err := scrypt.Key(password, salt, c.N, c.R, c.P, keyLen)
 	if err != nil {
 		return nil, fmt.Errorf("scrypt: %w", err)
 	}
+	defer Zero(key)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -132,7 +134,7 @@ func decrypt(c Container, password string, kdf kdfParams) ([]byte, error) {
 // password must be at least MinPasswordLen runes; the caller is responsible for
 // enforcing that floor before reaching here (the API does).
 func Seal(plaintext []byte, password string) ([]byte, error) {
-	c, err := encrypt(plaintext, password, productionKDF)
+	c, err := encrypt(plaintext, []byte(password), productionKDF)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +149,7 @@ func Open(blob, password []byte) ([]byte, error) {
 	if err := json.Unmarshal(blob, &c); err != nil {
 		return nil, fmt.Errorf("not a container: %w", err)
 	}
-	return decrypt(c, string(password), productionKDF)
+	return decrypt(c, password, productionKDF)
 }
 
 // Sealer seals plaintext under password into a JSON Container blob; Opener is
@@ -165,12 +167,12 @@ type (
 func CheapTestSealer() (Sealer, Opener) {
 	cheap := kdfParams{
 		n: 1 << 12, r: 8, p: 1,
-		minN: 1 << 12, maxN: 1 << 14,
-		minR: 8, maxR: 32,
-		minP: 1, maxP: 4,
+		minN: 1 << 12, maxN: 1 << 12,
+		minR: 8, maxR: 8,
+		minP: 1, maxP: 1,
 	}
 	seal := func(plaintext []byte, password string) ([]byte, error) {
-		c, err := encrypt(plaintext, password, cheap)
+		c, err := encrypt(plaintext, []byte(password), cheap)
 		if err != nil {
 			return nil, err
 		}
@@ -181,7 +183,7 @@ func CheapTestSealer() (Sealer, Opener) {
 		if err := json.Unmarshal(blob, &c); err != nil {
 			return nil, fmt.Errorf("not a container: %w", err)
 		}
-		return decrypt(c, string(password), cheap)
+		return decrypt(c, password, cheap)
 	}
 	return seal, open
 }

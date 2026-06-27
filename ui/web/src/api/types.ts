@@ -107,6 +107,7 @@ export interface VaultStatus {
   exists: boolean;
   locked: boolean;
   wallet_count: number;
+  legacy_keystore?: boolean;
 }
 
 // A wallet as listed by the vault: read-only fields plus whether it's active.
@@ -134,6 +135,12 @@ export interface AddWalletRequest {
   name: string;
   mnemonic: string;
   network: string;
+  vault_password: string;
+  spend_password: string;
+}
+
+export interface MigrateLegacyKeystoreRequest {
+  name: string;
   vault_password: string;
   spend_password: string;
 }

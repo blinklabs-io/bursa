@@ -35,9 +35,10 @@ const (
 // password from ciphertext corruption.
 var ErrDecryptFailed = errors.New("keystore decryption failed")
 
-// kdfParams is the scrypt cost Create writes plus the range Unlock accepts,
-// so cost can be raised in future releases without a format break, while
-// refusing absurd params from a crafted file.
+// kdfParams is the scrypt cost Create writes plus the range Unlock accepts.
+// Keep the accepted range tightly bounded: the container metadata is
+// attacker-controlled until AES-GCM authenticates it, so accepting materially
+// higher costs can turn Unlock/Open into a local resource-exhaustion primitive.
 type kdfParams struct {
 	n, r, p                            int
 	minN, maxN, minR, maxR, minP, maxP int
@@ -47,9 +48,9 @@ type kdfParams struct {
 // encryption (~1 GiB, ~1 s per derivation).
 var productionKDF = kdfParams{
 	n: 1 << 20, r: 8, p: 1,
-	minN: 1 << 20, maxN: 1 << 22,
-	minR: 8, maxR: 32,
-	minP: 1, maxP: 4,
+	minN: 1 << 20, maxN: 1 << 20,
+	minR: 8, maxR: 8,
+	minP: 1, maxP: 1,
 }
 
 // Keystore is an encrypted mnemonic file at Path (mode 0600).
@@ -90,7 +91,7 @@ func (k *Keystore) Create(mnemonic, password string) error {
 	if k.Exists() {
 		return fmt.Errorf("keystore already exists at %s", k.Path)
 	}
-	c, err := encrypt([]byte(mnemonic), password, k.params())
+	c, err := encrypt([]byte(mnemonic), []byte(password), k.params())
 	if err != nil {
 		return err
 	}
@@ -144,7 +145,7 @@ func (k *Keystore) Unlock(password string) ([]byte, error) {
 	if err := json.Unmarshal(blob, &c); err != nil {
 		return nil, fmt.Errorf("not a keystore container: %w", err)
 	}
-	return decrypt(c, password, k.params())
+	return decrypt(c, []byte(password), k.params())
 }
 
 // Zero overwrites b in place, e.g. a mnemonic returned by Unlock once signing

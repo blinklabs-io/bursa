@@ -44,6 +44,9 @@ var (
 	// ErrSubmitRejected: the node rejected the signed transaction; the wrapped
 	// message carries its structured reason (→ 422).
 	ErrSubmitRejected = errors.New("transaction rejected by node")
+	// ErrWalletChanged: the active wallet changed while a transaction was being
+	// built, so the preview is discarded instead of storing a stale pending send.
+	ErrWalletChanged = errors.New("wallet changed while building transaction")
 )
 
 // pendingTTL bounds how long a built-but-unconfirmed transaction is held. After
@@ -97,6 +100,10 @@ type Keystore interface {
 	Unlock(password string) (mnemonic []byte, err error)
 }
 
+type walletSeedStore interface {
+	UnlockFor(walletID, password string) (mnemonic []byte, err error)
+}
+
 // addressWindow is the number of external (receive) addresses derived for a
 // spending account. It matches the read-only wallet's default window so the
 // derived addresses (and their indices) line up for signing.
@@ -112,15 +119,19 @@ type pending struct {
 	tx       *apollo.Apollo
 	utxoAddr map[string]string // "txhash#index" → bech32 address (for signing)
 	created  time.Time
+	walletID string
+	account  *wallet.Account
 }
 
 // Service builds and holds pending send transactions.
 type Service struct {
-	chain   backend.ChainContext
-	keys    Keystore // may be nil for build-only usage
-	account *wallet.Account
-	mkID    func() string    // pending id generator; injectable for tests
-	now     func() time.Time // injectable for tests
+	chain    backend.ChainContext
+	keys     Keystore // may be nil for build-only usage
+	account  *wallet.Account
+	walletID string
+	gen      uint64
+	mkID     func() string    // pending id generator; injectable for tests
+	now      func() time.Time // injectable for tests
 
 	mu      sync.Mutex
 	pending map[string]*pending
@@ -131,7 +142,7 @@ func NewService(cc backend.ChainContext, ks Keystore, acct *wallet.Account) *Ser
 	return &Service{
 		chain:   cc,
 		keys:    ks,
-		account: acct,
+		account: cloneAccount(acct),
 		pending: make(map[string]*pending),
 		mkID:    randID,
 		now:     time.Now,
@@ -177,7 +188,10 @@ func (s *Service) SetWallet(mnemonic, network, password string) (*wallet.Account
 		}
 	}
 	s.mu.Lock()
-	s.account = acct
+	s.account = cloneAccount(acct)
+	s.walletID = ""
+	s.gen++
+	s.pending = make(map[string]*pending)
 	s.mu.Unlock()
 	return acct, nil
 }
@@ -187,24 +201,30 @@ func (s *Service) SetWallet(mnemonic, network, password string) (*wallet.Account
 // pushed here on unlock/activate, and the keystore adapter routes Unlock to that
 // wallet's vault-encrypted seed. Pending sends are cleared so a preview built
 // against a previous wallet can't be confirmed under the new one.
-func (s *Service) SetAccount(acct *wallet.Account) {
+func (s *Service) SetAccount(walletID string, acct *wallet.Account) {
 	s.mu.Lock()
-	s.account = acct
+	s.account = cloneAccount(acct)
+	if acct == nil {
+		s.walletID = ""
+	} else {
+		s.walletID = walletID
+	}
+	s.gen++
 	s.pending = make(map[string]*pending)
 	s.mu.Unlock()
 }
 
-// currentAccount returns the active account under lock (nil if none is set).
-func (s *Service) currentAccount() *wallet.Account {
+// currentBinding returns a stable snapshot of the active account binding.
+func (s *Service) currentBinding() (string, *wallet.Account, uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.account
+	return s.walletID, cloneAccount(s.account), s.gen
 }
 
 // Build runs coin selection and fee estimation for req using Apollo, stores the
 // incomplete tx under a new pending id, and returns a Preview for user approval.
 func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
-	acct := s.currentAccount()
+	walletID, acct, gen := s.currentBinding()
 	if acct == nil {
 		return Preview{}, ErrNoWallet
 	}
@@ -281,8 +301,18 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 	// Store the pending entry (sweeping any that have outlived their TTL first).
 	id := s.mkID()
 	s.mu.Lock()
+	if s.gen != gen || s.walletID != walletID {
+		s.mu.Unlock()
+		return Preview{}, ErrWalletChanged
+	}
 	s.sweepExpiredLocked()
-	s.pending[id] = &pending{tx: a, utxoAddr: utxoAddr, created: s.now()}
+	s.pending[id] = &pending{
+		tx:       a,
+		utxoAddr: utxoAddr,
+		created:  s.now(),
+		walletID: walletID,
+		account:  cloneAccount(acct),
+	}
 	s.mu.Unlock()
 
 	return toPreview(id, a), nil
@@ -299,7 +329,7 @@ func (s *Service) SignData(addrStr string, message []byte, password string) (sig
 	if s.keys == nil {
 		return "", "", errors.New("no keystore configured")
 	}
-	acct := s.currentAccount()
+	walletID, acct, _ := s.currentBinding()
 	if acct == nil {
 		return "", "", ErrNoWallet
 	}
@@ -330,7 +360,7 @@ func (s *Service) SignData(addrStr string, message []byte, password string) (sig
 		return "", "", fmt.Errorf("%w: address bytes: %w", ErrInvalidRequest, err)
 	}
 
-	mnemonicBytes, err := s.keys.Unlock(password)
+	mnemonicBytes, err := s.unlockSeed(walletID, password)
 	if err != nil {
 		if errors.Is(err, keystore.ErrDecryptFailed) {
 			return "", "", fmt.Errorf("%w: %w", ErrWrongPassword, err)
@@ -548,7 +578,7 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	if s.keys == nil {
 		return TxResult{}, errors.New("no keystore configured")
 	}
-	mnemonicBytes, err := s.keys.Unlock(password)
+	mnemonicBytes, err := s.unlockSeed(p.walletID, password)
 	if err != nil {
 		if errors.Is(err, keystore.ErrDecryptFailed) {
 			return TxResult{}, fmt.Errorf("%w: %w", ErrWrongPassword, err)
@@ -573,7 +603,7 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	}
 
 	// --- step 4: build address → derivation-index lookup ---
-	acct := s.currentAccount()
+	acct := p.account
 	if acct == nil {
 		return TxResult{}, ErrNoWallet
 	}
@@ -651,6 +681,24 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	}
 
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
+}
+
+func (s *Service) unlockSeed(walletID, password string) ([]byte, error) {
+	if walletID != "" {
+		if ks, ok := s.keys.(walletSeedStore); ok {
+			return ks.UnlockFor(walletID, password)
+		}
+	}
+	return s.keys.Unlock(password)
+}
+
+func cloneAccount(acct *wallet.Account) *wallet.Account {
+	if acct == nil {
+		return nil
+	}
+	cp := *acct
+	cp.ReceiveAddresses = append([]string(nil), acct.ReceiveAddresses...)
+	return &cp
 }
 
 // randID generates a 16-byte random hex string for pending IDs.

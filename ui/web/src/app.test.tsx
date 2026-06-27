@@ -22,7 +22,7 @@ function stubStatus(state: string) {
   } as never);
 }
 
-function stubVault(data: { exists: boolean; locked: boolean; wallet_count: number }) {
+function stubVault(data: { exists: boolean; locked: boolean; wallet_count: number; legacy_keystore?: boolean }) {
   vi.spyOn(hooks, "useVaultStatus").mockReturnValue({
     data,
     error: null,
@@ -47,6 +47,30 @@ test("no vault → Create Vault flow is shown", async () => {
   stubVault({ exists: false, locked: true, wallet_count: 0 });
   render(<App />);
   await waitFor(() => expect(screen.getByRole("button", { name: /create vault/i })).toBeInTheDocument());
+});
+
+test("legacy keystore without a vault → migration flow is shown", async () => {
+  stubStatus("ready");
+  stubVault({ exists: false, locked: true, wallet_count: 0, legacy_keystore: true });
+  quietPortfolio();
+  vi.spyOn(client, "migrateLegacyKeystore").mockResolvedValue(walletA);
+
+  render(<App />);
+  await waitFor(() => expect(screen.getByRole("button", { name: /import wallet/i })).toBeInTheDocument());
+
+  fireEvent.change(screen.getByLabelText(/^new vault password$/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.change(screen.getByLabelText(/^confirm new vault password$/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.change(screen.getByLabelText(/existing spending password/i), { target: { value: "spend-password-aaa" } });
+  fireEvent.click(screen.getByRole("button", { name: /import wallet/i }));
+
+  await waitFor(() =>
+    expect(client.migrateLegacyKeystore).toHaveBeenCalledWith({
+      name: "Wallet",
+      vault_password: "vault-password-xyz",
+      spend_password: "spend-password-aaa",
+    }),
+  );
+  await waitFor(() => expect(screen.getByText("Main")).toBeInTheDocument());
 });
 
 test("vault exists but locked → Unlock screen (vault password only, no seed field)", async () => {

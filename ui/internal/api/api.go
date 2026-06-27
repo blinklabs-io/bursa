@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
@@ -37,6 +38,7 @@ type Statuser interface {
 // the active wallet. SetAccount binds the active wallet's read-only account
 // (pushed by the vault on unlock/activate/add).
 type Wallet interface {
+	// SetAccount(nil) clears the active account binding.
 	SetAccount(acct *wallet.Account) error
 	Balance(ctx context.Context) (wallet.Balance, error)
 	Addresses(ctx context.Context) (wallet.AddressView, error)
@@ -50,7 +52,8 @@ type Wallet interface {
 // the vault); the seed is decrypted via the vault under the wallet's spending
 // password at confirm/sign time.
 type Spender interface {
-	SetAccount(acct *wallet.Account)
+	// SetAccount("", nil) clears the active wallet binding and pending sends.
+	SetAccount(id string, acct *wallet.Account)
 	Build(ctx context.Context, req spend.SendRequest) (spend.Preview, error)
 	Confirm(ctx context.Context, pendingID, password string) (spend.TxResult, error)
 	SignData(addr string, message []byte, password string) (signatureHex, keyHex string, err error)
@@ -68,18 +71,39 @@ type Vault interface {
 	Lock()
 	Wallets() ([]vault.WalletMeta, error)
 	AddWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
+	ImportWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
 	RemoveWallet(id, vaultPassword string) error
 	SetActive(id string) (vault.WalletMeta, error)
 	Active() (vault.WalletMeta, error)
+}
+
+// LegacyKeystore is the old single-wallet encrypted mnemonic store. It is
+// accepted only for explicit migration into the vault when vault.json is absent.
+type LegacyKeystore interface {
+	Exists() bool
+	Unlock(password string) ([]byte, error)
+}
+
+type handlerOptions struct {
+	legacy LegacyKeystore
+}
+
+type HandlerOption func(*handlerOptions)
+
+func WithLegacyKeystore(ks LegacyKeystore) HandlerOption {
+	return func(o *handlerOptions) {
+		o.legacy = ks
+	}
 }
 
 const defaultWindow = 20
 
 // vaultStatus is the GET /vault/status response.
 type vaultStatus struct {
-	Exists      bool `json:"exists"`
-	Locked      bool `json:"locked"`
-	WalletCount int  `json:"wallet_count"`
+	Exists         bool `json:"exists"`
+	Locked         bool `json:"locked"`
+	WalletCount    int  `json:"wallet_count"`
+	LegacyKeystore bool `json:"legacy_keystore"`
 }
 
 // walletView is the API representation of a vault wallet: the read-only fields a
@@ -112,7 +136,11 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // the encrypted multi-wallet store; the API pushes the active wallet onto wl/sp
 // whenever the selection changes. spa is the embedded SPA, registered as the
 // catch-all so the specific API routes take precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, network string, spa http.Handler) http.Handler {
+func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+	cfg := handlerOptions{}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -131,16 +159,24 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, network string, s
 			return
 		}
 		_ = wl.SetAccount(w.Account)
-		sp.SetAccount(w.Account)
+		sp.SetAccount(w.ID, w.Account)
+	}
+	clearActive := func() {
+		_ = wl.SetAccount(nil)
+		sp.SetAccount("", nil)
+	}
+	legacyAvailable := func() bool {
+		return !vlt.Exists() && cfg.legacy != nil && cfg.legacy.Exists()
 	}
 
 	// --- Vault lifecycle -----------------------------------------------------
 
 	mux.HandleFunc("GET /vault/status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, vaultStatus{
-			Exists:      vlt.Exists(),
-			Locked:      vlt.Locked(),
-			WalletCount: vlt.WalletCount(),
+			Exists:         vlt.Exists(),
+			Locked:         vlt.Locked(),
+			WalletCount:    vlt.WalletCount(),
+			LegacyKeystore: legacyAvailable(),
 		})
 	})
 
@@ -159,6 +195,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, network string, s
 			serve(w, struct{}{}, err)
 			return
 		}
+		clearActive()
 		writeJSON(w, http.StatusOK, vaultStatus{Exists: true, Locked: false, WalletCount: 0})
 	})
 
@@ -184,9 +221,58 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, network string, s
 
 	mux.HandleFunc("POST /vault/lock", func(w http.ResponseWriter, _ *http.Request) {
 		vlt.Lock()
+		clearActive()
 		writeJSON(w, http.StatusOK, vaultStatus{
 			Exists: vlt.Exists(), Locked: true, WalletCount: vlt.WalletCount(),
 		})
+	})
+
+	mux.HandleFunc("POST /vault/migrate-legacy", func(w http.ResponseWriter, r *http.Request) {
+		if vlt.Exists() {
+			serve(w, struct{}{}, vault.ErrVaultExists)
+			return
+		}
+		if cfg.legacy == nil || !cfg.legacy.Exists() {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "legacy keystore not found"})
+			return
+		}
+		var req struct {
+			Name          string `json:"name"`
+			VaultPassword string `json:"vault_password"`
+			SpendPassword string `json:"spend_password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if !requirePassword(w, req.VaultPassword) {
+			return
+		}
+		if req.SpendPassword == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "spend_password is required"})
+			return
+		}
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			name = "Wallet"
+		}
+		mnemonic, err := cfg.legacy.Unlock(req.SpendPassword)
+		if err != nil {
+			if errors.Is(err, keystore.ErrDecryptFailed) {
+				serve(w, struct{}{}, fmt.Errorf("%w: %w", vault.ErrWrongPassword, err))
+				return
+			}
+			serve(w, struct{}{}, err)
+			return
+		}
+		defer keystore.Zero(mnemonic)
+		meta, err := vlt.ImportWallet(name, string(mnemonic), network, req.VaultPassword, req.SpendPassword, defaultWindow)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		bindActive(meta)
+		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
 	})
 
 	// --- Wallet management ---------------------------------------------------
@@ -253,6 +339,11 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, network string, s
 		if err := vlt.RemoveWallet(r.PathValue("id"), req.VaultPassword); err != nil {
 			serve(w, struct{}{}, err)
 			return
+		}
+		if active, err := vlt.Active(); err == nil {
+			bindActive(active)
+		} else {
+			clearActive()
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"removed": true})
 	})
@@ -416,6 +507,8 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 	case errors.Is(err, vault.ErrLocked), errors.Is(err, vault.ErrNoActiveWallet),
 		errors.Is(err, wallet.ErrNoWallet), errors.Is(err, spend.ErrNoWallet):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: locked / no active wallet
+	case errors.Is(err, spend.ErrWalletChanged):
+		writeJSON(w, http.StatusConflict, errBody(err)) // 409: active wallet switched during build
 	case errors.Is(err, vault.ErrWrongPassword), errors.Is(err, spend.ErrWrongPassword):
 		writeJSON(w, http.StatusUnauthorized, errBody(err)) // 401
 	case errors.Is(err, spend.ErrInvalidRequest):

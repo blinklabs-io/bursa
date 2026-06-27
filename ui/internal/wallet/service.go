@@ -84,10 +84,14 @@ func (s *Service) SetWallet(mnemonic, network string, windowN int) (*Account, er
 	return cloneAccount(acct), nil
 }
 
-// SetAccount stores an already-derived active account.
+// SetAccount stores an already-derived active account. Passing nil clears the
+// active account, used when the vault is locked or the active wallet is removed.
 func (s *Service) SetAccount(acct *Account) error {
 	if acct == nil {
-		return errors.New("account is nil")
+		s.mu.Lock()
+		s.account = nil
+		s.mu.Unlock()
+		return nil
 	}
 	stored := cloneAccount(acct)
 	s.mu.Lock()

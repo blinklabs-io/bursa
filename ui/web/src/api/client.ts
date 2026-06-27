@@ -14,6 +14,7 @@ import type {
   CreateVaultRequest,
   UnlockVaultRequest,
   AddWalletRequest,
+  MigrateLegacyKeystoreRequest,
 } from "./types";
 
 export class ApiError extends Error {
@@ -74,6 +75,8 @@ export const getVaultStatus = () => apiGet<VaultStatus>("/vault/status");
 export const createVault = (req: CreateVaultRequest) => apiPost<VaultStatus>("/vault", req);
 export const unlockVault = (req: UnlockVaultRequest) => apiPost<WalletView[]>("/vault/unlock", req);
 export const lockVault = () => apiPost<VaultStatus>("/vault/lock");
+export const migrateLegacyKeystore = (req: MigrateLegacyKeystoreRequest) =>
+  apiPost<WalletView>("/vault/migrate-legacy", req);
 
 // Wallet management.
 export const addWallet = (req: AddWalletRequest) => apiPost<WalletView>("/wallet", req);

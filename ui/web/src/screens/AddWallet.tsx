@@ -6,16 +6,13 @@ import { Select } from "../components/Select";
 import { Button } from "../components/Button";
 import { addWallet, ApiError } from "../api/client";
 import type { WalletView } from "../api/types";
+import { MIN_PASSWORD_LEN, passwordLength } from "../password";
 
 const NETWORK_OPTIONS = [
   { value: "preview", label: "Preview" },
   { value: "preprod", label: "Preprod" },
   { value: "mainnet", label: "Mainnet" },
 ];
-
-// Mirrors keystore.MinPasswordLen on the node; the server enforces the same
-// floor, this just surfaces it before a round-trip. Keep the two in sync.
-const MIN_PASSWORD_LEN = 12;
 
 interface AddWalletProps {
   network: string;
@@ -58,7 +55,7 @@ export function AddWallet({
       return;
     }
     // Count code points, not UTF-16 units, to match the server's RuneCount.
-    if ([...spendPassword].length < MIN_PASSWORD_LEN) {
+    if (passwordLength(spendPassword) < MIN_PASSWORD_LEN) {
       setError(`Spending password must be at least ${MIN_PASSWORD_LEN} characters`);
       return;
     }
