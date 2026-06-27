@@ -107,7 +107,8 @@ test("spending-enabled wallet on a ready node can reach Send", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), {
     target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
   });
-  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "s3cretpw" } });
+  // Must clear the client-side minimum (12 chars) so it reaches createKeystore.
+  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "s3cret-passphrase" } });
   fireEvent.click(screen.getByRole("button", { name: /load wallet/i }));
 
   // Send screen renders (its "Send ADA" card).

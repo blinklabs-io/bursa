@@ -175,6 +175,93 @@ jobs:
         with:
           subject-path: 'bursa'
 
+  # Build the embedded-SPA wallet binary (ui/cmd/bursa-wallet) from the nested
+  # ui/ module across the same os/arch matrix as build-binaries. Only the
+  # default (non-webview) build is shipped: it is pure Go and cross-compiles
+  # cleanly. The `webview` variant needs CGO + system webkit and cannot be
+  # cross-compiled, so it is intentionally excluded here.
+  build-wallet-binaries:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest
+            os: darwin
+            arch: arm64
+          - runner: ubuntu-latest
+            os: freebsd
+            arch: amd64
+          - runner: ubuntu-latest
+            os: freebsd
+            arch: arm64
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+          - runner: ubuntu-latest
+            os: linux
+            arch: arm64
+          - runner: ubuntu-latest
+            os: windows
+            arch: amd64
+          - runner: ubuntu-latest
+            os: windows
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    needs: [create-draft-release]
+    permissions:
+      actions: write
+      attestations: write
+      checks: write
+      contents: write
+      id-token: write
+      packages: write
+      statuses: write
+    steps:
+      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 https://github.com/actions/checkout/releases/tag/v7.0.0
+        with:
+          fetch-depth: '0'
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0 https://github.com/actions/setup-node/releases/tag/v6.0.0
+        with:
+          node-version: 22
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0 https://github.com/actions/setup-go/releases/tag/v6.4.0
+        with:
+          go-version: 1.26.x
+      # Build the web bundle first so the //go:embed dist target is populated.
+      - name: Build web bundle
+        run: cd ui/web && npm ci && npm run build
+      - name: Build wallet binary
+        run: CGO_ENABLED=0 GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} make wallet-binary
+
+      # TODO: code-signing the wallet binary (Windows jsign / macOS codesign +
+      # notarization) is not yet mirrored from build-binaries. Ship it unsigned
+      # for now; wire up the same signing steps once the wallet is GA.
+
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          _filename=bursa-wallet-${{ env.RELEASE_TAG }}-${{ matrix.os }}-${{ matrix.arch }}
+          if [[ ${{ matrix.os }} == windows ]]; then
+            _filename=${_filename}.exe
+          fi
+          if [[ "${{ matrix.os }}" == "windows" || "${{ matrix.os }}" == "linux" || "${{ matrix.os }}" == "freebsd" ]]; then
+            cp ui/bursa-wallet ${_filename}
+          fi
+          if [[ "${{ matrix.os }}" == "darwin" ]]; then
+            _filename=bursa-wallet-${{ env.RELEASE_TAG }}-${{ matrix.os }}-${{ matrix.arch }}.zip
+            cp ui/bursa-wallet bursa-wallet
+            zip -r ${_filename} bursa-wallet
+          fi
+          curl \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @${_filename} \
+            https://uploads.github.com/repos/${{ github.repository_owner }}/bursa/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}
+
+      - name: Attest binary
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0 https://github.com/actions/attest/releases/tag/v4.1.0
+        with:
+          subject-path: 'ui/bursa-wallet'
+
   build-images:
     strategy:
       fail-fast: false
@@ -322,7 +409,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    needs: [create-draft-release, build-binaries, build-images, build-image-manifest]
+    needs: [create-draft-release, build-binaries, build-wallet-binaries, build-images, build-image-manifest]
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 https://github.com/actions/github-script/releases/tag/v9.0.0
         if: startsWith(github.ref, 'refs/tags/')
