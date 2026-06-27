@@ -684,12 +684,14 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 }
 
 func (s *Service) unlockSeed(walletID, password string) ([]byte, error) {
-	if walletID != "" {
-		if ks, ok := s.keys.(walletSeedStore); ok {
-			return ks.UnlockFor(walletID, password)
-		}
+	if walletID == "" {
+		return s.keys.Unlock(password)
 	}
-	return s.keys.Unlock(password)
+	ks, ok := s.keys.(walletSeedStore)
+	if !ok {
+		return nil, fmt.Errorf("wallet-bound seed unlock requires UnlockFor support for wallet %q", walletID)
+	}
+	return ks.UnlockFor(walletID, password)
 }
 
 func cloneAccount(acct *wallet.Account) *wallet.Account {

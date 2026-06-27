@@ -57,32 +57,43 @@ func accountXpubFromRoot(root bip32.XPrv) (string, error) {
 // stake address plus windowN external receive addresses (indices 0..windowN-1),
 // all bound to the canonical stake key m/1852'/1815'/0'/2/0.
 func Derive(mnemonic, network string, windowN int) (*Account, error) {
+	netID, err := validateDeriveInputs(network, windowN)
+	if err != nil {
+		return nil, err
+	}
 	root, err := bursa.GetRootKeyFromMnemonic(mnemonic, "")
 	if err != nil {
 		return nil, fmt.Errorf("root key from mnemonic: %w", err)
 	}
-	return deriveFromRoot(root, network, windowN)
+	return deriveFromRoot(root, network, netID, windowN)
 }
 
 // DeriveFromMnemonicBytes is the zeroable-byte variant of Derive.
 func DeriveFromMnemonicBytes(mnemonic []byte, network string, windowN int) (*Account, error) {
+	netID, err := validateDeriveInputs(network, windowN)
+	if err != nil {
+		return nil, err
+	}
 	root, err := rootKeyFromMnemonicBytes(mnemonic)
 	if err != nil {
 		return nil, fmt.Errorf("root key from mnemonic: %w", err)
 	}
-	return deriveFromRoot(root, network, windowN)
+	return deriveFromRoot(root, network, netID, windowN)
 }
 
-func deriveFromRoot(root bip32.XPrv, network string, windowN int) (*Account, error) {
-	defer zeroXPrv(root)
+func validateDeriveInputs(network string, windowN int) (uint8, error) {
 	if windowN < 1 {
-		return nil, fmt.Errorf("windowN must be at least 1, got %d", windowN)
+		return 0, fmt.Errorf("windowN must be at least 1, got %d", windowN)
 	}
 	netID, err := cardanonet.AddressNetworkID(network)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
+	return netID, nil
+}
 
+func deriveFromRoot(root bip32.XPrv, network string, netID uint8, windowN int) (*Account, error) {
+	defer zeroXPrv(root)
 	acctKey, err := bursa.GetAccountKey(root, 0)
 	if err != nil {
 		return nil, fmt.Errorf("account key: %w", err)

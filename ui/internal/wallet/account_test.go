@@ -108,6 +108,18 @@ func TestDeriveInvalidNetwork(t *testing.T) {
 	}
 }
 
+func TestDeriveValidatesInputsBeforeMnemonic(t *testing.T) {
+	if _, err := Derive("not a valid mnemonic", "preview", 0); err == nil || !strings.Contains(err.Error(), "windowN") {
+		t.Fatalf("Derive invalid window + mnemonic = %v, want window validation error", err)
+	}
+	if _, err := Derive("not a valid mnemonic", "mainnte", 1); err == nil || !strings.Contains(err.Error(), "unknown network") {
+		t.Fatalf("Derive invalid network + mnemonic = %v, want network validation error", err)
+	}
+	if _, err := DeriveFromMnemonicBytes([]byte("not a valid mnemonic"), "preview", 0); err == nil || !strings.Contains(err.Error(), "windowN") {
+		t.Fatalf("DeriveFromMnemonicBytes invalid window + mnemonic = %v, want window validation error", err)
+	}
+}
+
 func TestDeriveInvalidWindow(t *testing.T) {
 	// windowN < 1 must error, not panic (negative cap) or derive nothing.
 	for _, n := range []int{-1, 0} {

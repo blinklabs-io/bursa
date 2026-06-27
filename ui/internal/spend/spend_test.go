@@ -392,6 +392,18 @@ func (fk fakeKeystore) Unlock(_ string) ([]byte, error) {
 	return []byte(fk.mnemonic), nil
 }
 
+type trackingKeystore struct {
+	mnemonic    string
+	unlockCalls int
+}
+
+func (tk *trackingKeystore) Exists() bool             { return true }
+func (tk *trackingKeystore) Create(_, _ string) error { return nil }
+func (tk *trackingKeystore) Unlock(_ string) ([]byte, error) {
+	tk.unlockCalls++
+	return []byte(tk.mnemonic), nil
+}
+
 type blockingSeedStore struct {
 	mnemonicByID map[string]string
 	unlockForID  chan string
@@ -534,6 +546,31 @@ func TestConfirmUsesPendingWalletAfterAccountSwitch(t *testing.T) {
 	}
 	if fc.submitCalls != 1 {
 		t.Fatalf("SubmitTx calls = %d, want 1", fc.submitCalls)
+	}
+}
+
+func TestWalletBoundUnlockRequiresUnlockFor(t *testing.T) {
+	ks := &trackingKeystore{mnemonic: testMnemonic}
+	s := NewService(nil, ks, nil)
+
+	if _, err := s.unlockSeed("wallet-a", "pw"); err == nil {
+		t.Fatal("wallet-bound unlock with generic keystore succeeded, want error")
+	} else if !strings.Contains(err.Error(), "UnlockFor") {
+		t.Fatalf("wallet-bound unlock error = %v, want UnlockFor support error", err)
+	}
+	if ks.unlockCalls != 0 {
+		t.Fatalf("generic Unlock calls = %d, want 0 for wallet-bound unlock", ks.unlockCalls)
+	}
+
+	mnemonic, err := s.unlockSeed("", "pw")
+	if err != nil {
+		t.Fatalf("legacy unlock: %v", err)
+	}
+	if string(mnemonic) != testMnemonic {
+		t.Fatal("legacy unlock returned wrong mnemonic")
+	}
+	if ks.unlockCalls != 1 {
+		t.Fatalf("generic Unlock calls after legacy unlock = %d, want 1", ks.unlockCalls)
 	}
 }
 

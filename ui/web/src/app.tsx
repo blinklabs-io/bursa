@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { ReactElement } from "react";
 import type { Account, WalletView } from "./api/types";
 import { useStatus, useVaultStatus } from "./api/hooks";
-import { lockVault } from "./api/client";
+import { lockVault, ApiError } from "./api/client";
+import { Button } from "./components/Button";
 import { SyncBanner } from "./components/SyncBanner";
 import { WalletSwitcher } from "./components/WalletSwitcher";
 import { useHashRoute, navigate } from "./router";
@@ -66,6 +67,7 @@ export function App() {
   // Set when the user chooses to open the vault flow while the node is still
   // syncing, dismissing the boot Syncing view for this session.
   const [loadAnyway, setLoadAnyway] = useState(false);
+  const [lockError, setLockError] = useState<string | null>(null);
 
   const activeWallet = wallets.find((w) => w.id === activeId) ?? null;
   const isReady = status.data?.state === "ready";
@@ -76,6 +78,7 @@ export function App() {
   const canSign = activeWallet !== null;
 
   function applyWallets(list: WalletView[]) {
+    setLockError(null);
     setWallets(list);
     const active = list.find((w) => w.active);
     setActiveId(active ? active.id : null);
@@ -84,6 +87,7 @@ export function App() {
 
   function applyAdded(wallet: WalletView) {
     // A newly added wallet becomes active server-side; merge it in and select it.
+    setLockError(null);
     setWallets((prev) => {
       const without = prev.filter((w) => w.id !== wallet.id);
       return [...without.map((w) => ({ ...w, active: false })), { ...wallet, active: true }];
@@ -94,19 +98,23 @@ export function App() {
   }
 
   function applyActivated(wallet: WalletView) {
+    setLockError(null);
     setWallets((prev) => prev.map((w) => ({ ...w, active: w.id === wallet.id })));
     setActiveId(wallet.id);
   }
 
   async function handleLock() {
+    setLockError(null);
     try {
       await lockVault();
-    } finally {
       setWallets([]);
       setActiveId(null);
       setUnlocked(false);
       setAddingWallet(false);
       navigate("portfolio");
+      vaultStatus.refresh();
+    } catch (err) {
+      setLockError(err instanceof ApiError ? err.message : "Could not lock vault");
       vaultStatus.refresh();
     }
   }
@@ -121,6 +129,17 @@ export function App() {
 
   const vault = vaultStatus.data;
   const network = "preview";
+
+  if (!vault) {
+    return (
+      <FullScreen status={status.data}>
+        <VaultStatusUnavailable
+          error={vaultStatus.error}
+          onRetry={vaultStatus.refresh}
+        />
+      </FullScreen>
+    );
+  }
 
   // Boot gate: before the vault is open, if the node isn't ready and the user
   // hasn't opted to proceed, the Syncing view takes the whole screen. The escape
@@ -222,6 +241,11 @@ export function App() {
             onAddWallet={() => setAddingWallet(true)}
             onLock={handleLock}
           />
+          {lockError && (
+            <p className="error-text" role="alert">
+              {lockError}
+            </p>
+          )}
           {NAV.map(({ key, label }) => {
             const gated =
               activeWallet === null ||
@@ -242,7 +266,7 @@ export function App() {
             );
           })}
         </nav>
-        <main className="content">{content}</main>
+        <main className="content" key={activeWallet?.id ?? "none"}>{content}</main>
       </div>
     </div>
   );
@@ -262,5 +286,23 @@ function FullScreen({
       {status && <SyncBanner status={status} />}
       <main className="content content-centered">{children}</main>
     </div>
+  );
+}
+
+function VaultStatusUnavailable({
+  error,
+  onRetry,
+}: {
+  error: Error | null;
+  onRetry: () => void;
+}) {
+  return (
+    <section className="card">
+      <h2>Vault status unavailable</h2>
+      <p className="error-text" role="alert">
+        {error?.message ?? "Vault status is unavailable"}
+      </p>
+      <Button onClick={onRetry}>Retry</Button>
+    </section>
   );
 }

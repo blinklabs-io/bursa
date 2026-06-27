@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
@@ -24,9 +24,11 @@ export function CreateVault({ network, onReady }: CreateVaultProps) {
   const [vaultPassword, setVaultPassword] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const creatingRef = useRef(false);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
+    if (creatingRef.current) return;
     setError(null);
 
     if (passwordLength(password) < MIN_PASSWORD_LEN) {
@@ -38,6 +40,7 @@ export function CreateVault({ network, onReady }: CreateVaultProps) {
       return;
     }
 
+    creatingRef.current = true;
     setLoading(true);
     try {
       await createVault({ password });
@@ -46,6 +49,7 @@ export function CreateVault({ network, onReady }: CreateVaultProps) {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "An unexpected error occurred");
     } finally {
+      creatingRef.current = false;
       setLoading(false);
     }
   }

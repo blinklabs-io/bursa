@@ -253,6 +253,11 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 		return WalletMeta{}, ErrLocked
 	}
 
+	env, err := v.authenticatedEnvelopeLocked(vaultPassword)
+	if err != nil {
+		return WalletMeta{}, err
+	}
+
 	meta, seed, err := v.prepareWallet(name, mnemonic, network, spendPassword, windowN)
 	if err != nil {
 		return WalletMeta{}, err
@@ -268,10 +273,6 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 
 	// Load the current seed map (the cached index does not hold seeds), append
 	// the new seed, and re-persist the whole envelope under the vault password.
-	env, err := v.readEnvelope()
-	if err != nil {
-		return WalletMeta{}, err
-	}
 	seeds := env.Seeds
 	if seeds == nil {
 		seeds = map[string]keystore.Container{}
@@ -343,7 +344,7 @@ func (v *Vault) RemoveWallet(id, vaultPassword string) error {
 	if !found {
 		return fmt.Errorf("%w: %q", ErrUnknownWallet, id)
 	}
-	env, err := v.readEnvelope()
+	env, err := v.authenticatedEnvelopeLocked(vaultPassword)
 	if err != nil {
 		return err
 	}
@@ -480,6 +481,17 @@ func (v *Vault) readEnvelope() (envelope, error) {
 	}
 	if env.Seeds == nil {
 		env.Seeds = map[string]keystore.Container{}
+	}
+	return env, nil
+}
+
+func (v *Vault) authenticatedEnvelopeLocked(vaultPassword string) (envelope, error) {
+	env, err := v.readEnvelope()
+	if err != nil {
+		return envelope{}, err
+	}
+	if _, err := v.decodeIndex(env.Index, vaultPassword); err != nil {
+		return envelope{}, err
 	}
 	return env, nil
 }

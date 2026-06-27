@@ -19,6 +19,30 @@ test("creating the vault then advances to the add-first-wallet step", async () =
   await waitFor(() => expect(screen.getByLabelText(/recovery phrase/i)).toBeInTheDocument());
 });
 
+test("duplicate submits while create is in flight call create once", async () => {
+  let resolveCreate!: () => void;
+  const createSpy = vi.spyOn(client, "createVault").mockReturnValue(
+    new Promise((resolve) => {
+      resolveCreate = () => resolve({ exists: true, locked: false, wallet_count: 0 });
+    }),
+  );
+  const onReady = vi.fn();
+
+  render(<CreateVault network="preview" onReady={onReady} />);
+
+  fireEvent.change(screen.getByLabelText(/^vault password$/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.change(screen.getByLabelText(/confirm vault password/i), { target: { value: "vault-password-xyz" } });
+  const form = screen.getByRole("button", { name: /create vault/i }).closest("form");
+  if (!form) throw new Error("create form not found");
+
+  fireEvent.submit(form);
+  fireEvent.submit(form);
+
+  expect(createSpy).toHaveBeenCalledTimes(1);
+  resolveCreate();
+  await waitFor(() => expect(screen.getByLabelText(/recovery phrase/i)).toBeInTheDocument());
+});
+
 test("mismatched passwords are rejected before any request", async () => {
   const createSpy = vi.spyOn(client, "createVault");
   const onReady = vi.fn();

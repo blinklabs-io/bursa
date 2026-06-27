@@ -238,6 +238,32 @@ func TestAddWalletRejectsShortSpendPassword(t *testing.T) {
 	}
 }
 
+func TestAddWalletRequiresCorrectVaultPassword(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := v.AddWallet("main", mnemonicA, "preview", "wrong-vault-password", spendPwA, window); !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("AddWallet wrong vault password = %v, want ErrWrongPassword", err)
+	}
+	if v.WalletCount() != 0 {
+		t.Fatalf("WalletCount after failed AddWallet = %d, want 0", v.WalletCount())
+	}
+
+	v.Lock()
+	wallets, err := v.Unlock(vaultPw)
+	if err != nil {
+		t.Fatalf("Unlock with original password after failed AddWallet: %v", err)
+	}
+	if len(wallets) != 0 {
+		t.Fatalf("wallets after failed AddWallet = %d, want 0", len(wallets))
+	}
+	v.Lock()
+	if _, err := v.Unlock("wrong-vault-password"); !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("Unlock with rejected password = %v, want ErrWrongPassword", err)
+	}
+}
+
 func TestMultipleWalletsActiveSwitch(t *testing.T) {
 	v := newTestVault(t)
 	if err := v.Create(vaultPw); err != nil {
@@ -327,6 +353,37 @@ func TestRemoveWallet(t *testing.T) {
 
 	if err := v.RemoveWallet("nonexistent", vaultPw); !errors.Is(err, ErrUnknownWallet) {
 		t.Fatalf("RemoveWallet unknown = %v, want ErrUnknownWallet", err)
+	}
+}
+
+func TestRemoveWalletRequiresCorrectVaultPassword(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	a, _ := v.AddWallet("alpha", mnemonicA, "preview", vaultPw, spendPwA, window)
+	b, _ := v.AddWallet("beta", mnemonicB, "preview", vaultPw, spendPwB, window)
+
+	if err := v.RemoveWallet(a.ID, "wrong-vault-password"); !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("RemoveWallet wrong vault password = %v, want ErrWrongPassword", err)
+	}
+	if v.WalletCount() != 2 {
+		t.Fatalf("WalletCount after failed RemoveWallet = %d, want 2", v.WalletCount())
+	}
+	if _, err := v.SetActive(a.ID); err != nil {
+		t.Fatalf("removed wallet should still be selectable after failed RemoveWallet: %v", err)
+	}
+	if _, err := v.SetActive(b.ID); err != nil {
+		t.Fatalf("other wallet should remain selectable after failed RemoveWallet: %v", err)
+	}
+
+	v.Lock()
+	wallets, err := v.Unlock(vaultPw)
+	if err != nil {
+		t.Fatalf("Unlock with original password after failed RemoveWallet: %v", err)
+	}
+	if len(wallets) != 2 {
+		t.Fatalf("wallets after failed RemoveWallet = %d, want 2", len(wallets))
 	}
 }
 
