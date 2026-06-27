@@ -182,6 +182,18 @@ func (s *Service) SetWallet(mnemonic, network, password string) (*wallet.Account
 	return acct, nil
 }
 
+// SetAccount sets the active spending account directly, without creating a
+// keystore. The vault owns seed encryption now: the active wallet's account is
+// pushed here on unlock/activate, and the keystore adapter routes Unlock to that
+// wallet's vault-encrypted seed. Pending sends are cleared so a preview built
+// against a previous wallet can't be confirmed under the new one.
+func (s *Service) SetAccount(acct *wallet.Account) {
+	s.mu.Lock()
+	s.account = acct
+	s.pending = make(map[string]*pending)
+	s.mu.Unlock()
+}
+
 // currentAccount returns the active account under lock (nil if none is set).
 func (s *Service) currentAccount() *wallet.Account {
 	s.mu.Lock()

@@ -1,6 +1,5 @@
 import type {
   Status,
-  Account,
   Balance,
   AddressView,
   Tx,
@@ -8,10 +7,13 @@ import type {
   Preview,
   TxResult,
   SendRequest,
-  LoadWalletRequest,
-  CreateKeystoreRequest,
   SignDataRequest,
   SignDataResult,
+  VaultStatus,
+  WalletView,
+  CreateVaultRequest,
+  UnlockVaultRequest,
+  AddWalletRequest,
 } from "./types";
 
 export class ApiError extends Error {
@@ -63,9 +65,23 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const apiGet = <T>(path: string) => request<T>("GET", path);
 export const apiPost = <T>(path: string, body?: unknown) => request<T>("POST", path, body);
 
+export const apiDelete = <T>(path: string, body?: unknown) => request<T>("DELETE", path, body);
+
 export const getStatus = () => apiGet<Status>("/status");
-export const loadWallet = (req: LoadWalletRequest) => apiPost<Account>("/wallet", req);
-export const createKeystore = (req: CreateKeystoreRequest) => apiPost<Account>("/wallet/keystore", req);
+
+// Vault lifecycle.
+export const getVaultStatus = () => apiGet<VaultStatus>("/vault/status");
+export const createVault = (req: CreateVaultRequest) => apiPost<VaultStatus>("/vault", req);
+export const unlockVault = (req: UnlockVaultRequest) => apiPost<WalletView[]>("/vault/unlock", req);
+export const lockVault = () => apiPost<VaultStatus>("/vault/lock");
+
+// Wallet management.
+export const addWallet = (req: AddWalletRequest) => apiPost<WalletView>("/wallet", req);
+export const activateWallet = (id: string) =>
+  apiPost<WalletView>(`/wallet/${encodeURIComponent(id)}/activate`);
+export const removeWallet = (id: string, vaultPassword: string) =>
+  apiDelete<{ removed: boolean }>(`/wallet/${encodeURIComponent(id)}`, { vault_password: vaultPassword });
+
 export const getBalance = () => apiGet<Balance>("/wallet/balance");
 export const getAddresses = () => apiGet<AddressView>("/wallet/addresses");
 export const getTransactions = () => apiGet<Tx[]>("/wallet/transactions");

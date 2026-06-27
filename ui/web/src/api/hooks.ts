@@ -1,6 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
-import type { Status, Balance, AddressView, Tx, DelegationView } from "./types";
-import { getStatus, getBalance, getAddresses, getTransactions, getDelegation } from "./client";
+import type { Status, Balance, AddressView, Tx, DelegationView, VaultStatus } from "./types";
+import {
+  getStatus,
+  getVaultStatus,
+  getBalance,
+  getAddresses,
+  getTransactions,
+  getDelegation,
+} from "./client";
 
 export interface AsyncState<T> {
   data: T | null;
@@ -62,6 +69,7 @@ export function useAsync<T>(fn: () => Promise<T>, opts?: { pollMs?: number }): A
 }
 
 export const useStatus = (): AsyncState<Status> => useAsync(getStatus, { pollMs: 2000 });
+export const useVaultStatus = (): AsyncState<VaultStatus> => useAsync(getVaultStatus);
 export const useBalance = (): AsyncState<Balance> => useAsync(getBalance);
 export const useAddresses = (): AsyncState<AddressView> => useAsync(getAddresses);
 export const useTransactions = (): AsyncState<Tx[]> => useAsync(getTransactions);

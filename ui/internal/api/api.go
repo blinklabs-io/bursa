@@ -24,6 +24,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
+	"github.com/blinklabs-io/bursa/ui/internal/vault"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
 
@@ -32,9 +33,10 @@ type Statuser interface {
 	Status() supervisor.Status
 }
 
-// Wallet is the read-only wallet surface the API exposes.
+// Wallet is the read-only wallet surface the API exposes: it serves views for
+// the active wallet. SetAccount binds the active wallet's read-only account
+// (pushed by the vault on unlock/activate/add).
 type Wallet interface {
-	SetWallet(mnemonic, network string, windowN int) (*wallet.Account, error)
 	SetAccount(acct *wallet.Account) error
 	Balance(ctx context.Context) (wallet.Balance, error)
 	Addresses(ctx context.Context) (wallet.AddressView, error)
@@ -42,23 +44,75 @@ type Wallet interface {
 	Delegation(ctx context.Context) (wallet.DelegationView, error)
 }
 
-// Spender is the spending surface the API exposes: enabling spending (creating
-// the encrypted keystore + deriving the account), building a send for preview,
-// and confirming it (decrypt → sign → submit).
+// Spender is the spending surface the API exposes for the active wallet:
+// building a send for preview, confirming it (decrypt seed → sign → submit), and
+// CIP-8/CIP-30 message signing. SetAccount binds the active wallet (pushed by
+// the vault); the seed is decrypted via the vault under the wallet's spending
+// password at confirm/sign time.
 type Spender interface {
-	SetWallet(mnemonic, network, password string) (*wallet.Account, error)
+	SetAccount(acct *wallet.Account)
 	Build(ctx context.Context, req spend.SendRequest) (spend.Preview, error)
 	Confirm(ctx context.Context, pendingID, password string) (spend.TxResult, error)
 	SignData(addr string, message []byte, password string) (signatureHex, keyHex string, err error)
 }
 
+// Vault is the encrypted multi-wallet store the API drives. It owns the wallet
+// list and the active-wallet selection; the API pushes the active wallet's
+// account onto the Wallet/Spender services whenever it changes.
+type Vault interface {
+	Exists() bool
+	Locked() bool
+	WalletCount() int
+	Create(vaultPassword string) error
+	Unlock(vaultPassword string) ([]vault.WalletMeta, error)
+	Lock()
+	Wallets() ([]vault.WalletMeta, error)
+	AddWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
+	RemoveWallet(id, vaultPassword string) error
+	SetActive(id string) (vault.WalletMeta, error)
+	Active() (vault.WalletMeta, error)
+}
+
 const defaultWindow = 20
 
+// vaultStatus is the GET /vault/status response.
+type vaultStatus struct {
+	Exists      bool `json:"exists"`
+	Locked      bool `json:"locked"`
+	WalletCount int  `json:"wallet_count"`
+}
+
+// walletView is the API representation of a vault wallet: the read-only fields a
+// client needs to list and bind wallets. The encrypted seed is never exposed.
+type walletView struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Network      string   `json:"network"`
+	StakeAddress string   `json:"stake_address"`
+	Addresses    []string `json:"addresses"`
+	Active       bool     `json:"active"`
+}
+
+func toWalletView(w vault.WalletMeta, activeID string) walletView {
+	v := walletView{
+		ID:      w.ID,
+		Name:    w.Name,
+		Network: w.Network,
+		Active:  w.ID == activeID,
+	}
+	if w.Account != nil {
+		v.StakeAddress = w.Account.StakeAddress
+		v.Addresses = w.Account.ReceiveAddresses
+	}
+	return v
+}
+
 // NewHandler returns the loopback control-surface mux. network is the network
-// the embedded node runs on; wallet requests must match it (or omit it).
-// spa is the handler for the embedded SPA; it is registered as the catch-all
-// route so that the specific API routes above take precedence on the mux.
-func NewHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Handler) http.Handler {
+// the embedded node runs on; wallet requests must match it (or omit it). vlt is
+// the encrypted multi-wallet store; the API pushes the active wallet onto wl/sp
+// whenever the selection changes. spa is the embedded SPA, registered as the
+// catch-all so the specific API routes take precedence on the mux.
+func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, network string, spa http.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -69,10 +123,84 @@ func NewHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Han
 		writeJSON(w, http.StatusOK, st.Status())
 	})
 
+	// bindActive pushes the active wallet's read-only account onto the read and
+	// spend services so existing endpoints operate on it. Called after unlock,
+	// activate, and add.
+	bindActive := func(w vault.WalletMeta) {
+		if w.Account == nil {
+			return
+		}
+		_ = wl.SetAccount(w.Account)
+		sp.SetAccount(w.Account)
+	}
+
+	// --- Vault lifecycle -----------------------------------------------------
+
+	mux.HandleFunc("GET /vault/status", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, vaultStatus{
+			Exists:      vlt.Exists(),
+			Locked:      vlt.Locked(),
+			WalletCount: vlt.WalletCount(),
+		})
+	})
+
+	mux.HandleFunc("POST /vault", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if !requirePassword(w, req.Password) {
+			return
+		}
+		if err := vlt.Create(req.Password); err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, vaultStatus{Exists: true, Locked: false, WalletCount: 0})
+	})
+
+	mux.HandleFunc("POST /vault/unlock", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		wallets, err := vlt.Unlock(req.Password)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		// Unlock auto-activates a sole wallet; bind it so reads work immediately.
+		if active, err := vlt.Active(); err == nil {
+			bindActive(active)
+		}
+		writeJSON(w, http.StatusOK, walletList(wallets, vlt))
+	})
+
+	mux.HandleFunc("POST /vault/lock", func(w http.ResponseWriter, _ *http.Request) {
+		vlt.Lock()
+		writeJSON(w, http.StatusOK, vaultStatus{
+			Exists: vlt.Exists(), Locked: true, WalletCount: vlt.WalletCount(),
+		})
+	})
+
+	// --- Wallet management ---------------------------------------------------
+
+	// POST /wallet adds a wallet to the vault: derive + encrypt seed under the
+	// spending password, store read-only metadata under the vault password. The
+	// new wallet becomes active. No synced node needed (derivation is offline).
 	mux.HandleFunc("POST /wallet", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Mnemonic string `json:"mnemonic"`
-			Network  string `json:"network"`
+			Name          string `json:"name"`
+			Mnemonic      string `json:"mnemonic"`
+			Network       string `json:"network"`
+			VaultPassword string `json:"vault_password"`
+			SpendPassword string `json:"spend_password"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
@@ -82,13 +210,54 @@ func NewHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Han
 		if !ok {
 			return
 		}
-		acct, err := wl.SetWallet(req.Mnemonic, net, defaultWindow)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		// The spending password is required and floored at MinPasswordLen; the
+		// vault password must be supplied to re-seal the index.
+		if !requirePassword(w, req.SpendPassword) {
 			return
 		}
-		writeJSON(w, http.StatusOK, acct)
+		if req.VaultPassword == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vault_password is required"})
+			return
+		}
+		meta, err := vlt.AddWallet(req.Name, req.Mnemonic, net, req.VaultPassword, req.SpendPassword, defaultWindow)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		bindActive(meta)
+		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
 	})
+
+	mux.HandleFunc("POST /wallet/{id}/activate", func(w http.ResponseWriter, r *http.Request) {
+		meta, err := vlt.SetActive(r.PathValue("id"))
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		bindActive(meta)
+		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
+	})
+
+	mux.HandleFunc("DELETE /wallet/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			VaultPassword string `json:"vault_password"`
+		}
+		// A DELETE may carry a body for the vault password; tolerate an empty body.
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&req)
+		}
+		if req.VaultPassword == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vault_password is required"})
+			return
+		}
+		if err := vlt.RemoveWallet(r.PathValue("id"), req.VaultPassword); err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"removed": true})
+	})
+
+	// --- Read-only views (active wallet) -------------------------------------
 
 	mux.HandleFunc("GET /wallet/balance", gated(st, func(w http.ResponseWriter, r *http.Request) {
 		v, err := wl.Balance(r.Context())
@@ -107,39 +276,7 @@ func NewHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Han
 		serve(w, v, err)
 	}))
 
-	// Spending. Keystore setup derives + encrypts and so needs no synced node;
-	// build/confirm are gated on a fully synced node (readyGate).
-	mux.HandleFunc("POST /wallet/keystore", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Mnemonic string `json:"mnemonic"`
-			Network  string `json:"network"`
-			Password string `json:"password"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		net, ok := resolveNetwork(w, req.Network, network)
-		if !ok {
-			return
-		}
-		if utf8.RuneCountInString(req.Password) < keystore.MinPasswordLen {
-			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": fmt.Sprintf("password must be at least %d characters", keystore.MinPasswordLen),
-			})
-			return
-		}
-		acct, err := sp.SetWallet(req.Mnemonic, net, req.Password)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := wl.SetAccount(acct); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, acct)
-	})
+	// --- Spending (active wallet, spending password) -------------------------
 
 	mux.HandleFunc("POST /wallet/send", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
 		var req spend.SendRequest
@@ -164,8 +301,8 @@ func NewHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Han
 	}))
 
 	// CIP-8 / CIP-30 message signing. Ungated: signing is fully offline (no node
-	// needed) — it requires only the keystore (spending password) to unlock the
-	// key. A read-only wallet has no keystore and gets 409.
+	// needed) — it requires only the active wallet's spending password to decrypt
+	// its seed.
 	mux.HandleFunc("POST /wallet/sign-data", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Address  string `json:"address"`
@@ -185,6 +322,33 @@ func NewHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Han
 	mux.Handle("/", spa)
 
 	return mux
+}
+
+// walletList maps vault metadata to the client-facing wallet views, marking the
+// active wallet.
+func walletList(wallets []vault.WalletMeta, vlt Vault) []walletView {
+	activeID := ""
+	if active, err := vlt.Active(); err == nil {
+		activeID = active.ID
+	}
+	out := make([]walletView, 0, len(wallets))
+	for _, w := range wallets {
+		out = append(out, toWalletView(w, activeID))
+	}
+	return out
+}
+
+// requirePassword enforces the shared MinPasswordLen floor (counting runes, to
+// match the server-side scrypt input). It writes a 400 and returns false when
+// the password is too short.
+func requirePassword(w http.ResponseWriter, password string) bool {
+	if utf8.RuneCountInString(password) < keystore.MinPasswordLen {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("password must be at least %d characters", keystore.MinPasswordLen),
+		})
+		return false
+	}
+	return true
 }
 
 // resolveNetwork returns the effective network for a wallet request, defaulting
@@ -234,18 +398,28 @@ func readyGate(st Statuser, next http.HandlerFunc) http.HandlerFunc {
 }
 
 // serve writes a query result, or maps a known error to its HTTP status code
-// (falling back to 500). The spend sentinels carry the precise client-facing
-// code so the caller can distinguish e.g. wrong-password from insufficient-funds.
+// (falling back to 500). The spend and vault sentinels carry the precise
+// client-facing code so the caller can distinguish e.g. wrong-password from
+// insufficient-funds or a locked vault.
 func serve[T any](w http.ResponseWriter, v T, err error) {
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, v)
-	case errors.Is(err, wallet.ErrNoWallet), errors.Is(err, spend.ErrNoWallet):
-		writeJSON(w, http.StatusConflict, errBody(err)) // 409: no wallet/keystore loaded
+	case errors.Is(err, vault.ErrNoVault):
+		writeJSON(w, http.StatusNotFound, errBody(err)) // 404: no vault yet
+	case errors.Is(err, vault.ErrVaultExists):
+		writeJSON(w, http.StatusConflict, errBody(err)) // 409: vault already exists
+	case errors.Is(err, vault.ErrUnknownWallet):
+		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
+	case errors.Is(err, vault.ErrDuplicateWallet):
+		writeJSON(w, http.StatusConflict, errBody(err)) // 409
+	case errors.Is(err, vault.ErrLocked), errors.Is(err, vault.ErrNoActiveWallet),
+		errors.Is(err, wallet.ErrNoWallet), errors.Is(err, spend.ErrNoWallet):
+		writeJSON(w, http.StatusConflict, errBody(err)) // 409: locked / no active wallet
+	case errors.Is(err, vault.ErrWrongPassword), errors.Is(err, spend.ErrWrongPassword):
+		writeJSON(w, http.StatusUnauthorized, errBody(err)) // 401
 	case errors.Is(err, spend.ErrInvalidRequest):
 		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400
-	case errors.Is(err, spend.ErrWrongPassword):
-		writeJSON(w, http.StatusUnauthorized, errBody(err)) // 401
 	case errors.Is(err, spend.ErrUnknownPending):
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
 	case errors.Is(err, spend.ErrExpiredPending):

@@ -2,16 +2,39 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { App } from "./app";
 import * as hooks from "./api/hooks";
 import * as client from "./api/client";
-import type { Account } from "./api/types";
+import type { WalletView } from "./api/types";
 
-const mockAccount: Account = {
+const walletA: WalletView = {
+  id: "w1",
+  name: "Main",
   network: "preview",
   stake_address: "stake_test1abc",
-  receive_addresses: ["addr_test1abc"],
+  addresses: ["addr_test1abc"],
+  active: true,
 };
 
 function stubStatus(state: string) {
-  vi.spyOn(hooks, "useStatus").mockReturnValue({ data: { state, tip: 0, caughtUp: state === "ready" }, error: null, loading: false, refresh: vi.fn() } as never);
+  vi.spyOn(hooks, "useStatus").mockReturnValue({
+    data: { state, tip: 0, caughtUp: state === "ready" },
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+}
+
+function stubVault(data: { exists: boolean; locked: boolean; wallet_count: number }) {
+  vi.spyOn(hooks, "useVaultStatus").mockReturnValue({
+    data,
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+}
+
+// Keep Portfolio's data hooks quiet so it renders without firing real fetches.
+function quietPortfolio() {
+  vi.spyOn(hooks, "useBalance").mockReturnValue({ data: { lovelace: "1000000", assets: [] }, error: null, loading: false, refresh: vi.fn() } as never);
+  vi.spyOn(hooks, "useDelegation").mockReturnValue({ data: null, error: null, loading: false, refresh: vi.fn() } as never);
 }
 
 afterEach(() => {
@@ -19,97 +42,108 @@ afterEach(() => {
   window.location.hash = "";
 });
 
-test("with no wallet loaded, only Setup is shown", async () => {
+test("no vault → Create Vault flow is shown", async () => {
   stubStatus("ready");
-  // simulate the no-wallet signal: the wallet hooks reject 409 — App treats that as 'needs setup'
+  stubVault({ exists: false, locked: true, wallet_count: 0 });
   render(<App />);
-  await waitFor(() => expect(screen.getAllByText(/set up|load wallet/i).length).toBeGreaterThan(0));
+  await waitFor(() => expect(screen.getByRole("button", { name: /create vault/i })).toBeInTheDocument());
+});
+
+test("vault exists but locked → Unlock screen (vault password only, no seed field)", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 2 });
+  render(<App />);
+  await waitFor(() => expect(screen.getByRole("button", { name: /^unlock$/i })).toBeInTheDocument());
+  // No mnemonic/seed field on the unlock screen.
+  expect(screen.queryByLabelText(/recovery phrase/i)).not.toBeInTheDocument();
+  expect(screen.getByLabelText(/vault password/i)).toBeInTheDocument();
+});
+
+test("unlocking a single-wallet vault binds it and shows the main UI", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  // The sidebar and the active wallet appear.
+  await waitFor(() => expect(screen.getByText("Portfolio")).toBeInTheDocument());
+  expect(screen.getByText("Main")).toBeInTheDocument();
 });
 
 test("Send nav is disabled until the node is ready", async () => {
   stubStatus("syncing");
-  render(<App />);
-  // The Send entry is present but disabled while not ready.
-  await waitFor(() => expect(screen.getByText("Send").closest("button")).toBeDisabled());
-});
-
-test("deep-linking #/send while syncing falls back to Portfolio (guard)", async () => {
-  // Regression for the deep-link guard: reaching #/send directly (bypassing the
-  // disabled nav button) must NOT render the Send screen until the node is ready.
-  stubStatus("syncing");
-  // Keep Portfolio's data hooks quiet so it renders without firing real fetches.
-  vi.spyOn(hooks, "useBalance").mockReturnValue({ data: null, error: null, loading: true, refresh: vi.fn() } as never);
-  vi.spyOn(hooks, "useDelegation").mockReturnValue({ data: null, error: null, loading: true, refresh: vi.fn() } as never);
-  vi.spyOn(client, "loadWallet").mockResolvedValue(mockAccount);
-  window.location.hash = "#/send";
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
 
   render(<App />);
-  // Load a read-only wallet to get past Setup into the routed content area.
-  fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), {
-    target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: /load wallet/i }));
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
-  // Once the wallet loads, Setup is gone — but the Send screen must not appear.
-  await waitFor(() => expect(screen.queryByRole("button", { name: /load wallet/i })).not.toBeInTheDocument());
-  expect(screen.queryByText("Send ADA")).not.toBeInTheDocument();
-});
-
-test("a crafted hash (#/constructor) falls back to Portfolio instead of crashing", async () => {
-  // Regression: ROUTES is a Map, so an inherited Object.prototype key like
-  // "constructor" can't resolve to a function and get rendered as a screen.
-  stubStatus("ready");
-  vi.spyOn(hooks, "useBalance").mockReturnValue({ data: { lovelace: "1000000", assets: [] }, error: null, loading: false, refresh: vi.fn() } as never);
-  vi.spyOn(hooks, "useDelegation").mockReturnValue({ data: null, error: null, loading: false, refresh: vi.fn() } as never);
-  vi.spyOn(client, "loadWallet").mockResolvedValue(mockAccount);
-  window.location.hash = "#/constructor";
-
-  render(<App />);
-  fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), {
-    target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: /load wallet/i }));
-
-  // Falls back to Portfolio (its "Balance" card renders), not a blank/crashed screen.
-  await waitFor(() => expect(screen.getByText("Balance")).toBeInTheDocument());
-});
-
-test("read-only wallet cannot reach Send even when the node is ready", async () => {
-  // Regression: Send is gated on spendingEnabled, not just node readiness. A
-  // wallet loaded without a password (read-only) can never sign, so it must not
-  // enter the send flow even on a fully synced node.
-  stubStatus("ready");
-  vi.spyOn(hooks, "useBalance").mockReturnValue({ data: { lovelace: "1000000", assets: [] }, error: null, loading: false, refresh: vi.fn() } as never);
-  vi.spyOn(hooks, "useDelegation").mockReturnValue({ data: null, error: null, loading: false, refresh: vi.fn() } as never);
-  vi.spyOn(client, "loadWallet").mockResolvedValue(mockAccount); // no password → read-only
-  window.location.hash = "#/send";
-
-  render(<App />);
-  fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), {
-    target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: /load wallet/i }));
-
-  await waitFor(() => expect(screen.queryByRole("button", { name: /load wallet/i })).not.toBeInTheDocument());
-  // Send screen is NOT shown (falls back to Portfolio), and the nav item is disabled.
-  expect(screen.queryByText("Send ADA")).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText("Main")).toBeInTheDocument());
   expect(screen.getByText("Send").closest("button")).toBeDisabled();
 });
 
-test("spending-enabled wallet on a ready node can reach Send", async () => {
-  // The gate must still allow the valid case: a password-backed wallet on a
-  // synced node enters the send flow.
-  stubStatus("ready");
-  vi.spyOn(client, "createKeystore").mockResolvedValue(mockAccount); // password → spending enabled
+test("deep-linking #/send while syncing falls back to Portfolio (guard)", async () => {
+  stubStatus("syncing");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
   window.location.hash = "#/send";
 
   render(<App />);
-  fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), {
-    target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
-  });
-  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "s3cretpw" } });
-  fireEvent.click(screen.getByRole("button", { name: /load wallet/i }));
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
-  // Send screen renders (its "Send ADA" card).
+  await waitFor(() => expect(screen.getByText("Main")).toBeInTheDocument());
+  // Send screen must NOT appear until the node is ready.
+  expect(screen.queryByText("Send ADA")).not.toBeInTheDocument();
+});
+
+test("an active wallet on a ready node can reach Send", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+  window.location.hash = "#/send";
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
   await waitFor(() => expect(screen.getByText("Send ADA")).toBeInTheDocument());
+});
+
+test("a crafted hash (#/constructor) falls back to Portfolio instead of crashing", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+  window.location.hash = "#/constructor";
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  await waitFor(() => expect(screen.getByText("Balance")).toBeInTheDocument());
+});
+
+test("Add wallet action opens the add-wallet form", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  await waitFor(() => expect(screen.getByText("Main")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /add wallet/i }));
+  // The add-wallet form (with a recovery-phrase field) appears.
+  await waitFor(() => expect(screen.getByLabelText(/recovery phrase/i)).toBeInTheDocument());
 });

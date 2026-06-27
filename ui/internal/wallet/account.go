@@ -21,6 +21,22 @@ type Account struct {
 	ReceiveAddresses []string `json:"receive_addresses"`
 }
 
+// AccountXpub returns the Bech32-encoded extended public key for the CIP-1852
+// account m/1852'/1815'/0' derived from the mnemonic. It is stored in the vault
+// index as a stable account identifier and for any future xpub-based read-only
+// derivation; the account-level xpub never reveals a spending key.
+func AccountXpub(mnemonic string) (string, error) {
+	root, err := bursa.GetRootKeyFromMnemonic(mnemonic, "")
+	if err != nil {
+		return "", fmt.Errorf("root key from mnemonic: %w", err)
+	}
+	acctKey, err := bursa.GetAccountKey(root, 0)
+	if err != nil {
+		return "", fmt.Errorf("account key: %w", err)
+	}
+	return acctKey.Public().String(), nil
+}
+
 // Derive builds the account for the given mnemonic and network, producing the
 // stake address plus windowN external receive addresses (indices 0..windowN-1),
 // all bound to the canonical stake key m/1852'/1815'/0'/2/0.
