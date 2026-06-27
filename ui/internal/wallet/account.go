@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
@@ -30,10 +31,25 @@ func AccountXpub(mnemonic string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("root key from mnemonic: %w", err)
 	}
+	return accountXpubFromRoot(root)
+}
+
+// AccountXpubFromMnemonicBytes is the zeroable-byte variant of AccountXpub.
+func AccountXpubFromMnemonicBytes(mnemonic []byte) (string, error) {
+	root, err := rootKeyFromMnemonicBytes(mnemonic)
+	if err != nil {
+		return "", fmt.Errorf("root key from mnemonic: %w", err)
+	}
+	return accountXpubFromRoot(root)
+}
+
+func accountXpubFromRoot(root bip32.XPrv) (string, error) {
+	defer zeroXPrv(root)
 	acctKey, err := bursa.GetAccountKey(root, 0)
 	if err != nil {
 		return "", fmt.Errorf("account key: %w", err)
 	}
+	defer zeroXPrv(acctKey)
 	return acctKey.Public().String(), nil
 }
 
@@ -41,6 +57,24 @@ func AccountXpub(mnemonic string) (string, error) {
 // stake address plus windowN external receive addresses (indices 0..windowN-1),
 // all bound to the canonical stake key m/1852'/1815'/0'/2/0.
 func Derive(mnemonic, network string, windowN int) (*Account, error) {
+	root, err := bursa.GetRootKeyFromMnemonic(mnemonic, "")
+	if err != nil {
+		return nil, fmt.Errorf("root key from mnemonic: %w", err)
+	}
+	return deriveFromRoot(root, network, windowN)
+}
+
+// DeriveFromMnemonicBytes is the zeroable-byte variant of Derive.
+func DeriveFromMnemonicBytes(mnemonic []byte, network string, windowN int) (*Account, error) {
+	root, err := rootKeyFromMnemonicBytes(mnemonic)
+	if err != nil {
+		return nil, fmt.Errorf("root key from mnemonic: %w", err)
+	}
+	return deriveFromRoot(root, network, windowN)
+}
+
+func deriveFromRoot(root bip32.XPrv, network string, windowN int) (*Account, error) {
+	defer zeroXPrv(root)
 	if windowN < 1 {
 		return nil, fmt.Errorf("windowN must be at least 1, got %d", windowN)
 	}
@@ -49,18 +83,16 @@ func Derive(mnemonic, network string, windowN int) (*Account, error) {
 		return nil, err
 	}
 
-	root, err := bursa.GetRootKeyFromMnemonic(mnemonic, "")
-	if err != nil {
-		return nil, fmt.Errorf("root key from mnemonic: %w", err)
-	}
 	acctKey, err := bursa.GetAccountKey(root, 0)
 	if err != nil {
 		return nil, fmt.Errorf("account key: %w", err)
 	}
+	defer zeroXPrv(acctKey)
 	stakeKey, err := bursa.GetStakeKey(acctKey, 0)
 	if err != nil {
 		return nil, fmt.Errorf("stake key: %w", err)
 	}
+	defer zeroXPrv(stakeKey)
 	stakeHash := stakeKey.Public().PublicKey().Hash()
 
 	stakeAddr, err := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, netID, nil, stakeHash)
@@ -75,6 +107,7 @@ func Derive(mnemonic, network string, windowN int) (*Account, error) {
 			return nil, fmt.Errorf("payment key %d: %w", i, err)
 		}
 		payHash := payKey.Public().PublicKey().Hash()
+		zeroXPrv(payKey)
 		addr, err := lcommon.NewAddressFromParts(lcommon.AddressTypeKeyKey, netID, payHash, stakeHash)
 		if err != nil {
 			return nil, fmt.Errorf("address %d: %w", i, err)
@@ -87,4 +120,10 @@ func Derive(mnemonic, network string, windowN int) (*Account, error) {
 		StakeAddress:     stakeAddr.String(),
 		ReceiveAddresses: receive,
 	}, nil
+}
+
+func zeroXPrv(key bip32.XPrv) {
+	for i := range key {
+		key[i] = 0
+	}
 }

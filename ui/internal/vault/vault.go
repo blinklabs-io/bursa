@@ -53,6 +53,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
@@ -289,12 +290,25 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 // legacy keystore migration so the final vault is written in one atomic persist:
 // failure leaves no empty vault behind to block a retry.
 func (v *Vault) ImportWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (WalletMeta, error) {
+	mnemonicBytes := []byte(mnemonic)
+	defer keystore.Zero(mnemonicBytes)
+	return v.importWallet(name, mnemonicBytes, network, vaultPassword, spendPassword, windowN)
+}
+
+// ImportWalletMnemonicBytes is the zeroable-byte variant used when the
+// plaintext mnemonic came from a decryptable buffer. The caller keeps ownership
+// of mnemonic and should zero it after this method returns.
+func (v *Vault) ImportWalletMnemonicBytes(name string, mnemonic []byte, network, vaultPassword, spendPassword string, windowN int) (WalletMeta, error) {
+	return v.importWallet(name, mnemonic, network, vaultPassword, spendPassword, windowN)
+}
+
+func (v *Vault) importWallet(name string, mnemonic []byte, network, vaultPassword, spendPassword string, windowN int) (WalletMeta, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.Exists() {
 		return WalletMeta{}, ErrVaultExists
 	}
-	meta, seed, err := v.prepareWallet(name, mnemonic, network, spendPassword, windowN)
+	meta, seed, err := v.prepareWalletBytes(name, mnemonic, network, spendPassword, windowN)
 	if err != nil {
 		return WalletMeta{}, err
 	}
@@ -515,15 +529,24 @@ func (v *Vault) decodeIndex(c keystore.Container, vaultPassword string) (*index,
 }
 
 func (v *Vault) prepareWallet(name, mnemonic, network, spendPassword string, windowN int) (WalletMeta, keystore.Container, error) {
-	acct, err := wallet.Derive(mnemonic, network, windowN)
+	mnemonicBytes := []byte(mnemonic)
+	defer keystore.Zero(mnemonicBytes)
+	return v.prepareWalletBytes(name, mnemonicBytes, network, spendPassword, windowN)
+}
+
+func (v *Vault) prepareWalletBytes(name string, mnemonic []byte, network, spendPassword string, windowN int) (WalletMeta, keystore.Container, error) {
+	if utf8.RuneCountInString(spendPassword) < keystore.MinPasswordLen {
+		return WalletMeta{}, keystore.Container{}, fmt.Errorf("password must be at least %d characters", keystore.MinPasswordLen)
+	}
+	acct, err := wallet.DeriveFromMnemonicBytes(mnemonic, network, windowN)
 	if err != nil {
 		return WalletMeta{}, keystore.Container{}, err
 	}
-	xpub, err := wallet.AccountXpub(mnemonic)
+	xpub, err := wallet.AccountXpubFromMnemonicBytes(mnemonic)
 	if err != nil {
 		return WalletMeta{}, keystore.Container{}, err
 	}
-	seedBlob, err := v.seal([]byte(mnemonic), spendPassword)
+	seedBlob, err := v.seal(mnemonic, spendPassword)
 	if err != nil {
 		return WalletMeta{}, keystore.Container{}, err
 	}

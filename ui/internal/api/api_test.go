@@ -51,6 +51,7 @@ type fakeVault struct {
 	gotName   string
 	gotSpend  string
 	gotVault  string
+	gotSeed   []byte
 }
 
 type fakeLegacyKeystore struct {
@@ -58,6 +59,7 @@ type fakeLegacyKeystore struct {
 	mnemonic []byte
 	err      error
 	gotPw    string
+	returned []byte
 }
 
 func (f *fakeLegacyKeystore) Exists() bool { return f.exists }
@@ -67,7 +69,8 @@ func (f *fakeLegacyKeystore) Unlock(password string) ([]byte, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	return append([]byte(nil), f.mnemonic...), nil
+	f.returned = append([]byte(nil), f.mnemonic...)
+	return f.returned, nil
 }
 
 func sampleAccount(net string) *wallet.Account {
@@ -126,6 +129,14 @@ func (f *fakeVault) AddWallet(name, _, network, vaultPw, spendPw string, _ int) 
 }
 
 func (f *fakeVault) ImportWallet(name, _, network, vaultPw, spendPw string, _ int) (vault.WalletMeta, error) {
+	return f.importWallet(name, nil, network, vaultPw, spendPw)
+}
+
+func (f *fakeVault) ImportWalletMnemonicBytes(name string, mnemonic []byte, network, vaultPw, spendPw string, _ int) (vault.WalletMeta, error) {
+	return f.importWallet(name, mnemonic, network, vaultPw, spendPw)
+}
+
+func (f *fakeVault) importWallet(name string, mnemonic []byte, network, vaultPw, spendPw string) (vault.WalletMeta, error) {
 	if f.importErr != nil {
 		return vault.WalletMeta{}, f.importErr
 	}
@@ -135,6 +146,7 @@ func (f *fakeVault) ImportWallet(name, _, network, vaultPw, spendPw string, _ in
 	f.gotName = name
 	f.gotSpend = spendPw
 	f.gotVault = vaultPw
+	f.gotSeed = mnemonic
 	meta := vault.WalletMeta{ID: "legacy1", Name: name, Network: network, Account: sampleAccount(network)}
 	f.wallets = []vault.WalletMeta{meta}
 	f.activeID = meta.ID
@@ -416,6 +428,16 @@ func TestMigrateLegacyKeystoreImportsAndBinds(t *testing.T) {
 	if legacy.gotPw != "legacy-spend-password" {
 		t.Fatalf("legacy unlock password = %q", legacy.gotPw)
 	}
+	for i, b := range legacy.returned {
+		if b != 0 {
+			t.Fatalf("legacy mnemonic byte %d not zeroed after import", i)
+		}
+	}
+	for i, b := range fv.gotSeed {
+		if b != 0 {
+			t.Fatalf("imported mnemonic byte %d not zeroed after import", i)
+		}
+	}
 	if !fw.set || !sp.set || sp.gotID != "legacy1" {
 		t.Fatalf("imported wallet should be bound: wallet set=%v spend set=%v id=%q", fw.set, sp.set, sp.gotID)
 	}
@@ -441,6 +463,25 @@ func TestMigrateLegacyKeystoreWrongPassword(t *testing.T) {
 	}
 	if fv.imported || fv.exists {
 		t.Fatal("wrong legacy password should not create a vault")
+	}
+}
+
+func TestMigrateLegacyKeystoreRequiresSpendPasswordMinLength(t *testing.T) {
+	fv := &fakeVault{exists: false, locked: true}
+	legacy := &fakeLegacyKeystore{exists: true, mnemonic: []byte("abandon abandon about")}
+	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler(), WithLegacyKeystore(legacy))
+
+	body := `{"name":"Imported","vault_password":"valid-vault-password","spend_password":"short"}`
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/migrate-legacy", bytes.NewBufferString(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("short legacy spend password = %d, want 400", rec.Code)
+	}
+	if legacy.gotPw != "" {
+		t.Fatalf("legacy keystore should not be unlocked with a too-short password, got %q", legacy.gotPw)
+	}
+	if fv.imported || fv.exists {
+		t.Fatal("short legacy spend password should not create a vault")
 	}
 }
 

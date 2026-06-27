@@ -117,6 +117,39 @@ func TestImportWalletCreatesSingleWalletVault(t *testing.T) {
 	}
 }
 
+func TestImportWalletMnemonicBytesCreatesSingleWalletVault(t *testing.T) {
+	v := newTestVault(t)
+	mnemonic := []byte(mnemonicA)
+	meta, err := v.ImportWalletMnemonicBytes("legacy", mnemonic, "preview", vaultPw, spendPwA, window)
+	keystore.Zero(mnemonic)
+	if err != nil {
+		t.Fatalf("ImportWalletMnemonicBytes: %v", err)
+	}
+	if !v.Exists() || v.Locked() {
+		t.Fatal("import should create an unlocked vault")
+	}
+	if v.ActiveID() != meta.ID {
+		t.Fatalf("active = %q, want imported wallet %q", v.ActiveID(), meta.ID)
+	}
+	seed, err := v.UnlockSeed(spendPwA)
+	if err != nil {
+		t.Fatalf("UnlockSeed after import: %v", err)
+	}
+	if string(seed) != mnemonicA {
+		t.Fatal("imported seed mismatch")
+	}
+}
+
+func TestImportWalletRejectsShortSpendPassword(t *testing.T) {
+	v := newTestVault(t)
+	if _, err := v.ImportWallet("legacy", mnemonicA, "preview", vaultPw, "short", window); err == nil {
+		t.Fatal("ImportWallet should reject a too-short spend password")
+	}
+	if v.Exists() {
+		t.Fatal("short spend password should not create a vault")
+	}
+}
+
 func TestUnlockNoVault(t *testing.T) {
 	v := newTestVault(t)
 	if _, err := v.Unlock(vaultPw); !errors.Is(err, ErrNoVault) {
@@ -189,6 +222,19 @@ func TestAddWalletReadOnlyAndSpendLayers(t *testing.T) {
 	// The VAULT password must NOT decrypt the seed (different layer).
 	if _, err := v.UnlockSeed(vaultPw); !errors.Is(err, ErrWrongPassword) {
 		t.Fatalf("UnlockSeed with vault password = %v, want ErrWrongPassword (layers are separate)", err)
+	}
+}
+
+func TestAddWalletRejectsShortSpendPassword(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := v.AddWallet("main", mnemonicA, "preview", vaultPw, "short", window); err == nil {
+		t.Fatal("AddWallet should reject a too-short spend password")
+	}
+	if v.WalletCount() != 0 {
+		t.Fatalf("WalletCount = %d, want 0", v.WalletCount())
 	}
 }
 

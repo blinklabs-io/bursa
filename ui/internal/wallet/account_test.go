@@ -61,6 +61,37 @@ func TestDeriveDeterministic(t *testing.T) {
 	}
 }
 
+func TestDeriveFromMnemonicBytesMatchesStringDerive(t *testing.T) {
+	fromString, err := Derive(testMnemonic, "preview", 3)
+	if err != nil {
+		t.Fatalf("Derive: %v", err)
+	}
+	fromBytes, err := DeriveFromMnemonicBytes([]byte(testMnemonic), "preview", 3)
+	if err != nil {
+		t.Fatalf("DeriveFromMnemonicBytes: %v", err)
+	}
+	if fromBytes.StakeAddress != fromString.StakeAddress {
+		t.Fatalf("stake = %q, want %q", fromBytes.StakeAddress, fromString.StakeAddress)
+	}
+	for i := range fromString.ReceiveAddresses {
+		if fromBytes.ReceiveAddresses[i] != fromString.ReceiveAddresses[i] {
+			t.Fatalf("receive[%d] = %q, want %q", i, fromBytes.ReceiveAddresses[i], fromString.ReceiveAddresses[i])
+		}
+	}
+
+	xpubString, err := AccountXpub(testMnemonic)
+	if err != nil {
+		t.Fatalf("AccountXpub: %v", err)
+	}
+	xpubBytes, err := AccountXpubFromMnemonicBytes([]byte(testMnemonic))
+	if err != nil {
+		t.Fatalf("AccountXpubFromMnemonicBytes: %v", err)
+	}
+	if xpubBytes != xpubString {
+		t.Fatalf("xpub = %q, want %q", xpubBytes, xpubString)
+	}
+}
+
 func TestDeriveInvalidMnemonic(t *testing.T) {
 	if _, err := Derive("not a valid mnemonic", "preview", 1); err == nil {
 		t.Fatal("expected error for invalid mnemonic, got nil")

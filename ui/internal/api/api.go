@@ -72,6 +72,7 @@ type Vault interface {
 	Wallets() ([]vault.WalletMeta, error)
 	AddWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
 	ImportWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
+	ImportWalletMnemonicBytes(name string, mnemonic []byte, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
 	RemoveWallet(id, vaultPassword string) error
 	SetActive(id string) (vault.WalletMeta, error)
 	Active() (vault.WalletMeta, error)
@@ -252,6 +253,9 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, network string, s
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "spend_password is required"})
 			return
 		}
+		if !requirePassword(w, req.SpendPassword) {
+			return
+		}
 		name := strings.TrimSpace(req.Name)
 		if name == "" {
 			name = "Wallet"
@@ -266,7 +270,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, network string, s
 			return
 		}
 		defer keystore.Zero(mnemonic)
-		meta, err := vlt.ImportWallet(name, string(mnemonic), network, req.VaultPassword, req.SpendPassword, defaultWindow)
+		meta, err := vlt.ImportWalletMnemonicBytes(name, mnemonic, network, req.VaultPassword, req.SpendPassword, defaultWindow)
 		if err != nil {
 			serve(w, struct{}{}, err)
 			return
