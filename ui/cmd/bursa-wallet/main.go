@@ -80,16 +80,22 @@ func run() error {
 		MithrilEnabled: mithrilEnabled,
 	})
 
-	// The wallet queries the node's own loopback Blockfrost endpoint.
-	walletSvc := wallet.NewService(chain.NewClient(blockfrostPort))
+	// The wallet queries the node's own loopback Blockfrost endpoint. The same
+	// client also verifies pasted pool/DRep IDs and reads protocol params for the
+	// staking flow (consent law: the embedded node is the only network contact).
+	chainClient := chain.NewClient(blockfrostPort)
+	walletSvc := wallet.NewService(chainClient)
 
 	// Spending builds/signs/submits through the node's loopback UTxO-RPC
-	// endpoint; the mnemonic is encrypted at rest under the data dir.
+	// endpoint; the mnemonic is encrypted at rest under the data dir. Delegation
+	// txs additionally query pool/DRep/account state + protocol params through the
+	// Blockfrost client.
 	chainCtx := utxorpc.NewUtxoRpcChainContext(
 		fmt.Sprintf("http://127.0.0.1:%d", utxorpcPort), netID, nil,
 	)
 	keyStore := keystore.New(filepath.Join(dataDir, "keystore.json"))
 	spendSvc := spend.NewService(chainCtx, keyStore, nil)
+	spendSvc.SetChainQuerier(chainClient)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -101,7 +107,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              "127.0.0.1:8090", // loopback only
-		Handler:           api.NewHandler(sup, walletSvc, spendSvc, network, webui.Handler()),
+		Handler:           api.NewHandler(sup, walletSvc, spendSvc, chainClient, network, webui.Handler()),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	srvErr := make(chan error, 1)

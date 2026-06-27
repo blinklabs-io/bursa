@@ -240,6 +240,111 @@ func TestAccountRewardsNotFound(t *testing.T) {
 	}
 }
 
+func TestProtocolParams(t *testing.T) {
+	drepDeposit := "500000000"
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q", r.Method)
+		}
+		if r.URL.Path != "/api/v0/epochs/latest/parameters" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"key_deposit":"2000000","pool_deposit":"500000000","drep_deposit":"500000000"}`))
+	})
+	got, err := c.ProtocolParams(context.Background())
+	if err != nil {
+		t.Fatalf("ProtocolParams: %v", err)
+	}
+	if got.KeyDeposit != "2000000" || got.PoolDeposit != "500000000" {
+		t.Fatalf("unexpected params: %+v", got)
+	}
+	if got.DRepDeposit == nil || *got.DRepDeposit != drepDeposit {
+		t.Fatalf("drep_deposit = %v, want %q", got.DRepDeposit, drepDeposit)
+	}
+}
+
+func TestProtocolParamsPreConwayDRepDepositNull(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"key_deposit":"2000000","pool_deposit":"500000000","drep_deposit":null}`))
+	})
+	got, err := c.ProtocolParams(context.Background())
+	if err != nil {
+		t.Fatalf("ProtocolParams: %v", err)
+	}
+	if got.DRepDeposit != nil {
+		t.Fatalf("drep_deposit = %v, want nil", got.DRepDeposit)
+	}
+}
+
+func TestPoolFiltersExtendedList(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q", r.Method)
+		}
+		if r.URL.Path != "/api/v0/pools/extended" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"pool_id":"pool1aaa","hex":"aa","margin_cost":0.05,"declared_pledge":"100000000","fixed_cost":"340000000","live_stake":"5000000000","active_stake":"4800000000"},
+			{"pool_id":"pool1bbb","hex":"bb","margin_cost":0.02,"declared_pledge":"200000000","fixed_cost":"170000000","live_stake":"9000000000","active_stake":"8800000000"}
+		]`))
+	})
+	got, err := c.Pool(context.Background(), "pool1bbb")
+	if err != nil {
+		t.Fatalf("Pool: %v", err)
+	}
+	if got.PoolID != "pool1bbb" || got.MarginCost != 0.02 || got.FixedCost != "170000000" || got.DeclaredPledge != "200000000" {
+		t.Fatalf("unexpected pool: %+v", got)
+	}
+}
+
+func TestPoolNotInList(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"pool_id":"pool1aaa"}]`))
+	})
+	_, err := c.Pool(context.Background(), "pool1missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a pool not in the list should map to ErrNotFound, got %v", err)
+	}
+}
+
+func TestDRep(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q", r.Method)
+		}
+		if r.URL.Path != "/api/v0/governance/dreps/drep1abc" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"drep_id":"drep1abc","hex":"abc","has_script":false,"registered":true,"amount":"123","active":true,"live_stake":"123"}`))
+	})
+	got, err := c.DRep(context.Background(), "drep1abc")
+	if err != nil {
+		t.Fatalf("DRep: %v", err)
+	}
+	if got.DRepID != "drep1abc" || !got.Registered || !got.Active {
+		t.Fatalf("unexpected drep: %+v", got)
+	}
+}
+
+func TestDRepNotFound(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/governance/dreps/drep1missing" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(blockfrostNotFoundJSON))
+	})
+	_, err := c.DRep(context.Background(), "drep1missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("404 should map to ErrNotFound, got %v", err)
+	}
+}
+
 func TestErrorStatus(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

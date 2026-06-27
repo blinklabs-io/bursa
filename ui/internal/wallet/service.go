@@ -62,6 +62,7 @@ func cloneAccount(acct *Account) *Account {
 		Network:          acct.Network,
 		StakeAddress:     acct.StakeAddress,
 		ReceiveAddresses: cloneStringSlice(acct.ReceiveAddresses),
+		DRepKeyHash:      append([]byte(nil), acct.DRepKeyHash...),
 	}
 }
 

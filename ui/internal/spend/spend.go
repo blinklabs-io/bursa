@@ -119,6 +119,7 @@ type Service struct {
 	chain   backend.ChainContext
 	keys    Keystore // may be nil for build-only usage
 	account *wallet.Account
+	chainQ  chainQuerier     // node-backed pool/DRep/account/params queries (delegation); may be nil
 	mkID    func() string    // pending id generator; injectable for tests
 	now     func() time.Time // injectable for tests
 

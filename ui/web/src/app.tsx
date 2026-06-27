@@ -10,6 +10,7 @@ import { Portfolio } from "./screens/Portfolio";
 import { Receive } from "./screens/Receive";
 import { Activity } from "./screens/Activity";
 import { Send } from "./screens/Send";
+import { Staking } from "./screens/Staking";
 import { SignMessage } from "./screens/SignMessage";
 import { Settings } from "./screens/Settings";
 
@@ -28,6 +29,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "receive", label: "Receive" },
   { key: "activity", label: "Activity" },
   { key: "send", label: "Send" },
+  { key: "staking", label: "Staking" },
   { key: "sign", label: "Sign" },
   { key: "settings", label: "Settings" },
 ];
@@ -57,10 +59,12 @@ export function App() {
       </div>
     );
   }
-  // Sending requires BOTH a fully synced node and a spending-enabled wallet (a
-  // keystore created with a password). A read-only wallet (loaded without a
-  // password) can never complete a send, so it must not enter the send flow.
+  // Sending and staking both require BOTH a fully synced node and a
+  // spending-enabled wallet (a keystore created with a password). A read-only
+  // wallet (loaded without a password) can never sign, so it must not enter
+  // these flows. Staking is gated identically to send.
   const canSend = isReady && spendingEnabled;
+  const canStake = isReady && spendingEnabled;
 
   // Which nav entry maps to the screen currently shown (mirrors the content
   // resolution below) so the sidebar can highlight the active route.
@@ -68,6 +72,7 @@ export function App() {
   if (account !== null) {
     if (route === "settings") activeRoute = "settings";
     else if (route === "send" && canSend) activeRoute = "send";
+    else if (route === "staking" && canStake) activeRoute = "staking";
     else if (route === "sign" && spendingEnabled) activeRoute = "sign";
     else if (ROUTES.has(route) && route !== "send") activeRoute = route;
     else activeRoute = "portfolio";
@@ -93,6 +98,11 @@ export function App() {
     // needs a synced node AND a spending-enabled (password) wallet, so fall back
     // to Portfolio otherwise.
     content = <Portfolio />;
+  } else if (route === "staking") {
+    // Staking/governance is gated like send: a synced node AND a
+    // spending-enabled wallet. A read-only or unsynced wallet falls back to
+    // Portfolio.
+    content = canStake ? <Staking /> : <Portfolio />;
   } else if (route === "sign") {
     // Message signing needs a spending-enabled (keystore) wallet but no node;
     // a read-only wallet falls back to Portfolio.
@@ -113,7 +123,9 @@ export function App() {
           </div>
           {NAV.map(({ key, label }) => {
             const gated =
-              (key === "send" && !canSend) || (key === "sign" && !spendingEnabled);
+              (key === "send" && !canSend) ||
+              (key === "staking" && !canStake) ||
+              (key === "sign" && !spendingEnabled);
             const active = key === activeRoute;
             return (
               <button
