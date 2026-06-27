@@ -73,6 +73,9 @@ func TestDeriveFromMnemonicBytesMatchesStringDerive(t *testing.T) {
 	if fromBytes.StakeAddress != fromString.StakeAddress {
 		t.Fatalf("stake = %q, want %q", fromBytes.StakeAddress, fromString.StakeAddress)
 	}
+	if len(fromBytes.ReceiveAddresses) != len(fromString.ReceiveAddresses) {
+		t.Fatalf("got %d receive addresses, want %d", len(fromBytes.ReceiveAddresses), len(fromString.ReceiveAddresses))
+	}
 	for i := range fromString.ReceiveAddresses {
 		if fromBytes.ReceiveAddresses[i] != fromString.ReceiveAddresses[i] {
 			t.Fatalf("receive[%d] = %q, want %q", i, fromBytes.ReceiveAddresses[i], fromString.ReceiveAddresses[i])

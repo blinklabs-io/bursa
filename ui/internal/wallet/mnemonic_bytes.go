@@ -49,6 +49,7 @@ func entropyFromMnemonicBytes(mnemonic []byte) ([]byte, error) {
 	entropyLen := len(words) / 3 * 4
 	checksumBits := len(words) / 3
 	data := make([]byte, entropyLen+1)
+	defer zeroBytes(data)
 	for i, word := range words {
 		index, ok := mnemonicWordIndex(word, wordList)
 		if !ok {
@@ -62,12 +63,10 @@ func entropyFromMnemonicBytes(mnemonic []byte) ([]byte, error) {
 	gotChecksum := data[entropyLen] >> checksumShift
 	wantChecksum := hash[0] >> checksumShift
 	if gotChecksum != wantChecksum {
-		zeroBytes(data)
 		return nil, bursa.ErrInvalidMnemonic
 	}
 	entropy := make([]byte, entropyLen)
 	copy(entropy, data[:entropyLen])
-	zeroBytes(data)
 	return entropy, nil
 }
 
