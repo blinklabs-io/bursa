@@ -19,12 +19,17 @@ package main
 import (
 	"context"
 	"log/slog"
+	"time"
 )
 
 // awaitUI (default, headless build) serves the wallet UI over loopback for the
 // user's browser and blocks until a shutdown signal arrives or the control
 // surface fails. This build is pure Go (CGO_ENABLED=0) — no GUI dependency.
-func awaitUI(ctx context.Context, _ string, _ *slog.Logger, srvErr <-chan error) error {
+func awaitUI(ctx context.Context, url string, _ *slog.Logger, srvErr <-chan error) error {
+	if err := waitReachable(ctx, url, 15*time.Second, srvErr); err != nil {
+		return err
+	}
+
 	select {
 	case <-ctx.Done():
 		return nil
