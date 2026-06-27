@@ -2,12 +2,16 @@ package chain
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
 const blockfrostNotFoundJSON = `{"status_code":404,"error":"Not Found","message":"The requested component has not been found."}`
@@ -28,14 +32,86 @@ func TestAccount(t *testing.T) {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"stake_address":"stake_test1xyz","active":true,"active_epoch":42,"controlled_amount":"1500000","rewards_sum":"2000","withdrawals_sum":"0","reserves_sum":"0","treasury_sum":"0","withdrawable_amount":"2000","pool_id":"pool1abc"}`))
+		_, _ = w.Write([]byte(`{"stake_address":"stake_test1xyz","active":true,"registered":true,"active_epoch":42,"controlled_amount":"1500000","rewards_sum":"2000","withdrawals_sum":"0","reserves_sum":"0","treasury_sum":"0","withdrawable_amount":"2000","pool_id":"pool1abc"}`))
 	})
 	got, err := c.Account(context.Background(), "stake_test1xyz")
 	if err != nil {
 		t.Fatalf("Account: %v", err)
 	}
-	if got.ControlledAmount != "1500000" || got.PoolID == nil || *got.PoolID != "pool1abc" || !got.Active {
+	if got.ControlledAmount != "1500000" || got.PoolID == nil || *got.PoolID != "pool1abc" || got.DRepID != nil || !got.Active || !got.Registered {
 		t.Fatalf("unexpected account: %+v", got)
+	}
+}
+
+func TestAccountDRepIDFromDingoMetadata(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metadata.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`CREATE TABLE account (
+		credential_tag integer NOT NULL,
+		staking_key blob NOT NULL,
+		drep blob,
+		drep_type integer,
+		active boolean NOT NULL
+	)`)
+	if err != nil {
+		t.Fatalf("create account table: %v", err)
+	}
+	stakingKey := make([]byte, lcommon.AddressHashSize)
+	for i := range stakingKey {
+		stakingKey[i] = byte(i + 1)
+	}
+	stakeAddr, err := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, lcommon.AddressNetworkTestnet, nil, stakingKey)
+	if err != nil {
+		t.Fatalf("stake address: %v", err)
+	}
+	_, err = db.Exec(
+		`INSERT INTO account (credential_tag, staking_key, drep, drep_type, active) VALUES (?, ?, NULL, ?, 1)`,
+		dingoAccountCredentialKeyHash,
+		stakingKey,
+		dingoDRepTypeAlwaysAbstain,
+	)
+	if err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+
+	c := NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir))
+	got, err := c.AccountDRepID(context.Background(), stakeAddr.String())
+	if err != nil {
+		t.Fatalf("AccountDRepID: %v", err)
+	}
+	if got == nil || *got != "drep_abstain" {
+		t.Fatalf("AccountDRepID = %v, want drep_abstain", got)
+	}
+}
+
+func TestDingoDRepID(t *testing.T) {
+	hash := make([]byte, lcommon.AddressHashSize)
+	for i := range hash {
+		hash[i] = 0xaa
+	}
+	got, ok, err := dingoDRepID(hash, dingoDRepTypeAddrKeyHash)
+	if err != nil || !ok || !strings.HasPrefix(got, "drep-keyHash-") {
+		t.Fatalf("key hash drep = %q, ok=%v, err=%v", got, ok, err)
+	}
+	got, ok, err = dingoDRepID(hash, dingoDRepTypeScriptHash)
+	if err != nil || !ok || !strings.HasPrefix(got, "drep-scriptHash-") {
+		t.Fatalf("script hash drep = %q, ok=%v, err=%v", got, ok, err)
+	}
+	got, ok, err = dingoDRepID(nil, dingoDRepTypeAlwaysAbstain)
+	if err != nil || !ok || got != "drep_abstain" {
+		t.Fatalf("abstain drep = %q, ok=%v, err=%v", got, ok, err)
+	}
+	got, ok, err = dingoDRepID(nil, dingoDRepTypeNoConfidence)
+	if err != nil || !ok || got != "drep_no_confidence" {
+		t.Fatalf("no-confidence drep = %q, ok=%v, err=%v", got, ok, err)
+	}
+	got, ok, err = dingoDRepID(nil, dingoDRepTypeAddrKeyHash)
+	if err != nil || ok || got != "" {
+		t.Fatalf("nil key drep = %q, ok=%v, err=%v", got, ok, err)
 	}
 }
 
@@ -235,6 +311,111 @@ func TestAccountRewardsNotFound(t *testing.T) {
 		_, _ = w.Write([]byte(blockfrostNotFoundJSON))
 	})
 	_, err := c.AccountRewards(context.Background(), "stake_test1missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("404 should map to ErrNotFound, got %v", err)
+	}
+}
+
+func TestProtocolParams(t *testing.T) {
+	drepDeposit := "500000000"
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q", r.Method)
+		}
+		if r.URL.Path != "/api/v0/epochs/latest/parameters" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"key_deposit":"2000000","pool_deposit":"500000000","drep_deposit":"500000000"}`))
+	})
+	got, err := c.ProtocolParams(context.Background())
+	if err != nil {
+		t.Fatalf("ProtocolParams: %v", err)
+	}
+	if got.KeyDeposit != "2000000" || got.PoolDeposit != "500000000" {
+		t.Fatalf("unexpected params: %+v", got)
+	}
+	if got.DRepDeposit == nil || *got.DRepDeposit != drepDeposit {
+		t.Fatalf("drep_deposit = %v, want %q", got.DRepDeposit, drepDeposit)
+	}
+}
+
+func TestProtocolParamsPreConwayDRepDepositNull(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"key_deposit":"2000000","pool_deposit":"500000000","drep_deposit":null}`))
+	})
+	got, err := c.ProtocolParams(context.Background())
+	if err != nil {
+		t.Fatalf("ProtocolParams: %v", err)
+	}
+	if got.DRepDeposit != nil {
+		t.Fatalf("drep_deposit = %v, want nil", got.DRepDeposit)
+	}
+}
+
+func TestPoolFiltersExtendedList(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q", r.Method)
+		}
+		if r.URL.Path != "/api/v0/pools/extended" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"pool_id":"pool1aaa","hex":"aa","margin_cost":0.05,"declared_pledge":"100000000","fixed_cost":"340000000","live_stake":"5000000000","active_stake":"4800000000"},
+			{"pool_id":"pool1bbb","hex":"bb","margin_cost":0.02,"declared_pledge":"200000000","fixed_cost":"170000000","live_stake":"9000000000","active_stake":"8800000000"}
+		]`))
+	})
+	got, err := c.Pool(context.Background(), "pool1bbb")
+	if err != nil {
+		t.Fatalf("Pool: %v", err)
+	}
+	if got.PoolID != "pool1bbb" || got.MarginCost != 0.02 || got.FixedCost != "170000000" || got.DeclaredPledge != "200000000" {
+		t.Fatalf("unexpected pool: %+v", got)
+	}
+}
+
+func TestPoolNotInList(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"pool_id":"pool1aaa"}]`))
+	})
+	_, err := c.Pool(context.Background(), "pool1missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a pool not in the list should map to ErrNotFound, got %v", err)
+	}
+}
+
+func TestDRep(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q", r.Method)
+		}
+		if r.URL.Path != "/api/v0/governance/dreps/drep1abc" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"drep_id":"drep1abc","hex":"abc","has_script":false,"registered":true,"amount":"123","active":true,"live_stake":"123"}`))
+	})
+	got, err := c.DRep(context.Background(), "drep1abc")
+	if err != nil {
+		t.Fatalf("DRep: %v", err)
+	}
+	if got.DRepID != "drep1abc" || !got.Registered || !got.Active {
+		t.Fatalf("unexpected drep: %+v", got)
+	}
+}
+
+func TestDRepNotFound(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/governance/dreps/drep1missing" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(blockfrostNotFoundJSON))
+	})
+	_, err := c.DRep(context.Background(), "drep1missing")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("404 should map to ErrNotFound, got %v", err)
 	}
