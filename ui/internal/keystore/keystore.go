@@ -21,7 +21,12 @@ import (
 const (
 	containerVersion = 1
 
-	minPasswordLen = 8
+	// MinPasswordLen is the minimum spending-password length, exported so the
+	// API enforces the same floor before the keystore is ever reached. The
+	// password encrypts the mnemonic at rest, so a longer floor raises the cost
+	// of brute-forcing the keystore file if it leaks. Length is a coarse proxy
+	// for entropy, not a guarantee — a strength estimator could tighten this.
+	MinPasswordLen = 12
 	keyLen         = 32
 	gcmNonceLen    = 12
 	saltLen        = 16
@@ -87,11 +92,12 @@ type container struct {
 	Ciphertext string `json:"ciphertext"`
 }
 
-// Create encrypts the mnemonic under password (minimum 8 characters) and
-// writes the keystore. It refuses to overwrite an existing keystore.
+// Create encrypts the mnemonic under password (minimum MinPasswordLen
+// characters) and writes the keystore. It refuses to overwrite an existing
+// keystore.
 func (k *Keystore) Create(mnemonic, password string) error {
-	if utf8.RuneCountInString(password) < minPasswordLen {
-		return fmt.Errorf("password must be at least %d characters", minPasswordLen)
+	if utf8.RuneCountInString(password) < MinPasswordLen {
+		return fmt.Errorf("password must be at least %d characters", MinPasswordLen)
 	}
 	if mnemonic == "" {
 		return errors.New("mnemonic must not be empty")

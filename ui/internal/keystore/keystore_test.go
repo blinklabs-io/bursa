@@ -37,13 +37,13 @@ func TestCreateUnlockRoundTrip(t *testing.T) {
 		t.Fatal("Exists() true before Create")
 	}
 	const mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-	if err := ks.Create(mnemonic, "s3cret-pass"); err != nil {
+	if err := ks.Create(mnemonic, "s3cret-password"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if !ks.Exists() {
 		t.Fatal("Exists() false after Create")
 	}
-	got, err := ks.Unlock("s3cret-pass")
+	got, err := ks.Unlock("s3cret-password")
 	if err != nil {
 		t.Fatalf("Unlock: %v", err)
 	}
@@ -60,10 +60,10 @@ func TestRoundTripProductionParams(t *testing.T) {
 	}
 	ks := New(filepath.Join(t.TempDir(), "keystore.json"))
 	const mnemonic = "abandon abandon about"
-	if err := ks.Create(mnemonic, "s3cret-pass"); err != nil {
+	if err := ks.Create(mnemonic, "s3cret-password"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	got, err := ks.Unlock("s3cret-pass")
+	got, err := ks.Unlock("s3cret-password")
 	if err != nil {
 		t.Fatalf("Unlock: %v", err)
 	}
@@ -84,17 +84,17 @@ func TestUnlockWrongPassword(t *testing.T) {
 
 func TestCreateRefusesOverwrite(t *testing.T) {
 	ks := newTestKeystore(t)
-	if err := ks.Create("m", "password1"); err != nil {
+	if err := ks.Create("m", "valid-password-1"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := ks.Create("m2", "password2"); err == nil {
+	if err := ks.Create("m2", "valid-password-2"); err == nil {
 		t.Fatal("Create should refuse to overwrite an existing keystore")
 	}
 }
 
 func TestCreateRejectsEmptyMnemonic(t *testing.T) {
 	ks := newTestKeystore(t)
-	if err := ks.Create("", "password1"); err == nil {
+	if err := ks.Create("", "valid-password-1"); err == nil {
 		t.Fatal("Create should reject an empty mnemonic")
 	}
 	if ks.Exists() {
@@ -104,8 +104,9 @@ func TestCreateRejectsEmptyMnemonic(t *testing.T) {
 
 func TestCreateRejectsShortPassword(t *testing.T) {
 	ks := newTestKeystore(t)
-	if err := ks.Create("m", "1234567"); err == nil {
-		t.Fatal("Create should reject a password shorter than 8 characters")
+	// 11 chars: would have passed the old 8-char floor, must be rejected now.
+	if err := ks.Create("m", "elevenchars"); err == nil {
+		t.Fatalf("Create should reject a password shorter than %d characters", MinPasswordLen)
 	}
 	if ks.Exists() {
 		t.Fatal("Create persisted a keystore for a too-short password")
@@ -263,10 +264,10 @@ func TestUnlockRejectsOversizedFile(t *testing.T) {
 // Unlock returns mutable bytes so callers can wipe the mnemonic after use.
 func TestUnlockReturnsZeroableBytes(t *testing.T) {
 	ks := newTestKeystore(t)
-	if err := ks.Create("abandon about", "s3cret-pass"); err != nil {
+	if err := ks.Create("abandon about", "s3cret-password"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	got, err := ks.Unlock("s3cret-pass")
+	got, err := ks.Unlock("s3cret-password")
 	if err != nil {
 		t.Fatalf("Unlock: %v", err)
 	}
@@ -280,7 +281,7 @@ func TestUnlockReturnsZeroableBytes(t *testing.T) {
 
 func TestCreateWritesOwnerOnlyPermissions(t *testing.T) {
 	ks := newTestKeystore(t)
-	if err := ks.Create("m", "password1"); err != nil {
+	if err := ks.Create("m", "valid-password-1"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	info, err := os.Stat(ks.Path)

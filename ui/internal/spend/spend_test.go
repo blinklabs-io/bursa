@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/apollo/v2/backend"
+	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	"github.com/blinklabs-io/gouroboros/ledger"
@@ -127,11 +128,11 @@ func (o *fakeOutput) ToPlutusData() data.PlutusData       { return nil }
 func (o *fakeOutput) String() string                      { return o.address.String() }
 
 // backend.ChainContext implementation for fakeChain.
-func (fc *fakeChain) ProtocolParams() (backend.ProtocolParameters, error) {
+func (fc *fakeChain) ProtocolParams(_ context.Context) (backend.ProtocolParameters, error) {
 	return fc.pp, nil
 }
 
-func (fc *fakeChain) GenesisParams() (backend.GenesisParameters, error) {
+func (fc *fakeChain) GenesisParams(_ context.Context) (backend.GenesisParameters, error) {
 	return backend.GenesisParameters{
 		ActiveSlotsCoefficient: 0.05,
 		EpochLength:            432000,
@@ -139,21 +140,21 @@ func (fc *fakeChain) GenesisParams() (backend.GenesisParameters, error) {
 		NetworkMagic:           1,
 	}, nil
 }
-func (fc *fakeChain) NetworkId() uint8              { return 0 } // preview = 0
-func (fc *fakeChain) CurrentEpoch() (uint64, error) { return 500, nil }
+func (fc *fakeChain) NetworkId() uint8                               { return 0 } // preview = 0
+func (fc *fakeChain) CurrentEpoch(_ context.Context) (uint64, error) { return 500, nil }
 
-func (fc *fakeChain) MaxTxFee() (uint64, error) {
+func (fc *fakeChain) MaxTxFee(_ context.Context) (uint64, error) {
 	if fc.maxTxFeeErr != nil {
 		return 0, fc.maxTxFeeErr
 	}
 	return backend.ComputeMaxTxFee(fc.pp)
 }
-func (fc *fakeChain) Tip() (uint64, error) { return 10_000_000, nil }
-func (fc *fakeChain) Utxos(address lcommon.Address) ([]lcommon.Utxo, error) {
+func (fc *fakeChain) Tip(_ context.Context) (uint64, error) { return 10_000_000, nil }
+func (fc *fakeChain) Utxos(_ context.Context, address lcommon.Address) ([]lcommon.Utxo, error) {
 	return fc.utxos[address.String()], nil
 }
 
-func (fc *fakeChain) SubmitTx(tx []byte) (lcommon.Blake2b256, error) {
+func (fc *fakeChain) SubmitTx(_ context.Context, tx []byte) (lcommon.Blake2b256, error) {
 	fc.submitMu.Lock()
 	fc.submitCalls++
 	fc.submitCbor = append(fc.submitCbor[:0], tx...)
@@ -176,11 +177,11 @@ func (fc *fakeChain) submittedTxCbor() []byte {
 	return append([]byte(nil), fc.submitCbor...)
 }
 
-func (fc *fakeChain) EvaluateTx(_ []byte) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
+func (fc *fakeChain) EvaluateTx(_ context.Context, _ []byte, _ []lcommon.Utxo) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
 	return nil, nil
 }
 
-func (fc *fakeChain) UtxoByRef(txHash lcommon.Blake2b256, index uint32) (*lcommon.Utxo, error) {
+func (fc *fakeChain) UtxoByRef(_ context.Context, txHash lcommon.Blake2b256, index uint32) (*lcommon.Utxo, error) {
 	for _, utxos := range fc.utxos {
 		for _, u := range utxos {
 			if u.Id.Id() == txHash && u.Id.Index() == index {
@@ -191,7 +192,9 @@ func (fc *fakeChain) UtxoByRef(txHash lcommon.Blake2b256, index uint32) (*lcommo
 	}
 	return nil, nil
 }
-func (fc *fakeChain) ScriptCbor(_ lcommon.Blake2b224) ([]byte, error) { return nil, nil }
+func (fc *fakeChain) ScriptCbor(_ context.Context, _ lcommon.Blake2b224) ([]byte, error) {
+	return nil, nil
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -422,6 +425,57 @@ func TestConfirmSignsAndSubmits(t *testing.T) {
 	t.Logf("second Confirm correctly rejected: %v", err)
 }
 
+func TestSignDataRoundTrip(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	ks := fakeKeystore{mnemonic: testMnemonic}
+	s := NewService(newFakeChain(0, addr0), ks, acct)
+
+	msg := []byte("I own this address — proof for dApp login")
+	sig, key, err := s.SignData(addr0, msg, "pw")
+	if err != nil {
+		t.Fatalf("SignData: %v", err)
+	}
+	if sig == "" || key == "" {
+		t.Fatalf("expected non-empty signature and key, got sig=%q key=%q", sig, key)
+	}
+	// The COSE_Sign1 must verify against the COSE_Key + payload via the keys layer.
+	ok, err := bursa.VerifyData(sig, key, msg)
+	if err != nil {
+		t.Fatalf("VerifyData: %v", err)
+	}
+	if !ok {
+		t.Fatal("CIP-8 signature failed verification")
+	}
+	// A different payload must NOT verify against the same signature.
+	if tampered, _ := bursa.VerifyData(sig, key, []byte("tampered")); tampered {
+		t.Fatal("signature verified against the wrong payload")
+	}
+}
+
+func TestSignDataRejectsForeignAddress(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	ks := fakeKeystore{mnemonic: testMnemonic}
+	s := NewService(newFakeChain(0, acct.ReceiveAddresses[0]), ks, acct)
+	// An address the wallet does not own (outside the derived window) is rejected
+	// before any signing.
+	_, _, err := s.SignData("addr_test1qqqqqforeignnotours", []byte("x"), "pw")
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest for a foreign address, got %v", err)
+	}
+}
+
+func TestSignDataWrongPassword(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	ks := fakeKeystore{err: keystore.ErrDecryptFailed}
+	s := NewService(newFakeChain(0, addr0), ks, acct)
+	_, _, err := s.SignData(addr0, []byte("x"), "wrong")
+	if !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("expected ErrWrongPassword, got %v", err)
+	}
+}
+
 func TestConfirmConsumesPendingBeforeSubmit(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	addr0 := acct.ReceiveAddresses[0]
@@ -635,7 +689,7 @@ func TestSetWalletCreatesKeystoreAndEnablesBuild(t *testing.T) {
 	}
 
 	// SetWallet derives the account and creates the keystore.
-	got, err := s.SetWallet(testMnemonic, "preview", "spendpw1")
+	got, err := s.SetWallet(testMnemonic, "preview", "spend-password-1")
 	if err != nil {
 		t.Fatalf("SetWallet: %v", err)
 	}
@@ -654,13 +708,13 @@ func TestSetWalletCreatesKeystoreAndEnablesBuild(t *testing.T) {
 	}
 
 	// Re-attach: correct password unlocks the existing keystore; wrong fails.
-	if _, err := s.SetWallet(testMnemonic, "preview", "spendpw1"); err != nil {
+	if _, err := s.SetWallet(testMnemonic, "preview", "spend-password-1"); err != nil {
 		t.Fatalf("SetWallet re-attach with correct password: %v", err)
 	}
-	if _, err := s.SetWallet(testMnemonic, "preview", "wrongpw1"); err == nil {
+	if _, err := s.SetWallet(testMnemonic, "preview", "wrong-password-9"); err == nil {
 		t.Fatal("SetWallet re-attach with wrong password should fail")
 	}
-	if _, err := s.SetWallet(differentMnemonic, "preview", "spendpw1"); err == nil {
+	if _, err := s.SetWallet(differentMnemonic, "preview", "spend-password-1"); err == nil {
 		t.Fatal("SetWallet re-attach with different mnemonic should fail")
 	}
 }

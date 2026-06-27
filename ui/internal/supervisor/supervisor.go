@@ -132,6 +132,11 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		dingo.WithTopologyConfig(topologyCfg),
 		dingo.WithDatabasePath(s.cfg.DataDir),
 		dingo.WithStorageMode(dingo.StorageModeAPI),
+		// Without an explicit capacity the mempool defaults to 0 bytes and
+		// rejects every transaction ("mempool full: capacity=0 bytes"), so the
+		// wallet could never submit a spend. Match Dingo's own Praos default
+		// (1 MiB) — ample for a single-user wallet submitting its own txs.
+		dingo.WithMempoolCapacity(1<<20),
 		dingo.WithBindAddr("127.0.0.1"),
 		dingo.WithUtxorpcPort(s.cfg.UtxorpcPort),
 		dingo.WithBlockfrostPort(s.cfg.BlockfrostPort),

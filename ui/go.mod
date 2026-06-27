@@ -3,9 +3,9 @@ module github.com/blinklabs-io/bursa/ui
 go 1.26.0
 
 require (
-	github.com/blinklabs-io/apollo/v2 v2.0.0-20260610185853-0c47e0b38bd5
-	github.com/blinklabs-io/bursa v0.16.0
-	github.com/blinklabs-io/dingo v0.56.0
+	github.com/blinklabs-io/apollo/v2 v2.0.0-20260625155554-2c0d64b7d8e9
+	github.com/blinklabs-io/bursa v0.16.1-0.20260624233607-e1d8912f7e08
+	github.com/blinklabs-io/dingo v0.58.0
 	github.com/blinklabs-io/gouroboros v0.185.0
 	github.com/blinklabs-io/plutigo v0.1.15
 	github.com/utxorpc/go-codegen v0.19.2
@@ -157,6 +157,7 @@ require (
 	github.com/multiformats/go-multihash v0.2.3 // indirect
 	github.com/multiformats/go-varint v0.1.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/orandin/slog-gorm v1.4.0 // indirect
 	github.com/paulmach/orb v0.11.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
@@ -218,8 +219,8 @@ require (
 	gorm.io/gorm v1.31.1 // indirect
 	gorm.io/plugin/opentelemetry v0.1.16 // indirect
 	lukechampine.com/blake3 v1.1.6 // indirect
-	modernc.org/libc v1.22.5 // indirect
-	modernc.org/mathutil v1.5.0 // indirect
-	modernc.org/memory v1.5.0 // indirect
-	modernc.org/sqlite v1.23.1 // indirect
+	modernc.org/libc v1.73.4 // indirect
+	modernc.org/mathutil v1.7.1 // indirect
+	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.53.0 // indirect
 )
