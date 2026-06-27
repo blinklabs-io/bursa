@@ -5,6 +5,7 @@ import { useStatus } from "./api/hooks";
 import { SyncBanner } from "./components/SyncBanner";
 import { useHashRoute, navigate } from "./router";
 import { Setup } from "./screens/Setup";
+import { Syncing } from "./screens/Syncing";
 import { Portfolio } from "./screens/Portfolio";
 import { Receive } from "./screens/Receive";
 import { Activity } from "./screens/Activity";
@@ -34,10 +35,28 @@ const NAV: { key: string; label: string }[] = [
 export function App() {
   const [account, setAccount] = useState<Account | null>(null);
   const [spendingEnabled, setSpendingEnabled] = useState(false);
+  // Set when the user chooses to load a wallet while the node is still syncing,
+  // dismissing the boot Syncing view in favour of Setup (read-only).
+  const [loadAnyway, setLoadAnyway] = useState(false);
   const status = useStatus();
   const route = useHashRoute();
 
   const isReady = status.data?.state === "ready";
+
+  // Boot gate: before any wallet is loaded, if the node isn't ready and the
+  // user hasn't opted to proceed, the Syncing view takes the whole screen —
+  // there is nothing to operate yet, and a balance shown now would be wrong.
+  // The escape hatch drops to Setup for a read-only load against a syncing node.
+  if (account === null && !loadAnyway && status.data && status.data.state !== "ready") {
+    return (
+      <div className="app">
+        <SyncBanner status={status.data} />
+        <main className="content content-boot">
+          <Syncing status={status.data} onLoadAnyway={() => setLoadAnyway(true)} />
+        </main>
+      </div>
+    );
+  }
   // Sending requires BOTH a fully synced node and a spending-enabled wallet (a
   // keystore created with a password). A read-only wallet (loaded without a
   // password) can never complete a send, so it must not enter the send flow.

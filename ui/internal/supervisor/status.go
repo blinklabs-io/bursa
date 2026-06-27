@@ -31,12 +31,22 @@ const (
 // from dingo's mithril.SyncProgress for the API. It is set while
 // StateBootstrapping and retained in StateError as a diagnostic (how far the
 // bootstrap got before failing); any other state clears it.
+//
+// Bytes* describe the snapshot-download phase; Count/Total and CurrentSlot/
+// TipSlot describe the later block-replay phases (copy, gap-fill, backfill).
+// Whichever pair is populated for the active phase is what the UI renders to
+// show "where it is"; the rest stay zero (omitted).
 type BootstrapProgress struct {
 	Phase           string  `json:"phase"`
 	Percent         float64 `json:"percent"`
 	BytesDownloaded int64   `json:"bytes_downloaded,omitempty"`
 	TotalBytes      int64   `json:"total_bytes,omitempty"`
 	BytesPerSecond  float64 `json:"bytes_per_second,omitempty"`
+	CurrentSlot     uint64  `json:"current_slot,omitempty"`
+	TipSlot         uint64  `json:"tip_slot,omitempty"`
+	Count           int     `json:"count,omitempty"`
+	Total           int     `json:"total,omitempty"`
+	Description     string  `json:"description,omitempty"`
 }
 
 // Status is a point-in-time snapshot of the embedded node, serialised by the API.
