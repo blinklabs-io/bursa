@@ -1,6 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
-import type { Status, Balance, AddressView, Tx, DelegationView } from "./types";
-import { getStatus, getBalance, getAddresses, getTransactions, getDelegation } from "./client";
+import type { Status, Balance, AddressView, Tx, DelegationView, DexPoolsResponse } from "./types";
+import {
+  getStatus,
+  getBalance,
+  getAddresses,
+  getTransactions,
+  getDelegation,
+  getDexPools,
+} from "./client";
 
 export interface AsyncState<T> {
   data: T | null;
@@ -66,3 +73,4 @@ export const useBalance = (): AsyncState<Balance> => useAsync(getBalance);
 export const useAddresses = (): AsyncState<AddressView> => useAsync(getAddresses);
 export const useTransactions = (): AsyncState<Tx[]> => useAsync(getTransactions);
 export const useDelegation = (): AsyncState<DelegationView> => useAsync(getDelegation);
+export const useDexPools = (): AsyncState<DexPoolsResponse> => useAsync(getDexPools, { pollMs: 15000 });

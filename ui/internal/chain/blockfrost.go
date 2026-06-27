@@ -54,12 +54,36 @@ type Amount struct {
 }
 
 // UTxO mirrors one entry of GET /api/v0/addresses/{address}/utxos.
+//
+// Note: the node's address-utxos endpoint does NOT populate InlineDatum (it is
+// always nil there in dingo); only DataHash is set. To obtain a script UTxO's
+// inline datum, fetch the transaction's outputs via TxUTxOs and match by
+// OutputIndex (the tx-utxos endpoint does populate InlineDatum).
 type UTxO struct {
 	Address     string   `json:"address"`
 	TxHash      string   `json:"tx_hash"`
 	OutputIndex int      `json:"output_index"`
 	Amount      []Amount `json:"amount"`
 	Block       string   `json:"block"`
+	DataHash    *string  `json:"data_hash"`
+	InlineDatum *string  `json:"inline_datum"`
+}
+
+// TxOutput mirrors one output of GET /api/v0/txs/{hash}/utxos. Unlike the
+// address-utxos endpoint, this one carries the inline datum (hex-encoded CBOR)
+// for script outputs, which the DEX pool parsers need.
+type TxOutput struct {
+	Address     string   `json:"address"`
+	OutputIndex int      `json:"output_index"`
+	Amount      []Amount `json:"amount"`
+	DataHash    *string  `json:"data_hash"`
+	InlineDatum *string  `json:"inline_datum"`
+}
+
+// txUTxOsResponse mirrors GET /api/v0/txs/{hash}/utxos.
+type txUTxOsResponse struct {
+	Hash    string     `json:"hash"`
+	Outputs []TxOutput `json:"outputs"`
 }
 
 // AddressTx mirrors one entry of GET /api/v0/addresses/{address}/transactions.
@@ -169,6 +193,17 @@ func (c *Client) AddressUTxOs(ctx context.Context, addr string) ([]UTxO, error) 
 
 func (c *Client) AddressTransactions(ctx context.Context, addr string) ([]AddressTx, error) {
 	return getAllPages[AddressTx](ctx, c, "/api/v0/addresses/"+addr+"/transactions")
+}
+
+// TxOutputs returns the outputs of a transaction, including each output's
+// inline datum (hex CBOR) when present. Used to recover a script UTxO's inline
+// datum, which the address-utxos endpoint does not expose.
+func (c *Client) TxOutputs(ctx context.Context, txHash string) ([]TxOutput, error) {
+	var out txUTxOsResponse
+	if err := c.get(ctx, "/api/v0/txs/"+txHash+"/utxos", &out); err != nil {
+		return nil, err
+	}
+	return out.Outputs, nil
 }
 
 func (c *Client) AccountDelegations(ctx context.Context, stakeAddr string) ([]Delegation, error) {

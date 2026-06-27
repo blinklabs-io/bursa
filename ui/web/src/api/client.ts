@@ -12,6 +12,9 @@ import type {
   CreateKeystoreRequest,
   SignDataRequest,
   SignDataResult,
+  DexPoolsResponse,
+  DexQuoteRequest,
+  DexQuote,
 } from "./types";
 
 export class ApiError extends Error {
@@ -74,3 +77,5 @@ export const buildSend = (req: SendRequest) => apiPost<Preview>("/wallet/send", 
 export const confirmSend = (id: string, password: string) =>
   apiPost<TxResult>(`/wallet/send/${encodeURIComponent(id)}/confirm`, { password });
 export const signData = (req: SignDataRequest) => apiPost<SignDataResult>("/wallet/sign-data", req);
+export const getDexPools = () => apiGet<DexPoolsResponse>("/wallet/dex/pools");
+export const getDexQuote = (req: DexQuoteRequest) => apiPost<DexQuote>("/wallet/dex/quote", req);

@@ -33,6 +33,30 @@ test("Send nav is disabled until the node is ready", async () => {
   await waitFor(() => expect(screen.getByText("Send").closest("button")).toBeDisabled());
 });
 
+test("Swap nav is disabled until the node is ready", async () => {
+  stubStatus("syncing");
+  render(<App />);
+  // The Swap entry (node-local DEX quotes) needs a synced node to read pools.
+  await waitFor(() => expect(screen.getByText("Swap").closest("button")).toBeDisabled());
+});
+
+test("a read-only wallet on a ready node CAN reach Swap (no spending needed)", async () => {
+  // Swap only reads node-local pool data — it never signs or submits — so a
+  // read-only wallet (loaded without a password) may use it on a synced node.
+  stubStatus("ready");
+  vi.spyOn(client, "loadWallet").mockResolvedValue(mockAccount);
+  vi.spyOn(hooks, "useDexPools").mockReturnValue({ data: { pools: [] }, error: null, loading: false, refresh: vi.fn() } as never);
+  window.location.hash = "#/swap";
+
+  render(<App />);
+  fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), {
+    target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /load wallet/i }));
+
+  await waitFor(() => expect(screen.getByText("Swap Quote")).toBeInTheDocument());
+});
+
 test("deep-linking #/send while syncing falls back to Portfolio (guard)", async () => {
   // Regression for the deep-link guard: reaching #/send directly (bypassing the
   // disabled nav button) must NOT render the Send screen until the node is ready.
@@ -107,7 +131,8 @@ test("spending-enabled wallet on a ready node can reach Send", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), {
     target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
   });
-  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "s3cretpw" } });
+  // Must clear the client-side minimum (12 chars) so it reaches createKeystore.
+  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "s3cret-passphrase" } });
   fireEvent.click(screen.getByRole("button", { name: /load wallet/i }));
 
   // Send screen renders (its "Send ADA" card).
