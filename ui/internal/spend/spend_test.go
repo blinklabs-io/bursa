@@ -15,6 +15,7 @@ import (
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
+	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/blinklabs-io/gouroboros/ledger"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/blinklabs-io/gouroboros/ledger/shelley"
@@ -435,6 +436,137 @@ func mustDeriveConfirmAccount(t *testing.T) *wallet.Account {
 	return acct
 }
 
+func paymentKeyHashForAddress(t *testing.T, addrStr string) string {
+	t.Helper()
+	addr, err := lcommon.NewAddress(addrStr)
+	if err != nil {
+		t.Fatalf("NewAddress(%q): %v", addrStr, err)
+	}
+	return hex.EncodeToString(addr.PaymentKeyHash().Bytes())
+}
+
+func hashedSignDataFixture(t *testing.T, acct *wallet.Account) (string, string, []byte, string) {
+	t.Helper()
+	addrStr := acct.ReceiveAddresses[0]
+	addr, err := lcommon.NewAddress(addrStr)
+	if err != nil {
+		t.Fatalf("NewAddress: %v", err)
+	}
+	addrBytes, err := addr.Bytes()
+	if err != nil {
+		t.Fatalf("Address.Bytes: %v", err)
+	}
+	rootKey, err := bursa.GetRootKeyFromMnemonic(testMnemonic, "")
+	if err != nil {
+		t.Fatalf("root key: %v", err)
+	}
+	acctKey, err := bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		t.Fatalf("account key: %v", err)
+	}
+	payKey, err := bursa.GetPaymentKey(acctKey, 0)
+	if err != nil {
+		t.Fatalf("payment key: %v", err)
+	}
+
+	payload := []byte("payload signed through CIP-8 hashed mode")
+	protected, err := cbor.Encode(map[any]any{
+		int64(1):  int64(-8),
+		"address": addrBytes,
+	})
+	if err != nil {
+		t.Fatalf("encode protected headers: %v", err)
+	}
+	hash := lcommon.Blake2b224Hash(payload)
+	toBeSigned, err := cbor.Encode([]any{"Signature1", protected, []byte{}, hash[:]})
+	if err != nil {
+		t.Fatalf("encode Sig_structure: %v", err)
+	}
+	signature := payKey.Sign(toBeSigned)
+	coseSign1Bytes, err := cbor.Encode([]any{
+		protected,
+		map[any]any{"hashed": true},
+		payload,
+		signature,
+	})
+	if err != nil {
+		t.Fatalf("encode COSE_Sign1: %v", err)
+	}
+	coseKey, err := cbor.Encode(map[any]any{
+		int64(1):  int64(1),
+		int64(3):  int64(-8),
+		int64(-1): int64(6),
+		int64(-2): payKey.PublicKey(),
+	})
+	if err != nil {
+		t.Fatalf("encode COSE_Key: %v", err)
+	}
+	return hex.EncodeToString(coseSign1Bytes), hex.EncodeToString(coseKey), payload, addrStr
+}
+
+func witnessCount(t *testing.T, wit Witness) int {
+	t.Helper()
+	witBytes, err := hex.DecodeString(wit.WitnessCBOR)
+	if err != nil {
+		t.Fatalf("decode witness hex: %v", err)
+	}
+	var witnesses []lcommon.VkeyWitness
+	if _, err := cbor.Decode(witBytes, &witnesses); err != nil {
+		t.Fatalf("decode witnesses: %v", err)
+	}
+	return len(witnesses)
+}
+
+func bodyRequiredSigners(t *testing.T, unsignedTxCBOR string) []lcommon.Blake2b224 {
+	t.Helper()
+	txBytes, err := hex.DecodeString(unsignedTxCBOR)
+	if err != nil {
+		t.Fatalf("decode unsigned tx hex: %v", err)
+	}
+	tx, err := ledger.NewConwayTransactionFromCbor(txBytes)
+	if err != nil {
+		t.Fatalf("decode unsigned tx: %v", err)
+	}
+	return tx.Body.RequiredSigners()
+}
+
+func stakeKeyHashForAddress(t *testing.T, addrStr string) string {
+	t.Helper()
+	addr, err := lcommon.NewAddress(addrStr)
+	if err != nil {
+		t.Fatalf("NewAddress(%q): %v", addrStr, err)
+	}
+	kh := addr.StakeKeyHash()
+	if kh == (lcommon.Blake2b224{}) {
+		t.Fatalf("address %q has no stake key hash", addrStr)
+	}
+	return hex.EncodeToString(kh.Bytes())
+}
+
+func unsignedWithRequiredSigners(
+	t *testing.T,
+	unsignedTxCBOR string,
+	required []lcommon.Blake2b224,
+) string {
+	t.Helper()
+	txBytes, err := hex.DecodeString(unsignedTxCBOR)
+	if err != nil {
+		t.Fatalf("decode unsigned tx hex: %v", err)
+	}
+	tx, err := ledger.NewConwayTransactionFromCbor(txBytes)
+	if err != nil {
+		t.Fatalf("decode unsigned tx: %v", err)
+	}
+	tx.Body.TxRequiredSigners = cbor.NewSetType(required, true)
+	tx.SetCbor(nil)
+	tx.Body.SetCbor(nil)
+	encoded, err := cbor.Encode(tx)
+	if err != nil {
+		t.Fatalf("encode unsigned tx: %v", err)
+	}
+	return hex.EncodeToString(encoded)
+}
+
 func TestConfirmSignsAndSubmits(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	addr0 := acct.ReceiveAddresses[0]
@@ -549,6 +681,53 @@ func TestConfirmUsesPendingWalletAfterAccountSwitch(t *testing.T) {
 	}
 }
 
+func TestSignTxUsesActiveWalletBindingAfterAccountSwitch(t *testing.T) {
+	acctA := mustDeriveConfirmAccount(t)
+	acctB, err := wallet.Derive(differentMnemonic, "preview", 5)
+	if err != nil {
+		t.Fatalf("derive account B: %v", err)
+	}
+	fc := newFakeChain(5_000_000, acctA.ReceiveAddresses[0])
+	ks := &blockingSeedStore{
+		mnemonicByID: map[string]string{"a": testMnemonic, "b": differentMnemonic},
+		unlockForID:  make(chan string, 1),
+		release:      make(chan struct{}),
+	}
+	s := NewService(fc, ks, nil)
+	s.SetAccount("a", acctA)
+
+	pv, err := s.Build(context.Background(), SendRequest{To: acctA.ReceiveAddresses[2], Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw", unsigned.RequiredSigners)
+		done <- err
+	}()
+
+	var unlockID string
+	select {
+	case unlockID = <-ks.unlockForID:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SignTx did not request seed unlock")
+	}
+	if unlockID != "a" {
+		t.Fatalf("SignTx unlocked wallet %q, want active wallet a", unlockID)
+	}
+
+	s.SetAccount("b", acctB)
+	close(ks.release)
+	if err := <-done; err != nil {
+		t.Fatalf("SignTx after account switch: %v", err)
+	}
+}
+
 func TestWalletBoundUnlockRequiresUnlockFor(t *testing.T) {
 	ks := &trackingKeystore{mnemonic: testMnemonic}
 	s := NewService(nil, ks, nil)
@@ -599,6 +778,377 @@ func TestSignDataRoundTrip(t *testing.T) {
 	// A different payload must NOT verify against the same signature.
 	if tampered, _ := bursa.VerifyData(sig, key, []byte("tampered")); tampered {
 		t.Fatal("signature verified against the wrong payload")
+	}
+}
+
+func TestVerifyDataRoundTrip(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	ks := fakeKeystore{mnemonic: testMnemonic}
+	s := NewService(newFakeChain(0, addr0), ks, acct)
+
+	msg := []byte("prove I control this address")
+	sig, key, err := s.SignData(addr0, msg, "pw")
+	if err != nil {
+		t.Fatalf("SignData: %v", err)
+	}
+
+	// Verifies, and reports the signer address from the COSE protected header.
+	valid, gotAddr, err := s.VerifyData(sig, key, msg, false, "")
+	if err != nil {
+		t.Fatalf("VerifyData: %v", err)
+	}
+	if !valid {
+		t.Fatal("expected signature to verify")
+	}
+	if gotAddr != addr0 {
+		t.Fatalf("reported signer %q, want %q", gotAddr, addr0)
+	}
+
+	// expected_address matching the signer keeps it valid.
+	if v, _, _ := s.VerifyData(sig, key, msg, false, addr0); !v {
+		t.Fatal("expected valid when expected_address matches signer")
+	}
+	// A different expected_address makes it invalid (not an error).
+	if v, _, err := s.VerifyData(sig, key, msg, false, acct.ReceiveAddresses[1]); err != nil || v {
+		t.Fatalf("expected invalid for mismatched expected_address, got valid=%v err=%v", v, err)
+	}
+	// A tampered message must not verify.
+	if v, _, _ := s.VerifyData(sig, key, []byte("tampered"), false, ""); v {
+		t.Fatal("tampered message verified")
+	}
+}
+
+func TestVerifyDataHashedPayload(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	sig, key, msg, addr := hashedSignDataFixture(t, acct)
+	s := NewService(newFakeChain(0, addr), fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	valid, gotAddr, err := s.VerifyData(sig, key, msg, true, addr)
+	if err != nil {
+		t.Fatalf("VerifyData: %v", err)
+	}
+	if !valid {
+		t.Fatal("expected hashed payload signature to verify")
+	}
+	if gotAddr != addr {
+		t.Fatalf("reported signer %q, want %q", gotAddr, addr)
+	}
+}
+
+func TestVerifyDataMalformedReturnsInvalidRequest(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	s := NewService(newFakeChain(0, acct.ReceiveAddresses[0]), fakeKeystore{mnemonic: testMnemonic}, acct)
+	if _, _, err := s.VerifyData("zz", "a4", []byte("x"), false, ""); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest for bad hex, got %v", err)
+	}
+}
+
+// TestAirGapRoundTrip exercises the split flow: Build → ExportUnsigned (online)
+// → SignTx (offline) → SubmitSigned (online). The submitted tx must carry the
+// exact witnesses the inputs require and submit once.
+func TestAirGapRoundTrip(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	recvAddr := acct.ReceiveAddresses[2]
+
+	fc := newFakeChain(5_000_000, addr0)
+	ks := fakeKeystore{mnemonic: testMnemonic}
+	s := NewService(fc, ks, acct)
+
+	ctx := context.Background()
+	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// Export the unsigned tx + required signers (online instance).
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+	if unsigned.UnsignedTxCBOR == "" {
+		t.Fatal("expected non-empty unsigned tx cbor")
+	}
+	if len(unsigned.RequiredSigners) != 1 {
+		t.Fatalf("required signers = %d (%v), want 1", len(unsigned.RequiredSigners), unsigned.RequiredSigners)
+	}
+
+	// Sign offline (keystore + password, no chain access used).
+	wit, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw", unsigned.RequiredSigners)
+	if err != nil {
+		t.Fatalf("SignTx: %v", err)
+	}
+	if wit.WitnessCBOR == "" {
+		t.Fatal("expected non-empty witness cbor")
+	}
+	if got := witnessCount(t, wit); got != len(unsigned.RequiredSigners) {
+		t.Fatalf("offline witnesses = %d, want %d", got, len(unsigned.RequiredSigners))
+	}
+
+	// Submit on the online instance: attaches only the needed witness.
+	res, err := s.SubmitSigned(ctx, unsigned.UnsignedTxCBOR, wit.WitnessCBOR)
+	if err != nil {
+		t.Fatalf("SubmitSigned: %v", err)
+	}
+	if res.TxHash == "" {
+		t.Fatal("expected non-empty tx hash")
+	}
+	if fc.submitCalls != 1 {
+		t.Fatalf("SubmitTx calls = %d, want 1", fc.submitCalls)
+	}
+
+	// The broadcast tx must carry exactly one vkey witness (the single input
+	// address).
+	submitted, err := ledger.NewConwayTransactionFromCbor(fc.submittedTxCbor())
+	if err != nil {
+		t.Fatalf("decode submitted tx: %v", err)
+	}
+	if got := len(submitted.WitnessSet.VkeyWitnesses.Items()); got != 1 {
+		t.Fatalf("submitted vkey witnesses = %d, want 1", got)
+	}
+}
+
+func TestExportUnsignedBindsRequiredSignersInBody(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	fc := newFakeChain(5_000_000, acct.ReceiveAddresses[0])
+	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	pv, err := s.Build(context.Background(), SendRequest{
+		To:       acct.ReceiveAddresses[2],
+		Lovelace: "1000000",
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+
+	sidecar, err := parseRequiredSignerHashes(unsigned.RequiredSigners)
+	if err != nil {
+		t.Fatalf("parse exported required signers: %v", err)
+	}
+	body := bodyRequiredSigners(t, unsigned.UnsignedTxCBOR)
+	if !sameKeyHashSet(sidecar, body) {
+		t.Fatalf("body required signers %v do not match sidecar %v", keyHashesHex(body), unsigned.RequiredSigners)
+	}
+}
+
+func TestSignTxRejectsSidecarMismatchBeforeUnlock(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	fc := newFakeChain(5_000_000, acct.ReceiveAddresses[0])
+	ks := &trackingKeystore{mnemonic: testMnemonic}
+	s := NewService(fc, ks, acct)
+
+	pv, err := s.Build(context.Background(), SendRequest{
+		To:       acct.ReceiveAddresses[2],
+		Lovelace: "1000000",
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		signers []string
+	}{
+		{
+			name: "extra wallet payment key",
+			signers: append(
+				append([]string(nil), unsigned.RequiredSigners...),
+				paymentKeyHashForAddress(t, acct.ReceiveAddresses[1]),
+			),
+		},
+		{
+			name:    "stake key only",
+			signers: []string{stakeKeyHashForAddress(t, acct.ReceiveAddresses[0])},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw", tt.signers); !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("expected ErrInvalidRequest, got %v", err)
+			}
+		})
+	}
+	if ks.unlockCalls != 0 {
+		t.Fatalf("SignTx unlocked keystore %d times for mismatched sidecar", ks.unlockCalls)
+	}
+}
+
+func TestSubmitSignedAttachesBodyRequiredSigner(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	fc := newFakeChain(5_000_000, acct.ReceiveAddresses[0])
+	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	ctx := context.Background()
+	pv, err := s.Build(ctx, SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+
+	required := bodyRequiredSigners(t, unsigned.UnsignedTxCBOR)
+	stakeRequired, err := parseRequiredSignerHashes([]string{stakeKeyHashForAddress(t, acct.ReceiveAddresses[0])})
+	if err != nil {
+		t.Fatalf("parse stake signer: %v", err)
+	}
+	required = append(required, stakeRequired...)
+	mutatedTx := unsignedWithRequiredSigners(t, unsigned.UnsignedTxCBOR, required)
+	wit, err := s.SignTx(mutatedTx, "pw", keyHashesHex(required))
+	if err != nil {
+		t.Fatalf("SignTx: %v", err)
+	}
+	if got := witnessCount(t, wit); got != 2 {
+		t.Fatalf("offline witnesses = %d, want 2", got)
+	}
+	if _, err := s.SubmitSigned(ctx, mutatedTx, wit.WitnessCBOR); err != nil {
+		t.Fatalf("SubmitSigned: %v", err)
+	}
+	submitted, err := ledger.NewConwayTransactionFromCbor(fc.submittedTxCbor())
+	if err != nil {
+		t.Fatalf("decode submitted tx: %v", err)
+	}
+	if got := len(submitted.WitnessSet.VkeyWitnesses.Items()); got != 2 {
+		t.Fatalf("submitted vkey witnesses = %d, want 2", got)
+	}
+}
+
+// TestAirGapMultiInput checks the split flow attaches one witness per distinct
+// input address when coin selection spans two addresses.
+func TestAirGapMultiInput(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	addr1 := acct.ReceiveAddresses[1]
+	recvAddr := acct.ReceiveAddresses[2]
+
+	fc := newFakeChain(3_000_000, addr0)
+	fc.addUTxO(3_000_000, addr1, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0", 0)
+	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	ctx := context.Background()
+	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: "4000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+	if len(unsigned.RequiredSigners) != 2 {
+		t.Fatalf("required signers = %d, want 2", len(unsigned.RequiredSigners))
+	}
+	wit, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw", unsigned.RequiredSigners)
+	if err != nil {
+		t.Fatalf("SignTx: %v", err)
+	}
+	if got := witnessCount(t, wit); got != len(unsigned.RequiredSigners) {
+		t.Fatalf("offline witnesses = %d, want %d", got, len(unsigned.RequiredSigners))
+	}
+	if _, err := s.SubmitSigned(ctx, unsigned.UnsignedTxCBOR, wit.WitnessCBOR); err != nil {
+		t.Fatalf("SubmitSigned: %v", err)
+	}
+	submitted, err := ledger.NewConwayTransactionFromCbor(fc.submittedTxCbor())
+	if err != nil {
+		t.Fatalf("decode submitted tx: %v", err)
+	}
+	if got := len(submitted.WitnessSet.VkeyWitnesses.Items()); got != 2 {
+		t.Fatalf("submitted vkey witnesses = %d, want 2", got)
+	}
+}
+
+func TestExportUnsignedUnknownPending(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	s := NewService(newFakeChain(5_000_000, acct.ReceiveAddresses[0]), fakeKeystore{mnemonic: testMnemonic}, acct)
+	if _, err := s.ExportUnsigned("nope"); !errors.Is(err, ErrUnknownPending) {
+		t.Fatalf("expected ErrUnknownPending, got %v", err)
+	}
+}
+
+func TestSignTxWrongPassword(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	fc := newFakeChain(5_000_000, addr0)
+	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	ctx := context.Background()
+	pv, err := s.Build(ctx, SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+	// A service whose keystore rejects the password.
+	bad := NewService(fc, fakeKeystore{err: keystore.ErrDecryptFailed}, acct)
+	if _, err := bad.SignTx(unsigned.UnsignedTxCBOR, "wrong", unsigned.RequiredSigners); !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("expected ErrWrongPassword, got %v", err)
+	}
+}
+
+func TestSignTxInvalidCbor(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	s := NewService(newFakeChain(0, acct.ReceiveAddresses[0]), fakeKeystore{mnemonic: testMnemonic}, acct)
+	if _, err := s.SignTx("zzzz", "pw", nil); !errors.Is(err, ErrInvalidTx) {
+		t.Fatalf("expected ErrInvalidTx, got %v", err)
+	}
+}
+
+func TestSubmitSignedRejectsMismatchedWitness(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	fc := newFakeChain(5_000_000, addr0)
+	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	ctx := context.Background()
+	pv, err := s.Build(ctx, SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+
+	// Sign with a DIFFERENT wallet's keys: the witnesses won't match the inputs'
+	// required signers, so SubmitSigned must reject and never broadcast. The
+	// foreign service uses a different wallet and emits that wallet's witness,
+	// so SubmitSigned must reject it against acct's input signer set.
+	foreignAcct, err := wallet.Derive(differentMnemonic, "preview", 5)
+	if err != nil {
+		t.Fatalf("derive foreign account: %v", err)
+	}
+	foreign := NewService(fc, fakeKeystore{mnemonic: differentMnemonic}, foreignAcct)
+	foreignRequired, err := parseRequiredSignerHashes([]string{
+		paymentKeyHashForAddress(t, foreignAcct.ReceiveAddresses[0]),
+	})
+	if err != nil {
+		t.Fatalf("parse foreign required signer: %v", err)
+	}
+	foreignTx := unsignedWithRequiredSigners(t, unsigned.UnsignedTxCBOR, foreignRequired)
+	wit, err := foreign.SignTx(
+		foreignTx,
+		"pw",
+		keyHashesHex(foreignRequired),
+	)
+	if err != nil {
+		t.Fatalf("foreign SignTx: %v", err)
+	}
+	if _, err := s.SubmitSigned(ctx, unsigned.UnsignedTxCBOR, wit.WitnessCBOR); !errors.Is(err, ErrInvalidWitness) {
+		t.Fatalf("expected ErrInvalidWitness for foreign witness, got %v", err)
+	}
+	if fc.submitCalls != 0 {
+		t.Fatalf("foreign witness reached SubmitTx (%d calls)", fc.submitCalls)
 	}
 }
 

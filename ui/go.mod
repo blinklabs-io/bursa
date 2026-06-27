@@ -7,12 +7,18 @@ require (
 	github.com/blinklabs-io/bursa v0.16.1-0.20260624233607-e1d8912f7e08
 	github.com/blinklabs-io/dingo v0.58.0
 	github.com/blinklabs-io/go-bip39 v0.2.0
-	github.com/blinklabs-io/gouroboros v0.185.0
+	github.com/blinklabs-io/gouroboros v0.186.0
 	github.com/blinklabs-io/plutigo v0.1.15
 	github.com/utxorpc/go-codegen v0.19.2
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 	golang.org/x/crypto v0.53.0
 )
+
+// The wallet UI ships together with the bursa keys layer it embeds: CIP-8
+// verification (bursa.VerifyDataWithAddress) and air-gap signing reuse the
+// parent module's COSE/BIP32 code, so build against the local source rather
+// than a published tag.
+replace github.com/blinklabs-io/bursa => ../
 
 require (
 	cel.dev/expr v0.25.1 // indirect

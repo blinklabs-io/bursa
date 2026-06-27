@@ -49,10 +49,16 @@ jobs:
       # before the Go module is built/tested.
       - name: Build web bundle
         run: cd ui/web && npm ci && npm run build
+      # Scope to the module's real Go roots (cmd + internal). A repo-wide "./..."
+      # would descend into ui/web/node_modules, where the npm "flatted" package
+      # vendors a stray *.go file; Go's "..." wildcard does not skip node_modules,
+      # so on a clean checkout that package breaks module resolution
+      # ("updates to go.mod needed"). The wallet's Go code lives only under
+      # cmd/ and internal/.
       - name: go vet
-        run: cd ui && go vet ./...
+        run: cd ui && go vet ./cmd/... ./internal/...
       - name: go test
-        run: cd ui && go test ./...
+        run: cd ui && go test ./cmd/... ./internal/...
       - name: go build
         run: cd ui && go build ./cmd/bursa-wallet
 
@@ -75,3 +81,9 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0 https://github.com/golangci/golangci-lint-action/releases/tag/v9.3.0
         with:
           working-directory: ui
+          # Scope to the module's real Go roots. A default "./..." load descends
+          # into ui/web/node_modules, where the npm "flatted" package vendors a
+          # stray *.go file; Go's "..." wildcard does not skip node_modules, so on
+          # a clean checkout golangci-lint fails to load the package graph
+          # ("no go files to analyze: running `go mod tidy` may solve the problem").
+          args: ./cmd/... ./internal/...

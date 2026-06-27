@@ -36,8 +36,17 @@ var denylist = []string{
 
 // TestNoExternalServiceImports walks the bursa-wallet module's full transitive
 // import set and fails if any denylisted package is present.
+//
+// The scan is scoped to the module's real Go package roots (cmd + internal)
+// rather than "../../..." on purpose: the SPA under ../../web ships an npm
+// dependency tree, and at least one package (flatted) vendors a stray *.go
+// file under node_modules. Go's "..." wildcard does NOT skip node_modules, so a
+// repo-wide list would pull that package into the module graph and, on a clean
+// CI checkout, fail module resolution ("updates to go.mod needed"). The wallet's
+// outbound surface lives entirely under cmd/ and internal/, so those roots are
+// the correct and complete scope for this boundary check.
 func TestNoExternalServiceImports(t *testing.T) {
-	out, err := exec.Command("go", "list", "-deps", "../../...").Output()
+	out, err := exec.Command("go", "list", "-deps", "../../cmd/...", "../../internal/...").Output()
 	if err != nil {
 		t.Fatalf("go list -deps: %v", err)
 	}
