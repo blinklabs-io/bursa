@@ -371,54 +371,76 @@ func extractCoseKeyPub(keyBytes []byte) ([]byte, error) {
 // VerifyData verifies a CIP-8/CIP-30 signData signature (hex COSE_Sign1) using
 // the public key from the supplied COSE_Key (hex), over the expected payload.
 func VerifyData(signatureHex, keyHex string, expectedPayload []byte) (bool, error) {
+	valid, _, err := VerifyDataWithAddress(signatureHex, keyHex, expectedPayload)
+	return valid, err
+}
+
+// VerifyDataWithAddress is VerifyData that additionally returns the signer's
+// address. The COSE_Sign1 protected header carries the address the message was
+// signed for (set by SignData); when verification succeeds that address is
+// returned bech32-encoded so callers can show *which* address signed. The
+// returned address is only meaningful when valid is true and err is nil; it is
+// also returned (best-effort) on a clean signature mismatch (valid=false,
+// err=nil) so callers can report the address that failed.
+func VerifyDataWithAddress(
+	signatureHex, keyHex string,
+	expectedPayload []byte,
+) (valid bool, address string, err error) {
 	sigBytes, err := decodeHex(signatureHex)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	keyBytes, err := decodeHex(keyHex)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	var c coseSign1
 	if _, err := cbor.Decode(sigBytes, &c); err != nil {
-		return false, fmt.Errorf("failed to decode COSE_Sign1: %w", err)
+		return false, "", fmt.Errorf("failed to decode COSE_Sign1: %w", err)
 	}
 	if err := validateProtectedHeaders(c.Protected); err != nil {
-		return false, err
+		return false, "", err
 	}
 	payload := c.Payload
 	if payload == nil && expectedPayload != nil {
 		payload = expectedPayload
 	}
+	addrBytes, err := extractProtectedAddress(c.Protected)
+	if err != nil {
+		return false, "", err
+	}
+	// Decode the protected address to bech32 for the caller. A failure here is
+	// fatal: a malformed address means the signature cannot be trusted.
+	signerAddr, err := lcommon.NewAddressFromBytes(addrBytes)
+	if err != nil {
+		return false, "", fmt.Errorf("invalid protected address: %w", err)
+	}
+	address = signerAddr.String()
 	if expectedPayload != nil &&
 		c.Payload != nil &&
 		!bytes.Equal(c.Payload, expectedPayload) {
-		return false, nil
+		return false, address, nil
 	}
 	hashed, err := extractPayloadHashed(c.Protected, c.Unprotected)
 	if err != nil {
-		return false, err
+		return false, address, err
 	}
 	pub, err := extractCoseKeyPub(keyBytes)
 	if err != nil {
-		return false, err
+		return false, address, err
 	}
 	if len(pub) != ed25519.PublicKeySize {
-		return false, fmt.Errorf("unexpected public key size %d", len(pub))
+		return false, address, fmt.Errorf("unexpected public key size %d", len(pub))
 	}
-	addr, err := extractProtectedAddress(c.Protected)
-	if err != nil {
-		return false, err
-	}
-	if err := validateAddressForVKey(addr, pub); err != nil {
+	if err := validateAddressForVKey(addrBytes, pub); err != nil {
 		if errors.Is(err, errAddressDoesNotMatchSigningKey) {
-			return false, errors.New("protected address does not match public key")
+			return false, address, errors.New("protected address does not match public key")
 		}
-		return false, err
+		return false, address, err
 	}
 	toBeSigned, err := buildSigStructure(c.Protected, payloadToVerify(payload, hashed))
 	if err != nil {
-		return false, err
+		return false, address, err
 	}
-	return ed25519.Verify(ed25519.PublicKey(pub), toBeSigned, c.Signature), nil
+	return ed25519.Verify(ed25519.PublicKey(pub), toBeSigned, c.Signature), address, nil
 }
