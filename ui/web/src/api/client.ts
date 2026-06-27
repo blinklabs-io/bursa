@@ -12,6 +12,15 @@ import type {
   CreateKeystoreRequest,
   SignDataRequest,
   SignDataResult,
+  PoolCredentials,
+  KESPeriodInfo,
+  OpCert,
+  OpCertPayload,
+  PoolMetadataInput,
+  PoolMetadataResult,
+  PoolRegistrationParams,
+  PoolCertResult,
+  PoolIDResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -74,3 +83,49 @@ export const buildSend = (req: SendRequest) => apiPost<Preview>("/wallet/send", 
 export const confirmSend = (id: string, password: string) =>
   apiPost<TxResult>(`/wallet/send/${encodeURIComponent(id)}/confirm`, { password });
 export const signData = (req: SignDataRequest) => apiPost<SignDataResult>("/wallet/sign-data", req);
+
+// --- Stake Pool Operations (SPO) ---
+
+export const poolCredentials = (password: string) =>
+  apiPost<PoolCredentials>("/wallet/pool/credentials", { password });
+export const poolKESPeriod = () => apiGet<KESPeriodInfo>("/wallet/pool/kes-period");
+export const poolIssueOpCert = (req: {
+  password: string;
+  kes_index: number;
+  issue_number: number;
+  kes_period: number;
+}) => apiPost<OpCert>("/wallet/pool/opcert", req);
+export const poolRotateKES = (req: {
+  password: string;
+  new_kes_index: number;
+  prev_issue_number: number;
+  kes_period: number;
+}) => apiPost<OpCert>("/wallet/pool/opcert/rotate", req);
+export const poolOpCertPayload = (req: {
+  kes_vkey_hex: string;
+  issue_number: number;
+  kes_period: number;
+}) => apiPost<OpCertPayload>("/wallet/pool/opcert/payload", req);
+export const poolAssembleOpCert = (req: {
+  cold_vkey_hex: string;
+  kes_vkey_hex: string;
+  signature_hex: string;
+  issue_number: number;
+  kes_period: number;
+}) => apiPost<OpCert>("/wallet/pool/opcert/assemble", req);
+export const poolBuildMetadata = (req: PoolMetadataInput) =>
+  apiPost<PoolMetadataResult>("/wallet/pool/metadata", req);
+export const poolIDFromColdVKey = (cold_vkey_hex: string) =>
+  apiPost<PoolIDResult>("/wallet/pool/id", { cold_vkey_hex });
+export const poolBuildRegistration = (req: PoolRegistrationParams & { password: string }) =>
+  apiPost<PoolCertResult>("/wallet/pool/registration", req);
+export const poolBuildRegistrationAirGap = (
+  req: PoolRegistrationParams & { vrf_key_hash_hex: string },
+) => apiPost<PoolCertResult>("/wallet/pool/registration/airgap", req);
+export const poolBuildRetirementCert = (req: {
+  password?: string;
+  cold_vkey_hex?: string;
+  epoch: number;
+}) => apiPost<PoolCertResult>("/wallet/pool/retirement/cert", req);
+export const poolSubmitRetirement = (req: { password: string; epoch: number }) =>
+  apiPost<TxResult>("/wallet/pool/retirement/submit", req);

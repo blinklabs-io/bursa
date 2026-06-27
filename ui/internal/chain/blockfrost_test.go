@@ -256,3 +256,35 @@ func TestErrorStatus(t *testing.T) {
 		t.Fatalf("404 should map to ErrNotFound, got %v", err)
 	}
 }
+
+func TestGenesis(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/genesis" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"epoch_length":432000,"slots_per_kes_period":129600,"slot_length":1,"max_kes_evolutions":62,"network_magic":2}`))
+	})
+	got, err := c.Genesis(context.Background())
+	if err != nil {
+		t.Fatalf("Genesis: %v", err)
+	}
+	if got.SlotsPerKESPeriod != 129600 || got.EpochLength != 432000 || got.MaxKESEvolutions != 62 {
+		t.Fatalf("unexpected genesis: %+v", got)
+	}
+}
+
+func TestLatestEpoch(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/epochs/latest" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"epoch":512,"start_time":1700000000,"end_time":1700432000}`))
+	})
+	got, err := c.LatestEpoch(context.Background())
+	if err != nil {
+		t.Fatalf("LatestEpoch: %v", err)
+	}
+	if got.Epoch != 512 {
+		t.Fatalf("epoch = %d, want 512", got.Epoch)
+	}
+}

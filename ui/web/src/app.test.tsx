@@ -96,6 +96,41 @@ test("read-only wallet cannot reach Send even when the node is ready", async () 
   expect(screen.getByText("Send").closest("button")).toBeDisabled();
 });
 
+test("Operate nav is disabled for a read-only wallet", async () => {
+  // Pool operations need the seed (spend password); a read-only wallet cannot
+  // reach Operate, mirroring the Sign gating.
+  stubStatus("ready");
+  vi.spyOn(hooks, "useBalance").mockReturnValue({ data: { lovelace: "1000000", assets: [] }, error: null, loading: false, refresh: vi.fn() } as never);
+  vi.spyOn(hooks, "useDelegation").mockReturnValue({ data: null, error: null, loading: false, refresh: vi.fn() } as never);
+  vi.spyOn(client, "loadWallet").mockResolvedValue(mockAccount); // no password → read-only
+  window.location.hash = "#/operate";
+
+  render(<App />);
+  fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), {
+    target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /load wallet/i }));
+
+  await waitFor(() => expect(screen.queryByRole("button", { name: /load wallet/i })).not.toBeInTheDocument());
+  expect(screen.queryByText("Stake Pool Operations")).not.toBeInTheDocument();
+  expect(screen.getByText("Operate").closest("button")).toBeDisabled();
+});
+
+test("spending-enabled wallet can reach Operate", async () => {
+  stubStatus("ready");
+  vi.spyOn(client, "createKeystore").mockResolvedValue(mockAccount); // password → spending enabled
+  window.location.hash = "#/operate";
+
+  render(<App />);
+  fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), {
+    target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
+  });
+  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "s3cret-password" } });
+  fireEvent.click(screen.getByRole("button", { name: /load wallet/i }));
+
+  await waitFor(() => expect(screen.getByText("Stake Pool Operations")).toBeInTheDocument());
+});
+
 test("spending-enabled wallet on a ready node can reach Send", async () => {
   // The gate must still allow the valid case: a password-backed wallet on a
   // synced node enters the send flow.
@@ -107,7 +142,7 @@ test("spending-enabled wallet on a ready node can reach Send", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), {
     target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
   });
-  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "s3cretpw" } });
+  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "s3cret-password" } });
   fireEvent.click(screen.getByRole("button", { name: /load wallet/i }));
 
   // Send screen renders (its "Send ADA" card).

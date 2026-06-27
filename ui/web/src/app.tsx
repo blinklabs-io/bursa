@@ -10,6 +10,7 @@ import { Receive } from "./screens/Receive";
 import { Activity } from "./screens/Activity";
 import { Send } from "./screens/Send";
 import { SignMessage } from "./screens/SignMessage";
+import { Operate } from "./screens/Operate";
 import { Settings } from "./screens/Settings";
 
 // A Map (not a plain object) so a crafted hash like "#/constructor" or
@@ -28,6 +29,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "activity", label: "Activity" },
   { key: "send", label: "Send" },
   { key: "sign", label: "Sign" },
+  { key: "operate", label: "Operate" },
   { key: "settings", label: "Settings" },
 ];
 
@@ -50,6 +52,7 @@ export function App() {
     if (route === "settings") activeRoute = "settings";
     else if (route === "send" && canSend) activeRoute = "send";
     else if (route === "sign" && spendingEnabled) activeRoute = "sign";
+    else if (route === "operate" && spendingEnabled) activeRoute = "operate";
     else if (ROUTES.has(route) && route !== "send") activeRoute = route;
     else activeRoute = "portfolio";
   }
@@ -78,6 +81,12 @@ export function App() {
     // Message signing needs a spending-enabled (keystore) wallet but no node;
     // a read-only wallet falls back to Portfolio.
     content = spendingEnabled ? <SignMessage account={account} /> : <Portfolio />;
+  } else if (route === "operate") {
+    // Pool operations derive cold/VRF/KES keys from the seed and need the spend
+    // password (keystore). A read-only wallet falls back to Portfolio. Most pool
+    // ops are offline; only retirement submission needs a synced node, gated at
+    // the API.
+    content = spendingEnabled ? <Operate account={account} /> : <Portfolio />;
   } else {
     const Screen = ROUTES.get(route) ?? Portfolio;
     content = <Screen />;
@@ -94,7 +103,9 @@ export function App() {
           </div>
           {NAV.map(({ key, label }) => {
             const gated =
-              (key === "send" && !canSend) || (key === "sign" && !spendingEnabled);
+              (key === "send" && !canSend) ||
+              (key === "sign" && !spendingEnabled) ||
+              (key === "operate" && !spendingEnabled);
             const active = key === activeRoute;
             return (
               <button
