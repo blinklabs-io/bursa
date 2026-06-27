@@ -216,7 +216,14 @@ test("switching active wallets remounts routed content and refetches read state"
   vi.spyOn(client, "unlockVault").mockResolvedValue([walletA, walletB]);
   vi.spyOn(client, "activateWallet").mockResolvedValue({ ...walletB, active: true });
   const getBalance = vi.spyOn(client, "getBalance").mockResolvedValue({ lovelace: "1000000", assets: [] });
-  vi.spyOn(client, "getDelegation").mockResolvedValue(null);
+  vi.spyOn(client, "getDelegation").mockResolvedValue({
+    pool_id: null,
+    active: false,
+    rewards_sum: "0",
+    withdrawable_amount: "0",
+    provisional: false,
+    note: "",
+  });
 
   render(<App />);
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
