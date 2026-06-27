@@ -453,6 +453,225 @@ func TestSignDataRoundTrip(t *testing.T) {
 	}
 }
 
+func TestVerifyDataRoundTrip(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	ks := fakeKeystore{mnemonic: testMnemonic}
+	s := NewService(newFakeChain(0, addr0), ks, acct)
+
+	msg := []byte("prove I control this address")
+	sig, key, err := s.SignData(addr0, msg, "pw")
+	if err != nil {
+		t.Fatalf("SignData: %v", err)
+	}
+
+	// Verifies, and reports the signer address from the COSE protected header.
+	valid, gotAddr, err := s.VerifyData(sig, key, msg, false, "")
+	if err != nil {
+		t.Fatalf("VerifyData: %v", err)
+	}
+	if !valid {
+		t.Fatal("expected signature to verify")
+	}
+	if gotAddr != addr0 {
+		t.Fatalf("reported signer %q, want %q", gotAddr, addr0)
+	}
+
+	// expected_address matching the signer keeps it valid.
+	if v, _, _ := s.VerifyData(sig, key, msg, false, addr0); !v {
+		t.Fatal("expected valid when expected_address matches signer")
+	}
+	// A different expected_address makes it invalid (not an error).
+	if v, _, err := s.VerifyData(sig, key, msg, false, acct.ReceiveAddresses[1]); err != nil || v {
+		t.Fatalf("expected invalid for mismatched expected_address, got valid=%v err=%v", v, err)
+	}
+	// A tampered message must not verify.
+	if v, _, _ := s.VerifyData(sig, key, []byte("tampered"), false, ""); v {
+		t.Fatal("tampered message verified")
+	}
+}
+
+func TestVerifyDataMalformedReturnsInvalidRequest(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	s := NewService(newFakeChain(0, acct.ReceiveAddresses[0]), fakeKeystore{mnemonic: testMnemonic}, acct)
+	if _, _, err := s.VerifyData("zz", "a4", []byte("x"), false, ""); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest for bad hex, got %v", err)
+	}
+}
+
+// TestAirGapRoundTrip exercises the split flow: Build → ExportUnsigned (online)
+// → SignTx (offline) → SubmitSigned (online). The submitted tx must carry the
+// exact witnesses the inputs require and submit once.
+func TestAirGapRoundTrip(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	recvAddr := acct.ReceiveAddresses[2]
+
+	fc := newFakeChain(5_000_000, addr0)
+	ks := fakeKeystore{mnemonic: testMnemonic}
+	s := NewService(fc, ks, acct)
+
+	ctx := context.Background()
+	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// Export the unsigned tx + required signers (online instance).
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+	if unsigned.UnsignedTxCBOR == "" {
+		t.Fatal("expected non-empty unsigned tx cbor")
+	}
+	if len(unsigned.RequiredSigners) != 1 {
+		t.Fatalf("required signers = %d (%v), want 1", len(unsigned.RequiredSigners), unsigned.RequiredSigners)
+	}
+
+	// Sign offline (keystore + password, no chain access used).
+	wit, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw")
+	if err != nil {
+		t.Fatalf("SignTx: %v", err)
+	}
+	if wit.WitnessCBOR == "" {
+		t.Fatal("expected non-empty witness cbor")
+	}
+
+	// Submit on the online instance: attaches only the needed witness.
+	res, err := s.SubmitSigned(ctx, unsigned.UnsignedTxCBOR, wit.WitnessCBOR)
+	if err != nil {
+		t.Fatalf("SubmitSigned: %v", err)
+	}
+	if res.TxHash == "" {
+		t.Fatal("expected non-empty tx hash")
+	}
+	if fc.submitCalls != 1 {
+		t.Fatalf("SubmitTx calls = %d, want 1", fc.submitCalls)
+	}
+
+	// The broadcast tx must carry exactly one vkey witness (the single input
+	// address) — not the full window of candidate witnesses SignTx produced.
+	submitted, err := ledger.NewConwayTransactionFromCbor(fc.submittedTxCbor())
+	if err != nil {
+		t.Fatalf("decode submitted tx: %v", err)
+	}
+	if got := len(submitted.WitnessSet.VkeyWitnesses.Items()); got != 1 {
+		t.Fatalf("submitted vkey witnesses = %d, want 1", got)
+	}
+}
+
+// TestAirGapMultiInput checks the split flow attaches one witness per distinct
+// input address when coin selection spans two addresses.
+func TestAirGapMultiInput(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	addr1 := acct.ReceiveAddresses[1]
+	recvAddr := acct.ReceiveAddresses[2]
+
+	fc := newFakeChain(3_000_000, addr0)
+	fc.addUTxO(3_000_000, addr1, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0", 0)
+	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	ctx := context.Background()
+	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: "4000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+	if len(unsigned.RequiredSigners) != 2 {
+		t.Fatalf("required signers = %d, want 2", len(unsigned.RequiredSigners))
+	}
+	wit, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw")
+	if err != nil {
+		t.Fatalf("SignTx: %v", err)
+	}
+	if _, err := s.SubmitSigned(ctx, unsigned.UnsignedTxCBOR, wit.WitnessCBOR); err != nil {
+		t.Fatalf("SubmitSigned: %v", err)
+	}
+	submitted, err := ledger.NewConwayTransactionFromCbor(fc.submittedTxCbor())
+	if err != nil {
+		t.Fatalf("decode submitted tx: %v", err)
+	}
+	if got := len(submitted.WitnessSet.VkeyWitnesses.Items()); got != 2 {
+		t.Fatalf("submitted vkey witnesses = %d, want 2", got)
+	}
+}
+
+func TestExportUnsignedUnknownPending(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	s := NewService(newFakeChain(5_000_000, acct.ReceiveAddresses[0]), fakeKeystore{mnemonic: testMnemonic}, acct)
+	if _, err := s.ExportUnsigned("nope"); !errors.Is(err, ErrUnknownPending) {
+		t.Fatalf("expected ErrUnknownPending, got %v", err)
+	}
+}
+
+func TestSignTxWrongPassword(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	fc := newFakeChain(5_000_000, addr0)
+	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	ctx := context.Background()
+	pv, err := s.Build(ctx, SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+	// A service whose keystore rejects the password.
+	bad := NewService(fc, fakeKeystore{err: keystore.ErrDecryptFailed}, acct)
+	if _, err := bad.SignTx(unsigned.UnsignedTxCBOR, "wrong"); !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("expected ErrWrongPassword, got %v", err)
+	}
+}
+
+func TestSignTxInvalidCbor(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	s := NewService(newFakeChain(0, acct.ReceiveAddresses[0]), fakeKeystore{mnemonic: testMnemonic}, acct)
+	if _, err := s.SignTx("zzzz", "pw"); !errors.Is(err, ErrInvalidTx) {
+		t.Fatalf("expected ErrInvalidTx, got %v", err)
+	}
+}
+
+func TestSubmitSignedRejectsMismatchedWitness(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	fc := newFakeChain(5_000_000, addr0)
+	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	ctx := context.Background()
+	pv, err := s.Build(ctx, SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+
+	// Sign with a DIFFERENT wallet's keys: the witnesses won't match the inputs'
+	// required signers, so SubmitSigned must reject and never broadcast. The
+	// foreign service reuses acct for its window size but unlocks a different
+	// mnemonic, so SignTx derives non-matching keys.
+	foreign := NewService(fc, fakeKeystore{mnemonic: differentMnemonic}, acct)
+	wit, err := foreign.SignTx(unsigned.UnsignedTxCBOR, "pw")
+	if err != nil {
+		t.Fatalf("foreign SignTx: %v", err)
+	}
+	if _, err := s.SubmitSigned(ctx, unsigned.UnsignedTxCBOR, wit.WitnessCBOR); !errors.Is(err, ErrInvalidWitness) {
+		t.Fatalf("expected ErrInvalidWitness for foreign witness, got %v", err)
+	}
+	if fc.submitCalls != 0 {
+		t.Fatalf("foreign witness reached SubmitTx (%d calls)", fc.submitCalls)
+	}
+}
+
 func TestSignDataRejectsForeignAddress(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	ks := fakeKeystore{mnemonic: testMnemonic}

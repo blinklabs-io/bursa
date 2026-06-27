@@ -22,6 +22,7 @@ import (
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
+	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
@@ -44,6 +45,12 @@ var (
 	// ErrSubmitRejected: the node rejected the signed transaction; the wrapped
 	// message carries its structured reason (→ 422).
 	ErrSubmitRejected = errors.New("transaction rejected by node")
+	// ErrInvalidTx: a supplied transaction CBOR is malformed or could not be
+	// loaded (→ 400). Used by the air-gap sign/submit endpoints.
+	ErrInvalidTx = errors.New("invalid transaction")
+	// ErrInvalidWitness: a supplied witness CBOR is malformed, or none of its
+	// witnesses match the transaction's required signers (→ 400).
+	ErrInvalidWitness = errors.New("invalid witness")
 )
 
 // pendingTTL bounds how long a built-but-unconfirmed transaction is held. After
@@ -86,6 +93,26 @@ type Preview struct {
 // TxResult is returned from Confirm after successful submission.
 type TxResult struct {
 	TxHash string `json:"tx_hash"`
+}
+
+// UnsignedTx is returned from ExportUnsigned: the completed-but-unsigned
+// transaction CBOR (hex) plus the key-hashes that must witness it. It is the
+// hand-off artifact carried (file or copy/paste) to an offline, keyed instance
+// for signing.
+type UnsignedTx struct {
+	// UnsignedTxCBOR is the hex-encoded CBOR of the completed Conway tx with an
+	// empty witness set.
+	UnsignedTxCBOR string `json:"unsigned_tx_cbor"`
+	// RequiredSigners are the hex-encoded payment key-hashes (Blake2b-224) of the
+	// distinct input addresses — the witnesses the offline instance must produce.
+	RequiredSigners []string `json:"required_signers"`
+}
+
+// Witness is returned from SignTx: the vkey witness(es) produced offline for an
+// unsigned tx. WitnessCBOR is a hex-encoded CBOR array of common.VkeyWitness
+// (one per distinct signing key) ready to be attached by SubmitSigned.
+type Witness struct {
+	WitnessCBOR string `json:"witness_cbor"`
 }
 
 // Keystore is the minimal interface satisfied by *keystore.Keystore. It is
@@ -638,6 +665,301 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}
 
+	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
+}
+
+// VerifyData verifies a CIP-8/CIP-30 signData signature (hex COSE_Sign1) against
+// the supplied COSE_Key (hex) and message, returning whether it is valid and the
+// bech32 address that signed it (carried in the COSE_Sign1 protected header).
+// It is the inverse of SignData and, like it, is fully offline (pure crypto — no
+// keystore, no node). When hashed is true the message is the Blake2b-224 preimage
+// the signer hashed before signing (CIP-8 "hashed" payload). When expectedAddress
+// is non-empty, a signature whose protected address differs is reported invalid.
+func (s *Service) VerifyData(
+	signatureHex, keyHex string,
+	message []byte,
+	hashed bool,
+	expectedAddress string,
+) (valid bool, address string, err error) {
+	// bursa.VerifyData treats a nil expected payload as "use the embedded
+	// payload, whatever it is"; a non-nil payload must match. For an unhashed
+	// message we pass the bytes through. For a hashed payload the signer hashed
+	// the message before signing, and the COSE_Sign1 embeds the *hash*, not the
+	// preimage — so we must hash the message here to compare against the embedded
+	// payload and to rebuild the Sig_structure. bursa.VerifyDataWithAddress reads
+	// the "hashed" header itself and re-hashes when verifying, so we hand it the
+	// hash as the expected payload.
+	var expected []byte
+	if hashed {
+		h := lcommon.Blake2b224Hash(message)
+		expected = h[:]
+	} else {
+		expected = message
+	}
+	valid, address, err = bursa.VerifyDataWithAddress(signatureHex, keyHex, expected)
+	if err != nil {
+		return false, "", fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+	}
+	if expectedAddress != "" && address != expectedAddress {
+		// The signature may itself be cryptographically valid, but it does not
+		// attest the address the caller expected: report it as not valid.
+		return false, address, nil
+	}
+	return valid, address, nil
+}
+
+// ExportUnsigned returns the completed-but-UNSIGNED transaction CBOR for a
+// pending send plus the payment key-hashes that must witness it. It is the first
+// step of the air-gap flow: the returned artifact is carried to an offline, keyed
+// instance (file download or copy/paste) which produces the witness via SignTx.
+//
+// Unlike Confirm it does NOT consume the pending entry — the user may still
+// Confirm online instead, or re-export — but it is subject to the same TTL.
+func (s *Service) ExportUnsigned(pendingID string) (UnsignedTx, error) {
+	s.mu.Lock()
+	p, ok := s.pending[pendingID]
+	expired := ok && s.now().Sub(p.created) > pendingTTL
+	s.mu.Unlock()
+	if !ok {
+		return UnsignedTx{}, fmt.Errorf("%w: %q", ErrUnknownPending, pendingID)
+	}
+	if expired {
+		return UnsignedTx{}, fmt.Errorf("%w: %q", ErrExpiredPending, pendingID)
+	}
+
+	tx := p.tx.GetTx()
+	if tx == nil {
+		return UnsignedTx{}, errors.New("pending tx is nil")
+	}
+	cborBytes, err := p.tx.GetTxCbor()
+	if err != nil {
+		return UnsignedTx{}, fmt.Errorf("encode unsigned tx: %w", err)
+	}
+
+	// The required signers are the distinct input addresses' payment key-hashes.
+	// They are derived from the same utxoAddr map Confirm uses, so the offline
+	// instance is told exactly which keys it must produce witnesses for.
+	seen := make(map[string]bool)
+	var signers []string
+	for _, inp := range tx.Body.TxInputs.Items() {
+		ref := hex.EncodeToString(inp.TxId.Bytes()) + "#" + strconv.Itoa(int(inp.OutputIndex))
+		addrStr, found := p.utxoAddr[ref]
+		if !found {
+			return UnsignedTx{}, fmt.Errorf("input %s not in utxoAddr map", ref)
+		}
+		addr, err := lcommon.NewAddress(addrStr)
+		if err != nil {
+			return UnsignedTx{}, fmt.Errorf("parse address %s: %w", addrStr, err)
+		}
+		kh := hex.EncodeToString(addr.PaymentKeyHash().Bytes())
+		if !seen[kh] {
+			seen[kh] = true
+			signers = append(signers, kh)
+		}
+	}
+
+	return UnsignedTx{
+		UnsignedTxCBOR:  hex.EncodeToString(cborBytes),
+		RequiredSigners: signers,
+	}, nil
+}
+
+// SignTx is the air-gapped step: it decrypts the seed with the spending password,
+// derives the wallet's signing keys, and produces vkey witness(es) over the
+// supplied unsigned transaction's body. The result is a CBOR array of
+// common.VkeyWitness (one per derived key) which SubmitSigned attaches to the
+// same unsigned tx on the online instance.
+//
+// It needs only the unsigned tx CBOR and the password — no node, no UTxO set.
+// Because the tx body alone does not name which derived addresses fund the
+// inputs, SignTx produces a *candidate* witness for every key in the wallet's
+// address window (plus the stake key); SubmitSigned, which has chain access,
+// attaches only the witnesses the inputs actually require. The extra candidates
+// are never submitted, so they neither bloat the tx nor leak (the vkey is public,
+// the signature is over a public body hash).
+func (s *Service) SignTx(unsignedTxCBOR, password string) (Witness, error) {
+	if s.keys == nil {
+		return Witness{}, errors.New("no keystore configured")
+	}
+	acct := s.currentAccount()
+	if acct == nil {
+		return Witness{}, ErrNoWallet
+	}
+
+	// Load the unsigned tx and hash its body — this is what each witness signs.
+	loader, err := apollo.New(s.chain).LoadTxCbor(unsignedTxCBOR)
+	if err != nil {
+		return Witness{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
+	tx := loader.GetTx()
+	if tx == nil {
+		return Witness{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
+	}
+	bodyCbor, err := cbor.Encode(&tx.Body)
+	if err != nil {
+		return Witness{}, fmt.Errorf("encode tx body: %w", err)
+	}
+	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
+
+	mnemonicBytes, err := s.keys.Unlock(password)
+	if err != nil {
+		if errors.Is(err, keystore.ErrDecryptFailed) {
+			return Witness{}, fmt.Errorf("%w: %w", ErrWrongPassword, err)
+		}
+		return Witness{}, fmt.Errorf("unlock keystore: %w", err)
+	}
+	var rootKey, acctKey bip32.XPrv
+	defer func() {
+		for _, k := range []bip32.XPrv{rootKey, acctKey} {
+			for i := range k {
+				k[i] = 0
+			}
+		}
+		for i := range mnemonicBytes {
+			mnemonicBytes[i] = 0
+		}
+	}()
+
+	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	if err != nil {
+		return Witness{}, fmt.Errorf("root key: %w", err)
+	}
+	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		return Witness{}, fmt.Errorf("account key: %w", err)
+	}
+
+	// One candidate witness per window payment key, plus the stake key (so a tx
+	// spending from the reward address can also be signed). Dedupe by vkey so a
+	// degenerate derivation can't emit the same witness twice.
+	seenVkey := make(map[string]bool)
+	var witnesses []lcommon.VkeyWitness
+	addCandidate := func(signKey bip32.XPrv) error {
+		defer func() {
+			for i := range signKey {
+				signKey[i] = 0
+			}
+		}()
+		w, err := apollo.NewVkeyWitnessFromSkey(bodyHash, []byte(signKey))
+		if err != nil {
+			return err
+		}
+		vk := hex.EncodeToString(w.Vkey)
+		if seenVkey[vk] {
+			return nil
+		}
+		seenVkey[vk] = true
+		witnesses = append(witnesses, w)
+		return nil
+	}
+	for i := range acct.ReceiveAddresses {
+		payKey, err := bursa.GetPaymentKey(acctKey, uint32(i)) //nolint:gosec // bounded by window size
+		if err != nil {
+			return Witness{}, fmt.Errorf("payment key idx %d: %w", i, err)
+		}
+		if err := addCandidate(payKey); err != nil {
+			return Witness{}, fmt.Errorf("witness payment idx %d: %w", i, err)
+		}
+	}
+	if stakeKey, err := bursa.GetStakeKey(acctKey, 0); err == nil {
+		if err := addCandidate(stakeKey); err != nil {
+			return Witness{}, fmt.Errorf("witness stake key: %w", err)
+		}
+	}
+
+	encoded, err := cbor.Encode(witnesses)
+	if err != nil {
+		return Witness{}, fmt.Errorf("encode witnesses: %w", err)
+	}
+	return Witness{WitnessCBOR: hex.EncodeToString(encoded)}, nil
+}
+
+// SubmitSigned is the final air-gap step, run on the online instance: it loads
+// the unsigned tx, decodes the witness array produced offline by SignTx, attaches
+// only the witnesses the transaction's inputs actually require (resolved against
+// the chain), and submits. The tx body is never mutated, so the body hash the
+// witnesses signed still matches the submitted transaction.
+func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR string) (TxResult, error) {
+	a, err := apollo.New(s.chain).LoadTxCbor(unsignedTxCBOR)
+	if err != nil {
+		return TxResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
+	tx := a.GetTx()
+	if tx == nil {
+		return TxResult{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
+	}
+
+	witBytes, err := hex.DecodeString(witnessCBOR)
+	if err != nil {
+		return TxResult{}, fmt.Errorf("%w: witness hex: %w", ErrInvalidWitness, err)
+	}
+	var witnesses []lcommon.VkeyWitness
+	if _, err := cbor.Decode(witBytes, &witnesses); err != nil {
+		return TxResult{}, fmt.Errorf("%w: %w", ErrInvalidWitness, err)
+	}
+	if len(witnesses) == 0 {
+		return TxResult{}, fmt.Errorf("%w: no witnesses supplied", ErrInvalidWitness)
+	}
+
+	// Determine which payment key-hashes the inputs require by resolving each
+	// input against the chain (the inputs are still unspent until this tx lands).
+	needed := make(map[string]bool)
+	for _, inp := range tx.Body.TxInputs.Items() {
+		u, err := s.chain.UtxoByRef(ctx, inp.TxId, inp.OutputIndex)
+		if err != nil {
+			return TxResult{}, fmt.Errorf("resolve input %s#%d: %w",
+				hex.EncodeToString(inp.TxId.Bytes()), inp.OutputIndex, err)
+		}
+		if u == nil || u.Output == nil {
+			return TxResult{}, fmt.Errorf("%w: input %s#%d not found on chain (already spent?)",
+				ErrInvalidTx, hex.EncodeToString(inp.TxId.Bytes()), inp.OutputIndex)
+		}
+		inAddr := u.Output.Address() // addressable copy: PaymentKeyHash has a pointer receiver
+		needed[hex.EncodeToString(inAddr.PaymentKeyHash().Bytes())] = true
+	}
+
+	// Attach only the witnesses whose vkey hashes a required signer, deduped.
+	attached := make(map[string]bool)
+	count := 0
+	for _, w := range witnesses {
+		kh := hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes())
+		if !needed[kh] || attached[kh] {
+			continue
+		}
+		attached[kh] = true
+		if a, err = a.AddVerificationKeyWitness(w); err != nil {
+			return TxResult{}, fmt.Errorf("attach witness: %w", err)
+		}
+		count++
+	}
+	if count == 0 {
+		return TxResult{}, fmt.Errorf(
+			"%w: none of the supplied witnesses match the transaction's required signers",
+			ErrInvalidWitness,
+		)
+	}
+	if count < len(needed) {
+		return TxResult{}, fmt.Errorf(
+			"%w: transaction needs %d distinct signers but only %d were supplied",
+			ErrInvalidWitness, len(needed), count,
+		)
+	}
+
+	// LoadTxCbor cached the decoded transaction's raw CBOR; ConwayTransaction
+	// (and its witness set) re-emit that cache on encode, which would drop the
+	// witnesses we just attached. Clear the transaction-level and witness-set
+	// caches so SubmitContext re-serializes from the mutated struct. The BODY
+	// cache is deliberately left intact: the witnesses signed over the original
+	// body bytes, so re-encoding the body must reproduce them exactly.
+	tx.SetCbor(nil)
+	tx.WitnessSet.SetCbor(nil)
+
+	// Detach from the request context: once submitted the inputs are consumed, so
+	// a client disconnect must not strand a broadcast (mirrors Confirm).
+	txHash, err := a.SubmitContext(context.WithoutCancel(ctx))
+	if err != nil {
+		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
 }
 

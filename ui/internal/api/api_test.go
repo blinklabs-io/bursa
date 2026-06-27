@@ -229,6 +229,27 @@ type fakeSpender struct {
 	signKey    string
 	signErr    error
 	signAddr   string
+
+	// verify-data
+	verifyValid   bool
+	verifyAddr    string
+	verifyErr     error
+	gotVerifySig  string
+	gotVerifyMsg  string
+	gotVerifyExp  string
+	gotVerifyHash bool
+
+	// air-gap
+	unsigned     spend.UnsignedTx
+	exportErr    error
+	gotExportID  string
+	witness      spend.Witness
+	signTxErr    error
+	gotSignTxCBOR string
+	submitResult spend.TxResult
+	submitErr    error
+	gotSubmitTx  string
+	gotSubmitWit string
 }
 
 func (f *fakeSpender) SetWallet(_, network, _ string) (*wallet.Account, error) {
@@ -263,6 +284,42 @@ func (f *fakeSpender) SignData(addr string, _ []byte, _ string) (string, string,
 	return f.signSig, f.signKey, nil
 }
 
+func (f *fakeSpender) VerifyData(sig, _ string, msg []byte, hashed bool, expected string) (bool, string, error) {
+	f.gotVerifySig = sig
+	f.gotVerifyMsg = string(msg)
+	f.gotVerifyExp = expected
+	f.gotVerifyHash = hashed
+	if f.verifyErr != nil {
+		return false, "", f.verifyErr
+	}
+	return f.verifyValid, f.verifyAddr, nil
+}
+
+func (f *fakeSpender) ExportUnsigned(pendingID string) (spend.UnsignedTx, error) {
+	f.gotExportID = pendingID
+	if f.exportErr != nil {
+		return spend.UnsignedTx{}, f.exportErr
+	}
+	return f.unsigned, nil
+}
+
+func (f *fakeSpender) SignTx(unsignedTxCBOR, _ string) (spend.Witness, error) {
+	f.gotSignTxCBOR = unsignedTxCBOR
+	if f.signTxErr != nil {
+		return spend.Witness{}, f.signTxErr
+	}
+	return f.witness, nil
+}
+
+func (f *fakeSpender) SubmitSigned(_ context.Context, unsignedTxCBOR, witnessCBOR string) (spend.TxResult, error) {
+	f.gotSubmitTx = unsignedTxCBOR
+	f.gotSubmitWit = witnessCBOR
+	if f.submitErr != nil {
+		return spend.TxResult{}, f.submitErr
+	}
+	return f.submitResult, nil
+}
+
 func TestSignDataReturnsSignature(t *testing.T) {
 	// Ungated: message signing needs no synced node, only the keystore.
 	sp := &fakeSpender{signSig: "84a1deadbeef", signKey: "a4010103"}
@@ -289,6 +346,137 @@ func TestSignDataWrongPasswordReturns401(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/sign-data", body))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("sign-data with wrong password = %d, want 401", rec.Code)
+	}
+}
+
+func TestVerifyDataReturnsResult(t *testing.T) {
+	// Ungated: verification is pure crypto, needs no node and no keystore.
+	sp := &fakeSpender{verifyValid: true, verifyAddr: "addr_test1signed"}
+	h := NewHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"signature":"84a1","key":"a401","message":"hi","expected_address":"addr_test1signed"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/verify-data", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /wallet/verify-data = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"valid":true`) ||
+		!strings.Contains(rec.Body.String(), "addr_test1signed") {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+	if sp.gotVerifySig != "84a1" || sp.gotVerifyMsg != "hi" || sp.gotVerifyExp != "addr_test1signed" {
+		t.Fatalf("args not passed through: %+v", sp)
+	}
+}
+
+func TestVerifyDataInvalidArgsReturns400(t *testing.T) {
+	sp := &fakeSpender{verifyErr: fmt.Errorf("%w: bad hex", spend.ErrInvalidRequest)}
+	h := NewHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"signature":"zz","key":"a4","message":"hi"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/verify-data", body))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("verify-data with bad input = %d, want 400", rec.Code)
+	}
+}
+
+func TestExportUnsignedRequiresReady(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
+	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/send/pend1/export-unsigned", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("export-unsigned while syncing = %d, want 503", rec.Code)
+	}
+}
+
+func TestExportUnsignedReturnsTx(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	sp := &fakeSpender{unsigned: spend.UnsignedTx{
+		UnsignedTxCBOR:  "84a400",
+		RequiredSigners: []string{"deadbeef"},
+	}}
+	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/send/pend1/export-unsigned", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export-unsigned = %d, want 200", rec.Code)
+	}
+	if sp.gotExportID != "pend1" {
+		t.Fatalf("pending id not passed through: %q", sp.gotExportID)
+	}
+	if !strings.Contains(rec.Body.String(), "84a400") || !strings.Contains(rec.Body.String(), "deadbeef") {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+
+func TestSignTxUngated(t *testing.T) {
+	// Offline signing must not need a synced node — only the keystore.
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
+	sp := &fakeSpender{witness: spend.Witness{WitnessCBOR: "81825820"}}
+	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","password":"pw"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/sign-tx", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /wallet/sign-tx = %d, want 200", rec.Code)
+	}
+	if sp.gotSignTxCBOR != "84a400" {
+		t.Fatalf("unsigned tx not passed through: %q", sp.gotSignTxCBOR)
+	}
+	if !strings.Contains(rec.Body.String(), "81825820") {
+		t.Fatalf("witness missing from body: %s", rec.Body.String())
+	}
+}
+
+func TestSignTxWrongPasswordReturns401(t *testing.T) {
+	sp := &fakeSpender{signTxErr: fmt.Errorf("%w: bad", spend.ErrWrongPassword)}
+	h := NewHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","password":"bad"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/sign-tx", body))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("sign-tx wrong password = %d, want 401", rec.Code)
+	}
+}
+
+func TestSubmitSignedRequiresReady(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
+	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","witness_cbor":"81"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/submit-signed", body))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("submit-signed while syncing = %d, want 503", rec.Code)
+	}
+}
+
+func TestSubmitSignedReturnsTxHash(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	sp := &fakeSpender{submitResult: spend.TxResult{TxHash: "cafebabe"}}
+	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","witness_cbor":"81825820"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/submit-signed", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("submit-signed = %d, want 200", rec.Code)
+	}
+	if sp.gotSubmitTx != "84a400" || sp.gotSubmitWit != "81825820" {
+		t.Fatalf("args not passed through: tx=%q wit=%q", sp.gotSubmitTx, sp.gotSubmitWit)
+	}
+	if !strings.Contains(rec.Body.String(), "cafebabe") {
+		t.Fatalf("tx hash missing: %s", rec.Body.String())
+	}
+}
+
+func TestSubmitSignedInvalidWitnessReturns400(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	sp := &fakeSpender{submitErr: fmt.Errorf("%w: bad cbor", spend.ErrInvalidWitness)}
+	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","witness_cbor":"zz"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/submit-signed", body))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("submit-signed bad witness = %d, want 400", rec.Code)
 	}
 }
 

@@ -12,6 +12,12 @@ import type {
   CreateKeystoreRequest,
   SignDataRequest,
   SignDataResult,
+  VerifyDataRequest,
+  VerifyDataResult,
+  UnsignedTx,
+  WitnessResult,
+  SignTxRequest,
+  SubmitSignedRequest,
 } from "./types";
 
 export class ApiError extends Error {
@@ -74,3 +80,10 @@ export const buildSend = (req: SendRequest) => apiPost<Preview>("/wallet/send", 
 export const confirmSend = (id: string, password: string) =>
   apiPost<TxResult>(`/wallet/send/${encodeURIComponent(id)}/confirm`, { password });
 export const signData = (req: SignDataRequest) => apiPost<SignDataResult>("/wallet/sign-data", req);
+export const verifyData = (req: VerifyDataRequest) =>
+  apiPost<VerifyDataResult>("/wallet/verify-data", req);
+export const exportUnsigned = (id: string) =>
+  apiPost<UnsignedTx>(`/wallet/send/${encodeURIComponent(id)}/export-unsigned`);
+export const signTx = (req: SignTxRequest) => apiPost<WitnessResult>("/wallet/sign-tx", req);
+export const submitSigned = (req: SubmitSignedRequest) =>
+  apiPost<TxResult>("/wallet/submit-signed", req);

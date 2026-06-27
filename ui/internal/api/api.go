@@ -50,6 +50,10 @@ type Spender interface {
 	Build(ctx context.Context, req spend.SendRequest) (spend.Preview, error)
 	Confirm(ctx context.Context, pendingID, password string) (spend.TxResult, error)
 	SignData(addr string, message []byte, password string) (signatureHex, keyHex string, err error)
+	VerifyData(signatureHex, keyHex string, message []byte, hashed bool, expectedAddress string) (valid bool, address string, err error)
+	ExportUnsigned(pendingID string) (spend.UnsignedTx, error)
+	SignTx(unsignedTxCBOR, password string) (spend.Witness, error)
+	SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR string) (spend.TxResult, error)
 }
 
 const defaultWindow = 20
@@ -180,6 +184,63 @@ func NewHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Han
 		serve(w, map[string]string{"signature": sig, "key": key}, err)
 	})
 
+	// CIP-8 / CIP-30 message verification — the inverse of sign-data. Pure
+	// crypto: ungated, no node, no keystore (a read-only wallet can verify too).
+	mux.HandleFunc("POST /wallet/verify-data", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Signature       string `json:"signature"`
+			Key             string `json:"key"`
+			Message         string `json:"message"`
+			Hashed          bool   `json:"hashed"`
+			ExpectedAddress string `json:"expected_address"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		valid, addr, err := sp.VerifyData(req.Signature, req.Key, []byte(req.Message), req.Hashed, req.ExpectedAddress)
+		serve(w, map[string]any{"valid": valid, "address": addr}, err)
+	})
+
+	// Air-gap step 1 (online instance): export the completed-but-unsigned tx for
+	// a pending send + the key-hashes that must sign it. Built against a synced
+	// node's UTxO view, so it shares the send flow's readyGate.
+	mux.HandleFunc("POST /wallet/send/{id}/export-unsigned", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		v, err := sp.ExportUnsigned(r.PathValue("id"))
+		serve(w, v, err)
+	}))
+
+	// Air-gap step 2 (offline instance): sign an unsigned tx with the active
+	// wallet's key. Ungated like sign-data — pure crypto over the keystore, no
+	// node needed; this is what the air-gapped machine runs.
+	mux.HandleFunc("POST /wallet/sign-tx", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			UnsignedTxCBOR string `json:"unsigned_tx_cbor"`
+			Password       string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		v, err := sp.SignTx(req.UnsignedTxCBOR, req.Password)
+		serve(w, v, err)
+	})
+
+	// Air-gap step 3 (online instance): attach the offline witness to the
+	// unsigned tx and broadcast. Needs a synced node (readyGate).
+	mux.HandleFunc("POST /wallet/submit-signed", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			UnsignedTxCBOR string `json:"unsigned_tx_cbor"`
+			WitnessCBOR    string `json:"witness_cbor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		v, err := sp.SubmitSigned(r.Context(), req.UnsignedTxCBOR, req.WitnessCBOR)
+		serve(w, v, err)
+	}))
+
 	// SPA catch-all: the specific API routes above take precedence on the mux;
 	// everything else is served by the embedded frontend.
 	mux.Handle("/", spa)
@@ -242,7 +303,9 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusOK, v)
 	case errors.Is(err, wallet.ErrNoWallet), errors.Is(err, spend.ErrNoWallet):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: no wallet/keystore loaded
-	case errors.Is(err, spend.ErrInvalidRequest):
+	case errors.Is(err, spend.ErrInvalidRequest),
+		errors.Is(err, spend.ErrInvalidTx),
+		errors.Is(err, spend.ErrInvalidWitness):
 		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400
 	case errors.Is(err, spend.ErrWrongPassword):
 		writeJSON(w, http.StatusUnauthorized, errBody(err)) // 401
