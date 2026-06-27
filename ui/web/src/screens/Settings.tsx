@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { Card } from "../components/Card";
 import { StatusPill } from "../components/StatusPill";
 import { CopyButton } from "../components/CopyButton";
-import { useStatus, useHistoryExpiry } from "../api/hooks";
+import { Button } from "../components/Button";
+import { useStatus, useHistoryExpiry, useNftMedia } from "../api/hooks";
 import { setHistoryExpiry as putHistoryExpiry, ApiError } from "../api/client";
 import type { Account, NodeState } from "../api/types";
 
@@ -151,6 +152,7 @@ function LeanStorageCard() {
 
 export function Settings({ account, spendingEnabled }: SettingsProps) {
   const status = useStatus();
+  const nftMedia = useNftMedia();
 
   return (
     <div className="screen-settings">
@@ -194,6 +196,42 @@ export function Settings({ account, spendingEnabled }: SettingsProps) {
 
       <Card title="Keystore">
         <p>{spendingEnabled ? "Spending enabled" : "Read-only"}</p>
+      </Card>
+
+      <Card title="NFT Media">
+        <p className="helper-text">
+          Runs an embedded IPFS client that connects to the IPFS peer network to
+          fetch NFT images. This is your own client (like the embedded node) — no
+          third-party gateway is used. Off by default; enabling it is a one-time,
+          deliberate choice.
+        </p>
+        <div className="dl-row">
+          <dt>Status</dt>
+          <dd>
+            <StatusPill tone={nftMedia.enabled ? "ok" : "muted"}>
+              {nftMedia.enabled ? "Enabled" : "Disabled"}
+            </StatusPill>
+          </dd>
+        </div>
+        {nftMedia.error && (
+          <p role="alert" className="error-text">
+            {nftMedia.error.message}
+          </p>
+        )}
+        <div className="preview-actions">
+          <Button
+            variant={nftMedia.enabled ? "ghost" : "primary"}
+            disabled={nftMedia.loading || nftMedia.saving}
+            aria-pressed={nftMedia.enabled}
+            onClick={() => void nftMedia.setEnabled(!nftMedia.enabled)}
+          >
+            {nftMedia.saving
+              ? "Saving…"
+              : nftMedia.enabled
+                ? "Disable NFT media"
+                : "Enable NFT media"}
+          </Button>
+        </div>
       </Card>
     </div>
   );

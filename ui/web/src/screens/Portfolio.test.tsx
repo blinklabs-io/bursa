@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { Portfolio } from "./Portfolio";
 import * as hooks from "../api/hooks";
+import type { NFT } from "../api/types";
 
 function mockBalance(lovelace: string, assets: { unit: string; quantity: string }[]) {
   vi.spyOn(hooks, "useBalance").mockReturnValue({
@@ -10,6 +11,32 @@ function mockBalance(lovelace: string, assets: { unit: string; quantity: string 
     refresh: vi.fn(),
   } as never);
 }
+
+// NftGallery uses useNfts + useNftMedia; default them to empty/off so the
+// existing balance/delegation tests don't trigger real network calls.
+function mockNfts(list: NFT[] = [], loading = false) {
+  vi.spyOn(hooks, "useNfts").mockReturnValue({
+    data: list,
+    error: null,
+    loading,
+    refresh: vi.fn(),
+  } as never);
+}
+
+function mockNftMedia(enabled = false, loading = false) {
+  vi.spyOn(hooks, "useNftMedia").mockReturnValue({
+    enabled,
+    loading,
+    saving: false,
+    error: null,
+    setEnabled: vi.fn(),
+  } as never);
+}
+
+beforeEach(() => {
+  mockNfts();
+  mockNftMedia();
+});
 
 function mockDelegation(overrides: Partial<{
   pool_id: string | null;
@@ -148,4 +175,50 @@ test("(h) fresh wallet with zero balance is valid — not an error", () => {
   // Should show "0 ADA" in the balance card without an error state.
   expect(screen.getByText(/^0 ADA$/)).toBeInTheDocument();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+const sampleNft: NFT = {
+  unit: "policyAname1",
+  name: "My Cool NFT",
+  image_cid: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+  cached: false,
+};
+
+test("(i) NFTs present but media OFF shows a placeholder directing to Settings, no image", () => {
+  mockBalance("4500000", []);
+  mockDelegation();
+  mockNfts([sampleNft]);
+  mockNftMedia(false);
+
+  render(<Portfolio />);
+
+  expect(screen.getByText(/media off/i)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /settings/i })).toBeInTheDocument();
+  // No image must be rendered while media is off.
+  expect(screen.queryByRole("img")).toBeNull();
+});
+
+test("(j) NFTs present and media ON renders an image thumbnail to the loopback route", () => {
+  mockBalance("4500000", []);
+  mockDelegation();
+  mockNfts([sampleNft]);
+  mockNftMedia(true);
+
+  render(<Portfolio />);
+
+  const img = screen.getByRole("img", { name: /my cool nft/i }) as HTMLImageElement;
+  expect(img).toBeInTheDocument();
+  // Same-origin loopback path (satisfies CSP); not an external gateway URL.
+  expect(img.getAttribute("src")).toBe("/wallet/nft/policyAname1/image");
+});
+
+test("(k) no NFTs shows an empty-state message", () => {
+  mockBalance("4500000", []);
+  mockDelegation();
+  mockNfts([]);
+  mockNftMedia(true);
+
+  render(<Portfolio />);
+
+  expect(screen.getByText(/no nfts/i)).toBeInTheDocument();
 });

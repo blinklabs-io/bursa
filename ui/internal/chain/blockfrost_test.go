@@ -240,6 +240,44 @@ func TestAccountRewardsNotFound(t *testing.T) {
 	}
 }
 
+func TestAsset(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q", r.Method)
+		}
+		if r.URL.Path != "/api/v0/assets/policyAname1" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"asset":"policyAname1","policy_id":"policyA","asset_name":"6e616d6531","quantity":"1","onchain_metadata":{"name":"My NFT","image":"ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"}}`))
+	})
+	got, err := c.Asset(context.Background(), "policyAname1")
+	if err != nil {
+		t.Fatalf("Asset: %v", err)
+	}
+	if got.Asset != "policyAname1" || got.PolicyID != "policyA" || got.Quantity != "1" {
+		t.Fatalf("unexpected asset: %+v", got)
+	}
+	if len(got.OnchainMetadata) == 0 || !strings.Contains(string(got.OnchainMetadata), "ipfs://") {
+		t.Fatalf("onchain_metadata not captured: %s", got.OnchainMetadata)
+	}
+}
+
+func TestAssetNotFound(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/assets/policyMissing" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(blockfrostNotFoundJSON))
+	})
+	_, err := c.Asset(context.Background(), "policyMissing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("404 should map to ErrNotFound, got %v", err)
+	}
+}
+
 func TestErrorStatus(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

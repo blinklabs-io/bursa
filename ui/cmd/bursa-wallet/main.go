@@ -35,6 +35,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/nft"
 	"github.com/blinklabs-io/bursa/ui/internal/settings"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
@@ -143,6 +144,42 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// NFT media. Discovery is node-local (the embedded node's asset metadata);
+	// the active wallet's native-asset units are read on demand from the wallet's
+	// live balance. The embedded IPFS client is OFF by default and started only
+	// when the user opts in via the settings toggle (see internal/nft). ctx scopes
+	// the IPFS client's lifetime, so it tears down on shutdown.
+	nftUnits := func(ctx context.Context) ([]string, error) {
+		bal, err := walletSvc.Balance(ctx)
+		if err != nil {
+			if errors.Is(err, wallet.ErrNoWallet) {
+				return nil, nft.ErrNoWallet
+			}
+			return nil, err
+		}
+		units := make([]string, 0, len(bal.Assets))
+		for _, a := range bal.Assets {
+			units = append(units, a.Unit)
+		}
+		return units, nil
+	}
+	rawNftSvc, err := nft.NewService(ctx, nft.Config{
+		Chain:   chain.NewClient(blockfrostPort),
+		Units:   nftUnits,
+		DataDir: dataDir,
+		Logger:  logger,
+	})
+	// NFT media is optional; a startup failure (e.g. cache directory unavailable)
+	// degrades gracefully: the API returns "media unavailable" rather than killing
+	// the wallet. Pass a typed nil so the API's nil-interface guard fires correctly.
+	var nftSvc api.NFTs
+	if err != nil {
+		logger.Warn("nft: service unavailable, NFT media disabled", "err", err)
+	} else {
+		nftSvc = rawNftSvc
+		defer func() { _ = rawNftSvc.Close() }()
+	}
+
 	if err := sup.Start(ctx); err != nil {
 		return fmt.Errorf("start node: %w", err)
 	}
@@ -153,6 +190,7 @@ func run() error {
 		Handler: api.NewHandler(
 			sup, vlt, walletSvc, spendSvc,
 			&settingsController{store: settingsStore, sup: sup},
+			nftSvc,
 			network, webui.Handler(),
 			api.WithLegacyKeystore(legacyKeyStore),
 		),
