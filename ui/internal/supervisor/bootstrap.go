@@ -87,9 +87,10 @@ func syncConfigFor(p BootstrapParams, logger *slog.Logger) mithril.SyncConfig {
 	}
 }
 
-// toBootstrapProgress flattens dingo's SyncProgress into the package's API type.
-// Only the fields surfaced on /status are mapped; the rest (Active, CurrentSlot,
-// TipSlot, Count, Total, Description) are internal pacing signals we omit.
+// toBootstrapProgress flattens dingo's SyncProgress into the package's API type
+// so the UI can show which phase is running and how far it has got. Active is
+// the one field we drop: it only marks a phase's begin/end edge, and Percent
+// already conveys completion within a phase.
 func toBootstrapProgress(sp mithril.SyncProgress) BootstrapProgress {
 	return BootstrapProgress{
 		Phase:           string(sp.Phase),
@@ -97,6 +98,11 @@ func toBootstrapProgress(sp mithril.SyncProgress) BootstrapProgress {
 		BytesDownloaded: sp.BytesDownloaded,
 		TotalBytes:      sp.TotalBytes,
 		BytesPerSecond:  sp.BytesPerSecond,
+		CurrentSlot:     sp.CurrentSlot,
+		TipSlot:         sp.TipSlot,
+		Count:           sp.Count,
+		Total:           sp.Total,
+		Description:     sp.Description,
 	}
 }
 

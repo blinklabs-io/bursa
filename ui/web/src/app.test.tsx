@@ -10,6 +10,9 @@ const mockAccount: Account = {
   receive_addresses: ["addr_test1abc"],
 };
 
+const MNEMONIC =
+  "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12";
+
 function stubStatus(state: string) {
   vi.spyOn(hooks, "useStatus").mockReturnValue({ data: { state, tip: 0, caughtUp: state === "ready" }, error: null, loading: false, refresh: vi.fn() } as never);
 }
@@ -26,9 +29,30 @@ test("with no wallet loaded, only Setup is shown", async () => {
   await waitFor(() => expect(screen.getAllByText(/set up|load wallet/i).length).toBeGreaterThan(0));
 });
 
-test("Send nav is disabled until the node is ready", async () => {
+test("while syncing with no wallet, the boot Syncing view shows instead of Setup", async () => {
   stubStatus("syncing");
   render(<App />);
+  await waitFor(() =>
+    expect(screen.getByText(/catching up to the chain/i)).toBeInTheDocument(),
+  );
+  // Setup's mnemonic field stays hidden until the user opts in.
+  expect(screen.queryByRole("textbox", { name: /mnemonic/i })).not.toBeInTheDocument();
+  // The escape hatch reveals Setup for a read-only load.
+  fireEvent.click(screen.getByRole("button", { name: /load wallet anyway/i }));
+  expect(screen.getByRole("textbox", { name: /mnemonic/i })).toBeInTheDocument();
+});
+
+test("Send nav is disabled until the node is ready", async () => {
+  stubStatus("syncing");
+  vi.spyOn(hooks, "useBalance").mockReturnValue({ data: null, error: null, loading: true, refresh: vi.fn() } as never);
+  vi.spyOn(hooks, "useDelegation").mockReturnValue({ data: null, error: null, loading: true, refresh: vi.fn() } as never);
+  vi.spyOn(client, "loadWallet").mockResolvedValue(mockAccount);
+  render(<App />);
+  // While syncing with no wallet the boot view is shown; opt in to reach Setup,
+  // then load a read-only wallet so the nav (and its gating) becomes visible.
+  fireEvent.click(await screen.findByRole("button", { name: /load wallet anyway/i }));
+  fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), { target: { value: MNEMONIC } });
+  fireEvent.click(screen.getByRole("button", { name: /^load wallet$/i }));
   // The Send entry is present but disabled while not ready.
   await waitFor(() => expect(screen.getByText("Send").closest("button")).toBeDisabled());
 });
@@ -44,14 +68,16 @@ test("deep-linking #/send while syncing falls back to Portfolio (guard)", async 
   window.location.hash = "#/send";
 
   render(<App />);
-  // Load a read-only wallet to get past Setup into the routed content area.
+  // Past the boot Syncing view into Setup, then load a read-only wallet to reach
+  // the routed content area.
+  fireEvent.click(await screen.findByRole("button", { name: /load wallet anyway/i }));
   fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), {
-    target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
+    target: { value: MNEMONIC },
   });
-  fireEvent.click(screen.getByRole("button", { name: /load wallet/i }));
+  fireEvent.click(screen.getByRole("button", { name: /^load wallet$/i }));
 
   // Once the wallet loads, Setup is gone — but the Send screen must not appear.
-  await waitFor(() => expect(screen.queryByRole("button", { name: /load wallet/i })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("button", { name: /^load wallet$/i })).not.toBeInTheDocument());
   expect(screen.queryByText("Send ADA")).not.toBeInTheDocument();
 });
 
@@ -107,7 +133,8 @@ test("spending-enabled wallet on a ready node can reach Send", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: /mnemonic/i }), {
     target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
   });
-  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "s3cretpw" } });
+  // Must clear the client-side minimum (12 chars) so it reaches createKeystore.
+  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "s3cret-passphrase" } });
   fireEvent.click(screen.getByRole("button", { name: /load wallet/i }));
 
   // Send screen renders (its "Send ADA" card).
