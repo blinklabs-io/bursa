@@ -38,7 +38,7 @@ test("(a) renders block heights for each transaction", () => {
   expect(screen.getByText("12300")).toBeInTheDocument();
 });
 
-test("(b) renders truncated tx hash with a CopyButton that copies the FULL hash", () => {
+test("(b) renders truncated tx hash with a CopyButton that copies the FULL hash", async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.assign(navigator, { clipboard: { writeText } });
   mockTransactions([TX1]);
@@ -49,6 +49,7 @@ test("(b) renders truncated tx hash with a CopyButton that copies the FULL hash"
   expect(copyButtons.length).toBeGreaterThanOrEqual(1);
   fireEvent.click(copyButtons[0]);
   expect(writeText).toHaveBeenCalledWith(TX1.tx_hash);
+  expect(await screen.findByText("Copied")).toBeInTheDocument();
 
   // At least the beginning of the hash should be visible
   expect(screen.getByText(new RegExp(TX1.tx_hash.slice(0, 8)))).toBeInTheDocument();

@@ -20,6 +20,7 @@ import { Staking } from "./screens/Staking";
 import { SignMessage } from "./screens/SignMessage";
 import { VerifyMessage } from "./screens/VerifyMessage";
 import { Offline } from "./screens/Offline";
+import { Operate } from "./screens/Operate";
 import { Settings } from "./screens/Settings";
 
 // A Map (not a plain object) so a crafted hash like "#/constructor" or
@@ -41,6 +42,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "sign", label: "Sign" },
   { key: "verify", label: "Verify" },
   { key: "offline", label: "Offline" },
+  { key: "operate", label: "Operate" },
   { key: "settings", label: "Settings" },
 ];
 
@@ -207,6 +209,7 @@ export function App() {
     else if (route === "sign" && canSign) activeRoute = "sign";
     else if (route === "verify") activeRoute = "verify";
     else if (route === "offline" && canSign) activeRoute = "offline";
+    else if (route === "operate" && canSign) activeRoute = "operate";
     else if (ROUTES.has(route) && route !== "send") activeRoute = route;
     else activeRoute = "portfolio";
   }
@@ -247,6 +250,12 @@ export function App() {
     // Air-gap signing needs the active wallet's seed (to sign) but no node for
     // the sign step; falls back to Portfolio without an active wallet.
     content = canSign ? <Offline /> : <Portfolio />;
+  } else if (route === "operate") {
+    // Pool operations derive cold/VRF/KES keys from the seed and need the spend
+    // password. A wallet must be active; otherwise fall back to Portfolio. Most
+    // pool ops are offline; only retirement submission needs a synced node,
+    // gated at the API.
+    content = canSign ? <Operate account={toAccount(activeWallet)} /> : <Portfolio />;
   } else {
     const Screen = ROUTES.get(route) ?? Portfolio;
     content = <Screen />;
@@ -280,7 +289,8 @@ export function App() {
               (key === "send" && !canSend) ||
               (key === "staking" && !canStake) ||
               (key === "sign" && !canSign) ||
-              (key === "offline" && !canSign);
+              (key === "offline" && !canSign) ||
+              (key === "operate" && !canSign);
             const active = key === activeRoute;
             return (
               <button

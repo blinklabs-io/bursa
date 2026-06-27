@@ -15,8 +15,8 @@ import (
 )
 
 // Account is a derived, read-only view of a wallet: its stake address (the
-// query key) and a window of external (receive) payment addresses, all sharing
-// the canonical stake key at index 0.
+// query key) plus windows of external (receive) and internal (change) payment
+// addresses, all sharing the canonical stake key at index 0.
 //
 // DRepKeyHash is the wallet's own DRep verification-key hash (CIP-0105,
 // derivation role 3), derived at the same time as the addresses. It carries the
@@ -28,6 +28,7 @@ type Account struct {
 	StakeAddress     string   `json:"stake_address"`
 	ReceiveAddresses []string `json:"receive_addresses"`
 	DRepKeyHash      string   `json:"drep_key_hash,omitempty"`
+	ChangeAddresses  []string `json:"change_addresses,omitempty"`
 }
 
 // AccountXpub returns the Bech32-encoded extended public key for the CIP-1852
@@ -62,8 +63,9 @@ func accountXpubFromRoot(root bip32.XPrv) (string, error) {
 }
 
 // Derive builds the account for the given mnemonic and network, producing the
-// stake address plus windowN external receive addresses (indices 0..windowN-1),
-// all bound to the canonical stake key m/1852'/1815'/0'/2/0.
+// stake address plus windowN external receive addresses and windowN internal
+// change addresses (indices 0..windowN-1), all bound to the canonical stake key
+// m/1852'/1815'/0'/2/0.
 func Derive(mnemonic, network string, windowN int) (*Account, error) {
 	netID, err := validateDeriveInputs(network, windowN)
 	if err != nil {
@@ -128,19 +130,33 @@ func deriveFromRoot(root bip32.XPrv, network string, netID uint8, windowN int) (
 		return nil, fmt.Errorf("stake address: %w", err)
 	}
 
-	receive := make([]string, 0, windowN)
-	for i := 0; i < windowN; i++ {
-		payKey, err := bursa.GetPaymentKey(acctKey, uint32(i))
-		if err != nil {
-			return nil, fmt.Errorf("payment key %d: %w", i, err)
-		}
+	deriveAddr := func(chain uint32, i int) (string, error) {
+		idx := uint32(i) //nolint:gosec // i is bounded by the configured window size
+		roleKey := acctKey.Derive(chain)
+		defer zeroXPrv(roleKey)
+		payKey := roleKey.Derive(idx)
+		defer zeroXPrv(payKey)
 		payHash := payKey.Public().PublicKey().Hash()
-		zeroXPrv(payKey)
 		addr, err := lcommon.NewAddressFromParts(lcommon.AddressTypeKeyKey, netID, payHash, stakeHash)
 		if err != nil {
-			return nil, fmt.Errorf("address %d: %w", i, err)
+			return "", err
 		}
-		receive = append(receive, addr.String())
+		return addr.String(), nil
+	}
+
+	receive := make([]string, 0, windowN)
+	change := make([]string, 0, windowN)
+	for i := 0; i < windowN; i++ {
+		addr, err := deriveAddr(0, i)
+		if err != nil {
+			return nil, fmt.Errorf("receive address %d: %w", i, err)
+		}
+		receive = append(receive, addr)
+		addr, err = deriveAddr(1, i)
+		if err != nil {
+			return nil, fmt.Errorf("change address %d: %w", i, err)
+		}
+		change = append(change, addr)
 	}
 
 	return &Account{
@@ -148,6 +164,7 @@ func deriveFromRoot(root bip32.XPrv, network string, netID uint8, windowN int) (
 		StakeAddress:     stakeAddr.String(),
 		ReceiveAddresses: receive,
 		DRepKeyHash:      drepHash,
+		ChangeAddresses:  change,
 	}, nil
 }
 

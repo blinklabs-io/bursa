@@ -882,6 +882,7 @@ func cloneAccount(acct *wallet.Account) *wallet.Account {
 	}
 	cp := *acct
 	cp.ReceiveAddresses = append([]string(nil), acct.ReceiveAddresses...)
+	cp.ChangeAddresses = append([]string(nil), acct.ChangeAddresses...)
 	return &cp
 }
 

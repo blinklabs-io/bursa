@@ -20,6 +20,9 @@ func TestDerivePreview(t *testing.T) {
 	if len(acct.ReceiveAddresses) != 5 {
 		t.Fatalf("got %d receive addresses, want 5", len(acct.ReceiveAddresses))
 	}
+	if len(acct.ChangeAddresses) != 5 {
+		t.Fatalf("got %d change addresses, want 5", len(acct.ChangeAddresses))
+	}
 	seen := map[string]bool{}
 	for i, a := range acct.ReceiveAddresses {
 		if !strings.HasPrefix(a, "addr_test1") {
@@ -27,6 +30,15 @@ func TestDerivePreview(t *testing.T) {
 		}
 		if seen[a] {
 			t.Fatalf("receive[%d] = %q is a duplicate", i, a)
+		}
+		seen[a] = true
+	}
+	for i, a := range acct.ChangeAddresses {
+		if !strings.HasPrefix(a, "addr_test1") {
+			t.Fatalf("change[%d] = %q, want addr_test1… prefix", i, a)
+		}
+		if seen[a] {
+			t.Fatalf("change[%d] = %q duplicates a derived address", i, a)
 		}
 		seen[a] = true
 	}
@@ -59,6 +71,11 @@ func TestDeriveDeterministic(t *testing.T) {
 			t.Fatalf("receive[%d] not deterministic", i)
 		}
 	}
+	for i := range a1.ChangeAddresses {
+		if a1.ChangeAddresses[i] != a2.ChangeAddresses[i] {
+			t.Fatalf("change[%d] not deterministic", i)
+		}
+	}
 }
 
 func TestDeriveFromMnemonicBytesMatchesStringDerive(t *testing.T) {
@@ -76,9 +93,17 @@ func TestDeriveFromMnemonicBytesMatchesStringDerive(t *testing.T) {
 	if len(fromBytes.ReceiveAddresses) != len(fromString.ReceiveAddresses) {
 		t.Fatalf("got %d receive addresses, want %d", len(fromBytes.ReceiveAddresses), len(fromString.ReceiveAddresses))
 	}
+	if len(fromBytes.ChangeAddresses) != len(fromString.ChangeAddresses) {
+		t.Fatalf("got %d change addresses, want %d", len(fromBytes.ChangeAddresses), len(fromString.ChangeAddresses))
+	}
 	for i := range fromString.ReceiveAddresses {
 		if fromBytes.ReceiveAddresses[i] != fromString.ReceiveAddresses[i] {
 			t.Fatalf("receive[%d] = %q, want %q", i, fromBytes.ReceiveAddresses[i], fromString.ReceiveAddresses[i])
+		}
+	}
+	for i := range fromString.ChangeAddresses {
+		if fromBytes.ChangeAddresses[i] != fromString.ChangeAddresses[i] {
+			t.Fatalf("change[%d] = %q, want %q", i, fromBytes.ChangeAddresses[i], fromString.ChangeAddresses[i])
 		}
 	}
 

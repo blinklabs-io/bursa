@@ -2,10 +2,17 @@ import { useState } from "react";
 
 interface CopyButtonProps {
   value: string;
+  ariaLabel?: string;
+  "aria-label"?: string;
 }
 
-export function CopyButton({ value }: CopyButtonProps) {
+export function CopyButton({
+  value,
+  ariaLabel,
+  "aria-label": ariaLabelAttribute,
+}: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
+  const label = ariaLabel ?? ariaLabelAttribute;
 
   function handleClick() {
     navigator.clipboard
@@ -21,7 +28,7 @@ export function CopyButton({ value }: CopyButtonProps) {
   }
 
   return (
-    <button type="button" className="btn ghost" onClick={handleClick}>
+    <button type="button" className="btn ghost" onClick={handleClick} aria-label={label}>
       {copied ? "Copied" : "Copy"}
     </button>
   );

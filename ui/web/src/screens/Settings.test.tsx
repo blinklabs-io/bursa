@@ -44,7 +44,7 @@ test("(a) renders network from account prop", () => {
   expect(screen.getByText("preview")).toBeInTheDocument();
 });
 
-test("(b) renders stake address in monospace and a CopyButton for it", () => {
+test("(b) renders stake address in monospace and a CopyButton for it", async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.assign(navigator, { clipboard: { writeText } });
   mockStatus("ready", 12345, true);
@@ -56,6 +56,7 @@ test("(b) renders stake address in monospace and a CopyButton for it", () => {
   // The copy button must copy the FULL stake address.
   fireEvent.click(screen.getByRole("button", { name: /copy/i }));
   expect(writeText).toHaveBeenCalledWith(mockAccount.stake_address);
+  expect(await screen.findByText("Copied")).toBeInTheDocument();
 });
 
 test("(c) renders sync state pill from useStatus", () => {

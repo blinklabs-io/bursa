@@ -35,6 +35,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/settings"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
@@ -147,6 +148,17 @@ func run() error {
 	spendSvc := spend.NewService(chainCtx, vaultKeystore{v: vlt}, nil)
 	spendSvc.SetChainQuerier(chainClient)
 
+	// Stake Pool Operations: derives cold/VRF/KES credentials and builds/submits
+	// pool certificates on the active wallet, sharing the spend chain context for
+	// submission. Genesis (for KES-period math) comes from the node's loopback
+	// Blockfrost endpoint; the tip comes from the supervisor — no external call.
+	poolGenesis := chain.NewClient(blockfrostPort)
+	poolSvc := poolops.NewService(
+		chainCtx, vaultKeystore{v: vlt},
+		genesisAdapter{c: poolGenesis},
+		tipAdapter{sup: sup},
+	)
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -161,6 +173,7 @@ func run() error {
 			sup, vlt, walletSvc, spendSvc,
 			&settingsController{store: settingsStore, sup: sup},
 			chainClient,
+			poolSvc,
 			network, webui.Handler(),
 			api.WithLegacyKeystore(legacyKeyStore),
 		),
@@ -233,4 +246,33 @@ func (c *settingsController) HistoryExpiryRestartRequired() bool {
 		return false
 	}
 	return applied != c.store.HistoryExpiry()
+}
+
+// genesisAdapter adapts the loopback Blockfrost chain client to the genesis
+// subset the SPO toolkit's KES-period math needs.
+type genesisAdapter struct{ c *chain.Client }
+
+func (g genesisAdapter) Genesis(ctx context.Context) (poolops.Genesis, error) {
+	gen, err := g.c.Genesis(ctx)
+	if err != nil {
+		return poolops.Genesis{}, err
+	}
+	return poolops.Genesis{
+		SlotsPerKESPeriod: gen.SlotsPerKESPeriod,
+		MaxKESEvolutions:  gen.MaxKESEvolutions,
+		EpochLength:       gen.EpochLength,
+	}, nil
+}
+
+// tipAdapter exposes the supervisor's current tip slot to the SPO toolkit.
+// TipSlot returns an error when the node has not yet caught up to the chain
+// tip so that KES-period calculations do not silently use a stale slot.
+type tipAdapter struct{ sup *supervisor.Supervisor }
+
+func (t tipAdapter) TipSlot() (uint64, error) {
+	st := t.sup.Status()
+	if st.State != supervisor.StateReady {
+		return 0, fmt.Errorf("node is not synced (state: %s); wait for it to reach 'ready' before issuing opcerts", st.State)
+	}
+	return st.Tip, nil
 }

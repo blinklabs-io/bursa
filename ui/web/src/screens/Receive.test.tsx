@@ -23,7 +23,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("(a) next unused address card copies the FULL address", () => {
+test("(a) next unused address card copies the FULL address", async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.assign(navigator, { clipboard: { writeText } });
   mockAddresses();
@@ -38,6 +38,7 @@ test("(a) next unused address card copies the FULL address", () => {
   expect(copyButtons.length).toBeGreaterThanOrEqual(1);
   fireEvent.click(copyButtons[0]);
   expect(writeText).toHaveBeenCalledWith(ADDR_B);
+  expect(await screen.findByText("Copied")).toBeInTheDocument();
 });
 
 test("(b) renders a table listing all receive addresses", () => {
