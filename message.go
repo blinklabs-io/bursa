@@ -308,7 +308,10 @@ func SignData(addr, payload []byte, lk *LoadedKey) (signatureHex, keyHex string,
 	if err != nil {
 		return "", "", err
 	}
-	signature := sign(toBeSigned)
+	signature, err := sign(toBeSigned)
+	if err != nil {
+		return "", "", err
+	}
 	coseSign1Bytes, err := cbor.Encode([]any{
 		protected,
 		map[any]any{"hashed": false},

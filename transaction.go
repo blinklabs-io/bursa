@@ -127,22 +127,54 @@ func useTagForTxType(txType uint) bool {
 	return txType >= ledger.TxTypeConway
 }
 
+// ErrSignatureVerification indicates a freshly produced signature failed to
+// verify against its own public key. With correct key material and an intact
+// signing routine this can never happen, so it signals memory corruption, a
+// fault-injection ("glitch") attack on the deterministic EdDSA signer — the
+// standard defense against which is to verify before releasing the signature,
+// since a faulted second signing of the same message would otherwise leak the
+// private scalar — or a signing-math bug. The signature is discarded, never
+// returned.
+var ErrSignatureVerification = errors.New("produced signature failed self-verification")
+
+// verifyingSigner wraps a raw signing function with a verify-after-sign
+// self-check: it signs, then confirms the result verifies against pub before
+// returning it, yielding ErrSignatureVerification otherwise. crypto/ed25519
+// verification is valid for both standard and Cardano extended
+// (BIP32-Ed25519) signatures because both verify against the 32-byte public
+// key, and Go's verifier additionally rejects non-canonical S (malleable)
+// signatures. This is defense-in-depth applied at the lowest signing layer so
+// every caller — offline tx signing, CIP-8 data signing, and the remote
+// signer's custody backends — inherits the same guarantee.
+func verifyingSigner(pub []byte, raw func(msg []byte) []byte) func(msg []byte) ([]byte, error) {
+	return func(msg []byte) ([]byte, error) {
+		sig := raw(msg)
+		if len(pub) != ed25519.PublicKeySize ||
+			!ed25519.Verify(ed25519.PublicKey(pub), msg, sig) {
+			return nil, ErrSignatureVerification
+		}
+		return sig, nil
+	}
+}
+
 // signerForKey returns the 32-byte public (vkey) bytes and a signing closure
 // for a loaded signing key. Extended BIP32 keys (96-byte SKey) use Cardano
 // BIP32-Ed25519 signing; standard keys (64-byte ed25519 private key) use
-// crypto/ed25519.
-func signerForKey(lk *LoadedKey) (vkey []byte, sign func(msg []byte) []byte, err error) {
+// crypto/ed25519. The returned closure verifies every signature it produces
+// against vkey before returning it (see verifyingSigner / ErrSignatureVerification).
+func signerForKey(lk *LoadedKey) (vkey []byte, sign func(msg []byte) ([]byte, error), err error) {
 	if lk == nil {
 		return nil, nil, errors.New("signing key cannot be nil")
 	}
 	switch len(lk.SKey) {
 	case 96:
 		x := bip32.XPrv(lk.SKey)
-		return x.PublicKey(), x.Sign, nil
+		pub := x.PublicKey()
+		return pub, verifyingSigner(pub, x.Sign), nil
 	case 64:
 		priv := ed25519.PrivateKey(lk.SKey)
 		pub := priv.Public().(ed25519.PublicKey)
-		return pub, func(msg []byte) []byte { return ed25519.Sign(priv, msg) }, nil
+		return pub, verifyingSigner(pub, func(msg []byte) []byte { return ed25519.Sign(priv, msg) }), nil
 	default:
 		return nil, nil, fmt.Errorf("unsupported signing key length %d (want 64 or 96)", len(lk.SKey))
 	}
@@ -158,7 +190,11 @@ func CreateWitness(txID []byte, lk *LoadedKey) (lcommon.VkeyWitness, error) {
 	if err != nil {
 		return lcommon.VkeyWitness{}, err
 	}
-	return lcommon.VkeyWitness{Vkey: vkey, Signature: sign(txID)}, nil
+	sig, err := sign(txID)
+	if err != nil {
+		return lcommon.VkeyWitness{}, err
+	}
+	return lcommon.VkeyWitness{Vkey: vkey, Signature: sig}, nil
 }
 
 // SignTransaction adds a vkey witness for each provided signing key and returns
@@ -409,13 +445,25 @@ func MinFee(sizeBytes int, params ProtocolParams) uint64 {
 // SignDigest signs an arbitrary message with the loaded key and returns the raw
 // 64-byte signature. Standard ed25519 keys use crypto/ed25519; extended
 // BIP32-Ed25519 keys use the Cardano signing routine. This is the low-level
-// signing primitive used by the remote signer's custody backends.
+// signing primitive used by the remote signer's custody backends. The produced
+// signature is verified against the key's own public key before return; a
+// failure yields ErrSignatureVerification.
+//
+// SECURITY: SignDigest signs whatever bytes it is handed — it performs no
+// transaction decoding and no policy evaluation. Callers MUST only pass a
+// digest derived from a fully decoded, policy-checked request (e.g. the
+// blake2b-256 tx id from TransactionID after InspectTransaction, or a CIP-8
+// Sig_structure). Never wire this primitive to a caller-supplied, un-inspected
+// digest: doing so would let an attacker obtain a valid witness over an
+// arbitrary transaction body (a drain). The remote signer upholds this by
+// computing the digest itself from decoded CBOR and signing only after policy
+// passes; any new signing entry point must do the same.
 func SignDigest(lk *LoadedKey, msg []byte) ([]byte, error) {
 	_, sign, err := signerForKey(lk)
 	if err != nil {
 		return nil, err
 	}
-	return sign(msg), nil
+	return sign(msg)
 }
 
 // PublicKeyOf returns the canonical 32-byte Ed25519 verification key for the
