@@ -98,6 +98,23 @@ test("unlocking a single-wallet vault binds it and shows the main UI", async () 
   expect(screen.getByText("Main")).toBeInTheDocument();
 });
 
+test("while syncing before unlock, the boot Syncing view shows instead of the vault flow", async () => {
+  // The node-sync boot gate takes the whole screen while syncing and before the
+  // vault is unlocked — there is nothing to operate yet. The escape hatch drops
+  // into the vault flow (here: the unlock screen) for a read-only load.
+  stubStatus("syncing");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  render(<App />);
+  await waitFor(() =>
+    expect(screen.getByText(/catching up to the chain/i)).toBeInTheDocument(),
+  );
+  // The vault unlock control stays hidden until the user opts in.
+  expect(screen.queryByRole("button", { name: /^unlock$/i })).not.toBeInTheDocument();
+  // The escape hatch reveals the vault flow (unlock).
+  fireEvent.click(screen.getByRole("button", { name: /load wallet anyway/i }));
+  expect(screen.getByRole("button", { name: /^unlock$/i })).toBeInTheDocument();
+});
+
 test("Send nav is disabled until the node is ready", async () => {
   stubStatus("syncing");
   stubVault({ exists: true, locked: true, wallet_count: 1 });
@@ -105,6 +122,9 @@ test("Send nav is disabled until the node is ready", async () => {
   vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
 
   render(<App />);
+  // While syncing the boot view is shown; opt in to reach the vault flow, then
+  // unlock so the nav (and its gating) becomes visible.
+  fireEvent.click(await screen.findByRole("button", { name: /load wallet anyway/i }));
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
   fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
@@ -120,6 +140,8 @@ test("deep-linking #/send while syncing falls back to Portfolio (guard)", async 
   window.location.hash = "#/send";
 
   render(<App />);
+  // Past the boot Syncing view, then unlock to reach the routed content area.
+  fireEvent.click(await screen.findByRole("button", { name: /load wallet anyway/i }));
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
   fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 

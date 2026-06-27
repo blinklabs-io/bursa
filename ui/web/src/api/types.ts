@@ -3,9 +3,16 @@ export type NodeState = "stopped" | "starting" | "bootstrapping" | "syncing" | "
 export interface BootstrapProgress {
   phase: string;
   percent: number;
+  // Snapshot-download phase.
   bytes_downloaded?: number;
   total_bytes?: number;
   bytes_per_second?: number;
+  // Block-replay phases (copy / gap-fill / backfill): how far through the chain.
+  current_slot?: number;
+  tip_slot?: number;
+  count?: number;
+  total?: number;
+  description?: string;
 }
 
 export interface Status {

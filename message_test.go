@@ -15,6 +15,7 @@
 package bursa
 
 import (
+	"crypto/ed25519"
 	"encoding/hex"
 	"testing"
 
@@ -137,11 +138,15 @@ func testCoseSign1Hex(
 	if err != nil {
 		t.Fatalf("buildSigStructure: %v", err)
 	}
+	sig, err := sign(toBeSigned)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
 	coseSign1Bytes, err := cbor.Encode([]any{
 		protected,
 		unprotectedHeaders,
 		cosePayload,
-		sign(toBeSigned),
+		sig,
 	})
 	if err != nil {
 		t.Fatalf("encode COSE_Sign1: %v", err)
@@ -158,6 +163,35 @@ func testCoseSign1Hex(
 
 func TestSignAndVerifyData(t *testing.T) {
 	lk := testLoadedKey(make([]byte, 32))
+	addr := testEnterpriseAddress(t, lk.VKey)
+	payload := []byte("hello cardano")
+
+	sig, key, err := SignData(addr, payload, lk)
+	if err != nil {
+		t.Fatalf("SignData: %v", err)
+	}
+	if len(sig) == 0 || len(key) == 0 {
+		t.Fatalf("empty signature or key")
+	}
+	ok, err := VerifyData(sig, key, payload)
+	if err != nil {
+		t.Fatalf("VerifyData: %v", err)
+	}
+	if !ok {
+		t.Fatalf("signature failed to verify")
+	}
+}
+
+// Standard (non-extended, 64-byte) Ed25519 keys are valid for CIP-8 on the
+// software/SOPS backends, but every other CIP-8 test uses an extended key.
+// This covers the standard-key SignData -> VerifyData round trip end to end,
+// which also exercises the 64-byte branch of the verify-after-sign self-check.
+func TestSignAndVerifyData_StandardKey(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	lk := &LoadedKey{SKey: []byte(priv), VKey: pub}
 	addr := testEnterpriseAddress(t, lk.VKey)
 	payload := []byte("hello cardano")
 
@@ -362,11 +396,15 @@ func TestVerifyData_RejectsProtectedAddressMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("signerForKey: %v", err)
 	}
+	sig, err := sign(toBeSigned)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
 	coseSign1Bytes, err := cbor.Encode([]any{
 		protected,
 		map[any]any{"hashed": false},
 		payload,
-		sign(toBeSigned),
+		sig,
 	})
 	if err != nil {
 		t.Fatalf("encode COSE_Sign1: %v", err)
@@ -440,11 +478,15 @@ func TestVerifyData_RejectsInvalidProtectedAlgorithm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSigStructure: %v", err)
 	}
+	sig, err := sign(toBeSigned)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
 	coseSign1Bytes, err := cbor.Encode([]any{
 		protected,
 		map[any]any{"hashed": false},
 		payload,
-		sign(toBeSigned),
+		sig,
 	})
 	if err != nil {
 		t.Fatalf("encode COSE_Sign1: %v", err)

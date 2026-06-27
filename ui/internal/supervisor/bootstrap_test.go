@@ -48,6 +48,21 @@ func TestSyncConfigForWiresProgress(t *testing.T) {
 		t.Fatalf("progress not mapped: %+v", got)
 	}
 
+	// The block-replay positional fields (slot/count/description) must survive
+	// too — they're what the sync view renders to show "where it is".
+	sc.OnProgress(mithril.SyncProgress{
+		Phase:       mithril.PhaseBackfill,
+		Percent:     71,
+		CurrentSlot: 97740,
+		TipSlot:     132000,
+		Count:       18432,
+		Total:       25900,
+		Description: "Conway",
+	})
+	if got.CurrentSlot != 97740 || got.TipSlot != 132000 || got.Count != 18432 || got.Total != 25900 || got.Description != "Conway" {
+		t.Fatalf("positional progress not mapped: %+v", got)
+	}
+
 	// A nil OnProgress must not panic.
 	syncConfigFor(BootstrapParams{}, nil).OnProgress(mithril.SyncProgress{})
 }

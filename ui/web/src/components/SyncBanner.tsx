@@ -25,7 +25,7 @@ export function SyncBanner({ status }: SyncBannerProps) {
   const tone = stateToTone(status.state);
 
   let detail = "";
-  if (status.bootstrap) {
+  if (status.state === "bootstrapping" && status.bootstrap) {
     detail = `${status.bootstrap.phase} ${status.bootstrap.percent.toFixed(1)}%`;
   } else if (status.state === "ready") {
     detail = `tip ${status.tip} · ${status.caughtUp ? "caught up" : "catching up"}`;

@@ -10,6 +10,7 @@ import { CreateVault } from "./screens/CreateVault";
 import { UnlockVault } from "./screens/UnlockVault";
 import { AddWallet } from "./screens/AddWallet";
 import { MigrateLegacyKeystore } from "./screens/MigrateLegacyKeystore";
+import { Syncing } from "./screens/Syncing";
 import { Portfolio } from "./screens/Portfolio";
 import { Receive } from "./screens/Receive";
 import { Activity } from "./screens/Activity";
@@ -62,6 +63,9 @@ export function App() {
   // addingWallet overlays the Add-wallet form on top of the unlocked UI.
   const [addingWallet, setAddingWallet] = useState(false);
   const [skipLegacyImport, setSkipLegacyImport] = useState(false);
+  // Set when the user chooses to open the vault flow while the node is still
+  // syncing, dismissing the boot Syncing view for this session.
+  const [loadAnyway, setLoadAnyway] = useState(false);
 
   const activeWallet = wallets.find((w) => w.id === activeId) ?? null;
   const isReady = status.data?.state === "ready";
@@ -117,6 +121,21 @@ export function App() {
 
   const vault = vaultStatus.data;
   const network = "preview";
+
+  // Boot gate: before the vault is open, if the node isn't ready and the user
+  // hasn't opted to proceed, the Syncing view takes the whole screen. The escape
+  // hatch drops to the vault create/unlock flow for read-only operation while
+  // syncing continues.
+  if (!unlocked && !loadAnyway && status.data && status.data.state !== "ready") {
+    return (
+      <div className="app">
+        <SyncBanner status={status.data} />
+        <main className="content content-boot">
+          <Syncing status={status.data} onLoadAnyway={() => setLoadAnyway(true)} />
+        </main>
+      </div>
+    );
+  }
 
   // No vault yet → first-run: create vault + add first wallet.
   if (vault && !vault.exists && !unlocked) {
