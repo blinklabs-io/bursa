@@ -13,10 +13,32 @@ GOMODULE=$(shell grep ^module $(ROOT_DIR)/go.mod | awk '{ print $$2 }')
 # Set version strings based on git tag and current ref
 GO_LDFLAGS=-ldflags "-X '$(GOMODULE)/internal/version.Version=$(shell git describe --tags --exact-match 2>/dev/null)' -X '$(GOMODULE)/internal/version.CommitHash=$(shell git rev-parse --short HEAD)'"
 
-.PHONY: build mod-tidy clean test
+# The nested ui/ module is a separate Go module; mirror the version-ldflags
+# pattern against its module path for the embedded-SPA wallet binary.
+UI_GOMODULE=$(shell grep ^module $(ROOT_DIR)/ui/go.mod | awk '{ print $$2 }')
+UI_GO_LDFLAGS=-ldflags "-X '$(UI_GOMODULE)/internal/version.Version=$(shell git describe --tags --exact-match 2>/dev/null)' -X '$(UI_GOMODULE)/internal/version.CommitHash=$(shell git rev-parse --short HEAD)'"
+
+.PHONY: build wallet wallet-binary mod-tidy clean test
 
 # Alias for building program binary
 build: $(BINARIES)
+
+# Build the embedded-SPA wallet binary from the nested ui/ module. The web
+# bundle is built first so the //go:embed dist target is populated, then the
+# default (pure-Go, non-webview) bursa-wallet binary is compiled.
+wallet:
+	cd ui/web && npm ci && npm run build
+	$(MAKE) wallet-binary
+
+# Compile only the bursa-wallet Go binary, assuming the web bundle has already
+# been built into the //go:embed dist target. Honors GOOS/GOARCH for the
+# release cross-build matrix; the default build is pure Go and cross-compiles
+# without CGO. The webview variant is intentionally NOT built here.
+wallet-binary:
+	cd ui && go build \
+		$(UI_GO_LDFLAGS) \
+		-o bursa-wallet \
+		./cmd/bursa-wallet
 
 # Builds and installs binary in ~/.local/bin
 install: build
