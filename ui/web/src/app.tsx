@@ -1,10 +1,16 @@
 import { useState } from "react";
 import type { ReactElement } from "react";
-import type { Account } from "./api/types";
-import { useStatus } from "./api/hooks";
+import type { Account, WalletView } from "./api/types";
+import { useStatus, useVaultStatus } from "./api/hooks";
+import { lockVault, ApiError } from "./api/client";
+import { Button } from "./components/Button";
 import { SyncBanner } from "./components/SyncBanner";
+import { WalletSwitcher } from "./components/WalletSwitcher";
 import { useHashRoute, navigate } from "./router";
-import { Setup } from "./screens/Setup";
+import { CreateVault } from "./screens/CreateVault";
+import { UnlockVault } from "./screens/UnlockVault";
+import { AddWallet } from "./screens/AddWallet";
+import { MigrateLegacyKeystore } from "./screens/MigrateLegacyKeystore";
 import { Syncing } from "./screens/Syncing";
 import { Portfolio } from "./screens/Portfolio";
 import { Receive } from "./screens/Receive";
@@ -32,22 +38,114 @@ const NAV: { key: string; label: string }[] = [
   { key: "settings", label: "Settings" },
 ];
 
+// The active wallet drives the read/spend screens. Settings/SignMessage take an
+// Account; map the active WalletView onto that shape (the server binds the
+// active wallet, so only its display fields are needed here).
+function toAccount(w: WalletView): Account {
+  return {
+    network: w.network,
+    stake_address: w.stake_address,
+    receive_addresses: w.addresses,
+  };
+}
+
 export function App() {
-  const [account, setAccount] = useState<Account | null>(null);
-  const [spendingEnabled, setSpendingEnabled] = useState(false);
-  // Set when the user chooses to load a wallet while the node is still syncing,
-  // dismissing the boot Syncing view in favour of Setup (read-only).
-  const [loadAnyway, setLoadAnyway] = useState(false);
   const status = useStatus();
+  const vaultStatus = useVaultStatus();
   const route = useHashRoute();
 
-  const isReady = status.data?.state === "ready";
+  // Vault session state, established after create/unlock and kept in memory.
+  const [wallets, setWallets] = useState<WalletView[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  // unlocked tracks whether this session has unlocked the vault (create or
+  // unlock). The server is the source of truth via /vault/status, but we keep a
+  // client flag so the UI transitions immediately after the action.
+  const [unlocked, setUnlocked] = useState(false);
+  // addingWallet overlays the Add-wallet form on top of the unlocked UI.
+  const [addingWallet, setAddingWallet] = useState(false);
+  const [skipLegacyImport, setSkipLegacyImport] = useState(false);
+  // Set when the user chooses to open the vault flow while the node is still
+  // syncing, dismissing the boot Syncing view for this session.
+  const [loadAnyway, setLoadAnyway] = useState(false);
+  const [lockError, setLockError] = useState<string | null>(null);
 
-  // Boot gate: before any wallet is loaded, if the node isn't ready and the
-  // user hasn't opted to proceed, the Syncing view takes the whole screen —
-  // there is nothing to operate yet, and a balance shown now would be wrong.
-  // The escape hatch drops to Setup for a read-only load against a syncing node.
-  if (account === null && !loadAnyway && status.data && status.data.state !== "ready") {
+  const activeWallet = wallets.find((w) => w.id === activeId) ?? null;
+  const isReady = status.data?.state === "ready";
+  // Sending requires a fully synced node AND an active wallet (every vault
+  // wallet has an encrypted seed, so any active wallet can spend with its
+  // spending password).
+  const canSend = isReady && activeWallet !== null;
+  const canSign = activeWallet !== null;
+
+  function applyWallets(list: WalletView[]) {
+    setLockError(null);
+    setWallets(list);
+    const active = list.find((w) => w.active);
+    setActiveId(active ? active.id : null);
+    setUnlocked(true);
+  }
+
+  function applyAdded(wallet: WalletView) {
+    // A newly added wallet becomes active server-side; merge it in and select it.
+    setLockError(null);
+    setWallets((prev) => {
+      const without = prev.filter((w) => w.id !== wallet.id);
+      return [...without.map((w) => ({ ...w, active: false })), { ...wallet, active: true }];
+    });
+    setActiveId(wallet.id);
+    setUnlocked(true);
+    setAddingWallet(false);
+  }
+
+  function applyActivated(wallet: WalletView) {
+    setLockError(null);
+    setWallets((prev) => prev.map((w) => ({ ...w, active: w.id === wallet.id })));
+    setActiveId(wallet.id);
+  }
+
+  async function handleLock() {
+    setLockError(null);
+    try {
+      await lockVault();
+      setWallets([]);
+      setActiveId(null);
+      setUnlocked(false);
+      setAddingWallet(false);
+      navigate("portfolio");
+      vaultStatus.refresh();
+    } catch (err) {
+      setLockError(err instanceof ApiError ? err.message : "Could not lock vault");
+      vaultStatus.refresh();
+    }
+  }
+
+  // --- Pre-unlock flows: render full-screen, no sidebar -------------------
+
+  // While the vault status is loading, show nothing (avoids a flash of the
+  // wrong screen before we know whether a vault exists).
+  if (!vaultStatus.data && vaultStatus.loading) {
+    return <div className="app" />;
+  }
+
+  const vault = vaultStatus.data;
+  const network = "preview";
+
+  if (!vault) {
+    return (
+      <FullScreen status={status.data}>
+        <VaultStatusUnavailable
+          error={vaultStatus.error}
+          onRetry={vaultStatus.refresh}
+        />
+      </FullScreen>
+    );
+  }
+
+  // Boot gate: before the vault is open, if the node isn't ready and the user
+  // hasn't opted to proceed, the Syncing view takes the whole screen. The escape
+  // hatch drops to the vault create/unlock flow for read-only operation while
+  // syncing continues.
+  if (!unlocked && !loadAnyway && status.data && status.data.state !== "ready") {
     return (
       <div className="app">
         <SyncBanner status={status.data} />
@@ -57,46 +155,71 @@ export function App() {
       </div>
     );
   }
-  // Sending requires BOTH a fully synced node and a spending-enabled wallet (a
-  // keystore created with a password). A read-only wallet (loaded without a
-  // password) can never complete a send, so it must not enter the send flow.
-  const canSend = isReady && spendingEnabled;
+
+  // No vault yet → first-run: create vault + add first wallet.
+  if (vault && !vault.exists && !unlocked) {
+    if (vault.legacy_keystore && !skipLegacyImport) {
+      return (
+        <FullScreen status={status.data}>
+          <MigrateLegacyKeystore
+            onReady={(wallet) => applyWallets([{ ...wallet, active: true }])}
+            onCreateNew={() => setSkipLegacyImport(true)}
+          />
+        </FullScreen>
+      );
+    }
+    return (
+      <FullScreen status={status.data}>
+        <CreateVault network={network} onReady={applyAdded} />
+      </FullScreen>
+    );
+  }
+
+  // Vault exists but this session has not unlocked it → unlock (vault pw only).
+  if (vault && vault.exists && !unlocked) {
+    return (
+      <FullScreen status={status.data}>
+        <UnlockVault walletCount={vault.wallet_count} onUnlocked={applyWallets} />
+      </FullScreen>
+    );
+  }
+
+  // --- Unlocked: the normal wallet UI bound to the active wallet ----------
 
   // Which nav entry maps to the screen currently shown (mirrors the content
   // resolution below) so the sidebar can highlight the active route.
   let activeRoute = "";
-  if (account !== null) {
+  if (!addingWallet && activeWallet !== null) {
     if (route === "settings") activeRoute = "settings";
     else if (route === "send" && canSend) activeRoute = "send";
-    else if (route === "sign" && spendingEnabled) activeRoute = "sign";
+    else if (route === "sign" && canSign) activeRoute = "sign";
     else if (ROUTES.has(route) && route !== "send") activeRoute = route;
     else activeRoute = "portfolio";
   }
 
-  // Determine which screen to show in the content area.
-  // If no account is loaded, always show Setup regardless of route.
   let content: ReactElement;
-  if (account === null) {
+  if (addingWallet) {
     content = (
-      <Setup
-        network="preview"
-        onLoaded={(a, s) => {
-          setAccount(a);
-          setSpendingEnabled(s);
-        }}
+      <AddWallet
+        network={network}
+        onAdded={applyAdded}
+        onCancel={() => setAddingWallet(false)}
       />
     );
+  } else if (activeWallet === null) {
+    // Unlocked with multiple wallets and none selected yet: prompt to pick one.
+    content = (
+      <section className="card">
+        <h2>Select a wallet</h2>
+        <p className="helper-text">Choose a wallet from the sidebar to continue.</p>
+      </section>
+    );
   } else if (route === "settings") {
-    content = <Settings account={account} spendingEnabled={spendingEnabled} />;
+    content = <Settings account={toAccount(activeWallet)} spendingEnabled />;
   } else if (route === "send" && !canSend) {
-    // Guard deep-links (#/send) the same way the nav button is gated: sending
-    // needs a synced node AND a spending-enabled (password) wallet, so fall back
-    // to Portfolio otherwise.
     content = <Portfolio />;
   } else if (route === "sign") {
-    // Message signing needs a spending-enabled (keystore) wallet but no node;
-    // a read-only wallet falls back to Portfolio.
-    content = spendingEnabled ? <SignMessage account={account} /> : <Portfolio />;
+    content = canSign ? <SignMessage account={toAccount(activeWallet)} /> : <Portfolio />;
   } else {
     const Screen = ROUTES.get(route) ?? Portfolio;
     content = <Screen />;
@@ -111,9 +234,24 @@ export function App() {
             <span className="brand-mark">BVRSA</span>
             <span className="brand-motto">nodvs tvvs · claves tvæ</span>
           </div>
+          <WalletSwitcher
+            wallets={wallets}
+            activeId={activeId}
+            onActivated={applyActivated}
+            onAddWallet={() => setAddingWallet(true)}
+            onLock={handleLock}
+          />
+          {lockError && (
+            <p className="error-text" role="alert">
+              {lockError}
+            </p>
+          )}
           {NAV.map(({ key, label }) => {
             const gated =
-              (key === "send" && !canSend) || (key === "sign" && !spendingEnabled);
+              activeWallet === null ||
+              addingWallet ||
+              (key === "send" && !canSend) ||
+              (key === "sign" && !canSign);
             const active = key === activeRoute;
             return (
               <button
@@ -128,10 +266,43 @@ export function App() {
             );
           })}
         </nav>
-        <main className="content">
-          {content}
-        </main>
+        <main className="content" key={activeWallet?.id ?? "none"}>{content}</main>
       </div>
     </div>
+  );
+}
+
+// FullScreen wraps a pre-unlock screen (create/unlock) with the sync banner but
+// no sidebar — there is no active wallet to navigate yet.
+function FullScreen({
+  status,
+  children,
+}: {
+  status: ReturnType<typeof useStatus>["data"];
+  children: ReactElement;
+}) {
+  return (
+    <div className="app">
+      {status && <SyncBanner status={status} />}
+      <main className="content content-centered">{children}</main>
+    </div>
+  );
+}
+
+function VaultStatusUnavailable({
+  error,
+  onRetry,
+}: {
+  error: Error | null;
+  onRetry: () => void;
+}) {
+  return (
+    <section className="card">
+      <h2>Vault status unavailable</h2>
+      <p className="error-text" role="alert">
+        {error?.message ?? "Vault status is unavailable"}
+      </p>
+      <Button onClick={onRetry}>Retry</Button>
+    </section>
   );
 }

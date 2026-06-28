@@ -2,16 +2,11 @@ package keystore
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"golang.org/x/crypto/scrypt"
 )
 
 // testKDF keeps scrypt cheap (~4 MiB, sub-millisecond) so the suite stays
@@ -19,9 +14,9 @@ import (
 // TestRoundTripProductionParams, which is skipped under -short.
 var testKDF = kdfParams{
 	n: 1 << 12, r: 8, p: 1,
-	minN: 1 << 12, maxN: 1 << 14,
-	minR: 8, maxR: 32,
-	minP: 1, maxP: 4,
+	minN: 1 << 12, maxN: 1 << 12,
+	minR: 8, maxR: 8,
+	minP: 1, maxP: 1,
 }
 
 func newTestKeystore(t *testing.T) *Keystore {
@@ -149,9 +144,9 @@ func TestContainerFormat(t *testing.T) {
 func TestProductionKDFDefaults(t *testing.T) {
 	want := kdfParams{
 		n: 1 << 20, r: 8, p: 1,
-		minN: 1 << 20, maxN: 1 << 22,
-		minR: 8, maxR: 32,
-		minP: 1, maxP: 4,
+		minN: 1 << 20, maxN: 1 << 20,
+		minR: 8, maxR: 8,
+		minP: 1, maxP: 1,
 	}
 	if productionKDF != want {
 		t.Fatalf("productionKDF = %+v, want %+v", productionKDF, want)
@@ -189,32 +184,15 @@ func TestUnlockRejectsUnknownVersion(t *testing.T) {
 	}
 }
 
-// A keystore written with stronger-than-default scrypt params (here p=2) must
-// still unlock, so params can be raised later without a format break.
-func TestUnlockAcceptsStrongerParams(t *testing.T) {
+// A crafted container with above-budget params must be refused before the KDF
+// runs; these fields are unauthenticated until AES-GCM succeeds.
+func TestUnlockRejectsAboveBudgetParams(t *testing.T) {
 	ks := newTestKeystore(t)
-	const mnemonic = "abandon abandon about"
-	const password = "correct horse battery staple"
-	salt := make([]byte, 16)
-	nonce := make([]byte, 12)
-	key, err := scrypt.Key([]byte(password), salt, testKDF.n, testKDF.r, testKDF.p+1, 32)
-	if err != nil {
-		t.Fatalf("scrypt: %v", err)
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		t.Fatalf("NewCipher: %v", err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatalf("NewGCM: %v", err)
-	}
-	ct := gcm.Seal(nil, nonce, []byte(mnemonic), nil)
 	blob, err := json.Marshal(map[string]any{
 		"version": 1, "kdf": "scrypt", "n": testKDF.n, "r": testKDF.r, "p": testKDF.p + 1,
-		"salt":       hex.EncodeToString(salt),
-		"nonce":      hex.EncodeToString(nonce),
-		"ciphertext": hex.EncodeToString(ct),
+		"salt":       "00",
+		"nonce":      "00",
+		"ciphertext": "00",
 	})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -222,12 +200,8 @@ func TestUnlockAcceptsStrongerParams(t *testing.T) {
 	if err := os.WriteFile(ks.Path, blob, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	got, err := ks.Unlock(password)
-	if err != nil {
-		t.Fatalf("Unlock: %v", err)
-	}
-	if string(got) != mnemonic {
-		t.Fatalf("mnemonic mismatch: got %q", got)
+	if _, err := ks.Unlock("correct horse battery staple"); err == nil {
+		t.Fatal("Unlock should reject above-budget scrypt params")
 	}
 }
 

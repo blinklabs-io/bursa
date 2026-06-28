@@ -107,13 +107,47 @@ export interface SignDataResult {
   key: string; // COSE_Key, hex
 }
 
-export interface LoadWalletRequest {
-  mnemonic: string;
-  network: string;
+// Vault: the encrypted, multi-wallet store. A single vault password unlocks the
+// instance (read-only across all wallets); spending additionally needs the
+// active wallet's own spending password.
+export interface VaultStatus {
+  exists: boolean;
+  locked: boolean;
+  wallet_count: number;
+  legacy_keystore?: boolean;
 }
 
-export interface CreateKeystoreRequest {
+// A wallet as listed by the vault: read-only fields plus whether it's active.
+// The encrypted seed is never exposed.
+export interface WalletView {
+  id: string;
+  name: string;
+  network: string;
+  stake_address: string;
+  addresses: string[];
+  active: boolean;
+}
+
+export interface CreateVaultRequest {
+  password: string; // vault password
+}
+
+export interface UnlockVaultRequest {
+  password: string; // vault password
+}
+
+// Adding a wallet: the mnemonic + spending password (to encrypt the seed) plus
+// the vault password (to re-seal the index).
+export interface AddWalletRequest {
+  name: string;
   mnemonic: string;
   network: string;
-  password: string;
+  vault_password: string;
+  spend_password: string;
+}
+
+export interface MigrateLegacyKeystoreRequest {
+  name: string;
+  vault_password: string;
+  spend_password: string;
 }
