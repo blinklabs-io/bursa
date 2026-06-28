@@ -174,7 +174,7 @@ export function AddWallet({
         </div>
 
         <div style={{ margin: "var(--space-3) 0", display: "flex", gap: "var(--space-2)" }}>
-          <CopyButton value={generatedMnemonic} label="Copy phrase" />
+          <CopyButton value={generatedMnemonic} />
         </div>
 
         <div className="backup-warning">
