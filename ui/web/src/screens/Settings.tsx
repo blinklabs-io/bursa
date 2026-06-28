@@ -2,8 +2,10 @@ import { useState, useEffect } from "react";
 import { Card } from "../components/Card";
 import { StatusPill } from "../components/StatusPill";
 import { CopyButton } from "../components/CopyButton";
-import { useStatus, useHistoryExpiry } from "../api/hooks";
+import { Button } from "../components/Button";
+import { useStatus, useHistoryExpiry, useAsync } from "../api/hooks";
 import { setHistoryExpiry as putHistoryExpiry, ApiError } from "../api/client";
+import { getConnectorState, revokeGrant, unpair, pendingPairings } from "../api/connector";
 import type { Account, NodeState } from "../api/types";
 
 interface SettingsProps {
@@ -151,6 +153,26 @@ function LeanStorageCard() {
 
 export function Settings({ account, spendingEnabled }: SettingsProps) {
   const status = useStatus();
+  const connectorState = useAsync(getConnectorState, { pollMs: 3000 });
+  const pendingPairs = useAsync(pendingPairings, { pollMs: 3000 });
+
+  async function handleRevoke(origin: string) {
+    try {
+      await revokeGrant(origin);
+      connectorState.refresh();
+    } catch {
+      // ignore — UI will re-poll
+    }
+  }
+
+  async function handleUnpair() {
+    try {
+      await unpair();
+      connectorState.refresh();
+    } catch {
+      // ignore — UI will re-poll
+    }
+  }
 
   return (
     <div className="screen-settings">
@@ -194,6 +216,119 @@ export function Settings({ account, spendingEnabled }: SettingsProps) {
 
       <Card title="Keystore">
         <p>{spendingEnabled ? "Spending enabled" : "Read-only"}</p>
+      </Card>
+
+      <Card title="dApp Connector">
+        {connectorState.loading && !connectorState.data ? (
+          <p>Loading…</p>
+        ) : connectorState.data ? (
+          <>
+            <dl className="stat-list">
+              <dt>Status</dt>
+              <dd>
+                <StatusPill tone={connectorState.data.paired ? "ok" : "muted"}>
+                  {connectorState.data.paired ? "Paired" : "Not paired"}
+                </StatusPill>
+              </dd>
+              {connectorState.data.paired && connectorState.data.extension_id && (
+                <>
+                  <dt>Extension</dt>
+                  <dd>
+                    <code className="mono" style={{ fontSize: "0.8em", wordBreak: "break-all" }}>
+                      {connectorState.data.extension_id}
+                    </code>
+                  </dd>
+                </>
+              )}
+            </dl>
+
+            {/* Pending pairings — show code prominently for user to enter in extension */}
+            {pendingPairs.data && pendingPairs.data.length > 0 && (
+              <section className="connector-pending-pairings" style={{ marginTop: "1rem" }}>
+                <h3 style={{ fontSize: "0.9em", marginBottom: "0.5rem", fontWeight: 600 }}>
+                  Pending pairing
+                </h3>
+                {pendingPairs.data.map((p) => (
+                  <div
+                    key={p.extension_id}
+                    className="connector-pair-entry"
+                    style={{
+                      marginBottom: "0.75rem",
+                      padding: "0.75rem",
+                      border: "1px solid var(--border, #e0e0e0)",
+                      borderRadius: "6px",
+                    }}
+                  >
+                    <p style={{ fontSize: "0.8em", color: "var(--muted, #666)", marginBottom: "0.4rem" }}>
+                      {p.extension_id}
+                    </p>
+                    <p
+                      className="connector-pair-code"
+                      aria-label="Pairing code"
+                      style={{
+                        fontSize: "2rem",
+                        fontWeight: 700,
+                        letterSpacing: "0.3em",
+                        fontVariantNumeric: "tabular-nums",
+                        margin: "0.25rem 0",
+                      }}
+                    >
+                      {p.code}
+                    </p>
+                    <p style={{ fontSize: "0.8em", color: "var(--muted, #666)" }}>
+                      Enter this code in the Bursa extension to complete pairing.
+                    </p>
+                  </div>
+                ))}
+              </section>
+            )}
+
+            {/* Connected sites */}
+            {connectorState.data.origins.length > 0 && (
+              <section style={{ marginTop: "1rem" }}>
+                <h3 style={{ fontSize: "0.9em", marginBottom: "0.5rem", fontWeight: 600 }}>
+                  Connected sites
+                </h3>
+                <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                  {connectorState.data.origins.map((origin) => (
+                    <li
+                      key={origin}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "0.4rem 0",
+                        borderBottom: "1px solid var(--border, #e0e0e0)",
+                      }}
+                    >
+                      <code className="mono" style={{ fontSize: "0.85em" }}>
+                        {origin}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        aria-label={`Revoke ${origin}`}
+                        style={{ fontSize: "0.8em", padding: "0.2rem 0.5rem" }}
+                        onClick={() => void handleRevoke(origin)}
+                      >
+                        Revoke
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {connectorState.data.paired && (
+              <div style={{ marginTop: "1rem" }}>
+                <Button variant="ghost" onClick={() => void handleUnpair()}>
+                  Unpair extension
+                </Button>
+              </div>
+            )}
+          </>
+        ) : connectorState.error ? (
+          <p className="muted">Unavailable</p>
+        ) : null}
       </Card>
     </div>
   );

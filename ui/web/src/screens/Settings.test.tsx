@@ -2,13 +2,22 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Settings } from "./Settings";
 import * as hooks from "../api/hooks";
 import * as client from "../api/client";
-import type { Account, HistoryExpirySetting } from "../api/types";
+import * as connectorApi from "../api/connector";
+import type { Account, HistoryExpirySetting, ConnectorState, PendingPairing } from "../api/types";
 
 const mockAccount: Account = {
   network: "preview",
   stake_address: "stake_test1uzqxyz1234567890abcdefghijklmnopqrstuvwxyz",
   receive_addresses: ["addr_test1abc"],
 };
+
+const defaultConnectorState: ConnectorState = {
+  paired: false,
+  extension_id: "",
+  origins: [],
+};
+
+const defaultPendingPairings: PendingPairing[] = [];
 
 function mockStatus(state: string, tip = 12345, caughtUp = false) {
   vi.spyOn(hooks, "useStatus").mockReturnValue({
@@ -30,6 +39,14 @@ function mockHistoryExpiry(setting: HistoryExpirySetting | null, loading = false
   } as never);
 }
 
+function mockConnector(
+  state: ConnectorState = defaultConnectorState,
+  pending: PendingPairing[] = defaultPendingPairings,
+) {
+  vi.spyOn(connectorApi, "getConnectorState").mockResolvedValue(state);
+  vi.spyOn(connectorApi, "pendingPairings").mockResolvedValue(pending);
+}
+
 beforeEach(() => {
   mockHistoryExpiry({ enabled: false, restart_required: false });
 });
@@ -40,6 +57,7 @@ afterEach(() => {
 
 test("(a) renders network from account prop", () => {
   mockStatus("ready", 12345, true);
+  mockConnector();
   render(<Settings account={mockAccount} spendingEnabled={false} />);
   expect(screen.getByText("preview")).toBeInTheDocument();
 });
@@ -48,6 +66,7 @@ test("(b) renders stake address in monospace and a CopyButton for it", () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.assign(navigator, { clipboard: { writeText } });
   mockStatus("ready", 12345, true);
+  mockConnector();
 
   render(<Settings account={mockAccount} spendingEnabled={false} />);
 
@@ -60,6 +79,7 @@ test("(b) renders stake address in monospace and a CopyButton for it", () => {
 
 test("(c) renders sync state pill from useStatus", () => {
   mockStatus("syncing", 10000, false);
+  mockConnector();
   render(<Settings account={mockAccount} spendingEnabled={false} />);
   // The sync state must be visible
   expect(screen.getByText("syncing")).toBeInTheDocument();
@@ -67,42 +87,50 @@ test("(c) renders sync state pill from useStatus", () => {
 
 test("(d) renders tip block number from useStatus", () => {
   mockStatus("ready", 99999, true);
+  mockConnector();
   render(<Settings account={mockAccount} spendingEnabled={false} />);
   expect(screen.getByText("99999")).toBeInTheDocument();
 });
 
 test("(e) caughtUp=true shows a caught-up indicator", () => {
   mockStatus("ready", 12345, true);
+  mockConnector();
   render(<Settings account={mockAccount} spendingEnabled={false} />);
   expect(screen.getByText(/caught.?up/i)).toBeInTheDocument();
 });
 
 test("(f) caughtUp=false does NOT show caught-up indicator", () => {
   mockStatus("syncing", 12345, false);
+  mockConnector();
   render(<Settings account={mockAccount} spendingEnabled={false} />);
   expect(screen.queryByText(/caught.?up/i)).toBeNull();
 });
 
 test("(g) spendingEnabled=true shows 'Spending enabled'", () => {
   mockStatus("ready", 12345, true);
+  mockConnector();
   render(<Settings account={mockAccount} spendingEnabled={true} />);
   expect(screen.getByText(/spending enabled/i)).toBeInTheDocument();
 });
 
 test("(h) spendingEnabled=false shows 'Read-only'", () => {
   mockStatus("ready", 12345, true);
+  mockConnector();
   render(<Settings account={mockAccount} spendingEnabled={false} />);
   expect(screen.getByText(/read.?only/i)).toBeInTheDocument();
 });
 
-test("(i) loading state from useStatus renders gracefully", () => {
+test("(i) loading state from useStatus renders gracefully", async () => {
   vi.spyOn(hooks, "useStatus").mockReturnValue({
     data: null,
     error: null,
     loading: true,
     refresh: vi.fn(),
   } as never);
+  mockConnector();
   render(<Settings account={mockAccount} spendingEnabled={false} />);
+  // Wait for async connector state updates to settle.
+  await waitFor(() => {});
   // Should not crash; network card still shows
   expect(screen.getByText("preview")).toBeInTheDocument();
 });
@@ -184,4 +212,53 @@ test("(o) a persisted restart_required surfaces the restart note", () => {
   // The restart note appears both in the live status line (role=status) and as
   // the final bullet of the copy; assert the live status one specifically.
   expect(screen.getByRole("status")).toHaveTextContent(/takes effect after a node restart/i);
+});
+
+// ----------------------------------------------------------- connector ---
+
+test("(p) connector: shows paired status and extension id when paired", async () => {
+  mockStatus("ready", 12345, true);
+  mockConnector({
+    paired: true,
+    extension_id: "chrome-extension://abc123",
+    origins: [],
+  });
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  await waitFor(() => expect(screen.getByText("Paired")).toBeInTheDocument());
+  expect(screen.getByText("chrome-extension://abc123")).toBeInTheDocument();
+});
+
+test("(q) connector: shows connected sites with Revoke buttons", async () => {
+  mockStatus("ready", 12345, true);
+  mockConnector({
+    paired: true,
+    extension_id: "chrome-extension://abc123",
+    origins: ["https://app.sundae.fi", "https://app.minswap.org"],
+  });
+  vi.spyOn(connectorApi, "revokeGrant").mockResolvedValue(undefined);
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  await waitFor(() => expect(screen.getByText("https://app.sundae.fi")).toBeInTheDocument());
+  expect(screen.getByText("https://app.minswap.org")).toBeInTheDocument();
+  const revokeButtons = screen.getAllByRole("button", { name: /revoke/i });
+  expect(revokeButtons).toHaveLength(2);
+});
+
+test("(r) connector: shows pending pairing code prominently", async () => {
+  mockStatus("ready", 12345, true);
+  mockConnector({ paired: false, extension_id: "", origins: [] }, [
+    { extension_id: "chrome-extension://ext1", code: "123456" },
+  ]);
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  await waitFor(() => expect(screen.getByText("123456")).toBeInTheDocument());
+  expect(screen.getByText(/enter this code/i)).toBeInTheDocument();
+});
+
+test("(s) connector: Unpair button visible when paired", async () => {
+  mockStatus("ready", 12345, true);
+  mockConnector({ paired: true, extension_id: "chrome-extension://abc", origins: [] });
+  vi.spyOn(connectorApi, "unpair").mockResolvedValue(undefined);
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /unpair/i })).toBeInTheDocument(),
+  );
 });

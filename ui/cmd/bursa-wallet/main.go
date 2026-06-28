@@ -148,11 +148,13 @@ func run() error {
 	}
 	defer sup.Stop()
 
+	// connector wired after the backend adapter (Tasks 11-13); opt-in via BURSA_CONNECTOR.
 	srv := &http.Server{
 		Addr: "127.0.0.1:8090", // loopback only
 		Handler: api.NewHandler(
 			sup, vlt, walletSvc, spendSvc,
 			&settingsController{store: settingsStore, sup: sup},
+			nil, // CIP-30 connector; opt-in via BURSA_CONNECTOR (wired later)
 			network, webui.Handler(),
 			api.WithLegacyKeystore(legacyKeyStore),
 		),

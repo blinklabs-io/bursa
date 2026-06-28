@@ -1,0 +1,122 @@
+package connector
+
+import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+type tokenData struct {
+	ExtensionID string `json:"extension_id"`
+	Token       string `json:"token"`
+}
+
+// TokenStore holds the single paired-extension token, persisted atomically.
+type TokenStore struct {
+	path string
+	now  func() time.Time
+	rnd  func() (string, error)
+
+	mu   sync.RWMutex
+	data tokenData
+}
+
+// defaultRand mints a 32-byte random token. It fails closed: a crypto/rand
+// failure must never produce a predictable (zeroed) token, so the error is
+// surfaced to the caller rather than ignored.
+func defaultRand() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("connector: token entropy: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func NewTokenStore(path string, now func() time.Time, rnd func() (string, error)) *TokenStore {
+	if now == nil {
+		now = time.Now
+	}
+	if rnd == nil {
+		rnd = defaultRand
+	}
+	ts := &TokenStore{path: path, now: now, rnd: rnd}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &ts.data)
+	}
+	return ts
+}
+
+func (s *TokenStore) Mint(extensionID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok, err := s.rnd()
+	if err != nil {
+		return "", err
+	}
+	s.data = tokenData{ExtensionID: extensionID, Token: tok}
+	if err := s.persist(); err != nil {
+		return "", err
+	}
+	return s.data.Token, nil
+}
+
+func (s *TokenStore) Verify(token, extensionID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.Token == "" || s.data.ExtensionID != extensionID {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(s.data.Token)) == 1
+}
+
+func (s *TokenStore) Pair() (string, string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.ExtensionID, s.data.Token, s.data.Token != ""
+}
+
+func (s *TokenStore) Clear() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data = tokenData{}
+	if err := os.Remove(s.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (s *TokenStore) persist() error {
+	b, err := json.Marshal(s.data)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(s.path), ".token-*")
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return err
+	}
+	if err := os.Rename(f.Name(), s.path); err != nil {
+		_ = os.Remove(f.Name())
+		return err
+	}
+	return nil
+}
