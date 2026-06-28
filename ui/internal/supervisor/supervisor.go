@@ -73,8 +73,9 @@ type Supervisor struct {
 		ran           bool
 	}
 
-	now          func() time.Time // injectable clock for tests
-	bootstrapper Bootstrapper     // injectable for tests
+	now             func() time.Time // injectable clock for tests
+	bootstrapper    Bootstrapper     // injectable for tests
+	bootstrapBackoff time.Duration   // initial back-off for retry loop; injectable for tests
 }
 
 func New(cfg Config) *Supervisor {
@@ -85,10 +86,11 @@ func New(cfg Config) *Supervisor {
 		cfg.Logger = slog.Default()
 	}
 	return &Supervisor{
-		cfg:          cfg,
-		status:       Status{State: StateStopped},
-		now:          time.Now,
-		bootstrapper: mithrilBootstrapper{logger: cfg.Logger},
+		cfg:              cfg,
+		status:           Status{State: StateStopped},
+		now:              time.Now,
+		bootstrapper:     mithrilBootstrapper{logger: cfg.Logger},
+		bootstrapBackoff: bootstrapInitialBackoff,
 	}
 }
 
@@ -246,16 +248,87 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	return nil
 }
 
-// bootstrapThenLaunch runs the Mithril bootstrap and, on success, records the
-// completion marker and launches the node. Any failure → StateError (no fallback).
+// bootstrapMaxAttempts is the maximum number of times bootstrapThenLaunch will
+// attempt the Mithril bootstrap before giving up and setting StateError.
+const bootstrapMaxAttempts = 5
+
+// bootstrapInitialBackoff is the wait before the second attempt. Each
+// subsequent delay doubles, capped at bootstrapMaxBackoff.
+const bootstrapInitialBackoff = 2 * time.Second
+
+// bootstrapMaxBackoff caps the exponential back-off.
+const bootstrapMaxBackoff = 30 * time.Second
+
+// bootstrapWithRetry calls b.Bootstrap up to maxAttempts times. Transient
+// errors are retried with exponential back-off starting at initialBackoff;
+// context cancellation stops immediately. The download cache is intentionally
+// not pruned between attempts so any already-downloaded data is reused.
+func bootstrapWithRetry(
+	ctx context.Context,
+	b Bootstrapper,
+	params BootstrapParams,
+	logger *slog.Logger,
+	maxAttempts int,
+	initialBackoff time.Duration,
+) error {
+	var lastErr error
+	backoff := initialBackoff
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Abort immediately if the context is already done.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		err := b.Bootstrap(ctx, params)
+		if err == nil {
+			return nil
+		}
+		// Propagate context cancellation as-is — it is not a transient error.
+		if ctx.Err() != nil {
+			return err
+		}
+		lastErr = err
+		if attempt == maxAttempts {
+			break
+		}
+		logger.Warn(
+			"mithril bootstrap attempt failed, will retry",
+			"attempt", attempt,
+			"max", maxAttempts,
+			"err", err,
+			"backoff", backoff,
+		)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+		if backoff > bootstrapMaxBackoff {
+			backoff = bootstrapMaxBackoff
+		}
+	}
+	return fmt.Errorf("all %d bootstrap attempts failed, last error: %w", maxAttempts, lastErr)
+}
+
+// bootstrapThenLaunch runs the Mithril bootstrap (with retries) and, on
+// success, records the completion marker and launches the node.
+// Transient failures are retried up to bootstrapMaxAttempts times with
+// exponential back-off before StateError is set.
 func (s *Supervisor) bootstrapThenLaunch(ctx context.Context, runID uint64, launch func() error) {
-	err := s.bootstrapper.Bootstrap(ctx, BootstrapParams{
-		Network: s.cfg.Network,
-		DataDir: s.cfg.DataDir,
-		OnProgress: func(bp BootstrapProgress) {
-			s.onProgressForRun(runID, bp)
+	err := bootstrapWithRetry(
+		ctx,
+		s.bootstrapper,
+		BootstrapParams{
+			Network: s.cfg.Network,
+			DataDir: s.cfg.DataDir,
+			OnProgress: func(bp BootstrapProgress) {
+				s.onProgressForRun(runID, bp)
+			},
 		},
-	})
+		s.cfg.Logger,
+		bootstrapMaxAttempts,
+		s.bootstrapBackoff,
+	)
 	if err != nil {
 		// A bootstrap aborted by context cancellation (Stop or parent shutdown)
 		// is an orderly wind-down, not a failure — same guard as node.Run.
