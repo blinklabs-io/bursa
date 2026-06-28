@@ -7,6 +7,7 @@ import type {
   DelegationView,
   VaultStatus,
   DexPoolsResponse,
+  HistoryExpirySetting,
 } from "./types";
 import {
   getStatus,
@@ -16,6 +17,7 @@ import {
   getTransactions,
   getDelegation,
   getDexPools,
+  getHistoryExpiry,
 } from "./client";
 
 export interface AsyncState<T> {
@@ -84,3 +86,4 @@ export const useAddresses = (): AsyncState<AddressView> => useAsync(getAddresses
 export const useTransactions = (): AsyncState<Tx[]> => useAsync(getTransactions);
 export const useDelegation = (): AsyncState<DelegationView> => useAsync(getDelegation);
 export const useDexPools = (): AsyncState<DexPoolsResponse> => useAsync(getDexPools, { pollMs: 15000 });
+export const useHistoryExpiry = (): AsyncState<HistoryExpirySetting> => useAsync(getHistoryExpiry);

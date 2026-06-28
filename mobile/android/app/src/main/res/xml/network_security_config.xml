@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The wallet's loopback control surface is plain http on 127.0.0.1 (TLS over
+  loopback would add no security and just complicate cert handling). Permit
+  cleartext only to the loopback addresses; everything else stays cleartext-off.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

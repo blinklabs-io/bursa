@@ -162,6 +162,20 @@ type DexQuoter interface {
 	Quote(ctx context.Context, assetIn, assetOut string, amountIn uint64) (dex.Quote, error)
 }
 
+// SettingsController is the user-facing app-settings surface. It exposes the
+// persisted lean-node (history-expiry) profile and whether a node restart is
+// still needed for the persisted value to take effect (history expiry is a
+// node-construction option, applied only at node start). It is decoupled from
+// the storage and supervisor packages so the API can be tested with a fake.
+type SettingsController interface {
+	HistoryExpiry() bool
+	SetHistoryExpiry(enabled bool) error
+	// HistoryExpiryRestartRequired reports whether the running node was built
+	// with a different history-expiry value than what is now persisted (so the
+	// change has not taken effect yet).
+	HistoryExpiryRestartRequired() bool
+}
+
 const defaultWindow = 20
 
 // vaultStatus is the GET /vault/status response.
@@ -203,9 +217,10 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // whenever the selection changes. lookup verifies pasted pool/DRep IDs through
 // the node (may be nil). po is the Stake Pool Operations surface, ms the native
 // multi-signature surface, dx the node-local DEX quoter (may be nil — DEX
-// endpoints then 404 via the catch-all). spa is the embedded SPA, registered as
-// the catch-all so the specific API routes take precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, lookup PoolDRepLookup, po PoolOps, ms MultiSig, dx DexQuoter, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+// endpoints then 404 via the catch-all). settings exposes user-facing app
+// settings (the lean-node profile). spa is the embedded SPA, registered as the
+// catch-all so the specific API routes take precedence on the mux.
+func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, lookup PoolDRepLookup, po PoolOps, ms MultiSig, dx DexQuoter, settings SettingsController, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -530,6 +545,34 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, lookup PoolDRepLo
 		res, err := sp.Confirm(r.Context(), r.PathValue("id"), req.Password)
 		serve(w, res, err)
 	}))
+
+	// App settings: the lean-node (history-expiry) profile. Ungated — it is a
+	// config setting, not a node query, so it is readable/settable regardless of
+	// sync state. History expiry is a node-construction option, so a change only
+	// takes effect on the next node restart; restart_required surfaces that.
+	mux.HandleFunc("GET /wallet/settings/history-expiry", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{
+			"enabled":          settings.HistoryExpiry(),
+			"restart_required": settings.HistoryExpiryRestartRequired(),
+		})
+	})
+	mux.HandleFunc("PUT /wallet/settings/history-expiry", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if err := settings.SetHistoryExpiry(req.Enabled); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{
+			"enabled":          settings.HistoryExpiry(),
+			"restart_required": settings.HistoryExpiryRestartRequired(),
+		})
+	})
 
 	// CIP-8 / CIP-30 message verification — the inverse of sign-data. Pure
 	// crypto: ungated, no node, no keystore (a read-only wallet can verify too).

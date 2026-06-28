@@ -117,6 +117,15 @@ export interface VaultStatus {
   legacy_keystore?: boolean;
 }
 
+// App settings: the lean-node (history-expiry) profile. restart_required is true
+// when the persisted value differs from what the running node was built with —
+// history expiry is a node-construction option, so it only takes effect on the
+// next node restart.
+export interface HistoryExpirySetting {
+  enabled: boolean;
+  restart_required: boolean;
+}
+
 // DEX swap quotes — computed entirely from the embedded node (pool UTxOs at the
 // DEX script addresses). Reserves/amounts are uint64 decimal STRINGS server-side
 // so values beyond the JS safe-integer range survive the JSON round-trip.

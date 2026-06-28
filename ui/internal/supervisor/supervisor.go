@@ -44,6 +44,16 @@ type Config struct {
 	// serving. The zero value is false (genesis sync); main.go enables it by
 	// default and BURSA_SYNC=genesis opts out.
 	MithrilEnabled bool
+	// HistoryExpiry reports whether the "lean node" (history-expiry) profile is
+	// enabled. It is a provider (not a static bool) so the persisted user setting
+	// is the source of truth: it is read fresh every time the node config is built
+	// (each Start), letting a toggled setting take effect on the next node
+	// restart. A nil provider, or one returning false, keeps full immutable block
+	// history (behavior unchanged). When it returns true (the lean/mobile
+	// profile), the node periodically prunes immutable blocks older than the
+	// stability window, keeping the ledger state and recent blocks — a much
+	// smaller on-disk footprint at the cost of deep block history.
+	HistoryExpiry func() bool
 }
 
 // Supervisor owns the embedded Dingo node's lifecycle and exposes its status.
@@ -54,6 +64,14 @@ type Supervisor struct {
 
 	mu     sync.RWMutex
 	status Status
+	// applied records the history-expiry value the currently-running node was
+	// built with, so the API can tell whether a changed setting still needs a
+	// restart to take effect. ran is false until the node has been launched at
+	// least once this process.
+	applied struct {
+		historyExpiry bool
+		ran           bool
+	}
 
 	now          func() time.Time // injectable clock for tests
 	bootstrapper Bootstrapper     // injectable for tests
@@ -72,6 +90,67 @@ func New(cfg Config) *Supervisor {
 		now:          time.Now,
 		bootstrapper: mithrilBootstrapper{logger: cfg.Logger},
 	}
+}
+
+// historyExpiryEnabled resolves the lean-node profile from the (optional)
+// provider. A nil provider means the feature is not wired in (default off).
+func (cfg Config) historyExpiryEnabled() bool {
+	return cfg.HistoryExpiry != nil && cfg.HistoryExpiry()
+}
+
+// nodeConfigOptions builds the dingo option set for the embedded node. It is a
+// standalone function (not inlined into Start) so the config wiring — in
+// particular the opt-in history-expiry profile — can be unit-tested without
+// constructing a real node. historyExpiry is the resolved profile value (read
+// from the persisted setting at Start), passed in so the caller controls when
+// the source-of-truth provider is read.
+func nodeConfigOptions(
+	cfg Config,
+	historyExpiry bool,
+	cardanoCfg *cardano.CardanoNodeConfig,
+	topologyCfg *topology.TopologyConfig,
+) []dingo.ConfigOptionFunc {
+	opts := []dingo.ConfigOptionFunc{
+		dingo.WithNetwork(cfg.Network),
+		dingo.WithCardanoNodeConfig(cardanoCfg),
+		dingo.WithTopologyConfig(topologyCfg),
+		dingo.WithDatabasePath(cfg.DataDir),
+		dingo.WithStorageMode(dingo.StorageModeAPI),
+		// Without an explicit capacity the mempool defaults to 0 bytes and
+		// rejects every transaction ("mempool full: capacity=0 bytes"), so the
+		// wallet could never submit a spend. Match Dingo's own Praos default
+		// (1 MiB) — ample for a single-user wallet submitting its own txs.
+		dingo.WithMempoolCapacity(1 << 20),
+		dingo.WithBindAddr("127.0.0.1"),
+		dingo.WithUtxorpcPort(cfg.UtxorpcPort),
+		dingo.WithBlockfrostPort(cfg.BlockfrostPort),
+		dingo.WithListeners(connmanager.ListenerConfig{
+			ListenNetwork: "unix",
+			ListenAddress: cfg.SocketPath,
+			UseNtC:        true,
+		}),
+		dingo.WithLogger(cfg.Logger),
+	}
+	// Lean-node profile: opt in to dingo's history expiry so the node prunes
+	// immutable block history past the stability window. Off by default, where
+	// the node keeps full history (behavior unchanged).
+	if historyExpiry {
+		opts = append(opts, dingo.WithHistoryExpiry(dingo.HistoryExpiryConfig{
+			Enabled:   true,
+			Frequency: time.Hour,
+		}))
+	}
+	return opts
+}
+
+// AppliedHistoryExpiry reports the history-expiry value the currently/last
+// launched node was built with, and whether a node has been launched at all
+// this process (ran). The API compares this against the persisted setting to
+// decide whether a change still needs a node restart to take effect.
+func (s *Supervisor) AppliedHistoryExpiry() (applied bool, ran bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.applied.historyExpiry, s.applied.ran
 }
 
 // Start constructs the node, launches it, and begins polling its tip. It
@@ -126,27 +205,11 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		return fail(fmt.Errorf("load Dingo topology config: %w", err))
 	}
 
-	nodeCfg := dingo.NewConfig(
-		dingo.WithNetwork(s.cfg.Network),
-		dingo.WithCardanoNodeConfig(cardanoCfg),
-		dingo.WithTopologyConfig(topologyCfg),
-		dingo.WithDatabasePath(s.cfg.DataDir),
-		dingo.WithStorageMode(dingo.StorageModeAPI),
-		// Without an explicit capacity the mempool defaults to 0 bytes and
-		// rejects every transaction ("mempool full: capacity=0 bytes"), so the
-		// wallet could never submit a spend. Match Dingo's own Praos default
-		// (1 MiB) — ample for a single-user wallet submitting its own txs.
-		dingo.WithMempoolCapacity(1<<20),
-		dingo.WithBindAddr("127.0.0.1"),
-		dingo.WithUtxorpcPort(s.cfg.UtxorpcPort),
-		dingo.WithBlockfrostPort(s.cfg.BlockfrostPort),
-		dingo.WithListeners(connmanager.ListenerConfig{
-			ListenNetwork: "unix",
-			ListenAddress: s.cfg.SocketPath,
-			UseNtC:        true,
-		}),
-		dingo.WithLogger(s.cfg.Logger),
-	)
+	// Read the lean-node profile from its (persisted) source of truth once, here
+	// at Start, so a toggled setting takes effect on this node start. Record the
+	// applied value so the API can report whether a later change needs a restart.
+	historyExpiry := s.cfg.historyExpiryEnabled()
+	nodeCfg := dingo.NewConfig(nodeConfigOptions(s.cfg, historyExpiry, cardanoCfg, topologyCfg)...)
 	// launch creates the node, marks it starting, and begins serving + polling.
 	// Used by both the direct and post-bootstrap paths.
 	launch := func() error {
@@ -154,6 +217,10 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		s.mu.Lock()
+		s.applied.historyExpiry = historyExpiry
+		s.applied.ran = true
+		s.mu.Unlock()
 		s.setStateForRun(runID, StateStarting)
 		go func() {
 			if err := node.Run(runCtx); err != nil && runCtx.Err() == nil {

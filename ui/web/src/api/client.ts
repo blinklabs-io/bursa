@@ -45,6 +45,7 @@ import type {
   DexPoolsResponse,
   DexQuoteRequest,
   DexQuote,
+  HistoryExpirySetting,
 } from "./types";
 
 export class ApiError extends Error {
@@ -95,6 +96,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export const apiGet = <T>(path: string) => request<T>("GET", path);
 export const apiPost = <T>(path: string, body?: unknown) => request<T>("POST", path, body);
+export const apiPut = <T>(path: string, body?: unknown) => request<T>("PUT", path, body);
 
 export const apiDelete = <T>(path: string, body?: unknown) => request<T>("DELETE", path, body);
 
@@ -211,3 +213,9 @@ export const multiSigSubmit = (id: string, req: MultiSigSubmitRequest) =>
 // --- Node-local DEX swap quotes ---
 export const getDexPools = () => apiGet<DexPoolsResponse>("/wallet/dex/pools");
 export const getDexQuote = (req: DexQuoteRequest) => apiPost<DexQuote>("/wallet/dex/quote", req);
+
+// --- App settings: lean-node (history-expiry) profile ---
+export const getHistoryExpiry = () =>
+  apiGet<HistoryExpirySetting>("/wallet/settings/history-expiry");
+export const setHistoryExpiry = (enabled: boolean) =>
+  apiPut<HistoryExpirySetting>("/wallet/settings/history-expiry", { enabled });
