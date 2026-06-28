@@ -1,0 +1,16 @@
+# Build-generated native artifacts (produced by gomobile / CI / Docker).
+# The Go binding (ui/mobile) is the source of truth; these are derived.
+
+# Android: the gomobile AAR and Gradle build output / wrapper jar.
+android/app/libs/*.aar
+android/app/build/
+android/.gradle/
+android/build/
+android/local.properties
+android/gradle/wrapper/gradle-wrapper.jar
+
+# iOS: the gomobile xcframework and the xcodegen-generated project.
+ios/Bursa.xcframework/
+ios/*.xcodeproj/
+ios/build/
+ios/DerivedData/
