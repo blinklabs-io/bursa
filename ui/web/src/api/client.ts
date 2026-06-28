@@ -28,6 +28,12 @@ import type {
   PoolRegistrationParams,
   PoolCertResult,
   PoolIDResult,
+  VerifyDataRequest,
+  VerifyDataResult,
+  UnsignedTx,
+  WitnessResult,
+  SignTxRequest,
+  SubmitSignedRequest,
 } from "./types";
 
 export class ApiError extends Error {
@@ -162,3 +168,12 @@ export const poolBuildRetirementCert = (req: {
 }) => apiPost<PoolCertResult>("/wallet/pool/retirement/cert", req);
 export const poolSubmitRetirement = (req: { password: string; epoch: number }) =>
   apiPost<TxResult>("/wallet/pool/retirement/submit", req);
+
+// CIP-8/CIP-30 verification + air-gap signing.
+export const verifyData = (req: VerifyDataRequest) =>
+  apiPost<VerifyDataResult>("/wallet/verify-data", req);
+export const exportUnsigned = (id: string) =>
+  apiPost<UnsignedTx>(`/wallet/send/${encodeURIComponent(id)}/export-unsigned`);
+export const signTx = (req: SignTxRequest) => apiPost<WitnessResult>("/wallet/sign-tx", req);
+export const submitSigned = (req: SubmitSignedRequest) =>
+  apiPost<TxResult>("/wallet/submit-signed", req);

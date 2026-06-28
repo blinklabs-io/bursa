@@ -251,6 +251,35 @@ test("(i) compose inputs are disabled while the preview build is in flight", asy
   });
 });
 
+// --- export for offline signing ---
+
+test("(j) Export for offline signing shows the unsigned tx CBOR and required signers", async () => {
+  vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+  const exportUnsigned = vi.spyOn(client, "exportUnsigned").mockResolvedValue({
+    unsigned_tx_cbor: "84a400deadbeef",
+    required_signers: ["aabbccdd"],
+  });
+
+  render(<Send />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "addr_test1recipient" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: /export for offline signing/i }));
+
+  await waitFor(() => {
+    expect(exportUnsigned).toHaveBeenCalledWith("pending-abc-123");
+  });
+  expect(await screen.findByText("84a400deadbeef")).toBeInTheDocument();
+  expect(screen.getByText("aabbccdd")).toBeInTheDocument();
+});
+
 // --- invalid ADA shows error, buildSend NOT called ---
 
 test("(f) invalid ADA amount shows error without calling buildSend", async () => {

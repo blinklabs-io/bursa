@@ -15,6 +15,12 @@ require (
 	golang.org/x/crypto v0.53.0
 )
 
+// The wallet UI ships together with the bursa keys layer it embeds: CIP-8
+// verification (bursa.VerifyDataWithAddress) and air-gap signing reuse the
+// parent module's COSE/BIP32 code, so build against the local source rather
+// than a published tag.
+replace github.com/blinklabs-io/bursa => ../
+
 require (
 	cel.dev/expr v0.25.1 // indirect
 	cloud.google.com/go v0.123.0 // indirect
