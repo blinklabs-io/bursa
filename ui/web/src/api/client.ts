@@ -18,6 +18,14 @@ import type {
   WitnessResult,
   SignTxRequest,
   SubmitSignedRequest,
+  MultiSigAccount,
+  CreateMultiSigRequest,
+  MultiSigMyKey,
+  MultiSigBalance,
+  MultiSigBuildRequest,
+  MultiSigUnsignedTx,
+  MultiSigSignRequest,
+  MultiSigSubmitRequest,
 } from "./types";
 
 export class ApiError extends Error {
@@ -87,3 +95,22 @@ export const exportUnsigned = (id: string) =>
 export const signTx = (req: SignTxRequest) => apiPost<WitnessResult>("/wallet/sign-tx", req);
 export const submitSigned = (req: SubmitSignedRequest) =>
   apiPost<TxResult>("/wallet/submit-signed", req);
+
+// --- Native multi-signature ---
+export const listMultiSig = () => apiGet<MultiSigAccount[]>("/wallet/multisig");
+export const createMultiSig = (req: CreateMultiSigRequest) =>
+  apiPost<MultiSigAccount>("/wallet/multisig", req);
+export const getMultiSig = (id: string) =>
+  apiGet<MultiSigAccount>(`/wallet/multisig/${encodeURIComponent(id)}`);
+export const deleteMultiSig = (id: string) =>
+  request<{ status: string }>("DELETE", `/wallet/multisig/${encodeURIComponent(id)}`);
+export const multiSigMyKey = (password: string) =>
+  apiPost<MultiSigMyKey>("/wallet/multisig/my-key", { password });
+export const multiSigBalance = (id: string) =>
+  apiGet<MultiSigBalance>(`/wallet/multisig/${encodeURIComponent(id)}/balance`);
+export const multiSigBuild = (id: string, req: MultiSigBuildRequest) =>
+  apiPost<MultiSigUnsignedTx>(`/wallet/multisig/${encodeURIComponent(id)}/build`, req);
+export const multiSigSign = (req: MultiSigSignRequest) =>
+  apiPost<WitnessResult>("/wallet/multisig/sign", req);
+export const multiSigSubmit = (id: string, req: MultiSigSubmitRequest) =>
+  apiPost<TxResult>(`/wallet/multisig/${encodeURIComponent(id)}/submit`, req);

@@ -34,6 +34,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
@@ -91,6 +92,10 @@ func run() error {
 	keyStore := keystore.New(filepath.Join(dataDir, "keystore.json"))
 	spendSvc := spend.NewService(chainCtx, keyStore, nil)
 
+	// Native multi-sig accounts are persisted independently of the (not-yet-on-
+	// this-branch) wallet vault, in a JSON file under the data dir.
+	multisigSvc := multisig.NewService(chainCtx, keyStore, filepath.Join(dataDir, "multisig.json"))
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -101,7 +106,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              "127.0.0.1:8090", // loopback only
-		Handler:           api.NewHandler(sup, walletSvc, spendSvc, network, webui.Handler()),
+		Handler:           api.NewHandler(sup, walletSvc, spendSvc, multisigSvc, network, webui.Handler()),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	srvErr := make(chan error, 1)

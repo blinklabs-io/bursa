@@ -13,6 +13,7 @@ import { Send } from "./screens/Send";
 import { SignMessage } from "./screens/SignMessage";
 import { VerifyMessage } from "./screens/VerifyMessage";
 import { Offline } from "./screens/Offline";
+import { MultiSig } from "./screens/MultiSig";
 import { Settings } from "./screens/Settings";
 
 // A Map (not a plain object) so a crafted hash like "#/constructor" or
@@ -33,6 +34,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "sign", label: "Sign" },
   { key: "verify", label: "Verify" },
   { key: "offline", label: "Offline" },
+  { key: "multisig", label: "Multi-sig" },
   { key: "settings", label: "Settings" },
 ];
 
@@ -75,6 +77,7 @@ export function App() {
     else if (route === "sign" && spendingEnabled) activeRoute = "sign";
     else if (route === "verify") activeRoute = "verify";
     else if (route === "offline" && spendingEnabled) activeRoute = "offline";
+    else if (route === "multisig") activeRoute = "multisig";
     else if (ROUTES.has(route) && route !== "send") activeRoute = route;
     else activeRoute = "portfolio";
   }
@@ -111,6 +114,11 @@ export function App() {
     // Air-gap signing needs the keystore (to sign) but no node for the sign
     // step; a read-only wallet falls back to Portfolio.
     content = spendingEnabled ? <Offline /> : <Portfolio />;
+  } else if (route === "multisig") {
+    // Managing multi-sig accounts (list/create/view) is local state and works on
+    // any loaded wallet; the spend sub-flow gates itself on canSend (synced node
+    // + spending-enabled keystore).
+    content = <MultiSig canSpend={canSend} />;
   } else {
     const Screen = ROUTES.get(route) ?? Portfolio;
     content = <Screen />;

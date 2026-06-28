@@ -24,17 +24,63 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
+
+// newTestHandler wraps NewHandler, injecting a default no-op MultiSig so the
+// existing tests (which predate multi-sig) keep their original argument shape.
+// Tests that exercise multi-sig routes call NewHandler directly with their own.
+func newTestHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Handler) http.Handler {
+	return NewHandler(st, wl, sp, &fakeMultiSig{}, network, spa)
+}
+
+// fakeMultiSig is a default-zero stub of the MultiSig surface for tests that do
+// not exercise multi-sig endpoints.
+type fakeMultiSig struct {
+	accounts   []multisig.Account
+	getAcct    multisig.Account
+	getErr     error
+	createAcct multisig.Account
+	createErr  error
+	myKey      multisig.MyKey
+	myKeyErr   error
+	balance    string
+	balanceErr error
+	built      multisig.UnsignedTx
+	buildErr   error
+	witness    multisig.Witness
+	signErr    error
+	tx         multisig.TxResult
+	submitErr  error
+}
+
+func (f *fakeMultiSig) List() ([]multisig.Account, error)    { return f.accounts, nil }
+func (f *fakeMultiSig) Get(string) (multisig.Account, error) { return f.getAcct, f.getErr }
+func (f *fakeMultiSig) Create(multisig.CreateRequest) (multisig.Account, error) {
+	return f.createAcct, f.createErr
+}
+func (f *fakeMultiSig) Delete(string) error                  { return nil }
+func (f *fakeMultiSig) MyKey(string) (multisig.MyKey, error) { return f.myKey, f.myKeyErr }
+func (f *fakeMultiSig) Balance(context.Context, string) (string, error) {
+	return f.balance, f.balanceErr
+}
+func (f *fakeMultiSig) Build(context.Context, string, multisig.BuildRequest) (multisig.UnsignedTx, error) {
+	return f.built, f.buildErr
+}
+func (f *fakeMultiSig) Sign(string, string) (multisig.Witness, error) { return f.witness, f.signErr }
+func (f *fakeMultiSig) Submit(context.Context, string, string, []string) (multisig.TxResult, error) {
+	return f.tx, f.submitErr
+}
 
 type fakeStatuser struct{ s supervisor.Status }
 
 func (f fakeStatuser) Status() supervisor.Status { return f.s }
 
 func TestHealthAlwaysOK(t *testing.T) {
-	h := NewHandler(fakeStatuser{}, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(fakeStatuser{}, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
 	if rec.Code != http.StatusOK {
@@ -44,7 +90,7 @@ func TestHealthAlwaysOK(t *testing.T) {
 
 func TestStatusReturnsSnapshot(t *testing.T) {
 	want := supervisor.Status{State: supervisor.StateSyncing, Tip: 42, CaughtUp: true}
-	h := NewHandler(fakeStatuser{s: want}, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(fakeStatuser{s: want}, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
 	if rec.Code != http.StatusOK {
@@ -119,7 +165,7 @@ func (f *fakeWallet) Delegation(_ context.Context) (wallet.DelegationView, error
 func TestWalletSetAndBalanceReady(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	fw := &fakeWallet{balance: wallet.Balance{Lovelace: "1234"}}
-	h := NewHandler(st, fw, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, fw, &fakeSpender{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"preview"}`)
@@ -144,7 +190,7 @@ func TestWalletSetAndBalanceReady(t *testing.T) {
 
 func TestWalletGatedWhileStarting(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
-	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/balance", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -155,7 +201,7 @@ func TestWalletGatedWhileStarting(t *testing.T) {
 func TestWalletGatedWhileBootstrapping(t *testing.T) {
 	// Mithril bootstrap is not a servable state: reads must be gated (503).
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateBootstrapping}}
-	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/balance", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -168,7 +214,7 @@ func TestWalletNoWalletConflict(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	for _, path := range []string{"/wallet/balance", "/wallet/addresses", "/wallet/transactions", "/wallet/delegation"} {
 		t.Run(path, func(t *testing.T) {
-			h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+			h := newTestHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 			if rec.Code != http.StatusConflict {
@@ -180,7 +226,7 @@ func TestWalletNoWalletConflict(t *testing.T) {
 
 func TestWalletNetworkMismatch(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
-	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"mainnet"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet", body))
@@ -192,7 +238,7 @@ func TestWalletNetworkMismatch(t *testing.T) {
 func TestWalletDefaultNetworkIsNodeNetwork(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	fw := &fakeWallet{}
-	h := NewHandler(st, fw, &fakeSpender{}, "preprod", http.NotFoundHandler())
+	h := newTestHandler(st, fw, &fakeSpender{}, "preprod", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"mnemonic":"x x x"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet", body))
@@ -206,7 +252,7 @@ func TestWalletDefaultNetworkIsNodeNetwork(t *testing.T) {
 
 func TestWalletSetError(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
-	h := NewHandler(st, &fakeWallet{setErr: errors.New("invalid mnemonic")}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{setErr: errors.New("invalid mnemonic")}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"mnemonic":"bad","network":"preview"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet", body))
@@ -240,16 +286,16 @@ type fakeSpender struct {
 	gotVerifyHash bool
 
 	// air-gap
-	unsigned     spend.UnsignedTx
-	exportErr    error
-	gotExportID  string
-	witness      spend.Witness
-	signTxErr    error
+	unsigned      spend.UnsignedTx
+	exportErr     error
+	gotExportID   string
+	witness       spend.Witness
+	signTxErr     error
 	gotSignTxCBOR string
-	submitResult spend.TxResult
-	submitErr    error
-	gotSubmitTx  string
-	gotSubmitWit string
+	submitResult  spend.TxResult
+	submitErr     error
+	gotSubmitTx   string
+	gotSubmitWit  string
 }
 
 func (f *fakeSpender) SetWallet(_, network, _ string) (*wallet.Account, error) {
@@ -323,7 +369,7 @@ func (f *fakeSpender) SubmitSigned(_ context.Context, unsignedTxCBOR, witnessCBO
 func TestSignDataReturnsSignature(t *testing.T) {
 	// Ungated: message signing needs no synced node, only the keystore.
 	sp := &fakeSpender{signSig: "84a1deadbeef", signKey: "a4010103"}
-	h := NewHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"address":"addr_test1xyz","message":"hello","password":"pw"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/sign-data", body))
@@ -340,7 +386,7 @@ func TestSignDataReturnsSignature(t *testing.T) {
 
 func TestSignDataWrongPasswordReturns401(t *testing.T) {
 	sp := &fakeSpender{signErr: fmt.Errorf("%w: bad", spend.ErrWrongPassword)}
-	h := NewHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"address":"a","message":"m","password":"bad"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/sign-data", body))
@@ -352,7 +398,7 @@ func TestSignDataWrongPasswordReturns401(t *testing.T) {
 func TestVerifyDataReturnsResult(t *testing.T) {
 	// Ungated: verification is pure crypto, needs no node and no keystore.
 	sp := &fakeSpender{verifyValid: true, verifyAddr: "addr_test1signed"}
-	h := NewHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"signature":"84a1","key":"a401","message":"hi","expected_address":"addr_test1signed"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/verify-data", body))
@@ -370,7 +416,7 @@ func TestVerifyDataReturnsResult(t *testing.T) {
 
 func TestVerifyDataInvalidArgsReturns400(t *testing.T) {
 	sp := &fakeSpender{verifyErr: fmt.Errorf("%w: bad hex", spend.ErrInvalidRequest)}
-	h := NewHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"signature":"zz","key":"a4","message":"hi"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/verify-data", body))
@@ -381,7 +427,7 @@ func TestVerifyDataInvalidArgsReturns400(t *testing.T) {
 
 func TestExportUnsignedRequiresReady(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
-	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/send/pend1/export-unsigned", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -395,7 +441,7 @@ func TestExportUnsignedReturnsTx(t *testing.T) {
 		UnsignedTxCBOR:  "84a400",
 		RequiredSigners: []string{"deadbeef"},
 	}}
-	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/send/pend1/export-unsigned", nil))
 	if rec.Code != http.StatusOK {
@@ -413,7 +459,7 @@ func TestSignTxUngated(t *testing.T) {
 	// Offline signing must not need a synced node — only the keystore.
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
 	sp := &fakeSpender{witness: spend.Witness{WitnessCBOR: "81825820"}}
-	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","password":"pw"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/sign-tx", body))
@@ -430,7 +476,7 @@ func TestSignTxUngated(t *testing.T) {
 
 func TestSignTxWrongPasswordReturns401(t *testing.T) {
 	sp := &fakeSpender{signTxErr: fmt.Errorf("%w: bad", spend.ErrWrongPassword)}
-	h := NewHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(fakeStatuser{}, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","password":"bad"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/sign-tx", body))
@@ -441,7 +487,7 @@ func TestSignTxWrongPasswordReturns401(t *testing.T) {
 
 func TestSubmitSignedRequiresReady(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
-	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","witness_cbor":"81"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/submit-signed", body))
@@ -453,7 +499,7 @@ func TestSubmitSignedRequiresReady(t *testing.T) {
 func TestSubmitSignedReturnsTxHash(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{submitResult: spend.TxResult{TxHash: "cafebabe"}}
-	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","witness_cbor":"81825820"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/submit-signed", body))
@@ -471,7 +517,7 @@ func TestSubmitSignedReturnsTxHash(t *testing.T) {
 func TestSubmitSignedInvalidWitnessReturns400(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{submitErr: fmt.Errorf("%w: bad cbor", spend.ErrInvalidWitness)}
-	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","witness_cbor":"zz"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/submit-signed", body))
@@ -485,7 +531,7 @@ func TestKeystoreSetupDoesNotRequireReady(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
 	fw := &fakeWallet{}
 	sp := &fakeSpender{}
-	h := NewHandler(st, fw, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, fw, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"preview","password":"valid-spend-password"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/keystore", body))
@@ -503,7 +549,7 @@ func TestKeystoreSetupDoesNotRequireReady(t *testing.T) {
 func TestKeystoreSetupEnablesReadWallet(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	fw := &fakeWallet{balance: wallet.Balance{Lovelace: "1234"}}
-	h := NewHandler(st, fw, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, fw, &fakeSpender{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"preview","password":"valid-spend-password"}`)
@@ -521,7 +567,7 @@ func TestKeystoreSetupEnablesReadWallet(t *testing.T) {
 
 func TestKeystorePasswordRequired(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
-	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"preview"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/keystore", body))
@@ -533,7 +579,7 @@ func TestKeystorePasswordRequired(t *testing.T) {
 func TestKeystorePasswordTooShort(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{}
-	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"preview","password":"short"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/keystore", body))
@@ -548,7 +594,7 @@ func TestKeystorePasswordTooShort(t *testing.T) {
 func TestKeystorePasswordCountsCharacters(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{}
-	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"preview","password":"\u00e9\u00e9\u00e9\u00e9"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/keystore", body))
@@ -562,7 +608,7 @@ func TestKeystorePasswordCountsCharacters(t *testing.T) {
 
 func TestKeystoreNetworkMismatch(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
-	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"mnemonic":"x x x","network":"mainnet","password":"valid-spend-password"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/keystore", body))
@@ -574,7 +620,7 @@ func TestKeystoreNetworkMismatch(t *testing.T) {
 func TestSpendSendReadyReturnsPreview(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{preview: spend.Preview{PendingID: "pend123", Fee: "170000"}}
-	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"to":"addr_test1recv","lovelace":"1000000"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/send", body))
@@ -593,7 +639,7 @@ func TestSpendSendReadyReturnsPreview(t *testing.T) {
 func TestSpendSendGatedWhileSyncing(t *testing.T) {
 	// Spending requires a fully synced node (StateReady), unlike reads.
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
-	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"to":"addr_test1recv","lovelace":"1000000"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/send", body))
@@ -605,7 +651,7 @@ func TestSpendSendGatedWhileSyncing(t *testing.T) {
 func TestSpendSendNoWalletConflict(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{buildErr: spend.ErrNoWallet}
-	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"to":"addr_test1recv","lovelace":"1000000"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/send", body))
@@ -617,7 +663,7 @@ func TestSpendSendNoWalletConflict(t *testing.T) {
 func TestSpendConfirmReadyReturnsTxHash(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{result: spend.TxResult{TxHash: "deadbeef"}}
-	h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"valid-spend-password"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/send/pend123/confirm", body))
@@ -638,7 +684,7 @@ func TestSpendConfirmReadyReturnsTxHash(t *testing.T) {
 
 func TestSpendConfirmGatedWhileSyncing(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
-	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
+	h := newTestHandler(st, &fakeWallet{}, &fakeSpender{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"valid-spend-password"}`)
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/send/pend123/confirm", body))
@@ -678,12 +724,118 @@ func TestSpendErrorStatusCodes(t *testing.T) {
 				req = httptest.NewRequest(http.MethodPost, "/wallet/send",
 					bytes.NewBufferString(`{"to":"addr_test1recv","lovelace":"1000000"}`))
 			}
-			h := NewHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
+			h := newTestHandler(st, &fakeWallet{}, sp, "preview", http.NotFoundHandler())
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)
 			if rec.Code != tc.wantCode {
 				t.Fatalf("%s: code = %d, want %d", tc.name, rec.Code, tc.wantCode)
 			}
 		})
+	}
+}
+
+// --- Multi-sig routes -------------------------------------------------------
+
+func TestMultiSigListAndCreate(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	ms := &fakeMultiSig{
+		accounts:   []multisig.Account{{ID: "abc", Label: "treasury", ScriptAddress: "addr_test1wscript"}},
+		createAcct: multisig.Account{ID: "new1", Label: "joint", ScriptAddress: "addr_test1wnew"},
+	}
+	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, ms, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/multisig", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "treasury") {
+		t.Fatalf("GET /wallet/multisig = %d body %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"label":"joint","policy":{"threshold":2,"participants":[{"key_hash_hex":"aa"},{"key_hash_hex":"bb"}]}}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/multisig", body))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "addr_test1wnew") {
+		t.Fatalf("POST /wallet/multisig = %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMultiSigGetUnknownReturns404(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	ms := &fakeMultiSig{getErr: fmt.Errorf("%w: x", multisig.ErrUnknownAccount)}
+	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, ms, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/multisig/nope", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET unknown account = %d, want 404", rec.Code)
+	}
+}
+
+func TestMultiSigMyKey(t *testing.T) {
+	// Ungated: derives from the keystore, no node needed.
+	ms := &fakeMultiSig{myKey: multisig.MyKey{VKeyHex: "abcd", KeyHashHex: "deadbeef"}}
+	h := NewHandler(fakeStatuser{}, &fakeWallet{}, &fakeSpender{}, ms, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"pw"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/multisig/my-key", body))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "deadbeef") {
+		t.Fatalf("POST /wallet/multisig/my-key = %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMultiSigMyKeyNoKeystoreReturns409(t *testing.T) {
+	ms := &fakeMultiSig{myKeyErr: multisig.ErrNoKeystore}
+	h := NewHandler(fakeStatuser{}, &fakeWallet{}, &fakeSpender{}, ms, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/multisig/my-key",
+		bytes.NewBufferString(`{"password":"pw"}`)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("my-key without keystore = %d, want 409", rec.Code)
+	}
+}
+
+func TestMultiSigBuildGatedWhileSyncing(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
+	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/multisig/abc/build",
+		bytes.NewBufferString(`{"to":"addr_test1recv","lovelace":"1000000"}`)))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("build while syncing = %d, want 503", rec.Code)
+	}
+}
+
+func TestMultiSigSignAndSubmit(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	ms := &fakeMultiSig{
+		witness: multisig.Witness{WitnessCBOR: "81a0"},
+		tx:      multisig.TxResult{TxHash: "feedface"},
+	}
+	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, ms, "preview", http.NotFoundHandler())
+
+	// Sign is ungated.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/multisig/sign",
+		bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","password":"pw"}`)))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "81a0") {
+		t.Fatalf("POST /wallet/multisig/sign = %d body %s", rec.Code, rec.Body.String())
+	}
+
+	// Submit needs a ready node.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/multisig/abc/submit",
+		bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","witnesses":["81a0","81a1"]}`)))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "feedface") {
+		t.Fatalf("POST /wallet/multisig/abc/submit = %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMultiSigSubmitBelowThresholdReturns400(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	ms := &fakeMultiSig{submitErr: fmt.Errorf("%w: have 1 of 2", multisig.ErrInvalidWitness)}
+	h := NewHandler(st, &fakeWallet{}, &fakeSpender{}, ms, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/multisig/abc/submit",
+		bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","witnesses":["81a0"]}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("submit below threshold = %d, want 400", rec.Code)
 	}
 }
