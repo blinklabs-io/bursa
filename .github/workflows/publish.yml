@@ -372,11 +372,16 @@ jobs:
         id: manifest
         shell: bash
         run: |
+          # Use `docker buildx imagetools create` (not `docker manifest create`):
+          # buildx pushes each per-arch tag as an OCI image index (image +
+          # provenance attestation), so `docker manifest create` rejects nesting
+          # it and fails with "<tag>-amd64 is a manifest list". imagetools
+          # composes the per-arch indexes into one multi-arch index and pushes
+          # it in a single step.
           while IFS= read -r tag; do
-            docker manifest create "${tag}" \
+            docker buildx imagetools create -t "${tag}" \
               "${tag}-amd64" \
               "${tag}-arm64"
-            docker manifest push "${tag}"
           done <<< "${{ steps.meta.outputs.tags }}"
           dockerhub_tag=$(echo "${{ steps.meta.outputs.tags }}" | grep -v '^ghcr' | head -1)
           ghcr_tag=$(echo "${{ steps.meta.outputs.tags }}" | grep '^ghcr' | head -1)
