@@ -29,7 +29,10 @@ export function SyncBanner({ status }: SyncBannerProps) {
     detail = `${status.bootstrap.phase} ${status.bootstrap.percent.toFixed(1)}%`;
   } else if (status.state === "ready") {
     detail = `tip ${status.tip} · ${status.caughtUp ? "caught up" : "catching up"}`;
-  } else if (status.error) {
+  } else if (status.state === "error" && status.error) {
+    // Only display the error detail when the node is actually in the error
+    // state. A stale error field from a previous attempt must not surface
+    // once the node has recovered to bootstrapping / syncing / ready.
     detail = status.error;
   }
 

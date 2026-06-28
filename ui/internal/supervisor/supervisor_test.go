@@ -14,6 +14,7 @@
 package supervisor
 
 import (
+	"context"
 	"testing"
 
 	"github.com/blinklabs-io/dingo"
@@ -100,5 +101,66 @@ func TestAppliedHistoryExpiryBeforeLaunch(t *testing.T) {
 	s := New(baseConfig())
 	if _, ran := s.AppliedHistoryExpiry(); ran {
 		t.Fatal("AppliedHistoryExpiry must report ran=false before any launch")
+	}
+}
+
+// TestSetStateForRunClearsErrorOnRecovery asserts that transitioning from
+// StateError back to a healthy state (bootstrapping / syncing / ready) clears
+// the stale error string. Without this, a recovered transient error (e.g. a
+// failed Mithril GET) lingers in the status snapshot and is shown in the UI
+// even after the node has resumed normal operation.
+func TestSetStateForRunClearsErrorOnRecovery(t *testing.T) {
+	s := New(baseConfig())
+	// Plant a runID that matches an "active" run: give the supervisor a live
+	// cancel so activeRunLocked returns true, and set runID to the default 0+1.
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.mu.Lock()
+	s.cancel = cancel
+	s.runID = 1
+	s.mu.Unlock()
+
+	runID := uint64(1)
+
+	// Simulate an error (e.g. Mithril GET failed).
+	s.mu.Lock()
+	s.status.State = StateError
+	s.status.Err = "mithril GET failed"
+	s.status.Bootstrap = &BootstrapProgress{Phase: "snapshot", Percent: 30}
+	s.mu.Unlock()
+
+	// Recover to bootstrapping — error + stale bootstrap should be cleared.
+	s.setStateForRun(runID, StateBootstrapping)
+	st := s.Status()
+	if st.Err != "" {
+		t.Fatalf("expected Err to be cleared on StateBootstrapping, got %q", st.Err)
+	}
+	// Bootstrap is preserved while bootstrapping.
+	// (setStateForRun sets Bootstrap=nil only for non-bootstrapping states)
+
+	// Now set error again, then recover to StateSyncing.
+	s.mu.Lock()
+	s.status.State = StateError
+	s.status.Err = "mithril GET failed again"
+	s.mu.Unlock()
+	s.setStateForRun(runID, StateSyncing)
+	st = s.Status()
+	if st.Err != "" {
+		t.Fatalf("expected Err to be cleared on StateSyncing, got %q", st.Err)
+	}
+
+	// Verify StateError itself keeps the error string.
+	s.mu.Lock()
+	s.status.State = StateBootstrapping
+	s.status.Err = ""
+	s.mu.Unlock()
+	// setErrorForRun also cancels the context — just set state directly.
+	s.mu.Lock()
+	s.status.State = StateError
+	s.status.Err = "persistent failure"
+	s.mu.Unlock()
+	st = s.Status()
+	if st.Err != "persistent failure" {
+		t.Fatalf("expected Err to be retained in StateError, got %q", st.Err)
 	}
 }

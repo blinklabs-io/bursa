@@ -418,6 +418,12 @@ func (s *Supervisor) setStateForRun(runID uint64, st NodeState) {
 	if st != StateBootstrapping {
 		s.status.Bootstrap = nil
 	}
+	// Clear any stale error when the node returns to a healthy/in-progress
+	// state. An error set by a previous attempt (e.g. a failed Mithril GET)
+	// must not linger once the node is bootstrapping, syncing, or ready again.
+	if st != StateError {
+		s.status.Err = ""
+	}
 }
 
 // Only called from test code; nolint:unused because lint runs with tests:false.

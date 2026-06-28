@@ -48,3 +48,22 @@ test("SyncBanner shows error detail ahead of retained bootstrap diagnostics", ()
   expect(screen.getByText("mithril bootstrap: download failed")).toBeInTheDocument();
   expect(screen.queryByText("bootstrap 40.0%")).not.toBeInTheDocument();
 });
+
+test("SyncBanner does NOT show stale error detail when state is not error", () => {
+  // A node that recovered from an error to syncing should not surface the
+  // stale error string — the SyncBanner must guard on state === "error".
+  render(
+    <SyncBanner
+      status={{
+        state: "syncing",
+        tip: 0,
+        caughtUp: false,
+        error: "stale mithril error from previous attempt",
+      }}
+    />,
+  );
+  expect(screen.getByText("syncing")).toBeInTheDocument();
+  expect(
+    screen.queryByText("stale mithril error from previous attempt"),
+  ).not.toBeInTheDocument();
+});
