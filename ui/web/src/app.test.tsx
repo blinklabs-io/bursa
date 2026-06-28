@@ -291,6 +291,11 @@ test("Add wallet action opens the add-wallet form", async () => {
   await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
   // "Add wallet" appears in both the mobile drawer and the desktop sidebar.
   fireEvent.click(screen.getAllByRole("button", { name: /add wallet/i })[0]);
-  // The add-wallet form (with a recovery-phrase field) appears.
+  // The add-wallet flow now starts with a create/restore chooser.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /restore from recovery phrase/i })).toBeInTheDocument(),
+  );
+  // Navigate to the restore path to get the recovery phrase field.
+  fireEvent.click(screen.getByRole("button", { name: /restore from recovery phrase/i }));
   await waitFor(() => expect(screen.getByLabelText(/recovery phrase/i)).toBeInTheDocument());
 });

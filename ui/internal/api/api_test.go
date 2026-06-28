@@ -573,6 +573,31 @@ func TestAddWalletDuplicateConflict(t *testing.T) {
 	}
 }
 
+// TestGenerateMnemonic asserts the generate endpoint returns a non-empty
+// mnemonic (24-word / 256-bit BIP39). It does not need a vault or a node —
+// the endpoint is ungated and uses only the bursa core lib.
+func TestGenerateMnemonic(t *testing.T) {
+	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, nil, &fakePoolOps{}, &fakeMultiSig{}, &fakeDexQuoter{}, &fakeSettings{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/mnemonic/generate", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/mnemonic/generate = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Mnemonic string `json:"mnemonic"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Mnemonic == "" {
+		t.Fatal("expected non-empty mnemonic")
+	}
+	words := strings.Fields(body.Mnemonic)
+	if len(words) != 24 {
+		t.Fatalf("expected 24-word mnemonic, got %d words", len(words))
+	}
+}
+
 func TestActivateWalletBinds(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	fv := &fakeVault{

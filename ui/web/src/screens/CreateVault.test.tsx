@@ -15,7 +15,12 @@ test("creating the vault then advances to the add-first-wallet step", async () =
   fireEvent.click(screen.getByRole("button", { name: /create vault/i }));
 
   await waitFor(() => expect(createSpy).toHaveBeenCalledWith({ password: "vault-password-xyz" }));
-  // After creation, the add-first-wallet form (recovery phrase) is shown.
+  // After creation, the add-first-wallet chooser (create/restore) is shown.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /restore from recovery phrase/i })).toBeInTheDocument(),
+  );
+  // Navigate to the restore path to get the recovery-phrase field.
+  fireEvent.click(screen.getByRole("button", { name: /restore from recovery phrase/i }));
   await waitFor(() => expect(screen.getByLabelText(/recovery phrase/i)).toBeInTheDocument());
 });
 
@@ -40,6 +45,11 @@ test("duplicate submits while create is in flight call create once", async () =>
 
   expect(createSpy).toHaveBeenCalledTimes(1);
   resolveCreate();
+  // After creation the add-wallet chooser (create/restore) appears.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /restore from recovery phrase/i })).toBeInTheDocument(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: /restore from recovery phrase/i }));
   await waitFor(() => expect(screen.getByLabelText(/recovery phrase/i)).toBeInTheDocument());
 });
 
