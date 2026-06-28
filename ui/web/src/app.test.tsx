@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { App } from "./app";
 import * as hooks from "./api/hooks";
 import * as client from "./api/client";
@@ -266,4 +266,56 @@ test("Add wallet action opens the add-wallet form", async () => {
   fireEvent.click(screen.getByRole("button", { name: /add wallet/i }));
   // The add-wallet form (with a recovery-phrase field) appears.
   await waitFor(() => expect(screen.getByLabelText(/recovery phrase/i)).toBeInTheDocument());
+});
+
+// --- Offline banner tests ----------------------------------------------------
+
+test("offline banner appears when an 'offline' event is fired", async () => {
+  stubStatus("ready");
+  stubVault({ exists: false, locked: true, wallet_count: 0 });
+
+  render(<App />);
+  await waitFor(() => expect(screen.getByRole("button", { name: /create vault/i })).toBeInTheDocument());
+
+  expect(screen.queryByRole("alert", { name: /offline/i })).not.toBeInTheDocument();
+
+  act(() => {
+    window.dispatchEvent(new Event("offline"));
+  });
+
+  await waitFor(() => expect(screen.getByRole("alert", { name: /offline/i })).toBeInTheDocument());
+});
+
+test("offline banner hides when an 'online' event fires after going offline", async () => {
+  stubStatus("ready");
+  stubVault({ exists: false, locked: true, wallet_count: 0 });
+
+  render(<App />);
+  await waitFor(() => expect(screen.getByRole("button", { name: /create vault/i })).toBeInTheDocument());
+
+  act(() => {
+    window.dispatchEvent(new Event("offline"));
+  });
+  await waitFor(() => expect(screen.getByRole("alert", { name: /offline/i })).toBeInTheDocument());
+
+  act(() => {
+    window.dispatchEvent(new Event("online"));
+  });
+  await waitFor(() => expect(screen.queryByRole("alert", { name: /offline/i })).not.toBeInTheDocument());
+});
+
+test("offline banner can be dismissed by the user", async () => {
+  stubStatus("ready");
+  stubVault({ exists: false, locked: true, wallet_count: 0 });
+
+  render(<App />);
+  await waitFor(() => expect(screen.getByRole("button", { name: /create vault/i })).toBeInTheDocument());
+
+  act(() => {
+    window.dispatchEvent(new Event("offline"));
+  });
+  await waitFor(() => expect(screen.getByRole("alert", { name: /offline/i })).toBeInTheDocument());
+
+  fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+  expect(screen.queryByRole("alert", { name: /offline/i })).not.toBeInTheDocument();
 });

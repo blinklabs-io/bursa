@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The wallet's loopback control surface is plain http on 127.0.0.1 (TLS over
+  loopback would add no security and just complicate cert handling). Permit
+  cleartext only to the loopback addresses; everything else stays cleartext-off.
+
+  A base-config with cleartextTrafficPermitted="false" is required to enforce
+  cleartext-off for all other domains on API 24-27 devices. On those API levels
+  the platform default is cleartext-on, and the manifest's usesCleartextTraffic
+  attribute is ignored when networkSecurityConfig is present — so without this
+  base-config, all non-loopback cleartext is permitted on older devices.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

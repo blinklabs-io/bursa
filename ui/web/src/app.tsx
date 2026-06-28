@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { ReactElement } from "react";
 import type { Account, WalletView } from "./api/types";
 import { useStatus, useVaultStatus } from "./api/hooks";
@@ -156,6 +156,7 @@ export function App() {
   if (!unlocked && !loadAnyway && status.data && status.data.state !== "ready") {
     return (
       <div className="app">
+        <OfflineBanner />
         <SyncBanner status={status.data} />
         <main className="content content-boot">
           <Syncing status={status.data} onLoadAnyway={() => setLoadAnyway(true)} />
@@ -263,6 +264,7 @@ export function App() {
 
   return (
     <div className="app">
+      <OfflineBanner />
       {status.data && <SyncBanner status={status.data} />}
       <div className="layout">
         <nav className="sidebar">
@@ -322,6 +324,7 @@ function FullScreen({
 }) {
   return (
     <div className="app">
+      <OfflineBanner />
       {status && <SyncBanner status={status} />}
       <main className="content content-centered">{children}</main>
     </div>
@@ -343,5 +346,41 @@ function VaultStatusUnavailable({
       </p>
       <Button onClick={onRetry}>Retry</Button>
     </section>
+  );
+}
+
+// Small dismissible banner that appears when the browser reports no network.
+function OfflineBanner() {
+  const [offline, setOffline] = useState(!navigator.onLine);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    const onOffline = () => { setOffline(true); setDismissed(false); };
+    const onOnline = () => { setOffline(false); setDismissed(false); };
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online", onOnline);
+    return () => {
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("online", onOnline);
+    };
+  }, []);
+
+  if (!offline || dismissed) return null;
+
+  return (
+    <div
+      role="alert"
+      aria-label="offline"
+      className="offline-banner"
+    >
+      <span>You are offline. Some features may be unavailable.</span>
+      <button
+        className="offline-banner-dismiss"
+        aria-label="dismiss"
+        onClick={() => setDismissed(true)}
+      >
+        ✕
+      </button>
+    </div>
   );
 }

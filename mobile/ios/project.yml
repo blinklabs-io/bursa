@@ -1,0 +1,40 @@
+# Copyright 2026 Blink Labs Software
+# Licensed under the Apache License, Version 2.0.
+#
+# xcodegen project spec for the Bursa iOS app. Generate the .xcodeproj with:
+#   cd mobile/ios && xcodegen generate
+# then build with:
+#   xcodebuild -project Bursa.xcodeproj -scheme Bursa \
+#       -sdk iphonesimulator -configuration Debug build
+#
+# The Go wallet core is the Bursa.xcframework produced by `gomobile bind
+# -target=ios ... ./mobile` (see ../README.md / the CI `ios` job). It is expected
+# at mobile/ios/Bursa.xcframework and embedded into the app below.
+
+name: Bursa
+options:
+  bundleIdPrefix: io.blinklabs
+  deploymentTarget:
+    iOS: "15.0"
+
+targets:
+  Bursa:
+    type: application
+    platform: iOS
+    sources:
+      - path: Bursa
+    info:
+      path: Bursa/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.blinklabs.bursa
+        PRODUCT_NAME: Bursa
+        GENERATE_INFOPLIST_FILE: NO
+        # Allow building without a signing identity in CI (simulator/unsigned).
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+    dependencies:
+      # The gomobile-generated wallet core. embed: true copies it into the .app;
+      # gomobile xcframeworks are dynamic and must be embedded + signed.
+      - framework: Bursa.xcframework
+        embed: true
