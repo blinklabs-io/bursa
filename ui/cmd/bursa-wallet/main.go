@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -34,6 +35,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/settings"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
@@ -92,6 +94,20 @@ func run() error {
 	)
 	// Mithril fast-sync is on by default; BURSA_SYNC=genesis opts out.
 	mithrilEnabled := !strings.EqualFold(envOr("BURSA_SYNC", "mithril"), "genesis")
+
+	// The lean-node (history-expiry) profile is now a persisted, user-facing app
+	// setting (the source of truth) rather than an env-only control. BURSA_LEAN
+	// only SEEDS the first-run default — once a value is persisted (default off,
+	// or whatever the user later sets in the Settings screen), the env is ignored.
+	// This keeps the env as the initial-default seed for mobile builds.
+	settingsStore, err := settings.Load(filepath.Join(dataDir, "settings.json"))
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+	if err := settingsStore.SeedDefault(envBool("BURSA_LEAN", false)); err != nil {
+		return fmt.Errorf("seed lean-node default: %w", err)
+	}
+
 	sup := supervisor.New(supervisor.Config{
 		Network:        network,
 		DataDir:        filepath.Join(dataDir, "db"),
@@ -100,6 +116,9 @@ func run() error {
 		BlockfrostPort: blockfrostPort,
 		Logger:         logger,
 		MithrilEnabled: mithrilEnabled,
+		// Read the persisted setting fresh at each node Start, so a toggle in the
+		// Settings screen takes effect on the next node restart.
+		HistoryExpiry: settingsStore.HistoryExpiry,
 	})
 
 	// The wallet queries the node's own loopback Blockfrost endpoint.
@@ -128,8 +147,13 @@ func run() error {
 	defer sup.Stop()
 
 	srv := &http.Server{
-		Addr:              "127.0.0.1:8090", // loopback only
-		Handler:           api.NewHandler(sup, vlt, walletSvc, spendSvc, network, webui.Handler(), api.WithLegacyKeystore(legacyKeyStore)),
+		Addr: "127.0.0.1:8090", // loopback only
+		Handler: api.NewHandler(
+			sup, vlt, walletSvc, spendSvc,
+			&settingsController{store: settingsStore, sup: sup},
+			network, webui.Handler(),
+			api.WithLegacyKeystore(legacyKeyStore),
+		),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	srvErr := make(chan error, 1)
@@ -157,4 +181,45 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envBool reads a boolean env var, falling back to def when unset or unparsable.
+// Accepts the usual strconv.ParseBool truthy/falsy values (1/0, t/f, true/false).
+func envBool(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
+}
+
+// settingsController adapts the persisted settings store + the supervisor to the
+// api.SettingsController surface. The store is the source of truth for the
+// lean-node profile; the supervisor reports what the running node was actually
+// built with, so a change can be flagged as needing a node restart.
+type settingsController struct {
+	store *settings.Store
+	sup   *supervisor.Supervisor
+}
+
+func (c *settingsController) HistoryExpiry() bool { return c.store.HistoryExpiry() }
+
+func (c *settingsController) SetHistoryExpiry(enabled bool) error {
+	return c.store.SetHistoryExpiry(enabled)
+}
+
+// HistoryExpiryRestartRequired reports whether the persisted value differs from
+// what the running node was launched with. History expiry is a node-construction
+// option, so it only takes effect on the next node start: if no node has been
+// launched yet (ran=false), there is nothing to restart, so it is not required.
+func (c *settingsController) HistoryExpiryRestartRequired() bool {
+	applied, ran := c.sup.AppliedHistoryExpiry()
+	if !ran {
+		return false
+	}
+	return applied != c.store.HistoryExpiry()
 }
