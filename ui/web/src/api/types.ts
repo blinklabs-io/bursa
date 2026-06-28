@@ -107,6 +107,15 @@ export interface SignDataResult {
   key: string; // COSE_Key, hex
 }
 
+// App settings: the lean-node (history-expiry) profile. restart_required is true
+// when the persisted value differs from what the running node was built with —
+// history expiry is a node-construction option, so it only takes effect on the
+// next node restart.
+export interface HistoryExpirySetting {
+  enabled: boolean;
+  restart_required: boolean;
+}
+
 export interface LoadWalletRequest {
   mnemonic: string;
   network: string;

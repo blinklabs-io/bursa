@@ -12,6 +12,7 @@ import type {
   CreateKeystoreRequest,
   SignDataRequest,
   SignDataResult,
+  HistoryExpirySetting,
 } from "./types";
 
 export class ApiError extends Error {
@@ -62,6 +63,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export const apiGet = <T>(path: string) => request<T>("GET", path);
 export const apiPost = <T>(path: string, body?: unknown) => request<T>("POST", path, body);
+export const apiPut = <T>(path: string, body?: unknown) => request<T>("PUT", path, body);
 
 export const getStatus = () => apiGet<Status>("/status");
 export const loadWallet = (req: LoadWalletRequest) => apiPost<Account>("/wallet", req);
@@ -74,3 +76,7 @@ export const buildSend = (req: SendRequest) => apiPost<Preview>("/wallet/send", 
 export const confirmSend = (id: string, password: string) =>
   apiPost<TxResult>(`/wallet/send/${encodeURIComponent(id)}/confirm`, { password });
 export const signData = (req: SignDataRequest) => apiPost<SignDataResult>("/wallet/sign-data", req);
+export const getHistoryExpiry = () =>
+  apiGet<HistoryExpirySetting>("/wallet/settings/history-expiry");
+export const setHistoryExpiry = (enabled: boolean) =>
+  apiPut<HistoryExpirySetting>("/wallet/settings/history-expiry", { enabled });

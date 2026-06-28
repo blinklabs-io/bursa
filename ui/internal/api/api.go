@@ -52,13 +52,28 @@ type Spender interface {
 	SignData(addr string, message []byte, password string) (signatureHex, keyHex string, err error)
 }
 
+// SettingsController is the user-facing app-settings surface. It exposes the
+// persisted lean-node (history-expiry) profile and whether a node restart is
+// still needed for the persisted value to take effect (history expiry is a
+// node-construction option, applied only at node start). It is decoupled from
+// the storage and supervisor packages so the API can be tested with a fake.
+type SettingsController interface {
+	HistoryExpiry() bool
+	SetHistoryExpiry(enabled bool) error
+	// HistoryExpiryRestartRequired reports whether the running node was built
+	// with a different history-expiry value than what is now persisted (so the
+	// change has not taken effect yet).
+	HistoryExpiryRestartRequired() bool
+}
+
 const defaultWindow = 20
 
 // NewHandler returns the loopback control-surface mux. network is the network
 // the embedded node runs on; wallet requests must match it (or omit it).
+// settings exposes user-facing app settings (the lean-node profile).
 // spa is the handler for the embedded SPA; it is registered as the catch-all
 // route so that the specific API routes above take precedence on the mux.
-func NewHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Handler) http.Handler {
+func NewHandler(st Statuser, wl Wallet, sp Spender, settings SettingsController, network string, spa http.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -178,6 +193,34 @@ func NewHandler(st Statuser, wl Wallet, sp Spender, network string, spa http.Han
 		}
 		sig, key, err := sp.SignData(req.Address, []byte(req.Message), req.Password)
 		serve(w, map[string]string{"signature": sig, "key": key}, err)
+	})
+
+	// App settings: the lean-node (history-expiry) profile. Ungated — it is a
+	// config setting, not a node query, so it is readable/settable regardless of
+	// sync state. History expiry is a node-construction option, so a change only
+	// takes effect on the next node restart; restart_required surfaces that.
+	mux.HandleFunc("GET /wallet/settings/history-expiry", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{
+			"enabled":          settings.HistoryExpiry(),
+			"restart_required": settings.HistoryExpiryRestartRequired(),
+		})
+	})
+	mux.HandleFunc("PUT /wallet/settings/history-expiry", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if err := settings.SetHistoryExpiry(req.Enabled); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{
+			"enabled":          settings.HistoryExpiry(),
+			"restart_required": settings.HistoryExpiryRestartRequired(),
+		})
 	})
 
 	// SPA catch-all: the specific API routes above take precedence on the mux;
