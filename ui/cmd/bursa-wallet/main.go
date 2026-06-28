@@ -102,8 +102,11 @@ func run() error {
 		MithrilEnabled: mithrilEnabled,
 	})
 
-	// The wallet queries the node's own loopback Blockfrost endpoint.
-	walletSvc := wallet.NewService(chain.NewClient(blockfrostPort))
+	// The wallet queries the node's own loopback Blockfrost endpoint. The same
+	// client also verifies pasted pool/DRep IDs and reads protocol params for the
+	// staking flow (consent law: the embedded node is the only network contact).
+	chainClient := chain.NewClient(blockfrostPort)
+	walletSvc := wallet.NewService(chainClient)
 
 	// The vault is the encrypted multi-wallet store: a single file under the data
 	// dir holding the wallet index (encrypted under the vault password) and each
@@ -114,10 +117,13 @@ func run() error {
 
 	// Spending builds/signs/submits through the node's loopback UTxO-RPC
 	// endpoint; the active wallet's seed is decrypted from the vault on demand.
+	// Delegation txs additionally query pool/DRep/account state + protocol params
+	// through the Blockfrost client.
 	chainCtx := utxorpc.NewUtxoRpcChainContext(
 		fmt.Sprintf("http://127.0.0.1:%d", utxorpcPort), netID, nil,
 	)
 	spendSvc := spend.NewService(chainCtx, vaultKeystore{v: vlt}, nil)
+	spendSvc.SetChainQuerier(chainClient)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -129,7 +135,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              "127.0.0.1:8090", // loopback only
-		Handler:           api.NewHandler(sup, vlt, walletSvc, spendSvc, network, webui.Handler(), api.WithLegacyKeystore(legacyKeyStore)),
+		Handler:           api.NewHandler(sup, vlt, walletSvc, spendSvc, chainClient, network, webui.Handler(), api.WithLegacyKeystore(legacyKeyStore)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	srvErr := make(chan error, 1)

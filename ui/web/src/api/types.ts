@@ -117,6 +117,76 @@ export interface VaultStatus {
   legacy_keystore?: boolean;
 }
 
+// --- staking & governance ---
+
+// PoolInfo mirrors GET /wallet/pool/{id}: a node-verified stake pool readout.
+// margin_cost is a fraction (0.02 = 2%); the lovelace fields are decimal strings.
+export interface PoolInfo {
+  pool_id: string;
+  hex: string;
+  vrf_key: string;
+  active_stake: string;
+  live_stake: string;
+  declared_pledge: string;
+  fixed_cost: string;
+  margin_cost: number;
+}
+
+// DRepInfo mirrors GET /wallet/drep/{id}: confirms a DRep exists on chain.
+export interface DRepInfo {
+  drep_id: string;
+  hex: string;
+  has_script: boolean;
+  registered: boolean;
+  amount: string;
+  active: boolean;
+  live_stake: string;
+}
+
+export type VoteType = "abstain" | "no_confidence" | "drep" | "register_self";
+
+export interface VoteAnchor {
+  url: string;
+  hash: string; // hex-encoded 32-byte blake2b-256 digest
+}
+
+export interface DelegationVote {
+  type: VoteType;
+  drep_id?: string; // when type === "drep"
+  anchor?: VoteAnchor; // optional, when type === "register_self"
+}
+
+export interface DelegationRequest {
+  pool_id?: string; // omitted = leave stake delegation unchanged
+  vote?: DelegationVote;
+  withdraw?: boolean; // sweep withdrawable rewards
+}
+
+export type CertKind =
+  | "stake_registration"
+  | "stake_delegation"
+  | "vote_delegation"
+  | "drep_registration"
+  | "withdrawal";
+
+// Cert is one itemized line in a delegation preview: a summary plus, where
+// applicable, the refundable deposit it locks or the amount it moves.
+export interface Cert {
+  kind: CertKind;
+  summary: string;
+  deposit_lovelace?: string;
+  amount_lovelace?: string;
+}
+
+export interface DelegationPreview {
+  pending_id: string;
+  certs: Cert[];
+  fee: string;
+  deposit: string; // total refundable deposit, decimal lovelace
+  withdrawal?: string; // total withdrawn, decimal lovelace
+  total: string; // net cost (fee + deposits − withdrawals), decimal lovelace
+}
+
 // A wallet as listed by the vault: read-only fields plus whether it's active.
 // The encrypted seed is never exposed.
 export interface WalletView {

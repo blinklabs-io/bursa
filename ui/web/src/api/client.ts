@@ -15,6 +15,10 @@ import type {
   UnlockVaultRequest,
   AddWalletRequest,
   MigrateLegacyKeystoreRequest,
+  PoolInfo,
+  DRepInfo,
+  DelegationRequest,
+  DelegationPreview,
 } from "./types";
 
 export class ApiError extends Error {
@@ -93,3 +97,13 @@ export const buildSend = (req: SendRequest) => apiPost<Preview>("/wallet/send", 
 export const confirmSend = (id: string, password: string) =>
   apiPost<TxResult>(`/wallet/send/${encodeURIComponent(id)}/confirm`, { password });
 export const signData = (req: SignDataRequest) => apiPost<SignDataResult>("/wallet/sign-data", req);
+
+// Staking & governance. Pool/DRep lookups verify a pasted ID through the node;
+// buildDelegation returns an itemized preview; confirmDelegation signs + submits
+// through the same Confirm path the send flow uses.
+export const getPool = (id: string) => apiGet<PoolInfo>(`/wallet/pool/${encodeURIComponent(id)}`);
+export const getDRep = (id: string) => apiGet<DRepInfo>(`/wallet/drep/${encodeURIComponent(id)}`);
+export const buildDelegation = (req: DelegationRequest) =>
+  apiPost<DelegationPreview>("/wallet/delegation", req);
+export const confirmDelegation = (id: string, password: string) =>
+  apiPost<TxResult>(`/wallet/delegation/${encodeURIComponent(id)}/confirm`, { password });

@@ -16,6 +16,7 @@ import { Portfolio } from "./screens/Portfolio";
 import { Receive } from "./screens/Receive";
 import { Activity } from "./screens/Activity";
 import { Send } from "./screens/Send";
+import { Staking } from "./screens/Staking";
 import { SignMessage } from "./screens/SignMessage";
 import { Settings } from "./screens/Settings";
 
@@ -34,6 +35,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "receive", label: "Receive" },
   { key: "activity", label: "Activity" },
   { key: "send", label: "Send" },
+  { key: "staking", label: "Staking" },
   { key: "sign", label: "Sign" },
   { key: "settings", label: "Settings" },
 ];
@@ -184,6 +186,11 @@ export function App() {
     );
   }
 
+  // Staking/governance is gated identically to send: a fully synced node AND an
+  // active (spending-capable) wallet. A read-only or unsynced wallet falls back
+  // to Portfolio.
+  const canStake = isReady && activeWallet !== null;
+
   // --- Unlocked: the normal wallet UI bound to the active wallet ----------
 
   // Which nav entry maps to the screen currently shown (mirrors the content
@@ -192,6 +199,7 @@ export function App() {
   if (!addingWallet && activeWallet !== null) {
     if (route === "settings") activeRoute = "settings";
     else if (route === "send" && canSend) activeRoute = "send";
+    else if (route === "staking" && canStake) activeRoute = "staking";
     else if (route === "sign" && canSign) activeRoute = "sign";
     else if (ROUTES.has(route) && route !== "send") activeRoute = route;
     else activeRoute = "portfolio";
@@ -218,6 +226,11 @@ export function App() {
     content = <Settings account={toAccount(activeWallet)} spendingEnabled />;
   } else if (route === "send" && !canSend) {
     content = <Portfolio />;
+  } else if (route === "staking") {
+    // Staking/governance is gated like send: a synced node AND a
+    // spending-enabled wallet. A read-only or unsynced wallet falls back to
+    // Portfolio.
+    content = canStake ? <Staking /> : <Portfolio />;
   } else if (route === "sign") {
     content = canSign ? <SignMessage account={toAccount(activeWallet)} /> : <Portfolio />;
   } else {
@@ -251,6 +264,7 @@ export function App() {
               activeWallet === null ||
               addingWallet ||
               (key === "send" && !canSend) ||
+              (key === "staking" && !canStake) ||
               (key === "sign" && !canSign);
             const active = key === activeRoute;
             return (

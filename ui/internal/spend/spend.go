@@ -130,6 +130,7 @@ type Service struct {
 	account  *wallet.Account
 	walletID string
 	gen      uint64
+	chainQ   chainQuerier     // node-backed pool/DRep/account/params queries (delegation); may be nil
 	mkID     func() string    // pending id generator; injectable for tests
 	now      func() time.Time // injectable for tests
 
@@ -219,6 +220,14 @@ func (s *Service) currentBinding() (string, *wallet.Account, uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.walletID, cloneAccount(s.account), s.gen
+}
+
+// currentAccount returns a snapshot of the active account under lock (nil if
+// none is set). Used by the delegation flow.
+func (s *Service) currentAccount() *wallet.Account {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneAccount(s.account)
 }
 
 // Build runs coin selection and fee estimation for req using Apollo, stores the

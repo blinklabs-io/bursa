@@ -22,6 +22,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
@@ -47,16 +48,27 @@ type Wallet interface {
 }
 
 // Spender is the spending surface the API exposes for the active wallet:
-// building a send for preview, confirming it (decrypt seed → sign → submit), and
-// CIP-8/CIP-30 message signing. SetAccount binds the active wallet (pushed by
-// the vault); the seed is decrypted via the vault under the wallet's spending
-// password at confirm/sign time.
+// building a send for preview, confirming it (decrypt seed → sign → submit),
+// CIP-8/CIP-30 message signing, and building staking/governance delegation
+// transactions (which Confirm signs + submits through the same path as a send).
+// SetAccount binds the active wallet (pushed by the vault); the seed is
+// decrypted via the vault under the wallet's spending password at confirm/sign
+// time.
 type Spender interface {
 	// SetAccount("", nil) clears the active wallet binding and pending sends.
 	SetAccount(id string, acct *wallet.Account)
 	Build(ctx context.Context, req spend.SendRequest) (spend.Preview, error)
 	Confirm(ctx context.Context, pendingID, password string) (spend.TxResult, error)
 	SignData(addr string, message []byte, password string) (signatureHex, keyHex string, err error)
+	BuildDelegation(ctx context.Context, req spend.DelegationRequest) (spend.DelegationPreview, error)
+}
+
+// PoolDRepLookup is the node-backed verification surface the staking screen uses
+// to confirm a pasted pool or DRep ID exists (consent law: the embedded node is
+// the only thing that touches the network). *chain.Client satisfies it.
+type PoolDRepLookup interface {
+	Pool(ctx context.Context, poolID string) (chain.PoolInfo, error)
+	DRep(ctx context.Context, drepID string) (chain.DRepInfo, error)
 }
 
 // Vault is the encrypted multi-wallet store the API drives. It owns the wallet
@@ -135,9 +147,11 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // NewHandler returns the loopback control-surface mux. network is the network
 // the embedded node runs on; wallet requests must match it (or omit it). vlt is
 // the encrypted multi-wallet store; the API pushes the active wallet onto wl/sp
-// whenever the selection changes. spa is the embedded SPA, registered as the
-// catch-all so the specific API routes take precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+// whenever the selection changes. lookup verifies pasted pool/DRep IDs through
+// the node (may be nil, in which case those endpoints report unavailable). spa
+// is the embedded SPA, registered as the catch-all so the specific API routes
+// take precedence on the mux.
+func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, lookup PoolDRepLookup, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -412,6 +426,49 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, network string, s
 		serve(w, map[string]string{"signature": sig, "key": key}, err)
 	})
 
+	// Staking & governance. Pool/DRep lookups verify a pasted ID through the node
+	// (gated like reads — they only need the node serving queries). Building a
+	// delegation tx and confirming it are gated like sends (a fully synced node),
+	// since they select UTxOs and submit.
+	mux.HandleFunc("GET /wallet/pool/{id}", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if lookup == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "pool lookup unavailable"})
+			return
+		}
+		info, err := lookup.Pool(r.Context(), r.PathValue("id"))
+		serveLookup(w, info, err)
+	}))
+	mux.HandleFunc("GET /wallet/drep/{id}", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if lookup == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drep lookup unavailable"})
+			return
+		}
+		info, err := lookup.DRep(r.Context(), r.PathValue("id"))
+		serveLookup(w, info, err)
+	}))
+
+	mux.HandleFunc("POST /wallet/delegation", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req spend.DelegationRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		pv, err := sp.BuildDelegation(r.Context(), req)
+		serve(w, pv, err)
+	}))
+
+	mux.HandleFunc("POST /wallet/delegation/{id}/confirm", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		res, err := sp.Confirm(r.Context(), r.PathValue("id"), req.Password)
+		serve(w, res, err)
+	}))
+
 	// SPA catch-all: the specific API routes above take precedence on the mux;
 	// everything else is served by the embedded frontend.
 	mux.Handle("/", spa)
@@ -444,6 +501,20 @@ func requirePassword(w http.ResponseWriter, password string) bool {
 		return false
 	}
 	return true
+}
+
+// serveLookup writes a pool/DRep lookup result, mapping the node's not-found to
+// 404 (so the screen can show "not found by your node" inline) and other errors
+// to 502 (the node query failed).
+func serveLookup[T any](w http.ResponseWriter, v T, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, chain.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found by your node"})
+	default:
+		writeJSON(w, http.StatusBadGateway, errBody(err))
+	}
 }
 
 // resolveNetwork returns the effective network for a wallet request, defaulting
@@ -521,9 +592,11 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
 	case errors.Is(err, spend.ErrExpiredPending):
 		writeJSON(w, http.StatusGone, errBody(err)) // 410
-	case errors.Is(err, spend.ErrInsufficientFunds), errors.Is(err, spend.ErrSubmitRejected):
+	case errors.Is(err, spend.ErrInsufficientFunds), errors.Is(err, spend.ErrSubmitRejected),
+		errors.Is(err, spend.ErrNoChange):
 		// 422: the request was understood but cannot be fulfilled; the node's
-		// structured rejection reason (for submit) rides along in the message.
+		// structured rejection reason (for submit), the funding shortfall, or the
+		// "already in the requested state" note rides along in the message.
 		writeJSON(w, http.StatusUnprocessableEntity, errBody(err))
 	default:
 		writeJSON(w, http.StatusInternalServerError, errBody(err))

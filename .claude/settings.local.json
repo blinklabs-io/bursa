@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Read(//tmp/**)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/cardano-foundation/cardano-wallet/refs/heads/master/specifications/api/swagger.yaml\" -o cardano-wallet-swagger.yaml)"
+    ]
+  }
+}
