@@ -27,8 +27,11 @@ fi
 
 echo "==> gomobile bind (android AAR)"
 mkdir -p "${REPO}/mobile/android/app/libs"
+# arm64 only: the 32-bit ABIs (armeabi-v7a, x86) fail to compile because apollo
+# and dingo use math.MaxUint32 in an int context, which overflows a 32-bit int.
+# Every Android device since ~2017 is arm64, so this is the right target anyway.
 (cd "${REPO}/ui" && gomobile bind \
-    -target=android \
+    -target=android/arm64 \
     -androidapi 24 \
     -javapkg io.blinklabs.bursa \
     -o "${REPO}/mobile/android/app/libs/bursa.aar" \
