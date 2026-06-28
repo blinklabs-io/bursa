@@ -42,6 +42,9 @@ import type {
   MultiSigUnsignedTx,
   MultiSigSignRequest,
   MultiSigSubmitRequest,
+  DexPoolsResponse,
+  DexQuoteRequest,
+  DexQuote,
 } from "./types";
 
 export class ApiError extends Error {
@@ -204,3 +207,7 @@ export const multiSigSign = (req: MultiSigSignRequest) =>
   apiPost<WitnessResult>("/wallet/multisig/sign", req);
 export const multiSigSubmit = (id: string, req: MultiSigSubmitRequest) =>
   apiPost<TxResult>(`/wallet/multisig/${encodeURIComponent(id)}/submit`, req);
+
+// --- Node-local DEX swap quotes ---
+export const getDexPools = () => apiGet<DexPoolsResponse>("/wallet/dex/pools");
+export const getDexQuote = (req: DexQuoteRequest) => apiPost<DexQuote>("/wallet/dex/quote", req);

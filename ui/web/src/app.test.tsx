@@ -178,6 +178,22 @@ test("Send nav is disabled until the node is ready", async () => {
   expect(screen.getByText("Send").closest("button")).toBeDisabled();
 });
 
+test("Swap nav is disabled until the node is ready", async () => {
+  stubStatus("syncing");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: /load wallet anyway/i }));
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  await waitFor(() => expect(screen.getByText("Main")).toBeInTheDocument());
+  // The Swap entry (node-local DEX quotes) needs a synced node to read pools.
+  expect(screen.getByText("Swap").closest("button")).toBeDisabled();
+});
+
 test("deep-linking #/send while syncing falls back to Portfolio (guard)", async () => {
   stubStatus("syncing");
   stubVault({ exists: true, locked: true, wallet_count: 1 });

@@ -17,6 +17,7 @@ import { Receive } from "./screens/Receive";
 import { Activity } from "./screens/Activity";
 import { Send } from "./screens/Send";
 import { Staking } from "./screens/Staking";
+import { Swap } from "./screens/Swap";
 import { SignMessage } from "./screens/SignMessage";
 import { Operate } from "./screens/Operate";
 import { VerifyMessage } from "./screens/VerifyMessage";
@@ -32,6 +33,7 @@ const ROUTES = new Map<string, () => ReactElement>([
   ["receive", Receive],
   ["activity", Activity],
   ["send", Send],
+  ["swap", Swap],
 ]);
 
 const NAV: { key: string; label: string }[] = [
@@ -40,6 +42,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "activity", label: "Activity" },
   { key: "send", label: "Send" },
   { key: "staking", label: "Staking" },
+  { key: "swap", label: "Swap" },
   { key: "sign", label: "Sign" },
   { key: "operate", label: "Operate" },
   { key: "verify", label: "Verify" },
@@ -91,6 +94,9 @@ export function App() {
   // like Sign — only an active (spending-enabled) wallet is required; retirement
   // submission's node requirement is enforced at the API.
   const canOperate = activeWallet !== null;
+  // Swap shows node-local DEX prices/quotes (no spending, no signing — it never
+  // builds or submits a tx), so it needs only a synced node and an active wallet.
+  const canSwap = isReady && activeWallet !== null;
 
   function applyWallets(list: WalletView[]) {
     setLockError(null);
@@ -211,13 +217,15 @@ export function App() {
   let activeRoute = "";
   if (!addingWallet && activeWallet !== null) {
     if (route === "settings") activeRoute = "settings";
+    else if (route === "send" && canSend) activeRoute = "send";
+    else if (route === "swap" && canSwap) activeRoute = "swap";
     else if (route === "staking" && canStake) activeRoute = "staking";
     else if (route === "sign" && canSign) activeRoute = "sign";
     else if (route === "operate" && canOperate) activeRoute = "operate";
     else if (route === "verify") activeRoute = "verify";
     else if (route === "offline" && canSign) activeRoute = "offline";
     else if (route === "multisig") activeRoute = "multisig";
-    else if (ROUTES.has(route) && route !== "send") activeRoute = route;
+    else if (ROUTES.has(route) && route !== "send" && route !== "swap") activeRoute = route;
     else activeRoute = "portfolio";
   }
 
@@ -241,6 +249,10 @@ export function App() {
   } else if (route === "settings") {
     content = <Settings account={toAccount(activeWallet)} spendingEnabled />;
   } else if (route === "send" && !canSend) {
+    content = <Portfolio />;
+  } else if (route === "swap" && !canSwap) {
+    // Guard deep-links (#/swap): the DEX quote screen needs a synced node to
+    // read pool UTxOs, so fall back to Portfolio until the node is ready.
     content = <Portfolio />;
   } else if (route === "staking") {
     // Staking/governance is gated like send: a synced node AND a
@@ -299,6 +311,7 @@ export function App() {
               activeWallet === null ||
               addingWallet ||
               (key === "send" && !canSend) ||
+              (key === "swap" && !canSwap) ||
               (key === "staking" && !canStake) ||
               (key === "sign" && !canSign) ||
               (key === "operate" && !canOperate) ||

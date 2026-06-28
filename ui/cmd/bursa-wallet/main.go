@@ -33,6 +33,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/api"
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
@@ -117,6 +118,11 @@ func run() error {
 	vlt := vault.New(filepath.Join(dataDir, "vault.json"))
 	legacyKeyStore := keystore.New(filepath.Join(dataDir, "keystore.json"))
 
+	// DEX swap quotes are computed entirely from the embedded node (pool UTxOs at
+	// the DEX script addresses via the same loopback Blockfrost endpoint) — no
+	// external service. shai's pool locators are mainnet-only.
+	dexSvc := dex.NewService(chainClient, network)
+
 	// Spending builds/signs/submits through the node's loopback UTxO-RPC
 	// endpoint; the active wallet's seed is decrypted from the vault on demand.
 	// Delegation txs additionally query pool/DRep/account state + protocol params
@@ -152,7 +158,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              "127.0.0.1:8090", // loopback only
-		Handler:           api.NewHandler(sup, vlt, walletSvc, spendSvc, chainClient, poolSvc, multisigSvc, network, webui.Handler(), api.WithLegacyKeystore(legacyKeyStore)),
+		Handler:           api.NewHandler(sup, vlt, walletSvc, spendSvc, chainClient, poolSvc, multisigSvc, dexSvc, network, webui.Handler(), api.WithLegacyKeystore(legacyKeyStore)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	srvErr := make(chan error, 1)

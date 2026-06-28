@@ -19,10 +19,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
@@ -153,6 +155,13 @@ type MultiSig interface {
 	Submit(ctx context.Context, id, unsignedTxCBOR string, witnessCBORs []string) (multisig.TxResult, error)
 }
 
+// DexQuoter is the node-local DEX surface: pool prices and best-pool swap
+// quotes, computed entirely from the embedded node (no external service).
+type DexQuoter interface {
+	Pools(ctx context.Context) ([]dex.Pool, error)
+	Quote(ctx context.Context, assetIn, assetOut string, amountIn uint64) (dex.Quote, error)
+}
+
 const defaultWindow = 20
 
 // vaultStatus is the GET /vault/status response.
@@ -192,11 +201,11 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // the embedded node runs on; wallet requests must match it (or omit it). vlt is
 // the encrypted multi-wallet store; the API pushes the active wallet onto wl/sp
 // whenever the selection changes. lookup verifies pasted pool/DRep IDs through
-// the node (may be nil, in which case those endpoints report unavailable). po is
-// the Stake Pool Operations surface, ms the native multi-signature surface, both
-// for the active wallet. spa is the embedded SPA, registered as the catch-all so
-// the specific API routes take precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, lookup PoolDRepLookup, po PoolOps, ms MultiSig, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+// the node (may be nil). po is the Stake Pool Operations surface, ms the native
+// multi-signature surface, dx the node-local DEX quoter (may be nil — DEX
+// endpoints then 404 via the catch-all). spa is the embedded SPA, registered as
+// the catch-all so the specific API routes take precedence on the mux.
+func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, lookup PoolDRepLookup, po PoolOps, ms MultiSig, dx DexQuoter, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -681,6 +690,38 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, lookup PoolDRepLo
 		serve(w, v, err)
 	}))
 
+	// DEX swap quotes. These read ONLY from the embedded node (pool UTxOs at the
+	// DEX script addresses), so there is deliberately NO external-consent gate —
+	// nothing leaves 127.0.0.1. They are gated like other wallet reads: a node
+	// that can serve queries (synced/syncing) and a loaded wallet.
+	if dx != nil {
+		mux.HandleFunc("GET /wallet/dex/pools", gated(st, walletLoaded(wl, func(w http.ResponseWriter, r *http.Request) {
+			pools, err := dx.Pools(r.Context())
+			serveDex(w, map[string]any{"pools": pools}, err)
+		})))
+
+		mux.HandleFunc("POST /wallet/dex/quote", gated(st, walletLoaded(wl, func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				AssetIn  string `json:"asset_in"`
+				AssetOut string `json:"asset_out"`
+				AmountIn string `json:"amount_in"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+				return
+			}
+			amountIn, err := strconv.ParseUint(req.AmountIn, 10, 64)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{
+					"error": "amount_in must be a positive integer (base unit, e.g. lovelace)",
+				})
+				return
+			}
+			q, err := dx.Quote(r.Context(), req.AssetIn, req.AssetOut, amountIn)
+			serveDex(w, q, err)
+		})))
+	}
+
 	// SPA catch-all: the specific API routes above take precedence on the mux;
 	// everything else is served by the embedded frontend.
 	mux.Handle("/", spa)
@@ -894,6 +935,37 @@ func serveLookup[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found by your node"})
 	default:
 		writeJSON(w, http.StatusBadGateway, errBody(err))
+	}
+}
+
+// walletLoaded rejects a request with 409 when no wallet is loaded. DEX reads
+// are wallet-scoped UI features, so they require a loaded wallet even though the
+// pool data itself is account-independent.
+func walletLoaded(wl Wallet, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, err := wl.Addresses(r.Context()); errors.Is(err, wallet.ErrNoWallet) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": wallet.ErrNoWallet.Error()})
+			return
+		}
+		next(w, r)
+	}
+}
+
+// serveDex maps DEX errors to HTTP statuses (the generic serve only knows the
+// wallet/spend sentinels).
+func serveDex[T any](w http.ResponseWriter, v T, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, dex.ErrInvalidRequest):
+		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400
+	case errors.Is(err, dex.ErrNoRoute):
+		writeJSON(w, http.StatusNotFound, errBody(err)) // 404: no pool for the pair
+	case errors.Is(err, dex.ErrNotMainnet):
+		// 422: understood, but unavailable on this network (pools are mainnet-only).
+		writeJSON(w, http.StatusUnprocessableEntity, errBody(err))
+	default:
+		writeJSON(w, http.StatusInternalServerError, errBody(err))
 	}
 }
 
