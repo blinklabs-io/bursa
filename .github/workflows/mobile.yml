@@ -6,6 +6,10 @@ name: mobile
 on:
   workflow_dispatch:
   push:
+    branches:
+      # Temporary: build a showcase APK from the integration branch. Remove
+      # before merge — mobile.yml normally builds only on tags / manual dispatch.
+      - feat/showcase-integration
     tags:
       - v*
 
