@@ -36,9 +36,31 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
+	"github.com/blinklabs-io/bursa/ui/internal/vault"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	"github.com/blinklabs-io/bursa/ui/internal/webui"
 )
+
+// vaultKeystore adapts the encrypted vault to the spend service's Keystore
+// interface. The vault owns seed encryption and the active-wallet selection, so
+// Unlock decrypts the ACTIVE wallet's seed under the supplied spending password;
+// Create is unsupported (wallets are added via the vault) and Exists is true
+// whenever a wallet is active.
+type vaultKeystore struct{ v *vault.Vault }
+
+func (k vaultKeystore) Exists() bool { return k.v.ActiveID() != "" }
+
+func (k vaultKeystore) Create(string, string) error {
+	return errors.New("wallets are added through the vault, not the keystore")
+}
+
+func (k vaultKeystore) Unlock(password string) ([]byte, error) {
+	return k.v.UnlockSeed(password)
+}
+
+func (k vaultKeystore) UnlockFor(walletID, password string) ([]byte, error) {
+	return k.v.UnlockSeedFor(walletID, password)
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -83,13 +105,19 @@ func run() error {
 	// The wallet queries the node's own loopback Blockfrost endpoint.
 	walletSvc := wallet.NewService(chain.NewClient(blockfrostPort))
 
+	// The vault is the encrypted multi-wallet store: a single file under the data
+	// dir holding the wallet index (encrypted under the vault password) and each
+	// wallet's seed (encrypted under its own spending password). It replaces the
+	// old single plaintext/keystore model — no plaintext seeds at rest.
+	vlt := vault.New(filepath.Join(dataDir, "vault.json"))
+	legacyKeyStore := keystore.New(filepath.Join(dataDir, "keystore.json"))
+
 	// Spending builds/signs/submits through the node's loopback UTxO-RPC
-	// endpoint; the mnemonic is encrypted at rest under the data dir.
+	// endpoint; the active wallet's seed is decrypted from the vault on demand.
 	chainCtx := utxorpc.NewUtxoRpcChainContext(
 		fmt.Sprintf("http://127.0.0.1:%d", utxorpcPort), netID, nil,
 	)
-	keyStore := keystore.New(filepath.Join(dataDir, "keystore.json"))
-	spendSvc := spend.NewService(chainCtx, keyStore, nil)
+	spendSvc := spend.NewService(chainCtx, vaultKeystore{v: vlt}, nil)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -101,7 +129,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              "127.0.0.1:8090", // loopback only
-		Handler:           api.NewHandler(sup, walletSvc, spendSvc, network, webui.Handler()),
+		Handler:           api.NewHandler(sup, vlt, walletSvc, spendSvc, network, webui.Handler(), api.WithLegacyKeystore(legacyKeyStore)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	srvErr := make(chan error, 1)

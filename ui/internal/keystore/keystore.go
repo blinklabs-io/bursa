@@ -4,18 +4,12 @@
 package keystore
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"unicode/utf8"
-
-	"golang.org/x/crypto/scrypt"
 )
 
 const (
@@ -41,9 +35,10 @@ const (
 // password from ciphertext corruption.
 var ErrDecryptFailed = errors.New("keystore decryption failed")
 
-// kdfParams is the scrypt cost Create writes plus the range Unlock accepts,
-// so cost can be raised in future releases without a format break, while
-// refusing absurd params from a crafted file.
+// kdfParams is the scrypt cost Create writes plus the range Unlock accepts.
+// Keep the accepted range tightly bounded: the container metadata is
+// attacker-controlled until AES-GCM authenticates it, so accepting materially
+// higher costs can turn Unlock/Open into a local resource-exhaustion primitive.
 type kdfParams struct {
 	n, r, p                            int
 	minN, maxN, minR, maxR, minP, maxP int
@@ -53,9 +48,9 @@ type kdfParams struct {
 // encryption (~1 GiB, ~1 s per derivation).
 var productionKDF = kdfParams{
 	n: 1 << 20, r: 8, p: 1,
-	minN: 1 << 20, maxN: 1 << 22,
-	minR: 8, maxR: 32,
-	minP: 1, maxP: 4,
+	minN: 1 << 20, maxN: 1 << 20,
+	minR: 8, maxR: 8,
+	minP: 1, maxP: 1,
 }
 
 // Keystore is an encrypted mnemonic file at Path (mode 0600).
@@ -81,17 +76,6 @@ func (k *Keystore) Exists() bool {
 	return err == nil
 }
 
-type container struct {
-	Version    int    `json:"version"`
-	KDF        string `json:"kdf"`
-	N          int    `json:"n"`
-	R          int    `json:"r"`
-	P          int    `json:"p"`
-	Salt       string `json:"salt"`
-	Nonce      string `json:"nonce"`
-	Ciphertext string `json:"ciphertext"`
-}
-
 // Create encrypts the mnemonic under password (minimum MinPasswordLen
 // characters) and writes the keystore. It refuses to overwrite an existing
 // keystore.
@@ -107,34 +91,11 @@ func (k *Keystore) Create(mnemonic, password string) error {
 	if k.Exists() {
 		return fmt.Errorf("keystore already exists at %s", k.Path)
 	}
-	salt := make([]byte, saltLen)
-	if _, err := rand.Read(salt); err != nil {
-		return err
-	}
-	kdf := k.params()
-	key, err := scrypt.Key([]byte(password), salt, kdf.n, kdf.r, kdf.p, keyLen)
-	if err != nil {
-		return fmt.Errorf("scrypt: %w", err)
-	}
-	block, err := aes.NewCipher(key)
+	c, err := encrypt([]byte(mnemonic), []byte(password), k.params())
 	if err != nil {
 		return err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return err
-	}
-	ct := gcm.Seal(nil, nonce, []byte(mnemonic), nil)
-	blob, err := json.Marshal(container{
-		Version: containerVersion,
-		KDF:     "scrypt", N: kdf.n, R: kdf.r, P: kdf.p,
-		Salt: hex.EncodeToString(salt), Nonce: hex.EncodeToString(nonce),
-		Ciphertext: hex.EncodeToString(ct),
-	})
+	blob, err := json.Marshal(c)
 	if err != nil {
 		return err
 	}
@@ -184,48 +145,7 @@ func (k *Keystore) Unlock(password string) ([]byte, error) {
 	if err := json.Unmarshal(blob, &c); err != nil {
 		return nil, fmt.Errorf("not a keystore container: %w", err)
 	}
-	if c.Version != containerVersion {
-		return nil, fmt.Errorf("unsupported keystore version %d", c.Version)
-	}
-	kdf := k.params()
-	if c.KDF != "scrypt" ||
-		c.N < kdf.minN || c.N > kdf.maxN ||
-		c.R < kdf.minR || c.R > kdf.maxR ||
-		c.P < kdf.minP || c.P > kdf.maxP {
-		return nil, fmt.Errorf("unsupported KDF params (kdf=%q n=%d r=%d p=%d)", c.KDF, c.N, c.R, c.P)
-	}
-	salt, err := hex.DecodeString(c.Salt)
-	if err != nil {
-		return nil, err
-	}
-	nonce, err := hex.DecodeString(c.Nonce)
-	if err != nil {
-		return nil, err
-	}
-	if len(nonce) != gcmNonceLen {
-		return nil, fmt.Errorf("invalid nonce length %d", len(nonce))
-	}
-	ct, err := hex.DecodeString(c.Ciphertext)
-	if err != nil {
-		return nil, err
-	}
-	key, err := scrypt.Key([]byte(password), salt, c.N, c.R, c.P, keyLen)
-	if err != nil {
-		return nil, fmt.Errorf("scrypt: %w", err)
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	pt, err := gcm.Open(nil, nonce, ct, nil)
-	if err != nil {
-		return nil, fmt.Errorf("%w: wrong password or corrupt keystore", ErrDecryptFailed)
-	}
-	return pt, nil
+	return decrypt(c, []byte(password), k.params())
 }
 
 // Zero overwrites b in place, e.g. a mnemonic returned by Unlock once signing

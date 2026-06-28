@@ -6,6 +6,7 @@ require (
 	github.com/blinklabs-io/apollo/v2 v2.0.0-20260625155554-2c0d64b7d8e9
 	github.com/blinklabs-io/bursa v0.16.1-0.20260624233607-e1d8912f7e08
 	github.com/blinklabs-io/dingo v0.58.0
+	github.com/blinklabs-io/go-bip39 v0.2.0
 	github.com/blinklabs-io/gouroboros v0.185.0
 	github.com/blinklabs-io/plutigo v0.1.15
 	github.com/utxorpc/go-codegen v0.19.2
@@ -69,7 +70,6 @@ require (
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/blinklabs-io/bark v0.0.2 // indirect
-	github.com/blinklabs-io/go-bip39 v0.2.0 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.5.0 // indirect
 	github.com/btcsuite/btcd/btcutil v1.2.0 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.2.0 // indirect
