@@ -1,5 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
-import type { Status, Balance, AddressView, Tx, DelegationView, VaultStatus } from "./types";
+import type {
+  Status,
+  Balance,
+  AddressView,
+  Tx,
+  DelegationView,
+  VaultStatus,
+  HistoryExpirySetting,
+} from "./types";
 import {
   getStatus,
   getVaultStatus,
@@ -7,6 +15,7 @@ import {
   getAddresses,
   getTransactions,
   getDelegation,
+  getHistoryExpiry,
 } from "./client";
 
 export interface AsyncState<T> {
@@ -74,3 +83,4 @@ export const useBalance = (): AsyncState<Balance> => useAsync(getBalance);
 export const useAddresses = (): AsyncState<AddressView> => useAsync(getAddresses);
 export const useTransactions = (): AsyncState<Tx[]> => useAsync(getTransactions);
 export const useDelegation = (): AsyncState<DelegationView> => useAsync(getDelegation);
+export const useHistoryExpiry = (): AsyncState<HistoryExpirySetting> => useAsync(getHistoryExpiry);
