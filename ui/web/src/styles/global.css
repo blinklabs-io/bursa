@@ -8,6 +8,10 @@
   padding: 0;
 }
 
+html {
+  background: var(--bg);
+}
+
 body {
   font-family: var(--font);
   background: var(--bg);
@@ -44,6 +48,12 @@ a:hover {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  /* Safe-area insets for Android/iOS edge-to-edge rendering (viewport-fit=cover).
+     env() values are 0 on desktop, so these rules are a no-op there. */
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .layout {
