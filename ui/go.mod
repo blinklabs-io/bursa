@@ -9,6 +9,7 @@ require (
 	github.com/blinklabs-io/go-bip39 v0.2.0
 	github.com/blinklabs-io/gouroboros v0.185.0
 	github.com/blinklabs-io/plutigo v0.1.15
+	github.com/gowebpki/jcs v1.0.1
 	github.com/utxorpc/go-codegen v0.19.2
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 	golang.org/x/crypto v0.53.0

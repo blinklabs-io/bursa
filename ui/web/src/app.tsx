@@ -18,6 +18,7 @@ import { Activity } from "./screens/Activity";
 import { Send } from "./screens/Send";
 import { Staking } from "./screens/Staking";
 import { SignMessage } from "./screens/SignMessage";
+import { Operate } from "./screens/Operate";
 import { Settings } from "./screens/Settings";
 
 // A Map (not a plain object) so a crafted hash like "#/constructor" or
@@ -37,6 +38,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "send", label: "Send" },
   { key: "staking", label: "Staking" },
   { key: "sign", label: "Sign" },
+  { key: "operate", label: "Operate" },
   { key: "settings", label: "Settings" },
 ];
 
@@ -78,6 +80,11 @@ export function App() {
   // spending password).
   const canSend = isReady && activeWallet !== null;
   const canSign = activeWallet !== null;
+  // Pool operations derive cold/VRF/KES keys from the active wallet's seed and
+  // need its spending password. Most ops are offline (no node), so this is gated
+  // like Sign — only an active (spending-enabled) wallet is required; retirement
+  // submission's node requirement is enforced at the API.
+  const canOperate = activeWallet !== null;
 
   function applyWallets(list: WalletView[]) {
     setLockError(null);
@@ -201,6 +208,7 @@ export function App() {
     else if (route === "send" && canSend) activeRoute = "send";
     else if (route === "staking" && canStake) activeRoute = "staking";
     else if (route === "sign" && canSign) activeRoute = "sign";
+    else if (route === "operate" && canOperate) activeRoute = "operate";
     else if (ROUTES.has(route) && route !== "send") activeRoute = route;
     else activeRoute = "portfolio";
   }
@@ -233,6 +241,12 @@ export function App() {
     content = canStake ? <Staking /> : <Portfolio />;
   } else if (route === "sign") {
     content = canSign ? <SignMessage account={toAccount(activeWallet)} /> : <Portfolio />;
+  } else if (route === "operate") {
+    // Pool operations derive cold/VRF/KES keys from the seed and need the spend
+    // password. A wallet must be active; otherwise fall back to Portfolio. Most
+    // pool ops are offline; only retirement submission needs a synced node,
+    // gated at the API.
+    content = canOperate ? <Operate account={toAccount(activeWallet)} /> : <Portfolio />;
   } else {
     const Screen = ROUTES.get(route) ?? Portfolio;
     content = <Screen />;
@@ -265,7 +279,8 @@ export function App() {
               addingWallet ||
               (key === "send" && !canSend) ||
               (key === "staking" && !canStake) ||
-              (key === "sign" && !canSign);
+              (key === "sign" && !canSign) ||
+              (key === "operate" && !canOperate);
             const active = key === activeRoute;
             return (
               <button

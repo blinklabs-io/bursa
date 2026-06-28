@@ -127,6 +127,24 @@ type DRepInfo struct {
 	LiveStake  string `json:"live_stake"`
 }
 
+// Genesis mirrors GET /api/v0/genesis: the network's immutable genesis
+// parameters. SlotsPerKESPeriod and EpochLength drive the SPO KES-period and
+// epoch math; both are served by the embedded node, never an external service.
+type Genesis struct {
+	EpochLength       int `json:"epoch_length"`
+	SlotsPerKESPeriod int `json:"slots_per_kes_period"`
+	SlotLength        int `json:"slot_length"`
+	MaxKESEvolutions  int `json:"max_kes_evolutions"`
+	NetworkMagic      int `json:"network_magic"`
+}
+
+// EpochInfo mirrors GET /api/v0/epochs/latest (the fields the wallet uses).
+type EpochInfo struct {
+	Epoch     uint64 `json:"epoch"`
+	StartTime int64  `json:"start_time"`
+	EndTime   int64  `json:"end_time"`
+}
+
 type accountAddress struct {
 	Address string `json:"address"`
 }
@@ -257,5 +275,19 @@ func (c *Client) Pool(ctx context.Context, poolID string) (PoolInfo, error) {
 func (c *Client) DRep(ctx context.Context, drepID string) (DRepInfo, error) {
 	var out DRepInfo
 	err := c.get(ctx, "/api/v0/governance/dreps/"+drepID, &out)
+	return out, err
+}
+
+// Genesis fetches the network's genesis parameters from the embedded node.
+func (c *Client) Genesis(ctx context.Context) (Genesis, error) {
+	var out Genesis
+	err := c.get(ctx, "/api/v0/genesis", &out)
+	return out, err
+}
+
+// LatestEpoch fetches the current epoch info from the embedded node.
+func (c *Client) LatestEpoch(ctx context.Context) (EpochInfo, error) {
+	var out EpochInfo
+	err := c.get(ctx, "/api/v0/epochs/latest", &out)
 	return out, err
 }

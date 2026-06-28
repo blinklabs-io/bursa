@@ -34,6 +34,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
@@ -125,6 +126,17 @@ func run() error {
 	spendSvc := spend.NewService(chainCtx, vaultKeystore{v: vlt}, nil)
 	spendSvc.SetChainQuerier(chainClient)
 
+	// Stake Pool Operations: derives cold/VRF/KES credentials and builds/submits
+	// pool certificates on the active wallet, sharing the spend chain context for
+	// submission. Genesis (for KES-period math) comes from the node's loopback
+	// Blockfrost endpoint; the tip comes from the supervisor — no external call.
+	poolGenesis := chain.NewClient(blockfrostPort)
+	poolSvc := poolops.NewService(
+		chainCtx, vaultKeystore{v: vlt},
+		genesisAdapter{c: poolGenesis},
+		tipAdapter{sup: sup},
+	)
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -135,7 +147,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              "127.0.0.1:8090", // loopback only
-		Handler:           api.NewHandler(sup, vlt, walletSvc, spendSvc, chainClient, network, webui.Handler(), api.WithLegacyKeystore(legacyKeyStore)),
+		Handler:           api.NewHandler(sup, vlt, walletSvc, spendSvc, chainClient, poolSvc, network, webui.Handler(), api.WithLegacyKeystore(legacyKeyStore)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	srvErr := make(chan error, 1)
@@ -164,3 +176,24 @@ func envOr(key, def string) string {
 	}
 	return def
 }
+
+// genesisAdapter adapts the loopback Blockfrost chain client to the genesis
+// subset the SPO toolkit's KES-period math needs.
+type genesisAdapter struct{ c *chain.Client }
+
+func (g genesisAdapter) Genesis(ctx context.Context) (poolops.Genesis, error) {
+	gen, err := g.c.Genesis(ctx)
+	if err != nil {
+		return poolops.Genesis{}, err
+	}
+	return poolops.Genesis{
+		SlotsPerKESPeriod: gen.SlotsPerKESPeriod,
+		MaxKESEvolutions:  gen.MaxKESEvolutions,
+		EpochLength:       gen.EpochLength,
+	}, nil
+}
+
+// tipAdapter exposes the supervisor's current tip slot to the SPO toolkit.
+type tipAdapter struct{ sup *supervisor.Supervisor }
+
+func (t tipAdapter) TipSlot() uint64 { return t.sup.Status().Tip }
