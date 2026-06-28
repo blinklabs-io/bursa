@@ -34,6 +34,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
@@ -137,6 +138,10 @@ func run() error {
 		tipAdapter{sup: sup},
 	)
 
+	// Native multi-sig accounts are persisted in a JSON file under the data dir;
+	// signing uses the active wallet's CIP-1854 key, decrypted from the vault.
+	multisigSvc := multisig.NewService(chainCtx, vaultKeystore{v: vlt}, filepath.Join(dataDir, "multisig.json"))
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -147,7 +152,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              "127.0.0.1:8090", // loopback only
-		Handler:           api.NewHandler(sup, vlt, walletSvc, spendSvc, chainClient, poolSvc, network, webui.Handler(), api.WithLegacyKeystore(legacyKeyStore)),
+		Handler:           api.NewHandler(sup, vlt, walletSvc, spendSvc, chainClient, poolSvc, multisigSvc, network, webui.Handler(), api.WithLegacyKeystore(legacyKeyStore)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	srvErr := make(chan error, 1)

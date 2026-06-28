@@ -1106,6 +1106,73 @@ a:hover {
   border-bottom-color: var(--accent);
 }
 
+/* Multi-sig. */
+.ms-account-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.ms-account-open {
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text);
+}
+.ms-account-open:hover {
+  border-color: var(--accent);
+}
+.ms-account-label {
+  font-weight: 600;
+}
+.ms-account-policy {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.ms-account-addr {
+  font-size: 0.75rem;
+  word-break: break-all;
+  color: var(--text-muted);
+}
+.ms-mykey {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ms-participant {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+.ms-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.ms-progress {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--accent);
+  margin: var(--space-2) 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dot-warn,
   .sync-bar-indeterminate,

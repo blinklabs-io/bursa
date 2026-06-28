@@ -154,6 +154,74 @@ export interface SubmitSignedRequest {
   witness_cbor: string;
 }
 
+// --- Native multi-signature -------------------------------------------------
+
+// A signer in a multi-sig policy. key_hash_hex (Blake2b-224 of the CIP-1854
+// multi-sig vkey) is what the script needs; vkey_hex is carried for sharing.
+export interface MultiSigParticipant {
+  label?: string;
+  key_hash_hex: string;
+  vkey_hex?: string;
+}
+
+// The spending rule: a threshold of M participants, optionally inside a slot
+// validity interval (time-lock). Slots are numbers; if they ever exceed 2^53
+// they would be sent as strings, but Cardano slots stay well within range.
+export interface MultiSigPolicy {
+  threshold: number;
+  participants: MultiSigParticipant[];
+  invalid_before?: number;
+  invalid_after?: number;
+}
+
+// A saved multi-sig account: label + policy, plus the derived script + address.
+export interface MultiSigAccount {
+  id: string;
+  label: string;
+  network: string;
+  policy: MultiSigPolicy;
+  script_cbor: string;
+  script_address: string;
+}
+
+export interface CreateMultiSigRequest {
+  label: string;
+  network?: string;
+  policy: MultiSigPolicy;
+}
+
+// The wallet's own CIP-1854 participant identity, to share with co-signers.
+export interface MultiSigMyKey {
+  vkey_hex: string;
+  key_hash_hex: string;
+}
+
+// The unsigned multi-sig spend plus the data needed to collect signatures.
+export interface MultiSigUnsignedTx {
+  unsigned_tx_cbor: string;
+  required_signers: string[]; // candidate participant key-hashes (hex)
+  threshold: number; // how many must sign
+}
+
+export interface MultiSigBuildRequest {
+  to: string;
+  lovelace: string;
+}
+
+export interface MultiSigBalance {
+  lovelace: string;
+}
+
+export interface MultiSigSignRequest {
+  unsigned_tx_cbor: string;
+  password: string;
+}
+
+export interface MultiSigSubmitRequest {
+  unsigned_tx_cbor: string;
+  witnesses: string[];
+}
+
 // --- Stake Pool Operations (SPO) ---
 
 export interface PoolKeyInfo {
