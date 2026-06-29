@@ -16,6 +16,7 @@ package settings
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -142,6 +143,38 @@ func TestLoadRejectsCorruptFile(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil {
 		t.Fatal("Load should error on a corrupt settings file")
+	}
+}
+
+func TestLoadRejectsOversizedFile(t *testing.T) {
+	path := tmpPath(t)
+	if err := os.WriteFile(path, make([]byte, maxSettingsLen+1), 0o600); err != nil {
+		t.Fatalf("seed oversized file: %v", err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load should reject an oversized settings file")
+	}
+	if !strings.Contains(err.Error(), "settings file exceeds") {
+		t.Fatalf("Load error = %q, want size-cap error", err)
+	}
+}
+
+func TestSetHistoryExpiryRollsBackOnPersistError(t *testing.T) {
+	enabled := true
+	s := &Store{
+		path: filepath.Join(t.TempDir(), "missing-parent", "settings.json"),
+		d: data{
+			Version:       settingsVersion,
+			HistoryExpiry: &enabled,
+		},
+	}
+
+	if err := s.SetHistoryExpiry(false); err == nil {
+		t.Fatal("SetHistoryExpiry should fail when the settings directory is missing")
+	}
+	if !s.HistoryExpiry() {
+		t.Fatal("failed SetHistoryExpiry must leave the in-memory setting unchanged")
 	}
 }
 

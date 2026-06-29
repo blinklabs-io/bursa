@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -58,15 +59,15 @@ type Store struct {
 // error: silently discarding a user's persisted settings would be surprising.
 func Load(path string) (*Store, error) {
 	s := &Store{path: path, d: data{Version: settingsVersion}}
-	blob, err := os.ReadFile(path)
+	blob, err := readFileCapped(path, maxSettingsLen)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return s, nil
 		}
+		if errors.Is(err, errSettingsTooLarge) {
+			return nil, fmt.Errorf("settings file exceeds %d bytes", maxSettingsLen)
+		}
 		return nil, fmt.Errorf("read settings: %w", err)
-	}
-	if len(blob) > maxSettingsLen {
-		return nil, fmt.Errorf("settings file exceeds %d bytes", maxSettingsLen)
 	}
 	var d data
 	if err := json.Unmarshal(blob, &d); err != nil {
@@ -88,9 +89,14 @@ func (s *Store) HistoryExpiry() bool {
 func (s *Store) SetHistoryExpiry(enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	old := s.d
 	v := enabled
 	s.d.HistoryExpiry = &v
-	return s.writeLocked()
+	if err := s.writeLocked(); err != nil {
+		s.d = old
+		return err
+	}
+	return nil
 }
 
 // SeedDefault sets the history-expiry default ONLY when no value has been
@@ -104,9 +110,39 @@ func (s *Store) SeedDefault(enabled bool) error {
 	if s.d.HistoryExpiry != nil {
 		return nil // already persisted — the setting is now the source of truth
 	}
+	old := s.d
 	v := enabled
 	s.d.HistoryExpiry = &v
-	return s.writeLocked()
+	if err := s.writeLocked(); err != nil {
+		s.d = old
+		return err
+	}
+	return nil
+}
+
+var errSettingsTooLarge = errors.New("settings file too large")
+
+func readFileCapped(path string, maxLen int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > maxLen {
+		return nil, errSettingsTooLarge
+	}
+	blob, err := io.ReadAll(io.LimitReader(f, maxLen+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(blob)) > maxLen {
+		return nil, errSettingsTooLarge
+	}
+	return blob, nil
 }
 
 // writeLocked atomically writes the current snapshot. The caller holds s.mu.
@@ -145,5 +181,17 @@ func (s *Store) writeLocked() error {
 	if err := os.Rename(tmpName, s.path); err != nil {
 		return fmt.Errorf("replace settings: %w", err)
 	}
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("sync settings dir: %w", err)
+	}
 	return nil
+}
+
+func syncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }

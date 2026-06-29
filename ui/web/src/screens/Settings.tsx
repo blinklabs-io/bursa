@@ -30,14 +30,15 @@ function LeanStorageCard() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Seed local state from the server once it loads (and whenever it refreshes
-  // while we are not mid-save).
+  // Seed local state from the server once it loads, and whenever the hook data
+  // itself refreshes. Do not key this off saving: the hook may still hold the
+  // pre-PUT value when a successful save finishes.
   useEffect(() => {
-    if (setting.data && !saving) {
+    if (setting.data) {
       setEnabled(setting.data.enabled);
       setRestartRequired(setting.data.restart_required);
     }
-  }, [setting.data, saving]);
+  }, [setting.data]);
 
   async function handleToggle(next: boolean) {
     setError(null);

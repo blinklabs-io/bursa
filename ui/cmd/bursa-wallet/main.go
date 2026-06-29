@@ -116,8 +116,10 @@ func run() error {
 		BlockfrostPort: blockfrostPort,
 		Logger:         logger,
 		MithrilEnabled: mithrilEnabled,
-		// Read the persisted setting fresh at each node Start, so a toggle in the
-		// Settings screen takes effect on the next node restart.
+		// Read the persisted setting fresh at each node construction, so a toggle
+		// in the Settings screen takes effect on the next node restart. This is
+		// deliberately a provider because Mithril bootstrap defers construction
+		// until after the snapshot import completes.
 		HistoryExpiry: settingsStore.HistoryExpiry,
 	})
 
@@ -215,7 +217,8 @@ func (c *settingsController) SetHistoryExpiry(enabled bool) error {
 // HistoryExpiryRestartRequired reports whether the persisted value differs from
 // what the running node was launched with. History expiry is a node-construction
 // option, so it only takes effect on the next node start: if no node has been
-// launched yet (ran=false), there is nothing to restart, so it is not required.
+// launched yet (ran=false), there is nothing to restart, and any pending launch
+// will read the latest persisted value when it constructs the node.
 func (c *settingsController) HistoryExpiryRestartRequired() bool {
 	applied, ran := c.sup.AppliedHistoryExpiry()
 	if !ran {

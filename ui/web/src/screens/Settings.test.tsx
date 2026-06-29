@@ -138,7 +138,9 @@ test("(l) toggling lean storage PUTs the new value and shows restart note", asyn
   fireEvent.click(toggle);
 
   await waitFor(() => expect(spy).toHaveBeenCalledWith(true));
-  expect(await screen.findByText(/takes effect after a node restart/i)).toBeInTheDocument();
+  await waitFor(() => expect(toggle).not.toBeDisabled());
+  expect(toggle).toBeChecked();
+  expect(screen.getByRole("status")).toHaveTextContent(/takes effect after a node restart/i);
 });
 
 test("(m) a persisted restart_required surfaces the restart note", () => {

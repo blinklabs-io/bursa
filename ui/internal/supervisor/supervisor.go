@@ -47,12 +47,13 @@ type Config struct {
 	// HistoryExpiry reports whether the "lean node" (history-expiry) profile is
 	// enabled. It is a provider (not a static bool) so the persisted user setting
 	// is the source of truth: it is read fresh every time the node config is built
-	// (each Start), letting a toggled setting take effect on the next node
-	// restart. A nil provider, or one returning false, keeps full immutable block
-	// history (behavior unchanged). When it returns true (the lean/mobile
-	// profile), the node periodically prunes immutable blocks older than the
-	// stability window, keeping the ledger state and recent blocks — a much
-	// smaller on-disk footprint at the cost of deep block history.
+	// (each launch, including after asynchronous bootstrap), letting a toggled
+	// setting take effect on the next node restart. A nil provider, or one
+	// returning false, keeps full immutable block history (behavior unchanged).
+	// When it returns true (the lean/mobile profile), the node periodically
+	// prunes immutable blocks older than the stability window, keeping the ledger
+	// state and recent blocks — a much smaller on-disk footprint at the cost of
+	// deep block history.
 	HistoryExpiry func() bool
 }
 
@@ -75,6 +76,7 @@ type Supervisor struct {
 
 	now          func() time.Time // injectable clock for tests
 	bootstrapper Bootstrapper     // injectable for tests
+	newNode      func(dingo.Config) (nodeRunner, error)
 }
 
 func New(cfg Config) *Supervisor {
@@ -89,7 +91,14 @@ func New(cfg Config) *Supervisor {
 		status:       Status{State: StateStopped},
 		now:          time.Now,
 		bootstrapper: mithrilBootstrapper{logger: cfg.Logger},
+		newNode: func(cfg dingo.Config) (nodeRunner, error) {
+			return dingo.New(cfg)
+		},
 	}
+}
+
+type nodeRunner interface {
+	Run(context.Context) error
 }
 
 // historyExpiryEnabled resolves the lean-node profile from the (optional)
@@ -101,9 +110,8 @@ func (cfg Config) historyExpiryEnabled() bool {
 // nodeConfigOptions builds the dingo option set for the embedded node. It is a
 // standalone function (not inlined into Start) so the config wiring — in
 // particular the opt-in history-expiry profile — can be unit-tested without
-// constructing a real node. historyExpiry is the resolved profile value (read
-// from the persisted setting at Start), passed in so the caller controls when
-// the source-of-truth provider is read.
+// constructing a real node. historyExpiry is the resolved profile value, passed
+// in so the caller controls when the source-of-truth provider is read.
 func nodeConfigOptions(
 	cfg Config,
 	historyExpiry bool,
@@ -205,15 +213,16 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		return fail(fmt.Errorf("load Dingo topology config: %w", err))
 	}
 
-	// Read the lean-node profile from its (persisted) source of truth once, here
-	// at Start, so a toggled setting takes effect on this node start. Record the
-	// applied value so the API can report whether a later change needs a restart.
-	historyExpiry := s.cfg.historyExpiryEnabled()
-	nodeCfg := dingo.NewConfig(nodeConfigOptions(s.cfg, historyExpiry, cardanoCfg, topologyCfg)...)
 	// launch creates the node, marks it starting, and begins serving + polling.
 	// Used by both the direct and post-bootstrap paths.
 	launch := func() error {
-		node, err := dingo.New(nodeCfg)
+		// Read the lean-node profile from its persisted source of truth at the
+		// actual construction point. In the Mithril path, Start returns while
+		// bootstrap is still running, so reading earlier can freeze a stale value
+		// before the first node exists.
+		historyExpiry := s.cfg.historyExpiryEnabled()
+		nodeCfg := dingo.NewConfig(nodeConfigOptions(s.cfg, historyExpiry, cardanoCfg, topologyCfg)...)
+		node, err := s.newNode(nodeCfg)
 		if err != nil {
 			return err
 		}

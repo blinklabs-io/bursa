@@ -14,7 +14,11 @@
 package supervisor
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/blinklabs-io/dingo"
 )
@@ -100,5 +104,78 @@ func TestAppliedHistoryExpiryBeforeLaunch(t *testing.T) {
 	s := New(baseConfig())
 	if _, ran := s.AppliedHistoryExpiry(); ran {
 		t.Fatal("AppliedHistoryExpiry must report ran=false before any launch")
+	}
+}
+
+type blockingBootstrapper struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingBootstrapper) Bootstrap(ctx context.Context, p BootstrapParams) error {
+	if err := os.MkdirAll(p.DataDir, 0o700); err != nil {
+		return err
+	}
+	close(b.started)
+	select {
+	case <-b.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type nodeRunnerFunc func(context.Context) error
+
+func (f nodeRunnerFunc) Run(ctx context.Context) error { return f(ctx) }
+
+func TestStartReadsHistoryExpiryAtDeferredBootstrapLaunch(t *testing.T) {
+	enabled := false
+	cfg := baseConfig()
+	dir := t.TempDir()
+	cfg.DataDir = filepath.Join(dir, "db")
+	cfg.SocketPath = filepath.Join(dir, "node.socket")
+	cfg.MithrilEnabled = true
+	cfg.HistoryExpiry = func() bool { return enabled }
+
+	s := New(cfg)
+	fb := &blockingBootstrapper{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	s.bootstrapper = fb
+	nodeStarted := make(chan struct{})
+	s.newNode = func(dingo.Config) (nodeRunner, error) {
+		return nodeRunnerFunc(func(ctx context.Context) error {
+			close(nodeStarted)
+			<-ctx.Done()
+			return ctx.Err()
+		}), nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Stop()
+
+	select {
+	case <-fb.started:
+	case <-time.After(time.Second):
+		t.Fatal("bootstrap did not start")
+	}
+
+	enabled = true
+	close(fb.release)
+
+	select {
+	case <-nodeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("node was not launched after bootstrap")
+	}
+	applied, ran := s.AppliedHistoryExpiry()
+	if !ran || !applied {
+		t.Fatalf("AppliedHistoryExpiry = (%v, %v), want (true, true)", applied, ran)
 	}
 }
