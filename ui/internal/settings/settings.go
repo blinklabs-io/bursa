@@ -92,8 +92,10 @@ func (s *Store) SetHistoryExpiry(enabled bool) error {
 	old := s.d
 	v := enabled
 	s.d.HistoryExpiry = &v
-	if err := s.writeLocked(); err != nil {
-		s.d = old
+	if committed, err := s.writeLocked(); err != nil {
+		if !committed {
+			s.d = old
+		}
 		return err
 	}
 	return nil
@@ -113,8 +115,10 @@ func (s *Store) SeedDefault(enabled bool) error {
 	old := s.d
 	v := enabled
 	s.d.HistoryExpiry = &v
-	if err := s.writeLocked(); err != nil {
-		s.d = old
+	if committed, err := s.writeLocked(); err != nil {
+		if !committed {
+			s.d = old
+		}
 		return err
 	}
 	return nil
@@ -145,20 +149,21 @@ func readFileCapped(path string, maxLen int64) ([]byte, error) {
 	return blob, nil
 }
 
-// writeLocked atomically writes the current snapshot. The caller holds s.mu.
-// It writes to a temp file in the same directory then renames over the target,
-// so a reader never observes a partial write and a crash leaves either the old
-// file or the new one — never a truncated one.
-func (s *Store) writeLocked() error {
+// writeLocked atomically writes the current snapshot. The caller holds s.mu. It
+// writes to a temp file in the same directory then renames over the target, so a
+// reader never observes a partial write and a crash leaves either the old file
+// or the new one - never a truncated one. The committed return value is true
+// once the target path has been replaced, even if a later durability step fails.
+func (s *Store) writeLocked() (committed bool, err error) {
 	s.d.Version = settingsVersion
 	blob, err := json.MarshalIndent(s.d, "", "  ")
 	if err != nil {
-		return err
+		return false, err
 	}
 	dir := filepath.Dir(s.path)
 	tmp, err := os.CreateTemp(dir, ".settings-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create temp settings: %w", err)
+		return false, fmt.Errorf("create temp settings: %w", err)
 	}
 	tmpName := tmp.Name()
 	// Best-effort cleanup if we bail before the rename; after a successful
@@ -166,28 +171,30 @@ func (s *Store) writeLocked() error {
 	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := tmp.Write(blob); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("write temp settings: %w", err)
+		return false, fmt.Errorf("write temp settings: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("sync temp settings: %w", err)
+		return false, fmt.Errorf("sync temp settings: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp settings: %w", err)
+		return false, fmt.Errorf("close temp settings: %w", err)
 	}
 	if err := os.Chmod(tmpName, 0o600); err != nil {
-		return fmt.Errorf("chmod temp settings: %w", err)
+		return false, fmt.Errorf("chmod temp settings: %w", err)
 	}
 	if err := os.Rename(tmpName, s.path); err != nil {
-		return fmt.Errorf("replace settings: %w", err)
+		return false, fmt.Errorf("replace settings: %w", err)
 	}
 	if err := syncDir(dir); err != nil {
-		return fmt.Errorf("sync settings dir: %w", err)
+		return true, fmt.Errorf("sync settings dir: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
-func syncDir(dir string) error {
+var syncDir = syncDirFS
+
+func syncDirFS(dir string) error {
 	f, err := os.Open(dir)
 	if err != nil {
 		return err

@@ -14,6 +14,7 @@
 package settings
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,6 +176,41 @@ func TestSetHistoryExpiryRollsBackOnPersistError(t *testing.T) {
 	}
 	if !s.HistoryExpiry() {
 		t.Fatal("failed SetHistoryExpiry must leave the in-memory setting unchanged")
+	}
+}
+
+func TestSetHistoryExpiryDoesNotRollBackAfterRename(t *testing.T) {
+	path := tmpPath(t)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	origSyncDir := syncDir
+	syncDir = func(string) error {
+		return errors.New("sync failed")
+	}
+	t.Cleanup(func() {
+		syncDir = origSyncDir
+	})
+
+	err = s.SetHistoryExpiry(true)
+	if err == nil {
+		t.Fatal("SetHistoryExpiry should return the syncDir error")
+	}
+	if !strings.Contains(err.Error(), "sync settings dir") {
+		t.Fatalf("SetHistoryExpiry error = %q, want syncDir error", err)
+	}
+	if !s.HistoryExpiry() {
+		t.Fatal("post-rename syncDir failure must keep memory aligned with replaced settings file")
+	}
+
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !reloaded.HistoryExpiry() {
+		t.Fatal("post-rename syncDir failure should leave the replaced settings file readable")
 	}
 }
 
