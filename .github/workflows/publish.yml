@@ -387,8 +387,8 @@ jobs:
           done <<< "${{ steps.meta.outputs.tags }}"
           dockerhub_tag=$(echo "${{ steps.meta.outputs.tags }}" | grep -v '^ghcr' | head -1)
           ghcr_tag=$(echo "${{ steps.meta.outputs.tags }}" | grep '^ghcr' | head -1)
-          echo "dockerhub-digest=$(docker buildx imagetools inspect --format '{{.Digest}}' ${dockerhub_tag})" >> $GITHUB_OUTPUT
-          echo "ghcr-digest=$(docker buildx imagetools inspect --format '{{.Digest}}' ${ghcr_tag})" >> $GITHUB_OUTPUT
+          echo "dockerhub-digest=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${dockerhub_tag})" >> $GITHUB_OUTPUT
+          echo "ghcr-digest=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${ghcr_tag})" >> $GITHUB_OUTPUT
       - name: Attest Docker Hub manifest
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0 https://github.com/actions/attest/releases/tag/v4.1.0
         with:
