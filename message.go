@@ -409,8 +409,21 @@ func VerifyDataWithAddress(
 	if err != nil {
 		return false, "", err
 	}
-	// Decode the protected address to bech32 for the caller. A failure here is
-	// fatal: a malformed address means the signature cannot be trusted.
+	pub, err := extractCoseKeyPub(keyBytes)
+	if err != nil {
+		return false, "", err
+	}
+	if len(pub) != ed25519.PublicKeySize {
+		return false, "", fmt.Errorf("unexpected public key size %d", len(pub))
+	}
+	if err := validateAddressForVKey(addrBytes, pub); err != nil {
+		if errors.Is(err, errAddressDoesNotMatchSigningKey) {
+			return false, "", errors.New("protected address does not match public key")
+		}
+		return false, "", err
+	}
+	// Decode the protected address to bech32 for the caller only after it is
+	// bound to the supplied public key.
 	signerAddr, err := lcommon.NewAddressFromBytes(addrBytes)
 	if err != nil {
 		return false, "", fmt.Errorf("invalid protected address: %w", err)
@@ -423,19 +436,6 @@ func VerifyDataWithAddress(
 	}
 	hashed, err := extractPayloadHashed(c.Protected, c.Unprotected)
 	if err != nil {
-		return false, address, err
-	}
-	pub, err := extractCoseKeyPub(keyBytes)
-	if err != nil {
-		return false, address, err
-	}
-	if len(pub) != ed25519.PublicKeySize {
-		return false, address, fmt.Errorf("unexpected public key size %d", len(pub))
-	}
-	if err := validateAddressForVKey(addrBytes, pub); err != nil {
-		if errors.Is(err, errAddressDoesNotMatchSigningKey) {
-			return false, address, errors.New("protected address does not match public key")
-		}
 		return false, address, err
 	}
 	toBeSigned, err := buildSigStructure(c.Protected, payloadToVerify(payload, hashed))

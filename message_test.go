@@ -330,6 +330,31 @@ func TestVerifyData_TamperedPayloadFails(t *testing.T) {
 	}
 }
 
+func TestVerifyDataWithAddress_RejectsWrongKeyBeforePayloadMismatch(t *testing.T) {
+	lk1 := testLoadedKey(make([]byte, 32))
+	lk2 := testLoadedKey(append(make([]byte, 31), 1))
+
+	sig, _, err := SignData(testEnterpriseAddress(t, lk1.VKey), []byte("original"), lk1)
+	if err != nil {
+		t.Fatalf("SignData lk1: %v", err)
+	}
+	_, key2, err := SignData(testEnterpriseAddress(t, lk2.VKey), []byte("x"), lk2)
+	if err != nil {
+		t.Fatalf("SignData lk2: %v", err)
+	}
+
+	ok, address, err := VerifyDataWithAddress(sig, key2, []byte("tampered"))
+	if err == nil {
+		t.Fatalf("VerifyDataWithAddress must reject a key mismatch before payload mismatch")
+	}
+	if ok {
+		t.Fatalf("key mismatch must not verify")
+	}
+	if address != "" {
+		t.Fatalf("unverified protected address must not be returned, got %q", address)
+	}
+}
+
 func TestVerifyData_TamperedSignatureFails(t *testing.T) {
 	lk := testLoadedKey(make([]byte, 32))
 	addr := testEnterpriseAddress(t, lk.VKey)
