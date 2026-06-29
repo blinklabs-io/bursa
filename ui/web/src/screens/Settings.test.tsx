@@ -143,7 +143,41 @@ test("(l) toggling lean storage PUTs the new value and shows restart note", asyn
   expect(screen.getByRole("status")).toHaveTextContent(/takes effect after a node restart/i);
 });
 
-test("(m) a persisted restart_required surfaces the restart note", () => {
+test("(m) failed lean storage update rolls back and surfaces the error", async () => {
+  mockStatus("ready", 12345, true);
+  mockHistoryExpiry({ enabled: false, restart_required: false });
+  const spy = vi
+    .spyOn(client, "setHistoryExpiry")
+    .mockRejectedValue(new client.ApiError(500, "disk full"));
+
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  const toggle = screen.getByRole("switch", { name: /lean storage/i });
+  fireEvent.click(toggle);
+
+  await waitFor(() => expect(spy).toHaveBeenCalledWith(true));
+  await waitFor(() => expect(toggle).not.toBeDisabled());
+  expect(toggle).not.toBeChecked();
+  expect(screen.getByRole("alert")).toHaveTextContent(/disk full/i);
+});
+
+test("(n) failed initial lean storage load renders unavailable", () => {
+  mockStatus("ready", 12345, true);
+  vi.spyOn(hooks, "useHistoryExpiry").mockReturnValue({
+    data: null,
+    error: new Error("settings unavailable"),
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  const toggle = screen.getByRole("switch", { name: /lean storage/i });
+  expect(toggle).toBeDisabled();
+  expect(screen.getByText(/^Unavailable$/)).toBeInTheDocument();
+  expect(screen.queryByText(/^disabled$/i)).toBeNull();
+  expect(screen.getByRole("alert")).toHaveTextContent(/settings unavailable/i);
+});
+
+test("(o) a persisted restart_required surfaces the restart note", () => {
   mockStatus("ready", 12345, true);
   mockHistoryExpiry({ enabled: true, restart_required: true });
   render(<Settings account={mockAccount} spendingEnabled={false} />);

@@ -915,14 +915,31 @@ func TestSpendErrorStatusCodes(t *testing.T) {
 	}
 }
 
+type historyExpiryResponse struct {
+	Enabled         bool
+	RestartRequired bool
+}
+
 // decodeHistoryExpiry decodes the {enabled, restart_required} body.
-func decodeHistoryExpiry(t *testing.T, body *bytes.Buffer) map[string]bool {
+func decodeHistoryExpiry(t *testing.T, body *bytes.Buffer) historyExpiryResponse {
 	t.Helper()
-	var got map[string]bool
+	var got struct {
+		Enabled         *bool `json:"enabled"`
+		RestartRequired *bool `json:"restart_required"`
+	}
 	if err := json.NewDecoder(body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	return got
+	if got.Enabled == nil {
+		t.Fatal("response missing enabled")
+	}
+	if got.RestartRequired == nil {
+		t.Fatal("response missing restart_required")
+	}
+	return historyExpiryResponse{
+		Enabled:         *got.Enabled,
+		RestartRequired: *got.RestartRequired,
+	}
 }
 
 func TestGetHistoryExpiryReturnsState(t *testing.T) {
@@ -937,7 +954,7 @@ func TestGetHistoryExpiryReturnsState(t *testing.T) {
 		t.Fatalf("GET history-expiry = %d, want 200", rec.Code)
 	}
 	got := decodeHistoryExpiry(t, rec.Body)
-	if !got["enabled"] || !got["restart_required"] {
+	if !got.Enabled || !got.RestartRequired {
 		t.Fatalf("got %+v, want enabled+restart_required true", got)
 	}
 }
@@ -949,7 +966,7 @@ func TestGetHistoryExpiryDefaultOff(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/settings/history-expiry", nil))
 	got := decodeHistoryExpiry(t, rec.Body)
-	if got["enabled"] || got["restart_required"] {
+	if got.Enabled || got.RestartRequired {
 		t.Fatalf("got %+v, want both false (default)", got)
 	}
 }
@@ -969,11 +986,11 @@ func TestPutHistoryExpiryPersistsAndSignalsRestart(t *testing.T) {
 		t.Fatalf("SetHistoryExpiry not called with true: called=%v with=%v", set.setCalled, set.setCalledWith)
 	}
 	got := decodeHistoryExpiry(t, rec.Body)
-	if !got["enabled"] {
-		t.Fatalf("response enabled = %v, want true", got["enabled"])
+	if !got.Enabled {
+		t.Fatalf("response enabled = %v, want true", got.Enabled)
 	}
-	if !got["restart_required"] {
-		t.Fatalf("response restart_required = %v, want true", got["restart_required"])
+	if !got.RestartRequired {
+		t.Fatalf("response restart_required = %v, want true", got.RestartRequired)
 	}
 }
 
@@ -989,6 +1006,25 @@ func TestPutHistoryExpiryInvalidJSON(t *testing.T) {
 	}
 	if set.setCalled {
 		t.Fatal("SetHistoryExpiry must not be called on a bad request body")
+	}
+}
+
+func TestPutHistoryExpiryRequiresExplicitEnabled(t *testing.T) {
+	for _, bodyJSON := range []string{`{}`, `{"enabled":null}`} {
+		t.Run(bodyJSON, func(t *testing.T) {
+			st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+			set := &fakeSettings{}
+			h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, "preview", http.NotFoundHandler())
+			rec := httptest.NewRecorder()
+			body := bytes.NewBufferString(bodyJSON)
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/history-expiry", body))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("PUT history-expiry with %s = %d, want 400", bodyJSON, rec.Code)
+			}
+			if set.setCalled {
+				t.Fatal("SetHistoryExpiry must not be called without an explicit enabled value")
+			}
+		})
 	}
 }
 

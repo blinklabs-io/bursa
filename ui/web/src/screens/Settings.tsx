@@ -41,6 +41,8 @@ function LeanStorageCard() {
   }, [setting.data]);
 
   async function handleToggle(next: boolean) {
+    if (enabled === null || saving) return;
+    const previous = enabled;
     setError(null);
     setSaving(true);
     setEnabled(next); // optimistic
@@ -50,15 +52,19 @@ function LeanStorageCard() {
       setRestartRequired(res.restart_required);
     } catch (e) {
       // Roll back the optimistic flip on failure.
-      setEnabled(!next);
+      setEnabled(previous);
       setError(e instanceof ApiError ? e.message : "An unexpected error occurred");
     } finally {
       setSaving(false);
     }
   }
 
-  const loading = setting.loading && enabled === null;
+  const hasLoaded = enabled !== null;
+  const loading = setting.loading && !hasLoaded;
+  const unavailable = !loading && !hasLoaded;
   const checked = enabled ?? false;
+  const loadError = setting.error?.message ?? null;
+  const cardError = error ?? loadError;
 
   return (
     <Card title="Lean Storage">
@@ -73,7 +79,7 @@ function LeanStorageCard() {
             role="switch"
             aria-checked={checked}
             checked={checked}
-            disabled={loading || saving}
+            disabled={!hasLoaded || loading || saving}
             onChange={(e) => handleToggle(e.target.checked)}
           />
           <span className="switch-track" aria-hidden="true">
@@ -84,6 +90,8 @@ function LeanStorageCard() {
 
       {loading ? (
         <p className="muted">Loading…</p>
+      ) : unavailable ? (
+        <p className="muted">Unavailable</p>
       ) : (
         <p className="setting-state">
           {checked ? "Enabled" : "Disabled"}
@@ -91,9 +99,9 @@ function LeanStorageCard() {
         </p>
       )}
 
-      {error && (
+      {cardError && (
         <p role="alert" className="error-text">
-          {error}
+          {cardError}
         </p>
       )}
 
