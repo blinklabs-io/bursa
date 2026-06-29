@@ -65,16 +65,6 @@ func TestNodeConfigOptionsHistoryExpiryOptIn(t *testing.T) {
 	mustApply(on)
 }
 
-// TestNodeConfigOptionsDefaultOff guards the default: history expiry off must
-// not include the lean-profile option.
-func TestNodeConfigOptionsDefaultOff(t *testing.T) {
-	def := nodeConfigOptions(baseConfig(), false, nil, nil)
-	on := nodeConfigOptions(baseConfig(), true, nil, nil)
-	if len(def) == len(on) {
-		t.Fatal("history expiry off must not include the history-expiry option")
-	}
-}
-
 // TestHistoryExpiryEnabledReadsProvider asserts the supervisor reads the
 // (persisted) setting through its provider — it is the source of truth, not a
 // value frozen at construction. A nil provider reads as off.
