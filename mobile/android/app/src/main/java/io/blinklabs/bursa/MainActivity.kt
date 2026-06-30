@@ -126,6 +126,16 @@ class MainActivity : AppCompatActivity() {
     // re-polls on the main thread. Idempotent: loads at most once.
     private fun loadWebViewWhenReady() {
         if (webViewLoaded) return
+
+        // Check for a terminal boot failure first. If the node could not start,
+        // port() would stay 0 forever and we'd poll indefinitely behind a blank
+        // WebView. Surface the error and STOP polling (don't re-post).
+        val bootError = walletBinder?.bootError()
+        if (bootError != null) {
+            showBootError(bootError)
+            return
+        }
+
         val port = walletBinder?.port() ?: 0
         if (port == 0) {
             // Still booting (or briefly unbound) — try again shortly.
@@ -136,6 +146,30 @@ class MainActivity : AppCompatActivity() {
         }
         webViewLoaded = true
         webView.loadUrl("http://127.0.0.1:$port/")
+    }
+
+    // showBootError renders a minimal inline error page when the node fails to
+    // boot, replacing the blank WebView the user would otherwise stare at. Marks
+    // webViewLoaded so onResume's reload() and the poll loop both treat this as
+    // the terminal loaded state.
+    private fun showBootError(message: String) {
+        webViewLoaded = true
+        val escaped = android.text.TextUtils.htmlEncode(message)
+        val html = """
+            <!doctype html>
+            <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+            <style>
+              body{font-family:sans-serif;margin:0;padding:24px;background:#111;color:#eee;
+                   display:flex;flex-direction:column;justify-content:center;min-height:100vh}
+              h1{font-size:1.25rem;margin:0 0 12px}
+              p{margin:0;color:#bbb;line-height:1.5;word-break:break-word}
+            </style></head>
+            <body>
+              <h1>Wallet failed to start</h1>
+              <p>$escaped</p>
+            </body></html>
+        """.trimIndent()
+        webView.loadData(html, "text/html; charset=utf-8", "utf-8")
     }
 
     // onPause records when the app left the foreground so onResume can compute

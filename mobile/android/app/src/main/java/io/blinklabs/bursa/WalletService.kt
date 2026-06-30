@@ -65,6 +65,12 @@ class WalletService : Service() {
     private var app: App? = null
     private var started = false
 
+    // Set to the failure message when the node could not boot (app.start threw).
+    // The service keeps its binder answering so the Activity can read this and
+    // surface the failure instead of polling port() forever. Guarded by the
+    // service's main thread like the other lifecycle state.
+    private var bootError: String? = null
+
     private val binder = LocalBinder()
 
     private var connectivityManager: ConnectivityManager? = null
@@ -82,6 +88,12 @@ class WalletService : Service() {
         // wallet has not finished starting. The Activity polls/loads only once
         // this is non-zero (handles the bind-before-boot race).
         fun port(): Int = app?.port()?.toInt() ?: 0
+
+        // bootError returns the node boot-failure message, or null if the wallet
+        // has not failed (still booting, or booted fine). The Activity checks
+        // this each poll so a boot failure ends the poll loop and surfaces an
+        // error instead of waiting on a port that will never arrive.
+        fun bootError(): String? = this@WalletService.bootError
 
         // onNetworkChanged / onResume are pass-throughs to the service-held App
         // so the Activity routes its lifecycle kicks to the wallet the service
@@ -109,7 +121,8 @@ class WalletService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Always (re)assert foreground status with the ongoing notification.
         // On API 29+ the foregroundServiceType MUST be passed here too — it has
-        // to match the manifest's android:foregroundServiceType="dataSync".
+        // to match the manifest's android:foregroundServiceType="dataSync"
+        // (which itself is a required manifest declaration as of API 34).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -131,8 +144,9 @@ class WalletService : Service() {
     // startWalletIfNeeded boots the gomobile App once. Guarded by `started` so
     // repeated onStartCommand deliveries don't attempt a second start (the Go
     // side also errors on double-start, but we gate here to avoid the throw).
+    // A boot failure is also terminal — once `bootError` is set we don't retry.
     private fun startWalletIfNeeded() {
-        if (started) return
+        if (started || bootError != null) return
         val instance = Mobile.new_()
         try {
             // filesDir = app-private writable dir; "preview" network; lean=true
@@ -140,10 +154,21 @@ class WalletService : Service() {
             instance.start(filesDir.absolutePath, "preview", true)
         } catch (e: Exception) {
             android.util.Log.e(TAG, "wallet start failed", e)
-            // Could not boot — drop foreground status and stop. The Activity's
-            // binder.port() will keep returning 0 and it will not load a dead
-            // port.
-            stopSelf()
+            // Could not boot. We must NOT silently stopSelf() here: the Activity
+            // is still bound and only learns of a dead node by polling port(),
+            // which would stay 0 forever (onServiceDisconnected does not fire on
+            // a stopSelf of a still-bound service). Instead, record the failure
+            // so the binder can report it, then drop the foreground notification
+            // (there is nothing syncing). Keep the service alive/bound so the
+            // Activity can read bootError() and surface it; the system tears the
+            // service down once the Activity unbinds in onDestroy.
+            bootError = e.message ?: e.toString()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
             return
         }
         app = instance
