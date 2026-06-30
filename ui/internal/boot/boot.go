@@ -110,6 +110,9 @@ type App struct {
 	sup      *supervisor.Supervisor
 	logger   *slog.Logger
 
+	// ctx is the parent context supplied to Boot; it is forwarded to
+	// supervisor.Reconnect so the re-dial is cancelled if the app is torn down.
+	ctx context.Context
 	// stop cancels the node/supervisor context; srvErr surfaces a control-surface
 	// ListenAndServe failure to the caller (and to awaitUI on the desktop).
 	stop    context.CancelFunc
@@ -230,6 +233,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		listener: listener,
 		sup:      sup,
 		logger:   logger,
+		ctx:      ctx,
 		stop:     cancel,
 		srvErr:   srvErr,
 	}, nil
@@ -273,6 +277,23 @@ func (a *App) Stop() error {
 	a.stop()
 	a.sup.Stop()
 	return err
+}
+
+// OnNetworkChanged re-dials the embedded node's peers after a host network
+// change (e.g. WiFi↔cellular, loss→regain). It delegates to
+// supervisor.Reconnect which performs a Stop-then-relaunch cycle on the node,
+// re-establishing all peer connections while preserving the synced DataDir.
+//
+// It is a safe no-op when called before Boot or after Stop.
+func (a *App) OnNetworkChanged() error {
+	if a.sup == nil {
+		return nil
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return a.sup.Reconnect(ctx)
 }
 
 // settingsController adapts the persisted settings store + the supervisor to the

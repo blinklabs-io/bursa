@@ -91,6 +91,19 @@ func (a *App) Port() int {
 	return a.app.Port()
 }
 
+// OnNetworkChanged re-dials the embedded node's peers after the host network
+// changes (WiFi↔cellular, loss→regain). It is called from the Android
+// ConnectivityManager.NetworkCallback and must be safe to call from any thread.
+// It is a safe no-op before Start.
+func (a *App) OnNetworkChanged() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.app == nil {
+		return nil
+	}
+	return a.app.OnNetworkChanged()
+}
+
 // Stop tears the wallet down cleanly: it drains the control surface and winds
 // down the in-process node. It is safe to call more than once; calling it before
 // Start is a no-op.

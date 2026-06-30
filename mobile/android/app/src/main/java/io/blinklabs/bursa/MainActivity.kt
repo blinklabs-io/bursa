@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,7 +14,14 @@
 package io.blinklabs.bursa
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.webkit.WebView
 import androidx.appcompat.app.AppCompatActivity
 
@@ -32,6 +39,15 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var app: App
     private lateinit var webView: WebView
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    // Debounce handler: avoid thrashing Reconnect on rapid network transitions
+    // (e.g. WiFi hand-off to cellular). A 500 ms window absorbs back-to-back
+    // onLost→onAvailable events from a single interface change.
+    private val debounceHandler = Handler(Looper.getMainLooper())
+    private val reconnectRunnable = Runnable { handleNetworkChange() }
+    private val debounceDelayMs = 500L
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,9 +79,78 @@ class MainActivity : AppCompatActivity() {
 
         // app.port() is the OS-assigned loopback port the control surface bound.
         webView.loadUrl("http://127.0.0.1:${app.port()}/")
+
+        registerNetworkCallback()
+    }
+
+    // registerNetworkCallback subscribes to connectivity events so the node
+    // re-dials peers when the host network changes. ACCESS_NETWORK_STATE is
+    // declared in AndroidManifest.xml (no runtime prompt needed — it is a
+    // normal/install-time permission).
+    private fun registerNetworkCallback() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return
+        connectivityManager = cm
+
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                // A new network is usable — schedule a debounced reconnect.
+                scheduleReconnect()
+            }
+
+            override fun onLost(network: Network) {
+                // The current network was lost — schedule a debounced reconnect
+                // so the node drops dead peers and re-dials on the next
+                // available interface.
+                scheduleReconnect()
+            }
+        }
+        networkCallback = callback
+        cm.registerNetworkCallback(request, callback)
+    }
+
+    private fun scheduleReconnect() {
+        // Cancel any pending reconnect and restart the debounce window so
+        // rapid transitions (onLost immediately followed by onAvailable) are
+        // collapsed into a single call.
+        debounceHandler.removeCallbacks(reconnectRunnable)
+        debounceHandler.postDelayed(reconnectRunnable, debounceDelayMs)
+    }
+
+    private fun handleNetworkChange() {
+        // Must NOT run on the main thread: app.onNetworkChanged() performs a
+        // node Stop+relaunch which is a blocking, I/O-bound operation.
+        Thread {
+            try {
+                app.onNetworkChanged()
+            } catch (e: Exception) {
+                android.util.Log.w("bursa", "onNetworkChanged failed", e)
+            }
+            // Reload the WebView on the main thread after the node has
+            // re-dialled so the SPA reconnects to the refreshed control surface.
+            runOnUiThread {
+                if (this::webView.isInitialized) {
+                    webView.reload()
+                }
+            }
+        }.start()
     }
 
     override fun onDestroy() {
+        // Cancel any pending debounced reconnect.
+        debounceHandler.removeCallbacks(reconnectRunnable)
+
+        // Unregister the network callback before tearing the wallet down so
+        // no late callbacks try to call app.onNetworkChanged() after Stop.
+        networkCallback?.let { cb ->
+            connectivityManager?.unregisterNetworkCallback(cb)
+        }
+        networkCallback = null
+
         // Tear the wallet down: drains the control surface and winds down the
         // in-process node.
         if (this::app.isInitialized) {
