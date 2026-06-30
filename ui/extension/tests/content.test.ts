@@ -12,6 +12,11 @@ const chromeMock = {
   },
 };
 (globalThis as Record<string, unknown>).chrome = chromeMock;
+const jsdomEnv = globalThis as typeof globalThis & {
+  jsdom: {
+    reconfigure(settings: { url?: string }): void;
+  };
+};
 
 describe('content script', () => {
   // Capture injection details before beforeEach clears mocks
@@ -27,7 +32,9 @@ describe('content script', () => {
   });
 
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.clearAllMocks();
+    jsdomEnv.jsdom.reconfigure({ url: 'https://dapp.example/' });
     sendMessageCallbacks.length = 0;
   });
 
@@ -53,8 +60,8 @@ describe('content script', () => {
     );
   });
 
-  it('relays the background response back to the page via postMessage', () => {
-    const postMessageSpy = vi.spyOn(window, 'postMessage');
+  it('relays the background response back to the page via exact-origin postMessage', () => {
+    const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
 
     const msg = { source: 'bursa-cip30', id: '1', method: 'getNetworkId' };
     window.dispatchEvent(
@@ -66,7 +73,48 @@ describe('content script', () => {
 
     expect(postMessageSpy).toHaveBeenCalledWith(
       { source: 'bursa-cip30-reply', id: '1', result: 1 },
-      '*'
+      'https://dapp.example'
+    );
+  });
+
+  it('pins async replies to the origin captured when the request was received', () => {
+    const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+    jsdomEnv.jsdom.reconfigure({ url: 'https://first.example/request' });
+
+    const msg = { source: 'bursa-cip30', id: '1', method: 'getNetworkId' };
+    window.dispatchEvent(
+      new MessageEvent('message', { data: msg, source: window })
+    );
+
+    jsdomEnv.jsdom.reconfigure({ url: 'https://later.example/navigation' });
+    sendMessageCallbacks[0]({ id: '1', result: 1 });
+
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      { source: 'bursa-cip30-reply', id: '1', result: 1 },
+      'https://first.example'
+    );
+  });
+
+  it('relays background failures to the same exact origin', () => {
+    const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+
+    const msg = { source: 'bursa-cip30', id: '1', method: 'getNetworkId' };
+    window.dispatchEvent(
+      new MessageEvent('message', { data: msg, source: window })
+    );
+
+    sendMessageCallbacks[0](undefined);
+
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      {
+        source: 'bursa-cip30-reply',
+        id: '1',
+        error: {
+          code: -2,
+          info: 'No response from Bursa background',
+        },
+      },
+      'https://dapp.example'
     );
   });
 
