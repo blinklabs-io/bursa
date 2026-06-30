@@ -25,6 +25,11 @@ var (
 	ErrInvalidOrigin    = errors.New("connector: invalid origin")
 )
 
+const (
+	pairCodeDigits = 12
+	pairCodeMax    = 1_000_000_000_000
+)
+
 // Paginate is used by the Utxos backend method.
 type Paginate struct {
 	Page  int
@@ -58,7 +63,7 @@ type Service struct {
 	be     Backend
 	prompt func()
 
-	// pending pair codes: extensionID → 6-digit string
+	// pending pair codes: extensionID → numeric string
 	pairMu    sync.Mutex
 	pairCodes map[string]string
 }
@@ -99,17 +104,17 @@ func (s *Service) SetActiveAccount(acct *wallet.Account) {
 	}
 }
 
-// BeginPair generates a 6-digit pairing code for the given extensionID and
+// BeginPair generates a numeric pairing code for the given extensionID and
 // caches it. The code is returned for display in the Bursa UI.
 func (s *Service) BeginPair(extensionID string) string {
 	extensionID = normalizeExtensionID(extensionID)
-	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	n, err := rand.Int(rand.Reader, big.NewInt(pairCodeMax))
 	if err != nil {
 		// A CSPRNG failure is a fatal system condition; never fall back to a
 		// predictable code.
 		panic("connector: crypto/rand failure generating pair code: " + err.Error())
 	}
-	code := fmt.Sprintf("%06d", n.Int64())
+	code := fmt.Sprintf("%0*d", pairCodeDigits, n.Int64())
 	s.pairMu.Lock()
 	s.pairCodes[extensionID] = code
 	s.pairMu.Unlock()

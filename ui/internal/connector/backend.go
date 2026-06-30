@@ -759,17 +759,24 @@ func paginateSlice[T any](items []T, paginate *Paginate) []T {
 	if paginate == nil || paginate.Limit <= 0 {
 		return items
 	}
-	page := paginate.Page
-	if page < 1 {
-		page = 1
-	}
-	start := (page - 1) * paginate.Limit
-	if start >= len(items) {
+	if len(items) == 0 {
 		return nil
 	}
-	end := start + paginate.Limit
-	if end > len(items) {
-		end = len(items)
+	page := paginate.Page
+	if page < 0 {
+		page = 0
+	}
+	limit := paginate.Limit
+	// CIP-30 pages are 0-indexed. Check the page against len/limit before
+	// multiplying so oversized connector inputs cannot overflow into slice
+	// bounds.
+	if page > (len(items)-1)/limit {
+		return nil
+	}
+	start := page * limit
+	end := len(items)
+	if limit < len(items)-start {
+		end = start + limit
 	}
 	return items[start:end]
 }

@@ -110,6 +110,9 @@ func validDAppOrigin(origin string) bool {
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return false
 	}
+	if u.User != nil {
+		return false
+	}
 	if u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
 		return false
 	}

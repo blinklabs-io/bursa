@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
+	"github.com/blinklabs-io/bursa/ui/internal/vault"
 )
 
 // fakeConnectorBackend is a minimal Backend implementation for tests in this package.
@@ -81,8 +82,8 @@ func newOKHandler(called *bool) http.Handler {
 	})
 }
 
-// sixDigitRe matches any 6-digit sequence in a string.
-var sixDigitRe = regexp.MustCompile(`\b\d{6}\b`)
+// numericCodeRe matches any plausible numeric pairing code in a string.
+var numericCodeRe = regexp.MustCompile(`\b\d{6,}\b`)
 
 func TestConnectorPairRoute(t *testing.T) {
 	const extID = "chrome-extension://testpair"
@@ -106,9 +107,9 @@ func TestConnectorPairRoute(t *testing.T) {
 		if rec.Code != http.StatusAccepted {
 			t.Fatalf("status = %d, want 202", rec.Code)
 		}
-		// Security: ensure no 6-digit code leaked in response body.
-		if sixDigitRe.MatchString(rec.Body.String()) {
-			t.Errorf("response body contains a 6-digit code (security leak): %q", rec.Body.String())
+		// Security: ensure no numeric pairing code leaked in response body.
+		if numericCodeRe.MatchString(rec.Body.String()) {
+			t.Errorf("response body contains a numeric pairing code (security leak): %q", rec.Body.String())
 		}
 		var resp map[string]string
 		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -1028,8 +1029,8 @@ func TestHandlePendingPairings(t *testing.T) {
 		return connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
 	}
 
-	strictReq := func(method string) *http.Request {
-		req := httptest.NewRequest(method, "/connector/pending-pairings", nil)
+	strictReq := func(method, body string) *http.Request {
+		req := httptest.NewRequest(method, "/connector/pending-pairings", strings.NewReader(body))
 		req.Host = "127.0.0.1:8090"
 		req.Header.Set("Origin", "http://127.0.0.1:8090")
 		return req
@@ -1040,7 +1041,7 @@ func TestHandlePendingPairings(t *testing.T) {
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
 
-		req := strictReq(http.MethodPost)
+		req := strictReq(http.MethodPost, "")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -1056,14 +1057,14 @@ func TestHandlePendingPairings(t *testing.T) {
 		}
 	})
 
-	t.Run("strict same-origin with pending pairing returns extension_id + code", func(t *testing.T) {
+	t.Run("strict same-origin with pending pairing hides code without password", func(t *testing.T) {
 		svc := newSvc(t)
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
 
 		code := svc.BeginPair(extID)
 
-		req := strictReq(http.MethodPost)
+		req := strictReq(http.MethodPost, "")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -1080,8 +1081,68 @@ func TestHandlePendingPairings(t *testing.T) {
 		if pairings[0]["extension_id"] != extID {
 			t.Errorf("extension_id: want %q, got %q", extID, pairings[0]["extension_id"])
 		}
+		if pairings[0]["code"] != "" {
+			t.Errorf("code leaked without password: got %q", pairings[0]["code"])
+		}
+		if strings.Contains(rec.Body.String(), code) {
+			t.Fatalf("response leaked pairing code %q: %s", code, rec.Body.String())
+		}
+	})
+
+	t.Run("strict same-origin with password returns extension_id + code", func(t *testing.T) {
+		svc := newSvc(t)
+		mux := http.NewServeMux()
+		var gotPassword string
+		registerConnector(mux, svc, withConnectorPairingCodeAuthorizer(func(password string) error {
+			gotPassword = password
+			return nil
+		}))
+
+		code := svc.BeginPair(extID)
+
+		req := strictReq(http.MethodPost, `{"password":"vault-secret"}`)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if gotPassword != "vault-secret" {
+			t.Fatalf("authorizer password = %q, want vault-secret", gotPassword)
+		}
+		var pairings []map[string]string
+		if err := json.NewDecoder(rec.Body).Decode(&pairings); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(pairings) != 1 {
+			t.Fatalf("want 1 pairing, got %d", len(pairings))
+		}
+		if pairings[0]["extension_id"] != extID {
+			t.Errorf("extension_id: want %q, got %q", extID, pairings[0]["extension_id"])
+		}
 		if pairings[0]["code"] != code {
 			t.Errorf("code: want %q, got %q", code, pairings[0]["code"])
+		}
+	})
+
+	t.Run("wrong password does not expose pairing code", func(t *testing.T) {
+		svc := newSvc(t)
+		mux := http.NewServeMux()
+		registerConnector(mux, svc, withConnectorPairingCodeAuthorizer(func(string) error {
+			return vault.ErrWrongPassword
+		}))
+
+		code := svc.BeginPair(extID)
+
+		req := strictReq(http.MethodPost, `{"password":"wrong"}`)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), code) {
+			t.Fatalf("response leaked pairing code %q: %s", code, rec.Body.String())
 		}
 	})
 

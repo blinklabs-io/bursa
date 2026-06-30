@@ -243,12 +243,23 @@ test("(q) connector: shows connected sites with Revoke buttons", async () => {
   expect(revokeButtons).toHaveLength(2);
 });
 
-test("(r) connector: shows pending pairing code prominently", async () => {
+test("(r) connector: reveals pending pairing code after vault password", async () => {
   mockStatus("ready", 12345, true);
-  mockConnector({ paired: false, extension_id: "", origins: [] }, [
-    { extension_id: "chrome-extension://ext1", code: "123456" },
-  ]);
+  vi.spyOn(connectorApi, "getConnectorState").mockResolvedValue({
+    paired: false,
+    extension_id: "",
+    origins: [],
+  });
+  vi.spyOn(connectorApi, "pendingPairings").mockImplementation(async (password?: string) =>
+    password ? [{ extension_id: "chrome-extension://ext1", code: "123456" }] : [{ extension_id: "chrome-extension://ext1" }],
+  );
   render(<Settings account={mockAccount} spendingEnabled={false} />);
+  await waitFor(() => expect(screen.getByText("chrome-extension://ext1")).toBeInTheDocument());
+  expect(screen.queryByText("123456")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText(/vault password/i), {
+    target: { value: "vault-password" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /reveal code/i }));
   await waitFor(() => expect(screen.getByText("123456")).toBeInTheDocument());
   expect(screen.getByText(/enter this code/i)).toBeInTheDocument();
 });

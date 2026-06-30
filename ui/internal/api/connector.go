@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -33,6 +34,18 @@ import (
 // middleware needs. *connector.Service satisfies this interface.
 type connectorTokenVerifier interface {
 	VerifyToken(token, extensionID string) bool
+}
+
+type connectorRouteConfig struct {
+	authorizePairingCode func(password string) error
+}
+
+type connectorRouteOption func(*connectorRouteConfig)
+
+func withConnectorPairingCodeAuthorizer(authorize func(password string) error) connectorRouteOption {
+	return func(cfg *connectorRouteConfig) {
+		cfg.authorizePairingCode = authorize
+	}
 }
 
 // connectorMiddleware returns a middleware that:
@@ -137,7 +150,12 @@ func strictSameOrigin(r *http.Request) bool {
 //
 // SPA-facing routes (events, grants, grants/revoke, decide, unpair) are NOT
 // token-gated; each handler guards itself via sameOrigin().
-func registerConnector(mux *http.ServeMux, svc *connector.Service) {
+func registerConnector(mux *http.ServeMux, svc *connector.Service, opts ...connectorRouteOption) {
+	cfg := connectorRouteConfig{}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	// Extension-facing: CORS + token (pair is token-exempt inside the middleware).
 	ext := http.NewServeMux()
 	ext.HandleFunc("POST /connector/pair", handleConnectorPair(svc))
@@ -152,7 +170,7 @@ func registerConnector(mux *http.ServeMux, svc *connector.Service) {
 	mux.HandleFunc("POST /connector/grants/revoke", handleConnectorGrantsRevoke(svc))
 	mux.HandleFunc("POST /connector/decide", handleConnectorDecide(svc))
 	mux.HandleFunc("POST /connector/unpair", handleConnectorUnpair(svc))
-	mux.HandleFunc("POST /connector/pending-pairings", handleConnectorPendingPairings(svc))
+	mux.HandleFunc("POST /connector/pending-pairings", handleConnectorPendingPairings(svc, cfg.authorizePairingCode))
 }
 
 // handleConnectorGrants handles GET /connector/grants.
@@ -261,18 +279,58 @@ func handleConnectorUnpair(svc *connector.Service) http.HandlerFunc {
 	}
 }
 
+type pendingPairingView struct {
+	ExtensionID string `json:"extension_id"`
+	Code        string `json:"code,omitempty"`
+}
+
+func pendingPairingViews(pairings []connector.PendingPairing, includeCodes bool) []pendingPairingView {
+	out := make([]pendingPairingView, 0, len(pairings))
+	for _, p := range pairings {
+		v := pendingPairingView{ExtensionID: p.ExtensionID}
+		if includeCodes {
+			v.Code = p.Code
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
 // handleConnectorPendingPairings handles POST /connector/pending-pairings.
 //
 // SPA-facing — requires a strict same-origin browser request with an Origin
-// header. Pairing codes are intentionally not exposed via no-Origin GETs because
-// any local process could otherwise scrape the code and self-confirm pairing.
-func handleConnectorPendingPairings(svc *connector.Service) http.HandlerFunc {
+// header. Pending extension IDs may be listed so Settings can show that a
+// browser extension is waiting, but pairing codes are only returned after a
+// vault-password check. Origin is only a browser boundary; local processes can
+// forge it, so it must not be the capability that protects the code.
+func handleConnectorPendingPairings(svc *connector.Service, authorizeCode func(password string) error) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !strictSameOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
 			return
 		}
-		pairings := svc.PendingPairings()
+		var body struct {
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+
+		includeCodes := false
+		if body.Password != "" {
+			if authorizeCode == nil {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "pairing code reveal is unavailable"})
+				return
+			}
+			if err := authorizeCode(body.Password); err != nil {
+				serve(w, []pendingPairingView{}, err)
+				return
+			}
+			includeCodes = true
+		}
+
+		pairings := pendingPairingViews(svc.PendingPairings(), includeCodes)
 		writeJSON(w, http.StatusOK, pairings)
 	}
 }

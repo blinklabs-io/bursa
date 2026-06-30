@@ -43,7 +43,15 @@ func TestGrantStoreRejectsInvalidOrigins(t *testing.T) {
 	path := t.TempDir() + "/grants.json"
 	g := NewGrantStore(path)
 
-	for _, origin := range []string{"", " ", "unknown", "https://a.io/path", "chrome-extension://abc"} {
+	for _, origin := range []string{
+		"",
+		" ",
+		"unknown",
+		"https://a.io/path",
+		"https://user@example.com",
+		"https://user:pass@example.com",
+		"chrome-extension://abc",
+	} {
 		if err := g.Grant(origin); !errors.Is(err, ErrInvalidOrigin) {
 			t.Fatalf("Grant(%q) err = %v, want ErrInvalidOrigin", origin, err)
 		}
@@ -59,7 +67,7 @@ func TestGrantStoreRejectsInvalidOrigins(t *testing.T) {
 func TestGrantStoreIgnoresInvalidPersistedOrigins(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "grants.json")
-	b, err := json.Marshal([]string{"", "https://valid.example"})
+	b, err := json.Marshal([]string{"", "https://user@example.com", "https://valid.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,6 +78,9 @@ func TestGrantStoreIgnoresInvalidPersistedOrigins(t *testing.T) {
 	g := NewGrantStore(path)
 	if g.IsGranted("") {
 		t.Fatal("empty persisted origin should be ignored")
+	}
+	if g.IsGranted("https://user@example.com") {
+		t.Fatal("persisted origin with userinfo should be ignored")
 	}
 	if !g.IsGranted("https://valid.example") {
 		t.Fatal("valid persisted origin should be loaded")

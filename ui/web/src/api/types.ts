@@ -180,8 +180,8 @@ export interface ConnectorRequest {
 }
 
 // PendingPairing is a pairing that has been initiated (BeginPair) but not yet
-// confirmed. The code must be entered in the Bursa browser extension.
+// confirmed. The code is present only after a vault-password reveal.
 export interface PendingPairing {
   extension_id: string;
-  code: string;
+  code?: string;
 }

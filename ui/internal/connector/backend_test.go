@@ -327,12 +327,12 @@ func TestWalletBackendAddressesHex(t *testing.T) {
 		t.Errorf("round-trip address = %q, want %q", parsed.String(), usedAddr)
 	}
 
-	usedPage, err := be.UsedAddresses(context.Background(), &Paginate{Page: 2, Limit: 1})
+	usedPage, err := be.UsedAddresses(context.Background(), &Paginate{Page: 1, Limit: 1})
 	if err != nil {
-		t.Fatalf("UsedAddresses page 2: %v", err)
+		t.Fatalf("UsedAddresses page 1: %v", err)
 	}
 	if len(usedPage) != 0 {
-		t.Fatalf("used page 2 count = %d, want 0", len(usedPage))
+		t.Fatalf("used page 1 count = %d, want 0", len(usedPage))
 	}
 
 	// Unused addresses: receive[1] and receive[2] should be unused.
@@ -392,39 +392,69 @@ func TestWalletBackendPaginate(t *testing.T) {
 	}
 	be := NewWalletBackend(wl, nil, acct, "preview", fc)
 
-	// Page 1 of 1 per page: should return only the first UTxO.
-	p1, err := be.Utxos(context.Background(), "", &Paginate{Page: 1, Limit: 1})
+	// Page 0 of 1 per page: should return only the first UTxO.
+	p1, err := be.Utxos(context.Background(), "", &Paginate{Page: 0, Limit: 1})
 	if err != nil {
-		t.Fatalf("Utxos page 1: %v", err)
+		t.Fatalf("Utxos page 0: %v", err)
 	}
 	if len(p1) != 1 {
-		t.Fatalf("page 1 = %d entries, want 1", len(p1))
+		t.Fatalf("page 0 = %d entries, want 1", len(p1))
 	}
 	txHash, _, _, _ := decodeUTxOHex(t, p1[0])
 	if txHash != known[0].TxHash {
-		t.Errorf("page 1 utxo tx = %q, want %q", txHash, known[0].TxHash)
+		t.Errorf("page 0 utxo tx = %q, want %q", txHash, known[0].TxHash)
 	}
 
-	// Page 2 of 1 per page: should return only the second UTxO.
-	p2, err := be.Utxos(context.Background(), "", &Paginate{Page: 2, Limit: 1})
+	// Page 1 of 1 per page: should return only the second UTxO.
+	p2, err := be.Utxos(context.Background(), "", &Paginate{Page: 1, Limit: 1})
 	if err != nil {
-		t.Fatalf("Utxos page 2: %v", err)
+		t.Fatalf("Utxos page 1: %v", err)
 	}
 	if len(p2) != 1 {
-		t.Fatalf("page 2 = %d entries, want 1", len(p2))
+		t.Fatalf("page 1 = %d entries, want 1", len(p2))
 	}
 	txHash2, _, _, _ := decodeUTxOHex(t, p2[0])
 	if txHash2 != known[1].TxHash {
-		t.Errorf("page 2 utxo tx = %q, want %q", txHash2, known[1].TxHash)
+		t.Errorf("page 1 utxo tx = %q, want %q", txHash2, known[1].TxHash)
 	}
 
-	// Page 3 of 1 per page: past the end, should return nil.
-	p3, err := be.Utxos(context.Background(), "", &Paginate{Page: 3, Limit: 1})
+	// Page 2 of 1 per page: past the end, should return nil.
+	p3, err := be.Utxos(context.Background(), "", &Paginate{Page: 2, Limit: 1})
 	if err != nil {
-		t.Fatalf("Utxos page 3: %v", err)
+		t.Fatalf("Utxos page 2: %v", err)
 	}
 	if len(p3) != 0 {
-		t.Fatalf("page 3 = %d entries, want 0", len(p3))
+		t.Fatalf("page 2 = %d entries, want 0", len(p3))
+	}
+}
+
+func TestPaginateSliceCIP30ZeroIndexedAndSafeBounds(t *testing.T) {
+	items := []int{1, 2, 3}
+
+	first := paginateSlice(items, &Paginate{Page: 0, Limit: 2})
+	if len(first) != 2 || first[0] != 1 || first[1] != 2 {
+		t.Fatalf("page 0 = %v, want [1 2]", first)
+	}
+
+	second := paginateSlice(items, &Paginate{Page: 1, Limit: 2})
+	if len(second) != 1 || second[0] != 3 {
+		t.Fatalf("page 1 = %v, want [3]", second)
+	}
+
+	pastEnd := paginateSlice(items, &Paginate{Page: 2, Limit: 2})
+	if len(pastEnd) != 0 {
+		t.Fatalf("page 2 = %v, want empty", pastEnd)
+	}
+
+	negativePage := paginateSlice(items, &Paginate{Page: -1, Limit: 2})
+	if len(negativePage) != 2 || negativePage[0] != 1 || negativePage[1] != 2 {
+		t.Fatalf("negative page = %v, want first page [1 2]", negativePage)
+	}
+
+	maxInt := int(^uint(0) >> 1)
+	huge := paginateSlice(items, &Paginate{Page: maxInt, Limit: maxInt})
+	if len(huge) != 0 {
+		t.Fatalf("huge page/limit = %v, want empty", huge)
 	}
 }
 

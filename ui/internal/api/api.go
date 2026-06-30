@@ -66,6 +66,7 @@ type Spender interface {
 type Vault interface {
 	Exists() bool
 	Locked() bool
+	VerifyPassword(vaultPassword string) error
 	WalletCount() int
 	Create(vaultPassword string) error
 	Unlock(vaultPassword string) ([]vault.WalletMeta, error)
@@ -473,7 +474,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 
 	// CIP-30 connector: only registered when enabled (opt-in).
 	if cn != nil {
-		registerConnector(mux, cn)
+		registerConnector(mux, cn, withConnectorPairingCodeAuthorizer(vlt.VerifyPassword))
 	}
 
 	// SPA catch-all: the specific API routes above take precedence on the mux;

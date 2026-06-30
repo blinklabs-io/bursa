@@ -129,6 +129,18 @@ test("pendingPairings returns an array of PendingPairing", async () => {
   );
 });
 
+test("pendingPairings sends password only when revealing codes", async () => {
+  mockFetch(200, []);
+  await pendingPairings("vault-secret");
+  expect(globalThis.fetch).toHaveBeenCalledWith(
+    "/connector/pending-pairings",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ password: "vault-secret" }),
+    }),
+  );
+});
+
 // ---------------------------------------------------------------------------
 // subscribePending (EventSource-based)
 // ---------------------------------------------------------------------------

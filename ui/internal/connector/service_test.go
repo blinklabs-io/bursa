@@ -196,6 +196,19 @@ func TestServicePairCodeMismatch(t *testing.T) {
 	}
 }
 
+func TestServicePairCodeFormat(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	code := s.BeginPair("ext-format")
+	if len(code) != pairCodeDigits {
+		t.Fatalf("pair code length = %d, want %d", len(code), pairCodeDigits)
+	}
+	for _, r := range code {
+		if r < '0' || r > '9' {
+			t.Fatalf("pair code %q contains non-digit %q", code, r)
+		}
+	}
+}
+
 // TestServiceGrantsAndRevoke exercises Grants() and RevokeGrant().
 func TestServiceGrantsAndRevoke(t *testing.T) {
 	be := &fakeBackend{}
@@ -313,7 +326,7 @@ func TestServiceGetUsedAddressesPassesPagination(t *testing.T) {
 		t.Fatalf("enable: %v", err)
 	}
 
-	params := json.RawMessage(`{"paginate":{"page":2,"limit":1}}`)
+	params := json.RawMessage(`{"paginate":{"page":1,"limit":1}}`)
 	out, err := s.Handle(ctx(t), "https://g.io", "getUsedAddresses", params)
 	if err != nil {
 		t.Fatalf("getUsedAddresses: %v", err)
@@ -321,8 +334,8 @@ func TestServiceGetUsedAddressesPassesPagination(t *testing.T) {
 	if string(out) != `["addr1","addr2"]` {
 		t.Fatalf("getUsedAddresses result = %s", out)
 	}
-	if be.usedPaginate == nil || be.usedPaginate.Page != 2 || be.usedPaginate.Limit != 1 {
-		t.Fatalf("backend paginate = %+v, want page=2 limit=1", be.usedPaginate)
+	if be.usedPaginate == nil || be.usedPaginate.Page != 1 || be.usedPaginate.Limit != 1 {
+		t.Fatalf("backend paginate = %+v, want page=1 limit=1", be.usedPaginate)
 	}
 }
 

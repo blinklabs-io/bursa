@@ -46,6 +46,7 @@ type fakeVault struct {
 	activeID   string
 	createErr  error
 	unlockErr  error
+	verifyErr  error
 	addErr     error
 	addCalled  bool
 	importErr  error
@@ -54,6 +55,7 @@ type fakeVault struct {
 	gotNetwork string
 	gotSpend   string
 	gotVault   string
+	gotVerify  string
 	gotSeed    []byte
 }
 
@@ -87,6 +89,11 @@ func sampleAccount(net string) *wallet.Account {
 func (f *fakeVault) Exists() bool     { return f.exists }
 func (f *fakeVault) Locked() bool     { return f.locked }
 func (f *fakeVault) WalletCount() int { return len(f.wallets) }
+
+func (f *fakeVault) VerifyPassword(password string) error {
+	f.gotVerify = password
+	return f.verifyErr
+}
 
 func (f *fakeVault) Create(_ string) error {
 	if f.createErr != nil {

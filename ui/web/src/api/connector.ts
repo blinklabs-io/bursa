@@ -43,11 +43,13 @@ export function unpair(): Promise<void> {
   return apiPost<void>("/connector/unpair");
 }
 
-// pendingPairings fetches the list of extensions that have called BeginPair but
-// have not yet confirmed the code. POST forces browsers to include an Origin
-// header, letting the server reject no-Origin local scraping requests.
-export function pendingPairings(): Promise<PendingPairing[]> {
-  return apiPost<PendingPairing[]>("/connector/pending-pairings");
+// pendingPairings fetches extensions that have called BeginPair but have not
+// yet confirmed. The server returns codes only when a vault password is supplied.
+export function pendingPairings(password?: string): Promise<PendingPairing[]> {
+  return apiPost<PendingPairing[]>(
+    "/connector/pending-pairings",
+    password ? { password } : undefined,
+  );
 }
 
 // subscribePending opens a Server-Sent Events stream at /connector/events and
