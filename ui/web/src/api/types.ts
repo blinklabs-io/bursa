@@ -117,6 +117,15 @@ export interface VaultStatus {
   legacy_keystore?: boolean;
 }
 
+// App settings: the lean-node (history-expiry) profile. restart_required is true
+// when the persisted value differs from what the running node was built with —
+// history expiry is a node-construction option, so it only takes effect on the
+// next node restart.
+export interface HistoryExpirySetting {
+  enabled: boolean;
+  restart_required: boolean;
+}
+
 // A wallet as listed by the vault: read-only fields plus whether it's active.
 // The encrypted seed is never exposed.
 export interface WalletView {
