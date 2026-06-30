@@ -173,6 +173,15 @@ func decodeUTxOHex(t *testing.T, s string) (txHash string, idx uint32, addr stri
 	return
 }
 
+func encodeValueHex(t *testing.T, lovelace uint64) string {
+	t.Helper()
+	b, err := gocbor.Encode(&mary.MaryTransactionOutputValue{Amount: lovelace})
+	if err != nil {
+		t.Fatalf("encode value: %v", err)
+	}
+	return hex.EncodeToString(b)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -291,7 +300,7 @@ func TestWalletBackendAddressesHex(t *testing.T) {
 	be := NewWalletBackend(wl2, nil, acct, "preview", fc)
 
 	// Used addresses.
-	usedHex, err := be.UsedAddresses(context.Background())
+	usedHex, err := be.UsedAddresses(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("UsedAddresses: %v", err)
 	}
@@ -316,6 +325,14 @@ func TestWalletBackendAddressesHex(t *testing.T) {
 	}
 	if parsed.String() != usedAddr {
 		t.Errorf("round-trip address = %q, want %q", parsed.String(), usedAddr)
+	}
+
+	usedPage, err := be.UsedAddresses(context.Background(), &Paginate{Page: 2, Limit: 1})
+	if err != nil {
+		t.Fatalf("UsedAddresses page 2: %v", err)
+	}
+	if len(usedPage) != 0 {
+		t.Fatalf("used page 2 count = %d, want 0", len(usedPage))
 	}
 
 	// Unused addresses: receive[1] and receive[2] should be unused.
@@ -411,6 +428,49 @@ func TestWalletBackendPaginate(t *testing.T) {
 	}
 }
 
+func TestWalletBackendUtxosCBORAmount(t *testing.T) {
+	acct, wl := mustDeriveBackendAccount(t)
+	targetAddr := acct.ReceiveAddresses[0]
+	known := twoKnownUTxOs(targetAddr)
+
+	fc := &fakeConnectorChain{
+		addressErr: chain.ErrNotFound,
+		utxos:      map[string][]chain.UTxO{targetAddr: known},
+	}
+	be := NewWalletBackend(wl, nil, acct, "preview", fc)
+
+	amt25 := encodeValueHex(t, 2_500_000)
+	selected, err := be.Utxos(context.Background(), amt25, nil)
+	if err != nil {
+		t.Fatalf("Utxos(2.5 ADA): %v", err)
+	}
+	if len(selected) != 1 {
+		t.Fatalf("Utxos(2.5 ADA) count = %d, want 1", len(selected))
+	}
+	txHash, _, _, _ := decodeUTxOHex(t, selected[0])
+	if txHash != known[1].TxHash {
+		t.Fatalf("Utxos(2.5 ADA) selected tx = %q, want %q", txHash, known[1].TxHash)
+	}
+
+	amt4 := encodeValueHex(t, 4_000_000)
+	cover, err := be.Utxos(context.Background(), amt4, nil)
+	if err != nil {
+		t.Fatalf("Utxos(4 ADA): %v", err)
+	}
+	if len(cover) != 2 {
+		t.Fatalf("Utxos(4 ADA) count = %d, want 2", len(cover))
+	}
+
+	amt6 := encodeValueHex(t, 6_000_000)
+	none, err := be.Utxos(context.Background(), amt6, nil)
+	if err != nil {
+		t.Fatalf("Utxos(6 ADA): %v", err)
+	}
+	if none != nil {
+		t.Fatalf("Utxos(6 ADA) = %v, want nil for unsatisfiable amount", none)
+	}
+}
+
 func TestWalletBackendCollateral(t *testing.T) {
 	acct, wl := mustDeriveBackendAccount(t)
 	targetAddr := acct.ReceiveAddresses[0]
@@ -488,7 +548,7 @@ func TestWalletBackendCollateral(t *testing.T) {
 	}
 }
 
-func TestWalletBackendStubsReturnErrNotImplemented(t *testing.T) {
+func TestWalletBackendSigningMethodsErrorWithoutSpendService(t *testing.T) {
 	acct, wl := mustDeriveBackendAccount(t)
 	fc := &fakeConnectorChain{addressErr: chain.ErrNotFound}
 	be := NewWalletBackend(wl, nil, acct, "preview", fc)

@@ -30,3 +30,22 @@ func TestQueueTimeout(t *testing.T) {
 		t.Fatalf("want ErrTimeout, got %v", err)
 	}
 }
+
+func TestQueueRejectsDuplicateAfterDecisionConsumed(t *testing.T) {
+	q := NewQueue(time.Now, func() string { return "req1" }, time.Second)
+	req := q.Submit("https://a.io", "signTx", nil)
+	if err := q.Decide(req.ID, Decision{Approved: true}); err != nil {
+		t.Fatalf("first Decide: %v", err)
+	}
+
+	q.mu.Lock()
+	w := q.waiters[req.ID]
+	q.mu.Unlock()
+	if got := <-w.done; !got.Approved {
+		t.Fatalf("first decision = %+v, want approved", got)
+	}
+
+	if err := q.Decide(req.ID, Decision{Approved: false}); err != ErrAlreadyDecided {
+		t.Fatalf("duplicate Decide after consumed decision = %v, want ErrAlreadyDecided", err)
+	}
+}

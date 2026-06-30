@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -50,6 +51,7 @@ func NewTokenStore(path string, now func() time.Time, rnd func() (string, error)
 	ts := &TokenStore{path: path, now: now, rnd: rnd}
 	if b, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(b, &ts.data)
+		ts.data.ExtensionID = normalizeExtensionID(ts.data.ExtensionID)
 	}
 	return ts
 }
@@ -61,16 +63,18 @@ func (s *TokenStore) Mint(extensionID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	s.data = tokenData{ExtensionID: extensionID, Token: tok}
-	if err := s.persist(); err != nil {
+	next := tokenData{ExtensionID: normalizeExtensionID(extensionID), Token: tok}
+	if err := s.persist(next); err != nil {
 		return "", err
 	}
+	s.data = next
 	return s.data.Token, nil
 }
 
 func (s *TokenStore) Verify(token, extensionID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	extensionID = normalizeExtensionID(extensionID)
 	if s.data.Token == "" || s.data.ExtensionID != extensionID {
 		return false
 	}
@@ -86,15 +90,15 @@ func (s *TokenStore) Pair() (string, string, bool) {
 func (s *TokenStore) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data = tokenData{}
 	if err := os.Remove(s.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
+	s.data = tokenData{}
 	return nil
 }
 
-func (s *TokenStore) persist() error {
-	b, err := json.Marshal(s.data)
+func (s *TokenStore) persist(data tokenData) error {
+	b, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
@@ -119,4 +123,12 @@ func (s *TokenStore) persist() error {
 		return err
 	}
 	return nil
+}
+
+func normalizeExtensionID(extensionID string) string {
+	extensionID = strings.TrimSpace(extensionID)
+	if extensionID == "" || strings.Contains(extensionID, "://") {
+		return extensionID
+	}
+	return "chrome-extension://" + extensionID
 }

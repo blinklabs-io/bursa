@@ -21,6 +21,7 @@ import {
   subscribePending,
 } from "./connector";
 import type { ConnectorRequest, ConnectorState, PendingPairing } from "./types";
+import { FakeEventSource, installFakeEventSource } from "../test-utils/FakeEventSource";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -124,7 +125,7 @@ test("pendingPairings returns an array of PendingPairing", async () => {
   expect(result).toEqual(pairings);
   expect(globalThis.fetch).toHaveBeenCalledWith(
     "/connector/pending-pairings",
-    expect.objectContaining({ method: "GET" }),
+    expect.objectContaining({ method: "POST" }),
   );
 });
 
@@ -132,40 +133,16 @@ test("pendingPairings returns an array of PendingPairing", async () => {
 // subscribePending (EventSource-based)
 // ---------------------------------------------------------------------------
 
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  url: string;
-  onmessage: ((evt: { data: string }) => void) | null = null;
-  closed = false;
-
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.instances.push(this);
-  }
-
-  // Simulate a message event.
-  emit(data: string) {
-    this.onmessage?.({ data });
-  }
-
-  close() {
-    this.closed = true;
-  }
-}
-
-// Capture the real EventSource so we can restore it after these tests and avoid
-// leaking the fake into other test files.
-const realEventSource = globalThis.EventSource;
+let restoreEventSource: (() => void) | undefined;
 
 beforeEach(() => {
-  FakeEventSource.instances = [];
-  // Replace global EventSource with our fake.
-  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+  restoreEventSource = installFakeEventSource();
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
-  globalThis.EventSource = realEventSource;
+  restoreEventSource?.();
+  restoreEventSource = undefined;
 });
 
 test("subscribePending opens an EventSource at /connector/events", () => {

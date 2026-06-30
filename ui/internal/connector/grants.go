@@ -2,8 +2,10 @@ package connector
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -20,7 +22,9 @@ func NewGrantStore(path string) *GrantStore {
 		var origins []string
 		if json.Unmarshal(b, &origins) == nil {
 			for _, o := range origins {
-				g.set[o] = true
+				if validDAppOrigin(o) {
+					g.set[o] = true
+				}
 			}
 		}
 	}
@@ -28,14 +32,23 @@ func NewGrantStore(path string) *GrantStore {
 }
 
 func (g *GrantStore) Grant(origin string) error {
+	if !validDAppOrigin(origin) {
+		return ErrInvalidOrigin
+	}
 	return g.mutate(func(s map[string]bool) { s[origin] = true })
 }
 
 func (g *GrantStore) Revoke(origin string) error {
+	if !validDAppOrigin(origin) {
+		return ErrInvalidOrigin
+	}
 	return g.mutate(func(s map[string]bool) { delete(s, origin) })
 }
 
 func (g *GrantStore) IsGranted(origin string) bool {
+	if !validDAppOrigin(origin) {
+		return false
+	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.set[origin]
@@ -87,4 +100,18 @@ func (g *GrantStore) mutate(fn func(map[string]bool)) error {
 	// Persistence succeeded — commit the new set.
 	g.set = next
 	return nil
+}
+
+func validDAppOrigin(origin string) bool {
+	if strings.TrimSpace(origin) != origin || origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+	if u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
+		return false
+	}
+	return u.Scheme == "http" || u.Scheme == "https"
 }

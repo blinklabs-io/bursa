@@ -44,10 +44,10 @@ export function unpair(): Promise<void> {
 }
 
 // pendingPairings fetches the list of extensions that have called BeginPair but
-// have not yet confirmed the code. Each entry has an extension_id and the 6-digit
-// code the user must enter in the extension.
+// have not yet confirmed the code. POST forces browsers to include an Origin
+// header, letting the server reject no-Origin local scraping requests.
 export function pendingPairings(): Promise<PendingPairing[]> {
-  return apiGet<PendingPairing[]>("/connector/pending-pairings");
+  return apiPost<PendingPairing[]>("/connector/pending-pairings");
 }
 
 // subscribePending opens a Server-Sent Events stream at /connector/events and

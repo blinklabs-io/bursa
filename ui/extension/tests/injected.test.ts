@@ -31,9 +31,11 @@ describe('injected provider', () => {
       source: string;
       id: string;
       method: string;
+      params: unknown;
     };
     expect(enableCall.source).toBe('bursa-cip30');
     expect(enableCall.method).toBe('enable');
+    expect(enableCall.params).toEqual({ origin: window.location.origin });
 
     window.dispatchEvent(
       new MessageEvent('message', {
@@ -151,9 +153,11 @@ describe('injected provider', () => {
       source: string;
       id: string;
       method: string;
+      params: unknown;
     };
     expect(enableCall.source).toBe('bursa-cip30');
     expect(enableCall.method).toBe('enable');
+    expect(enableCall.params).toEqual({ origin: window.location.origin });
 
     const cip30Error = { code: -3, info: 'User declined connection' };
     window.dispatchEvent(
@@ -180,9 +184,11 @@ describe('injected provider', () => {
       source: string;
       id: string;
       method: string;
+      params: unknown;
     };
     expect(call.source).toBe('bursa-cip30');
     expect(call.method).toBe('isEnabled');
+    expect(call.params).toEqual({ origin: window.location.origin });
 
     // Reply to clean up the listener
     window.dispatchEvent(

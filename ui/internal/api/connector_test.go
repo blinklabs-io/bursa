@@ -35,8 +35,10 @@ func (f *fakeConnectorBackend) NetworkID() int { return 0 }
 func (f *fakeConnectorBackend) Utxos(_ context.Context, _ string, _ *connector.Paginate) ([]string, error) {
 	return nil, nil
 }
-func (f *fakeConnectorBackend) Balance(_ context.Context) (string, error)           { return "", nil }
-func (f *fakeConnectorBackend) UsedAddresses(_ context.Context) ([]string, error)   { return nil, nil }
+func (f *fakeConnectorBackend) Balance(_ context.Context) (string, error) { return "", nil }
+func (f *fakeConnectorBackend) UsedAddresses(_ context.Context, _ *connector.Paginate) ([]string, error) {
+	return nil, nil
+}
 func (f *fakeConnectorBackend) UnusedAddresses(_ context.Context) ([]string, error) { return nil, nil }
 func (f *fakeConnectorBackend) ChangeAddress(_ context.Context) (string, error)     { return "", nil }
 func (f *fakeConnectorBackend) RewardAddresses(_ context.Context) ([]string, error) { return nil, nil }
@@ -993,7 +995,31 @@ func TestConnectorMiddleware(t *testing.T) {
 	}
 }
 
-// TestHandlePendingPairings verifies GET /connector/pending-pairings.
+func TestConnectorMiddlewareNormalizesRawPairedExtensionID(t *testing.T) {
+	svc, token := newTestService(t, "abc123")
+	paired := func() (string, bool) { return svc.PairedExtensionID() }
+	mw := connectorMiddleware(svc, paired)
+
+	var nextCalled bool
+	req := httptest.NewRequest(http.MethodGet, "/connector/utxos", nil)
+	req.Header.Set("Origin", "chrome-extension://abc123")
+	req.Header.Set("X-Bursa-Token", token)
+	rec := httptest.NewRecorder()
+
+	mw(newOKHandler(&nextCalled)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if !nextCalled {
+		t.Fatal("next handler was not called")
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "chrome-extension://abc123" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want chrome-extension://abc123", got)
+	}
+}
+
+// TestHandlePendingPairings verifies POST /connector/pending-pairings.
 func TestHandlePendingPairings(t *testing.T) {
 	const extID = "chrome-extension://pending-pair-test"
 
@@ -1002,13 +1028,19 @@ func TestHandlePendingPairings(t *testing.T) {
 		return connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
 	}
 
-	t.Run("same-origin no pending pairings returns empty array", func(t *testing.T) {
+	strictReq := func(method string) *http.Request {
+		req := httptest.NewRequest(method, "/connector/pending-pairings", nil)
+		req.Host = "127.0.0.1:8090"
+		req.Header.Set("Origin", "http://127.0.0.1:8090")
+		return req
+	}
+
+	t.Run("strict same-origin no pending pairings returns empty array", func(t *testing.T) {
 		svc := newSvc(t)
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
 
-		req := httptest.NewRequest(http.MethodGet, "/connector/pending-pairings", nil)
-		// No Origin header → same-origin request.
+		req := strictReq(http.MethodPost)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -1024,14 +1056,14 @@ func TestHandlePendingPairings(t *testing.T) {
 		}
 	})
 
-	t.Run("same-origin with pending pairing returns extension_id + code", func(t *testing.T) {
+	t.Run("strict same-origin with pending pairing returns extension_id + code", func(t *testing.T) {
 		svc := newSvc(t)
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
 
 		code := svc.BeginPair(extID)
 
-		req := httptest.NewRequest(http.MethodGet, "/connector/pending-pairings", nil)
+		req := strictReq(http.MethodPost)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -1053,12 +1085,48 @@ func TestHandlePendingPairings(t *testing.T) {
 		}
 	})
 
+	t.Run("no-Origin POST is rejected", func(t *testing.T) {
+		svc := newSvc(t)
+		mux := http.NewServeMux()
+		registerConnector(mux, svc)
+		code := svc.BeginPair(extID)
+
+		req := httptest.NewRequest(http.MethodPost, "/connector/pending-pairings", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), code) {
+			t.Fatalf("response leaked pairing code %q: %s", code, rec.Body.String())
+		}
+	})
+
+	t.Run("no-Origin GET does not expose pairing code", func(t *testing.T) {
+		svc := newSvc(t)
+		mux := http.NewServeMux()
+		registerConnector(mux, svc)
+		code := svc.BeginPair(extID)
+
+		req := httptest.NewRequest(http.MethodGet, "/connector/pending-pairings", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code == http.StatusOK {
+			t.Fatalf("GET status = 200, want non-200")
+		}
+		if strings.Contains(rec.Body.String(), code) {
+			t.Fatalf("GET response leaked pairing code %q: %s", code, rec.Body.String())
+		}
+	})
+
 	t.Run("cross-origin request is rejected with 403", func(t *testing.T) {
 		svc := newSvc(t)
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
 
-		req := httptest.NewRequest(http.MethodGet, "/connector/pending-pairings", nil)
+		req := httptest.NewRequest(http.MethodPost, "/connector/pending-pairings", nil)
 		req.Host = "127.0.0.1:8090"
 		req.Header.Set("Origin", "https://evil.example.com")
 		rec := httptest.NewRecorder()

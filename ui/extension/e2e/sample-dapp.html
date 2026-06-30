@@ -116,11 +116,31 @@
     }
 
     function ok(val) {
-      write('ok', '  OK: ' + JSON.stringify(val, null, 2));
+      write('ok', '  OK: ' + formatLogValue(val));
     }
 
     function err(e) {
-      write('err', '  ERR: ' + JSON.stringify(e));
+      write('err', '  ERR: ' + formatLogValue(e));
+    }
+
+    function formatLogValue(value) {
+      if (value instanceof Error) {
+        const details = { name: value.name, message: value.message };
+        for (const key of Object.keys(value)) {
+          details[key] = value[key];
+        }
+        try {
+          return JSON.stringify(details, null, 2);
+        } catch (_) {
+          return value.name + ': ' + value.message;
+        }
+      }
+      try {
+        const json = JSON.stringify(value, null, 2);
+        return json === undefined ? String(value) : json;
+      } catch (_) {
+        return String(value);
+      }
     }
 
     // ---------------------------------------------------------------------------

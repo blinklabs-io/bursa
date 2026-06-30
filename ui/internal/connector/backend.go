@@ -111,12 +111,12 @@ func (b *WalletBackend) NetworkID() int {
 }
 
 // UsedAddresses returns hex-encoded raw address bytes for each chain-seen address.
-func (b *WalletBackend) UsedAddresses(ctx context.Context) ([]string, error) {
+func (b *WalletBackend) UsedAddresses(ctx context.Context, paginate *Paginate) ([]string, error) {
 	av, err := b.wl.Addresses(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return addrStringsToHex(av.Used)
+	return addrStringsToHex(paginateSlice(av.Used, paginate))
 }
 
 // UnusedAddresses returns hex-encoded raw bytes for derived addresses not yet on chain.
@@ -197,30 +197,34 @@ func (b *WalletBackend) Balance(ctx context.Context) (string, error) {
 	return hex.EncodeToString(cborBytes), nil
 }
 
-// Utxos returns hex CBOR of each TransactionUnspentOutput ([input, output]) for
-// all wallet UTxOs, filtered by paginate if non-nil. The amount filter is ignored
-// in this first version when the value is empty.
+// Utxos returns hex CBOR of each TransactionUnspentOutput ([input, output]).
+// When amount is non-empty it is a hex-CBOR CIP-30 Value; the returned UTxOs
+// cover that requested value, or nil when the wallet cannot cover it. Pagination
+// applies after amount selection.
 func (b *WalletBackend) Utxos(ctx context.Context, amount string, paginate *Paginate) ([]string, error) {
 	utxos, err := b.allUTxOs(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Paginate: 1-based page, limit items per page.
-	if paginate != nil && paginate.Limit > 0 {
-		page := paginate.Page
-		if page < 1 {
-			page = 1
+	if amount != "" {
+		target, err := decodeRequestedValue(amount)
+		if err != nil {
+			return nil, err
 		}
-		start := (page - 1) * paginate.Limit
-		if start >= len(utxos) {
+		selected, ok, err := selectUTxOsForValue(utxos, target)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
 			return nil, nil
 		}
-		end := start + paginate.Limit
-		if end > len(utxos) {
-			end = len(utxos)
-		}
-		utxos = utxos[start:end]
+		utxos = selected
+	}
+
+	utxos = paginateSlice(utxos, paginate)
+	if utxos == nil {
+		return nil, nil
 	}
 
 	return encodeUTxOs(utxos)
@@ -749,4 +753,218 @@ func utxoLovelace(u chain.UTxO) uint64 {
 		}
 	}
 	return 0
+}
+
+func paginateSlice[T any](items []T, paginate *Paginate) []T {
+	if paginate == nil || paginate.Limit <= 0 {
+		return items
+	}
+	page := paginate.Page
+	if page < 1 {
+		page = 1
+	}
+	start := (page - 1) * paginate.Limit
+	if start >= len(items) {
+		return nil
+	}
+	end := start + paginate.Limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[start:end]
+}
+
+type cip30Value struct {
+	lovelace *big.Int
+	assets   map[string]*big.Int
+}
+
+func newCIP30Value() cip30Value {
+	return cip30Value{lovelace: new(big.Int), assets: map[string]*big.Int{}}
+}
+
+func decodeRequestedValue(amount string) (cip30Value, error) {
+	raw, err := hex.DecodeString(amount)
+	if err != nil {
+		return cip30Value{}, fmt.Errorf("utxo amount %q is not valid hex: %w", amount, err)
+	}
+	var mv mary.MaryTransactionOutputValue
+	if _, err := gocbor.Decode(raw, &mv); err != nil {
+		return cip30Value{}, fmt.Errorf("utxo amount %q is not valid CBOR Value: %w", amount, err)
+	}
+	v := newCIP30Value()
+	v.lovelace.SetUint64(mv.Amount)
+	if mv.Assets != nil {
+		for _, policy := range mv.Assets.Policies() {
+			for _, name := range mv.Assets.Assets(policy) {
+				qty := mv.Assets.Asset(policy, name)
+				if qty == nil {
+					continue
+				}
+				if qty.Sign() < 0 {
+					return cip30Value{}, fmt.Errorf("utxo amount has negative asset quantity for %s", assetUnit(policy, name))
+				}
+				if qty.Sign() == 0 {
+					continue
+				}
+				v.assets[assetUnit(policy, name)] = new(big.Int).Set(qty)
+			}
+		}
+	}
+	return v, nil
+}
+
+func utxoToValue(u chain.UTxO) (cip30Value, error) {
+	v := newCIP30Value()
+	for _, amt := range u.Amount {
+		qty, ok := new(big.Int).SetString(amt.Quantity, 10)
+		if !ok || qty.Sign() < 0 {
+			return cip30Value{}, fmt.Errorf("invalid quantity %q for unit %s", amt.Quantity, amt.Unit)
+		}
+		if amt.Unit == "lovelace" {
+			v.lovelace.Add(v.lovelace, qty)
+			continue
+		}
+		if v.assets[amt.Unit] == nil {
+			v.assets[amt.Unit] = new(big.Int)
+		}
+		v.assets[amt.Unit].Add(v.assets[amt.Unit], qty)
+	}
+	return v, nil
+}
+
+func assetUnit(policy lcommon.Blake2b224, name []byte) string {
+	return hex.EncodeToString(policy.Bytes()) + hex.EncodeToString(name)
+}
+
+func (v cip30Value) add(other cip30Value) {
+	v.lovelace.Add(v.lovelace, other.lovelace)
+	for unit, qty := range other.assets {
+		if v.assets[unit] == nil {
+			v.assets[unit] = new(big.Int)
+		}
+		v.assets[unit].Add(v.assets[unit], qty)
+	}
+}
+
+func (v cip30Value) covers(target cip30Value) bool {
+	if v.lovelace.Cmp(target.lovelace) < 0 {
+		return false
+	}
+	for unit, want := range target.assets {
+		got := v.assets[unit]
+		if got == nil || got.Cmp(want) < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (v cip30Value) isZero() bool {
+	if v.lovelace.Sign() != 0 {
+		return false
+	}
+	for _, qty := range v.assets {
+		if qty.Sign() != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func contributionScore(v, target cip30Value) *big.Int {
+	score := new(big.Int)
+	if target.lovelace.Sign() > 0 {
+		addMin(score, v.lovelace, target.lovelace)
+	}
+	for unit, want := range target.assets {
+		if got := v.assets[unit]; got != nil {
+			addMin(score, got, want)
+		}
+	}
+	return score
+}
+
+func excessScore(v, target cip30Value) *big.Int {
+	score := new(big.Int)
+	if diff := new(big.Int).Sub(v.lovelace, target.lovelace); diff.Sign() > 0 {
+		score.Add(score, diff)
+	}
+	for unit, want := range target.assets {
+		got := v.assets[unit]
+		if got == nil {
+			continue
+		}
+		if diff := new(big.Int).Sub(got, want); diff.Sign() > 0 {
+			score.Add(score, diff)
+		}
+	}
+	return score
+}
+
+func addMin(dst, a, b *big.Int) {
+	if a.Cmp(b) < 0 {
+		dst.Add(dst, a)
+		return
+	}
+	dst.Add(dst, b)
+}
+
+func selectUTxOsForValue(utxos []chain.UTxO, target cip30Value) ([]chain.UTxO, bool, error) {
+	if target.isZero() {
+		return []chain.UTxO{}, true, nil
+	}
+	type candidate struct {
+		utxo   chain.UTxO
+		value  cip30Value
+		score  *big.Int
+		excess *big.Int
+	}
+	candidates := make([]candidate, 0, len(utxos))
+	total := newCIP30Value()
+	var bestSingle *candidate
+	for _, u := range utxos {
+		v, err := utxoToValue(u)
+		if err != nil {
+			return nil, false, err
+		}
+		total.add(v)
+		score := contributionScore(v, target)
+		if score.Sign() == 0 {
+			continue
+		}
+		c := candidate{
+			utxo:   u,
+			value:  v,
+			score:  score,
+			excess: excessScore(v, target),
+		}
+		if v.covers(target) && (bestSingle == nil || c.excess.Cmp(bestSingle.excess) < 0) {
+			tmp := c
+			bestSingle = &tmp
+		}
+		candidates = append(candidates, c)
+	}
+	if !total.covers(target) {
+		return nil, false, nil
+	}
+	if bestSingle != nil {
+		return []chain.UTxO{bestSingle.utxo}, true, nil
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if cmp := candidates[i].score.Cmp(candidates[j].score); cmp != 0 {
+			return cmp > 0
+		}
+		return utxoLovelace(candidates[i].utxo) > utxoLovelace(candidates[j].utxo)
+	})
+	selected := make([]chain.UTxO, 0, len(candidates))
+	sum := newCIP30Value()
+	for _, c := range candidates {
+		selected = append(selected, c.utxo)
+		sum.add(c.value)
+		if sum.covers(target) {
+			return selected, true, nil
+		}
+	}
+	return nil, false, nil
 }

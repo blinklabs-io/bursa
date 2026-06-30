@@ -23,6 +23,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
 import { Input } from "../components/Input";
+import { ApiError } from "../api/client";
 import { subscribePending, decide } from "../api/connector";
 import { notifyPending } from "../connectorNotify";
 import type { ConnectorRequest } from "../api/types";
@@ -58,7 +59,6 @@ function needsPassword(method: string): boolean {
   return [
     "signTx",
     "signData",
-    "submitTx",
     "getPubDRepKey",
     "getRegisteredPubStakeKeys",
     "getUnregisteredPubStakeKeys",
@@ -66,6 +66,15 @@ function needsPassword(method: string): boolean {
     "cip95.getRegisteredPubStakeKeys",
     "cip95.getUnregisteredPubStakeKeys",
   ].includes(method);
+}
+
+function formatParams(params: unknown): string {
+  try {
+    const formatted = JSON.stringify(params, null, 2);
+    return formatted === undefined ? String(params) : formatted;
+  } catch {
+    return String(params);
+  }
 }
 
 export function ConnectorApproval() {
@@ -104,11 +113,17 @@ export function ConnectorApproval() {
     setBusy(true);
     setError(null);
     try {
-      await decide(current.id, approved, approved ? password : undefined);
+      const decisionPassword = approved && needsPassword(current.method) ? password : undefined;
+      await decide(current.id, approved, decisionPassword);
       // Remove the decided request from the queue.
       setPending((prev) => prev.filter((r) => r.id !== current.id));
       setPassword("");
     } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        setPending((prev) => prev.filter((r) => r.id !== current.id));
+        setPassword("");
+        return;
+      }
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setBusy(false);
@@ -145,6 +160,24 @@ export function ConnectorApproval() {
             </dd>
             <dt>Action</dt>
             <dd>{methodSummary(current)}</dd>
+            {current.params !== undefined && (
+              <>
+                <dt>Params</dt>
+                <dd>
+                  <pre
+                    className="mono"
+                    style={{
+                      margin: 0,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      fontSize: "0.8em",
+                    }}
+                  >
+                    {formatParams(current.params)}
+                  </pre>
+                </dd>
+              </>
+            )}
             {pending.length > 1 && (
               <>
                 <dt>Queue</dt>

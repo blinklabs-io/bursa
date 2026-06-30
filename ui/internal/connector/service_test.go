@@ -16,12 +16,14 @@ type fakeBackend struct {
 	submitID  string
 	signSig   string
 	signKey   string
+	usedAddrs []string
 
 	// recorded call args
 	signTxCalled   bool
 	signTxPassword string
 	signTxTx       string
 	signTxPartial  bool
+	usedPaginate   *Paginate
 }
 
 func (b *fakeBackend) NetworkID() int { return b.networkID }
@@ -32,7 +34,10 @@ func (b *fakeBackend) Utxos(_ context.Context, _ string, _ *Paginate) ([]string,
 
 func (b *fakeBackend) Balance(_ context.Context) (string, error) { return b.balance, nil }
 
-func (b *fakeBackend) UsedAddresses(_ context.Context) ([]string, error) { return nil, nil }
+func (b *fakeBackend) UsedAddresses(_ context.Context, paginate *Paginate) ([]string, error) {
+	b.usedPaginate = paginate
+	return b.usedAddrs, nil
+}
 
 func (b *fakeBackend) UnusedAddresses(_ context.Context) ([]string, error) { return nil, nil }
 
@@ -298,6 +303,29 @@ func TestServiceNetworkIDAndIsEnabled(t *testing.T) {
 	}
 }
 
+func TestServiceGetUsedAddressesPassesPagination(t *testing.T) {
+	be := &fakeBackend{usedAddrs: []string{"addr1", "addr2"}}
+	s := NewService(t.TempDir(), be, nil)
+	_, _ = s.ConfirmPairForTest("ext")
+
+	go decideWhenPending(s, Decision{Approved: true})
+	if _, err := s.Handle(ctx(t), "https://g.io", "enable", nil); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	params := json.RawMessage(`{"paginate":{"page":2,"limit":1}}`)
+	out, err := s.Handle(ctx(t), "https://g.io", "getUsedAddresses", params)
+	if err != nil {
+		t.Fatalf("getUsedAddresses: %v", err)
+	}
+	if string(out) != `["addr1","addr2"]` {
+		t.Fatalf("getUsedAddresses result = %s", out)
+	}
+	if be.usedPaginate == nil || be.usedPaginate.Page != 2 || be.usedPaginate.Limit != 1 {
+		t.Fatalf("backend paginate = %+v, want page=2 limit=1", be.usedPaginate)
+	}
+}
+
 // TestServiceCIP95PrefixedMethods is a cross-layer contract test.
 // It hard-codes the EXACT method strings that injected.ts emits for the three
 // CIP-95 provider calls (search for "cip95." in ui/extension/src/injected.ts).
@@ -366,5 +394,24 @@ func TestServicePendingPairings(t *testing.T) {
 	}
 	if got := svc.PendingPairings(); len(got) != 0 {
 		t.Fatalf("after confirm: want 0 pending pairings, got %d", len(got))
+	}
+}
+
+func TestServiceNormalizesRawExtensionID(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	code := s.BeginPair("abcdefghijklmnopabcdefghijklmnop")
+	token, err := s.ConfirmPair("abcdefghijklmnopabcdefghijklmnop", code)
+	if err != nil {
+		t.Fatalf("ConfirmPair: %v", err)
+	}
+	if !s.VerifyToken(token, "chrome-extension://abcdefghijklmnopabcdefghijklmnop") {
+		t.Fatal("token minted with raw extension id should verify against chrome-extension:// origin")
+	}
+	extID, paired := s.PairedExtensionID()
+	if !paired {
+		t.Fatal("want paired")
+	}
+	if extID != "chrome-extension://abcdefghijklmnopabcdefghijklmnop" {
+		t.Fatalf("paired extension id = %q, want chrome-extension:// form", extID)
 	}
 }

@@ -120,6 +120,13 @@ func sameOrigin(r *http.Request) bool {
 	return o == scheme+"://"+r.Host
 }
 
+func strictSameOrigin(r *http.Request) bool {
+	if r.Header.Get("Origin") == "" {
+		return false
+	}
+	return sameOrigin(r)
+}
+
 // registerConnector registers all /connector/* routes on mux.
 //
 // Extension-facing routes (pair, request) are wrapped by connectorMiddleware,
@@ -145,7 +152,7 @@ func registerConnector(mux *http.ServeMux, svc *connector.Service) {
 	mux.HandleFunc("POST /connector/grants/revoke", handleConnectorGrantsRevoke(svc))
 	mux.HandleFunc("POST /connector/decide", handleConnectorDecide(svc))
 	mux.HandleFunc("POST /connector/unpair", handleConnectorUnpair(svc))
-	mux.HandleFunc("GET /connector/pending-pairings", handleConnectorPendingPairings(svc))
+	mux.HandleFunc("POST /connector/pending-pairings", handleConnectorPendingPairings(svc))
 }
 
 // handleConnectorGrants handles GET /connector/grants.
@@ -254,15 +261,14 @@ func handleConnectorUnpair(svc *connector.Service) http.HandlerFunc {
 	}
 }
 
-// handleConnectorPendingPairings handles GET /connector/pending-pairings.
+// handleConnectorPendingPairings handles POST /connector/pending-pairings.
 //
-// SPA-facing — requires same-origin request. Returns the list of extension IDs
-// that have called BeginPair but not yet confirmed the code. Each entry contains
-// the extension_id and the 6-digit code the user must enter in the extension to
-// complete pairing.
+// SPA-facing — requires a strict same-origin browser request with an Origin
+// header. Pairing codes are intentionally not exposed via no-Origin GETs because
+// any local process could otherwise scrape the code and self-confirm pairing.
 func handleConnectorPendingPairings(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !sameOrigin(r) {
+		if !strictSameOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
 			return
 		}
@@ -351,7 +357,7 @@ func handleConnectorEvents(svc *connector.Service) http.HandlerFunc {
 //	TxSendError:     1 Refused
 func connectorErrorCode(method string, err error) (httpStatus int, code int, info string) {
 	switch {
-	case errors.Is(err, connector.ErrInvalidParams):
+	case errors.Is(err, connector.ErrInvalidParams), errors.Is(err, connector.ErrInvalidOrigin):
 		return http.StatusBadRequest, -1, err.Error()
 	case errors.Is(err, connector.ErrNotGranted), errors.Is(err, connector.ErrRefused):
 		return http.StatusForbidden, -3, err.Error()

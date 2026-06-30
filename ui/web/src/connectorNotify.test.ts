@@ -64,12 +64,27 @@ function installMockNotification(permission: NotificationPermission = "granted")
   globalThis.Notification = MockNotification as unknown as typeof Notification;
 }
 
+const realNotification = globalThis.Notification;
+
+function restoreNotification() {
+  if (realNotification === undefined) {
+    Reflect.deleteProperty(globalThis, "Notification");
+    return;
+  }
+  globalThis.Notification = realNotification;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
+beforeEach(() => {
+  vi.spyOn(window, "focus").mockImplementation(() => undefined);
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
+  restoreNotification();
   // The module-level `permissionRequested` flag is reset by freshNotifyPending()
   // re-importing the module (via vi.resetModules) at the start of each test, so
   // requestPermission() actually runs again instead of early-returning.
@@ -94,11 +109,8 @@ test("does not throw when permission is denied", async () => {
 test("does not throw when Notification API is absent", async () => {
   const notifyPending = await freshNotifyPending();
   // Simulate an environment without the Notification API.
-  const saved = globalThis.Notification;
-  // @ts-expect-error — intentionally removing Notification for the test
-  delete globalThis.Notification;
+  Reflect.deleteProperty(globalThis, "Notification");
   await expect(notifyPending(makeReq("n3"))).resolves.not.toThrow();
-  globalThis.Notification = saved;
 });
 
 test("uses the request id as a tag to collapse duplicate notifications", async () => {

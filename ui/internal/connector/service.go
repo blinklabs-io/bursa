@@ -22,6 +22,7 @@ var (
 	ErrNotGranted       = errors.New("connector: origin not granted")
 	ErrPairCodeMismatch = errors.New("connector: pair code mismatch")
 	ErrInvalidParams    = errors.New("connector: invalid request params")
+	ErrInvalidOrigin    = errors.New("connector: invalid origin")
 )
 
 // Paginate is used by the Utxos backend method.
@@ -35,7 +36,7 @@ type Backend interface {
 	NetworkID() int
 	Utxos(ctx context.Context, amount string, paginate *Paginate) ([]string, error)
 	Balance(ctx context.Context) (string, error)
-	UsedAddresses(ctx context.Context) ([]string, error)
+	UsedAddresses(ctx context.Context, paginate *Paginate) ([]string, error)
 	UnusedAddresses(ctx context.Context) ([]string, error)
 	ChangeAddress(ctx context.Context) (string, error)
 	RewardAddresses(ctx context.Context) ([]string, error)
@@ -101,6 +102,7 @@ func (s *Service) SetActiveAccount(acct *wallet.Account) {
 // BeginPair generates a 6-digit pairing code for the given extensionID and
 // caches it. The code is returned for display in the Bursa UI.
 func (s *Service) BeginPair(extensionID string) string {
+	extensionID = normalizeExtensionID(extensionID)
 	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
 	if err != nil {
 		// A CSPRNG failure is a fatal system condition; never fall back to a
@@ -117,6 +119,7 @@ func (s *Service) BeginPair(extensionID string) string {
 // ConfirmPair validates the code for extensionID, then mints and returns a
 // bearer token. Returns ErrPairCodeMismatch if the code is wrong.
 func (s *Service) ConfirmPair(extensionID, code string) (string, error) {
+	extensionID = normalizeExtensionID(extensionID)
 	s.pairMu.Lock()
 	expected, ok := s.pairCodes[extensionID]
 	if ok {
@@ -131,7 +134,7 @@ func (s *Service) ConfirmPair(extensionID, code string) (string, error) {
 
 // VerifyToken checks whether the bearer token is valid for the given extensionID.
 func (s *Service) VerifyToken(token, extensionID string) bool {
-	return s.tokens.Verify(token, extensionID)
+	return s.tokens.Verify(token, normalizeExtensionID(extensionID))
 }
 
 // PairedExtensionID returns the currently paired extension ID and whether a
@@ -192,6 +195,9 @@ func (s *Service) PendingPairings() []PendingPairing {
 // to either an immediate Backend read (for granted origins) or a queued approval
 // flow (for enable and signing methods).
 func (s *Service) Handle(ctx context.Context, origin, method string, params json.RawMessage) (json.RawMessage, error) {
+	if !validDAppOrigin(origin) {
+		return nil, ErrInvalidOrigin
+	}
 	switch method {
 	// isEnabled is a special case: returns a bool without requiring a grant.
 	case "isEnabled":
@@ -266,7 +272,13 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if !s.grants.IsGranted(origin) {
 			return nil, ErrNotGranted
 		}
-		v, err := s.be.UsedAddresses(ctx)
+		var p struct {
+			Paginate *Paginate `json:"paginate"`
+		}
+		if err := unmarshalParams(params, &p); err != nil {
+			return nil, err
+		}
+		v, err := s.be.UsedAddresses(ctx, p.Paginate)
 		if err != nil {
 			return nil, err
 		}

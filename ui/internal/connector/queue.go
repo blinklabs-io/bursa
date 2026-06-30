@@ -28,8 +28,9 @@ type Decision struct {
 }
 
 type waiter struct {
-	req  Request
-	done chan Decision
+	req     Request
+	done    chan Decision
+	decided bool
 }
 
 type Queue struct {
@@ -90,20 +91,19 @@ func (q *Queue) Await(ctx context.Context, id string) (Decision, error) {
 func (q *Queue) Decide(id string, d Decision) error {
 	q.mu.Lock()
 	w, ok := q.waiters[id]
-	q.mu.Unlock()
 	if !ok {
+		q.mu.Unlock()
 		return ErrUnknownRequest
 	}
-	// done is buffered with capacity 1. A non-blocking send delivers the first
-	// decision; a duplicate decision (the buffer is already full, or the request
-	// was resolved) returns ErrAlreadyDecided instead of blocking the caller's
-	// goroutine forever.
-	select {
-	case w.done <- d:
-		return nil
-	default:
+	if w.decided {
+		q.mu.Unlock()
 		return ErrAlreadyDecided
 	}
+	w.decided = true
+	q.mu.Unlock()
+
+	w.done <- d
+	return nil
 }
 
 func (q *Queue) Pending() []Request {
@@ -111,6 +111,9 @@ func (q *Queue) Pending() []Request {
 	defer q.mu.Unlock()
 	out := make([]Request, 0, len(q.waiters))
 	for _, w := range q.waiters {
+		if w.decided {
+			continue
+		}
 		out = append(out, w.req)
 	}
 	return out

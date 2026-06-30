@@ -1,22 +1,56 @@
 package connector
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestTokenStoreMintVerify(t *testing.T) {
 	seq := 0
 	ts := NewTokenStore(t.TempDir()+"/token.json", nil, func() (string, error) { seq++; return "tok", nil })
-	tok, err := ts.Mint("chrome-extension://abc")
+	tok, err := ts.Mint("abc")
 	if err != nil || tok != "tok" {
 		t.Fatalf("mint: %q %v", tok, err)
 	}
 	if !ts.Verify("tok", "chrome-extension://abc") {
-		t.Fatal("verify should pass for matching token+id")
+		t.Fatal("verify should pass for matching token+chrome-extension origin")
 	}
 	if ts.Verify("tok", "chrome-extension://evil") {
 		t.Fatal("verify must fail for wrong extension id")
 	}
 	if ts.Verify("wrong", "chrome-extension://abc") {
 		t.Fatal("verify must fail for wrong token")
+	}
+}
+
+func TestTokenStoreMintDoesNotChangeMemoryOnPersistFailure(t *testing.T) {
+	blockedPath := t.TempDir()
+	ts := NewTokenStore(blockedPath, nil, func() (string, error) { return "tok", nil })
+	if _, err := ts.Mint("abc"); err == nil {
+		t.Fatal("Mint to a directory path should fail")
+	}
+	if ts.Verify("tok", "chrome-extension://abc") {
+		t.Fatal("failed Mint must not leave token in memory")
+	}
+}
+
+func TestTokenStoreClearKeepsMemoryOnRemoveFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token.json")
+	ts := NewTokenStore(path, nil, func() (string, error) { return "tok", nil })
+	if _, err := ts.Mint("abc"); err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	blockedDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(blockedDir, "child"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ts.path = blockedDir
+	if err := ts.Clear(); err == nil {
+		t.Fatal("Clear on non-empty directory path should fail")
+	}
+	if !ts.Verify("tok", "chrome-extension://abc") {
+		t.Fatal("failed Clear must keep token in memory")
 	}
 }
 
