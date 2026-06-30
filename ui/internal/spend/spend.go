@@ -944,9 +944,14 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 	if tx == nil {
 		return Witness{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
 	}
-	bodyCbor, err := cbor.Encode(&tx.Body)
-	if err != nil {
-		return Witness{}, fmt.Errorf("encode tx body: %w", err)
+	// Witnesses sign the hash of the body bytes exactly as carried by the
+	// unsigned transaction. Re-encoding can drift while preserving semantics.
+	bodyCbor := tx.Body.Cbor()
+	if bodyCbor == nil {
+		bodyCbor, err = cbor.Encode(&tx.Body)
+		if err != nil {
+			return Witness{}, fmt.Errorf("encode tx body: %w", err)
+		}
 	}
 	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
 

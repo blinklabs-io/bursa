@@ -506,6 +506,11 @@ func hashedSignDataFixture(t *testing.T, acct *wallet.Account) (string, string, 
 
 func witnessCount(t *testing.T, wit Witness) int {
 	t.Helper()
+	return len(decodeWitnesses(t, wit))
+}
+
+func decodeWitnesses(t *testing.T, wit Witness) []lcommon.VkeyWitness {
+	t.Helper()
 	witBytes, err := hex.DecodeString(wit.WitnessCBOR)
 	if err != nil {
 		t.Fatalf("decode witness hex: %v", err)
@@ -514,7 +519,7 @@ func witnessCount(t *testing.T, wit Witness) int {
 	if _, err := cbor.Decode(witBytes, &witnesses); err != nil {
 		t.Fatalf("decode witnesses: %v", err)
 	}
-	return len(witnesses)
+	return witnesses
 }
 
 func bodyRequiredSigners(t *testing.T, unsignedTxCBOR string) []lcommon.Blake2b224 {
@@ -563,6 +568,35 @@ func unsignedWithRequiredSigners(
 	encoded, err := cbor.Encode(tx)
 	if err != nil {
 		t.Fatalf("encode unsigned tx: %v", err)
+	}
+	return hex.EncodeToString(encoded)
+}
+
+func unsignedWithIndefiniteBodyMap(t *testing.T, unsignedTxCBOR string) string {
+	t.Helper()
+	txBytes, err := hex.DecodeString(unsignedTxCBOR)
+	if err != nil {
+		t.Fatalf("decode unsigned tx hex: %v", err)
+	}
+	var arr []cbor.RawMessage
+	if _, err := cbor.Decode(txBytes, &arr); err != nil {
+		t.Fatalf("decode unsigned tx array: %v", err)
+	}
+	if len(arr) != 4 {
+		t.Fatalf("unsigned tx array length = %d, want 4", len(arr))
+	}
+	body := []byte(arr[0])
+	if len(body) == 0 || body[0] < 0xa0 || body[0] > 0xb7 {
+		t.Fatalf("body CBOR does not start with a definite map header: %x", body[:min(len(body), 8)])
+	}
+	driftedBody := make([]byte, 0, len(body)+1)
+	driftedBody = append(driftedBody, 0xbf)
+	driftedBody = append(driftedBody, body[1:]...)
+	driftedBody = append(driftedBody, 0xff)
+	arr[0] = cbor.RawMessage(driftedBody)
+	encoded, err := cbor.Encode(arr)
+	if err != nil {
+		t.Fatalf("encode drifted unsigned tx: %v", err)
 	}
 	return hex.EncodeToString(encoded)
 }
@@ -999,6 +1033,58 @@ func TestSignTxRejectsSidecarMismatchBeforeUnlock(t *testing.T) {
 	}
 	if ks.unlockCalls != 0 {
 		t.Fatalf("SignTx unlocked keystore %d times for mismatched sidecar", ks.unlockCalls)
+	}
+}
+
+func TestSignTxHashesOriginalBodyCbor(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	fc := newFakeChain(5_000_000, acct.ReceiveAddresses[0])
+	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	pv, err := s.Build(context.Background(), SendRequest{
+		To:       acct.ReceiveAddresses[2],
+		Lovelace: "1000000",
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+
+	driftedTx := unsignedWithIndefiniteBodyMap(t, unsigned.UnsignedTxCBOR)
+	txBytes, err := hex.DecodeString(driftedTx)
+	if err != nil {
+		t.Fatalf("decode drifted tx hex: %v", err)
+	}
+	tx, err := ledger.NewConwayTransactionFromCbor(txBytes)
+	if err != nil {
+		t.Fatalf("decode drifted tx: %v", err)
+	}
+	originalBodyHash := lcommon.Blake2b256Hash(tx.Body.Cbor())
+	reencodedBody, err := cbor.Encode(&tx.Body)
+	if err != nil {
+		t.Fatalf("re-encode drifted body: %v", err)
+	}
+	reencodedBodyHash := lcommon.Blake2b256Hash(reencodedBody)
+	if originalBodyHash == reencodedBodyHash {
+		t.Fatal("test fixture did not create a body CBOR hash drift")
+	}
+
+	wit, err := s.SignTx(driftedTx, "pw", unsigned.RequiredSigners)
+	if err != nil {
+		t.Fatalf("SignTx: %v", err)
+	}
+	witnesses := decodeWitnesses(t, wit)
+	if len(witnesses) != 1 {
+		t.Fatalf("offline witnesses = %d, want 1", len(witnesses))
+	}
+	if err := lcommon.VerifyVKeySignature(witnesses[0].Vkey, witnesses[0].Signature, originalBodyHash.Bytes()); err != nil {
+		t.Fatalf("witness does not verify against original body hash: %v", err)
+	}
+	if err := lcommon.VerifyVKeySignature(witnesses[0].Vkey, witnesses[0].Signature, reencodedBodyHash.Bytes()); err == nil {
+		t.Fatal("witness unexpectedly verifies against re-encoded body hash")
 	}
 }
 
