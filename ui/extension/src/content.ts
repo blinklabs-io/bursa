@@ -1,4 +1,6 @@
 // Inject the provider script into the page's main world
+const pageTargetOrigin = '*';
+
 const script = document.createElement('script');
 script.src = chrome.runtime.getURL('injected.js');
 script.type = 'module';
@@ -14,7 +16,6 @@ window.addEventListener('message', (event) => {
     // is set and response is undefined. Without this guard the page's CIP-30 call hangs
     // forever, so relay an error reply carrying the ORIGINAL request id.
     if (chrome.runtime.lastError || !response) {
-      const targetOrigin = window.location.origin;
       window.postMessage(
         {
           source: 'bursa-cip30-reply',
@@ -24,12 +25,12 @@ window.addEventListener('message', (event) => {
             info: chrome.runtime.lastError?.message ?? 'No response from Bursa background',
           },
         },
-        targetOrigin,
+        pageTargetOrigin,
       );
       return;
     }
     // Relay reply back to the page
-    window.postMessage({ source: 'bursa-cip30-reply', ...response }, window.location.origin);
+    window.postMessage({ source: 'bursa-cip30-reply', ...response }, pageTargetOrigin);
   });
 });
 

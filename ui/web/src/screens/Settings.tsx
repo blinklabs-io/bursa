@@ -153,25 +153,24 @@ function LeanStorageCard() {
 
 export function Settings({ account, spendingEnabled }: SettingsProps) {
   const status = useStatus();
-  const [connectorDisabled, setConnectorDisabled] = useState(false);
+  const [connectorMissing, setConnectorMissing] = useState(false);
   const loadConnectorState = useCallback(async () => {
     try {
       const state = await getConnectorState();
-      setConnectorDisabled(false);
+      setConnectorMissing(false);
       return state;
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
-        setConnectorDisabled(true);
+        setConnectorMissing(true);
         return null;
       }
       throw e;
     }
   }, []);
   const connectorState = useAsync(loadConnectorState, {
-    pollMs: connectorDisabled ? undefined : 3000,
-    enabled: !connectorDisabled,
+    pollMs: 3000,
   });
-  const connectorAvailable = !connectorDisabled && connectorState.data !== null;
+  const connectorAvailable = !connectorMissing && connectorState.data !== null;
   const pendingPairs = useAsync(pendingPairings, {
     pollMs: connectorAvailable ? 3000 : undefined,
     enabled: connectorAvailable,
@@ -275,7 +274,7 @@ export function Settings({ account, spendingEnabled }: SettingsProps) {
         <p>{spendingEnabled ? "Spending enabled" : "Read-only"}</p>
       </Card>
 
-      {!connectorDisabled && (
+      {!connectorMissing && (
         <Card title="dApp Connector">
         {connectorState.loading && !connectorState.data ? (
           <p>Loading…</p>

@@ -27,6 +27,7 @@ const { handleRequest } = await import('../src/background');
 
 describe('background worker', () => {
   beforeEach(() => {
+    vi.unstubAllGlobals();
     // Reset storage and mocks between tests
     for (const key of Object.keys(storageMock)) {
       delete storageMock[key];

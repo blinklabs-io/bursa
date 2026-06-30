@@ -52,8 +52,13 @@ func NewTokenStore(path string, now func() time.Time, rnd func() (string, error)
 	}
 	ts := &TokenStore{path: path, now: now, rnd: rnd}
 	if b, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(b, &ts.data)
-		ts.data.ExtensionID = normalizeExtensionID(ts.data.ExtensionID)
+		var data tokenData
+		if err := json.Unmarshal(b, &data); err == nil {
+			data.ExtensionID = normalizeExtensionID(data.ExtensionID)
+			if data.Token != "" && validExtensionID(data.ExtensionID) {
+				ts.data = data
+			}
+		}
 	}
 	return ts
 }

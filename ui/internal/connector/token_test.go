@@ -93,6 +93,30 @@ func TestTokenStorePersistsAndClears(t *testing.T) {
 	}
 }
 
+func TestTokenStoreLoadsOnlyValidPersistedPairings(t *testing.T) {
+	dir := t.TempDir()
+
+	validPath := filepath.Join(dir, "valid-token.json")
+	if err := os.WriteFile(validPath, []byte(`{"extension_id":"abc","token":"tok"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	valid := NewTokenStore(validPath, nil, func() (string, error) { return "unused", nil })
+	extID, tok, ok := valid.Pair()
+	if !ok || extID != "chrome-extension://abc" || tok != "tok" {
+		t.Fatalf("Pair() = (%q, %q, %v), want normalized valid persisted pair", extID, tok, ok)
+	}
+
+	invalidPath := filepath.Join(dir, "invalid-token.json")
+	if err := os.WriteFile(invalidPath, []byte(`{"extension_id":"https://evil.example","token":"tok"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	invalid := NewTokenStore(invalidPath, nil, func() (string, error) { return "unused", nil })
+	extID, tok, ok = invalid.Pair()
+	if ok || extID != "" || tok != "" {
+		t.Fatalf("Pair() = (%q, %q, %v), want invalid persisted pair ignored", extID, tok, ok)
+	}
+}
+
 func TestTokenStoreClearWhenAbsent(t *testing.T) {
 	ts := NewTokenStore(t.TempDir()+"/token.json", nil, func() (string, error) { return "tok", nil })
 	if err := ts.Clear(); err != nil {

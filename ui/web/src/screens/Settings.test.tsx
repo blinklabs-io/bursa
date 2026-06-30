@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Settings } from "./Settings";
 import * as hooks from "../api/hooks";
 import * as client from "../api/client";
@@ -53,6 +53,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 test("(a) renders network from account prop", () => {
@@ -285,4 +286,30 @@ test("(t) connector: hides card and skips pending pairing poll when endpoint is 
 
   await waitFor(() => expect(screen.queryByText("dApp Connector")).toBeNull());
   expect(pendingSpy).not.toHaveBeenCalled();
+});
+
+test("(u) connector: recovers after a transient missing endpoint", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  mockStatus("ready", 12345, true);
+  const state: ConnectorState = {
+    paired: false,
+    extension_id: "",
+    origins: [],
+  };
+  const stateSpy = vi
+    .spyOn(connectorApi, "getConnectorState")
+    .mockRejectedValueOnce(new client.ApiError(404, "not found"))
+    .mockResolvedValue(state);
+  vi.spyOn(connectorApi, "pendingPairings").mockResolvedValue([]);
+
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+
+  await waitFor(() => expect(screen.queryByText("dApp Connector")).toBeNull());
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+
+  await waitFor(() => expect(screen.getByText("dApp Connector")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("Not paired")).toBeInTheDocument());
+  expect(stateSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
 });

@@ -66,7 +66,7 @@ describe('content script', () => {
 
     expect(postMessageSpy).toHaveBeenCalledWith(
       { source: 'bursa-cip30-reply', id: '1', result: 1 },
-      window.location.origin
+      '*'
     );
   });
 
