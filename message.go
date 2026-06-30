@@ -342,6 +342,20 @@ type coseSign1 struct {
 	Signature   []byte
 }
 
+// SignaturePayloadHashed returns the CIP-8/CIP-30 COSE "hashed" header value
+// from a hex-encoded COSE_Sign1 signature. It does not verify the signature.
+func SignaturePayloadHashed(signatureHex string) (bool, error) {
+	sigBytes, err := decodeHex(signatureHex)
+	if err != nil {
+		return false, err
+	}
+	var c coseSign1
+	if _, err := cbor.Decode(sigBytes, &c); err != nil {
+		return false, fmt.Errorf("failed to decode COSE_Sign1: %w", err)
+	}
+	return extractPayloadHashed(c.Protected, c.Unprotected)
+}
+
 // extractCoseKeyPub extracts the public key (label -2) from a COSE_Key.
 func extractCoseKeyPub(keyBytes []byte) ([]byte, error) {
 	var m map[any]cbor.RawMessage

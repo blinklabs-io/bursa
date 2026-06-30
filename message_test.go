@@ -314,6 +314,67 @@ func TestVerifyData_HashedPayload(t *testing.T) {
 	}
 }
 
+func TestSignaturePayloadHashed(t *testing.T) {
+	lk := testLoadedKey(make([]byte, 32))
+	addr := testEnterpriseAddress(t, lk.VKey)
+	payload := []byte("payload signed through CIP-8 hashed mode")
+
+	defaultSig, _, err := SignData(addr, payload, lk)
+	if err != nil {
+		t.Fatalf("SignData: %v", err)
+	}
+
+	protectedSig, _ := testCoseSign1Hex(t, lk, addr, payload, payload, true, true)
+	unprotectedSig, _ := testCoseSign1Hex(t, lk, addr, payload, payload, true, false)
+
+	tests := []struct {
+		name string
+		sig  string
+		want bool
+	}{
+		{name: "default false", sig: defaultSig},
+		{name: "protected true", sig: protectedSig, want: true},
+		{name: "unprotected true", sig: unprotectedSig, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := SignaturePayloadHashed(tt.sig)
+			if err != nil {
+				t.Fatalf("SignaturePayloadHashed: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("SignaturePayloadHashed = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSignaturePayloadHashedRejectsDuplicateHeader(t *testing.T) {
+	lk := testLoadedKey(make([]byte, 32))
+	addr := testEnterpriseAddress(t, lk.VKey)
+	protected, err := cbor.Encode(map[any]any{
+		int64(1):  int64(coseAlgEdDSA),
+		"address": addr,
+		"hashed":  true,
+	})
+	if err != nil {
+		t.Fatalf("encode protected headers: %v", err)
+	}
+	coseSign1Bytes, err := cbor.Encode([]any{
+		protected,
+		map[any]any{"hashed": true},
+		[]byte("payload"),
+		[]byte("signature"),
+	})
+	if err != nil {
+		t.Fatalf("encode COSE_Sign1: %v", err)
+	}
+
+	if _, err := SignaturePayloadHashed(hex.EncodeToString(coseSign1Bytes)); err == nil {
+		t.Fatal("SignaturePayloadHashed must reject duplicated hashed headers")
+	}
+}
+
 func TestVerifyData_TamperedPayloadFails(t *testing.T) {
 	lk := testLoadedKey(make([]byte, 32))
 	addr := testEnterpriseAddress(t, lk.VKey)
