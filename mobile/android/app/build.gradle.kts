@@ -49,4 +49,10 @@ dependencies {
     implementation(files("libs/bursa.aar"))
 
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // NotificationCompat / ContextCompat for the foreground-service notification
+    // and the startForegroundService + permission-check helpers.
+    implementation("androidx.core:core-ktx:1.13.1")
+    // registerForActivityResult / ActivityResultContracts for the runtime
+    // POST_NOTIFICATIONS request on API 33+.
+    implementation("androidx.activity:activity-ktx:1.9.3")
 }

@@ -13,66 +13,80 @@
 // limitations under the License.
 package io.blinklabs.bursa
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.ComponentName
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
+import android.content.Intent
+import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.webkit.WebView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 
-// The gomobile binding. `gomobile bind -javapkg io.blinklabs.bursa` emits the Go
-// `mobile` package as the Java class `io.blinklabs.bursa.mobile.Mobile`, with
-// `App` as `io.blinklabs.bursa.mobile.App`. The Go `New()` constructor becomes
-// `Mobile.new_()` (gomobile suffixes the Java keyword `new`).
-import io.blinklabs.bursa.mobile.App
-import io.blinklabs.bursa.mobile.Mobile
-
-// MainActivity boots the in-process wallet (the embedded lean Dingo node + the
-// loopback control surface that serves the API and the embedded SPA), then
-// points a full-screen WebView at the loopback URL the wallet chose.
+// MainActivity no longer owns the wallet. The embedded node + loopback control
+// surface live in WalletService (a foreground Service) so they survive the
+// Activity being backgrounded/destroyed. MainActivity starts that service,
+// binds to it, reads the loopback port() from the binder once the wallet has
+// booted, and points a full-screen WebView at it.
+//
+// The ConnectivityManager.NetworkCallback (F2) lives in the service now; the
+// onResume threshold logic (F3) stays here but routes its heavy re-dial to the
+// bound service-held App.
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var app: App
     private lateinit var webView: WebView
-    private var connectivityManager: ConnectivityManager? = null
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
-    // Resume-threshold: only trigger a full OnResume re-dial when the app has
-    // been backgrounded longer than this. Quick app-switches (e.g. permission
-    // prompts, recent-apps gestures) do not bounce the node; only extended
-    // suspension causes peers to go stale.
+    // Binder to the wallet service. Non-null only while bound.
+    private var walletBinder: WalletService.LocalBinder? = null
+    private var bound = false
+
+    // Resume-threshold (F3): only trigger a full OnResume re-dial when the app
+    // has been backgrounded longer than this. Quick app-switches (permission
+    // prompts, recent-apps gestures) do not bounce the node.
     private val resumeThresholdMs = 30_000L
     private var pauseTimestampMs = 0L
 
-    // Debounce handler: avoid thrashing Reconnect on rapid network transitions
-    // (e.g. WiFi hand-off to cellular). A 500 ms window absorbs back-to-back
-    // onLost→onAvailable events from a single interface change.
-    private val debounceHandler = Handler(Looper.getMainLooper())
-    private val reconnectRunnable = Runnable { handleNetworkChange() }
-    private val debounceDelayMs = 500L
+    // The wallet boots asynchronously inside the service, so the port may be 0
+    // for a moment after we bind. We poll the binder until it reports a non-zero
+    // port, then load the WebView (handles the bind-before-boot race).
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val portPollDelayMs = 100L
+    private var webViewLoaded = false
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            walletBinder = service as? WalletService.LocalBinder
+            bound = true
+            // The wallet may still be booting; wait for a real port.
+            loadWebViewWhenReady()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            // The service process went away (e.g. crash). Drop the binder; the
+            // system will rebind when it returns.
+            walletBinder = null
+            bound = false
+        }
+    }
+
+    // Runtime POST_NOTIFICATIONS request (Android 13+). The result is ignored:
+    // the service still runs and the notification still posts whether or not the
+    // user grants it — denial only suppresses the visible notification.
+    private val requestNotificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* granted: Boolean — intentionally ignored */ }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Boot the wallet in-process. filesDir is the app-private writable data
-        // dir; "preview" is the network; lean = true selects the history-expiry
-        // profile (small on-disk footprint) appropriate for a phone. start()
-        // surfaces a boot failure as a (Java-checked) Exception; fail visibly
-        // rather than loading a WebView against a port that was never bound.
-        app = Mobile.new_()
-        try {
-            app.start(filesDir.absolutePath, "preview", true)
-        } catch (e: Exception) {
-            android.util.Log.e("bursa", "wallet start failed", e)
-            finish()
-            return
-        }
+        maybeRequestNotificationPermission()
 
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
@@ -84,106 +98,77 @@ class MainActivity : AppCompatActivity() {
         }
         setContentView(webView)
 
-        // app.port() is the OS-assigned loopback port the control surface bound.
-        webView.loadUrl("http://127.0.0.1:${app.port()}/")
-
-        registerNetworkCallback()
+        // Start the wallet as a foreground service so it keeps running even when
+        // this Activity is backgrounded or destroyed, then bind to read its
+        // loopback port. startForegroundService promotes the service to the
+        // foreground (it calls startForeground within the required window).
+        val intent = Intent(this, WalletService::class.java)
+        ContextCompat.startForegroundService(this, intent)
+        bindService(intent, connection, Context.BIND_AUTO_CREATE)
     }
 
-    // registerNetworkCallback subscribes to connectivity events so the node
-    // re-dials peers when the host network changes. ACCESS_NETWORK_STATE is
-    // declared in AndroidManifest.xml (no runtime prompt needed — it is a
-    // normal/install-time permission).
-    private fun registerNetworkCallback() {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            ?: return
-        connectivityManager = cm
-
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                // A new network is usable — schedule a debounced reconnect.
-                scheduleReconnect()
-            }
-
-            override fun onLost(network: Network) {
-                // The current network was lost — schedule a debounced reconnect
-                // so the node drops dead peers and re-dials on the next
-                // available interface.
-                scheduleReconnect()
-            }
+    // maybeRequestNotificationPermission asks for POST_NOTIFICATIONS on API 33+.
+    // On older versions the permission is granted at install time and no prompt
+    // is needed. The foreground service runs regardless of the answer.
+    private fun maybeRequestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        networkCallback = callback
-        cm.registerNetworkCallback(request, callback)
     }
 
-    private fun scheduleReconnect() {
-        // Cancel any pending reconnect and restart the debounce window so
-        // rapid transitions (onLost immediately followed by onAvailable) are
-        // collapsed into a single call.
-        debounceHandler.removeCallbacks(reconnectRunnable)
-        debounceHandler.postDelayed(reconnectRunnable, debounceDelayMs)
-    }
-
-    private fun handleNetworkChange() {
-        // Must NOT run on the main thread: app.onNetworkChanged() performs a
-        // node Stop+relaunch which is a blocking, I/O-bound operation.
-        Thread {
-            try {
-                app.onNetworkChanged()
-            } catch (e: Exception) {
-                android.util.Log.w("bursa", "onNetworkChanged failed", e)
+    // loadWebViewWhenReady loads the WebView once the bound service reports a
+    // non-zero loopback port. If the wallet is still booting (port == 0) it
+    // re-polls on the main thread. Idempotent: loads at most once.
+    private fun loadWebViewWhenReady() {
+        if (webViewLoaded) return
+        val port = walletBinder?.port() ?: 0
+        if (port == 0) {
+            // Still booting (or briefly unbound) — try again shortly.
+            if (bound) {
+                mainHandler.postDelayed({ loadWebViewWhenReady() }, portPollDelayMs)
             }
-            // Reload the WebView on the main thread after the node has
-            // re-dialled so the SPA reconnects to the refreshed control surface.
-            runOnUiThread {
-                if (this::webView.isInitialized) {
-                    webView.reload()
-                }
-            }
-        }.start()
+            return
+        }
+        webViewLoaded = true
+        webView.loadUrl("http://127.0.0.1:$port/")
     }
 
-    // onPause records the instant the app leaves the foreground so onResume can
-    // compute how long it was backgrounded.
+    // onPause records when the app left the foreground so onResume can compute
+    // how long it was backgrounded.
     override fun onPause() {
         super.onPause()
         pauseTimestampMs = System.currentTimeMillis()
     }
 
-    // onResume is called every time the activity becomes visible: on initial
-    // start, after a quick app-switch, and after extended background suspension.
-    //
-    // Strategy:
-    //  - Always reload the WebView (cheap) so the SPA's visibilitychange
-    //    listener fires and data views refetch.
-    //  - Only call app.onResume() (heavyweight: Stop+relaunch the node) when
-    //    the app has been suspended longer than resumeThresholdMs, because peers
-    //    only go fully stale after extended suspension. Quick switches are
-    //    handled by the SPA reload alone.
-    //  - Guard against being called before the wallet has been started.
+    // onResume (F3): on becoming visible again, always do the cheap WebView
+    // reload so the SPA refetches, and only route a heavy app.onResume() re-dial
+    // to the service when the app was suspended longer than the threshold.
     override fun onResume() {
         super.onResume()
 
-        // Always do the lightweight WebView reload so the SPA refetches.
-        if (this::webView.isInitialized) {
+        // Always do the lightweight WebView reload so the SPA refetches — but
+        // only once it has actually loaded a URL (avoid reloading about:blank
+        // before the first load).
+        if (webViewLoaded) {
             webView.reload()
         }
 
-        // Skip the heavy re-dial if the wallet has not been started yet or if
-        // the suspension was shorter than the threshold.
-        if (!this::app.isInitialized) return
+        // Skip the heavy re-dial if the suspension was shorter than the
+        // threshold (quick app-switch handled by the reload alone).
         val elapsed = if (pauseTimestampMs > 0) System.currentTimeMillis() - pauseTimestampMs else 0L
         if (elapsed < resumeThresholdMs) return
 
-        // The app was backgrounded long enough that TCP connections to peers
-        // may have been torn down. Re-dial on a background thread.
+        // Route the re-dial to the service-held App, off the main thread
+        // (onResume() does a node Stop+relaunch).
+        val binder = walletBinder ?: return
         Thread {
             try {
-                app.onResume()
+                binder.onResume()
             } catch (e: Exception) {
                 android.util.Log.w("bursa", "onResume re-dial failed", e)
             }
@@ -191,21 +176,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        // Cancel any pending debounced reconnect.
-        debounceHandler.removeCallbacks(reconnectRunnable)
+        // Stop polling for the port.
+        mainHandler.removeCallbacksAndMessages(null)
 
-        // Unregister the network callback before tearing the wallet down so
-        // no late callbacks try to call app.onNetworkChanged() after Stop.
-        networkCallback?.let { cb ->
-            connectivityManager?.unregisterNetworkCallback(cb)
+        // Unbind from — but do NOT stop — the service: the whole point is that
+        // the node keeps running (and syncing) after the Activity is gone. The
+        // system manages the foreground service's lifetime from here.
+        if (bound) {
+            unbindService(connection)
+            bound = false
         }
-        networkCallback = null
+        walletBinder = null
 
-        // Tear the wallet down: drains the control surface and winds down the
-        // in-process node.
-        if (this::app.isInitialized) {
-            app.stop()
-        }
         if (this::webView.isInitialized) {
             webView.destroy()
         }
