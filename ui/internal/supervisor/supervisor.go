@@ -56,6 +56,27 @@ type Config struct {
 	HistoryExpiry func() bool
 }
 
+// NodeRunner is the interface the supervisor uses to create and run the embedded
+// node. It is an interface (not a concrete dingo.Node) so the orchestration can
+// be unit-tested without network connectivity (the production implementation
+// calls dingo.New and then node.Run).
+type NodeRunner interface {
+	// Run starts the node and blocks until ctx is cancelled. An error from a
+	// graceful cancellation (ctx.Err() != nil) is treated as orderly shutdown.
+	Run(ctx context.Context) error
+}
+
+// NodeFactory creates a NodeRunner from a dingo config. It is injectable for
+// tests (the real factory calls dingo.New).
+type NodeFactory interface {
+	New(cfg dingo.Config) (NodeRunner, error)
+}
+
+// dingoNodeFactory is the production NodeFactory backed by dingo.New.
+type dingoNodeFactory struct{}
+
+func (dingoNodeFactory) New(cfg dingo.Config) (NodeRunner, error) { return dingo.New(cfg) }
+
 // Supervisor owns the embedded Dingo node's lifecycle and exposes its status.
 type Supervisor struct {
 	cfg    Config
@@ -75,6 +96,7 @@ type Supervisor struct {
 
 	now          func() time.Time // injectable clock for tests
 	bootstrapper Bootstrapper     // injectable for tests
+	nodeFactory  NodeFactory      // injectable for tests
 }
 
 func New(cfg Config) *Supervisor {
@@ -89,6 +111,7 @@ func New(cfg Config) *Supervisor {
 		status:       Status{State: StateStopped},
 		now:          time.Now,
 		bootstrapper: mithrilBootstrapper{logger: cfg.Logger},
+		nodeFactory:  dingoNodeFactory{},
 	}
 }
 
@@ -213,7 +236,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	// launch creates the node, marks it starting, and begins serving + polling.
 	// Used by both the direct and post-bootstrap paths.
 	launch := func() error {
-		node, err := dingo.New(nodeCfg)
+		node, err := s.nodeFactory.New(nodeCfg)
 		if err != nil {
 			return err
 		}
