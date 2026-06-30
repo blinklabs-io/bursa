@@ -362,6 +362,11 @@ a:hover {
   font-size: 0.875rem;
   margin: var(--space-1) 0;
 }
+.warning-text {
+  color: var(--warn);
+  font-size: 0.875rem;
+  margin: var(--space-1) 0;
+}
 /* Affirmative verdict (verification valid). Mirrors .error-text but positive. */
 .success-text {
   color: var(--ok);

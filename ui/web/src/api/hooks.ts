@@ -7,6 +7,7 @@ import type {
   DelegationView,
   VaultStatus,
   HistoryExpirySetting,
+  TPMStatus,
 } from "./types";
 import {
   getStatus,
@@ -16,6 +17,7 @@ import {
   getTransactions,
   getDelegation,
   getHistoryExpiry,
+  getTPMStatus,
 } from "./client";
 
 export interface AsyncState<T> {
@@ -23,6 +25,10 @@ export interface AsyncState<T> {
   error: Error | null;
   loading: boolean;
   refresh: () => void;
+  // setData lets a caller apply a fresher value it already holds (e.g. the body
+  // a mutation POST returned), so the UI reflects the new state even if the
+  // follow-up refresh GET later fails.
+  setData: (value: T) => void;
 }
 
 export function useAsync<T>(fn: () => Promise<T>, opts?: { pollMs?: number }): AsyncState<T> {
@@ -74,7 +80,12 @@ export function useAsync<T>(fn: () => Promise<T>, opts?: { pollMs?: number }): A
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick]);
 
-  return { data, error, loading, refresh };
+  const applyData = useCallback((value: T) => {
+    setData(value);
+    setError(null);
+  }, []);
+
+  return { data, error, loading, refresh, setData: applyData };
 }
 
 export const useStatus = (): AsyncState<Status> => useAsync(getStatus, { pollMs: 2000 });
@@ -84,3 +95,4 @@ export const useAddresses = (): AsyncState<AddressView> => useAsync(getAddresses
 export const useTransactions = (): AsyncState<Tx[]> => useAsync(getTransactions);
 export const useDelegation = (): AsyncState<DelegationView> => useAsync(getDelegation);
 export const useHistoryExpiry = (): AsyncState<HistoryExpirySetting> => useAsync(getHistoryExpiry);
+export const useTPMStatus = (): AsyncState<TPMStatus> => useAsync(getTPMStatus);

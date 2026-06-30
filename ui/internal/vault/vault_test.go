@@ -48,6 +48,22 @@ func newTestVault(t *testing.T) *Vault {
 	return v
 }
 
+// readEnvelopeFile reads the on-disk vault at path and unmarshals it into an
+// envelope. Shared by the at-rest tests so their setup + envelope decode stays
+// in one place and cannot drift apart.
+func readEnvelopeFile(t *testing.T, path string) envelope {
+	t.Helper()
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var env envelope
+	if err := json.Unmarshal(blob, &env); err != nil {
+		t.Fatalf("Unmarshal envelope: %v", err)
+	}
+	return env
+}
+
 func TestCreateAndUnlockEmptyVault(t *testing.T) {
 	v := newTestVault(t)
 	if v.Exists() {
@@ -434,6 +450,14 @@ func TestNoPlaintextSeedAtRest(t *testing.T) {
 	if env.Format != formatVersion {
 		t.Fatalf("format = %d, want %d", env.Format, formatVersion)
 	}
+	// Format 2: the VEK is wrapped under the vault password in the key section.
+	if env.Key == nil || env.Key.Password.Ciphertext == "" {
+		t.Fatal("format-2 vault missing wrapped-VEK key section")
+	}
+	// The 32-byte VEK must never appear in cleartext on disk.
+	if env.Key.Password.KDF != "scrypt" {
+		t.Fatalf("wrapped VEK not a scrypt container: %+v", env.Key.Password)
+	}
 	if env.Index.Ciphertext == "" {
 		t.Fatal("index ciphertext empty")
 	}
@@ -444,6 +468,48 @@ func TestNoPlaintextSeedAtRest(t *testing.T) {
 		if s.KDF != "scrypt" || s.Ciphertext == "" {
 			t.Fatalf("seed blob not a scrypt container: %+v", s)
 		}
+	}
+}
+
+// TestFormat2CreateLockUnlockRoundTrip exercises the VEK indirection end to end:
+// a new vault is created as format 2, and a fresh handle unlocks it after a lock.
+func TestFormat2CreateLockUnlockRoundTrip(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := v.AddWallet("main", mnemonicA, "preview", vaultPw, spendPwA, window); err != nil {
+		t.Fatalf("AddWallet: %v", err)
+	}
+
+	// On-disk file must be format 2 with a key section.
+	env := readEnvelopeFile(t, v.path)
+	if env.Format != 2 {
+		t.Fatalf("format = %d, want 2", env.Format)
+	}
+	if env.Key == nil || env.Key.Password.Ciphertext == "" {
+		t.Fatal("missing wrapped-VEK key section")
+	}
+
+	// The index is now encrypted under the VEK, NOT directly under the vault
+	// password: opening the index Container with the vault password must fail.
+	idxBlob, err := json.Marshal(env.Index)
+	if err != nil {
+		t.Fatalf("marshal index: %v", err)
+	}
+	_, open := keystore.CheapTestSealer()
+	if _, err := open(idxBlob, []byte(vaultPw)); err == nil {
+		t.Fatal("index should not decrypt directly under the vault password (VEK indirection)")
+	}
+
+	// Lock + fresh handle unlock round-trips.
+	v.Lock()
+	wallets, err := v.Unlock(vaultPw)
+	if err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+	if len(wallets) != 1 {
+		t.Fatalf("wallets = %d, want 1", len(wallets))
 	}
 }
 

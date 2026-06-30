@@ -355,3 +355,22 @@ export interface MigrateLegacyKeystoreRequest {
   vault_password: string;
   spend_password: string;
 }
+
+// TPM vault binding: machine-binding of the at-rest vault to a TPM 2.0 device.
+// This protects the vault key at rest (it does NOT protect the signing key).
+// The password protector is always kept as recovery — TPM loss never bricks the vault.
+export interface TPMStatus {
+  available: boolean;
+  reason?: string;
+  enabled: boolean;
+  pcrBound: boolean;
+}
+
+export interface EnableTPMRequest {
+  password: string;
+  pcrBound?: boolean;
+}
+
+export interface DisableTPMRequest {
+  password: string;
+}

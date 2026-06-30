@@ -9,6 +9,7 @@ require (
 	github.com/blinklabs-io/go-bip39 v0.2.0
 	github.com/blinklabs-io/gouroboros v0.186.0
 	github.com/blinklabs-io/plutigo v0.1.15
+	github.com/google/go-tpm v0.9.8
 	github.com/gowebpki/jcs v1.0.1
 	github.com/utxorpc/go-codegen v0.19.2
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
@@ -114,6 +115,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/go-tpm-tools v0.4.9 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/google/uuid v1.6.0 // indirect
