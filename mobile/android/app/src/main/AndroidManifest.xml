@@ -11,6 +11,16 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- The node lives in a foreground Service so it keeps syncing while the app
+         is backgrounded. FOREGROUND_SERVICE is required to run any foreground
+         service (API 28+); FOREGROUND_SERVICE_DATA_SYNC is the typed permission
+         required on API 34+ for the dataSync foregroundServiceType. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Required on API 33+ to post the ongoing "syncing" notification; requested
+         at runtime. The service still runs if the user denies it. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="false"
         android:label="Bursa"
@@ -28,5 +38,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The foreground Service that owns the embedded node + loopback control
+             surface. foregroundServiceType="dataSync" is required on API 34+ and
+             MUST match the type passed to startForeground() in the service. Not
+             exported: only this app's MainActivity binds to it. -->
+        <service
+            android:name=".WalletService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
