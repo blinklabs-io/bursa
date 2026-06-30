@@ -22,7 +22,9 @@ import (
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
+	gocbor "github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/blinklabs-io/gouroboros/ledger/conway"
 )
 
 // ErrNoWallet is returned when Build is called without a wallet account configured.
@@ -403,6 +405,119 @@ func (s *Service) SignData(addrStr string, message []byte, password string) (sig
 	return bursa.SignData(addrBytes, message, lk)
 }
 
+// PubDRepKey unlocks the keystore with the given password, derives the DRep key
+// (CIP-0105, derivation role 3: m/1852'/1815'/0'/3/0), and returns the raw
+// 32-byte Ed25519 public key. The private key material is zeroed before returning.
+func (s *Service) PubDRepKey(password string) ([]byte, error) {
+	if s.keys == nil {
+		return nil, errors.New("no keystore configured")
+	}
+
+	// Bind to the active wallet's seed (not merely the active vault default) so
+	// the derived key always matches the account the approval was issued for,
+	// even if the active selection changes between approval and unlock.
+	walletID, acct, _ := s.currentBinding()
+	if acct == nil {
+		return nil, ErrNoWallet
+	}
+	mnemonicBytes, err := s.unlockSeed(walletID, password)
+	if err != nil {
+		if errors.Is(err, keystore.ErrDecryptFailed) {
+			return nil, fmt.Errorf("%w: %w", ErrWrongPassword, err)
+		}
+		return nil, fmt.Errorf("unlock keystore: %w", err)
+	}
+	defer func() {
+		for i := range mnemonicBytes {
+			mnemonicBytes[i] = 0
+		}
+	}()
+
+	var rootKey, acctKey, drepKey bip32.XPrv
+	defer func() {
+		for _, k := range []bip32.XPrv{rootKey, acctKey, drepKey} {
+			for i := range k {
+				k[i] = 0
+			}
+		}
+	}()
+
+	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	if err != nil {
+		return nil, fmt.Errorf("root key: %w", err)
+	}
+	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		return nil, fmt.Errorf("account key: %w", err)
+	}
+	drepKey, err = bursa.GetDRepKey(acctKey, 0)
+	if err != nil {
+		return nil, fmt.Errorf("drep key: %w", err)
+	}
+
+	// Return a copy of the public key before zeroing drepKey.
+	pub := bip32.XPrv(drepKey).Public().PublicKey()
+	out := make([]byte, len(pub))
+	copy(out, pub)
+	return out, nil
+}
+
+// PubStakeKey unlocks the keystore with the given password, derives the stake key
+// (CIP-1852, derivation role 2: m/1852'/1815'/0'/2/0), and returns the raw
+// 32-byte Ed25519 public key. The private key material is zeroed before returning.
+func (s *Service) PubStakeKey(password string) ([]byte, error) {
+	if s.keys == nil {
+		return nil, errors.New("no keystore configured")
+	}
+
+	// Bind to the active wallet's seed (see PubDRepKey) so the derived stake key
+	// matches the account the approval was issued for.
+	walletID, acct, _ := s.currentBinding()
+	if acct == nil {
+		return nil, ErrNoWallet
+	}
+	mnemonicBytes, err := s.unlockSeed(walletID, password)
+	if err != nil {
+		if errors.Is(err, keystore.ErrDecryptFailed) {
+			return nil, fmt.Errorf("%w: %w", ErrWrongPassword, err)
+		}
+		return nil, fmt.Errorf("unlock keystore: %w", err)
+	}
+	defer func() {
+		for i := range mnemonicBytes {
+			mnemonicBytes[i] = 0
+		}
+	}()
+
+	var rootKey, acctKey, stakeKey bip32.XPrv
+	defer func() {
+		for _, k := range []bip32.XPrv{rootKey, acctKey, stakeKey} {
+			for i := range k {
+				k[i] = 0
+			}
+		}
+	}()
+
+	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	if err != nil {
+		return nil, fmt.Errorf("root key: %w", err)
+	}
+	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		return nil, fmt.Errorf("account key: %w", err)
+	}
+	stakeKey, err = bursa.GetStakeKey(acctKey, 0)
+	if err != nil {
+		return nil, fmt.Errorf("stake key: %w", err)
+	}
+
+	// Return a copy of the public key before zeroing stakeKey.
+	pub := bip32.XPrv(stakeKey).Public().PublicKey()
+	out := make([]byte, len(pub))
+	copy(out, pub)
+	return out, nil
+}
+
 // sweepExpiredLocked drops pending entries past their TTL. Callers hold s.mu.
 func (s *Service) sweepExpiredLocked() {
 	now := s.now()
@@ -701,6 +816,233 @@ func cloneAccount(acct *wallet.Account) *wallet.Account {
 	cp := *acct
 	cp.ReceiveAddresses = append([]string(nil), acct.ReceiveAddresses...)
 	return &cp
+}
+
+// Submit submits a fully-signed transaction (raw CBOR bytes) to the chain.
+// It returns the tx hash as a hex string. This is the SubmitTx path for
+// externally-signed transactions (CIP-30 connector); it reuses the same
+// backend.ChainContext the spend service uses for its own Confirm flow.
+func (s *Service) Submit(ctx context.Context, txBytes []byte) (string, error) {
+	txHash, err := s.chain.SubmitTx(context.WithoutCancel(ctx), txBytes)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+	}
+	return hex.EncodeToString(txHash.Bytes()), nil
+}
+
+// WitnessTx derives the wallet's signing keys and builds a CBOR witness set
+// for an external transaction.  The caller provides:
+//   - txBodyCbor: the raw CBOR of the transaction body (used to compute the hash
+//     that is signed; must equal the body embedded in the original tx).
+//   - requiredSignerHashes: the Blake2b224 key hashes from the tx body's
+//     required-signers field (key 14); all matching keys are signed regardless
+//     of partialSign.
+//   - inputAddrs: the bech32 addresses of the transaction's inputs that the
+//     wallet may own (resolved by the caller using its address window).
+//   - password: unlocks the keystore.
+//   - partialSign: when false, WitnessTx returns an error if no key matches at
+//     all (the tx requires at least one signature this wallet cannot provide);
+//     when true, an empty witness set is acceptable.
+//
+// Returns the CBOR-encoded ConwayTransactionWitnessSet containing only the
+// VkeyWitnesses this wallet can provide.
+func (s *Service) WitnessTx(
+	txBodyCbor []byte,
+	requiredSignerHashes []lcommon.Blake2b224,
+	inputAddrs []string,
+	password string,
+	partialSign bool,
+) ([]byte, error) {
+	if s.keys == nil {
+		return nil, errors.New("no keystore configured")
+	}
+	walletID, acct, _ := s.currentBinding()
+	if acct == nil {
+		return nil, ErrNoWallet
+	}
+
+	// Unlock the active wallet's seed (walletID-bound), not merely the active
+	// vault default, so the witnesses are produced from the same account whose
+	// address window was used to resolve which keys to sign with.
+	mnemonicBytes, err := s.unlockSeed(walletID, password)
+	if err != nil {
+		if errors.Is(err, keystore.ErrDecryptFailed) {
+			return nil, fmt.Errorf("%w: %w", ErrWrongPassword, err)
+		}
+		return nil, fmt.Errorf("unlock keystore: %w", err)
+	}
+	defer func() {
+		for i := range mnemonicBytes {
+			mnemonicBytes[i] = 0
+		}
+	}()
+
+	// Derive account key.
+	var rootKey, acctKey bip32.XPrv
+	defer func() {
+		for _, k := range []bip32.XPrv{rootKey, acctKey} {
+			for i := range k {
+				k[i] = 0
+			}
+		}
+	}()
+
+	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	if err != nil {
+		return nil, fmt.Errorf("root key: %w", err)
+	}
+	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		return nil, fmt.Errorf("account key: %w", err)
+	}
+
+	// Hash the tx body to get the signing target.
+	txBodyHash := lcommon.Blake2b256Hash(txBodyCbor)
+
+	// Build a map: bech32 address → derivation index for every address the wallet
+	// can sign for. The wallet derives only role-0 (payment/receive) addresses via
+	// GetPaymentKey; the first receive address also serves as the change address
+	// (see Build), so there is no separate role-1 window to enumerate. An address
+	// absent from this map MUST NOT be signed — defaulting to index 0 would attach
+	// a witness from the wrong key. If a role-1 change window is ever added, it
+	// must be enumerated here with its own derivation path so the correct key is
+	// derived per address.
+	idxOf := make(map[string]uint32, len(acct.ReceiveAddresses))
+	for i, addrStr := range acct.ReceiveAddresses {
+		idxOf[addrStr] = uint32(i) //nolint:gosec // bounded by window size
+	}
+
+	// Build required signer set for quick lookup.
+	reqSet := make(map[lcommon.Blake2b224]bool, len(requiredSignerHashes))
+	for _, h := range requiredSignerHashes {
+		reqSet[h] = true
+	}
+
+	// Collect address→index for every address we must sign for. Only addresses
+	// present in idxOf are eligible (no silent index-0 fallback):
+	// - Inputs at addresses the wallet owns.
+	// - Addresses whose payment key matches a required signer.
+	signIdx := make(map[string]uint32)
+	for _, addrStr := range inputAddrs {
+		if idx, owned := idxOf[addrStr]; owned {
+			signIdx[addrStr] = idx
+		}
+	}
+	signStake := false
+	signDRep := false
+
+	// For required signers: iterate all owned signing keys to find matches. This
+	// includes payment keys plus non-payment wallet witnesses such as stake and
+	// DRep keys.
+	if len(reqSet) > 0 {
+		for i, addrStr := range acct.ReceiveAddresses {
+			payKey, err := bursa.GetPaymentKey(acctKey, uint32(i)) //nolint:gosec // bounded by window size
+			if err != nil {
+				continue
+			}
+			vkeyHash := lcommon.Blake2b224Hash(bip32.XPrv(payKey).Public().PublicKey())
+			if reqSet[vkeyHash] {
+				signIdx[addrStr] = uint32(i) //nolint:gosec // bounded by window size
+			}
+			for j := range payKey {
+				payKey[j] = 0
+			}
+		}
+		stakeKey, err := bursa.GetStakeKey(acctKey, 0)
+		if err != nil {
+			return nil, fmt.Errorf("stake key: %w", err)
+		}
+		stakeVkeyHash := lcommon.Blake2b224Hash(bip32.XPrv(stakeKey).Public().PublicKey())
+		if reqSet[stakeVkeyHash] {
+			signStake = true
+		}
+		for j := range stakeKey {
+			stakeKey[j] = 0
+		}
+
+		drepKey, err := bursa.GetDRepKey(acctKey, 0)
+		if err != nil {
+			return nil, fmt.Errorf("drep key: %w", err)
+		}
+		drepVkeyHash := lcommon.Blake2b224Hash(bip32.XPrv(drepKey).Public().PublicKey())
+		if reqSet[drepVkeyHash] {
+			signDRep = true
+		}
+		for j := range drepKey {
+			drepKey[j] = 0
+		}
+	}
+
+	if len(signIdx) == 0 && !signStake && !signDRep && !partialSign {
+		return nil, fmt.Errorf(
+			"%w: no wallet key matches any required signer or input address in this transaction",
+			ErrInvalidRequest,
+		)
+	}
+
+	// Build vkey witnesses for all matched addresses using each address's own
+	// derivation index.
+	var witnesses []lcommon.VkeyWitness
+	appendWitness := func(key bip32.XPrv) {
+		witnesses = append(witnesses, lcommon.VkeyWitness{
+			Vkey:      bip32.XPrv(key).Public().PublicKey(),
+			Signature: bip32.XPrv(key).Sign(txBodyHash.Bytes()),
+		})
+	}
+	for _, idx := range signIdx {
+		payKey, err := bursa.GetPaymentKey(acctKey, idx)
+		if err != nil {
+			return nil, fmt.Errorf("payment key idx %d: %w", idx, err)
+		}
+		func() {
+			defer func() {
+				for j := range payKey {
+					payKey[j] = 0
+				}
+			}()
+			appendWitness(payKey)
+		}()
+	}
+	if signStake {
+		stakeKey, err := bursa.GetStakeKey(acctKey, 0)
+		if err != nil {
+			return nil, fmt.Errorf("stake key: %w", err)
+		}
+		func() {
+			defer func() {
+				for j := range stakeKey {
+					stakeKey[j] = 0
+				}
+			}()
+			appendWitness(stakeKey)
+		}()
+	}
+	if signDRep {
+		drepKey, err := bursa.GetDRepKey(acctKey, 0)
+		if err != nil {
+			return nil, fmt.Errorf("drep key: %w", err)
+		}
+		func() {
+			defer func() {
+				for j := range drepKey {
+					drepKey[j] = 0
+				}
+			}()
+			appendWitness(drepKey)
+		}()
+	}
+
+	// Encode witness set as CBOR using the ConwayTransactionWitnessSet type,
+	// which serialises as a map with integer keys (key 0 = vkey witnesses).
+	ws := conway.ConwayTransactionWitnessSet{}
+	if len(witnesses) > 0 {
+		ws.VkeyWitnesses = gocbor.NewSetType(witnesses, true)
+	}
+	wsCbor, err := gocbor.Encode(ws)
+	if err != nil {
+		return nil, fmt.Errorf("encode witness set: %w", err)
+	}
+	return wsCbor, nil
 }
 
 // randID generates a 16-byte random hex string for pending IDs.

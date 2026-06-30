@@ -34,6 +34,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/api"
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/settings"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
@@ -124,7 +125,8 @@ func run() error {
 	})
 
 	// The wallet queries the node's own loopback Blockfrost endpoint.
-	walletSvc := wallet.NewService(chain.NewClient(blockfrostPort))
+	chainClient := chain.NewClient(blockfrostPort)
+	walletSvc := wallet.NewService(chainClient)
 
 	// The vault is the encrypted multi-wallet store: a single file under the data
 	// dir holding the wallet index (encrypted under the vault password) and each
@@ -148,11 +150,18 @@ func run() error {
 	}
 	defer sup.Stop()
 
+	var connectorSvc *connector.Service
+	if envBool("BURSA_CONNECTOR", false) {
+		connectorBackend := connector.NewWalletBackend(walletSvc, spendSvc, nil, network, chainClient)
+		connectorSvc = connector.NewService(dataDir, connectorBackend, nil)
+	}
+
 	srv := &http.Server{
 		Addr: "127.0.0.1:8090", // loopback only
 		Handler: api.NewHandler(
 			sup, vlt, walletSvc, spendSvc,
 			&settingsController{store: settingsStore, sup: sup},
+			connectorSvc,
 			network, webui.Handler(),
 			api.WithLegacyKeystore(legacyKeyStore),
 		),

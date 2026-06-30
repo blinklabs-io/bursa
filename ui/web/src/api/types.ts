@@ -160,3 +160,28 @@ export interface MigrateLegacyKeystoreRequest {
   vault_password: string;
   spend_password: string;
 }
+
+// CIP-30 connector types.
+
+// ConnectorState is returned by GET /connector/grants.
+export interface ConnectorState {
+  paired: boolean;
+  extension_id: string;
+  origins: string[];
+}
+
+// ConnectorRequest is a pending consent request from a dApp.
+export interface ConnectorRequest {
+  id: string;
+  origin: string;
+  method: string;
+  params?: unknown;
+  created: string; // RFC3339 timestamp
+}
+
+// PendingPairing is a pairing that has been initiated (BeginPair) but not yet
+// confirmed. The code is present only after a vault-password reveal.
+export interface PendingPairing {
+  extension_id: string;
+  code?: string;
+}

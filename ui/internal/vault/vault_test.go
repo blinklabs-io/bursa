@@ -80,6 +80,28 @@ func TestCreateAndUnlockEmptyVault(t *testing.T) {
 	}
 }
 
+func TestVerifyPasswordDoesNotUnlockVault(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	v.Lock()
+
+	if err := v.VerifyPassword("wrong-password"); !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("VerifyPassword wrong = %v, want ErrWrongPassword", err)
+	}
+	if !v.Locked() {
+		t.Fatal("wrong password verification must not unlock vault")
+	}
+
+	if err := v.VerifyPassword(vaultPw); err != nil {
+		t.Fatalf("VerifyPassword: %v", err)
+	}
+	if !v.Locked() {
+		t.Fatal("successful password verification must not unlock vault")
+	}
+}
+
 func TestCreateRefusesOverwrite(t *testing.T) {
 	v := newTestVault(t)
 	if err := v.Create(vaultPw); err != nil {

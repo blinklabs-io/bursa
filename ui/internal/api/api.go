@@ -22,6 +22,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
@@ -65,6 +66,7 @@ type Spender interface {
 type Vault interface {
 	Exists() bool
 	Locked() bool
+	VerifyPassword(vaultPassword string) error
 	WalletCount() int
 	Create(vaultPassword string) error
 	Unlock(vaultPassword string) ([]vault.WalletMeta, error)
@@ -152,7 +154,9 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // whenever the selection changes. settings exposes user-facing app settings
 // (the lean-node profile). spa is the embedded SPA, registered as the catch-all
 // so the specific API routes take precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+// cn is the CIP-30 connector service; when nil the connector routes are not
+// registered (opt-in/off).
+func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cn *connector.Service, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -176,10 +180,19 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		}
 		_ = wl.SetAccount(w.Account)
 		sp.SetAccount(w.ID, w.Account)
+		// Keep the CIP-30 connector backend bound to the active wallet so dApp
+		// calls (getUtxos/getBalance/getRewardAddresses, signing) resolve against
+		// the current account rather than a nil or stale one.
+		if cn != nil {
+			cn.SetActiveAccount(w.Account)
+		}
 	}
 	clearActive := func() {
 		_ = wl.SetAccount(nil)
 		sp.SetAccount("", nil)
+		if cn != nil {
+			cn.SetActiveAccount(nil)
+		}
 	}
 	legacyAvailable := func() bool {
 		return !vlt.Exists() && cfg.legacy != nil && cfg.legacy.Exists()
@@ -458,6 +471,11 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			"restart_required": settings.HistoryExpiryRestartRequired(),
 		})
 	})
+
+	// CIP-30 connector: only registered when enabled (opt-in).
+	if cn != nil {
+		registerConnector(mux, cn, withConnectorPairingCodeAuthorizer(vlt.VerifyPassword))
+	}
 
 	// SPA catch-all: the specific API routes above take precedence on the mux;
 	// everything else is served by the embedded frontend.
