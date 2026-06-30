@@ -42,6 +42,13 @@ class MainActivity : AppCompatActivity() {
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
+    // Resume-threshold: only trigger a full OnResume re-dial when the app has
+    // been backgrounded longer than this. Quick app-switches (e.g. permission
+    // prompts, recent-apps gestures) do not bounce the node; only extended
+    // suspension causes peers to go stale.
+    private val resumeThresholdMs = 30_000L
+    private var pauseTimestampMs = 0L
+
     // Debounce handler: avoid thrashing Reconnect on rapid network transitions
     // (e.g. WiFi hand-off to cellular). A 500 ms window absorbs back-to-back
     // onLost→onAvailable events from a single interface change.
@@ -136,6 +143,49 @@ class MainActivity : AppCompatActivity() {
                 if (this::webView.isInitialized) {
                     webView.reload()
                 }
+            }
+        }.start()
+    }
+
+    // onPause records the instant the app leaves the foreground so onResume can
+    // compute how long it was backgrounded.
+    override fun onPause() {
+        super.onPause()
+        pauseTimestampMs = System.currentTimeMillis()
+    }
+
+    // onResume is called every time the activity becomes visible: on initial
+    // start, after a quick app-switch, and after extended background suspension.
+    //
+    // Strategy:
+    //  - Always reload the WebView (cheap) so the SPA's visibilitychange
+    //    listener fires and data views refetch.
+    //  - Only call app.onResume() (heavyweight: Stop+relaunch the node) when
+    //    the app has been suspended longer than resumeThresholdMs, because peers
+    //    only go fully stale after extended suspension. Quick switches are
+    //    handled by the SPA reload alone.
+    //  - Guard against being called before the wallet has been started.
+    override fun onResume() {
+        super.onResume()
+
+        // Always do the lightweight WebView reload so the SPA refetches.
+        if (this::webView.isInitialized) {
+            webView.reload()
+        }
+
+        // Skip the heavy re-dial if the wallet has not been started yet or if
+        // the suspension was shorter than the threshold.
+        if (!this::app.isInitialized) return
+        val elapsed = if (pauseTimestampMs > 0) System.currentTimeMillis() - pauseTimestampMs else 0L
+        if (elapsed < resumeThresholdMs) return
+
+        // The app was backgrounded long enough that TCP connections to peers
+        // may have been torn down. Re-dial on a background thread.
+        Thread {
+            try {
+                app.onResume()
+            } catch (e: Exception) {
+                android.util.Log.w("bursa", "onResume re-dial failed", e)
             }
         }.start()
     }

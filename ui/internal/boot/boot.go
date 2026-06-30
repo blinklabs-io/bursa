@@ -296,6 +296,23 @@ func (a *App) OnNetworkChanged() error {
 	return a.sup.Reconnect(ctx)
 }
 
+// OnResume re-dials the embedded node's peers after the app returns from the
+// background. Peers go stale during suspension (the OS may have torn down TCP
+// connections), so a Reconnect cycle re-establishes them without data loss (the
+// synced DataDir is preserved; Mithril bootstrap is skipped).
+//
+// It is a safe no-op when called before Boot or after Stop.
+func (a *App) OnResume() error {
+	if a.sup == nil {
+		return nil
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return a.sup.Reconnect(ctx)
+}
+
 // settingsController adapts the persisted settings store + the supervisor to the
 // api.SettingsController surface. The store is the source of truth for the
 // lean-node profile; the supervisor reports what the running node was actually

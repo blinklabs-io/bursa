@@ -15,15 +15,20 @@ package supervisor
 
 import "context"
 
-// Reconnect re-dials the node's peers after a host network change. It performs
-// a Stop-then-relaunch cycle via the existing runID-versioned path, which tears
-// down all peer connections and re-establishes them. The already-synced DataDir
-// is preserved and Mithril bootstrap is skipped (the completion marker remains),
-// so reconnect is fast and involves no data loss.
+// Reconnect re-dials the node's peers after a host network change or app
+// resume. It performs a Stop-then-relaunch cycle via the existing
+// runID-versioned path, which tears down all peer connections and
+// re-establishes them. The already-synced DataDir is preserved and Mithril
+// bootstrap is skipped (the completion marker remains), so reconnect is fast
+// and involves no data loss.
 //
 // Reconnect is a safe no-op when the supervisor is not running (not started,
 // stopped, or mid-stop). It is concurrency-safe and may be called from the
-// Android NetworkCallback thread.
+// Android NetworkCallback or onResume thread.
+//
+// If the supervisor is already running (Start returns "supervisor already
+// started"), Reconnect folds that benign sentinel to nil — the desired
+// post-reconnect state is "node running", which is already true.
 func (s *Supervisor) Reconnect(ctx context.Context) error {
 	s.mu.RLock()
 	running := s.cancel != nil
@@ -32,5 +37,9 @@ func (s *Supervisor) Reconnect(ctx context.Context) error {
 		return nil
 	}
 	s.Stop()
-	return s.Start(ctx)
+	if err := s.Start(ctx); err != nil && err.Error() == "supervisor already started" {
+		return nil
+	} else {
+		return err
+	}
 }

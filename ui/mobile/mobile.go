@@ -104,6 +104,19 @@ func (a *App) OnNetworkChanged() error {
 	return a.app.OnNetworkChanged()
 }
 
+// OnResume re-dials the embedded node's peers after the app returns from the
+// background. It is called from the Android Activity.onResume and must be safe
+// to call from any thread. Peers go stale during suspension so a re-dial cycle
+// re-establishes them without data loss. It is a safe no-op before Start.
+func (a *App) OnResume() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.app == nil {
+		return nil
+	}
+	return a.app.OnResume()
+}
+
 // Stop tears the wallet down cleanly: it drains the control surface and winds
 // down the in-process node. It is safe to call more than once; calling it before
 // Start is a no-op.
