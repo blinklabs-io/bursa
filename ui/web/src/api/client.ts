@@ -29,39 +29,60 @@ export class ApiError extends Error {
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
+// Retry only on network failures (TypeError/"Failed to fetch"), not HTTP errors.
+const RETRY_ATTEMPTS = 3; // total attempts (1 initial + 2 retries)
+const RETRY_BACKOFF_BASE_MS = 250;
+const RETRY_BACKOFF_CAP_MS = 1_000;
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let res: Response;
-  try {
-    res = await fetch(path, {
-      method,
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
-    });
-  } catch (e) {
-    // Normalize transport failures (network down, timeout/abort) into ApiError
-    // so callers handle them uniformly; status 0 means no HTTP response.
-    const msg =
-      e instanceof DOMException && e.name === "AbortError" ? "request timed out" : "network error";
-    throw new ApiError(0, msg);
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!res.ok) {
-    let message = `request failed (${res.status})`;
-    try {
-      const j = await res.json();
-      if (j && typeof j.error === "string") message = j.error;
-    } catch {
-      /* non-JSON */
+  let lastNetworkError: ApiError | null = null;
+
+  for (let attempt = 0; attempt < RETRY_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      // Capped exponential backoff: 250ms, 500ms, ... capped at 1000ms
+      const delay = Math.min(RETRY_BACKOFF_BASE_MS * Math.pow(2, attempt - 1), RETRY_BACKOFF_CAP_MS);
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
     }
-    throw new ApiError(res.status, message);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(path, {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      // Only retry on network failures (TypeError). AbortError (timeout) is not retried.
+      if (e instanceof TypeError) {
+        lastNetworkError = new ApiError(0, "network error");
+        continue;
+      }
+      // Timeout / abort — treat as a terminal error, don't retry.
+      throw new ApiError(0, "request timed out");
+    }
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      let message = `request failed (${res.status})`;
+      try {
+        const j = await res.json();
+        if (j && typeof j.error === "string") message = j.error;
+      } catch {
+        /* non-JSON */
+      }
+      // HTTP error responses are real responses — do not retry.
+      throw new ApiError(res.status, message);
+    }
+    // All our endpoints return JSON.
+    return (await res.json()) as T;
   }
-  // All our endpoints return JSON.
-  return (await res.json()) as T;
+
+  // Exhausted all retry attempts for network failures.
+  throw lastNetworkError ?? new ApiError(0, "network error");
 }
 
 export const apiGet = <T>(path: string) => request<T>("GET", path);
