@@ -273,3 +273,16 @@ test("(s) connector: Unpair button visible when paired", async () => {
     expect(screen.getByRole("button", { name: /unpair/i })).toBeInTheDocument(),
   );
 });
+
+test("(t) connector: hides card and skips pending pairing poll when endpoint is missing", async () => {
+  mockStatus("ready", 12345, true);
+  vi.spyOn(connectorApi, "getConnectorState").mockRejectedValue(
+    new client.ApiError(404, "not found"),
+  );
+  const pendingSpy = vi.spyOn(connectorApi, "pendingPairings").mockResolvedValue([]);
+
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+
+  await waitFor(() => expect(screen.queryByText("dApp Connector")).toBeNull());
+  expect(pendingSpy).not.toHaveBeenCalled();
+});

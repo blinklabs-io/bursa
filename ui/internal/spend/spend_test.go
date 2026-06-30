@@ -13,10 +13,13 @@ import (
 
 	"github.com/blinklabs-io/apollo/v2/backend"
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
+	gocbor "github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/blinklabs-io/gouroboros/ledger"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/blinklabs-io/gouroboros/ledger/conway"
 	"github.com/blinklabs-io/gouroboros/ledger/shelley"
 	"github.com/blinklabs-io/plutigo/data"
 	utxorpc "github.com/utxorpc/go-codegen/utxorpc/v1alpha/cardano"
@@ -818,6 +821,59 @@ func TestConfirmMultiInput(t *testing.T) {
 	}
 	if got := len(submitted.WitnessSet.VkeyWitnesses.Items()); got != 2 {
 		t.Fatalf("submitted tx vkey witnesses = %d, want 2", got)
+	}
+}
+
+func TestWitnessTxRequiredSignerIncludesStakeAndDRepKeys(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(testMnemonic, "")
+	if err != nil {
+		t.Fatalf("GetRootKeyFromMnemonic: %v", err)
+	}
+	acctKey, err := bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		t.Fatalf("GetAccountKey: %v", err)
+	}
+	stakeKey, err := bursa.GetStakeKey(acctKey, 0)
+	if err != nil {
+		t.Fatalf("GetStakeKey: %v", err)
+	}
+	drepKey, err := bursa.GetDRepKey(acctKey, 0)
+	if err != nil {
+		t.Fatalf("GetDRepKey: %v", err)
+	}
+	stakeVkey := append([]byte(nil), bip32.XPrv(stakeKey).Public().PublicKey()...)
+	drepVkey := append([]byte(nil), bip32.XPrv(drepKey).Public().PublicKey()...)
+
+	s := NewService(nil, fakeKeystore{mnemonic: testMnemonic}, acct)
+	wsCbor, err := s.WitnessTx(
+		[]byte("tx-body"),
+		[]lcommon.Blake2b224{
+			lcommon.Blake2b224Hash(stakeVkey),
+			lcommon.Blake2b224Hash(drepVkey),
+		},
+		nil,
+		"pw",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("WitnessTx: %v", err)
+	}
+
+	var ws conway.ConwayTransactionWitnessSet
+	if _, err := gocbor.Decode(wsCbor, &ws); err != nil {
+		t.Fatalf("decode witness set: %v", err)
+	}
+	got := map[string]bool{}
+	for _, w := range ws.VkeyWitnesses.Items() {
+		got[hex.EncodeToString(w.Vkey)] = true
+	}
+	if !got[hex.EncodeToString(stakeVkey)] {
+		t.Fatalf("missing stake key witness; got %v", got)
+	}
+	if !got[hex.EncodeToString(drepVkey)] {
+		t.Fatalf("missing DRep key witness; got %v", got)
 	}
 }
 

@@ -149,7 +149,7 @@ func strictSameOrigin(r *http.Request) bool {
 // preflight requests also reach the middleware before the sub-mux dispatches.
 //
 // SPA-facing routes (events, grants, grants/revoke, decide, unpair) are NOT
-// token-gated; each handler guards itself via sameOrigin().
+// token-gated; each handler guards itself via sameOrigin()/strictSameOrigin().
 func registerConnector(mux *http.ServeMux, svc *connector.Service, opts ...connectorRouteOption) {
 	cfg := connectorRouteConfig{}
 	for _, opt := range opts {
@@ -202,12 +202,12 @@ func handleConnectorGrants(svc *connector.Service) http.HandlerFunc {
 
 // handleConnectorGrantsRevoke handles POST /connector/grants/revoke.
 //
-// SPA-facing — requires same-origin request. Body: {"origin": string}.
+// SPA-facing — requires strict same-origin browser request. Body: {"origin": string}.
 // Revokes the given origin's grant and responds 200 {"ok":true}; empty origin
 // or revocation error responds 400.
 func handleConnectorGrantsRevoke(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !sameOrigin(r) {
+		if !strictSameOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
 			return
 		}
@@ -232,12 +232,12 @@ func handleConnectorGrantsRevoke(svc *connector.Service) http.HandlerFunc {
 
 // handleConnectorDecide handles POST /connector/decide.
 //
-// SPA-facing — requires same-origin request. Body: {"id": string, "approved":
+// SPA-facing — requires strict same-origin browser request. Body: {"id": string, "approved":
 // bool, "password": string}. Resolves a pending consent prompt.
 // Unknown id → 404; other error → 400.
 func handleConnectorDecide(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !sameOrigin(r) {
+		if !strictSameOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
 			return
 		}
@@ -265,12 +265,12 @@ func handleConnectorDecide(svc *connector.Service) http.HandlerFunc {
 
 // handleConnectorUnpair handles POST /connector/unpair.
 //
-// SPA-facing — requires same-origin request. Unpairs the current extension.
+// SPA-facing — requires strict same-origin browser request. Unpairs the current extension.
 // The operation is idempotent (Unpair tolerates absence). Always responds 200
-// {"ok":true} when same-origin.
+// {"ok":true} when strict same-origin.
 func handleConnectorUnpair(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !sameOrigin(r) {
+		if !strictSameOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
 			return
 		}
@@ -338,7 +338,7 @@ func handleConnectorPendingPairings(svc *connector.Service, authorizeCode func(p
 // handleConnectorEvents handles GET /connector/events.
 //
 // This is a Server-Sent Events (SSE) stream consumed by the Bursa SPA. It is
-// guarded by sameOrigin() (like the other SPA-facing routes) and does NOT
+// guarded by strictSameOrigin() and does NOT
 // require the extension bearer token — that is scoped to extension-facing
 // routes only.
 //
@@ -349,10 +349,10 @@ func handleConnectorPendingPairings(svc *connector.Service, authorizeCode func(p
 //  4. Returns when the client disconnects (r.Context().Done()).
 func handleConnectorEvents(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// SPA-facing: enforce same-origin before opening the stream, matching the
-		// other /connector/* SPA routes. Without this guard a cross-origin page
-		// could open the SSE stream and observe pending dApp request metadata.
-		if !sameOrigin(r) {
+		// SPA-facing: require a browser same-origin request before opening the
+		// stream. Without this guard local non-browser clients could observe
+		// pending dApp request metadata, including request IDs.
+		if !strictSameOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
 			return
 		}

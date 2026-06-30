@@ -53,27 +53,25 @@ bursa serve --connector
 ## Step 4 — Pair the extension with Bursa
 
 1. Click the Bursa extension icon in the Chrome toolbar to open the popup.
-2. Navigate to **Settings → Connector**.
-3. Enter the pairing code shown in the Bursa daemon logs (or the Bursa Settings
-   UI) and click **Pair**.
-4. The popup should display a "Connected" status.
+2. In the popup, confirm the Bursa port and click **Pair with Bursa**.
+3. In the Bursa app, open **Settings → dApp Connector**, reveal the pending
+   pairing code, then enter that code in the extension popup.
+4. Click **Confirm Pairing** in the popup.
+5. The popup should display a "Connected" status.
 
 ---
 
 ## Step 5 — Open the sample dApp
 
-Open `sample-dapp.html` in Chrome.  You can do this via a local HTTP server or
-directly as a `file://` URL:
+Open `sample-dapp.html` in Chrome via a local HTTP server:
 
 ```sh
-# Option A — file:// URL (works without a server)
-open ui/extension/e2e/sample-dapp.html          # macOS
-xdg-open ui/extension/e2e/sample-dapp.html      # Linux
-
-# Option B — simple local server
 python3 -m http.server 8090 --directory ui/extension/e2e
 # then navigate to http://localhost:8090/sample-dapp.html
 ```
+
+You can also open it as a `file://` URL, but only after enabling
+**Allow access to file URLs** for the Bursa extension in `chrome://extensions`.
 
 After the page loads you should see:
 

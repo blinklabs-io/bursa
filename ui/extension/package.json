@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "vite build",
-    "lint": "eslint src --ext .ts",
+    "lint": "eslint src tests --ext .ts",
     "type-check": "tsc --noEmit",
     "test": "vitest run"
   },

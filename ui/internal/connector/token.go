@@ -20,6 +20,8 @@ type tokenData struct {
 	Token       string `json:"token"`
 }
 
+var ErrInvalidExtensionID = errors.New("connector: invalid extension id")
+
 // TokenStore holds the single paired-extension token, persisted atomically.
 type TokenStore struct {
 	path string
@@ -59,11 +61,15 @@ func NewTokenStore(path string, now func() time.Time, rnd func() (string, error)
 func (s *TokenStore) Mint(extensionID string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	extensionID = normalizeExtensionID(extensionID)
+	if !validExtensionID(extensionID) {
+		return "", ErrInvalidExtensionID
+	}
 	tok, err := s.rnd()
 	if err != nil {
 		return "", err
 	}
-	next := tokenData{ExtensionID: normalizeExtensionID(extensionID), Token: tok}
+	next := tokenData{ExtensionID: extensionID, Token: tok}
 	if err := s.persist(next); err != nil {
 		return "", err
 	}
@@ -75,6 +81,9 @@ func (s *TokenStore) Verify(token, extensionID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	extensionID = normalizeExtensionID(extensionID)
+	if !validExtensionID(extensionID) {
+		return false
+	}
 	if s.data.Token == "" || s.data.ExtensionID != extensionID {
 		return false
 	}
@@ -131,4 +140,13 @@ func normalizeExtensionID(extensionID string) string {
 		return extensionID
 	}
 	return "chrome-extension://" + extensionID
+}
+
+func validExtensionID(extensionID string) bool {
+	const prefix = "chrome-extension://"
+	if !strings.HasPrefix(extensionID, prefix) {
+		return false
+	}
+	id := strings.TrimPrefix(extensionID, prefix)
+	return id != "" && !strings.Contains(id, "/")
 }

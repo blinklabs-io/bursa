@@ -1,6 +1,7 @@
 package connector
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,6 +33,25 @@ func TestTokenStoreMintDoesNotChangeMemoryOnPersistFailure(t *testing.T) {
 	}
 	if ts.Verify("tok", "chrome-extension://abc") {
 		t.Fatal("failed Mint must not leave token in memory")
+	}
+}
+
+func TestTokenStoreRejectsInvalidExtensionIDs(t *testing.T) {
+	calls := 0
+	ts := NewTokenStore(t.TempDir()+"/token.json", nil, func() (string, error) {
+		calls++
+		return "tok", nil
+	})
+	for _, extID := range []string{"", "https://example.com", "moz-extension://abc", "chrome-extension://"} {
+		if _, err := ts.Mint(extID); !errors.Is(err, ErrInvalidExtensionID) {
+			t.Fatalf("Mint(%q) error = %v, want ErrInvalidExtensionID", extID, err)
+		}
+		if ts.Verify("tok", extID) {
+			t.Fatalf("Verify(%q) should fail for invalid extension id", extID)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("invalid Mint called random source %d times, want 0", calls)
 	}
 }
 

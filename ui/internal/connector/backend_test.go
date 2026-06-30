@@ -1024,7 +1024,9 @@ func TestWalletBackendSignData(t *testing.T) {
 	if len(keyHex) < len(vkeyHex) {
 		t.Errorf("COSE_Key (%d bytes) is too short to contain the 32-byte vkey", len(keyBytes))
 	}
-	_ = keyHex // presence verified indirectly via VerifyData above
+	if !bytes.Contains(keyBytes, wantVkey) {
+		t.Fatalf("COSE_Key %s does not contain expected vkey %s", keyHex, vkeyHex)
+	}
 }
 
 // TestWalletBackendSignTx builds a minimal Conway tx with a required signer

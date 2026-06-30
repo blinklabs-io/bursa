@@ -35,7 +35,7 @@ type waiter struct {
 
 type Queue struct {
 	now     func() time.Time
-	mkID    func() string
+	mkID    func() (string, error)
 	timeout time.Duration
 
 	mu      sync.Mutex
@@ -44,17 +44,21 @@ type Queue struct {
 	nextSub int
 }
 
-func NewQueue(now func() time.Time, mkID func() string, timeout time.Duration) *Queue {
+func NewQueue(now func() time.Time, mkID func() (string, error), timeout time.Duration) *Queue {
 	return &Queue{
 		now: now, mkID: mkID, timeout: timeout,
 		waiters: map[string]*waiter{}, subs: map[int]chan Request{},
 	}
 }
 
-func (q *Queue) Submit(origin, method string, params json.RawMessage) *Request {
+func (q *Queue) Submit(origin, method string, params json.RawMessage) (*Request, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	r := Request{ID: q.mkID(), Origin: origin, Method: method, Params: params, Created: q.now()}
+	id, err := q.mkID()
+	if err != nil {
+		return nil, err
+	}
+	r := Request{ID: id, Origin: origin, Method: method, Params: params, Created: q.now()}
 	q.waiters[r.ID] = &waiter{req: r, done: make(chan Decision, 1)}
 	for _, ch := range q.subs {
 		select {
@@ -62,7 +66,7 @@ func (q *Queue) Submit(origin, method string, params json.RawMessage) *Request {
 		default:
 		}
 	}
-	return &r
+	return &r, nil
 }
 
 func (q *Queue) Await(ctx context.Context, id string) (Decision, error) {

@@ -8,8 +8,11 @@ import (
 )
 
 func TestQueueSubmitApprove(t *testing.T) {
-	q := NewQueue(time.Now, func() string { return "req1" }, time.Second)
-	req := q.Submit("https://a.io", "signTx", json.RawMessage(`{"tx":"00"}`))
+	q := NewQueue(time.Now, func() (string, error) { return "req1", nil }, time.Second)
+	req, err := q.Submit("https://a.io", "signTx", json.RawMessage(`{"tx":"00"}`))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 	if req.ID != "req1" || len(q.Pending()) != 1 {
 		t.Fatalf("submit: %+v pending=%d", req, len(q.Pending()))
 	}
@@ -24,16 +27,21 @@ func TestQueueSubmitApprove(t *testing.T) {
 }
 
 func TestQueueTimeout(t *testing.T) {
-	q := NewQueue(time.Now, func() string { return "r" }, 10*time.Millisecond)
-	q.Submit("https://a.io", "enable", nil)
+	q := NewQueue(time.Now, func() (string, error) { return "r", nil }, 10*time.Millisecond)
+	if _, err := q.Submit("https://a.io", "enable", nil); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 	if _, err := q.Await(context.Background(), "r"); err != ErrTimeout {
 		t.Fatalf("want ErrTimeout, got %v", err)
 	}
 }
 
 func TestQueueRejectsDuplicateAfterDecisionConsumed(t *testing.T) {
-	q := NewQueue(time.Now, func() string { return "req1" }, time.Second)
-	req := q.Submit("https://a.io", "signTx", nil)
+	q := NewQueue(time.Now, func() (string, error) { return "req1", nil }, time.Second)
+	req, err := q.Submit("https://a.io", "signTx", nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 	if err := q.Decide(req.ID, Decision{Approved: true}); err != nil {
 		t.Fatalf("first Decide: %v", err)
 	}

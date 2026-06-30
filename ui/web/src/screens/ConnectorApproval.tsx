@@ -87,19 +87,20 @@ export function ConnectorApproval() {
 
   // Track IDs we have already notified so we don't re-notify on re-renders.
   const notifiedIds = useRef<Set<string>>(new Set());
+  const pendingIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const unsub = subscribePending((req) => {
-      setPending((prev) => {
-        // Deduplicate: if the SSE snapshot replays an id we already have, skip.
-        if (prev.some((r) => r.id === req.id)) return prev;
-        // Notify once per new request.
-        if (!notifiedIds.current.has(req.id)) {
-          notifiedIds.current.add(req.id);
-          notifyPending(req);
-        }
-        return [...prev, req];
-      });
+      // Deduplicate: if the SSE snapshot replays an id we already have, skip.
+      if (pendingIds.current.has(req.id)) return;
+      pendingIds.current.add(req.id);
+      setPending((prev) => [...prev, req]);
+      // Notify once per new request, outside the state updater so the updater
+      // stays pure under Strict Mode.
+      if (!notifiedIds.current.has(req.id)) {
+        notifiedIds.current.add(req.id);
+        notifyPending(req);
+      }
     });
     return unsub;
   }, []);
@@ -116,10 +117,12 @@ export function ConnectorApproval() {
       const decisionPassword = approved && needsPassword(current.method) ? password : undefined;
       await decide(current.id, approved, decisionPassword);
       // Remove the decided request from the queue.
+      pendingIds.current.delete(current.id);
       setPending((prev) => prev.filter((r) => r.id !== current.id));
       setPassword("");
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
+        pendingIds.current.delete(current.id);
         setPending((prev) => prev.filter((r) => r.id !== current.id));
         setPassword("");
         return;

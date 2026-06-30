@@ -25,6 +25,7 @@ export async function handleRequest(
   senderOrigin?: string,
 ): Promise<{ id: string; result?: unknown; error?: unknown }> {
   const { token, port = 8090 } = await chrome.storage.local.get(['token', 'port']);
+  const parsedPort = parsePort(port);
 
   if (!token) {
     return {
@@ -32,12 +33,17 @@ export async function handleRequest(
       error: { code: -3, info: 'Not paired with Bursa. Open the extension popup to pair.' },
     };
   }
+  if (parsedPort === null) {
+    return { id: message.id, error: { code: -2, info: 'Invalid Bursa port configuration' } };
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 125_000); // 125s
 
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/connector/request`, {
+    const baseURL = `http://127.0.0.1:${parsedPort}`;
+    const requestURL = new URL('/connector/request', baseURL);
+    const response = await fetch(requestURL.toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -70,4 +76,15 @@ export async function handleRequest(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function parsePort(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isInteger(value)) {
+    return value >= 1 && value <= 65535 ? value : null;
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    const parsed = Number(value.trim());
+    return parsed >= 1 && parsed <= 65535 ? parsed : null;
+  }
+  return null;
 }

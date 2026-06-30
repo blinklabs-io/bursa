@@ -138,6 +138,25 @@ describe('background worker', () => {
     expect(url).toBe('http://127.0.0.1:9999/connector/request');
   });
 
+  it('rejects invalid stored ports without sending the token', async () => {
+    storageMock['token'] = 'test-token';
+    storageMock['port'] = '9999.evil';
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await handleRequest(
+      { id: 'bad-port', method: 'getBalance', params: [] },
+      'https://app.example.com',
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response).toEqual({
+      id: 'bad-port',
+      error: { code: -2, info: 'Invalid Bursa port configuration' },
+    });
+  });
+
   // Cross-layer contract test: verifies that the origin used in the POST body
   // comes from the browser-verified sender argument, NOT any page-supplied field.
   // This matches how chrome.runtime.onMessage passes sender to the listener in

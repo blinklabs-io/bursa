@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { Card } from "../components/Card";
 import { StatusPill } from "../components/StatusPill";
 import { CopyButton } from "../components/CopyButton";
@@ -153,8 +153,29 @@ function LeanStorageCard() {
 
 export function Settings({ account, spendingEnabled }: SettingsProps) {
   const status = useStatus();
-  const connectorState = useAsync(getConnectorState, { pollMs: 3000 });
-  const pendingPairs = useAsync(pendingPairings, { pollMs: 3000 });
+  const [connectorDisabled, setConnectorDisabled] = useState(false);
+  const loadConnectorState = useCallback(async () => {
+    try {
+      const state = await getConnectorState();
+      setConnectorDisabled(false);
+      return state;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        setConnectorDisabled(true);
+        return null;
+      }
+      throw e;
+    }
+  }, []);
+  const connectorState = useAsync(loadConnectorState, {
+    pollMs: connectorDisabled ? undefined : 3000,
+    enabled: !connectorDisabled,
+  });
+  const connectorAvailable = !connectorDisabled && connectorState.data !== null;
+  const pendingPairs = useAsync(pendingPairings, {
+    pollMs: connectorAvailable ? 3000 : undefined,
+    enabled: connectorAvailable,
+  });
   const [pairingPassword, setPairingPassword] = useState("");
   const [revealingPairCode, setRevealingPairCode] = useState(false);
   const [pairingRevealError, setPairingRevealError] = useState<string | null>(null);
@@ -254,7 +275,8 @@ export function Settings({ account, spendingEnabled }: SettingsProps) {
         <p>{spendingEnabled ? "Spending enabled" : "Read-only"}</p>
       </Card>
 
-      <Card title="dApp Connector">
+      {!connectorDisabled && (
+        <Card title="dApp Connector">
         {connectorState.loading && !connectorState.data ? (
           <p>Loading…</p>
         ) : connectorState.data ? (
@@ -399,7 +421,8 @@ export function Settings({ account, spendingEnabled }: SettingsProps) {
         ) : connectorState.error ? (
           <p className="muted">Unavailable</p>
         ) : null}
-      </Card>
+        </Card>
+      )}
     </div>
   );
 }

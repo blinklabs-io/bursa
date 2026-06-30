@@ -451,6 +451,7 @@ func TestConnectorEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
+	req.Header.Set("Origin", srv.URL)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
@@ -516,6 +517,15 @@ func TestConnectorGrants(t *testing.T) {
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
 		return svc, mux
+	}
+	strictReq := func(method, path, body string) *http.Request {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Host = "127.0.0.1:8090"
+		req.Header.Set("Origin", "http://127.0.0.1:8090")
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		return req
 	}
 
 	t.Run("GET /connector/grants returns grants + paired info", func(t *testing.T) {
@@ -618,8 +628,7 @@ func TestConnectorGrants(t *testing.T) {
 		}
 
 		body := `{"origin":"https://revoke.io"}`
-		req := httptest.NewRequest(http.MethodPost, "/connector/grants/revoke", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req := strictReq(http.MethodPost, "/connector/grants/revoke", body)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -645,8 +654,7 @@ func TestConnectorGrants(t *testing.T) {
 		_, mux := newSvcPaired(t)
 
 		body := `{"origin":""}`
-		req := httptest.NewRequest(http.MethodPost, "/connector/grants/revoke", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req := strictReq(http.MethodPost, "/connector/grants/revoke", body)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -659,8 +667,7 @@ func TestConnectorGrants(t *testing.T) {
 		_, mux := newSvcPaired(t)
 
 		body := `{"id":"no-such-id","approved":true,"password":""}`
-		req := httptest.NewRequest(http.MethodPost, "/connector/decide", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req := strictReq(http.MethodPost, "/connector/decide", body)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -695,8 +702,7 @@ func TestConnectorGrants(t *testing.T) {
 		}
 
 		body := `{"id":"` + pendingID + `","approved":true,"password":""}`
-		req := httptest.NewRequest(http.MethodPost, "/connector/decide", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req := strictReq(http.MethodPost, "/connector/decide", body)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -716,8 +722,7 @@ func TestConnectorGrants(t *testing.T) {
 	t.Run("POST /connector/decide malformed body → 400", func(t *testing.T) {
 		_, mux := newSvcPaired(t)
 
-		req := httptest.NewRequest(http.MethodPost, "/connector/decide", strings.NewReader("{bad json"))
-		req.Header.Set("Content-Type", "application/json")
+		req := strictReq(http.MethodPost, "/connector/decide", "{bad json")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -730,7 +735,7 @@ func TestConnectorGrants(t *testing.T) {
 		_, mux := newSvcPaired(t)
 
 		for i := 0; i < 2; i++ {
-			req := httptest.NewRequest(http.MethodPost, "/connector/unpair", nil)
+			req := strictReq(http.MethodPost, "/connector/unpair", "")
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 
@@ -778,7 +783,7 @@ func TestConnectorGrants(t *testing.T) {
 		}
 	})
 
-	t.Run("same-origin guard: no Origin header → allowed", func(t *testing.T) {
+	t.Run("same-origin guard: GET grants no Origin header → allowed", func(t *testing.T) {
 		_, mux := newSvcPaired(t)
 
 		req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)

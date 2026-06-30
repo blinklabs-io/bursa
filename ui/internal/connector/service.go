@@ -72,10 +72,12 @@ type Service struct {
 // networkPrompt is called (if non-nil) after each new request is enqueued so
 // that Phase 3 can raise a UI notification.
 func NewService(dir string, be Backend, networkPrompt func()) *Service {
-	mkID := func() string {
+	mkID := func() (string, error) {
 		b := make([]byte, 16)
-		_, _ = rand.Read(b)
-		return hex.EncodeToString(b)
+		if _, err := rand.Read(b); err != nil {
+			return "", fmt.Errorf("connector: request id entropy: %w", err)
+		}
+		return hex.EncodeToString(b), nil
 	}
 	return &Service{
 		tokens:    NewTokenStore(filepath.Join(dir, "connector-token.json"), time.Now, nil),
@@ -461,7 +463,10 @@ func (s *Service) enqueueAndAwait(
 	params json.RawMessage,
 	fn func(Decision) (json.RawMessage, error),
 ) (json.RawMessage, error) {
-	req := s.queue.Submit(origin, method, params)
+	req, err := s.queue.Submit(origin, method, params)
+	if err != nil {
+		return nil, err
+	}
 	if s.prompt != nil {
 		s.prompt()
 	}

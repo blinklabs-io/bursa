@@ -416,7 +416,10 @@ func (s *Service) PubDRepKey(password string) ([]byte, error) {
 	// Bind to the active wallet's seed (not merely the active vault default) so
 	// the derived key always matches the account the approval was issued for,
 	// even if the active selection changes between approval and unlock.
-	walletID, _, _ := s.currentBinding()
+	walletID, acct, _ := s.currentBinding()
+	if acct == nil {
+		return nil, ErrNoWallet
+	}
 	mnemonicBytes, err := s.unlockSeed(walletID, password)
 	if err != nil {
 		if errors.Is(err, keystore.ErrDecryptFailed) {
@@ -469,7 +472,10 @@ func (s *Service) PubStakeKey(password string) ([]byte, error) {
 
 	// Bind to the active wallet's seed (see PubDRepKey) so the derived stake key
 	// matches the account the approval was issued for.
-	walletID, _, _ := s.currentBinding()
+	walletID, acct, _ := s.currentBinding()
+	if acct == nil {
+		return nil, ErrNoWallet
+	}
 	mnemonicBytes, err := s.unlockSeed(walletID, password)
 	if err != nil {
 		if errors.Is(err, keystore.ErrDecryptFailed) {
@@ -872,11 +878,20 @@ func (s *Service) WitnessTx(
 	}()
 
 	// Derive account key.
-	rootKey, err := bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	var rootKey, acctKey bip32.XPrv
+	defer func() {
+		for _, k := range []bip32.XPrv{rootKey, acctKey} {
+			for i := range k {
+				k[i] = 0
+			}
+		}
+	}()
+
+	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err := bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, 0)
 	if err != nil {
 		return nil, fmt.Errorf("account key: %w", err)
 	}
@@ -913,9 +928,12 @@ func (s *Service) WitnessTx(
 			signIdx[addrStr] = idx
 		}
 	}
+	signStake := false
+	signDRep := false
 
-	// For required signers: iterate all derived payment keys to find matches.
-	// We derive each key, compute its vkey hash, and check against reqSet.
+	// For required signers: iterate all owned signing keys to find matches. This
+	// includes payment keys plus non-payment wallet witnesses such as stake and
+	// DRep keys.
 	if len(reqSet) > 0 {
 		for i, addrStr := range acct.ReceiveAddresses {
 			payKey, err := bursa.GetPaymentKey(acctKey, uint32(i)) //nolint:gosec // bounded by window size
@@ -930,9 +948,32 @@ func (s *Service) WitnessTx(
 				payKey[j] = 0
 			}
 		}
+		stakeKey, err := bursa.GetStakeKey(acctKey, 0)
+		if err != nil {
+			return nil, fmt.Errorf("stake key: %w", err)
+		}
+		stakeVkeyHash := lcommon.Blake2b224Hash(bip32.XPrv(stakeKey).Public().PublicKey())
+		if reqSet[stakeVkeyHash] {
+			signStake = true
+		}
+		for j := range stakeKey {
+			stakeKey[j] = 0
+		}
+
+		drepKey, err := bursa.GetDRepKey(acctKey, 0)
+		if err != nil {
+			return nil, fmt.Errorf("drep key: %w", err)
+		}
+		drepVkeyHash := lcommon.Blake2b224Hash(bip32.XPrv(drepKey).Public().PublicKey())
+		if reqSet[drepVkeyHash] {
+			signDRep = true
+		}
+		for j := range drepKey {
+			drepKey[j] = 0
+		}
 	}
 
-	if len(signIdx) == 0 && !partialSign {
+	if len(signIdx) == 0 && !signStake && !signDRep && !partialSign {
 		return nil, fmt.Errorf(
 			"%w: no wallet key matches any required signer or input address in this transaction",
 			ErrInvalidRequest,
@@ -942,6 +983,12 @@ func (s *Service) WitnessTx(
 	// Build vkey witnesses for all matched addresses using each address's own
 	// derivation index.
 	var witnesses []lcommon.VkeyWitness
+	appendWitness := func(key bip32.XPrv) {
+		witnesses = append(witnesses, lcommon.VkeyWitness{
+			Vkey:      bip32.XPrv(key).Public().PublicKey(),
+			Signature: bip32.XPrv(key).Sign(txBodyHash.Bytes()),
+		})
+	}
 	for _, idx := range signIdx {
 		payKey, err := bursa.GetPaymentKey(acctKey, idx)
 		if err != nil {
@@ -953,10 +1000,35 @@ func (s *Service) WitnessTx(
 					payKey[j] = 0
 				}
 			}()
-			witnesses = append(witnesses, lcommon.VkeyWitness{
-				Vkey:      bip32.XPrv(payKey).Public().PublicKey(),
-				Signature: bip32.XPrv(payKey).Sign(txBodyHash.Bytes()),
-			})
+			appendWitness(payKey)
+		}()
+	}
+	if signStake {
+		stakeKey, err := bursa.GetStakeKey(acctKey, 0)
+		if err != nil {
+			return nil, fmt.Errorf("stake key: %w", err)
+		}
+		func() {
+			defer func() {
+				for j := range stakeKey {
+					stakeKey[j] = 0
+				}
+			}()
+			appendWitness(stakeKey)
+		}()
+	}
+	if signDRep {
+		drepKey, err := bursa.GetDRepKey(acctKey, 0)
+		if err != nil {
+			return nil, fmt.Errorf("drep key: %w", err)
+		}
+		func() {
+			defer func() {
+				for j := range drepKey {
+					drepKey[j] = 0
+				}
+			}()
+			appendWitness(drepKey)
 		}()
 	}
 
