@@ -335,7 +335,6 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 		}
 		if sameKeyHashSet(required, actual) {
 			a = next
-			required = actual
 			break
 		}
 		required = actual
@@ -830,6 +829,64 @@ func cloneAccount(acct *wallet.Account) *wallet.Account {
 	return &cp
 }
 
+type coseSign1Headers struct {
+	cbor.StructAsArray
+	Protected   []byte
+	Unprotected cbor.RawMessage
+	Payload     []byte
+	Signature   []byte
+}
+
+func coseSignatureHashed(signatureHex string) (bool, error) {
+	sigBytes, err := hex.DecodeString(signatureHex)
+	if err != nil {
+		return false, fmt.Errorf("invalid signature hex: %w", err)
+	}
+	var c coseSign1Headers
+	if _, err := cbor.Decode(sigBytes, &c); err != nil {
+		return false, fmt.Errorf("failed to decode COSE_Sign1: %w", err)
+	}
+	protectedHashed, hasProtected, err := coseHeaderHashed(c.Protected, "protected")
+	if err != nil {
+		return false, err
+	}
+	unprotectedHashed, hasUnprotected, err := coseHeaderHashed(c.Unprotected, "unprotected")
+	if err != nil {
+		return false, err
+	}
+	if hasProtected && hasUnprotected {
+		return false, errors.New("COSE hashed header duplicated")
+	}
+	if hasProtected {
+		return protectedHashed, nil
+	}
+	if hasUnprotected {
+		return unprotectedHashed, nil
+	}
+	return false, nil
+}
+
+func coseHeaderHashed(raw cbor.RawMessage, location string) (bool, bool, error) {
+	if len(raw) == 0 {
+		return false, false, nil
+	}
+	var headers map[any]cbor.RawMessage
+	if _, err := cbor.Decode(raw, &headers); err != nil {
+		return false, false, fmt.Errorf("failed to decode COSE %s headers: %w", location, err)
+	}
+	for label, value := range headers {
+		if got, ok := label.(string); !ok || got != "hashed" {
+			continue
+		}
+		var hashed bool
+		if _, err := cbor.Decode(value, &hashed); err != nil {
+			return false, false, fmt.Errorf("failed to decode COSE hashed header: %w", err)
+		}
+		return hashed, true, nil
+	}
+	return false, false, nil
+}
+
 // VerifyData verifies a CIP-8/CIP-30 signData signature (hex COSE_Sign1) against
 // the supplied COSE_Key (hex) and message, returning whether it is valid and the
 // bech32 address that signed it (carried in the COSE_Sign1 protected header).
@@ -843,9 +900,19 @@ func (s *Service) VerifyData(
 	hashed bool,
 	expectedAddress string,
 ) (valid bool, address string, err error) {
-	// bursa.VerifyDataWithAddress reads the COSE "hashed" header and applies the
-	// CIP-8 payload hash when rebuilding the Sig_structure. The UI's hashed flag
-	// says the caller supplied the preimage, so pass it through unchanged here.
+	signatureHashed, err := coseSignatureHashed(signatureHex)
+	if err != nil {
+		return false, "", fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+	}
+	if signatureHashed != hashed {
+		return false, "", fmt.Errorf(
+			"%w: hashed flag %t does not match COSE hashed header %t",
+			ErrInvalidRequest, hashed, signatureHashed,
+		)
+	}
+	// bursa.VerifyDataWithAddress treats the COSE "hashed" header as the source
+	// of truth when rebuilding the Sig_structure. The UI flag is validated above
+	// so request shape mistakes do not silently verify.
 	valid, address, err = bursa.VerifyDataWithAddress(signatureHex, keyHex, message)
 	if err != nil {
 		return false, "", fmt.Errorf("%w: %w", ErrInvalidRequest, err)

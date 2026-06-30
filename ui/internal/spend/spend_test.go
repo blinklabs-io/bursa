@@ -836,6 +836,26 @@ func TestVerifyDataHashedPayload(t *testing.T) {
 	}
 }
 
+func TestVerifyDataRejectsHashedFlagMismatch(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr := acct.ReceiveAddresses[0]
+	s := NewService(newFakeChain(0, addr), fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	msg := []byte("prove I control this address")
+	sig, key, err := s.SignData(addr, msg, "pw")
+	if err != nil {
+		t.Fatalf("SignData: %v", err)
+	}
+	if _, _, err := s.VerifyData(sig, key, msg, true, ""); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest for unhashed signature with hashed=true, got %v", err)
+	}
+
+	hashedSig, hashedKey, hashedMsg, _ := hashedSignDataFixture(t, acct)
+	if _, _, err := s.VerifyData(hashedSig, hashedKey, hashedMsg, false, ""); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest for hashed signature with hashed=false, got %v", err)
+	}
+}
+
 func TestVerifyDataMalformedReturnsInvalidRequest(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	s := NewService(newFakeChain(0, acct.ReceiveAddresses[0]), fakeKeystore{mnemonic: testMnemonic}, acct)
