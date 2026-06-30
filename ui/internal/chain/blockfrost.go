@@ -85,6 +85,19 @@ type Reward struct {
 	PoolID string `json:"pool_id"`
 }
 
+// AssetInfo mirrors GET /api/v0/assets/{asset}. OnchainMetadata carries the
+// CIP-25/CIP-68 token metadata (name, image, description) when present; it is a
+// free-form object so we keep it as raw JSON and interpret it at a higher layer
+// (different standards nest fields differently). Fields the wallet does not use
+// (mint/burn counts, fingerprint, initial_mint_tx_hash, etc.) are omitted.
+type AssetInfo struct {
+	Asset           string          `json:"asset"`
+	PolicyID        string          `json:"policy_id"`
+	AssetName       string          `json:"asset_name"`
+	Quantity        string          `json:"quantity"`
+	OnchainMetadata json.RawMessage `json:"onchain_metadata"`
+}
+
 type accountAddress struct {
 	Address string `json:"address"`
 }
@@ -169,6 +182,15 @@ func (c *Client) AddressUTxOs(ctx context.Context, addr string) ([]UTxO, error) 
 
 func (c *Client) AddressTransactions(ctx context.Context, addr string) ([]AddressTx, error) {
 	return getAllPages[AddressTx](ctx, c, "/api/v0/addresses/"+addr+"/transactions")
+}
+
+// Asset fetches GET /api/v0/assets/{asset}, where asset is the concatenation
+// of the policy ID and the hex-encoded asset name (the "unit" of a UTxO
+// amount). Returns ErrNotFound if the node has not indexed the asset.
+func (c *Client) Asset(ctx context.Context, asset string) (AssetInfo, error) {
+	var out AssetInfo
+	err := c.get(ctx, "/api/v0/assets/"+asset, &out)
+	return out, err
 }
 
 func (c *Client) AccountDelegations(ctx context.Context, stakeAddr string) ([]Delegation, error) {

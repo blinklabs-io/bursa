@@ -16,6 +16,8 @@ import type {
   AddWalletRequest,
   MigrateLegacyKeystoreRequest,
   HistoryExpirySetting,
+  NFT,
+  NftMediaSetting,
 } from "./types";
 
 export class ApiError extends Error {
@@ -99,3 +101,12 @@ export const getHistoryExpiry = () =>
   apiGet<HistoryExpirySetting>("/wallet/settings/history-expiry");
 export const setHistoryExpiry = (enabled: boolean) =>
   apiPut<HistoryExpirySetting>("/wallet/settings/history-expiry", { enabled });
+
+// NFT media.
+export const getNfts = () => apiGet<NFT[]>("/wallet/nft");
+export const getNftMedia = () => apiGet<NftMediaSetting>("/wallet/settings/nft-media");
+export const setNftMedia = (enabled: boolean) =>
+  apiPut<NftMediaSetting>("/wallet/settings/nft-media", { enabled });
+// The image URL for an asset's NFT media; same-origin (loopback) so it satisfies
+// the SPA's strict CSP. Returns 403 when media is disabled, 404 when no image.
+export const nftImageUrl = (unit: string) => `/wallet/nft/${encodeURIComponent(unit)}/image`;

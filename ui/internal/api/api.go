@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/nft"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
@@ -111,6 +112,17 @@ type SettingsController interface {
 	HistoryExpiryRestartRequired() bool
 }
 
+// NFTs is the NFT-media surface the API exposes: listing the active wallet's
+// NFTs (node-local discovery), serving a cached/just-fetched image over
+// loopback, and the off-by-default enable toggle. The whole surface is gated on
+// the toggle except List (which is always node-local) and the toggle itself.
+type NFTs interface {
+	List(ctx context.Context) ([]nft.NFT, error)
+	ServeImage(ctx context.Context, w http.ResponseWriter, unit string)
+	Enabled() bool
+	SetEnabled(enabled bool) error
+}
+
 const defaultWindow = 20
 
 // vaultStatus is the GET /vault/status response.
@@ -150,9 +162,11 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // the embedded node runs on; wallet requests must match it (or omit it). vlt is
 // the encrypted multi-wallet store; the API pushes the active wallet onto wl/sp
 // whenever the selection changes. settings exposes user-facing app settings
-// (the lean-node profile). spa is the embedded SPA, registered as the catch-all
-// so the specific API routes take precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+// (the lean-node profile). nfts may be nil (NFT media disabled at build/wire
+// time), in which case the NFT routes report media as unavailable rather than
+// panicking. spa is the embedded SPA, registered as the catch-all so the
+// specific API routes take precedence on the mux.
+func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, nfts NFTs, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -459,6 +473,61 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		})
 	})
 
+	// NFT media. Discovery (GET /wallet/nft) is node-local — it queries the
+	// embedded node's asset metadata and never touches IPFS — so it is gated
+	// only on the node being servable, like other reads. Image bytes
+	// (GET /wallet/nft/{asset}/image) and the toggle live below; the nft service
+	// itself enforces the off-by-default media gate (403 when disabled).
+	mux.HandleFunc("GET /wallet/nft", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if nfts == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "nft media not available"})
+			return
+		}
+		v, err := nfts.List(r.Context())
+		serveNFT(w, v, err)
+	}))
+
+	// Image bytes served over loopback. The CSP (default-src 'self') requires
+	// images be same-origin, so the frontend points <img> at this route rather
+	// than at any external gateway. The nft service returns 403 when media is
+	// off, triggering a fetch only when enabled and not cached.
+	mux.HandleFunc("GET /wallet/nft/{asset}/image", func(w http.ResponseWriter, r *http.Request) {
+		if nfts == nil {
+			http.Error(w, "nft media not available", http.StatusServiceUnavailable)
+			return
+		}
+		nfts.ServeImage(r.Context(), w, r.PathValue("asset"))
+	})
+
+	// NFT-media enable toggle (the consent surface). GET reports the current
+	// state; PUT sets it. Ungated by node state: it is a local preference, not a
+	// chain query, and the user must be able to flip it before/while syncing.
+	mux.HandleFunc("GET /wallet/settings/nft-media", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": nfts != nil && nfts.Enabled()})
+	})
+	mux.HandleFunc("PUT /wallet/settings/nft-media", func(w http.ResponseWriter, r *http.Request) {
+		if nfts == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "nft media not available"})
+			return
+		}
+		var req struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if req.Enabled == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "enabled is required"})
+			return
+		}
+		if err := nfts.SetEnabled(*req.Enabled); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": nfts.Enabled()})
+	})
+
 	// SPA catch-all: the specific API routes above take precedence on the mux;
 	// everything else is served by the embedded frontend.
 	mux.Handle("/", spa)
@@ -491,6 +560,19 @@ func requirePassword(w http.ResponseWriter, password string) bool {
 		return false
 	}
 	return true
+}
+
+// serveNFT writes an NFT query result, mapping the no-wallet sentinel to 409
+// (consistent with the wallet reads above) and other errors to 500.
+func serveNFT[T any](w http.ResponseWriter, v T, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, nft.ErrNoWallet):
+		writeJSON(w, http.StatusConflict, errBody(err))
+	default:
+		writeJSON(w, http.StatusInternalServerError, errBody(err))
+	}
 }
 
 // resolveNetwork returns the effective network for a wallet request, defaulting

@@ -7,6 +7,7 @@ import type {
   DelegationView,
   VaultStatus,
   HistoryExpirySetting,
+  NFT,
 } from "./types";
 import {
   getStatus,
@@ -16,6 +17,9 @@ import {
   getTransactions,
   getDelegation,
   getHistoryExpiry,
+  getNfts,
+  getNftMedia,
+  setNftMedia,
 } from "./client";
 
 export interface AsyncState<T> {
@@ -84,3 +88,53 @@ export const useAddresses = (): AsyncState<AddressView> => useAsync(getAddresses
 export const useTransactions = (): AsyncState<Tx[]> => useAsync(getTransactions);
 export const useDelegation = (): AsyncState<DelegationView> => useAsync(getDelegation);
 export const useHistoryExpiry = (): AsyncState<HistoryExpirySetting> => useAsync(getHistoryExpiry);
+export const useNfts = (): AsyncState<NFT[]> => useAsync(getNfts);
+
+// NftMediaState extends the enable-setting fetch with a setter that flips the
+// toggle (PUT), tracks the in-flight state, and refreshes on success.
+export interface NftMediaState {
+  enabled: boolean;
+  loading: boolean;
+  saving: boolean;
+  error: Error | null;
+  setEnabled: (next: boolean) => Promise<void>;
+}
+
+export function useNftMedia(): NftMediaState {
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getNftMedia()
+      .then((s) => {
+        if (!cancelled) setEnabled(s.enabled);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setError(e);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const set = useCallback(async (next: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const s = await setNftMedia(next);
+      setEnabled(s.enabled);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  return { enabled, loading, saving, error, setEnabled: set };
+}

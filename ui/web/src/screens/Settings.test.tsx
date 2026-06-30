@@ -30,8 +30,24 @@ function mockHistoryExpiry(setting: HistoryExpirySetting | null, loading = false
   } as never);
 }
 
+function mockNftMedia(
+  overrides: Partial<{ enabled: boolean; loading: boolean; saving: boolean; setEnabled: ReturnType<typeof vi.fn> }> = {},
+) {
+  const setEnabled = overrides.setEnabled ?? vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(hooks, "useNftMedia").mockReturnValue({
+    enabled: overrides.enabled ?? false,
+    loading: overrides.loading ?? false,
+    saving: overrides.saving ?? false,
+    error: null,
+    setEnabled,
+  } as never);
+  return setEnabled;
+}
+
 beforeEach(() => {
   mockHistoryExpiry({ enabled: false, restart_required: false });
+  // Default: media off, not loading — so existing tests don't hit the network.
+  mockNftMedia();
 });
 
 afterEach(() => {
@@ -173,7 +189,12 @@ test("(n) failed initial lean storage load renders unavailable", () => {
   const toggle = screen.getByRole("switch", { name: /lean storage/i });
   expect(toggle).toBeDisabled();
   expect(screen.getByText(/^Unavailable$/)).toBeInTheDocument();
-  expect(screen.queryByText(/^disabled$/i)).toBeNull();
+  // The lean storage card must not show "Disabled" when load fails; the NFT card
+  // may show "Disabled" in the same render, so scope to the setting-state class.
+  const settingStates = document.querySelectorAll(".setting-state");
+  for (const el of settingStates) {
+    expect(el.textContent?.toLowerCase()).not.toMatch(/^disabled$/);
+  }
   expect(screen.getByRole("alert")).toHaveTextContent(/settings unavailable/i);
 });
 
@@ -184,4 +205,35 @@ test("(o) a persisted restart_required surfaces the restart note", () => {
   // The restart note appears both in the live status line (role=status) and as
   // the final bullet of the copy; assert the live status one specifically.
   expect(screen.getByRole("status")).toHaveTextContent(/takes effect after a node restart/i);
+});
+
+// ------------------------------------------------------------ NFT media ---
+
+test("(p) NFT media card explains the embedded IPFS client and shows Disabled by default", () => {
+  mockStatus("ready", 12345, true);
+  mockNftMedia({ enabled: false });
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  // The explanation makes the consent clear.
+  expect(screen.getByText(/embedded ipfs client/i)).toBeInTheDocument();
+  // Use getAllByText since lean storage may also show "Disabled"; at least one match is fine.
+  expect(screen.getAllByText(/disabled/i).length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: /enable nft media/i })).toBeInTheDocument();
+});
+
+test("(q) clicking Enable calls setEnabled(true) — the one-time opt-in", () => {
+  mockStatus("ready", 12345, true);
+  const setEnabled = mockNftMedia({ enabled: false });
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  fireEvent.click(screen.getByRole("button", { name: /enable nft media/i }));
+  expect(setEnabled).toHaveBeenCalledWith(true);
+});
+
+test("(r) when enabled, the button offers to disable and shows Enabled status", () => {
+  mockStatus("ready", 12345, true);
+  const setEnabled = mockNftMedia({ enabled: true });
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  expect(screen.getByText(/enabled/i)).toBeInTheDocument();
+  const btn = screen.getByRole("button", { name: /disable nft media/i });
+  fireEvent.click(btn);
+  expect(setEnabled).toHaveBeenCalledWith(false);
 });

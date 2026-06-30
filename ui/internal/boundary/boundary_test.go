@@ -23,7 +23,24 @@ import (
 // never reach. Sanctioned outbound links: the embedded node's P2P, and a
 // one-time Mithril snapshot download at bootstrap (first-party Cardano infra,
 // certificate-verified, leaks no wallet data — see internal/supervisor/bootstrap.go).
+//
+// On the embedded IPFS client (boxo / go-libp2p / go-libp2p-kad-dht, used by
+// internal/nft): these are deliberately NOT denylisted. They are peer-to-peer
+// protocol libraries — the user's OWN IPFS retrieval client, in the same spirit
+// as the embedded Cardano node — not a hosted-service or gateway SDK. Crucially:
+//   - The client is OFF by default and is only started after a one-time,
+//     deliberate opt-in (the "Enable NFT media" setting). While disabled, no
+//     libp2p host is created and nothing touches the network.
+//   - Retrieval is direct p2p (DHT provider routing + bitswap). There is NO
+//     third-party HTTP gateway and NO delegated-routing HTTP service: no hosted
+//     IPFS SaaS SDK (e.g. pinata, web3.storage, nft.storage, infura ipfs) is
+//     imported. If one ever is, add its import substring here to fail the build.
 var denylist = []string{
+	// Hosted IPFS / gateway SaaS SDKs — the embedded boxo client must never be
+	// swapped for one of these. (None are imported today.)
+	"web3.storage",
+	"nft.storage",
+	"pinata",
 	"coingecko",
 	"coinmarketcap",
 	"binance", // matches go-binance, binance-connector-go, api.binance, etc.
