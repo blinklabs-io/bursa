@@ -713,7 +713,7 @@ func TestWalletNoActiveWalletConflict(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	for _, path := range []string{"/wallet/balance", "/wallet/addresses", "/wallet/transactions", "/wallet/delegation"} {
 		t.Run(path, func(t *testing.T) {
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeNFTs{}, "preview", http.NotFoundHandler())
+			h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeNFTs{}, "preview", http.NotFoundHandler())
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 			if rec.Code != http.StatusConflict {
@@ -906,7 +906,7 @@ func TestSpendErrorStatusCodes(t *testing.T) {
 				req = httptest.NewRequest(http.MethodPost, "/wallet/send",
 					bytes.NewBufferString(`{"to":"addr_test1recv","lovelace":"1000000"}`))
 			}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeNFTs{}, "preview", http.NotFoundHandler())
+			h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeNFTs{}, "preview", http.NotFoundHandler())
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)
 			if rec.Code != tc.wantCode {
@@ -1051,6 +1051,7 @@ type fakeNFTs struct {
 	imageBytes []byte
 	servedUnit string
 	setErr     error
+	setCalled  bool
 }
 
 func (f *fakeNFTs) List(_ context.Context) ([]nft.NFT, error) {
@@ -1074,6 +1075,7 @@ func (f *fakeNFTs) ServeImage(_ context.Context, w http.ResponseWriter, unit str
 func (f *fakeNFTs) Enabled() bool { return f.enabled }
 
 func (f *fakeNFTs) SetEnabled(enabled bool) error {
+	f.setCalled = true
 	if f.setErr != nil {
 		return f.setErr
 	}
@@ -1179,6 +1181,28 @@ func TestNFTSettingsToggle(t *testing.T) {
 		bytes.NewBufferString(`{"enabled":false}`)))
 	if rec.Code != http.StatusOK || nf.enabled {
 		t.Fatalf("PUT nft-media disable = %d enabled=%v, want 200 disabled", rec.Code, nf.enabled)
+	}
+}
+
+func TestNFTSettingsRequiresExplicitEnabled(t *testing.T) {
+	for _, bodyJSON := range []string{`{}`, `{"enabled":null}`} {
+		t.Run(bodyJSON, func(t *testing.T) {
+			st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+			nf := &fakeNFTs{enabled: true}
+			h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nf, "preview", http.NotFoundHandler())
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/nft-media",
+				bytes.NewBufferString(bodyJSON)))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("PUT nft-media with %s = %d, want 400", bodyJSON, rec.Code)
+			}
+			if nf.setCalled {
+				t.Fatal("SetEnabled must not be called without an explicit enabled value")
+			}
+			if !nf.enabled {
+				t.Fatal("NFT media should remain enabled after a bad request")
+			}
+		})
 	}
 }
 

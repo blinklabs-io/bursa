@@ -205,14 +205,16 @@ export function Settings({ account, spendingEnabled }: SettingsProps) {
           third-party gateway is used. Off by default; enabling it is a one-time,
           deliberate choice.
         </p>
-        <div className="dl-row">
-          <dt>Status</dt>
-          <dd>
-            <StatusPill tone={nftMedia.enabled ? "ok" : "muted"}>
-              {nftMedia.enabled ? "Enabled" : "Disabled"}
-            </StatusPill>
-          </dd>
-        </div>
+        <dl>
+          <div className="dl-row">
+            <dt>Status</dt>
+            <dd>
+              <StatusPill tone={nftMedia.enabled ? "ok" : "muted"}>
+                {nftMedia.enabled ? "Enabled" : "Disabled"}
+              </StatusPill>
+            </dd>
+          </div>
+        </dl>
         {nftMedia.error && (
           <p role="alert" className="error-text">
             {nftMedia.error.message}
