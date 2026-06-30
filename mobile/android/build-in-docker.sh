@@ -27,8 +27,10 @@ fi
 
 echo "==> gomobile bind (android AAR)"
 mkdir -p "${REPO}/mobile/android/app/libs"
+# arm64 only: the 32-bit Android ABIs (armeabi-v7a/x86) overflow math.MaxUint32
+# (int is 32-bit there) in the apollo/dingo deps, so restrict to android/arm64.
 (cd "${REPO}/ui" && gomobile bind \
-    -target=android \
+    -target=android/arm64 \
     -androidapi 24 \
     -javapkg io.blinklabs.bursa \
     -o "${REPO}/mobile/android/app/libs/bursa.aar" \
