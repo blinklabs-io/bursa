@@ -70,6 +70,7 @@ func TestBindingSignaturesAreGomobileCompatible(t *testing.T) {
 		{"Port", nil, []string{"int"}},
 		{"Stop", nil, []string{"error"}},
 		{"OnNetworkChanged", nil, []string{"error"}},
+		{"OnResume", nil, []string{"error"}},
 	}
 	for _, s := range sigs {
 		for _, p := range s.params {

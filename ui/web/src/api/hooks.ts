@@ -75,10 +75,18 @@ export function useAsync<T>(fn: () => Promise<T>, opts?: { pollMs?: number }): A
     const onOnline = () => run(false);
     window.addEventListener("online", onOnline);
 
+    // When the app returns from the background (tab/app becomes visible),
+    // trigger an immediate refetch so the UI reflects any state changes that
+    // occurred while it was suspended. The run() guard already skips the call
+    // when document.hidden is true, so a hidden→hidden transition is a no-op.
+    const onVisibilityChange = () => run(false);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     return () => {
       cancelled = true;
       if (id !== undefined) clearInterval(id);
       window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick]);
