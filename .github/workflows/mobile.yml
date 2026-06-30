@@ -6,6 +6,9 @@ name: mobile
 on:
   workflow_dispatch:
   push:
+    branches:
+      # Temporary: build the test APK for the mobile-resilience integration branch.
+      - integration-mobile-opts
     tags:
       - v*
 
@@ -58,6 +61,9 @@ jobs:
   # generates the project and xcodebuild produces an (unsigned, simulator) .app.
   ios:
     name: ios
+    # Skipped for the integration-mobile-opts test-APK push: the macOS runner is
+    # slow and not needed to validate the Android APK. Still runs on tags / dispatch.
+    if: github.ref != 'refs/heads/integration-mobile-opts'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 https://github.com/actions/checkout/releases/tag/v7.0.0
