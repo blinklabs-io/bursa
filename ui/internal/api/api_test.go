@@ -1617,7 +1617,7 @@ func TestPoolRegistrationSeedAndAirGap(t *testing.T) {
 
 func TestPoolRegistrationAcceptsStringAmounts(t *testing.T) {
 	po := &fakePoolOps{cert: poolops.CertResult{PoolID: "pool1reg", CBORHex: "8a03"}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, po, "preview", http.NotFoundHandler())
+	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, po, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"pw","pledge":"9007199254740993","cost":"18446744073709551615","margin_num":1,"margin_denom":50}`)
