@@ -1,12 +1,13 @@
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { Preview, TxResult, SendAsset } from "../api/types";
-import { buildSend, confirmSend, ApiError } from "../api/client";
+import type { Preview, TxResult, SendAsset, UnsignedTx } from "../api/types";
+import { buildSend, confirmSend, exportUnsigned, ApiError } from "../api/client";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { Table } from "../components/Table";
 import { CopyButton } from "../components/CopyButton";
+import { DownloadButton } from "../components/DownloadButton";
 import { formatAda, parseAda } from "../format";
 
 type Phase = "compose" | "preview" | "done";
@@ -186,6 +187,8 @@ function PreviewPhase({ preview, onBack, onDone }: PreviewPhaseProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exported, setExported] = useState<UnsignedTx | null>(null);
 
   const outputRows = preview.outputs.map((o) => ({
     address: o.address,
@@ -206,6 +209,23 @@ function PreviewPhase({ preview, onBack, onDone }: PreviewPhaseProps) {
       setError(errorMessage(e));
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Export the unsigned tx for offline signing. The result is shown for
+  // copy/download so it can be carried to an air-gapped, keyed instance; the
+  // pending send is not consumed, so the user may still confirm online instead.
+  async function handleExport() {
+    setError(null);
+    setExported(null);
+    setExporting(true);
+    try {
+      const res = await exportUnsigned(preview.pending_id);
+      setExported(res);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -246,12 +266,48 @@ function PreviewPhase({ preview, onBack, onDone }: PreviewPhaseProps) {
         )}
 
         <div className="preview-actions">
-          <Button variant="ghost" onClick={onBack} disabled={loading}>
+          <Button variant="ghost" onClick={onBack} disabled={loading || exporting}>
             Back
           </Button>
-          <Button onClick={handleConfirm} disabled={loading || !password}>
+          <Button onClick={handleConfirm} disabled={loading || exporting || !password}>
             {loading ? "Submitting…" : "Confirm & send"}
           </Button>
+        </div>
+
+        <div className="offline-export">
+          <Button variant="ghost" onClick={handleExport} disabled={loading || exporting}>
+            {exporting ? "Exporting…" : "Export for offline signing"}
+          </Button>
+          {exported && (
+            <div className="sign-result">
+              <p className="helper-text">
+                Carry this unsigned transaction to your offline instance, sign it
+                there, then bring the witness back to Submit signed.
+              </p>
+              <p className="field-label">Unsigned transaction (CBOR)</p>
+              <div className="tx-hash-row">
+                <code className="tx-hash">{exported.unsigned_tx_cbor}</code>
+                <CopyButton value={exported.unsigned_tx_cbor} />
+                <DownloadButton
+                  value={exported.unsigned_tx_cbor}
+                  filename="unsigned-tx.cbor"
+                  label="Download"
+                />
+              </div>
+              {exported.required_signers.length > 0 && (
+                <>
+                  <p className="field-label">Required signers</p>
+                  <ul className="signer-list">
+                    {exported.required_signers.map((s) => (
+                      <li key={s}>
+                        <code className="tx-hash">{s}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </Card>

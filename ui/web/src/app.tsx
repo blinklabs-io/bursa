@@ -17,6 +17,8 @@ import { Receive } from "./screens/Receive";
 import { Activity } from "./screens/Activity";
 import { Send } from "./screens/Send";
 import { SignMessage } from "./screens/SignMessage";
+import { VerifyMessage } from "./screens/VerifyMessage";
+import { Offline } from "./screens/Offline";
 import { Settings } from "./screens/Settings";
 
 // A Map (not a plain object) so a crafted hash like "#/constructor" or
@@ -35,6 +37,8 @@ const NAV: { key: string; label: string }[] = [
   { key: "activity", label: "Activity" },
   { key: "send", label: "Send" },
   { key: "sign", label: "Sign" },
+  { key: "verify", label: "Verify" },
+  { key: "offline", label: "Offline" },
   { key: "settings", label: "Settings" },
 ];
 
@@ -193,6 +197,8 @@ export function App() {
     if (route === "settings") activeRoute = "settings";
     else if (route === "send" && canSend) activeRoute = "send";
     else if (route === "sign" && canSign) activeRoute = "sign";
+    else if (route === "verify") activeRoute = "verify";
+    else if (route === "offline" && canSign) activeRoute = "offline";
     else if (ROUTES.has(route) && route !== "send") activeRoute = route;
     else activeRoute = "portfolio";
   }
@@ -220,6 +226,14 @@ export function App() {
     content = <Portfolio />;
   } else if (route === "sign") {
     content = canSign ? <SignMessage account={toAccount(activeWallet)} /> : <Portfolio />;
+  } else if (route === "verify") {
+    // Verification is pure crypto — available to any active wallet, even
+    // read-only, since it neither needs a node nor the keystore.
+    content = <VerifyMessage />;
+  } else if (route === "offline") {
+    // Air-gap signing needs the active wallet's seed (to sign) but no node for
+    // the sign step; falls back to Portfolio without an active wallet.
+    content = canSign ? <Offline /> : <Portfolio />;
   } else {
     const Screen = ROUTES.get(route) ?? Portfolio;
     content = <Screen />;
@@ -251,7 +265,8 @@ export function App() {
               activeWallet === null ||
               addingWallet ||
               (key === "send" && !canSend) ||
-              (key === "sign" && !canSign);
+              (key === "sign" && !canSign) ||
+              (key === "offline" && !canSign);
             const active = key === activeRoute;
             return (
               <button

@@ -126,6 +126,44 @@ export interface HistoryExpirySetting {
   restart_required: boolean;
 }
 
+// CIP-8/CIP-30 verification: the inverse of signData. expected_address is
+// optional; when set, a signature whose signer differs is reported invalid.
+export interface VerifyDataRequest {
+  signature: string; // COSE_Sign1, hex
+  key: string; // COSE_Key, hex
+  message: string;
+  hashed?: boolean;
+  expected_address?: string;
+}
+
+export interface VerifyDataResult {
+  valid: boolean;
+  address: string; // the bech32 address carried in the COSE protected header
+}
+
+// Air-gap signing. CBOR fields are hex strings carried (file/copy-paste)
+// between an online instance (export + submit) and an offline keyed instance
+// (sign).
+export interface UnsignedTx {
+  unsigned_tx_cbor: string;
+  required_signers: string[]; // payment key-hashes (hex) that must witness the tx
+}
+
+export interface WitnessResult {
+  witness_cbor: string;
+}
+
+export interface SignTxRequest {
+  unsigned_tx_cbor: string;
+  password: string;
+  required_signers: string[];
+}
+
+export interface SubmitSignedRequest {
+  unsigned_tx_cbor: string;
+  witness_cbor: string;
+}
+
 // A wallet as listed by the vault: read-only fields plus whether it's active.
 // The encrypted seed is never exposed.
 export interface WalletView {

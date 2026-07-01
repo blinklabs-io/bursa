@@ -16,6 +16,12 @@ import type {
   AddWalletRequest,
   MigrateLegacyKeystoreRequest,
   HistoryExpirySetting,
+  VerifyDataRequest,
+  VerifyDataResult,
+  UnsignedTx,
+  WitnessResult,
+  SignTxRequest,
+  SubmitSignedRequest,
 } from "./types";
 
 export class ApiError extends Error {
@@ -99,3 +105,10 @@ export const getHistoryExpiry = () =>
   apiGet<HistoryExpirySetting>("/wallet/settings/history-expiry");
 export const setHistoryExpiry = (enabled: boolean) =>
   apiPut<HistoryExpirySetting>("/wallet/settings/history-expiry", { enabled });
+export const verifyData = (req: VerifyDataRequest) =>
+  apiPost<VerifyDataResult>("/wallet/verify-data", req);
+export const exportUnsigned = (id: string) =>
+  apiPost<UnsignedTx>(`/wallet/send/${encodeURIComponent(id)}/export-unsigned`);
+export const signTx = (req: SignTxRequest) => apiPost<WitnessResult>("/wallet/sign-tx", req);
+export const submitSigned = (req: SubmitSignedRequest) =>
+  apiPost<TxResult>("/wallet/submit-signed", req);
