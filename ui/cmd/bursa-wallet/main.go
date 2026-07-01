@@ -108,9 +108,10 @@ func run() error {
 		return fmt.Errorf("seed lean-node default: %w", err)
 	}
 
+	nodeDataDir := filepath.Join(dataDir, "db")
 	sup := supervisor.New(supervisor.Config{
 		Network:        network,
-		DataDir:        filepath.Join(dataDir, "db"),
+		DataDir:        nodeDataDir,
 		SocketPath:     filepath.Join(dataDir, "node.socket"),
 		UtxorpcPort:    utxorpcPort,
 		BlockfrostPort: blockfrostPort,
@@ -123,8 +124,11 @@ func run() error {
 		HistoryExpiry: settingsStore.HistoryExpiry,
 	})
 
-	// The wallet queries the node's own loopback Blockfrost endpoint.
-	walletSvc := wallet.NewService(chain.NewClient(blockfrostPort))
+	// The wallet queries the node's own loopback Blockfrost endpoint. The same
+	// client also verifies pasted pool/DRep IDs and reads protocol params for the
+	// staking flow (consent law: the embedded node is the only network contact).
+	chainClient := chain.NewClient(blockfrostPort, chain.WithDingoDataDir(nodeDataDir))
+	walletSvc := wallet.NewService(chainClient)
 
 	// The vault is the encrypted multi-wallet store: a single file under the data
 	// dir holding the wallet index (encrypted under the vault password) and each
@@ -135,10 +139,13 @@ func run() error {
 
 	// Spending builds/signs/submits through the node's loopback UTxO-RPC
 	// endpoint; the active wallet's seed is decrypted from the vault on demand.
+	// Delegation txs additionally query pool/DRep/account state + protocol params
+	// through the Blockfrost client.
 	chainCtx := utxorpc.NewUtxoRpcChainContext(
 		fmt.Sprintf("http://127.0.0.1:%d", utxorpcPort), netID, nil,
 	)
 	spendSvc := spend.NewService(chainCtx, vaultKeystore{v: vlt}, nil)
+	spendSvc.SetChainQuerier(chainClient)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -153,6 +160,7 @@ func run() error {
 		Handler: api.NewHandler(
 			sup, vlt, walletSvc, spendSvc,
 			&settingsController{store: settingsStore, sup: sup},
+			chainClient,
 			network, webui.Handler(),
 			api.WithLegacyKeystore(legacyKeyStore),
 		),

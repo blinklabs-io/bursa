@@ -5,6 +5,7 @@
 package wallet
 
 import (
+	"encoding/hex"
 	"fmt"
 
 	"github.com/blinklabs-io/bursa"
@@ -16,10 +17,17 @@ import (
 // Account is a derived, read-only view of a wallet: its stake address (the
 // query key) and a window of external (receive) payment addresses, all sharing
 // the canonical stake key at index 0.
+//
+// DRepKeyHash is the wallet's own DRep verification-key hash (CIP-0105,
+// derivation role 3), derived at the same time as the addresses. It carries the
+// public credential (a 28-byte blake2b-224 digest, hex-encoded over JSON) for
+// self-DRep registration and self vote delegation, so those operations need no
+// password to learn the wallet's DRep identity. It is public material, not a key.
 type Account struct {
 	Network          string   `json:"network"`
 	StakeAddress     string   `json:"stake_address"`
 	ReceiveAddresses []string `json:"receive_addresses"`
+	DRepKeyHash      string   `json:"drep_key_hash,omitempty"`
 }
 
 // AccountXpub returns the Bech32-encoded extended public key for the CIP-1852
@@ -106,6 +114,15 @@ func deriveFromRoot(root bip32.XPrv, network string, netID uint8, windowN int) (
 	defer zeroXPrv(stakeKey)
 	stakeHash := stakeKey.Public().PublicKey().Hash()
 
+	// The wallet's own DRep credential (CIP-0105, role 3): a public key hash used
+	// for self-DRep registration and self vote delegation.
+	drepKey, err := bursa.GetDRepKey(acctKey, 0)
+	if err != nil {
+		return nil, fmt.Errorf("drep key: %w", err)
+	}
+	defer zeroXPrv(drepKey)
+	drepHash := hex.EncodeToString(drepKey.Public().PublicKey().Hash())
+
 	stakeAddr, err := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, netID, nil, stakeHash)
 	if err != nil {
 		return nil, fmt.Errorf("stake address: %w", err)
@@ -130,6 +147,7 @@ func deriveFromRoot(root bip32.XPrv, network string, netID uint8, windowN int) (
 		Network:          network,
 		StakeAddress:     stakeAddr.String(),
 		ReceiveAddresses: receive,
+		DRepKeyHash:      drepHash,
 	}, nil
 }
 

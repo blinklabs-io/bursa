@@ -106,8 +106,8 @@ type UnsignedTx struct {
 	// UnsignedTxCBOR is the hex-encoded CBOR of the completed Conway tx with an
 	// empty witness set.
 	UnsignedTxCBOR string `json:"unsigned_tx_cbor"`
-	// RequiredSigners are the hex-encoded payment key-hashes (Blake2b-224) of the
-	// distinct input addresses — the witnesses the offline instance must produce.
+	// RequiredSigners are the hex-encoded key-hashes (Blake2b-224) that must
+	// witness the transaction.
 	RequiredSigners []string `json:"required_signers"`
 }
 
@@ -143,11 +143,12 @@ const feePaddingLovelace = 1000
 
 // pending holds a completed but unsigned tx while awaiting Confirm.
 type pending struct {
-	tx       *apollo.Apollo
-	utxoAddr map[string]string // "txhash#index" → bech32 address (for signing)
-	created  time.Time
-	walletID string
-	account  *wallet.Account
+	tx        *apollo.Apollo
+	utxoAddr  map[string]string // "txhash#index" → bech32 address (for signing)
+	created   time.Time
+	walletID  string
+	account   *wallet.Account
+	certKinds []CertKind // non-nil for delegation txs; drives stake/DRep witness addition at Confirm
 }
 
 // Service builds and holds pending send transactions.
@@ -157,6 +158,7 @@ type Service struct {
 	account  *wallet.Account
 	walletID string
 	gen      uint64
+	chainQ   chainQuerier     // node-backed pool/DRep/account/params queries (delegation); may be nil
 	mkID     func() string    // pending id generator; injectable for tests
 	now      func() time.Time // injectable for tests
 
@@ -246,6 +248,14 @@ func (s *Service) currentBinding() (string, *wallet.Account, uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.walletID, cloneAccount(s.account), s.gen
+}
+
+// currentAccount returns a snapshot of the active account under lock (nil if
+// none is set). Used by the delegation flow.
+func (s *Service) currentAccount() *wallet.Account {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneAccount(s.account)
 }
 
 // Build runs coin selection and fee estimation for req using Apollo, stores the
@@ -541,6 +551,19 @@ func sameKeyHashSet(a, b []lcommon.Blake2b224) bool {
 	return true
 }
 
+func keyHashSetContainsAll(set, subset []lcommon.Blake2b224) bool {
+	seen := make(map[lcommon.Blake2b224]bool, len(set))
+	for _, kh := range set {
+		seen[kh] = true
+	}
+	for _, kh := range subset {
+		if !seen[kh] {
+			return false
+		}
+	}
+	return true
+}
+
 func keyHashesHex(signers []lcommon.Blake2b224) []string {
 	ret := make([]string, 0, len(signers))
 	for _, kh := range signers {
@@ -794,6 +817,39 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 		}
 	}
 
+	// --- step 6b: add stake / DRep key witnesses for delegation certificates ---
+	// Cardano requires a vkey witness from the stake key for any cert that touches
+	// the stake credential (stake registration, stake delegation, vote delegation,
+	// and reward withdrawal). It also requires a witness from the DRep key for a
+	// DRep registration. These are in addition to the payment-key witnesses above.
+	needsStakeWitness, needsDRepWitness := certKindsRequireWitnesses(p.certKinds)
+	if needsStakeWitness {
+		stakeKey, err := bursa.GetStakeKey(acctKey, 0)
+		if err != nil {
+			return TxResult{}, fmt.Errorf("stake key: %w", err)
+		}
+		a, err = a.SignWithSkey([]byte(stakeKey))
+		for i := range stakeKey {
+			stakeKey[i] = 0
+		}
+		if err != nil {
+			return TxResult{}, fmt.Errorf("sign stake key: %w", err)
+		}
+	}
+	if needsDRepWitness {
+		drepKey, err := bursa.GetDRepKey(acctKey, 0)
+		if err != nil {
+			return TxResult{}, fmt.Errorf("drep key: %w", err)
+		}
+		a, err = a.SignWithSkey([]byte(drepKey))
+		for i := range drepKey {
+			drepKey[i] = 0
+		}
+		if err != nil {
+			return TxResult{}, fmt.Errorf("sign drep key: %w", err)
+		}
+	}
+
 	// --- step 7: submit ---
 	// The node's structured rejection reason (the failing ledger rule, via the
 	// utxorpc backend) rides along in the wrapped message.
@@ -890,16 +946,18 @@ func (s *Service) ExportUnsigned(pendingID string) (UnsignedTx, error) {
 	if tx == nil {
 		return UnsignedTx{}, errors.New("pending tx is nil")
 	}
-	// The required signers are the distinct input addresses' payment key-hashes.
-	// They are derived from the same utxoAddr map Confirm uses, so the offline
-	// instance is told exactly which keys it must produce witnesses for.
-	signerHashes, err := requiredPaymentKeyHashesForInputs(tx.Body.Inputs(), p.utxoAddr)
+	// Payment signer hashes are derived from the same utxoAddr map Confirm uses.
+	// Delegation transactions may also bind stake/DRep certificate signers in the
+	// body; export the full body-bound signer set after confirming the selected
+	// payment keys are represented.
+	paymentSignerHashes, err := requiredPaymentKeyHashesForInputs(tx.Body.Inputs(), p.utxoAddr)
 	if err != nil {
 		return UnsignedTx{}, err
 	}
-	if !sameKeyHashSet(tx.Body.RequiredSigners(), signerHashes) {
+	bodySignerHashes := tx.Body.RequiredSigners()
+	if !keyHashSetContainsAll(bodySignerHashes, paymentSignerHashes) {
 		return UnsignedTx{}, fmt.Errorf(
-			"%w: unsigned tx required signers do not match selected input signers",
+			"%w: unsigned tx required signers do not include selected input signers",
 			ErrInvalidTx,
 		)
 	}
@@ -910,7 +968,7 @@ func (s *Service) ExportUnsigned(pendingID string) (UnsignedTx, error) {
 
 	return UnsignedTx{
 		UnsignedTxCBOR:  hex.EncodeToString(cborBytes),
-		RequiredSigners: keyHashesHex(signerHashes),
+		RequiredSigners: keyHashesHex(bodySignerHashes),
 	}, nil
 }
 
@@ -1042,6 +1100,11 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 			return Witness{}, fmt.Errorf("witness stake key: %w", err)
 		}
 	}
+	if drepKey, err := bursa.GetDRepKey(acctKey, 0); err == nil {
+		if err := addCandidate(drepKey); err != nil {
+			return Witness{}, fmt.Errorf("witness drep key: %w", err)
+		}
+	}
 	if len(witnesses) == 0 {
 		return Witness{}, fmt.Errorf(
 			"%w: none of this wallet's keys match the transaction's required signers",
@@ -1152,6 +1215,22 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
+}
+
+// certKindsRequireWitnesses returns which additional witnesses a delegation tx
+// needs beyond the payment-input witnesses. Stake-touching certs (registration,
+// stake delegation, vote delegation, withdrawal) each require the stake key to
+// be a witness; DRep registration requires the DRep key.
+func certKindsRequireWitnesses(kinds []CertKind) (needsStake, needsDRep bool) {
+	for _, k := range kinds {
+		switch k {
+		case CertStakeRegistration, CertStakeDelegation, CertVoteDelegation, CertWithdrawal:
+			needsStake = true
+		case CertDRepRegistration:
+			needsDRep = true
+		}
+	}
+	return
 }
 
 // randID generates a 16-byte random hex string for pending IDs.

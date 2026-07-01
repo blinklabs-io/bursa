@@ -260,9 +260,11 @@ a:hover {
 .portfolio,
 .receive,
 .activity,
+.staking,
 .screen-settings,
 .send-form,
 .sign-form,
+.staking-form,
 .preview-details,
 .done-details {
   display: flex;
@@ -305,6 +307,7 @@ a:hover {
 /* Field labels are instrument captions too. */
 .send-form label,
 .sign-form label,
+.staking-form label,
 .field-group label,
 .field-label {
   display: block;
@@ -344,7 +347,8 @@ a:hover {
 }
 /* Forms: inputs carry the rhythm; labels hug the input above them. */
 .send-form .field,
-.sign-form .field {
+.sign-form .field,
+.staking-form .field {
   margin-bottom: var(--space-3);
 }
 
@@ -986,6 +990,123 @@ a:hover {
 .tab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+
+/* --------------------------------------------------------------- staking -- */
+/* Node-verified pool/DRep readout under a pasted ID. */
+.verified-readout {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin: calc(-1 * var(--space-2)) 0 var(--space-3);
+  line-height: 1.7;
+  word-break: break-word;
+}
+.verified-tick {
+  color: var(--ok);
+}
+
+/* Voting-power picker — selectable instrument tiles. */
+.vote-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.vote-opt {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--inset);
+  padding: 12px 14px;
+}
+.vote-opt.selected {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.staking-form .vote-opt-label {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  cursor: pointer;
+  /* Override the instrument-caption label styling for the option title row. */
+  font-family: var(--font);
+  font-size: 0.9rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text);
+  margin: 0;
+}
+.staking-form .vote-opt-label input[type="radio"] {
+  margin-top: 3px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.vote-opt-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.vote-opt-title {
+  font-weight: 600;
+}
+.vote-opt-sub {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.vote-opt-extra {
+  margin-top: var(--space-3);
+  padding-left: 26px;
+  display: flex;
+  flex-direction: column;
+}
+.vote-opt-extra .field:last-of-type {
+  margin-bottom: var(--space-2);
+}
+
+/* The larger separate DRep deposit notice. */
+.deposit-note {
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: var(--space-1);
+}
+
+/* Itemized confirm — one line per certificate/withdrawal. */
+.cert-list {
+  margin-bottom: var(--space-3);
+}
+.cert-row {
+  display: flex;
+  gap: 11px;
+  align-items: baseline;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.cert-row:last-child {
+  border-bottom: none;
+}
+.cert-mark {
+  font-family: var(--mono);
+  color: var(--accent);
+  width: 1.2em;
+  flex-shrink: 0;
+}
+.cert-body {
+  flex: 1;
+  font-size: 0.9rem;
+}
+.cert-amt {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  color: var(--text);
+}
+.total-accent {
+  color: var(--accent);
 }
 
 @media (prefers-reduced-motion: reduce) {
