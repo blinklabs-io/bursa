@@ -106,8 +106,8 @@ type UnsignedTx struct {
 	// UnsignedTxCBOR is the hex-encoded CBOR of the completed Conway tx with an
 	// empty witness set.
 	UnsignedTxCBOR string `json:"unsigned_tx_cbor"`
-	// RequiredSigners are the hex-encoded payment key-hashes (Blake2b-224) of the
-	// distinct input addresses — the witnesses the offline instance must produce.
+	// RequiredSigners are the hex-encoded key-hashes (Blake2b-224) that must
+	// witness the transaction.
 	RequiredSigners []string `json:"required_signers"`
 }
 
@@ -551,6 +551,19 @@ func sameKeyHashSet(a, b []lcommon.Blake2b224) bool {
 	return true
 }
 
+func keyHashSetContainsAll(set, subset []lcommon.Blake2b224) bool {
+	seen := make(map[lcommon.Blake2b224]bool, len(set))
+	for _, kh := range set {
+		seen[kh] = true
+	}
+	for _, kh := range subset {
+		if !seen[kh] {
+			return false
+		}
+	}
+	return true
+}
+
 func keyHashesHex(signers []lcommon.Blake2b224) []string {
 	ret := make([]string, 0, len(signers))
 	for _, kh := range signers {
@@ -933,16 +946,18 @@ func (s *Service) ExportUnsigned(pendingID string) (UnsignedTx, error) {
 	if tx == nil {
 		return UnsignedTx{}, errors.New("pending tx is nil")
 	}
-	// The required signers are the distinct input addresses' payment key-hashes.
-	// They are derived from the same utxoAddr map Confirm uses, so the offline
-	// instance is told exactly which keys it must produce witnesses for.
-	signerHashes, err := requiredPaymentKeyHashesForInputs(tx.Body.Inputs(), p.utxoAddr)
+	// Payment signer hashes are derived from the same utxoAddr map Confirm uses.
+	// Delegation transactions may also bind stake/DRep certificate signers in the
+	// body; export the full body-bound signer set after confirming the selected
+	// payment keys are represented.
+	paymentSignerHashes, err := requiredPaymentKeyHashesForInputs(tx.Body.Inputs(), p.utxoAddr)
 	if err != nil {
 		return UnsignedTx{}, err
 	}
-	if !sameKeyHashSet(tx.Body.RequiredSigners(), signerHashes) {
+	bodySignerHashes := tx.Body.RequiredSigners()
+	if !keyHashSetContainsAll(bodySignerHashes, paymentSignerHashes) {
 		return UnsignedTx{}, fmt.Errorf(
-			"%w: unsigned tx required signers do not match selected input signers",
+			"%w: unsigned tx required signers do not include selected input signers",
 			ErrInvalidTx,
 		)
 	}
@@ -953,7 +968,7 @@ func (s *Service) ExportUnsigned(pendingID string) (UnsignedTx, error) {
 
 	return UnsignedTx{
 		UnsignedTxCBOR:  hex.EncodeToString(cborBytes),
-		RequiredSigners: keyHashesHex(signerHashes),
+		RequiredSigners: keyHashesHex(bodySignerHashes),
 	}, nil
 }
 
@@ -1085,6 +1100,11 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 			return Witness{}, fmt.Errorf("witness stake key: %w", err)
 		}
 	}
+	if drepKey, err := bursa.GetDRepKey(acctKey, 0); err == nil {
+		if err := addCandidate(drepKey); err != nil {
+			return Witness{}, fmt.Errorf("witness drep key: %w", err)
+		}
+	}
 	if len(witnesses) == 0 {
 		return Witness{}, fmt.Errorf(
 			"%w: none of this wallet's keys match the transaction's required signers",
@@ -1200,14 +1220,13 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 // certKindsRequireWitnesses returns which additional witnesses a delegation tx
 // needs beyond the payment-input witnesses. Stake-touching certs (registration,
 // stake delegation, vote delegation, withdrawal) each require the stake key to
-// be a witness; DRep registration additionally requires the DRep key.
+// be a witness; DRep registration requires the DRep key.
 func certKindsRequireWitnesses(kinds []CertKind) (needsStake, needsDRep bool) {
 	for _, k := range kinds {
 		switch k {
 		case CertStakeRegistration, CertStakeDelegation, CertVoteDelegation, CertWithdrawal:
 			needsStake = true
 		case CertDRepRegistration:
-			needsStake = true
 			needsDRep = true
 		}
 	}

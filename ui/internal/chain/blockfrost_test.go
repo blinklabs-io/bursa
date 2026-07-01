@@ -3,6 +3,7 @@ package chain
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -373,6 +374,63 @@ func TestPoolFiltersExtendedList(t *testing.T) {
 	}
 	if got.PoolID != "pool1bbb" || got.MarginCost != 0.02 || got.FixedCost != "170000000" || got.DeclaredPledge != "200000000" {
 		t.Fatalf("unexpected pool: %+v", got)
+	}
+}
+
+func TestPoolStopsWhenMatchFoundBeforeLastPage(t *testing.T) {
+	calls := 0
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/api/v0/pools/extended" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if page := r.URL.Query().Get("page"); page != "1" {
+			t.Fatalf("requested page %q after match was on page 1", page)
+		}
+		rows := make([]PoolInfo, pageSize)
+		for i := range rows {
+			rows[i] = PoolInfo{PoolID: fmt.Sprintf("pool1%03d", i)}
+		}
+		rows[7] = PoolInfo{PoolID: "pool1target", FixedCost: "340000000"}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(rows); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+	})
+	got, err := c.Pool(context.Background(), "pool1target")
+	if err != nil {
+		t.Fatalf("Pool: %v", err)
+	}
+	if got.PoolID != "pool1target" || got.FixedCost != "340000000" {
+		t.Fatalf("unexpected pool: %+v", got)
+	}
+	if calls != 1 {
+		t.Fatalf("requests = %d, want 1", calls)
+	}
+}
+
+func TestPoolUsesCachedCompleteList(t *testing.T) {
+	calls := 0
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"pool_id":"pool1aaa","fixed_cost":"340000000"},
+			{"pool_id":"pool1bbb","fixed_cost":"170000000"}
+		]`))
+	})
+	if _, err := c.Pool(context.Background(), "pool1bbb"); err != nil {
+		t.Fatalf("Pool first lookup: %v", err)
+	}
+	got, err := c.Pool(context.Background(), "pool1aaa")
+	if err != nil {
+		t.Fatalf("Pool cached lookup: %v", err)
+	}
+	if got.FixedCost != "340000000" {
+		t.Fatalf("unexpected cached pool: %+v", got)
+	}
+	if calls != 1 {
+		t.Fatalf("requests = %d, want 1", calls)
 	}
 }
 

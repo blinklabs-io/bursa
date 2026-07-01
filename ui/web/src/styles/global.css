@@ -1023,7 +1023,7 @@ a:hover {
   border-color: var(--accent);
   background: var(--accent-dim);
 }
-.vote-opt-label {
+.staking-form .vote-opt-label {
   display: flex;
   gap: 11px;
   align-items: flex-start;
@@ -1037,7 +1037,7 @@ a:hover {
   color: var(--text);
   margin: 0;
 }
-.vote-opt-label input[type="radio"] {
+.staking-form .vote-opt-label input[type="radio"] {
   margin-top: 3px;
   accent-color: var(--accent);
   flex-shrink: 0;

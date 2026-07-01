@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
@@ -340,6 +341,58 @@ func newFakeQuerier() *fakeQuerier {
 	}
 }
 
+func drepKeyHashForAccount(t *testing.T, acct *wallet.Account) string {
+	t.Helper()
+	drep, err := drepFromHex(acct.DRepKeyHash)
+	if err != nil {
+		t.Fatalf("drepFromHex: %v", err)
+	}
+	return hex.EncodeToString(drep.Credential)
+}
+
+func exportedRequiredSignerSet(t *testing.T, s *Service, pendingID string) map[string]bool {
+	t.Helper()
+	unsigned, err := s.ExportUnsigned(pendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+	s.mu.Lock()
+	p := s.pending[pendingID]
+	if p == nil || p.tx == nil || p.tx.GetTx() == nil {
+		s.mu.Unlock()
+		t.Fatalf("pending tx %q is missing", pendingID)
+	}
+	body := keyHashesHex(p.tx.GetTx().Body.RequiredSigners())
+	s.mu.Unlock()
+	if !equalStringSets(body, unsigned.RequiredSigners) {
+		t.Fatalf("body required signers %v do not match sidecar %v", body, unsigned.RequiredSigners)
+	}
+	ret := make(map[string]bool, len(body))
+	for _, signer := range body {
+		ret[signer] = true
+	}
+	return ret
+}
+
+func equalStringSets(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]bool, len(a))
+	for _, s := range a {
+		seen[s] = true
+	}
+	if len(seen) != len(a) {
+		return false
+	}
+	for _, s := range b {
+		if !seen[s] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestBuildDelegationNoWallet(t *testing.T) {
 	fc := newFakeChain(5_000_000, mustDeriveTestAccount(t).ReceiveAddresses[0])
 	s := NewService(fc, nil, nil)
@@ -496,6 +549,12 @@ func TestBuildDelegationFreshWalletPreview(t *testing.T) {
 	if pv.Fee == "" || pv.Fee == "0" {
 		t.Fatalf("expected non-zero fee, got %q", pv.Fee)
 	}
+	signers := exportedRequiredSignerSet(t, s, pv.PendingID)
+	payment := paymentKeyHashForAddress(t, acct.ReceiveAddresses[0])
+	stake := stakeKeyHashForAddress(t, acct.ReceiveAddresses[0])
+	if !signers[payment] || !signers[stake] || len(signers) != 2 {
+		t.Fatalf("required signers = %v, want payment %s and stake %s", signers, payment, stake)
+	}
 }
 
 // TestBuildDelegationConfirmSignsAndSubmits proves a delegation tx flows through
@@ -569,6 +628,48 @@ func TestBuildDelegationRegisterSelfPreview(t *testing.T) {
 	}
 	if pv.Deposit != "500000000" {
 		t.Fatalf("total deposit = %q, want 500000000", pv.Deposit)
+	}
+	signers := exportedRequiredSignerSet(t, s, pv.PendingID)
+	payment := paymentKeyHashForAddress(t, acct.ReceiveAddresses[0])
+	stake := stakeKeyHashForAddress(t, acct.ReceiveAddresses[0])
+	drep := drepKeyHashForAccount(t, acct)
+	if !signers[payment] || !signers[stake] || !signers[drep] || len(signers) != 3 {
+		t.Fatalf("required signers = %v, want payment %s, stake %s, drep %s", signers, payment, stake, drep)
+	}
+}
+
+func TestBuildDelegationRegisterSelfOnlyDoesNotRequireStakeSigner(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	fc := newFakeChain(600_000_000, acct.ReceiveAddresses[0])
+	s := NewService(fc, nil, acct)
+	q := newFakeQuerier()
+	ownDRepID := "drep-keyHash-" + acct.DRepKeyHash
+	q.account = chain.AccountInfo{
+		Registered:         true,
+		Active:             true,
+		PoolID:             strptr("pool1abc"),
+		DRepID:             &ownDRepID,
+		WithdrawableAmount: "0",
+	}
+	q.drepErr = chain.ErrNotFound
+	s.SetChainQuerier(q)
+
+	pv, err := s.BuildDelegation(context.Background(), DelegationRequest{
+		Vote: &Vote{Type: VoteRegisterSelf},
+	})
+	if err != nil {
+		t.Fatalf("BuildDelegation register-self only: %v", err)
+	}
+	if len(pv.Certs) != 1 || pv.Certs[0].Kind != CertDRepRegistration {
+		t.Fatalf("unexpected certs: %+v", pv.Certs)
+	}
+
+	signers := exportedRequiredSignerSet(t, s, pv.PendingID)
+	payment := paymentKeyHashForAddress(t, acct.ReceiveAddresses[0])
+	stake := stakeKeyHashForAddress(t, acct.ReceiveAddresses[0])
+	drep := drepKeyHashForAccount(t, acct)
+	if !signers[payment] || !signers[drep] || signers[stake] || len(signers) != 2 {
+		t.Fatalf("required signers = %v, want payment %s and drep %s only", signers, payment, drep)
 	}
 }
 

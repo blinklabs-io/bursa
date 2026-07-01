@@ -580,11 +580,7 @@ func (s *Service) buildDelegationTx(
 		Credential: stakeKeyHash,
 	}
 
-	a := apollo.New(s.chain).
-		SetWallet(apollo.NewExternalWallet(changeAddr)).
-		SetChangeAddress(changeAddr).
-		SetFeePadding(feePaddingLovelace)
-
+	var loaded []lcommon.Utxo
 	utxoAddr := make(map[string]string)
 	for _, addrStr := range acct.ReceiveAddresses {
 		addr, err := lcommon.NewAddress(addrStr)
@@ -596,64 +592,156 @@ func (s *Service) buildDelegationTx(
 			return nil, nil, fmt.Errorf("utxos for %s: %w", addrStr, err)
 		}
 		if len(utxos) > 0 {
-			a = a.AddLoadedUTxOs(utxos...)
+			loaded = append(loaded, utxos...)
 			for _, u := range utxos {
 				utxoAddr[makeUtxoRef(u)] = addrStr
 			}
 		}
 	}
 
-	// Apply each computed certificate. We build the discrete certs (the combined
-	// register+delegate cert is equivalent and the discrete set keeps the apollo
-	// calls one-to-one with the itemized preview).
+	certSigners, err := delegationCertRequiredSigners(certs, stakeKeyHash, acct)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var a *apollo.Apollo
+	var paymentSigners []lcommon.Blake2b224
+	maxAttempts := len(acct.ReceiveAddresses) + 2
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		next := apollo.New(s.chain).
+			SetWallet(apollo.NewExternalWallet(changeAddr)).
+			SetChangeAddress(changeAddr).
+			SetFeePadding(feePaddingLovelace).
+			AddLoadedUTxOs(loaded...)
+		for _, kh := range appendKeyHashes(nil, certSigners, paymentSigners) {
+			next = next.AddRequiredSigner(kh)
+		}
+		next, err = s.applyDelegationTx(next, req, certs, params, stakeAddr, cred)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		next, err = next.CompleteContext(ctx)
+		if err != nil {
+			if isInsufficientFundsError(err) {
+				return nil, nil, fmt.Errorf("%w: %w", ErrInsufficientFunds, err)
+			}
+			return nil, nil, fmt.Errorf("complete transaction: %w", err)
+		}
+
+		tx := next.GetTx()
+		if tx == nil {
+			return nil, nil, errors.New("completed tx is nil")
+		}
+		actualPaymentSigners, err := requiredPaymentKeyHashesForInputs(tx.Body.Inputs(), utxoAddr)
+		if err != nil {
+			return nil, nil, err
+		}
+		if sameKeyHashSet(paymentSigners, actualPaymentSigners) {
+			a = next
+			break
+		}
+		paymentSigners = actualPaymentSigners
+	}
+	if a == nil {
+		return nil, nil, errors.New("delegation required signer set did not converge")
+	}
+	return a, utxoAddr, nil
+}
+
+// applyDelegationTx applies each computed certificate/withdrawal to a fresh
+// Apollo builder. The discrete certs keep the apollo calls one-to-one with the
+// itemized preview.
+func (s *Service) applyDelegationTx(
+	a *apollo.Apollo,
+	req DelegationRequest,
+	certs []Cert,
+	params ProtocolParams,
+	stakeAddr lcommon.Address,
+	cred lcommon.Credential,
+) (*apollo.Apollo, error) {
+	var err error
 	for _, c := range certs {
 		switch c.Kind {
 		case CertStakeRegistration:
 			a, err = a.RegisterStake(&cred)
 			if err != nil {
-				return nil, nil, fmt.Errorf("register stake: %w", err)
+				return nil, fmt.Errorf("register stake: %w", err)
 			}
 		case CertStakeDelegation:
 			poolHash, err := poolKeyHash(req.PoolID)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			a, err = a.DelegateStake(&cred, poolHash)
 			if err != nil {
-				return nil, nil, fmt.Errorf("delegate stake: %w", err)
+				return nil, fmt.Errorf("delegate stake: %w", err)
 			}
 		case CertDRepRegistration:
 			drepCred, anchor, err := s.selfDRepCredential(req)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			a = a.RegisterDRep(drepCred, int64(params.DRepDeposit), anchor) //nolint:gosec // deposit from node params
 		case CertVoteDelegation:
 			drep, err := s.voteDrep(req)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			a, err = a.DelegateVote(&cred, drep)
 			if err != nil {
-				return nil, nil, fmt.Errorf("delegate vote: %w", err)
+				return nil, fmt.Errorf("delegate vote: %w", err)
 			}
 		case CertWithdrawal:
 			amt, err := parseAmount(c.AmountLovelace)
 			if err != nil {
-				return nil, nil, fmt.Errorf("%w: withdrawal amount", ErrInvalidRequest)
+				return nil, fmt.Errorf("%w: withdrawal amount", ErrInvalidRequest)
 			}
 			a = a.AddWithdrawal(stakeAddr, amt, nil, nil)
 		}
 	}
+	return a, nil
+}
 
-	a, err = a.CompleteContext(ctx)
-	if err != nil {
-		if isInsufficientFundsError(err) {
-			return nil, nil, fmt.Errorf("%w: %w", ErrInsufficientFunds, err)
+func delegationCertRequiredSigners(
+	certs []Cert,
+	stakeKeyHash lcommon.Blake2b224,
+	acct *wallet.Account,
+) ([]lcommon.Blake2b224, error) {
+	var signers []lcommon.Blake2b224
+	for _, c := range certs {
+		switch c.Kind {
+		case CertStakeRegistration, CertStakeDelegation, CertVoteDelegation, CertWithdrawal:
+			if stakeKeyHash == (lcommon.Blake2b224{}) {
+				return nil, errors.New("stake credential is missing")
+			}
+			signers = appendKeyHashes(signers, []lcommon.Blake2b224{stakeKeyHash})
+		case CertDRepRegistration:
+			drep, err := drepFromHex(acct.DRepKeyHash)
+			if err != nil {
+				return nil, err
+			}
+			signers = appendKeyHashes(signers, []lcommon.Blake2b224{lcommon.NewBlake2b224(drep.Credential)})
 		}
-		return nil, nil, fmt.Errorf("complete transaction: %w", err)
 	}
-	return a, utxoAddr, nil
+	return signers, nil
+}
+
+func appendKeyHashes(dst []lcommon.Blake2b224, sets ...[]lcommon.Blake2b224) []lcommon.Blake2b224 {
+	seen := make(map[lcommon.Blake2b224]bool, len(dst))
+	for _, kh := range dst {
+		seen[kh] = true
+	}
+	for _, set := range sets {
+		for _, kh := range set {
+			if seen[kh] {
+				continue
+			}
+			seen[kh] = true
+			dst = append(dst, kh)
+		}
+	}
+	return dst
 }
 
 // poolKeyHash decodes a bech32 pool1… ID into the 28-byte pool key hash apollo's

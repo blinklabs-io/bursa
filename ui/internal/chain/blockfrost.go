@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
@@ -34,6 +35,11 @@ type Client struct {
 	BaseURL      string
 	http         *http.Client
 	dingoDataDir string
+
+	poolMu            sync.Mutex
+	poolCache         map[string]PoolInfo
+	poolCacheComplete bool
+	poolCacheUntil    time.Time
 }
 
 type ClientOption func(*Client)
@@ -187,6 +193,8 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 const pageSize = 100
 
 const maxPages = 1000
+
+const poolCacheTTL = time.Minute
 
 // getAllPages fetches every page of a list endpoint. The node caps pages at
 // pageSize rows; a page with fewer rows is the last one.
@@ -398,20 +406,69 @@ func (c *Client) ProtocolParams(ctx context.Context) (ProtocolParams, error) {
 
 // Pool returns the on-chain parameters for poolID. dingo has no per-pool lookup
 // endpoint; it exposes pools only via the paginated GET /api/v0/pools/extended
-// list, so Pool walks that list and returns the matching entry. A pool the node
-// has not seen yields ErrNotFound — the wallet treats that as "not found by your
-// node" and refuses to delegate.
+// list, so Pool scans pages until it finds the requested entry and keeps a
+// short-lived index for repeated UI/build verification. A pool the node has not
+// seen yields ErrNotFound — the wallet treats that as "not found by your node"
+// and refuses to delegate.
 func (c *Client) Pool(ctx context.Context, poolID string) (PoolInfo, error) {
-	pools, err := getAllPages[PoolInfo](ctx, c, "/api/v0/pools/extended")
-	if err != nil {
-		return PoolInfo{}, err
+	if pool, found, complete := c.cachedPool(poolID); found || complete {
+		if found {
+			return pool, nil
+		}
+		return PoolInfo{}, ErrNotFound
 	}
-	for _, p := range pools {
-		if p.PoolID == poolID {
-			return p, nil
+
+	for page := 1; page <= maxPages; page++ {
+		var rows []PoolInfo
+		paged := fmt.Sprintf("/api/v0/pools/extended?count=%d&page=%d", pageSize, page)
+		if err := c.get(ctx, paged, &rows); err != nil {
+			return PoolInfo{}, err
+		}
+		complete := len(rows) < pageSize
+		c.cachePools(rows, complete)
+		for _, p := range rows {
+			if p.PoolID == poolID {
+				return p, nil
+			}
+		}
+		if complete {
+			return PoolInfo{}, ErrNotFound
 		}
 	}
-	return PoolInfo{}, ErrNotFound
+	return PoolInfo{}, fmt.Errorf("%w: /api/v0/pools/extended exceeded %d pages", errPageLimitExceeded, maxPages)
+}
+
+func (c *Client) cachedPool(poolID string) (PoolInfo, bool, bool) {
+	c.poolMu.Lock()
+	defer c.poolMu.Unlock()
+	if c.poolCache == nil || time.Now().After(c.poolCacheUntil) {
+		c.poolCache = nil
+		c.poolCacheComplete = false
+		c.poolCacheUntil = time.Time{}
+		return PoolInfo{}, false, false
+	}
+	pool, found := c.poolCache[poolID]
+	return pool, found, c.poolCacheComplete
+}
+
+func (c *Client) cachePools(pools []PoolInfo, complete bool) {
+	now := time.Now()
+	c.poolMu.Lock()
+	defer c.poolMu.Unlock()
+	if c.poolCache == nil || now.After(c.poolCacheUntil) {
+		c.poolCache = make(map[string]PoolInfo)
+		c.poolCacheComplete = false
+		c.poolCacheUntil = now.Add(poolCacheTTL)
+	}
+	for _, p := range pools {
+		if p.PoolID == "" {
+			continue
+		}
+		c.poolCache[p.PoolID] = p
+	}
+	if complete {
+		c.poolCacheComplete = true
+	}
 }
 
 // DRep confirms a delegated representative exists on chain and returns its
