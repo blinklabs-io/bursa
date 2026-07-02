@@ -57,14 +57,37 @@ type Config struct {
 	HistoryExpiry func() bool
 }
 
+// NodeRunner is the interface the supervisor uses to create and run the embedded
+// node. It is an interface (not a concrete dingo.Node) so the orchestration can
+// be unit-tested without network connectivity (the production implementation
+// calls dingo.New and then node.Run).
+type NodeRunner interface {
+	// Run starts the node and blocks until ctx is cancelled. An error from a
+	// graceful cancellation (ctx.Err() != nil) is treated as orderly shutdown.
+	Run(ctx context.Context) error
+}
+
+// NodeFactory creates a NodeRunner from a dingo config. It is injectable for
+// tests (the real factory calls dingo.New).
+type NodeFactory interface {
+	New(cfg dingo.Config) (NodeRunner, error)
+}
+
+// dingoNodeFactory is the production NodeFactory backed by dingo.New.
+type dingoNodeFactory struct{}
+
+func (dingoNodeFactory) New(cfg dingo.Config) (NodeRunner, error) { return dingo.New(cfg) }
+
 // Supervisor owns the embedded Dingo node's lifecycle and exposes its status.
 type Supervisor struct {
-	cfg    Config
-	cancel context.CancelFunc
-	runID  uint64
+	cfg     Config
+	cancel  context.CancelFunc
+	runDone chan struct{}
+	runID   uint64
 
-	mu     sync.RWMutex
-	status Status
+	lifecycleMu sync.Mutex
+	mu          sync.RWMutex
+	status      Status
 	// applied records the history-expiry value the currently-running node was
 	// built with, so the API can tell whether a changed setting still needs a
 	// restart to take effect. ran is false until the node has been launched at
@@ -76,7 +99,7 @@ type Supervisor struct {
 
 	now          func() time.Time // injectable clock for tests
 	bootstrapper Bootstrapper     // injectable for tests
-	newNode      func(dingo.Config) (nodeRunner, error)
+	nodeFactory  NodeFactory      // injectable for tests
 }
 
 func New(cfg Config) *Supervisor {
@@ -91,14 +114,8 @@ func New(cfg Config) *Supervisor {
 		status:       Status{State: StateStopped},
 		now:          time.Now,
 		bootstrapper: mithrilBootstrapper{logger: cfg.Logger},
-		newNode: func(cfg dingo.Config) (nodeRunner, error) {
-			return dingo.New(cfg)
-		},
+		nodeFactory:  dingoNodeFactory{},
 	}
-}
-
-type nodeRunner interface {
-	Run(context.Context) error
 }
 
 // historyExpiryEnabled resolves the lean-node profile from the (optional)
@@ -161,20 +178,40 @@ func (s *Supervisor) AppliedHistoryExpiry() (applied bool, ran bool) {
 	return s.applied.historyExpiry, s.applied.ran
 }
 
+// ErrAlreadyStarted is returned by Start when the supervisor is already running.
+// Reconnect folds this sentinel to nil (the node is running, which is the
+// desired post-reconnect state) so callers can use errors.Is to distinguish it
+// from real failures.
+var ErrAlreadyStarted = errors.New("supervisor already started")
+
 // Start constructs the node, launches it, and begins polling its tip. It
 // returns once the node goroutine is launched; readiness is reported via Status.
 func (s *Supervisor) Start(ctx context.Context) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	return s.start(ctx)
+}
+
+func (s *Supervisor) start(ctx context.Context) error {
 	// Guard against double-start: reserve s.cancel atomically so a second Start
 	// can't overwrite (and orphan) the first node and poll loop.
 	s.mu.Lock()
 	if s.cancel != nil {
 		s.mu.Unlock()
-		return errors.New("supervisor already started")
+		return ErrAlreadyStarted
 	}
 	runCtx, cancel := context.WithCancel(ctx)
+	runDone := make(chan struct{})
+	var completeOnce sync.Once
+	completeRun := func() {
+		completeOnce.Do(func() {
+			close(runDone)
+		})
+	}
 	s.runID++
 	runID := s.runID
 	s.cancel = cancel
+	s.runDone = runDone
 	s.mu.Unlock()
 
 	// fail releases the reservation so Start can be retried if we error out
@@ -183,9 +220,11 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		s.mu.Lock()
 		if s.activeRunLocked(runID) {
 			s.cancel = nil
+			s.runDone = nil
 		}
 		s.mu.Unlock()
 		cancel()
+		completeRun()
 		return err
 	}
 
@@ -222,7 +261,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		// before the first node exists.
 		historyExpiry := s.cfg.historyExpiryEnabled()
 		nodeCfg := dingo.NewConfig(nodeConfigOptions(s.cfg, historyExpiry, cardanoCfg, topologyCfg)...)
-		node, err := s.newNode(nodeCfg)
+		node, err := s.nodeFactory.New(nodeCfg)
 		if err != nil {
 			return err
 		}
@@ -232,6 +271,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		s.mu.Unlock()
 		s.setStateForRun(runID, StateStarting)
 		go func() {
+			defer completeRun()
 			if err := node.Run(runCtx); err != nil && runCtx.Err() == nil {
 				s.setErrorForRun(runID, err)
 			}
@@ -251,13 +291,20 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	// creation is deferred until the snapshot import finishes (mithril.Sync and
 	// the node cannot both hold the DB).
 	s.setStateForRun(runID, StateBootstrapping)
-	go s.bootstrapThenLaunch(runCtx, runID, launch)
+	go s.bootstrapThenLaunch(runCtx, runID, launch, completeRun)
 	return nil
 }
 
 // bootstrapThenLaunch runs the Mithril bootstrap and, on success, records the
 // completion marker and launches the node. Any failure → StateError (no fallback).
-func (s *Supervisor) bootstrapThenLaunch(ctx context.Context, runID uint64, launch func() error) {
+func (s *Supervisor) bootstrapThenLaunch(ctx context.Context, runID uint64, launch func() error, completeRun func()) {
+	launched := false
+	defer func() {
+		if !launched {
+			completeRun()
+		}
+	}()
+
 	err := s.bootstrapper.Bootstrap(ctx, BootstrapParams{
 		Network: s.cfg.Network,
 		DataDir: s.cfg.DataDir,
@@ -294,7 +341,9 @@ func (s *Supervisor) bootstrapThenLaunch(ctx context.Context, runID uint64, laun
 		if ctx.Err() == nil {
 			s.setErrorForRun(runID, fmt.Errorf("create node: %w", err))
 		}
+		return
 	}
+	launched = true
 }
 
 // onProgress stores the latest bootstrap progress on the status snapshot.
@@ -314,19 +363,35 @@ func (s *Supervisor) onProgressForRun(runID uint64, bp BootstrapProgress) {
 	s.status.Bootstrap = &bp
 }
 
-// Stop cancels the node's context and marks the supervisor stopped.
+// Stop cancels the node's context, waits for the active run to exit, and marks
+// the supervisor stopped.
 func (s *Supervisor) Stop() {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	s.waitForRunExit(s.stop())
+}
+
+func (s *Supervisor) stop() <-chan struct{} {
 	s.mu.Lock()
 	cancel := s.cancel
+	runDone := s.runDone
 	// Clear the start guard so the supervisor can be started again after being
 	// stopped, and record the terminal state under the same lock so a late poll
 	// can't race between the unlock and the state write.
 	s.cancel = nil
+	s.runDone = nil
 	s.status.State = StateStopped
 	s.status.Bootstrap = nil // a clean shutdown is not a diagnostic failure
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	return runDone
+}
+
+func (s *Supervisor) waitForRunExit(runDone <-chan struct{}) {
+	if runDone != nil {
+		<-runDone
 	}
 }
 
@@ -371,6 +436,7 @@ func (s *Supervisor) setErrorForRun(runID uint64, err error) {
 	}
 	cancel := s.cancel
 	s.cancel = nil
+	s.runDone = nil
 	s.status.State = StateError
 	// Status.Bootstrap is intentionally retained on error so /status shows how
 	// far a bootstrap got before failing (diagnostics).

@@ -44,6 +44,9 @@ export function useAsync<T>(fn: () => Promise<T>, opts?: { pollMs?: number }): A
     let inFlight = false;
 
     const run = (isInitial: boolean) => {
+      // Suspend polling when the network is down or the page is hidden — avoid
+      // firing requests into a dead network or a backgrounded tab.
+      if (!isInitial && (!navigator.onLine || document.hidden)) return;
       // Skip if a request is still pending: prevents overlapping polls and
       // out-of-order responses from overwriting fresher data.
       if (inFlight) return;
@@ -73,9 +76,23 @@ export function useAsync<T>(fn: () => Promise<T>, opts?: { pollMs?: number }): A
       id = setInterval(() => run(false), opts.pollMs);
     }
 
+    // When the network comes back, trigger an immediate refetch so the UI
+    // recovers without waiting for the next poll interval.
+    const onOnline = () => run(false);
+    window.addEventListener("online", onOnline);
+
+    // When the app returns from the background (tab/app becomes visible),
+    // trigger an immediate refetch so the UI reflects any state changes that
+    // occurred while it was suspended. The run() guard already skips the call
+    // when document.hidden is true, so a hidden→hidden transition is a no-op.
+    const onVisibilityChange = () => run(false);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     return () => {
       cancelled = true;
       if (id !== undefined) clearInterval(id);
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick]);

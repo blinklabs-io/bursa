@@ -1,0 +1,2 @@
+# The gomobile AAR (bursa.aar) is written here at build time (CI / Docker).
+# This file keeps the otherwise-empty directory tracked so the build target exists.

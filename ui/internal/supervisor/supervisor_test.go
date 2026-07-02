@@ -119,6 +119,10 @@ type nodeRunnerFunc func(context.Context) error
 
 func (f nodeRunnerFunc) Run(ctx context.Context) error { return f(ctx) }
 
+type nodeFactoryFunc func(dingo.Config) (NodeRunner, error)
+
+func (f nodeFactoryFunc) New(cfg dingo.Config) (NodeRunner, error) { return f(cfg) }
+
 func TestStartReadsHistoryExpiryAtDeferredBootstrapLaunch(t *testing.T) {
 	enabled := false
 	cfg := baseConfig()
@@ -135,13 +139,13 @@ func TestStartReadsHistoryExpiryAtDeferredBootstrapLaunch(t *testing.T) {
 	}
 	s.bootstrapper = fb
 	nodeStarted := make(chan struct{})
-	s.newNode = func(dingo.Config) (nodeRunner, error) {
+	s.nodeFactory = nodeFactoryFunc(func(dingo.Config) (NodeRunner, error) {
 		return nodeRunnerFunc(func(ctx context.Context) error {
 			close(nodeStarted)
 			<-ctx.Done()
 			return ctx.Err()
 		}), nil
-	}
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
