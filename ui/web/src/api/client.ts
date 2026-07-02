@@ -35,6 +35,9 @@ import type {
   PoolRegistrationParams,
   PoolCertResult,
   PoolIDResult,
+  TPMStatus,
+  EnableTPMRequest,
+  DisableTPMRequest,
 } from "./types";
 
 export class ApiError extends Error {
@@ -185,3 +188,8 @@ export const poolBuildRetirementCert = (req: PoolBuildRetirementCertRequest) =>
   apiPost<PoolCertResult>("/wallet/pool/retirement/cert", req);
 export const poolSubmitRetirement = (req: { password: string; epoch: number }) =>
   apiPost<TxResult>("/wallet/pool/retirement/submit", req);
+
+// TPM vault binding.
+export const getTPMStatus = () => apiGet<TPMStatus>("/vault/tpm/status");
+export const enableTPM = (req: EnableTPMRequest) => apiPost<TPMStatus>("/vault/tpm/enable", req);
+export const disableTPM = (req: DisableTPMRequest) => apiPost<TPMStatus>("/vault/tpm/disable", req);

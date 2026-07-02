@@ -2,7 +2,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Settings } from "./Settings";
 import * as hooks from "../api/hooks";
 import * as client from "../api/client";
-import type { Account, HistoryExpirySetting } from "../api/types";
+import type { Account, HistoryExpirySetting, TPMStatus } from "../api/types";
 
 const mockAccount: Account = {
   network: "preview",
@@ -30,8 +30,28 @@ function mockHistoryExpiry(setting: HistoryExpirySetting | null, loading = false
   } as never);
 }
 
+function mockTPMStatus(tpmStatus: TPMStatus) {
+  vi.spyOn(hooks, "useTPMStatus").mockReturnValue({
+    data: tpmStatus,
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+    setData: vi.fn(),
+  } as never);
+}
+
+const tpmAvailable: TPMStatus = { available: true, enabled: false, pcrBound: false };
+const tpmUnavailable: TPMStatus = { available: false, reason: "tpm: no device found", enabled: false, pcrBound: false };
+const tpmEnabled: TPMStatus = { available: true, enabled: true, pcrBound: false };
+const tpmEnabledUnavailable: TPMStatus = { available: false, reason: "tpm: no device found", enabled: true, pcrBound: false };
+const tpmEnabledPCR: TPMStatus = { available: true, enabled: true, pcrBound: true };
+
+// Default-mock both hooks for every test so tests that don't exercise those
+// cards never fire an unmocked async fetch (which triggers act() warnings).
+// Individual tests override as needed.
 beforeEach(() => {
   mockHistoryExpiry({ enabled: false, restart_required: false });
+  mockTPMStatus(tpmUnavailable);
 });
 
 afterEach(() => {
@@ -102,6 +122,7 @@ test("(i) loading state from useStatus renders gracefully", () => {
     error: null,
     loading: true,
     refresh: vi.fn(),
+    setData: vi.fn(),
   } as never);
   render(<Settings account={mockAccount} spendingEnabled={false} />);
   // Should not crash; network card still shows
@@ -168,6 +189,7 @@ test("(n) failed initial lean storage load renders unavailable", () => {
     error: new Error("settings unavailable"),
     loading: false,
     refresh: vi.fn(),
+    setData: vi.fn(),
   } as never);
 
   render(<Settings account={mockAccount} spendingEnabled={false} />);
@@ -185,4 +207,163 @@ test("(o) a persisted restart_required surfaces the restart note", () => {
   // The restart note appears both in the live status line (role=status) and as
   // the final bullet of the copy; assert the live status one specifically.
   expect(screen.getByRole("status")).toHaveTextContent(/takes effect after a node restart/i);
+});
+
+// --- Hardware security (TPM) card -----------------------------------------
+
+test("(j0) TPM card renders a loading state while status is fetching", () => {
+  mockStatus("ready");
+  vi.spyOn(hooks, "useTPMStatus").mockReturnValue({
+    data: null,
+    error: null,
+    loading: true,
+    refresh: vi.fn(),
+    setData: vi.fn(),
+  } as never);
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  // The card must still be present (not gated away) and show a loading hint.
+  expect(screen.getByText("Hardware security")).toBeInTheDocument();
+  const loadings = screen.getAllByText(/loading/i);
+  expect(loadings.length).toBeGreaterThan(0);
+});
+
+test("(j1) TPM card renders an error/unavailable state on status-fetch error", () => {
+  mockStatus("ready");
+  vi.spyOn(hooks, "useTPMStatus").mockReturnValue({
+    data: null,
+    error: new Error("network down"),
+    loading: false,
+    refresh: vi.fn(),
+    setData: vi.fn(),
+  } as never);
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  // The card must remain present (not vanish) and surface the failure.
+  expect(screen.getByText("Hardware security")).toBeInTheDocument();
+  expect(screen.getByText(/unavailable/i)).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent(/network down/i);
+});
+
+test("(p) TPM card shows 'No TPM detected' message when unavailable", () => {
+  mockStatus("ready");
+  mockTPMStatus(tpmUnavailable);
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  expect(screen.getByText(/no tpm detected/i)).toBeInTheDocument();
+});
+
+test("(q) TPM card shows the unavailable reason text", () => {
+  mockStatus("ready");
+  mockTPMStatus({ available: false, reason: "tss group permission denied", enabled: false, pcrBound: false });
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  expect(screen.getByText(/tss group permission denied/i)).toBeInTheDocument();
+});
+
+test("(r) TPM card shows toggle when TPM is available and not enabled", () => {
+  mockStatus("ready");
+  mockTPMStatus(tpmAvailable);
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  // Toggle button / checkbox should be present to enable TPM
+  expect(screen.getByRole("button", { name: /enable/i })).toBeInTheDocument();
+});
+
+test("(s) TPM card shows disable button when TPM is enabled", () => {
+  mockStatus("ready");
+  mockTPMStatus(tpmEnabled);
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  expect(screen.getByRole("button", { name: /disable/i })).toBeInTheDocument();
+});
+
+test("(s1) TPM-enabled vault can be disabled when TPM is unavailable", () => {
+  mockStatus("ready");
+  mockTPMStatus(tpmEnabledUnavailable);
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  expect(screen.getByRole("button", { name: /disable/i })).toBeInTheDocument();
+  expect(screen.queryByText(/no tpm detected/i)).toBeNull();
+});
+
+test("(t) enabling TPM calls enableTPM client function with password", async () => {
+  mockStatus("ready");
+  mockTPMStatus(tpmAvailable);
+  const enableTPMSpy = vi.spyOn(client, "enableTPM").mockResolvedValue(tpmEnabled);
+
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  fireEvent.click(screen.getByRole("button", { name: /enable/i }));
+
+  // Password prompt appears
+  const pwInput = await screen.findByPlaceholderText(/vault password/i);
+  fireEvent.change(pwInput, { target: { value: "valid-vault-password" } });
+  fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+
+  await waitFor(() => {
+    expect(enableTPMSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ password: "valid-vault-password" })
+    );
+  });
+});
+
+test("(t1) failed TPM enable is announced as an alert", async () => {
+  mockStatus("ready");
+  mockTPMStatus(tpmAvailable);
+  vi.spyOn(client, "enableTPM").mockRejectedValue(new client.ApiError(500, "TPM seal failed"));
+
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  fireEvent.click(screen.getByRole("button", { name: /enable/i }));
+
+  const pwInput = await screen.findByPlaceholderText(/vault password/i);
+  fireEvent.change(pwInput, { target: { value: "valid-vault-password" } });
+  fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(/tpm seal failed/i);
+});
+
+test("(u) disabling TPM calls disableTPM client function with password", async () => {
+  mockStatus("ready");
+  mockTPMStatus(tpmEnabled);
+  const disableTPMSpy = vi.spyOn(client, "disableTPM").mockResolvedValue(tpmAvailable);
+
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  fireEvent.click(screen.getByRole("button", { name: /disable/i }));
+
+  const pwInput = await screen.findByPlaceholderText(/vault password/i);
+  fireEvent.change(pwInput, { target: { value: "valid-vault-password" } });
+  fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+
+  await waitFor(() => {
+    expect(disableTPMSpy).toHaveBeenCalledWith({ password: "valid-vault-password" });
+  });
+});
+
+test("(u1) failed TPM disable is announced as an alert", async () => {
+  mockStatus("ready");
+  mockTPMStatus(tpmEnabled);
+  vi.spyOn(client, "disableTPM").mockRejectedValue(new client.ApiError(500, "TPM disable failed"));
+
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  fireEvent.click(screen.getByRole("button", { name: /disable/i }));
+
+  const pwInput = await screen.findByPlaceholderText(/vault password/i);
+  fireEvent.change(pwInput, { target: { value: "valid-vault-password" } });
+  fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(/tpm disable failed/i);
+});
+
+test("(v) PCR advanced option shows brittleness warning when checked", async () => {
+  mockStatus("ready");
+  mockTPMStatus(tpmAvailable);
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  fireEvent.click(screen.getByRole("button", { name: /enable/i }));
+
+  // Advanced PCR checkbox should appear in the enable dialog
+  const pcrCheckbox = await screen.findByRole("checkbox", { name: /pcr/i });
+  fireEvent.click(pcrCheckbox);
+
+  // Brittleness warning should appear
+  expect(await screen.findByRole("status")).toHaveTextContent(/firmware update/i);
+});
+
+test("(w) TPM card shows PCR-bound status when enabled with PCR", () => {
+  mockStatus("ready");
+  mockTPMStatus(tpmEnabledPCR);
+  render(<Settings account={mockAccount} spendingEnabled={false} />);
+  expect(screen.getByText(/pcr/i)).toBeInTheDocument();
 });

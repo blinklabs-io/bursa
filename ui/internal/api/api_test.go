@@ -55,6 +55,16 @@ type fakeVault struct {
 	gotSpend   string
 	gotVault   string
 	gotSeed    []byte
+
+	// TPM fakes
+	tpmStatus          vault.TPMStatusInfo
+	enableTPMErr       error
+	disableTPMErr      error
+	enableTPMCalled    bool
+	disableTPMCalled   bool
+	enableTPMPassword  string
+	enableTPMPCRBound  bool
+	disableTPMPassword string
 }
 
 type fakeLegacyKeystore struct {
@@ -222,6 +232,21 @@ func (f *fakeSettings) SetHistoryExpiry(enabled bool) error {
 }
 
 func (f *fakeSettings) HistoryExpiryRestartRequired() bool { return f.restartRequired }
+
+func (f *fakeVault) TPMStatus() vault.TPMStatusInfo { return f.tpmStatus }
+
+func (f *fakeVault) EnableTPM(password string, pcrBound bool) error {
+	f.enableTPMCalled = true
+	f.enableTPMPassword = password
+	f.enableTPMPCRBound = pcrBound
+	return f.enableTPMErr
+}
+
+func (f *fakeVault) DisableTPM(password string) error {
+	f.disableTPMCalled = true
+	f.disableTPMPassword = password
+	return f.disableTPMErr
+}
 
 func TestHealthAlwaysOK(t *testing.T) {
 	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
@@ -1708,5 +1733,215 @@ func TestVaultUnlockAttachesPoolWallet(t *testing.T) {
 	}
 	if !po.setAccountCalled {
 		t.Fatal("pool service was not attached to the active wallet on vault unlock")
+	}
+}
+
+// --- TPM routes -------------------------------------------------------------
+
+func TestTPMStatusReturnsProbeResult(t *testing.T) {
+	fv := &fakeVault{tpmStatus: vault.TPMStatusInfo{
+		Available: true,
+		Reason:    "",
+		Enabled:   false,
+		PCRBound:  false,
+	}}
+	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/vault/tpm/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /vault/tpm/status = %d, want 200", rec.Code)
+	}
+	var got tpmStatusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Available || got.Enabled || got.PCRBound {
+		t.Fatalf("tpm status = %+v, want available=true enabled=false pcrBound=false", got)
+	}
+}
+
+func TestTPMStatusReturnsUnavailableWithReason(t *testing.T) {
+	fv := &fakeVault{tpmStatus: vault.TPMStatusInfo{
+		Available: false,
+		Reason:    "no TPM device found",
+		Enabled:   false,
+		PCRBound:  false,
+	}}
+	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/vault/tpm/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /vault/tpm/status = %d, want 200", rec.Code)
+	}
+	var got tpmStatusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Available || got.Reason != "no TPM device found" {
+		t.Fatalf("tpm status = %+v, want available=false reason='no TPM device found'", got)
+	}
+}
+
+func TestTPMStatusReturnsEnabledAndPCRBound(t *testing.T) {
+	fv := &fakeVault{tpmStatus: vault.TPMStatusInfo{
+		Available: true,
+		Enabled:   true,
+		PCRBound:  true,
+	}}
+	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/vault/tpm/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /vault/tpm/status = %d, want 200", rec.Code)
+	}
+	var got tpmStatusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Available || !got.Enabled || !got.PCRBound {
+		t.Fatalf("tpm status = %+v, want available=true enabled=true pcrBound=true", got)
+	}
+}
+
+func TestEnableTPMCallsVaultMethodWithPassword(t *testing.T) {
+	fv := &fakeVault{tpmStatus: vault.TPMStatusInfo{Available: true}}
+	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"valid-vault-password","pcrBound":true}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/tpm/enable", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /vault/tpm/enable = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !fv.enableTPMCalled {
+		t.Fatal("EnableTPM should have been called")
+	}
+	if fv.enableTPMPassword != "valid-vault-password" {
+		t.Fatalf("EnableTPM password = %q, want valid-vault-password", fv.enableTPMPassword)
+	}
+	if !fv.enableTPMPCRBound {
+		t.Fatal("EnableTPM pcrBound should be true")
+	}
+}
+
+func TestEnableTPMWithoutPCRBound(t *testing.T) {
+	fv := &fakeVault{tpmStatus: vault.TPMStatusInfo{Available: true}}
+	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"valid-vault-password"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/tpm/enable", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /vault/tpm/enable no pcrBound = %d, want 200", rec.Code)
+	}
+	if fv.enableTPMPCRBound {
+		t.Fatal("EnableTPM pcrBound should default to false")
+	}
+}
+
+func TestEnableTPMWrongPasswordReturns401(t *testing.T) {
+	fv := &fakeVault{
+		tpmStatus:    vault.TPMStatusInfo{Available: true},
+		enableTPMErr: fmt.Errorf("%w: bad", vault.ErrWrongPassword),
+	}
+	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"wrong-but-long-password"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/tpm/enable", body))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("POST /vault/tpm/enable wrong password = %d, want 401", rec.Code)
+	}
+}
+
+func TestEnableTPMUnavailableReturns409(t *testing.T) {
+	fv := &fakeVault{
+		tpmStatus:    vault.TPMStatusInfo{Available: false, Reason: "no device"},
+		enableTPMErr: fmt.Errorf("%w: no device", vault.ErrTPMUnavailable),
+	}
+	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"valid-vault-password"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/tpm/enable", body))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("POST /vault/tpm/enable unavailable = %d, want 409", rec.Code)
+	}
+}
+
+func TestEnableTPMRequiresPassword(t *testing.T) {
+	// Both a missing and a too-short password must fail the shared
+	// MinPasswordLen floor (via requirePassword) without touching the vault.
+	for _, body := range []string{`{}`, `{"password":"short"}`} {
+		fv := &fakeVault{tpmStatus: vault.TPMStatusInfo{Available: true}}
+		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/tpm/enable", bytes.NewBufferString(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("POST /vault/tpm/enable body %s = %d, want 400", body, rec.Code)
+		}
+		if fv.enableTPMCalled {
+			t.Fatalf("EnableTPM should not be called for body %s", body)
+		}
+	}
+}
+
+func TestDisableTPMCallsVaultMethodWithPassword(t *testing.T) {
+	fv := &fakeVault{}
+	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"valid-vault-password"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/tpm/disable", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /vault/tpm/disable = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !fv.disableTPMCalled {
+		t.Fatal("DisableTPM should have been called")
+	}
+	if fv.disableTPMPassword != "valid-vault-password" {
+		t.Fatalf("DisableTPM password = %q, want valid-vault-password", fv.disableTPMPassword)
+	}
+}
+
+func TestDisableTPMWrongPasswordReturns401(t *testing.T) {
+	fv := &fakeVault{disableTPMErr: fmt.Errorf("%w: bad", vault.ErrWrongPassword)}
+	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"wrong-but-long-password"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/tpm/disable", body))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("POST /vault/tpm/disable wrong password = %d, want 401", rec.Code)
+	}
+}
+
+func TestDisableTPMRequiresPassword(t *testing.T) {
+	// Both a missing and a too-short password must fail the shared
+	// MinPasswordLen floor (via requirePassword) without touching the vault.
+	for _, body := range []string{`{}`, `{"password":"short"}`} {
+		fv := &fakeVault{}
+		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/tpm/disable", bytes.NewBufferString(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("POST /vault/tpm/disable body %s = %d, want 400", body, rec.Code)
+		}
+		if fv.disableTPMCalled {
+			t.Fatalf("DisableTPM should not be called for body %s", body)
+		}
+	}
+}
+
+func TestTPMRoutesRejectTrailingJSON(t *testing.T) {
+	// The TPM routes must validate bodies as strictly as the other POST routes
+	// (decodeBody): a body with trailing JSON tokens is malformed and must be
+	// rejected without touching the vault.
+	for _, route := range []string{"/vault/tpm/enable", "/vault/tpm/disable"} {
+		fv := &fakeVault{tpmStatus: vault.TPMStatusInfo{Available: true}}
+		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		body := bytes.NewBufferString(`{"password":"valid-vault-password"}{"junk":true}`)
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, route, body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("POST %s with trailing JSON = %d, want 400", route, rec.Code)
+		}
+		if fv.enableTPMCalled || fv.disableTPMCalled {
+			t.Fatalf("POST %s with trailing JSON must not touch the vault", route)
+		}
 	}
 }

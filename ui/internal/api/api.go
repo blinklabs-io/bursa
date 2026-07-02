@@ -95,6 +95,27 @@ type Vault interface {
 	RemoveWallet(id, vaultPassword string) error
 	SetActive(id string) (vault.WalletMeta, error)
 	Active() (vault.WalletMeta, error)
+	// TPM feature: machine-binding of the at-rest vault.
+	TPMStatus() vault.TPMStatusInfo
+	EnableTPM(vaultPassword string, pcrBound bool) error
+	DisableTPM(vaultPassword string) error
+}
+
+// tpmStatusResponse is the GET /vault/tpm/status response.
+type tpmStatusResponse struct {
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+	Enabled   bool   `json:"enabled"`
+	PCRBound  bool   `json:"pcrBound"`
+}
+
+func toTPMStatusResponse(info vault.TPMStatusInfo) tpmStatusResponse {
+	return tpmStatusResponse{
+		Available: info.Available,
+		Reason:    info.Reason,
+		Enabled:   info.Enabled,
+		PCRBound:  info.PCRBound,
+	}
 }
 
 // LegacyKeystore is the old single-wallet encrypted mnemonic store. It is
@@ -363,6 +384,56 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		writeJSON(w, http.StatusOK, vaultStatus{
 			Exists: vlt.Exists(), Locked: true, WalletCount: vlt.WalletCount(),
 		})
+	})
+
+	// --- TPM vault binding ---------------------------------------------------
+
+	// GET /vault/tpm/status returns a probe of TPM availability on this machine
+	// and whether the vault is currently TPM-enrolled. No vault unlock needed.
+	mux.HandleFunc("GET /vault/tpm/status", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, toTPMStatusResponse(vlt.TPMStatus()))
+	})
+
+	// POST /vault/tpm/enable adds a TPM protector to the vault. The vault
+	// password is required to authenticate and recover the VEK. pcrBound is
+	// optional (defaults to false); when true the seal additionally binds to PCR
+	// 7 (firmware state). The password protector is always kept as recovery.
+	mux.HandleFunc("POST /vault/tpm/enable", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password string `json:"password"`
+			PCRBound bool   `json:"pcrBound"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if !requirePassword(w, req.Password) {
+			return
+		}
+		if err := vlt.EnableTPM(req.Password, req.PCRBound); err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, toTPMStatusResponse(vlt.TPMStatus()))
+	})
+
+	// POST /vault/tpm/disable removes the TPM protector and re-persists with
+	// the password protector only. A no-op vault (no TPM enrolled) succeeds
+	// silently.
+	mux.HandleFunc("POST /vault/tpm/disable", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password string `json:"password"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if !requirePassword(w, req.Password) {
+			return
+		}
+		if err := vlt.DisableTPM(req.Password); err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, toTPMStatusResponse(vlt.TPMStatus()))
 	})
 
 	mux.HandleFunc("POST /vault/migrate-legacy", func(w http.ResponseWriter, r *http.Request) {
@@ -975,6 +1046,8 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: locked / no active wallet
 	case errors.Is(err, spend.ErrWalletChanged):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: active wallet switched during build
+	case errors.Is(err, vault.ErrTPMUnavailable):
+		writeJSON(w, http.StatusConflict, errBody(err)) // 409: TPM not available on this machine
 	case errors.Is(err, vault.ErrWrongPassword), errors.Is(err, spend.ErrWrongPassword),
 		errors.Is(err, poolops.ErrWrongPassword):
 		writeJSON(w, http.StatusUnauthorized, errBody(err)) // 401

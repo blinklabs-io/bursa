@@ -2,9 +2,11 @@ import { useState, useEffect } from "react";
 import { Card } from "../components/Card";
 import { StatusPill } from "../components/StatusPill";
 import { CopyButton } from "../components/CopyButton";
-import { useStatus, useHistoryExpiry } from "../api/hooks";
-import { setHistoryExpiry as putHistoryExpiry, ApiError } from "../api/client";
-import type { Account, NodeState } from "../api/types";
+import { Button } from "../components/Button";
+import { Input } from "../components/Input";
+import { useStatus, useHistoryExpiry, useTPMStatus } from "../api/hooks";
+import { setHistoryExpiry as putHistoryExpiry, ApiError, enableTPM, disableTPM } from "../api/client";
+import type { Account, NodeState, TPMStatus } from "../api/types";
 
 interface SettingsProps {
   account: Account;
@@ -149,8 +151,171 @@ function LeanStorageCard() {
   );
 }
 
+// TPM hardware security card. Fetches /vault/tpm/status on mount.
+// When unavailable: shows a disabled explanatory state (platform note + reason).
+// When available:
+//   - Not enabled: "Enable" button → password dialog → optional PCR (with warning).
+//   - Enabled: shows current state (PCR bound?) + "Disable" button → password dialog.
+function TPMCard({
+  tpmStatus,
+  onRefresh,
+  onApplyStatus,
+}: {
+  tpmStatus: TPMStatus;
+  onRefresh: () => void;
+  // onApplyStatus applies the authoritative status returned by the mutation POST
+  // so the card never shows stale hardware-security state if the follow-up GET
+  // (onRefresh) fails after the mutation already succeeded.
+  onApplyStatus?: (status: TPMStatus) => void;
+}) {
+  const [mode, setMode] = useState<"idle" | "enabling" | "disabling">("idle");
+  const [password, setPassword] = useState("");
+  const [pcrBound, setPcrBound] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const resetDialog = () => {
+    setMode("idle");
+    setPassword("");
+    setPcrBound(false);
+    setError(null);
+  };
+
+  const runTPMMutation = async (action: () => Promise<TPMStatus>) => {
+    if (!password) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const status = await action();
+      resetDialog();
+      // Trust the POST's authoritative status first; refresh is a best-effort
+      // re-sync that must not, on failure, revert the card to stale state.
+      onApplyStatus?.(status);
+      onRefresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleEnable = () => runTPMMutation(() => enableTPM({ password, pcrBound }));
+  const handleDisable = () => runTPMMutation(() => disableTPM({ password }));
+
+  if (!tpmStatus.available && !tpmStatus.enabled) {
+    return (
+      <Card title="Hardware security">
+        <p className="muted">No TPM detected</p>
+        {tpmStatus.reason && (
+          <p className="helper-text">{tpmStatus.reason}</p>
+        )}
+        <p className="helper-text">
+          TPM vault binding is only available on desktop/server platforms with a TPM 2.0 device.
+          On Linux, ensure the <code>tss</code> group permission is set for <code>/dev/tpmrm0</code> or <code>/dev/tpm0</code>.
+        </p>
+      </Card>
+    );
+  }
+
+  if (mode === "enabling") {
+    return (
+      <Card title="Hardware security">
+        <p>Enter your vault password to add TPM-backed machine binding with password recovery.</p>
+        <Input
+          type="password"
+          aria-label="Vault password"
+          placeholder="vault password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          disabled={busy}
+        />
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            role="checkbox"
+            aria-label="Also require PCR measurement (boot state)"
+            checked={pcrBound}
+            onChange={(e) => setPcrBound(e.target.checked)}
+            disabled={busy}
+          />
+          {" "}Also require unchanged boot state (PCR)
+        </label>
+        {pcrBound && (
+          <p className="warning-text" role="status">
+            Warning: PCR binding is brittle. A firmware update or boot configuration
+            change may prevent TPM unsealing. Your password always remains as recovery,
+            but you may need to re-enroll after a firmware update.
+          </p>
+        )}
+        {error && <p className="error-text" role="alert">{error}</p>}
+        <div className="row-actions">
+          <Button onClick={handleEnable} disabled={busy || !password}>
+            Confirm
+          </Button>
+          <Button variant="ghost" onClick={resetDialog} disabled={busy}>
+            Cancel
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  if (mode === "disabling") {
+    return (
+      <Card title="Hardware security">
+        <p>Enter your vault password to remove TPM-backed machine binding.</p>
+        <Input
+          type="password"
+          aria-label="Vault password"
+          placeholder="vault password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          disabled={busy}
+        />
+        {error && <p className="error-text" role="alert">{error}</p>}
+        <div className="row-actions">
+          <Button onClick={handleDisable} disabled={busy || !password}>
+            Confirm
+          </Button>
+          <Button variant="ghost" onClick={resetDialog} disabled={busy}>
+            Cancel
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  // idle: available, show current state
+  return (
+    <Card title="Hardware security">
+      {tpmStatus.enabled ? (
+        <>
+          <p>
+            TPM-backed machine binding is <strong>enabled</strong> with password recovery.
+            {tpmStatus.pcrBound && " PCR-bound (boot state required)."}
+          </p>
+          {!tpmStatus.available && tpmStatus.reason && (
+            <p className="helper-text">{tpmStatus.reason}</p>
+          )}
+          <Button variant="ghost" onClick={() => setMode("disabling")}>
+            Disable TPM binding
+          </Button>
+        </>
+      ) : (
+        <>
+          <p>Add TPM-backed machine binding while keeping password recovery.</p>
+          <Button onClick={() => setMode("enabling")}>
+            Enable TPM binding
+          </Button>
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function Settings({ account, spendingEnabled }: SettingsProps) {
   const status = useStatus();
+  const tpmStatusQuery = useTPMStatus();
 
   return (
     <div className="screen-settings">
@@ -195,6 +360,25 @@ export function Settings({ account, spendingEnabled }: SettingsProps) {
       <Card title="Keystore">
         <p>{spendingEnabled ? "Spending enabled" : "Read-only"}</p>
       </Card>
+
+      {tpmStatusQuery.data ? (
+        <TPMCard
+          tpmStatus={tpmStatusQuery.data}
+          onRefresh={tpmStatusQuery.refresh}
+          onApplyStatus={tpmStatusQuery.setData}
+        />
+      ) : tpmStatusQuery.loading ? (
+        <Card title="Hardware security">
+          <p>Loading…</p>
+        </Card>
+      ) : (
+        <Card title="Hardware security">
+          <p className="muted">Unavailable</p>
+          {tpmStatusQuery.error && (
+            <p className="error-text" role="alert">{tpmStatusQuery.error.message}</p>
+          )}
+        </Card>
+      )}
     </div>
   );
 }
