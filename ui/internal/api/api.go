@@ -18,12 +18,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
@@ -127,6 +130,98 @@ type SettingsController interface {
 	HistoryExpiryRestartRequired() bool
 }
 
+// PoolOps is the Stake Pool Operations surface the API exposes. Credential
+// generation and seed-derived certificate/opcert building need the active
+// wallet + spending password; the air-gap builders (pool ID, opcert payload /
+// assembly, metadata, air-gap registration cert) need neither. Submission
+// (retirement) needs a synced node. It operates on the active wallet.
+type PoolOps interface {
+	// SetAccount binds the active wallet (both its ID and its read-only account)
+	// so pool operations always derive credentials from the same wallet whose
+	// account is in use. Passing an empty id and nil acct clears the binding.
+	SetAccount(id string, acct *wallet.Account)
+	Credentials(password string) (poolops.Credentials, error)
+	KESPeriod(ctx context.Context) (poolops.KESPeriodInfo, error)
+	IssueOpCert(password string, kesIndex uint32, issueNumber, kesPeriod uint64) (poolops.OpCert, error)
+	RotateKES(password string, newKESIndex uint32, prevIssueNumber, kesPeriod uint64) (poolops.OpCert, error)
+	OpCertPayload(kesVKeyHex string, issueNumber, kesPeriod uint64) (poolops.OpCertPayload, error)
+	AssembleOpCert(coldVKeyHex, kesVKeyHex, signatureHex string, issueNumber, kesPeriod uint64) (poolops.OpCert, error)
+	BuildMetadata(in poolops.MetadataInput) (poolops.MetadataResult, error)
+	PoolIDFromColdVKey(coldVKeyHex string) (poolID, poolIDHex string, err error)
+	BuildRegistrationFromSeed(password string, p poolops.RegistrationParams) (poolops.CertResult, error)
+	BuildRegistrationAirGap(p poolops.AirGapRegistrationParams) (poolops.CertResult, error)
+	BuildRetirementCert(password, coldVKeyHex string, epoch uint64) (poolops.CertResult, error)
+	SubmitRetirement(ctx context.Context, password string, epoch uint64) (poolops.TxResult, error)
+}
+
+type decimalUint64 uint64
+
+func (n *decimalUint64) UnmarshalJSON(data []byte) error {
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || raw == "null" {
+		return errors.New("expected unsigned integer")
+	}
+	if raw[0] == '"' {
+		unquoted, err := strconv.Unquote(raw)
+		if err != nil {
+			return fmt.Errorf("invalid quoted unsigned integer: %w", err)
+		}
+		raw = strings.TrimSpace(unquoted)
+	}
+	if raw == "" {
+		return errors.New("expected unsigned integer")
+	}
+	for _, c := range raw {
+		if c < '0' || c > '9' {
+			return errors.New("expected unsigned integer")
+		}
+	}
+	v, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return fmt.Errorf("unsigned integer out of range: %w", err)
+	}
+	*n = decimalUint64(v)
+	return nil
+}
+
+type poolRegistrationRequest struct {
+	Pledge        decimalUint64   `json:"pledge"`
+	Cost          decimalUint64   `json:"cost"`
+	MarginNum     int64           `json:"margin_num"`
+	MarginDenom   int64           `json:"margin_denom"`
+	RewardAddress string          `json:"reward_address,omitempty"`
+	Owners        []string        `json:"owners,omitempty"`
+	Relays        []poolops.Relay `json:"relays,omitempty"`
+	MetadataURL   string          `json:"metadata_url,omitempty"`
+	MetadataHash  string          `json:"metadata_hash,omitempty"`
+	ColdVKeyHex   string          `json:"cold_vkey_hex,omitempty"`
+}
+
+func (r poolRegistrationRequest) params() poolops.RegistrationParams {
+	return poolops.RegistrationParams{
+		Pledge:        uint64(r.Pledge),
+		Cost:          uint64(r.Cost),
+		MarginNum:     r.MarginNum,
+		MarginDenom:   r.MarginDenom,
+		RewardAddress: r.RewardAddress,
+		Owners:        r.Owners,
+		Relays:        r.Relays,
+		MetadataURL:   r.MetadataURL,
+		MetadataHash:  r.MetadataHash,
+		ColdVKeyHex:   r.ColdVKeyHex,
+	}
+}
+
+type poolRegistrationSeedRequest struct {
+	Password string `json:"password"`
+	poolRegistrationRequest
+}
+
+type poolRegistrationAirGapRequest struct {
+	poolRegistrationRequest
+	VRFKeyHashHex string `json:"vrf_key_hash_hex"`
+}
+
 const defaultWindow = 20
 
 // vaultStatus is the GET /vault/status response.
@@ -167,10 +262,10 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // the encrypted multi-wallet store; the API pushes the active wallet onto wl/sp
 // whenever the selection changes. settings exposes user-facing app settings
 // (the lean-node profile). lookup verifies pasted pool/DRep IDs through the
-// node (may be nil, in which case those endpoints report unavailable). spa is
-// the embedded SPA, registered as the catch-all so the specific API routes
-// take precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, lookup PoolDRepLookup, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+// node (may be nil, in which case those endpoints report unavailable). po is
+// the Stake Pool Operations surface. spa is the embedded SPA, registered as
+// the catch-all so the specific API routes take precedence on the mux.
+func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, lookup PoolDRepLookup, po PoolOps, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -194,10 +289,19 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		}
 		_ = wl.SetAccount(w.Account)
 		sp.SetAccount(w.ID, w.Account)
+		// Pool operations run on the same active wallet; attach both the wallet
+		// ID and its account so the SPO toolkit always derives credentials from
+		// the wallet whose account data is current.
+		if po != nil {
+			po.SetAccount(w.ID, w.Account)
+		}
 	}
 	clearActive := func() {
 		_ = wl.SetAccount(nil)
 		sp.SetAccount("", nil)
+		if po != nil {
+			po.SetAccount("", nil)
+		}
 	}
 	legacyAvailable := func() bool {
 		return !vlt.Exists() && cfg.legacy != nil && cfg.legacy.Exists()
@@ -578,6 +682,10 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		serve(w, res, err)
 	}))
 
+	if po != nil {
+		registerPoolRoutes(mux, st, po)
+	}
+
 	// SPA catch-all: the specific API routes above take precedence on the mux;
 	// everything else is served by the embedded frontend.
 	mux.Handle("/", spa)
@@ -624,6 +732,179 @@ func serveLookup[T any](w http.ResponseWriter, v T, err error) {
 	default:
 		writeJSON(w, http.StatusBadGateway, errBody(err))
 	}
+}
+
+// registerPoolRoutes wires the Stake Pool Operations (SPO) endpoints under
+// /wallet/pool/. Air-gap builders (pool ID, opcert payload/assembly, metadata,
+// air-gap registration cert) are ungated and need no node — they are pure
+// transforms over operator-supplied data. Seed-derived credential/cert/opcert
+// building needs the active wallet + spending password but no node (offline).
+// KES-period and retirement submission need a node (gated / readyGate).
+func registerPoolRoutes(mux *http.ServeMux, st Statuser, po PoolOps) {
+	// 1. Credentials (active wallet + password; offline).
+	mux.HandleFunc("POST /wallet/pool/credentials", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password string `json:"password"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := po.Credentials(req.Password)
+		serve(w, v, err)
+	})
+
+	// 2. KES period (node tip + genesis; gated on a queryable node).
+	mux.HandleFunc("GET /wallet/pool/kes-period", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		v, err := po.KESPeriod(r.Context())
+		serve(w, v, err)
+	}))
+
+	// 2. Operational certificate: issue (seed).
+	mux.HandleFunc("POST /wallet/pool/opcert", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password    string `json:"password"`
+			KESIndex    uint32 `json:"kes_index"`
+			IssueNumber uint64 `json:"issue_number"`
+			KESPeriod   uint64 `json:"kes_period"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := po.IssueOpCert(req.Password, req.KESIndex, req.IssueNumber, req.KESPeriod)
+		serve(w, v, err)
+	})
+
+	// 2. Operational certificate: KES rotation (seed) — new KES key + counter bump.
+	mux.HandleFunc("POST /wallet/pool/opcert/rotate", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password        string `json:"password"`
+			NewKESIndex     uint32 `json:"new_kes_index"`
+			PrevIssueNumber uint64 `json:"prev_issue_number"`
+			KESPeriod       uint64 `json:"kes_period"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := po.RotateKES(req.Password, req.NewKESIndex, req.PrevIssueNumber, req.KESPeriod)
+		serve(w, v, err)
+	})
+
+	// Air-gap: opcert to-be-signed payload (no wallet needed).
+	mux.HandleFunc("POST /wallet/pool/opcert/payload", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			KESVKeyHex  string `json:"kes_vkey_hex"`
+			IssueNumber uint64 `json:"issue_number"`
+			KESPeriod   uint64 `json:"kes_period"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := po.OpCertPayload(req.KESVKeyHex, req.IssueNumber, req.KESPeriod)
+		serve(w, v, err)
+	})
+
+	// Air-gap: assemble opcert from an externally-produced cold-key signature.
+	mux.HandleFunc("POST /wallet/pool/opcert/assemble", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ColdVKeyHex  string `json:"cold_vkey_hex"`
+			KESVKeyHex   string `json:"kes_vkey_hex"`
+			SignatureHex string `json:"signature_hex"`
+			IssueNumber  uint64 `json:"issue_number"`
+			KESPeriod    uint64 `json:"kes_period"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := po.AssembleOpCert(req.ColdVKeyHex, req.KESVKeyHex, req.SignatureHex, req.IssueNumber, req.KESPeriod)
+		serve(w, v, err)
+	})
+
+	// 6. Metadata builder (pure transform; no wallet/node).
+	mux.HandleFunc("POST /wallet/pool/metadata", func(w http.ResponseWriter, r *http.Request) {
+		var in poolops.MetadataInput
+		if !decodeBody(w, r, &in) {
+			return
+		}
+		v, err := po.BuildMetadata(in)
+		serve(w, v, err)
+	})
+
+	// Air-gap import: pool ID from an external cold vkey (pure transform).
+	mux.HandleFunc("POST /wallet/pool/id", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ColdVKeyHex string `json:"cold_vkey_hex"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		id, idHex, err := po.PoolIDFromColdVKey(req.ColdVKeyHex)
+		serve(w, map[string]string{"pool_id": id, "pool_id_hex": idHex}, err)
+	})
+
+	// 3/4. Registration / update certificate (seed): build the canonical cert.
+	mux.HandleFunc("POST /wallet/pool/registration", func(w http.ResponseWriter, r *http.Request) {
+		var req poolRegistrationSeedRequest
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := po.BuildRegistrationFromSeed(req.Password, req.params())
+		serve(w, v, err)
+	})
+
+	// 3/4. Registration / update certificate (air-gap): build from imported keys.
+	mux.HandleFunc("POST /wallet/pool/registration/airgap", func(w http.ResponseWriter, r *http.Request) {
+		var req poolRegistrationAirGapRequest
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := po.BuildRegistrationAirGap(poolops.AirGapRegistrationParams{
+			RegistrationParams: req.params(),
+			VRFKeyHashHex:      req.VRFKeyHashHex,
+		})
+		serve(w, v, err)
+	})
+
+	// 5. Retirement certificate (seed or air-gap cold vkey).
+	mux.HandleFunc("POST /wallet/pool/retirement/cert", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password    string `json:"password"`
+			ColdVKeyHex string `json:"cold_vkey_hex"`
+			Epoch       uint64 `json:"epoch"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := po.BuildRetirementCert(req.Password, req.ColdVKeyHex, req.Epoch)
+		serve(w, v, err)
+	})
+
+	// 5. Retirement transaction submission (seed; needs a fully synced node).
+	mux.HandleFunc("POST /wallet/pool/retirement/submit", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password string `json:"password"`
+			Epoch    uint64 `json:"epoch"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := po.SubmitRetirement(r.Context(), req.Password, req.Epoch)
+		serve(w, v, err)
+	}))
+}
+
+// decodeBody decodes a JSON request body into v, writing a 400 and returning
+// false on malformed input.
+func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(v); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return false
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return false
+	}
+	return true
 }
 
 // resolveNetwork returns the effective network for a wallet request, defaulting
@@ -689,22 +970,25 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 	case errors.Is(err, vault.ErrDuplicateWallet):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409
 	case errors.Is(err, vault.ErrLocked), errors.Is(err, vault.ErrNoActiveWallet),
-		errors.Is(err, wallet.ErrNoWallet), errors.Is(err, spend.ErrNoWallet):
+		errors.Is(err, wallet.ErrNoWallet), errors.Is(err, spend.ErrNoWallet),
+		errors.Is(err, poolops.ErrNoWallet):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: locked / no active wallet
 	case errors.Is(err, spend.ErrWalletChanged):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: active wallet switched during build
-	case errors.Is(err, vault.ErrWrongPassword), errors.Is(err, spend.ErrWrongPassword):
+	case errors.Is(err, vault.ErrWrongPassword), errors.Is(err, spend.ErrWrongPassword),
+		errors.Is(err, poolops.ErrWrongPassword):
 		writeJSON(w, http.StatusUnauthorized, errBody(err)) // 401
 	case errors.Is(err, spend.ErrInvalidRequest),
 		errors.Is(err, spend.ErrInvalidTx),
-		errors.Is(err, spend.ErrInvalidWitness):
+		errors.Is(err, spend.ErrInvalidWitness),
+		errors.Is(err, poolops.ErrInvalidRequest):
 		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400
 	case errors.Is(err, spend.ErrUnknownPending):
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
 	case errors.Is(err, spend.ErrExpiredPending):
 		writeJSON(w, http.StatusGone, errBody(err)) // 410
 	case errors.Is(err, spend.ErrInsufficientFunds), errors.Is(err, spend.ErrSubmitRejected),
-		errors.Is(err, spend.ErrNoChange):
+		errors.Is(err, spend.ErrNoChange), errors.Is(err, poolops.ErrSubmitRejected):
 		// 422: the request was understood but cannot be fulfilled; the node's
 		// structured rejection reason (for submit), the funding shortfall, or the
 		// "already in the requested state" note rides along in the message.

@@ -63,6 +63,7 @@ func cloneAccount(acct *Account) *Account {
 		StakeAddress:     acct.StakeAddress,
 		ReceiveAddresses: cloneStringSlice(acct.ReceiveAddresses),
 		DRepKeyHash:      acct.DRepKeyHash,
+		ChangeAddresses:  cloneStringSlice(acct.ChangeAddresses),
 	}
 }
 

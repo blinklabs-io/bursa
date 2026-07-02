@@ -926,9 +926,6 @@ a:hover {
 }
 .setting-copy ul {
   list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
 }
 .setting-copy li {
   position: relative;
@@ -1107,6 +1104,124 @@ a:hover {
 }
 .total-accent {
   color: var(--accent);
+}
+
+/* ----------------------------------------------- pool operations (SPO) -- */
+.operate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.operate-form,
+.operate-subform {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 880px;
+}
+.operate-form label,
+.operate-subform label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: var(--space-1);
+}
+/* Tab / mode strips read as instrument selectors. */
+.operate-tabs,
+.mode-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+.operate-tab {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px var(--space-3);
+  cursor: pointer;
+}
+.operate-tab:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.operate-tab.active {
+  color: var(--accent-text);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.operate-tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+/* Gold-accented readout for identity values (pool ID, hashes). */
+.tx-hash.accent {
+  color: var(--accent);
+}
+
+.creds-result,
+.opcert-result,
+.cert-result,
+.metadata-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+.key-readout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-top: 1px dashed var(--border);
+}
+
+.operate-form .checkbox-row,
+.operate-subform .checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  text-transform: none;
+  letter-spacing: normal;
+  font-family: var(--font);
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.kes-period {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.relay-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.relay-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.relay-row .field {
+  margin-bottom: 0;
+  flex: 1 1 8rem;
+  min-width: 6rem;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -234,6 +234,93 @@ export interface DelegationPreview {
   total: string; // net cost (fee + deposits − withdrawals), decimal lovelace
 }
 
+// --- Stake Pool Operations (SPO) ---
+
+export interface PoolKeyInfo {
+  vkey_hex: string;
+  vkey_bech32?: string;
+  hash_hex: string;
+}
+
+export interface PoolCredentials {
+  network: string;
+  pool_id: string;
+  pool_id_hex: string;
+  cold: PoolKeyInfo;
+  vrf: PoolKeyInfo;
+  kes: PoolKeyInfo;
+  cold_index: number;
+  vrf_index: number;
+  kes_index: number;
+}
+
+export interface KESPeriodInfo {
+  current_period: number;
+  tip_slot: number;
+  slots_per_kes_period: number;
+  max_kes_evolutions: number;
+}
+
+export interface OpCert {
+  kes_vkey_hex: string;
+  issue_number: number;
+  kes_period: number;
+  cold_signature_hex: string;
+  kes_index: number;
+}
+
+export interface OpCertPayload {
+  payload_hex: string;
+  kes_vkey_hex: string;
+  issue_number: number;
+  kes_period: number;
+}
+
+export interface PoolMetadataInput {
+  name: string;
+  ticker: string;
+  homepage: string;
+  description: string;
+}
+
+export interface PoolMetadataResult {
+  json: string;
+  hash_hex: string;
+}
+
+export interface PoolRelayInput {
+  type: "single_host_address" | "single_host_name" | "multi_host_name";
+  ipv4?: string;
+  ipv6?: string;
+  hostname?: string;
+  port?: number;
+}
+
+// RegistrationParams mirrors the backend poolops.RegistrationParams. cold_vkey_hex
+// is only set in the air-gap path (then vrf_key_hash_hex is required too).
+export interface PoolRegistrationParams {
+  pledge: string;
+  cost: string;
+  margin_num: number;
+  margin_denom: number;
+  reward_address?: string;
+  owners?: string[];
+  relays?: PoolRelayInput[];
+  metadata_url?: string;
+  metadata_hash?: string;
+  cold_vkey_hex?: string;
+}
+
+export interface PoolCertResult {
+  pool_id: string;
+  cbor_hex: string;
+}
+
+export interface PoolIDResult {
+  pool_id: string;
+  pool_id_hex: string;
+}
+
 // A wallet as listed by the vault: read-only fields plus whether it's active.
 // The encrypted seed is never exposed.
 export interface WalletView {

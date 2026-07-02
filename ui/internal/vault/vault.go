@@ -637,6 +637,7 @@ func cloneWallet(w *WalletMeta) *WalletMeta {
 	if w.Account != nil {
 		acct := *w.Account
 		acct.ReceiveAddresses = append([]string(nil), w.Account.ReceiveAddresses...)
+		acct.ChangeAddresses = append([]string(nil), w.Account.ChangeAddresses...)
 		c.Account = &acct
 	}
 	return &c
