@@ -405,6 +405,67 @@ func (c *Client) AddressTransactions(ctx context.Context, addr string) ([]Addres
 	return getAllPages[AddressTx](ctx, c, "/api/v0/addresses/"+addr+"/transactions")
 }
 
+// TxInfo mirrors the subset of GET /api/v0/txs/{hash} the wallet's transaction
+// history needs: the authoritative fee and the transaction's block placement.
+// An unknown hash yields ErrNotFound.
+type TxInfo struct {
+	Hash        string `json:"hash"`
+	Block       string `json:"block"`
+	BlockHeight uint64 `json:"block_height"`
+	BlockTime   int64  `json:"block_time"`
+	Index       int    `json:"index"`
+	Fees        string `json:"fees"`
+}
+
+// Transaction fetches a transaction's summary (fee, block placement) from
+// GET /api/v0/txs/{hash}.
+func (c *Client) Transaction(ctx context.Context, hash string) (TxInfo, error) {
+	var out TxInfo
+	err := c.get(ctx, "/api/v0/txs/"+url.PathEscape(hash), &out)
+	return out, err
+}
+
+// TxIO is one input or output of a transaction, as returned by
+// GET /api/v0/txs/{hash}/utxos: the address it belongs to and its per-asset
+// amounts (unit "lovelace" or policy+hexname, same shape as UTxO.Amount).
+type TxIO struct {
+	Address     string   `json:"address"`
+	Amount      []Amount `json:"amount"`
+	TxHash      string   `json:"tx_hash,omitempty"`
+	OutputIndex int      `json:"output_index"`
+}
+
+// TxUTxOs mirrors GET /api/v0/txs/{hash}/utxos: a transaction's full set of
+// inputs and outputs. The wallet diffs these against its own addresses to
+// compute a transaction's direction and net amount, entirely from node data.
+type TxUTxOs struct {
+	Hash    string `json:"hash"`
+	Inputs  []TxIO `json:"inputs"`
+	Outputs []TxIO `json:"outputs"`
+}
+
+// TransactionUTxOs fetches a transaction's inputs and outputs from
+// GET /api/v0/txs/{hash}/utxos.
+func (c *Client) TransactionUTxOs(ctx context.Context, hash string) (TxUTxOs, error) {
+	var out TxUTxOs
+	err := c.get(ctx, "/api/v0/txs/"+url.PathEscape(hash)+"/utxos", &out)
+	return out, err
+}
+
+// BlockTip is the subset of GET /api/v0/blocks/latest the wallet needs: the
+// chain's current block height, used to compute a transaction's confirmation
+// count (tip height minus the transaction's own block height).
+type BlockTip struct {
+	Height uint64 `json:"height"`
+}
+
+// LatestBlock fetches the chain tip from GET /api/v0/blocks/latest.
+func (c *Client) LatestBlock(ctx context.Context) (BlockTip, error) {
+	var out BlockTip
+	err := c.get(ctx, "/api/v0/blocks/latest", &out)
+	return out, err
+}
+
 func (c *Client) AccountDelegations(ctx context.Context, stakeAddr string) ([]Delegation, error) {
 	return getAllPages[Delegation](ctx, c, "/api/v0/accounts/"+stakeAddr+"/delegations")
 }

@@ -47,6 +47,10 @@ type Wallet interface {
 	Balance(ctx context.Context) (wallet.Balance, error)
 	Addresses(ctx context.Context) (wallet.AddressView, error)
 	Transactions(ctx context.Context) ([]wallet.Tx, error)
+	// TransactionDetail returns the drill-down view (inputs/outputs, every
+	// asset delta) of one transaction in the history; chain.ErrNotFound when
+	// the node has no record of hash.
+	TransactionDetail(ctx context.Context, hash string) (wallet.TxDetail, error)
 	Delegation(ctx context.Context) (wallet.DelegationView, error)
 }
 
@@ -574,6 +578,13 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		v, err := wl.Transactions(r.Context())
 		serve(w, v, err)
 	}))
+	// Drill-down for one transaction in the history: full input/output
+	// breakdown. Gated like the list above — it only needs the node serving
+	// queries, not a full sync.
+	mux.HandleFunc("GET /wallet/transactions/{hash}", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		v, err := wl.TransactionDetail(r.Context(), r.PathValue("hash"))
+		serve(w, v, err)
+	}))
 	mux.HandleFunc("GET /wallet/delegation", gated(st, func(w http.ResponseWriter, r *http.Request) {
 		v, err := wl.Delegation(r.Context())
 		serve(w, v, err)
@@ -1032,6 +1043,8 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, chain.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, errBody(err)) // 404: node has no record of this transaction
 	case errors.Is(err, vault.ErrNoVault):
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404: no vault yet
 	case errors.Is(err, vault.ErrVaultExists):

@@ -18,6 +18,9 @@ type chainQuerier interface {
 	AccountAddresses(ctx context.Context, stakeAddr string) ([]string, error)
 	AddressUTxOs(ctx context.Context, addr string) ([]chain.UTxO, error)
 	AddressTransactions(ctx context.Context, addr string) ([]chain.AddressTx, error)
+	Transaction(ctx context.Context, hash string) (chain.TxInfo, error)
+	TransactionUTxOs(ctx context.Context, hash string) (chain.TxUTxOs, error)
+	LatestBlock(ctx context.Context) (chain.BlockTip, error)
 }
 
 // AddressView is the receive-address view: the derived window, the chain-seen
@@ -189,7 +192,11 @@ func (s *Service) Addresses(ctx context.Context) (AddressView, error) {
 }
 
 // Transactions returns the merged, newest-first history across the account's
-// chain-seen and derived addresses.
+// chain-seen and derived addresses, enriched with each transaction's
+// direction, net ADA/asset deltas, fee, and confirmation count relative to
+// the wallet's own addresses. Enrichment is node-only: it queries the node's
+// tx and tx/utxos endpoints and diffs the result against the wallet's own
+// addresses — no third-party indexer is involved.
 func (s *Service) Transactions(ctx context.Context) ([]Tx, error) {
 	acct, err := s.currentAccount()
 	if err != nil {
@@ -210,7 +217,162 @@ func (s *Service) Transactions(ctx context.Context) ([]Tx, error) {
 		}
 		per = append(per, ts)
 	}
-	return MergeTransactions(per), nil
+	merged := MergeTransactions(per)
+	if len(merged) == 0 {
+		return merged, nil
+	}
+
+	// A tip-lookup failure must not fail the whole history — the merged list
+	// (and each tx's own enrichment) is still valid; only the confirmation
+	// count relative to the tip is unknowable. Degrade to "pending" (0
+	// confirmations) for every entry rather than discarding the list.
+	tip, tipErr := s.chain.LatestBlock(ctx)
+	mine := ownerSet(addrs, acct)
+	for i := range merged {
+		if tipErr != nil {
+			merged[i].Confirmations, merged[i].Pending = 0, true
+		} else {
+			merged[i].Confirmations, merged[i].Pending = txConfirmations(tip.Height, merged[i].BlockHeight)
+		}
+		if err := s.enrichTx(ctx, &merged[i], mine); err != nil {
+			return nil, err
+		}
+	}
+	return merged, nil
+}
+
+// enrichTx fills in a Tx's direction/net-amount/fee fields by querying the
+// node for the transaction's summary and inputs+outputs. A transaction the
+// node no longer has a record of (e.g. pruned under the lean-node
+// history-expiry setting) is left with its basic fields only — set by the
+// caller before enrichTx runs — rather than failing the whole history.
+func (s *Service) enrichTx(ctx context.Context, tx *Tx, mine map[string]bool) error {
+	info, err := s.chain.Transaction(ctx, tx.TxHash)
+	if errors.Is(err, chain.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	// The fee is already known once the tx summary comes back; set it now so
+	// it survives even if the UTxO-detail call below fails or is pruned
+	// (lean-node history-expiry can drop UTxO detail on a tx whose summary
+	// is still retained).
+	tx.Fee = feeOrZero(info.Fees)
+	utxos, err := s.chain.TransactionUTxOs(ctx, tx.TxHash)
+	if errors.Is(err, chain.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	direction, netLovelace, deltas, err := computeTxDelta(utxos.Inputs, utxos.Outputs, mine)
+	if err != nil {
+		return err
+	}
+	tx.Direction = direction
+	tx.NetLovelace = netLovelace
+	tx.AssetDeltas = deltas
+	return nil
+}
+
+// TransactionDetail returns the drill-down view of a single transaction: its
+// enriched summary (direction/net-amount/fee/confirmations) plus the full
+// input/output breakdown, each entry marked as belonging to the active
+// wallet's own addresses or not. Node-only, like Transactions.
+func (s *Service) TransactionDetail(ctx context.Context, hash string) (TxDetail, error) {
+	acct, err := s.currentAccount()
+	if err != nil {
+		return TxDetail{}, err
+	}
+	addrs, err := s.scanAddresses(ctx, acct)
+	if err != nil {
+		return TxDetail{}, err
+	}
+	mine := ownerSet(addrs, acct)
+
+	info, err := s.chain.Transaction(ctx, hash)
+	if err != nil {
+		return TxDetail{}, err
+	}
+	utxos, err := s.chain.TransactionUTxOs(ctx, hash)
+	if err != nil {
+		return TxDetail{}, err
+	}
+	// A tip-lookup failure must not turn a found transaction into a 404 (serve()
+	// maps chain.ErrNotFound to 404, which would otherwise misreport a tx that
+	// genuinely exists purely because the tip call failed). Degrade to
+	// "pending" (0 confirmations) instead of propagating the tip error.
+	tip, tipErr := s.chain.LatestBlock(ctx)
+
+	direction, netLovelace, deltas, err := computeTxDelta(utxos.Inputs, utxos.Outputs, mine)
+	if err != nil {
+		return TxDetail{}, err
+	}
+	inputs, err := toTxIOs(utxos.Inputs, mine)
+	if err != nil {
+		return TxDetail{}, err
+	}
+	outputs, err := toTxIOs(utxos.Outputs, mine)
+	if err != nil {
+		return TxDetail{}, err
+	}
+	var confirmations uint64
+	var pending bool
+	if tipErr != nil {
+		confirmations, pending = 0, true
+	} else {
+		confirmations, pending = txConfirmations(tip.Height, info.BlockHeight)
+	}
+
+	return TxDetail{
+		Tx: Tx{
+			TxHash:        hash,
+			TxIndex:       info.Index,
+			BlockHeight:   info.BlockHeight,
+			BlockTime:     info.BlockTime,
+			Direction:     direction,
+			NetLovelace:   netLovelace,
+			AssetDeltas:   deltas,
+			Fee:           feeOrZero(info.Fees),
+			Confirmations: confirmations,
+			Pending:       pending,
+		},
+		Inputs:  inputs,
+		Outputs: outputs,
+	}, nil
+}
+
+// feeOrZero normalizes an empty fee string (the node omits it in edge cases)
+// to "0" so callers always see a valid decimal string.
+func feeOrZero(fee string) string {
+	if fee == "" {
+		return "0"
+	}
+	return fee
+}
+
+// toAddrSet builds a membership set from an address list, for O(1) "is this
+// address mine" checks during transaction-delta computation.
+func toAddrSet(addrs []string) map[string]bool {
+	set := make(map[string]bool, len(addrs))
+	for _, a := range addrs {
+		set[a] = true
+	}
+	return set
+}
+
+// ownerSet builds the "is this address mine" membership set used to classify
+// a transaction's direction and net amount. It is deliberately wider than
+// addrs (the set scanAddresses returns for querying history): it also
+// includes the account's locally-derived change addresses, which the node's
+// account index may not report yet (e.g. before the stake key is registered,
+// or before the node has seen a spend from them) but which the wallet still
+// controls. Excluding them would misclassify a wallet-owned change output as
+// external and skew direction/net-amount for spends that touch such an
+// address.
+func ownerSet(addrs []string, acct *Account) map[string]bool {
+	return toAddrSet(append(addrs, acct.ChangeAddresses...))
 }
 
 // Delegation returns the current delegation/rewards summary (provisional).

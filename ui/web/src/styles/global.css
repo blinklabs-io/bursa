@@ -1229,6 +1229,154 @@ a:hover {
   min-width: 6rem;
 }
 
+/* --------------------------------------------------------------- activity -- */
+/* Filter bar: search + direction picker + CSV export, above the tx table. */
+.activity-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.activity-filters .field {
+  width: auto;
+  flex: 1 1 220px;
+}
+.activity-filters select.field {
+  flex: 0 1 180px;
+}
+
+/* Direction indicator: a small arrow + label, color-coded like a ledger
+   (green in, red out) — the same convention used for the signed amount. */
+.tx-direction {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+.tx-direction-arrow {
+  font-weight: 700;
+}
+.tx-direction-received {
+  color: var(--ok);
+}
+.tx-direction-sent {
+  color: var(--error);
+}
+.tx-direction-self {
+  color: var(--text-muted);
+}
+
+/* Signed net amount — colored the same as its direction. */
+.tx-amount-in {
+  color: var(--ok);
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.tx-amount-out {
+  color: var(--error);
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.tx-amount-self {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------- tx detail drawer -- */
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, black 55%, transparent);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 50;
+}
+.drawer {
+  width: min(480px, 100%);
+  height: 100%;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: var(--space-4);
+  gap: var(--space-4);
+}
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.drawer-title {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.drawer-close {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 4px 10px;
+}
+.drawer-close:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.drawer-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.drawer-section h3 {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.io-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.io-row.is-mine {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.io-address {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  word-break: break-all;
+  flex: 1;
+  min-width: 0;
+}
+.io-amount {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dot-warn,
   .sync-bar-indeterminate,

@@ -3,6 +3,7 @@ import type {
   Balance,
   AddressView,
   Tx,
+  TxDetail,
   DelegationView,
   Preview,
   TxResult,
@@ -112,6 +113,8 @@ export const removeWallet = (id: string, vaultPassword: string) =>
 export const getBalance = () => apiGet<Balance>("/wallet/balance");
 export const getAddresses = () => apiGet<AddressView>("/wallet/addresses");
 export const getTransactions = () => apiGet<Tx[]>("/wallet/transactions");
+export const getTransactionDetail = (hash: string) =>
+  apiGet<TxDetail>(`/wallet/transactions/${encodeURIComponent(hash)}`);
 export const getDelegation = () => apiGet<DelegationView>("/wallet/delegation");
 export const buildSend = (req: SendRequest) => apiPost<Preview>("/wallet/send", req);
 export const confirmSend = (id: string, password: string) =>

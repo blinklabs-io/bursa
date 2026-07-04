@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
@@ -281,6 +282,8 @@ type fakeWallet struct {
 	set              bool
 	setAccountCalled bool
 	gotNetwork       string
+	txDetail         wallet.TxDetail
+	txDetailErr      error
 }
 
 func (f *fakeWallet) SetAccount(acct *wallet.Account) error {
@@ -315,6 +318,19 @@ func (f *fakeWallet) Transactions(_ context.Context) ([]wallet.Tx, error) {
 		return nil, wallet.ErrNoWallet
 	}
 	return nil, nil
+}
+
+func (f *fakeWallet) TransactionDetail(_ context.Context, hash string) (wallet.TxDetail, error) {
+	if !f.set {
+		return wallet.TxDetail{}, wallet.ErrNoWallet
+	}
+	if f.txDetailErr != nil {
+		return wallet.TxDetail{}, f.txDetailErr
+	}
+	if f.txDetail.TxHash != "" {
+		return f.txDetail, nil
+	}
+	return wallet.TxDetail{Tx: wallet.Tx{TxHash: hash}}, nil
 }
 
 func (f *fakeWallet) Delegation(_ context.Context) (wallet.DelegationView, error) {
@@ -736,7 +752,7 @@ func TestWalletGatedWhileBootstrapping(t *testing.T) {
 func TestWalletNoActiveWalletConflict(t *testing.T) {
 	// No active wallet bound: reads must yield 409 (the read service has no account).
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
-	for _, path := range []string{"/wallet/balance", "/wallet/addresses", "/wallet/transactions", "/wallet/delegation"} {
+	for _, path := range []string{"/wallet/balance", "/wallet/addresses", "/wallet/transactions", "/wallet/transactions/tx1", "/wallet/delegation"} {
 		t.Run(path, func(t *testing.T) {
 			h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
 			rec := httptest.NewRecorder()
@@ -745,6 +761,52 @@ func TestWalletNoActiveWalletConflict(t *testing.T) {
 				t.Fatalf("GET %s with no active wallet = %d, want 409", path, rec.Code)
 			}
 		})
+	}
+}
+
+func TestGetTransactionDetailOK(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	fw := &fakeWallet{
+		set: true,
+		txDetail: wallet.TxDetail{
+			Tx: wallet.Tx{
+				TxHash:      "tx1",
+				Direction:   wallet.TxDirectionSent,
+				NetLovelace: "-3170000",
+				Fee:         "170000",
+			},
+			Inputs:  []wallet.TxIO{{Address: "addr_mine", Lovelace: "5000000", IsMine: true}},
+			Outputs: []wallet.TxIO{{Address: "addr_other", Lovelace: "3000000"}},
+		},
+	}
+	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/transactions/tx1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/transactions/tx1 = %d, want 200", rec.Code)
+	}
+	var got wallet.TxDetail
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.TxHash != "tx1" || got.Direction != wallet.TxDirectionSent || got.Fee != "170000" {
+		t.Fatalf("detail = %+v, want tx1/sent/170000 fee", got)
+	}
+	if len(got.Inputs) != 1 || !got.Inputs[0].IsMine || len(got.Outputs) != 1 {
+		t.Fatalf("inputs/outputs = %+v / %+v", got.Inputs, got.Outputs)
+	}
+}
+
+func TestGetTransactionDetailNotFound(t *testing.T) {
+	// The node has no record of the hash: surfaced as 404, matching the
+	// pool/DRep lookup convention ("not found by your node").
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	fw := &fakeWallet{set: true, txDetailErr: chain.ErrNotFound}
+	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/transactions/unknown", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /wallet/transactions/unknown = %d, want 404", rec.Code)
 	}
 }
 
