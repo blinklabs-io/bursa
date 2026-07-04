@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Send } from "./Send";
 import * as client from "../api/client";
-import type { Preview, TxResult } from "../api/types";
+import type { Preview, TxResult, HandleInfo } from "../api/types";
 
 const MOCK_PREVIEW: Preview = {
   pending_id: "pending-abc-123",
@@ -348,4 +348,99 @@ test("(g) buildSend error shown inline on compose phase", async () => {
 
   // Still on compose
   expect(screen.getByRole("button", { name: /review/i })).toBeInTheDocument();
+});
+
+// --- ADA Handle resolution ---
+
+const MOCK_HANDLE: HandleInfo = { handle: "chris", address: "addr1resolvedhandle" };
+
+test("(k) $handle recipient resolves and buildSend uses the resolved address", async () => {
+  const resolveHandle = vi.spyOn(client, "resolveHandle").mockResolvedValue(MOCK_HANDLE);
+  const buildSend = vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+
+  render(<Send />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "$chris" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+
+  await waitFor(() => {
+    expect(resolveHandle).toHaveBeenCalledWith("$chris");
+  });
+
+  await waitFor(() => {
+    expect(screen.getByText(/resolved by your node/i)).toBeInTheDocument();
+  });
+  expect(screen.getByText(/addr1resolvedhandle/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  await waitFor(() => {
+    expect(buildSend).toHaveBeenCalledWith({
+      to: "addr1resolvedhandle",
+      lovelace: "5000000",
+    });
+  });
+});
+
+test("(l) unresolved $handle shows 'Handle not found' and disables Review", async () => {
+  vi.spyOn(client, "resolveHandle").mockRejectedValue(new client.ApiError(404, "not found by your node"));
+  const buildSend = vi.spyOn(client, "buildSend");
+
+  render(<Send />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "$nosuchhandle" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+
+  await waitFor(() => {
+    expect(screen.getByText(/handle not found/i)).toBeInTheDocument();
+  });
+
+  expect(screen.getByRole("button", { name: /review/i })).toBeDisabled();
+
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+  expect(buildSend).not.toHaveBeenCalled();
+});
+
+test("(m) Review is disabled while a $handle is still resolving", async () => {
+  let resolveLookup: (info: HandleInfo) => void = () => {};
+  vi.spyOn(client, "resolveHandle").mockReturnValue(
+    new Promise<HandleInfo>((resolve) => {
+      resolveLookup = resolve;
+    })
+  );
+
+  render(<Send />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "$chris" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+
+  await waitFor(() => {
+    expect(screen.getByText(/resolving handle/i)).toBeInTheDocument();
+  });
+  expect(screen.getByRole("button", { name: /review/i })).toBeDisabled();
+
+  resolveLookup(MOCK_HANDLE);
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: /review/i })).toBeEnabled();
+  });
+});
+
+test("(n) a plain address recipient never calls resolveHandle", async () => {
+  const resolveHandle = vi.spyOn(client, "resolveHandle");
+  vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+
+  render(<Send />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "addr_test1recipient" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
+  });
+  expect(resolveHandle).not.toHaveBeenCalled();
 });

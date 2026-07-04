@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
@@ -70,12 +71,15 @@ type Spender interface {
 	BuildDelegation(ctx context.Context, req spend.DelegationRequest) (spend.DelegationPreview, error)
 }
 
-// PoolDRepLookup is the node-backed verification surface the staking screen uses
-// to confirm a pasted pool or DRep ID exists (consent law: the embedded node is
-// the only thing that touches the network). *chain.Client satisfies it.
-type PoolDRepLookup interface {
+// NodeLookup is the node-backed verification surface the staking and send
+// screens use: confirming a pasted pool or DRep ID exists, and resolving an
+// ADA Handle ($name) to its current holding address (consent law: the
+// embedded node is the only thing that touches the network). *chain.Client
+// satisfies it.
+type NodeLookup interface {
 	Pool(ctx context.Context, poolID string) (chain.PoolInfo, error)
 	DRep(ctx context.Context, drepID string) (chain.DRepInfo, error)
+	AssetAddresses(ctx context.Context, asset string) ([]chain.AssetAddress, error)
 }
 
 // Vault is the encrypted multi-wallet store the API drives. It owns the wallet
@@ -243,6 +247,14 @@ type poolRegistrationAirGapRequest struct {
 	VRFKeyHashHex string `json:"vrf_key_hash_hex"`
 }
 
+// handleInfo mirrors GET /wallet/handle/{name}: a node-verified ADA Handle
+// resolution. Handle is the bare name (no leading '$'); Address is the
+// bech32 payment address currently holding the handle NFT.
+type handleInfo struct {
+	Handle  string `json:"handle"`
+	Address string `json:"address"`
+}
+
 const defaultWindow = 20
 
 // vaultStatus is the GET /vault/status response.
@@ -282,11 +294,12 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // the embedded node runs on; wallet requests must match it (or omit it). vlt is
 // the encrypted multi-wallet store; the API pushes the active wallet onto wl/sp
 // whenever the selection changes. settings exposes user-facing app settings
-// (the lean-node profile). lookup verifies pasted pool/DRep IDs through the
-// node (may be nil, in which case those endpoints report unavailable). po is
-// the Stake Pool Operations surface. spa is the embedded SPA, registered as
-// the catch-all so the specific API routes take precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, lookup PoolDRepLookup, po PoolOps, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+// (the lean-node profile). lookup verifies pasted pool/DRep IDs and resolves
+// ADA Handles through the node (may be nil, in which case those endpoints
+// report unavailable). po is the Stake Pool Operations surface. spa is the
+// embedded SPA, registered as the catch-all so the specific API routes take
+// precedence on the mux.
+func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, lookup NodeLookup, po PoolOps, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -729,6 +742,21 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		}
 		info, err := lookup.DRep(r.Context(), r.PathValue("id"))
 		serveLookup(w, info, err)
+	}))
+
+	// ADA Handle ($name) resolution for the Send screen: resolve the on-chain
+	// NFT to its current holding address through the node (never an external
+	// service). A leading '$' is optional; handle.Resolve normalizes it. A
+	// name with no Handle policy on this network (anything but mainnet, today)
+	// or with no on-chain holder reports as a clean not-found (404), never a
+	// hard error.
+	mux.HandleFunc("GET /wallet/handle/{name}", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if lookup == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "handle lookup unavailable"})
+			return
+		}
+		bare, addr, err := handle.Resolve(r.Context(), lookup, network, r.PathValue("name"))
+		serveLookup(w, handleInfo{Handle: bare, Address: addr}, err)
 	}))
 
 	mux.HandleFunc("POST /wallet/delegation", readyGate(st, func(w http.ResponseWriter, r *http.Request) {

@@ -26,6 +26,7 @@ import type {
   DRepInfo,
   DelegationRequest,
   DelegationPreview,
+  HandleInfo,
   PoolCredentials,
   KESPeriodInfo,
   OpCert,
@@ -128,6 +129,12 @@ export const exportUnsigned = (id: string) =>
 export const signTx = (req: SignTxRequest) => apiPost<WitnessResult>("/wallet/sign-tx", req);
 export const submitSigned = (req: SubmitSignedRequest) =>
   apiPost<TxResult>("/wallet/submit-signed", req);
+
+// ADA Handle ($name) resolution for the Send screen: resolves the handle NFT
+// to its current holding address through the node. name may carry a leading
+// '$' or not — the server strips it either way.
+export const resolveHandle = (name: string) =>
+  apiGet<HandleInfo>(`/wallet/handle/${encodeURIComponent(name)}`);
 
 // Staking & governance. Pool/DRep lookups verify a pasted ID through the node;
 // buildDelegation returns an itemized preview; confirmDelegation signs + submits
