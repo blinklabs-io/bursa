@@ -59,6 +59,8 @@ import type {
   HardwareSignResponse,
   TxSummary,
   CosignResult,
+  NFT,
+  NftMediaSetting,
 } from "./types";
 
 export class ApiError extends Error {
@@ -323,3 +325,10 @@ export const decodeTx = (tx_cbor: string) => apiPost<TxSummary>("/wallet/decode-
 export const cosignTx = (req: { tx_cbor: string; password: string; partial_sign?: boolean }) =>
   apiPost<CosignResult>("/wallet/cosign-tx", req);
 export const submitTx = (tx_cbor: string) => apiPost<TxResult>("/wallet/submit-tx", { tx_cbor });
+
+// NFT media.
+export const getNfts = () => apiGet<NFT[]>("/wallet/nft");
+export const getNftMedia = () => apiGet<NftMediaSetting>("/wallet/settings/nft-media");
+export const setNftMedia = (enabled: boolean) =>
+  apiPut<NftMediaSetting>("/wallet/settings/nft-media", { enabled });
+export const nftImageUrl = (unit: string) => `/wallet/nft/${encodeURIComponent(unit)}/image`;

@@ -32,6 +32,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
+	"github.com/blinklabs-io/bursa/ui/internal/nft"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
@@ -153,6 +154,7 @@ type LegacyKeystore interface {
 type handlerOptions struct {
 	legacy    LegacyKeystore
 	connector *connector.Service
+	nfts      NFTs
 }
 
 type HandlerOption func(*handlerOptions)
@@ -169,6 +171,11 @@ func WithConnector(svc *connector.Service) HandlerOption {
 	return func(o *handlerOptions) {
 		o.connector = svc
 	}
+}
+
+// WithNFTs enables the optional NFT discovery and media endpoints.
+func WithNFTs(nfts NFTs) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.nfts = nfts }
 }
 
 // SettingsController is the user-facing app-settings surface. It exposes the
@@ -344,6 +351,14 @@ type handleInfo struct {
 	Address string `json:"address"`
 }
 
+// NFTs is the optional NFT discovery and media surface.
+type NFTs interface {
+	List(ctx context.Context) ([]nft.NFT, error)
+	ServeImage(ctx context.Context, w http.ResponseWriter, unit string)
+	Enabled() bool
+	SetEnabled(enabled bool) error
+}
+
 const defaultWindow = 20
 
 // statusResponse is the GET /status response: the supervisor's node snapshot
@@ -415,6 +430,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	nfts := cfg.nfts
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -948,6 +964,49 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		}
 		valid, addr, err := sp.VerifyData(req.Signature, req.Key, []byte(req.Message), req.Hashed, req.ExpectedAddress)
 		serve(w, map[string]any{"valid": valid, "address": addr}, err)
+	})
+
+	// NFT discovery remains node-local. Image serving is same-origin and the
+	// service enforces the off-by-default media consent gate.
+	mux.HandleFunc("GET /wallet/nft", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if nfts == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "nft media not available"})
+			return
+		}
+		v, err := nfts.List(r.Context())
+		serveNFT(w, v, err)
+	}))
+	mux.HandleFunc("GET /wallet/nft/{asset}/image", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if nfts == nil {
+			http.Error(w, "nft media not available", http.StatusServiceUnavailable)
+			return
+		}
+		nfts.ServeImage(r.Context(), w, r.PathValue("asset"))
+	}))
+	mux.HandleFunc("GET /wallet/settings/nft-media", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": nfts != nil && nfts.Enabled()})
+	})
+	mux.HandleFunc("PUT /wallet/settings/nft-media", func(w http.ResponseWriter, r *http.Request) {
+		if nfts == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "nft media not available"})
+			return
+		}
+		var req struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if req.Enabled == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "enabled is required"})
+			return
+		}
+		if err := nfts.SetEnabled(*req.Enabled); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": nfts.Enabled()})
 	})
 
 	// Air-gap step 1 (online instance): export the completed-but-unsigned tx for
@@ -1643,6 +1702,17 @@ func serveDex[T any](w http.ResponseWriter, v T, err error) {
 	case errors.Is(err, dex.ErrNotMainnet):
 		// 422: understood, but unavailable on this network (pools are mainnet-only).
 		writeJSON(w, http.StatusUnprocessableEntity, errBody(err))
+	default:
+		writeJSON(w, http.StatusInternalServerError, errBody(err))
+	}
+}
+
+func serveNFT[T any](w http.ResponseWriter, v T, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, nft.ErrNoWallet):
+		writeJSON(w, http.StatusConflict, errBody(err))
 	default:
 		writeJSON(w, http.StatusInternalServerError, errBody(err))
 	}

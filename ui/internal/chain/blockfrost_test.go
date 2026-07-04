@@ -3,6 +3,7 @@ package chain
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -530,6 +531,178 @@ func TestAssetNilMetadata(t *testing.T) {
 	// as a falsy value) rather than erroring, since it is the common case today.
 	if string(got.OnchainMetadata) != "null" {
 		t.Fatalf("OnchainMetadata = %s, want the raw JSON null literal", got.OnchainMetadata)
+	}
+}
+
+func TestAssetEnrichesNilMetadataFromDingoCIP25Index(t *testing.T) {
+	const (
+		policyID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		nameHex  = "746f6b656e"
+		unit     = policyID + nameHex
+	)
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metadata.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`CREATE TABLE utxo (
+		id integer PRIMARY KEY,
+		transaction_id integer,
+		deleted_slot integer NOT NULL
+	);
+	CREATE TABLE asset (
+		id integer PRIMARY KEY,
+		utxo_id integer NOT NULL,
+		policy_id blob NOT NULL,
+		name blob NOT NULL
+	);
+	CREATE INDEX idx_asset_policy_id ON asset(policy_id);
+	CREATE TABLE transaction_metadata_label (
+		id integer PRIMARY KEY,
+		transaction_id integer NOT NULL,
+		label integer NOT NULL,
+		slot integer NOT NULL,
+		cbor_value blob,
+		json_value text NOT NULL
+	);
+	CREATE UNIQUE INDEX idx_tx_metadata_label_tx_label
+		ON transaction_metadata_label(transaction_id, label)`)
+	if err != nil {
+		t.Fatalf("create metadata tables: %v", err)
+	}
+	policyIDBytes, err := hex.DecodeString(policyID)
+	if err != nil {
+		t.Fatalf("decode policy ID: %v", err)
+	}
+	name, err := hex.DecodeString(nameHex)
+	if err != nil {
+		t.Fatalf("decode asset name: %v", err)
+	}
+	_, err = db.Exec(
+		`INSERT INTO utxo (id, transaction_id, deleted_slot)
+		 VALUES (1, 1, 99), (2, 2, 0);
+		 INSERT INTO asset (id, utxo_id, policy_id, name)
+		 VALUES (1, 1, ?, ?), (2, 2, ?, ?)`,
+		policyIDBytes, name,
+		policyIDBytes, name,
+	)
+	if err != nil {
+		t.Fatalf("insert asset outputs: %v", err)
+	}
+	_, err = db.Exec(
+		`INSERT INTO transaction_metadata_label
+			(id, transaction_id, label, slot, json_value)
+		 VALUES
+			(1, 1, 721, 10, ?),
+			(2, 2, 721, 20, ?),
+			(3, 3, 20,  30, ?),
+			(4, 4, 721, 40, ?)`,
+		`{"`+policyID+`":{"token":{"name":"Old","image":"ipfs://old"}}}`,
+		`{"`+policyID+`":{"`+nameHex+`":{"name":"Current","image":"ipfs://current"}}}`,
+		`{"`+policyID+`":{"`+nameHex+`":{"name":"Wrong label"}}}`,
+		`{"`+policyID+`":{"`+nameHex+`":{"name":"Unrelated transaction"}}}`,
+	)
+	if err != nil {
+		t.Fatalf("insert metadata: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/assets/"+unit {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w,
+			`{"asset":%q,"policy_id":%q,"asset_name":%q,"asset_name_ascii":"token","onchain_metadata":null}`,
+			unit, policyID, nameHex,
+		)
+	}))
+	defer srv.Close()
+
+	c := NewClientURL(srv.URL, WithDingoDataDir(dir))
+	got, err := c.Asset(context.Background(), unit)
+	if err != nil {
+		t.Fatalf("Asset: %v", err)
+	}
+	var metadata struct {
+		Name  string `json:"name"`
+		Image string `json:"image"`
+	}
+	if err := json.Unmarshal(got.OnchainMetadata, &metadata); err != nil {
+		t.Fatalf("unmarshal enriched metadata: %v", err)
+	}
+	if metadata.Name != "Current" || metadata.Image != "ipfs://current" {
+		t.Fatalf("OnchainMetadata = %+v, want latest producing-transaction CIP-25 entry", metadata)
+	}
+}
+
+func TestAssetMissingDingoMetadataIndexKeepsNullMetadata(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metadata.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"asset":"policy123746f6b656e",
+			"policy_id":"policy123",
+			"asset_name":"746f6b656e",
+			"onchain_metadata":null
+		}`))
+	})
+	c.dingoDataDir = dir
+	got, err := c.Asset(context.Background(), "policy123746f6b656e")
+	if err != nil {
+		t.Fatalf("Asset: %v", err)
+	}
+	if string(got.OnchainMetadata) != "null" {
+		t.Fatalf("OnchainMetadata = %s, want null", got.OnchainMetadata)
+	}
+}
+
+func TestAssetCIP25MetadataPreservesContextCancellation(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metadata.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c := NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir))
+	_, err = c.assetCIP25Metadata(
+		ctx,
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"746f6b656e",
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("assetCIP25Metadata error = %v, want context.Canceled", err)
+	}
+}
+
+func TestExtractCIP25AssetMetadataAcceptsUTF8V1Name(t *testing.T) {
+	const policyID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	got := extractCIP25AssetMetadata(
+		json.RawMessage(`{"`+policyID+`":{"Token":{"name":"Version one"}}}`),
+		policyID,
+		"546f6b656e",
+	)
+	var metadata struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(got, &metadata); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	if metadata.Name != "Version one" {
+		t.Fatalf("name = %q, want Version one", metadata.Name)
 	}
 }
 

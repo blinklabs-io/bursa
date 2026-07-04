@@ -10,7 +10,13 @@ import { CopyButton } from "../components/CopyButton";
 import { Button } from "../components/Button";
 import { Input } from "../components/Input";
 import { Select } from "../components/Select";
-import { useStatus, useHistoryExpiry, useTPMStatus, useAsync } from "../api/hooks";
+import {
+  useStatus,
+  useHistoryExpiry,
+  useTPMStatus,
+  useNftMedia,
+  useAsync,
+} from "../api/hooks";
 import type { AsyncState } from "../api/hooks";
 import {
   setHistoryExpiry as putHistoryExpiry,
@@ -549,6 +555,7 @@ export function Settings({ account, walletType, autoLock }: SettingsProps) {
       setRevealingPairCode(false);
     }
   }
+  const nftMedia = useNftMedia();
 
   return (
     <div className="screen-settings">
@@ -591,6 +598,27 @@ export function Settings({ account, walletType, autoLock }: SettingsProps) {
       <LeanStorageCard />
 
       <AutoLockCard setting={autoLock} />
+
+      <Card title="NFT Media">
+        <p className="helper-text">
+          Runs an embedded IPFS client to fetch NFT images without a third-party gateway.
+          It is off by default and only starts after you enable it.
+        </p>
+        <StatusPill tone={nftMedia.enabled ? "ok" : "muted"}>
+          {nftMedia.enabled ? "On" : "Off"}
+        </StatusPill>
+        {nftMedia.error && <p role="alert" className="error-text">{nftMedia.error.message}</p>}
+        <div className="preview-actions">
+          <Button
+            variant={nftMedia.enabled ? "ghost" : "primary"}
+            disabled={nftMedia.loading || nftMedia.saving}
+            aria-pressed={nftMedia.enabled}
+            onClick={() => void nftMedia.setEnabled(!nftMedia.enabled)}
+          >
+            {nftMedia.saving ? "Saving…" : nftMedia.enabled ? "Turn off NFT media" : "Turn on NFT media"}
+          </Button>
+        </div>
+      </Card>
 
       <Card title="Wallet">
         <p>{walletTypeStatus(walletType)}</p>

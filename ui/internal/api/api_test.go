@@ -29,6 +29,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
+	"github.com/blinklabs-io/bursa/ui/internal/nft"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/settings"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
@@ -76,6 +77,123 @@ type fakeVault struct {
 	hwCalled        bool
 	gotXpub         string
 	gotAccountIndex uint32
+}
+
+type fakeNFTs struct {
+	enabled    bool
+	list       []nft.NFT
+	listErr    error
+	imageBytes []byte
+	servedUnit string
+	setCalled  bool
+}
+
+func (f *fakeNFTs) List(context.Context) ([]nft.NFT, error) { return f.list, f.listErr }
+func (f *fakeNFTs) ServeImage(_ context.Context, w http.ResponseWriter, unit string) {
+	f.servedUnit = unit
+	if !f.enabled {
+		http.Error(w, "nft media disabled", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	_, _ = w.Write(f.imageBytes)
+}
+func (f *fakeNFTs) Enabled() bool { return f.enabled }
+func (f *fakeNFTs) SetEnabled(enabled bool) error {
+	f.setCalled = true
+	f.enabled = enabled
+	return nil
+}
+
+func nftHandler(st fakeStatuser, nfts NFTs) http.Handler {
+	return NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{},
+		&fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview",
+		http.NotFoundHandler(), WithNFTs(nfts))
+}
+
+func TestNFTListReady(t *testing.T) {
+	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}},
+		&fakeNFTs{list: []nft.NFT{{Unit: "policyAtoken", Name: "Token A", ImageCID: "bafyimage"}}})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"Token A"`) {
+		t.Fatalf("GET /wallet/nft = %d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestNFTListGatedAndNoWallet(t *testing.T) {
+	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, &fakeNFTs{})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /wallet/nft while starting = %d, want 503", rec.Code)
+	}
+
+	h = nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, &fakeNFTs{listErr: nft.ErrNoWallet})
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("GET /wallet/nft without wallet = %d, want 409", rec.Code)
+	}
+}
+
+func TestNFTImageConsentGate(t *testing.T) {
+	nf := &fakeNFTs{imageBytes: []byte("PNG")}
+	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, nf)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft/policyAtoken/image", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("disabled image = %d, want 403", rec.Code)
+	}
+	nf.enabled = true
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft/policyAtoken/image", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "PNG" || nf.servedUnit != "policyAtoken" {
+		t.Fatalf("enabled image = %d body=%q unit=%q", rec.Code, rec.Body.String(), nf.servedUnit)
+	}
+}
+
+func TestNFTImageGatedWhileNodeStarts(t *testing.T) {
+	nf := &fakeNFTs{enabled: true, imageBytes: []byte("PNG")}
+	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, nf)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft/policyAtoken/image", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("image while starting = %d, want 503", rec.Code)
+	}
+	if nf.servedUnit != "" {
+		t.Fatalf("ServeImage called for %q while node unavailable", nf.servedUnit)
+	}
+}
+
+func TestNFTSettingsToggleAndValidation(t *testing.T) {
+	nf := &fakeNFTs{}
+	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, nf)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/nft-media", strings.NewReader(`{"enabled":true}`)))
+	if rec.Code != http.StatusOK || !nf.enabled {
+		t.Fatalf("enable = %d enabled=%v", rec.Code, nf.enabled)
+	}
+	nf.setCalled = false
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/nft-media", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusBadRequest || nf.setCalled {
+		t.Fatalf("missing enabled = %d setCalled=%v", rec.Code, nf.setCalled)
+	}
+}
+
+func TestNFTNilServiceDegradesGracefully(t *testing.T) {
+	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("nil service list = %d, want 503", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/settings/nft-media", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":false`) {
+		t.Fatalf("nil service setting = %d body=%q", rec.Code, rec.Body.String())
+	}
 }
 
 type fakeLegacyKeystore struct {

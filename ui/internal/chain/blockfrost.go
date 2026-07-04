@@ -216,10 +216,9 @@ type AssetAddress struct {
 // (name/image/decimals/etc. are all optional, standard-specific keys) —
 // callers parse the fields they need defensively.
 //
-// As of dingo's current adapter, OnchainMetadata is always null: dingo does
-// not yet parse mint-transaction metadata into this field. Callers must treat
-// name/ticker/decimals as best-effort and fall back to the raw unit/quantity
-// when they are absent, which today is effectively always.
+// Dingo v0.58's asset response leaves OnchainMetadata null. When a Dingo data
+// directory is configured, Client.Asset fills that gap from the node's locally
+// indexed CIP-25 (label 721) transaction metadata.
 type AssetInfo struct {
 	Asset           string          `json:"asset"`
 	PolicyID        string          `json:"policy_id"`
@@ -229,6 +228,8 @@ type AssetInfo struct {
 	Quantity        string          `json:"quantity"`
 	OnchainMetadata json.RawMessage `json:"onchain_metadata"`
 }
+
+const cip25MetadataLabel = 721
 
 type accountAddress struct {
 	Address string `json:"address"`
@@ -654,6 +655,151 @@ func (c *Client) AssetAddresses(ctx context.Context, asset string) ([]AssetAddre
 // seen) yields ErrNotFound.
 func (c *Client) Asset(ctx context.Context, unit string) (AssetInfo, error) {
 	var out AssetInfo
-	err := c.get(ctx, "/api/v0/assets/"+url.PathEscape(unit), &out)
-	return out, err
+	if err := c.get(ctx, "/api/v0/assets/"+url.PathEscape(unit), &out); err != nil {
+		return out, err
+	}
+	if len(out.OnchainMetadata) != 0 && string(out.OnchainMetadata) != "null" {
+		return out, nil
+	}
+	metadata, err := c.assetCIP25Metadata(ctx, out.PolicyID, out.AssetName)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return AssetInfo{}, err
+		}
+		// Metadata enrichment is optional. A core/partially-backfilled Dingo
+		// database may not have the API-mode metadata index yet; that must not
+		// turn an otherwise successful asset identity lookup into a failure.
+		return out, nil
+	}
+	if len(metadata) != 0 {
+		out.OnchainMetadata = metadata
+	}
+	return out, nil
+}
+
+// assetCIP25Metadata reads the latest label-721 entry for an asset from
+// Dingo's local metadata index. Dingo indexes transaction metadata but does not
+// currently join it into its Blockfrost-compatible asset response.
+func (c *Client) assetCIP25Metadata(
+	ctx context.Context,
+	policyID string,
+	assetNameHex string,
+) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if c.dingoDataDir == "" {
+		return nil, nil
+	}
+	metadataPath := filepath.Join(c.dingoDataDir, "metadata.sqlite")
+	if _, err := os.Stat(metadataPath); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("asset CIP-25 metadata: %w", err)
+	}
+
+	db, err := sql.Open("sqlite", sqliteReadOnlyDSN(metadataPath))
+	if err != nil {
+		return nil, fmt.Errorf("open asset CIP-25 metadata: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	var hasMetadataLabels int
+	err = db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM sqlite_master
+			WHERE type = 'table' AND name = 'transaction_metadata_label'
+		)`,
+	).Scan(&hasMetadataLabels)
+	if err != nil {
+		return nil, fmt.Errorf("inspect asset CIP-25 metadata index: %w", err)
+	}
+	if hasMetadataLabels == 0 {
+		return nil, nil
+	}
+
+	policyIDBytes, err := hex.DecodeString(policyID)
+	if err != nil {
+		return nil, fmt.Errorf("decode asset metadata policy ID %q: %w", policyID, err)
+	}
+	assetName, err := hex.DecodeString(assetNameHex)
+	if err != nil {
+		return nil, fmt.Errorf("decode asset metadata name %q: %w", assetNameHex, err)
+	}
+
+	// CIP-25 metadata belongs to the mint transaction. Resolve only label-721
+	// rows from transactions that produced an output containing this asset,
+	// using Dingo's indexed asset -> UTxO -> transaction relationship. Bursa
+	// runs Dingo in API mode, which retains spent output rows; block-history
+	// expiry only removes block CBOR and therefore does not break this join.
+	rows, err := db.QueryContext(ctx, `
+		SELECT metadata.json_value
+		FROM transaction_metadata_label AS metadata
+		WHERE metadata.label = ?
+		  AND metadata.transaction_id IN (
+			SELECT DISTINCT utxo.transaction_id
+			FROM asset
+			INNER JOIN utxo ON utxo.id = asset.utxo_id
+			WHERE asset.policy_id = ? AND asset.name = ?
+		  )
+		ORDER BY metadata.slot DESC, metadata.id DESC`,
+		cip25MetadataLabel,
+		policyIDBytes,
+		assetName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query asset CIP-25 metadata: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var labelJSONString string
+		if err := rows.Scan(&labelJSONString); err != nil {
+			return nil, fmt.Errorf("scan asset CIP-25 metadata: %w", err)
+		}
+		labelJSON := json.RawMessage(labelJSONString)
+		if metadata := extractCIP25AssetMetadata(labelJSON, policyID, assetNameHex); len(metadata) != 0 {
+			return metadata, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate asset CIP-25 metadata: %w", err)
+	}
+	return nil, nil
+}
+
+func extractCIP25AssetMetadata(
+	labelJSON json.RawMessage,
+	policyID string,
+	assetNameHex string,
+) json.RawMessage {
+	var label map[string]json.RawMessage
+	if err := json.Unmarshal(labelJSON, &label); err != nil {
+		return nil
+	}
+	var assets map[string]json.RawMessage
+	if err := json.Unmarshal(label[policyID], &assets); err != nil {
+		return nil
+	}
+
+	// CIP-25 v2 uses the asset-name bytes (rendered as hex by Dingo's metadata
+	// codec); v1 commonly uses the UTF-8 asset name. Accept both spellings.
+	candidates := []string{assetNameHex}
+	if assetName, err := hex.DecodeString(assetNameHex); err == nil {
+		candidates = append(candidates, string(assetName))
+	}
+	for _, candidate := range candidates {
+		metadata := assets[candidate]
+		if len(metadata) == 0 || string(metadata) == "null" {
+			continue
+		}
+		var object map[string]json.RawMessage
+		if json.Unmarshal(metadata, &object) == nil {
+			return append(json.RawMessage(nil), metadata...)
+		}
+	}
+	return nil
 }

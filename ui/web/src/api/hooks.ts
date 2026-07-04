@@ -12,6 +12,7 @@ import type {
   Contact,
   DexPoolsResponse,
   AssetInfo,
+  NFT,
 } from "./types";
 import {
   getStatus,
@@ -26,6 +27,9 @@ import {
   getContacts,
   getDexPools,
   getAssetMetadata,
+  getNfts,
+  getNftMedia,
+  setNftMedia,
 } from "./client";
 
 export interface AsyncState<T> {
@@ -143,6 +147,52 @@ export const useTPMStatus = (): AsyncState<TPMStatus> => useAsync(getTPMStatus);
 export const useContacts = (): AsyncState<Contact[]> => useAsync(getContacts);
 export const useDexPools = (): AsyncState<DexPoolsResponse> =>
   useAsync(getDexPools, { pollMs: 15000 });
+export const useNfts = (): AsyncState<NFT[]> => useAsync(getNfts);
+
+export interface NftMediaState {
+  enabled: boolean;
+  loading: boolean;
+  saving: boolean;
+  error: Error | null;
+  setEnabled: (next: boolean) => Promise<void>;
+}
+
+export function useNftMedia(): NftMediaState {
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getNftMedia()
+      .then((setting) => {
+        if (!cancelled) setEnabled(setting.enabled);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const set = useCallback(async (next: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const setting = await setNftMedia(next);
+      setEnabled(setting.enabled);
+    } catch (err) {
+      setError(err as Error);
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  return { enabled, loading, saving, error, setEnabled: set };
+}
 
 // useAssetMetadata looks up on-chain metadata for a set of native-asset units
 // (in parallel) and returns whatever resolved, keyed by unit. It is

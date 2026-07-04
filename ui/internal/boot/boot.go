@@ -41,6 +41,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
+	"github.com/blinklabs-io/bursa/ui/internal/nft"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/settings"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
@@ -118,6 +119,7 @@ type App struct {
 	srv      *http.Server
 	listener net.Listener
 	sup      *supervisor.Supervisor
+	nft      *nft.Service
 	logger   *slog.Logger
 
 	// ctx is the parent context supplied to Boot; it is forwarded to
@@ -270,11 +272,41 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		connectorSvc = connector.NewService(cfg.DataDir, connectorBackend, nil)
 	}
 
+	// NFT discovery reads native-asset units from the active wallet and metadata
+	// from the embedded node. The IPFS client remains off until explicit consent.
+	nftUnits := func(ctx context.Context) ([]string, error) {
+		bal, err := walletSvc.Balance(ctx)
+		if err != nil {
+			if errors.Is(err, wallet.ErrNoWallet) {
+				return nil, nft.ErrNoWallet
+			}
+			return nil, err
+		}
+		units := make([]string, 0, len(bal.Assets))
+		for _, asset := range bal.Assets {
+			units = append(units, asset.Unit)
+		}
+		return units, nil
+	}
+	var nftSvc *nft.Service
+	if nft.MediaAvailable() {
+		var nftErr error
+		nftSvc, nftErr = nft.NewService(ctx, nft.Config{
+			Chain: chainClient, Units: nftUnits, DataDir: cfg.DataDir, Logger: logger,
+		})
+		if nftErr != nil {
+			logger.Warn("nft: service unavailable, NFT media disabled", "err", nftErr)
+		}
+	}
+
 	// Bind the control-surface listener BEFORE starting the node so an
 	// OS-assigned port (127.0.0.1:0) is known to the caller the moment Boot
 	// returns — the mobile WebView needs the concrete port to load the SPA.
 	listener, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
+		if nftSvc != nil {
+			_ = nftSvc.Close()
+		}
 		return nil, fmt.Errorf("bind control surface %q: %w", cfg.Addr, err)
 	}
 
@@ -282,6 +314,9 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	if err := sup.Start(runCtx); err != nil {
 		cancel()
 		_ = listener.Close()
+		if nftSvc != nil {
+			_ = nftSvc.Close()
+		}
 		return nil, fmt.Errorf("start node: %w", err)
 	}
 	// sup.Start only launches the node/poll-loop goroutines; it does not wait
@@ -295,9 +330,19 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		sup.Stop()
 		cancel()
 		_ = listener.Close()
+		if nftSvc != nil {
+			_ = nftSvc.Close()
+		}
 		return nil, err
 	}
 
+	handlerOpts := []api.HandlerOption{api.WithLegacyKeystore(legacyKeyStore)}
+	if connectorSvc != nil {
+		handlerOpts = append(handlerOpts, api.WithConnector(connectorSvc))
+	}
+	if nftSvc != nil {
+		handlerOpts = append(handlerOpts, api.WithNFTs(nftSvc))
+	}
 	srv := &http.Server{
 		Handler: api.NewHandler(
 			sup, vlt, walletSvc, spendSvc,
@@ -307,9 +352,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			poolSvc,
 			dexSvc,
 			multisigSvc,
-			cfg.Network, webui.Handler(),
-			api.WithLegacyKeystore(legacyKeyStore),
-			api.WithConnector(connectorSvc),
+			cfg.Network, webui.Handler(), handlerOpts...,
 		),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -328,6 +371,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		srv:      srv,
 		listener: listener,
 		sup:      sup,
+		nft:      nftSvc,
 		logger:   logger,
 		ctx:      ctx,
 		stop:     cancel,
@@ -371,6 +415,9 @@ func (a *App) Stop() error {
 	// calls don't see the node yanked out from under them mid-request.
 	a.stop()
 	a.sup.Stop()
+	if a.nft != nil {
+		_ = a.nft.Close()
+	}
 	return err
 }
 
