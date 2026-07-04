@@ -36,6 +36,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/api"
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
@@ -103,6 +104,10 @@ type Config struct {
 	// user toggles the Settings screen, the persisted value is the source of
 	// truth and this seed is ignored. Mobile builds pass true.
 	LeanDefault bool
+	// ConnectorEnabled opts into the local CIP-30/CIP-95 dApp connector.
+	// It is disabled by default so the extension-facing routes are absent unless
+	// the caller explicitly enables them.
+	ConnectorEnabled bool
 }
 
 // App is a booted wallet stack: a running supervised node and an HTTP control
@@ -253,6 +258,18 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// the active wallet's CIP-1854 key, decrypted from the vault on demand.
 	multisigSvc := multisig.NewService(chainCtx, vaultKeystore{v: vlt}, filepath.Join(cfg.DataDir, "multisig.json"))
 
+	var connectorSvc *connector.Service
+	if cfg.ConnectorEnabled {
+		connectorBackend := connector.NewWalletBackend(
+			walletSvc,
+			spendSvc,
+			nil,
+			cfg.Network,
+			chainClient,
+		)
+		connectorSvc = connector.NewService(cfg.DataDir, connectorBackend, nil)
+	}
+
 	// Bind the control-surface listener BEFORE starting the node so an
 	// OS-assigned port (127.0.0.1:0) is known to the caller the moment Boot
 	// returns — the mobile WebView needs the concrete port to load the SPA.
@@ -292,6 +309,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			multisigSvc,
 			cfg.Network, webui.Handler(),
 			api.WithLegacyKeystore(legacyKeyStore),
+			api.WithConnector(connectorSvc),
 		),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,

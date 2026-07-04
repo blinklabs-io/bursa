@@ -69,7 +69,8 @@ func run() error {
 		MithrilEnabled: mithrilEnabled,
 		// BURSA_LEAN seeds the first-run lean-node default; the persisted setting
 		// (default off) is the source of truth thereafter.
-		LeanDefault: envBool("BURSA_LEAN", false),
+		LeanDefault:      envBool("BURSA_LEAN", false),
+		ConnectorEnabled: envBool("BURSA_CONNECTOR", false),
 	})
 	if err != nil {
 		return err

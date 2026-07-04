@@ -10,6 +10,7 @@ export default defineConfig({
       "/health": "http://127.0.0.1:8090",
       "/vault": "http://127.0.0.1:8090",
       "/wallet": "http://127.0.0.1:8090",
+      "/connector": "http://127.0.0.1:8090",
     },
   },
   test: {

@@ -39,15 +39,24 @@ export interface AsyncState<T> {
   setData: (value: T) => void;
 }
 
-export function useAsync<T>(fn: () => Promise<T>, opts?: { pollMs?: number }): AsyncState<T> {
+export function useAsync<T>(
+  fn: () => Promise<T>,
+  opts?: { pollMs?: number; enabled?: boolean },
+): AsyncState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
+  const enabled = opts?.enabled ?? true;
+  const pollMs = opts?.pollMs;
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     let inFlight = false;
 
@@ -80,8 +89,8 @@ export function useAsync<T>(fn: () => Promise<T>, opts?: { pollMs?: number }): A
     run(true);
 
     let id: ReturnType<typeof setInterval> | undefined;
-    if (opts?.pollMs) {
-      id = setInterval(() => run(false), opts.pollMs);
+    if (pollMs) {
+      id = setInterval(() => run(false), pollMs);
     }
 
     // When the network comes back, trigger an immediate refetch so the UI
@@ -103,7 +112,7 @@ export function useAsync<T>(fn: () => Promise<T>, opts?: { pollMs?: number }): A
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tick]);
+  }, [tick, enabled, pollMs]);
 
   const applyData = useCallback((value: T) => {
     setData(value);

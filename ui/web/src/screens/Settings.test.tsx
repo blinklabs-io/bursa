@@ -1,14 +1,28 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Settings } from "./Settings";
 import * as hooks from "../api/hooks";
 import type { AsyncState } from "../api/hooks";
 import * as client from "../api/client";
-import type { Account, HistoryExpirySetting, AutoLockSetting, TPMStatus } from "../api/types";
+import * as connectorApi from "../api/connector";
+import type {
+  Account,
+  HistoryExpirySetting,
+  AutoLockSetting,
+  TPMStatus,
+  ConnectorState,
+  PendingPairing,
+} from "../api/types";
 
 const mockAccount: Account = {
   network: "preview",
   stake_address: "stake_test1uzqxyz1234567890abcdefghijklmnopqrstuvwxyz",
   receive_addresses: ["addr_test1abc"],
+};
+
+const defaultConnectorState: ConnectorState = {
+  paired: false,
+  extension_id: "",
+  origins: [],
 };
 
 function mockStatus(state: string, tip = 12345, caughtUp = false) {
@@ -71,6 +85,14 @@ function mockTPMStatus(tpmStatus: TPMStatus) {
   } as never);
 }
 
+function mockConnector(
+  state: ConnectorState = defaultConnectorState,
+  pending: PendingPairing[] = [],
+) {
+  vi.spyOn(connectorApi, "getConnectorState").mockResolvedValue(state);
+  vi.spyOn(connectorApi, "pendingPairings").mockResolvedValue(pending);
+}
+
 const tpmAvailable: TPMStatus = { available: true, enabled: false, pcrBound: false };
 const tpmUnavailable: TPMStatus = { available: false, reason: "tpm: no device found", enabled: false, pcrBound: false };
 const tpmEnabled: TPMStatus = { available: true, enabled: true, pcrBound: false };
@@ -84,10 +106,12 @@ beforeEach(() => {
   mockHistoryExpiry({ enabled: false, restart_required: false });
   mockAutoLock({ minutes: 15 });
   mockTPMStatus(tpmUnavailable);
+  mockConnector();
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 test("(a) renders network from account prop", () => {
@@ -470,4 +494,59 @@ test("(w) TPM card shows PCR-bound status when enabled with PCR", () => {
   mockTPMStatus(tpmEnabledPCR);
   renderSettings();
   expect(screen.getByText(/pcr/i)).toBeInTheDocument();
+});
+
+test("connector shows paired extension and connected sites", async () => {
+  mockStatus("ready", 12345, true);
+  vi.mocked(connectorApi.getConnectorState).mockResolvedValue({
+    paired: true,
+    extension_id: "chrome-extension://abc123",
+    origins: ["https://app.sundae.fi"],
+  });
+  vi.spyOn(connectorApi, "revokeGrant").mockResolvedValue(undefined);
+
+  renderSettings();
+
+  await waitFor(() => expect(screen.getByText("Paired")).toBeInTheDocument());
+  expect(screen.getByText("chrome-extension://abc123")).toBeInTheDocument();
+  expect(screen.getByText("https://app.sundae.fi")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /revoke/i })).toBeInTheDocument();
+});
+
+test("connector reveals a pending pairing code after password confirmation", async () => {
+  mockStatus("ready", 12345, true);
+  vi.mocked(connectorApi.pendingPairings).mockImplementation(async (password?: string) =>
+    password
+      ? [{ extension_id: "chrome-extension://ext1", code: "123456" }]
+      : [{ extension_id: "chrome-extension://ext1" }],
+  );
+
+  renderSettings();
+
+  await waitFor(() =>
+    expect(screen.getByText("chrome-extension://ext1")).toBeInTheDocument(),
+  );
+  fireEvent.change(screen.getByLabelText(/vault password/i), {
+    target: { value: "vault-password" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /reveal code/i }));
+  await waitFor(() => expect(screen.getByText("123456")).toBeInTheDocument());
+});
+
+test("connector card recovers after a transient missing endpoint", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  mockStatus("ready", 12345, true);
+  vi.mocked(connectorApi.getConnectorState)
+    .mockRejectedValueOnce(new client.ApiError(404, "not found"))
+    .mockResolvedValue(defaultConnectorState);
+
+  renderSettings();
+
+  await waitFor(() => expect(screen.queryByText("dApp Connector")).toBeNull());
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  await waitFor(() =>
+    expect(screen.getByText("dApp Connector")).toBeInTheDocument(),
+  );
 });

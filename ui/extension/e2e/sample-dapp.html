@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bursa CIP-30 Sample dApp</title>
+  <style>
+    body {
+      font-family: monospace;
+      max-width: 800px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      background: #0d1117;
+      color: #c9d1d9;
+    }
+    h1 { color: #58a6ff; }
+    h2 { color: #79c0ff; margin-top: 2rem; border-bottom: 1px solid #30363d; padding-bottom: 0.5rem; }
+    .btn-group { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
+    button {
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      padding: 0.4rem 0.8rem;
+      cursor: pointer;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+    button:hover { background: #30363d; border-color: #58a6ff; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #log {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 1rem;
+      min-height: 200px;
+      max-height: 500px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .ok  { color: #3fb950; }
+    .err { color: #f85149; }
+    .hdr { color: #d2a8ff; }
+    .sep { color: #30363d; }
+    #status {
+      margin-bottom: 1rem;
+      padding: 0.5rem 0.75rem;
+      border-radius: 4px;
+      background: #21262d;
+      border: 1px solid #30363d;
+    }
+    #status.enabled { border-color: #3fb950; color: #3fb950; }
+    #status.disabled { border-color: #f85149; color: #f85149; }
+  </style>
+</head>
+<body>
+  <h1>Bursa CIP-30 Sample dApp</h1>
+  <p>Manual end-to-end harness for the Bursa browser extension. See <code>e2e/README.md</code> for setup steps.</p>
+
+  <div id="status" class="disabled">Not connected — click Enable first</div>
+
+  <h2>Connection</h2>
+  <div class="btn-group">
+    <button id="btn-enable">enable()</button>
+    <button id="btn-is-enabled">isEnabled()</button>
+  </div>
+
+  <h2>CIP-30 API</h2>
+  <div class="btn-group">
+    <button id="btn-network-id" disabled>getNetworkId()</button>
+    <button id="btn-balance" disabled>getBalance()</button>
+    <button id="btn-used-addrs" disabled>getUsedAddresses()</button>
+    <button id="btn-unused-addrs" disabled>getUnusedAddresses()</button>
+    <button id="btn-change-addr" disabled>getChangeAddress()</button>
+    <button id="btn-reward-addrs" disabled>getRewardAddresses()</button>
+    <button id="btn-utxos" disabled>getUtxos()</button>
+    <button id="btn-collateral" disabled>getCollateral()</button>
+  </div>
+
+  <h2>Signing &amp; Submission</h2>
+  <div class="btn-group">
+    <button id="btn-sign-data" disabled>signData(addr, payload)</button>
+    <button id="btn-sign-tx" disabled>signTx(dummyTx)</button>
+    <button id="btn-submit-tx" disabled>submitTx(dummyTx)</button>
+  </div>
+
+  <h2>CIP-95 Extensions</h2>
+  <div class="btn-group">
+    <button id="btn-drep-key" disabled>cip95.getPubDRepKey()</button>
+    <button id="btn-reg-stake" disabled>cip95.getRegisteredPubStakeKeys()</button>
+    <button id="btn-unreg-stake" disabled>cip95.getUnregisteredPubStakeKeys()</button>
+  </div>
+
+  <h2>Output Log</h2>
+  <button id="btn-clear-log">Clear log</button>
+  <div id="log"></div>
+
+  <script>
+    // ---------------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------------
+    const log = document.getElementById('log');
+    const statusEl = document.getElementById('status');
+
+    function write(cls, text) {
+      const span = document.createElement('span');
+      span.className = cls;
+      span.textContent = text + '\n';
+      log.appendChild(span);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function section(label) {
+      write('sep', '─'.repeat(60));
+      write('hdr', '▶ ' + label);
+    }
+
+    function ok(val) {
+      write('ok', '  OK: ' + formatLogValue(val));
+    }
+
+    function err(e) {
+      write('err', '  ERR: ' + formatLogValue(e));
+    }
+
+    function formatLogValue(value) {
+      if (value instanceof Error) {
+        const details = { name: value.name, message: value.message };
+        for (const key of Object.keys(value)) {
+          details[key] = value[key];
+        }
+        try {
+          return JSON.stringify(details, null, 2);
+        } catch (_) {
+          return value.name + ': ' + value.message;
+        }
+      }
+      try {
+        const json = JSON.stringify(value, null, 2);
+        return json === undefined ? String(value) : json;
+      } catch (_) {
+        return String(value);
+      }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Provider detection
+    // ---------------------------------------------------------------------------
+    function getBursa() {
+      if (typeof window.cardano === 'undefined' || !window.cardano.bursa) {
+        throw new Error('window.cardano.bursa not found — is the extension loaded and the page reloaded?');
+      }
+      return window.cardano.bursa;
+    }
+
+    // ---------------------------------------------------------------------------
+    // State
+    // ---------------------------------------------------------------------------
+    let api = null;
+
+    function setEnabled(enabled) {
+      document.querySelectorAll('button').forEach(b => {
+        const alwaysOn = ['btn-enable', 'btn-is-enabled', 'btn-clear-log'];
+        if (!alwaysOn.includes(b.id)) {
+          b.disabled = !enabled;
+        }
+      });
+      if (enabled) {
+        statusEl.textContent = 'Connected — Bursa API enabled';
+        statusEl.className = 'enabled';
+      } else {
+        statusEl.textContent = 'Not connected — click Enable first';
+        statusEl.className = 'disabled';
+      }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Dummy CBOR hex transaction (a minimal but structurally plausible stub)
+    // signTx / submitTx will fail with a Bursa error — that is expected; we only
+    // verify the call reaches the extension and triggers the approval prompt.
+    // ---------------------------------------------------------------------------
+    const DUMMY_TX_HEX = '84a500818258200000000000000000000000000000000000000000000000000000000000000000000182825839000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a001e8480021a0002b569031a00a4b1ff0500a0f5f6';
+
+    // ---------------------------------------------------------------------------
+    // Button handlers
+    // ---------------------------------------------------------------------------
+
+    document.getElementById('btn-enable').onclick = async () => {
+      section('enable()');
+      try {
+        const bursa = getBursa();
+        api = await bursa.enable();
+        setEnabled(true);
+        ok('API object obtained');
+      } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-is-enabled').onclick = async () => {
+      section('isEnabled()');
+      try {
+        const result = await getBursa().isEnabled();
+        ok(result);
+      } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-network-id').onclick = async () => {
+      section('getNetworkId()');
+      try { ok(await api.getNetworkId()); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-balance').onclick = async () => {
+      section('getBalance()');
+      try { ok(await api.getBalance()); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-used-addrs').onclick = async () => {
+      section('getUsedAddresses()');
+      try { ok(await api.getUsedAddresses()); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-unused-addrs').onclick = async () => {
+      section('getUnusedAddresses()');
+      try { ok(await api.getUnusedAddresses()); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-change-addr').onclick = async () => {
+      section('getChangeAddress()');
+      try { ok(await api.getChangeAddress()); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-reward-addrs').onclick = async () => {
+      section('getRewardAddresses()');
+      try { ok(await api.getRewardAddresses()); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-utxos').onclick = async () => {
+      section('getUtxos()');
+      try { ok(await api.getUtxos()); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-collateral').onclick = async () => {
+      section('getCollateral()');
+      try { ok(await api.getCollateral()); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-sign-data').onclick = async () => {
+      section('signData(addr, payload)');
+      try {
+        // Use change address if available, otherwise a placeholder bech32
+        let addr;
+        try { addr = await api.getChangeAddress(); } catch (_) { addr = 'addr_placeholder'; }
+        const payload = Array.from(new TextEncoder().encode('Bursa CIP-30 E2E test')).map(b => b.toString(16).padStart(2, '0')).join('');
+        ok(await api.signData(addr, payload));
+      } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-sign-tx').onclick = async () => {
+      section('signTx(dummyTx, partialSign=true)');
+      try { ok(await api.signTx(DUMMY_TX_HEX, true)); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-submit-tx').onclick = async () => {
+      section('submitTx(dummyTx) — expected to fail; verifies round-trip only');
+      try { ok(await api.submitTx(DUMMY_TX_HEX)); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-drep-key').onclick = async () => {
+      section('cip95.getPubDRepKey()');
+      try { ok(await api.cip95.getPubDRepKey()); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-reg-stake').onclick = async () => {
+      section('cip95.getRegisteredPubStakeKeys()');
+      try { ok(await api.cip95.getRegisteredPubStakeKeys()); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-unreg-stake').onclick = async () => {
+      section('cip95.getUnregisteredPubStakeKeys()');
+      try { ok(await api.cip95.getUnregisteredPubStakeKeys()); } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-clear-log').onclick = () => { log.innerHTML = ''; };
+
+    // ---------------------------------------------------------------------------
+    // Init
+    // ---------------------------------------------------------------------------
+    window.addEventListener('load', () => {
+      try {
+        getBursa();
+        write('ok', 'window.cardano.bursa detected (extension loaded)');
+        write('ok', 'apiVersion: ' + window.cardano.bursa.apiVersion);
+      } catch (e) {
+        write('err', String(e));
+        write('err', 'Load the extension and reload this page.');
+      }
+    });
+  </script>
+</body>
+</html>
