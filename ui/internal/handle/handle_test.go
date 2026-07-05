@@ -72,15 +72,17 @@ func TestAssetNameHex(t *testing.T) {
 	}
 }
 
-func TestPolicyForNetworkMainnetOnly(t *testing.T) {
-	policy, ok := PolicyForNetwork("mainnet")
-	if !ok {
-		t.Fatal("PolicyForNetwork(mainnet) ok = false, want true")
+func TestPolicyForNetworkUsesSamePolicyOnSupportedNetworks(t *testing.T) {
+	for _, network := range []string{"mainnet", "preview", "preprod"} {
+		policy, ok := PolicyForNetwork(network)
+		if !ok {
+			t.Fatalf("PolicyForNetwork(%q) ok = false, want true", network)
+		}
+		if policy != PolicyID {
+			t.Fatalf("PolicyForNetwork(%q) = %q, want %q", network, policy, PolicyID)
+		}
 	}
-	if policy != MainnetPolicyID {
-		t.Fatalf("PolicyForNetwork(mainnet) = %q, want %q", policy, MainnetPolicyID)
-	}
-	for _, net := range []string{"preview", "preprod", "testnet", "", "MAINNET"} {
+	for _, net := range []string{"testnet", "", "MAINNET", "mainnte"} {
 		if _, ok := PolicyForNetwork(net); ok {
 			t.Errorf("PolicyForNetwork(%q) ok = true, want false", net)
 		}
@@ -92,17 +94,26 @@ func TestAssetUnit(t *testing.T) {
 	if !ok {
 		t.Fatal("AssetUnit(mainnet, chris) ok = false, want true")
 	}
-	want := MainnetPolicyID + "6368726973"
+	want := PolicyID + "6368726973"
 	if unit != want {
 		t.Fatalf("AssetUnit(mainnet, chris) = %q, want %q", unit, want)
 	}
-	if _, ok := AssetUnit("preview", "chris"); ok {
-		t.Fatal("AssetUnit(preview, chris) ok = true, want false")
+	for _, network := range []string{"preview", "preprod"} {
+		unit, ok := AssetUnit(network, "chris")
+		if !ok {
+			t.Fatalf("AssetUnit(%s, chris) ok = false, want true", network)
+		}
+		if unit != want {
+			t.Fatalf("AssetUnit(%s, chris) = %q, want %q", network, unit, want)
+		}
+	}
+	if _, ok := AssetUnit("mainnte", "chris"); ok {
+		t.Fatal("AssetUnit(mainnte, chris) ok = true, want false")
 	}
 }
 
 // fakeAssetLookup is a test double for AssetLookup; it records whether it was
-// called (so tests can assert Resolve short-circuits on unsupported networks
+// called (so tests can assert Resolve short-circuits on invalid networks
 // without touching the node) and which asset unit it was called with (so
 // tests can assert Resolve queries the case-folded unit).
 type fakeAssetLookup struct {
@@ -135,14 +146,32 @@ func TestResolveFound(t *testing.T) {
 	}
 }
 
-func TestResolveNotFoundOnUnsupportedNetworkSkipsNodeQuery(t *testing.T) {
+func TestResolveOnTestnetUsesSharedPolicy(t *testing.T) {
 	lk := &fakeAssetLookup{addrs: []chain.AssetAddress{{Address: "addr1abc"}}}
-	_, _, err := Resolve(context.Background(), lk, "preview", "$chris")
+	name, addr, err := Resolve(context.Background(), lk, "preview", "$chris")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if name != "chris" {
+		t.Fatalf("Resolve name = %q, want chris", name)
+	}
+	if addr != "addr1abc" {
+		t.Fatalf("Resolve address = %q, want addr1abc", addr)
+	}
+	wantUnit := PolicyID + "6368726973"
+	if lk.gotAsset != wantUnit {
+		t.Fatalf("Resolve queried asset %q, want %q", lk.gotAsset, wantUnit)
+	}
+}
+
+func TestResolveNotFoundOnInvalidNetworkSkipsNodeQuery(t *testing.T) {
+	lk := &fakeAssetLookup{addrs: []chain.AssetAddress{{Address: "addr1abc"}}}
+	_, _, err := Resolve(context.Background(), lk, "mainnte", "$chris")
 	if !errors.Is(err, chain.ErrNotFound) {
 		t.Fatalf("Resolve err = %v, want chain.ErrNotFound", err)
 	}
 	if lk.called {
-		t.Fatal("Resolve queried the node for a network with no Handle policy")
+		t.Fatal("Resolve queried the node for an invalid network")
 	}
 }
 

@@ -747,9 +747,8 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// ADA Handle ($name) resolution for the Send screen: resolve the on-chain
 	// NFT to its current holding address through the node (never an external
 	// service). A leading '$' is optional; handle.Resolve normalizes it. A
-	// name with no Handle policy on this network (anything but mainnet, today)
-	// or with no on-chain holder reports as a clean not-found (404), never a
-	// hard error.
+	// name on an unsupported network or with no on-chain holder reports as a
+	// clean not-found (404), never a hard error.
 	mux.HandleFunc("GET /wallet/handle/{name}", gated(st, func(w http.ResponseWriter, r *http.Request) {
 		if lookup == nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "handle lookup unavailable"})

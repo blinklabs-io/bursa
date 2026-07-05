@@ -23,11 +23,15 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 )
 
-// MainnetPolicyID is the canonical ADA Handle root policy on Cardano mainnet.
-const MainnetPolicyID = "f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a"
+// PolicyID is the ADA Handle root policy used on mainnet and supported testnets.
+const PolicyID = "f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a"
+
+// MainnetPolicyID is kept as a compatibility alias for PolicyID.
+const MainnetPolicyID = PolicyID
 
 // ErrInvalidName is returned when a handle input has no name left after
 // stripping its optional leading '$' and surrounding whitespace.
@@ -55,20 +59,18 @@ func AssetNameHex(name string) string {
 	return hex.EncodeToString([]byte(name))
 }
 
-// PolicyForNetwork returns the ADA Handle policy ID for network and whether
-// handle resolution is available there. Only mainnet has a canonical Handle
-// policy today; other networks (preview, preprod, ...) report unavailable
-// rather than guessing at a policy or erroring.
+// PolicyForNetwork returns the ADA Handle policy ID for a supported Cardano
+// network and whether handle resolution is available there.
 func PolicyForNetwork(network string) (policyID string, ok bool) {
-	if network == "mainnet" {
-		return MainnetPolicyID, true
+	if cardanonet.ValidNetwork(network) {
+		return PolicyID, true
 	}
 	return "", false
 }
 
 // AssetUnit returns the Blockfrost-style asset unit (policy ID concatenated
 // with the hex-encoded asset name) identifying handle name on network, or
-// ok=false when network has no known Handle policy.
+// ok=false when network is unsupported.
 func AssetUnit(network, name string) (unit string, ok bool) {
 	policy, ok := PolicyForNetwork(network)
 	if !ok {
@@ -90,9 +92,9 @@ type AssetLookup interface {
 // returns the normalized (lowercased, '$'-stripped) name alongside the
 // address, so callers don't need to normalize the input a second time. It
 // returns chain.ErrNotFound — never a hard error — for every "not found"
-// case: an empty/invalid name, a network with no Handle policy
-// (preview/preprod today), the node not having seen the asset, or the asset
-// having no current holder. Any other lookup error is returned as-is.
+// case: an empty/invalid name, an unsupported network, the node not having
+// seen the asset, or the asset having no current holder. Any other lookup
+// error is returned as-is.
 func Resolve(ctx context.Context, lookup AssetLookup, network, input string) (name, address string, err error) {
 	name, err = Normalize(input)
 	if err != nil {

@@ -2003,6 +2003,27 @@ func TestHandleLookupResolvesOnMainnet(t *testing.T) {
 	}
 }
 
+func TestHandleLookupResolvesOnPreview(t *testing.T) {
+	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr_test1abc", Quantity: "1"}}}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, lk, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/handle/$chris", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/handle/$chris on preview = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var got handleInfo
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Handle != "chris" || got.Address != "addr_test1abc" {
+		t.Fatalf("unexpected handle info: %+v", got)
+	}
+	wantUnit := "f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "6368726973"
+	if len(lk.gotAssetUnits) != 1 || lk.gotAssetUnits[0] != wantUnit {
+		t.Fatalf("queried asset unit = %v, want [%s]", lk.gotAssetUnits, wantUnit)
+	}
+}
+
 func TestHandleLookupWithoutDollarSign(t *testing.T) {
 	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc"}}}
 	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, lk, &fakePoolOps{}, "mainnet", http.NotFoundHandler())
@@ -2013,16 +2034,16 @@ func TestHandleLookupWithoutDollarSign(t *testing.T) {
 	}
 }
 
-func TestHandleLookupNotFoundOnPreview(t *testing.T) {
+func TestHandleLookupNotFoundOnInvalidNetwork(t *testing.T) {
 	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc"}}}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, lk, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, lk, &fakePoolOps{}, "mainnte", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/handle/$chris", nil))
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("GET /wallet/handle/$chris on preview = %d, want 404: %s", rec.Code, rec.Body.String())
+		t.Fatalf("GET /wallet/handle/$chris on invalid network = %d, want 404: %s", rec.Code, rec.Body.String())
 	}
 	if len(lk.gotAssetUnits) != 0 {
-		t.Fatalf("preview lookup should not query the node, got %v", lk.gotAssetUnits)
+		t.Fatalf("invalid-network lookup should not query the node, got %v", lk.gotAssetUnits)
 	}
 }
 
