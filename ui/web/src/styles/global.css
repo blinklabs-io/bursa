@@ -435,6 +435,37 @@ a:hover {
   color: var(--text);
 }
 
+/* Receive screen — QR codes framed in a light chip so they stay reliably
+   scannable regardless of the surrounding dark theme. */
+.receive-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+.receive-next-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+  min-width: 0;
+}
+.receive-qr-frame {
+  display: inline-flex;
+  padding: var(--space-2);
+  background: #ffffff;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  line-height: 0;
+  flex-shrink: 0;
+}
+.receive-qr-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
 /* Labeled readout rows (delegation, tx preview summary, settings stats). */
 .dl-row,
 .stat-list > div {
