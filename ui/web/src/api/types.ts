@@ -95,6 +95,14 @@ export interface TxResult {
   tx_hash: string;
 }
 
+// ADA Handle ($name) resolution: GET /wallet/handle/{name} resolves the
+// on-chain handle NFT to its current holding (payment) address through the
+// node. Handle is the bare name (no leading '$').
+export interface HandleInfo {
+  handle: string;
+  address: string;
+}
+
 // CIP-8/CIP-30 signData: sign an arbitrary message with a wallet address's key.
 export interface SignDataRequest {
   address: string;

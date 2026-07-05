@@ -539,3 +539,76 @@ func TestLatestEpoch(t *testing.T) {
 		t.Fatalf("epoch times: got StartTime=%d EndTime=%d, want 1700000000/1700432000", got.StartTime, got.EndTime)
 	}
 }
+
+func TestAssetAddresses(t *testing.T) {
+	const asset = "f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a6368726973"
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q", r.Method)
+		}
+		if r.URL.Path != "/api/v0/assets/"+asset+"/addresses" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"address":"addr1abc","quantity":"1"}]`))
+	})
+	got, err := c.AssetAddresses(context.Background(), asset)
+	if err != nil {
+		t.Fatalf("AssetAddresses: %v", err)
+	}
+	if len(got) != 1 || got[0].Address != "addr1abc" || got[0].Quantity != "1" {
+		t.Fatalf("unexpected asset addresses: %+v", got)
+	}
+}
+
+func TestAssetAddressesNotFound(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/assets/deadbeef/addresses" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(blockfrostNotFoundJSON))
+	})
+	_, err := c.AssetAddresses(context.Background(), "deadbeef")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("404 should map to ErrNotFound, got %v", err)
+	}
+}
+
+func TestAssetAddressesPaginated(t *testing.T) {
+	const asset = "deadbeef"
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q", r.Method)
+		}
+		if r.URL.Path != "/api/v0/assets/"+asset+"/addresses" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		q := r.URL.Query()
+		if q.Get("count") != "100" {
+			t.Errorf("count = %q", q.Get("count"))
+		}
+		var rows []string
+		switch q.Get("page") {
+		case "1":
+			for i := range pageSize {
+				rows = append(rows, fmt.Sprintf(`{"address":"addr1_%03d","quantity":"1"}`, i))
+			}
+		case "2":
+			rows = append(rows, `{"address":"addr1_100","quantity":"1"}`)
+		default:
+			t.Errorf("page = %q", q.Get("page"))
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
+	})
+	got, err := c.AssetAddresses(context.Background(), asset)
+	if err != nil {
+		t.Fatalf("AssetAddresses: %v", err)
+	}
+	if len(got) != pageSize+1 {
+		t.Fatalf("len = %d, want %d", len(got), pageSize+1)
+	}
+}

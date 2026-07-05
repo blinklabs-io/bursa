@@ -177,6 +177,14 @@ type EpochInfo struct {
 	EndTime   int64  `json:"end_time"`
 }
 
+// AssetAddress mirrors one entry of GET /api/v0/assets/{asset}/addresses: an
+// address currently holding some quantity of the asset. Used to resolve an
+// ADA Handle NFT to its current holder (see internal/handle).
+type AssetAddress struct {
+	Address  string `json:"address"`
+	Quantity string `json:"quantity"`
+}
+
 type accountAddress struct {
 	Address string `json:"address"`
 }
@@ -513,4 +521,11 @@ func (c *Client) LatestEpoch(ctx context.Context) (EpochInfo, error) {
 	var out EpochInfo
 	err := c.get(ctx, "/api/v0/epochs/latest", &out)
 	return out, err
+}
+
+// AssetAddresses returns every address currently holding some quantity of
+// asset — a Blockfrost-style unit (policy ID concatenated with the hex asset
+// name). An asset the node has not seen yields ErrNotFound.
+func (c *Client) AssetAddresses(ctx context.Context, asset string) ([]AssetAddress, error) {
+	return getAllPages[AssetAddress](ctx, c, "/api/v0/assets/"+asset+"/addresses")
 }

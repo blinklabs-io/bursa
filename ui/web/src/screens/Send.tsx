@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { Preview, TxResult, SendAsset, UnsignedTx } from "../api/types";
-import { buildSend, confirmSend, exportUnsigned, ApiError } from "../api/client";
+import type { Preview, TxResult, SendAsset, UnsignedTx, HandleInfo } from "../api/types";
+import { buildSend, confirmSend, exportUnsigned, resolveHandle, ApiError } from "../api/client";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
@@ -23,6 +23,16 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
+// How long to wait after the user stops typing a "$handle" before querying
+// the node to resolve it — avoids firing a lookup on every keystroke.
+const HANDLE_RESOLVE_DEBOUNCE_MS = 400;
+
+// isHandleInput reports whether a recipient input names an ADA Handle (a
+// leading '$') rather than a raw address.
+function isHandleInput(value: string): boolean {
+  return value.trim().startsWith("$");
+}
+
 // --- Compose phase ---
 
 interface ComposeProps {
@@ -42,6 +52,46 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // ADA Handle resolution: when `to` names a handle ($name), debounce a
+  // lookup through the node and show the resolved address (or a clean
+  // not-found). resolvedHandle.handle is only trusted when it still matches
+  // the current input — see the effect below.
+  const [resolvedHandle, setResolvedHandle] = useState<HandleInfo | null>(null);
+  const [handleError, setHandleError] = useState<string | null>(null);
+  const [resolvingHandle, setResolvingHandle] = useState(false);
+  const handleInput = isHandleInput(to);
+  const trimmedTo = to.trim();
+
+  useEffect(() => {
+    setResolvedHandle(null);
+    setHandleError(null);
+    if (!handleInput) {
+      setResolvingHandle(false);
+      return;
+    }
+    let cancelled = false;
+    setResolvingHandle(true);
+    const timer = setTimeout(() => {
+      resolveHandle(trimmedTo)
+        .then((info) => {
+          if (!cancelled) setResolvedHandle(info);
+        })
+        .catch((e: unknown) => {
+          if (cancelled) return;
+          setHandleError(
+            e instanceof ApiError && e.status === 404 ? "Handle not found" : errorMessage(e),
+          );
+        })
+        .finally(() => {
+          if (!cancelled) setResolvingHandle(false);
+        });
+    }, HANDLE_RESOLVE_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [trimmedTo, handleInput]);
+
   function addAssetRow() {
     setAssetRows((prev) => [...prev, { unit: "", quantity: "" }]);
   }
@@ -58,6 +108,29 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
 
   async function handleReview() {
     setError(null);
+
+    // A "$handle" recipient must resolve to an address before building the
+    // send; use the node-verified address, never the raw handle text.
+    let resolvedTo = trimmedTo;
+    if (handleInput) {
+      if (resolvingHandle) {
+        setError("Still resolving the handle — try again in a moment.");
+        return;
+      }
+      if (!resolvedHandle) {
+        setError(handleError ?? "Enter a valid, resolvable ADA Handle.");
+        return;
+      }
+      // Guard against a fast edit from one $handle to another landing here
+      // with the previous handle's resolved address still in state: only
+      // trust resolvedHandle when it matches the current input.
+      const normalizedHandle = trimmedTo.replace(/^\$/, "").trim().toLowerCase();
+      if (resolvedHandle.handle.toLowerCase() !== normalizedHandle) {
+        setError("Still resolving the handle — try again in a moment.");
+        return;
+      }
+      resolvedTo = resolvedHandle.address;
+    }
 
     // Validate ADA amount (parseAda returns a decimal lovelace string)
     let lovelace: string;
@@ -89,7 +162,7 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
     setLoading(true);
     try {
       const preview = await buildSend({
-        to: to.trim(),
+        to: resolvedTo,
         lovelace,
         ...(assets.length > 0 ? { assets } : {}),
       });
@@ -104,15 +177,29 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
   return (
     <Card title="Send ADA">
       <div className="send-form">
-        <label htmlFor="send-to">Recipient address</label>
+        <label htmlFor="send-to">Recipient address or $handle</label>
         <Input
           id="send-to"
           type="text"
-          placeholder="addr1..."
+          placeholder="addr1... or $handle"
           value={to}
           onChange={(e) => setTo(e.target.value)}
           disabled={loading}
         />
+        {handleInput && resolvingHandle && (
+          <p className="helper-text">Resolving handle…</p>
+        )}
+        {handleInput && resolvedHandle && (
+          <p className="verified-readout">
+            <span className="verified-tick">✓ Resolved by your node</span>
+            {" · "}${resolvedHandle.handle} → {resolvedHandle.address}
+          </p>
+        )}
+        {handleInput && handleError && (
+          <p role="alert" className="error-text">
+            {handleError}
+          </p>
+        )}
 
         <label htmlFor="send-amount">Amount (ADA)</label>
         <Input
@@ -161,7 +248,15 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
           </p>
         )}
 
-        <Button onClick={handleReview} disabled={loading || !to.trim() || !adaAmount.trim()}>
+        <Button
+          onClick={handleReview}
+          disabled={
+            loading ||
+            !to.trim() ||
+            !adaAmount.trim() ||
+            (handleInput && (resolvingHandle || !resolvedHandle))
+          }
+        >
           {loading ? "Building…" : "Review"}
         </Button>
       </div>
