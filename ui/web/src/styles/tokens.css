@@ -1,8 +1,45 @@
-:root {
-  /* Bursa — Lat. "purse / treasury". A node-operator instrument panel:
-     a dark cockpit for your own full node, with a classical gold (coin) accent. */
+/* Bursa — Lat. "purse / treasury". A node-operator instrument panel:
+   a cockpit for your own full node, with a classical gold (coin) accent.
 
-  /* Surfaces — dark, cool blue-slate cockpit */
+   Two themes share one shape: dark cockpit (default) and a light counterpart.
+   Every color lives in a CSS custom property here; global.css never hardcodes
+   a color. The active theme is selected by a `data-theme` attribute on the
+   document root (<html>), written by src/theme.ts:
+     - `:root[data-theme="dark"]`  — explicit dark (same values as the :root default)
+     - `:root[data-theme="light"]` — explicit light
+   `:root` alone (no attribute yet, e.g. before JS runs) falls back to dark.
+   Selectors are order-independent by specificity, not by source order:
+   `:root[data-theme="light"]` and `:root[data-theme="dark"]` are both
+   0,2,0 (`:root` + an attribute selector), which beats a plain `:root`
+   (0,1,0). So light always wins when the attribute says "light", and a
+   reorder of these blocks (or an inserted rule between them) can't
+   silently flip the default. */
+
+:root {
+  /* Shape + type — identical across themes. */
+  --radius: 6px;
+  --radius-lg: 10px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 36px;
+
+  --font:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* Gold-tint wash used behind active nav/wallet rows and focus rings. Derived
+     from --accent so it automatically follows whichever theme is active. */
+  --accent-dim: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* ------------------------------------------------------- dark (default) -- */
+/* Surfaces — dark, cool blue-slate cockpit. */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
   --bg: #0c0f15; /* ground */
   --surface: #151a22; /* panels */
   --inset: #1d2531; /* inputs, hovers, table stripes */
@@ -16,23 +53,37 @@
   /* Gold — the purse/coin; primary interactive + identity + key readouts */
   --accent: #d8a657;
   --accent-strong: #ecc079; /* hover / bright */
-  --accent-dim: color-mix(in srgb, var(--accent) 16%, transparent);
   --accent-text: #14110a; /* dark ink on gold fills */
 
   /* Node-health readouts — a distinct family so none clashes with gold */
   --ok: #58c47a; /* ready */
   --warn: #5fa2e6; /* syncing / working (blue reads as "in progress") */
   --error: #ff6166; /* error */
+}
 
-  --radius: 6px;
-  --radius-lg: 10px;
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 16px;
-  --space-4: 24px;
-  --space-5: 36px;
+/* ------------------------------------------------------------- light -- */
+/* A legible light counterpart: light blue-slate surfaces, dark ink, and a
+   deepened "antique bronze" gold. The airy dark-mode gold (#d8a657) drops
+   below WCAG AA (~2.2:1) when used as text on a light ground, so the light
+   theme darkens it (~5.9-6.9:1 against bg/surface/inset) and flips
+   --accent-text to white for fills (gold buttons, active tabs). */
+:root[data-theme="light"] {
+  color-scheme: light;
 
-  --font:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --bg: #f7f9fc;
+  --surface: #ffffff;
+  --inset: #eef1f6;
+  --border: #ccd6e0;
+
+  --text: #1a2230;
+  --text-muted: #55606f;
+  --text-faint: #5f6b7a;
+
+  --accent: #7d5010;
+  --accent-strong: #64400c;
+  --accent-text: #ffffff;
+
+  --ok: #187a42;
+  --warn: #2f6fb5;
+  --error: #c22f37;
 }

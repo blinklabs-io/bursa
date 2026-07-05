@@ -8,6 +8,7 @@ import { Button } from "./components/Button";
 import { SyncBanner } from "./components/SyncBanner";
 import { WalletSwitcher } from "./components/WalletSwitcher";
 import { MobileNav } from "./components/MobileNav";
+import { ThemeToggle } from "./components/ThemeToggle";
 import { useHashRoute, navigate } from "./router";
 import { CreateVault } from "./screens/CreateVault";
 import { UnlockVault } from "./screens/UnlockVault";
@@ -350,6 +351,9 @@ export function App() {
           <div className="brand">
             <span className="brand-mark">BVRSA</span>
             <span className="brand-motto">nodvs tvvs · claves tvæ</span>
+          </div>
+          <div className="sidebar-theme">
+            <ThemeToggle />
           </div>
           <WalletSwitcher
             wallets={wallets}

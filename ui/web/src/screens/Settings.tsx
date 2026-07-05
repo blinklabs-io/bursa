@@ -5,6 +5,7 @@ import { CopyButton } from "../components/CopyButton";
 import { Button } from "../components/Button";
 import { Input } from "../components/Input";
 import { Select } from "../components/Select";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { useStatus, useHistoryExpiry, useTPMStatus } from "../api/hooks";
 import type { AsyncState } from "../api/hooks";
 import {
@@ -443,6 +444,13 @@ export function Settings({ account, spendingEnabled, autoLock }: SettingsProps) 
 
   return (
     <div className="screen-settings">
+      <Card title="Appearance">
+        <div className="setting-toggle-row">
+          <span className="setting-toggle-label">Theme</span>
+          <ThemeToggle />
+        </div>
+      </Card>
+
       <Card title="Network">
         <p>{account.network}</p>
       </Card>

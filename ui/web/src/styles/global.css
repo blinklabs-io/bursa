@@ -867,6 +867,27 @@ a:hover {
   margin-bottom: 0;
 }
 
+/* ------------------------------------------------------------ theme toggle - */
+/* Compact Dark/Light segmented control, reusing .operate-tab's instrument
+   styling at a smaller size so it fits the sidebar header as well as a
+   Settings card. */
+.theme-toggle {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+.theme-toggle .operate-tab {
+  padding: 5px var(--space-2);
+  font-size: 0.625rem;
+}
+
+/* The sidebar's copy of the toggle sits under the brand, set off the same way
+   the wallet switcher is (bottom hairline + bottom margin) for rhythm. */
+.sidebar-theme {
+  padding: 0 var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
 /* ------------------------------------------------------ settings toggles -- */
 /* A labeled switch row: caption on the left, a sliding toggle on the right. */
 .setting-toggle-row {

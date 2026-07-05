@@ -13,7 +13,15 @@ const walletA: WalletView = {
   active: true,
 };
 
-test("renders the app shell once a wallet is active", async () => {
+afterEach(() => {
+  document.documentElement.removeAttribute("data-theme");
+  vi.restoreAllMocks();
+});
+
+// renderUnlockedApp stubs the data hooks + unlockVault, renders the app, and
+// drives the vault-unlock form. Shared by both tests below so the theme
+// variations stay focused on the thing they're actually asserting.
+async function renderUnlockedApp() {
   vi.spyOn(hooks, "useStatus").mockReturnValue({
     data: { state: "ready", tip: 0, caughtUp: true },
     error: null,
@@ -38,4 +46,23 @@ test("renders the app shell once a wallet is active", async () => {
   // On mobile and desktop the nav is rendered in both the sidebar and the
   // mobile drawer, so multiple elements with the same label may be present.
   await waitFor(() => expect(screen.getAllByText("Portfolio").length).toBeGreaterThan(0));
+}
+
+test.each(["dark", "light"] as const)("renders the app shell in the %s theme", async (theme) => {
+  document.documentElement.setAttribute("data-theme", theme);
+
+  await renderUnlockedApp();
+
+  // The document root keeps carrying the theme the app started with — the app
+  // itself never touches data-theme (only src/theme.ts + the toggle do).
+  expect(document.documentElement.getAttribute("data-theme")).toBe(theme);
+});
+
+test("renders the app shell once a wallet is active", async () => {
+  await renderUnlockedApp();
+
+  // Nav items appear once the vault is unlocked and a wallet is active. On
+  // mobile and desktop the nav is rendered in both the sidebar and the
+  // mobile drawer, so multiple elements with the same label may be present.
+  expect(screen.getAllByText("Portfolio").length).toBeGreaterThan(0);
 });
