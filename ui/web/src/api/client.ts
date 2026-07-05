@@ -41,6 +41,8 @@ import type {
   TPMStatus,
   EnableTPMRequest,
   DisableTPMRequest,
+  Contact,
+  UpsertContactRequest,
   DexPoolsResponse,
   DexQuoteRequest,
   DexQuote,
@@ -240,6 +242,14 @@ export const poolSubmitRetirement = (req: { password: string; epoch: number }) =
 export const getTPMStatus = () => apiGet<TPMStatus>("/vault/tpm/status");
 export const enableTPM = (req: EnableTPMRequest) => apiPost<TPMStatus>("/vault/tpm/enable", req);
 export const disableTPM = (req: DisableTPMRequest) => apiPost<TPMStatus>("/vault/tpm/disable", req);
+
+// Address book (local-only contacts). Upsert creates a new contact when
+// req.id is omitted, or updates the contact with that id when supplied.
+export const getContacts = () => apiGet<Contact[]>("/wallet/contacts");
+export const upsertContact = (req: UpsertContactRequest) =>
+  apiPost<Contact>("/wallet/contacts", req);
+export const deleteContact = (id: string) =>
+  apiDelete<{ removed: boolean }>(`/wallet/contacts/${encodeURIComponent(id)}`);
 
 // DEX swap quotes (node-local: pool prices and best-pool quotes).
 export const getDexPools = () => apiGet<DexPoolsResponse>("/wallet/dex/pools");

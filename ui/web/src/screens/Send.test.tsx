@@ -1,7 +1,8 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Send } from "./Send";
 import * as client from "../api/client";
-import type { Preview, TxResult, HandleInfo } from "../api/types";
+import { mockContacts } from "../test/mockContacts";
+import type { Preview, TxResult, HandleInfo, Contact } from "../api/types";
 
 const MOCK_PREVIEW: Preview = {
   pending_id: "pending-abc-123",
@@ -17,6 +18,10 @@ const MOCK_PREVIEW: Preview = {
 const MOCK_TX_RESULT: TxResult = {
   tx_hash: "deadbeef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
 };
+
+beforeEach(() => {
+  mockContacts([]);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -443,4 +448,52 @@ test("(n) a plain address recipient never calls resolveHandle", async () => {
     expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
   });
   expect(resolveHandle).not.toHaveBeenCalled();
+});
+
+// --- address-book picker on the recipient field ---
+
+const ALICE: Contact = { id: "c1", name: "Alice", address: "addr_test1alice" };
+const BOB: Contact = { id: "c2", name: "Bob", address: "addr_test1bob" };
+
+test("(o) no saved contacts: the Address book toggle is not rendered", () => {
+  mockContacts([]);
+  render(<Send />);
+  expect(screen.queryByRole("button", { name: /address book/i })).not.toBeInTheDocument();
+  // And the textbox indices other tests rely on stay exactly recipient/amount.
+  expect(screen.getAllByRole("textbox")).toHaveLength(2);
+});
+
+test("(p) saved contacts: clicking Address book lists them, and picking one fills the recipient", () => {
+  mockContacts([ALICE, BOB]);
+  render(<Send />);
+
+  const toggle = screen.getByRole("button", { name: /address book/i });
+  expect(toggle).toHaveAttribute("aria-controls", "send-contact-picker-list");
+  fireEvent.click(toggle);
+  expect(screen.getByRole("list", { name: /saved contacts/i })).toHaveAttribute(
+    "id",
+    "send-contact-picker-list"
+  );
+  expect(screen.getByText("Alice")).toBeInTheDocument();
+  expect(screen.getByText("addr_test1alice")).toBeInTheDocument();
+  expect(screen.getByText("Bob")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Alice"));
+
+  const inputs = screen.getAllByRole("textbox");
+  expect(inputs[0]).toHaveValue("addr_test1alice");
+  // The picker list closes after a selection.
+  expect(screen.queryByText("Bob")).not.toBeInTheDocument();
+});
+
+test("(q) the Address book picker closes on a second click of the toggle", () => {
+  mockContacts([ALICE]);
+  render(<Send />);
+
+  const toggle = screen.getByRole("button", { name: /address book/i });
+  fireEvent.click(toggle);
+  expect(screen.getByText("Alice")).toBeInTheDocument();
+
+  fireEvent.click(toggle);
+  expect(screen.queryByText("Alice")).not.toBeInTheDocument();
 });

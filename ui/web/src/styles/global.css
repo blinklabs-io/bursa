@@ -1476,6 +1476,109 @@ a:hover {
   display: inline; /* shown on desktop; hidden inside the mobile query */
 }
 
+/* --------------------------------------------------- address book (contacts) - */
+.screen-contacts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 880px;
+}
+.contact-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: var(--space-3);
+}
+.contact-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.contact-row:last-child {
+  border-bottom: none;
+}
+.contact-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.contact-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.contact-address {
+  font-size: 0.8125rem;
+  word-break: break-all;
+  color: var(--text-muted);
+}
+.contact-note {
+  font-size: 0.8125rem;
+}
+.contact-row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* Recipient row on Send: the address field plus the "Address book" toggle. */
+.send-to-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.send-to-row .field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The address-book picker dropdown that opens under the Send recipient field. */
+.contact-picker-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  margin-bottom: var(--space-1);
+  max-height: 220px;
+  overflow-y: auto;
+}
+.contact-picker-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-2);
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.contact-picker-item:hover,
+.contact-picker-item:focus-visible {
+  background: var(--surface);
+}
+.contact-picker-name {
+  font-weight: 600;
+}
+.contact-picker-address {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
 /* ============================================================ mobile ===== */
 /* Below 768 px the left sidebar is replaced by a top bar + slide-out drawer.
    Everything above 768 px is unchanged — the desktop layout still rules.    */

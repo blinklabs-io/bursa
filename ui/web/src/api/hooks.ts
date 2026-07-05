@@ -9,6 +9,7 @@ import type {
   HistoryExpirySetting,
   AutoLockSetting,
   TPMStatus,
+  Contact,
   DexPoolsResponse,
 } from "./types";
 import {
@@ -21,6 +22,7 @@ import {
   getHistoryExpiry,
   getAutoLock,
   getTPMStatus,
+  getContacts,
   getDexPools,
 } from "./client";
 
@@ -118,5 +120,6 @@ export const useDelegation = (): AsyncState<DelegationView> => useAsync(getDeleg
 export const useHistoryExpiry = (): AsyncState<HistoryExpirySetting> => useAsync(getHistoryExpiry);
 export const useAutoLock = (): AsyncState<AutoLockSetting> => useAsync(getAutoLock);
 export const useTPMStatus = (): AsyncState<TPMStatus> => useAsync(getTPMStatus);
+export const useContacts = (): AsyncState<Contact[]> => useAsync(getContacts);
 export const useDexPools = (): AsyncState<DexPoolsResponse> =>
   useAsync(getDexPools, { pollMs: 15000 });

@@ -26,6 +26,7 @@ import (
 
 	bursa "github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
@@ -180,6 +181,17 @@ type SettingsController interface {
 // keep the frontend list in sync by hand.
 var autoLockOptions = map[int]bool{0: true, 1: true, 5: true, 15: true, 30: true}
 
+// Contacts is the local-only address-book surface: a per-instance store of
+// saved recipient addresses (a friendly name, a Cardano address, and an
+// optional note). It is pure on-device storage: CRUD only, no lookups against
+// any external service. Upsert creates a new contact when Entry.ID is empty,
+// or updates the contact with that ID when it matches an existing one.
+type Contacts interface {
+	List() []contacts.Entry
+	Upsert(entry contacts.Entry) (contacts.Entry, error)
+	Delete(id string) error
+}
+
 // PoolOps is the Stake Pool Operations surface the API exposes. Credential
 // generation and seed-derived certificate/opcert building need the active
 // wallet + spending password; the air-gap builders (pool ID, opcert payload /
@@ -326,12 +338,13 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // the embedded node runs on; wallet requests must match it (or omit it). vlt is
 // the encrypted multi-wallet store; the API pushes the active wallet onto wl/sp
 // whenever the selection changes. settings exposes user-facing app settings
-// (the lean-node profile). lookup verifies pasted pool/DRep IDs and resolves
-// ADA Handles through the node (may be nil, in which case those endpoints
-// report unavailable). po is the Stake Pool Operations surface. dx optionally
-// enables node-local DEX routes. spa is the embedded SPA, registered as the
-// catch-all so the specific API routes take precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, lookup NodeLookup, po PoolOps, dx DexQuoter, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+// (the lean-node profile). cb is the local-only address-book store. lookup
+// verifies pasted pool/DRep IDs and resolves ADA Handles through the node (may
+// be nil, in which case those endpoints report unavailable). po is the Stake
+// Pool Operations surface. dx optionally enables node-local DEX routes. spa is
+// the embedded SPA, registered as the catch-all so the specific API routes take
+// precedence on the mux.
+func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cb Contacts, lookup NodeLookup, po PoolOps, dx DexQuoter, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -779,6 +792,29 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		writeJSON(w, http.StatusOK, map[string]int{"minutes": settings.AutoLockMinutes()})
 	})
 
+	// --- Address book (local-only, no network) -------------------------------
+	// Pure on-device CRUD storage: ungated (no node needed) and never reaches
+	// out to any external service.
+
+	mux.HandleFunc("GET /wallet/contacts", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, cb.List())
+	})
+	mux.HandleFunc("POST /wallet/contacts", func(w http.ResponseWriter, r *http.Request) {
+		var req contacts.Entry
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		entry, err := cb.Upsert(req)
+		serve(w, entry, err)
+	})
+	mux.HandleFunc("DELETE /wallet/contacts/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if err := cb.Delete(r.PathValue("id")); err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"removed": true})
+	})
+
 	// CIP-8 / CIP-30 message verification — the inverse of sign-data. Pure
 	// crypto: ungated, no node, no keystore (a read-only wallet can verify too).
 	mux.HandleFunc("POST /wallet/verify-data", func(w http.ResponseWriter, r *http.Request) {
@@ -1197,8 +1233,11 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 	case errors.Is(err, spend.ErrInvalidRequest),
 		errors.Is(err, spend.ErrInvalidTx),
 		errors.Is(err, spend.ErrInvalidWitness),
-		errors.Is(err, poolops.ErrInvalidRequest):
+		errors.Is(err, poolops.ErrInvalidRequest),
+		errors.Is(err, contacts.ErrInvalidRequest):
 		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400
+	case errors.Is(err, contacts.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
 	case errors.Is(err, spend.ErrUnknownPending):
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
 	case errors.Is(err, spend.ErrExpiredPending):

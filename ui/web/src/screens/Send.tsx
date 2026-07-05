@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Preview, TxResult, SendAsset, UnsignedTx, HandleInfo } from "../api/types";
 import { buildSend, confirmSend, exportUnsigned, resolveHandle, ApiError } from "../api/client";
+import { useContacts } from "../api/hooks";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
@@ -51,6 +52,9 @@ interface ComposeProps {
 function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, onPreview }: ComposeProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const contacts = useContacts();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const contactPickerListID = "send-contact-picker-list";
 
   // ADA Handle resolution: when `to` names a handle ($name), debounce a
   // lookup through the node and show the resolved address (or a clean
@@ -178,14 +182,47 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
     <Card title="Send ADA">
       <div className="send-form">
         <label htmlFor="send-to">Recipient address or $handle</label>
-        <Input
-          id="send-to"
-          type="text"
-          placeholder="addr1... or $handle"
-          value={to}
-          onChange={(e) => setTo(e.target.value)}
-          disabled={loading}
-        />
+        <div className="send-to-row">
+          <Input
+            id="send-to"
+            type="text"
+            placeholder="addr1... or $handle"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            disabled={loading}
+          />
+          {contacts.data && contacts.data.length > 0 && (
+            <Button
+              variant="ghost"
+              onClick={() => setPickerOpen((open) => !open)}
+              disabled={loading}
+              aria-controls={contactPickerListID}
+              aria-expanded={pickerOpen}
+            >
+              Address book
+            </Button>
+          )}
+        </div>
+        {pickerOpen && contacts.data && contacts.data.length > 0 && (
+          <ul id={contactPickerListID} className="contact-picker-list" aria-label="Saved contacts">
+            {contacts.data.map((c) => (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  className="contact-picker-item"
+                  disabled={loading}
+                  onClick={() => {
+                    setTo(c.address);
+                    setPickerOpen(false);
+                  }}
+                >
+                  <span className="contact-picker-name">{c.name}</span>
+                  <code className="contact-picker-address mono">{c.address}</code>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         {handleInput && resolvingHandle && (
           <p className="helper-text">Resolving handle…</p>
         )}

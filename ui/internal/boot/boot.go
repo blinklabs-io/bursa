@@ -36,6 +36,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/api"
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
@@ -187,6 +188,15 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		return nil, fmt.Errorf("seed lean-node default: %w", err)
 	}
 
+	// The address book is local-only, per-instance storage. It is non-essential:
+	// a corrupt contacts file should not brick startup, so boot with an empty
+	// in-memory book and leave the bad file untouched for manual recovery.
+	contactsStore, contactsWarn := contacts.LoadOrEmpty(filepath.Join(cfg.DataDir, "contacts.json"))
+	if contactsWarn != nil {
+		logger.Warn("address book could not be loaded; continuing with an empty one",
+			"error", contactsWarn)
+	}
+
 	nodeDataDir := filepath.Join(cfg.DataDir, "db")
 	sup := supervisor.New(supervisor.Config{
 		Network:        cfg.Network,
@@ -270,6 +280,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		Handler: api.NewHandler(
 			sup, vlt, walletSvc, spendSvc,
 			&settingsController{store: settingsStore, sup: sup},
+			contactsStore,
 			chainClient,
 			poolSvc,
 			dexSvc,
