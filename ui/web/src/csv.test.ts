@@ -28,7 +28,15 @@ test("toCsv with no rows renders only the header", () => {
 test("toCsv neutralizes formula-injection leading characters with a single quote", () => {
   const csv = toCsv(
     ["field"],
-    [["=cmd|' /C calc'!A1"], ["+1+1"], ["-1+1"], ["@SUM(A1:A2)"]],
+    [
+      ["=cmd|' /C calc'!A1"],
+      ["+1+1"],
+      ["-1+1"],
+      ["@SUM(A1:A2)"],
+      ["\t=SUM(A1:A2)"],
+      ["\n=SUM(A1:A2)"],
+      ["\r=SUM(A1:A2)"],
+    ],
   );
   expect(csv).toBe(
     [
@@ -37,6 +45,9 @@ test("toCsv neutralizes formula-injection leading characters with a single quote
       "'+1+1",
       "'-1+1",
       "'@SUM(A1:A2)",
+      "'\t=SUM(A1:A2)",
+      "\"'\n=SUM(A1:A2)\"",
+      "\"'\r=SUM(A1:A2)\"",
     ].join("\r\n"),
   );
 });
@@ -51,7 +62,10 @@ test("toCsv quotes fields containing a bare carriage return", () => {
   expect(csv).toBe('field\r\n"has\rcr"');
 });
 
-test("toCsv does not alter a plain negative-looking numeric field differently than any other leading-dash field", () => {
-  // Documents the accepted tradeoff: a negative amount exports as text.
-  expect(toCsv(["n"], [["-42"]])).toBe("n\r\n'-42");
+test("toCsv preserves plain signed numeric fields", () => {
+  const csv = toCsv(
+    ["n"],
+    [[-42], ["-42"], ["+42"], ["-.5"], ["+1.25e-3"], ["-1E+3"]],
+  );
+  expect(csv).toBe("n\r\n-42\r\n-42\r\n+42\r\n-.5\r\n+1.25e-3\r\n-1E+3");
 });

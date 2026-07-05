@@ -3,15 +3,14 @@
  * quote, newline, or carriage return, doubling any embedded quotes.
  *
  * Also neutralizes spreadsheet formula-injection (OWASP CSV-injection
- * guidance): a field whose first character is one of `= + - @`, tab, or CR
- * gets a leading single quote (') prefixed, forcing spreadsheet apps to
- * render it as text instead of evaluating it as a formula. This means e.g. a
- * negative amount like "-42" exports as "'-42" (rendered as text) — an
- * accepted, safe tradeoff.
+ * guidance): a non-numeric field whose first character is one of `= + - @`,
+ * tab, LF, or CR gets a leading single quote (') prefixed, forcing spreadsheet
+ * apps to render it as text instead of evaluating it as a formula.
  */
 function csvField(value: string | number): string {
   let s = String(value);
-  if (/^[=+\-@\t\r]/.test(s)) {
+  const isPlainNumber = /^[+-]?(?:\d+|\d*\.\d+)(?:[eE][+-]?\d+)?$/.test(s);
+  if (/^[=+\-@\t\n\r]/.test(s) && !isPlainNumber) {
     s = `'${s}`;
   }
   if (/[",\n\r]/.test(s)) {
