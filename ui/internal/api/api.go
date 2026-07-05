@@ -149,8 +149,9 @@ func WithLegacyKeystore(ks LegacyKeystore) HandlerOption {
 // SettingsController is the user-facing app-settings surface. It exposes the
 // persisted lean-node (history-expiry) profile and whether a node restart is
 // still needed for the persisted value to take effect (history expiry is a
-// node-construction option, applied only at node start). It is decoupled from
-// the storage and supervisor packages so the API can be tested with a fake.
+// node-construction option, applied only at node start), plus the idle
+// auto-lock timeout. It is decoupled from the storage and supervisor packages
+// so the API can be tested with a fake.
 type SettingsController interface {
 	HistoryExpiry() bool
 	SetHistoryExpiry(enabled bool) error
@@ -158,7 +159,25 @@ type SettingsController interface {
 	// with a different history-expiry value than what is now persisted (so the
 	// change has not taken effect yet).
 	HistoryExpiryRestartRequired() bool
+	// AutoLockMinutes reports the persisted idle auto-lock timeout in minutes;
+	// 0 means "Off" (auto-lock disabled). It is a pure client-side/UI setting —
+	// no node behaviour depends on it — so unlike history-expiry it never needs
+	// a restart to take effect.
+	AutoLockMinutes() int
+	// SetAutoLockMinutes persists the idle auto-lock timeout. It rejects any
+	// value outside the offered set (see settings.AutoLockOptions).
+	SetAutoLockMinutes(minutes int) error
 }
+
+// autoLockOptions are the only accepted auto-lock timeouts (minutes; 0 = Off).
+// Mirrors settings.AutoLockOptions — duplicated here (like the frontend's
+// MIN_PASSWORD_LEN mirroring keystore.MinPasswordLen) so this package stays
+// decoupled from the settings package and can be exercised with a fake. Also
+// mirrored a third time in the frontend's AUTO_LOCK_OPTIONS
+// (web/src/screens/Settings.tsx). TestAutoLockOptionsMatchesSettingsPackage in
+// api_test.go guards this set against settings.AutoLockOptions drifting apart;
+// keep the frontend list in sync by hand.
+var autoLockOptions = map[int]bool{0: true, 1: true, 5: true, 15: true, 30: true}
 
 // PoolOps is the Stake Pool Operations surface the API exposes. Credential
 // generation and seed-derived certificate/opcert building need the active
@@ -689,6 +708,36 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			"enabled":          settings.HistoryExpiry(),
 			"restart_required": settings.HistoryExpiryRestartRequired(),
 		})
+	})
+
+	// App settings: the idle auto-lock timeout. Ungated for the same reason as
+	// history-expiry — it is a local UI preference, not a node query. Unlike
+	// history-expiry it takes effect immediately (the frontend's idle timer
+	// reads it directly), so there is no restart_required field.
+	mux.HandleFunc("GET /wallet/settings/auto-lock", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]int{"minutes": settings.AutoLockMinutes()})
+	})
+	mux.HandleFunc("PUT /wallet/settings/auto-lock", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Minutes *int `json:"minutes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if req.Minutes == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "minutes is required"})
+			return
+		}
+		if !autoLockOptions[*req.Minutes] {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid auto-lock timeout"})
+			return
+		}
+		if err := settings.SetAutoLockMinutes(*req.Minutes); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]int{"minutes": settings.AutoLockMinutes()})
 	})
 
 	// CIP-8 / CIP-30 message verification — the inverse of sign-data. Pure

@@ -7,6 +7,7 @@ import type {
   DelegationView,
   VaultStatus,
   HistoryExpirySetting,
+  AutoLockSetting,
   TPMStatus,
 } from "./types";
 import {
@@ -17,6 +18,7 @@ import {
   getTransactions,
   getDelegation,
   getHistoryExpiry,
+  getAutoLock,
   getTPMStatus,
 } from "./client";
 
@@ -112,4 +114,5 @@ export const useAddresses = (): AsyncState<AddressView> => useAsync(getAddresses
 export const useTransactions = (): AsyncState<Tx[]> => useAsync(getTransactions);
 export const useDelegation = (): AsyncState<DelegationView> => useAsync(getDelegation);
 export const useHistoryExpiry = (): AsyncState<HistoryExpirySetting> => useAsync(getHistoryExpiry);
+export const useAutoLock = (): AsyncState<AutoLockSetting> => useAsync(getAutoLock);
 export const useTPMStatus = (): AsyncState<TPMStatus> => useAsync(getTPMStatus);

@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import type { ReactElement } from "react";
 import type { Account, WalletView } from "./api/types";
-import { useStatus, useVaultStatus } from "./api/hooks";
+import { useStatus, useVaultStatus, useAutoLock } from "./api/hooks";
 import { lockVault, ApiError } from "./api/client";
+import { useIdleLock } from "./useIdleLock";
 import { Button } from "./components/Button";
 import { SyncBanner } from "./components/SyncBanner";
 import { WalletSwitcher } from "./components/WalletSwitcher";
@@ -61,6 +62,14 @@ function toAccount(w: WalletView): Account {
 export function App() {
   const status = useStatus();
   const vaultStatus = useVaultStatus();
+  // Lifted here (rather than called again inside Settings/AutoLockCard) so
+  // there is a single shared copy of the auto-lock setting: useIdleLock below
+  // reads autoLock.data directly, and Settings is handed this same AsyncState
+  // (autoLock.setData) so a save there updates the value useIdleLock sees in
+  // this same session, with no reload. A second independent useAutoLock()
+  // instance inside Settings would have its own useState and never be seen by
+  // the idle timer here (see useAsync in api/hooks.ts: no shared cache).
+  const autoLock = useAutoLock();
   const route = useHashRoute();
 
   // Vault session state, established after create/unlock and kept in memory.
@@ -127,6 +136,15 @@ export function App() {
       vaultStatus.refresh();
     }
   }
+
+  // Idle auto-lock: re-locks the vault after the persisted timeout elapses
+  // with no pointer/keyboard/visibility activity (see useIdleLock). Only runs
+  // once the vault is actually unlocked — locking an already-locked vault is
+  // harmless but pointless. Default to Off (0) only while the setting is
+  // still loading (nothing is known yet); if loading finishes and the fetch
+  // failed (autoLock.data stays null), fail SAFE by assuming the default
+  // timeout rather than fail OPEN by leaving auto-lock permanently disabled.
+  useIdleLock(autoLock.loading ? 0 : (autoLock.data?.minutes ?? 15), () => void handleLock(), unlocked);
 
   // --- Pre-unlock flows: render full-screen, no sidebar -------------------
 
@@ -239,7 +257,7 @@ export function App() {
       </section>
     );
   } else if (route === "settings") {
-    content = <Settings account={toAccount(activeWallet)} spendingEnabled />;
+    content = <Settings account={toAccount(activeWallet)} spendingEnabled autoLock={autoLock} />;
   } else if (route === "send" && !canSend) {
     content = <Portfolio />;
   } else if (route === "staking") {

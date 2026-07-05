@@ -4,13 +4,26 @@ import { StatusPill } from "../components/StatusPill";
 import { CopyButton } from "../components/CopyButton";
 import { Button } from "../components/Button";
 import { Input } from "../components/Input";
+import { Select } from "../components/Select";
 import { useStatus, useHistoryExpiry, useTPMStatus } from "../api/hooks";
-import { setHistoryExpiry as putHistoryExpiry, ApiError, enableTPM, disableTPM } from "../api/client";
-import type { Account, NodeState, TPMStatus } from "../api/types";
+import type { AsyncState } from "../api/hooks";
+import {
+  setHistoryExpiry as putHistoryExpiry,
+  setAutoLock as putAutoLock,
+  ApiError,
+  enableTPM,
+  disableTPM,
+} from "../api/client";
+import type { Account, AutoLockSetting, NodeState, TPMStatus } from "../api/types";
 
 interface SettingsProps {
   account: Account;
   spendingEnabled: boolean;
+  // The auto-lock AsyncState, lifted up to and owned by App (see app.tsx) so
+  // this screen's save path and App's useIdleLock share the same value — a
+  // change here must be visible to the idle timer in the same session, with
+  // no reload.
+  autoLock: AsyncState<AutoLockSetting>;
 }
 
 function syncTone(state: NodeState): "ok" | "warn" | "error" | "muted" {
@@ -146,6 +159,117 @@ function LeanStorageCard() {
             <strong>Takes effect after a node restart.</strong>
           </li>
         </ul>
+      </div>
+    </Card>
+  );
+}
+
+// Mirrors settings.AutoLockOptions (ui/internal/settings/settings.go) and
+// autoLockOptions (ui/internal/api/api.go) — those two are guarded against
+// drift by TestAutoLockOptionsMatchesSettingsPackage in ui/internal/api, but
+// this frontend copy lives outside the Go module and must be kept in sync by
+// hand.
+const AUTO_LOCK_OPTIONS = [
+  { value: "0", label: "Off" },
+  { value: "1", label: "1 minute" },
+  { value: "5", label: "5 minutes" },
+  { value: "15", label: "15 minutes" },
+  { value: "30", label: "30 minutes" },
+];
+
+// AutoLockCard is the user-facing control for the idle auto-lock timeout: how
+// long the app waits with no pointer/keyboard/visibility activity before
+// re-locking the vault (see useIdleLock, wired up in app.tsx). Mirrors
+// LeanStorageCard's optimistic-update pattern, minus the restart-required
+// concept — this setting is a pure frontend behaviour and takes effect on the
+// very next idle check.
+//
+// `setting` is App's useAutoLock() AsyncState, passed down rather than called
+// again here (compare TPMCard, which is handed tpmStatusQuery the same way).
+// A second independent useAutoLock() call here would have its own useState
+// (useAsync keeps no shared cache) and App's useIdleLock would never see a
+// save made through this card until a full reload.
+function AutoLockCard({ setting }: { setting: AsyncState<AutoLockSetting> }) {
+  const [minutes, setMinutes] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (setting.data) {
+      setMinutes(setting.data.minutes);
+    }
+  }, [setting.data]);
+
+  async function handleChange(next: number) {
+    if (minutes === null || saving || next === minutes) return;
+    const previous = minutes;
+    setError(null);
+    setSaving(true);
+    setMinutes(next); // optimistic
+    try {
+      const res = await putAutoLock(next);
+      setMinutes(res.minutes);
+      // Propagate the authoritative saved value into the shared AsyncState
+      // App reads for useIdleLock, so the new timeout (including Off) takes
+      // effect immediately in this session — not just in this card's local
+      // echo of it.
+      setting.setData(res);
+    } catch (e) {
+      // Roll back the optimistic change on failure.
+      setMinutes(previous);
+      setError(e instanceof ApiError ? e.message : "An unexpected error occurred");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const hasLoaded = minutes !== null;
+  const loading = setting.loading && !hasLoaded;
+  const unavailable = !loading && !hasLoaded;
+  const loadError = setting.error?.message ?? null;
+  const cardError = error ?? loadError;
+
+  return (
+    <Card title="Auto-Lock">
+      <div className="setting-toggle-row">
+        <label htmlFor="auto-lock" className="setting-toggle-label">
+          Lock after inactivity
+        </label>
+        <Select
+          id="auto-lock"
+          aria-label="Lock after inactivity"
+          options={AUTO_LOCK_OPTIONS}
+          value={String(minutes ?? 0)}
+          disabled={!hasLoaded || loading || saving}
+          onChange={(e) => handleChange(Number(e.target.value))}
+        />
+      </div>
+
+      {loading ? (
+        <p className="muted">Loading…</p>
+      ) : unavailable ? (
+        <p className="muted">Unavailable</p>
+      ) : (
+        <p className="setting-state">
+          {minutes === 0
+            ? "Off — the vault will not auto-lock"
+            : `Locks after ${minutes} minute${minutes === 1 ? "" : "s"} of inactivity`}
+          {saving && " · saving…"}
+        </p>
+      )}
+
+      {cardError && (
+        <p role="alert" className="error-text">
+          {cardError}
+        </p>
+      )}
+
+      <div className="setting-copy">
+        <p>
+          Automatically re-locks the vault after a period with no pointer,
+          keyboard, or tab activity — so a wallet left open and unattended
+          doesn&apos;t stay unlocked indefinitely.
+        </p>
       </div>
     </Card>
   );
@@ -313,7 +437,7 @@ function TPMCard({
   );
 }
 
-export function Settings({ account, spendingEnabled }: SettingsProps) {
+export function Settings({ account, spendingEnabled, autoLock }: SettingsProps) {
   const status = useStatus();
   const tpmStatusQuery = useTPMStatus();
 
@@ -356,6 +480,8 @@ export function Settings({ account, spendingEnabled }: SettingsProps) {
       </Card>
 
       <LeanStorageCard />
+
+      <AutoLockCard setting={autoLock} />
 
       <Card title="Keystore">
         <p>{spendingEnabled ? "Spending enabled" : "Read-only"}</p>

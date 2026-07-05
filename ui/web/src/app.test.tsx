@@ -40,14 +40,37 @@ function stubVault(data: { exists: boolean; locked: boolean; wallet_count: numbe
   } as never);
 }
 
+// The idle auto-lock timer reads useAutoLock; default it to Off so existing
+// tests (none of which exercise the idle-lock feature) never have a real
+// setInterval running against them, and never fire an unmocked fetch.
+function stubAutoLock(minutes = 0) {
+  vi.spyOn(hooks, "useAutoLock").mockReturnValue({
+    data: { minutes },
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+    setData: vi.fn(),
+  } as never);
+}
+
 // Keep Portfolio's data hooks quiet so it renders without firing real fetches.
 function quietPortfolio() {
   vi.spyOn(hooks, "useBalance").mockReturnValue({ data: { lovelace: "1000000", assets: [] }, error: null, loading: false, refresh: vi.fn() } as never);
   vi.spyOn(hooks, "useDelegation").mockReturnValue({ data: null, error: null, loading: false, refresh: vi.fn() } as never);
 }
 
+beforeEach(() => {
+  stubAutoLock(0);
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
+  // Belt-and-suspenders: the idle auto-lock tests below call vi.useFakeTimers()
+  // and normally switch back with vi.useRealTimers() at the end, but if such a
+  // test fails/throws before reaching that line, fake timers would otherwise
+  // stay installed and cascade into unrelated tests. useRealTimers() is a
+  // harmless no-op when real timers are already active.
+  vi.useRealTimers();
   window.location.hash = "";
 });
 
@@ -334,4 +357,150 @@ test("offline banner can be dismissed by the user", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
   expect(screen.queryByRole("alert", { name: /offline/i })).not.toBeInTheDocument();
+});
+
+// -------------------------------------------------------- idle auto-lock ---
+
+test("idle auto-lock locks the vault after the persisted timeout with no activity", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  stubAutoLock(1); // 1 minute
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+  const lockSpy = vi.spyOn(client, "lockVault").mockResolvedValue({
+    exists: true,
+    locked: true,
+    wallet_count: 1,
+  });
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+
+  await waitFor(() => expect(lockSpy).toHaveBeenCalled());
+  // Locking clears the unlocked shell and returns to the unlock screen.
+  await waitFor(() => expect(screen.getByRole("button", { name: /^unlock$/i })).toBeInTheDocument());
+  vi.useRealTimers();
+});
+
+test("idle auto-lock does not fire when the setting is Off", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  stubAutoLock(0); // Off
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+  const lockSpy = vi.spyOn(client, "lockVault");
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+  });
+
+  expect(lockSpy).not.toHaveBeenCalled();
+  expect(screen.getAllByText("Main").length).toBeGreaterThan(0);
+  vi.useRealTimers();
+});
+
+test("activity before the idle timeout elapses prevents the auto-lock", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  stubAutoLock(1); // 1 minute
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+  const lockSpy = vi.spyOn(client, "lockVault").mockResolvedValue({
+    exists: true,
+    locked: true,
+    wallet_count: 1,
+  });
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(50_000);
+  });
+  act(() => {
+    window.dispatchEvent(new Event("pointerdown"));
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(50_000); // 100s total, but only 50s since activity
+  });
+
+  expect(lockSpy).not.toHaveBeenCalled();
+  expect(screen.getAllByText("Main").length).toBeGreaterThan(0);
+  vi.useRealTimers();
+});
+
+// Regression test for Fix 1: App's useIdleLock and Settings' AutoLockCard used
+// to each hold their own useAutoLock() instance (useAsync/useState has no
+// shared cache — see api/hooks.ts), so a save made in Settings never reached
+// the copy App actually feeds into useIdleLock; changing the timeout (or
+// turning it Off) silently had no effect until a full reload. This test does
+// NOT stub useAutoLock (unlike the other idle-lock tests above, which
+// deliberately do to keep them focused) — it only mocks the fetch/client
+// layer, so both the App-level read and the Settings-level save go through
+// the real, shared hook instance and would fail here if the state were split
+// again.
+test("[Fix 1] changing the auto-lock timeout in Settings propagates to the idle timer in the same session (no reload)", async () => {
+  // Undo this file's beforeEach stubAutoLock(0), which mocks hooks.useAutoLock
+  // directly — this test deliberately exercises the REAL useAutoLock() hook
+  // (shared, per Fix 1) in both App and Settings; only the fetch/client layer
+  // below is mocked.
+  vi.restoreAllMocks();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+  vi.spyOn(client, "getAutoLock").mockResolvedValue({ minutes: 1 });
+  const setAutoLockSpy = vi.spyOn(client, "setAutoLock").mockResolvedValue({ minutes: 0 });
+  const lockSpy = vi.spyOn(client, "lockVault").mockResolvedValue({
+    exists: true,
+    locked: true,
+    wallet_count: 1,
+  });
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
+
+  // Navigate to Settings within the SAME App instance (no remount, no reload)
+  // and wait for the real useAutoLock() fetch to resolve to the persisted
+  // 1-minute timeout.
+  fireEvent.click(screen.getAllByRole("button", { name: "Settings" })[0]);
+  const select = await screen.findByRole("combobox", { name: /lock after inactivity/i });
+  await waitFor(() => expect(select).toHaveValue("1"));
+
+  // Switch to Off through the real Settings control.
+  fireEvent.change(select, { target: { value: "0" } });
+  await waitFor(() => expect(setAutoLockSpy).toHaveBeenCalledWith(0));
+  await waitFor(() => expect(select).toHaveValue("0"));
+
+  // Advance well past the original 1-minute timeout with no activity. If the
+  // Settings save had not propagated to App's copy of the setting (the bug),
+  // useIdleLock would still be running with the stale 1-minute value and
+  // lockVault would fire around the 60s mark. With the fix, App's shared
+  // AsyncState now reports minutes: 0, so useIdleLock is disabled and never
+  // locks the vault.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+  });
+
+  expect(lockSpy).not.toHaveBeenCalled();
+  vi.useRealTimers();
 });

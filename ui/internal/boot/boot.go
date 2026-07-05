@@ -393,6 +393,15 @@ func (c *settingsController) HistoryExpiryRestartRequired() bool {
 	return applied != c.store.HistoryExpiry()
 }
 
+// AutoLockMinutes and SetAutoLockMinutes pass straight through to the
+// persisted settings store: unlike history-expiry, the idle auto-lock timeout
+// is pure frontend behaviour with no node-construction dependency.
+func (c *settingsController) AutoLockMinutes() int { return c.store.AutoLockMinutes() }
+
+func (c *settingsController) SetAutoLockMinutes(minutes int) error {
+	return c.store.SetAutoLockMinutes(minutes)
+}
+
 // genesisAdapter adapts the loopback Blockfrost chain client to the genesis
 // subset the SPO toolkit's KES-period math needs.
 type genesisAdapter struct{ c *chain.Client }

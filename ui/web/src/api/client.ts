@@ -17,6 +17,7 @@ import type {
   AddWalletRequest,
   MigrateLegacyKeystoreRequest,
   HistoryExpirySetting,
+  AutoLockSetting,
   VerifyDataRequest,
   VerifyDataResult,
   UnsignedTx,
@@ -155,6 +156,9 @@ export const getHistoryExpiry = () =>
   apiGet<HistoryExpirySetting>("/wallet/settings/history-expiry");
 export const setHistoryExpiry = (enabled: boolean) =>
   apiPut<HistoryExpirySetting>("/wallet/settings/history-expiry", { enabled });
+export const getAutoLock = () => apiGet<AutoLockSetting>("/wallet/settings/auto-lock");
+export const setAutoLock = (minutes: number) =>
+  apiPut<AutoLockSetting>("/wallet/settings/auto-lock", { minutes });
 export const verifyData = (req: VerifyDataRequest) =>
   apiPost<VerifyDataResult>("/wallet/verify-data", req);
 export const exportUnsigned = (id: string) =>
