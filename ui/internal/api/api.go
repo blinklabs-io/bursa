@@ -24,6 +24,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	bursa "github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
@@ -541,6 +542,20 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		}
 		bindActive(meta)
 		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
+	})
+
+	// GET /wallet/mnemonic/generate returns a freshly generated 24-word BIP39
+	// mnemonic (256-bit entropy). The phrase is generated server-side so the
+	// client never handles raw entropy. This endpoint is ungated — it needs
+	// neither a running node nor an unlocked vault, and is loopback-only so there
+	// is no risk of the phrase leaking over the network.
+	mux.HandleFunc("GET /wallet/mnemonic/generate", func(w http.ResponseWriter, _ *http.Request) {
+		m, err := bursa.GenerateMnemonic()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"mnemonic": m})
 	})
 
 	mux.HandleFunc("POST /wallet/{id}/activate", func(w http.ResponseWriter, r *http.Request) {

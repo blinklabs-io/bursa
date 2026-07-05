@@ -1225,16 +1225,15 @@ a:hover {
   border-top: 1px dashed var(--border);
 }
 
-.operate-form .checkbox-row,
-.operate-subform .checkbox-row {
-  display: flex;
+.checkbox-row {
+  display: flex !important;
   align-items: center;
   gap: var(--space-2);
-  text-transform: none;
-  letter-spacing: normal;
-  font-family: var(--font);
-  font-size: 0.8125rem;
-  color: var(--text);
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  font-family: var(--font) !important;
+  font-size: 0.8125rem !important;
+  color: var(--text) !important;
 }
 
 .kes-period {
@@ -1423,6 +1422,49 @@ a:hover {
   font-size: 0.8125rem;
   text-align: right;
   white-space: nowrap;
+}
+
+/* ---------------------------------------------- recovery phrase display -- */
+/* 3-column word grid for the generated 24-word phrase. */
+.recovery-phrase-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-1) var(--space-2);
+  margin: var(--space-3) 0;
+}
+.recovery-phrase-word {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+}
+.recovery-phrase-index {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--text-faint);
+  min-width: 1.4em;
+  text-align: right;
+  flex-shrink: 0;
+}
+.recovery-phrase-text {
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Backup warning box. */
+.backup-warning {
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 0.8125rem;
+  color: var(--error);
+  margin-top: var(--space-3);
 }
 
 @media (prefers-reduced-motion: reduce) {
