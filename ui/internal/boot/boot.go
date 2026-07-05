@@ -36,6 +36,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/api"
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/settings"
@@ -232,6 +233,11 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		tipAdapter{sup: sup},
 	)
 
+	// DEX swap quotes read pool UTxOs from the node's loopback Blockfrost
+	// endpoint and compute prices/quotes locally. The service returns a clean
+	// ErrNotMainnet on non-mainnet networks.
+	dexSvc := dex.NewService(chainClient, cfg.Network)
+
 	// Bind the control-surface listener BEFORE starting the node so an
 	// OS-assigned port (127.0.0.1:0) is known to the caller the moment Boot
 	// returns — the mobile WebView needs the concrete port to load the SPA.
@@ -266,6 +272,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			&settingsController{store: settingsStore, sup: sup},
 			chainClient,
 			poolSvc,
+			dexSvc,
 			cfg.Network, webui.Handler(),
 			api.WithLegacyKeystore(legacyKeyStore),
 		),

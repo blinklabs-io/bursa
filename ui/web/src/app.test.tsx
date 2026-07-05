@@ -227,6 +227,29 @@ test("deep-linking #/send while syncing falls back to Portfolio (guard)", async 
   expect(screen.queryByText("Send ADA")).not.toBeInTheDocument();
 });
 
+test("deep-linking #/swap while syncing opens the read-only swap screen", async () => {
+  stubStatus("syncing");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+  vi.spyOn(hooks, "useDexPools").mockReturnValue({
+    data: { pools: [] },
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+  window.location.hash = "#/swap";
+
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: /load wallet anyway/i }));
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: /swap quote/i })).toBeInTheDocument(),
+  );
+  expect(screen.getAllByText("Swap").some((el) => el.closest("button")?.disabled === false)).toBe(true);
+});
+
 test("an active wallet on a ready node can reach Send", async () => {
   stubStatus("ready");
   stubVault({ exists: true, locked: true, wallet_count: 1 });

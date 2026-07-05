@@ -425,3 +425,36 @@ export interface EnableTPMRequest {
 export interface DisableTPMRequest {
   password: string;
 }
+
+export interface DexPool {
+  protocol: string;
+  pool_id: string;
+  asset_x: string; // unit: "lovelace" or policy+hexname
+  asset_y: string;
+  reserve_x: string;
+  reserve_y: string;
+  price_xy: number; // Y per X
+  price_yx: number; // X per Y
+  effective_fee: number;
+  tx_hash: string;
+  tx_index: number;
+}
+export interface DexPoolsResponse {
+  pools: DexPool[];
+}
+export interface DexQuoteRequest {
+  asset_in: string;
+  asset_out: string;
+  amount_in: string; // base-unit (e.g. lovelace) uint64 as a decimal string
+}
+export interface DexQuote {
+  protocol: string;
+  pool_id: string;
+  asset_in: string;
+  asset_out: string;
+  amount_in: string;
+  amount_out: string;
+  price_impact_pct: number;
+  effective_fee: number;
+  route: string;
+}

@@ -26,6 +26,7 @@ import (
 
 	bursa "github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
@@ -203,6 +204,13 @@ type PoolOps interface {
 	SubmitRetirement(ctx context.Context, password string, epoch uint64) (poolops.TxResult, error)
 }
 
+// DexQuoter is the node-local DEX surface: pool prices and best-pool swap
+// quotes, computed entirely from the embedded node (no external service).
+type DexQuoter interface {
+	Pools(ctx context.Context) ([]dex.Pool, error)
+	Quote(ctx context.Context, assetIn, assetOut string, amountIn uint64) (dex.Quote, error)
+}
+
 type decimalUint64 uint64
 
 func (n *decimalUint64) UnmarshalJSON(data []byte) error {
@@ -320,10 +328,10 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // whenever the selection changes. settings exposes user-facing app settings
 // (the lean-node profile). lookup verifies pasted pool/DRep IDs and resolves
 // ADA Handles through the node (may be nil, in which case those endpoints
-// report unavailable). po is the Stake Pool Operations surface. spa is the
-// embedded SPA, registered as the catch-all so the specific API routes take
-// precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, lookup NodeLookup, po PoolOps, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+// report unavailable). po is the Stake Pool Operations surface. dx optionally
+// enables node-local DEX routes. spa is the embedded SPA, registered as the
+// catch-all so the specific API routes take precedence on the mux.
+func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, lookup NodeLookup, po PoolOps, dx DexQuoter, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -636,6 +644,37 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		v, err := wl.Delegation(r.Context())
 		serve(w, v, err)
 	}))
+
+	// DEX swap quotes. These read ONLY from the embedded node (pool UTxOs at the
+	// DEX script addresses), so there is deliberately NO external-consent gate —
+	// nothing leaves 127.0.0.1. They are gated like other wallet reads: a node
+	// that can serve queries (synced/syncing).
+	if dx != nil {
+		mux.HandleFunc("GET /wallet/dex/pools", gated(st, func(w http.ResponseWriter, r *http.Request) {
+			pools, err := dx.Pools(r.Context())
+			serveDex(w, map[string]any{"pools": pools}, err)
+		}))
+
+		mux.HandleFunc("POST /wallet/dex/quote", gated(st, func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				AssetIn  string `json:"asset_in"`
+				AssetOut string `json:"asset_out"`
+				AmountIn string `json:"amount_in"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			amountIn, err := strconv.ParseUint(req.AmountIn, 10, 64)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{
+					"error": "amount_in must be a positive integer (base unit, e.g. lovelace)",
+				})
+				return
+			}
+			q, err := dx.Quote(r.Context(), req.AssetIn, req.AssetOut, amountIn)
+			serveDex(w, q, err)
+		}))
+	}
 
 	// --- Spending (active wallet, spending password) -------------------------
 
@@ -1169,6 +1208,24 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 		// 422: the request was understood but cannot be fulfilled; the node's
 		// structured rejection reason (for submit), the funding shortfall, or the
 		// "already in the requested state" note rides along in the message.
+		writeJSON(w, http.StatusUnprocessableEntity, errBody(err))
+	default:
+		writeJSON(w, http.StatusInternalServerError, errBody(err))
+	}
+}
+
+// serveDex maps DEX errors to HTTP statuses (the generic serve only knows the
+// wallet/spend sentinels).
+func serveDex[T any](w http.ResponseWriter, v T, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, dex.ErrInvalidRequest):
+		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400
+	case errors.Is(err, dex.ErrNoRoute):
+		writeJSON(w, http.StatusNotFound, errBody(err)) // 404: no pool for the pair
+	case errors.Is(err, dex.ErrNotMainnet):
+		// 422: understood, but unavailable on this network (pools are mainnet-only).
 		writeJSON(w, http.StatusUnprocessableEntity, errBody(err))
 	default:
 		writeJSON(w, http.StatusInternalServerError, errBody(err))
