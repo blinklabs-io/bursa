@@ -6,6 +6,7 @@ import { lockVault, ApiError } from "./api/client";
 import { Button } from "./components/Button";
 import { SyncBanner } from "./components/SyncBanner";
 import { WalletSwitcher } from "./components/WalletSwitcher";
+import { MobileNav } from "./components/MobileNav";
 import { useHashRoute, navigate } from "./router";
 import { CreateVault } from "./screens/CreateVault";
 import { UnlockVault } from "./screens/UnlockVault";
@@ -226,10 +227,15 @@ export function App() {
     );
   } else if (activeWallet === null) {
     // Unlocked with multiple wallets and none selected yet: prompt to pick one.
+    // On mobile the sidebar is hidden, so direct the user to the drawer instead.
     content = (
       <section className="card">
         <h2>Select a wallet</h2>
-        <p className="helper-text">Choose a wallet from the sidebar to continue.</p>
+        <p className="helper-text">
+          Add or select a wallet to continue.{" "}
+          <span className="mobile-hint">Open the menu (☰) to see your wallets.</span>
+          <span className="desktop-hint">Choose a wallet from the sidebar.</span>
+        </p>
       </section>
     );
   } else if (route === "settings") {
@@ -262,11 +268,41 @@ export function App() {
     content = <Screen />;
   }
 
+  // Build the nav item descriptors once, shared between desktop sidebar and
+  // mobile drawer so gating logic only lives in one place.
+  const navItems = NAV.map(({ key, label }) => {
+    const gated =
+      activeWallet === null ||
+      addingWallet ||
+      (key === "send" && !canSend) ||
+      (key === "staking" && !canStake) ||
+      (key === "sign" && !canSign) ||
+      (key === "offline" && !canSign) ||
+      (key === "operate" && !canSign);
+    return { key, label, disabled: gated, active: key === activeRoute };
+  });
+
   return (
     <div className="app">
       <OfflineBanner />
       {status.data && <SyncBanner status={status.data} />}
+
+      {/* Mobile-only: top bar + slide-out drawer. Hidden on desktop via CSS. */}
+      <MobileNav
+        status={status.data ?? null}
+        activeWallet={activeWallet}
+        wallets={wallets}
+        activeId={activeId}
+        lockError={lockError}
+        navItems={navItems}
+        onActivated={applyActivated}
+        onAddWallet={() => setAddingWallet(true)}
+        onLock={handleLock}
+        onNavigate={navigate}
+      />
+
       <div className="layout">
+        {/* Desktop sidebar. Hidden on mobile via CSS. */}
         <nav className="sidebar">
           <div className="brand">
             <span className="brand-mark">BVRSA</span>
@@ -284,28 +320,17 @@ export function App() {
               {lockError}
             </p>
           )}
-          {NAV.map(({ key, label }) => {
-            const gated =
-              activeWallet === null ||
-              addingWallet ||
-              (key === "send" && !canSend) ||
-              (key === "staking" && !canStake) ||
-              (key === "sign" && !canSign) ||
-              (key === "offline" && !canSign) ||
-              (key === "operate" && !canSign);
-            const active = key === activeRoute;
-            return (
-              <button
-                key={key}
-                className={active ? "nav-item active" : "nav-item"}
-                aria-current={active ? "page" : undefined}
-                disabled={gated}
-                onClick={() => navigate(key)}
-              >
-                {label}
-              </button>
-            );
-          })}
+          {navItems.map(({ key, label, disabled, active }) => (
+            <button
+              key={key}
+              className={active ? "nav-item active" : "nav-item"}
+              aria-current={active ? "page" : undefined}
+              disabled={disabled}
+              onClick={() => navigate(key)}
+            >
+              {label}
+            </button>
+          ))}
         </nav>
         <main className="content" key={activeWallet?.id ?? "none"}>{content}</main>
       </div>

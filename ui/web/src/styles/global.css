@@ -1467,11 +1467,285 @@ a:hover {
   margin-top: var(--space-3);
 }
 
+/* Conditional hints: one version for mobile, one for desktop. Each is hidden
+   on the viewport it is not meant for so screen readers see only one. */
+.mobile-hint {
+  display: none; /* shown only inside the mobile media query below */
+}
+.desktop-hint {
+  display: inline; /* shown on desktop; hidden inside the mobile query */
+}
+
+/* ============================================================ mobile ===== */
+/* Below 768 px the left sidebar is replaced by a top bar + slide-out drawer.
+   Everything above 768 px is unchanged — the desktop layout still rules.    */
+
+@media (max-width: 767.98px) {
+  /* Conditional hints: flip which hint is visible. */
+  .mobile-hint {
+    display: inline;
+  }
+  .desktop-hint {
+    display: none;
+  }
+
+  /* Hide the desktop sidebar; show nothing for it on mobile. */
+  .sidebar {
+    display: none;
+  }
+
+  /* The mobile top bar sits above everything, like the sync-banner. */
+  .mobile-topbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-3);
+    height: 52px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 200;
+  }
+
+  .mobile-brand-mark {
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.28em;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .mobile-topbar-center {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .mobile-wallet-name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mobile-wallet-name-empty {
+    color: var(--text-faint);
+    font-weight: 400;
+  }
+
+  /* Compact node-state chip: coloured dot + short state label. */
+  .mobile-sync-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+    border: 1px solid transparent;
+  }
+  .mobile-sync-chip::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentcolor;
+    flex-shrink: 0;
+  }
+  .mobile-sync-chip-ok {
+    color: var(--ok);
+    border-color: color-mix(in srgb, var(--ok) 35%, transparent);
+    background: color-mix(in srgb, var(--ok) 12%, transparent);
+  }
+  .mobile-sync-chip-warn {
+    color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+    background: color-mix(in srgb, var(--warn) 12%, transparent);
+  }
+  .mobile-sync-chip-error {
+    color: var(--error);
+    border-color: color-mix(in srgb, var(--error) 35%, transparent);
+    background: color-mix(in srgb, var(--error) 12%, transparent);
+  }
+  .mobile-sync-chip-muted {
+    color: var(--text-muted);
+    border-color: var(--border);
+    background: var(--inset);
+  }
+
+  /* Hamburger: at least 44 × 44 px tap target. */
+  .mobile-hamburger {
+    appearance: none;
+    -webkit-appearance: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: none;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text);
+    font-size: 1.1rem;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.12s ease;
+  }
+  .mobile-hamburger:hover {
+    background: var(--inset);
+  }
+  .mobile-hamburger:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  /* Semi-transparent backdrop; tap to close. */
+  .mobile-drawer-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 300;
+  }
+
+  /* Slide-out drawer — full height, slides in from the right. */
+  .mobile-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(320px, 85vw);
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    z-index: 400;
+    transform: translateX(100%);
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+      visibility 0s linear 0.22s;
+    overflow-y: auto;
+    /* Account for safe area at the top / bottom. */
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .mobile-drawer-open {
+    transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
+    transition:
+      transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+      visibility 0s linear 0s;
+  }
+
+  .mobile-drawer-inner {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    min-height: 100%;
+  }
+
+  /* Nav list inside the drawer — full-width, touch-friendly. */
+  .mobile-nav-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-2);
+    margin-top: var(--space-2);
+  }
+
+  /* Ensure all nav/wallet taps have at least 44 px height on mobile. */
+  .mobile-nav-list .nav-item,
+  .mobile-drawer .wallet-item,
+  .mobile-drawer .wallet-action {
+    min-height: 44px;
+  }
+
+  /* Content: single column, no left offset from (now-hidden) sidebar. */
+  .layout {
+    flex-direction: column;
+  }
+
+  .content {
+    padding: var(--space-3);
+  }
+
+  /* Constrain screens to viewport width — no horizontal scroll. */
+  .portfolio,
+  .receive,
+  .activity,
+  .staking,
+  .screen-settings,
+  .send-form,
+  .sign-form,
+  .staking-form,
+  .preview-details,
+  .done-details,
+  .operate,
+  .operate-form,
+  .operate-subform {
+    max-width: 100%;
+  }
+
+  /* Wide tables scroll horizontally inside their container. */
+  .table-wrap {
+    overflow-x: auto;
+  }
+
+  /* Boot sync view: a little less top margin on small screens. */
+  .syncing {
+    margin-top: var(--space-4);
+  }
+
+  /* Preview actions (send/staking confirm): stack buttons vertically. */
+  .preview-actions {
+    flex-direction: column;
+  }
+  .preview-actions .btn {
+    width: 100%;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  /* Operate-tab strip: wrap onto two lines if needed. */
+  .operate-tabs,
+  .mode-toggle {
+    flex-wrap: wrap;
+  }
+  .operate-tab {
+    min-height: 44px;
+  }
+}
+
+/* Hide mobile-only elements on desktop. */
+@media (min-width: 768px) {
+  .mobile-topbar,
+  .mobile-drawer,
+  .mobile-drawer-overlay {
+    display: none !important;
+  }
+}
+
+/* ========================================================= reduced-motion = */
 @media (prefers-reduced-motion: reduce) {
   .dot-warn,
   .sync-bar-indeterminate,
   .sync-step-active .sync-step-dot {
     animation: none;
+  }
+  .mobile-drawer {
+    transition: none;
   }
   * {
     transition: none !important;
