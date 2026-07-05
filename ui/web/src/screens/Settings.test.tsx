@@ -162,7 +162,11 @@ test("(l) toggling lean storage PUTs the new value and shows restart note", asyn
   await waitFor(() => expect(spy).toHaveBeenCalledWith(true));
   await waitFor(() => expect(toggle).not.toBeDisabled());
   expect(toggle).toBeChecked();
-  expect(screen.getByRole("status")).toHaveTextContent(/takes effect after a node restart/i);
+  // The live restart note (role=status) must appear after a save that returns
+  // restart_required=true. findByRole is used here because the static copy
+  // section also contains the same text ("Takes effect after a node restart."),
+  // and findByText would match both elements.
+  expect(await screen.findByRole("status")).toHaveTextContent(/takes effect after a node restart/i);
 });
 
 test("(m) failed lean storage update rolls back and surfaces the error", async () => {
