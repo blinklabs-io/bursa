@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Bursa</string>
+
+    <!-- Foreground-service notification + channel (the embedded node keeps
+         syncing in the background). -->
+    <string name="sync_channel_name">Wallet sync</string>
+    <string name="sync_channel_description">Keeps your wallet up to date while Bursa runs in the background.</string>
+    <string name="sync_notification_title">Bursa is syncing</string>
+    <string name="sync_notification_text">Keeping your wallet up to date in the background.</string>
+    <string name="wallet_service_bind_failed">Could not connect to the wallet service.</string>
+</resources>

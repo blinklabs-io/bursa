@@ -167,7 +167,7 @@ func TestBootstrapThenLaunchSuccess(t *testing.T) {
 	s := newTestSupervisor(t, fb)
 	launched := false
 	s.setState(StateBootstrapping)
-	s.bootstrapThenLaunch(context.Background(), s.runID, func() error { launched = true; return nil })
+	s.bootstrapThenLaunch(context.Background(), s.runID, func() error { launched = true; return nil }, func() {})
 
 	if !fb.called {
 		t.Fatal("bootstrapper not invoked")
@@ -191,7 +191,7 @@ func TestBootstrapThenLaunchFailureSetsError(t *testing.T) {
 	s := newTestSupervisor(t, fb)
 	launched := false
 	s.setState(StateBootstrapping)
-	s.bootstrapThenLaunch(context.Background(), s.runID, func() error { launched = true; return nil })
+	s.bootstrapThenLaunch(context.Background(), s.runID, func() error { launched = true; return nil }, func() {})
 
 	if launched {
 		t.Fatal("launch must NOT be called when bootstrap fails")
@@ -219,7 +219,7 @@ func TestBootstrapCancellationIsNotError(t *testing.T) {
 	s := newTestSupervisor(t, fb)
 	s.setState(StateBootstrapping)
 	launched := false
-	s.bootstrapThenLaunch(ctx, s.runID, func() error { launched = true; return nil })
+	s.bootstrapThenLaunch(ctx, s.runID, func() error { launched = true; return nil }, func() {})
 
 	if launched {
 		t.Fatal("launch must NOT be called when bootstrap is cancelled")
@@ -244,7 +244,7 @@ func TestBootstrapPostSuccessCancellationStopsBeforeLaunch(t *testing.T) {
 	s.bootstrapThenLaunch(ctx, s.runID, func() error {
 		launched = true
 		return errors.New("late launch failure")
-	})
+	}, func() {})
 
 	if launched {
 		t.Fatal("launch must NOT be called after cancellation")
