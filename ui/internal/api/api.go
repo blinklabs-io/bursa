@@ -30,6 +30,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
@@ -223,6 +224,22 @@ type DexQuoter interface {
 	Quote(ctx context.Context, assetIn, assetOut string, amountIn uint64) (dex.Quote, error)
 }
 
+// MultiSig is the native multi-signature surface the API exposes: managing saved
+// multi-sig accounts (list/create/get/delete), sharing the wallet's own CIP-1854
+// participant key, and the spend flow (balance/build/sign/submit) against a saved
+// account's script address.
+type MultiSig interface {
+	List() ([]multisig.Account, error)
+	Get(id string) (multisig.Account, error)
+	Create(req multisig.CreateRequest) (multisig.Account, error)
+	Delete(id string) error
+	MyKey(password string) (multisig.MyKey, error)
+	Balance(ctx context.Context, id string) (string, error)
+	Build(ctx context.Context, id string, req multisig.BuildRequest) (multisig.UnsignedTx, error)
+	Sign(unsignedTxCBOR, password string) (multisig.Witness, error)
+	Submit(ctx context.Context, id, unsignedTxCBOR string, witnessCBORs []string) (multisig.TxResult, error)
+}
+
 type decimalUint64 uint64
 
 func (n *decimalUint64) UnmarshalJSON(data []byte) error {
@@ -341,10 +358,11 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // (the lean-node profile). cb is the local-only address-book store. lookup
 // verifies pasted pool/DRep IDs and resolves ADA Handles through the node (may
 // be nil, in which case those endpoints report unavailable). po is the Stake
-// Pool Operations surface. dx optionally enables node-local DEX routes. spa is
-// the embedded SPA, registered as the catch-all so the specific API routes take
-// precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cb Contacts, lookup NodeLookup, po PoolOps, dx DexQuoter, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+// Pool Operations surface. dx optionally enables node-local DEX routes. ms is
+// the native multi-signature surface (may be nil, in which case the multi-sig
+// routes are not registered). spa is the embedded SPA, registered as the
+// catch-all so the specific API routes take precedence on the mux.
+func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cb Contacts, lookup NodeLookup, po PoolOps, dx DexQuoter, ms MultiSig, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -934,6 +952,10 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		registerPoolRoutes(mux, st, po)
 	}
 
+	if ms != nil {
+		registerMultiSigRoutes(mux, st, ms, network)
+	}
+
 	// SPA catch-all: the specific API routes above take precedence on the mux;
 	// everything else is served by the embedded frontend.
 	mux.Handle("/", spa)
@@ -1140,6 +1162,102 @@ func registerPoolRoutes(mux *http.ServeMux, st Statuser, po PoolOps) {
 	}))
 }
 
+// registerMultiSigRoutes wires the native multi-signature endpoints under
+// /wallet/multisig. Account management (list/create/get/delete) and sharing the
+// wallet's own participant key are local/offline; balance is a node read
+// (gated); build and submit need a synced node (readyGate); sign is pure crypto
+// over the keystore (ungated).
+func registerMultiSigRoutes(mux *http.ServeMux, st Statuser, ms MultiSig, network string) {
+	// List saved multi-sig accounts.
+	mux.HandleFunc("GET /wallet/multisig", func(w http.ResponseWriter, _ *http.Request) {
+		v, err := ms.List()
+		serve(w, v, err)
+	})
+
+	// Create a saved multi-sig account from a policy.
+	mux.HandleFunc("POST /wallet/multisig", func(w http.ResponseWriter, r *http.Request) {
+		var req multisig.CreateRequest
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		net, ok := resolveNetwork(w, req.Network, network)
+		if !ok {
+			return
+		}
+		req.Network = net
+		v, err := ms.Create(req)
+		serve(w, v, err)
+	})
+
+	// The active wallet's own CIP-1854 multi-sig participant key, to share. Needs
+	// the spending password to unlock the seed; ungated (pure crypto, no node).
+	mux.HandleFunc("POST /wallet/multisig/my-key", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password string `json:"password"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := ms.MyKey(req.Password)
+		serve(w, v, err)
+	})
+
+	// Fetch one saved account.
+	mux.HandleFunc("GET /wallet/multisig/{id}", func(w http.ResponseWriter, r *http.Request) {
+		v, err := ms.Get(r.PathValue("id"))
+		serve(w, v, err)
+	})
+
+	// Delete a saved account.
+	mux.HandleFunc("DELETE /wallet/multisig/{id}", func(w http.ResponseWriter, r *http.Request) {
+		err := ms.Delete(r.PathValue("id"))
+		serve(w, map[string]string{"status": "deleted"}, err)
+	})
+
+	// Balance held at the account's script address.
+	mux.HandleFunc("GET /wallet/multisig/{id}/balance", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		v, err := ms.Balance(r.Context(), r.PathValue("id"))
+		serve(w, map[string]string{"lovelace": v}, err)
+	}))
+
+	// Build an unsigned spend from the account's script address.
+	mux.HandleFunc("POST /wallet/multisig/{id}/build", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req multisig.BuildRequest
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := ms.Build(r.Context(), r.PathValue("id"), req)
+		serve(w, v, err)
+	}))
+
+	// Co-sign an unsigned multi-sig tx with the wallet's CIP-1854 key. Ungated
+	// (pure crypto over the keystore, no node), like sign-tx.
+	mux.HandleFunc("POST /wallet/multisig/sign", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			UnsignedTxCBOR string `json:"unsigned_tx_cbor"`
+			Password       string `json:"password"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := ms.Sign(req.UnsignedTxCBOR, req.Password)
+		serve(w, v, err)
+	})
+
+	// Attach the script + collected witnesses and broadcast (threshold enforced).
+	mux.HandleFunc("POST /wallet/multisig/{id}/submit", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			UnsignedTxCBOR string   `json:"unsigned_tx_cbor"`
+			Witnesses      []string `json:"witnesses"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := ms.Submit(r.Context(), r.PathValue("id"), req.UnsignedTxCBOR, req.Witnesses)
+		serve(w, v, err)
+	}))
+}
+
 // decodeBody decodes a JSON request body into v, writing a 400 and returning
 // false on malformed input.
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -1221,29 +1339,31 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409
 	case errors.Is(err, vault.ErrLocked), errors.Is(err, vault.ErrNoActiveWallet),
 		errors.Is(err, wallet.ErrNoWallet), errors.Is(err, spend.ErrNoWallet),
-		errors.Is(err, poolops.ErrNoWallet):
+		errors.Is(err, poolops.ErrNoWallet), errors.Is(err, multisig.ErrNoKeystore):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: locked / no active wallet
 	case errors.Is(err, spend.ErrWalletChanged):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: active wallet switched during build
 	case errors.Is(err, vault.ErrTPMUnavailable):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: TPM not available on this machine
 	case errors.Is(err, vault.ErrWrongPassword), errors.Is(err, spend.ErrWrongPassword),
-		errors.Is(err, poolops.ErrWrongPassword):
+		errors.Is(err, poolops.ErrWrongPassword), errors.Is(err, multisig.ErrWrongPassword):
 		writeJSON(w, http.StatusUnauthorized, errBody(err)) // 401
 	case errors.Is(err, spend.ErrInvalidRequest),
 		errors.Is(err, spend.ErrInvalidTx),
 		errors.Is(err, spend.ErrInvalidWitness),
 		errors.Is(err, poolops.ErrInvalidRequest),
+		errors.Is(err, multisig.ErrInvalidRequest), errors.Is(err, multisig.ErrInvalidTx),
+		errors.Is(err, multisig.ErrInvalidWitness),
 		errors.Is(err, contacts.ErrInvalidRequest):
 		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400
-	case errors.Is(err, contacts.ErrNotFound):
-		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
-	case errors.Is(err, spend.ErrUnknownPending):
+	case errors.Is(err, contacts.ErrNotFound),
+		errors.Is(err, spend.ErrUnknownPending), errors.Is(err, multisig.ErrUnknownAccount):
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
 	case errors.Is(err, spend.ErrExpiredPending):
 		writeJSON(w, http.StatusGone, errBody(err)) // 410
 	case errors.Is(err, spend.ErrInsufficientFunds), errors.Is(err, spend.ErrSubmitRejected),
-		errors.Is(err, spend.ErrNoChange), errors.Is(err, poolops.ErrSubmitRejected):
+		errors.Is(err, spend.ErrNoChange), errors.Is(err, poolops.ErrSubmitRejected),
+		errors.Is(err, multisig.ErrInsufficientFunds), errors.Is(err, multisig.ErrSubmitRejected):
 		// 422: the request was understood but cannot be fulfilled; the node's
 		// structured rejection reason (for submit), the funding shortfall, or the
 		// "already in the requested state" note rides along in the message.
