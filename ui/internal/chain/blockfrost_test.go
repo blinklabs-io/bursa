@@ -479,6 +479,75 @@ func TestDRepNotFound(t *testing.T) {
 	}
 }
 
+func TestAsset(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q", r.Method)
+		}
+		if r.URL.Path != "/api/v0/assets/policy123746f6b656e" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"asset":"policy123746f6b656e","policy_id":"policy123","asset_name":"746f6b656e","asset_name_ascii":"token","fingerprint":"asset1xyz","quantity":"1000000","initial_mint_tx_hash":"aa","mint_or_burn_count":1,"onchain_metadata":{"name":"Token","ticker":"TOK","decimals":6}}`))
+	})
+	got, err := c.Asset(context.Background(), "policy123746f6b656e")
+	if err != nil {
+		t.Fatalf("Asset: %v", err)
+	}
+	if got.Asset != "policy123746f6b656e" || got.PolicyID != "policy123" || got.AssetName != "746f6b656e" {
+		t.Fatalf("unexpected asset: %+v", got)
+	}
+	if got.AssetNameASCII != "token" || got.Fingerprint != "asset1xyz" || got.Quantity != "1000000" {
+		t.Fatalf("unexpected asset: %+v", got)
+	}
+	if got.OnchainMetadata == nil {
+		t.Fatalf("OnchainMetadata = nil, want raw JSON")
+	}
+	var meta struct {
+		Name     string `json:"name"`
+		Ticker   string `json:"ticker"`
+		Decimals int    `json:"decimals"`
+	}
+	if err := json.Unmarshal(got.OnchainMetadata, &meta); err != nil {
+		t.Fatalf("unmarshal OnchainMetadata: %v", err)
+	}
+	if meta.Name != "Token" || meta.Ticker != "TOK" || meta.Decimals != 6 {
+		t.Fatalf("unexpected onchain metadata: %+v", meta)
+	}
+}
+
+func TestAssetNilMetadata(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"asset":"policy123746f6b656e","policy_id":"policy123","asset_name":"746f6b656e","asset_name_ascii":"token","fingerprint":"asset1xyz","quantity":"1000000","initial_mint_tx_hash":"","mint_or_burn_count":0,"onchain_metadata":null}`))
+	})
+	got, err := c.Asset(context.Background(), "policy123746f6b656e")
+	if err != nil {
+		t.Fatalf("Asset: %v", err)
+	}
+	// dingo's current adapter always reports onchain_metadata: null — this must
+	// decode cleanly (as the raw JSON literal "null", which the frontend reads
+	// as a falsy value) rather than erroring, since it is the common case today.
+	if string(got.OnchainMetadata) != "null" {
+		t.Fatalf("OnchainMetadata = %s, want the raw JSON null literal", got.OnchainMetadata)
+	}
+}
+
+func TestAssetNotFound(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/assets/policymissing" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(blockfrostNotFoundJSON))
+	})
+	_, err := c.Asset(context.Background(), "policymissing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("404 should map to ErrNotFound, got %v", err)
+	}
+}
+
 func TestErrorStatus(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

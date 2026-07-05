@@ -85,3 +85,46 @@ export function parseAda(ada: string): string {
 
   return lovelace.toString();
 }
+
+/**
+ * Convert a raw native-token quantity (decimal string, base units) to a
+ * display string using `decimals` fractional digits — the general form of
+ * formatAda (ADA/lovelace is simply the fixed 6-decimal case).
+ *
+ * Uses BigInt to avoid float precision loss on values beyond 2^53. Returns
+ * the input unchanged when it isn't a plain integer string, or when decimals
+ * is not a positive integer (nothing to apply) — so a malformed value or an
+ * asset with unknown decimals shows through rather than crashing the screen.
+ *
+ * `decimals` comes from on-chain asset metadata, which anyone can mint
+ * arbitrary values into (see tokenMeta.ts) — it is not trusted input. Values
+ * above MAX_TOKEN_DECIMALS are rejected (input returned unchanged) rather
+ * than fed to BigInt exponentiation, which would otherwise let an adversarial
+ * "decimals" value force an unbounded BigInt allocation and hang the tab.
+ *
+ * Examples:
+ *   formatTokenQuantity("4500000", 6) → "4.5"
+ *   formatTokenQuantity("150", 2)     → "1.5"
+ *   formatTokenQuantity("12345", 0)   → "12345"
+ */
+const MAX_TOKEN_DECIMALS = 18;
+
+export function formatTokenQuantity(quantity: string, decimals: number): string {
+  if (!Number.isInteger(decimals) || decimals <= 0 || decimals > MAX_TOKEN_DECIMALS) return quantity;
+  if (!/^-?\d+$/.test(quantity)) return quantity;
+
+  const base = BigInt(10) ** BigInt(decimals);
+  const raw = BigInt(quantity);
+  const isNegative = raw < BigInt(0);
+  const abs = isNegative ? -raw : raw;
+
+  const intPart = abs / base;
+  const fracPart = abs % base;
+
+  if (fracPart === BigInt(0)) {
+    return (isNegative ? "-" : "") + intPart.toString();
+  }
+
+  const fracStr = fracPart.toString().padStart(decimals, "0").replace(/0+$/, "");
+  return (isNegative ? "-" : "") + intPart.toString() + "." + fracStr;
+}

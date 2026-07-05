@@ -79,15 +79,19 @@ type Spender interface {
 	BuildDelegation(ctx context.Context, req spend.DelegationRequest) (spend.DelegationPreview, error)
 }
 
-// NodeLookup is the node-backed verification surface the staking and send
-// screens use: confirming a pasted pool or DRep ID exists, and resolving an
-// ADA Handle ($name) to its current holding address (consent law: the
-// embedded node is the only thing that touches the network). *chain.Client
-// satisfies it.
+// NodeLookup is the node-backed verification/lookup surface the wallet uses to
+// confirm a pasted pool or DRep ID exists, resolve ADA Handles, and read native
+// asset identity/metadata. The embedded node is the only component that
+// touches the network; *chain.Client satisfies this interface.
 type NodeLookup interface {
 	Pool(ctx context.Context, poolID string) (chain.PoolInfo, error)
 	DRep(ctx context.Context, drepID string) (chain.DRepInfo, error)
 	AssetAddresses(ctx context.Context, asset string) ([]chain.AssetAddress, error)
+	// Asset returns on-chain identity/metadata for a native asset (unit =
+	// policy ID + hex asset name). Most assets have no indexed on-chain
+	// metadata today (see chain.AssetInfo) — the Portfolio screen falls back
+	// to the raw unit/quantity when it is absent.
+	Asset(ctx context.Context, unit string) (chain.AssetInfo, error)
 }
 
 // Vault is the encrypted multi-wallet store the API drives. It owns the wallet
@@ -356,8 +360,9 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // the encrypted multi-wallet store; the API pushes the active wallet onto wl/sp
 // whenever the selection changes. settings exposes user-facing app settings
 // (the lean-node profile). cb is the local-only address-book store. lookup
-// verifies pasted pool/DRep IDs and resolves ADA Handles through the node (may
-// be nil, in which case those endpoints report unavailable). po is the Stake
+// verifies pasted pool/DRep IDs, resolves ADA Handles, and reads native-asset
+// metadata through the node (may be nil, in which case those endpoints report
+// unavailable). po is the Stake
 // Pool Operations surface. dx optionally enables node-local DEX routes. ms is
 // the native multi-signature surface (may be nil, in which case the multi-sig
 // routes are not registered). spa is the embedded SPA, registered as the
@@ -926,6 +931,20 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		serveLookup(w, handleInfo{Handle: bare, Address: addr}, err)
 	}))
 
+	// GET /wallet/assets/{unit} reads a native asset's on-chain
+	// identity/metadata (unit = policy ID + hex asset name) through the node,
+	// for the Portfolio screen's token name/ticker/decimals display. Gated
+	// like the pool/DRep lookups above — it only needs the node serving
+	// queries, not a full sync.
+	mux.HandleFunc("GET /wallet/assets/{unit}", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if lookup == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "asset lookup unavailable"})
+			return
+		}
+		info, err := lookup.Asset(r.Context(), r.PathValue("unit"))
+		serveLookup(w, info, err)
+	}))
+
 	mux.HandleFunc("POST /wallet/delegation", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
 		var req spend.DelegationRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -990,9 +1009,9 @@ func requirePassword(w http.ResponseWriter, password string) bool {
 	return true
 }
 
-// serveLookup writes a pool/DRep lookup result, mapping the node's not-found to
-// 404 (so the screen can show "not found by your node" inline) and other errors
-// to 502 (the node query failed).
+// serveLookup writes a pool/DRep/asset lookup result, mapping the node's
+// not-found to 404 (so the screen can show "not found by your node" inline)
+// and other errors to 502 (the node query failed).
 func serveLookup[T any](w http.ResponseWriter, v T, err error) {
 	switch {
 	case err == nil:

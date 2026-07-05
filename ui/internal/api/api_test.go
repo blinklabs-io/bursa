@@ -324,6 +324,36 @@ func (f *fakeVault) DisableTPM(password string) error {
 	return f.disableTPMErr
 }
 
+// fakeLookup implements the api.NodeLookup interface (pool/DRep/asset
+// node-verified lookups) for handler tests.
+type fakeLookup struct {
+	pool    chain.PoolInfo
+	poolErr error
+	drep    chain.DRepInfo
+	drepErr error
+
+	asset    chain.AssetInfo
+	assetErr error
+	gotUnit  string
+}
+
+func (f *fakeLookup) Pool(_ context.Context, _ string) (chain.PoolInfo, error) {
+	return f.pool, f.poolErr
+}
+
+func (f *fakeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, error) {
+	return f.drep, f.drepErr
+}
+
+func (f *fakeLookup) AssetAddresses(_ context.Context, _ string) ([]chain.AssetAddress, error) {
+	return nil, chain.ErrNotFound
+}
+
+func (f *fakeLookup) Asset(_ context.Context, unit string) (chain.AssetInfo, error) {
+	f.gotUnit = unit
+	return f.asset, f.assetErr
+}
+
 func TestHealthAlwaysOK(t *testing.T) {
 	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
@@ -2149,6 +2179,68 @@ func readyStatuser() fakeStatuser {
 	return fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 }
 
+func TestAssetLookupOK(t *testing.T) {
+	lookup := &fakeLookup{asset: chain.AssetInfo{
+		Asset:           "policy123746f6b656e",
+		PolicyID:        "policy123",
+		AssetName:       "746f6b656e",
+		AssetNameASCII:  "token",
+		Fingerprint:     "asset1xyz",
+		Quantity:        "1000000",
+		OnchainMetadata: json.RawMessage(`{"name":"Token","ticker":"TOK","decimals":6}`),
+	}}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/assets/policy123746f6b656e", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/assets/{unit} = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if lookup.gotUnit != "policy123746f6b656e" {
+		t.Fatalf("lookup.Asset called with unit %q, want policy123746f6b656e", lookup.gotUnit)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"ticker":"TOK"`) {
+		t.Fatalf("response missing onchain_metadata passthrough: %s", body)
+	}
+	var got chain.AssetInfo
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Asset != "policy123746f6b656e" || got.Fingerprint != "asset1xyz" {
+		t.Fatalf("unexpected response: %+v", got)
+	}
+}
+
+func TestAssetLookupNotFound(t *testing.T) {
+	lookup := &fakeLookup{assetErr: chain.ErrNotFound}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/assets/policymissing", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /wallet/assets/{unit} (not found) = %d, want 404", rec.Code)
+	}
+}
+
+func TestAssetLookupUnavailableWhenNoLookup(t *testing.T) {
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/assets/policy123746f6b656e", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /wallet/assets/{unit} with nil lookup = %d, want 503", rec.Code)
+	}
+}
+
+func TestAssetLookupGatedWhileStarting(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
+	lookup := &fakeLookup{}
+	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/assets/policy123746f6b656e", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /wallet/assets/{unit} while starting = %d, want 503", rec.Code)
+	}
+}
+
 func TestPoolCredentialsReturnsCreds(t *testing.T) {
 	po := &fakePoolOps{creds: poolops.Credentials{PoolID: "pool1abc", Network: "preview"}}
 	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
@@ -2697,6 +2789,10 @@ func (f *fakeNodeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, erro
 func (f *fakeNodeLookup) AssetAddresses(_ context.Context, asset string) ([]chain.AssetAddress, error) {
 	f.gotAssetUnits = append(f.gotAssetUnits, asset)
 	return f.assetAddrs, f.assetErr
+}
+
+func (f *fakeNodeLookup) Asset(_ context.Context, _ string) (chain.AssetInfo, error) {
+	return chain.AssetInfo{}, chain.ErrNotFound
 }
 
 func TestHandleLookupUnavailableWithoutLookup(t *testing.T) {
