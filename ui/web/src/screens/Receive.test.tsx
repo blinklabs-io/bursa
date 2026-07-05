@@ -107,3 +107,25 @@ test("(g) empty receive list renders gracefully (fresh wallet)", () => {
   // Card with next_unused still visible
   expect(screen.getByText(ADDR_A)).toBeInTheDocument();
 });
+
+test("(h) each address gets an external explorer link, scoped to the wallet's network", () => {
+  mockAddresses();
+  render(<Receive network="preprod" />);
+
+  const links = screen.getAllByRole("link");
+  expect(links.length).toBeGreaterThanOrEqual(1);
+
+  // The next-unused card's link points at the FULL address, not the truncated form.
+  const nextUnusedLink = links.find(
+    (l) => l.getAttribute("href") === `https://preprod.cardanoscan.io/address/${ADDR_B}`,
+  );
+  expect(nextUnusedLink).toBeDefined();
+  expect(nextUnusedLink).toHaveAttribute("target", "_blank");
+  expect(nextUnusedLink).toHaveAttribute("rel", expect.stringContaining("noopener"));
+
+  // The table row for ADDR_A also links out, using the same network.
+  const rowLink = links.find(
+    (l) => l.getAttribute("href") === `https://preprod.cardanoscan.io/address/${ADDR_A}`,
+  );
+  expect(rowLink).toBeDefined();
+});

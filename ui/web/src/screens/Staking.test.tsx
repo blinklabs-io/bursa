@@ -342,6 +342,64 @@ test("(k) withdraw button is disabled when there are no withdrawable rewards", (
 
 // --- build error stays on compose ---
 
+// --- external explorer links (pool + DRep) ---
+
+test("(m) pasting a verified pool ID renders an explorer link scoped to the wallet's network", async () => {
+  mockDelegation({ active: false });
+  vi.spyOn(client, "getPool").mockResolvedValue(MOCK_POOL);
+
+  render(<Staking network="preprod" />);
+
+  const poolInput = screen.getByPlaceholderText(/pool1\.\.\./i);
+  fireEvent.change(poolInput, { target: { value: "pool1abc" } });
+  fireEvent.blur(poolInput);
+
+  await waitFor(() => expect(screen.getByText("✓ Verified by your node")).toBeInTheDocument());
+
+  const link = screen.getByRole("link");
+  expect(link).toHaveAttribute("href", "https://preprod.cardanoscan.io/pool/pool1abc");
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+});
+
+test("(n) verifying a DRep ID renders an explorer link scoped to the wallet's network", async () => {
+  mockDelegation({ active: false });
+  vi.spyOn(client, "getDRep").mockResolvedValue(MOCK_DREP);
+
+  render(<Staking network="mainnet" />);
+
+  fireEvent.click(screen.getByLabelText(/a specific drep/i));
+  const drepInput = screen.getByLabelText(/drep id/i);
+  fireEvent.change(drepInput, { target: { value: "drep1abc" } });
+  fireEvent.blur(drepInput);
+
+  await waitFor(() => expect(screen.getByText("✓ Verified by your node")).toBeInTheDocument());
+
+  const link = screen.getByRole("link");
+  expect(link).toHaveAttribute("href", "https://cardanoscan.io/drep/drep1abc");
+});
+
+test("(o) an active delegation's pool ID in the status panel links out to the explorer", () => {
+  mockDelegation({ active: true, pool_id: "pool1active", withdrawable_amount: "0" });
+
+  render(<Staking network="preview" />);
+
+  const link = screen.getByRole("link");
+  expect(link).toHaveAttribute("href", "https://preview.cardanoscan.io/pool/pool1active");
+});
+
+test("(p) an active delegation with a null pool_id (e.g. DRep-only vote delegation) shows the muted dash and renders NO pool explorer link", () => {
+  mockDelegation({ active: true, pool_id: null, withdrawable_amount: "0" });
+
+  render(<Staking network="preview" />);
+
+  // Registered (stake key active) but no delegated pool: muted placeholder,
+  // not a literal "null" or a broken /pool/null link.
+  expect(screen.getByText(/registered/i)).toBeInTheDocument();
+  expect(screen.getByText("—")).toBeInTheDocument();
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
+});
+
 test("(l) a buildDelegation error (e.g. no change) is shown inline on the form", async () => {
   mockDelegation({ active: false });
   vi.spyOn(client, "buildDelegation").mockRejectedValue(

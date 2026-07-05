@@ -8,8 +8,15 @@ import { Input } from "../components/Input";
 import { Select } from "../components/Select";
 import { DownloadButton } from "../components/DownloadButton";
 import { Drawer } from "../components/Drawer";
+import { ExplorerLink } from "../components/ExplorerLink";
 import { formatAda } from "../format";
 import { toCsv } from "../csv";
+
+interface ActivityProps {
+  // Optional so existing no-prop callers/tests keep working; the app always
+  // passes the active wallet's real network when routing to this screen.
+  network?: string;
+}
 
 function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message;
@@ -239,7 +246,7 @@ function TransactionDetailDrawer({ hash, onClose }: { hash: string; onClose: () 
 
 type DirectionFilter = "all" | "received" | "sent" | "self";
 
-export function Activity() {
+export function Activity({ network = "preview" }: ActivityProps = {}) {
   const txs = useTransactions();
   const [search, setSearch] = useState("");
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>("all");
@@ -299,6 +306,12 @@ export function Activity() {
       <span className="hash-cell">
         <span className="mono">{truncateHash(tx.tx_hash)}</span>
         <CopyButton value={tx.tx_hash} />
+        <ExplorerLink
+          network={network}
+          kind="tx"
+          id={tx.tx_hash}
+          label={`View transaction ${truncateHash(tx.tx_hash)} on block explorer`}
+        />
       </span>
     ),
     actions: (

@@ -31,6 +31,17 @@ import { Settings } from "./screens/Settings";
 // A Map (not a plain object) so a crafted hash like "#/constructor" or
 // "#/toString" can't resolve to an inherited Object.prototype member and get
 // rendered as a screen — unknown routes always fall back to Portfolio.
+//
+// Dual purpose, and NOT the same for every entry: `ROUTES.has(route)` (below,
+// in the activeRoute/sidebar-highlight logic) treats every key here — plus
+// "staking"/"sign"/etc., which aren't in this map at all — as a real,
+// highlightable route. But `ROUTES.get(route)` is only reached by the final
+// `else` in the content-selection branches further down, and "receive" and
+// "activity" never reach it: they're intercepted by their own explicit
+// `else if` branches earlier so they can be passed the active wallet's real
+// `network` (this map's factories take no props). So `receive`/`activity`
+// stay listed here for route-highlighting and prototype-pollution-safe
+// lookup purposes only — their actual content never comes from this map.
 const ROUTES = new Map<string, () => ReactElement>([
   ["portfolio", Portfolio],
   ["receive", Receive],
@@ -283,7 +294,7 @@ export function App() {
     // Staking/governance is gated like send: a synced node AND a
     // spending-enabled wallet. A read-only or unsynced wallet falls back to
     // Portfolio.
-    content = canStake ? <Staking /> : <Portfolio />;
+    content = canStake ? <Staking network={activeWallet.network} /> : <Portfolio />;
   } else if (route === "sign") {
     content = canSign ? <SignMessage account={toAccount(activeWallet)} /> : <Portfolio />;
   } else if (route === "verify") {
@@ -305,6 +316,15 @@ export function App() {
     // any active wallet; the spend sub-flow gates itself on canSend (synced node
     // + spending-enabled wallet).
     content = <MultiSig canSpend={canSend} />;
+  } else if (route === "receive") {
+    // Explorer links on each address need the active wallet's real network
+    // (preview/preprod/mainnet), which the generic ROUTES map (no props)
+    // can't carry.
+    content = <Receive network={activeWallet.network} />;
+  } else if (route === "activity") {
+    // Same reasoning as "receive": the tx-hash explorer link needs the
+    // active wallet's network.
+    content = <Activity network={activeWallet.network} />;
   } else {
     const Screen = ROUTES.get(route) ?? Portfolio;
     content = <Screen />;
