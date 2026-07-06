@@ -11,6 +11,8 @@ import (
 // ErrNoWallet is returned by query methods when no wallet has been loaded.
 var ErrNoWallet = errors.New("no wallet set")
 
+const maxConcurrentTxEnrichments = 4
+
 // chainQuerier is the slice of the chain client the service needs (satisfied
 // by *chain.Client); it exists so tests can supply a fake.
 type chainQuerier interface {
@@ -234,11 +236,62 @@ func (s *Service) Transactions(ctx context.Context) ([]Tx, error) {
 		} else {
 			merged[i].Confirmations, merged[i].Pending = txConfirmations(tip.Height, merged[i].BlockHeight)
 		}
-		if err := s.enrichTx(ctx, &merged[i], mine); err != nil {
-			return nil, err
-		}
+	}
+	if err := s.enrichTxs(ctx, merged, mine); err != nil {
+		return nil, err
 	}
 	return merged, nil
+}
+
+func (s *Service) enrichTxs(ctx context.Context, txs []Tx, mine map[string]bool) error {
+	workers := maxConcurrentTxEnrichments
+	if len(txs) < workers {
+		workers = len(txs)
+	}
+	if workers == 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	jobs := make(chan int)
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				if err := s.enrichTx(ctx, &txs[i], mine); err != nil {
+					select {
+					case errCh <- err:
+						cancel()
+					default:
+					}
+					return
+				}
+			}
+		}()
+	}
+
+send:
+	for i := range txs {
+		select {
+		case <-ctx.Done():
+			break send
+		case jobs <- i:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		return err
+	default:
+		return ctx.Err()
+	}
 }
 
 // enrichTx fills in a Tx's direction/net-amount/fee fields by querying the
@@ -296,7 +349,8 @@ func (s *Service) TransactionDetail(ctx context.Context, hash string) (TxDetail,
 		return TxDetail{}, err
 	}
 	utxos, err := s.chain.TransactionUTxOs(ctx, hash)
-	if err != nil {
+	utxosPruned := errors.Is(err, chain.ErrNotFound)
+	if err != nil && !utxosPruned {
 		return TxDetail{}, err
 	}
 	// A tip-lookup failure must not turn a found transaction into a 404 (serve()
@@ -304,6 +358,29 @@ func (s *Service) TransactionDetail(ctx context.Context, hash string) (TxDetail,
 	// genuinely exists purely because the tip call failed). Degrade to
 	// "pending" (0 confirmations) instead of propagating the tip error.
 	tip, tipErr := s.chain.LatestBlock(ctx)
+	var confirmations uint64
+	var pending bool
+	if tipErr != nil {
+		confirmations, pending = 0, true
+	} else {
+		confirmations, pending = txConfirmations(tip.Height, info.BlockHeight)
+	}
+
+	if utxosPruned {
+		return TxDetail{
+			Tx: Tx{
+				TxHash:        hash,
+				TxIndex:       info.Index,
+				BlockHeight:   info.BlockHeight,
+				BlockTime:     info.BlockTime,
+				Fee:           feeOrZero(info.Fees),
+				Confirmations: confirmations,
+				Pending:       pending,
+			},
+			Inputs:  []TxIO{},
+			Outputs: []TxIO{},
+		}, nil
+	}
 
 	direction, netLovelace, deltas, err := computeTxDelta(utxos.Inputs, utxos.Outputs, mine)
 	if err != nil {
@@ -316,13 +393,6 @@ func (s *Service) TransactionDetail(ctx context.Context, hash string) (TxDetail,
 	outputs, err := toTxIOs(utxos.Outputs, mine)
 	if err != nil {
 		return TxDetail{}, err
-	}
-	var confirmations uint64
-	var pending bool
-	if tipErr != nil {
-		confirmations, pending = 0, true
-	} else {
-		confirmations, pending = txConfirmations(tip.Height, info.BlockHeight)
 	}
 
 	return TxDetail{
@@ -372,7 +442,10 @@ func toAddrSet(addrs []string) map[string]bool {
 // external and skew direction/net-amount for spends that touch such an
 // address.
 func ownerSet(addrs []string, acct *Account) map[string]bool {
-	return toAddrSet(append(addrs, acct.ChangeAddresses...))
+	owned := make([]string, 0, len(addrs)+len(acct.ChangeAddresses))
+	owned = append(owned, addrs...)
+	owned = append(owned, acct.ChangeAddresses...)
+	return toAddrSet(owned)
 }
 
 // Delegation returns the current delegation/rewards summary (provisional).

@@ -3,7 +3,9 @@ package wallet
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 )
@@ -20,6 +22,7 @@ type fakeChain struct {
 
 	txInfo      map[string]chain.TxInfo
 	txInfoErrs  map[string]error
+	txInfoHook  func(hash string)
 	txUTxOs     map[string]chain.TxUTxOs
 	txUTxOErrs  map[string]error
 	latestBlock chain.BlockTip
@@ -49,6 +52,9 @@ func (f *fakeChain) AddressTransactions(_ context.Context, addr string) ([]chain
 }
 
 func (f *fakeChain) Transaction(_ context.Context, hash string) (chain.TxInfo, error) {
+	if f.txInfoHook != nil {
+		f.txInfoHook(hash)
+	}
 	if err := f.txInfoErrs[hash]; err != nil {
 		return chain.TxInfo{}, err
 	}
@@ -268,6 +274,109 @@ func TestServiceTransactionsEnriched(t *testing.T) {
 	}
 }
 
+func TestServiceTransactionsEnrichmentConcurrentAndOrdered(t *testing.T) {
+	const txCount = maxConcurrentTxEnrichments + 2
+	addressTxs := make([]chain.AddressTx, 0, txCount)
+	txInfo := make(map[string]chain.TxInfo, txCount)
+	txUTxOs := make(map[string]chain.TxUTxOs, txCount)
+	for i := 0; i < txCount; i++ {
+		hash := fmt.Sprintf("tx%d", i)
+		blockHeight := uint64(100 - i)
+		addressTxs = append(addressTxs, chain.AddressTx{
+			TxHash:      hash,
+			TxIndex:     i,
+			BlockHeight: blockHeight,
+			BlockTime:   int64(1000 + i),
+		})
+		txInfo[hash] = chain.TxInfo{Hash: hash, BlockHeight: blockHeight, BlockTime: int64(1000 + i), Fees: "170000"}
+		txUTxOs[hash] = chain.TxUTxOs{
+			Hash: hash,
+			Outputs: []chain.TxIO{
+				{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1000000"}}},
+			},
+		}
+	}
+
+	started := make(chan string, txCount)
+	release := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+
+	fc := &fakeChain{
+		addresses: []string{"addr_test1a"},
+		txs: map[string][]chain.AddressTx{
+			"addr_test1a": addressTxs,
+		},
+		txInfo:      txInfo,
+		txUTxOs:     txUTxOs,
+		latestBlock: chain.BlockTip{Height: 120},
+		txInfoHook: func(hash string) {
+			started <- hash
+			<-release
+		},
+	}
+	s := NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 1); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+
+	resultCh := make(chan struct {
+		txs []Tx
+		err error
+	}, 1)
+	go func() {
+		txs, err := s.Transactions(context.Background())
+		resultCh <- struct {
+			txs []Tx
+			err error
+		}{txs: txs, err: err}
+	}()
+
+	for i := 0; i < maxConcurrentTxEnrichments; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d enrichment calls started; want %d concurrent calls", i, maxConcurrentTxEnrichments)
+		}
+	}
+	select {
+	case hash := <-started:
+		t.Fatalf("enrichment started %q before a worker was released; want at most %d in flight", hash, maxConcurrentTxEnrichments)
+	default:
+	}
+	close(release)
+	released = true
+
+	var result struct {
+		txs []Tx
+		err error
+	}
+	select {
+	case result = <-resultCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Transactions did not finish after releasing enrichment workers")
+	}
+	if result.err != nil {
+		t.Fatalf("Transactions: %v", result.err)
+	}
+	if len(result.txs) != txCount {
+		t.Fatalf("got %d txs, want %d", len(result.txs), txCount)
+	}
+	for i, tx := range result.txs {
+		wantHash := fmt.Sprintf("tx%d", i)
+		if tx.TxHash != wantHash {
+			t.Fatalf("tx[%d].TxHash = %q, want %q (merged order must be preserved)", i, tx.TxHash, wantHash)
+		}
+		if tx.Direction != TxDirectionReceived || tx.NetLovelace != "1000000" || tx.Fee != "170000" {
+			t.Fatalf("tx[%d] enrichment = %+v, want received/1000000/170000", i, tx)
+		}
+	}
+}
+
 func TestServiceTransactionsEnrichmentNotFoundGraceful(t *testing.T) {
 	// A transaction the node no longer has a record of (e.g. pruned under
 	// lean-node history-expiry) must not fail the whole history — it keeps
@@ -388,6 +497,20 @@ func TestServiceTransactionsRecognizesChangeAddressOwnership(t *testing.T) {
 	}
 }
 
+func TestOwnerSetDoesNotMutateCallerSlice(t *testing.T) {
+	addrs := make([]string, 1, 2)
+	addrs[0] = "addr_test1a"
+	acct := &Account{ChangeAddresses: []string{"addr_test1change"}}
+
+	set := ownerSet(addrs, acct)
+	if !set["addr_test1a"] || !set["addr_test1change"] {
+		t.Fatalf("ownerSet = %+v, want receive and change addresses", set)
+	}
+	if got := addrs[:cap(addrs)][1]; got != "" {
+		t.Fatalf("ownerSet mutated caller slice backing array: got spare element %q, want empty", got)
+	}
+}
+
 func TestServiceTransactionDetail(t *testing.T) {
 	fc := &fakeChain{
 		addresses: []string{"addr_test1a"},
@@ -451,6 +574,40 @@ func TestServiceTransactionDetail(t *testing.T) {
 	}
 	if !sawMine || !sawExternal {
 		t.Fatalf("expected one mine + one external output, got %+v", detail.Outputs)
+	}
+}
+
+func TestServiceTransactionDetailFeePreservedWhenUTxOsPruned(t *testing.T) {
+	fc := &fakeChain{
+		addresses: []string{"addr_test1a"},
+		txInfo: map[string]chain.TxInfo{
+			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "170000", Index: 2},
+		},
+		txUTxOErrs:  map[string]error{"tx1": chain.ErrNotFound},
+		latestBlock: chain.BlockTip{Height: 95},
+	}
+	s := NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 1); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	detail, err := s.TransactionDetail(context.Background(), "tx1")
+	if err != nil {
+		t.Fatalf("TransactionDetail: %v", err)
+	}
+	if detail.TxHash != "tx1" || detail.TxIndex != 2 || detail.BlockHeight != 90 || detail.BlockTime != 1000 {
+		t.Fatalf("tx summary = %+v", detail.Tx)
+	}
+	if detail.Fee != "170000" {
+		t.Fatalf("fee = %q, want 170000", detail.Fee)
+	}
+	if detail.Confirmations != 5 || detail.Pending {
+		t.Fatalf("confirmations = %d pending=%v, want 5 false", detail.Confirmations, detail.Pending)
+	}
+	if detail.Direction != "" || detail.NetLovelace != "" || detail.AssetDeltas != nil {
+		t.Fatalf("pruned UTxO enrichment = direction %q net %q assets %+v, want zero-valued", detail.Direction, detail.NetLovelace, detail.AssetDeltas)
+	}
+	if len(detail.Inputs) != 0 || len(detail.Outputs) != 0 {
+		t.Fatalf("inputs/outputs = %+v/%+v, want empty slices", detail.Inputs, detail.Outputs)
 	}
 }
 

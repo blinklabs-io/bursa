@@ -115,9 +115,13 @@ function transactionsToCsv(txs: Tx[]): string {
 }
 
 function TxIORow({ io }: { io: TxIO }) {
+  const ownerLabel = io.is_mine ? "Mine" : "External";
   return (
     <div className={`io-row${io.is_mine ? " is-mine" : ""}`}>
-      <span className="io-address mono">{io.address}</span>
+      <span className="io-address-group">
+        <span className="io-address mono">{io.address}</span>
+        <span className="io-owner">{ownerLabel}</span>
+      </span>
       <span className="io-amount">
         {formatAda(io.lovelace)} ADA
         {io.assets.length > 0 && (

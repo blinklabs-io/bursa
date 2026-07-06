@@ -244,6 +244,8 @@ test("(n) clicking Details opens a drawer with the transaction breakdown", async
   const drawer = within(dialog);
   expect(await drawer.findAllByText("addr_other")).toHaveLength(2); // one input, one output
   expect(drawer.getByText("addr_mine")).toBeInTheDocument();
+  expect(drawer.getByText("Mine")).toBeInTheDocument();
+  expect(drawer.getAllByText("External")).toHaveLength(2);
 
   fireEvent.click(screen.getByRole("button", { name: /close/i }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
