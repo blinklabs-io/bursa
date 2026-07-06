@@ -1,6 +1,11 @@
 interface DownloadButtonProps {
-  // The text content to download (e.g. CBOR hex).
-  value: string;
+  // The text content to download (e.g. CBOR hex). Mutually exclusive with
+  // getValue — use this form when the value is already computed and cheap.
+  value?: string;
+  // Lazily produces the text content on click. Use this form when computing
+  // the value eagerly on every render would be wasteful or unsafe (e.g. it
+  // reads fields that may be absent until the export is actually requested).
+  getValue?: () => string;
   // Suggested file name for the download.
   filename: string;
   label?: string;
@@ -9,9 +14,10 @@ interface DownloadButtonProps {
 // DownloadButton offers a string payload as a downloadable text file. It is used
 // to carry air-gap artifacts (unsigned tx / witness CBOR) to a separate machine
 // where copy/paste across an air gap is impractical.
-export function DownloadButton({ value, filename, label = "Download" }: DownloadButtonProps) {
+export function DownloadButton({ value, getValue, filename, label = "Download" }: DownloadButtonProps) {
   function handleClick() {
-    const blob = new Blob([value], { type: "text/plain" });
+    const content = getValue ? getValue() : (value ?? "");
+    const blob = new Blob([content], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -23,7 +29,7 @@ export function DownloadButton({ value, filename, label = "Download" }: Download
   }
 
   return (
-    <button type="button" className="btn ghost" onClick={handleClick} disabled={!value}>
+    <button type="button" className="btn ghost" onClick={handleClick} disabled={!getValue && !value}>
       {label}
     </button>
   );

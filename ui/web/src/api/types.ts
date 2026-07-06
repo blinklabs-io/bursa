@@ -47,11 +47,48 @@ export interface AddressView {
   next_unused: string;
 }
 
+export type TxDirection = "received" | "sent" | "self" | "";
+
+// AssetDelta is a signed per-native-asset quantity change (decimal STRING;
+// negative means the wallet's holdings of that asset decreased).
+export interface AssetDelta {
+  unit: string;
+  quantity: string;
+}
+
+// Tx is one entry of the transaction history, enriched with its direction,
+// net ADA/asset deltas, fee, and confirmation count relative to the active
+// wallet's own addresses. direction/net_lovelace/fee are empty and
+// asset_deltas is null when the node no longer has a record of the
+// transaction (e.g. pruned under lean-node history-expiry) — the backend's Go
+// nil slice serializes to JSON `null`, not `[]` —
+// block_height/block_time/confirmations still hold.
 export interface Tx {
   tx_hash: string;
   tx_index: number;
   block_height: number;
   block_time: number;
+  direction: TxDirection;
+  net_lovelace: string; // signed decimal STRING
+  asset_deltas: AssetDelta[] | null;
+  fee: string;
+  confirmations: number;
+  pending: boolean;
+}
+
+// TxIO is one input or output of a transaction detail view.
+export interface TxIO {
+  address: string;
+  lovelace: string;
+  assets: AssetBalance[];
+  is_mine: boolean;
+}
+
+// TxDetail is the drill-down view of a single transaction: its Tx summary
+// plus the full input/output breakdown.
+export interface TxDetail extends Tx {
+  inputs: TxIO[];
+  outputs: TxIO[];
 }
 
 export interface DelegationView {

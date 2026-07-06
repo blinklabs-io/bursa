@@ -3,7 +3,9 @@ package wallet
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 )
@@ -17,6 +19,14 @@ type fakeChain struct {
 	utxoErrs     map[string]error
 	txs          map[string][]chain.AddressTx
 	txErrs       map[string]error
+
+	txInfo      map[string]chain.TxInfo
+	txInfoErrs  map[string]error
+	txInfoHook  func(hash string)
+	txUTxOs     map[string]chain.TxUTxOs
+	txUTxOErrs  map[string]error
+	latestBlock chain.BlockTip
+	latestErr   error
 }
 
 func (f *fakeChain) Account(_ context.Context, _ string) (chain.AccountInfo, error) {
@@ -39,6 +49,27 @@ func (f *fakeChain) AddressTransactions(_ context.Context, addr string) ([]chain
 		return nil, err
 	}
 	return f.txs[addr], nil
+}
+
+func (f *fakeChain) Transaction(_ context.Context, hash string) (chain.TxInfo, error) {
+	if f.txInfoHook != nil {
+		f.txInfoHook(hash)
+	}
+	if err := f.txInfoErrs[hash]; err != nil {
+		return chain.TxInfo{}, err
+	}
+	return f.txInfo[hash], nil
+}
+
+func (f *fakeChain) TransactionUTxOs(_ context.Context, hash string) (chain.TxUTxOs, error) {
+	if err := f.txUTxOErrs[hash]; err != nil {
+		return chain.TxUTxOs{}, err
+	}
+	return f.txUTxOs[hash], nil
+}
+
+func (f *fakeChain) LatestBlock(_ context.Context) (chain.BlockTip, error) {
+	return f.latestBlock, f.latestErr
 }
 
 func TestServiceNoWallet(t *testing.T) {
@@ -193,5 +224,522 @@ func TestServiceIgnoresUnusedDerivedAddressNotFound(t *testing.T) {
 	}
 	if len(txs) != 1 || txs[0].TxHash != "tx-used" {
 		t.Fatalf("transactions = %+v, want tx-used only", txs)
+	}
+}
+
+func TestServiceTransactionsEnriched(t *testing.T) {
+	fc := &fakeChain{
+		addresses: []string{"addr_test1a"},
+		txs: map[string][]chain.AddressTx{
+			"addr_test1a": {{TxHash: "tx1", TxIndex: 0, BlockHeight: 90, BlockTime: 1000}},
+		},
+		txInfo: map[string]chain.TxInfo{
+			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "170000"},
+		},
+		txUTxOs: map[string]chain.TxUTxOs{
+			"tx1": {
+				Hash:   "tx1",
+				Inputs: []chain.TxIO{{Address: "addr_test1other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
+				Outputs: []chain.TxIO{
+					{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}},
+					{Address: "addr_test1other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1830000"}}},
+				},
+			},
+		},
+		latestBlock: chain.BlockTip{Height: 100},
+	}
+	s := NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 1); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	txs, err := s.Transactions(context.Background())
+	if err != nil {
+		t.Fatalf("Transactions: %v", err)
+	}
+	if len(txs) != 1 {
+		t.Fatalf("got %d txs, want 1", len(txs))
+	}
+	tx := txs[0]
+	if tx.Direction != TxDirectionReceived {
+		t.Fatalf("direction = %v, want received", tx.Direction)
+	}
+	if tx.NetLovelace != "3000000" {
+		t.Fatalf("net = %v, want 3000000", tx.NetLovelace)
+	}
+	if tx.Fee != "170000" {
+		t.Fatalf("fee = %v, want 170000", tx.Fee)
+	}
+	if tx.Confirmations != 10 || tx.Pending {
+		t.Fatalf("confirmations = %d pending=%v, want 10 false", tx.Confirmations, tx.Pending)
+	}
+}
+
+func TestServiceTransactionsEnrichmentConcurrentAndOrdered(t *testing.T) {
+	const txCount = maxConcurrentTxEnrichments + 2
+	addressTxs := make([]chain.AddressTx, 0, txCount)
+	txInfo := make(map[string]chain.TxInfo, txCount)
+	txUTxOs := make(map[string]chain.TxUTxOs, txCount)
+	for i := 0; i < txCount; i++ {
+		hash := fmt.Sprintf("tx%d", i)
+		blockHeight := uint64(100 - i)
+		addressTxs = append(addressTxs, chain.AddressTx{
+			TxHash:      hash,
+			TxIndex:     i,
+			BlockHeight: blockHeight,
+			BlockTime:   int64(1000 + i),
+		})
+		txInfo[hash] = chain.TxInfo{Hash: hash, BlockHeight: blockHeight, BlockTime: int64(1000 + i), Fees: "170000"}
+		txUTxOs[hash] = chain.TxUTxOs{
+			Hash: hash,
+			Outputs: []chain.TxIO{
+				{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1000000"}}},
+			},
+		}
+	}
+
+	started := make(chan string, txCount)
+	release := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+
+	fc := &fakeChain{
+		addresses: []string{"addr_test1a"},
+		txs: map[string][]chain.AddressTx{
+			"addr_test1a": addressTxs,
+		},
+		txInfo:      txInfo,
+		txUTxOs:     txUTxOs,
+		latestBlock: chain.BlockTip{Height: 120},
+		txInfoHook: func(hash string) {
+			started <- hash
+			<-release
+		},
+	}
+	s := NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 1); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+
+	resultCh := make(chan struct {
+		txs []Tx
+		err error
+	}, 1)
+	go func() {
+		txs, err := s.Transactions(context.Background())
+		resultCh <- struct {
+			txs []Tx
+			err error
+		}{txs: txs, err: err}
+	}()
+
+	for i := 0; i < maxConcurrentTxEnrichments; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d enrichment calls started; want %d concurrent calls", i, maxConcurrentTxEnrichments)
+		}
+	}
+	select {
+	case hash := <-started:
+		t.Fatalf("enrichment started %q before a worker was released; want at most %d in flight", hash, maxConcurrentTxEnrichments)
+	default:
+	}
+	close(release)
+	released = true
+
+	var result struct {
+		txs []Tx
+		err error
+	}
+	select {
+	case result = <-resultCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Transactions did not finish after releasing enrichment workers")
+	}
+	if result.err != nil {
+		t.Fatalf("Transactions: %v", result.err)
+	}
+	if len(result.txs) != txCount {
+		t.Fatalf("got %d txs, want %d", len(result.txs), txCount)
+	}
+	for i, tx := range result.txs {
+		wantHash := fmt.Sprintf("tx%d", i)
+		if tx.TxHash != wantHash {
+			t.Fatalf("tx[%d].TxHash = %q, want %q (merged order must be preserved)", i, tx.TxHash, wantHash)
+		}
+		if tx.Direction != TxDirectionReceived || tx.NetLovelace != "1000000" || tx.Fee != "170000" {
+			t.Fatalf("tx[%d] enrichment = %+v, want received/1000000/170000", i, tx)
+		}
+	}
+}
+
+func TestServiceTransactionsEnrichmentNotFoundGraceful(t *testing.T) {
+	// A transaction the node no longer has a record of (e.g. pruned under
+	// lean-node history-expiry) must not fail the whole history — it keeps
+	// its basic (hash/block) fields with enrichment left zero-valued.
+	fc := &fakeChain{
+		addresses: []string{"addr_test1a"},
+		txs: map[string][]chain.AddressTx{
+			"addr_test1a": {{TxHash: "tx-pruned", TxIndex: 0, BlockHeight: 50, BlockTime: 500}},
+		},
+		txInfoErrs:  map[string]error{"tx-pruned": chain.ErrNotFound},
+		latestBlock: chain.BlockTip{Height: 100},
+	}
+	s := NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 1); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	txs, err := s.Transactions(context.Background())
+	if err != nil {
+		t.Fatalf("Transactions: %v", err)
+	}
+	if len(txs) != 1 || txs[0].TxHash != "tx-pruned" {
+		t.Fatalf("txs = %+v, want [tx-pruned]", txs)
+	}
+	if txs[0].Direction != "" || txs[0].Fee != "" {
+		t.Fatalf("enrichment = %+v, want zero-valued (not found)", txs[0])
+	}
+	// Confirmations are computed from the already-known block height,
+	// independent of the failed enrichment call.
+	if txs[0].Confirmations != 50 || txs[0].Pending {
+		t.Fatalf("confirmations = %d pending=%v, want 50 false", txs[0].Confirmations, txs[0].Pending)
+	}
+}
+
+func TestServiceTransactionsFeePreservedWhenUTxOsPruned(t *testing.T) {
+	// The tx summary (and its fee) can still be available even when the
+	// node has pruned the UTxO-level detail for the same tx (lean-node
+	// history-expiry can drop UTxO detail before the summary itself ages
+	// out). The fee must not be silently discarded in that case.
+	fc := &fakeChain{
+		addresses: []string{"addr_test1a"},
+		txs: map[string][]chain.AddressTx{
+			"addr_test1a": {{TxHash: "tx1", TxIndex: 0, BlockHeight: 90, BlockTime: 1000}},
+		},
+		txInfo: map[string]chain.TxInfo{
+			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "170000"},
+		},
+		txUTxOErrs:  map[string]error{"tx1": chain.ErrNotFound},
+		latestBlock: chain.BlockTip{Height: 100},
+	}
+	s := NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 1); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	txs, err := s.Transactions(context.Background())
+	if err != nil {
+		t.Fatalf("Transactions: %v", err)
+	}
+	if len(txs) != 1 {
+		t.Fatalf("got %d txs, want 1", len(txs))
+	}
+	if txs[0].Fee != "170000" {
+		t.Fatalf("fee = %q, want 170000 (fee must survive a pruned UTxO-detail call)", txs[0].Fee)
+	}
+	if txs[0].Direction != "" {
+		t.Fatalf("direction = %v, want empty (direction still requires UTxO detail)", txs[0].Direction)
+	}
+}
+
+// TestServiceTransactionsRecognizesChangeAddressOwnership guards against
+// treating a not-yet-discovered change address as external. scanAddresses'
+// result (what mine used to be built from) only includes receive addresses
+// plus whatever the node's account index has already reported; a change
+// address the node hasn't seen a spend from yet is absent from it even
+// though the wallet controls it.
+func TestServiceTransactionsRecognizesChangeAddressOwnership(t *testing.T) {
+	fc := &fakeChain{
+		addresses: []string{"addr_test1a"},
+		txs: map[string][]chain.AddressTx{
+			"addr_test1a": {{TxHash: "tx1", TxIndex: 0, BlockHeight: 90, BlockTime: 1000}},
+		},
+		txInfo: map[string]chain.TxInfo{
+			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "200000"},
+		},
+		latestBlock: chain.BlockTip{Height: 100},
+	}
+	s := NewService(fc)
+	acct, err := s.SetWallet(testMnemonic, "preview", 1)
+	if err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	if len(acct.ChangeAddresses) == 0 {
+		t.Fatalf("account has no change addresses")
+	}
+	changeAddr := acct.ChangeAddresses[0]
+
+	// The wallet spends a discovered address entirely into its own
+	// not-yet-discovered change address: an internal consolidation, not a
+	// payment to or from an outside party.
+	fc.txUTxOs = map[string]chain.TxUTxOs{
+		"tx1": {
+			Hash:    "tx1",
+			Inputs:  []chain.TxIO{{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
+			Outputs: []chain.TxIO{{Address: changeAddr, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "4800000"}}}},
+		},
+	}
+	txs, err := s.Transactions(context.Background())
+	if err != nil {
+		t.Fatalf("Transactions: %v", err)
+	}
+	if len(txs) != 1 {
+		t.Fatalf("got %d txs, want 1", len(txs))
+	}
+	if txs[0].Direction != TxDirectionSelf {
+		t.Fatalf("direction = %v, want self (change address must count as the wallet's own)", txs[0].Direction)
+	}
+	if txs[0].NetLovelace != "-200000" {
+		t.Fatalf("net = %v, want -200000 (fee only)", txs[0].NetLovelace)
+	}
+}
+
+func TestOwnerSetDoesNotMutateCallerSlice(t *testing.T) {
+	addrs := make([]string, 1, 2)
+	addrs[0] = "addr_test1a"
+	acct := &Account{ChangeAddresses: []string{"addr_test1change"}}
+
+	set := ownerSet(addrs, acct)
+	if !set["addr_test1a"] || !set["addr_test1change"] {
+		t.Fatalf("ownerSet = %+v, want receive and change addresses", set)
+	}
+	if got := addrs[:cap(addrs)][1]; got != "" {
+		t.Fatalf("ownerSet mutated caller slice backing array: got spare element %q, want empty", got)
+	}
+}
+
+func TestServiceTransactionDetail(t *testing.T) {
+	fc := &fakeChain{
+		addresses: []string{"addr_test1a"},
+		txInfo: map[string]chain.TxInfo{
+			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "170000", Index: 2},
+		},
+		txUTxOs: map[string]chain.TxUTxOs{
+			"tx1": {
+				Hash:   "tx1",
+				Inputs: []chain.TxIO{{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
+				Outputs: []chain.TxIO{
+					{Address: "addr_test1other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}},
+					{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1830000"}}},
+				},
+			},
+		},
+		latestBlock: chain.BlockTip{Height: 95},
+	}
+	s := NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 1); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	detail, err := s.TransactionDetail(context.Background(), "tx1")
+	if err != nil {
+		t.Fatalf("TransactionDetail: %v", err)
+	}
+	if detail.TxHash != "tx1" || detail.TxIndex != 2 {
+		t.Fatalf("tx summary = %+v", detail.Tx)
+	}
+	if detail.Direction != TxDirectionSent {
+		t.Fatalf("direction = %v, want sent", detail.Direction)
+	}
+	if detail.NetLovelace != "-3170000" {
+		t.Fatalf("net = %v, want -3170000", detail.NetLovelace)
+	}
+	if detail.Fee != "170000" {
+		t.Fatalf("fee = %v, want 170000", detail.Fee)
+	}
+	if detail.Confirmations != 5 {
+		t.Fatalf("confirmations = %d, want 5", detail.Confirmations)
+	}
+	if len(detail.Inputs) != 1 || !detail.Inputs[0].IsMine || detail.Inputs[0].Lovelace != "5000000" {
+		t.Fatalf("inputs = %+v", detail.Inputs)
+	}
+	if len(detail.Outputs) != 2 {
+		t.Fatalf("outputs = %+v", detail.Outputs)
+	}
+	var sawExternal, sawMine bool
+	for _, o := range detail.Outputs {
+		if o.IsMine {
+			sawMine = true
+			if o.Lovelace != "1830000" {
+				t.Fatalf("mine output lovelace = %v, want 1830000", o.Lovelace)
+			}
+		} else {
+			sawExternal = true
+			if o.Lovelace != "3000000" {
+				t.Fatalf("external output lovelace = %v, want 3000000", o.Lovelace)
+			}
+		}
+	}
+	if !sawMine || !sawExternal {
+		t.Fatalf("expected one mine + one external output, got %+v", detail.Outputs)
+	}
+}
+
+func TestServiceTransactionDetailFeePreservedWhenUTxOsPruned(t *testing.T) {
+	fc := &fakeChain{
+		addresses: []string{"addr_test1a"},
+		txInfo: map[string]chain.TxInfo{
+			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "170000", Index: 2},
+		},
+		txUTxOErrs:  map[string]error{"tx1": chain.ErrNotFound},
+		latestBlock: chain.BlockTip{Height: 95},
+	}
+	s := NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 1); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	detail, err := s.TransactionDetail(context.Background(), "tx1")
+	if err != nil {
+		t.Fatalf("TransactionDetail: %v", err)
+	}
+	if detail.TxHash != "tx1" || detail.TxIndex != 2 || detail.BlockHeight != 90 || detail.BlockTime != 1000 {
+		t.Fatalf("tx summary = %+v", detail.Tx)
+	}
+	if detail.Fee != "170000" {
+		t.Fatalf("fee = %q, want 170000", detail.Fee)
+	}
+	if detail.Confirmations != 5 || detail.Pending {
+		t.Fatalf("confirmations = %d pending=%v, want 5 false", detail.Confirmations, detail.Pending)
+	}
+	if detail.Direction != "" || detail.NetLovelace != "" || detail.AssetDeltas != nil {
+		t.Fatalf("pruned UTxO enrichment = direction %q net %q assets %+v, want zero-valued", detail.Direction, detail.NetLovelace, detail.AssetDeltas)
+	}
+	if len(detail.Inputs) != 0 || len(detail.Outputs) != 0 {
+		t.Fatalf("inputs/outputs = %+v/%+v, want empty slices", detail.Inputs, detail.Outputs)
+	}
+}
+
+func TestServiceTransactionDetailNoWallet(t *testing.T) {
+	s := NewService(&fakeChain{})
+	if _, err := s.TransactionDetail(context.Background(), "tx1"); !errors.Is(err, ErrNoWallet) {
+		t.Fatalf("TransactionDetail without wallet: err = %v, want ErrNoWallet", err)
+	}
+}
+
+func TestServiceTransactionDetailNotFound(t *testing.T) {
+	fc := &fakeChain{txInfoErrs: map[string]error{"unknown": chain.ErrNotFound}}
+	s := NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 1); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	if _, err := s.TransactionDetail(context.Background(), "unknown"); !errors.Is(err, chain.ErrNotFound) {
+		t.Fatalf("TransactionDetail unknown hash: err = %v, want chain.ErrNotFound", err)
+	}
+}
+
+func TestServiceTransactionDetailSelfTransfer(t *testing.T) {
+	// Every input and output belongs to the wallet's own addresses: a
+	// consolidation/self-transfer, not a payment to or from anyone else.
+	fc := &fakeChain{
+		addresses: []string{"addr_test1a", "addr_test1b"},
+		txInfo: map[string]chain.TxInfo{
+			"tx1": {Hash: "tx1", BlockHeight: 10, Fees: "170000"},
+		},
+		txUTxOs: map[string]chain.TxUTxOs{
+			"tx1": {
+				Hash:    "tx1",
+				Inputs:  []chain.TxIO{{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
+				Outputs: []chain.TxIO{{Address: "addr_test1b", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "4830000"}}}},
+			},
+		},
+		latestBlock: chain.BlockTip{Height: 10},
+	}
+	s := NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 1); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	detail, err := s.TransactionDetail(context.Background(), "tx1")
+	if err != nil {
+		t.Fatalf("TransactionDetail: %v", err)
+	}
+	if detail.Direction != TxDirectionSelf {
+		t.Fatalf("direction = %v, want self", detail.Direction)
+	}
+	if detail.NetLovelace != "-170000" {
+		t.Fatalf("net = %v, want -170000 (fee only)", detail.NetLovelace)
+	}
+}
+
+func TestServiceTransactionsTipLookupFailureDegradesGracefully(t *testing.T) {
+	// A LatestBlock failure must not fail the whole history endpoint — the
+	// already-merged, already-enriched list is still valid; only the
+	// confirmation count relative to the tip is unknowable.
+	fc := &fakeChain{
+		addresses: []string{"addr_test1a"},
+		txs: map[string][]chain.AddressTx{
+			"addr_test1a": {{TxHash: "tx1", TxIndex: 0, BlockHeight: 90, BlockTime: 1000}},
+		},
+		txInfo: map[string]chain.TxInfo{
+			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "170000"},
+		},
+		txUTxOs: map[string]chain.TxUTxOs{
+			"tx1": {
+				Hash: "tx1",
+				Outputs: []chain.TxIO{
+					{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}},
+				},
+			},
+		},
+		latestErr: errors.New("tip lookup boom"),
+	}
+	s := NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 1); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	txs, err := s.Transactions(context.Background())
+	if err != nil {
+		t.Fatalf("Transactions: %v, want no error (tip failure must degrade)", err)
+	}
+	if len(txs) != 1 {
+		t.Fatalf("got %d txs, want 1", len(txs))
+	}
+	tx := txs[0]
+	if !tx.Pending || tx.Confirmations != 0 {
+		t.Fatalf("confirmations = %d pending=%v, want 0/pending (tip unknown)", tx.Confirmations, tx.Pending)
+	}
+	// Per-tx enrichment (direction/fee) is unaffected by the tip failure.
+	if tx.Direction != TxDirectionReceived || tx.Fee != "170000" {
+		t.Fatalf("enrichment = %+v, want direction=received fee=170000 despite tip failure", tx)
+	}
+}
+
+func TestServiceTransactionDetailTipLookupFailureDoesNotNotFound(t *testing.T) {
+	// A tip-lookup failure (even chain.ErrNotFound) must not turn a
+	// found transaction into a 404: serve() maps chain.ErrNotFound to 404,
+	// which would misreport a tx that genuinely exists.
+	fc := &fakeChain{
+		addresses: []string{"addr_test1a"},
+		txInfo: map[string]chain.TxInfo{
+			"tx1": {Hash: "tx1", BlockHeight: 90, Fees: "170000"},
+		},
+		txUTxOs: map[string]chain.TxUTxOs{
+			"tx1": {
+				Hash:   "tx1",
+				Inputs: []chain.TxIO{{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
+				Outputs: []chain.TxIO{
+					{Address: "addr_test1other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "4830000"}}},
+				},
+			},
+		},
+		latestErr: chain.ErrNotFound,
+	}
+	s := NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 1); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	detail, err := s.TransactionDetail(context.Background(), "tx1")
+	if err != nil {
+		t.Fatalf("TransactionDetail: %v, want no error (tip failure must not 404 a found tx)", err)
+	}
+	if detail.TxHash != "tx1" {
+		t.Fatalf("tx hash = %v, want tx1", detail.TxHash)
+	}
+	if !detail.Pending || detail.Confirmations != 0 {
+		t.Fatalf("confirmations = %d pending=%v, want 0/pending (tip unknown)", detail.Confirmations, detail.Pending)
+	}
+	if detail.Direction != TxDirectionSent {
+		t.Fatalf("direction = %v, want sent (unaffected by tip failure)", detail.Direction)
 	}
 }
