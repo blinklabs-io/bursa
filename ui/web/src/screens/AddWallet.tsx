@@ -227,7 +227,15 @@ export function AddWallet({
           <Button onClick={handleProceedToConfirm}>
             Continue
           </Button>
-          <Button variant="ghost" onClick={() => { setError(null); setMode("choose"); }}>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setError(null);
+              setGeneratedMnemonic("");
+              setConfirmed(false);
+              setMode("choose");
+            }}
+          >
             Back
           </Button>
         </div>
