@@ -187,12 +187,14 @@ export function MobileNav({
         <button
           ref={hamburgerRef}
           className="mobile-hamburger"
-          aria-label={open ? "Close menu" : "Open menu"}
+          aria-label="Open menu"
           aria-controls="mobile-navigation-drawer"
           aria-expanded={open}
-          onClick={() => setOpen((o) => !o)}
+          aria-hidden={open}
+          tabIndex={open ? -1 : undefined}
+          onClick={() => setOpen(true)}
         >
-          {open ? "✕" : "☰"}
+          ☰
         </button>
       </div>
 
@@ -213,6 +215,17 @@ export function MobileNav({
         aria-label="Wallet and navigation"
       >
         <div className="mobile-drawer-inner">
+          <div className="mobile-drawer-header">
+            <button
+              type="button"
+              className="mobile-drawer-close"
+              aria-label="Close menu"
+              onClick={() => setOpen(false)}
+            >
+              ✕
+            </button>
+          </div>
+
           {/* Wallet switcher block */}
           <WalletSwitcher
             wallets={wallets}

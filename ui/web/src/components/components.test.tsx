@@ -1,4 +1,4 @@
-import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { WalletView } from "../api/types";
 import { Button } from "./Button";
 import { StatusPill } from "./StatusPill";
@@ -99,12 +99,32 @@ test("MobileNav locks page scroll and restores focus when dismissed", async () =
   fireEvent.click(menuButton);
 
   expect(document.body.style.overflow).toBe("hidden");
-  expect(screen.getByRole("button", { name: /Main/i })).toHaveFocus();
+  expect(screen.getByRole("button", { name: /close menu/i })).toHaveFocus();
 
   fireEvent.keyDown(document, { key: "Escape" });
 
   await waitFor(() => expect(menuButton).toHaveFocus());
   expect(document.body.style.overflow).toBe("auto");
+});
+
+test("MobileNav closes from the drawer close button", async () => {
+  renderMobileNav();
+  const menuButton = screen.getByRole("button", { name: /open menu/i });
+
+  menuButton.focus();
+  fireEvent.click(menuButton);
+
+  const drawer = screen.getByRole("navigation", { name: /wallet and navigation/i });
+  const closeButton = within(drawer).getByRole("button", { name: /close menu/i });
+
+  expect(closeButton).toHaveFocus();
+  fireEvent.click(closeButton);
+
+  await waitFor(() => expect(menuButton).toHaveFocus());
+  expect(screen.getByRole("button", { name: /open menu/i })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
 });
 
 test("MobileNav returns focus after navigation closes the drawer", async () => {
@@ -160,10 +180,8 @@ test("MobileNav closes the drawer when the viewport switches to desktop", async 
 
   fireEvent.click(menuButton);
 
-  expect(screen.getByRole("button", { name: /close menu/i })).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
+  expect(menuButton).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("button", { name: /close menu/i })).toBeEnabled();
   expect(document.body.style.overflow).toBe("hidden");
 
   act(() => {
@@ -187,10 +205,7 @@ test("MobileNav keeps lock failures visible in the open drawer", () => {
   fireEvent.click(screen.getByRole("button", { name: /lock vault/i }));
 
   expect(onLock).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("button", { name: /close menu/i })).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
+  expect(screen.getByRole("button", { name: /close menu/i })).toBeEnabled();
 
   rerender(<MobileNav {...props} lockError="network error" />);
 
