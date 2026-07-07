@@ -131,6 +131,10 @@ export const migrateLegacyKeystore = (req: MigrateLegacyKeystoreRequest) =>
   apiPost<WalletView>("/vault/migrate-legacy", req);
 
 // Wallet management.
+// generateMnemonic calls the server-side BIP39 generator (256-bit / 24 words).
+// Generating server-side keeps raw entropy inside the loopback process.
+export const generateMnemonic = () =>
+  apiGet<{ mnemonic: string }>("/wallet/mnemonic/generate").then((r) => r.mnemonic);
 export const addWallet = (req: AddWalletRequest) => apiPost<WalletView>("/wallet", req);
 export const activateWallet = (id: string) =>
   apiPost<WalletView>(`/wallet/${encodeURIComponent(id)}/activate`);

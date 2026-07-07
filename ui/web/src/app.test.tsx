@@ -264,7 +264,12 @@ test("Add wallet action opens the add-wallet form", async () => {
 
   await waitFor(() => expect(screen.getByText("Main")).toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: /add wallet/i }));
-  // The add-wallet form (with a recovery-phrase field) appears.
+  // The add-wallet flow now starts with a create/restore chooser.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /restore from recovery phrase/i })).toBeInTheDocument(),
+  );
+  // Navigate to the restore path to get the recovery phrase field.
+  fireEvent.click(screen.getByRole("button", { name: /restore from recovery phrase/i }));
   await waitFor(() => expect(screen.getByLabelText(/recovery phrase/i)).toBeInTheDocument());
 });
 
