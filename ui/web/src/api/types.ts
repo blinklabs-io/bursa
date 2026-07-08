@@ -171,6 +171,12 @@ export interface HistoryExpirySetting {
   restart_required: boolean;
 }
 
+// App setting: the idle auto-lock timeout, in minutes. 0 means "Off" (never
+// auto-lock). Takes effect immediately client-side — no restart_required.
+export interface AutoLockSetting {
+  minutes: 0 | 1 | 5 | 15 | 30;
+}
+
 // CIP-8/CIP-30 verification: the inverse of signData. expected_address is
 // optional; when set, a signature whose signer differs is reported invalid.
 export interface VerifyDataRequest {

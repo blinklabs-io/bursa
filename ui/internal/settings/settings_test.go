@@ -214,6 +214,134 @@ func TestSetHistoryExpiryDoesNotRollBackAfterRename(t *testing.T) {
 	}
 }
 
+// TestAutoLockDefaultsWhenAbsent: a missing settings file yields the
+// documented default timeout (15 minutes), not "Off".
+func TestAutoLockDefaultsWhenAbsent(t *testing.T) {
+	s, err := Load(tmpPath(t))
+	if err != nil {
+		t.Fatalf("Load with no file: %v", err)
+	}
+	if got := s.AutoLockMinutes(); got != defaultAutoLockMinutes {
+		t.Fatalf("AutoLockMinutes() = %d, want default %d", got, defaultAutoLockMinutes)
+	}
+}
+
+// TestAutoLockSetPersistsRoundTrip: setting the value writes the file, and a
+// fresh Load reads it back — including "Off" (0), which must survive the
+// round trip distinctly from "never persisted" (which also reads back as a
+// non-zero default, so this specifically exercises the persisted-zero path).
+func TestAutoLockSetPersistsRoundTrip(t *testing.T) {
+	path := tmpPath(t)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := s.SetAutoLockMinutes(5); err != nil {
+		t.Fatalf("SetAutoLockMinutes(5): %v", err)
+	}
+	if got := s.AutoLockMinutes(); got != 5 {
+		t.Fatalf("in-memory AutoLockMinutes() = %d, want 5", got)
+	}
+
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded.AutoLockMinutes(); got != 5 {
+		t.Fatalf("reloaded AutoLockMinutes() = %d, want persisted 5", got)
+	}
+
+	// Explicitly persisting "Off" (0) must survive reload as 0, not fall back
+	// to the default.
+	if err := reloaded.SetAutoLockMinutes(0); err != nil {
+		t.Fatalf("SetAutoLockMinutes(0): %v", err)
+	}
+	again, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload after off: %v", err)
+	}
+	if got := again.AutoLockMinutes(); got != 0 {
+		t.Fatalf("reloaded AutoLockMinutes() = %d, want persisted 0 (Off)", got)
+	}
+}
+
+// TestAutoLockRejectsInvalidValues: only the documented options are accepted;
+// an out-of-set value is rejected without mutating the in-memory value or
+// touching disk.
+func TestAutoLockRejectsInvalidValues(t *testing.T) {
+	for _, bad := range []int{-1, 2, 10, 60, 1000} {
+		path := tmpPath(t)
+		s, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if err := s.SetAutoLockMinutes(bad); !errors.Is(err, ErrInvalidAutoLockMinutes) {
+			t.Fatalf("SetAutoLockMinutes(%d) error = %v, want ErrInvalidAutoLockMinutes", bad, err)
+		}
+		if got := s.AutoLockMinutes(); got != defaultAutoLockMinutes {
+			t.Fatalf("rejected SetAutoLockMinutes(%d) must leave the default in place, got %d", bad, got)
+		}
+		if _, err := os.Stat(path); err == nil {
+			t.Fatalf("rejected SetAutoLockMinutes(%d) must not write a settings file", bad)
+		}
+	}
+}
+
+// TestAutoLockAllOptionsAccepted: every documented option round-trips.
+func TestAutoLockAllOptionsAccepted(t *testing.T) {
+	for _, v := range AutoLockOptions {
+		path := tmpPath(t)
+		s, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if err := s.SetAutoLockMinutes(v); err != nil {
+			t.Fatalf("SetAutoLockMinutes(%d): %v", v, err)
+		}
+		if got := s.AutoLockMinutes(); got != v {
+			t.Fatalf("AutoLockMinutes() = %d, want %d", got, v)
+		}
+	}
+}
+
+// TestAutoLockMinutesFallsBackOnInvalidPersistedValue: a settings file that
+// was hand-edited (or written by an older/newer version with a different
+// option set) can contain an auto_lock_minutes value outside AutoLockOptions.
+// AutoLockMinutes must not pass such a value through as-is — it must fall
+// back to the default, the same as an absent value.
+func TestAutoLockMinutesFallsBackOnInvalidPersistedValue(t *testing.T) {
+	for _, bad := range []int{-1, 2, 10, 60, 1000} {
+		v := bad
+		s := &Store{
+			d: data{
+				Version:         settingsVersion,
+				AutoLockMinutes: &v,
+			},
+		}
+		if got := s.AutoLockMinutes(); got != defaultAutoLockMinutes {
+			t.Fatalf("AutoLockMinutes() with invalid persisted %d = %d, want default %d", bad, got, defaultAutoLockMinutes)
+		}
+	}
+}
+
+func TestSetAutoLockMinutesRollsBackOnPersistError(t *testing.T) {
+	initial := 5
+	s := &Store{
+		path: filepath.Join(t.TempDir(), "missing-parent", "settings.json"),
+		d: data{
+			Version:         settingsVersion,
+			AutoLockMinutes: &initial,
+		},
+	}
+
+	if err := s.SetAutoLockMinutes(30); err == nil {
+		t.Fatal("SetAutoLockMinutes should fail when the settings directory is missing")
+	}
+	if got := s.AutoLockMinutes(); got != initial {
+		t.Fatalf("failed SetAutoLockMinutes must leave the in-memory setting unchanged, got %d", got)
+	}
+}
+
 // TestSeedDefaultFalseStillPersistsFirstRun: seeding false on first run records
 // an explicit value (so a later env flip to true is correctly ignored). i.e.
 // the absence-vs-explicit-false distinction is preserved.

@@ -37,12 +37,42 @@ const settingsVersion = 1
 // a few hundred bytes; anything larger is not one of ours.
 const maxSettingsLen = 64 * 1024
 
+// defaultAutoLockMinutes is the idle auto-lock timeout used until the user
+// persists a choice: a sensible middle ground between "never" (0, i.e. Off)
+// and the shortest offered timeout.
+const defaultAutoLockMinutes = 15
+
+// AutoLockOptions are the only accepted auto-lock timeouts, in minutes. 0 means
+// "Off" (idle auto-lock disabled). Exported so the API layer and its tests can
+// validate against the same set without duplicating the literal values. The API
+// package still keeps its own copy (internal/api/api.go's autoLockOptions) to
+// stay decoupled — internal/api/api_test.go's
+// TestAutoLockOptionsMatchesSettingsPackage asserts the two stay equal. The
+// frontend's AUTO_LOCK_OPTIONS (web/src/screens/Settings.tsx) is a third copy,
+// kept in sync by hand.
+var AutoLockOptions = []int{0, 1, 5, 15, 30}
+
+// ErrInvalidAutoLockMinutes is returned by SetAutoLockMinutes for any value not
+// in AutoLockOptions.
+var ErrInvalidAutoLockMinutes = errors.New("invalid auto-lock timeout")
+
+func isValidAutoLockMinutes(m int) bool {
+	for _, v := range AutoLockOptions {
+		if v == m {
+			return true
+		}
+	}
+	return false
+}
+
 // data is the on-disk shape. Booleans use a pointer so a missing key (absent
 // field) is distinguishable from an explicit false — only a present value counts
-// as "persisted" for seeding purposes.
+// as "persisted" for seeding purposes. AutoLockMinutes uses a pointer for the
+// same reason: nil (absent) means "no choice persisted yet, use the default".
 type data struct {
-	Version       int   `json:"version"`
-	HistoryExpiry *bool `json:"history_expiry,omitempty"`
+	Version         int   `json:"version"`
+	HistoryExpiry   *bool `json:"history_expiry,omitempty"`
+	AutoLockMinutes *int  `json:"auto_lock_minutes,omitempty"`
 }
 
 // Store is a settings file at Path. It is safe for concurrent use: every method
@@ -115,6 +145,45 @@ func (s *Store) SeedDefault(enabled bool) error {
 	old := s.d
 	v := enabled
 	s.d.HistoryExpiry = &v
+	if committed, err := s.writeLocked(); err != nil {
+		if !committed {
+			s.d = old
+		}
+		return err
+	}
+	return nil
+}
+
+// AutoLockMinutes reports the persisted idle auto-lock timeout, in minutes,
+// defaulting to defaultAutoLockMinutes when no value has ever been persisted
+// OR when the persisted value is no longer one of AutoLockOptions (e.g. a
+// hand-edited or older/newer-version settings file) — an invalid value must
+// never propagate out as a lock timeout. 0 means auto-lock is off.
+func (s *Store) AutoLockMinutes() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.d.AutoLockMinutes == nil {
+		return defaultAutoLockMinutes
+	}
+	v := *s.d.AutoLockMinutes
+	if !isValidAutoLockMinutes(v) {
+		return defaultAutoLockMinutes
+	}
+	return v
+}
+
+// SetAutoLockMinutes persists the idle auto-lock timeout and atomically writes
+// the file. minutes must be one of AutoLockOptions (0 disables auto-lock);
+// anything else returns ErrInvalidAutoLockMinutes without touching the store.
+func (s *Store) SetAutoLockMinutes(minutes int) error {
+	if !isValidAutoLockMinutes(minutes) {
+		return fmt.Errorf("%w: %d", ErrInvalidAutoLockMinutes, minutes)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.d
+	v := minutes
+	s.d.AutoLockMinutes = &v
 	if committed, err := s.writeLocked(); err != nil {
 		if !committed {
 			s.d = old

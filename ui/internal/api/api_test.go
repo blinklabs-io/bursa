@@ -27,6 +27,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
+	"github.com/blinklabs-io/bursa/ui/internal/settings"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
@@ -218,6 +219,11 @@ type fakeSettings struct {
 	setErr          error
 	setCalledWith   bool
 	setCalled       bool
+
+	autoLockMinutes       int
+	setAutoLockErr        error
+	setAutoLockCalled     bool
+	setAutoLockCalledWith int
 }
 
 func (f *fakeSettings) HistoryExpiry() bool { return f.enabled }
@@ -233,6 +239,18 @@ func (f *fakeSettings) SetHistoryExpiry(enabled bool) error {
 }
 
 func (f *fakeSettings) HistoryExpiryRestartRequired() bool { return f.restartRequired }
+
+func (f *fakeSettings) AutoLockMinutes() int { return f.autoLockMinutes }
+
+func (f *fakeSettings) SetAutoLockMinutes(minutes int) error {
+	f.setAutoLockCalled = true
+	f.setAutoLockCalledWith = minutes
+	if f.setAutoLockErr != nil {
+		return f.setAutoLockErr
+	}
+	f.autoLockMinutes = minutes
+	return nil
+}
 
 func (f *fakeVault) TPMStatus() vault.TPMStatusInfo { return f.tpmStatus }
 
@@ -1499,6 +1517,148 @@ func TestPutHistoryExpiryPersistError(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/history-expiry", body))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("PUT history-expiry with persist error = %d, want 500", rec.Code)
+	}
+}
+
+func decodeAutoLock(t *testing.T, body *bytes.Buffer) int {
+	t.Helper()
+	var got struct {
+		Minutes *int `json:"minutes"`
+	}
+	if err := json.NewDecoder(body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Minutes == nil {
+		t.Fatal("response missing minutes")
+	}
+	return *got.Minutes
+}
+
+func TestGetAutoLockReturnsPersistedValue(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStopped}}
+	set := &fakeSettings{autoLockMinutes: 30}
+	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/settings/auto-lock", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET auto-lock = %d, want 200", rec.Code)
+	}
+	if got := decodeAutoLock(t, rec.Body); got != 30 {
+		t.Fatalf("GET auto-lock minutes = %d, want 30", got)
+	}
+}
+
+func TestPutAutoLockPersists(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	set := &fakeSettings{autoLockMinutes: 15}
+	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"minutes":5}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/auto-lock", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT auto-lock = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !set.setAutoLockCalled || set.setAutoLockCalledWith != 5 {
+		t.Fatalf("SetAutoLockMinutes not called with 5: called=%v with=%v", set.setAutoLockCalled, set.setAutoLockCalledWith)
+	}
+	if got := decodeAutoLock(t, rec.Body); got != 5 {
+		t.Fatalf("PUT auto-lock response minutes = %d, want 5", got)
+	}
+}
+
+func TestPutAutoLockAcceptsOff(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	set := &fakeSettings{autoLockMinutes: 15}
+	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"minutes":0}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/auto-lock", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT auto-lock 0 (Off) = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if got := decodeAutoLock(t, rec.Body); got != 0 {
+		t.Fatalf("PUT auto-lock response minutes = %d, want 0", got)
+	}
+}
+
+func TestPutAutoLockInvalidJSON(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	set := &fakeSettings{}
+	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{not json`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/auto-lock", body))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT auto-lock with bad JSON = %d, want 400", rec.Code)
+	}
+	if set.setAutoLockCalled {
+		t.Fatal("SetAutoLockMinutes must not be called on a bad request body")
+	}
+}
+
+func TestPutAutoLockRequiresExplicitMinutes(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	set := &fakeSettings{}
+	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/auto-lock", body))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT auto-lock with no minutes = %d, want 400", rec.Code)
+	}
+	if set.setAutoLockCalled {
+		t.Fatal("SetAutoLockMinutes must not be called without an explicit minutes value")
+	}
+}
+
+func TestPutAutoLockRejectsOutOfSetValue(t *testing.T) {
+	for _, bad := range []int{-1, 2, 60} {
+		st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+		set := &fakeSettings{}
+		h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		body := bytes.NewBufferString(fmt.Sprintf(`{"minutes":%d}`, bad))
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/auto-lock", body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("PUT auto-lock with %d = %d, want 400", bad, rec.Code)
+		}
+		if set.setAutoLockCalled {
+			t.Fatalf("SetAutoLockMinutes must not be called for out-of-set value %d", bad)
+		}
+	}
+}
+
+func TestPutAutoLockPersistError(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	set := &fakeSettings{setAutoLockErr: errors.New("disk full")}
+	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, nil, &fakePoolOps{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"minutes":5}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/auto-lock", body))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("PUT auto-lock with persist error = %d, want 500", rec.Code)
+	}
+}
+
+// TestAutoLockOptionsMatchesSettingsPackage guards against the api-layer's
+// autoLockOptions (duplicated for decoupling, see its doc comment) silently
+// drifting from settings.AutoLockOptions — the two must always accept exactly
+// the same set of timeouts. The frontend's AUTO_LOCK_OPTIONS
+// (web/src/screens/Settings.tsx) duplicates the same set again for the <Select>
+// and is guarded only by a cross-referencing comment, since it lives outside
+// the Go module.
+func TestAutoLockOptionsMatchesSettingsPackage(t *testing.T) {
+	want := make(map[int]bool, len(settings.AutoLockOptions))
+	for _, v := range settings.AutoLockOptions {
+		want[v] = true
+	}
+	if len(autoLockOptions) != len(want) {
+		t.Fatalf("autoLockOptions has %d entries, settings.AutoLockOptions has %d: %v vs %v", len(autoLockOptions), len(want), autoLockOptions, want)
+	}
+	for v := range want {
+		if !autoLockOptions[v] {
+			t.Fatalf("autoLockOptions is missing %d, present in settings.AutoLockOptions", v)
+		}
 	}
 }
 
