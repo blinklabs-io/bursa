@@ -190,7 +190,7 @@ const AUTO_LOCK_OPTIONS = [
 // (useAsync keeps no shared cache) and App's useIdleLock would never see a
 // save made through this card until a full reload.
 function AutoLockCard({ setting }: { setting: AsyncState<AutoLockSetting> }) {
-  const [minutes, setMinutes] = useState<number | null>(null);
+  const [minutes, setMinutes] = useState<AutoLockSetting["minutes"] | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -200,7 +200,7 @@ function AutoLockCard({ setting }: { setting: AsyncState<AutoLockSetting> }) {
     }
   }, [setting.data]);
 
-  async function handleChange(next: number) {
+  async function handleChange(next: AutoLockSetting["minutes"]) {
     if (minutes === null || saving || next === minutes) return;
     const previous = minutes;
     setError(null);
@@ -241,7 +241,7 @@ function AutoLockCard({ setting }: { setting: AsyncState<AutoLockSetting> }) {
           options={AUTO_LOCK_OPTIONS}
           value={String(minutes ?? 0)}
           disabled={!hasLoaded || loading || saving}
-          onChange={(e) => handleChange(Number(e.target.value))}
+          onChange={(e) => handleChange(Number(e.target.value) as AutoLockSetting["minutes"])}
         />
       </div>
 

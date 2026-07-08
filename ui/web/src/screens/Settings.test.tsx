@@ -268,13 +268,15 @@ test("(al2) auto-lock 'Off' (0) is rendered distinctly", () => {
 test("(al3) changing the auto-lock select PUTs the new value", async () => {
   mockStatus("ready", 12345, true);
   mockAutoLock({ minutes: 15 });
-  const spy = vi.spyOn(client, "setAutoLock").mockResolvedValue({ minutes: 5 });
+  const saved = { minutes: 5 } as const;
+  const spy = vi.spyOn(client, "setAutoLock").mockResolvedValue(saved);
 
   renderSettings();
   const select = screen.getByRole("combobox", { name: /lock after inactivity/i });
   fireEvent.change(select, { target: { value: "5" } });
 
   await waitFor(() => expect(spy).toHaveBeenCalledWith(5));
+  await waitFor(() => expect(autoLockState.setData).toHaveBeenCalledWith(saved));
   await waitFor(() => expect(select).toHaveValue("5"));
   expect(screen.getByText(/locks after 5 minutes/i)).toBeInTheDocument();
 });
