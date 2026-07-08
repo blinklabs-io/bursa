@@ -34,6 +34,8 @@ test("renders the app shell once a wallet is active", async () => {
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
   fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
-  // Sidebar nav items appear once the vault is unlocked and a wallet is active.
-  await waitFor(() => expect(screen.getByText("Portfolio")).toBeInTheDocument());
+  // Nav items appear once the vault is unlocked and a wallet is active.
+  // On mobile and desktop the nav is rendered in both the sidebar and the
+  // mobile drawer, so multiple elements with the same label may be present.
+  await waitFor(() => expect(screen.getAllByText("Portfolio").length).toBeGreaterThan(0));
 });

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act, within } from "@testing-library/react";
 import { App } from "./app";
 import * as hooks from "./api/hooks";
 import * as client from "./api/client";
@@ -79,7 +79,8 @@ test("legacy keystore without a vault → migration flow is shown", async () => 
       spend_password: "spend-password-aaa",
     }),
   );
-  await waitFor(() => expect(screen.getByText("Main")).toBeInTheDocument());
+  // Wallet name appears in both the mobile topbar and the sidebar wallet list.
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
 });
 
 test("vault exists but locked → Unlock screen (vault password only, no seed field)", async () => {
@@ -102,9 +103,10 @@ test("unlocking a single-wallet vault binds it and shows the main UI", async () 
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
   fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
-  // The sidebar and the active wallet appear.
-  await waitFor(() => expect(screen.getByText("Portfolio")).toBeInTheDocument());
-  expect(screen.getByText("Main")).toBeInTheDocument();
+  // Nav items and the active wallet appear; they may be present in both the
+  // mobile drawer and the desktop sidebar, so use getAllByText.
+  await waitFor(() => expect(screen.getAllByText("Portfolio").length).toBeGreaterThan(0));
+  expect(screen.getAllByText("Main").length).toBeGreaterThan(0);
 });
 
 test("lock failure keeps the unlocked UI visible and reports the error", async () => {
@@ -117,12 +119,16 @@ test("lock failure keeps the unlocked UI visible and reports the error", async (
   render(<App />);
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
   fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
-  await waitFor(() => expect(screen.getByText("Main")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
 
-  fireEvent.click(screen.getByRole("button", { name: /lock vault/i }));
+  const sidebar = document.querySelector<HTMLElement>(".sidebar");
+  expect(sidebar).not.toBeNull();
+  const sidebarQueries = within(sidebar as HTMLElement);
 
-  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("network error"));
-  expect(screen.getByText("Main")).toBeInTheDocument();
+  fireEvent.click(sidebarQueries.getByRole("button", { name: /lock vault/i }));
+
+  await waitFor(() => expect(sidebarQueries.getByRole("alert")).toHaveTextContent("network error"));
+  expect(screen.getAllByText("Main").length).toBeGreaterThan(0);
   expect(screen.queryByRole("button", { name: /^unlock$/i })).not.toBeInTheDocument();
 });
 
@@ -174,8 +180,10 @@ test("Send nav is disabled until the node is ready", async () => {
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
   fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
-  await waitFor(() => expect(screen.getByText("Main")).toBeInTheDocument());
-  expect(screen.getByText("Send").closest("button")).toBeDisabled();
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
+  // Send appears in both the mobile drawer and the desktop sidebar; both must
+  // be disabled while syncing — check that every "Send" button is disabled.
+  expect(screen.getAllByText("Send").every((el) => el.closest("button")?.disabled)).toBe(true);
 });
 
 test("deep-linking #/send while syncing falls back to Portfolio (guard)", async () => {
@@ -191,7 +199,7 @@ test("deep-linking #/send while syncing falls back to Portfolio (guard)", async 
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
   fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
-  await waitFor(() => expect(screen.getByText("Main")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
   // Send screen must NOT appear until the node is ready.
   expect(screen.queryByText("Send ADA")).not.toBeInTheDocument();
 });
@@ -229,10 +237,12 @@ test("switching active wallets remounts routed content and refetches read state"
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
   fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
-  await waitFor(() => expect(screen.getByText("Main")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
   await waitFor(() => expect(getBalance).toHaveBeenCalledTimes(1));
 
-  fireEvent.click(screen.getByRole("button", { name: /Savings/i }));
+  // Savings appears in both the mobile drawer and the desktop sidebar; click
+  // the first one (either activates the same server-side wallet).
+  fireEvent.click(screen.getAllByRole("button", { name: /Savings/i })[0]);
 
   await waitFor(() => expect(client.activateWallet).toHaveBeenCalledWith("w2"));
   await waitFor(() => expect(getBalance).toHaveBeenCalledTimes(2));
@@ -262,8 +272,9 @@ test("Add wallet action opens the add-wallet form", async () => {
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
   fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
-  await waitFor(() => expect(screen.getByText("Main")).toBeInTheDocument());
-  fireEvent.click(screen.getByRole("button", { name: /add wallet/i }));
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
+  // "Add wallet" appears in both the mobile drawer and the desktop sidebar.
+  fireEvent.click(screen.getAllByRole("button", { name: /add wallet/i })[0]);
   // The add-wallet flow now starts with a create/restore chooser.
   await waitFor(() =>
     expect(screen.getByRole("button", { name: /restore from recovery phrase/i })).toBeInTheDocument(),
