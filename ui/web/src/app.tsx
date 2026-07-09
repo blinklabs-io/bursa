@@ -98,9 +98,10 @@ export function App() {
   // spending password).
   const canSend = isReady && activeWallet !== null;
   const canSign = activeWallet !== null;
-  // Swap shows node-local DEX prices/quotes (no spending, no signing). It is
-  // gated like wallet reads: a node that can serve queries is enough.
-  const canSwap = canQueryNode && activeWallet !== null;
+  // Swap shows node-local DEX prices/quotes (no spending, no signing), but
+  // the DEX pool locators are mainnet-only. On preview/preprod the backend
+  // returns ErrNotMainnet, so do not expose the route for testnet wallets.
+  const canSwap = canQueryNode && activeWallet?.network === "mainnet";
 
   function applyWallets(list: WalletView[]) {
     setLockError(null);
@@ -269,8 +270,8 @@ export function App() {
   } else if (route === "send" && !canSend) {
     content = <Portfolio />;
   } else if (route === "swap" && !canSwap) {
-    // Guard deep-links (#/swap): the DEX quote screen needs a synced node to
-    // read pool UTxOs, so fall back to Portfolio until the node is ready.
+    // Guard deep-links (#/swap): DEX quotes need a queryable mainnet node, so
+    // fall back to Portfolio while the node or active wallet cannot support it.
     content = <Portfolio />;
   } else if (route === "staking") {
     // Staking/governance is gated like send: a synced node AND a
