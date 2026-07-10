@@ -50,7 +50,7 @@ var (
 // unexported so gomobile treats it as an opaque reference type.
 type App struct {
 	mu          sync.Mutex
-	app         *boot.App
+	app         runtimeApp
 	starting    bool
 	startCancel context.CancelFunc
 	// startDone is created before each boot goroutine launches and is closed
@@ -69,6 +69,13 @@ type App struct {
 	// cancellation. Reading an already-closed channel never blocks, so once
 	// cleanup finishes this becomes a no-op wait; it is never reset to nil.
 	draining <-chan struct{}
+}
+
+type runtimeApp interface {
+	Stop() error
+	Port() int
+	OnNetworkChanged() error
+	OnResume() error
 }
 
 // New constructs an unstarted App handle. Call Start to boot the wallet.
@@ -145,7 +152,11 @@ func (a *App) StartWithTimeout(dataDir, network string, lean bool, timeoutMs int
 			MithrilEnabled: true,
 			LeanDefault:    lean,
 		})
-		result <- startResult{app: app, err: err}
+		var runtime runtimeApp
+		if app != nil {
+			runtime = app
+		}
+		result <- startResult{app: runtime, err: err}
 	}()
 
 	timer := time.NewTimer(timeout)
@@ -167,7 +178,7 @@ func (a *App) StartWithTimeout(dataDir, network string, lean bool, timeoutMs int
 }
 
 type startResult struct {
-	app *boot.App
+	app runtimeApp
 	err error
 }
 

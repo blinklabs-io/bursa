@@ -41,6 +41,9 @@ import type {
   TPMStatus,
   EnableTPMRequest,
   DisableTPMRequest,
+  DexPoolsResponse,
+  DexQuoteRequest,
+  DexQuote,
 } from "./types";
 
 export class ApiError extends Error {
@@ -237,3 +240,8 @@ export const poolSubmitRetirement = (req: { password: string; epoch: number }) =
 export const getTPMStatus = () => apiGet<TPMStatus>("/vault/tpm/status");
 export const enableTPM = (req: EnableTPMRequest) => apiPost<TPMStatus>("/vault/tpm/enable", req);
 export const disableTPM = (req: DisableTPMRequest) => apiPost<TPMStatus>("/vault/tpm/disable", req);
+
+// DEX swap quotes (node-local: pool prices and best-pool quotes).
+export const getDexPools = () => apiGet<DexPoolsResponse>("/wallet/dex/pools");
+export const computeDexQuote = (req: DexQuoteRequest) =>
+  apiPost<DexQuote>("/wallet/dex/quote", req);

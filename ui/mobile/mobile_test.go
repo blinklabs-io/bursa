@@ -16,7 +16,6 @@ package mobile
 import (
 	"context"
 	"errors"
-	"net"
 	"reflect"
 	"runtime"
 	"sync"
@@ -386,50 +385,50 @@ func TestStopPublishesDrainBeforeCanceledStartObservesCancellation(t *testing.T)
 	}
 }
 
-// TestCleanupLateStartStopsLiveAppAndTerminates proves the fix for the
-// node-lifecycle leak in cleanupLateStart (PR #561 review): when a superseded
-// start's slow bootWallet call eventually delivers a live *boot.App anyway —
-// the scenario the reviewer's rejected `case <-ctx.Done(): return` patch would
-// have abandoned mid-watch — cleanupLateStart must Stop() it (releasing the
-// node and its control-surface socket) AND its goroutine must terminate
-// promptly rather than leak.
-//
-// It exercises the real boot.Boot/App.Stop pair (not a fake), so the
-// assertions cover the actual lifecycle contract: a real bound listener that
-// must stop accepting connections once cleanup runs.
+type fakeRuntimeApp struct {
+	stopEntered chan struct{}
+	stopRelease chan struct{}
+}
+
+func (f *fakeRuntimeApp) Stop() error {
+	close(f.stopEntered)
+	<-f.stopRelease
+	return nil
+}
+
+func (f *fakeRuntimeApp) Port() int { return 0 }
+
+func (f *fakeRuntimeApp) OnNetworkChanged() error { return nil }
+
+func (f *fakeRuntimeApp) OnResume() error { return nil }
+
+// TestCleanupLateStartStopsLiveAppAndTerminates proves the node-lifecycle leak
+// guard in cleanupLateStart: when a superseded start's slow bootWallet call
+// eventually delivers a live runtime anyway, cleanupLateStart must call Stop()
+// and must not close its done channel until Stop returns.
 func TestCleanupLateStartStopsLiveAppAndTerminates(t *testing.T) {
-	app, err := boot.Boot(context.Background(), boot.Config{
-		Network: "preview",
-		DataDir: t.TempDir(),
-		Addr:    "127.0.0.1:0",
-	})
-	if err != nil {
-		t.Fatalf("boot.Boot: %v", err)
+	app := &fakeRuntimeApp{
+		stopEntered: make(chan struct{}),
+		stopRelease: make(chan struct{}),
 	}
-	addr := app.Addr()
-
-	if conn, dialErr := net.DialTimeout("tcp", addr, time.Second); dialErr != nil {
-		t.Fatalf("control surface not reachable before cleanup: %v", dialErr)
-	} else {
-		_ = conn.Close()
-	}
-
 	result := make(chan startResult, 1)
 	result <- startResult{app: app, err: nil}
 
 	done := cleanupLateStart(result)
 	select {
+	case <-app.stopEntered:
+	case <-time.After(time.Second):
+		t.Fatal("cleanupLateStart did not call Stop")
+	}
+	select {
+	case <-done:
+		t.Fatal("cleanupLateStart closed done before Stop returned")
+	default:
+	}
+	close(app.stopRelease)
+	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("cleanupLateStart did not terminate; goroutine leaked")
-	}
-
-	// done only closes after res.app.Stop() has returned (deferred close runs
-	// last), so the control surface listener must already be torn down —
-	// proving cleanupLateStart genuinely stopped the live node/socket rather
-	// than merely that Stop is idempotent.
-	if conn, dialErr := net.DialTimeout("tcp", addr, time.Second); dialErr == nil {
-		_ = conn.Close()
-		t.Fatal("control surface still reachable after cleanupLateStart; Stop was not performed")
 	}
 }

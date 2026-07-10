@@ -22,6 +22,15 @@ const walletB: WalletView = {
   active: false,
 };
 
+const mainnetWallet: WalletView = {
+  id: "w-mainnet",
+  name: "Mainnet",
+  network: "mainnet",
+  stake_address: "stake1abc",
+  addresses: ["addr1abc"],
+  active: true,
+};
+
 function stubStatus(state: string) {
   vi.spyOn(hooks, "useStatus").mockReturnValue({
     data: { state, tip: 0, caughtUp: state === "ready" },
@@ -225,6 +234,52 @@ test("deep-linking #/send while syncing falls back to Portfolio (guard)", async 
   await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
   // Send screen must NOT appear until the node is ready.
   expect(screen.queryByText("Send ADA")).not.toBeInTheDocument();
+});
+
+test("deep-linking #/swap while syncing opens the mainnet read-only swap screen", async () => {
+  stubStatus("syncing");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  vi.spyOn(client, "unlockVault").mockResolvedValue([mainnetWallet]);
+  vi.spyOn(hooks, "useDexPools").mockReturnValue({
+    data: { pools: [] },
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+  window.location.hash = "#/swap";
+
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: /load wallet anyway/i }));
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: /swap quote/i })).toBeInTheDocument(),
+  );
+  expect(screen.getAllByText("Swap").some((el) => el.closest("button")?.disabled === false)).toBe(true);
+});
+
+test("deep-linking #/swap with a preview wallet falls back to Portfolio", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+  const useDexPools = vi.spyOn(hooks, "useDexPools").mockReturnValue({
+    data: { pools: [] },
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+  window.location.hash = "#/swap";
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  await waitFor(() => expect(screen.getByText("Balance")).toBeInTheDocument());
+  expect(screen.queryByRole("heading", { name: /swap quote/i })).not.toBeInTheDocument();
+  expect(screen.getAllByText("Swap").every((el) => el.closest("button")?.disabled)).toBe(true);
+  expect(useDexPools).not.toHaveBeenCalled();
 });
 
 test("an active wallet on a ready node can reach Send", async () => {
