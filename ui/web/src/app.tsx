@@ -19,6 +19,7 @@ import { Receive } from "./screens/Receive";
 import { Activity } from "./screens/Activity";
 import { Send } from "./screens/Send";
 import { Swap } from "./screens/Swap";
+import { Contacts } from "./screens/Contacts";
 import { Staking } from "./screens/Staking";
 import { SignMessage } from "./screens/SignMessage";
 import { VerifyMessage } from "./screens/VerifyMessage";
@@ -35,6 +36,7 @@ const ROUTES = new Map<string, () => ReactElement>([
   ["activity", Activity],
   ["send", Send],
   ["swap", Swap],
+  ["contacts", Contacts],
 ]);
 
 const NAV: { key: string; label: string }[] = [
@@ -43,6 +45,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "activity", label: "Activity" },
   { key: "send", label: "Send" },
   { key: "swap", label: "Swap" },
+  { key: "contacts", label: "Contacts" },
   { key: "staking", label: "Staking" },
   { key: "sign", label: "Sign" },
   { key: "verify", label: "Verify" },

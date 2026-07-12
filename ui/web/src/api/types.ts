@@ -426,6 +426,24 @@ export interface DisableTPMRequest {
   password: string;
 }
 
+// Address book: local-only saved contacts (a friendly name, a Cardano
+// address, and an optional note). Pure on-device storage.
+export interface Contact {
+  id: string;
+  name: string;
+  address: string;
+  note?: string;
+}
+
+// UpsertContactRequest creates a new contact when id is omitted, or updates
+// the contact with that id when supplied.
+export interface UpsertContactRequest {
+  id?: string;
+  name: string;
+  address: string;
+  note?: string;
+}
+
 export interface DexPool {
   protocol: string;
   pool_id: string;
