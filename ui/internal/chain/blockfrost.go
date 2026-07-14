@@ -209,6 +209,27 @@ type AssetAddress struct {
 	Quantity string `json:"quantity"`
 }
 
+// AssetInfo mirrors GET /api/v0/assets/{asset}: a native asset's on-chain
+// identity, plus whatever CIP-25/68-style on-chain metadata the node has
+// indexed for it. OnchainMetadata is left as raw JSON (null when absent)
+// rather than a typed struct, since the standard defines no fixed schema
+// (name/image/decimals/etc. are all optional, standard-specific keys) —
+// callers parse the fields they need defensively.
+//
+// As of dingo's current adapter, OnchainMetadata is always null: dingo does
+// not yet parse mint-transaction metadata into this field. Callers must treat
+// name/ticker/decimals as best-effort and fall back to the raw unit/quantity
+// when they are absent, which today is effectively always.
+type AssetInfo struct {
+	Asset           string          `json:"asset"`
+	PolicyID        string          `json:"policy_id"`
+	AssetName       string          `json:"asset_name"`
+	AssetNameASCII  string          `json:"asset_name_ascii"`
+	Fingerprint     string          `json:"fingerprint"`
+	Quantity        string          `json:"quantity"`
+	OnchainMetadata json.RawMessage `json:"onchain_metadata"`
+}
+
 type accountAddress struct {
 	Address string `json:"address"`
 }
@@ -624,4 +645,15 @@ func (c *Client) LatestEpoch(ctx context.Context) (EpochInfo, error) {
 // name). An asset the node has not seen yields ErrNotFound.
 func (c *Client) AssetAddresses(ctx context.Context, asset string) ([]AssetAddress, error) {
 	return getAllPages[AssetAddress](ctx, c, "/api/v0/assets/"+asset+"/addresses")
+}
+
+// Asset fetches on-chain identity/metadata for a native asset — unit is the
+// policy ID concatenated with the hex-encoded asset name, the same "unit"
+// used in UTxO amounts — from the node's loopback Blockfrost-compatible API.
+// An asset the node has not indexed (never minted, as far as this node has
+// seen) yields ErrNotFound.
+func (c *Client) Asset(ctx context.Context, unit string) (AssetInfo, error) {
+	var out AssetInfo
+	err := c.get(ctx, "/api/v0/assets/"+url.PathEscape(unit), &out)
+	return out, err
 }

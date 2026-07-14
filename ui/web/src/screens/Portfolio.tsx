@@ -1,12 +1,23 @@
-import { useBalance, useDelegation } from "../api/hooks";
+import { useMemo, useState } from "react";
+import { useBalance, useDelegation, useAssetMetadata } from "../api/hooks";
 import { Card } from "../components/Card";
 import { Table } from "../components/Table";
 import { StatusPill } from "../components/StatusPill";
-import { formatAda } from "../format";
+import { Input } from "../components/Input";
+import { formatAda, formatTokenQuantity } from "../format";
+import { extractAssetMeta, assetDisplayName, assetMatchesQuery } from "../tokenMeta";
 
 export function Portfolio() {
   const balance = useBalance();
   const delegation = useDelegation();
+  const [query, setQuery] = useState("");
+
+  // Metadata is looked up per-asset through the node (node-only; see
+  // tokenMeta.ts) and applied on a best-effort basis below — a missing or
+  // failed lookup for one asset never blocks the rest of the portfolio.
+  const units = useMemo(() => (balance.data?.assets ?? []).map((a) => a.unit), [balance.data]);
+  const metadataByUnit = useAssetMetadata(units);
+  const assets = balance.data?.assets ?? [];
 
   // Show a single loading state if either hook is still loading.
   if (balance.loading || delegation.loading) {
@@ -21,18 +32,26 @@ export function Portfolio() {
     return <p role="alert" className="error-text">{delegation.error.message}</p>;
   }
 
-  const bal = balance.data;
   const del = delegation.data;
 
   // A fresh wallet returns zeros/empty — treat it as valid, not an error.
-  const lovelace = bal?.lovelace ?? "0";
-  const assets = bal?.assets ?? [];
+  const lovelace = balance.data?.lovelace ?? "0";
+
+  const visibleAssets = assets.filter((a) =>
+    assetMatchesQuery(a.unit, extractAssetMeta(metadataByUnit[a.unit]), query),
+  );
 
   const tokenColumns = [
-    { key: "unit", label: "Unit" },
+    { key: "unit", label: "Asset" },
     { key: "quantity", label: "Quantity" },
   ];
-  const tokenRows = assets.map((a) => ({ unit: a.unit, quantity: a.quantity }));
+  const tokenRows = visibleAssets.map((a) => {
+    const meta = extractAssetMeta(metadataByUnit[a.unit]);
+    return {
+      unit: assetDisplayName(a.unit, meta),
+      quantity: meta.decimals !== undefined ? formatTokenQuantity(a.quantity, meta.decimals) : a.quantity,
+    };
+  });
 
   return (
     <div className="portfolio">
@@ -44,7 +63,21 @@ export function Portfolio() {
         {assets.length === 0 ? (
           <p className="muted">No native tokens</p>
         ) : (
-          <Table columns={tokenColumns} rows={tokenRows} />
+          <>
+            <Input
+              type="text"
+              className="token-search"
+              placeholder="Search by name, ticker, policy, or unit…"
+              aria-label="Search native tokens"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {visibleAssets.length === 0 ? (
+              <p className="muted">No tokens match &ldquo;{query}&rdquo;</p>
+            ) : (
+              <Table columns={tokenColumns} rows={tokenRows} />
+            )}
+          </>
         )}
       </Card>
 

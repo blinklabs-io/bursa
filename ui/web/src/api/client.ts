@@ -26,6 +26,7 @@ import type {
   SubmitSignedRequest,
   PoolInfo,
   DRepInfo,
+  AssetInfo,
   DelegationRequest,
   DelegationPreview,
   HandleInfo,
@@ -191,6 +192,11 @@ export const resolveHandle = (name: string) =>
 // through the same Confirm path the send flow uses.
 export const getPool = (id: string) => apiGet<PoolInfo>(`/wallet/pool/${encodeURIComponent(id)}`);
 export const getDRep = (id: string) => apiGet<DRepInfo>(`/wallet/drep/${encodeURIComponent(id)}`);
+
+// Native-asset on-chain metadata (node-only; see ../tokenMeta.ts for how the
+// Portfolio screen interprets it, with a fallback when it's absent).
+export const getAssetMetadata = (unit: string) =>
+  apiGet<AssetInfo>(`/wallet/assets/${encodeURIComponent(unit)}`);
 export const buildDelegation = (req: DelegationRequest) =>
   apiPost<DelegationPreview>("/wallet/delegation", req);
 export const confirmDelegation = (id: string, password: string) =>

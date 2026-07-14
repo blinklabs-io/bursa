@@ -11,6 +11,7 @@ import type {
   TPMStatus,
   Contact,
   DexPoolsResponse,
+  AssetInfo,
 } from "./types";
 import {
   getStatus,
@@ -24,6 +25,7 @@ import {
   getTPMStatus,
   getContacts,
   getDexPools,
+  getAssetMetadata,
 } from "./client";
 
 export interface AsyncState<T> {
@@ -123,3 +125,52 @@ export const useTPMStatus = (): AsyncState<TPMStatus> => useAsync(getTPMStatus);
 export const useContacts = (): AsyncState<Contact[]> => useAsync(getContacts);
 export const useDexPools = (): AsyncState<DexPoolsResponse> =>
   useAsync(getDexPools, { pollMs: 15000 });
+
+// useAssetMetadata looks up on-chain metadata for a set of native-asset units
+// (in parallel) and returns whatever resolved, keyed by unit. It is
+// deliberately NOT a single useAsync call: assets are looked up individually
+// against the node, and a lookup failing for one unit (not indexed, request
+// error, etc.) must not prevent the others from displaying — the Portfolio
+// screen falls back to the raw unit/quantity for any unit missing from the
+// returned map.
+export function useAssetMetadata(units: string[]): Record<string, AssetInfo | undefined> {
+  const [metadata, setMetadata] = useState<Record<string, AssetInfo | undefined>>({});
+  // Units are hex (policy id + asset name), so \0 can't collide with real
+  // content; this just gives useEffect a stable dependency for "same set".
+  // Dedupe + sort first so the key reflects set semantics — the caller only
+  // cares which units are present, not their order or repeat count — so a
+  // reorder (or a duplicate) of the same units doesn't retrigger lookups.
+  const uniqueUnits = [...new Set(units)].sort();
+  const key = uniqueUnits.join("\0");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    // Do not expose results for units from the previous request set while the
+    // new lookups are pending.
+    setMetadata({});
+
+    // Publish each successful lookup immediately. A slow or rejected unit
+    // must not delay metadata that the node has already returned for another.
+    for (const unit of uniqueUnits) {
+      getAssetMetadata(unit)
+        .then((info) => {
+          if (!cancelled) {
+            setMetadata((current) => ({ ...current, [unit]: info }));
+          }
+        })
+        .catch(() => {
+          // Silently omit failures: callers fall back to the raw unit and
+          // quantity, and the return type makes that absence explicit.
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+    // key summarizes `uniqueUnits` for this effect's purposes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  return metadata;
+}

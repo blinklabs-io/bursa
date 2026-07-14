@@ -1,6 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { Portfolio } from "./Portfolio";
 import * as hooks from "../api/hooks";
+import type { AssetInfo } from "../api/types";
 
 function mockBalance(lovelace: string, assets: { unit: string; quantity: string }[]) {
   vi.spyOn(hooks, "useBalance").mockReturnValue({
@@ -9,6 +10,10 @@ function mockBalance(lovelace: string, assets: { unit: string; quantity: string 
     loading: false,
     refresh: vi.fn(),
   } as never);
+}
+
+function mockAssetMetadata(byUnit: Record<string, Partial<AssetInfo>>) {
+  vi.spyOn(hooks, "useAssetMetadata").mockReturnValue(byUnit as never);
 }
 
 function mockDelegation(overrides: Partial<{
@@ -34,6 +39,12 @@ function mockDelegation(overrides: Partial<{
     refresh: vi.fn(),
   } as never);
 }
+
+beforeEach(() => {
+  // Default: no metadata resolved for any asset (the common case, since most
+  // assets have none on-chain). Individual tests override with mockAssetMetadata.
+  mockAssetMetadata({});
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -148,4 +159,101 @@ test("(h) fresh wallet with zero balance is valid — not an error", () => {
   // Should show "0 ADA" in the balance card without an error state.
   expect(screen.getByText(/^0 ADA$/)).toBeInTheDocument();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+// --- on-chain token metadata + search/filter ---
+
+function makeAssetInfo(unit: string, metadata: Record<string, unknown> | null): AssetInfo {
+  return {
+    asset: unit,
+    policy_id: unit.slice(0, 56),
+    asset_name: unit.slice(56),
+    asset_name_ascii: "",
+    fingerprint: "",
+    quantity: "0",
+    onchain_metadata: metadata,
+  };
+}
+
+test("(i) shows on-chain name and decimals-applied quantity when metadata is available", () => {
+  const unit = "a".repeat(56) + "746f6b656e";
+  mockBalance("4500000", [{ unit, quantity: "1500000" }]);
+  mockDelegation();
+  mockAssetMetadata({
+    [unit]: makeAssetInfo(unit, { name: "Space Coin", ticker: "SPC", decimals: 6 }),
+  });
+
+  render(<Portfolio />);
+
+  expect(screen.getByText("Space Coin")).toBeInTheDocument();
+  expect(screen.getByText("1.5")).toBeInTheDocument();
+  expect(screen.queryByText(unit)).not.toBeInTheDocument();
+});
+
+test("(j) an asset with no resolved metadata falls back to its raw unit/quantity, even when a sibling asset has metadata", () => {
+  const known = "a".repeat(56) + "746f6b656e";
+  const unknown = "b".repeat(56) + "756e6b6e6f776e";
+  mockBalance("4500000", [
+    { unit: known, quantity: "1500000" },
+    { unit: unknown, quantity: "42" },
+  ]);
+  mockDelegation();
+  mockAssetMetadata({ [known]: makeAssetInfo(known, { name: "Space Coin", decimals: 6 }) });
+
+  render(<Portfolio />);
+
+  expect(screen.getByText("Space Coin")).toBeInTheDocument();
+  expect(screen.getByText(unknown)).toBeInTheDocument();
+  expect(screen.getByText("42")).toBeInTheDocument();
+});
+
+test("(k) search box filters the token list by on-chain name", () => {
+  const spc = "a".repeat(56) + "746f6b656e";
+  const other = "b".repeat(56) + "756e6b6e6f776e";
+  mockBalance("0", [
+    { unit: spc, quantity: "10" },
+    { unit: other, quantity: "20" },
+  ]);
+  mockDelegation();
+  mockAssetMetadata({ [spc]: makeAssetInfo(spc, { name: "Space Coin" }) });
+
+  render(<Portfolio />);
+
+  expect(screen.getByText("Space Coin")).toBeInTheDocument();
+  expect(screen.getByText(other)).toBeInTheDocument();
+
+  fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "space" } });
+
+  expect(screen.getByText("Space Coin")).toBeInTheDocument();
+  expect(screen.queryByText(other)).not.toBeInTheDocument();
+});
+
+test("(k2) search box also matches on the raw unit when there is no metadata", () => {
+  mockBalance("0", [{ unit: "lovelace_unit.TokenA", quantity: "5" }]);
+  mockDelegation();
+
+  render(<Portfolio />);
+  fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "tokena" } });
+
+  expect(screen.getByText("lovelace_unit.TokenA")).toBeInTheDocument();
+});
+
+test("(l) a search with no matches shows an empty-results message instead of the table", () => {
+  mockBalance("0", [{ unit: "lovelace_unit.TokenA", quantity: "5" }]);
+  mockDelegation();
+
+  render(<Portfolio />);
+  fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "nomatch" } });
+
+  expect(screen.queryByText("lovelace_unit.TokenA")).not.toBeInTheDocument();
+  expect(screen.getByText(/no tokens match/i)).toBeInTheDocument();
+});
+
+test("(m) the search box is not rendered when there are no native tokens", () => {
+  mockBalance("0", []);
+  mockDelegation();
+
+  render(<Portfolio />);
+
+  expect(screen.queryByPlaceholderText(/search/i)).not.toBeInTheDocument();
 });

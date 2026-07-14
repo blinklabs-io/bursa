@@ -520,6 +520,11 @@ a:hover {
   margin-top: var(--space-3);
 }
 
+/* Native-token search/filter box (Portfolio). */
+.token-search {
+  margin-bottom: var(--space-3);
+}
+
 /* ---------------------------------------------------------------- tables -- */
 .table-wrap {
   overflow-x: auto;

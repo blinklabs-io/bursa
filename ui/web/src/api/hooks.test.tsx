@@ -1,6 +1,7 @@
 import { renderHook, waitFor, act } from "@testing-library/react";
-import { useStatus, useAsync } from "./hooks";
+import { useStatus, useAsync, useAssetMetadata } from "./hooks";
 import * as client from "./client";
+import type { AssetInfo } from "./types";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -166,4 +167,86 @@ test("an 'online' window event triggers an immediate refetch", async () => {
   });
 
   await waitFor(() => expect(calls).toBeGreaterThan(callsAfterInit));
+});
+
+function fakeAssetInfo(unit: string, name: string): AssetInfo {
+  return {
+    asset: unit,
+    policy_id: unit.slice(0, 56),
+    asset_name: unit.slice(56),
+    asset_name_ascii: "",
+    fingerprint: "",
+    quantity: "0",
+    onchain_metadata: { name },
+  };
+}
+
+test("useAssetMetadata resolves metadata for every unit, keyed by unit", async () => {
+  vi.spyOn(client, "getAssetMetadata").mockImplementation((unit: string) =>
+    Promise.resolve(fakeAssetInfo(unit, `Name-${unit}`)),
+  );
+  const { result } = renderHook(() => useAssetMetadata(["unitA", "unitB"]));
+  await waitFor(() => expect(Object.keys(result.current)).toHaveLength(2));
+  expect(result.current.unitA?.onchain_metadata).toEqual({ name: "Name-unitA" });
+  expect(result.current.unitB?.onchain_metadata).toEqual({ name: "Name-unitB" });
+});
+
+test("useAssetMetadata: a rejected lookup for one unit does not break the others", async () => {
+  vi.spyOn(client, "getAssetMetadata").mockImplementation((unit: string) => {
+    if (unit === "bad") return Promise.reject(new Error("not found by your node"));
+    return Promise.resolve(fakeAssetInfo(unit, "Good"));
+  });
+  const { result } = renderHook(() => useAssetMetadata(["good", "bad"]));
+  await waitFor(() => expect(result.current.good).toBeDefined());
+  expect(result.current.bad).toBeUndefined();
+});
+
+test("useAssetMetadata publishes fast lookups without waiting for slower units", async () => {
+  let resolveSlow!: (info: AssetInfo) => void;
+  const slow = new Promise<AssetInfo>((resolve) => {
+    resolveSlow = resolve;
+  });
+  vi.spyOn(client, "getAssetMetadata").mockImplementation((unit: string) => {
+    if (unit === "slow") return slow;
+    return Promise.resolve(fakeAssetInfo(unit, "Fast"));
+  });
+
+  const { result } = renderHook(() => useAssetMetadata(["slow", "fast"]));
+  await waitFor(() => expect(result.current.fast).toBeDefined());
+  expect(result.current.slow).toBeUndefined();
+
+  await act(async () => resolveSlow(fakeAssetInfo("slow", "Slow")));
+  await waitFor(() => expect(result.current.slow).toBeDefined());
+});
+
+test("useAssetMetadata: an empty unit list resolves to {} without calling the client", () => {
+  const spy = vi.spyOn(client, "getAssetMetadata");
+  const { result } = renderHook(() => useAssetMetadata([]));
+  expect(result.current).toEqual({});
+  expect(spy).not.toHaveBeenCalled();
+});
+
+test("useAssetMetadata: reordering the same units does not retrigger lookups", async () => {
+  const spy = vi
+    .spyOn(client, "getAssetMetadata")
+    .mockImplementation((unit: string) => Promise.resolve(fakeAssetInfo(unit, `Name-${unit}`)));
+  const { result, rerender } = renderHook(({ units }) => useAssetMetadata(units), {
+    initialProps: { units: ["unitA", "unitB"] },
+  });
+  await waitFor(() => expect(Object.keys(result.current)).toHaveLength(2));
+  expect(spy).toHaveBeenCalledTimes(2);
+
+  rerender({ units: ["unitB", "unitA"] });
+  // Give any (unwanted) effect re-run a tick to fire before asserting.
+  await Promise.resolve();
+  expect(spy).toHaveBeenCalledTimes(2);
+});
+
+test("useAssetMetadata: duplicate units trigger only one lookup", async () => {
+  const spy = vi
+    .spyOn(client, "getAssetMetadata")
+    .mockImplementation((unit: string) => Promise.resolve(fakeAssetInfo(unit, "Token")));
+  const { result } = renderHook(() => useAssetMetadata(["unitA", "unitA", "unitA"]));
+  await waitFor(() => expect(result.current.unitA).toBeDefined());
+  expect(spy).toHaveBeenCalledTimes(1);
 });
