@@ -1,4 +1,4 @@
-import { extractAssetMeta, assetDisplayName, assetMatchesQuery, policyIdOf } from "./tokenMeta";
+import { extractAssetMeta, assetDisplayName, assetMatchesQuery } from "./tokenMeta";
 import type { AssetInfo } from "./api/types";
 
 function makeInfo(onchainMetadata: unknown): AssetInfo {
@@ -23,6 +23,11 @@ test("extractAssetMeta: reads name/ticker/decimals when present", () => {
 test("extractAssetMeta: falls back to symbol when ticker absent", () => {
   const info = makeInfo({ name: "Token", symbol: "TOK" });
   expect(extractAssetMeta(info)).toEqual({ name: "Token", ticker: "TOK" });
+});
+
+test("extractAssetMeta: falls back to symbol when ticker is empty", () => {
+  const info = makeInfo({ ticker: "  ", symbol: "TOK" });
+  expect(extractAssetMeta(info)).toEqual({ ticker: "TOK" });
 });
 
 test("extractAssetMeta: returns {} when onchain_metadata is null (dingo's current default)", () => {
@@ -59,14 +64,6 @@ test("assetDisplayName: prefers name, then ticker, then raw unit", () => {
   expect(assetDisplayName("unit1", { name: "Token" })).toBe("Token");
   expect(assetDisplayName("unit1", { ticker: "TOK" })).toBe("TOK");
   expect(assetDisplayName("unit1", {})).toBe("unit1");
-});
-
-// --- policyIdOf ---
-
-test("policyIdOf: first 56 hex chars are the policy id", () => {
-  const policy = "a".repeat(56);
-  const unit = policy + "746f6b656e";
-  expect(policyIdOf(unit)).toBe(policy);
 });
 
 // --- assetMatchesQuery ---

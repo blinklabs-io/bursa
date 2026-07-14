@@ -245,10 +245,10 @@ export interface DRepInfo {
 // identity, read from the embedded node (never an external token registry).
 // quantity here is the asset's total on-chain supply — NOT this wallet's
 // balance of it (see Balance/AssetBalance for that). onchain_metadata has no
-// fixed schema (CIP-25/68 define optional, standard-specific keys) and is
-// null on most assets today — the node does not yet index it for every
-// asset — so callers must read it defensively (see ../tokenMeta.ts) and fall
-// back to the raw unit/quantity when name/ticker/decimals are absent.
+// fixed schema (CIP-25/68 define optional, standard-specific keys). The
+// current dingo adapter always returns null; callers must read it defensively
+// (see ../tokenMeta.ts) and fall back to the raw unit/quantity until adapter
+// support lands.
 export interface AssetInfo {
   asset: string;
   policy_id: string;

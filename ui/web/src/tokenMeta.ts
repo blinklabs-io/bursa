@@ -31,9 +31,11 @@ export function extractAssetMeta(info: AssetInfo | undefined): AssetDisplayMeta 
     result.name = name.trim();
   }
 
-  const ticker = meta.ticker ?? meta.symbol;
-  if (typeof ticker === "string" && ticker.trim() !== "") {
-    result.ticker = ticker.trim();
+  for (const ticker of [meta.ticker, meta.symbol]) {
+    if (typeof ticker === "string" && ticker.trim() !== "") {
+      result.ticker = ticker.trim();
+      break;
+    }
   }
 
   const decimalsRaw = meta.decimals;
@@ -49,13 +51,6 @@ export function extractAssetMeta(info: AssetInfo | undefined): AssetDisplayMeta 
 /** Display label for a native asset: metadata name, else ticker, else the raw unit (policy id + hex asset name). */
 export function assetDisplayName(unit: string, meta: AssetDisplayMeta): string {
   return meta.name || meta.ticker || unit;
-}
-
-/** A Cardano policy ID is 28 bytes = 56 hex chars; unit = policy ID + hex asset name. */
-const POLICY_ID_HEX_LENGTH = 56;
-
-export function policyIdOf(unit: string): string {
-  return unit.slice(0, POLICY_ID_HEX_LENGTH);
 }
 
 /**

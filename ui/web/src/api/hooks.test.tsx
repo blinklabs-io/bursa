@@ -201,6 +201,24 @@ test("useAssetMetadata: a rejected lookup for one unit does not break the others
   expect(result.current.bad).toBeUndefined();
 });
 
+test("useAssetMetadata publishes fast lookups without waiting for slower units", async () => {
+  let resolveSlow!: (info: AssetInfo) => void;
+  const slow = new Promise<AssetInfo>((resolve) => {
+    resolveSlow = resolve;
+  });
+  vi.spyOn(client, "getAssetMetadata").mockImplementation((unit: string) => {
+    if (unit === "slow") return slow;
+    return Promise.resolve(fakeAssetInfo(unit, "Fast"));
+  });
+
+  const { result } = renderHook(() => useAssetMetadata(["slow", "fast"]));
+  await waitFor(() => expect(result.current.fast).toBeDefined());
+  expect(result.current.slow).toBeUndefined();
+
+  await act(async () => resolveSlow(fakeAssetInfo("slow", "Slow")));
+  await waitFor(() => expect(result.current.slow).toBeDefined());
+});
+
 test("useAssetMetadata: an empty unit list resolves to {} without calling the client", () => {
   const spy = vi.spyOn(client, "getAssetMetadata");
   const { result } = renderHook(() => useAssetMetadata([]));
@@ -222,4 +240,13 @@ test("useAssetMetadata: reordering the same units does not retrigger lookups", a
   // Give any (unwanted) effect re-run a tick to fire before asserting.
   await Promise.resolve();
   expect(spy).toHaveBeenCalledTimes(2);
+});
+
+test("useAssetMetadata: duplicate units trigger only one lookup", async () => {
+  const spy = vi
+    .spyOn(client, "getAssetMetadata")
+    .mockImplementation((unit: string) => Promise.resolve(fakeAssetInfo(unit, "Token")));
+  const { result } = renderHook(() => useAssetMetadata(["unitA", "unitA", "unitA"]));
+  await waitFor(() => expect(result.current.unitA).toBeDefined());
+  expect(spy).toHaveBeenCalledTimes(1);
 });

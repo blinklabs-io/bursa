@@ -133,43 +133,42 @@ export const useDexPools = (): AsyncState<DexPoolsResponse> =>
 // error, etc.) must not prevent the others from displaying — the Portfolio
 // screen falls back to the raw unit/quantity for any unit missing from the
 // returned map.
-export function useAssetMetadata(units: string[]): Record<string, AssetInfo> {
-  const [metadata, setMetadata] = useState<Record<string, AssetInfo>>({});
+export function useAssetMetadata(units: string[]): Record<string, AssetInfo | undefined> {
+  const [metadata, setMetadata] = useState<Record<string, AssetInfo | undefined>>({});
   // Units are hex (policy id + asset name), so \0 can't collide with real
   // content; this just gives useEffect a stable dependency for "same set".
   // Dedupe + sort first so the key reflects set semantics — the caller only
   // cares which units are present, not their order or repeat count — so a
   // reorder (or a duplicate) of the same units doesn't retrigger lookups.
-  const key = [...new Set(units)].sort().join("\0");
+  const uniqueUnits = [...new Set(units)].sort();
+  const key = uniqueUnits.join("\0");
 
   useEffect(() => {
     let cancelled = false;
 
-    if (units.length === 0) {
-      setMetadata({});
-      return;
-    }
+    // Do not expose results for units from the previous request set while the
+    // new lookups are pending.
+    setMetadata({});
 
-    Promise.allSettled(
-      units.map((unit) => getAssetMetadata(unit).then((info) => [unit, info] as const)),
-    ).then((results) => {
-      if (cancelled) return;
-      const next: Record<string, AssetInfo> = {};
-      for (const result of results) {
-        if (result.status === "fulfilled") {
-          const [unit, info] = result.value;
-          next[unit] = info;
-        }
-        // A rejected result is silently skipped: the caller's fallback path
-        // (raw unit/quantity) covers it.
-      }
-      setMetadata(next);
-    });
+    // Publish each successful lookup immediately. A slow or rejected unit
+    // must not delay metadata that the node has already returned for another.
+    for (const unit of uniqueUnits) {
+      getAssetMetadata(unit)
+        .then((info) => {
+          if (!cancelled) {
+            setMetadata((current) => ({ ...current, [unit]: info }));
+          }
+        })
+        .catch(() => {
+          // Silently omit failures: callers fall back to the raw unit and
+          // quantity, and the return type makes that absence explicit.
+        });
+    }
 
     return () => {
       cancelled = true;
     };
-    // key summarizes `units` for this effect's purposes.
+    // key summarizes `uniqueUnits` for this effect's purposes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
