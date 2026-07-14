@@ -25,6 +25,7 @@ import { SignMessage } from "./screens/SignMessage";
 import { VerifyMessage } from "./screens/VerifyMessage";
 import { Offline } from "./screens/Offline";
 import { Operate } from "./screens/Operate";
+import { MultiSig } from "./screens/MultiSig";
 import { Settings } from "./screens/Settings";
 
 // A Map (not a plain object) so a crafted hash like "#/constructor" or
@@ -51,6 +52,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "verify", label: "Verify" },
   { key: "offline", label: "Offline" },
   { key: "operate", label: "Operate" },
+  { key: "multisig", label: "Multi-sig" },
   { key: "settings", label: "Settings" },
 ];
 
@@ -242,6 +244,7 @@ export function App() {
     else if (route === "verify") activeRoute = "verify";
     else if (route === "offline" && canSign) activeRoute = "offline";
     else if (route === "operate" && canSign) activeRoute = "operate";
+    else if (route === "multisig") activeRoute = "multisig";
     else if (ROUTES.has(route) && route !== "send" && route !== "swap") activeRoute = route;
     else activeRoute = "portfolio";
   }
@@ -297,6 +300,11 @@ export function App() {
     // pool ops are offline; only retirement submission needs a synced node,
     // gated at the API.
     content = canSign ? <Operate account={toAccount(activeWallet)} /> : <Portfolio />;
+  } else if (route === "multisig") {
+    // Managing multi-sig accounts (list/create/view) is local state and works on
+    // any active wallet; the spend sub-flow gates itself on canSend (synced node
+    // + spending-enabled wallet).
+    content = <MultiSig canSpend={canSend} />;
   } else {
     const Screen = ROUTES.get(route) ?? Portfolio;
     content = <Screen />;

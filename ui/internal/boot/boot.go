@@ -39,6 +39,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/settings"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
@@ -248,6 +249,10 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// ErrNotMainnet on non-mainnet networks.
 	dexSvc := dex.NewService(chainClient, cfg.Network)
 
+	// Native multi-sig accounts are persisted under the data dir; signing uses
+	// the active wallet's CIP-1854 key, decrypted from the vault on demand.
+	multisigSvc := multisig.NewService(chainCtx, vaultKeystore{v: vlt}, filepath.Join(cfg.DataDir, "multisig.json"))
+
 	// Bind the control-surface listener BEFORE starting the node so an
 	// OS-assigned port (127.0.0.1:0) is known to the caller the moment Boot
 	// returns — the mobile WebView needs the concrete port to load the SPA.
@@ -284,6 +289,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			chainClient,
 			poolSvc,
 			dexSvc,
+			multisigSvc,
 			cfg.Network, webui.Handler(),
 			api.WithLegacyKeystore(legacyKeyStore),
 		),
