@@ -513,6 +513,43 @@ test("connector shows paired extension and connected sites", async () => {
   expect(screen.getByRole("button", { name: /revoke/i })).toBeInTheDocument();
 });
 
+test("connector surfaces a failed grant revocation", async () => {
+  mockStatus("ready", 12345, true);
+  vi.mocked(connectorApi.getConnectorState).mockResolvedValue({
+    paired: true,
+    extension_id: "chrome-extension://abc123",
+    origins: ["https://app.sundae.fi"],
+  });
+  vi.spyOn(connectorApi, "revokeGrant").mockRejectedValue(
+    new client.ApiError(500, "Revoke failed"),
+  );
+
+  renderSettings();
+  const revoke = await screen.findByRole("button", {
+    name: "Revoke https://app.sundae.fi",
+  });
+  fireEvent.click(revoke);
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("Revoke failed");
+});
+
+test("connector surfaces a failed extension unpair", async () => {
+  mockStatus("ready", 12345, true);
+  vi.mocked(connectorApi.getConnectorState).mockResolvedValue({
+    paired: true,
+    extension_id: "chrome-extension://abc123",
+    origins: [],
+  });
+  vi.spyOn(connectorApi, "unpair").mockRejectedValue(
+    new client.ApiError(500, "Unpair failed"),
+  );
+
+  renderSettings();
+  fireEvent.click(await screen.findByRole("button", { name: /unpair extension/i }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("Unpair failed");
+});
+
 test("connector reveals a pending pairing code after password confirmation", async () => {
   mockStatus("ready", 12345, true);
   vi.mocked(connectorApi.pendingPairings).mockImplementation(async (password?: string) =>

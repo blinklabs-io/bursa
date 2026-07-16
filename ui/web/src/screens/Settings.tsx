@@ -470,6 +470,8 @@ export function Settings({ account, spendingEnabled, autoLock }: SettingsProps) 
   const [revealingPairCode, setRevealingPairCode] = useState(false);
   const [pairingRevealError, setPairingRevealError] = useState<string | null>(null);
   const [revealedPairCodes, setRevealedPairCodes] = useState<Record<string, string>>({});
+  const [connectorMutationError, setConnectorMutationError] = useState<string | null>(null);
+  const [connectorMutation, setConnectorMutation] = useState<string | null>(null);
 
   useEffect(() => {
     if (!pendingPairs.data) return;
@@ -484,20 +486,32 @@ export function Settings({ account, spendingEnabled, autoLock }: SettingsProps) 
   }, [pendingPairs.data]);
 
   async function handleRevoke(origin: string) {
+    setConnectorMutationError(null);
+    setConnectorMutation(`revoke:${origin}`);
     try {
       await revokeGrant(origin);
       connectorState.refresh();
-    } catch {
-      // The polling refresh will retry.
+    } catch (e) {
+      setConnectorMutationError(
+        e instanceof Error ? e.message : `Unable to revoke ${origin}`,
+      );
+    } finally {
+      setConnectorMutation(null);
     }
   }
 
   async function handleUnpair() {
+    setConnectorMutationError(null);
+    setConnectorMutation("unpair");
     try {
       await unpair();
       connectorState.refresh();
-    } catch {
-      // The polling refresh will retry.
+    } catch (e) {
+      setConnectorMutationError(
+        e instanceof Error ? e.message : "Unable to unpair extension",
+      );
+    } finally {
+      setConnectorMutation(null);
     }
   }
 
@@ -679,9 +693,10 @@ export function Settings({ account, spendingEnabled, autoLock }: SettingsProps) 
                         <Button
                           variant="ghost"
                           aria-label={`Revoke ${origin}`}
+                          disabled={connectorMutation !== null}
                           onClick={() => void handleRevoke(origin)}
                         >
-                          Revoke
+                          {connectorMutation === `revoke:${origin}` ? "Revoking…" : "Revoke"}
                         </Button>
                       </li>
                     ))}
@@ -690,9 +705,18 @@ export function Settings({ account, spendingEnabled, autoLock }: SettingsProps) 
               )}
 
               {connectorState.data.paired && (
-                <Button variant="ghost" onClick={() => void handleUnpair()}>
-                  Unpair extension
+                <Button
+                  variant="ghost"
+                  disabled={connectorMutation !== null}
+                  onClick={() => void handleUnpair()}
+                >
+                  {connectorMutation === "unpair" ? "Unpairing…" : "Unpair extension"}
                 </Button>
+              )}
+              {connectorMutationError && (
+                <p role="alert" className="error-text">
+                  {connectorMutationError}
+                </p>
               )}
             </>
           ) : connectorState.error ? (

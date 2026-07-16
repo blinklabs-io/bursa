@@ -965,6 +965,22 @@ func derivedPaymentVkey(t *testing.T, idx uint32) []byte {
 	return bip32.XPrv(payKey).Public().PublicKey()
 }
 
+// derivedChangeVkey returns the 32-byte Ed25519 public key for the role-1
+// payment key at derivation index idx from backendTestMnemonic.
+func derivedChangeVkey(t *testing.T, idx uint32) []byte {
+	t.Helper()
+	rootKey, err := bursa.GetRootKeyFromMnemonic(backendTestMnemonic, "")
+	if err != nil {
+		t.Fatalf("GetRootKeyFromMnemonic: %v", err)
+	}
+	acctKey, err := bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		t.Fatalf("GetAccountKey: %v", err)
+	}
+	changeKey := acctKey.Derive(1).Derive(idx)
+	return bip32.XPrv(changeKey).Public().PublicKey()
+}
+
 // ---------------------------------------------------------------------------
 // Task 12 backend signing tests
 // ---------------------------------------------------------------------------
@@ -1134,6 +1150,71 @@ func TestWalletBackendSignTx(t *testing.T) {
 	// re-encoded body that differs byte-for-byte from the original).
 	if !ed25519.Verify(ed25519.PublicKey(witnesses[0].Vkey), signingTarget.Bytes(), witnesses[0].Signature) {
 		t.Error("witness signature does not verify against blake2b-256 of the original tx body")
+	}
+}
+
+func TestWalletBackendSignTxChangeAddressInput(t *testing.T) {
+	acct := mustDeriveBackendSigningAccount(t)
+	sp := spend.NewService(
+		&fakeSpendChain{},
+		fakeTestKeystore{mnemonic: backendTestMnemonic},
+		acct,
+	)
+
+	changeAddr := acct.ChangeAddresses[2]
+	utxo := twoKnownUTxOs(changeAddr)[0]
+	fc := &fakeConnectorChain{
+		addressErr: chain.ErrNotFound,
+		utxos: map[string][]chain.UTxO{
+			changeAddr: {utxo},
+		},
+	}
+	wl := wallet.NewService(&walletChainBridge{f: fc})
+	if _, err := wl.SetWallet(backendTestMnemonic, "preview", 5); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	be := NewWalletBackend(wl, sp, acct, "preview", fc)
+
+	txIDBytes, err := hex.DecodeString(utxo.TxHash)
+	if err != nil {
+		t.Fatalf("decode tx id: %v", err)
+	}
+	var txID lcommon.Blake2b256
+	copy(txID[:], txIDBytes)
+	body := conway.ConwayTransactionBody{
+		TxInputs: conway.NewConwayTransactionInputSet([]shelley.ShelleyTransactionInput{{
+			TxId:        txID,
+			OutputIndex: uint32(utxo.OutputIndex), //nolint:gosec // test fixture
+		}}),
+		TxFee: 200000,
+	}
+	txCbor, err := gocbor.Encode(&conway.ConwayTransaction{
+		Body:      body,
+		TxIsValid: true,
+	})
+	if err != nil {
+		t.Fatalf("encode tx: %v", err)
+	}
+
+	wsHex, err := be.SignTx(context.Background(), hex.EncodeToString(txCbor), false, "anypassword")
+	if err != nil {
+		t.Fatalf("SignTx change input: %v", err)
+	}
+	wsBytes, err := hex.DecodeString(wsHex)
+	if err != nil {
+		t.Fatalf("decode witness set hex: %v", err)
+	}
+	var ws conway.ConwayTransactionWitnessSet
+	if _, err := gocbor.Decode(wsBytes, &ws); err != nil {
+		t.Fatalf("decode witness set: %v", err)
+	}
+	witnesses := ws.VkeyWitnesses.Items()
+	if len(witnesses) != 1 {
+		t.Fatalf("witness count = %d, want 1", len(witnesses))
+	}
+	wantVkey := derivedChangeVkey(t, 2)
+	if !bytes.Equal(witnesses[0].Vkey, wantVkey) {
+		t.Fatalf("change witness vkey = %x, want %x", witnesses[0].Vkey, wantVkey)
 	}
 }
 

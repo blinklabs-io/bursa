@@ -1358,14 +1358,14 @@ func (s *Service) Submit(ctx context.Context, txBytes []byte) (string, error) {
 //   - txBodyCbor: the raw CBOR of the transaction body (used to compute the hash
 //     that is signed; must equal the body embedded in the original tx).
 //   - requiredSignerHashes: the Blake2b224 key hashes from the tx body's
-//     required-signers field (key 14); all matching keys are signed regardless
-//     of partialSign.
+//     required-signers field (key 14). WitnessTx also reads the body directly
+//     for certificate and withdrawal credentials.
 //   - inputAddrs: the bech32 addresses of the transaction's inputs that the
 //     wallet may own (resolved by the caller using its address window).
 //   - password: unlocks the keystore.
-//   - partialSign: when false, WitnessTx returns an error if no key matches at
-//     all (the tx requires at least one signature this wallet cannot provide);
-//     when true, an empty witness set is acceptable.
+//   - partialSign: when false, WitnessTx returns an error if any explicitly
+//     required key credential cannot be matched; when true, a partial or empty
+//     witness set is acceptable.
 //
 // Returns the CBOR-encoded ConwayTransactionWitnessSet containing only the
 // VkeyWitnesses this wallet can provide.
@@ -1392,6 +1392,11 @@ func (s *Service) WitnessTx(
 	// one.
 	if curWalletID != walletID {
 		return nil, ErrWalletChanged
+	}
+
+	var txBody conway.ConwayTransactionBody
+	if _, err := cbor.Decode(txBodyCbor, &txBody); err != nil {
+		return nil, fmt.Errorf("%w: decode transaction body: %w", ErrInvalidTx, err)
 	}
 
 	// Unlock the active wallet's seed (walletID-bound), not merely the active
@@ -1432,50 +1437,129 @@ func (s *Service) WitnessTx(
 	// Hash the tx body to get the signing target.
 	txBodyHash := lcommon.Blake2b256Hash(txBodyCbor)
 
-	// Build a map: bech32 address → derivation index for every address the wallet
-	// can sign for. The wallet derives only role-0 (payment/receive) addresses via
-	// GetPaymentKey; the first receive address also serves as the change address
-	// (see Build), so there is no separate role-1 window to enumerate. An address
-	// absent from this map MUST NOT be signed — defaulting to index 0 would attach
-	// a witness from the wrong key. If a role-1 change window is ever added, it
-	// must be enumerated here with its own derivation path so the correct key is
-	// derived per address.
-	idxOf := make(map[string]uint32, len(acct.ReceiveAddresses))
+	// Build a map from every owned payment address to its CIP-1852 role/index.
+	// Receive addresses use role 0 and change addresses use role 1. An address
+	// absent from this map MUST NOT be signed — defaulting to role/index 0 would
+	// attach a witness from the wrong key.
+	type paymentKeyPath struct {
+		role  uint32
+		index uint32
+	}
+	pathOf := make(map[string]paymentKeyPath, len(acct.ReceiveAddresses)+len(acct.ChangeAddresses))
 	for i, addrStr := range acct.ReceiveAddresses {
-		idxOf[addrStr] = uint32(i) //nolint:gosec // bounded by window size
+		pathOf[addrStr] = paymentKeyPath{
+			role:  0,
+			index: uint32(i), //nolint:gosec // bounded by window size
+		}
+	}
+	for i, addrStr := range acct.ChangeAddresses {
+		pathOf[addrStr] = paymentKeyPath{
+			role:  1,
+			index: uint32(i), //nolint:gosec // bounded by window size
+		}
 	}
 
-	// Build required signer set for quick lookup.
+	// Build the complete set of explicit key credentials that require witnesses:
+	// key-14 required signers plus credentials referenced by certificates and
+	// reward withdrawals. The latter are not redundantly required to appear in
+	// key 14.
 	reqSet := make(map[lcommon.Blake2b224]bool, len(requiredSignerHashes))
 	for _, h := range requiredSignerHashes {
 		reqSet[h] = true
 	}
+	for _, h := range txBody.RequiredSigners() {
+		reqSet[h] = true
+	}
+	addCredential := func(cred *lcommon.Credential) {
+		if cred != nil && cred.CredType == lcommon.CredentialTypeAddrKeyHash {
+			reqSet[cred.Credential] = true
+		}
+	}
+	for _, cert := range txBody.Certificates() {
+		switch c := cert.(type) {
+		case *lcommon.StakeRegistrationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.StakeDeregistrationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.StakeDelegationCertificate:
+			addCredential(c.StakeCredential)
+		case *lcommon.RegistrationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.DeregistrationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.VoteDelegationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.StakeVoteDelegationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.StakeRegistrationDelegationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.VoteRegistrationDelegationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.StakeVoteRegistrationDelegationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.RegistrationDrepCertificate:
+			addCredential(&c.DrepCredential)
+		case *lcommon.DeregistrationDrepCertificate:
+			addCredential(&c.DrepCredential)
+		case *lcommon.UpdateDrepCertificate:
+			addCredential(&c.DrepCredential)
+		}
+	}
+	for addr := range txBody.TxWithdrawals {
+		if addr == nil {
+			continue
+		}
+		if payload, ok := addr.StakingPayload().(lcommon.AddressPayloadKeyHash); ok {
+			reqSet[payload.Hash] = true
+		}
+	}
 
-	// Collect address→index for every address we must sign for. Only addresses
-	// present in idxOf are eligible (no silent index-0 fallback):
+	// Collect each payment derivation path we must sign for. Only addresses
+	// present in pathOf are eligible (no silent role/index-0 fallback):
 	// - Inputs at addresses the wallet owns.
 	// - Addresses whose payment key matches a required signer.
-	signIdx := make(map[string]uint32)
+	signPaths := make(map[paymentKeyPath]bool)
 	for _, addrStr := range inputAddrs {
-		if idx, owned := idxOf[addrStr]; owned {
-			signIdx[addrStr] = idx
+		if path, owned := pathOf[addrStr]; owned {
+			signPaths[path] = true
 		}
 	}
 	signStake := false
 	signDRep := false
 
+	derivePaymentKey := func(path paymentKeyPath) (bip32.XPrv, error) {
+		switch path.role {
+		case 0:
+			return bursa.GetPaymentKey(acctKey, path.index)
+		case 1:
+			if path.index >= 0x80000000 {
+				return nil, fmt.Errorf("invalid change key index %d", path.index)
+			}
+			roleKey := acctKey.Derive(1)
+			defer func() {
+				for i := range roleKey {
+					roleKey[i] = 0
+				}
+			}()
+			return roleKey.Derive(path.index), nil
+		default:
+			return nil, fmt.Errorf("unsupported payment key role %d", path.role)
+		}
+	}
+
 	// For required signers: iterate all owned signing keys to find matches. This
-	// includes payment keys plus non-payment wallet witnesses such as stake and
-	// DRep keys.
+	// includes receive/change payment keys plus non-payment wallet witnesses such
+	// as stake and DRep keys.
 	if len(reqSet) > 0 {
-		for i, addrStr := range acct.ReceiveAddresses {
-			payKey, err := bursa.GetPaymentKey(acctKey, uint32(i)) //nolint:gosec // bounded by window size
+		for _, path := range pathOf {
+			payKey, err := derivePaymentKey(path)
 			if err != nil {
 				continue
 			}
 			vkeyHash := lcommon.Blake2b224Hash(bip32.XPrv(payKey).Public().PublicKey())
 			if reqSet[vkeyHash] {
-				signIdx[addrStr] = uint32(i) //nolint:gosec // bounded by window size
+				signPaths[path] = true
+				delete(reqSet, vkeyHash)
 			}
 			for j := range payKey {
 				payKey[j] = 0
@@ -1488,6 +1572,7 @@ func (s *Service) WitnessTx(
 		stakeVkeyHash := lcommon.Blake2b224Hash(bip32.XPrv(stakeKey).Public().PublicKey())
 		if reqSet[stakeVkeyHash] {
 			signStake = true
+			delete(reqSet, stakeVkeyHash)
 		}
 		for j := range stakeKey {
 			stakeKey[j] = 0
@@ -1500,13 +1585,21 @@ func (s *Service) WitnessTx(
 		drepVkeyHash := lcommon.Blake2b224Hash(bip32.XPrv(drepKey).Public().PublicKey())
 		if reqSet[drepVkeyHash] {
 			signDRep = true
+			delete(reqSet, drepVkeyHash)
 		}
 		for j := range drepKey {
 			drepKey[j] = 0
 		}
 	}
 
-	if len(signIdx) == 0 && !signStake && !signDRep && !partialSign {
+	if len(reqSet) > 0 && !partialSign {
+		return nil, fmt.Errorf(
+			"%w: wallet cannot provide %d required key witness(es)",
+			ErrInvalidRequest,
+			len(reqSet),
+		)
+	}
+	if len(signPaths) == 0 && !signStake && !signDRep && !partialSign {
 		return nil, fmt.Errorf(
 			"%w: no wallet key matches any required signer or input address in this transaction",
 			ErrInvalidRequest,
@@ -1522,10 +1615,10 @@ func (s *Service) WitnessTx(
 			Signature: bip32.XPrv(key).Sign(txBodyHash.Bytes()),
 		})
 	}
-	for _, idx := range signIdx {
-		payKey, err := bursa.GetPaymentKey(acctKey, idx)
+	for path := range signPaths {
+		payKey, err := derivePaymentKey(path)
 		if err != nil {
-			return nil, fmt.Errorf("payment key idx %d: %w", idx, err)
+			return nil, fmt.Errorf("payment key role %d idx %d: %w", path.role, path.index, err)
 		}
 		func() {
 			defer func() {

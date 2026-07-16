@@ -28,6 +28,20 @@ import { subscribePending, decide } from "../api/connector";
 import { notifyPending } from "../connectorNotify";
 import type { ConnectorRequest } from "../api/types";
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function requestTime(req: ConnectorRequest): number {
+  const parsed = Date.parse(req.created);
+  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+}
+
+function orderPending(requests: ConnectorRequest[]): ConnectorRequest[] {
+  return [...requests].sort(
+    (a, b) => requestTime(a) - requestTime(b) || a.id.localeCompare(b.id),
+  );
+}
+
 // methodSummary returns a human-readable one-line description of what a CIP-30
 // method does, so the user understands what they are approving or rejecting.
 function methodSummary(req: ConnectorRequest): string {
@@ -87,19 +101,19 @@ export function ConnectorApproval() {
 
   // Track IDs we have already notified so we don't re-notify on re-renders.
   const notifiedIds = useRef<Set<string>>(new Set());
-  const pendingIds = useRef<Set<string>>(new Set());
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previouslyFocused = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    const unsub = subscribePending((req) => {
-      // Deduplicate: if the SSE snapshot replays an id we already have, skip.
-      if (pendingIds.current.has(req.id)) return;
-      pendingIds.current.add(req.id);
-      setPending((prev) => [...prev, req]);
-      // Notify once per new request, outside the state updater so the updater
-      // stays pure under Strict Mode.
-      if (!notifiedIds.current.has(req.id)) {
-        notifiedIds.current.add(req.id);
-        notifyPending(req);
+    const unsub = subscribePending((snapshot) => {
+      const ordered = orderPending(snapshot);
+      setPending(ordered);
+
+      for (const req of ordered) {
+        if (!notifiedIds.current.has(req.id)) {
+          notifiedIds.current.add(req.id);
+          notifyPending(req);
+        }
       }
     });
     return unsub;
@@ -107,6 +121,60 @@ export function ConnectorApproval() {
 
   // The request at the head of the queue is the one we prompt for.
   const current = pending[0];
+  const currentID = current?.id;
+  const hasCurrent = current !== undefined;
+
+  useEffect(() => {
+    if (currentID === undefined) return;
+    setPassword("");
+    setError(null);
+    if (!previouslyFocused.current) {
+      previouslyFocused.current = document.activeElement as HTMLElement | null;
+    }
+    const dialog = dialogRef.current;
+    const firstFocusable = dialog?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+    (firstFocusable ?? dialog)?.focus();
+  }, [currentID]);
+
+  useEffect(() => {
+    if (current) return;
+    previouslyFocused.current?.focus();
+    previouslyFocused.current = null;
+  }, [current]);
+
+  useEffect(() => {
+    if (!hasCurrent) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [hasCurrent]);
+
+  useEffect(
+    () => () => {
+      previouslyFocused.current?.focus();
+    },
+    [],
+  );
+
   if (!current) return null;
 
   async function handleDecide(approved: boolean) {
@@ -117,12 +185,10 @@ export function ConnectorApproval() {
       const decisionPassword = approved && needsPassword(current.method) ? password : undefined;
       await decide(current.id, approved, decisionPassword);
       // Remove the decided request from the queue.
-      pendingIds.current.delete(current.id);
       setPending((prev) => prev.filter((r) => r.id !== current.id));
       setPassword("");
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
-        pendingIds.current.delete(current.id);
         setPending((prev) => prev.filter((r) => r.id !== current.id));
         setPassword("");
         return;
@@ -152,7 +218,11 @@ export function ConnectorApproval() {
         padding: "1rem",
       }}
     >
-      <div style={{ width: "100%", maxWidth: "420px" }}>
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        style={{ width: "100%", maxWidth: "420px" }}
+      >
         <Card title="dApp Request">
           <dl className="stat-list" style={{ marginBottom: "1rem" }}>
             <dt>Origin</dt>

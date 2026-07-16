@@ -246,9 +246,9 @@
     document.getElementById('btn-sign-data').onclick = async () => {
       section('signData(addr, payload)');
       try {
-        // Use change address if available, otherwise a placeholder bech32
-        let addr;
-        try { addr = await api.getChangeAddress(); } catch (_) { addr = 'addr_placeholder'; }
+        // A real wallet address is required by CIP-30 signData. If address
+        // discovery fails, surface that error instead of sending invalid input.
+        const addr = await api.getChangeAddress();
         const payload = Array.from(new TextEncoder().encode('Bursa CIP-30 E2E test')).map(b => b.toString(16).padStart(2, '0')).join('');
         ok(await api.signData(addr, payload));
       } catch (e) { err(e); }

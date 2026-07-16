@@ -231,7 +231,8 @@ func (v *Vault) Locked() bool {
 func (v *Vault) VerifyPassword(vaultPassword string) error {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	_, _, _, err := v.authenticatedEnvelopeLocked(vaultPassword)
+	_, vek, _, err := v.authenticatedEnvelopeLocked(vaultPassword)
+	keystore.Zero(vek)
 	return err
 }
 

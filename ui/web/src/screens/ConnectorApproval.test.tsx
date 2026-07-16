@@ -33,15 +33,22 @@ const makeReq = (overrides: Partial<ConnectorRequest> = {}): ConnectorRequest =>
 });
 
 let restoreEventSource: (() => void) | undefined;
+let emittedRequests: ConnectorRequest[] = [];
 
 function emitRequest(req: ConnectorRequest) {
+  emittedRequests = [...emittedRequests.filter((item) => item.id !== req.id), req];
+  emitSnapshot(emittedRequests);
+}
+
+function emitSnapshot(pending: ConnectorRequest[]) {
   act(() => {
-    FakeEventSource.instances[0].emit(JSON.stringify(req));
+    FakeEventSource.instances[0].emit(JSON.stringify({ type: "snapshot", pending }));
   });
 }
 
 beforeEach(() => {
   restoreEventSource = installFakeEventSource();
+  emittedRequests = [];
   vi.spyOn(notify, "notifyPending").mockResolvedValue(undefined);
 });
 
@@ -66,6 +73,66 @@ test("shows the approval dialog when a pending request arrives", async () => {
   await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
   expect(screen.getByText("https://app.minswap.org")).toBeInTheDocument();
   expect(screen.getByText(/grant wallet access/i)).toBeInTheDocument();
+});
+
+test("shows the oldest request first when a reconnect snapshot is unordered", async () => {
+  render(<ConnectorApproval />);
+  emitSnapshot([
+    makeReq({
+      id: "newer",
+      origin: "https://newer.example",
+      created: "2026-06-27T00:00:02Z",
+    }),
+    makeReq({
+      id: "older",
+      origin: "https://older.example",
+      created: "2026-06-27T00:00:01Z",
+    }),
+  ]);
+
+  await waitFor(() =>
+    expect(screen.getByText("https://older.example")).toBeInTheDocument(),
+  );
+  expect(screen.queryByText("https://newer.example")).toBeNull();
+});
+
+test("authoritative snapshots remove expired requests from the overlay", async () => {
+  render(<ConnectorApproval />);
+  emitSnapshot([
+    makeReq({ id: "expired", origin: "https://expired.example" }),
+  ]);
+  await waitFor(() =>
+    expect(screen.getByText("https://expired.example")).toBeInTheDocument(),
+  );
+
+  emitSnapshot([]);
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+test("moves focus into non-password dialogs and traps Tab navigation", async () => {
+  const backgroundButton = document.createElement("button");
+  backgroundButton.textContent = "Background";
+  document.body.append(backgroundButton);
+  backgroundButton.focus();
+
+  const { unmount } = render(<ConnectorApproval />);
+  emitRequest(makeReq({ method: "enable" }));
+
+  const reject = await screen.findByRole("button", { name: /reject/i });
+  const approve = screen.getByRole("button", { name: /approve/i });
+  await waitFor(() => expect(reject).toHaveFocus());
+
+  approve.focus();
+  fireEvent.keyDown(document, { key: "Tab" });
+  expect(reject).toHaveFocus();
+
+  fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+  expect(approve).toHaveFocus();
+
+  unmount();
+  expect(backgroundButton).toHaveFocus();
+  backgroundButton.remove();
 });
 
 test("Approve calls decide(id, true, password) for a signing method", async () => {
@@ -151,8 +218,16 @@ test("drops stale pending requests when decide returns 404", async () => {
   vi.spyOn(connectorApi, "decide").mockRejectedValue(new ApiError(404, "unknown request id"));
 
   render(<ConnectorApproval />);
-  emitRequest(makeReq({ id: "stale-1", origin: "https://stale.example" }));
-  emitRequest(makeReq({ id: "next-1", origin: "https://next.example" }));
+  emitRequest(makeReq({
+    id: "stale-1",
+    origin: "https://stale.example",
+    created: "2026-06-27T00:00:00Z",
+  }));
+  emitRequest(makeReq({
+    id: "next-1",
+    origin: "https://next.example",
+    created: "2026-06-27T00:00:01Z",
+  }));
 
   await waitFor(() => expect(screen.getByText("https://stale.example")).toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: /reject/i }));

@@ -164,9 +164,9 @@ test("subscribePending opens an EventSource at /connector/events", () => {
   unsub();
 });
 
-test("subscribePending calls onRequest with parsed ConnectorRequest for each message", () => {
-  const received: ConnectorRequest[] = [];
-  subscribePending((req) => received.push(req));
+test("subscribePending supplies authoritative pending snapshots", () => {
+  const received: ConnectorRequest[][] = [];
+  subscribePending((pending) => received.push(pending));
 
   const req: ConnectorRequest = {
     id: "r1",
@@ -175,25 +175,36 @@ test("subscribePending calls onRequest with parsed ConnectorRequest for each mes
     created: "2026-06-27T00:00:00Z",
   };
 
-  FakeEventSource.instances[0].emit(JSON.stringify(req));
+  FakeEventSource.instances[0].emit(
+    JSON.stringify({ type: "snapshot", pending: [req] }),
+  );
 
   expect(received).toHaveLength(1);
-  expect(received[0]).toEqual(req);
+  expect(received[0]).toEqual([req]);
 });
 
 test("subscribePending closes the EventSource when unsubscribed", () => {
   const unsub = subscribePending(() => {});
   const es = FakeEventSource.instances[0];
+  expect(es.readyState).toBe(FakeEventSource.OPEN);
   expect(es.closed).toBe(false);
   unsub();
   expect(es.closed).toBe(true);
+  expect(es.readyState).toBe(FakeEventSource.CLOSED);
+  expect(FakeEventSource.instances).not.toContain(es);
 });
 
 test("subscribePending silently ignores malformed data", () => {
-  const received: ConnectorRequest[] = [];
+  const received: ConnectorRequest[][] = [];
   expect(() => {
     subscribePending((req) => received.push(req));
     FakeEventSource.instances[0].emit("not-valid-json{{{");
   }).not.toThrow();
   expect(received).toHaveLength(0);
+});
+
+test("FakeEventSource exposes browser-compatible readyState constants", () => {
+  expect(FakeEventSource.CONNECTING).toBe(0);
+  expect(FakeEventSource.OPEN).toBe(1);
+  expect(FakeEventSource.CLOSED).toBe(2);
 });

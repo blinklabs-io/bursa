@@ -12,6 +12,12 @@ var (
 	ErrTimeout        = errors.New("connector: request timed out")
 	ErrUnknownRequest = errors.New("connector: unknown request id")
 	ErrAlreadyDecided = errors.New("connector: request already decided")
+	ErrQueueFull      = errors.New("connector: too many pending requests")
+)
+
+const (
+	maxPendingRequests          = 64
+	maxPendingRequestsPerOrigin = 8
 )
 
 type Request struct {
@@ -40,32 +46,30 @@ type Queue struct {
 
 	mu      sync.Mutex
 	waiters map[string]*waiter
-	subs    map[int]chan Request
+	subs    map[int]chan struct{}
 	nextSub int
 }
 
 func NewQueue(now func() time.Time, mkID func() (string, error), timeout time.Duration) *Queue {
 	return &Queue{
 		now: now, mkID: mkID, timeout: timeout,
-		waiters: map[string]*waiter{}, subs: map[int]chan Request{},
+		waiters: map[string]*waiter{}, subs: map[int]chan struct{}{},
 	}
 }
 
 func (q *Queue) Submit(origin, method string, params json.RawMessage) (*Request, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	if len(q.waiters) >= maxPendingRequests || q.pendingForOriginLocked(origin) >= maxPendingRequestsPerOrigin {
+		return nil, ErrQueueFull
+	}
 	id, err := q.mkID()
 	if err != nil {
 		return nil, err
 	}
 	r := Request{ID: id, Origin: origin, Method: method, Params: params, Created: q.now()}
 	q.waiters[r.ID] = &waiter{req: r, done: make(chan Decision, 1)}
-	for _, ch := range q.subs {
-		select {
-		case ch <- r:
-		default:
-		}
-	}
+	q.notifyLocked()
 	return &r, nil
 }
 
@@ -104,6 +108,7 @@ func (q *Queue) Decide(id string, d Decision) error {
 		return ErrAlreadyDecided
 	}
 	w.decided = true
+	q.notifyLocked()
 	q.mu.Unlock()
 
 	w.done <- d
@@ -123,12 +128,17 @@ func (q *Queue) Pending() []Request {
 	return out
 }
 
-func (q *Queue) Subscribe() (<-chan Request, func()) {
+// Subscribe returns a coalesced state-change notification channel. Consumers
+// must call Pending after each notification and replace their local state with
+// that authoritative snapshot. The one-slot channel intentionally coalesces
+// bursts: if a consumer is slow, a queued notification still causes it to read
+// the latest complete state, so requests and removals cannot be lost.
+func (q *Queue) Subscribe() (<-chan struct{}, func()) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	id := q.nextSub
 	q.nextSub++
-	ch := make(chan Request, 8)
+	ch := make(chan struct{}, 1)
 	q.subs[id] = ch
 	return ch, func() {
 		q.mu.Lock()
@@ -143,5 +153,27 @@ func (q *Queue) Subscribe() (<-chan Request, func()) {
 func (q *Queue) remove(id string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	delete(q.waiters, id)
+	if _, ok := q.waiters[id]; ok {
+		delete(q.waiters, id)
+		q.notifyLocked()
+	}
+}
+
+func (q *Queue) pendingForOriginLocked(origin string) int {
+	n := 0
+	for _, w := range q.waiters {
+		if !w.decided && w.req.Origin == origin {
+			n++
+		}
+	}
+	return n
+}
+
+func (q *Queue) notifyLocked() {
+	for _, ch := range q.subs {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
 }

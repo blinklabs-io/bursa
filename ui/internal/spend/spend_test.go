@@ -1500,11 +1500,20 @@ func TestWitnessTxRequiredSignerIncludesStakeAndDRepKeys(t *testing.T) {
 	}
 	stakeVkey := append([]byte(nil), bip32.XPrv(stakeKey).Public().PublicKey()...)
 	drepVkey := append([]byte(nil), bip32.XPrv(drepKey).Public().PublicKey()...)
+	bodyCbor, err := cbor.Encode(conway.ConwayTransactionBody{
+		TxRequiredSigners: cbor.NewSetType([]lcommon.Blake2b224{
+			lcommon.Blake2b224Hash(stakeVkey),
+			lcommon.Blake2b224Hash(drepVkey),
+		}, true),
+	})
+	if err != nil {
+		t.Fatalf("encode body: %v", err)
+	}
 
 	s := NewService(nil, fakeKeystore{mnemonic: testMnemonic}, acct)
 	wsCbor, err := s.WitnessTx(
 		"",
-		[]byte("tx-body"),
+		bodyCbor,
 		[]lcommon.Blake2b224{
 			lcommon.Blake2b224Hash(stakeVkey),
 			lcommon.Blake2b224Hash(drepVkey),
@@ -1530,6 +1539,117 @@ func TestWitnessTxRequiredSignerIncludesStakeAndDRepKeys(t *testing.T) {
 	}
 	if !got[hex.EncodeToString(drepVkey)] {
 		t.Fatalf("missing DRep key witness; got %v", got)
+	}
+}
+
+func TestWitnessTxIncludesCertificateAndWithdrawalKeysWithoutRequiredSigners(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(testMnemonic, "")
+	if err != nil {
+		t.Fatalf("GetRootKeyFromMnemonic: %v", err)
+	}
+	acctKey, err := bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		t.Fatalf("GetAccountKey: %v", err)
+	}
+	stakeKey, err := bursa.GetStakeKey(acctKey, 0)
+	if err != nil {
+		t.Fatalf("GetStakeKey: %v", err)
+	}
+	drepKey, err := bursa.GetDRepKey(acctKey, 0)
+	if err != nil {
+		t.Fatalf("GetDRepKey: %v", err)
+	}
+	stakeVkey := append([]byte(nil), bip32.XPrv(stakeKey).Public().PublicKey()...)
+	drepVkey := append([]byte(nil), bip32.XPrv(drepKey).Public().PublicKey()...)
+	drepHash := lcommon.Blake2b224Hash(drepVkey)
+
+	stakeAddr, err := lcommon.NewAddress(acct.StakeAddress)
+	if err != nil {
+		t.Fatalf("NewAddress(stake): %v", err)
+	}
+	bodyCbor, err := cbor.Encode(conway.ConwayTransactionBody{
+		TxWithdrawals: map[*lcommon.Address]uint64{
+			&stakeAddr: 1,
+		},
+		TxCertificates: []lcommon.CertificateWrapper{{
+			Type: uint(lcommon.CertificateTypeUpdateDrep),
+			Certificate: &lcommon.UpdateDrepCertificate{
+				CertType: uint(lcommon.CertificateTypeUpdateDrep),
+				DrepCredential: lcommon.Credential{
+					CredType:   lcommon.CredentialTypeAddrKeyHash,
+					Credential: drepHash,
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("encode body: %v", err)
+	}
+
+	s := NewService(nil, fakeKeystore{mnemonic: testMnemonic}, acct)
+	wsCbor, err := s.WitnessTx("", bodyCbor, nil, nil, "pw", false)
+	if err != nil {
+		t.Fatalf("WitnessTx: %v", err)
+	}
+
+	var ws conway.ConwayTransactionWitnessSet
+	if _, err := cbor.Decode(wsCbor, &ws); err != nil {
+		t.Fatalf("decode witness set: %v", err)
+	}
+	got := map[string]bool{}
+	for _, w := range ws.VkeyWitnesses.Items() {
+		got[hex.EncodeToString(w.Vkey)] = true
+	}
+	if !got[hex.EncodeToString(stakeVkey)] {
+		t.Fatalf("missing withdrawal stake key witness; got %v", got)
+	}
+	if !got[hex.EncodeToString(drepVkey)] {
+		t.Fatalf("missing certificate DRep key witness; got %v", got)
+	}
+}
+
+func TestWitnessTxNonPartialRejectsUnmatchedRequiredSigner(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(testMnemonic, "")
+	if err != nil {
+		t.Fatalf("GetRootKeyFromMnemonic: %v", err)
+	}
+	acctKey, err := bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		t.Fatalf("GetAccountKey: %v", err)
+	}
+	payKey, err := bursa.GetPaymentKey(acctKey, 0)
+	if err != nil {
+		t.Fatalf("GetPaymentKey: %v", err)
+	}
+	ownedHash := lcommon.Blake2b224Hash(bip32.XPrv(payKey).Public().PublicKey())
+	foreignHash := lcommon.Blake2b224Hash([]byte("foreign required signer"))
+	required := []lcommon.Blake2b224{ownedHash, foreignHash}
+	bodyCbor, err := cbor.Encode(conway.ConwayTransactionBody{
+		TxRequiredSigners: cbor.NewSetType(required, true),
+	})
+	if err != nil {
+		t.Fatalf("encode body: %v", err)
+	}
+
+	s := NewService(nil, fakeKeystore{mnemonic: testMnemonic}, acct)
+	if _, err := s.WitnessTx("", bodyCbor, required, nil, "pw", false); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("WitnessTx(partialSign=false) = %v, want ErrInvalidRequest", err)
+	}
+
+	wsCbor, err := s.WitnessTx("", bodyCbor, required, nil, "pw", true)
+	if err != nil {
+		t.Fatalf("WitnessTx(partialSign=true): %v", err)
+	}
+	var ws conway.ConwayTransactionWitnessSet
+	if _, err := cbor.Decode(wsCbor, &ws); err != nil {
+		t.Fatalf("decode witness set: %v", err)
+	}
+	if got := len(ws.VkeyWitnesses.Items()); got != 1 {
+		t.Fatalf("partial witness count = %d, want 1", got)
 	}
 }
 

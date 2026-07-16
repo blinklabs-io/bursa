@@ -9,7 +9,7 @@ import (
 
 func TestTokenStoreMintVerify(t *testing.T) {
 	seq := 0
-	ts := NewTokenStore(t.TempDir()+"/token.json", nil, func() (string, error) { seq++; return "tok", nil })
+	ts := NewTokenStore(t.TempDir()+"/token.json", func() (string, error) { seq++; return "tok", nil })
 	tok, err := ts.Mint("abc")
 	if err != nil || tok != "tok" {
 		t.Fatalf("mint: %q %v", tok, err)
@@ -27,7 +27,7 @@ func TestTokenStoreMintVerify(t *testing.T) {
 
 func TestTokenStoreMintDoesNotChangeMemoryOnPersistFailure(t *testing.T) {
 	blockedPath := t.TempDir()
-	ts := NewTokenStore(blockedPath, nil, func() (string, error) { return "tok", nil })
+	ts := NewTokenStore(blockedPath, func() (string, error) { return "tok", nil })
 	if _, err := ts.Mint("abc"); err == nil {
 		t.Fatal("Mint to a directory path should fail")
 	}
@@ -38,7 +38,7 @@ func TestTokenStoreMintDoesNotChangeMemoryOnPersistFailure(t *testing.T) {
 
 func TestTokenStoreRejectsInvalidExtensionIDs(t *testing.T) {
 	calls := 0
-	ts := NewTokenStore(t.TempDir()+"/token.json", nil, func() (string, error) {
+	ts := NewTokenStore(t.TempDir()+"/token.json", func() (string, error) {
 		calls++
 		return "tok", nil
 	})
@@ -57,7 +57,7 @@ func TestTokenStoreRejectsInvalidExtensionIDs(t *testing.T) {
 
 func TestTokenStoreClearKeepsMemoryOnRemoveFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "token.json")
-	ts := NewTokenStore(path, nil, func() (string, error) { return "tok", nil })
+	ts := NewTokenStore(path, func() (string, error) { return "tok", nil })
 	if _, err := ts.Mint("abc"); err != nil {
 		t.Fatalf("Mint: %v", err)
 	}
@@ -76,18 +76,18 @@ func TestTokenStoreClearKeepsMemoryOnRemoveFailure(t *testing.T) {
 
 func TestTokenStorePersistsAndClears(t *testing.T) {
 	path := t.TempDir() + "/token.json"
-	a := NewTokenStore(path, nil, func() (string, error) { return "tok", nil })
+	a := NewTokenStore(path, func() (string, error) { return "tok", nil })
 	if _, err := a.Mint("ext1"); err != nil {
 		t.Fatal(err)
 	}
-	b := NewTokenStore(path, nil, func() (string, error) { return "tok", nil })
+	b := NewTokenStore(path, func() (string, error) { return "tok", nil })
 	if !b.Verify("tok", "ext1") {
 		t.Fatal("token should survive reload")
 	}
 	if err := b.Clear(); err != nil {
 		t.Fatal(err)
 	}
-	c := NewTokenStore(path, nil, func() (string, error) { return "tok", nil })
+	c := NewTokenStore(path, func() (string, error) { return "tok", nil })
 	if c.Verify("tok", "ext1") {
 		t.Fatal("cleared token must not verify")
 	}
@@ -100,7 +100,7 @@ func TestTokenStoreLoadsOnlyValidPersistedPairings(t *testing.T) {
 	if err := os.WriteFile(validPath, []byte(`{"extension_id":"abc","token":"tok"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	valid := NewTokenStore(validPath, nil, func() (string, error) { return "unused", nil })
+	valid := NewTokenStore(validPath, func() (string, error) { return "unused", nil })
 	extID, tok, ok := valid.Pair()
 	if !ok || extID != "chrome-extension://abc" || tok != "tok" {
 		t.Fatalf("Pair() = (%q, %q, %v), want normalized valid persisted pair", extID, tok, ok)
@@ -110,7 +110,7 @@ func TestTokenStoreLoadsOnlyValidPersistedPairings(t *testing.T) {
 	if err := os.WriteFile(invalidPath, []byte(`{"extension_id":"https://evil.example","token":"tok"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	invalid := NewTokenStore(invalidPath, nil, func() (string, error) { return "unused", nil })
+	invalid := NewTokenStore(invalidPath, func() (string, error) { return "unused", nil })
 	extID, tok, ok = invalid.Pair()
 	if ok || extID != "" || tok != "" {
 		t.Fatalf("Pair() = (%q, %q, %v), want invalid persisted pair ignored", extID, tok, ok)
@@ -118,7 +118,7 @@ func TestTokenStoreLoadsOnlyValidPersistedPairings(t *testing.T) {
 }
 
 func TestTokenStoreClearWhenAbsent(t *testing.T) {
-	ts := NewTokenStore(t.TempDir()+"/token.json", nil, func() (string, error) { return "tok", nil })
+	ts := NewTokenStore(t.TempDir()+"/token.json", func() (string, error) { return "tok", nil })
 	if err := ts.Clear(); err != nil {
 		t.Fatalf("Clear on never-minted store should return nil, got %v", err)
 	}

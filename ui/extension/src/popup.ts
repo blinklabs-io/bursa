@@ -1,10 +1,9 @@
-// Read current state from storage on load
+// Read current state from storage on load.
 async function init() {
   const { token, port = 8090 } = await chrome.storage.local.get(['token', 'port']);
 
   const statusBar = document.getElementById('status-bar')!;
   const pairSection = document.getElementById('pair-section')!;
-  const sitesSection = document.getElementById('sites-section')!;
   const portInput = document.getElementById('port-input') as HTMLInputElement;
 
   portInput.value = String(port);
@@ -13,8 +12,6 @@ async function init() {
     statusBar.textContent = 'Connected';
     statusBar.className = 'status connected';
     pairSection.hidden = true;
-    sitesSection.hidden = false;
-    // (connected-sites list is populated by the background on future tasks; for now just show section)
   } else {
     statusBar.textContent = 'Not paired';
     statusBar.className = 'status disconnected';
@@ -86,24 +83,6 @@ document.getElementById('confirm-btn')!.addEventListener('click', async () => {
   }
 });
 
-// Revoke: POST /connector/self-revoke — an extension-facing, token-gated route.
-// /connector/grants/revoke is the separate SPA-facing route; it requires a
-// strict same-origin browser request and would reject this popup's fetch
-// (whose Origin is chrome-extension://<id>, not the API's own host).
-async function revokeOrigin(origin: string) {
-  const { token, port = 8090 } = await chrome.storage.local.get(['token', 'port']);
-  await fetch(`http://127.0.0.1:${port}/connector/self-revoke`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Bursa-Token': token as string,
-    },
-    body: JSON.stringify({ origin }),
-  });
-  // Refresh sites list (not implemented here — placeholder)
-}
-
-// Export for testing
-export { revokeOrigin };
-
 init();
+
+export {};

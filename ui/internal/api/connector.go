@@ -288,12 +288,11 @@ func handleConnectorUnpair(svc *connector.Service) http.HandlerFunc {
 // handleConnectorSelfRevoke handles POST /connector/self-revoke.
 //
 // Extension-facing — gated by connectorMiddleware's bearer-token check (same
-// as /connector/pair and /connector/request), NOT by same-origin: a paired
-// extension's popup calls this directly to let the user revoke a connected
-// site from its own connected-sites UI. (/connector/grants/revoke is the
-// separate SPA-facing route, gated by strictSameOrigin instead of a token —
-// the popup's fetch would fail that check since its Origin is
-// chrome-extension://<id>, not the API's own host.)
+// as /connector/pair and /connector/request), NOT by same-origin. This is the
+// token-gated counterpart available to a future extension-side grants UI.
+// (/connector/grants/revoke is the separate SPA-facing route, gated by
+// strictSameOrigin instead of a token; an extension fetch would fail that check
+// since its Origin is chrome-extension://<id>, not the API's own host.)
 // Body: {"origin": string}.
 func handleConnectorSelfRevoke(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -380,8 +379,9 @@ func handleConnectorPendingPairings(svc *connector.Service, authorizeCode func(p
 // routes only.
 //
 // On connect:
-//  1. Emits the current pending snapshot (one event per request).
-//  2. Streams new requests as they arrive via svc.Subscribe().
+//  1. Emits the current pending queue as one authoritative snapshot event.
+//  2. Emits a fresh authoritative snapshot when svc.Subscribe reports a state
+//     change, including decisions and timeout removals.
 //  3. Sends a ": keepalive" SSE comment every 20 s to prevent proxy timeouts.
 //  4. Returns when the client disconnects (r.Context().Done()).
 func handleConnectorEvents(svc *connector.Service) http.HandlerFunc {
@@ -400,15 +400,27 @@ func handleConnectorEvents(svc *connector.Service) http.HandlerFunc {
 			return
 		}
 
+		ch, cancel := svc.Subscribe()
+		defer cancel()
+
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		w.WriteHeader(http.StatusOK)
 		flusher.Flush()
 
-		// writeEvent writes a single SSE data event and flushes.
-		writeEvent := func(req connector.Request) {
-			b, err := json.Marshal(req)
+		// writeSnapshot publishes the complete authoritative queue state. Queue
+		// notifications are coalesced, so consumers replace local state with
+		// this snapshot rather than depending on lossless per-request events.
+		writeSnapshot := func() {
+			event := struct {
+				Type    string              `json:"type"`
+				Pending []connector.Request `json:"pending"`
+			}{
+				Type:    "snapshot",
+				Pending: svc.Pending(),
+			}
+			b, err := json.Marshal(event)
 			if err != nil {
 				return
 			}
@@ -416,21 +428,16 @@ func handleConnectorEvents(svc *connector.Service) http.HandlerFunc {
 			flusher.Flush()
 		}
 
-		ch, cancel := svc.Subscribe()
-		defer cancel()
-
 		// Emit the current pending snapshot so the SPA starts with full state.
-		for _, req := range svc.Pending() {
-			writeEvent(req)
-		}
+		writeSnapshot()
 
 		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
 
 		for {
 			select {
-			case req := <-ch:
-				writeEvent(req)
+			case <-ch:
+				writeSnapshot()
 			case <-ticker.C:
 				fmt.Fprint(w, ": keepalive\n\n")
 				flusher.Flush()
@@ -458,6 +465,8 @@ func connectorErrorCode(method string, err error) (httpStatus int, code int, inf
 		return http.StatusForbidden, -3, err.Error()
 	case errors.Is(err, connector.ErrTimeout):
 		return http.StatusRequestTimeout, -3, "request timed out"
+	case errors.Is(err, connector.ErrQueueFull):
+		return http.StatusTooManyRequests, -3, err.Error()
 	case errors.Is(err, connector.ErrUserDeclined):
 		switch method {
 		case "signData":
@@ -482,6 +491,10 @@ func connectorErrorCode(method string, err error) (httpStatus int, code int, inf
 // On error   → CIP-30 error body {"error_code": N, "info": "<msg>"}.
 func handleConnectorRequest(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Connector approvals intentionally wait up to two minutes. Clear the
+		// server-wide 30-second write deadline for this long-polling route.
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 		var body struct {
 			Origin string          `json:"origin"`
 			Method string          `json:"method"`

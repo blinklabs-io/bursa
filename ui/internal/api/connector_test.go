@@ -232,6 +232,8 @@ func TestConnectorErrorCode(t *testing.T) {
 		{"ErrRefused/unknown", "unknown", connector.ErrRefused, 403, -3, "connector: refused"},
 		// ErrTimeout → 408, -3
 		{"ErrTimeout", "signTx", connector.ErrTimeout, 408, -3, "request timed out"},
+		// ErrQueueFull → 429, -3
+		{"ErrQueueFull", "signTx", connector.ErrQueueFull, 429, -3, "connector: too many pending requests"},
 		// ErrUserDeclined by method
 		{"ErrUserDeclined/signData", "signData", connector.ErrUserDeclined, 403, 3, "connector: user declined"},
 		{"ErrUserDeclined/signTx", "signTx", connector.ErrUserDeclined, 403, 2, "connector: user declined"},
@@ -583,8 +585,12 @@ func TestConnectorEvents(t *testing.T) {
 		svc.Handle(context.Background(), "https://a.io", "enable", nil) //nolint:errcheck
 	}()
 
-	// Read the SSE response line-by-line until we see a matching data event or
-	// the context deadline expires.
+	type queueSnapshot struct {
+		Type    string              `json:"type"`
+		Pending []connector.Request `json:"pending"`
+	}
+
+	// Read authoritative snapshots until the pending request appears.
 	scanner := bufio.NewScanner(resp.Body)
 	found := false
 	for scanner.Scan() {
@@ -593,9 +599,17 @@ func TestConnectorEvents(t *testing.T) {
 			continue
 		}
 		payload := strings.TrimPrefix(line, "data: ")
-		// Must contain both "method":"enable" and "origin":"https://a.io".
-		if strings.Contains(payload, `"method":"enable"`) && strings.Contains(payload, `"origin":"https://a.io"`) {
-			found = true
+		var snapshot queueSnapshot
+		if err := json.Unmarshal([]byte(payload), &snapshot); err != nil || snapshot.Type != "snapshot" {
+			continue
+		}
+		for _, pending := range snapshot.Pending {
+			if pending.Method == "enable" && pending.Origin == "https://a.io" {
+				found = true
+				break
+			}
+		}
+		if found {
 			break
 		}
 	}
@@ -604,11 +618,52 @@ func TestConnectorEvents(t *testing.T) {
 		t.Error("did not receive expected SSE data event for pending enable request")
 	}
 
-	// Clean up: decide the pending request so the goroutine unblocks.
+	// Decide the request and require a subsequent authoritative empty snapshot,
+	// proving removals/timeouts cannot remain stuck in the overlay.
 	for _, pending := range svc.Pending() {
 		_ = svc.Decide(pending.ID, connector.Decision{Approved: false})
 	}
+	removed := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		var snapshot queueSnapshot
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &snapshot); err == nil &&
+			snapshot.Type == "snapshot" && len(snapshot.Pending) == 0 {
+			removed = true
+			break
+		}
+	}
+	if !removed {
+		t.Error("did not receive authoritative empty snapshot after decision")
+	}
 	// cancel() (deferred above) ends the SSE stream.
+}
+
+type writeDeadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadlines []time.Time
+}
+
+func (w *writeDeadlineRecorder) SetWriteDeadline(deadline time.Time) error {
+	w.deadlines = append(w.deadlines, deadline)
+	return nil
+}
+
+func TestConnectorRequestClearsWriteDeadline(t *testing.T) {
+	svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/connector/request", strings.NewReader(
+		`{"origin":"https://a.io","method":"isEnabled"}`,
+	))
+	rec := &writeDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+
+	handleConnectorRequest(svc).ServeHTTP(rec, req)
+
+	if len(rec.deadlines) != 1 || !rec.deadlines[0].IsZero() {
+		t.Fatalf("write deadlines = %v, want one cleared deadline", rec.deadlines)
+	}
 }
 
 // TestConnectorGrants tests GET /connector/grants, POST /connector/grants/revoke,

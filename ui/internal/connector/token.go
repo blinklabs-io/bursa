@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 )
 
 type tokenData struct {
@@ -25,7 +24,6 @@ var ErrInvalidExtensionID = errors.New("connector: invalid extension id")
 // TokenStore holds the single paired-extension token, persisted atomically.
 type TokenStore struct {
 	path string
-	now  func() time.Time
 	rnd  func() (string, error)
 
 	mu   sync.RWMutex
@@ -43,14 +41,11 @@ func defaultRand() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func NewTokenStore(path string, now func() time.Time, rnd func() (string, error)) *TokenStore {
-	if now == nil {
-		now = time.Now
-	}
+func NewTokenStore(path string, rnd func() (string, error)) *TokenStore {
 	if rnd == nil {
 		rnd = defaultRand
 	}
-	ts := &TokenStore{path: path, now: now, rnd: rnd}
+	ts := &TokenStore{path: path, rnd: rnd}
 	if b, err := os.ReadFile(path); err == nil {
 		var data tokenData
 		if err := json.Unmarshal(b, &data); err == nil {

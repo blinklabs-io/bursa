@@ -13,9 +13,6 @@
     button { padding: 6px 12px; cursor: pointer; font-size: 13px; }
     input { width: 100%; box-sizing: border-box; padding: 6px; margin: 4px 0 8px; font-size: 13px; }
     label { font-size: 12px; color: #666; }
-    .site-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 12px; border-bottom: 1px solid #eee; }
-    #sites-section { margin-top: 12px; }
-    #sites-list { max-height: 150px; overflow-y: auto; }
     .error { color: #721c24; font-size: 12px; margin-top: 4px; }
   </style>
 </head>
@@ -36,11 +33,6 @@
       <button id="confirm-btn">Confirm Pairing</button>
       <div id="code-error" class="error" role="alert" hidden></div>
     </div>
-  </div>
-
-  <div id="sites-section" hidden>
-    <h2 style="font-size:14px">Connected sites</h2>
-    <div id="sites-list"></div>
   </div>
 
   <script type="module" src="popup.js"></script>

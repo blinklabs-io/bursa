@@ -52,18 +52,25 @@ export function pendingPairings(password?: string): Promise<PendingPairing[]> {
   );
 }
 
+interface PendingSnapshotEvent {
+  type: "snapshot";
+  pending: ConnectorRequest[];
+}
+
 // subscribePending opens a Server-Sent Events stream at /connector/events and
-// calls onRequest for each ConnectorRequest event received. Returns an
-// unsubscribe function that closes the stream.
+// replaces the consumer's local state with each authoritative queue snapshot.
+// Returns an unsubscribe function that closes the stream.
 export function subscribePending(
-  onRequest: (req: ConnectorRequest) => void,
+  onSnapshot: (pending: ConnectorRequest[]) => void,
 ): () => void {
   const es = new EventSource("/connector/events");
 
   es.onmessage = (evt) => {
     try {
-      const req = JSON.parse(evt.data) as ConnectorRequest;
-      onRequest(req);
+      const event = JSON.parse(evt.data) as PendingSnapshotEvent;
+      if (event.type === "snapshot" && Array.isArray(event.pending)) {
+        onSnapshot(event.pending);
+      }
     } catch {
       // Ignore malformed events (keepalive comments never produce onmessage).
     }

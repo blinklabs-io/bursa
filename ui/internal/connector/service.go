@@ -80,7 +80,7 @@ func NewService(dir string, be Backend, networkPrompt func()) *Service {
 		return hex.EncodeToString(b), nil
 	}
 	return &Service{
-		tokens:    NewTokenStore(filepath.Join(dir, "connector-token.json"), time.Now, nil),
+		tokens:    NewTokenStore(filepath.Join(dir, "connector-token.json"), nil),
 		grants:    NewGrantStore(filepath.Join(dir, "connector-grants.json")),
 		queue:     NewQueue(time.Now, mkID, 120*time.Second),
 		be:        be,
@@ -132,7 +132,7 @@ func (s *Service) ConfirmPair(extensionID, code string) (string, error) {
 	extensionID = normalizeExtensionID(extensionID)
 	s.pairMu.Lock()
 	expected, ok := s.pairCodes[extensionID]
-	if ok {
+	if ok && expected == code {
 		delete(s.pairCodes, extensionID)
 	}
 	s.pairMu.Unlock()
@@ -164,8 +164,9 @@ func (s *Service) Pending() []Request {
 	return s.queue.Pending()
 }
 
-// Subscribe returns a channel that receives new requests and an unsubscribe func.
-func (s *Service) Subscribe() (<-chan Request, func()) {
+// Subscribe returns coalesced queue state-change notifications and an
+// unsubscribe function. Consumers must refresh from Pending on notification.
+func (s *Service) Subscribe() (<-chan struct{}, func()) {
 	return s.queue.Subscribe()
 }
 
@@ -378,16 +379,19 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if !s.grants.IsGranted(origin) {
 			return nil, ErrNotGranted
 		}
+		var p struct {
+			Tx          string `json:"tx"`
+			PartialSign bool   `json:"partialSign"`
+		}
+		if err := unmarshalRequiredParams(params, &p); err != nil {
+			return nil, err
+		}
+		if p.Tx == "" {
+			return nil, fmt.Errorf("%w: tx is required", ErrInvalidParams)
+		}
 		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
 			if !d.Approved {
 				return nil, ErrUserDeclined
-			}
-			var p struct {
-				Tx          string `json:"tx"`
-				PartialSign bool   `json:"partialSign"`
-			}
-			if err := unmarshalParams(params, &p); err != nil {
-				return nil, err
 			}
 			v, err := s.be.SignTx(ctx, p.Tx, p.PartialSign, d.Password)
 			if err != nil {
@@ -400,16 +404,19 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if !s.grants.IsGranted(origin) {
 			return nil, ErrNotGranted
 		}
+		var p struct {
+			Addr    string `json:"addr"`
+			Payload string `json:"payload"`
+		}
+		if err := unmarshalRequiredParams(params, &p); err != nil {
+			return nil, err
+		}
+		if p.Addr == "" || p.Payload == "" {
+			return nil, fmt.Errorf("%w: addr and payload are required", ErrInvalidParams)
+		}
 		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
 			if !d.Approved {
 				return nil, ErrUserDeclined
-			}
-			var p struct {
-				Addr    string `json:"addr"`
-				Payload string `json:"payload"`
-			}
-			if err := unmarshalParams(params, &p); err != nil {
-				return nil, err
 			}
 			sig, key, err := s.be.SignData(p.Addr, p.Payload, d.Password)
 			if err != nil {
@@ -422,15 +429,18 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if !s.grants.IsGranted(origin) {
 			return nil, ErrNotGranted
 		}
+		var p struct {
+			Tx string `json:"tx"`
+		}
+		if err := unmarshalRequiredParams(params, &p); err != nil {
+			return nil, err
+		}
+		if p.Tx == "" {
+			return nil, fmt.Errorf("%w: tx is required", ErrInvalidParams)
+		}
 		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
 			if !d.Approved {
 				return nil, ErrUserDeclined
-			}
-			var p struct {
-				Tx string `json:"tx"`
-			}
-			if err := unmarshalParams(params, &p); err != nil {
-				return nil, err
 			}
 			v, err := s.be.SubmitTx(ctx, p.Tx)
 			if err != nil {
@@ -456,6 +466,13 @@ func unmarshalParams(params json.RawMessage, dst any) error {
 		return fmt.Errorf("%w: %w", ErrInvalidParams, err)
 	}
 	return nil
+}
+
+func unmarshalRequiredParams(params json.RawMessage, dst any) error {
+	if len(params) == 0 || string(params) == "null" {
+		return fmt.Errorf("%w: params are required", ErrInvalidParams)
+	}
+	return unmarshalParams(params, dst)
 }
 
 // enqueueAndAwait submits a request to the queue, optionally calls the

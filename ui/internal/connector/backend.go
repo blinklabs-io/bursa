@@ -379,10 +379,11 @@ func extractTxBodyCbor(txBytes []byte) ([]byte, error) {
 	return body, nil
 }
 
-// resolveInputAddresses looks up which of this wallet's derived receive addresses
-// have UTxOs that match the transaction inputs. This is used by SignTx to
-// identify which payment keys are needed for signing. Per-address chain lookup
-// failures are best-effort and skipped, so this never returns an error.
+// resolveInputAddresses looks up which of this wallet's derived receive or
+// change addresses have UTxOs that match the transaction inputs. This is used
+// by SignTx to identify which role/index payment keys are needed for signing.
+// Per-address chain lookup failures are best-effort and skipped, so this never
+// returns an error.
 func (b *WalletBackend) resolveInputAddresses(ctx context.Context, inputs []shelley.ShelleyTransactionInput) []string {
 	acct := b.account()
 	if acct == nil || len(inputs) == 0 {
@@ -396,9 +397,13 @@ func (b *WalletBackend) resolveInputAddresses(ctx context.Context, inputs []shel
 		inputSet[ref] = true
 	}
 
-	// Query UTxOs at each derived receive address; check if any UTxO is in inputSet.
+	// Query UTxOs at each derived receive/change address; check if any UTxO is in
+	// inputSet.
 	var owned []string
-	for _, addrStr := range acct.ReceiveAddresses {
+	addresses := make([]string, 0, len(acct.ReceiveAddresses)+len(acct.ChangeAddresses))
+	addresses = append(addresses, acct.ReceiveAddresses...)
+	addresses = append(addresses, acct.ChangeAddresses...)
+	for _, addrStr := range addresses {
 		utxos, err := b.chain.AddressUTxOs(ctx, addrStr)
 		if err != nil || len(utxos) == 0 {
 			continue

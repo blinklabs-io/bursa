@@ -32,7 +32,6 @@ document.body.innerHTML = `
       <div id="code-error" hidden></div>
     </div>
   </div>
-  <div id="sites-section" hidden></div>
 `;
 
 // Dynamic import after DOM and chrome mock are ready
@@ -67,7 +66,6 @@ describe('popup UI', () => {
     const codeError = document.getElementById('code-error')!;
     const statusBar = document.getElementById('status-bar')!;
     const pairSection = document.getElementById('pair-section')!;
-    const sitesSection = document.getElementById('sites-section')!;
     const portInput = document.getElementById('port-input') as HTMLInputElement;
     const codeInput = document.getElementById('code-input') as HTMLInputElement;
 
@@ -77,7 +75,6 @@ describe('popup UI', () => {
     statusBar.textContent = 'Not paired';
     statusBar.className = 'status disconnected';
     pairSection.hidden = false;
-    sitesSection.hidden = true;
     portInput.value = '8090';
     codeInput.value = '';
     pairError.textContent = '';
@@ -139,11 +136,10 @@ describe('popup UI', () => {
     // connected branch and updates the UI.
     const statusBar = document.getElementById('status-bar')!;
     const pairSection = document.getElementById('pair-section')!;
-    const sitesSection = document.getElementById('sites-section')!;
     expect(statusBar.textContent).toBe('Connected');
     expect(statusBar.className).toContain('connected');
     expect(pairSection.hidden).toBe(true);
-    expect(sitesSection.hidden).toBe(false);
+    expect(document.getElementById('sites-section')).toBeNull();
   });
 
   it('pair step 1 failure shows pair-error element', async () => {

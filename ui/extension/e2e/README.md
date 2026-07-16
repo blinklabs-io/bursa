@@ -38,14 +38,14 @@ The output is written to `ui/extension/dist/`.
 
 ## Step 3 — Start Bursa with the connector enabled
 
-Start the Bursa daemon.  The connector listens on `localhost` by default and
-requires a pairing code to authorise dApps.  Consult the Bursa documentation
-for the exact flag/config key.
-
-Example (adjust flags as needed):
+Build and start the Bursa wallet with the connector opt-in enabled. The
+connector listens on `localhost` and requires a pairing code to authorise
+dApps:
 
 ```sh
-bursa serve --connector
+# From the repository root:
+make wallet
+BURSA_CONNECTOR=1 ./ui/bursa-wallet
 ```
 
 ---
@@ -66,8 +66,8 @@ bursa serve --connector
 Open `sample-dapp.html` in Chrome via a local HTTP server:
 
 ```sh
-python3 -m http.server 8090 --directory ui/extension/e2e
-# then navigate to http://localhost:8090/sample-dapp.html
+python3 -m http.server 8080 --directory ui/extension/e2e
+# then navigate to http://localhost:8080/sample-dapp.html
 ```
 
 You can also open it as a `file://` URL, but only after enabling

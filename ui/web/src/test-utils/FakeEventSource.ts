@@ -1,9 +1,13 @@
 export class FakeEventSource {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 2;
   static instances: FakeEventSource[] = [];
 
   url: string;
   onmessage: ((evt: { data: string }) => void) | null = null;
   closed = false;
+  readyState = FakeEventSource.OPEN;
 
   constructor(url: string) {
     this.url = url;
@@ -16,6 +20,10 @@ export class FakeEventSource {
 
   close() {
     this.closed = true;
+    this.readyState = FakeEventSource.CLOSED;
+    FakeEventSource.instances = FakeEventSource.instances.filter(
+      (instance) => instance !== this,
+    );
   }
 }
 

@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 )
@@ -193,6 +194,9 @@ func TestServicePairCodeMismatch(t *testing.T) {
 	_, err := s.ConfirmPair("ext2", code+"X")
 	if err != ErrPairCodeMismatch {
 		t.Fatalf("want ErrPairCodeMismatch, got %v", err)
+	}
+	if _, err := s.ConfirmPair("ext2", code); err != nil {
+		t.Fatalf("correct code after mismatch should still pair: %v", err)
 	}
 }
 
@@ -426,5 +430,38 @@ func TestServiceNormalizesRawExtensionID(t *testing.T) {
 	}
 	if extID != "chrome-extension://abcdefghijklmnopabcdefghijklmnop" {
 		t.Fatalf("paired extension id = %q, want chrome-extension:// form", extID)
+	}
+}
+
+func TestServiceRejectsMalformedSigningParamsBeforePrompt(t *testing.T) {
+	prompts := 0
+	s := NewService(t.TempDir(), &fakeBackend{}, func() { prompts++ })
+	const origin = "https://signing.example"
+	if err := s.grants.Grant(origin); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	tests := []struct {
+		method string
+		params json.RawMessage
+	}{
+		{method: "signTx", params: json.RawMessage(`{"tx":`)},
+		{method: "signTx", params: json.RawMessage(`{}`)},
+		{method: "signData", params: json.RawMessage(`{"addr":"aa"}`)},
+		{method: "signData", params: nil},
+		{method: "submitTx", params: json.RawMessage(`null`)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.method+"/"+string(tc.params), func(t *testing.T) {
+			if _, err := s.Handle(ctx(t), origin, tc.method, tc.params); !errors.Is(err, ErrInvalidParams) {
+				t.Fatalf("Handle error = %v, want ErrInvalidParams", err)
+			}
+		})
+	}
+	if prompts != 0 {
+		t.Fatalf("prompt called %d times for invalid params, want 0", prompts)
+	}
+	if pending := s.Pending(); len(pending) != 0 {
+		t.Fatalf("invalid params queued requests: %+v", pending)
 	}
 }
