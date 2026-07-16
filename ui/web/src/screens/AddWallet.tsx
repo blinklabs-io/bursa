@@ -5,7 +5,9 @@ import { Input } from "../components/Input";
 import { Select } from "../components/Select";
 import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
-import { addWallet, generateMnemonic, ApiError } from "../api/client";
+import { addWallet, addHardwareWallet, generateMnemonic, ApiError } from "../api/client";
+import { connectLedger } from "../hw/ledger";
+import type { LedgerSession } from "../hw/ledger";
 import type { WalletView } from "../api/types";
 import { MIN_PASSWORD_LEN, passwordLength } from "../password";
 import { CHALLENGE_WORD_COUNT, isChallengeAnswerCorrect, pickChallengeIndices, validateChallenge } from "../phraseChallenge";
@@ -29,7 +31,7 @@ interface AddWalletProps {
 }
 
 // Mode within the Add Wallet flow.
-type Mode = "choose" | "create" | "create-confirm" | "restore";
+type Mode = "choose" | "create" | "create-confirm" | "restore" | "ledger";
 
 export function AddWallet({
   network,
@@ -57,6 +59,7 @@ export function AddWallet({
   const [selectedNetwork, setSelectedNetwork] = useState(network);
   const [spendPassword, setSpendPassword] = useState("");
   const [vaultPassword, setVaultPassword] = useState("");
+  const [ledgerAccountIndex, setLedgerAccountIndex] = useState("0");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -125,7 +128,6 @@ export function AddWallet({
       setError("Vault password is required");
       return;
     }
-
     setLoading(true);
     try {
       const wallet = await addWallet({
@@ -143,14 +145,65 @@ export function AddWallet({
     }
   }
 
+  // --- "Connect Ledger" path -----------------------------------------------
+  // No mnemonic and no spending password: the device holds the private key
+  // and signs every transaction directly. Only the account-level xpub is
+  // read from the device and stored (watch-only).
+
+  async function handleLedgerConnect(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+
+    const vaultPw = knownVaultPassword ?? vaultPassword;
+    if (vaultPw === "") {
+      setError("Vault password is required");
+      return;
+    }
+    // Reject an empty field explicitly: Number("") is 0, which would otherwise
+    // pass the integer/range check and silently import Ledger account 0 — a
+    // different account than a user who cleared the field may intend.
+    const trimmedIndex = ledgerAccountIndex.trim();
+    const accountIndex = Number(trimmedIndex);
+    if (
+      trimmedIndex === "" ||
+      !Number.isInteger(accountIndex) ||
+      accountIndex < 0 ||
+      accountIndex >= 0x80000000
+    ) {
+      setError("Account index must be an integer from 0 to 2147483647");
+      return;
+    }
+
+    setLoading(true);
+    let session: LedgerSession | null = null;
+    try {
+      session = await connectLedger();
+      const xpub = await session.getAccountXpub(accountIndex);
+      const wallet = await addHardwareWallet(
+        name.trim() || "Ledger Wallet",
+        xpub,
+        accountIndex,
+        selectedNetwork,
+        vaultPw,
+      );
+      onAdded(wallet);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An unexpected error occurred");
+    } finally {
+      if (session) await session.close().catch(() => {});
+      setLoading(false);
+    }
+  }
+
   // --- Mode: choose -------------------------------------------------------
 
   if (mode === "choose") {
     return (
       <Card title={title}>
         <p className="helper-text" style={{ marginBottom: "var(--space-3)" }}>
-          Create a brand-new wallet with a freshly generated recovery phrase, or
-          restore an existing one from a phrase you already have.
+          Create a brand-new wallet with a freshly generated recovery phrase,
+          restore an existing one from a phrase you already have, or connect a
+          Ledger hardware wallet.
         </p>
         <div className="preview-actions" style={{ flexDirection: "column" }}>
           <Button onClick={handleGenerate} disabled={generating}>
@@ -158,6 +211,9 @@ export function AddWallet({
           </Button>
           <Button variant="ghost" onClick={() => { setError(null); setMode("restore"); }} disabled={generating}>
             Restore from recovery phrase
+          </Button>
+          <Button variant="ghost" onClick={() => { setError(null); setMode("ledger"); }} disabled={generating}>
+            Connect Ledger
           </Button>
           {onCancel && (
             <Button type="button" variant="ghost" onClick={onCancel}>
@@ -363,6 +419,96 @@ export function AddWallet({
             >
               Back
             </Button>
+          </div>
+        </form>
+      </Card>
+    );
+  }
+
+  // --- Mode: ledger (Connect Ledger, no mnemonic or spending password) ----
+
+  if (mode === "ledger") {
+    return (
+      <Card title="Connect Ledger">
+        <form onSubmit={handleLedgerConnect}>
+          <div className="field-group">
+            <label htmlFor="ledger-name">Wallet Name</label>
+            <Input
+              id="ledger-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Ledger Main"
+              aria-label="Wallet Name"
+            />
+          </div>
+
+          <div className="field-group">
+            <label htmlFor="ledger-network">Network</label>
+            <Select
+              id="ledger-network"
+              options={NETWORK_OPTIONS}
+              value={selectedNetwork}
+              onChange={(e) => setSelectedNetwork(e.target.value)}
+            />
+          </div>
+
+          <div className="field-group">
+            <label htmlFor="ledger-account-index">Account Index</label>
+            <Input
+              id="ledger-account-index"
+              type="number"
+              min={0}
+              max={0x7fffffff}
+              step={1}
+              value={ledgerAccountIndex}
+              onChange={(e) => setLedgerAccountIndex(e.target.value)}
+              aria-label="Account Index"
+            />
+          </div>
+
+          {needsVaultPassword && (
+            <div className="field-group">
+              <label htmlFor="ledger-vault-password">Vault Password</label>
+              <Input
+                id="ledger-vault-password"
+                type="password"
+                value={vaultPassword}
+                onChange={(e) => setVaultPassword(e.target.value)}
+                placeholder="Your vault password"
+                aria-label="Vault Password"
+              />
+              <p className="helper-text">Confirms the change to your encrypted vault.</p>
+            </div>
+          )}
+
+          <p className="helper-text">
+            Connect your Ledger device, open the Cardano app, then click Connect Ledger.
+            No spending password is needed — the device signs every transaction.
+          </p>
+
+          {error && (
+            <p className="error-text" role="alert">
+              {error}
+            </p>
+          )}
+
+          <div className="preview-actions">
+            <Button type="submit" disabled={loading}>
+              {loading ? "Connecting…" : "Connect Ledger"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => { setError(null); setMode("choose"); }}
+              disabled={loading}
+            >
+              Back
+            </Button>
+            {onCancel && (
+              <Button type="button" variant="ghost" onClick={onCancel} disabled={loading}>
+                Cancel
+              </Button>
+            )}
           </div>
         </form>
       </Card>

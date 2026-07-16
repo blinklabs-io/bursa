@@ -70,6 +70,12 @@ type fakeVault struct {
 	enableTPMPassword  string
 	enableTPMPCRBound  bool
 	disableTPMPassword string
+
+	// hardware wallet
+	hwErr           error
+	hwCalled        bool
+	gotXpub         string
+	gotAccountIndex uint32
 }
 
 type fakeLegacyKeystore struct {
@@ -354,6 +360,23 @@ func (f *fakeLookup) Asset(_ context.Context, unit string) (chain.AssetInfo, err
 	return f.asset, f.assetErr
 }
 
+func (f *fakeVault) AddHardwareWallet(name, accountXpubBech32, network, vaultPw string, accountIndex uint32, _ int) (vault.WalletMeta, error) {
+	if f.hwErr != nil {
+		return vault.WalletMeta{}, f.hwErr
+	}
+	f.hwCalled = true
+	f.gotName = name
+	f.gotXpub = accountXpubBech32
+	f.gotAccountIndex = accountIndex
+	f.gotVault = vaultPw
+	acct := sampleAccount(network)
+	acct.AccountIndex = accountIndex
+	meta := vault.WalletMeta{ID: "hw1", Name: name, Network: network, Account: acct, Type: vault.WalletTypeHardware}
+	f.wallets = append(f.wallets, meta)
+	f.activeID = meta.ID
+	return meta, nil
+}
+
 func TestHealthAlwaysOK(t *testing.T) {
 	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
@@ -552,6 +575,35 @@ func TestVaultUnlockBindsSoleWalletAndReads(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/balance", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /wallet/balance after unlock = %d, want 200", rec.Code)
+	}
+}
+
+func TestVaultUnlockLegacyWalletDefaultsToFullType(t *testing.T) {
+	// A wallet record persisted before hardware-wallet support carries no type.
+	// It must surface as a full (seed-backed) wallet so the SPA keeps Send/Sign
+	// enabled — an empty type would disable both for an otherwise normal wallet.
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	fv := &fakeVault{
+		exists:  true,
+		locked:  true,
+		wallets: []vault.WalletMeta{{ID: "legacy", Name: "old", Network: "preview", Account: sampleAccount("preview")}},
+	}
+	h := NewHandler(st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vault/unlock", bytes.NewBufferString(`{"password":"valid-vault-password"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /vault/unlock = %d, want 200", rec.Code)
+	}
+	var list []walletView
+	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("unlock list = %+v, want one wallet", list)
+	}
+	if list[0].Type != vault.WalletTypeFull {
+		t.Fatalf("legacy wallet type = %q, want %q", list[0].Type, vault.WalletTypeFull)
 	}
 }
 
@@ -980,6 +1032,11 @@ type fakeSpender struct {
 	submitErr     error
 	gotSubmitTx   string
 	gotSubmitWit  string
+
+	// hardware signing
+	hwSignReq    spend.HardwareSignRequest
+	hwSignReqErr error
+	gotHWSignID  string
 }
 
 func (f *fakeSpender) SetAccount(id string, acct *wallet.Account) {
@@ -1048,6 +1105,14 @@ func (f *fakeSpender) SubmitSigned(_ context.Context, unsignedTxCBOR, witnessCBO
 		return spend.TxResult{}, f.submitErr
 	}
 	return f.submitResult, nil
+}
+
+func (f *fakeSpender) HardwareSignRequest(pendingID string) (spend.HardwareSignRequest, error) {
+	f.gotHWSignID = pendingID
+	if f.hwSignReqErr != nil {
+		return spend.HardwareSignRequest{}, f.hwSignReqErr
+	}
+	return f.hwSignReq, nil
 }
 
 func (f *fakeSpender) BuildDelegation(_ context.Context, _ spend.DelegationRequest) (spend.DelegationPreview, error) {
@@ -3036,5 +3101,196 @@ func TestDexQuoteErrorMapping(t *testing.T) {
 				t.Fatalf("POST /wallet/dex/quote with %s = %d, want %d: %s", tc.name, rec.Code, tc.want, rec.Body.String())
 			}
 		})
+	}
+}
+
+// --- Hardware wallet --------------------------------------------------------
+
+func TestHardwareWalletRoute(t *testing.T) {
+	t.Run("valid body returns active wallet view with addresses", func(t *testing.T) {
+		st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+		fv := &fakeVault{exists: true, locked: false}
+		fw := &fakeWallet{}
+		sp := &fakeSpender{}
+		h := NewHandler(st, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+		body := `{"name":"Ledger","account_xpub":"acct_xvk1test","account_index":7,"network":"preview","vault_password":"valid-vault-password"}`
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("POST /wallet/hardware = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		if !fv.hwCalled {
+			t.Fatal("AddHardwareWallet should have been called")
+		}
+		if fv.gotName != "Ledger" || fv.gotXpub != "acct_xvk1test" || fv.gotVault != "valid-vault-password" {
+			t.Fatalf("unexpected vault args: name=%q xpub=%q vault=%q", fv.gotName, fv.gotXpub, fv.gotVault)
+		}
+		if fv.gotAccountIndex != 7 {
+			t.Fatalf("account index = %d, want 7", fv.gotAccountIndex)
+		}
+		var got walletView
+		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if got.ID != "hw1" || !got.Active || got.Type != vault.WalletTypeHardware {
+			t.Fatalf("response = %+v, want active hardware wallet hw1", got)
+		}
+		if len(got.Addresses) == 0 {
+			t.Fatal("response should include receive addresses")
+		}
+		if !fw.setAccountCalled || !sp.setAccountCalled {
+			t.Fatal("hardware wallet should be bound to read and spend services")
+		}
+	})
+
+	t.Run("hardened account index returns 400", func(t *testing.T) {
+		fv := &fakeVault{exists: true, locked: false}
+		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		body := `{"name":"Ledger","account_xpub":"acct_xvk1test","account_index":2147483648,"network":"preview","vault_password":"valid-vault-password"}`
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("hardened account index = %d, want 400", rec.Code)
+		}
+		if fv.hwCalled {
+			t.Fatal("AddHardwareWallet should not be called")
+		}
+	})
+
+	t.Run("malformed JSON returns 400", func(t *testing.T) {
+		fv := &fakeVault{exists: true, locked: false}
+		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(`{bad json`)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("malformed JSON = %d, want 400", rec.Code)
+		}
+		if fv.hwCalled {
+			t.Fatal("AddHardwareWallet should not be called with malformed JSON")
+		}
+	})
+
+	t.Run("empty xpub returns 400", func(t *testing.T) {
+		fv := &fakeVault{exists: true, locked: false}
+		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		body := `{"name":"Ledger","account_xpub":"","network":"preview","vault_password":"valid-vault-password"}`
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("empty xpub = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("empty name returns 400", func(t *testing.T) {
+		fv := &fakeVault{exists: true, locked: false}
+		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		body := `{"name":"","account_xpub":"acct_xvk1test","network":"preview","vault_password":"valid-vault-password"}`
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("empty name = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("missing vault_password returns 400", func(t *testing.T) {
+		fv := &fakeVault{exists: true, locked: false}
+		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		body := `{"name":"Ledger","account_xpub":"acct_xvk1test","network":"preview"}`
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("missing vault_password = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("duplicate hardware wallet returns 409", func(t *testing.T) {
+		fv := &fakeVault{exists: true, locked: false, hwErr: vault.ErrDuplicateWallet}
+		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		body := `{"name":"Ledger","account_xpub":"acct_xvk1test","network":"preview","vault_password":"valid-vault-password"}`
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("duplicate hardware wallet = %d, want 409", rec.Code)
+		}
+	})
+
+	t.Run("network mismatch returns 400", func(t *testing.T) {
+		fv := &fakeVault{exists: true, locked: false}
+		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		body := `{"name":"Ledger","account_xpub":"acct_xvk1test","network":"mainnet","vault_password":"valid-vault-password"}`
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("network mismatch = %d, want 400", rec.Code)
+		}
+	})
+}
+
+func TestHardwareSignRequestRoute(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	sp := &fakeSpender{hwSignReq: spend.HardwareSignRequest{
+		Network:       "preview",
+		NetworkID:     0,
+		ProtocolMagic: 2,
+		Inputs: []spend.HWInput{
+			{TxHashHex: "deadbeef", OutputIndex: 0, Path: "1852'/1815'/0'/0/0"},
+		},
+		Outputs: []spend.HWOutput{
+			{AddressHex: "60aabb", AddressBech32: "addr_test1...", Lovelace: "1000000"},
+		},
+		Fee:             "170000",
+		RequiredSigners: []string{"aabbccdd"},
+		UnsignedTxCBOR:  "84a4deadbeef",
+	}}
+	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/send/pending-123/hardware-sign-request", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /hardware-sign-request = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var got spend.HardwareSignRequest
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if sp.gotHWSignID != "pending-123" {
+		t.Fatalf("gotHWSignID = %q, want pending-123", sp.gotHWSignID)
+	}
+	if got.NetworkID != 0 || got.ProtocolMagic != 2 {
+		t.Fatalf("network fields wrong: %+v", got)
+	}
+	if len(got.Inputs) != 1 || got.Inputs[0].Path != "1852'/1815'/0'/0/0" {
+		t.Fatalf("inputs wrong: %+v", got.Inputs)
+	}
+	if len(got.RequiredSigners) != 1 || got.RequiredSigners[0] != "aabbccdd" {
+		t.Fatalf("required signers wrong: %+v", got.RequiredSigners)
+	}
+}
+
+func TestSubmitHardwareRoute(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	sp := &fakeSpender{
+		unsigned:     spend.UnsignedTx{UnsignedTxCBOR: "84a400deadbeef", RequiredSigners: []string{"aabb"}},
+		submitResult: spend.TxResult{TxHash: "cafebabe"},
+	}
+	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	body := `{"witness_cbor":"81825820"}`
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/send/pending-123/submit-hardware",
+		strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /submit-hardware = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var got spend.TxResult
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.TxHash != "cafebabe" {
+		t.Fatalf("tx_hash = %q, want cafebabe", got.TxHash)
+	}
+	if sp.gotSubmitTx != "84a400deadbeef" || sp.gotSubmitWit != "81825820" {
+		t.Fatalf("SubmitSigned called with wrong args: tx=%q wit=%q", sp.gotSubmitTx, sp.gotSubmitWit)
 	}
 }

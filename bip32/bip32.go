@@ -32,6 +32,7 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"strings"
 
 	"filippo.io/edwards25519"
@@ -505,6 +506,80 @@ func (key XPrv) Derive(index uint32) XPrv {
 	copy(child[64:], childChain)
 
 	return child
+}
+
+// Derive derives a child extended public key from the parent using the given index.
+// Only non-hardened derivation (index < 0x80000000) is supported; hardened indices
+// require the private key and will return an error.
+//
+// Follows BIP32-Ed25519 (Khovratovich–Law V2) public-child derivation:
+//
+//	Z = HMAC-SHA512(chainCode, 0x02 || pubKey || LE32(index))
+//	ZL = Z[0:28]
+//	childPoint = parentPoint + (8·ZL)·B   (Edwards25519 scalar-base-mul + point add)
+//	childChain = HMAC-SHA512(chainCode, 0x03 || pubKey || LE32(index))[32:64]
+func (x XPub) Derive(index uint32) (XPub, error) {
+	if len(x) != 64 {
+		panic("XPub must be 64 bytes")
+	}
+	if hardened(index) {
+		return XPub{}, fmt.Errorf(
+			"bip32: cannot derive hardened index %d from a public key", index,
+		)
+	}
+
+	pubKey := []byte(x[:32])
+	chainCode := x[32:]
+
+	serializedIndex := make([]byte, 4)
+	binary.LittleEndian.PutUint32(serializedIndex, index)
+
+	// Z = HMAC-SHA512(chainCode, 0x02 || pubKey || LE32(index))
+	keyHmac := hmac.New(sha512.New, chainCode)
+	keyHmac.Write([]byte{0x02})
+	keyHmac.Write(pubKey)
+	keyHmac.Write(serializedIndex)
+	z := keyHmac.Sum(nil)
+
+	// child chain code = HMAC-SHA512(chainCode, 0x03 || pubKey || LE32(index))[32:64]
+	chainHmac := hmac.New(sha512.New, chainCode)
+	chainHmac.Write([]byte{0x03})
+	chainHmac.Write(pubKey)
+	chainHmac.Write(serializedIndex)
+	iout := chainHmac.Sum(nil)
+	childChain := iout[32:]
+
+	// ZL = Z[0:28]; compute tweak scalar = 8 * ZL (as little-endian 32-byte integer)
+	// add28mul8 with a zero base gives us exactly 8*ZL[0:28] in 32-byte LE form.
+	zeroBase := make([]byte, 32)
+	tweakLE := add28mul8(zeroBase, z[:32]) // uses only z[0:28] internally
+
+	// Interpret tweakLE as a scalar via SetUniformBytes (zero-padded to 64 bytes),
+	// matching the same approach makePublicKey uses for kL.
+	tweakPadded := make([]byte, 64)
+	copy(tweakPadded[:32], tweakLE)
+	tweakScalar, err := edwards25519.NewScalar().SetUniformBytes(tweakPadded)
+	if err != nil {
+		return XPub{}, fmt.Errorf("bip32: XPub.Derive scalar error: %w", err)
+	}
+
+	// tweakPoint = tweakScalar * B
+	tweakPoint := edwards25519.NewIdentityPoint().ScalarBaseMult(tweakScalar)
+
+	// parentPoint = decode A from compressed Edwards25519 encoding
+	parentPoint, err := edwards25519.NewIdentityPoint().SetBytes(pubKey)
+	if err != nil {
+		return XPub{}, fmt.Errorf("bip32: XPub.Derive: invalid parent public key: %w", err)
+	}
+
+	// childPoint = parentPoint + tweakPoint
+	childPoint := edwards25519.NewIdentityPoint().Add(parentPoint, tweakPoint)
+	childPubKey := childPoint.Bytes()
+
+	child := make([]byte, 64)
+	copy(child[:32], childPubKey)
+	copy(child[32:], childChain)
+	return XPub(child), nil
 }
 
 func hardened(index uint32) bool {

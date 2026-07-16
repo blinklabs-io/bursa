@@ -392,6 +392,8 @@ export interface PoolIDResult {
 
 // A wallet as listed by the vault: read-only fields plus whether it's active.
 // The encrypted seed is never exposed.
+export type WalletType = "full" | "read_only" | "multi_signature" | "hardware";
+
 export interface WalletView {
   id: string;
   name: string;
@@ -399,6 +401,39 @@ export interface WalletView {
   stake_address: string;
   addresses: string[];
   active: boolean;
+  type: WalletType;
+}
+
+// Hardware signing request — structured tx fields for the Ledger device.
+// The device uses these to display the transaction to the user and sign it
+// without parsing raw CBOR.
+export interface HWInput {
+  tx_hash_hex: string;
+  output_index: number;
+  path?: string; // CIP-1852 path, e.g. "1852'/1815'/0'/0/0"
+}
+
+export interface HWOutput {
+  address_hex: string;
+  address_bech32: string;
+  lovelace: string;
+  payment_path?: string; // present for a wallet-owned base address
+  stake_path?: string; // present with payment_path for a wallet-owned base address
+  assets?: { policy_id_hex: string; asset_name_hex: string; amount: string }[];
+}
+
+export interface HardwareSignResponse {
+  network: string;
+  network_id: number;
+  include_network_id?: boolean;
+  protocol_magic: number;
+  inputs: HWInput[];
+  outputs: HWOutput[];
+  fee: string;
+  ttl?: string;
+  required_signers: string[];
+  unsigned_tx_cbor: string;
+  unsupported?: string; // non-empty = this tx type cannot be signed on hardware yet
 }
 
 export interface CreateVaultRequest {
@@ -581,4 +616,14 @@ export interface ConnectorRequest {
 export interface PendingPairing {
   extension_id: string;
   code?: string;
+}
+
+// Adding a hardware wallet: the account xpub is derived from the device; no
+// spending password is needed (the device signs every transaction directly).
+export interface AddHardwareWalletRequest {
+  name: string;
+  account_xpub: string;
+  account_index: number;
+  network: string;
+  vault_password: string;
 }

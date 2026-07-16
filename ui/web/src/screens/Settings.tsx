@@ -20,11 +20,11 @@ import {
   disableTPM,
 } from "../api/client";
 import { getConnectorState, revokeGrant, unpair, pendingPairings } from "../api/connector";
-import type { Account, AutoLockSetting, NodeState, TPMStatus } from "../api/types";
+import type { Account, AutoLockSetting, NodeState, TPMStatus, WalletType } from "../api/types";
 
 interface SettingsProps {
   account: Account;
-  spendingEnabled: boolean;
+  walletType: WalletType;
   // The auto-lock AsyncState, lifted up to and owned by App (see app.tsx) so
   // this screen's save path and App's useIdleLock share the same value — a
   // change here must be visible to the idle timer in the same session, with
@@ -37,6 +37,19 @@ function syncTone(state: NodeState): "ok" | "warn" | "error" | "muted" {
   if (state === "error") return "error";
   if (state === "stopped") return "muted";
   return "warn";
+}
+
+function walletTypeStatus(walletType: WalletType): string {
+  switch (walletType) {
+    case "full":
+      return "Full wallet · Spending enabled";
+    case "read_only":
+      return "Read-only wallet";
+    case "multi_signature":
+      return "Multi-signature wallet";
+    case "hardware":
+      return "Hardware wallet · On-device signing";
+  }
 }
 
 // LeanStorageCard is the user-facing control for the lean-node (history-expiry)
@@ -443,7 +456,7 @@ function TPMCard({
   );
 }
 
-export function Settings({ account, spendingEnabled, autoLock }: SettingsProps) {
+export function Settings({ account, walletType, autoLock }: SettingsProps) {
   const status = useStatus();
   const tpmStatusQuery = useTPMStatus();
   const [connectorMissing, setConnectorMissing] = useState(false);
@@ -579,8 +592,8 @@ export function Settings({ account, spendingEnabled, autoLock }: SettingsProps) 
 
       <AutoLockCard setting={autoLock} />
 
-      <Card title="Keystore">
-        <p>{spendingEnabled ? "Spending enabled" : "Read-only"}</p>
+      <Card title="Wallet">
+        <p>{walletTypeStatus(walletType)}</p>
       </Card>
 
       {tpmStatusQuery.data ? (

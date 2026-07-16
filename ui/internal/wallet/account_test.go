@@ -1,10 +1,13 @@
 package wallet
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/bip32"
+	"github.com/btcsuite/btcd/btcutil/bech32"
 )
 
 const testMnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
@@ -151,5 +154,48 @@ func TestDeriveInvalidWindow(t *testing.T) {
 		if _, err := Derive(testMnemonic, "preview", n); err == nil {
 			t.Fatalf("windowN=%d: expected error, got nil", n)
 		}
+	}
+}
+
+func TestDeriveFromAccountXpubMatchesMnemonic(t *testing.T) {
+	mnemonic := testMnemonic
+	fromMnem, err := DeriveFromMnemonicBytes([]byte(mnemonic), "preview", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xpub, err := AccountXpubFromMnemonicBytes([]byte(mnemonic))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Hardware wallets use the standard acct_xvk HRP. AccountXpub currently
+	// emits root_xvk, so re-label the same payload to cover both accepted forms.
+	_, payload, err := bip32.LenientBech32Decode(xpub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acctXpub, err := bech32.Encode("acct_xvk", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, encoded := range []string{xpub, acctXpub} {
+		fromXpub, err := DeriveFromAccountXpub(encoded, "preview", 0, 5)
+		if err != nil {
+			t.Fatalf("DeriveFromAccountXpub(%q): %v", encoded[:8], err)
+		}
+		if !reflect.DeepEqual(fromXpub, fromMnem) {
+			t.Fatalf("account mismatch for %q HRP:\n xpub: %+v\n mnem: %+v", encoded[:8], fromXpub, fromMnem)
+		}
+	}
+}
+
+func TestDeriveFromAccountXpubRejectsHardenedAccountIndex(t *testing.T) {
+	xpub, err := AccountXpubFromMnemonicBytes([]byte(testMnemonic))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DeriveFromAccountXpub(xpub, "preview", 1<<31, 1); err == nil {
+		t.Fatal("expected hardened account index to be rejected")
 	}
 }

@@ -1,8 +1,26 @@
 import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { Preview, TxResult, SendAsset, UnsignedTx, HandleInfo } from "../api/types";
-import { buildSend, confirmSend, exportUnsigned, resolveHandle, ApiError } from "../api/client";
+import type { Preview, TxResult, SendAsset, UnsignedTx, HandleInfo, HardwareSignResponse } from "../api/types";
+import {
+  buildSend,
+  confirmSend,
+  exportUnsigned,
+  resolveHandle,
+  getHardwareSignRequest,
+  submitHardware,
+  ApiError,
+} from "../api/client";
 import { useContacts } from "../api/hooks";
+import { connectLedger } from "../hw/ledger";
+import type { LedgerSession } from "../hw/ledger";
+import type { SignTransactionRequest, TxInput, TxOutput } from "@cardano-foundation/ledgerjs-hw-app-cardano";
+import {
+  AddressType,
+  TransactionSigningMode,
+  TxOutputDestinationType,
+  TxOutputFormat,
+  TxRequiredSignerType,
+} from "@cardano-foundation/ledgerjs-hw-app-cardano";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
@@ -10,6 +28,72 @@ import { Table } from "../components/Table";
 import { CopyButton } from "../components/CopyButton";
 import { DownloadButton } from "../components/DownloadButton";
 import { formatAda, parseAda } from "../format";
+
+// parseBip32Path converts a CIP-1852 path string to a numeric array.
+// "1852'/1815'/0'/0/3" → [0x80000000+1852, 0x80000000+1815, 0x80000000+0, 0, 3]
+function parseBip32Path(pathStr: string): number[] {
+  const HARDENED = 0x80000000;
+  return pathStr.split("/").map((seg) => {
+    const hardened = seg.endsWith("'");
+    const n = parseInt(hardened ? seg.slice(0, -1) : seg, 10);
+    return hardened ? n + HARDENED : n;
+  });
+}
+
+// mapToSignRequest converts a HardwareSignResponse (from the backend) to the
+// SignTransactionRequest format that ledgerjs expects.
+function mapToSignRequest(resp: HardwareSignResponse): SignTransactionRequest {
+  const inputs: TxInput[] = resp.inputs.map((inp) => ({
+    txHashHex: inp.tx_hash_hex,
+    outputIndex: inp.output_index,
+    path: inp.path ? parseBip32Path(inp.path) : null,
+  }));
+
+  const outputs: TxOutput[] = resp.outputs.map((out) => {
+    const destination = out.payment_path && out.stake_path
+      ? {
+          type: TxOutputDestinationType.DEVICE_OWNED as const,
+          params: {
+            type: AddressType.BASE_PAYMENT_KEY_STAKE_KEY as const,
+            params: {
+              spendingPath: parseBip32Path(out.payment_path),
+              stakingPath: parseBip32Path(out.stake_path),
+            },
+          },
+        }
+      : {
+          type: TxOutputDestinationType.THIRD_PARTY as const,
+          params: { addressHex: out.address_hex },
+        };
+
+    return {
+      format: TxOutputFormat.ARRAY_LEGACY,
+      destination,
+      amount: BigInt(out.lovelace),
+      // ledgerjs iterates this field even when the output contains ADA only.
+      tokenBundle: [],
+    };
+  });
+
+  return {
+    tx: {
+      network: {
+        protocolMagic: resp.protocol_magic,
+        networkId: resp.network_id,
+      },
+      inputs,
+      outputs,
+      fee: BigInt(resp.fee),
+      ttl: resp.ttl ? BigInt(resp.ttl) : null,
+      requiredSigners: resp.required_signers.map((hashHex) => ({
+        type: TxRequiredSignerType.HASH,
+        hashHex,
+      })),
+      includeNetworkId: resp.include_network_id || null,
+    },
+    signingMode: TransactionSigningMode.ORDINARY_TRANSACTION,
+  };
+}
 
 type Phase = "compose" | "preview" | "done";
 
@@ -305,6 +389,7 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
 
 interface PreviewPhaseProps {
   preview: Preview;
+  isHardware?: boolean;
   onBack: () => void;
   onDone: (result: TxResult) => void;
 }
@@ -315,7 +400,8 @@ const OUTPUT_COLUMNS = [
   { key: "assets", label: "Assets" },
 ];
 
-function PreviewPhase({ preview, onBack, onDone }: PreviewPhaseProps) {
+function PreviewPhase({ preview, isHardware, onBack, onDone }: PreviewPhaseProps) {
+  // password is only used in the software (!isHardware) confirm path; hooks cannot be conditional.
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -340,6 +426,40 @@ function PreviewPhase({ preview, onBack, onDone }: PreviewPhaseProps) {
     } catch (e) {
       setError(errorMessage(e));
     } finally {
+      setLoading(false);
+    }
+  }
+
+  // Hardware confirm flow: connect Ledger → fetch signing request → signTx → submit.
+  // WebHID's device chooser must be requested while the confirm click still
+  // carries transient user activation, before yielding to a backend request.
+  async function handleHardwareConfirm() {
+    setError(null);
+    setLoading(true);
+    let session: LedgerSession | null = null;
+    try {
+      // 1. Connect directly from the click handler so a first-time user can
+      // grant WebHID permission while browser user activation is still live.
+      session = await connectLedger();
+
+      // 2. Fetch the structured signing request once the device is connected.
+      const signResp = await getHardwareSignRequest(preview.pending_id);
+      if (signResp.unsupported) {
+        setError(`This transaction cannot be signed on hardware: ${signResp.unsupported}`);
+        return;
+      }
+      const request = mapToSignRequest(signResp);
+
+      // 3. Sign on the connected Ledger device.
+      const witnessCbor = await session.signTx(request);
+
+      // 4. Submit the signed transaction.
+      const result = await submitHardware(preview.pending_id, witnessCbor);
+      onDone(result);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      if (session) await session.close().catch(() => {});
       setLoading(false);
     }
   }
@@ -382,14 +502,22 @@ function PreviewPhase({ preview, onBack, onDone }: PreviewPhaseProps) {
           </div>
         </dl>
 
-        <label htmlFor="spend-password">Spending password</label>
-        <Input
-          id="spend-password"
-          type="password"
-          placeholder="Spending password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
+        {isHardware ? (
+          <p className="helper-text">
+            Connect your Ledger and confirm the transaction on the device.
+          </p>
+        ) : (
+          <>
+            <label htmlFor="spend-password">Spending password</label>
+            <Input
+              id="spend-password"
+              type="password"
+              placeholder="Spending password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </>
+        )}
 
         {error && (
           <p role="alert" className="error-text">
@@ -401,46 +529,54 @@ function PreviewPhase({ preview, onBack, onDone }: PreviewPhaseProps) {
           <Button variant="ghost" onClick={onBack} disabled={loading || exporting}>
             Back
           </Button>
-          <Button onClick={handleConfirm} disabled={loading || exporting || !password}>
-            {loading ? "Submitting…" : "Confirm & send"}
-          </Button>
-        </div>
-
-        <div className="offline-export">
-          <Button variant="ghost" onClick={handleExport} disabled={loading || exporting}>
-            {exporting ? "Exporting…" : "Export for offline signing"}
-          </Button>
-          {exported && (
-            <div className="sign-result">
-              <p className="helper-text">
-                Carry this unsigned transaction to your offline instance, sign it
-                there, then bring the witness back to Submit signed.
-              </p>
-              <p className="field-label">Unsigned transaction (CBOR)</p>
-              <div className="tx-hash-row">
-                <code className="tx-hash">{exported.unsigned_tx_cbor}</code>
-                <CopyButton value={exported.unsigned_tx_cbor} />
-                <DownloadButton
-                  value={exported.unsigned_tx_cbor}
-                  filename="unsigned-tx.cbor"
-                  label="Download"
-                />
-              </div>
-              {exported.required_signers.length > 0 && (
-                <>
-                  <p className="field-label">Required signers</p>
-                  <ul className="signer-list">
-                    {exported.required_signers.map((s) => (
-                      <li key={s}>
-                        <code className="tx-hash">{s}</code>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </div>
+          {isHardware ? (
+            <Button onClick={handleHardwareConfirm} disabled={loading || exporting}>
+              {loading ? "Signing…" : "Confirm on Ledger"}
+            </Button>
+          ) : (
+            <Button onClick={handleConfirm} disabled={loading || exporting || !password}>
+              {loading ? "Submitting…" : "Confirm & send"}
+            </Button>
           )}
         </div>
+
+        {!isHardware && (
+          <div className="offline-export">
+            <Button variant="ghost" onClick={handleExport} disabled={loading || exporting}>
+              {exporting ? "Exporting…" : "Export for offline signing"}
+            </Button>
+            {exported && (
+              <div className="sign-result">
+                <p className="helper-text">
+                  Carry this unsigned transaction to your offline instance, sign it
+                  there, then bring the witness back to Submit signed.
+                </p>
+                <p className="field-label">Unsigned transaction (CBOR)</p>
+                <div className="tx-hash-row">
+                  <code className="tx-hash">{exported.unsigned_tx_cbor}</code>
+                  <CopyButton value={exported.unsigned_tx_cbor} />
+                  <DownloadButton
+                    value={exported.unsigned_tx_cbor}
+                    filename="unsigned-tx.cbor"
+                    label="Download"
+                  />
+                </div>
+                {exported.required_signers.length > 0 && (
+                  <>
+                    <p className="field-label">Required signers</p>
+                    <ul className="signer-list">
+                      {exported.required_signers.map((s) => (
+                        <li key={s}>
+                          <code className="tx-hash">{s}</code>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -471,7 +607,7 @@ function DonePhase({ result, onReset }: DonePhaseProps) {
 
 // --- Top-level Send screen ---
 
-export function Send() {
+export function Send({ isHardware }: { isHardware?: boolean } = {}) {
   const [phase, setPhase] = useState<Phase>("compose");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [txResult, setTxResult] = useState<TxResult | null>(null);
@@ -510,6 +646,7 @@ export function Send() {
     return (
       <PreviewPhase
         preview={preview}
+        isHardware={isHardware}
         onBack={() => setPhase("compose")}
         onDone={handleDone}
       />

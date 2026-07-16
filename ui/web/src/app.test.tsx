@@ -11,6 +11,7 @@ const walletA: WalletView = {
   stake_address: "stake_test1abc",
   addresses: ["addr_test1abc"],
   active: true,
+  type: "full",
 };
 
 const walletB: WalletView = {
@@ -20,6 +21,7 @@ const walletB: WalletView = {
   stake_address: "stake_test1def",
   addresses: ["addr_test1def"],
   active: false,
+  type: "full",
 };
 
 const mainnetWallet: WalletView = {
@@ -29,6 +31,17 @@ const mainnetWallet: WalletView = {
   stake_address: "stake1abc",
   addresses: ["addr1abc"],
   active: true,
+  type: "full",
+};
+
+const hardwareWallet: WalletView = {
+  id: "w-ledger",
+  name: "Ledger",
+  network: "preview",
+  stake_address: "stake_test1ledger",
+  addresses: ["addr_test1ledger"],
+  active: true,
+  type: "hardware",
 };
 
 function stubStatus(state: string) {
@@ -294,6 +307,88 @@ test("an active wallet on a ready node can reach Send", async () => {
   fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
   await waitFor(() => expect(screen.getByText("Send ADA")).toBeInTheDocument());
+});
+
+test.each(["read_only", "multi_signature"] as const)(
+  "%s wallet cannot enter the regular Send flow",
+  async (type) => {
+    stubStatus("ready");
+    stubVault({ exists: true, locked: true, wallet_count: 1 });
+    quietPortfolio();
+    vi.spyOn(client, "unlockVault").mockResolvedValue([{ ...walletA, type }]);
+    window.location.hash = "#/send";
+
+    render(<App />);
+    fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+    fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+    await waitFor(() => expect(screen.getByText("Balance")).toBeInTheDocument());
+    expect(screen.queryByText("Send ADA")).not.toBeInTheDocument();
+  },
+);
+
+test("Settings identifies a hardware wallet as using on-device signing", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  vi.spyOn(client, "unlockVault").mockResolvedValue([hardwareWallet]);
+  window.location.hash = "#/settings";
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  expect(await screen.findByText(/hardware wallet.*on-device signing/i)).toBeInTheDocument();
+  expect(screen.queryByText(/read.?only/i)).not.toBeInTheDocument();
+});
+
+test("a hardware wallet can submit a multi-sig spend with external witnesses but cannot sign locally", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  vi.spyOn(client, "unlockVault").mockResolvedValue([hardwareWallet]);
+  vi.spyOn(client, "listMultiSig").mockResolvedValue([{
+    id: "acct1",
+    label: "Treasury",
+    network: "preview",
+    policy: {
+      threshold: 1,
+      participants: [{ key_hash_hex: "a".repeat(56) }],
+    },
+    script_cbor: "8200",
+    script_address: "addr_test1wqscriptaddressxyz",
+  }]);
+  vi.spyOn(client, "multiSigBalance").mockResolvedValue({ lovelace: "0" });
+  vi.spyOn(client, "multiSigBuild").mockResolvedValue({
+    unsigned_tx_cbor: "84a400",
+    required_signers: ["a".repeat(56)],
+    threshold: 1,
+  });
+  const submit = vi.spyOn(client, "multiSigSubmit").mockResolvedValue({ tx_hash: "feedface" });
+  window.location.hash = "#/multisig";
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  fireEvent.click(await screen.findByText("Treasury"));
+
+  fireEvent.change(await screen.findByLabelText(/recipient address/i), {
+    target: { value: "addr_test1recipient" },
+  });
+  fireEvent.change(screen.getByLabelText(/amount \(ada\)/i), { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("button", { name: /build transaction/i }));
+
+  expect(await screen.findByText(/0 of 1 collected/i)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /sign here/i })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText(/co-signer witness/i), { target: { value: "81a0external" } });
+  fireEvent.click(screen.getByRole("button", { name: /add witness/i }));
+  fireEvent.click(await screen.findByRole("button", { name: /^submit$/i }));
+
+  await waitFor(() =>
+    expect(submit).toHaveBeenCalledWith("acct1", {
+      unsigned_tx_cbor: "84a400",
+      witnesses: ["81a0external"],
+    }),
+  );
 });
 
 test("switching active wallets remounts routed content and refetches read state", async () => {

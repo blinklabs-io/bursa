@@ -78,6 +78,7 @@ type Spender interface {
 	SignTx(unsignedTxCBOR, password string, requiredSigners []string) (spend.Witness, error)
 	SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR string) (spend.TxResult, error)
 	BuildDelegation(ctx context.Context, req spend.DelegationRequest) (spend.DelegationPreview, error)
+	HardwareSignRequest(pendingID string) (spend.HardwareSignRequest, error)
 }
 
 // NodeLookup is the node-backed verification/lookup surface the wallet uses to
@@ -109,6 +110,7 @@ type Vault interface {
 	AddWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
 	ImportWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
 	ImportWalletMnemonicBytes(name string, mnemonic []byte, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
+	AddHardwareWallet(name, accountXpubBech32, network, vaultPassword string, accountIndex uint32, windowN int) (vault.WalletMeta, error)
 	RemoveWallet(id, vaultPassword string) error
 	SetActive(id string) (vault.WalletMeta, error)
 	Active() (vault.WalletMeta, error)
@@ -343,20 +345,31 @@ type vaultStatus struct {
 // walletView is the API representation of a vault wallet: the read-only fields a
 // client needs to list and bind wallets. The encrypted seed is never exposed.
 type walletView struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Network      string   `json:"network"`
-	StakeAddress string   `json:"stake_address"`
-	Addresses    []string `json:"addresses"`
-	Active       bool     `json:"active"`
+	ID           string           `json:"id"`
+	Name         string           `json:"name"`
+	Network      string           `json:"network"`
+	StakeAddress string           `json:"stake_address"`
+	Addresses    []string         `json:"addresses"`
+	Active       bool             `json:"active"`
+	Type         vault.WalletType `json:"type"`
 }
 
 func toWalletView(w vault.WalletMeta, activeID string) walletView {
+	// Wallet records persisted before hardware-wallet support carry no type.
+	// The vault only ever creates full or hardware wallets (both set the type
+	// explicitly), so an absent type is always a legacy full (seed-backed)
+	// wallet. Normalize it here — the single point where wallet metadata
+	// becomes SPA-facing — so upgraded vaults keep Send/Sign enabled.
+	walletType := w.Type
+	if walletType == "" {
+		walletType = vault.WalletTypeFull
+	}
 	v := walletView{
 		ID:      w.ID,
 		Name:    w.Name,
 		Network: w.Network,
 		Active:  w.ID == activeID,
+		Type:    walletType,
 	}
 	if w.Account != nil {
 		v.StakeAddress = w.Account.StakeAddress
@@ -635,6 +648,51 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"mnemonic": m})
+	})
+
+	// POST /wallet/hardware adds a hardware-backed (watch-only) wallet derived
+	// from an account-level xpub supplied by the device. No mnemonic or spending
+	// password is required — the hardware device holds the private key. The new
+	// wallet becomes active.
+	mux.HandleFunc("POST /wallet/hardware", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Name          string `json:"name"`
+			AccountXpub   string `json:"account_xpub"`
+			AccountIndex  uint32 `json:"account_index"`
+			Network       string `json:"network"`
+			VaultPassword string `json:"vault_password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if strings.TrimSpace(req.Name) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+			return
+		}
+		if strings.TrimSpace(req.AccountXpub) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_xpub is required"})
+			return
+		}
+		if req.VaultPassword == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vault_password is required"})
+			return
+		}
+		if req.AccountIndex >= 1<<31 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_index must be less than 2147483648"})
+			return
+		}
+		net, ok := resolveNetwork(w, req.Network, network)
+		if !ok {
+			return
+		}
+		meta, err := vlt.AddHardwareWallet(req.Name, req.AccountXpub, net, req.VaultPassword, req.AccountIndex, defaultWindow)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		bindActive(meta)
+		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
 	})
 
 	mux.HandleFunc("POST /wallet/{id}/activate", func(w http.ResponseWriter, r *http.Request) {
@@ -981,6 +1039,33 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		}
 		res, err := sp.Confirm(r.Context(), r.PathValue("id"), req.Password)
 		serve(w, res, err)
+	}))
+
+	// GET /wallet/send/{id}/hardware-sign-request — structured signing request for Ledger.
+	// The pending entry is NOT consumed — the user can still confirm online instead.
+	mux.HandleFunc("GET /wallet/send/{id}/hardware-sign-request", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		v, err := sp.HardwareSignRequest(r.PathValue("id"))
+		serve(w, v, err)
+	}))
+
+	// POST /wallet/send/{id}/submit-hardware — attach hardware (Ledger) witness and broadcast.
+	// The witness CBOR is produced by the device; the unsigned tx comes from the pending entry.
+	mux.HandleFunc("POST /wallet/send/{id}/submit-hardware", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			WitnessCBOR string `json:"witness_cbor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		// Fetch the unsigned tx CBOR from the pending entry.
+		unsigned, err := sp.ExportUnsigned(r.PathValue("id"))
+		if err != nil {
+			serve(w, spend.TxResult{}, err)
+			return
+		}
+		v, err := sp.SubmitSigned(r.Context(), unsigned.UnsignedTxCBOR, req.WitnessCBOR)
+		serve(w, v, err)
 	}))
 
 	if po != nil {

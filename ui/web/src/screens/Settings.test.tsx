@@ -65,11 +65,11 @@ function mockAutoLock(setting: AutoLockSetting | null, loading = false) {
 
 // renderSettings wraps render(<Settings .../>) with the module's current
 // autoLockState so every call site doesn't need to thread it explicitly.
-function renderSettings(props: Partial<Pick<Parameters<typeof Settings>[0], "account" | "spendingEnabled">> = {}) {
+function renderSettings(props: Partial<Pick<Parameters<typeof Settings>[0], "account" | "walletType">> = {}) {
   return render(
     <Settings
       account={props.account ?? mockAccount}
-      spendingEnabled={props.spendingEnabled ?? false}
+      walletType={props.walletType ?? "read_only"}
       autoLock={autoLockState}
     />,
   );
@@ -160,16 +160,29 @@ test("(f) caughtUp=false does NOT show caught-up indicator", () => {
   expect(screen.queryByText(/caught.?up/i)).toBeNull();
 });
 
-test("(g) spendingEnabled=true shows 'Spending enabled'", () => {
+test("(g) full wallet type shows spending enabled", () => {
   mockStatus("ready", 12345, true);
-  renderSettings({ spendingEnabled: true });
-  expect(screen.getByText(/spending enabled/i)).toBeInTheDocument();
+  renderSettings({ walletType: "full" });
+  expect(screen.getByText(/full wallet.*spending enabled/i)).toBeInTheDocument();
 });
 
-test("(h) spendingEnabled=false shows 'Read-only'", () => {
+test("(h) read-only wallet type shows 'Read-only'", () => {
   mockStatus("ready", 12345, true);
   renderSettings();
   expect(screen.getByText(/read.?only/i)).toBeInTheDocument();
+});
+
+test("hardware wallet shows on-device signing instead of 'Read-only'", () => {
+  mockStatus("ready", 12345, true);
+  renderSettings({ walletType: "hardware" });
+  expect(screen.getByText(/hardware wallet.*on-device signing/i)).toBeInTheDocument();
+  expect(screen.queryByText(/read.?only/i)).not.toBeInTheDocument();
+});
+
+test("multi-signature wallet type is identified explicitly", () => {
+  mockStatus("ready", 12345, true);
+  renderSettings({ walletType: "multi_signature" });
+  expect(screen.getByText(/multi-signature wallet/i)).toBeInTheDocument();
 });
 
 test("(i) loading state from useStatus renders gracefully", () => {

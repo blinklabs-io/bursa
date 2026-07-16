@@ -4,7 +4,7 @@ import * as client from "../api/client";
 import type { WalletView } from "../api/types";
 
 const wallets: WalletView[] = [
-  { id: "w1", name: "Main", network: "preview", stake_address: "stake_test1", addresses: ["addr1"], active: true },
+  { id: "w1", name: "Main", network: "preview", stake_address: "stake_test1", addresses: ["addr1"], active: true, type: "full" },
 ];
 
 afterEach(() => vi.restoreAllMocks());
