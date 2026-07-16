@@ -1610,6 +1610,89 @@ func TestWitnessTxIncludesCertificateAndWithdrawalKeysWithoutRequiredSigners(t *
 	}
 }
 
+// TestWitnessTxNonPartialRejectsCommitteeCertColdKey verifies that a committee
+// authorization/resignation certificate whose cold credential the wallet cannot
+// witness does not slip through the non-partial completeness check just because
+// the transaction also has a wallet-owned payment input. The wallet never
+// derives committee cold keys, so with partialSign=false the request must fail
+// closed rather than return a witness set that silently omits the required
+// committee witness. With partialSign=true the wallet may still return the
+// payment witness it can provide.
+func TestWitnessTxNonPartialRejectsCommitteeCertColdKey(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	// A foreign committee cold credential the wallet does not own.
+	committeeColdHash := lcommon.Blake2b224Hash([]byte("committee cold key"))
+
+	certCases := []struct {
+		name string
+		cert lcommon.CertificateWrapper
+	}{
+		{
+			name: "AuthCommitteeHot",
+			cert: lcommon.CertificateWrapper{
+				Type: uint(lcommon.CertificateTypeAuthCommitteeHot),
+				Certificate: &lcommon.AuthCommitteeHotCertificate{
+					CertType: uint(lcommon.CertificateTypeAuthCommitteeHot),
+					ColdCredential: lcommon.Credential{
+						CredType:   lcommon.CredentialTypeAddrKeyHash,
+						Credential: committeeColdHash,
+					},
+					HotCredential: lcommon.Credential{
+						CredType:   lcommon.CredentialTypeAddrKeyHash,
+						Credential: lcommon.Blake2b224Hash([]byte("committee hot key")),
+					},
+				},
+			},
+		},
+		{
+			name: "ResignCommitteeCold",
+			cert: lcommon.CertificateWrapper{
+				Type: uint(lcommon.CertificateTypeResignCommitteeCold),
+				Certificate: &lcommon.ResignCommitteeColdCertificate{
+					CertType: uint(lcommon.CertificateTypeResignCommitteeCold),
+					ColdCredential: lcommon.Credential{
+						CredType:   lcommon.CredentialTypeAddrKeyHash,
+						Credential: committeeColdHash,
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range certCases {
+		t.Run(tc.name, func(t *testing.T) {
+			bodyCbor, err := cbor.Encode(conway.ConwayTransactionBody{
+				TxCertificates: []lcommon.CertificateWrapper{tc.cert},
+			})
+			if err != nil {
+				t.Fatalf("encode body: %v", err)
+			}
+
+			s := NewService(nil, fakeKeystore{mnemonic: testMnemonic}, acct)
+			// A wallet-owned input provides a payment witness. Before the fix this
+			// alone satisfied the completeness check while the committee cold-key
+			// witness was silently dropped.
+			inputAddrs := []string{acct.ReceiveAddresses[0]}
+
+			if _, err := s.WitnessTx("", bodyCbor, nil, inputAddrs, "pw", false); !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("WitnessTx(partialSign=false) = %v, want ErrInvalidRequest", err)
+			}
+
+			wsCbor, err := s.WitnessTx("", bodyCbor, nil, inputAddrs, "pw", true)
+			if err != nil {
+				t.Fatalf("WitnessTx(partialSign=true): %v", err)
+			}
+			var ws conway.ConwayTransactionWitnessSet
+			if _, err := cbor.Decode(wsCbor, &ws); err != nil {
+				t.Fatalf("decode witness set: %v", err)
+			}
+			if got := len(ws.VkeyWitnesses.Items()); got != 1 {
+				t.Fatalf("partial witness count = %d, want 1 (payment key only)", got)
+			}
+		})
+	}
+}
+
 func TestWitnessTxNonPartialRejectsUnmatchedRequiredSigner(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 

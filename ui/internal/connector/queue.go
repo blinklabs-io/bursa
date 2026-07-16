@@ -60,7 +60,7 @@ func NewQueue(now func() time.Time, mkID func() (string, error), timeout time.Du
 func (q *Queue) Submit(origin, method string, params json.RawMessage) (*Request, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if len(q.waiters) >= maxPendingRequests || q.pendingForOriginLocked(origin) >= maxPendingRequestsPerOrigin {
+	if q.pendingCountLocked() >= maxPendingRequests || q.pendingForOriginLocked(origin) >= maxPendingRequestsPerOrigin {
 		return nil, ErrQueueFull
 	}
 	id, err := q.mkID()
@@ -157,6 +157,21 @@ func (q *Queue) remove(id string) {
 		delete(q.waiters, id)
 		q.notifyLocked()
 	}
+}
+
+// pendingCountLocked returns the number of undecided waiters. Decided waiters
+// linger in the map until their Await goroutine runs cleanup (see remove); the
+// global bound must ignore them so Submit does not return ErrQueueFull while
+// fewer than maxPendingRequests requests are actually awaiting a decision. This
+// matches pendingForOriginLocked and Pending semantics.
+func (q *Queue) pendingCountLocked() int {
+	n := 0
+	for _, w := range q.waiters {
+		if !w.decided {
+			n++
+		}
+	}
+	return n
 }
 
 func (q *Queue) pendingForOriginLocked(origin string) int {

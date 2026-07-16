@@ -1503,6 +1503,16 @@ func (s *Service) WitnessTx(
 			addCredential(&c.DrepCredential)
 		case *lcommon.UpdateDrepCertificate:
 			addCredential(&c.DrepCredential)
+		case *lcommon.AuthCommitteeHotCertificate:
+			// Authorising a committee hot key is witnessed by the member's cold
+			// credential. The wallet does not derive committee keys, so a key-hash
+			// cold credential remains unmatched below and, with partialSign=false,
+			// correctly fails the completeness check rather than returning a
+			// witness set that silently omits the required committee witness.
+			addCredential(&c.ColdCredential)
+		case *lcommon.ResignCommitteeColdCertificate:
+			// Resigning is witnessed by the member's cold credential.
+			addCredential(&c.ColdCredential)
 		}
 	}
 	for addr := range txBody.TxWithdrawals {

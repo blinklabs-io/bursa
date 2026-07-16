@@ -20,11 +20,14 @@ type fakeBackend struct {
 	usedAddrs []string
 
 	// recorded call args
-	signTxCalled   bool
-	signTxPassword string
-	signTxTx       string
-	signTxPartial  bool
-	usedPaginate   *Paginate
+	signTxCalled    bool
+	signTxPassword  string
+	signTxTx        string
+	signTxPartial   bool
+	usedPaginate    *Paginate
+	signDataCalled  bool
+	signDataAddr    string
+	signDataPayload string
 }
 
 func (b *fakeBackend) NetworkID() int { return b.networkID }
@@ -56,7 +59,10 @@ func (b *fakeBackend) SignTx(_ context.Context, txHex string, partialSign bool, 
 	return b.signedTx, nil
 }
 
-func (b *fakeBackend) SignData(_, _, password string) (string, string, error) {
+func (b *fakeBackend) SignData(addr, payload, _ string) (string, string, error) {
+	b.signDataCalled = true
+	b.signDataAddr = addr
+	b.signDataPayload = payload
 	return b.signSig, b.signKey, nil
 }
 
@@ -463,5 +469,36 @@ func TestServiceRejectsMalformedSigningParamsBeforePrompt(t *testing.T) {
 	}
 	if pending := s.Pending(); len(pending) != 0 {
 		t.Fatalf("invalid params queued requests: %+v", pending)
+	}
+}
+
+// TestServiceSignDataAcceptsEmptyPayload verifies that a present-but-empty
+// payload ("" — valid hex for the empty byte sequence) is not rejected before
+// the approval UI: it must reach the queue, be approved, and be passed through
+// to the backend. Only an absent payload field is rejected (covered by
+// TestServiceRejectsMalformedSigningParamsBeforePrompt).
+func TestServiceSignDataAcceptsEmptyPayload(t *testing.T) {
+	be := &fakeBackend{signSig: "sig", signKey: "key"}
+	s := NewService(t.TempDir(), be, func() {})
+	const origin = "https://signdata.example"
+	if err := s.grants.Grant(origin); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	params := json.RawMessage(`{"addr":"aa","payload":""}`)
+	go decideWhenPending(s, Decision{Approved: true, Password: "pw"})
+	out, err := s.Handle(ctx(t), origin, "signData", params)
+	if err != nil {
+		t.Fatalf("signData with empty payload: %v", err)
+	}
+	if string(out) != `{"key":"key","signature":"sig"}` {
+		t.Fatalf("signData result = %s", out)
+	}
+	if !be.signDataCalled {
+		t.Fatal("backend SignData was not called for an empty payload")
+	}
+	if be.signDataAddr != "aa" || be.signDataPayload != "" {
+		t.Fatalf("backend received addr=%q payload=%q, want addr=%q payload=\"\"",
+			be.signDataAddr, be.signDataPayload, "aa")
 	}
 }

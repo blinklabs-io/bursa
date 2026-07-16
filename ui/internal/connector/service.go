@@ -405,20 +405,23 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 			return nil, ErrNotGranted
 		}
 		var p struct {
-			Addr    string `json:"addr"`
-			Payload string `json:"payload"`
+			Addr string `json:"addr"`
+			// Payload is a pointer so a present-but-empty value ("") — valid hex
+			// for the empty byte sequence, which the backend signs — is accepted,
+			// while an absent payload field is still rejected.
+			Payload *string `json:"payload"`
 		}
 		if err := unmarshalRequiredParams(params, &p); err != nil {
 			return nil, err
 		}
-		if p.Addr == "" || p.Payload == "" {
+		if p.Addr == "" || p.Payload == nil {
 			return nil, fmt.Errorf("%w: addr and payload are required", ErrInvalidParams)
 		}
 		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
 			if !d.Approved {
 				return nil, ErrUserDeclined
 			}
-			sig, key, err := s.be.SignData(p.Addr, p.Payload, d.Password)
+			sig, key, err := s.be.SignData(p.Addr, *p.Payload, d.Password)
 			if err != nil {
 				return nil, err
 			}
