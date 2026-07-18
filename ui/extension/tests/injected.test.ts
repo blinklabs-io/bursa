@@ -3,9 +3,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Import the module to trigger the side effect that sets window.cardano.bursa
 import '../src/injected';
 
+const jsdomEnv = globalThis as typeof globalThis & {
+  jsdom: {
+    reconfigure(settings: { url?: string }): void;
+  };
+};
+
 describe('injected provider', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    jsdomEnv.jsdom.reconfigure({ url: 'https://dapp.example/' });
   });
 
   it('sets window.cardano.bursa with name === "Bursa"', () => {
@@ -74,6 +81,27 @@ describe('injected provider', () => {
 
     const result = await networkIdPromise;
     expect(result).toBe(1);
+  });
+
+  it('uses a wildcard postMessage target for file URLs', async () => {
+    jsdomEnv.jsdom.reconfigure({ url: 'file:///tmp/sample-dapp.html' });
+    const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+    const provider = window.cardano?.bursa as {
+      isEnabled(): Promise<boolean>;
+    };
+
+    const isEnabledPromise = provider.isEnabled();
+    const call = postMessageSpy.mock.calls[0][0] as { id: string };
+
+    expect(postMessageSpy.mock.calls[0][1]).toBe('*');
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'bursa-cip30-reply', id: call.id, result: false },
+        source: window,
+      })
+    );
+    await expect(isEnabledPromise).resolves.toBe(false);
   });
 
   it('reply resolves promise with result', async () => {

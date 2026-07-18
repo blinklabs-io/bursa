@@ -79,11 +79,15 @@ function sendRequest(method: string, params?: unknown): Promise<unknown> {
     }, REPLY_TIMEOUT_MS);
 
     window.addEventListener('message', handler);
-    // Post to our own origin only. Posting to the current window never reaches
-    // child iframes or the opener, so '*' was not a cross-origin leak, but pinning
-    // the target origin matches the rigor of the reply path (content.ts) and is the
-    // best-practice default.
-    window.postMessage({ source: 'bursa-cip30', id, method, params }, window.location.origin);
+    // Opaque origins (including file:// pages) serialize as "null", which is not
+    // a valid postMessage target origin. Since this posts to the current window,
+    // use the required wildcard for those pages and pin all other requests to the
+    // page's exact origin.
+    const targetOrigin =
+      window.location.protocol === 'file:' || window.location.origin === 'null'
+        ? '*'
+        : window.location.origin;
+    window.postMessage({ source: 'bursa-cip30', id, method, params }, targetOrigin);
   });
 }
 

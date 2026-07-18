@@ -21,8 +21,13 @@ script.onload = () => script.remove();
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
   if (event.data?.source !== 'bursa-cip30') return;
-  const replyTargetOrigin =
-    normalizeExactOrigin(window.location.origin) ?? normalizeExactOrigin(event.origin);
+  const pageHasOpaqueOrigin =
+    window.location.protocol === 'file:' || window.location.origin === 'null';
+  // Opaque origins cannot be expressed as a postMessage target origin. The
+  // wildcard is required for file:// pages; replies still target this same window.
+  const replyTargetOrigin = pageHasOpaqueOrigin
+    ? '*'
+    : normalizeExactOrigin(window.location.origin) ?? normalizeExactOrigin(event.origin);
   if (!replyTargetOrigin) return;
 
   chrome.runtime.sendMessage(event.data, (response) => {

@@ -77,6 +77,27 @@ describe('content script', () => {
     );
   });
 
+  it('relays file URL requests and replies with a wildcard target origin', () => {
+    const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+    jsdomEnv.jsdom.reconfigure({ url: 'file:///tmp/sample-dapp.html' });
+
+    const msg = { source: 'bursa-cip30', id: '1', method: 'getNetworkId' };
+    window.dispatchEvent(
+      new MessageEvent('message', { data: msg, source: window, origin: 'null' })
+    );
+
+    expect(chromeMock.runtime.sendMessage).toHaveBeenCalledWith(
+      msg,
+      expect.any(Function)
+    );
+
+    sendMessageCallbacks[0]({ id: '1', result: 1 });
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      { source: 'bursa-cip30-reply', id: '1', result: 1 },
+      '*'
+    );
+  });
+
   it('pins async replies to the origin captured when the request was received', () => {
     const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
     jsdomEnv.jsdom.reconfigure({ url: 'https://first.example/request' });
