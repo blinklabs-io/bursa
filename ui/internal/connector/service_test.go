@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -100,7 +101,10 @@ func decideWhenPending(s *Service, d Decision) {
 
 // ConfirmPairForTest is a test helper that runs BeginPair+ConfirmPair for the given extensionID.
 func (s *Service) ConfirmPairForTest(extensionID string) (string, error) {
-	code := s.BeginPair(extensionID)
+	code, err := s.BeginPair(extensionID)
+	if err != nil {
+		return "", err
+	}
 	return s.ConfirmPair(extensionID, code)
 }
 
@@ -196,9 +200,11 @@ func TestServiceEnableReject(t *testing.T) {
 // TestServicePairCodeMismatch verifies ConfirmPair returns ErrPairCodeMismatch on wrong code.
 func TestServicePairCodeMismatch(t *testing.T) {
 	s := NewService(t.TempDir(), &fakeBackend{}, nil)
-	code := s.BeginPair("ext2")
-	_, err := s.ConfirmPair("ext2", code+"X")
-	if err != ErrPairCodeMismatch {
+	code, err := s.BeginPair("ext2")
+	if err != nil {
+		t.Fatalf("BeginPair: %v", err)
+	}
+	if _, err := s.ConfirmPair("ext2", code+"X"); err != ErrPairCodeMismatch {
 		t.Fatalf("want ErrPairCodeMismatch, got %v", err)
 	}
 	if _, err := s.ConfirmPair("ext2", code); err != nil {
@@ -208,7 +214,10 @@ func TestServicePairCodeMismatch(t *testing.T) {
 
 func TestServicePairCodeFormat(t *testing.T) {
 	s := NewService(t.TempDir(), &fakeBackend{}, nil)
-	code := s.BeginPair("ext-format")
+	code, err := s.BeginPair("ext-format")
+	if err != nil {
+		t.Fatalf("BeginPair: %v", err)
+	}
 	if len(code) != pairCodeDigits {
 		t.Fatalf("pair code length = %d, want %d", len(code), pairCodeDigits)
 	}
@@ -216,6 +225,84 @@ func TestServicePairCodeFormat(t *testing.T) {
 		if r < '0' || r > '9' {
 			t.Fatalf("pair code %q contains non-digit %q", code, r)
 		}
+	}
+}
+
+// TestServiceBeginPairRejectsInvalidExtensionID verifies malformed extension IDs
+// are refused rather than cached.
+func TestServiceBeginPairRejectsInvalidExtensionID(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	for _, bad := range []string{"", "chrome-extension://", "chrome-extension://has/slash"} {
+		if _, err := s.BeginPair(bad); !errors.Is(err, ErrInvalidExtensionID) {
+			t.Errorf("BeginPair(%q): want ErrInvalidExtensionID, got %v", bad, err)
+		}
+	}
+	if got := len(s.PendingPairings()); got != 0 {
+		t.Fatalf("invalid IDs must not be cached, got %d pending", got)
+	}
+}
+
+// TestServicePairCodeExpires verifies an expired code no longer confirms and is
+// dropped from the pending list.
+func TestServicePairCodeExpires(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	now := time.Now()
+	s.now = func() time.Time { return now }
+
+	code, err := s.BeginPair("ext-expire")
+	if err != nil {
+		t.Fatalf("BeginPair: %v", err)
+	}
+
+	// Advance past the TTL.
+	now = now.Add(pairCodeTTL + time.Second)
+	if _, err := s.ConfirmPair("ext-expire", code); !errors.Is(err, ErrPairCodeMismatch) {
+		t.Fatalf("expired code: want ErrPairCodeMismatch, got %v", err)
+	}
+	if got := len(s.PendingPairings()); got != 0 {
+		t.Fatalf("expired code must be pruned, got %d pending", got)
+	}
+}
+
+// TestServicePairCodeAttemptCap verifies a code is discarded after too many
+// wrong guesses, so it cannot be brute-forced.
+func TestServicePairCodeAttemptCap(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	code, err := s.BeginPair("ext-cap")
+	if err != nil {
+		t.Fatalf("BeginPair: %v", err)
+	}
+
+	wrong := "000000000000"
+	if wrong == code {
+		wrong = "000000000001"
+	}
+	for i := 0; i < pairCodeMaxAttempts; i++ {
+		if _, err := s.ConfirmPair("ext-cap", wrong); !errors.Is(err, ErrPairCodeMismatch) {
+			t.Fatalf("attempt %d: want ErrPairCodeMismatch, got %v", i, err)
+		}
+	}
+	// The correct code must now be rejected too: the entry was discarded.
+	if _, err := s.ConfirmPair("ext-cap", code); !errors.Is(err, ErrPairCodeMismatch) {
+		t.Fatalf("after attempt cap, correct code should fail: got %v", err)
+	}
+}
+
+// TestServiceBeginPairBounded verifies the pending map cannot grow past its cap.
+func TestServiceBeginPairBounded(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	for i := 0; i < maxPendingPairCodes; i++ {
+		id := fmt.Sprintf("chrome-extension://ext-%d", i)
+		if _, err := s.BeginPair(id); err != nil {
+			t.Fatalf("BeginPair(%s): %v", id, err)
+		}
+	}
+	if _, err := s.BeginPair("chrome-extension://one-too-many"); !errors.Is(err, ErrTooManyPairings) {
+		t.Fatalf("want ErrTooManyPairings past cap, got %v", err)
+	}
+	// Re-initiating an existing extension ID must still succeed (overwrite, no growth).
+	if _, err := s.BeginPair("chrome-extension://ext-0"); err != nil {
+		t.Fatalf("re-pair existing id: %v", err)
 	}
 }
 
@@ -398,7 +485,10 @@ func TestServicePendingPairings(t *testing.T) {
 
 	// Begin a pairing: code is generated internally.
 	const extID = "chrome-extension://test-pending-pairings"
-	code := svc.BeginPair(extID)
+	code, err := svc.BeginPair(extID)
+	if err != nil {
+		t.Fatalf("BeginPair: %v", err)
+	}
 
 	pairings := svc.PendingPairings()
 	if len(pairings) != 1 {
@@ -422,7 +512,10 @@ func TestServicePendingPairings(t *testing.T) {
 
 func TestServiceNormalizesRawExtensionID(t *testing.T) {
 	s := NewService(t.TempDir(), &fakeBackend{}, nil)
-	code := s.BeginPair("abcdefghijklmnopabcdefghijklmnop")
+	code, err := s.BeginPair("abcdefghijklmnopabcdefghijklmnop")
+	if err != nil {
+		t.Fatalf("BeginPair: %v", err)
+	}
 	token, err := s.ConfirmPair("abcdefghijklmnopabcdefghijklmnop", code)
 	if err != nil {
 		t.Fatalf("ConfirmPair: %v", err)

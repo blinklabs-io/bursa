@@ -19,7 +19,7 @@
 // The component is mounted globally in app.tsx so it appears on top of whatever
 // screen is currently active — the user does not need to navigate away.
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
 import { Input } from "../components/Input";
@@ -98,11 +98,17 @@ export function ConnectorApproval() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // needsReReview is set when the head request is replaced while the overlay is
+  // open, so a click intended for the request the user was reading cannot land
+  // on a substituted one. See the swap-detection layout effect below.
+  const [needsReReview, setNeedsReReview] = useState(false);
 
   // Track IDs we have already notified so we don't re-notify on re-renders.
   const notifiedIds = useRef<Set<string>>(new Set());
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+  // The request ID the user has actually been shown, used to detect a swap.
+  const shownID = useRef<string | null>(null);
 
   useEffect(() => {
     const unsub = subscribePending((snapshot) => {
@@ -123,6 +129,27 @@ export function ConnectorApproval() {
   const current = pending[0];
   const currentID = current?.id;
   const hasCurrent = current !== undefined;
+
+  // Detect a request substitution: the head request being replaced by a
+  // different one while the overlay is already open (an external timeout, a
+  // decision made in another tab, or the previous request resolving). When that
+  // happens, force a fresh review so an in-flight click cannot be converted into
+  // an approval of a request the user never saw. This runs in a layout effect so
+  // the gate is set synchronously, before the browser can dispatch a pending
+  // click on the newly-rendered button. Password methods are already protected
+  // by the password-clear below; this extends the same protection to the
+  // no-password methods (enable, submitTx).
+  useLayoutEffect(() => {
+    if (currentID === undefined) {
+      shownID.current = null;
+      setNeedsReReview(false);
+      return;
+    }
+    if (shownID.current !== null && shownID.current !== currentID) {
+      setNeedsReReview(true);
+    }
+    shownID.current = currentID;
+  }, [currentID]);
 
   useEffect(() => {
     if (currentID === undefined) return;
@@ -179,6 +206,9 @@ export function ConnectorApproval() {
 
   async function handleDecide(approved: boolean) {
     if (!current) return;
+    // Refuse to approve a request that was substituted in and not yet
+    // re-reviewed, even if a click somehow raced ahead of the disabled state.
+    if (approved && needsReReview) return;
     setBusy(true);
     setError(null);
     try {
@@ -200,6 +230,10 @@ export function ConnectorApproval() {
   }
 
   const requiresPassword = needsPassword(current.method);
+  // signTx/signData carry raw CBOR/hex that Bursa cannot yet decode into a
+  // human-readable summary, so consent here is not fully informed. Flag the
+  // payload prominently so the raw bytes are not mistaken for a reviewed action.
+  const isRawSigning = current.method === "signTx" || current.method === "signData";
 
   return (
     <div
@@ -237,6 +271,25 @@ export function ConnectorApproval() {
               <>
                 <dt>Params</dt>
                 <dd>
+                  {isRawSigning && (
+                    <p
+                      role="alert"
+                      style={{
+                        margin: "0 0 0.5rem",
+                        padding: "0.5rem 0.6rem",
+                        border: "1px solid var(--warning-border, #b8860b)",
+                        background: "var(--warning-bg, rgba(184, 134, 11, 0.12))",
+                        color: "var(--warning-text, #8a6d00)",
+                        borderRadius: "4px",
+                        fontSize: "0.8em",
+                      }}
+                    >
+                      ⚠ Contents unverified — raw {current.method === "signTx" ? "transaction" : "data payload"}.
+                      Bursa cannot decode what is shown below, so it may not reflect what you expect
+                      (e.g. how much it sends or where). Only approve if you trust {current.origin} and
+                      understand exactly what you are signing.
+                    </p>
+                  )}
                   <pre
                     className="mono"
                     style={{
@@ -286,6 +339,30 @@ export function ConnectorApproval() {
             </p>
           )}
 
+          {needsReReview && (
+            <div
+              role="alert"
+              style={{
+                marginBottom: "0.75rem",
+                padding: "0.5rem 0.6rem",
+                border: "1px solid var(--warning-border, #b8860b)",
+                background: "var(--warning-bg, rgba(184, 134, 11, 0.12))",
+                color: "var(--warning-text, #8a6d00)",
+                borderRadius: "4px",
+                fontSize: "0.85em",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "0.5rem",
+              }}
+            >
+              <span>This request changed. Review the details above before approving.</span>
+              <Button variant="ghost" onClick={() => setNeedsReReview(false)}>
+                Reviewed
+              </Button>
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
             <Button
               variant="ghost"
@@ -296,7 +373,7 @@ export function ConnectorApproval() {
             </Button>
             <Button
               variant="primary"
-              disabled={busy || (requiresPassword && !password)}
+              disabled={busy || needsReReview || (requiresPassword && !password)}
               onClick={() => void handleDecide(true)}
             >
               {busy ? "Processing…" : "Approve"}

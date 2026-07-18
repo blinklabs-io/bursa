@@ -64,7 +64,10 @@ func (f *fakeConnectorBackend) UnregisteredPubStakeKeys(_ string) ([]string, err
 func newTestService(t *testing.T, extensionID string) (*connector.Service, string) {
 	t.Helper()
 	svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
-	code := svc.BeginPair(extensionID)
+	code, err := svc.BeginPair(extensionID)
+	if err != nil {
+		t.Fatalf("BeginPair: %v", err)
+	}
 	token, err := svc.ConfirmPair(extensionID, code)
 	if err != nil {
 		t.Fatalf("ConfirmPair: %v", err)
@@ -126,7 +129,7 @@ func TestConnectorPairRoute(t *testing.T) {
 		registerConnector(mux, svc)
 
 		// Learn the code directly (simulates in-app display).
-		code := svc.BeginPair(extID)
+		code, _ := svc.BeginPair(extID)
 
 		body := `{"extension_id":"` + extID + `","code":"` + code + `"}`
 		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
@@ -708,7 +711,8 @@ func TestConnectorGrants(t *testing.T) {
 		<-done
 
 		req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)
-		// No Origin header → same-origin.
+		// No Origin header + loopback Host → same-origin (the real SPA GET).
+		req.Host = "127.0.0.1:8090"
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -746,6 +750,7 @@ func TestConnectorGrants(t *testing.T) {
 		registerConnector(mux, svc)
 
 		req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)
+		req.Host = "127.0.0.1:8090"
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -949,16 +954,34 @@ func TestConnectorGrants(t *testing.T) {
 		}
 	})
 
-	t.Run("same-origin guard: GET grants no Origin header → allowed", func(t *testing.T) {
+	t.Run("same-origin guard: GET grants no Origin header, loopback Host → allowed", func(t *testing.T) {
 		_, mux := newSvcPaired(t)
 
+		// The SPA's own same-origin GET omits Origin but always arrives over a
+		// loopback Host — that case must still be allowed.
 		req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)
-		// No Origin header set.
+		req.Host = "127.0.0.1:8090"
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
-			t.Errorf("status = %d, want 200 when no Origin header", rec.Code)
+			t.Errorf("status = %d, want 200 for no-Origin GET over loopback", rec.Code)
+		}
+	})
+
+	t.Run("same-origin guard: GET grants no Origin header, rebound Host → rejected", func(t *testing.T) {
+		_, mux := newSvcPaired(t)
+
+		// A DNS-rebound page (evil.com → 127.0.0.1) fetching a relative URL sends
+		// no Origin header but a public Host. This must be refused so the paired
+		// extension ID and connected-origin list cannot leak.
+		req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)
+		req.Host = "evil.com"
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("status = %d, want 403 for no-Origin GET over rebound Host", rec.Code)
 		}
 	})
 }
@@ -1233,7 +1256,7 @@ func TestHandlePendingPairings(t *testing.T) {
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
 
-		code := svc.BeginPair(extID)
+		code, _ := svc.BeginPair(extID)
 
 		req := strictReq(http.MethodPost, "")
 		rec := httptest.NewRecorder()
@@ -1269,7 +1292,7 @@ func TestHandlePendingPairings(t *testing.T) {
 			return nil
 		}))
 
-		code := svc.BeginPair(extID)
+		code, _ := svc.BeginPair(extID)
 
 		req := strictReq(http.MethodPost, `{"password":"vault-secret"}`)
 		rec := httptest.NewRecorder()
@@ -1303,7 +1326,7 @@ func TestHandlePendingPairings(t *testing.T) {
 			return vault.ErrWrongPassword
 		}))
 
-		code := svc.BeginPair(extID)
+		code, _ := svc.BeginPair(extID)
 
 		req := strictReq(http.MethodPost, `{"password":"wrong"}`)
 		rec := httptest.NewRecorder()
@@ -1321,7 +1344,7 @@ func TestHandlePendingPairings(t *testing.T) {
 		svc := newSvc(t)
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
-		code := svc.BeginPair(extID)
+		code, _ := svc.BeginPair(extID)
 
 		req := httptest.NewRequest(http.MethodPost, "/connector/pending-pairings", nil)
 		rec := httptest.NewRecorder()
@@ -1339,7 +1362,7 @@ func TestHandlePendingPairings(t *testing.T) {
 		svc := newSvc(t)
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
-		code := svc.BeginPair(extID)
+		code, _ := svc.BeginPair(extID)
 
 		req := httptest.NewRequest(http.MethodGet, "/connector/pending-pairings", nil)
 		rec := httptest.NewRecorder()

@@ -46,11 +46,14 @@ function sendRequest(method: string, params?: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
     // The id is an unguessable uuidv4 nonce. Replies arrive via window.postMessage
     // from the content script, which is the same window the page can also post to,
-    // so we cannot use a private cryptographic channel here. The accepted mitigation
-    // is: (1) the id is an unguessable nonce, (2) we accept only the FIRST matching
-    // reply then immediately tear down the listener, and (3) a timeout guarantees the
-    // listener is always removed and the promise always settles. A forged reply would
-    // therefore have to guess the per-call nonce before the genuine reply arrives.
+    // so we cannot use a private cryptographic channel here. The nonce only defends
+    // against OTHER-window forgers (which must guess the per-call nonce before the
+    // genuine reply arrives); a same-origin co-resident script or page XSS can always
+    // observe and race the reply — that is the inherent floor of the injected-provider
+    // pattern, not a defect. Mitigations: (1) the id is an unguessable nonce, (2) we
+    // accept only the FIRST matching reply then immediately tear down the listener,
+    // and (3) a timeout guarantees the listener is always removed and the promise
+    // always settles.
     const id = crypto.randomUUID();
 
     const cleanup = () => {
@@ -76,7 +79,11 @@ function sendRequest(method: string, params?: unknown): Promise<unknown> {
     }, REPLY_TIMEOUT_MS);
 
     window.addEventListener('message', handler);
-    window.postMessage({ source: 'bursa-cip30', id, method, params }, '*');
+    // Post to our own origin only. Posting to the current window never reaches
+    // child iframes or the opener, so '*' was not a cross-origin leak, but pinning
+    // the target origin matches the rigor of the reply path (content.ts) and is the
+    // best-practice default.
+    window.postMessage({ source: 'bursa-cip30', id, method, params }, window.location.origin);
   });
 }
 
@@ -157,13 +164,17 @@ const bursaProvider = {
 
   async isEnabled(): Promise<boolean> {
     // Use safeRequest for parity with enable(): rejections become CIP-30
-    // {code, info} errors rather than raw values.
-    return safeRequest('isEnabled', { origin: window.location.origin }) as Promise<boolean>;
+    // {code, info} errors rather than raw values. No origin is sent: the backend
+    // authorizes on the browser-verified sender origin (body.Origin), never a
+    // page-supplied one, so passing origin here would be an inert, misleading field.
+    return safeRequest('isEnabled') as Promise<boolean>;
   },
 
   async enable(): Promise<CIP30API> {
     try {
-      await sendRequest('enable', { origin: window.location.origin });
+      // See isEnabled: the origin is derived from the sender by the background
+      // worker, so we deliberately do not pass a page-controlled origin.
+      await sendRequest('enable');
       return buildCIP30API();
     } catch (err) {
       throw wrapError(err);

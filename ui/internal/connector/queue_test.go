@@ -38,6 +38,25 @@ func TestQueueTimeout(t *testing.T) {
 	}
 }
 
+// TestDrainDecision covers the timeout/cancel tie-break: a decision buffered on
+// the done channel at the instant the timer fires must be returned rather than
+// dropped in favour of a spurious ErrTimeout.
+func TestDrainDecision(t *testing.T) {
+	done := make(chan Decision, 1)
+	if _, err := drainDecision(done); err != ErrTimeout {
+		t.Fatalf("empty channel: want ErrTimeout, got %v", err)
+	}
+
+	done <- Decision{Approved: true, Password: "pw"}
+	d, err := drainDecision(done)
+	if err != nil {
+		t.Fatalf("buffered decision: unexpected error %v", err)
+	}
+	if !d.Approved || d.Password != "pw" {
+		t.Fatalf("buffered decision: got %+v", d)
+	}
+}
+
 func TestQueueRejectsDuplicateAfterDecisionConsumed(t *testing.T) {
 	q := NewQueue(time.Now, func() (string, error) { return "req1", nil }, time.Second)
 	req, err := q.Submit("https://a.io", "signTx", nil)

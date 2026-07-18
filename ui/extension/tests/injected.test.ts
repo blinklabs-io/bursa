@@ -35,7 +35,9 @@ describe('injected provider', () => {
     };
     expect(enableCall.source).toBe('bursa-cip30');
     expect(enableCall.method).toBe('enable');
-    expect(enableCall.params).toEqual({ origin: window.location.origin });
+    // enable() deliberately sends no page-controlled origin: the backend
+    // authorizes on the browser-verified sender origin.
+    expect(enableCall.params).toBeUndefined();
 
     window.dispatchEvent(
       new MessageEvent('message', {
@@ -59,6 +61,8 @@ describe('injected provider', () => {
     expect(call.source).toBe('bursa-cip30');
     expect(typeof call.id).toBe('string');
     expect(call.method).toBe('getNetworkId');
+    // Requests are posted to our own origin, never '*'.
+    expect(postMessageSpy.mock.calls[0][1]).toBe(window.location.origin);
 
     // Reply to resolve the promise
     window.dispatchEvent(
@@ -157,7 +161,9 @@ describe('injected provider', () => {
     };
     expect(enableCall.source).toBe('bursa-cip30');
     expect(enableCall.method).toBe('enable');
-    expect(enableCall.params).toEqual({ origin: window.location.origin });
+    // enable() deliberately sends no page-controlled origin: the backend
+    // authorizes on the browser-verified sender origin.
+    expect(enableCall.params).toBeUndefined();
 
     const cip30Error = { code: -3, info: 'User declined connection' };
     window.dispatchEvent(
@@ -188,7 +194,8 @@ describe('injected provider', () => {
     };
     expect(call.source).toBe('bursa-cip30');
     expect(call.method).toBe('isEnabled');
-    expect(call.params).toEqual({ origin: window.location.origin });
+    // isEnabled() sends no page-controlled origin (see enable()).
+    expect(call.params).toBeUndefined();
 
     // Reply to clean up the listener
     window.dispatchEvent(

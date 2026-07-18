@@ -111,14 +111,21 @@ func isLoopbackHost(host string) bool {
 
 // sameOrigin returns true when the request comes from the same origin as the
 // API server. Same-origin browser requests typically omit the Origin header
-// entirely, so an absent header is treated as same-origin. When Origin is
-// present, the Host must be a loopback address (DNS-rebinding defence) and the
-// Origin must match the API server's own scheme+host.
+// entirely, so an absent header is treated as same-origin — but ONLY when the
+// request actually arrived over a loopback Host. A DNS-rebound cross-site page
+// fetching a relative URL produces the same shape (no Origin, relative GET) yet
+// carries a public Host header (e.g. Host: evil.com), so gating the absent-Origin
+// case on isLoopbackHost is what closes the rebinding leak at the source rather
+// than relying on each caller to pick strictSameOrigin. When Origin is present,
+// the Host must likewise be loopback and the Origin must match the API server's
+// own scheme+host.
 func sameOrigin(r *http.Request) bool {
 	o := r.Header.Get("Origin")
 	if o == "" {
-		// No Origin header: same-origin direct navigation, allow.
-		return true
+		// No Origin header: trust it only when it reached us over loopback. The
+		// SPA's own same-origin GETs (which omit Origin) always satisfy this; a
+		// rebound public hostname never does.
+		return isLoopbackHost(r.Host)
 	}
 	// Reject if the Host is not a loopback address: a DNS-rebound host
 	// (e.g. Host: evil.com:8090 → 127.0.0.1) would otherwise pass the
@@ -560,7 +567,14 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 			// Initiate: generate + cache a pairing code for display in the Bursa UI.
 			// Do NOT return the code in the HTTP response — that would allow any
 			// local unauthenticated caller to pair without user approval.
-			svc.BeginPair(req.ExtensionID)
+			if _, err := svc.BeginPair(req.ExtensionID); err != nil {
+				status := http.StatusBadRequest
+				if errors.Is(err, connector.ErrTooManyPairings) {
+					status = http.StatusTooManyRequests
+				}
+				writeJSON(w, status, map[string]string{"error": err.Error()})
+				return
+			}
 			writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending"})
 			return
 		}

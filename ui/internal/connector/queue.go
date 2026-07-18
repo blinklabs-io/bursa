@@ -90,9 +90,32 @@ func (q *Queue) Await(ctx context.Context, id string) (Decision, error) {
 	case d := <-w.done:
 		return d, nil
 	case <-t.C:
-		return Decision{}, ErrTimeout
+		// A Decide may have fired at the very instant the timer expired: it sets
+		// decided=true and sends on the buffered done channel while this select
+		// simultaneously chose the timeout branch. Prefer a delivered decision so
+		// the SPA/dApp (which saw Decide succeed) and the signing path agree on
+		// the outcome instead of the caller reporting a spurious timeout.
+		return drainDecision(w.done)
 	case <-ctx.Done():
-		return Decision{}, ctx.Err()
+		// Same tie-break as the timeout branch: honour a decision that landed
+		// concurrently with cancellation.
+		select {
+		case d := <-w.done:
+			return d, nil
+		default:
+			return Decision{}, ctx.Err()
+		}
+	}
+}
+
+// drainDecision returns a decision already buffered on done, or ErrTimeout if
+// none is present. It never blocks.
+func drainDecision(done <-chan Decision) (Decision, error) {
+	select {
+	case d := <-done:
+		return d, nil
+	default:
+		return Decision{}, ErrTimeout
 	}
 }
 

@@ -249,3 +249,52 @@ test("shows request params before approval", async () => {
   await waitFor(() => expect(screen.getByText(/"payload": "4275727361"/)).toBeInTheDocument());
   expect(screen.getByText(/"addr": "addr_test1qpz\.\.\."/)).toBeInTheDocument();
 });
+
+test("signing methods show a raw-contents warning; enable does not", async () => {
+  render(<ConnectorApproval />);
+  emitRequest(makeReq({ id: "sign-warn", method: "signTx", params: { tx: "deadbeef" } }));
+
+  await waitFor(() => expect(screen.getByText(/contents unverified/i)).toBeInTheDocument());
+
+  // Swapping to a plain enable clears the warning.
+  emitSnapshot([makeReq({ id: "enable-nowarn", method: "enable", origin: "https://x.example" })]);
+  await waitFor(() =>
+    expect(screen.getByText("https://x.example")).toBeInTheDocument(),
+  );
+  expect(screen.queryByText(/contents unverified/i)).toBeNull();
+});
+
+test("a substituted head request forces re-review before Approve", async () => {
+  render(<ConnectorApproval />);
+  emitRequest(makeReq({ id: "orig", method: "enable", origin: "https://orig.example" }));
+
+  // The first request needs no re-review: Approve is immediately actionable.
+  await waitFor(() => expect(screen.getByText("https://orig.example")).toBeInTheDocument());
+  expect(screen.getByRole("button", { name: /approve/i })).not.toBeDisabled();
+
+  // The head is replaced externally (timeout / another tab) by a different request.
+  emitSnapshot([makeReq({ id: "swapped", method: "enable", origin: "https://swapped.example" })]);
+  await waitFor(() => expect(screen.getByText("https://swapped.example")).toBeInTheDocument());
+
+  // Approve is now gated behind an explicit re-review acknowledgement.
+  expect(screen.getByText(/request changed/i)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /approve/i })).toBeDisabled();
+
+  fireEvent.click(screen.getByRole("button", { name: /reviewed/i }));
+  expect(screen.getByRole("button", { name: /approve/i })).not.toBeDisabled();
+});
+
+test("a substituted no-password request cannot be one-click approved", async () => {
+  const decideSpy = vi.spyOn(connectorApi, "decide").mockResolvedValue(undefined);
+
+  render(<ConnectorApproval />);
+  emitRequest(makeReq({ id: "sub-a", method: "submitTx", params: { tx: "aa" } }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /approve/i })).not.toBeDisabled());
+
+  emitSnapshot([makeReq({ id: "sub-b", method: "submitTx", params: { tx: "bb" } })]);
+  await waitFor(() => expect(screen.getByText(/request changed/i)).toBeInTheDocument());
+
+  // A click that lands on the substituted request must not approve it.
+  fireEvent.click(screen.getByRole("button", { name: /approve/i }));
+  expect(decideSpy).not.toHaveBeenCalled();
+});

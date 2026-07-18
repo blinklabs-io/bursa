@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,18 +18,38 @@ import (
 
 // Sentinel errors returned by Service.
 var (
-	ErrRefused          = errors.New("connector: refused")
-	ErrUserDeclined     = errors.New("connector: user declined")
-	ErrNotGranted       = errors.New("connector: origin not granted")
-	ErrPairCodeMismatch = errors.New("connector: pair code mismatch")
-	ErrInvalidParams    = errors.New("connector: invalid request params")
-	ErrInvalidOrigin    = errors.New("connector: invalid origin")
+	ErrRefused            = errors.New("connector: refused")
+	ErrUserDeclined       = errors.New("connector: user declined")
+	ErrNotGranted         = errors.New("connector: origin not granted")
+	ErrPairCodeMismatch   = errors.New("connector: pair code mismatch")
+	ErrInvalidParams   = errors.New("connector: invalid request params")
+	ErrInvalidOrigin   = errors.New("connector: invalid origin")
+	ErrTooManyPairings = errors.New("connector: too many pending pairings")
+	// ErrInvalidExtensionID is defined in token.go.
 )
 
 const (
 	pairCodeDigits = 12
 	pairCodeMax    = 1_000_000_000_000
+	// pairCodeTTL bounds how long a generated pairing code stays valid. A code
+	// is a short-lived bootstrap secret; expiring it caps the brute-force window.
+	pairCodeTTL = 5 * time.Minute
+	// pairCodeMaxAttempts caps confirmation tries per code before it is discarded,
+	// forcing the user to re-initiate rather than letting a local process grind
+	// the 10^12 keyspace.
+	pairCodeMaxAttempts = 5
+	// maxPendingPairCodes bounds the pending-pairing map so a flood of distinct
+	// extension IDs cannot grow it without limit.
+	maxPendingPairCodes = 32
 )
+
+// pairEntry is a pending pairing code plus the metadata needed to expire it and
+// cap confirmation attempts.
+type pairEntry struct {
+	code     string
+	created  time.Time
+	attempts int
+}
 
 // Paginate is used by the Utxos backend method.
 type Paginate struct {
@@ -62,10 +83,11 @@ type Service struct {
 	queue  *Queue
 	be     Backend
 	prompt func()
+	now    func() time.Time
 
-	// pending pair codes: extensionID → numeric string
+	// pending pair codes: extensionID → entry (code + expiry/attempt metadata)
 	pairMu    sync.Mutex
-	pairCodes map[string]string
+	pairCodes map[string]*pairEntry
 }
 
 // NewService constructs a Service, creating the three stores under dir.
@@ -85,7 +107,8 @@ func NewService(dir string, be Backend, networkPrompt func()) *Service {
 		queue:     NewQueue(time.Now, mkID, 120*time.Second),
 		be:        be,
 		prompt:    networkPrompt,
-		pairCodes: map[string]string{},
+		now:       time.Now,
+		pairCodes: map[string]*pairEntry{},
 	}
 }
 
@@ -110,9 +133,15 @@ func (s *Service) SetActiveAccount(walletID string, acct *wallet.Account) {
 }
 
 // BeginPair generates a numeric pairing code for the given extensionID and
-// caches it. The code is returned for display in the Bursa UI.
-func (s *Service) BeginPair(extensionID string) string {
+// caches it. The code is returned for display in the Bursa UI. It rejects a
+// malformed extension ID and refuses to grow the pending map past
+// maxPendingPairCodes (after pruning expired entries), so a flood of distinct
+// IDs cannot exhaust memory.
+func (s *Service) BeginPair(extensionID string) (string, error) {
 	extensionID = normalizeExtensionID(extensionID)
+	if !validExtensionID(extensionID) {
+		return "", ErrInvalidExtensionID
+	}
 	n, err := rand.Int(rand.Reader, big.NewInt(pairCodeMax))
 	if err != nil {
 		// A CSPRNG failure is a fatal system condition; never fall back to a
@@ -121,25 +150,52 @@ func (s *Service) BeginPair(extensionID string) string {
 	}
 	code := fmt.Sprintf("%0*d", pairCodeDigits, n.Int64())
 	s.pairMu.Lock()
-	s.pairCodes[extensionID] = code
-	s.pairMu.Unlock()
-	return code
+	defer s.pairMu.Unlock()
+	s.prunePairCodesLocked()
+	if _, exists := s.pairCodes[extensionID]; !exists && len(s.pairCodes) >= maxPendingPairCodes {
+		return "", ErrTooManyPairings
+	}
+	s.pairCodes[extensionID] = &pairEntry{code: code, created: s.now()}
+	return code, nil
 }
 
 // ConfirmPair validates the code for extensionID, then mints and returns a
-// bearer token. Returns ErrPairCodeMismatch if the code is wrong.
+// bearer token. Returns ErrPairCodeMismatch if the code is wrong, expired, or
+// has exhausted its attempt budget. The code is compared in constant time so a
+// caller cannot learn a prefix from response timing.
 func (s *Service) ConfirmPair(extensionID, code string) (string, error) {
 	extensionID = normalizeExtensionID(extensionID)
 	s.pairMu.Lock()
-	expected, ok := s.pairCodes[extensionID]
-	if ok && expected == code {
-		delete(s.pairCodes, extensionID)
+	entry, ok := s.pairCodes[extensionID]
+	match := false
+	if ok {
+		if s.now().Sub(entry.created) > pairCodeTTL {
+			delete(s.pairCodes, extensionID)
+		} else {
+			entry.attempts++
+			match = subtle.ConstantTimeCompare([]byte(entry.code), []byte(code)) == 1
+			// Discard the code once it succeeds or exhausts its attempt budget so
+			// it can be used at most once and cannot be ground down.
+			if match || entry.attempts >= pairCodeMaxAttempts {
+				delete(s.pairCodes, extensionID)
+			}
+		}
 	}
 	s.pairMu.Unlock()
-	if !ok || expected != code {
+	if !match {
 		return "", ErrPairCodeMismatch
 	}
 	return s.tokens.Mint(extensionID)
+}
+
+// prunePairCodesLocked removes expired pairing codes. Callers must hold pairMu.
+func (s *Service) prunePairCodesLocked() {
+	now := s.now()
+	for id, entry := range s.pairCodes {
+		if now.Sub(entry.created) > pairCodeTTL {
+			delete(s.pairCodes, id)
+		}
+	}
 }
 
 // VerifyToken checks whether the bearer token is valid for the given extensionID.
@@ -191,13 +247,15 @@ type PendingPairing struct {
 	Code        string `json:"code"`
 }
 
-// PendingPairings returns all pending (unconfirmed) pairing codes.
+// PendingPairings returns all pending (unconfirmed) pairing codes, dropping any
+// that have expired.
 func (s *Service) PendingPairings() []PendingPairing {
 	s.pairMu.Lock()
 	defer s.pairMu.Unlock()
+	s.prunePairCodesLocked()
 	out := make([]PendingPairing, 0, len(s.pairCodes))
-	for extID, code := range s.pairCodes {
-		out = append(out, PendingPairing{ExtensionID: extID, Code: code})
+	for extID, entry := range s.pairCodes {
+		out = append(out, PendingPairing{ExtensionID: extID, Code: entry.code})
 	}
 	return out
 }

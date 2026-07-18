@@ -848,19 +848,28 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 		}
 		return TxResult{}, fmt.Errorf("unlock keystore: %w", err)
 	}
+	// rootKey and acctKey hold the account master secret; declare them up front so
+	// the deferred cleanup below zeroes them on every exit path (including the
+	// derivation errors here), matching the other signing methods.
+	var rootKey, acctKey bip32.XPrv
 	defer func() {
-		// Zero the decrypted mnemonic as best-effort cleanup.
+		// Zero the decrypted mnemonic and derived account keys as best-effort cleanup.
+		for _, k := range []bip32.XPrv{rootKey, acctKey} {
+			for i := range k {
+				k[i] = 0
+			}
+		}
 		for i := range mnemonicBytes {
 			mnemonicBytes[i] = 0
 		}
 	}()
 
 	// --- step 3: derive account key ---
-	rootKey, err := bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
 	if err != nil {
 		return TxResult{}, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err := bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, 0)
 	if err != nil {
 		return TxResult{}, fmt.Errorf("account key: %w", err)
 	}
