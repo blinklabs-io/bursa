@@ -171,7 +171,7 @@ jobs:
             https://uploads.github.com/repos/${{ github.repository_owner }}/bursa/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}
 
       - name: Attest binary
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1 https://github.com/actions/attest/releases/tag/v4.1.1
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0 https://github.com/actions/attest/releases/tag/v4.2.0
         with:
           subject-path: 'bursa'
 
@@ -258,7 +258,7 @@ jobs:
             https://uploads.github.com/repos/${{ github.repository_owner }}/bursa/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}
 
       - name: Attest binary
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1 https://github.com/actions/attest/releases/tag/v4.1.1
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0 https://github.com/actions/attest/releases/tag/v4.2.0
         with:
           subject-path: 'ui/bursa-wallet'
 
@@ -323,13 +323,13 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
       - name: Attest Docker Hub image
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1 https://github.com/actions/attest/releases/tag/v4.1.1
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0 https://github.com/actions/attest/releases/tag/v4.2.0
         with:
           subject-name: index.docker.io/blinklabs/bursa
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
       - name: Attest GHCR image
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1 https://github.com/actions/attest/releases/tag/v4.1.1
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0 https://github.com/actions/attest/releases/tag/v4.2.0
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -390,13 +390,13 @@ jobs:
           echo "dockerhub-digest=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${dockerhub_tag})" >> $GITHUB_OUTPUT
           echo "ghcr-digest=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${ghcr_tag})" >> $GITHUB_OUTPUT
       - name: Attest Docker Hub manifest
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1 https://github.com/actions/attest/releases/tag/v4.1.1
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0 https://github.com/actions/attest/releases/tag/v4.2.0
         with:
           subject-name: index.docker.io/blinklabs/bursa
           subject-digest: ${{ steps.manifest.outputs.dockerhub-digest }}
           push-to-registry: true
       - name: Attest GHCR manifest
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1 https://github.com/actions/attest/releases/tag/v4.1.1
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0 https://github.com/actions/attest/releases/tag/v4.2.0
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.manifest.outputs.ghcr-digest }}
