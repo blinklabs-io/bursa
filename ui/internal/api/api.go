@@ -26,6 +26,7 @@ import (
 
 	bursa "github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/handle"
@@ -142,7 +143,8 @@ type LegacyKeystore interface {
 }
 
 type handlerOptions struct {
-	legacy LegacyKeystore
+	legacy    LegacyKeystore
+	connector *connector.Service
 }
 
 type HandlerOption func(*handlerOptions)
@@ -150,6 +152,14 @@ type HandlerOption func(*handlerOptions)
 func WithLegacyKeystore(ks LegacyKeystore) HandlerOption {
 	return func(o *handlerOptions) {
 		o.legacy = ks
+	}
+}
+
+// WithConnector enables the opt-in CIP-30/CIP-95 connector routes and keeps
+// the connector backend bound to the currently active wallet.
+func WithConnector(svc *connector.Service) HandlerOption {
+	return func(o *handlerOptions) {
+		o.connector = svc
 	}
 }
 
@@ -397,12 +407,18 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		if po != nil {
 			po.SetAccount(w.ID, w.Account)
 		}
+		if cfg.connector != nil {
+			cfg.connector.SetActiveAccount(w.ID, w.Account)
+		}
 	}
 	clearActive := func() {
 		_ = wl.SetAccount(nil)
 		sp.SetAccount("", nil)
 		if po != nil {
 			po.SetAccount("", nil)
+		}
+		if cfg.connector != nil {
+			cfg.connector.SetActiveAccount("", nil)
 		}
 	}
 	legacyAvailable := func() bool {
@@ -973,6 +989,23 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 
 	if ms != nil {
 		registerMultiSigRoutes(mux, st, ms, network)
+	}
+
+	if cfg.connector != nil {
+		authorizePairingCode := func(password string) error {
+			verifier, ok := vlt.(interface {
+				VerifyPassword(string) error
+			})
+			if !ok {
+				return errors.New("vault password verification unavailable")
+			}
+			return verifier.VerifyPassword(password)
+		}
+		registerConnector(
+			mux,
+			cfg.connector,
+			withConnectorPairingCodeAuthorizer(authorizePairingCode),
+		)
 	}
 
 	// SPA catch-all: the specific API routes above take precedence on the mux;

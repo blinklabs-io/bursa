@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bursa Connector</title>
+  <style>
+    body { font-family: sans-serif; min-width: 300px; padding: 12px; margin: 0; }
+    h1 { font-size: 16px; margin: 0 0 12px; }
+    .status { padding: 8px; border-radius: 4px; margin-bottom: 12px; font-size: 13px; }
+    .status.connected { background: #d4edda; color: #155724; }
+    .status.disconnected { background: #f8d7da; color: #721c24; }
+    button { padding: 6px 12px; cursor: pointer; font-size: 13px; }
+    input { width: 100%; box-sizing: border-box; padding: 6px; margin: 4px 0 8px; font-size: 13px; }
+    label { font-size: 12px; color: #666; }
+    .error { color: #721c24; font-size: 12px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Bursa Connector</h1>
+  <div id="status-bar" class="status disconnected" role="status" aria-live="polite">Not paired</div>
+
+  <div id="pair-section">
+    <label for="port-input">Bursa port (default 8090):</label>
+    <input id="port-input" type="number" value="8090" min="1" max="65535">
+    <button id="pair-btn">Pair with Bursa</button>
+    <div id="pair-error" class="error" role="alert" hidden></div>
+
+    <div id="code-section" hidden>
+      <p style="font-size:12px">Check Bursa Settings for the pairing code and enter it below:</p>
+      <label for="code-input">Pairing code:</label>
+      <input id="code-input" type="text" placeholder="Enter code from Bursa">
+      <button id="confirm-btn">Confirm Pairing</button>
+      <div id="code-error" class="error" role="alert" hidden></div>
+    </div>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

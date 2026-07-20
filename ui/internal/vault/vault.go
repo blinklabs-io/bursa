@@ -225,6 +225,17 @@ func (v *Vault) Locked() bool {
 	return v.idx == nil
 }
 
+// VerifyPassword authenticates the vault password without changing the lock
+// state or active wallet. It is used by flows that need an explicit user
+// approval but should not unlock or rebind the vault as a side effect.
+func (v *Vault) VerifyPassword(vaultPassword string) error {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	_, vek, _, err := v.authenticatedEnvelopeLocked(vaultPassword)
+	keystore.Zero(vek)
+	return err
+}
+
 // WalletCount returns the number of wallets in the vault. It works whether the
 // vault is locked or unlocked: when unlocked it uses the cached index; when
 // locked it reads the envelope and counts the seed blobs (the index is

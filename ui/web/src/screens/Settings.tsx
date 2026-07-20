@@ -1,11 +1,16 @@
-import { useState, useEffect } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  type FormEvent,
+} from "react";
 import { Card } from "../components/Card";
 import { StatusPill } from "../components/StatusPill";
 import { CopyButton } from "../components/CopyButton";
 import { Button } from "../components/Button";
 import { Input } from "../components/Input";
 import { Select } from "../components/Select";
-import { useStatus, useHistoryExpiry, useTPMStatus } from "../api/hooks";
+import { useStatus, useHistoryExpiry, useTPMStatus, useAsync } from "../api/hooks";
 import type { AsyncState } from "../api/hooks";
 import {
   setHistoryExpiry as putHistoryExpiry,
@@ -14,6 +19,7 @@ import {
   enableTPM,
   disableTPM,
 } from "../api/client";
+import { getConnectorState, revokeGrant, unpair, pendingPairings } from "../api/connector";
 import type { Account, AutoLockSetting, NodeState, TPMStatus } from "../api/types";
 
 interface SettingsProps {
@@ -440,6 +446,96 @@ function TPMCard({
 export function Settings({ account, spendingEnabled, autoLock }: SettingsProps) {
   const status = useStatus();
   const tpmStatusQuery = useTPMStatus();
+  const [connectorMissing, setConnectorMissing] = useState(false);
+  const loadConnectorState = useCallback(async () => {
+    try {
+      const state = await getConnectorState();
+      setConnectorMissing(false);
+      return state;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        setConnectorMissing(true);
+        return null;
+      }
+      throw e;
+    }
+  }, []);
+  const connectorState = useAsync(loadConnectorState, { pollMs: 3000 });
+  const connectorAvailable = !connectorMissing && connectorState.data !== null;
+  const pendingPairs = useAsync(pendingPairings, {
+    pollMs: connectorAvailable ? 3000 : undefined,
+    enabled: connectorAvailable,
+  });
+  const [pairingPassword, setPairingPassword] = useState("");
+  const [revealingPairCode, setRevealingPairCode] = useState(false);
+  const [pairingRevealError, setPairingRevealError] = useState<string | null>(null);
+  const [revealedPairCodes, setRevealedPairCodes] = useState<Record<string, string>>({});
+  const [connectorMutationError, setConnectorMutationError] = useState<string | null>(null);
+  const [connectorMutation, setConnectorMutation] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pendingPairs.data) return;
+    const pending = new Set(pendingPairs.data.map((p) => p.extension_id));
+    setRevealedPairCodes((prev) => {
+      const next: Record<string, string> = {};
+      for (const [extensionID, code] of Object.entries(prev)) {
+        if (pending.has(extensionID)) next[extensionID] = code;
+      }
+      return next;
+    });
+  }, [pendingPairs.data]);
+
+  async function handleRevoke(origin: string) {
+    setConnectorMutationError(null);
+    setConnectorMutation(`revoke:${origin}`);
+    try {
+      await revokeGrant(origin);
+      connectorState.refresh();
+    } catch (e) {
+      setConnectorMutationError(
+        e instanceof Error ? e.message : `Unable to revoke ${origin}`,
+      );
+    } finally {
+      setConnectorMutation(null);
+    }
+  }
+
+  async function handleUnpair() {
+    setConnectorMutationError(null);
+    setConnectorMutation("unpair");
+    try {
+      await unpair();
+      connectorState.refresh();
+    } catch (e) {
+      setConnectorMutationError(
+        e instanceof Error ? e.message : "Unable to unpair extension",
+      );
+    } finally {
+      setConnectorMutation(null);
+    }
+  }
+
+  async function handleRevealPairCode(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!pairingPassword || revealingPairCode) return;
+    setPairingRevealError(null);
+    setRevealingPairCode(true);
+    try {
+      const pairings = await pendingPairings(pairingPassword);
+      const codes: Record<string, string> = {};
+      for (const pairing of pairings) {
+        if (pairing.code) codes[pairing.extension_id] = pairing.code;
+      }
+      setRevealedPairCodes(codes);
+      setPairingPassword("");
+    } catch (e) {
+      setPairingRevealError(
+        e instanceof ApiError ? e.message : "Unable to reveal pairing code",
+      );
+    } finally {
+      setRevealingPairCode(false);
+    }
+  }
 
   return (
     <div className="screen-settings">
@@ -503,6 +599,129 @@ export function Settings({ account, spendingEnabled, autoLock }: SettingsProps) 
           {tpmStatusQuery.error && (
             <p className="error-text" role="alert">{tpmStatusQuery.error.message}</p>
           )}
+        </Card>
+      )}
+
+      {!connectorMissing && (
+        <Card title="dApp Connector">
+          {connectorState.loading && !connectorState.data ? (
+            <p>Loading…</p>
+          ) : connectorState.data ? (
+            <>
+              <dl className="stat-list">
+                <dt>Status</dt>
+                <dd>
+                  <StatusPill tone={connectorState.data.paired ? "ok" : "muted"}>
+                    {connectorState.data.paired ? "Paired" : "Not paired"}
+                  </StatusPill>
+                </dd>
+                {connectorState.data.paired && connectorState.data.extension_id && (
+                  <>
+                    <dt>Extension</dt>
+                    <dd>
+                      <code className="mono">{connectorState.data.extension_id}</code>
+                    </dd>
+                  </>
+                )}
+              </dl>
+
+              {pendingPairs.data && pendingPairs.data.length > 0 && (
+                <section className="connector-pending-pairings">
+                  <h3>Pending pairing</h3>
+                  <form onSubmit={handleRevealPairCode}>
+                    <Input
+                      type="password"
+                      autoComplete="current-password"
+                      aria-label="Vault password"
+                      placeholder="Vault password"
+                      value={pairingPassword}
+                      disabled={revealingPairCode}
+                      onChange={(e) => setPairingPassword(e.target.value)}
+                    />
+                    <Button
+                      type="submit"
+                      disabled={!pairingPassword || revealingPairCode}
+                    >
+                      {revealingPairCode ? "Revealing…" : "Reveal code"}
+                    </Button>
+                  </form>
+                  {pairingRevealError && (
+                    <p role="alert" className="error-text">
+                      {pairingRevealError}
+                    </p>
+                  )}
+                  {pendingPairs.data.map((pairing) => {
+                    const code =
+                      pairing.code ?? revealedPairCodes[pairing.extension_id];
+                    return (
+                      <div
+                        key={pairing.extension_id}
+                        className="connector-pair-entry"
+                      >
+                        <p>
+                          <code className="mono">{pairing.extension_id}</code>
+                        </p>
+                        {code ? (
+                          <>
+                            <p
+                              className="connector-pair-code"
+                              aria-label="Pairing code"
+                            >
+                              {code}
+                            </p>
+                            <p>
+                              Enter this code in the Bursa extension to complete
+                              pairing.
+                            </p>
+                          </>
+                        ) : (
+                          <p>Reveal the code to complete pairing.</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </section>
+              )}
+
+              {connectorState.data.origins.length > 0 && (
+                <section>
+                  <h3>Connected sites</h3>
+                  <ul>
+                    {connectorState.data.origins.map((origin) => (
+                      <li key={origin}>
+                        <code className="mono">{origin}</code>
+                        <Button
+                          variant="ghost"
+                          aria-label={`Revoke ${origin}`}
+                          disabled={connectorMutation !== null}
+                          onClick={() => void handleRevoke(origin)}
+                        >
+                          {connectorMutation === `revoke:${origin}` ? "Revoking…" : "Revoke"}
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              {connectorState.data.paired && (
+                <Button
+                  variant="ghost"
+                  disabled={connectorMutation !== null}
+                  onClick={() => void handleUnpair()}
+                >
+                  {connectorMutation === "unpair" ? "Unpairing…" : "Unpair extension"}
+                </Button>
+              )}
+              {connectorMutationError && (
+                <p role="alert" className="error-text">
+                  {connectorMutationError}
+                </p>
+              )}
+            </>
+          ) : connectorState.error ? (
+            <p className="muted">Unavailable</p>
+          ) : null}
         </Card>
       )}
     </div>

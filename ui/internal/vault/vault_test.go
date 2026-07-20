@@ -96,6 +96,59 @@ func TestCreateAndUnlockEmptyVault(t *testing.T) {
 	}
 }
 
+func TestVerifyPasswordDoesNotUnlockVault(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	v.Lock()
+
+	if err := v.VerifyPassword("wrong-password"); !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("VerifyPassword wrong = %v, want ErrWrongPassword", err)
+	}
+	if !v.Locked() {
+		t.Fatal("wrong password verification must not unlock vault")
+	}
+
+	if err := v.VerifyPassword(vaultPw); err != nil {
+		t.Fatalf("VerifyPassword: %v", err)
+	}
+	if !v.Locked() {
+		t.Fatal("successful password verification must not unlock vault")
+	}
+}
+
+func TestVerifyPasswordZerosRecoveredVEK(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	v.Lock()
+
+	seal, open := keystore.CheapTestSealer()
+	var recoveredVEK []byte
+	trackingOpen := func(blob, password []byte) ([]byte, error) {
+		plaintext, err := open(blob, password)
+		if err == nil && string(password) == vaultPw {
+			recoveredVEK = plaintext
+		}
+		return plaintext, err
+	}
+	v.SetCipher(seal, trackingOpen)
+
+	if err := v.VerifyPassword(vaultPw); err != nil {
+		t.Fatalf("VerifyPassword: %v", err)
+	}
+	if len(recoveredVEK) != vekLen {
+		t.Fatalf("tracked VEK length = %d, want %d", len(recoveredVEK), vekLen)
+	}
+	for i, b := range recoveredVEK {
+		if b != 0 {
+			t.Fatalf("recovered VEK byte %d = %d, want zero", i, b)
+		}
+	}
+}
+
 func TestCreateRefusesOverwrite(t *testing.T) {
 	v := newTestVault(t)
 	if err := v.Create(vaultPw); err != nil {

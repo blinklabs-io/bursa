@@ -562,3 +562,23 @@ export interface MultiSigSubmitRequest {
   unsigned_tx_cbor: string;
   witnesses: string[];
 }
+
+// CIP-30 connector types.
+export interface ConnectorState {
+  paired: boolean;
+  extension_id: string;
+  origins: string[];
+}
+
+export interface ConnectorRequest {
+  id: string;
+  origin: string;
+  method: string;
+  params?: unknown;
+  created: string; // RFC3339 timestamp
+}
+
+export interface PendingPairing {
+  extension_id: string;
+  code?: string;
+}

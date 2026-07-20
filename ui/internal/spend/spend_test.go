@@ -13,11 +13,13 @@ import (
 
 	"github.com/blinklabs-io/apollo/v2/backend"
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/blinklabs-io/gouroboros/ledger"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/blinklabs-io/gouroboros/ledger/conway"
 	"github.com/blinklabs-io/gouroboros/ledger/shelley"
 	"github.com/blinklabs-io/plutigo/data"
 	utxorpc "github.com/utxorpc/go-codegen/utxorpc/v1alpha/cardano"
@@ -1474,6 +1476,287 @@ func TestConfirmMultiInput(t *testing.T) {
 	}
 	if got := len(submitted.WitnessSet.VkeyWitnesses.Items()); got != 2 {
 		t.Fatalf("submitted tx vkey witnesses = %d, want 2", got)
+	}
+}
+
+func TestWitnessTxRequiredSignerIncludesStakeAndDRepKeys(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(testMnemonic, "")
+	if err != nil {
+		t.Fatalf("GetRootKeyFromMnemonic: %v", err)
+	}
+	acctKey, err := bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		t.Fatalf("GetAccountKey: %v", err)
+	}
+	stakeKey, err := bursa.GetStakeKey(acctKey, 0)
+	if err != nil {
+		t.Fatalf("GetStakeKey: %v", err)
+	}
+	drepKey, err := bursa.GetDRepKey(acctKey, 0)
+	if err != nil {
+		t.Fatalf("GetDRepKey: %v", err)
+	}
+	stakeVkey := append([]byte(nil), bip32.XPrv(stakeKey).Public().PublicKey()...)
+	drepVkey := append([]byte(nil), bip32.XPrv(drepKey).Public().PublicKey()...)
+	bodyCbor, err := cbor.Encode(conway.ConwayTransactionBody{
+		TxRequiredSigners: cbor.NewSetType([]lcommon.Blake2b224{
+			lcommon.Blake2b224Hash(stakeVkey),
+			lcommon.Blake2b224Hash(drepVkey),
+		}, true),
+	})
+	if err != nil {
+		t.Fatalf("encode body: %v", err)
+	}
+
+	s := NewService(nil, fakeKeystore{mnemonic: testMnemonic}, acct)
+	wsCbor, err := s.WitnessTx(
+		"",
+		bodyCbor,
+		[]lcommon.Blake2b224{
+			lcommon.Blake2b224Hash(stakeVkey),
+			lcommon.Blake2b224Hash(drepVkey),
+		},
+		nil,
+		"pw",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("WitnessTx: %v", err)
+	}
+
+	var ws conway.ConwayTransactionWitnessSet
+	if _, err := cbor.Decode(wsCbor, &ws); err != nil {
+		t.Fatalf("decode witness set: %v", err)
+	}
+	got := map[string]bool{}
+	for _, w := range ws.VkeyWitnesses.Items() {
+		got[hex.EncodeToString(w.Vkey)] = true
+	}
+	if !got[hex.EncodeToString(stakeVkey)] {
+		t.Fatalf("missing stake key witness; got %v", got)
+	}
+	if !got[hex.EncodeToString(drepVkey)] {
+		t.Fatalf("missing DRep key witness; got %v", got)
+	}
+}
+
+func TestWitnessTxIncludesCertificateAndWithdrawalKeysWithoutRequiredSigners(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(testMnemonic, "")
+	if err != nil {
+		t.Fatalf("GetRootKeyFromMnemonic: %v", err)
+	}
+	acctKey, err := bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		t.Fatalf("GetAccountKey: %v", err)
+	}
+	stakeKey, err := bursa.GetStakeKey(acctKey, 0)
+	if err != nil {
+		t.Fatalf("GetStakeKey: %v", err)
+	}
+	drepKey, err := bursa.GetDRepKey(acctKey, 0)
+	if err != nil {
+		t.Fatalf("GetDRepKey: %v", err)
+	}
+	stakeVkey := append([]byte(nil), bip32.XPrv(stakeKey).Public().PublicKey()...)
+	drepVkey := append([]byte(nil), bip32.XPrv(drepKey).Public().PublicKey()...)
+	drepHash := lcommon.Blake2b224Hash(drepVkey)
+
+	stakeAddr, err := lcommon.NewAddress(acct.StakeAddress)
+	if err != nil {
+		t.Fatalf("NewAddress(stake): %v", err)
+	}
+	bodyCbor, err := cbor.Encode(conway.ConwayTransactionBody{
+		TxWithdrawals: map[*lcommon.Address]uint64{
+			&stakeAddr: 1,
+		},
+		TxCertificates: []lcommon.CertificateWrapper{{
+			Type: uint(lcommon.CertificateTypeUpdateDrep),
+			Certificate: &lcommon.UpdateDrepCertificate{
+				CertType: uint(lcommon.CertificateTypeUpdateDrep),
+				DrepCredential: lcommon.Credential{
+					CredType:   lcommon.CredentialTypeAddrKeyHash,
+					Credential: drepHash,
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("encode body: %v", err)
+	}
+
+	s := NewService(nil, fakeKeystore{mnemonic: testMnemonic}, acct)
+	wsCbor, err := s.WitnessTx("", bodyCbor, nil, nil, "pw", false)
+	if err != nil {
+		t.Fatalf("WitnessTx: %v", err)
+	}
+
+	var ws conway.ConwayTransactionWitnessSet
+	if _, err := cbor.Decode(wsCbor, &ws); err != nil {
+		t.Fatalf("decode witness set: %v", err)
+	}
+	got := map[string]bool{}
+	for _, w := range ws.VkeyWitnesses.Items() {
+		got[hex.EncodeToString(w.Vkey)] = true
+	}
+	if !got[hex.EncodeToString(stakeVkey)] {
+		t.Fatalf("missing withdrawal stake key witness; got %v", got)
+	}
+	if !got[hex.EncodeToString(drepVkey)] {
+		t.Fatalf("missing certificate DRep key witness; got %v", got)
+	}
+}
+
+// TestWitnessTxNonPartialRejectsCommitteeCertColdKey verifies that a committee
+// authorization/resignation certificate whose cold credential the wallet cannot
+// witness does not slip through the non-partial completeness check just because
+// the transaction also has a wallet-owned payment input. The wallet never
+// derives committee cold keys, so with partialSign=false the request must fail
+// closed rather than return a witness set that silently omits the required
+// committee witness. With partialSign=true the wallet may still return the
+// payment witness it can provide.
+func TestWitnessTxNonPartialRejectsCommitteeCertColdKey(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	// A foreign committee cold credential the wallet does not own.
+	committeeColdHash := lcommon.Blake2b224Hash([]byte("committee cold key"))
+
+	certCases := []struct {
+		name string
+		cert lcommon.CertificateWrapper
+	}{
+		{
+			name: "AuthCommitteeHot",
+			cert: lcommon.CertificateWrapper{
+				Type: uint(lcommon.CertificateTypeAuthCommitteeHot),
+				Certificate: &lcommon.AuthCommitteeHotCertificate{
+					CertType: uint(lcommon.CertificateTypeAuthCommitteeHot),
+					ColdCredential: lcommon.Credential{
+						CredType:   lcommon.CredentialTypeAddrKeyHash,
+						Credential: committeeColdHash,
+					},
+					HotCredential: lcommon.Credential{
+						CredType:   lcommon.CredentialTypeAddrKeyHash,
+						Credential: lcommon.Blake2b224Hash([]byte("committee hot key")),
+					},
+				},
+			},
+		},
+		{
+			name: "ResignCommitteeCold",
+			cert: lcommon.CertificateWrapper{
+				Type: uint(lcommon.CertificateTypeResignCommitteeCold),
+				Certificate: &lcommon.ResignCommitteeColdCertificate{
+					CertType: uint(lcommon.CertificateTypeResignCommitteeCold),
+					ColdCredential: lcommon.Credential{
+						CredType:   lcommon.CredentialTypeAddrKeyHash,
+						Credential: committeeColdHash,
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range certCases {
+		t.Run(tc.name, func(t *testing.T) {
+			bodyCbor, err := cbor.Encode(conway.ConwayTransactionBody{
+				TxCertificates: []lcommon.CertificateWrapper{tc.cert},
+			})
+			if err != nil {
+				t.Fatalf("encode body: %v", err)
+			}
+
+			s := NewService(nil, fakeKeystore{mnemonic: testMnemonic}, acct)
+			// A wallet-owned input provides a payment witness. Before the fix this
+			// alone satisfied the completeness check while the committee cold-key
+			// witness was silently dropped.
+			inputAddrs := []string{acct.ReceiveAddresses[0]}
+
+			if _, err := s.WitnessTx("", bodyCbor, nil, inputAddrs, "pw", false); !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("WitnessTx(partialSign=false) = %v, want ErrInvalidRequest", err)
+			}
+
+			wsCbor, err := s.WitnessTx("", bodyCbor, nil, inputAddrs, "pw", true)
+			if err != nil {
+				t.Fatalf("WitnessTx(partialSign=true): %v", err)
+			}
+			var ws conway.ConwayTransactionWitnessSet
+			if _, err := cbor.Decode(wsCbor, &ws); err != nil {
+				t.Fatalf("decode witness set: %v", err)
+			}
+			if got := len(ws.VkeyWitnesses.Items()); got != 1 {
+				t.Fatalf("partial witness count = %d, want 1 (payment key only)", got)
+			}
+		})
+	}
+}
+
+func TestWitnessTxNonPartialRejectsUnmatchedRequiredSigner(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(testMnemonic, "")
+	if err != nil {
+		t.Fatalf("GetRootKeyFromMnemonic: %v", err)
+	}
+	acctKey, err := bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		t.Fatalf("GetAccountKey: %v", err)
+	}
+	payKey, err := bursa.GetPaymentKey(acctKey, 0)
+	if err != nil {
+		t.Fatalf("GetPaymentKey: %v", err)
+	}
+	ownedHash := lcommon.Blake2b224Hash(bip32.XPrv(payKey).Public().PublicKey())
+	foreignHash := lcommon.Blake2b224Hash([]byte("foreign required signer"))
+	required := []lcommon.Blake2b224{ownedHash, foreignHash}
+	bodyCbor, err := cbor.Encode(conway.ConwayTransactionBody{
+		TxRequiredSigners: cbor.NewSetType(required, true),
+	})
+	if err != nil {
+		t.Fatalf("encode body: %v", err)
+	}
+
+	s := NewService(nil, fakeKeystore{mnemonic: testMnemonic}, acct)
+	if _, err := s.WitnessTx("", bodyCbor, required, nil, "pw", false); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("WitnessTx(partialSign=false) = %v, want ErrInvalidRequest", err)
+	}
+
+	wsCbor, err := s.WitnessTx("", bodyCbor, required, nil, "pw", true)
+	if err != nil {
+		t.Fatalf("WitnessTx(partialSign=true): %v", err)
+	}
+	var ws conway.ConwayTransactionWitnessSet
+	if _, err := cbor.Decode(wsCbor, &ws); err != nil {
+		t.Fatalf("decode witness set: %v", err)
+	}
+	if got := len(ws.VkeyWitnesses.Items()); got != 1 {
+		t.Fatalf("partial witness count = %d, want 1", got)
+	}
+}
+
+// TestWitnessTxRejectsWalletChanged verifies that WitnessTx fails closed with
+// ErrWalletChanged when the walletID passed by the caller (captured when it
+// resolved inputAddrs/requiredSignerHashes) no longer matches the currently
+// active wallet. This guards the connector signing path: if the active wallet
+// changes while a dApp signTx approval is pending, WitnessTx must not silently
+// derive witnesses from the newly active wallet.
+func TestWitnessTxRejectsWalletChanged(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	s := NewService(nil, fakeKeystore{mnemonic: testMnemonic}, nil)
+	s.SetAccount("a", acct)
+
+	_, err := s.WitnessTx(
+		"b", // caller's stale binding; "a" is now the active wallet.
+		[]byte("tx-body"),
+		nil,
+		nil,
+		"pw",
+		true,
+	)
+	if !errors.Is(err, ErrWalletChanged) {
+		t.Fatalf("WitnessTx with stale walletID = %v, want ErrWalletChanged", err)
 	}
 }
 

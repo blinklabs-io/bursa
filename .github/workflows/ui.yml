@@ -34,6 +34,32 @@ jobs:
       - name: build
         run: npm run build
 
+  extension:
+    name: extension
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui/extension
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 https://github.com/actions/checkout/releases/tag/v7.0.0
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0 https://github.com/actions/setup-node/releases/tag/v6.0.0
+        with:
+          node-version: 22
+      - name: npm ci
+        run: npm ci
+      - name: lint
+        run: npm run lint
+      - name: type-check
+        run: npm run type-check
+      - name: test
+        run: npm run test
+      - name: build
+        run: npm run build
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0 https://github.com/actions/upload-artifact/releases/tag/v5.0.0
+        with:
+          name: bursa-connector-dist
+          path: ui/extension/dist
+
   ui-go:
     name: ui-go
     runs-on: ubuntu-latest

@@ -27,6 +27,7 @@ import { Offline } from "./screens/Offline";
 import { Operate } from "./screens/Operate";
 import { MultiSig } from "./screens/MultiSig";
 import { Settings } from "./screens/Settings";
+import { ConnectorApproval } from "./screens/ConnectorApproval";
 
 // A Map (not a plain object) so a crafted hash like "#/constructor" or
 // "#/toString" can't resolve to an inherited Object.prototype member and get
@@ -377,6 +378,10 @@ export function App() {
         </nav>
         <main className="content" key={activeWallet?.id ?? "none"}>{content}</main>
       </div>
+      {/* Global connector approval overlay: rendered on top of all screens when
+          a dApp has pending consent requests. Mounts regardless of current route
+          so requests are never silently missed. */}
+      <ConnectorApproval />
     </div>
   );
 }
