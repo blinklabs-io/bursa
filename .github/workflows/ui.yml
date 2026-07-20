@@ -42,7 +42,7 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0 https://github.com/actions/setup-node/releases/tag/v6.4.0
         with:
           node-version: 22
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0 https://github.com/actions/setup-go/releases/tag/v6.5.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
           go-version: 1.26.x
       # Build the web bundle first so the //go:embed dist target is populated
@@ -70,7 +70,7 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0 https://github.com/actions/setup-node/releases/tag/v6.4.0
         with:
           node-version: 22
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0 https://github.com/actions/setup-go/releases/tag/v6.5.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
           go-version: 1.26.x
       # golangci-lint needs the embedded dist to type-check the webui package,
