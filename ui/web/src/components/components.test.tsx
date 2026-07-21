@@ -1,10 +1,11 @@
-import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within, createEvent } from "@testing-library/react";
 import type { WalletView } from "../api/types";
 import { Button } from "./Button";
 import { StatusPill } from "./StatusPill";
 import { CopyButton } from "./CopyButton";
 import { SyncBanner } from "./SyncBanner";
 import { MobileNav } from "./MobileNav";
+import { ExplorerLink } from "./ExplorerLink";
 
 type MobileNavProps = Parameters<typeof MobileNav>[0];
 
@@ -49,6 +50,9 @@ afterEach(() => {
     value: originalMatchMedia,
   });
   document.body.style.overflow = "";
+  // The real build never has this bridge in a browser/test environment; undo
+  // whatever an ExplorerLink test above stubbed in, to avoid leakage.
+  delete (window as { bursaOpenExternal?: unknown }).bursaOpenExternal;
 });
 
 test("Button fires onClick", () => {
@@ -210,4 +214,71 @@ test("MobileNav keeps lock failures visible in the open drawer", () => {
   rerender(<MobileNav {...props} lockError="network error" />);
 
   expect(screen.getByRole("alert")).toHaveTextContent("network error");
+});
+
+// --- ExplorerLink ---
+// The wallet must never call out to a block explorer itself — this link only
+// ever fires from a user click, and must open in a new, unlinked tab.
+
+test("ExplorerLink renders an <a> with the correct href, target, and rel", () => {
+  render(<ExplorerLink network="preview" kind="tx" id="deadbeef" />);
+  const link = screen.getByRole("link");
+  expect(link).toHaveAttribute("href", "https://preview.cardanoscan.io/transaction/deadbeef");
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+  expect(link).toHaveAttribute("rel", expect.stringContaining("noreferrer"));
+});
+
+test("ExplorerLink maps network + kind to the right host and path", () => {
+  render(<ExplorerLink network="mainnet" kind="pool" id="pool1abc" />);
+  expect(screen.getByRole("link")).toHaveAttribute(
+    "href",
+    "https://cardanoscan.io/pool/pool1abc",
+  );
+});
+
+test("ExplorerLink has an accessible label that signals it leaves the wallet", () => {
+  render(<ExplorerLink network="preprod" kind="drep" id="drep1abc" />);
+  const link = screen.getByRole("link");
+  expect(link.getAttribute("aria-label")?.toLowerCase()).toContain("explorer");
+  expect(link).toHaveAttribute("title");
+});
+
+// The desktop build embeds a webview with no tab-strip: a plain
+// `target="_blank"` click would navigate the wallet window itself. The click
+// handler must always prevent the anchor's own navigation and instead open
+// externally — via the webview-injected `window.bursaOpenExternal` bridge
+// when present, or `window.open` otherwise (see ui_webview.go / ui_headless.go).
+
+test("ExplorerLink opens via window.open and prevents default navigation when no webview bridge is present", () => {
+  const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+  render(<ExplorerLink network="preview" kind="tx" id="deadbeef" />);
+  const link = screen.getByRole("link");
+  const event = createEvent.click(link);
+  const preventDefault = vi.spyOn(event, "preventDefault");
+  fireEvent(link, event);
+
+  expect(preventDefault).toHaveBeenCalled();
+  expect(openSpy).toHaveBeenCalledWith(
+    "https://preview.cardanoscan.io/transaction/deadbeef",
+    "_blank",
+    "noopener,noreferrer",
+  );
+});
+
+test("ExplorerLink calls the webview bursaOpenExternal bridge instead of window.open when present", () => {
+  const bridge = vi.fn();
+  (window as { bursaOpenExternal?: (url: string) => void }).bursaOpenExternal = bridge;
+  const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+  render(<ExplorerLink network="mainnet" kind="pool" id="pool1abc" />);
+  const link = screen.getByRole("link");
+  const event = createEvent.click(link);
+  const preventDefault = vi.spyOn(event, "preventDefault");
+  fireEvent(link, event);
+
+  expect(preventDefault).toHaveBeenCalled();
+  expect(bridge).toHaveBeenCalledWith("https://cardanoscan.io/pool/pool1abc");
+  expect(openSpy).not.toHaveBeenCalled();
 });

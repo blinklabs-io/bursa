@@ -525,6 +525,23 @@ a:hover {
   margin-bottom: var(--space-3);
 }
 
+/* External block-explorer affordance ("↗"): a plain <a target="_blank"> the
+   user clicks to leave the wallet for a PUBLIC explorer. The wallet itself
+   never fetches this URL — see src/explorer.ts. */
+.explorer-link {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-1);
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.8125rem;
+  line-height: 1;
+}
+.explorer-link:hover,
+.explorer-link:focus-visible {
+  color: var(--accent);
+}
+
 /* ---------------------------------------------------------------- tables -- */
 .table-wrap {
   overflow-x: auto;

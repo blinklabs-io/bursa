@@ -4,6 +4,13 @@ import { useAddresses } from "../api/hooks";
 import { Card } from "../components/Card";
 import { Table } from "../components/Table";
 import { CopyButton } from "../components/CopyButton";
+import { ExplorerLink } from "../components/ExplorerLink";
+
+interface ReceiveProps {
+  // Optional so existing no-prop callers/tests keep working; the app always
+  // passes the active wallet's real network when routing to this screen.
+  network?: string;
+}
 
 /** Truncate a long bech32 address for display: first 12 … last 8 chars. */
 function truncateAddr(addr: string): string {
@@ -29,7 +36,7 @@ function AddressQR({ address, size, title }: { address: string; size: number; ti
   );
 }
 
-export function Receive() {
+export function Receive({ network = "preview" }: ReceiveProps = {}) {
   const addresses = useAddresses();
   const [expandedQr, setExpandedQr] = useState<string | null>(null);
 
@@ -78,7 +85,17 @@ export function Receive() {
           )}
         </div>
       ),
-      copy: <CopyButton value={addr} />,
+      copy: (
+        <>
+          <CopyButton value={addr} />
+          <ExplorerLink
+            network={network}
+            kind="address"
+            id={addr}
+            label={`View address ${truncateAddr(addr)} on block explorer`}
+          />
+        </>
+      ),
     };
   });
 
@@ -92,6 +109,7 @@ export function Receive() {
           <div className="receive-next-details">
             <p className="mono address-full">{nextUnused}</p>
             <CopyButton value={nextUnused} />
+            {nextUnused && <ExplorerLink network={network} kind="address" id={nextUnused} />}
           </div>
         </div>
       </Card>

@@ -22,6 +22,7 @@ import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { StatusPill } from "../components/StatusPill";
 import { CopyButton } from "../components/CopyButton";
+import { ExplorerLink } from "../components/ExplorerLink";
 import { formatAda } from "../format";
 
 type Phase = "status" | "compose" | "preview" | "done";
@@ -66,9 +67,11 @@ const VOTE_OPTIONS: { type: VoteType; title: string; sub: string }[] = [
 function StatusPanel({
   poolId,
   active,
+  network,
 }: {
   poolId: string | null;
   active: boolean;
+  network: string;
 }) {
   return (
     <Card title="Current status">
@@ -85,7 +88,16 @@ function StatusPanel({
         </div>
         <div className="dl-row">
           <dt>Delegated pool</dt>
-          <dd>{poolId ?? <span className="muted">—</span>}</dd>
+          <dd>
+            {poolId ? (
+              <>
+                {poolId}
+                <ExplorerLink network={network} kind="pool" id={poolId} />
+              </>
+            ) : (
+              <span className="muted">—</span>
+            )}
+          </dd>
         </div>
       </dl>
     </Card>
@@ -106,6 +118,7 @@ interface ComposeProps {
   anchorHash: string;
   setAnchorHash: (v: string) => void;
   onPreview: (preview: DelegationPreview) => void;
+  network: string;
 }
 
 function Compose(props: ComposeProps) {
@@ -121,6 +134,7 @@ function Compose(props: ComposeProps) {
     anchorHash,
     setAnchorHash,
     onPreview,
+    network,
   } = props;
 
   const [pool, setPool] = useState<PoolInfo | null>(null);
@@ -270,6 +284,7 @@ function Compose(props: ComposeProps) {
             {" · "}pledge {formatAda(pool.declared_pledge)} ₳
             {" · "}fixed {formatAda(pool.fixed_cost)} ₳
             {" · "}live stake {formatAda(pool.live_stake)} ₳
+            <ExplorerLink network={network} kind="pool" id={pool.pool_id} />
           </p>
         )}
         {poolError && (
@@ -321,6 +336,7 @@ function Compose(props: ComposeProps) {
                       <p className="verified-readout">
                         <span className="verified-tick">✓ Verified by your node</span>
                         {drep.registered ? " · registered" : " · not registered"}
+                        <ExplorerLink network={network} kind="drep" id={drep.drep_id} />
                       </p>
                     )}
                     {drepError && (
@@ -512,14 +528,15 @@ function DonePhase({ result, onReset }: { result: TxResult; onReset: () => void 
 // --- Active state: status + withdraw + change ---
 
 interface ActiveProps {
-  poolId: string;
+  poolId: string | null;
   withdrawable: string;
   note: string;
   onChange: () => void;
   onWithdraw: (preview: DelegationPreview) => void;
+  network: string;
 }
 
-function ActiveState({ poolId, withdrawable, note, onChange, onWithdraw }: ActiveProps) {
+function ActiveState({ poolId, withdrawable, note, onChange, onWithdraw, network }: ActiveProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const canWithdraw = /^\d+$/.test(withdrawable) && BigInt(withdrawable) > 0n;
@@ -538,7 +555,7 @@ function ActiveState({ poolId, withdrawable, note, onChange, onWithdraw }: Activ
 
   return (
     <>
-      <StatusPanel poolId={poolId} active={true} />
+      <StatusPanel poolId={poolId} active={true} network={network} />
       <Card title="Rewards">
         <div className="dl-row">
           <dt className="field-label">Withdrawable</dt>
@@ -567,7 +584,13 @@ function ActiveState({ poolId, withdrawable, note, onChange, onWithdraw }: Activ
 
 // --- Top-level Staking screen ---
 
-export function Staking() {
+interface StakingProps {
+  // Optional so existing no-prop callers/tests keep working; the app always
+  // passes the active wallet's real network when routing to this screen.
+  network?: string;
+}
+
+export function Staking({ network = "preview" }: StakingProps = {}) {
   const delegation = useDelegation();
 
   const [phase, setPhase] = useState<Phase>("status");
@@ -647,11 +670,12 @@ export function Staking() {
     return (
       <div className="staking">
         <ActiveState
-          poolId={del.pool_id ?? "—"}
+          poolId={del.pool_id}
           withdrawable={del.withdrawable_amount}
           note={del.provisional ? del.note : ""}
           onChange={goCompose}
           onWithdraw={(p) => handlePreview(p, "status")}
+          network={network}
         />
       </div>
     );
@@ -660,7 +684,7 @@ export function Staking() {
   // Compose (set-up / change) form, with the status panel above it.
   return (
     <div className="staking">
-      <StatusPanel poolId={del?.pool_id ?? null} active={isActive} />
+      <StatusPanel poolId={del?.pool_id ?? null} active={isActive} network={network} />
       <Compose
         poolId={poolId}
         setPoolId={setPoolId}
@@ -673,6 +697,7 @@ export function Staking() {
         anchorHash={anchorHash}
         setAnchorHash={setAnchorHash}
         onPreview={handlePreview}
+        network={network}
       />
     </div>
   );

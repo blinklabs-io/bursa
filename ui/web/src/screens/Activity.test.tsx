@@ -310,3 +310,13 @@ test("(r) drawer detail view renders a pruned tx (null asset_deltas) without cra
   const dialog = await screen.findByRole("dialog");
   expect(within(dialog).getByText("Unknown")).toBeInTheDocument();
 });
+
+test("(s) each row has an external explorer link to the FULL tx hash, scoped to the wallet's network", () => {
+  mockTransactions([TX1]);
+  render(<Activity network="mainnet" />);
+
+  const link = screen.getByRole("link");
+  expect(link).toHaveAttribute("href", `https://cardanoscan.io/transaction/${TX1.tx_hash}`);
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+});
