@@ -335,7 +335,7 @@ export function App() {
     // Managing multi-sig accounts (list/create/view) is local state and works on
     // any active wallet. Building and submitting spends requires a synced node;
     // only local CIP-1854 key derivation/signing additionally requires a seed.
-    content = <MultiSig canSpend={canSend} canSign={canSign} />;
+    content = <MultiSig canSpend={isReady} canSign={canSign} />;
   } else if (route === "receive") {
     // Explorer links on each address need the active wallet's real network
     // (preview/preprod/mainnet), which the generic ROUTES map (no props)
