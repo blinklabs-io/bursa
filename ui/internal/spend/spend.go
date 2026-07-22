@@ -1446,6 +1446,48 @@ func (s *Service) WitnessTx(
 	// Hash the tx body to get the signing target.
 	txBodyHash := lcommon.Blake2b256Hash(txBodyCbor)
 
+	witnesses, err := s.deriveWitnesses(
+		acctKey,
+		txBodyHash,
+		requiredSignerHashes,
+		&txBody,
+		inputAddrs,
+		acct,
+		partialSign,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Encode witness set as CBOR using the ConwayTransactionWitnessSet type,
+	// which serialises as a map with integer keys (key 0 = vkey witnesses).
+	ws := conway.ConwayTransactionWitnessSet{}
+	if len(witnesses) > 0 {
+		ws.VkeyWitnesses = cbor.NewSetType(witnesses, true)
+	}
+	wsCbor, err := cbor.Encode(ws)
+	if err != nil {
+		return nil, fmt.Errorf("encode witness set: %w", err)
+	}
+	return wsCbor, nil
+}
+
+// deriveWitnesses derives the vkey witnesses this wallet can provide for a
+// transaction, given the already-derived account key. It matches required
+// signers (key-14 plus certificate/withdrawal credentials) and owned input
+// addresses to the wallet's payment/stake/DRep keys, deriving each candidate
+// key from acctKey and zeroing it locally once it has served its purpose.
+// Both WitnessTx and CosignTx call this so the derivation logic never drifts
+// between the two entry points.
+func (s *Service) deriveWitnesses(
+	acctKey bip32.XPrv,
+	txBodyHash lcommon.Blake2b256,
+	requiredSignerHashes []lcommon.Blake2b224,
+	txBody *conway.ConwayTransactionBody,
+	inputAddrs []string,
+	acct *wallet.Account,
+	partialSign bool,
+) ([]lcommon.VkeyWitness, error) {
 	// Build a map from every owned payment address to its CIP-1852 role/index.
 	// Receive addresses use role 0 and change addresses use role 1. An address
 	// absent from this map MUST NOT be signed — defaulting to role/index 0 would
@@ -1677,17 +1719,7 @@ func (s *Service) WitnessTx(
 		}()
 	}
 
-	// Encode witness set as CBOR using the ConwayTransactionWitnessSet type,
-	// which serialises as a map with integer keys (key 0 = vkey witnesses).
-	ws := conway.ConwayTransactionWitnessSet{}
-	if len(witnesses) > 0 {
-		ws.VkeyWitnesses = cbor.NewSetType(witnesses, true)
-	}
-	wsCbor, err := cbor.Encode(ws)
-	if err != nil {
-		return nil, fmt.Errorf("encode witness set: %w", err)
-	}
-	return wsCbor, nil
+	return witnesses, nil
 }
 
 // HardwareSignRequest is the structured signing request the SPA passes to the
