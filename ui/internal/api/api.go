@@ -986,8 +986,10 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// (decode-tx), add this wallet's witness(es) (cosign-tx), and broadcast the
 	// result (submit-tx). decode-tx and cosign-tx are ungated like sign-tx —
 	// pure crypto over the keystore/tx bytes, no node needed; submit-tx needs a
-	// synced node like submit-signed. The vkey path here delegates straight to
-	// the spender; multisig classification/routing is added in a later task.
+	// synced node like submit-signed. Each handler classifies the pasted tx via
+	// ms.InspectTx and routes native-script multisig txs to the multisig
+	// service, ordinary vkey txs straight to the spender (see importDecode/
+	// importCosign/importSubmit below).
 	mux.HandleFunc("POST /wallet/decode-tx", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			TxCBOR string `json:"tx_cbor"`

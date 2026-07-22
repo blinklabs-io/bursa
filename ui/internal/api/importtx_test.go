@@ -128,6 +128,9 @@ func TestDecodeTxHandler_MultiSigKind(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"threshold":2`) {
 		t.Errorf("want multisig block with threshold, got %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), `"fee":"2000000"`) {
+		t.Errorf("want spend-summary fee to survive the multisig merge, got %s", rec.Body.String())
+	}
 }
 
 func TestDecodeTxHandler_InvalidJSON(t *testing.T) {
