@@ -99,6 +99,40 @@ type TxResult struct {
 	TxHash string `json:"tx_hash"`
 }
 
+// TxSummaryOutput is one output (or reward withdrawal) as presented in a
+// decoded transaction summary.
+type TxSummaryOutput struct {
+	Address  string  `json:"address"`
+	Lovelace string  `json:"lovelace"` // decimal lovelace string; see Asset.Quantity
+	Assets   []Asset `json:"assets,omitempty"`
+}
+
+// TxSummarySigner identifies a vkey witness (present or still needed) by its
+// Blake2b-224 key hash. Role is only populated in WalletCanAdd, where it tells
+// the caller which of the wallet's own keys (payment/stake/drep) would
+// produce that witness.
+type TxSummarySigner struct {
+	KeyHash string `json:"key_hash"`
+	Role    string `json:"role,omitempty"` // "payment"|"stake"|"drep" (only in wallet_can_add)
+}
+
+// TxSummary is a no-password, human-readable preview of a pasted transaction,
+// produced by DecodeTx. It classifies the transaction (vkey vs. native
+// multisig vs. already complete) and reports which of the wallet's own keys
+// could still add a required signature.
+type TxSummary struct {
+	Kind               string            `json:"kind"` // "vkey"|"native_multisig"|"complete"|"unknown"
+	Outputs            []TxSummaryOutput `json:"outputs"`
+	Fee                string            `json:"fee"`
+	TTL                uint64            `json:"ttl,omitempty"`
+	Certificates       []string          `json:"certificates,omitempty"`
+	Withdrawals        []TxSummaryOutput `json:"withdrawals,omitempty"` // Address=reward addr
+	NetworkID          *int              `json:"network_id,omitempty"`
+	ExistingSignatures []TxSummarySigner `json:"existing_signatures"`
+	WalletCanAdd       []TxSummarySigner `json:"wallet_can_add"`
+	IsComplete         bool              `json:"is_complete"`
+}
+
 // UnsignedTx is returned from ExportUnsigned: the completed-but-unsigned
 // transaction CBOR (hex) plus the key-hashes that must witness it. It is the
 // hand-off artifact carried (file or copy/paste) to an offline, keyed instance
@@ -1360,6 +1394,241 @@ func (s *Service) Submit(ctx context.Context, txBytes []byte) (string, error) {
 		return "", fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}
 	return hex.EncodeToString(txHash.Bytes()), nil
+}
+
+// DecodeTx decodes a full tx CBOR into a no-password summary and classifies it as
+// an ordinary vkey tx. (The api layer upgrades kind to "native_multisig" when the
+// tx carries a native script.) wallet_can_add is derived from the active account's
+// public key hashes — no seed required, and nothing here signs or mutates the tx.
+func (s *Service) DecodeTx(txCbor string) (TxSummary, error) {
+	txBytes, err := hex.DecodeString(strings.TrimSpace(txCbor))
+	if err != nil {
+		return TxSummary{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
+	}
+	var tx conway.ConwayTransaction
+	if _, err := cbor.Decode(txBytes, &tx); err != nil {
+		return TxSummary{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
+
+	out := TxSummary{
+		Kind:               "vkey",
+		Fee:                strconv.FormatUint(tx.Body.TxFee, 10),
+		ExistingSignatures: []TxSummarySigner{},
+		WalletCanAdd:       []TxSummarySigner{},
+	}
+	if ttl := tx.Body.TTL(); ttl != 0 {
+		out.TTL = ttl
+	}
+	for _, o := range tx.Body.Outputs() {
+		out.Outputs = append(out.Outputs, TxSummaryOutput{
+			Address:  o.Address().String(),
+			Lovelace: o.Amount().String(),
+			Assets:   assetsFromOutput(o),
+		})
+	}
+	for _, c := range tx.Body.Certificates() {
+		out.Certificates = append(out.Certificates, certLabel(c))
+	}
+	for addr, amount := range tx.Body.TxWithdrawals {
+		if addr == nil {
+			continue
+		}
+		out.Withdrawals = append(out.Withdrawals, TxSummaryOutput{
+			Address:  addr.String(),
+			Lovelace: strconv.FormatUint(amount, 10),
+		})
+	}
+
+	// Existing signatures already present in the witness set.
+	present := map[string]bool{}
+	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
+		kh := hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes())
+		present[kh] = true
+		out.ExistingSignatures = append(out.ExistingSignatures, TxSummarySigner{KeyHash: kh})
+	}
+
+	// wallet_can_add: match the active account's known payment key hashes (from its
+	// bech32 addresses) against required signers / cert / withdrawal credentials
+	// this wallet hasn't already witnessed.
+	_, acct, _ := s.currentBinding()
+	needed := neededKeyHashes(&tx) // key-14 + cert/withdrawal credentials, as a set
+	if acct != nil {
+		seen := map[string]bool{}
+		for _, kh := range walletPaymentKeyHashes(acct) {
+			khHex := hex.EncodeToString(kh.Bytes())
+			if needed[khHex] && !present[khHex] && !seen[khHex] {
+				seen[khHex] = true
+				out.WalletCanAdd = append(out.WalletCanAdd, TxSummarySigner{KeyHash: khHex, Role: "payment"})
+			}
+		}
+	}
+
+	out.IsComplete = len(out.WalletCanAdd) == 0 && coversAllNeeded(needed, present)
+	return out, nil
+}
+
+// assetsFromOutput enumerates a transaction output's native assets as decimal
+// quantities, mirroring the loop toPreview uses for Apollo-built outputs.
+func assetsFromOutput(o lcommon.TransactionOutput) []Asset {
+	ma := o.Assets()
+	if ma == nil {
+		return nil
+	}
+	var assets []Asset
+	for _, pol := range ma.Policies() {
+		for _, name := range ma.Assets(pol) {
+			qty := ma.Asset(pol, name)
+			if qty != nil && qty.Sign() > 0 {
+				assets = append(assets, Asset{
+					Unit:     hex.EncodeToString(pol.Bytes()) + hex.EncodeToString(name),
+					Quantity: qty.String(),
+				})
+			}
+		}
+	}
+	return assets
+}
+
+// certLabel returns a stable snake_case label for a certificate's kind, for
+// display in a decoded tx summary.
+func certLabel(c lcommon.Certificate) string {
+	switch c.(type) {
+	case *lcommon.StakeRegistrationCertificate:
+		return "stake_registration"
+	case *lcommon.StakeDeregistrationCertificate:
+		return "stake_deregistration"
+	case *lcommon.StakeDelegationCertificate:
+		return "stake_delegation"
+	case *lcommon.PoolRegistrationCertificate:
+		return "pool_registration"
+	case *lcommon.PoolRetirementCertificate:
+		return "pool_retirement"
+	case *lcommon.GenesisKeyDelegationCertificate:
+		return "genesis_key_delegation"
+	case *lcommon.MoveInstantaneousRewardsCertificate:
+		return "move_instantaneous_rewards"
+	case *lcommon.RegistrationCertificate:
+		return "registration"
+	case *lcommon.DeregistrationCertificate:
+		return "deregistration"
+	case *lcommon.VoteDelegationCertificate:
+		return "vote_delegation"
+	case *lcommon.StakeVoteDelegationCertificate:
+		return "stake_vote_delegation"
+	case *lcommon.StakeRegistrationDelegationCertificate:
+		return "stake_registration_delegation"
+	case *lcommon.VoteRegistrationDelegationCertificate:
+		return "vote_registration_delegation"
+	case *lcommon.StakeVoteRegistrationDelegationCertificate:
+		return "stake_vote_registration_delegation"
+	case *lcommon.AuthCommitteeHotCertificate:
+		return "auth_committee_hot"
+	case *lcommon.ResignCommitteeColdCertificate:
+		return "resign_committee_cold"
+	case *lcommon.RegistrationDrepCertificate:
+		return "registration_drep"
+	case *lcommon.DeregistrationDrepCertificate:
+		return "deregistration_drep"
+	case *lcommon.UpdateDrepCertificate:
+		return "update_drep"
+	default:
+		return "unknown"
+	}
+}
+
+// neededKeyHashes builds the set of addr-key-hash credentials (hex-encoded)
+// that must witness tx: key-14 required signers plus certificate and reward
+// withdrawal credentials. This mirrors the reqSet construction in
+// deriveWitnesses/WitnessTx so the two stay consistent — a hash this wallet
+// can witness for signing is also one DecodeTx should report as addable.
+func neededKeyHashes(tx *conway.ConwayTransaction) map[string]bool {
+	needed := make(map[string]bool)
+	addHash := func(kh lcommon.Blake2b224) {
+		needed[hex.EncodeToString(kh.Bytes())] = true
+	}
+	for _, kh := range tx.Body.RequiredSigners() {
+		addHash(kh)
+	}
+	addCredential := func(cred *lcommon.Credential) {
+		if cred != nil && cred.CredType == lcommon.CredentialTypeAddrKeyHash {
+			addHash(cred.Credential)
+		}
+	}
+	for _, cert := range tx.Body.Certificates() {
+		switch c := cert.(type) {
+		case *lcommon.StakeRegistrationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.StakeDeregistrationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.StakeDelegationCertificate:
+			addCredential(c.StakeCredential)
+		case *lcommon.RegistrationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.DeregistrationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.VoteDelegationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.StakeVoteDelegationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.StakeRegistrationDelegationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.VoteRegistrationDelegationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.StakeVoteRegistrationDelegationCertificate:
+			addCredential(&c.StakeCredential)
+		case *lcommon.RegistrationDrepCertificate:
+			addCredential(&c.DrepCredential)
+		case *lcommon.DeregistrationDrepCertificate:
+			addCredential(&c.DrepCredential)
+		case *lcommon.UpdateDrepCertificate:
+			addCredential(&c.DrepCredential)
+		case *lcommon.AuthCommitteeHotCertificate:
+			addCredential(&c.ColdCredential)
+		case *lcommon.ResignCommitteeColdCertificate:
+			addCredential(&c.ColdCredential)
+		}
+	}
+	for addr := range tx.Body.TxWithdrawals {
+		if addr == nil {
+			continue
+		}
+		if payload, ok := addr.StakingPayload().(lcommon.AddressPayloadKeyHash); ok {
+			addHash(payload.Hash)
+		}
+	}
+	return needed
+}
+
+// walletPaymentKeyHashes returns the payment key hashes for every address
+// (receive and change) the active account has derived.
+func walletPaymentKeyHashes(acct *wallet.Account) []lcommon.Blake2b224 {
+	hashes := make([]lcommon.Blake2b224, 0, len(acct.ReceiveAddresses)+len(acct.ChangeAddresses))
+	for _, addrStr := range acct.ReceiveAddresses {
+		addr, err := lcommon.NewAddress(addrStr)
+		if err != nil {
+			continue
+		}
+		hashes = append(hashes, addr.PaymentKeyHash())
+	}
+	for _, addrStr := range acct.ChangeAddresses {
+		addr, err := lcommon.NewAddress(addrStr)
+		if err != nil {
+			continue
+		}
+		hashes = append(hashes, addr.PaymentKeyHash())
+	}
+	return hashes
+}
+
+// coversAllNeeded reports whether every hex-encoded key hash in needed is
+// already present (already witnessed).
+func coversAllNeeded(needed, present map[string]bool) bool {
+	for kh := range needed {
+		if !present[kh] {
+			return false
+		}
+	}
+	return true
 }
 
 // WitnessTx derives the wallet's signing keys and builds a CBOR witness set
