@@ -225,6 +225,59 @@ func composeScript(p Policy) (*bursa.NativeScript, error) {
 	return all, nil
 }
 
+// PolicyFromScript recovers a Policy from a decoded native script — the inverse
+// of composeScript. It walks the script's node tree looking for exactly the
+// shapes composeScript produces: a bare NativeScriptNofK (threshold clause
+// only), or a NativeScriptAll wrapping optional time-lock clauses
+// (NativeScriptInvalidBefore / NativeScriptInvalidHereafter) plus the NofK.
+// Every sub-script under the NofK must be a NativeScriptPubkey — that's the
+// only leaf composeScript ever emits there.
+//
+// Any other shape (including NativeScriptAny, which composeScript never
+// produces) is rejected as ErrInvalidTx rather than silently accepted or
+// panicked on.
+func PolicyFromScript(ns *bursa.NativeScript) (Policy, error) {
+	var p Policy
+	var walk func(node *lcommon.NativeScript) error
+	walk = func(node *lcommon.NativeScript) error {
+		switch v := node.Item().(type) {
+		case *lcommon.NativeScriptNofK:
+			parts := make([]Participant, 0, len(v.Scripts))
+			for i := range v.Scripts {
+				pk, ok := v.Scripts[i].Item().(*lcommon.NativeScriptPubkey)
+				if !ok {
+					return fmt.Errorf("%w: threshold clause holds a non-pubkey sub-script", ErrInvalidTx)
+				}
+				parts = append(parts, Participant{KeyHashHex: hex.EncodeToString(pk.Hash)})
+			}
+			p.Threshold = int(v.N)
+			p.Participants = parts
+		case *lcommon.NativeScriptInvalidBefore:
+			slot := v.Slot
+			p.InvalidBefore = &slot
+		case *lcommon.NativeScriptInvalidHereafter:
+			slot := v.Slot
+			p.InvalidAfter = &slot
+		case *lcommon.NativeScriptAll:
+			for i := range v.Scripts {
+				if err := walk(&v.Scripts[i]); err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("%w: unsupported native-script shape for a multisig policy", ErrInvalidTx)
+		}
+		return nil
+	}
+	if err := walk(ns); err != nil {
+		return Policy{}, err
+	}
+	if p.Threshold == 0 || len(p.Participants) == 0 {
+		return Policy{}, fmt.Errorf("%w: script has no threshold clause", ErrInvalidTx)
+	}
+	return p, nil
+}
+
 // scriptAddress derives the canonical Cardano script address for a native script.
 //
 // IMPORTANT: this does NOT use bursa.GetScriptAddress, which hashes only the bare
