@@ -18,6 +18,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/blinklabs-io/gouroboros/ledger/conway"
 )
 
 // Sentinel errors. The API layer maps these to HTTP status codes via errors.Is.
@@ -97,6 +98,28 @@ type UnsignedTx struct {
 // common.VkeyWitness, normally length 1 — this co-signer's multi-sig key).
 type Witness struct {
 	WitnessCBOR string `json:"witness_cbor"`
+}
+
+// TxParticipant is one candidate signer of an inspected transaction's policy,
+// together with whether a vkey witness for it is already attached.
+type TxParticipant struct {
+	KeyHash string `json:"key_hash"`
+	Label   string `json:"label,omitempty"`
+	Signed  bool   `json:"signed"`
+}
+
+// TxInfo is the classification of a pasted transaction produced by InspectTx:
+// whether it is a native-script multi-sig spend, its recovered policy (if
+// any), and per-participant signed status so the UI can show co-signing
+// progress.
+type TxInfo struct {
+	IsMultiSig     bool            `json:"is_multisig"`
+	Label          string          `json:"label,omitempty"`
+	ScriptHash     string          `json:"script_hash,omitempty"`
+	Threshold      int             `json:"threshold,omitempty"`
+	Participants   []TxParticipant `json:"participants,omitempty"`
+	SignedCount    int             `json:"signed_count"`
+	ScriptEmbedded bool            `json:"script_embedded"`
 }
 
 // Keystore is the minimal interface the service needs of *keystore.Keystore.
@@ -323,6 +346,29 @@ func (s *Service) Get(id string) (Account, error) {
 // Delete removes a saved account by id.
 func (s *Service) Delete(id string) error {
 	return s.store.remove(id)
+}
+
+// FindByScriptHash searches the saved accounts for one whose native script
+// hashes to scriptHashHex (as produced by NativeScript.Hash). It returns
+// (Account{}, false, nil) when no account matches. A saved account whose
+// ScriptCBOR fails to decode is skipped rather than aborting the search —
+// one corrupt record must not hide every other account.
+func (s *Service) FindByScriptHash(scriptHashHex string) (Account, bool, error) {
+	accts, err := s.store.list()
+	if err != nil {
+		return Account{}, false, err
+	}
+	want := strings.ToLower(strings.TrimSpace(scriptHashHex))
+	for _, a := range accts {
+		script, err := decodeScript(a.ScriptCBOR)
+		if err != nil {
+			continue
+		}
+		if strings.ToLower(hex.EncodeToString(script.Hash().Bytes())) == want {
+			return a, true, nil
+		}
+	}
+	return Account{}, false, nil
 }
 
 // CreateRequest is the input to Create: a label, the network, and the policy.
@@ -584,6 +630,71 @@ func (s *Service) Build(ctx context.Context, id string, req BuildRequest) (Unsig
 	}, nil
 }
 
+// InspectTx classifies a pasted transaction CBOR: whether it is a native-
+// script multi-sig spend, its recovered policy, and per-participant signed
+// status. It prefers an embedded native script (Build attaches one to the
+// witness set); when found, it also tries to match a saved account by script
+// hash to recover a friendly label and any saved participant labels. A native
+// script that isn't a recognizable N-of-M policy is still reported as
+// multi-sig (with the script hash set) but leaves the policy fields empty so
+// the UI can warn, rather than erroring. A tx with no embedded native script
+// at all — without chain resolution of its inputs there is nothing to match
+// against — is reported as not multi-sig.
+func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
+	txBytes, err := hex.DecodeString(strings.TrimSpace(txCbor))
+	if err != nil {
+		return TxInfo{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
+	}
+	var tx conway.ConwayTransaction
+	if _, err := cbor.Decode(txBytes, &tx); err != nil {
+		return TxInfo{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
+
+	scripts := tx.WitnessSet.NativeScripts()
+	if len(scripts) == 0 {
+		return TxInfo{IsMultiSig: false}, nil
+	}
+	ns := &scripts[0]
+	scriptHash := hex.EncodeToString(ns.Hash().Bytes())
+
+	policy, err := PolicyFromScript(ns)
+	if err != nil {
+		// Not a recognizable N-of-M policy: report multi-sig + the script hash
+		// so the UI can warn, but leave the policy fields empty. Deliberately
+		// not an error — this is a classification result, not a failure.
+		return TxInfo{IsMultiSig: true, ScriptEmbedded: true, ScriptHash: scriptHash}, nil //nolint:nilerr // classification, not failure — see comment above
+	}
+
+	info := TxInfo{
+		IsMultiSig:     true,
+		ScriptEmbedded: true,
+		ScriptHash:     scriptHash,
+		Threshold:      policy.Threshold,
+	}
+	if acct, ok, _ := s.FindByScriptHash(scriptHash); ok {
+		info.Label = acct.Label
+		policy = mergeParticipantLabels(policy, acct.Policy)
+	}
+
+	// Signed participants = vkey witnesses already attached whose key-hash is
+	// a policy participant. Key-hashes are compared case-insensitively.
+	signed := make(map[string]bool, len(tx.WitnessSet.VkeyWitnesses.Items()))
+	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
+		kh := strings.ToLower(hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes()))
+		signed[kh] = true
+	}
+	info.Participants = make([]TxParticipant, 0, len(policy.Participants))
+	for _, part := range policy.Participants {
+		kh := strings.ToLower(part.KeyHashHex)
+		p := TxParticipant{KeyHash: kh, Label: part.Label, Signed: signed[kh]}
+		if p.Signed {
+			info.SignedCount++
+		}
+		info.Participants = append(info.Participants, p)
+	}
+	return info, nil
+}
+
 // Sign is a co-signer's step: it decrypts the seed, derives the wallet's CIP-1854
 // multi-sig key (NOT the CIP-1852 payment key used for ordinary sends), and emits
 // that key's vkey witness over the unsigned tx body. The witness is collected with
@@ -758,6 +869,30 @@ func decodeScript(scriptCBORHex string) (*bursa.NativeScript, error) {
 		return nil, fmt.Errorf("%w: decode script: %w", ErrInvalidRequest, err)
 	}
 	return &ns, nil
+}
+
+// mergeParticipantLabels copies each saved participant's Label onto the
+// matching (case-insensitive key-hash) participant recovered from the
+// script, leaving fromScript's ordering and threshold untouched. It is used
+// so InspectTx can show friendly names for participants of a saved account
+// even though the script itself only carries key-hashes.
+func mergeParticipantLabels(fromScript, saved Policy) Policy {
+	labels := make(map[string]string, len(saved.Participants))
+	for _, sp := range saved.Participants {
+		if sp.Label == "" {
+			continue
+		}
+		labels[strings.ToLower(sp.KeyHashHex)] = sp.Label
+	}
+	out := fromScript
+	out.Participants = make([]Participant, len(fromScript.Participants))
+	for i, p := range fromScript.Participants {
+		if label, ok := labels[strings.ToLower(p.KeyHashHex)]; ok {
+			p.Label = label
+		}
+		out.Participants[i] = p
+	}
+	return out
 }
 
 // scriptKeyHashes returns the participant key-hashes (as raw 28-byte slices) of a
