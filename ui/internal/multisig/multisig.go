@@ -858,11 +858,10 @@ type TxResult struct {
 // counterpart to CosignImported's off-band CBOR-passing workflow, where
 // instead of collecting separate witness blobs (Submit's contract) the
 // growing signed tx CBOR itself has been passed from co-signer to co-signer
-// and this is the final hop. It classifies the tx via InspectTx, attaches the
-// native script from a saved account when the tx doesn't already embed one,
-// verifies the collected witnesses meet the script's threshold, and
-// broadcasts — mirroring Submit's byte-safety (clear the tx-level and
-// witness-set CBOR caches, leave the body cache intact) and submit call.
+// and this is the final hop. It classifies the tx via InspectTx, verifies the
+// collected witnesses meet the script's threshold, and broadcasts —
+// mirroring Submit's byte-safety (clear the tx-level and witness-set CBOR
+// caches, leave the body cache intact) and submit call.
 func (s *Service) SubmitImported(ctx context.Context, txCbor string) (TxResult, error) {
 	info, err := s.InspectTx(txCbor)
 	if err != nil {
@@ -881,25 +880,12 @@ func (s *Service) SubmitImported(ctx context.Context, txCbor string) (TxResult, 
 		return TxResult{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
 	}
 
-	// Attach the native script if the tx doesn't already carry one but a saved
-	// account's script matches the hash InspectTx recovered from the policy.
-	if !info.ScriptEmbedded && info.ScriptHash != "" {
-		acct, ok, err := s.FindByScriptHash(info.ScriptHash)
-		if err != nil {
-			return TxResult{}, err
-		}
-		if !ok {
-			return TxResult{}, fmt.Errorf(
-				"%w: transaction lacks its native script and no saved account matches",
-				ErrInvalidTx,
-			)
-		}
-		script, err := decodeScript(acct.ScriptCBOR)
-		if err != nil {
-			return TxResult{}, err
-		}
-		a = a.AttachScript(*script)
-	}
+	// A multisig tx always carries its native script: Build attaches it and
+	// co-signing preserves it, so a tx that reaches here is guaranteed to have
+	// an embedded script (the !IsMultiSig guard above rejects any tx without a
+	// recognizable embedded native-script policy). Recovering a stripped script
+	// from a saved account would require chain-based input resolution and is out
+	// of scope; see InspectTx.
 
 	if info.SignedCount < info.Threshold {
 		return TxResult{}, fmt.Errorf(
