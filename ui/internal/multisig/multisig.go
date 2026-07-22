@@ -640,6 +640,18 @@ func (s *Service) Build(ctx context.Context, id string, req BuildRequest) (Unsig
 // the UI can warn, rather than erroring. A tx with no embedded native script
 // at all — without chain resolution of its inputs there is nothing to match
 // against — is reported as not multi-sig.
+//
+// A native script rides in the witness set for exactly one of two reasons:
+// (a) it authorizes minting under its policy ID, or (b) it satisfies a
+// script-locked spend input. An ordinary vkey-signed payment that also mints
+// an NFT/token under a native-script policy (a common DApp-built tx) carries
+// a native script for reason (a) only and must NOT be classified as a
+// multisig spend. InspectTx tells the two apart: it collects the tx body's
+// mint policy IDs and, among the embedded scripts, selects the first one that
+// either matches a saved multisig account (definitely a spend) or whose hash
+// is not a mint policy (so it must be there for a spend). If every embedded
+// script is purely a mint policy, the tx is reported as not multi-sig so it
+// routes to the ordinary vkey path.
 func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 	txBytes, err := hex.DecodeString(strings.TrimSpace(txCbor))
 	if err != nil {
@@ -654,7 +666,28 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 	if len(scripts) == 0 {
 		return TxInfo{IsMultiSig: false}, nil
 	}
-	ns := &scripts[0]
+
+	mintPolicies := make(map[string]bool)
+	if mint := tx.Body.AssetMint(); mint != nil {
+		for _, pol := range mint.Policies() {
+			mintPolicies[hex.EncodeToString(pol.Bytes())] = true
+		}
+	}
+
+	var ns *lcommon.NativeScript
+	for i := range scripts {
+		hash := hex.EncodeToString(scripts[i].Hash().Bytes())
+		if _, ok, _ := s.FindByScriptHash(hash); ok || !mintPolicies[hash] {
+			ns = &scripts[i]
+			break
+		}
+	}
+	if ns == nil {
+		// Every embedded native script is a mint-only policy: there is no
+		// script-locked spend here, so this is an ordinary tx that happens to
+		// mint under a native-script policy — route to the vkey path.
+		return TxInfo{IsMultiSig: false}, nil
+	}
 	scriptHash := hex.EncodeToString(ns.Hash().Bytes())
 
 	policy, err := PolicyFromScript(ns)

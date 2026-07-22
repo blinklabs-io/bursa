@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"math/big"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	apollo "github.com/blinklabs-io/apollo/v2"
 	"github.com/blinklabs-io/bursa"
+	gcbor "github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/blinklabs-io/gouroboros/ledger/conway"
 )
 
 func TestPolicyFromScript_RoundTrip(t *testing.T) {
@@ -149,6 +152,168 @@ func TestInspectTx_EmbeddedScript(t *testing.T) {
 			t.Errorf("participant %s reported signed on an unsigned tx", p.KeyHash)
 		}
 	}
+}
+
+// TestInspectTx_MintOnlyIsNotMultiSig covers the classification bug: an
+// ordinary vkey-signed payment that also mints a token/NFT under a
+// native-script policy carries that policy script in its witness set (the
+// ledger requires it there to authorize the mint) but has no script-locked
+// spend at all. InspectTx must NOT classify this as a multisig spend — doing
+// so would route it to the cosign/submit path, where it fails because the
+// wallet isn't a "participant" of the mint policy.
+func TestInspectTx_MintOnlyIsNotMultiSig(t *testing.T) {
+	fc := newFakeChain()
+	svc := NewService(fc, nil, filepath.Join(t.TempDir(), "multisig.json"))
+
+	// A bare pubkey native script used purely as a minting policy (not a
+	// multisig N-of-M threshold script, and not saved as an account here).
+	mintScript, err := bursa.NewScriptSig(bytesRepeat(9, 28))
+	if err != nil {
+		t.Fatalf("NewScriptSig: %v", err)
+	}
+	policyIDHex := hex.EncodeToString(mintScript.Hash().Bytes())
+
+	txHex := mintOnlyTxHex(t, fc, mintScript, policyIDHex)
+
+	info, err := svc.InspectTx(txHex)
+	if err != nil {
+		t.Fatalf("InspectTx: %v", err)
+	}
+	if info.IsMultiSig {
+		t.Errorf("mint-only native script must not be classified multisig: %+v", info)
+	}
+	if info.ScriptEmbedded {
+		t.Error("mint-only tx must not report ScriptEmbedded (routed to the vkey path)")
+	}
+}
+
+// TestInspectTx_MultiSigSpendPlusMint covers the mixed case: a real multisig
+// spend script alongside an unrelated mint policy script in the same witness
+// set. The spend script must still be selected (it doesn't match any mint
+// policy ID) and the tx must still classify as multisig.
+func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
+	fc := newFakeChain()
+	svc := NewService(fc, nil, filepath.Join(t.TempDir(), "multisig.json"))
+	_, khA, _ := multiSigKeyHash(t, mnemonicA)
+	_, khB, _ := multiSigKeyHash(t, mnemonicB)
+
+	acct, err := svc.Create(CreateRequest{
+		Label:   "treasury",
+		Network: "preview",
+		Policy: Policy{
+			Threshold:    2,
+			Participants: []Participant{{KeyHashHex: khA}, {KeyHashHex: khB}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fc.addUTxO(acct.ScriptAddress, strings.Repeat("77", 32), 0, 10_000_000)
+
+	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// Attach an unrelated mint policy script (different hash) on top of the
+	// already-built multisig spend tx.
+	mintScript, err := bursa.NewScriptSig(bytesRepeat(8, 28))
+	if err != nil {
+		t.Fatalf("NewScriptSig: %v", err)
+	}
+	policyIDHex := hex.EncodeToString(mintScript.Hash().Bytes())
+	txHex := addMintToTx(t, built.UnsignedTxCBOR, mintScript, policyIDHex)
+
+	info, err := svc.InspectTx(txHex)
+	if err != nil {
+		t.Fatalf("InspectTx: %v", err)
+	}
+	if !info.IsMultiSig {
+		t.Fatalf("multisig spend script must still classify as multisig even with an unrelated mint policy attached: %+v", info)
+	}
+	if info.Threshold != 2 || len(info.Participants) != 2 {
+		t.Errorf("got %d-of-%d, want 2-of-2", info.Threshold, len(info.Participants))
+	}
+}
+
+// mintOnlyTxHex builds an ordinary vkey-signed payment tx (via
+// ordinaryUnsignedTxHex — no script-locked input at all) and then injects a
+// mint of one unit under mintScript's policy ID plus mintScript itself into
+// the witness set, directly at the decoded-struct level. This is the shape
+// the ledger requires to authorize a native-script mint, and exactly what
+// used to be misclassified as a multisig spend.
+//
+// Apollo's Mint/AttachScript builder methods only feed a fresh Complete()/
+// CompleteContext() build — they don't retroactively mutate a tx already
+// loaded via LoadTxCbor (GetTxCbor just re-serializes whatever is in the
+// loaded struct) — so post-hoc injection has to happen at the gouroboros
+// struct level, decoding then re-encoding the CBOR directly.
+func mintOnlyTxHex(t *testing.T, fc *fakeChain, mintScript *bursa.NativeScript, policyIDHex string) string {
+	t.Helper()
+	tx := decodeConwayTx(t, ordinaryUnsignedTxHex(t, fc))
+	injectMint(t, &tx, policyIDHex, []lcommon.NativeScript{*mintScript})
+	return encodeConwayTx(t, &tx)
+}
+
+// addMintToTx decodes an already-built unsigned tx CBOR and injects an
+// additional mint under mintScript's policy plus mintScript itself into the
+// witness set (ahead of whatever native scripts the tx already carries), so
+// the result carries both the original spend script and the new mint policy
+// script. See mintOnlyTxHex for why this happens at the struct level rather
+// than through Apollo's builder methods.
+func addMintToTx(t *testing.T, unsignedTxCBOR string, mintScript *bursa.NativeScript, policyIDHex string) string {
+	t.Helper()
+	tx := decodeConwayTx(t, unsignedTxCBOR)
+	scripts := append([]lcommon.NativeScript{*mintScript}, tx.WitnessSet.NativeScripts()...)
+	injectMint(t, &tx, policyIDHex, scripts)
+	return encodeConwayTx(t, &tx)
+}
+
+// decodeConwayTx hex-decodes and CBOR-decodes a Conway transaction.
+func decodeConwayTx(t *testing.T, txHex string) conway.ConwayTransaction {
+	t.Helper()
+	txBytes, err := hex.DecodeString(txHex)
+	if err != nil {
+		t.Fatalf("decode tx hex: %v", err)
+	}
+	var tx conway.ConwayTransaction
+	if _, err := gcbor.Decode(txBytes, &tx); err != nil {
+		t.Fatalf("decode tx: %v", err)
+	}
+	return tx
+}
+
+// injectMint sets tx.Body.TxMint to mint one unit under policyIDHex and
+// replaces the witness set's native scripts with scripts, clearing the CBOR
+// caches so re-encoding reflects the change.
+func injectMint(t *testing.T, tx *conway.ConwayTransaction, policyIDHex string, scripts []lcommon.NativeScript) {
+	t.Helper()
+	policyBytes, err := hex.DecodeString(policyIDHex)
+	if err != nil {
+		t.Fatalf("decode policy id: %v", err)
+	}
+	var policyID lcommon.Blake2b224
+	copy(policyID[:], policyBytes)
+	mintData := map[lcommon.Blake2b224]map[gcbor.ByteString]lcommon.MultiAssetTypeMint{
+		policyID: {gcbor.NewByteString([]byte("token")): big.NewInt(1)},
+	}
+	mint := lcommon.NewMultiAsset[lcommon.MultiAssetTypeMint](mintData)
+	tx.Body.TxMint = &mint
+	tx.WitnessSet.WsNativeScripts = gcbor.NewSetType(scripts, true)
+
+	tx.SetCbor(nil)
+	tx.Body.SetCbor(nil)
+	tx.WitnessSet.SetCbor(nil)
+}
+
+// encodeConwayTx CBOR-encodes a Conway transaction back to hex.
+func encodeConwayTx(t *testing.T, tx *conway.ConwayTransaction) string {
+	t.Helper()
+	out, err := gcbor.Encode(tx)
+	if err != nil {
+		t.Fatalf("re-encode tx: %v", err)
+	}
+	return hex.EncodeToString(out)
 }
 
 // TestInspectTx_NotMultiSig feeds InspectTx an ordinary (no native script)
