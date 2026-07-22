@@ -57,6 +57,8 @@ import type {
   MultiSigSignRequest,
   MultiSigSubmitRequest,
   HardwareSignResponse,
+  TxSummary,
+  CosignResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -312,3 +314,12 @@ export const multiSigSign = (req: MultiSigSignRequest) =>
   apiPost<WitnessResult>("/wallet/multisig/sign", req);
 export const multiSigSubmit = (id: string, req: MultiSigSubmitRequest) =>
   apiPost<TxResult>(`/wallet/multisig/${encodeURIComponent(id)}/submit`, req);
+
+// Import transaction: paste a full tx CBOR built elsewhere to inspect it
+// (decode-tx), add this wallet's witness(es) (cosign-tx), and broadcast the
+// result (submit-tx). The backend classifies vkey vs native-multisig
+// transactions and routes accordingly — see TxSummary/CosignResult in types.ts.
+export const decodeTx = (tx_cbor: string) => apiPost<TxSummary>("/wallet/decode-tx", { tx_cbor });
+export const cosignTx = (req: { tx_cbor: string; password: string; partial_sign?: boolean }) =>
+  apiPost<CosignResult>("/wallet/cosign-tx", req);
+export const submitTx = (tx_cbor: string) => apiPost<TxResult>("/wallet/submit-tx", { tx_cbor });

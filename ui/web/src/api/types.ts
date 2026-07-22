@@ -627,3 +627,67 @@ export interface AddHardwareWalletRequest {
   network: string;
   vault_password: string;
 }
+
+// --- Import transaction (decode / cosign / submit) --------------------------
+// Backend: spend.TxSummary, multisig.TxInfo, spend.CosignResult (vkey path) /
+// multisig.CosignResult (native-script path). All amounts are decimal STRINGS
+// (uint64 server-side), matching the rest of the API.
+
+export interface TxSummarySigner {
+  key_hash: string;
+  role?: string;
+}
+
+export interface TxSummaryOutput {
+  address: string;
+  lovelace: string;
+  assets?: { unit: string; quantity: string }[];
+}
+
+export interface TxSummaryMultiSigParticipant {
+  key_hash: string;
+  label?: string;
+  signed: boolean;
+}
+
+// multisig.TxInfo
+export interface TxSummaryMultiSig {
+  is_multisig: boolean;
+  label?: string;
+  script_hash?: string;
+  threshold?: number;
+  participants?: TxSummaryMultiSigParticipant[];
+  signed_count: number;
+  script_embedded: boolean;
+}
+
+// spend.TxSummary, with the api-layer's optional multisig.TxInfo attached.
+export interface TxSummary {
+  kind: "vkey" | "native_multisig" | "complete" | "unknown";
+  outputs: TxSummaryOutput[];
+  fee: string;
+  ttl?: number;
+  certificates?: string[];
+  withdrawals?: TxSummaryOutput[];
+  network_id?: number;
+  existing_signatures: TxSummarySigner[];
+  wallet_can_add: TxSummarySigner[];
+  is_complete: boolean;
+  multisig?: TxSummaryMultiSig;
+}
+
+// CosignResult accommodates both response shapes returned by POST
+// /wallet/cosign-tx: the vkey path (spend.CosignResult: added is the list of
+// signers just added, plus a fresh summary) and the native-multisig path
+// (multisig.CosignResult: added is a bool — whether this cosign added a new
+// witness — plus signed_count/threshold). `added`'s type differs between the
+// two Go structs, hence the union.
+export interface CosignResult {
+  tx_cbor: string;
+  // vkey path
+  added?: TxSummarySigner[] | boolean;
+  summary?: TxSummary;
+  // multisig path
+  signed_count?: number;
+  threshold?: number;
+}

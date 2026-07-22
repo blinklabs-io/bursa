@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, ApiError } from "./client";
+import { apiDelete, apiGet, ApiError, decodeTx, cosignTx, submitTx } from "./client";
 
 function mockFetch(status: number, body: unknown) {
   globalThis.fetch = vi.fn().mockResolvedValue({
@@ -75,4 +75,38 @@ test("apiDelete is not retried after a network error", async () => {
 
   await expect(apiDelete("/wallet/test-wallet")).rejects.toBeInstanceOf(ApiError);
   expect(calls).toBe(1);
+});
+
+// --- Import-transaction (decode / cosign / submit) --------------------------
+
+test("decodeTx posts tx_cbor and returns the parsed TxSummary", async () => {
+  mockFetch(200, {
+    kind: "vkey",
+    outputs: [],
+    fee: "170000",
+    existing_signatures: [],
+    wallet_can_add: [],
+    is_complete: false,
+  });
+  await expect(decodeTx("84a4")).resolves.toEqual({
+    kind: "vkey",
+    outputs: [],
+    fee: "170000",
+    existing_signatures: [],
+    wallet_can_add: [],
+    is_complete: false,
+  });
+});
+
+test("cosignTx posts tx_cbor + password and returns a CosignResult", async () => {
+  mockFetch(200, { tx_cbor: "84beef", added: [{ key_hash: "abc" }] });
+  await expect(cosignTx({ tx_cbor: "84a4", password: "pw" })).resolves.toEqual({
+    tx_cbor: "84beef",
+    added: [{ key_hash: "abc" }],
+  });
+});
+
+test("submitTx posts tx_cbor and returns a TxResult", async () => {
+  mockFetch(200, { tx_hash: "abc123" });
+  await expect(submitTx("84beef")).resolves.toEqual({ tx_hash: "abc123" });
 });
