@@ -854,6 +854,142 @@ type TxResult struct {
 	TxHash string `json:"tx_hash"`
 }
 
+// CosignResult is returned from CosignImported: the merged tx CBOR plus
+// enough bookkeeping (whether this cosign actually added a new witness, how
+// many participant signatures the tx now carries, and the policy threshold)
+// for the UI to show cosigning progress and decide whether the tx is ready to
+// submit.
+type CosignResult struct {
+	TxCBOR      string `json:"tx_cbor"`
+	Added       bool   `json:"added"`
+	SignedCount int    `json:"signed_count"`
+	Threshold   int    `json:"threshold"`
+}
+
+// CosignImported is the "paste a tx, cosign it, hand back the CBOR" flow: an
+// alternative to Sign+Submit's off-band witness collection where instead the
+// growing signed tx CBOR itself is passed from co-signer to co-signer. It
+// derives this wallet's CIP-1854 multi-sig key exactly as Sign does, verifies
+// (via InspectTx's recovered policy) that the wallet's key-hash is actually a
+// participant in the tx's script — refusing with ErrInvalidRequest otherwise,
+// since signing a script this wallet has no part in cannot help satisfy it —
+// then signs the tx's body hash and merges the resulting witness into the
+// tx's existing witness set, preserving whatever co-signer witnesses are
+// already attached. Merging is deduped by key-hash, so cosigning a tx that
+// already carries this wallet's witness is a no-op (Added=false).
+func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) {
+	if s.keys == nil || !s.keys.Exists() {
+		return CosignResult{}, ErrNoKeystore
+	}
+	info, err := s.InspectTx(txCbor)
+	if err != nil {
+		return CosignResult{}, err
+	}
+	if !info.IsMultiSig || info.Threshold == 0 {
+		return CosignResult{}, fmt.Errorf("%w: not a recognizable multisig transaction", ErrInvalidTx)
+	}
+	participants := make(map[string]bool, len(info.Participants))
+	for _, p := range info.Participants {
+		participants[strings.ToLower(p.KeyHash)] = true
+	}
+
+	a, err := apollo.New(s.chain).LoadTxCbor(strings.TrimSpace(txCbor))
+	if err != nil {
+		return CosignResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
+	tx := a.GetTx()
+	if tx == nil {
+		return CosignResult{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
+	}
+	// Witnesses sign the exact body bytes carried by the imported transaction.
+	// Re-encoding can drift while preserving semantics (mirrors Sign).
+	bodyCbor := tx.Body.Cbor()
+	if bodyCbor == nil {
+		bodyCbor, err = cbor.Encode(&tx.Body)
+		if err != nil {
+			return CosignResult{}, fmt.Errorf("encode tx body: %w", err)
+		}
+	}
+	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
+
+	mnemonicBytes, err := s.keys.Unlock(password)
+	if err != nil {
+		if errors.Is(err, keystore.ErrDecryptFailed) {
+			return CosignResult{}, fmt.Errorf("%w: %w", ErrWrongPassword, err)
+		}
+		return CosignResult{}, fmt.Errorf("unlock keystore: %w", err)
+	}
+	var rootKey, acctKey, payKey bip32.XPrv
+	defer func() {
+		for _, k := range []bip32.XPrv{rootKey, acctKey, payKey} {
+			zero(k)
+		}
+		zeroBytes(mnemonicBytes)
+	}()
+
+	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	if err != nil {
+		return CosignResult{}, fmt.Errorf("root key: %w", err)
+	}
+	acctKey, err = bursa.GetMultiSigAccountKey(rootKey, 0)
+	if err != nil {
+		return CosignResult{}, fmt.Errorf("multisig account key: %w", err)
+	}
+	payKey, err = bursa.GetMultiSigPaymentKey(acctKey, 0)
+	if err != nil {
+		return CosignResult{}, fmt.Errorf("multisig payment key: %w", err)
+	}
+	myKH := strings.ToLower(hex.EncodeToString(lcommon.Blake2b224Hash(payKey.Public().PublicKey()).Bytes()))
+	if !participants[myKH] {
+		return CosignResult{}, fmt.Errorf(
+			"%w: this wallet is not a participant in the transaction's policy",
+			ErrInvalidRequest,
+		)
+	}
+
+	// Existing co-signer witnesses (dedupe key: lower-case key-hash).
+	signed := make(map[string]bool, len(tx.WitnessSet.VkeyWitnesses.Items()))
+	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
+		signed[strings.ToLower(hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes()))] = true
+	}
+	added := false
+	if !signed[myKH] {
+		w, err := apollo.NewVkeyWitnessFromSkey(bodyHash, []byte(payKey))
+		if err != nil {
+			return CosignResult{}, fmt.Errorf("sign with multisig key: %w", err)
+		}
+		if a, err = a.AddVerificationKeyWitness(w); err != nil {
+			return CosignResult{}, fmt.Errorf("attach witness: %w", err)
+		}
+		signed[myKH] = true
+		added = true
+	}
+
+	// Clear the tx-level and witness-set caches so GetTxCbor re-serializes the
+	// merged witness set; the BODY cache stays intact so every witness (ours
+	// and any prior co-signer's) still matches the re-emitted body bytes
+	// (mirrors Submit).
+	tx.SetCbor(nil)
+	tx.WitnessSet.SetCbor(nil)
+	mergedBytes, err := a.GetTxCbor()
+	if err != nil {
+		return CosignResult{}, fmt.Errorf("encode merged tx: %w", err)
+	}
+
+	signedCount := 0
+	for kh := range signed {
+		if participants[kh] {
+			signedCount++
+		}
+	}
+	return CosignResult{
+		TxCBOR:      hex.EncodeToString(mergedBytes),
+		Added:       added,
+		SignedCount: signedCount,
+		Threshold:   info.Threshold,
+	}, nil
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

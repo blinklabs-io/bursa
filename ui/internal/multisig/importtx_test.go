@@ -221,6 +221,91 @@ func TestFindByScriptHash_SkipsDecodeErrors(t *testing.T) {
 	}
 }
 
+// --- CosignImported ----------------------------------------------------------
+
+// TestCosignImported_AddsAndMerges builds a 1-of-1 account whose sole
+// participant is this wallet's own CIP-1854 key, funds it, builds a spend, and
+// cosigns the resulting pasted (unsigned) tx CBOR. The first cosign must
+// attach the wallet's witness (Added=true, SignedCount=1); re-cosigning the
+// returned CBOR must not attach a duplicate (Added=false, idempotent).
+func TestCosignImported_AddsAndMerges(t *testing.T) {
+	fc := newFakeChain()
+	ks := newTestKeystore(t, mnemonicA)
+	svc := NewService(fc, ks, filepath.Join(t.TempDir(), "multisig.json"))
+
+	mk, err := svc.MyKey("test-password-123")
+	if err != nil {
+		t.Fatalf("MyKey: %v", err)
+	}
+	acct, err := svc.Create(CreateRequest{
+		Label:   "solo",
+		Network: "preview",
+		Policy:  Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: mk.KeyHashHex}}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fc.addUTxO(acct.ScriptAddress, strings.Repeat("22", 32), 0, 10_000_000)
+
+	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	res, err := svc.CosignImported(built.UnsignedTxCBOR, "test-password-123")
+	if err != nil {
+		t.Fatalf("CosignImported: %v", err)
+	}
+	if !res.Added || res.SignedCount != 1 || res.Threshold != 1 {
+		t.Fatalf("CosignImported = %+v, want Added=true SignedCount=1 Threshold=1", res)
+	}
+	if res.TxCBOR == "" {
+		t.Fatal("expected non-empty tx_cbor")
+	}
+
+	// Re-cosigning the returned (already-signed) CBOR is idempotent: no
+	// duplicate witness gets added.
+	res2, err := svc.CosignImported(res.TxCBOR, "test-password-123")
+	if err != nil {
+		t.Fatalf("CosignImported (2nd): %v", err)
+	}
+	if res2.Added {
+		t.Error("second cosign should not add a duplicate witness")
+	}
+	if res2.SignedCount != 1 {
+		t.Errorf("SignedCount after re-cosign = %d, want 1", res2.SignedCount)
+	}
+}
+
+// TestCosignImported_NotAParticipant builds an account whose sole participant
+// is a foreign key-hash the wallet does not own, and asserts CosignImported
+// refuses with ErrInvalidRequest rather than silently signing a script it
+// isn't party to.
+func TestCosignImported_NotAParticipant(t *testing.T) {
+	fc := newFakeChain()
+	ks := newTestKeystore(t, mnemonicA)
+	svc := NewService(fc, ks, filepath.Join(t.TempDir(), "multisig.json"))
+
+	acct, err := svc.Create(CreateRequest{
+		Label:   "foreign",
+		Network: "preview",
+		Policy:  Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: strings.Repeat("ab", 28)}}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fc.addUTxO(acct.ScriptAddress, strings.Repeat("33", 32), 0, 10_000_000)
+
+	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	if _, err := svc.CosignImported(built.UnsignedTxCBOR, "test-password-123"); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("CosignImported error = %v, want ErrInvalidRequest", err)
+	}
+}
+
 // ordinaryUnsignedTxHex builds a plain (non-script) unsigned spend directly
 // through apollo — no AttachScript call — so the resulting Conway tx's
 // witness set carries zero native scripts. It exercises the same
