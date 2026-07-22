@@ -2,7 +2,11 @@ package spend
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
 	"testing"
+
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
@@ -40,7 +44,7 @@ func newBuildOnlyService(t *testing.T) *Service {
 }
 
 func TestDecodeTx_VkeySummary(t *testing.T) {
-	svc, _, unsignedCbor := buildUnsignedSendFixture(t)
+	svc, acct, unsignedCbor := buildUnsignedSendFixture(t)
 	got, err := svc.DecodeTx(unsignedCbor)
 	if err != nil {
 		t.Fatalf("DecodeTx: %v", err)
@@ -60,11 +64,53 @@ func TestDecodeTx_VkeySummary(t *testing.T) {
 	if len(got.ExistingSignatures) != 0 {
 		t.Errorf("unsigned tx has %d existing sigs, want 0", len(got.ExistingSignatures))
 	}
+
+	// WalletCanAdd must name the actual payment key hash this wallet owns for
+	// the spent input (buildUnsignedSendFixture funds the tx from
+	// acct.ReceiveAddresses[0]), derived the same way walletPaymentKeyHashes
+	// does -- not hardcoded -- so a subtly-wrong key hash in DecodeTx would
+	// fail this test.
+	if len(got.WalletCanAdd) == 0 {
+		t.Fatal("expected at least one wallet_can_add entry for the unsigned send tx's input signer")
+	}
+	fundingAddr, err := lcommon.NewAddress(acct.ReceiveAddresses[0])
+	if err != nil {
+		t.Fatalf("parse funding address: %v", err)
+	}
+	wantKeyHash := hex.EncodeToString(fundingAddr.PaymentKeyHash().Bytes())
+
+	found := false
+	for _, signer := range got.WalletCanAdd {
+		if signer.KeyHash == wantKeyHash {
+			found = true
+			if signer.Role != "payment" {
+				t.Errorf("wallet_can_add entry for %s: role = %q, want payment", wantKeyHash, signer.Role)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("wallet_can_add %+v does not contain expected payment key hash %s", got.WalletCanAdd, wantKeyHash)
+	}
 }
 
 func TestDecodeTx_Malformed(t *testing.T) {
-	svc := newBuildOnlyService(t)
-	if _, err := svc.DecodeTx("zzzz"); err == nil {
-		t.Fatal("expected error for non-hex CBOR")
+	tests := []struct {
+		name string
+		in   string
+	}{
+		{name: "non-hex", in: "zzzz"},
+		{name: "valid-hex-invalid-cbor", in: "00"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newBuildOnlyService(t)
+			_, err := svc.DecodeTx(tt.in)
+			if err == nil {
+				t.Fatalf("expected error for input %q", tt.in)
+			}
+			if !errors.Is(err, ErrInvalidTx) {
+				t.Errorf("err = %v, want it to wrap ErrInvalidTx", err)
+			}
+		})
 	}
 }
