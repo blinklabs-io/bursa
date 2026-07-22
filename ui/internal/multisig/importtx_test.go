@@ -390,6 +390,85 @@ func TestCosignImported_PreservesOtherCosigner(t *testing.T) {
 	}
 }
 
+// --- SubmitImported ----------------------------------------------------------
+
+// TestSubmitImported_BelowThresholdRejected builds a 2-of-2 policy (this
+// wallet's own CIP-1854 key plus a foreign key-hash it does not own), funds
+// the script address, builds a spend, and cosigns with only this wallet's key
+// (1 of 2). SubmitImported must refuse to broadcast a below-threshold tx.
+func TestSubmitImported_BelowThresholdRejected(t *testing.T) {
+	fc := newFakeChain()
+	ks := newTestKeystore(t, mnemonicA)
+	svc := NewService(fc, ks, filepath.Join(t.TempDir(), "multisig.json"))
+
+	mk, err := svc.MyKey("test-password-123")
+	if err != nil {
+		t.Fatalf("MyKey: %v", err)
+	}
+	acct, err := svc.Create(CreateRequest{
+		Label:   "2of2",
+		Network: "preview",
+		Policy: Policy{Threshold: 2, Participants: []Participant{
+			{KeyHashHex: mk.KeyHashHex}, {KeyHashHex: strings.Repeat("cd", 28)},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fc.addUTxO(acct.ScriptAddress, strings.Repeat("55", 32), 0, 10_000_000)
+
+	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	signed, err := svc.CosignImported(built.UnsignedTxCBOR, "test-password-123") // 1 of 2
+	if err != nil {
+		t.Fatalf("CosignImported: %v", err)
+	}
+	if _, err := svc.SubmitImported(context.Background(), signed.TxCBOR); !errors.Is(err, ErrInvalidWitness) {
+		t.Fatalf("SubmitImported error = %v, want ErrInvalidWitness (below threshold)", err)
+	}
+}
+
+// TestSubmitImported_ThresholdMetBroadcasts builds a 1-of-1 policy owned
+// entirely by this wallet, cosigns it (meeting the threshold), and asserts
+// SubmitImported broadcasts successfully and returns a non-empty tx hash.
+func TestSubmitImported_ThresholdMetBroadcasts(t *testing.T) {
+	fc := newFakeChain()
+	ks := newTestKeystore(t, mnemonicA)
+	svc := NewService(fc, ks, filepath.Join(t.TempDir(), "multisig.json"))
+
+	mk, err := svc.MyKey("test-password-123")
+	if err != nil {
+		t.Fatalf("MyKey: %v", err)
+	}
+	acct, err := svc.Create(CreateRequest{
+		Label:   "1of1",
+		Network: "preview",
+		Policy:  Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: mk.KeyHashHex}}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fc.addUTxO(acct.ScriptAddress, strings.Repeat("66", 32), 0, 10_000_000)
+
+	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	signed, err := svc.CosignImported(built.UnsignedTxCBOR, "test-password-123")
+	if err != nil {
+		t.Fatalf("CosignImported: %v", err)
+	}
+	res, err := svc.SubmitImported(context.Background(), signed.TxCBOR)
+	if err != nil {
+		t.Fatalf("SubmitImported: %v", err)
+	}
+	if res.TxHash == "" {
+		t.Error("expected a tx hash")
+	}
+}
+
 // ordinaryUnsignedTxHex builds a plain (non-script) unsigned spend directly
 // through apollo — no AttachScript call — so the resulting Conway tx's
 // witness set carries zero native scripts. It exercises the same

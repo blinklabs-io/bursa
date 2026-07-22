@@ -854,6 +854,74 @@ type TxResult struct {
 	TxHash string `json:"tx_hash"`
 }
 
+// SubmitImported is the "paste a fully co-signed tx, broadcast it" flow: the
+// counterpart to CosignImported's off-band CBOR-passing workflow, where
+// instead of collecting separate witness blobs (Submit's contract) the
+// growing signed tx CBOR itself has been passed from co-signer to co-signer
+// and this is the final hop. It classifies the tx via InspectTx, attaches the
+// native script from a saved account when the tx doesn't already embed one,
+// verifies the collected witnesses meet the script's threshold, and
+// broadcasts — mirroring Submit's byte-safety (clear the tx-level and
+// witness-set CBOR caches, leave the body cache intact) and submit call.
+func (s *Service) SubmitImported(ctx context.Context, txCbor string) (TxResult, error) {
+	info, err := s.InspectTx(txCbor)
+	if err != nil {
+		return TxResult{}, err
+	}
+	if !info.IsMultiSig || info.Threshold == 0 {
+		return TxResult{}, fmt.Errorf("%w: not a recognizable multisig transaction", ErrInvalidTx)
+	}
+
+	a, err := apollo.New(s.chain).LoadTxCbor(strings.TrimSpace(txCbor))
+	if err != nil {
+		return TxResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
+	tx := a.GetTx()
+	if tx == nil {
+		return TxResult{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
+	}
+
+	// Attach the native script if the tx doesn't already carry one but a saved
+	// account's script matches the hash InspectTx recovered from the policy.
+	if !info.ScriptEmbedded && info.ScriptHash != "" {
+		acct, ok, err := s.FindByScriptHash(info.ScriptHash)
+		if err != nil {
+			return TxResult{}, err
+		}
+		if !ok {
+			return TxResult{}, fmt.Errorf(
+				"%w: transaction lacks its native script and no saved account matches",
+				ErrInvalidTx,
+			)
+		}
+		script, err := decodeScript(acct.ScriptCBOR)
+		if err != nil {
+			return TxResult{}, err
+		}
+		a = a.AttachScript(*script)
+	}
+
+	if info.SignedCount < info.Threshold {
+		return TxResult{}, fmt.Errorf(
+			"%w: have %d of %d required signatures",
+			ErrInvalidWitness, info.SignedCount, info.Threshold,
+		)
+	}
+
+	// LoadTxCbor cached the decoded tx's raw CBOR; clear the tx-level and
+	// witness-set caches so SubmitContext re-serializes the (possibly
+	// newly-attached) script and witnesses. The BODY cache stays intact: the
+	// witnesses signed the original body bytes (mirrors Submit).
+	tx.SetCbor(nil)
+	tx.WitnessSet.SetCbor(nil)
+
+	txHash, err := a.SubmitContext(context.WithoutCancel(ctx))
+	if err != nil {
+		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+	}
+	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
+}
+
 // CosignResult is returned from CosignImported: the merged tx CBOR plus
 // enough bookkeeping (whether this cosign actually added a new witness, how
 // many participant signatures the tx now carries, and the policy threshold)
