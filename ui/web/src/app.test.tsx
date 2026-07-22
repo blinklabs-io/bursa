@@ -391,6 +391,22 @@ test("a hardware wallet can submit a multi-sig spend with external witnesses but
   );
 });
 
+test("deep-linking #/import with an active wallet renders the Import Transaction screen", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+  window.location.hash = "#/import";
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: /import transaction/i })).toBeInTheDocument(),
+  );
+});
+
 test("switching active wallets remounts routed content and refetches read state", async () => {
   stubStatus("ready");
   stubVault({ exists: true, locked: true, wallet_count: 2 });
