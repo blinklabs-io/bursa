@@ -306,6 +306,90 @@ func TestCosignImported_NotAParticipant(t *testing.T) {
 	}
 }
 
+// TestCosignImported_PreservesOtherCosigner is the real multi-party regression
+// for CosignImported's headline guarantee ("preserves existing co-signer
+// witnesses"): unlike TestCosignImported_AddsAndMerges (a 1-of-1 policy where
+// there is no other co-signer to preserve), this builds a genuine 2-of-2
+// policy across two independent keystores/wallets (mirrors TestSpendFlow's
+// svcA/svcB setup) and cosigns in two hops through the pasted-CBOR flow:
+// svcA attaches its witness first, then svcB imports svcA's *result* CBOR and
+// attaches its own. The final tx must carry BOTH participants' witnesses —
+// proving svcB's merge didn't clobber svcA's — which InspectTx confirms via
+// SignedCount and each participant's Signed flag.
+func TestCosignImported_PreservesOtherCosigner(t *testing.T) {
+	fc := newFakeChain()
+	ksA := newTestKeystore(t, mnemonicA)
+	ksB := newTestKeystore(t, mnemonicB)
+
+	// Two independent wallets (separate keystores + separate on-disk stores),
+	// sharing only the fake chain.
+	svcA := NewService(fc, ksA, filepath.Join(t.TempDir(), "a.json"))
+	svcB := NewService(fc, ksB, filepath.Join(t.TempDir(), "b.json"))
+
+	mkA, err := svcA.MyKey("test-password-123")
+	if err != nil {
+		t.Fatalf("MyKey A: %v", err)
+	}
+	mkB, err := svcB.MyKey("test-password-123")
+	if err != nil {
+		t.Fatalf("MyKey B: %v", err)
+	}
+
+	// svcA creates the joint 2-of-2 account (its own store only — CosignImported
+	// recovers the policy from the tx's embedded script, so svcB never needs
+	// this account saved in its own store).
+	acct, err := svcA.Create(CreateRequest{
+		Label:   "joint",
+		Network: "preview",
+		Policy: Policy{
+			Threshold:    2,
+			Participants: []Participant{{KeyHashHex: mkA.KeyHashHex}, {KeyHashHex: mkB.KeyHashHex}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fc.addUTxO(acct.ScriptAddress, strings.Repeat("44", 32), 0, 10_000_000)
+
+	built, err := svcA.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// Hop 1: svcA cosigns the freshly-built unsigned tx.
+	resA, err := svcA.CosignImported(built.UnsignedTxCBOR, "test-password-123")
+	if err != nil {
+		t.Fatalf("CosignImported A: %v", err)
+	}
+	if !resA.Added || resA.SignedCount != 1 {
+		t.Fatalf("CosignImported A = %+v, want Added=true SignedCount=1", resA)
+	}
+
+	// Hop 2: svcB pastes svcA's *result* CBOR (not the original unsigned tx)
+	// and cosigns it — the real "pass the CBOR along" workflow.
+	resB, err := svcB.CosignImported(resA.TxCBOR, "test-password-123")
+	if err != nil {
+		t.Fatalf("CosignImported B: %v", err)
+	}
+	if !resB.Added || resB.SignedCount != 2 {
+		t.Fatalf("CosignImported B = %+v, want Added=true SignedCount=2", resB)
+	}
+
+	// The final tx must carry BOTH witnesses: svcA's survived svcB's merge.
+	info, err := svcA.InspectTx(resB.TxCBOR)
+	if err != nil {
+		t.Fatalf("InspectTx: %v", err)
+	}
+	if info.SignedCount != 2 {
+		t.Fatalf("SignedCount = %d, want 2", info.SignedCount)
+	}
+	for _, p := range info.Participants {
+		if !p.Signed {
+			t.Errorf("participant %s not signed, want both participants signed", p.KeyHash)
+		}
+	}
+}
+
 // ordinaryUnsignedTxHex builds a plain (non-script) unsigned spend directly
 // through apollo — no AttachScript call — so the resulting Conway tx's
 // witness set carries zero native scripts. It exercises the same
