@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 )
@@ -59,6 +60,39 @@ func (f *fakeSpender) SubmitTxCbor(_ context.Context, txCbor string) (spend.TxRe
 	return f.submitTxResult, nil
 }
 
+// --- fakeMultiSig extensions for the import-tx endpoints ---------------------
+//
+// Like fakeSpender above, the fields these methods read/write are declared on
+// fakeMultiSig itself (see api_test.go) so existing call sites constructing a
+// bare &fakeMultiSig{} keep satisfying the extended MultiSig interface
+// unchanged; the default zero-value InspectTx returns IsMultiSig:false so the
+// vkey-path tests above still route straight to the spender.
+
+func (f *fakeMultiSig) InspectTx(txCbor string) (multisig.TxInfo, error) {
+	f.gotInspectCBOR = txCbor
+	if f.inspectErr != nil {
+		return multisig.TxInfo{}, f.inspectErr
+	}
+	return f.inspect, nil
+}
+
+func (f *fakeMultiSig) CosignImported(txCbor, password string) (multisig.CosignResult, error) {
+	f.gotCosignCBOR = txCbor
+	f.gotCosignPassword = password
+	if f.cosignImportedErr != nil {
+		return multisig.CosignResult{}, f.cosignImportedErr
+	}
+	return f.cosign, nil
+}
+
+func (f *fakeMultiSig) SubmitImported(_ context.Context, txCbor string) (multisig.TxResult, error) {
+	f.gotSubmitImportCBOR = txCbor
+	if f.submitImportedErr != nil {
+		return multisig.TxResult{}, f.submitImportedErr
+	}
+	return f.submitImported, nil
+}
+
 // --- POST /wallet/decode-tx ---------------------------------------------------
 
 func TestDecodeTxHandler_OK(t *testing.T) {
@@ -75,6 +109,24 @@ func TestDecodeTxHandler_OK(t *testing.T) {
 	}
 	if sp.gotDecodeCBOR != "84a4..." {
 		t.Errorf("tx_cbor not passed through: %q", sp.gotDecodeCBOR)
+	}
+}
+
+func TestDecodeTxHandler_MultiSigKind(t *testing.T) {
+	sp := &fakeSpender{decodeResult: spend.TxSummary{Kind: "vkey", Fee: "2000000"}}
+	ms := &fakeMultiSig{inspect: multisig.TxInfo{IsMultiSig: true, Threshold: 2, SignedCount: 1}}
+	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"tx_cbor":"84a4..."}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/decode-tx", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("decode-tx status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"kind":"native_multisig"`) {
+		t.Errorf("want native_multisig kind, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"threshold":2`) {
+		t.Errorf("want multisig block with threshold, got %s", rec.Body.String())
 	}
 }
 
@@ -132,6 +184,20 @@ func TestCosignTxHandler_PartialSignFalseIsHonored(t *testing.T) {
 	}
 	if sp.gotCosignPartial {
 		t.Errorf("partial_sign=false should be honored, got true")
+	}
+}
+
+func TestCosignTxHandler_RoutesMultiSig(t *testing.T) {
+	ms := &fakeMultiSig{
+		inspect: multisig.TxInfo{IsMultiSig: true, Threshold: 1},
+		cosign:  multisig.CosignResult{TxCBOR: "84beef", Added: true, SignedCount: 1, Threshold: 1},
+	}
+	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"tx_cbor":"84a4...","password":"p"}`)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/cosign-tx", body))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "84beef") {
+		t.Fatalf("multisig cosign not routed: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

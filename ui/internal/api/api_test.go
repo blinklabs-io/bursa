@@ -1324,6 +1324,19 @@ type fakeMultiSig struct {
 	gotSubmitID      string
 	gotSubmitTxCBOR  string
 	gotSubmitWitness []string
+
+	// import-tx (decode-tx/cosign-tx/submit-tx multisig path); methods defined
+	// in importtx_test.go alongside the tests that exercise them.
+	inspect             multisig.TxInfo
+	inspectErr          error
+	gotInspectCBOR      string
+	cosign              multisig.CosignResult
+	cosignImportedErr   error
+	gotCosignCBOR       string
+	gotCosignPassword   string
+	submitImported      multisig.TxResult
+	submitImportedErr   error
+	gotSubmitImportCBOR string
 }
 
 func (f *fakeMultiSig) List() ([]multisig.Account, error) {

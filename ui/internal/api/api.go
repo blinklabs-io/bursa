@@ -260,6 +260,12 @@ type MultiSig interface {
 	Build(ctx context.Context, id string, req multisig.BuildRequest) (multisig.UnsignedTx, error)
 	Sign(unsignedTxCBOR, password string) (multisig.Witness, error)
 	Submit(ctx context.Context, id, unsignedTxCBOR string, witnessCBORs []string) (multisig.TxResult, error)
+	// InspectTx, CosignImported, and SubmitImported back the import-tx routes'
+	// classification/dispatch (decode-tx/cosign-tx/submit-tx): see
+	// importDecode, importCosign, and importSubmit below.
+	InspectTx(txCbor string) (multisig.TxInfo, error)
+	CosignImported(txCbor, password string) (multisig.CosignResult, error)
+	SubmitImported(ctx context.Context, txCbor string) (multisig.TxResult, error)
 }
 
 type decimalUint64 uint64
@@ -1446,20 +1452,56 @@ func registerMultiSigRoutes(mux *http.ServeMux, st Statuser, ms MultiSig, networ
 	}))
 }
 
-// importDecode, importCosign, and importSubmit back the decode-tx/cosign-tx/
-// submit-tx routes. They take the MultiSig service alongside the Spender so a
-// later task can classify a pasted tx and route native-multisig transactions
-// through ms without touching these call sites; for now (vkey path only) ms is
-// unused and every call delegates straight to sp.
-func importDecode(_ context.Context, sp Spender, _ MultiSig, txCbor string) (spend.TxSummary, error) {
-	return sp.DecodeTx(txCbor)
+// importDecodeResponse is decode-tx's response: the vkey-path TxSummary with
+// an optional multisig classification block merged in. When the pasted tx is
+// a native-script multi-sig spend, Kind is overridden to "native_multisig"
+// and MultiSig carries the policy/participant detail from ms.InspectTx.
+type importDecodeResponse struct {
+	spend.TxSummary
+	MultiSig *multisig.TxInfo `json:"multisig,omitempty"`
 }
 
-func importCosign(ctx context.Context, sp Spender, _ MultiSig, txCbor, password string, partial bool) (spend.CosignResult, error) {
+// importDecode, importCosign, and importSubmit back the decode-tx/cosign-tx/
+// submit-tx routes. Each classifies the pasted tx via ms.InspectTx first and
+// routes native-script multi-sig transactions through the MultiSig service;
+// everything else (vkey path) delegates to the Spender, unchanged from the
+// prior (vkey-only) behavior.
+func importDecode(_ context.Context, sp Spender, ms MultiSig, txCbor string) (importDecodeResponse, error) {
+	info, err := ms.InspectTx(txCbor)
+	if err != nil {
+		return importDecodeResponse{}, err
+	}
+	summary, err := sp.DecodeTx(txCbor)
+	if err != nil {
+		return importDecodeResponse{}, err
+	}
+	resp := importDecodeResponse{TxSummary: summary}
+	if info.IsMultiSig {
+		resp.Kind = "native_multisig"
+		resp.MultiSig = &info
+	}
+	return resp, nil
+}
+
+func importCosign(ctx context.Context, sp Spender, ms MultiSig, txCbor, password string, partial bool) (any, error) {
+	info, err := ms.InspectTx(txCbor)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsMultiSig {
+		return ms.CosignImported(txCbor, password)
+	}
 	return sp.CosignTx(ctx, txCbor, password, partial)
 }
 
-func importSubmit(ctx context.Context, sp Spender, _ MultiSig, txCbor string) (spend.TxResult, error) {
+func importSubmit(ctx context.Context, sp Spender, ms MultiSig, txCbor string) (any, error) {
+	info, err := ms.InspectTx(txCbor)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsMultiSig {
+		return ms.SubmitImported(ctx, txCbor)
+	}
 	return sp.SubmitTxCbor(ctx, txCbor)
 }
 
