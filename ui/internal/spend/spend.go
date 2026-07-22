@@ -1396,6 +1396,20 @@ func (s *Service) Submit(ctx context.Context, txBytes []byte) (string, error) {
 	return hex.EncodeToString(txHash.Bytes()), nil
 }
 
+// SubmitTxCbor hex-decodes a full (already-signed) tx CBOR and broadcasts it
+// via Submit. It does not sign or hold key material.
+func (s *Service) SubmitTxCbor(ctx context.Context, txCbor string) (TxResult, error) {
+	txBytes, err := hex.DecodeString(strings.TrimSpace(txCbor))
+	if err != nil {
+		return TxResult{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
+	}
+	hashHex, err := s.Submit(ctx, txBytes) // existing method; wraps ErrSubmitRejected
+	if err != nil {
+		return TxResult{}, err
+	}
+	return TxResult{TxHash: hashHex}, nil
+}
+
 // DecodeTx decodes a full tx CBOR into a no-password summary and classifies it as
 // an ordinary vkey tx. (The api layer upgrades kind to "native_multisig" when the
 // tx carries a native script.) wallet_can_add is derived from the active account's

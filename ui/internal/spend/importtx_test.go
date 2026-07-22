@@ -156,6 +156,24 @@ func TestCosignTx_WrongPassword(t *testing.T) {
 	}
 }
 
+func TestSubmitTxCbor_Broadcasts(t *testing.T) {
+	svc, _, unsignedCbor := buildUnsignedSendFixture(t) // fake chain records SubmitTx
+	res, err := svc.SubmitTxCbor(context.Background(), unsignedCbor)
+	if err != nil {
+		t.Fatalf("SubmitTxCbor: %v", err)
+	}
+	if res.TxHash == "" {
+		t.Error("expected a tx hash")
+	}
+}
+
+func TestSubmitTxCbor_BadHex(t *testing.T) {
+	svc := newBuildOnlyService(t)
+	if _, err := svc.SubmitTxCbor(context.Background(), "nothex"); !errors.Is(err, ErrInvalidTx) {
+		t.Fatalf("err = %v, want ErrInvalidTx", err)
+	}
+}
+
 func TestDecodeTx_Malformed(t *testing.T) {
 	tests := []struct {
 		name string
