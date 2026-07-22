@@ -1037,6 +1037,20 @@ type fakeSpender struct {
 	hwSignReq    spend.HardwareSignRequest
 	hwSignReqErr error
 	gotHWSignID  string
+
+	// import-tx (decode-tx/cosign-tx/submit-tx vkey path); methods defined in
+	// importtx_test.go alongside the tests that exercise them.
+	decodeResult     spend.TxSummary
+	decodeErr        error
+	gotDecodeCBOR    string
+	cosignResult     spend.CosignResult
+	cosignErr        error
+	gotCosignCBOR    string
+	gotCosignPass    string
+	gotCosignPartial bool
+	submitTxResult   spend.TxResult
+	submitTxErr      error
+	gotSubmitTxCBOR  string
 }
 
 func (f *fakeSpender) SetAccount(id string, acct *wallet.Account) {
