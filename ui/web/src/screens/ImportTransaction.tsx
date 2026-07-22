@@ -107,12 +107,23 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
   }
 
   const ms = summary?.multisig;
-  // wallet_can_add is authoritative for both vkey and native-multisig kinds:
-  // the backend only lists key-hashes this wallet actually holds and hasn't
-  // signed with yet.
-  const canAdd = summary ? summary.wallet_can_add.length > 0 : false;
+  // wallet_can_add is authoritative for the vkey kind, but the native-multisig
+  // builder deliberately never registers participant key-hashes as tx-level
+  // required signers, so spend.DecodeTx (which derives wallet_can_add from
+  // required-signers/cert credentials) always reports it empty for multisig —
+  // fall back to summary.multisig.is_multisig so the affordance still shows.
+  // If the wallet isn't actually a participant, cosignTx returns an error,
+  // which the screen already surfaces — that's the intended design.
+  const canAdd = summary
+    ? summary.wallet_can_add.length > 0 || (summary.multisig?.is_multisig ?? false)
+    : false;
   const remaining = ms && ms.threshold != null ? Math.max(ms.threshold - ms.signed_count, 0) : 0;
-  const readyToSubmit = summary?.is_complete ?? false;
+  // is_complete is meaningless for multisig (spend.DecodeTx reads it true
+  // immediately since it never sees multisig required-signers) — gate
+  // multisig readiness on the authoritative signed_count/threshold instead.
+  const readyToSubmit = ms?.is_multisig
+    ? ms.signed_count >= (ms.threshold ?? 0)
+    : (summary?.is_complete ?? false);
 
   return (
     <Card title="Import Transaction">
