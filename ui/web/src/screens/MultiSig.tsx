@@ -23,6 +23,7 @@ import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
 import { DownloadButton } from "../components/DownloadButton";
+import { MultiSigProgress } from "../components/MultiSigProgress";
 import { formatAda, parseAda } from "../format";
 
 function errorMessage(err: unknown): string {
@@ -698,10 +699,7 @@ function CollectAndSubmit({
           />
         </div>
 
-        <p className="ms-progress">
-          {collected} of {built.threshold} collected
-          {collected > 0 && ` (${collected} witness${collected === 1 ? "" : "es"})`}
-        </p>
+        <MultiSigProgress threshold={built.threshold} total={built.required_signers.length} signedCount={collected} />
 
         {/* Sign locally only when the seed-derived CIP-1854 key is available. */}
         {canSign && (

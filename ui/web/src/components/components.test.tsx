@@ -6,6 +6,7 @@ import { CopyButton } from "./CopyButton";
 import { SyncBanner } from "./SyncBanner";
 import { MobileNav } from "./MobileNav";
 import { ExplorerLink } from "./ExplorerLink";
+import { MultiSigProgress } from "./MultiSigProgress";
 
 type MobileNavProps = Parameters<typeof MobileNav>[0];
 
@@ -282,4 +283,29 @@ test("ExplorerLink calls the webview bursaOpenExternal bridge instead of window.
   expect(preventDefault).toHaveBeenCalled();
   expect(bridge).toHaveBeenCalledWith("https://cardanoscan.io/pool/pool1abc");
   expect(openSpy).not.toHaveBeenCalled();
+});
+
+test("MultiSigProgress shows K of N signed and marks signed participants", () => {
+  render(
+    <MultiSigProgress
+      threshold={2}
+      total={3}
+      signedCount={1}
+      participants={[
+        { key_hash: "aa".repeat(28), label: "alice", signed: true },
+        { key_hash: "bb".repeat(28), signed: false },
+        { key_hash: "cc".repeat(28), signed: false },
+      ]}
+    />,
+  );
+
+  expect(screen.getByText(/1 of 2/)).toBeInTheDocument();
+  expect(screen.getByText(/alice/)).toBeInTheDocument();
+});
+
+test("MultiSigProgress shows threshold-met indicator once signedCount reaches threshold", () => {
+  render(<MultiSigProgress threshold={2} total={2} signedCount={2} />);
+
+  expect(screen.getByText(/2 of 2/)).toBeInTheDocument();
+  expect(screen.getByText(/threshold met/i)).toBeInTheDocument();
 });

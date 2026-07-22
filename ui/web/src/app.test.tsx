@@ -377,7 +377,7 @@ test("a hardware wallet can submit a multi-sig spend with external witnesses but
   fireEvent.change(screen.getByLabelText(/amount \(ada\)/i), { target: { value: "1" } });
   fireEvent.click(screen.getByRole("button", { name: /build transaction/i }));
 
-  expect(await screen.findByText(/0 of 1 collected/i)).toBeInTheDocument();
+  expect(await screen.findByText(/0 of 1 signed/i)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /sign here/i })).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText(/co-signer witness/i), { target: { value: "81a0external" } });
   fireEvent.click(screen.getByRole("button", { name: /add witness/i }));
