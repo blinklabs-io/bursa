@@ -1467,6 +1467,167 @@ func (s *Service) DecodeTx(txCbor string) (TxSummary, error) {
 	return out, nil
 }
 
+// extractTxBodyCbor returns the raw CBOR bytes of the transaction body (element
+// [0] of the outer transaction array), preserving them exactly as supplied so the
+// signing hash (blake2b-256 of the body) matches what the node computes. It does
+// NOT re-encode the decoded struct. This mirrors connector.extractTxBodyCbor;
+// CosignTx uses this copy so the spend package does not depend on connector.
+func extractTxBodyCbor(txBytes []byte) ([]byte, error) {
+	var outer []cbor.RawMessage
+	if _, err := cbor.Decode(txBytes, &outer); err != nil {
+		return nil, fmt.Errorf("%w: decode tx as CBOR array: %w", ErrInvalidTx, err)
+	}
+	if len(outer) < 1 {
+		return nil, fmt.Errorf("%w: transaction CBOR array is empty (no body element)", ErrInvalidTx)
+	}
+	body := []byte(outer[0])
+	if len(body) == 0 {
+		return nil, fmt.Errorf("%w: transaction body element is empty", ErrInvalidTx)
+	}
+	return body, nil
+}
+
+// CosignResult is returned from CosignTx: the merged transaction CBOR (this
+// wallet's witnesses plus any co-signers' witnesses already present in the
+// pasted tx), the witnesses this call added, and a fresh no-password summary
+// of the updated transaction.
+type CosignResult struct {
+	TxCBOR  string            `json:"tx_cbor"`
+	Added   []TxSummarySigner `json:"added"`
+	Summary TxSummary         `json:"summary"`
+}
+
+// CosignTx derives this wallet's witnesses for a pasted transaction and MERGES
+// them into its existing witness set, preserving any co-signers' witnesses
+// already present (e.g. a native-multisig or shared-wallet transaction someone
+// else has partially signed). Unlike SubmitSigned/SignTx (the air-gap pair),
+// CosignTx keeps the wallet's own keystore local: it unlocks with password,
+// derives the account key, and calls deriveWitnesses exactly as WitnessTx does,
+// then attaches the resulting witnesses to the loaded tx via apollo and
+// re-serializes. It does not submit; the caller decides when to broadcast.
+//
+// Merging is idempotent and dedupes by vkey key-hash: re-cosigning an
+// already-signed tx adds zero duplicate witnesses.
+func (s *Service) CosignTx(
+	ctx context.Context,
+	txCbor, password string,
+	partialSign bool,
+) (CosignResult, error) {
+	if s.keys == nil {
+		return CosignResult{}, errors.New("no keystore configured")
+	}
+	walletID, acct, _ := s.currentBinding()
+	if acct == nil {
+		return CosignResult{}, ErrNoWallet
+	}
+	trimmed := strings.TrimSpace(txCbor)
+	txBytes, err := hex.DecodeString(trimmed)
+	if err != nil {
+		return CosignResult{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
+	}
+	bodyCbor, err := extractTxBodyCbor(txBytes)
+	if err != nil {
+		return CosignResult{}, err
+	}
+	var tx conway.ConwayTransaction
+	if _, err := cbor.Decode(txBytes, &tx); err != nil {
+		return CosignResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
+
+	// Best-effort input-address resolution (needs a node; non-fatal without one
+	// -- required-signer and cert credentials still match without it).
+	var inputAddrs []string
+	for _, inp := range tx.Body.Inputs() {
+		u, err := s.chain.UtxoByRef(ctx, inp.Id(), inp.Index())
+		if err != nil || u == nil || u.Output == nil {
+			continue
+		}
+		inputAddrs = append(inputAddrs, u.Output.Address().String())
+	}
+
+	// Unlock + derive account key (zeroing on exit), same pattern as WitnessTx.
+	mnemonicBytes, err := s.unlockSeed(walletID, password)
+	if err != nil {
+		if errors.Is(err, keystore.ErrDecryptFailed) {
+			return CosignResult{}, fmt.Errorf("%w: %w", ErrWrongPassword, err)
+		}
+		return CosignResult{}, fmt.Errorf("unlock keystore: %w", err)
+	}
+	var rootKey, acctKey bip32.XPrv
+	defer func() {
+		for _, k := range []bip32.XPrv{rootKey, acctKey} {
+			for i := range k {
+				k[i] = 0
+			}
+		}
+		for i := range mnemonicBytes {
+			mnemonicBytes[i] = 0
+		}
+	}()
+	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	if err != nil {
+		return CosignResult{}, fmt.Errorf("root key: %w", err)
+	}
+	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	if err != nil {
+		return CosignResult{}, fmt.Errorf("account key: %w", err)
+	}
+
+	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
+	witnesses, err := s.deriveWitnesses(
+		acctKey,
+		bodyHash,
+		tx.Body.RequiredSigners(),
+		&tx.Body,
+		inputAddrs,
+		acct,
+		partialSign,
+	)
+	if err != nil {
+		return CosignResult{}, err
+	}
+
+	// Merge into the pasted tx, preserving existing witnesses, deduped by key-hash.
+	present := map[string]bool{}
+	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
+		present[hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes())] = true
+	}
+	a, err := apollo.New(s.chain).LoadTxCbor(trimmed)
+	if err != nil {
+		return CosignResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
+	var added []TxSummarySigner
+	for _, w := range witnesses {
+		kh := hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes())
+		if present[kh] {
+			continue
+		}
+		present[kh] = true
+		if a, err = a.AddVerificationKeyWitness(w); err != nil {
+			return CosignResult{}, fmt.Errorf("attach witness: %w", err)
+		}
+		added = append(added, TxSummarySigner{KeyHash: kh})
+	}
+
+	// Clear tx/witness-set caches (keep the body cache) so re-serialization
+	// includes the attached witnesses over the unchanged body bytes -- the
+	// SubmitSigned pattern (spend.go SubmitSigned, above).
+	if lt := a.GetTx(); lt != nil {
+		lt.SetCbor(nil)
+		lt.WitnessSet.SetCbor(nil)
+	}
+	mergedBytes, err := a.GetTxCbor()
+	if err != nil {
+		return CosignResult{}, fmt.Errorf("encode merged tx: %w", err)
+	}
+	mergedHex := hex.EncodeToString(mergedBytes)
+	summary, err := s.DecodeTx(mergedHex)
+	if err != nil {
+		return CosignResult{}, err
+	}
+	return CosignResult{TxCBOR: mergedHex, Added: added, Summary: summary}, nil
+}
+
 // assetsFromOutput enumerates a transaction output's native assets as decimal
 // quantities, mirroring the loop toPreview uses for Apollo-built outputs.
 func assetsFromOutput(o lcommon.TransactionOutput) []Asset {

@@ -8,8 +8,16 @@ import (
 
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 
+	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
+
+// testPassword is the spending password used by the CosignTx fixtures below.
+// fakeKeystore.Unlock ignores the supplied password entirely (it always
+// succeeds unless constructed with an err), so its value is arbitrary; a
+// dedicated fakeKeystore{err: keystore.ErrDecryptFailed} service is used to
+// exercise the wrong-password path instead (see TestCosignTx_WrongPassword).
+const testPassword = "cosign-test-password"
 
 // buildUnsignedSendFixture builds a real unsigned send transaction (via the
 // same Build -> ExportUnsigned path exercised in spend_test.go's air-gap
@@ -90,6 +98,61 @@ func TestDecodeTx_VkeySummary(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("wallet_can_add %+v does not contain expected payment key hash %s", got.WalletCanAdd, wantKeyHash)
+	}
+}
+
+func TestCosignTx_MergesPreservingExisting(t *testing.T) {
+	svc, acct, unsignedCbor := buildUnsignedSendFixture(t)
+	_ = acct
+
+	// First co-sign: wallet adds its payment witness.
+	res, err := svc.CosignTx(context.Background(), unsignedCbor, testPassword, true)
+	if err != nil {
+		t.Fatalf("CosignTx: %v", err)
+	}
+	if len(res.Added) == 0 {
+		t.Fatal("expected at least one added witness")
+	}
+
+	// The updated tx must decode and now carry the witness(es).
+	summary, err := svc.DecodeTx(res.TxCBOR)
+	if err != nil {
+		t.Fatalf("DecodeTx(updated): %v", err)
+	}
+	if len(summary.ExistingSignatures) < len(res.Added) {
+		t.Errorf("updated tx has %d sigs, want >= %d", len(summary.ExistingSignatures), len(res.Added))
+	}
+
+	// Body-hash stability: re-cosigning must be idempotent (no duplicate witnesses).
+	res2, err := svc.CosignTx(context.Background(), res.TxCBOR, testPassword, true)
+	if err != nil {
+		t.Fatalf("CosignTx (2nd): %v", err)
+	}
+	if len(res2.Added) != 0 {
+		t.Errorf("second cosign added %d witnesses, want 0 (already present)", len(res2.Added))
+	}
+}
+
+func TestCosignTx_WrongPassword(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	fc := newFakeChain(5_000_000, addr0)
+	good := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	pv, err := good.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := good.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+
+	// A service bound to the same account whose keystore rejects the password.
+	bad := NewService(fc, fakeKeystore{err: keystore.ErrDecryptFailed}, acct)
+	_, err = bad.CosignTx(context.Background(), unsigned.UnsignedTxCBOR, "wrong", true)
+	if !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("err = %v, want ErrWrongPassword", err)
 	}
 }
 
