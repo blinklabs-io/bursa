@@ -118,8 +118,11 @@ export function useAsync<T>(
   // closures/arrow functions are new identities each render. Callers MUST
   // therefore pass a STABLE `fn`: a module-level function (as the useStatus,
   // useBalance, etc. helpers below do) or one wrapped in useCallback. A caller
-  // that passes an unstable `fn` will silently only ever see the value from the
-  // first render's closure. `refresh` is the supported way to refetch.
+  // that passes an unstable `fn` keeps the previously-captured closure only
+  // until one of the effect deps (`refresh`/`tick`, `enabled`, or `pollMs`)
+  // changes and re-runs the effect, at which point the LATEST `fn` is captured;
+  // it is not permanently stuck on the first render's closure. `refresh` is the
+  // supported way to refetch.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick, enabled, pollMs]);
 
