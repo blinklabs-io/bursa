@@ -421,19 +421,27 @@ test("switching active wallets remounts routed content and refetches read state"
   await waitFor(() => expect(getBalance).toHaveBeenCalledTimes(2));
 });
 
-test("a crafted hash (#/constructor) falls back to Portfolio instead of crashing", async () => {
-  stubStatus("ready");
-  stubVault({ exists: true, locked: true, wallet_count: 1 });
-  quietPortfolio();
-  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
-  window.location.hash = "#/constructor";
+// Prototype-pollution guard: a crafted hash whose name collides with an
+// inherited Object.prototype member must resolve through the production ROUTES
+// Map (app.tsx) to a real, absent key and fall back to Portfolio — never render
+// an inherited member as a "screen" nor crash. Exercised end-to-end here (not
+// against a hand-built Map) so the check is bound to the code that ships.
+test.each(["#/__proto__", "#/constructor"])(
+  "a crafted hash (%s) falls back to Portfolio instead of crashing",
+  async (hash) => {
+    stubStatus("ready");
+    stubVault({ exists: true, locked: true, wallet_count: 1 });
+    quietPortfolio();
+    vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+    window.location.hash = hash;
 
-  render(<App />);
-  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
-  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+    render(<App />);
+    fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+    fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
-  await waitFor(() => expect(screen.getByText("Balance")).toBeInTheDocument());
-});
+    await waitFor(() => expect(screen.getByText("Balance")).toBeInTheDocument());
+  },
+);
 
 test("Add wallet action opens the add-wallet form", async () => {
   stubStatus("ready");

@@ -282,60 +282,9 @@ test("Metadata tab builds the canonical JSON + hash", async () => {
   expect(await screen.findByText("feedface")).toBeInTheDocument();
 });
 
-test("Retirement tab builds an air-gap certificate from a cold vkey", async () => {
-  vi.spyOn(client, "poolBuildRetirementCert").mockResolvedValue({
-    pool_id: "pool1ret",
-    cbor_hex: "8304",
-  });
-  render(<Operate account={account} />);
-  fireEvent.click(screen.getByRole("tab", { name: /retirement/i }));
-  fireEvent.click(screen.getByRole("button", { name: /air-gap/i }));
-  fireEvent.change(screen.getByLabelText(/retirement epoch/i), { target: { value: "520" } });
-  fireEvent.change(screen.getByLabelText(/cold verification key/i), {
-    target: { value: "c0ld" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: /build certificate/i }));
-
-  await waitFor(() =>
-    expect(client.poolBuildRetirementCert).toHaveBeenCalledWith({
-      cold_vkey_hex: "c0ld",
-      epoch: 520,
-    }),
-  );
-  expect(await screen.findByText("pool1ret")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /copy retirement pool id/i })).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: /copy retirement certificate cbor hex/i }),
-  ).toBeInTheDocument();
-});
-
-test("Retirement tab submits a retirement transaction", async () => {
-  vi.spyOn(client, "poolSubmitRetirement").mockResolvedValue({ tx_hash: "deadbeef" });
-  render(<Operate account={account} />);
-  fireEvent.click(screen.getByRole("tab", { name: /retirement/i }));
-  fireEvent.change(screen.getByLabelText(/retirement epoch/i), { target: { value: "520" } });
-  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "pw" } });
-  fireEvent.click(screen.getByRole("button", { name: /build & submit retirement/i }));
-
-  await waitFor(() =>
-    expect(client.poolSubmitRetirement).toHaveBeenCalledWith({ password: "pw", epoch: 520 }),
-  );
-  expect(await screen.findByText("deadbeef")).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: /copy retirement transaction hash/i }),
-  ).toBeInTheDocument();
-});
-
-test("Retirement rejects unsafe epoch integers before calling the API", () => {
-  vi.spyOn(client, "poolSubmitRetirement").mockResolvedValue({ tx_hash: "deadbeef" });
-  render(<Operate account={account} />);
-  fireEvent.click(screen.getByRole("tab", { name: /retirement/i }));
-  fireEvent.change(screen.getByLabelText(/retirement epoch/i), {
-    target: { value: "9007199254740993" },
-  });
-  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "pw" } });
-  fireEvent.click(screen.getByRole("button", { name: /build & submit retirement/i }));
-
-  expect(screen.getByRole("alert")).toHaveTextContent(/retirement epoch must be a non-negative integer/i);
-  expect(client.poolSubmitRetirement).not.toHaveBeenCalled();
-});
+// The Retirement tab's API contract (air-gap cert build, seed submission, and
+// epoch validation) is covered co-located in screens/operate/Retirement.test.tsx
+// against the same <Retirement /> component this tab mounts; the tab-mount itself
+// is exercised by "Operate tab aria-controls targets stay mounted" above. Those
+// contract cases are intentionally NOT duplicated here so the air-gap/submission
+// behaviour is maintained in a single suite.
