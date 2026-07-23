@@ -23,7 +23,7 @@ const { mockSession, mockConnectDevice } = vi.hoisted(() => {
 });
 
 vi.mock("../hw", () => ({
-  connectDevice: mockConnectDevice,
+  connectHardware: mockConnectDevice,
 }));
 
 const created: WalletView = {

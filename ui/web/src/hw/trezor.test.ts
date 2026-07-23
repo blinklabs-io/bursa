@@ -257,4 +257,29 @@ describe("connectTrezor session", () => {
     await session.close();
     expect(mockDispose).toHaveBeenCalledOnce();
   });
+
+  test("closing one live signer keeps the other usable (ref-counted dispose)", async () => {
+    // Two live signers share the module-wide transport. Closing one must NOT
+    // tear it down while the other is still in use. (Connected sequentially so
+    // the shared init() runs once — b reuses a's in-flight init promise.)
+    const a = await connectTrezor({ requestExternalConsent: approve });
+    const b = await connectTrezor({ requestExternalConsent: approve });
+    expect(mockInit).toHaveBeenCalledOnce();
+
+    await a.close();
+    // The shared transport survives because b is still live.
+    expect(mockDispose).not.toHaveBeenCalled();
+
+    // b remains fully usable after a closed.
+    const xpub = await b.getAccountXpub(0);
+    expect(xpub).toBe(TEST_XPUB_BECH32);
+
+    // The LAST signer to close disposes the transport exactly once.
+    await b.close();
+    expect(mockDispose).toHaveBeenCalledOnce();
+
+    // A double close() on an already-closed signer is a no-op (no extra dispose).
+    await a.close();
+    expect(mockDispose).toHaveBeenCalledOnce();
+  });
 });

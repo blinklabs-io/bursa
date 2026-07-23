@@ -77,8 +77,22 @@ export interface ExternalConnectOptions {
 }
 
 /**
- * Options passed to a device connector. A discriminated union: local devices
- * (Ledger) take {@link LocalConnectOptions}; external-network devices (Trezor)
- * take {@link ExternalConnectOptions}, which requires the consent callback.
+ * Options passed to a device connector. A union of the two option shapes; the
+ * per-kind contract is enforced by {@link ConnectOptionsByKind} at the
+ * connectDevice factory boundary, not by this union on its own.
  */
 export type ConnectOptions = LocalConnectOptions | ExternalConnectOptions;
+
+/**
+ * Ties each {@link HardwareKind} to the connect-options it accepts, so the
+ * factory can discriminate at compile time: a local device (Ledger) can NEVER
+ * be handed a cloud-consent callback, and an external device (Trezor) can NEVER
+ * be connected without one. Enforced via the kind-specific `connectDevice`
+ * overloads in hw/index.ts. (Keystone is unsupported this phase; it accepts the
+ * broad union and is rejected at runtime.)
+ */
+export interface ConnectOptionsByKind {
+  ledger: LocalConnectOptions;
+  trezor: ExternalConnectOptions;
+  keystone: ConnectOptions;
+}

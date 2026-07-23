@@ -1,7 +1,5 @@
 import { describe, test, expect, beforeEach } from "vitest";
-import { setDeviceKind, getDeviceKind, getStoredDeviceKind } from "./deviceKind";
-
-const STORAGE_KEY = "bursa.hw.deviceKind";
+import { setDeviceKind, getDeviceKind, getStoredDeviceKind, STORAGE_KEY } from "./deviceKind";
 
 beforeEach(() => {
   localStorage.clear();

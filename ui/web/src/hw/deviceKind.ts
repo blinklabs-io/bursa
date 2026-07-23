@@ -8,9 +8,12 @@
  * reconnect the right device for on-device signing.
  *
  * This is a purely local hint, keyed by wallet id in localStorage. It carries
- * no secret (the device kind is not sensitive) and is safe to lose: any
- * hardware wallet with no stored hint — including every one added before this
- * feature existed — defaults to "ledger" for backward compatibility.
+ * no secret (the device kind is not sensitive) and is safe to lose. When no
+ * hint is stored, {@link getStoredDeviceKind} returns `undefined` so callers
+ * can PROMPT for the device; only the non-interactive {@link getDeviceKind}
+ * falls back to "ledger". The fallback belongs to that function alone — do NOT
+ * reintroduce it into the stored-hint read, or a Trezor wallet with a lost hint
+ * would silently reconnect as a Ledger (the wrong signer).
  *
  * If device-kind ever needs to survive a browser-data wipe or move between
  * machines, it should become a server-side WalletView field instead; see the
@@ -19,7 +22,9 @@
 
 import type { HardwareKind } from "./types";
 
-const STORAGE_KEY = "bursa.hw.deviceKind";
+// The localStorage key the device-kind hint map lives under. Exported so tests
+// read/write the SAME key as this module (one source of truth).
+export const STORAGE_KEY = "bursa.hw.deviceKind";
 
 // Kinds we accept from storage. Keystone is intentionally omitted: it is
 // disabled this phase, so a stale "keystone" hint must NOT select an

@@ -7,7 +7,7 @@ import type { HardwareSigner } from "../hw";
 
 // Mock the hardware factory so tests don't try to open WebHID / a Trezor popup.
 vi.mock("../hw", () => ({
-  connectDevice: vi.fn(),
+  connectHardware: vi.fn(),
 }));
 
 // Send-parity capabilities shared by the mock signers below.
@@ -587,8 +587,8 @@ test("(s) hardware account: confirm flow connects device, fetches sign request, 
 
   const mockSignTx = vi.fn<HardwareSigner["signTx"]>().mockResolvedValue("81825820aabb");
   const mockClose = vi.fn().mockResolvedValue(undefined);
-  const { connectDevice } = await import("../hw");
-  vi.mocked(connectDevice).mockResolvedValue({
+  const { connectHardware } = await import("../hw");
+  vi.mocked(connectHardware).mockResolvedValue({
     kind: "ledger",
     capabilities: HW_CAPS,
     getAccountXpub: vi.fn(),
@@ -620,11 +620,11 @@ test("(s) hardware account: confirm flow connects device, fetches sign request, 
   });
 
   // The user chose Ledger above, so that is the device we connect.
-  expect(vi.mocked(connectDevice).mock.calls[0][0]).toBe("ledger");
+  expect(vi.mocked(connectHardware).mock.calls[0][0]).toBe("ledger");
 
   // The device connect must begin directly from the confirm click, before
   // yielding to the backend signing-request fetch (preserves user activation).
-  expect(vi.mocked(connectDevice).mock.invocationCallOrder[0]).toBeLessThan(
+  expect(vi.mocked(connectHardware).mock.invocationCallOrder[0]).toBeLessThan(
     vi.mocked(client.getHardwareSignRequest).mock.invocationCallOrder[0],
   );
 
@@ -641,8 +641,8 @@ test("(t) hardware account: unsupported tx closes the connected device without s
     unsupported: "certificates are not supported on hardware yet",
   });
 
-  const { connectDevice } = await import("../hw");
-  const mockConnectDevice = vi.mocked(connectDevice);
+  const { connectHardware } = await import("../hw");
+  const mockConnectDevice = vi.mocked(connectHardware);
   const mockSignTx = vi.fn();
   const mockClose = vi.fn().mockResolvedValue(undefined);
   mockConnectDevice.mockClear();
@@ -700,6 +700,100 @@ test("(u) hardware account with a stored Trezor hint: no device prompt, gates on
   expect(confirm).toBeDisabled();
   fireEvent.click(screen.getByRole("checkbox", { name: /connect\.trezor\.io/i }));
   expect(confirm).not.toBeDisabled();
+
+  localStorage.clear();
+});
+
+test("(v) a failed hardware attempt keeps the picker and does NOT persist the pick", async () => {
+  vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+  localStorage.clear();
+
+  const { connectHardware } = await import("../hw");
+  const mockConnect = vi.mocked(connectHardware);
+  mockConnect.mockReset();
+  // Simulate picking the wrong device: the connection attempt fails.
+  mockConnect.mockRejectedValue(new Error("no matching device found"));
+
+  render(<Send isHardware walletId="hw-recover" />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "addr_test1recipient" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
+  });
+
+  // Pick the (wrong) device and try to confirm — the attempt fails.
+  fireEvent.click(screen.getByRole("radio", { name: /ledger/i }));
+  fireEvent.click(screen.getByRole("button", { name: /confirm on.*ledger/i }));
+
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(/no matching device/i);
+  });
+
+  // The picker is STILL reachable so the user can change the device.
+  expect(screen.getByText(/which device backs this wallet/i)).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: /trezor/i })).toBeInTheDocument();
+
+  // The mistaken pick was NOT persisted — only a successful send persists.
+  const { getStoredDeviceKind } = await import("../hw/deviceKind");
+  expect(getStoredDeviceKind("hw-recover")).toBeUndefined();
+
+  // Switching to the other device and retrying connects THAT device.
+  fireEvent.click(screen.getByRole("radio", { name: /trezor/i }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /connect\.trezor\.io/i }));
+  fireEvent.click(screen.getByRole("button", { name: /confirm on.*trezor/i }));
+
+  await waitFor(() => {
+    const kinds = mockConnect.mock.calls.map((c) => c[0]);
+    expect(kinds[kinds.length - 1]).toBe("trezor");
+  });
+
+  localStorage.clear();
+});
+
+test("(w) a successful hardware send persists the chosen device kind", async () => {
+  vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+  vi.spyOn(client, "getHardwareSignRequest").mockResolvedValue(MOCK_HW_SIGN_RESP);
+  vi.spyOn(client, "submitHardware").mockResolvedValue(MOCK_TX_RESULT);
+  localStorage.clear();
+
+  const { connectHardware } = await import("../hw");
+  const mockConnect = vi.mocked(connectHardware);
+  mockConnect.mockReset();
+  mockConnect.mockResolvedValue({
+    kind: "ledger",
+    capabilities: HW_CAPS,
+    getAccountXpub: vi.fn(),
+    signTx: vi.fn<HardwareSigner["signTx"]>().mockResolvedValue("81825820aabb"),
+    close: vi.fn().mockResolvedValue(undefined),
+  });
+
+  render(<Send isHardware walletId="hw-persist" />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "addr_test1recipient" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
+  });
+
+  const { getStoredDeviceKind } = await import("../hw/deviceKind");
+
+  // Merely SELECTING a device must not persist it.
+  fireEvent.click(screen.getByRole("radio", { name: /ledger/i }));
+  expect(getStoredDeviceKind("hw-persist")).toBeUndefined();
+
+  // A successful send persists the hint so the next send skips the picker.
+  fireEvent.click(screen.getByRole("button", { name: /confirm on.*ledger/i }));
+  await waitFor(() => {
+    expect(screen.getByText(new RegExp(MOCK_TX_RESULT.tx_hash))).toBeInTheDocument();
+  });
+  expect(getStoredDeviceKind("hw-persist")).toBe("ledger");
 
   localStorage.clear();
 });

@@ -5,7 +5,7 @@ import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
 import { addWallet, addHardwareWallet, generateMnemonic, ApiError } from "../api/client";
-import { connectDevice } from "../hw";
+import { connectHardware } from "../hw";
 import type { HardwareKind, HardwareSigner } from "../hw";
 import { setDeviceKind } from "../hw/deviceKind";
 import type { WalletView } from "../api/types";
@@ -215,12 +215,11 @@ export function AddWallet({
     setLoading(true);
     let session: HardwareSigner | null = null;
     try {
-      // connectDevice dispatches to the right connector. For Trezor the
+      // connectHardware dispatches to the right connector. For Trezor the
       // consent box gates the connect button, so this reports the given
-      // approval; the real init() gate lives inside connectTrezor.
-      session = await connectDevice(deviceKind, {
-        requestExternalConsent: async () => externalConsent,
-      });
+      // approval; the real init() gate lives inside connectTrezor. For Ledger
+      // the callback is ignored.
+      session = await connectHardware(deviceKind, async () => externalConsent);
       const xpub = await session.getAccountXpub(account);
       const defaultName = `${DEVICE_LABELS[deviceKind]} Wallet`;
       const wallet = await addHardwareWallet(
@@ -231,6 +230,10 @@ export function AddWallet({
         vaultPw,
       );
       // Remember which device backs this wallet so Send reconnects it.
+      // TODO(follow-up): this hint is client-only (localStorage); persist the
+      // device kind on the server-side wallet record so it survives a browser
+      // wipe or another browser. Send's post-failure device picker mitigates
+      // the wrong-signer risk until then (see hw/deviceKind.ts).
       setDeviceKind(wallet.id, deviceKind);
       onAdded(wallet);
     } catch (err) {

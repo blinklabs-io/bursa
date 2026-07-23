@@ -11,7 +11,7 @@ import {
   ApiError,
 } from "../api/client";
 import { useContacts } from "../api/hooks";
-import { connectDevice } from "../hw";
+import { connectHardware } from "../hw";
 import type { HardwareKind, HardwareSigner } from "../hw";
 import { getStoredDeviceKind, setDeviceKind } from "../hw/deviceKind";
 import { Card } from "../components/Card";
@@ -353,6 +353,14 @@ function PreviewPhase({
   // prompt for one so we never reconnect the wrong signer.
   const [chosenKind, setChosenKind] = useState<HardwareKind | undefined>(storedDeviceKind);
   const deviceKind = chosenKind;
+  // The picker stays reachable whenever the device is not yet CONFIRMED by a
+  // stored hint (i.e. no persisted kind for this wallet). A user's pick is only
+  // tentative until a hardware send succeeds, so a wrong pick can be corrected —
+  // even after a failed attempt — by choosing a different device here.
+  const deviceKnownFromHint = storedDeviceKind !== undefined;
+  const showDevicePicker = isHardware && !deviceKnownFromHint;
+  // Confirm is gated until a device is chosen (defensive: the button is disabled
+  // until then), regardless of whether it came from a hint or the picker.
   const needsDeviceChoice = isHardware && deviceKind === undefined;
   const deviceLabel = deviceKind ? DEVICE_LABELS[deviceKind] : "";
   // Trezor reaches connect.trezor.io, so its confirm is gated on an explicit
@@ -367,13 +375,14 @@ function PreviewPhase({
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState<UnsignedTx | null>(null);
 
-  // Record the user's device choice so a later send reconnects it directly
-  // instead of prompting again (the local recovery path for a lost hint).
+  // Select a device to sign with. This is TENTATIVE: the hint is NOT persisted
+  // here, only after a successful hardware send (see handleHardwareConfirm), so
+  // a mistaken pick that never signs is not remembered and can be changed by
+  // picking again — including after a failed attempt.
   function chooseDevice(kind: HardwareKind) {
     setError(null);
     setExternalConsent(false);
     setChosenKind(kind);
-    if (walletId) setDeviceKind(walletId, kind);
   }
 
   const outputRows = preview.outputs.map((o) => ({
@@ -418,12 +427,11 @@ function PreviewPhase({
       // grant WebHID permission while browser user activation is still live.
       // The device kind is the one recorded when this wallet was added (or the
       // one the user just chose when no hint was stored).
-      session = await connectDevice(kind, {
-        // The confirm button is disabled until the Trezor consent box is
-        // ticked, so this simply reports the already-given approval; the real
-        // gate lives in connectTrezor and refuses to init() without it.
-        requestExternalConsent: async () => externalConsent,
-      });
+      // The confirm button is disabled until the Trezor consent box is ticked,
+      // so this simply reports the already-given approval; the real gate lives
+      // in connectTrezor and refuses to init() without it. For a local device
+      // (Ledger) the callback is ignored.
+      session = await connectHardware(kind, async () => externalConsent);
 
       // 2. Fetch the structured signing request once the device is connected.
       const signResp = await getHardwareSignRequest(preview.pending_id);
@@ -438,6 +446,10 @@ function PreviewPhase({
 
       // 4. Submit the signed transaction.
       const result = await submitHardware(preview.pending_id, witnessCbor);
+      // Persist the device-kind hint only NOW — after a successful hardware
+      // send — so a wrong pick that never signs is never remembered. A correct
+      // pick is remembered so a later send reconnects it without prompting.
+      if (walletId) setDeviceKind(walletId, kind);
       onDone(result);
     } catch (e) {
       setError(errorMessage(e));
@@ -487,16 +499,19 @@ function PreviewPhase({
 
         {isHardware ? (
           <>
-            {needsDeviceChoice ? (
-              // The device kind for this wallet is unknown (e.g. a browser-data
-              // wipe cleared the local hint). Ask which device backs it rather
-              // than silently defaulting to Ledger and reconnecting the wrong
-              // signer.
+            {showDevicePicker && (
+              // The device kind for this wallet is not confirmed by a stored
+              // hint (e.g. a browser-data wipe cleared it). Ask which device
+              // backs it rather than silently defaulting to Ledger and
+              // reconnecting the wrong signer. The picker STAYS visible after a
+              // pick so a mistaken choice can be changed — including after a
+              // failed attempt — until a send succeeds and persists the hint.
               <fieldset className="field-group" style={{ border: "none", padding: 0, margin: 0 }}>
                 <legend className="field-label">Which device backs this wallet?</legend>
                 <p className="helper-text">
                   We could not tell whether this hardware wallet is a Ledger or a
-                  Trezor. Choose the device you used to add it.
+                  Trezor. Choose the device you used to add it; you can change
+                  this if a connection attempt fails.
                 </p>
                 {(["ledger", "trezor"] as const).map((k) => (
                   <label className="checkbox-row" key={k}>
@@ -512,7 +527,8 @@ function PreviewPhase({
                   </label>
                 ))}
               </fieldset>
-            ) : (
+            )}
+            {deviceKind !== undefined && (
               <p className="helper-text">
                 Connect your {deviceLabel} and confirm the transaction on the device.
               </p>

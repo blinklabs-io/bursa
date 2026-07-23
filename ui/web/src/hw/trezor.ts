@@ -64,9 +64,15 @@ const TREZOR_MANIFEST = {
 // "already initialized". A SHARED init promise makes the lifecycle safe under
 // concurrent connectTrezor() calls: two callers (e.g. a double-click) await the
 // same in-flight init instead of both racing to init(). A failed init clears
-// the promise so a later connect can retry; close() clears it so a fresh
-// connect re-inits after dispose.
+// the promise so a later connect can retry.
 let trezorInitPromise: Promise<void> | null = null;
+
+// The connect.trezor.io transport is module-wide (one iframe per page), so it
+// is shared by every live signer. Reference-count the live signers and dispose
+// the transport (and clear the shared init) only when the LAST one closes —
+// otherwise closing one of two concurrent sessions would tear the transport out
+// from under the other, breaking its getAccountXpub/signTx.
+let activeSignerCount = 0;
 
 // ── Capabilities ──────────────────────────────────────────────────────────────
 
@@ -150,6 +156,13 @@ export async function connectTrezor(opts: ExternalConnectOptions): Promise<Hardw
   }
   await trezorInitPromise;
 
+  // Init succeeded: this signer now shares the module-wide transport. Counted
+  // here (after the await) so a failed init never leaves a phantom reference.
+  activeSignerCount += 1;
+
+  // Guards against a double close() double-decrementing the shared count.
+  let closed = false;
+
   return {
     kind: "trezor",
     capabilities: TREZOR_CAPABILITIES,
@@ -227,9 +240,18 @@ export async function connectTrezor(opts: ExternalConnectOptions): Promise<Hardw
     },
 
     async close(): Promise<void> {
-      // Release the iframe/popup transport. A fresh connect re-inits it.
-      TrezorConnect.dispose();
-      trezorInitPromise = null;
+      // Idempotent: a second close() on the same signer must not decrement the
+      // shared count again.
+      if (closed) return;
+      closed = true;
+      activeSignerCount -= 1;
+      // Only the LAST live signer tears down the shared transport, so a
+      // concurrent session stays usable. A fresh connect re-inits afterwards.
+      if (activeSignerCount <= 0) {
+        activeSignerCount = 0;
+        TrezorConnect.dispose();
+        trezorInitPromise = null;
+      }
     },
   };
 }
