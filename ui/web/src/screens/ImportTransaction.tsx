@@ -101,7 +101,14 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
           <code className="tx-hash">{result.tx_hash}</code>
           <CopyButton value={result.tx_hash} ariaLabel="Copy transaction hash" />
         </div>
-        <Button onClick={reset}>Import another</Button>
+        <Button
+          onClick={() => {
+            reset();
+            setCbor("");
+          }}
+        >
+          Import another
+        </Button>
       </Card>
     );
   }
@@ -177,6 +184,12 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
                 <dd>{summary.certificates.join(", ")}</dd>
               </div>
             ) : null}
+            {summary.network_id != null ? (
+              <div className="dl-row">
+                <dt>Network</dt>
+                <dd>{summary.network_id === 1 ? "mainnet (1)" : `testnet (${summary.network_id})`}</dd>
+              </div>
+            ) : null}
           </dl>
 
           <p className="field-label">Outputs</p>
@@ -187,6 +200,22 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
               </li>
             ))}
           </ul>
+
+          {summary.withdrawals?.length ? (
+            <>
+              {/* Reward withdrawals move funds out of this wallet's staking
+                  rewards just like outputs move funds out of its UTxOs, so they
+                  MUST be shown before the user cosigns or submits. */}
+              <p className="field-label">Reward withdrawals</p>
+              <ul className="signer-list">
+                {summary.withdrawals.map((wd, i) => (
+                  <li key={i}>
+                    <code className="tx-hash">{wd.address}</code> — {formatAda(wd.lovelace)} ADA
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
 
           {ms?.is_multisig ? (
             <MultiSigProgress

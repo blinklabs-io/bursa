@@ -34,7 +34,7 @@ import (
 // &fakeSpender{} keep satisfying the extended Spender interface unchanged;
 // only the methods live here, next to the tests that exercise them.
 
-func (f *fakeSpender) DecodeTx(txCbor string) (spend.TxSummary, error) {
+func (f *fakeSpender) DecodeTx(_ context.Context, txCbor string) (spend.TxSummary, error) {
 	f.gotDecodeCBOR = txCbor
 	if f.decodeErr != nil {
 		return spend.TxSummary{}, f.decodeErr

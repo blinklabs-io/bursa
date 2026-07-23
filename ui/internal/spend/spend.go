@@ -6,6 +6,7 @@ package spend
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -1414,7 +1415,7 @@ func (s *Service) SubmitTxCbor(ctx context.Context, txCbor string) (TxResult, er
 // an ordinary vkey tx. (The api layer upgrades kind to "native_multisig" when the
 // tx carries a native script.) wallet_can_add is derived from the active account's
 // public key hashes — no seed required, and nothing here signs or mutates the tx.
-func (s *Service) DecodeTx(txCbor string) (TxSummary, error) {
+func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error) {
 	txBytes, err := hex.DecodeString(strings.TrimSpace(txCbor))
 	if err != nil {
 		return TxSummary{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
@@ -1423,6 +1424,15 @@ func (s *Service) DecodeTx(txCbor string) (TxSummary, error) {
 	if _, err := cbor.Decode(txBytes, &tx); err != nil {
 		return TxSummary{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
 	}
+	// The witnesses sign blake2b-256 of the raw body element, preserved exactly
+	// as supplied (see extractTxBodyCbor). We need it to verify existing
+	// witnesses below so a malformed signature is not counted as covering a
+	// required credential.
+	bodyCbor, err := extractTxBodyCbor(txBytes)
+	if err != nil {
+		return TxSummary{}, err
+	}
+	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
 
 	out := TxSummary{
 		Kind:               "vkey",
@@ -1432,6 +1442,10 @@ func (s *Service) DecodeTx(txCbor string) (TxSummary, error) {
 	}
 	if ttl := tx.Body.TTL(); ttl != 0 {
 		out.TTL = ttl
+	}
+	if nid := tx.Body.NetworkId(); nid != nil {
+		v := int(*nid)
+		out.NetworkID = &v
 	}
 	for _, o := range tx.Body.Outputs() {
 		out.Outputs = append(out.Outputs, TxSummaryOutput{
@@ -1453,32 +1467,93 @@ func (s *Service) DecodeTx(txCbor string) (TxSummary, error) {
 		})
 	}
 
-	// Existing signatures already present in the witness set.
+	// Existing signatures already present in the witness set. A witness counts
+	// toward `present` (the "already covered" set used for wallet_can_add and
+	// completeness) only when its signature actually verifies over the body
+	// bytes — otherwise a pasted tx could carry a bogus witness for a required
+	// key and appear complete, or hide the fact that this wallet can still add
+	// the real one. Every attached witness is still listed for display.
 	present := map[string]bool{}
 	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
 		kh := hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes())
-		present[kh] = true
 		out.ExistingSignatures = append(out.ExistingSignatures, TxSummarySigner{KeyHash: kh})
-	}
-
-	// wallet_can_add: match the active account's known payment key hashes (from its
-	// bech32 addresses) against required signers / cert / withdrawal credentials
-	// this wallet hasn't already witnessed.
-	_, acct, _ := s.currentBinding()
-	needed := neededKeyHashes(&tx) // key-14 + cert/withdrawal credentials, as a set
-	if acct != nil {
-		seen := map[string]bool{}
-		for _, kh := range walletPaymentKeyHashes(acct) {
-			khHex := hex.EncodeToString(kh.Bytes())
-			if needed[khHex] && !present[khHex] && !seen[khHex] {
-				seen[khHex] = true
-				out.WalletCanAdd = append(out.WalletCanAdd, TxSummarySigner{KeyHash: khHex, Role: "payment"})
-			}
+		if vkeyWitnessValid(w, bodyHash.Bytes()) {
+			present[kh] = true
 		}
 	}
 
-	out.IsComplete = len(out.WalletCanAdd) == 0 && coversAllNeeded(needed, present)
+	// wallet_can_add: match the active account's known key hashes against the
+	// credentials this tx needs witnessed that it hasn't already. needed starts
+	// with key-14 required signers plus certificate/withdrawal credentials, then
+	// is augmented with each resolvable input's payment key hash — a pasted tx
+	// need not list its input signers as required signers, so without this an
+	// unsigned ordinary spend would look complete.
+	_, acct, _ := s.currentBinding()
+	needed := neededKeyHashes(&tx)
+	resolvedAllInputs := s.addInputKeyHashes(ctx, &tx, needed)
+	if acct != nil {
+		seen := map[string]bool{}
+		addCanAdd := func(khHex, role string) {
+			khHex = strings.ToLower(khHex)
+			if needed[khHex] && !present[khHex] && !seen[khHex] {
+				seen[khHex] = true
+				out.WalletCanAdd = append(out.WalletCanAdd, TxSummarySigner{KeyHash: khHex, Role: role})
+			}
+		}
+		for _, kh := range walletPaymentKeyHashes(acct) {
+			addCanAdd(hex.EncodeToString(kh.Bytes()), "payment")
+		}
+		// CosignTx can also derive this wallet's stake and DRep witnesses, so
+		// surface them when a delegation / DRep tx needs them — otherwise such an
+		// import would show no addable wallet signer at all.
+		if acct.StakeAddress != "" {
+			if sa, err := lcommon.NewAddress(acct.StakeAddress); err == nil {
+				addCanAdd(hex.EncodeToString(sa.StakeKeyHash().Bytes()), "stake")
+			}
+		}
+		if acct.DRepKeyHash != "" {
+			addCanAdd(acct.DRepKeyHash, "drep")
+		}
+	}
+
+	// A tx is only complete when there is nothing this wallet can add, every
+	// needed credential is already validly witnessed, AND we could resolve every
+	// input (so no unseen input credential is silently assumed satisfied). When
+	// inputs cannot be resolved — no node, or an already-spent input — treat
+	// completeness as unknown (false) rather than risk submitting an unsigned tx.
+	out.IsComplete = len(out.WalletCanAdd) == 0 &&
+		coversAllNeeded(needed, present) &&
+		resolvedAllInputs
 	return out, nil
+}
+
+// addInputKeyHashes resolves tx's inputs (best-effort, via the chain) and adds
+// each key-hash-locked input's payment credential to needed. It returns whether
+// every input was resolved: a script-locked input needs no vkey witness and
+// still counts as resolved, but an input the chain cannot return leaves the
+// tx's witness requirements only partially known. Without a chain, inputs are
+// unresolvable and completeness must stay unknown.
+func (s *Service) addInputKeyHashes(ctx context.Context, tx *conway.ConwayTransaction, needed map[string]bool) bool {
+	inputs := tx.Body.Inputs()
+	if len(inputs) == 0 {
+		return true
+	}
+	if s.chain == nil {
+		return false
+	}
+	resolvedAll := true
+	for _, inp := range inputs {
+		u, err := s.chain.UtxoByRef(ctx, inp.Id(), inp.Index())
+		if err != nil || u == nil || u.Output == nil {
+			resolvedAll = false
+			continue
+		}
+		addr := u.Output.Address()
+		if p, ok := addr.PayloadPayload().(lcommon.AddressPayloadKeyHash); ok {
+			needed[hex.EncodeToString(p.Hash.Bytes())] = true
+		}
+	}
+	return resolvedAll
 }
 
 // extractTxBodyCbor returns the raw CBOR bytes of the transaction body (element
@@ -1601,14 +1676,33 @@ func (s *Service) CosignTx(
 		return CosignResult{}, err
 	}
 
-	// Merge into the pasted tx, preserving existing witnesses, deduped by key-hash.
-	present := map[string]bool{}
-	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
-		present[hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes())] = true
-	}
 	a, err := apollo.New(s.chain).LoadTxCbor(trimmed)
 	if err != nil {
 		return CosignResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
+	lt := a.GetTx()
+	if lt == nil {
+		return CosignResult{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
+	}
+	// Rebuild the witness set from only the existing witnesses whose signature
+	// verifies over the preserved body bytes, deduped by key-hash. A pasted tx
+	// can carry a malformed or foreign witness — including one bearing THIS
+	// wallet's own pubkey — and keying dedupe off key-hash alone would preserve
+	// that invalid witness and skip our valid replacement, getting the tx
+	// rejected at the node. Dropping non-verifying witnesses lets the valid one
+	// (ours below, or a later co-signer's) take its place.
+	present := map[string]bool{}
+	kept := make([]lcommon.VkeyWitness, 0, len(lt.WitnessSet.VkeyWitnesses.Items()))
+	for _, w := range lt.WitnessSet.VkeyWitnesses.Items() {
+		if !vkeyWitnessValid(w, bodyHash.Bytes()) {
+			continue
+		}
+		kh := hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes())
+		if present[kh] {
+			continue
+		}
+		present[kh] = true
+		kept = append(kept, w)
 	}
 	var added []TxSummarySigner
 	for _, w := range witnesses {
@@ -1617,25 +1711,22 @@ func (s *Service) CosignTx(
 			continue
 		}
 		present[kh] = true
-		if a, err = a.AddVerificationKeyWitness(w); err != nil {
-			return CosignResult{}, fmt.Errorf("attach witness: %w", err)
-		}
+		kept = append(kept, w)
 		added = append(added, TxSummarySigner{KeyHash: kh})
 	}
+	lt.WitnessSet.VkeyWitnesses = cbor.NewSetType(kept, true)
 
 	// Clear tx/witness-set caches (keep the body cache) so re-serialization
-	// includes the attached witnesses over the unchanged body bytes -- the
+	// includes the rebuilt witness set over the unchanged body bytes -- the
 	// SubmitSigned pattern (spend.go SubmitSigned, above).
-	if lt := a.GetTx(); lt != nil {
-		lt.SetCbor(nil)
-		lt.WitnessSet.SetCbor(nil)
-	}
+	lt.SetCbor(nil)
+	lt.WitnessSet.SetCbor(nil)
 	mergedBytes, err := a.GetTxCbor()
 	if err != nil {
 		return CosignResult{}, fmt.Errorf("encode merged tx: %w", err)
 	}
 	mergedHex := hex.EncodeToString(mergedBytes)
-	summary, err := s.DecodeTx(mergedHex)
+	summary, err := s.DecodeTx(ctx, mergedHex)
 	if err != nil {
 		return CosignResult{}, err
 	}
@@ -1793,6 +1884,19 @@ func walletPaymentKeyHashes(acct *wallet.Account) []lcommon.Blake2b224 {
 		hashes = append(hashes, addr.PaymentKeyHash())
 	}
 	return hashes
+}
+
+// vkeyWitnessValid reports whether w is a genuine Ed25519 signature by w.Vkey
+// over msg — the transaction body hash bytes the witness is meant to sign.
+// Cardano's BIP32-Ed25519 witnesses verify under standard Ed25519 against the
+// 32-byte public key, so a pasted tx carrying a malformed or foreign witness
+// (even one bearing this wallet's own pubkey) is rejected here rather than
+// being trusted by key-hash alone.
+func vkeyWitnessValid(w lcommon.VkeyWitness, msg []byte) bool {
+	if len(w.Vkey) != ed25519.PublicKeySize || len(w.Signature) != ed25519.SignatureSize {
+		return false
+	}
+	return ed25519.Verify(ed25519.PublicKey(w.Vkey), msg, w.Signature)
 }
 
 // coversAllNeeded reports whether every hex-encoded key hash in needed is

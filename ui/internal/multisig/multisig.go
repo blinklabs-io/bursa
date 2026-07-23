@@ -2,6 +2,7 @@ package multisig
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -261,10 +262,21 @@ func composeScript(p Policy) (*bursa.NativeScript, error) {
 // panicked on.
 func PolicyFromScript(ns *bursa.NativeScript) (Policy, error) {
 	var p Policy
+	// composeScript emits exactly one threshold clause and at most one clause of
+	// each time-lock type. A non-canonical script (multiple N-of-K clauses, or
+	// repeated time-locks) is rejected rather than silently collapsed to the
+	// last one seen: the node validates ALL clauses of an `all`, so showing and
+	// threshold-checking only one would let cosigning report readiness while the
+	// node still rejects the tx.
+	var nofk, invalidBefore, invalidAfter int
 	var walk func(node *lcommon.NativeScript) error
 	walk = func(node *lcommon.NativeScript) error {
 		switch v := node.Item().(type) {
 		case *lcommon.NativeScriptNofK:
+			nofk++
+			if nofk > 1 {
+				return fmt.Errorf("%w: native script has more than one threshold clause", ErrInvalidTx)
+			}
 			parts := make([]Participant, 0, len(v.Scripts))
 			for i := range v.Scripts {
 				pk, ok := v.Scripts[i].Item().(*lcommon.NativeScriptPubkey)
@@ -276,9 +288,17 @@ func PolicyFromScript(ns *bursa.NativeScript) (Policy, error) {
 			p.Threshold = int(v.N)
 			p.Participants = parts
 		case *lcommon.NativeScriptInvalidBefore:
+			invalidBefore++
+			if invalidBefore > 1 {
+				return fmt.Errorf("%w: native script has more than one invalid-before clause", ErrInvalidTx)
+			}
 			slot := v.Slot
 			p.InvalidBefore = &slot
 		case *lcommon.NativeScriptInvalidHereafter:
+			invalidAfter++
+			if invalidAfter > 1 {
+				return fmt.Errorf("%w: native script has more than one invalid-hereafter clause", ErrInvalidTx)
+			}
 			slot := v.Slot
 			p.InvalidAfter = &slot
 		case *lcommon.NativeScriptAll:
@@ -674,20 +694,40 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 		}
 	}
 
-	var ns *lcommon.NativeScript
+	// An embedded native script is present for one of two reasons: it authorizes
+	// minting under its policy ID, or it satisfies a script-locked spend input.
+	// A script whose hash is a mint policy MAY be there only for minting, so its
+	// presence — even matching a saved account — is NOT proof of a spend
+	// (resolving the inputs would be required to know, and that needs a node).
+	// A script that is not a mint policy can only be there to satisfy a spend,
+	// so those are the candidate spend scripts.
+	var candidates []*lcommon.NativeScript
 	for i := range scripts {
 		hash := hex.EncodeToString(scripts[i].Hash().Bytes())
-		if _, ok, _ := s.FindByScriptHash(hash); ok || !mintPolicies[hash] {
-			ns = &scripts[i]
-			break
+		if !mintPolicies[hash] {
+			candidates = append(candidates, &scripts[i])
 		}
 	}
-	if ns == nil {
-		// Every embedded native script is a mint-only policy: there is no
-		// script-locked spend here, so this is an ordinary tx that happens to
-		// mint under a native-script policy — route to the vkey path.
+	switch len(candidates) {
+	case 0:
+		// Every embedded native script is a mint policy: without resolving the
+		// inputs there is no evidence of a script-locked spend, so this is an
+		// ordinary tx that mints under a native-script policy — route to the
+		// vkey path. (A mint policy that also happens to be saved as a multisig
+		// account in this wallet is NOT treated as a spend on that basis alone.)
 		return TxInfo{IsMultiSig: false}, nil
+	case 1:
+		// Exactly one candidate spend script — the supported case.
+	default:
+		// The spend is protected by more than one native script. Only a single
+		// policy can be inspected and threshold-checked here; classifying against
+		// just the first would let the UI report readiness while another script
+		// stays unsatisfied. Report multi-sig but leave the policy fields empty
+		// (Threshold stays 0), so CosignImported/SubmitImported refuse it rather
+		// than guess.
+		return TxInfo{IsMultiSig: true, ScriptEmbedded: true}, nil
 	}
+	ns := candidates[0]
 	scriptHash := hex.EncodeToString(ns.Hash().Bytes())
 
 	policy, err := PolicyFromScript(ns)
@@ -709,10 +749,25 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 		policy = mergeParticipantLabels(policy, acct.Policy)
 	}
 
-	// Signed participants = vkey witnesses already attached whose key-hash is
-	// a policy participant. Key-hashes are compared case-insensitively.
+	// Signed participants = vkey witnesses already attached whose key-hash is a
+	// policy participant AND whose signature verifies over the tx body bytes.
+	// Key-hashes are compared case-insensitively. Verifying the signature is
+	// essential: a pasted tx can carry a bogus witness for a participant's key,
+	// and counting it toward the threshold would let SubmitImported broadcast a
+	// tx the node then rejects.
+	bodyCbor := tx.Body.Cbor()
+	if bodyCbor == nil {
+		bodyCbor, err = cbor.Encode(&tx.Body)
+		if err != nil {
+			return TxInfo{}, fmt.Errorf("encode tx body: %w", err)
+		}
+	}
+	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
 	signed := make(map[string]bool, len(tx.WitnessSet.VkeyWitnesses.Items()))
 	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
+		if !vkeyWitnessValid(w, bodyHash.Bytes()) {
+			continue
+		}
 		kh := strings.ToLower(hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes()))
 		signed[kh] = true
 	}
@@ -1034,10 +1089,24 @@ func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) 
 		)
 	}
 
-	// Existing co-signer witnesses (dedupe key: lower-case key-hash).
+	// Rebuild the witness set from only the existing witnesses whose signature
+	// verifies over the body bytes, deduped by lower-case key-hash. Counting or
+	// deduping by key-hash alone is unsafe: a pasted tx can carry an invalid
+	// witness bearing this wallet's own key, which would make this cosign a
+	// no-op (added=false) and leave the bogus witness in place for the node to
+	// reject. Dropping non-verifying witnesses lets our valid one replace it.
 	signed := make(map[string]bool, len(tx.WitnessSet.VkeyWitnesses.Items()))
+	kept := make([]lcommon.VkeyWitness, 0, len(tx.WitnessSet.VkeyWitnesses.Items()))
 	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
-		signed[strings.ToLower(hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes()))] = true
+		if !vkeyWitnessValid(w, bodyHash.Bytes()) {
+			continue
+		}
+		kh := strings.ToLower(hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes()))
+		if signed[kh] {
+			continue
+		}
+		signed[kh] = true
+		kept = append(kept, w)
 	}
 	added := false
 	if !signed[myKH] {
@@ -1045,12 +1114,11 @@ func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) 
 		if err != nil {
 			return CosignResult{}, fmt.Errorf("sign with multisig key: %w", err)
 		}
-		if a, err = a.AddVerificationKeyWitness(w); err != nil {
-			return CosignResult{}, fmt.Errorf("attach witness: %w", err)
-		}
 		signed[myKH] = true
+		kept = append(kept, w)
 		added = true
 	}
+	tx.WitnessSet.VkeyWitnesses = cbor.NewSetType(kept, true)
 
 	// Clear the tx-level and witness-set caches so GetTxCbor re-serializes the
 	// merged witness set; the BODY cache stays intact so every witness (ours
@@ -1080,6 +1148,19 @@ func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// vkeyWitnessValid reports whether w is a genuine Ed25519 signature by w.Vkey
+// over msg (the tx body hash bytes). Cardano's BIP32-Ed25519 witnesses verify
+// under standard Ed25519 against the 32-byte public key, so a pasted tx
+// carrying a malformed or foreign witness — even one bearing a participant's
+// key — is rejected here rather than counted toward the threshold on key-hash
+// alone.
+func vkeyWitnessValid(w lcommon.VkeyWitness, msg []byte) bool {
+	if len(w.Vkey) != ed25519.PublicKeySize || len(w.Signature) != ed25519.SignatureSize {
+		return false
+	}
+	return ed25519.Verify(ed25519.PublicKey(w.Vkey), msg, w.Signature)
+}
 
 // decodeScript reconstructs a native script from its hex CBOR.
 func decodeScript(scriptCBORHex string) (*bursa.NativeScript, error) {

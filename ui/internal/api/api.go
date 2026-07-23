@@ -82,7 +82,7 @@ type Spender interface {
 	// DecodeTx, CosignTx, and SubmitTxCbor back the "import transaction" flow:
 	// a user pastes a full tx CBOR built elsewhere (e.g. by a DApp or another
 	// wallet) to inspect it, add this wallet's witness(es), and broadcast it.
-	DecodeTx(txCbor string) (spend.TxSummary, error)
+	DecodeTx(ctx context.Context, txCbor string) (spend.TxSummary, error)
 	CosignTx(ctx context.Context, txCbor, password string, partialSign bool) (spend.CosignResult, error)
 	SubmitTxCbor(ctx context.Context, txCbor string) (spend.TxResult, error)
 }
@@ -1468,12 +1468,12 @@ type importDecodeResponse struct {
 // routes native-script multi-sig transactions through the MultiSig service;
 // everything else (vkey path) delegates to the Spender, unchanged from the
 // prior (vkey-only) behavior.
-func importDecode(_ context.Context, sp Spender, ms MultiSig, txCbor string) (importDecodeResponse, error) {
+func importDecode(ctx context.Context, sp Spender, ms MultiSig, txCbor string) (importDecodeResponse, error) {
 	info, err := ms.InspectTx(txCbor)
 	if err != nil {
 		return importDecodeResponse{}, err
 	}
-	summary, err := sp.DecodeTx(txCbor)
+	summary, err := sp.DecodeTx(ctx, txCbor)
 	if err != nil {
 		return importDecodeResponse{}, err
 	}

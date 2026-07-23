@@ -83,6 +83,29 @@ func TestPolicyFromScript_UnsupportedShape(t *testing.T) {
 	}
 }
 
+// TestPolicyFromScript_RejectsMultipleThresholdClauses covers a non-canonical
+// `all` script the node validates in full but composeScript never emits: two
+// N-of-K threshold clauses. Silently keeping only the last would let cosigning
+// report readiness against one clause while the node still enforces both, so
+// PolicyFromScript must reject it.
+func TestPolicyFromScript_RejectsMultipleThresholdClauses(t *testing.T) {
+	first, err := bursa.NewMultiSigScript(1, bytesRepeat(1, 28))
+	if err != nil {
+		t.Fatalf("NewMultiSigScript(first): %v", err)
+	}
+	second, err := bursa.NewMultiSigScript(1, bytesRepeat(2, 28))
+	if err != nil {
+		t.Fatalf("NewMultiSigScript(second): %v", err)
+	}
+	all, err := bursa.NewScriptAll(first, second)
+	if err != nil {
+		t.Fatalf("NewScriptAll: %v", err)
+	}
+	if _, err := PolicyFromScript(all); !errors.Is(err, ErrInvalidTx) {
+		t.Fatalf("PolicyFromScript(two threshold clauses) error = %v, want ErrInvalidTx", err)
+	}
+}
+
 func bytesRepeat(b byte, n int) []byte {
 	s := make([]byte, n)
 	for i := range s {

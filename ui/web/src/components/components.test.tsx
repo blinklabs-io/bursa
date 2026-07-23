@@ -285,7 +285,7 @@ test("ExplorerLink calls the webview bursaOpenExternal bridge instead of window.
   expect(openSpy).not.toHaveBeenCalled();
 });
 
-test("MultiSigProgress shows K of N signed and marks signed participants", () => {
+test("MultiSigProgress shows signed-of-total and marks signed participants", () => {
   render(
     <MultiSigProgress
       threshold={2}
@@ -299,8 +299,18 @@ test("MultiSigProgress shows K of N signed and marks signed participants", () =>
     />,
   );
 
-  expect(screen.getByText(/1 of 2/)).toBeInTheDocument();
+  // Progress is signed-of-total (1 of 3), not signed-of-threshold: a pending
+  // third participant must not read as fully signed.
+  expect(screen.getByText(/1 of 3/)).toBeInTheDocument();
+  expect(screen.getByText(/policy 2-of-3/)).toBeInTheDocument();
+  // The threshold is not yet met at 1 signature.
+  expect(screen.queryByText(/threshold met/i)).not.toBeInTheDocument();
+
+  // Signed vs pending state must be conveyed accessibly, not merely by which
+  // names appear: alice is signed, the other two are pending.
   expect(screen.getByText(/alice/)).toBeInTheDocument();
+  expect(screen.getAllByLabelText("signed")).toHaveLength(1);
+  expect(screen.getAllByLabelText("pending")).toHaveLength(2);
 });
 
 test("MultiSigProgress shows threshold-met indicator once signedCount reaches threshold", () => {

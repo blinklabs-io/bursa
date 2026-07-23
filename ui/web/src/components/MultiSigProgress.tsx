@@ -18,10 +18,15 @@ interface MultiSigProgressProps {
 // pending.
 export function MultiSigProgress({ threshold, total, signedCount, participants }: MultiSigProgressProps) {
   const met = signedCount >= threshold;
+  // Report progress against the total signer count, not the threshold: a
+  // threshold-of-total policy can still have participants pending after the
+  // threshold is met, and "X of <threshold>" would misleadingly read as fully
+  // signed. Fall back to threshold only when the total is unknown (0).
+  const denominator = total > 0 ? total : threshold;
   return (
     <div className="ms-progress-block">
       <p className="ms-progress">
-        {signedCount} of {threshold} signed
+        {signedCount} of {denominator} signed
         {total > 0 && ` (policy ${threshold}-of-${total})`}
         {met ? " · threshold met" : ""}
       </p>

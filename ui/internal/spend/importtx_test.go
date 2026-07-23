@@ -2,15 +2,65 @@ package spend
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"testing"
 
+	apollo "github.com/blinklabs-io/apollo/v2"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
+
+// foreignWitness builds a valid vkey witness over unsignedCbor's body bytes
+// from a fresh, unrelated Ed25519 key (i.e. a co-signer that is not this
+// wallet). Because CosignTx verifies and dedupes witnesses by signature, a
+// retained witness must be genuinely valid — a zero/garbage witness would be
+// (correctly) dropped, so it could not prove retention.
+func foreignWitness(t *testing.T, unsignedCbor string) (lcommon.VkeyWitness, string) {
+	t.Helper()
+	txBytes, err := hex.DecodeString(unsignedCbor)
+	if err != nil {
+		t.Fatalf("decode unsigned cbor: %v", err)
+	}
+	body, err := extractTxBodyCbor(txBytes)
+	if err != nil {
+		t.Fatalf("extract body: %v", err)
+	}
+	bodyHash := lcommon.Blake2b256Hash(body)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	w := lcommon.VkeyWitness{Vkey: pub, Signature: ed25519.Sign(priv, bodyHash.Bytes())}
+	kh := hex.EncodeToString(lcommon.Blake2b224Hash(pub).Bytes())
+	return w, kh
+}
+
+// attachWitness re-serializes unsignedCbor with w merged into its witness set,
+// preserving the original body bytes (the SubmitSigned/CosignTx pattern), and
+// returns the new tx CBOR hex.
+func attachWitness(t *testing.T, s *Service, unsignedCbor string, w lcommon.VkeyWitness) string {
+	t.Helper()
+	a, err := apollo.New(s.chain).LoadTxCbor(unsignedCbor)
+	if err != nil {
+		t.Fatalf("LoadTxCbor: %v", err)
+	}
+	if a, err = a.AddVerificationKeyWitness(w); err != nil {
+		t.Fatalf("AddVerificationKeyWitness: %v", err)
+	}
+	lt := a.GetTx()
+	lt.SetCbor(nil)
+	lt.WitnessSet.SetCbor(nil)
+	b, err := a.GetTxCbor()
+	if err != nil {
+		t.Fatalf("GetTxCbor: %v", err)
+	}
+	return hex.EncodeToString(b)
+}
 
 // testPassword is the spending password used by the CosignTx fixtures below.
 // fakeKeystore.Unlock ignores the supplied password entirely (it always
@@ -53,7 +103,7 @@ func newBuildOnlyService(t *testing.T) *Service {
 
 func TestDecodeTx_VkeySummary(t *testing.T) {
 	svc, acct, unsignedCbor := buildUnsignedSendFixture(t)
-	got, err := svc.DecodeTx(unsignedCbor)
+	got, err := svc.DecodeTx(context.Background(), unsignedCbor)
 	if err != nil {
 		t.Fatalf("DecodeTx: %v", err)
 	}
@@ -105,22 +155,46 @@ func TestCosignTx_MergesPreservingExisting(t *testing.T) {
 	svc, acct, unsignedCbor := buildUnsignedSendFixture(t)
 	_ = acct
 
-	// First co-sign: wallet adds its payment witness.
-	res, err := svc.CosignTx(context.Background(), unsignedCbor, testPassword, true)
+	// Seed the fixture with a valid witness from an unrelated co-signer, so this
+	// test actually exercises retention: a regression that drops or replaces
+	// existing co-signer witnesses would now fail.
+	foreign, foreignKH := foreignWitness(t, unsignedCbor)
+	preSigned := attachWitness(t, svc, unsignedCbor, foreign)
+
+	// Sanity: the foreign witness is present before we cosign.
+	pre, err := svc.DecodeTx(context.Background(), preSigned)
+	if err != nil {
+		t.Fatalf("DecodeTx(preSigned): %v", err)
+	}
+	if !hasSigner(pre.ExistingSignatures, foreignKH) {
+		t.Fatalf("pre-signed fixture missing the foreign witness %s", foreignKH)
+	}
+
+	// First co-sign: wallet adds its own witness on top of the foreign one.
+	res, err := svc.CosignTx(context.Background(), preSigned, testPassword, true)
 	if err != nil {
 		t.Fatalf("CosignTx: %v", err)
 	}
 	if len(res.Added) == 0 {
 		t.Fatal("expected at least one added witness")
 	}
+	for _, a := range res.Added {
+		if a.KeyHash == foreignKH {
+			t.Fatalf("cosign re-added the foreign witness %s instead of preserving it", foreignKH)
+		}
+	}
 
-	// The updated tx must decode and now carry the witness(es).
-	summary, err := svc.DecodeTx(res.TxCBOR)
+	// The updated tx must decode, retain the foreign witness, and carry ours.
+	summary, err := svc.DecodeTx(context.Background(), res.TxCBOR)
 	if err != nil {
 		t.Fatalf("DecodeTx(updated): %v", err)
 	}
-	if len(summary.ExistingSignatures) < len(res.Added) {
-		t.Errorf("updated tx has %d sigs, want >= %d", len(summary.ExistingSignatures), len(res.Added))
+	if !hasSigner(summary.ExistingSignatures, foreignKH) {
+		t.Errorf("cosign dropped the pre-existing foreign witness %s", foreignKH)
+	}
+	if len(summary.ExistingSignatures) < len(res.Added)+1 {
+		t.Errorf("updated tx has %d sigs, want >= %d (foreign + added)",
+			len(summary.ExistingSignatures), len(res.Added)+1)
 	}
 
 	// Body-hash stability: re-cosigning must be idempotent (no duplicate witnesses).
@@ -131,6 +205,16 @@ func TestCosignTx_MergesPreservingExisting(t *testing.T) {
 	if len(res2.Added) != 0 {
 		t.Errorf("second cosign added %d witnesses, want 0 (already present)", len(res2.Added))
 	}
+}
+
+// hasSigner reports whether signers contains one with the given key hash.
+func hasSigner(signers []TxSummarySigner, keyHash string) bool {
+	for _, s := range signers {
+		if s.KeyHash == keyHash {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCosignTx_WrongPassword(t *testing.T) {
@@ -158,7 +242,27 @@ func TestCosignTx_WrongPassword(t *testing.T) {
 
 func TestSubmitTxCbor_Broadcasts(t *testing.T) {
 	svc, _, unsignedCbor := buildUnsignedSendFixture(t) // fake chain records SubmitTx
-	res, err := svc.SubmitTxCbor(context.Background(), unsignedCbor)
+
+	// The import flow submits a fully assembled tx, not raw unsigned CBOR: cosign
+	// first, then broadcast the CosignResult's CBOR. Asserting the witness was
+	// added keeps this test honest — it would otherwise pass even if submission
+	// wrongly accepted an unsigned transaction.
+	cos, err := svc.CosignTx(context.Background(), unsignedCbor, testPassword, true)
+	if err != nil {
+		t.Fatalf("CosignTx: %v", err)
+	}
+	if len(cos.Added) == 0 {
+		t.Fatal("expected cosign to add at least one witness")
+	}
+	summary, err := svc.DecodeTx(context.Background(), cos.TxCBOR)
+	if err != nil {
+		t.Fatalf("DecodeTx(cosigned): %v", err)
+	}
+	if len(summary.ExistingSignatures) < len(cos.Added) {
+		t.Fatalf("cosigned tx has %d sigs, want >= %d", len(summary.ExistingSignatures), len(cos.Added))
+	}
+
+	res, err := svc.SubmitTxCbor(context.Background(), cos.TxCBOR)
 	if err != nil {
 		t.Fatalf("SubmitTxCbor: %v", err)
 	}
@@ -185,7 +289,7 @@ func TestDecodeTx_Malformed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := newBuildOnlyService(t)
-			_, err := svc.DecodeTx(tt.in)
+			_, err := svc.DecodeTx(context.Background(), tt.in)
 			if err == nil {
 				t.Fatalf("expected error for input %q", tt.in)
 			}
