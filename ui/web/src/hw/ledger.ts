@@ -13,7 +13,9 @@
 import TransportWebHID from "@ledgerhq/hw-transport-webhid";
 import Ada from "@cardano-foundation/ledgerjs-hw-app-cardano";
 import type {
+  AssetGroup,
   SignTransactionRequest,
+  Token,
   TxInput,
   TxOutput,
 } from "@cardano-foundation/ledgerjs-hw-app-cardano";
@@ -50,6 +52,22 @@ function parseBip32Path(pathStr: string): number[] {
 
 // ── Neutral → ledgerjs mapping ────────────────────────────────────────────────
 
+// mapTokenBundle groups a neutral output's native assets by policy id and maps
+// them into the ledgerjs AssetGroup/Token shape. Without this, a multi-asset
+// send would reach the device with an empty bundle and the device would sign a
+// DIFFERENT transaction than the backend built (dropping the tokens entirely).
+function mapTokenBundle(
+  assets: NonNullable<HardwareSignResponse["outputs"][number]["assets"]>,
+): AssetGroup[] {
+  const byPolicy = new Map<string, Token[]>();
+  for (const a of assets) {
+    const tokens = byPolicy.get(a.policy_id_hex) ?? [];
+    tokens.push({ assetNameHex: a.asset_name_hex, amount: BigInt(a.amount) });
+    byPolicy.set(a.policy_id_hex, tokens);
+  }
+  return Array.from(byPolicy, ([policyIdHex, tokens]) => ({ policyIdHex, tokens }));
+}
+
 // mapToSignRequest converts a HardwareSignResponse (from the backend) to the
 // SignTransactionRequest format that ledgerjs expects. This lived in Send.tsx
 // as a device-specific leak; it now belongs to the Ledger signer, which is the
@@ -82,8 +100,10 @@ function mapToSignRequest(resp: HardwareSignResponse): SignTransactionRequest {
       format: TxOutputFormat.ARRAY_LEGACY,
       destination,
       amount: BigInt(out.lovelace),
-      // ledgerjs iterates this field even when the output contains ADA only.
-      tokenBundle: [],
+      // Carry any native assets grouped by policy so the device signs the same
+      // tx the backend built. ledgerjs iterates this field even when the output
+      // is ADA-only, so an empty array is the correct no-asset value.
+      tokenBundle: out.assets && out.assets.length > 0 ? mapTokenBundle(out.assets) : [],
     };
   });
 

@@ -25,8 +25,17 @@ import { hexToBytes } from "./hex";
  * The bech32 package's 90-char default limit is bypassed by passing limit=1000.
  */
 export function encodeXpub(publicKeyHex: string, chainCodeHex: string): string {
-  const pubBytes = Array.from(hexToBytes(publicKeyHex));
-  const ccBytes = Array.from(hexToBytes(chainCodeHex));
+  const pubBytes = hexToBytes(publicKeyHex);
+  const ccBytes = hexToBytes(chainCodeHex);
+  // Enforce the xpub layout locally: each half MUST be exactly 32 bytes.
+  // Concatenating a short/long half would silently produce a misaligned or
+  // invalid xpub that the backend cannot match — fail here instead.
+  if (pubBytes.length !== 32) {
+    throw new Error(`encodeXpub: public key must be 32 bytes, got ${pubBytes.length}`);
+  }
+  if (ccBytes.length !== 32) {
+    throw new Error(`encodeXpub: chain code must be 32 bytes, got ${ccBytes.length}`);
+  }
   const data = new Uint8Array([...pubBytes, ...ccBytes]); // 64 bytes
   const words = bech32ToWords(data);
   return bech32Encode("root_xvk", words, 1000 /* no length limit */);

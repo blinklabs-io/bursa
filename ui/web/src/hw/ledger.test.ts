@@ -233,6 +233,49 @@ describe("connectLedger", () => {
       await session.close();
     });
 
+    test("maps native assets into the ledger token bundle grouped by policy id", async () => {
+      // A recipient output carrying two assets under one policy plus one under a
+      // second policy. The device MUST receive these grouped so it signs the
+      // same tx the backend built — an empty bundle would drop the tokens.
+      const MULTI_ASSET_REQ: HardwareSignResponse = {
+        ...NEUTRAL_REQ,
+        outputs: [
+          {
+            address_hex: "60aabb",
+            address_bech32: "addr1recipient",
+            lovelace: "1000000",
+            assets: [
+              { policy_id_hex: "aa".repeat(28), asset_name_hex: "544f4b454e31", amount: "5" },
+              { policy_id_hex: "aa".repeat(28), asset_name_hex: "544f4b454e32", amount: "7" },
+              { policy_id_hex: "bb".repeat(28), asset_name_hex: "", amount: "3" },
+            ],
+          },
+          NEUTRAL_REQ.outputs[1], // wallet-owned change, ADA-only
+        ],
+      };
+
+      const session = await connectLedger();
+      await session.signTx(MULTI_ASSET_REQ);
+
+      const request = mockSignTransaction.mock.calls[0][0];
+      expect(request.tx.outputs[0].tokenBundle).toEqual([
+        {
+          policyIdHex: "aa".repeat(28),
+          tokens: [
+            { assetNameHex: "544f4b454e31", amount: 5n },
+            { assetNameHex: "544f4b454e32", amount: 7n },
+          ],
+        },
+        {
+          policyIdHex: "bb".repeat(28),
+          tokens: [{ assetNameHex: "", amount: 3n }],
+        },
+      ]);
+      // The ADA-only change output keeps an empty bundle (ledgerjs iterates it).
+      expect(request.tx.outputs[1].tokenBundle).toEqual([]);
+      await session.close();
+    });
+
     test("returns a raw CBOR witness array", async () => {
       const session = await connectLedger();
       const result = await session.signTx(NEUTRAL_REQ);

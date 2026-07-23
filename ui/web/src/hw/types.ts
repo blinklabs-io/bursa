@@ -56,13 +56,29 @@ export interface HardwareSigner {
 }
 
 /**
- * Options passed to a device connector.
- *
- * `requestExternalConsent` is the CONSENT-LAW gate for devices that reach a
- * cloud service (Trezor loads connect.trezor.io). The connector MUST await it
- * and only proceed with the external connection when it resolves `true`.
- * Fully-local devices (Ledger via WebHID) ignore it.
+ * Options for a fully-local connector (Ledger via WebHID). No external
+ * network is contacted, so no consent gate applies; the field is forbidden
+ * so a local connector is never accidentally handed a cloud consent callback.
  */
-export interface ConnectOptions {
-  requestExternalConsent?: () => Promise<boolean>;
+export interface LocalConnectOptions {
+  requestExternalConsent?: never;
 }
+
+/**
+ * Options for an external-network connector (Trezor loads connect.trezor.io).
+ *
+ * `requestExternalConsent` is the CONSENT-LAW gate: it is MANDATORY here so a
+ * cloud-reaching device can NEVER be connected without a consent callback.
+ * The connector MUST await it and only proceed once it resolves `true`,
+ * rejecting when it is absent or resolves `false`.
+ */
+export interface ExternalConnectOptions {
+  requestExternalConsent: () => Promise<boolean>;
+}
+
+/**
+ * Options passed to a device connector. A discriminated union: local devices
+ * (Ledger) take {@link LocalConnectOptions}; external-network devices (Trezor)
+ * take {@link ExternalConnectOptions}, which requires the consent callback.
+ */
+export type ConnectOptions = LocalConnectOptions | ExternalConnectOptions;

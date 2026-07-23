@@ -543,9 +543,41 @@ test("(r) hardware account: preview shows 'Confirm on your Ledger' with no passw
     expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
   });
 
+  // With no stored device-kind hint, the wallet's device is unknown, so the
+  // preview prompts for it rather than silently defaulting to Ledger.
+  expect(screen.getByText(/which device backs this wallet/i)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /choose a device/i })).toBeDisabled();
+
+  // Choosing Ledger reveals the Ledger confirm flow.
+  fireEvent.click(screen.getByRole("radio", { name: /ledger/i }));
+
   // Hardware: no password field, shows Ledger button.
   expect(screen.queryByPlaceholderText(/spending password/i)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /confirm on.*ledger/i })).toBeInTheDocument();
+});
+
+test("(r2) hardware account with unknown kind: choosing Trezor gates confirm on consent", async () => {
+  vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+
+  render(<Send isHardware />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "addr_test1recipient" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
+  });
+
+  // Pick Trezor: the confirm button appears but stays disabled until the
+  // connect.trezor.io consent box is ticked (consent-law gate).
+  fireEvent.click(screen.getByRole("radio", { name: /trezor/i }));
+  const confirm = screen.getByRole("button", { name: /confirm on.*trezor/i });
+  expect(confirm).toBeDisabled();
+
+  fireEvent.click(screen.getByRole("checkbox", { name: /connect\.trezor\.io/i }));
+  expect(confirm).not.toBeDisabled();
 });
 
 test("(s) hardware account: confirm flow connects device, fetches sign request, signs, submits", async () => {
@@ -575,6 +607,8 @@ test("(s) hardware account: confirm flow connects device, fetches sign request, 
     expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
   });
 
+  // No stored hint → choose the device, then confirm on it.
+  fireEvent.click(screen.getByRole("radio", { name: /ledger/i }));
   fireEvent.click(screen.getByRole("button", { name: /confirm on.*ledger/i }));
 
   await waitFor(() => {
@@ -585,7 +619,7 @@ test("(s) hardware account: confirm flow connects device, fetches sign request, 
     expect(client.submitHardware).toHaveBeenCalledWith("pending-abc-123", "81825820aabb");
   });
 
-  // With no stored device-kind hint, a hardware wallet defaults to Ledger.
+  // The user chose Ledger above, so that is the device we connect.
   expect(vi.mocked(connectDevice).mock.calls[0][0]).toBe("ledger");
 
   // The device connect must begin directly from the confirm click, before
@@ -631,6 +665,7 @@ test("(t) hardware account: unsupported tx closes the connected device without s
     expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
   });
 
+  fireEvent.click(screen.getByRole("radio", { name: /ledger/i }));
   fireEvent.click(screen.getByRole("button", { name: /confirm on.*ledger/i }));
 
   await waitFor(() => {
@@ -640,4 +675,31 @@ test("(t) hardware account: unsupported tx closes the connected device without s
   expect(mockConnectDevice).toHaveBeenCalledOnce();
   expect(mockSignTx).not.toHaveBeenCalled();
   expect(mockClose).toHaveBeenCalledOnce();
+});
+
+test("(u) hardware account with a stored Trezor hint: no device prompt, gates on consent", async () => {
+  vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+  localStorage.clear();
+  localStorage.setItem("bursa.hw.deviceKind", JSON.stringify({ "hw-trez": "trezor" }));
+
+  render(<Send isHardware walletId="hw-trez" />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "addr_test1recipient" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
+  });
+
+  // The stored hint means the device is known — no picker is shown, and the
+  // Trezor confirm is gated straight on the consent box.
+  expect(screen.queryByText(/which device backs this wallet/i)).not.toBeInTheDocument();
+  const confirm = screen.getByRole("button", { name: /confirm on.*trezor/i });
+  expect(confirm).toBeDisabled();
+  fireEvent.click(screen.getByRole("checkbox", { name: /connect\.trezor\.io/i }));
+  expect(confirm).not.toBeDisabled();
+
+  localStorage.clear();
 });

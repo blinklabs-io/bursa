@@ -21,8 +21,10 @@ import type { HardwareKind } from "./types";
 
 const STORAGE_KEY = "bursa.hw.deviceKind";
 
-// Kinds we persist. Keystone is intentionally omitted until it is supported.
-const KNOWN_KINDS: readonly HardwareKind[] = ["ledger", "trezor", "keystone"];
+// Kinds we accept from storage. Keystone is intentionally omitted: it is
+// disabled this phase, so a stale "keystone" hint must NOT select an
+// unsupported signer — it falls back to the documented "ledger" default.
+const KNOWN_KINDS: readonly HardwareKind[] = ["ledger", "trezor"];
 
 type DeviceKindMap = Record<string, HardwareKind>;
 
@@ -64,11 +66,25 @@ export function setDeviceKind(walletId: string, kind: HardwareKind): void {
 }
 
 /**
- * Look up the device kind for a hardware wallet id. Defaults to "ledger" when
- * no hint is stored (pre-existing hardware wallets predate this feature) or
- * when the stored value is not a kind we recognise.
+ * Look up the stored device-kind hint for a hardware wallet id, or `undefined`
+ * when no recognised hint is stored — e.g. after a browser-data wipe, on
+ * another browser, or for a wallet added before this feature existed.
+ *
+ * Callers MUST treat `undefined` as "unknown, ask the user which device backs
+ * this wallet" rather than silently assuming one: a wrong assumption would try
+ * to reconnect the wrong signer (e.g. open WebHID for what is really a Trezor).
+ */
+export function getStoredDeviceKind(walletId: string): HardwareKind | undefined {
+  const stored = readMap()[walletId];
+  return stored && KNOWN_KINDS.includes(stored) ? stored : undefined;
+}
+
+/**
+ * Look up the device kind for a hardware wallet id, defaulting to "ledger" when
+ * no recognised hint is stored. Prefer {@link getStoredDeviceKind} where the
+ * caller can prompt the user; this default exists only for non-interactive
+ * call sites that must pick something.
  */
 export function getDeviceKind(walletId: string): HardwareKind {
-  const stored = readMap()[walletId];
-  return stored && KNOWN_KINDS.includes(stored) ? stored : "ledger";
+  return getStoredDeviceKind(walletId) ?? "ledger";
 }

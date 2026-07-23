@@ -24,6 +24,7 @@ vi.mock("@trezor/connect-web", () => ({
 }));
 
 import { connectTrezor } from "./trezor";
+import type { ExternalConnectOptions } from "./types";
 import type { HardwareSignResponse } from "../api/types";
 
 // Xpub parity vector — identical key material to the Ledger canonical vector
@@ -85,7 +86,13 @@ describe("connectTrezor consent gate", () => {
   });
 
   test("does NOT init when no consent callback is provided", async () => {
-    await expect(connectTrezor()).rejects.toThrow(/connect\.trezor\.io/i);
+    // The consent callback is mandatory for this external connector; an options
+    // object without it (an untyped/legacy caller) must be rejected, not
+    // treated as implicit approval. Cast bypasses the compile-time requirement
+    // to exercise the runtime guard.
+    await expect(connectTrezor({} as ExternalConnectOptions)).rejects.toThrow(
+      /connect\.trezor\.io/i,
+    );
     expect(mockInit).not.toHaveBeenCalled();
   });
 
@@ -181,6 +188,61 @@ describe("connectTrezor session", () => {
     expect(result).toContain(TEST_PUB_KEY_HEX);
     expect(result).toContain("aabbccdd".repeat(16));
     await session.close();
+  });
+
+  test("signTx maps native assets into the token bundle grouped by policy id", async () => {
+    // A recipient output carrying two assets under one policy plus one under a
+    // second policy. The device MUST receive these so it signs the same tx the
+    // backend built — an empty/absent bundle would drop the tokens silently.
+    const MULTI_ASSET_REQ: HardwareSignResponse = {
+      ...NEUTRAL_REQ,
+      outputs: [
+        {
+          address_hex: "60aabb",
+          address_bech32: "addr1recipient",
+          lovelace: "1000000",
+          assets: [
+            { policy_id_hex: "aa".repeat(28), asset_name_hex: "544f4b454e31", amount: "5" },
+            { policy_id_hex: "aa".repeat(28), asset_name_hex: "544f4b454e32", amount: "7" },
+            { policy_id_hex: "bb".repeat(28), asset_name_hex: "", amount: "3" },
+          ],
+        },
+        NEUTRAL_REQ.outputs[1], // wallet-owned change, ADA-only
+      ],
+    };
+
+    const session = await connectTrezor({ requestExternalConsent: approve });
+    await session.signTx(MULTI_ASSET_REQ);
+
+    const params = mockSignTransaction.mock.calls[0][0];
+    expect(params.outputs[0].tokenBundle).toEqual([
+      {
+        policyId: "aa".repeat(28),
+        tokenAmounts: [
+          { assetNameBytes: "544f4b454e31", amount: "5" },
+          { assetNameBytes: "544f4b454e32", amount: "7" },
+        ],
+      },
+      {
+        policyId: "bb".repeat(28),
+        tokenAmounts: [{ assetNameBytes: "", amount: "3" }],
+      },
+    ]);
+    // The ADA-only change output carries no bundle key.
+    expect(params.outputs[1].tokenBundle).toBeUndefined();
+    await session.close();
+  });
+
+  test("concurrent connects share a single init()", async () => {
+    // Two callers (e.g. a double-click) must not both race into init(); the
+    // shared init promise means only one init() call is made.
+    const [a, b] = await Promise.all([
+      connectTrezor({ requestExternalConsent: approve }),
+      connectTrezor({ requestExternalConsent: approve }),
+    ]);
+    expect(mockInit).toHaveBeenCalledOnce();
+    await a.close();
+    await b.close();
   });
 
   test("signTx throws on an unsuccessful device response", async () => {

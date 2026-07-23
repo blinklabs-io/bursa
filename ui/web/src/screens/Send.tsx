@@ -13,7 +13,7 @@ import {
 import { useContacts } from "../api/hooks";
 import { connectDevice } from "../hw";
 import type { HardwareKind, HardwareSigner } from "../hw";
-import { getDeviceKind } from "../hw/deviceKind";
+import { getStoredDeviceKind, setDeviceKind } from "../hw/deviceKind";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
@@ -323,9 +323,13 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
 
 interface PreviewPhaseProps {
   preview: Preview;
-  // When set, this is a hardware wallet and the on-device confirm flow is used;
-  // the value is the specific device to reconnect for signing.
-  deviceKind?: HardwareKind;
+  // When true, this is a hardware wallet and the on-device confirm flow is used.
+  isHardware: boolean;
+  // The wallet id, used to remember the device kind once known/chosen.
+  walletId?: string;
+  // The device recorded for this wallet, or undefined when unknown (e.g. after
+  // a browser-data wipe) — in which case the user is prompted to choose it.
+  storedDeviceKind?: HardwareKind;
   onBack: () => void;
   onDone: (result: TxResult) => void;
 }
@@ -336,8 +340,20 @@ const OUTPUT_COLUMNS = [
   { key: "assets", label: "Assets" },
 ];
 
-function PreviewPhase({ preview, deviceKind, onBack, onDone }: PreviewPhaseProps) {
-  const isHardware = deviceKind !== undefined;
+function PreviewPhase({
+  preview,
+  isHardware,
+  walletId,
+  storedDeviceKind,
+  onBack,
+  onDone,
+}: PreviewPhaseProps) {
+  // The device to sign with: the stored hint when known, otherwise whatever the
+  // user picks below. When neither is set we must NOT assume a device — we
+  // prompt for one so we never reconnect the wrong signer.
+  const [chosenKind, setChosenKind] = useState<HardwareKind | undefined>(storedDeviceKind);
+  const deviceKind = chosenKind;
+  const needsDeviceChoice = isHardware && deviceKind === undefined;
   const deviceLabel = deviceKind ? DEVICE_LABELS[deviceKind] : "";
   // Trezor reaches connect.trezor.io, so its confirm is gated on an explicit
   // acknowledgement (consent law); local devices (Ledger) need no such gate.
@@ -350,6 +366,15 @@ function PreviewPhase({ preview, deviceKind, onBack, onDone }: PreviewPhaseProps
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState<UnsignedTx | null>(null);
+
+  // Record the user's device choice so a later send reconnects it directly
+  // instead of prompting again (the local recovery path for a lost hint).
+  function chooseDevice(kind: HardwareKind) {
+    setError(null);
+    setExternalConsent(false);
+    setChosenKind(kind);
+    if (walletId) setDeviceKind(walletId, kind);
+  }
 
   const outputRows = preview.outputs.map((o) => ({
     address: o.address,
@@ -379,13 +404,20 @@ function PreviewPhase({ preview, deviceKind, onBack, onDone }: PreviewPhaseProps
   // request — so the connect happens first, directly from the handler.
   async function handleHardwareConfirm() {
     setError(null);
+    // Never assume a device: if the kind is unknown the user must pick one
+    // first (the confirm button is disabled until then, so this is defensive).
+    if (deviceKind === undefined) {
+      setError("Choose which hardware device backs this wallet to continue.");
+      return;
+    }
+    const kind = deviceKind;
     setLoading(true);
     let session: HardwareSigner | null = null;
     try {
       // 1. Connect directly from the click handler so a first-time user can
       // grant WebHID permission while browser user activation is still live.
-      // The device kind is the one recorded when this wallet was added.
-      const kind = deviceKind ?? "ledger";
+      // The device kind is the one recorded when this wallet was added (or the
+      // one the user just chose when no hint was stored).
       session = await connectDevice(kind, {
         // The confirm button is disabled until the Trezor consent box is
         // ticked, so this simply reports the already-given approval; the real
@@ -455,9 +487,36 @@ function PreviewPhase({ preview, deviceKind, onBack, onDone }: PreviewPhaseProps
 
         {isHardware ? (
           <>
-            <p className="helper-text">
-              Connect your {deviceLabel} and confirm the transaction on the device.
-            </p>
+            {needsDeviceChoice ? (
+              // The device kind for this wallet is unknown (e.g. a browser-data
+              // wipe cleared the local hint). Ask which device backs it rather
+              // than silently defaulting to Ledger and reconnecting the wrong
+              // signer.
+              <fieldset className="field-group" style={{ border: "none", padding: 0, margin: 0 }}>
+                <legend className="field-label">Which device backs this wallet?</legend>
+                <p className="helper-text">
+                  We could not tell whether this hardware wallet is a Ledger or a
+                  Trezor. Choose the device you used to add it.
+                </p>
+                {(["ledger", "trezor"] as const).map((k) => (
+                  <label className="checkbox-row" key={k}>
+                    <input
+                      type="radio"
+                      name="send-hw-device"
+                      value={k}
+                      checked={deviceKind === k}
+                      onChange={() => chooseDevice(k)}
+                      aria-label={DEVICE_LABELS[k]}
+                    />
+                    {DEVICE_LABELS[k]}
+                  </label>
+                ))}
+              </fieldset>
+            ) : (
+              <p className="helper-text">
+                Connect your {deviceLabel} and confirm the transaction on the device.
+              </p>
+            )}
             {needsExternalConsent && (
               <label className="checkbox-row">
                 <input
@@ -497,9 +556,14 @@ function PreviewPhase({ preview, deviceKind, onBack, onDone }: PreviewPhaseProps
           {isHardware ? (
             <Button
               onClick={handleHardwareConfirm}
-              disabled={loading || exporting || (needsExternalConsent && !externalConsent)}
+              disabled={
+                loading ||
+                exporting ||
+                needsDeviceChoice ||
+                (needsExternalConsent && !externalConsent)
+              }
             >
-              {loading ? "Signing…" : `Confirm on ${deviceLabel}`}
+              {loading ? "Signing…" : needsDeviceChoice ? "Choose a device" : `Confirm on ${deviceLabel}`}
             </Button>
           ) : (
             <Button onClick={handleConfirm} disabled={loading || exporting || !password}>
@@ -580,10 +644,12 @@ export function Send({
   walletId,
 }: { isHardware?: boolean; walletId?: string } = {}) {
   // For a hardware wallet, look up which device kind backs it so the confirm
-  // flow reconnects the right one. Defaults to "ledger" for wallets added
-  // before device-kind was recorded (see hw/deviceKind.ts).
-  const deviceKind: HardwareKind | undefined = isHardware
-    ? getDeviceKind(walletId ?? "")
+  // flow reconnects the right one. This can be `undefined` (unknown) after a
+  // browser-data wipe or on another browser; in that case the preview prompts
+  // the user to choose the device rather than silently assuming Ledger, which
+  // would try to reconnect the wrong signer (see hw/deviceKind.ts).
+  const storedDeviceKind: HardwareKind | undefined = isHardware
+    ? getStoredDeviceKind(walletId ?? "")
     : undefined;
 
   const [phase, setPhase] = useState<Phase>("compose");
@@ -624,7 +690,9 @@ export function Send({
     return (
       <PreviewPhase
         preview={preview}
-        deviceKind={deviceKind}
+        isHardware={isHardware ?? false}
+        walletId={walletId}
+        storedDeviceKind={storedDeviceKind}
         onBack={() => setPhase("compose")}
         onDone={handleDone}
       />

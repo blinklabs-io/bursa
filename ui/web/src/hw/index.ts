@@ -10,7 +10,14 @@ import type { ConnectOptions, HardwareKind, HardwareSigner } from "./types";
 import { connectLedger } from "./ledger";
 import { connectTrezor } from "./trezor";
 
-export type { HardwareKind, HardwareCapabilities, HardwareSigner, ConnectOptions } from "./types";
+export type {
+  HardwareKind,
+  HardwareCapabilities,
+  HardwareSigner,
+  ConnectOptions,
+  LocalConnectOptions,
+  ExternalConnectOptions,
+} from "./types";
 
 /**
  * Connect to a hardware device of the given kind.
@@ -26,8 +33,19 @@ export function connectDevice(
   switch (kind) {
     case "ledger":
       return connectLedger();
-    case "trezor":
-      return connectTrezor(opts);
+    case "trezor": {
+      // Trezor reaches connect.trezor.io: the consent callback is mandatory.
+      // Reject here (rather than defaulting to no consent) if it is missing.
+      const consent = opts?.requestExternalConsent;
+      if (typeof consent !== "function") {
+        return Promise.reject(
+          new Error(
+            "Connecting a Trezor contacts connect.trezor.io; a consent callback is required before proceeding.",
+          ),
+        );
+      }
+      return connectTrezor({ requestExternalConsent: consent });
+    }
     case "keystone":
       throw new Error("Keystone hardware wallets are not yet supported");
     default: {

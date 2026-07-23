@@ -16,7 +16,7 @@
  */
 
 import type { HardwareSignResponse } from "../api/types";
-import type { ConnectOptions, HardwareCapabilities, HardwareSigner } from "./types";
+import type { ExternalConnectOptions, HardwareCapabilities, HardwareSigner } from "./types";
 import { encodeXpub } from "./xpub";
 import { encodeWitnessArray } from "./witness";
 
@@ -43,13 +43,17 @@ function parseBip32Path(pathStr: string): number[] {
 
 // ── Trezor Connect manifest / init ────────────────────────────────────────────
 
+// Placeholder contact advertised in the Trezor Connect manifest.
+// TODO: production contact — replace with the approved production
+// support/attribution address before shipping.
+const TREZOR_MANIFEST_CONTACT_EMAIL = "wallet@blinklabs.io";
+
 // Trezor requires a manifest identifying the calling app so it can reach out if
 // an integration misbehaves. This is the local Bursa wallet's identity; appUrl
 // is the wallet's own origin when running in a browser context.
-// NOTE (human follow-up): confirm the contact email before shipping.
 const TREZOR_MANIFEST = {
   appName: "Bursa Wallet",
-  email: "wallet@blinklabs.io",
+  email: TREZOR_MANIFEST_CONTACT_EMAIL,
   appUrl:
     typeof window !== "undefined" && window.location?.origin
       ? window.location.origin
@@ -57,9 +61,12 @@ const TREZOR_MANIFEST = {
 };
 
 // init() loads the connect.trezor.io iframe once per page; a second call throws
-// "already initialized". Track it so repeated connects (and reconnect after a
-// close/dispose) behave, without re-loading the iframe unnecessarily.
-let trezorInitialized = false;
+// "already initialized". A SHARED init promise makes the lifecycle safe under
+// concurrent connectTrezor() calls: two callers (e.g. a double-click) await the
+// same in-flight init instead of both racing to init(). A failed init clears
+// the promise so a later connect can retry; close() clears it so a fresh
+// connect re-inits after dispose.
+let trezorInitPromise: Promise<void> | null = null;
 
 // ── Capabilities ──────────────────────────────────────────────────────────────
 
@@ -73,18 +80,53 @@ const TREZOR_CAPABILITIES: HardwareCapabilities = {
   poolReg: false,
 };
 
+// ── Neutral → Trezor token-bundle mapping ─────────────────────────────────────
+
+// A Trezor cardanoSignTransaction output token bundle: assets grouped by policy
+// id, each carrying an asset-name + decimal amount (both hex/string). Typed
+// locally to avoid importing the SDK's schema types at module load.
+type TrezorAssetGroup = {
+  policyId: string;
+  tokenAmounts: { assetNameBytes: string; amount: string }[];
+};
+
+// mapTokenBundle groups a neutral output's native assets by policy id into the
+// Trezor token-bundle shape, or returns undefined for an ADA-only output.
+function mapTokenBundle(
+  assets: HardwareSignResponse["outputs"][number]["assets"],
+): TrezorAssetGroup[] | undefined {
+  if (!assets || assets.length === 0) return undefined;
+  const byPolicy = new Map<string, { assetNameBytes: string; amount: string }[]>();
+  for (const a of assets) {
+    const tokens = byPolicy.get(a.policy_id_hex) ?? [];
+    tokens.push({ assetNameBytes: a.asset_name_hex, amount: a.amount });
+    byPolicy.set(a.policy_id_hex, tokens);
+  }
+  return Array.from(byPolicy, ([policyId, tokenAmounts]) => ({ policyId, tokenAmounts }));
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
  * Connect to a Trezor device via Trezor Connect and return a HardwareSigner.
  *
- * @param opts.requestExternalConsent - REQUIRED in practice: it must resolve
- *   true before any connect.trezor.io contact is made. If it is absent or
- *   resolves false, no SDK is loaded, init() is never called, and this throws.
+ * @param opts.requestExternalConsent - MANDATORY (enforced by the type and at
+ *   runtime): it must resolve true before any connect.trezor.io contact is
+ *   made. If it is absent or resolves false, no SDK is loaded, init() is never
+ *   called, and this throws.
  */
-export async function connectTrezor(opts?: ConnectOptions): Promise<HardwareSigner> {
+export async function connectTrezor(opts: ExternalConnectOptions): Promise<HardwareSigner> {
   // CONSENT-LAW GATE — nothing external happens before this resolves true.
-  const approved = opts?.requestExternalConsent ? await opts.requestExternalConsent() : false;
+  // The consent callback is mandatory for this external-network connector; a
+  // missing callback (e.g. an untyped JS caller) is rejected, never treated as
+  // implicit approval.
+  const consent = opts?.requestExternalConsent;
+  if (typeof consent !== "function") {
+    throw new Error(
+      "Connecting a Trezor contacts connect.trezor.io; a consent callback is required before proceeding.",
+    );
+  }
+  const approved = await consent();
   if (!approved) {
     throw new Error(
       "Connecting a Trezor contacts connect.trezor.io; approval is required before proceeding.",
@@ -95,10 +137,18 @@ export async function connectTrezor(opts?: ConnectOptions): Promise<HardwareSign
   // initial load and makes it impossible to init() it before approval.
   const { default: TrezorConnect, PROTO } = await import("@trezor/connect-web");
 
-  if (!trezorInitialized) {
-    await TrezorConnect.init({ manifest: TREZOR_MANIFEST, lazyLoad: true });
-    trezorInitialized = true;
+  // Guard init with a shared promise so concurrent connects can't both init().
+  if (!trezorInitPromise) {
+    trezorInitPromise = TrezorConnect.init({ manifest: TREZOR_MANIFEST, lazyLoad: true }).catch(
+      (err: unknown) => {
+        // A failed init must not poison future attempts — clear the shared
+        // promise so a later connect can retry from a clean slate.
+        trezorInitPromise = null;
+        throw err;
+      },
+    );
   }
+  await trezorInitPromise;
 
   return {
     kind: "trezor",
@@ -128,8 +178,12 @@ export async function connectTrezor(opts?: ConnectOptions): Promise<HardwareSign
         prev_index: inp.output_index,
       }));
 
-      const outputs = req.outputs.map((out) =>
-        out.payment_path && out.stake_path
+      const outputs = req.outputs.map((out) => {
+        // Carry any native assets grouped by policy id so the device signs the
+        // same tx the backend built; without this a multi-asset send would sign
+        // an ADA-only output that drops the tokens.
+        const tokenBundle = mapTokenBundle(out.assets);
+        return out.payment_path && out.stake_path
           ? {
               // Wallet-owned change: describe it by path so the device can
               // recognise it as its own and not prompt as an external send.
@@ -139,13 +193,15 @@ export async function connectTrezor(opts?: ConnectOptions): Promise<HardwareSign
                 stakingPath: parseBip32Path(out.stake_path),
               },
               amount: out.lovelace,
+              ...(tokenBundle ? { tokenBundle } : {}),
             }
           : {
               // Third-party recipient: the bech32 address as displayed.
               address: out.address_bech32,
               amount: out.lovelace,
-            },
-      );
+              ...(tokenBundle ? { tokenBundle } : {}),
+            };
+      });
 
       const res = await TrezorConnect.cardanoSignTransaction({
         signingMode: PROTO.CardanoTxSigningMode.ORDINARY_TRANSACTION,
@@ -173,7 +229,7 @@ export async function connectTrezor(opts?: ConnectOptions): Promise<HardwareSign
     async close(): Promise<void> {
       // Release the iframe/popup transport. A fresh connect re-inits it.
       TrezorConnect.dispose();
-      trezorInitialized = false;
+      trezorInitPromise = null;
     },
   };
 }
