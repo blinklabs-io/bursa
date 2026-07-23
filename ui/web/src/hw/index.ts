@@ -8,6 +8,7 @@
 
 import type { ConnectOptions, HardwareKind, HardwareSigner } from "./types";
 import { connectLedger } from "./ledger";
+import { connectTrezor } from "./trezor";
 
 export type { HardwareKind, HardwareCapabilities, HardwareSigner, ConnectOptions } from "./types";
 
@@ -15,19 +16,18 @@ export type { HardwareKind, HardwareCapabilities, HardwareSigner, ConnectOptions
  * Connect to a hardware device of the given kind.
  *
  * @param opts - forwarded to the connector; carries the external-connection
- *   consent gate that cloud-reaching devices require.
- * @throws Error for a kind whose connector is not implemented yet.
+ *   consent gate that cloud-reaching devices (Trezor) require.
+ * @throws Error for an unimplemented kind (Keystone is not supported yet).
  */
 export function connectDevice(
   kind: HardwareKind,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- opts is used once Trezor lands
   opts?: ConnectOptions,
 ): Promise<HardwareSigner> {
   switch (kind) {
     case "ledger":
       return connectLedger();
     case "trezor":
-      throw new Error("Trezor hardware wallets are not yet supported");
+      return connectTrezor(opts);
     case "keystone":
       throw new Error("Keystone hardware wallets are not yet supported");
     default: {
