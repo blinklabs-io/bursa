@@ -100,7 +100,7 @@ func TestDecodeTxHandler_OK(t *testing.T) {
 	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4..."}`)
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/decode-tx", body))
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/decode-tx", body))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("decode-tx status = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -118,7 +118,7 @@ func TestDecodeTxHandler_MultiSigKind(t *testing.T) {
 	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4..."}`)
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/decode-tx", body))
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/decode-tx", body))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("decode-tx status = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -137,7 +137,7 @@ func TestDecodeTxHandler_InvalidJSON(t *testing.T) {
 	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`not json`)
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/decode-tx", body))
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/decode-tx", body))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("decode-tx invalid json = %d, want 400", rec.Code)
 	}
@@ -150,7 +150,7 @@ func TestCosignTxHandler_InvalidTxIs400(t *testing.T) {
 	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"zz","password":"p"}`)
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/cosign-tx", body))
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/cosign-tx", body))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("cosign-tx status = %d, want 400, body=%s", rec.Code, rec.Body.String())
 	}
@@ -161,7 +161,7 @@ func TestCosignTxHandler_OK_DefaultsPartialSignTrue(t *testing.T) {
 	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4...","password":"pw"}`)
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/cosign-tx", body))
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/cosign-tx", body))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("cosign-tx status = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -181,7 +181,7 @@ func TestCosignTxHandler_PartialSignFalseIsHonored(t *testing.T) {
 	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4...","password":"pw","partial_sign":false}`)
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/cosign-tx", body))
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/cosign-tx", body))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("cosign-tx status = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -198,7 +198,7 @@ func TestCosignTxHandler_RoutesMultiSig(t *testing.T) {
 	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4...","password":"p"}`)
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/cosign-tx", body))
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/cosign-tx", body))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "84beef") {
 		t.Fatalf("multisig cosign not routed: %d %s", rec.Code, rec.Body.String())
 	}
@@ -211,7 +211,7 @@ func TestSubmitTxHandler_RequiresReady(t *testing.T) {
 	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4..."}`)
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/submit-tx", body))
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/submit-tx", body))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("submit-tx while syncing = %d, want 503, body=%s", rec.Code, rec.Body.String())
 	}
@@ -223,7 +223,7 @@ func TestSubmitTxHandler_ReturnsTxHash(t *testing.T) {
 	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4..."}`)
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/submit-tx", body))
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/submit-tx", body))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("submit-tx = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -241,7 +241,7 @@ func TestSubmitTxHandler_InvalidTxIs400(t *testing.T) {
 	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"zz"}`)
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wallet/submit-tx", body))
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/submit-tx", body))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("submit-tx invalid tx = %d, want 400, body=%s", rec.Code, rec.Body.String())
 	}
