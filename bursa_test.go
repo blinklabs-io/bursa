@@ -584,6 +584,32 @@ func TestGetRootKeyFromMnemonic(t *testing.T) {
 	}
 }
 
+func TestGetRootKeyFromMnemonicBytes(t *testing.T) {
+	const canonical = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+
+	t.Run("matches string version", func(t *testing.T) {
+		for _, password := range []string{"", "testpassword"} {
+			want, err := GetRootKeyFromMnemonic(canonical, password)
+			if err != nil {
+				t.Fatalf("GetRootKeyFromMnemonic(%q): %v", password, err)
+			}
+			got, err := GetRootKeyFromMnemonicBytes([]byte(canonical), password)
+			if err != nil {
+				t.Fatalf("GetRootKeyFromMnemonicBytes(%q): %v", password, err)
+			}
+			assert.Equal(t, []byte(want), []byte(got),
+				"root key mismatch for password %q", password)
+		}
+	})
+
+	t.Run("rejects invalid mnemonic", func(t *testing.T) {
+		for _, m := range []string{"", "invalid mnemonic"} {
+			_, err := GetRootKeyFromMnemonicBytes([]byte(m), "")
+			assert.ErrorIs(t, err, ErrInvalidMnemonic)
+		}
+	})
+}
+
 func TestCIP0003KeyGeneration(t *testing.T) {
 	// Test CIP-0003 compliance for wallet key generation
 	// These test vectors validate the complete key generation pipeline:

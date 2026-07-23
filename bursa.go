@@ -619,20 +619,12 @@ func ExtractKeyFiles(wallet *Wallet) (map[string]string, error) {
 	return result, nil
 }
 
+// GetRootKeyFromMnemonic derives the CIP-1852 root key from a mnemonic string.
+// It delegates to GetRootKeyFromMnemonicBytes; callers that hold the decrypted
+// mnemonic in a zeroable byte slice (e.g. signing paths) should call that
+// function directly to avoid materializing an un-zeroable mnemonic string.
 func GetRootKeyFromMnemonic(mnemonic, password string) (bip32.XPrv, error) {
-	if !bip39.IsMnemonicValid(mnemonic) {
-		return nil, ErrInvalidMnemonic
-	}
-	entropy, err := bip39.EntropyFromMnemonic(mnemonic)
-	if err != nil {
-		return nil, err
-	}
-	pwBytes := []byte{}
-	if password != "" {
-		pwBytes = []byte(password)
-	}
-	rootKey := GetRootKey(entropy, pwBytes)
-	return rootKey, nil
+	return GetRootKeyFromMnemonicBytes([]byte(mnemonic), password)
 }
 
 func GetRootKey(entropy []byte, password []byte) bip32.XPrv {
