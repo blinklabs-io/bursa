@@ -24,14 +24,9 @@ import { StatusPill } from "../components/StatusPill";
 import { CopyButton } from "../components/CopyButton";
 import { ExplorerLink } from "../components/ExplorerLink";
 import { formatAda } from "../format";
+import { errorMessage } from "../errorMessage";
 
 type Phase = "status" | "compose" | "preview" | "done";
-
-function errorMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
 
 // Percent display for a pool margin fraction (0.02 → "2.0%").
 function pct(fraction: number): string {

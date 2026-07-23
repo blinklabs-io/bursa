@@ -17,5 +17,24 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: "./src/test-setup.ts",
+    coverage: {
+      // v8 is the native, zero-instrumentation provider (matches our vitest 3.x).
+      provider: "v8",
+      reporter: ["text", "html", "lcov"],
+      // Only the app source counts toward coverage; exclude config, type-only
+      // declarations, test files, and test helpers so the numbers reflect
+      // exercised product code rather than scaffolding.
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/**/*.test.{ts,tsx}",
+        "src/**/*.d.ts",
+        "src/test-setup.ts",
+        "src/test-utils/**",
+        "src/main.tsx",
+        "src/vite-env.d.ts",
+      ],
+      // No hard thresholds yet: this is a baseline-only configuration so CI is
+      // never broken by coverage. Raise `thresholds` here once a floor is agreed.
+    },
   },
 });

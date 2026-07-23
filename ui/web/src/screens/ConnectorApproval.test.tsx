@@ -46,6 +46,18 @@ function emitSnapshot(pending: ConnectorRequest[]) {
   });
 }
 
+function emitError() {
+  act(() => {
+    FakeEventSource.instances[0].emitError();
+  });
+}
+
+function emitOpen() {
+  act(() => {
+    FakeEventSource.instances[0].emitOpen();
+  });
+}
+
 beforeEach(() => {
   restoreEventSource = installFakeEventSource();
   emittedRequests = [];
@@ -282,6 +294,25 @@ test("a substituted head request forces re-review before Approve", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: /reviewed/i }));
   expect(screen.getByRole("button", { name: /approve/i })).not.toBeDisabled();
+});
+
+test("shows a reconnecting indicator when the stream degrades and clears it on recovery", async () => {
+  render(<ConnectorApproval />);
+  emitRequest(makeReq({ id: "degrade-1", method: "enable" }));
+  await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+
+  // No indicator while the stream is healthy.
+  expect(screen.queryByText(/reconnecting to node/i)).toBeNull();
+
+  // A connection error surfaces the indicator.
+  emitError();
+  await waitFor(() =>
+    expect(screen.getByText(/reconnecting to node/i)).toBeInTheDocument(),
+  );
+
+  // The stream reopening clears it again.
+  emitOpen();
+  await waitFor(() => expect(screen.queryByText(/reconnecting to node/i)).toBeNull());
 });
 
 test("a substituted no-password request cannot be one-click approved", async () => {

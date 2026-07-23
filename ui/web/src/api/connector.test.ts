@@ -203,6 +203,52 @@ test("subscribePending silently ignores malformed data", () => {
   expect(received).toHaveLength(0);
 });
 
+test("subscribePending reports degraded state on error and recovery on reopen", () => {
+  const states: boolean[] = [];
+  const unsub = subscribePending(
+    () => {},
+    (degraded) => states.push(degraded),
+  );
+  const es = FakeEventSource.instances[0];
+
+  // A connection error surfaces degraded=true, but the stream stays open so the
+  // browser can auto-reconnect (we must not tear it down).
+  es.emitError();
+  expect(states).toEqual([true]);
+  expect(es.closed).toBe(false);
+
+  // Reconnecting clears the degraded state.
+  es.emitOpen();
+  expect(states).toEqual([true, false]);
+
+  unsub();
+});
+
+test("subscribePending delivers no onError callbacks after unsubscribe", () => {
+  const states: boolean[] = [];
+  const unsub = subscribePending(
+    () => {},
+    (degraded) => states.push(degraded),
+  );
+  const es = FakeEventSource.instances[0];
+
+  unsub();
+
+  // A real closed EventSource never fires onerror/onopen again; the fake must
+  // match so post-unsubscribe tests cannot observe impossible callbacks.
+  es.emitError();
+  es.emitOpen();
+  expect(states).toEqual([]);
+});
+
+test("subscribePending tolerates an error with no onError callback", () => {
+  expect(() => {
+    const unsub = subscribePending(() => {});
+    FakeEventSource.instances[0].emitError();
+    unsub();
+  }).not.toThrow();
+});
+
 test("FakeEventSource exposes browser-compatible readyState constants", () => {
   expect(FakeEventSource.CONNECTING).toBe(0);
   expect(FakeEventSource.OPEN).toBe(1);

@@ -4,14 +4,9 @@ import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
 import { DownloadButton } from "../components/DownloadButton";
-import { signTx, submitSigned, ApiError } from "../api/client";
+import { signTx, submitSigned } from "../api/client";
 import type { WitnessResult, TxResult } from "../api/types";
-
-function errorMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
+import { errorMessage } from "../errorMessage";
 
 type Tab = "sign" | "submit";
 

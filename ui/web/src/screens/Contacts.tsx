@@ -1,17 +1,12 @@
 import { useState } from "react";
 import type { Contact } from "../api/types";
 import { useContacts } from "../api/hooks";
-import { upsertContact, deleteContact, ApiError } from "../api/client";
+import { upsertContact, deleteContact } from "../api/client";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
-
-function errorMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
+import { errorMessage } from "../errorMessage";
 
 interface ContactFormProps {
   // null = new contact; otherwise the contact being edited.
