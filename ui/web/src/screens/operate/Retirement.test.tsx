@@ -44,6 +44,9 @@ test("seed mode submits a retirement transaction and shows the tx hash", async (
   await waitFor(() => expect(submit).toHaveBeenCalledWith({ password: "pw", epoch: 520 }));
   expect(await screen.findByText("deadbeef")).toBeInTheDocument();
   expect(screen.getByText(/retirement transaction submitted/i)).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /copy retirement transaction hash/i }),
+  ).toBeInTheDocument();
 });
 
 // --- air-gap mode: cold-vkey cert, no submit button ---
@@ -67,6 +70,12 @@ test("air-gap mode builds a certificate from a cold vkey and has no submit butto
     expect(build).toHaveBeenCalledWith({ cold_vkey_hex: "c0ld", epoch: 300 }),
   );
   expect(await screen.findByText("pool1air")).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /copy retirement pool id/i }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /copy retirement certificate cbor hex/i }),
+  ).toBeInTheDocument();
 });
 
 // --- validation ---

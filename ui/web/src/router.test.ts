@@ -55,7 +55,29 @@ test("useHashRoute updates when the hash changes after mount", () => {
   expect(result.current).toBe("swap");
 });
 
-test("useHashRoute stops updating after unmount (listener cleanup)", () => {
+test("registers a hashchange listener on mount and removes the same one on unmount", () => {
+  const add = vi.spyOn(window, "addEventListener");
+  const remove = vi.spyOn(window, "removeEventListener");
+  window.location.hash = "#/portfolio";
+
+  const { unmount } = renderHook(() => useHashRoute());
+
+  // Mount must register a hashchange listener…
+  const registration = add.mock.calls.find(([type]) => type === "hashchange");
+  expect(registration).toBeDefined();
+  const handler = registration![1];
+  expect(remove).not.toHaveBeenCalledWith("hashchange", handler);
+
+  // …and unmount must remove that exact handler (fails if the effect's
+  // cleanup omits removeEventListener, unlike a behavioural-only assertion).
+  unmount();
+  expect(remove).toHaveBeenCalledWith("hashchange", handler);
+
+  add.mockRestore();
+  remove.mockRestore();
+});
+
+test("useHashRoute stops updating after unmount (no stale setState)", () => {
   window.location.hash = "#/portfolio";
   const { result, unmount } = renderHook(() => useHashRoute());
   unmount();
@@ -72,11 +94,15 @@ test("useHashRoute stops updating after unmount (listener cleanup)", () => {
 // --- prototype-pollution safety property ---
 //
 // The router itself only ever produces plain route strings — it never resolves
-// a route into a handler. The defense (see the long comment in app.tsx) is that
-// app.tsx stores routes in a Map, not a plain object, so a crafted hash like
-// "#/__proto__" or "#/constructor" resolves to a real, absent key rather than an
-// inherited Object.prototype member. These tests lock that property at the
-// lookup layer the router feeds.
+// a route into a handler, so all it can do here is faithfully echo a crafted
+// hash as its literal route name (asserted below). The actual defense lives in
+// app.tsx, which resolves routes through a Map (not a plain object) so a crafted
+// hash like "#/__proto__" or "#/constructor" hits a real, absent key rather than
+// an inherited Object.prototype member. That end-to-end property is exercised
+// against the production ROUTES lookup by rendering <App /> with those hashes in
+// app.test.tsx ("a crafted hash … falls back to Portfolio"); it is verified there
+// rather than against a hand-built Map here, so the check is bound to the code
+// that ships.
 
 test("crafted '#/__proto__' and '#/constructor' hashes parse to their literal names", () => {
   window.location.hash = "#/__proto__";
@@ -84,20 +110,4 @@ test("crafted '#/__proto__' and '#/constructor' hashes parse to their literal na
 
   window.location.hash = "#/constructor";
   expect(renderHook(() => useHashRoute()).result.current).toBe("constructor");
-});
-
-test("a Map lookup rejects inherited-member route names that a plain object would resolve", () => {
-  const routes = new Map<string, () => string>([["portfolio", () => "Portfolio"]]);
-
-  for (const crafted of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
-    // The Map has no such route: unknown → app falls back to Portfolio.
-    expect(routes.has(crafted)).toBe(false);
-    expect(routes.get(crafted)).toBeUndefined();
-  }
-
-  // Contrast: a plain object is the footgun the Map avoids — these inherited
-  // members are truthy and callable, which is exactly what would hijack routing.
-  const asObject: Record<string, unknown> = { portfolio: () => "Portfolio" };
-  expect(asObject["constructor"]).toBeDefined();
-  expect(typeof asObject["toString"]).toBe("function");
 });

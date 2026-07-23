@@ -25,12 +25,16 @@ function fillSeedMinimum(pledge = "100000000", password = "pw") {
 
 // --- air-gap mode (the branch Operate.test.tsx does not exercise) ---
 
-test("air-gap mode builds from a cold vkey + VRF key hash, not a password", async () => {
+test("air-gap mode builds from a cold vkey + VRF key hash, and never sends the spending password", async () => {
   const build = vi
     .spyOn(client, "poolBuildRegistrationAirGap")
     .mockResolvedValue({ pool_id: "pool1air", cbor_hex: "8a03air" });
   renderReg();
 
+  // Enter a spending password in seed mode FIRST, then switch to air-gap. The
+  // password state persists across the toggle, so this guards the security
+  // invariant: even a leftover password must never reach the air-gap request.
+  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "supersecret" } });
   fireEvent.click(screen.getByRole("button", { name: /air-gap/i }));
   expect(screen.queryByLabelText(/spending password/i)).toBeNull();
 
@@ -44,6 +48,10 @@ test("air-gap mode builds from a cold vkey + VRF key hash, not a password", asyn
   expect(arg.cold_vkey_hex).toBe("c0ld");
   expect(arg.vrf_key_hash_hex).toBe("vrf");
   expect(arg.pledge).toBe("100000000");
+  // The captured air-gap request body must carry no password field and no
+  // trace of the value the user typed in seed mode.
+  expect(arg).not.toHaveProperty("password");
+  expect(JSON.stringify(arg)).not.toContain("supersecret");
   expect(await screen.findByText("pool1air")).toBeInTheDocument();
   expect(screen.getByText("8a03air")).toBeInTheDocument();
 });

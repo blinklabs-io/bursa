@@ -81,23 +81,27 @@ test("clicking the already-active wallet is a no-op", () => {
   expect(onActivated).not.toHaveBeenCalled();
 });
 
-test("a second selection is ignored while one switch is in flight", async () => {
+test("every wallet button is disabled while a switch is in flight, so no second request can start", async () => {
   let resolve!: (w: WalletView) => void;
   const activate = vi
     .spyOn(client, "activateWallet")
     .mockReturnValue(new Promise<WalletView>((r) => (resolve = r)));
   renderSwitcher();
 
-  // Kick off the switch to Savings; buttons disable while busy.
+  // Kick off the switch to Savings. The guard against a concurrent second
+  // request is enforced in the DOM: while one activation is pending, EVERY
+  // wallet button is disabled, so the user cannot dispatch another select().
   fireEvent.click(screen.getByRole("button", { name: /savings/i }));
   await waitFor(() => expect(screen.getByRole("button", { name: /savings/i })).toBeDisabled());
-
-  // A click during the in-flight switch must not start a second request.
-  fireEvent.click(screen.getByRole("button", { name: /savings/i }));
+  // The other wallet's button is disabled too — not just the one in flight —
+  // which is what actually prevents a second request from being started.
+  expect(screen.getByRole("button", { name: /main/i })).toBeDisabled();
   expect(activate).toHaveBeenCalledTimes(1);
 
+  // Buttons re-enable once the in-flight switch resolves.
   resolve({ ...walletB, active: true });
   await waitFor(() => expect(screen.getByRole("button", { name: /savings/i })).not.toBeDisabled());
+  expect(screen.getByRole("button", { name: /main/i })).not.toBeDisabled();
 });
 
 // --- error handling ---
