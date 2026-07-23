@@ -87,6 +87,17 @@ func (c *Coordinator) SignOpCert(ctx context.Context, kesVkey []byte, issueCount
 		return nil, CodeDenied, fmt.Errorf("%s", dec.Reason)
 	}
 
+	// Operational certificates are signed only by stake-pool COLD keys. Guard
+	// against a misconfigured policy granting opcert to a key of any other role
+	// (payment, stake, committee, etc.); such a key must never produce an opcert
+	// signature regardless of what the ACL permits.
+	if ref.Type() != backend.KeyTypePool {
+		c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "denied", "reason", "key is not a stake-pool cold key")
+		c.deps.Metrics.observe("opcert", string(CodeBadRequest))
+		c.deps.Metrics.observeDeny(string(CodeBadRequest))
+		return nil, CodeBadRequest, fmt.Errorf("opcert signing requires a %q key, got %q", backend.KeyTypePool, ref.Type())
+	}
+
 	// The cold key signs the raw OCertSignable bytes directly (this is NOT a
 	// CBOR encoding). Building it via gouroboros keeps the byte layout identical
 	// to cardano-node / cardano-ledger and to Part A's canonical envelope.
