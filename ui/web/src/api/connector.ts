@@ -60,8 +60,15 @@ interface PendingSnapshotEvent {
 // subscribePending opens a Server-Sent Events stream at /connector/events and
 // replaces the consumer's local state with each authoritative queue snapshot.
 // Returns an unsubscribe function that closes the stream.
+//
+// The optional onError callback surfaces the stream's health so the UI can show
+// a "reconnecting" indicator: it is invoked with degraded=true when the browser
+// signals a connection error, and degraded=false once the stream (re)opens. The
+// callback is optional so existing callers that only care about snapshots keep
+// working unchanged.
 export function subscribePending(
   onSnapshot: (pending: ConnectorRequest[]) => void,
+  onError?: (degraded: boolean) => void,
 ): () => void {
   const es = new EventSource("/connector/events");
 
@@ -74,6 +81,17 @@ export function subscribePending(
     } catch {
       // Ignore malformed events (keepalive comments never produce onmessage).
     }
+  };
+
+  // EventSource fires onerror on any disconnect — including transient blips —
+  // and then reconnects on its own, so we must NOT close the stream here.
+  // Instead surface a degraded state to the caller and let the browser recover;
+  // the matching onopen clears the degraded flag once the stream is back.
+  es.onerror = () => {
+    onError?.(true);
+  };
+  es.onopen = () => {
+    onError?.(false);
   };
 
   return () => es.close();

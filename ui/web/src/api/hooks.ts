@@ -111,6 +111,15 @@ export function useAsync<T>(
       window.removeEventListener("online", onOnline);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
+  // CONTRACT: `fn` is deliberately omitted from the dependency array. Including
+  // it would re-run this effect (tearing down the poll interval and event
+  // listeners, then refetching) on every render where the caller passes a
+  // freshly-created function — which is the common case, since inline
+  // closures/arrow functions are new identities each render. Callers MUST
+  // therefore pass a STABLE `fn`: a module-level function (as the useStatus,
+  // useBalance, etc. helpers below do) or one wrapped in useCallback. A caller
+  // that passes an unstable `fn` will silently only ever see the value from the
+  // first render's closure. `refresh`/`tick` is the supported way to refetch.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick, enabled, pollMs]);
 
