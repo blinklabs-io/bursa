@@ -325,8 +325,9 @@ func TestRetirementCertEncoding(t *testing.T) {
 }
 
 // TestOpCertPayloadAndAssemble checks the air-gap opcert flow: the payload is
-// CBOR([kesVkey, issue, period]); a cold-key signature over it verifies and is
-// assembled into an opcert; a wrong signature is rejected.
+// the OCertSignable representation (kesVkey || issue || period); a cold-key
+// signature over it verifies and is assembled into an opcert; a wrong signature
+// is rejected.
 func TestOpCertPayloadAndAssemble(t *testing.T) {
 	s := &Service{}
 	creds, _ := deriveCredentials(mustRoot(t), "preview", 0, 0, 0)
@@ -337,9 +338,9 @@ func TestOpCertPayloadAndAssemble(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpCertPayload: %v", err)
 	}
-	// Payload must equal CBOR([kesVkey, issue, period]).
+	// Payload must equal the OCertSignable bytes (kesVkey || issue || period).
 	kesVkey, _ := hex.DecodeString(kesVKeyHex)
-	wantPayload, _ := cbor.Encode([]any{kesVkey, uint64(7), uint64(3)})
+	wantPayload := lcommon.OpCertSignableBytes(kesVkey, uint64(7), uint64(3))
 	if payload.PayloadHex != hex.EncodeToString(wantPayload) {
 		t.Fatalf("payload %q != %q", payload.PayloadHex, hex.EncodeToString(wantPayload))
 	}

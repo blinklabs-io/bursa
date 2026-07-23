@@ -363,11 +363,12 @@ func TestServiceIssueOpCert(t *testing.T) {
 	if opcert.IssueNumber != 5 || opcert.KesPeriod != 2 {
 		t.Fatalf("issue/period = %d/%d, want 5/2", opcert.IssueNumber, opcert.KesPeriod)
 	}
-	// The opcert ColdSignature must verify against the cold vkey over
-	// CBOR([kesVkey, issue, period]).
+	// The opcert ColdSignature must verify against the cold vkey over the
+	// OCertSignable representation (kesVkey || issue || period, counters
+	// big-endian uint64) — what gouroboros' CreateOpCert now signs.
 	kesVkey, _ := hex.DecodeString(opcert.KesVKeyHex)
 	sig, _ := hex.DecodeString(opcert.ColdSignatureHex)
-	payload, _ := cbor.Encode([]any{kesVkey, uint64(5), uint64(2)})
+	payload := lcommon.OpCertSignableBytes(kesVkey, uint64(5), uint64(2))
 	if !ed25519.Verify(coldVkey, payload, sig) {
 		t.Fatal("issued opcert does not verify against the cold vkey")
 	}
