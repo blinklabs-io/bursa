@@ -5,62 +5,31 @@
  * @cardano-foundation/ledgerjs-hw-app-cardano, and bech32.
  * No network calls are made beyond the HID transport.
  *
- * Xpub encoding parity with Go:
- *   bip32.XPub.String() encodes 64 bytes (publicKey || chainCode) as bech32
- *   with HRP "root_xvk" — exactly what getAccountXpub produces here.
- *   Verified against the Go canonical vector for the "abandon ×11 about"
- *   test mnemonic at account 0 (see ledger.test.ts).
+ * Xpub/witness encoding parity with Go lives in the shared hw/xpub.ts and
+ * hw/witness.ts helpers so every device (Ledger, Trezor, …) encodes from one
+ * implementation; the parity vector is exercised in ledger.test.ts.
  */
 
 import TransportWebHID from "@ledgerhq/hw-transport-webhid";
 import Ada from "@cardano-foundation/ledgerjs-hw-app-cardano";
-import type { SignTransactionRequest } from "@cardano-foundation/ledgerjs-hw-app-cardano";
-import { encode as bech32Encode, toWords as bech32ToWords } from "bech32";
-
-// ── CBOR helpers (minimal, covers only the witness-set structure) ─────────────
-
-/**
- * Encode a small non-negative integer as CBOR unsigned int.
- * This is only ever called with small witness-array cardinalities (the count of
- * distinct signers in a transaction), NOT with lovelace amounts (those go
- * through ledgerjs BigInt). The 65535 cap is therefore never reached in practice.
- */
-function cborUint(n: number): number[] {
-  if (n < 24) return [n];
-  if (n < 256) return [0x18, n];
-  if (n < 65536) return [0x19, n >> 8, n & 0xff];
-  throw new RangeError(`cborUint: ${n} is too large`);
-}
-
-/** Encode a byte array as a CBOR byte string. */
-function cborBytes(hex: string): number[] {
-  const bytes = hexToBytes(hex);
-  const hdr = cborUint(bytes.length);
-  hdr[0] |= 0x40; // major type 2 = byte string
-  return [...hdr, ...Array.from(bytes)];
-}
-
-/** Encode a fixed-size array of already-encoded CBOR items. */
-function cborArray(items: number[][]): number[] {
-  const hdr = cborUint(items.length);
-  hdr[0] |= 0x80; // major type 4 = array
-  return [...hdr, ...items.flat()];
-}
-
-/** Encode a hex string as Uint8Array. */
-function hexToBytes(hex: string): Uint8Array {
-  const len = hex.length;
-  const out = new Uint8Array(len / 2);
-  for (let i = 0; i < len; i += 2) {
-    out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
-  }
-  return out;
-}
-
-/** Encode bytes as lowercase hex string. */
-function bytesToHex(bytes: number[]): string {
-  return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+import type {
+  AssetGroup,
+  SignTransactionRequest,
+  Token,
+  TxInput,
+  TxOutput,
+} from "@cardano-foundation/ledgerjs-hw-app-cardano";
+import {
+  AddressType,
+  TransactionSigningMode,
+  TxOutputDestinationType,
+  TxOutputFormat,
+  TxRequiredSignerType,
+} from "@cardano-foundation/ledgerjs-hw-app-cardano";
+import type { HardwareSignResponse } from "../api/types";
+import type { HardwareCapabilities, HardwareSigner } from "./types";
+import { encodeXpub } from "./xpub";
+import { encodeWitnessArray } from "./witness";
 
 // ── BIP32 path ───────────────────────────────────────────────────────────────
 
@@ -71,71 +40,112 @@ function accountPath(account: number): number[] {
   return [1852 + HARDENED, 1815 + HARDENED, account + HARDENED];
 }
 
-// ── Bech32 xpub encoding ─────────────────────────────────────────────────────
-
-/**
- * Encode a raw {publicKeyHex, chainCodeHex} pair as a bech32 xpub with HRP
- * "root_xvk". This matches Go's bip32.XPub.String() exactly:
- *   data = publicKey(32 bytes) || chainCode(32 bytes)  →  bech32(root_xvk, data)
- *
- * The bech32 package's 90-char default limit is bypassed by passing limit=1000.
- */
-function encodeXpub(publicKeyHex: string, chainCodeHex: string): string {
-  const pubBytes = Array.from(hexToBytes(publicKeyHex));
-  const ccBytes = Array.from(hexToBytes(chainCodeHex));
-  const data = new Uint8Array([...pubBytes, ...ccBytes]); // 64 bytes
-  const words = bech32ToWords(data);
-  return bech32Encode("root_xvk", words, 1000 /* no length limit */);
+// parseBip32Path converts a CIP-1852 path string to a numeric array.
+// "1852'/1815'/0'/0/3" → [0x80000000+1852, 0x80000000+1815, 0x80000000+0, 0, 3]
+function parseBip32Path(pathStr: string): number[] {
+  return pathStr.split("/").map((seg) => {
+    const hardened = seg.endsWith("'");
+    const n = parseInt(hardened ? seg.slice(0, -1) : seg, 10);
+    return hardened ? n + HARDENED : n;
+  });
 }
 
-// ── Raw vkey-witness-array CBOR encoding ─────────────────────────────────────────────────
+// ── Neutral → ledgerjs mapping ────────────────────────────────────────────────
 
-/**
- * Encode the raw vkey-witness array consumed by the backend's SubmitSigned.
- *
- * Format: [[pubkey_bytes, sig_bytes], ...]
- *   - each witness = [32-byte Ed25519 pubkey, 64-byte Ed25519 signature]
- */
-function encodeWitnessArray(witnesses: { pubKeyHex: string; sigHex: string }[]): string {
-  return bytesToHex(
-    cborArray(
-      witnesses.map(({ pubKeyHex, sigHex }) =>
-        cborArray([cborBytes(pubKeyHex), cborBytes(sigHex)]),
-      ),
-    ),
-  );
+// mapTokenBundle groups a neutral output's native assets by policy id and maps
+// them into the ledgerjs AssetGroup/Token shape. Without this, a multi-asset
+// send would reach the device with an empty bundle and the device would sign a
+// DIFFERENT transaction than the backend built (dropping the tokens entirely).
+function mapTokenBundle(
+  assets: NonNullable<HardwareSignResponse["outputs"][number]["assets"]>,
+): AssetGroup[] {
+  const byPolicy = new Map<string, Token[]>();
+  for (const a of assets) {
+    const tokens = byPolicy.get(a.policy_id_hex) ?? [];
+    tokens.push({ assetNameHex: a.asset_name_hex, amount: BigInt(a.amount) });
+    byPolicy.set(a.policy_id_hex, tokens);
+  }
+  return Array.from(byPolicy, ([policyIdHex, tokens]) => ({ policyIdHex, tokens }));
+}
+
+// mapToSignRequest converts a HardwareSignResponse (from the backend) to the
+// SignTransactionRequest format that ledgerjs expects. This lived in Send.tsx
+// as a device-specific leak; it now belongs to the Ledger signer, which is the
+// only code that knows the ledgerjs shape.
+function mapToSignRequest(resp: HardwareSignResponse): SignTransactionRequest {
+  const inputs: TxInput[] = resp.inputs.map((inp) => ({
+    txHashHex: inp.tx_hash_hex,
+    outputIndex: inp.output_index,
+    path: inp.path ? parseBip32Path(inp.path) : null,
+  }));
+
+  const outputs: TxOutput[] = resp.outputs.map((out) => {
+    const destination = out.payment_path && out.stake_path
+      ? {
+          type: TxOutputDestinationType.DEVICE_OWNED as const,
+          params: {
+            type: AddressType.BASE_PAYMENT_KEY_STAKE_KEY as const,
+            params: {
+              spendingPath: parseBip32Path(out.payment_path),
+              stakingPath: parseBip32Path(out.stake_path),
+            },
+          },
+        }
+      : {
+          type: TxOutputDestinationType.THIRD_PARTY as const,
+          params: { addressHex: out.address_hex },
+        };
+
+    return {
+      format: TxOutputFormat.ARRAY_LEGACY,
+      destination,
+      amount: BigInt(out.lovelace),
+      // Carry any native assets grouped by policy so the device signs the same
+      // tx the backend built. ledgerjs iterates this field even when the output
+      // is ADA-only, so an empty array is the correct no-asset value.
+      tokenBundle: out.assets && out.assets.length > 0 ? mapTokenBundle(out.assets) : [],
+    };
+  });
+
+  return {
+    tx: {
+      network: {
+        protocolMagic: resp.protocol_magic,
+        networkId: resp.network_id,
+      },
+      inputs,
+      outputs,
+      fee: BigInt(resp.fee),
+      ttl: resp.ttl ? BigInt(resp.ttl) : null,
+      requiredSigners: resp.required_signers.map((hashHex) => ({
+        type: TxRequiredSignerType.HASH,
+        hashHex,
+      })),
+      includeNetworkId: resp.include_network_id || null,
+    },
+    signingMode: TransactionSigningMode.ORDINARY_TRANSACTION,
+  };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/** A live session with a Ledger device running the Cardano app. */
-export interface LedgerSession {
-  /**
-   * Derive the account-level extended public key from the device.
-   * Calls getExtendedPublicKey(m/1852'/1815'/<account>') and encodes
-   * the result as a bech32 "root_xvk" string identical to what Go's
-   * bip32.XPub.String() / wallet.AccountXpub() produces.
-   */
-  getAccountXpub(account: number): Promise<string>;
-
-  /**
-   * Sign a transaction on the device.
-   * @param request - The full SignTransactionRequest for the Cardano Ledger app.
-   * @returns CBOR-encoded raw vkey-witness array hex string.
-   */
-  signTx(request: SignTransactionRequest): Promise<string>;
-
-  /** Close the underlying HID transport. */
-  close(): Promise<void>;
-}
+// Ledger currently signs send (ordinary) transactions on-device; the other
+// flows are declared unsupported until their neutral→ledgerjs mappings land.
+const LEDGER_CAPABILITIES: HardwareCapabilities = {
+  send: true,
+  staking: false,
+  governance: false,
+  multisig: false,
+  poolReg: false,
+};
 
 /**
- * Open a connection to a Ledger device via WebHID and return a LedgerSession.
+ * Open a connection to a Ledger device via WebHID and return a HardwareSigner.
  *
  * @throws Error — "WebHID not available — open this in a Chromium browser"
  *   if the browser does not support the WebHID API.
  */
-export async function connectLedger(): Promise<LedgerSession> {
+export async function connectLedger(): Promise<HardwareSigner> {
   if (
     typeof navigator === "undefined" ||
     (navigator as Navigator & { hid?: unknown }).hid === undefined
@@ -147,13 +157,19 @@ export async function connectLedger(): Promise<LedgerSession> {
   const cardano = new Ada(transport);
 
   return {
+    kind: "ledger",
+    capabilities: LEDGER_CAPABILITIES,
+
     async getAccountXpub(account: number): Promise<string> {
       const path = accountPath(account);
       const { publicKeyHex, chainCodeHex } = await cardano.getExtendedPublicKey({ path });
       return encodeXpub(publicKeyHex, chainCodeHex);
     },
 
-    async signTx(request: SignTransactionRequest): Promise<string> {
+    async signTx(req: HardwareSignResponse): Promise<string> {
+      // 0. Shape the neutral request into what the Cardano Ledger app expects.
+      const request = mapToSignRequest(req);
+
       // 1. Ask the device to sign the transaction and collect witness signatures.
       const { witnesses } = await cardano.signTransaction(request);
 

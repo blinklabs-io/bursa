@@ -3,25 +3,27 @@ import { AddWallet } from "./AddWallet";
 import * as client from "../api/client";
 import type { WalletView } from "../api/types";
 
-// ── Ledger mock ───────────────────────────────────────────────────────────────
+// ── Hardware-device mock ────────────────────────────────────────────────────
 const FIXED_XPUB =
   "root_xvk1qpxlt6hkndkymk3lgchrcgpjnkrxkutp6c4p0nwegwuhlhqmlkzjhxm7qhz8c7dw8qvpgm4y8ayjzce7hqjm0p7g4uh6ypmfmzrk4sv4k39n";
 
 // vi.hoisted creates variables that are available before vi.mock() factory runs.
-const { mockSession, mockConnectLedger } = vi.hoisted(() => {
+const { mockSession, mockConnectDevice } = vi.hoisted(() => {
   const mockSession = {
+    kind: "ledger" as const,
+    capabilities: { send: true, staking: false, governance: false, multisig: false, poolReg: false },
     getAccountXpub: vi.fn().mockResolvedValue(
       "root_xvk1qpxlt6hkndkymk3lgchrcgpjnkrxkutp6c4p0nwegwuhlhqmlkzjhxm7qhz8c7dw8qvpgm4y8ayjzce7hqjm0p7g4uh6ypmfmzrk4sv4k39n",
     ),
     signTx: vi.fn(),
     close: vi.fn().mockResolvedValue(undefined),
   };
-  const mockConnectLedger = vi.fn().mockResolvedValue(mockSession);
-  return { mockSession, mockConnectLedger };
+  const mockConnectDevice = vi.fn().mockResolvedValue(mockSession);
+  return { mockSession, mockConnectDevice };
 });
 
-vi.mock("../hw/ledger", () => ({
-  connectLedger: mockConnectLedger,
+vi.mock("../hw", () => ({
+  connectHardware: mockConnectDevice,
 }));
 
 const created: WalletView = {
@@ -231,7 +233,7 @@ test("create-confirm: submit stays blocked while the challenge is unanswered or 
   expect(spy).not.toHaveBeenCalled();
 });
 
-// ── Connect Ledger flow ───────────────────────────────────────────────────────
+// ── Connect hardware wallet flow ────────────────────────────────────────────
 
 const hwWallet: WalletView = {
   id: "hw1",
@@ -243,27 +245,34 @@ const hwWallet: WalletView = {
   type: "hardware",
 };
 
-// Helper: navigate from the "choose" screen to the "Connect Ledger" form.
-function goToLedger() {
-  fireEvent.click(screen.getByRole("button", { name: /connect ledger/i }));
+// Helper: navigate from the "choose" screen to the "Connect hardware wallet" form.
+function goToHardware() {
+  fireEvent.click(screen.getByRole("button", { name: /connect hardware wallet/i }));
 }
 
-// Re-arm the connectLedger mock before each Ledger test because
+// Re-arm the connectDevice mock before each hardware test because
 // vi.restoreAllMocks() (called in afterEach above) clears vi.fn() implementations.
+// Also clear localStorage so the device-kind hint from a prior test never leaks.
 beforeEach(() => {
+  localStorage.clear();
   mockSession.getAccountXpub.mockReset().mockResolvedValue(FIXED_XPUB);
   mockSession.close.mockReset().mockResolvedValue(undefined);
-  mockConnectLedger.mockReset().mockResolvedValue(mockSession);
+  mockConnectDevice.mockReset().mockResolvedValue(mockSession);
 });
 
-test("Connect Ledger: calls getAccountXpub(0) then addHardwareWallet, wallet added", async () => {
+test("Connect hardware: Ledger is the default device; connects, adds wallet, stores kind", async () => {
   const hwSpy = vi.spyOn(client, "addHardwareWallet").mockResolvedValue(hwWallet);
   const onAdded = vi.fn();
 
   render(<AddWallet network="preview" knownVaultPassword="vault-pw" onAdded={onAdded} />);
 
-  // Navigate from the chooser to the Ledger form.
-  goToLedger();
+  // Navigate from the chooser to the hardware form.
+  goToHardware();
+
+  // Ledger radio is selected by default.
+  expect(screen.getByRole("radio", { name: /ledger/i })).toBeChecked();
+  // Keystone is listed but disabled (coming soon).
+  expect(screen.getByRole("radio", { name: /keystone/i })).toBeDisabled();
 
   // Fill in wallet name
   fireEvent.change(screen.getByLabelText(/wallet name/i), { target: { value: "Ledger Main" } });
@@ -271,19 +280,55 @@ test("Connect Ledger: calls getAccountXpub(0) then addHardwareWallet, wallet add
   // Trigger connect
   fireEvent.click(screen.getByRole("button", { name: /connect ledger/i }));
 
+  await waitFor(() => expect(mockConnectDevice).toHaveBeenCalled());
+  expect(mockConnectDevice.mock.calls[0][0]).toBe("ledger");
   await waitFor(() => expect(mockSession.getAccountXpub).toHaveBeenCalledWith(0));
   await waitFor(() =>
     expect(hwSpy).toHaveBeenCalledWith("Ledger Main", FIXED_XPUB, 0, "preview", "vault-pw"),
   );
   await waitFor(() => expect(onAdded).toHaveBeenCalledWith(hwWallet));
   expect(mockSession.close).toHaveBeenCalledOnce();
+  // The device-kind hint is persisted so Send reconnects a Ledger.
+  const { getDeviceKind } = await import("../hw/deviceKind");
+  expect(getDeviceKind("hw1")).toBe("ledger");
 });
 
-test("Connect Ledger: derives and stores the selected account index", async () => {
+test("Connect hardware: Trezor requires consent, then connects and stores the trezor kind", async () => {
+  const hwSpy = vi.spyOn(client, "addHardwareWallet").mockResolvedValue(hwWallet);
+  const onAdded = vi.fn();
+
+  render(<AddWallet network="preview" knownVaultPassword="vault-pw" onAdded={onAdded} />);
+  goToHardware();
+
+  // Pick Trezor.
+  fireEvent.click(screen.getByRole("radio", { name: /^trezor$/i }));
+
+  // The connect button is disabled until the external-connection consent is
+  // given (Trezor reaches connect.trezor.io — consent law).
+  const connectButton = screen.getByRole("button", { name: /connect trezor/i });
+  expect(connectButton).toBeDisabled();
+  expect(mockConnectDevice).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("checkbox", { name: /connect\.trezor\.io/i }));
+  expect(connectButton).toBeEnabled();
+
+  fireEvent.click(connectButton);
+
+  await waitFor(() => expect(mockConnectDevice).toHaveBeenCalled());
+  expect(mockConnectDevice.mock.calls[0][0]).toBe("trezor");
+  await waitFor(() =>
+    expect(hwSpy).toHaveBeenCalledWith("Trezor Wallet", FIXED_XPUB, 0, "preview", "vault-pw"),
+  );
+  await waitFor(() => expect(onAdded).toHaveBeenCalledWith(hwWallet));
+  const { getDeviceKind } = await import("../hw/deviceKind");
+  expect(getDeviceKind("hw1")).toBe("trezor");
+});
+
+test("Connect hardware: derives and stores the selected account index", async () => {
   const hwSpy = vi.spyOn(client, "addHardwareWallet").mockResolvedValue(hwWallet);
 
   render(<AddWallet network="preview" knownVaultPassword="vault-pw" onAdded={vi.fn()} />);
-  goToLedger();
+  goToHardware();
   fireEvent.change(screen.getByLabelText(/account index/i), { target: { value: "2" } });
   fireEvent.click(screen.getByRole("button", { name: /connect ledger/i }));
 
@@ -291,28 +336,28 @@ test("Connect Ledger: derives and stores the selected account index", async () =
   expect(hwSpy).toHaveBeenCalledWith("Ledger Wallet", FIXED_XPUB, 2, "preview", "vault-pw");
 });
 
-test("Connect Ledger: an empty account index is rejected before touching the device", async () => {
+test("Connect hardware: an empty account index is rejected before touching the device", async () => {
   // Number("") is 0, so an empty field must be caught explicitly — otherwise it
-  // would silently import account 0, a different Ledger account than intended.
+  // would silently import account 0, a different account than intended.
   const hwSpy = vi.spyOn(client, "addHardwareWallet");
 
   render(<AddWallet network="preview" knownVaultPassword="vault-pw" onAdded={vi.fn()} />);
-  goToLedger();
+  goToHardware();
   fireEvent.change(screen.getByLabelText(/account index/i), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: /connect ledger/i }));
 
   await waitFor(() => expect(screen.getByText(/account index must be an integer/i)).toBeInTheDocument());
-  expect(mockConnectLedger).not.toHaveBeenCalled();
+  expect(mockConnectDevice).not.toHaveBeenCalled();
   expect(hwSpy).not.toHaveBeenCalled();
 });
 
-test("Connect Ledger: closes the session when reading the account xpub fails", async () => {
+test("Connect hardware: closes the session when reading the account xpub fails", async () => {
   mockSession.getAccountXpub.mockRejectedValueOnce(new Error("Cardano app is not open"));
   const hwSpy = vi.spyOn(client, "addHardwareWallet");
 
   render(<AddWallet network="preview" knownVaultPassword="vault-pw" onAdded={vi.fn()} />);
 
-  goToLedger();
+  goToHardware();
   fireEvent.click(screen.getByRole("button", { name: /connect ledger/i }));
 
   await waitFor(() =>
@@ -322,15 +367,15 @@ test("Connect Ledger: closes the session when reading the account xpub fails", a
   expect(hwSpy).not.toHaveBeenCalled();
 });
 
-test("Connect Ledger: WebHID unavailable error message is shown", async () => {
-  mockConnectLedger.mockRejectedValueOnce(
+test("Connect hardware: WebHID unavailable error message is shown", async () => {
+  mockConnectDevice.mockRejectedValueOnce(
     new Error("WebHID not available — open this in a Chromium browser"),
   );
   const onAdded = vi.fn();
 
   render(<AddWallet network="preview" knownVaultPassword="vault-pw" onAdded={onAdded} />);
 
-  goToLedger();
+  goToHardware();
   fireEvent.click(screen.getByRole("button", { name: /connect ledger/i }));
 
   await waitFor(() =>

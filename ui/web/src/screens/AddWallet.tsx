@@ -5,8 +5,9 @@ import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
 import { addWallet, addHardwareWallet, generateMnemonic, ApiError } from "../api/client";
-import { connectLedger } from "../hw/ledger";
-import type { LedgerSession } from "../hw/ledger";
+import { connectHardware } from "../hw";
+import type { HardwareKind, HardwareSigner } from "../hw";
+import { setDeviceKind } from "../hw/deviceKind";
 import type { WalletView } from "../api/types";
 import { MIN_PASSWORD_LEN, passwordLength } from "../password";
 import { CHALLENGE_WORD_COUNT, isChallengeAnswerCorrect, pickChallengeIndices, validateChallenge } from "../phraseChallenge";
@@ -48,7 +49,21 @@ interface AddWalletProps {
 }
 
 // Mode within the Add Wallet flow.
-type Mode = "choose" | "create" | "create-confirm" | "restore" | "ledger";
+type Mode = "choose" | "create" | "create-confirm" | "restore" | "hardware";
+
+// Selectable hardware devices. Keystone is listed but disabled until its
+// signer lands, so users can see it is planned without being able to pick it.
+const DEVICE_OPTIONS: { kind: HardwareKind; label: string; disabled?: boolean }[] = [
+  { kind: "ledger", label: "Ledger" },
+  { kind: "trezor", label: "Trezor" },
+  { kind: "keystone", label: "Keystone (coming soon)", disabled: true },
+];
+
+const DEVICE_LABELS: Record<HardwareKind, string> = {
+  ledger: "Ledger",
+  trezor: "Trezor",
+  keystone: "Keystone",
+};
 
 export function AddWallet({
   network,
@@ -75,7 +90,13 @@ export function AddWallet({
   const [mnemonic, setMnemonic] = useState("");
   const [spendPassword, setSpendPassword] = useState("");
   const [vaultPassword, setVaultPassword] = useState("");
-  const [ledgerAccountIndex, setLedgerAccountIndex] = useState("0");
+
+  // Hardware-wallet state: which device, which account, and (for a
+  // cloud-reaching device like Trezor) the external-connection consent.
+  const [deviceKind, setDeviceKindState] = useState<HardwareKind>("ledger");
+  const [accountIndex, setAccountIndex] = useState("0");
+  const [externalConsent, setExternalConsent] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -161,12 +182,13 @@ export function AddWallet({
     }
   }
 
-  // --- "Connect Ledger" path -----------------------------------------------
+  // --- Hardware-wallet path -------------------------------------------------
   // No mnemonic and no spending password: the device holds the private key
   // and signs every transaction directly. Only the account-level xpub is
-  // read from the device and stored (watch-only).
+  // read from the device and stored (watch-only). The chosen device kind is
+  // recorded client-side so Send later reconnects the same device.
 
-  async function handleLedgerConnect(e: FormEvent) {
+  async function handleHardwareConnect(e: FormEvent) {
     e.preventDefault();
     setError(null);
 
@@ -176,32 +198,43 @@ export function AddWallet({
       return;
     }
     // Reject an empty field explicitly: Number("") is 0, which would otherwise
-    // pass the integer/range check and silently import Ledger account 0 — a
-    // different account than a user who cleared the field may intend.
-    const trimmedIndex = ledgerAccountIndex.trim();
-    const accountIndex = Number(trimmedIndex);
+    // pass the integer/range check and silently import account 0 — a different
+    // account than a user who cleared the field may intend.
+    const trimmedIndex = accountIndex.trim();
+    const account = Number(trimmedIndex);
     if (
       trimmedIndex === "" ||
-      !Number.isInteger(accountIndex) ||
-      accountIndex < 0 ||
-      accountIndex >= 0x80000000
+      !Number.isInteger(account) ||
+      account < 0 ||
+      account >= 0x80000000
     ) {
       setError("Account index must be an integer from 0 to 2147483647");
       return;
     }
 
     setLoading(true);
-    let session: LedgerSession | null = null;
+    let session: HardwareSigner | null = null;
     try {
-      session = await connectLedger();
-      const xpub = await session.getAccountXpub(accountIndex);
+      // connectHardware dispatches to the right connector. For Trezor the
+      // consent box gates the connect button, so this reports the given
+      // approval; the real init() gate lives inside connectTrezor. For Ledger
+      // the callback is ignored.
+      session = await connectHardware(deviceKind, async () => externalConsent);
+      const xpub = await session.getAccountXpub(account);
+      const defaultName = `${DEVICE_LABELS[deviceKind]} Wallet`;
       const wallet = await addHardwareWallet(
-        name.trim() || "Ledger Wallet",
+        name.trim() || defaultName,
         xpub,
-        accountIndex,
+        account,
         network,
         vaultPw,
       );
+      // Remember which device backs this wallet so Send reconnects it.
+      // TODO(follow-up): this hint is client-only (localStorage); persist the
+      // device kind on the server-side wallet record so it survives a browser
+      // wipe or another browser. Send's post-failure device picker mitigates
+      // the wrong-signer risk until then (see hw/deviceKind.ts).
+      setDeviceKind(wallet.id, deviceKind);
       onAdded(wallet);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An unexpected error occurred");
@@ -219,7 +252,7 @@ export function AddWallet({
         <p className="helper-text" style={{ marginBottom: "var(--space-3)" }}>
           Create a brand-new wallet with a freshly generated recovery phrase,
           restore an existing one from a phrase you already have, or connect a
-          Ledger hardware wallet.
+          hardware wallet (Ledger or Trezor).
         </p>
         <div className="preview-actions" style={{ flexDirection: "column" }}>
           <Button onClick={handleGenerate} disabled={generating}>
@@ -228,8 +261,8 @@ export function AddWallet({
           <Button variant="ghost" onClick={() => { setError(null); setMode("restore"); }} disabled={generating}>
             Restore from recovery phrase
           </Button>
-          <Button variant="ghost" onClick={() => { setError(null); setMode("ledger"); }} disabled={generating}>
-            Connect Ledger
+          <Button variant="ghost" onClick={() => { setError(null); setMode("hardware"); }} disabled={generating}>
+            Connect hardware wallet
           </Button>
           {onCancel && (
             <Button type="button" variant="ghost" onClick={onCancel}>
@@ -433,19 +466,45 @@ export function AddWallet({
     );
   }
 
-  // --- Mode: ledger (Connect Ledger, no mnemonic or spending password) ----
+  // --- Mode: hardware (connect a device, no mnemonic or spending password) --
 
-  if (mode === "ledger") {
+  if (mode === "hardware") {
+    const deviceLabel = DEVICE_LABELS[deviceKind];
+    // Trezor reaches connect.trezor.io; its connect is gated on explicit
+    // acknowledgement (consent law). Ledger (WebHID) needs no such gate.
+    const needsExternalConsent = deviceKind === "trezor";
     return (
-      <Card title="Connect Ledger">
-        <form onSubmit={handleLedgerConnect}>
+      <Card title="Connect hardware wallet">
+        <form onSubmit={handleHardwareConnect}>
+          <fieldset className="field-group" style={{ border: "none", padding: 0, margin: 0 }}>
+            <legend className="field-label">Device</legend>
+            {DEVICE_OPTIONS.map((opt) => (
+              <label className="checkbox-row" key={opt.kind}>
+                <input
+                  type="radio"
+                  name="hw-device"
+                  value={opt.kind}
+                  checked={deviceKind === opt.kind}
+                  disabled={opt.disabled || loading}
+                  onChange={() => {
+                    setError(null);
+                    setExternalConsent(false);
+                    setDeviceKindState(opt.kind);
+                  }}
+                  aria-label={opt.label}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </fieldset>
+
           <div className="field-group">
-            <label htmlFor="ledger-name">Wallet Name</label>
+            <label htmlFor="hw-name">Wallet Name</label>
             <Input
-              id="ledger-name"
+              id="hw-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Ledger Main"
+              placeholder={`e.g. ${deviceLabel} Main`}
               aria-label="Wallet Name"
             />
           </div>
@@ -453,24 +512,24 @@ export function AddWallet({
           <NetworkDisplay network={network} />
 
           <div className="field-group">
-            <label htmlFor="ledger-account-index">Account Index</label>
+            <label htmlFor="hw-account-index">Account Index</label>
             <Input
-              id="ledger-account-index"
+              id="hw-account-index"
               type="number"
               min={0}
               max={0x7fffffff}
               step={1}
-              value={ledgerAccountIndex}
-              onChange={(e) => setLedgerAccountIndex(e.target.value)}
+              value={accountIndex}
+              onChange={(e) => setAccountIndex(e.target.value)}
               aria-label="Account Index"
             />
           </div>
 
           {needsVaultPassword && (
             <div className="field-group">
-              <label htmlFor="ledger-vault-password">Vault Password</label>
+              <label htmlFor="hw-vault-password">Vault Password</label>
               <Input
-                id="ledger-vault-password"
+                id="hw-vault-password"
                 type="password"
                 value={vaultPassword}
                 onChange={(e) => setVaultPassword(e.target.value)}
@@ -481,8 +540,21 @@ export function AddWallet({
             </div>
           )}
 
+          {needsExternalConsent && (
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={externalConsent}
+                onChange={(e) => setExternalConsent(e.target.checked)}
+                aria-label="Approve contacting connect.trezor.io to reach the Trezor"
+              />
+              I understand this connects to connect.trezor.io to reach my {deviceLabel},
+              which leaves my node.
+            </label>
+          )}
+
           <p className="helper-text">
-            Connect your Ledger device, open the Cardano app, then click Connect Ledger.
+            Connect your {deviceLabel} device, open the Cardano app, then click Connect.
             No spending password is needed — the device signs every transaction.
           </p>
 
@@ -493,8 +565,11 @@ export function AddWallet({
           )}
 
           <div className="preview-actions">
-            <Button type="submit" disabled={loading}>
-              {loading ? "Connecting…" : "Connect Ledger"}
+            <Button
+              type="submit"
+              disabled={loading || (needsExternalConsent && !externalConsent)}
+            >
+              {loading ? "Connecting…" : `Connect ${deviceLabel}`}
             </Button>
             <Button
               type="button"

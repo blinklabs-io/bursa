@@ -13,6 +13,7 @@
   "dependencies": {
     "@cardano-foundation/ledgerjs-hw-app-cardano": "^7.1.4",
     "@ledgerhq/hw-transport-webhid": "^6.35.4",
+    "@trezor/connect-web": "^9.7.3",
     "bech32": "^1.1.4",
     "qrcode.react": "^4.2.0",
     "react": "^19.0.0",

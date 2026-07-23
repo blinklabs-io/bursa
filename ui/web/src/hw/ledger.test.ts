@@ -39,10 +39,12 @@ vi.mock("@ledgerhq/hw-transport-webhid", () => ({
   default: { create: mockCreate },
 }));
 
-vi.mock("@cardano-foundation/ledgerjs-hw-app-cardano", () => ({
-  default: mockAdaConstructor,
-  Ada: mockAdaConstructor,
-}));
+// Keep the real enum exports (TxOutputDestinationType, AddressType, …) that the
+// neutral→ledgerjs mapping in ledger.ts references; only the Ada class is mocked.
+vi.mock("@cardano-foundation/ledgerjs-hw-app-cardano", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@cardano-foundation/ledgerjs-hw-app-cardano")>();
+  return { ...actual, default: mockAdaConstructor, Ada: mockAdaConstructor };
+});
 
 // ── Test constants ────────────────────────────────────────────────────────────
 //
@@ -73,7 +75,31 @@ const MOCK_WITNESS_SIG_HEX = "aabbccdd".repeat(16); // 64 bytes
 
 // ── Import SUT after mocks ────────────────────────────────────────────────────
 import { connectLedger } from "./ledger";
-import type { SignTransactionRequest } from "@cardano-foundation/ledgerjs-hw-app-cardano";
+import type { HardwareSignResponse } from "../api/types";
+
+// A neutral backend signing request (device-agnostic). connectLedger's signTx
+// maps this to the ledgerjs SignTransactionRequest internally; the mapping
+// assertions below used to live in Send.test.tsx and moved here with the code.
+const NEUTRAL_REQ: HardwareSignResponse = {
+  network: "mainnet",
+  network_id: 1,
+  include_network_id: true,
+  protocol_magic: 764824073,
+  inputs: [{ tx_hash_hex: "deadbeef", output_index: 0, path: "1852'/1815'/0'/0/0" }],
+  outputs: [
+    { address_hex: "60aabb", address_bech32: "addr1recipient", lovelace: "1000000" },
+    {
+      address_hex: "60ccdd",
+      address_bech32: "addr1change",
+      lovelace: "3800000",
+      payment_path: "1852'/1815'/0'/0/0",
+      stake_path: "1852'/1815'/0'/2/0",
+    },
+  ],
+  fee: "200000",
+  required_signers: ["aabbccdd"],
+  unsigned_tx_cbor: "84a4deadbeef",
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function setWebHID(available: boolean) {
@@ -125,6 +151,19 @@ describe("connectLedger", () => {
     await session.close();
   });
 
+  test("reports kind 'ledger' and send-only capabilities", async () => {
+    const session = await connectLedger();
+    expect(session.kind).toBe("ledger");
+    expect(session.capabilities).toEqual({
+      send: true,
+      staking: false,
+      governance: false,
+      multisig: false,
+      poolReg: false,
+    });
+    await session.close();
+  });
+
   describe("getAccountXpub", () => {
     test("calls getExtendedPublicKey with correct CIP-1852 path for account 0", async () => {
       const session = await connectLedger();
@@ -156,28 +195,93 @@ describe("connectLedger", () => {
   });
 
   describe("signTx", () => {
-    test("calls signTransaction with the request and returns a raw CBOR witness array", async () => {
+    test("maps the neutral request to a ledgerjs SignTransactionRequest", async () => {
       const session = await connectLedger();
 
-      const txReq: SignTransactionRequest = {
-        tx: {
-          network: { protocolMagic: 764824073, networkId: 1 },
-          inputs: [],
-          outputs: [],
-          fee: 200000,
-        },
-        signingMode: "ordinary_transaction" as const,
-      } as SignTransactionRequest;
-
-      const result = await session.signTx(txReq);
+      await session.signTx(NEUTRAL_REQ);
 
       expect(mockSignTransaction).toHaveBeenCalledOnce();
-      // The request object must be passed through to the device unchanged.
-      expect(mockSignTransaction).toHaveBeenCalledWith(txReq);
-      // Result is CBOR hex: [[pubkey, sig], ...]
-      // Must be a non-empty hex string
+      const request = mockSignTransaction.mock.calls[0][0];
+
+      // ORDINARY signing with the network + required-signer fields carried over.
+      expect(request.signingMode).toBe("ordinary_transaction");
+      expect(request.tx.network).toEqual({ protocolMagic: 764824073, networkId: 1 });
+      expect(request.tx.includeNetworkId).toBe(true);
+      expect(request.tx.requiredSigners).toEqual([
+        { type: "required_signer_hash", hashHex: "aabbccdd" },
+      ]);
+
+      // Third-party recipient by raw address hex; device-owned change by path.
+      expect(request.tx.outputs[0].destination).toEqual({
+        type: "third_party",
+        params: { addressHex: "60aabb" },
+      });
+      expect(request.tx.outputs[1].destination).toEqual({
+        type: "device_owned",
+        params: {
+          type: 0,
+          params: {
+            spendingPath: [0x8000073c, 0x80000717, 0x80000000, 0, 0],
+            stakingPath: [0x8000073c, 0x80000717, 0x80000000, 2, 0],
+          },
+        },
+      });
+      // ledgerjs iterates tokenBundle even for ADA-only outputs.
+      expect(request.tx.outputs.every((o: { tokenBundle: unknown[] }) => Array.isArray(o.tokenBundle))).toBe(
+        true,
+      );
+      await session.close();
+    });
+
+    test("maps native assets into the ledger token bundle grouped by policy id", async () => {
+      // A recipient output carrying two assets under one policy plus one under a
+      // second policy. The device MUST receive these grouped so it signs the
+      // same tx the backend built — an empty bundle would drop the tokens.
+      const MULTI_ASSET_REQ: HardwareSignResponse = {
+        ...NEUTRAL_REQ,
+        outputs: [
+          {
+            address_hex: "60aabb",
+            address_bech32: "addr1recipient",
+            lovelace: "1000000",
+            assets: [
+              { policy_id_hex: "aa".repeat(28), asset_name_hex: "544f4b454e31", amount: "5" },
+              { policy_id_hex: "aa".repeat(28), asset_name_hex: "544f4b454e32", amount: "7" },
+              { policy_id_hex: "bb".repeat(28), asset_name_hex: "", amount: "3" },
+            ],
+          },
+          NEUTRAL_REQ.outputs[1], // wallet-owned change, ADA-only
+        ],
+      };
+
+      const session = await connectLedger();
+      await session.signTx(MULTI_ASSET_REQ);
+
+      const request = mockSignTransaction.mock.calls[0][0];
+      expect(request.tx.outputs[0].tokenBundle).toEqual([
+        {
+          policyIdHex: "aa".repeat(28),
+          tokens: [
+            { assetNameHex: "544f4b454e31", amount: 5n },
+            { assetNameHex: "544f4b454e32", amount: 7n },
+          ],
+        },
+        {
+          policyIdHex: "bb".repeat(28),
+          tokens: [{ assetNameHex: "", amount: 3n }],
+        },
+      ]);
+      // The ADA-only change output keeps an empty bundle (ledgerjs iterates it).
+      expect(request.tx.outputs[1].tokenBundle).toEqual([]);
+      await session.close();
+    });
+
+    test("returns a raw CBOR witness array", async () => {
+      const session = await connectLedger();
+      const result = await session.signTx(NEUTRAL_REQ);
+      // Result is CBOR hex: [[pubkey, sig], ...] — a non-empty hex string with
+      // one outer array followed by one two-element witness tuple.
       expect(result).toMatch(/^[0-9a-f]+$/);
-      // One outer witness array followed by one two-element witness tuple.
       expect(result.startsWith("8182")).toBe(true);
       await session.close();
     });
@@ -191,17 +295,7 @@ describe("connectLedger", () => {
         chainCodeHex: TEST_CHAIN_CODE_HEX,
       });
 
-      const txReq: SignTransactionRequest = {
-        tx: {
-          network: { protocolMagic: 764824073, networkId: 1 },
-          inputs: [],
-          outputs: [],
-          fee: 200000,
-        },
-        signingMode: "ordinary_transaction" as const,
-      } as SignTransactionRequest;
-
-      const result = await session.signTx(txReq);
+      const result = await session.signTx(NEUTRAL_REQ);
 
       // The CBOR hex must contain both the pubkey and the sig as substrings
       expect(result).toContain(MOCK_WITNESS_PUB_HEX);
