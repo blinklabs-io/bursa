@@ -2,9 +2,13 @@ import { act, renderHook } from "@testing-library/react";
 import { useHashRoute, navigate } from "./router";
 
 // The hash is global state shared across the jsdom window; reset it between
-// tests so a leftover route from one case can't leak into the next.
+// tests so a leftover route from one case can't leak into the next. Restoring
+// all mocks here guarantees any spy (e.g. the addEventListener/removeEventListener
+// spies below) is torn down even if an assertion throws before its own cleanup,
+// so a leaked spy can never bleed into another test.
 afterEach(() => {
   window.location.hash = "";
+  vi.restoreAllMocks();
 });
 
 // --- getRoute parsing (observed through useHashRoute's initial value) ---
@@ -72,9 +76,8 @@ test("registers a hashchange listener on mount and removes the same one on unmou
   // cleanup omits removeEventListener, unlike a behavioural-only assertion).
   unmount();
   expect(remove).toHaveBeenCalledWith("hashchange", handler);
-
-  add.mockRestore();
-  remove.mockRestore();
+  // Spies are restored in afterEach (vi.restoreAllMocks), so they cannot leak
+  // into other tests even if an assertion above throws first.
 });
 
 test("useHashRoute stops updating after unmount (no stale setState)", () => {
