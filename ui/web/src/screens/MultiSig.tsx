@@ -96,11 +96,12 @@ function ListView({ accounts, onCreate, onOpen }: ListViewProps) {
 // ---------------------------------------------------------------------------
 
 interface CreateViewProps {
+  canSign: boolean;
   onCancel: () => void;
   onCreated: (acct: MultiSigAccount) => void;
 }
 
-function CreateView({ onCancel, onCreated }: CreateViewProps) {
+function CreateView({ canSign, onCancel, onCreated }: CreateViewProps) {
   const mounted = useMountedRef();
   const [label, setLabel] = useState("");
   const [threshold, setThreshold] = useState("2");
@@ -231,53 +232,55 @@ function CreateView({ onCancel, onCreated }: CreateViewProps) {
           disabled={loading}
         />
 
-        {/* Your own participant key, to share and to add to the policy. */}
-        <div className="ms-mykey">
-          <p className="field-label">Your participant key (CIP-1854)</p>
-          {myKeyHash ? (
-            <>
-              <p className="helper-text">Share this key-hash so others can include you.</p>
-              <div className="tx-hash-row">
-                <code className="tx-hash">{myKeyHash}</code>
-                <CopyButton value={myKeyHash} />
-              </div>
-              {myKeyVkey && (
+        {/* Your own participant key requires a seed-derived CIP-1854 key. */}
+        {canSign && (
+          <div className="ms-mykey">
+            <p className="field-label">Your participant key (CIP-1854)</p>
+            {myKeyHash ? (
+              <>
+                <p className="helper-text">Share this key-hash so others can include you.</p>
                 <div className="tx-hash-row">
-                  <code className="tx-hash">vkey: {myKeyVkey}</code>
-                  <CopyButton value={myKeyVkey} />
+                  <code className="tx-hash">{myKeyHash}</code>
+                  <CopyButton value={myKeyHash} />
                 </div>
-              )}
-              <Button
-                variant="ghost"
-                onClick={addMyself}
-                disabled={
-                  loading ||
-                  participants.some((p) => p.key_hash_hex.toLowerCase() === myKeyHash?.toLowerCase())
-                }
-              >
-                + Add myself
-              </Button>
-            </>
-          ) : (
-            <>
-              <p className="helper-text">
-                Enter your spending password to reveal your key-hash to share.
-              </p>
-              <Input
-                type="password"
-                placeholder="Spending password"
-                value={myKeyPassword}
-                onChange={(e) => setMyKeyPassword(e.target.value)}
-                disabled={loadingMyKey}
-                aria-label="Spending password"
-              />
-              {myKeyError && <ErrorText message={myKeyError} />}
-              <Button variant="ghost" onClick={handleRevealMyKey} disabled={loadingMyKey || !myKeyPassword}>
-                {loadingMyKey ? "Deriving…" : "Reveal my key"}
-              </Button>
-            </>
-          )}
-        </div>
+                {myKeyVkey && (
+                  <div className="tx-hash-row">
+                    <code className="tx-hash">vkey: {myKeyVkey}</code>
+                    <CopyButton value={myKeyVkey} />
+                  </div>
+                )}
+                <Button
+                  variant="ghost"
+                  onClick={addMyself}
+                  disabled={
+                    loading ||
+                    participants.some((p) => p.key_hash_hex.toLowerCase() === myKeyHash?.toLowerCase())
+                  }
+                >
+                  + Add myself
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="helper-text">
+                  Enter your spending password to reveal your key-hash to share.
+                </p>
+                <Input
+                  type="password"
+                  placeholder="Spending password"
+                  value={myKeyPassword}
+                  onChange={(e) => setMyKeyPassword(e.target.value)}
+                  disabled={loadingMyKey}
+                  aria-label="Spending password"
+                />
+                {myKeyError && <ErrorText message={myKeyError} />}
+                <Button variant="ghost" onClick={handleRevealMyKey} disabled={loadingMyKey || !myKeyPassword}>
+                  {loadingMyKey ? "Deriving…" : "Reveal my key"}
+                </Button>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Co-signer participants. */}
         <p className="field-label">Participants ({participants.length})</p>
@@ -374,11 +377,12 @@ function CreateView({ onCancel, onCreated }: CreateViewProps) {
 interface DetailViewProps {
   account: MultiSigAccount;
   canSpend: boolean;
+  canSign: boolean;
   onBack: () => void;
   onDeleted: () => void;
 }
 
-function DetailView({ account, canSpend, onBack, onDeleted }: DetailViewProps) {
+function DetailView({ account, canSpend, canSign, onBack, onDeleted }: DetailViewProps) {
   const mounted = useMountedRef();
   const [balance, setBalance] = useState<string | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
@@ -466,7 +470,12 @@ function DetailView({ account, canSpend, onBack, onDeleted }: DetailViewProps) {
         </div>
       </Card>
 
-      <SpendFlow account={account} canSpend={canSpend} onSpent={() => void loadBalance()} />
+      <SpendFlow
+        account={account}
+        canSpend={canSpend}
+        canSign={canSign}
+        onSpent={() => void loadBalance()}
+      />
     </div>
   );
 }
@@ -478,10 +487,11 @@ function DetailView({ account, canSpend, onBack, onDeleted }: DetailViewProps) {
 interface SpendFlowProps {
   account: MultiSigAccount;
   canSpend: boolean;
+  canSign: boolean;
   onSpent: () => void;
 }
 
-function SpendFlow({ account, canSpend, onSpent }: SpendFlowProps) {
+function SpendFlow({ account, canSpend, canSign, onSpent }: SpendFlowProps) {
   const [to, setTo] = useState("");
   const [ada, setAda] = useState("");
   const [built, setBuilt] = useState<MultiSigUnsignedTx | null>(null);
@@ -553,6 +563,7 @@ function SpendFlow({ account, canSpend, onSpent }: SpendFlowProps) {
         built={built}
         witnesses={witnesses}
         setWitnesses={setWitnesses}
+        canSign={canSign}
         onResult={setResult}
         onSpent={onSpent}
         onBack={reset}
@@ -595,15 +606,25 @@ interface CollectProps {
   built: MultiSigUnsignedTx;
   witnesses: string[];
   setWitnesses: Dispatch<SetStateAction<string[]>>;
+  canSign: boolean;
   onResult: (r: TxResult) => void;
   onSpent: () => void;
   onBack: () => void;
 }
 
-// CollectAndSubmit shows the unsigned tx for export, lets a co-signer on THIS
-// instance sign with their password, accepts pasted witnesses from other
-// co-signers, tracks "X of N collected", and submits once the threshold is met.
-function CollectAndSubmit({ accountId, built, witnesses, setWitnesses, onResult, onSpent, onBack }: CollectProps) {
+// CollectAndSubmit shows the unsigned tx for export, optionally lets a local
+// seed-backed co-signer sign with their password, accepts pasted witnesses from
+// other co-signers, tracks "X of N collected", and submits at the threshold.
+function CollectAndSubmit({
+  accountId,
+  built,
+  witnesses,
+  setWitnesses,
+  canSign,
+  onResult,
+  onSpent,
+  onBack,
+}: CollectProps) {
   const [password, setPassword] = useState("");
   const [pasteWitness, setPasteWitness] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -682,19 +703,23 @@ function CollectAndSubmit({ accountId, built, witnesses, setWitnesses, onResult,
           {collected > 0 && ` (${collected} witness${collected === 1 ? "" : "es"})`}
         </p>
 
-        {/* Sign on this instance. */}
-        <label htmlFor="ms-sign-pw">Sign with this wallet</label>
-        <Input
-          id="ms-sign-pw"
-          type="password"
-          placeholder="Spending password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          disabled={signing}
-        />
-        <Button variant="ghost" onClick={handleSignHere} disabled={signing || !password}>
-          {signing ? "Signing…" : "Sign here"}
-        </Button>
+        {/* Sign locally only when the seed-derived CIP-1854 key is available. */}
+        {canSign && (
+          <>
+            <label htmlFor="ms-sign-pw">Sign with this wallet</label>
+            <Input
+              id="ms-sign-pw"
+              type="password"
+              placeholder="Spending password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={signing}
+            />
+            <Button variant="ghost" onClick={handleSignHere} disabled={signing || !password}>
+              {signing ? "Signing…" : "Sign here"}
+            </Button>
+          </>
+        )}
 
         {/* Paste a witness from another co-signer. */}
         <label htmlFor="ms-paste">Add a co-signer's witness (CBOR)</label>
@@ -734,9 +759,10 @@ type View = "list" | "create" | "detail";
 
 interface MultiSigProps {
   canSpend: boolean;
+  canSign: boolean;
 }
 
-export function MultiSig({ canSpend }: MultiSigProps) {
+export function MultiSig({ canSpend, canSign }: MultiSigProps) {
   const mounted = useMountedRef();
   const [view, setView] = useState<View>("list");
   const [accounts, setAccounts] = useState<MultiSigAccount[]>([]);
@@ -766,6 +792,7 @@ export function MultiSig({ canSpend }: MultiSigProps) {
   if (view === "create") {
     return (
       <CreateView
+        canSign={canSign}
         onCancel={() => setView("list")}
         onCreated={(acct) => {
           setSelected(acct);
@@ -781,6 +808,7 @@ export function MultiSig({ canSpend }: MultiSigProps) {
       <DetailView
         account={selected}
         canSpend={canSpend}
+        canSign={canSign}
         onBack={() => {
           setSelected(null);
           void refresh();

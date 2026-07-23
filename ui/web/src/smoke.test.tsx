@@ -11,6 +11,7 @@ const walletA: WalletView = {
   stake_address: "stake_test1abc",
   addresses: ["addr_test1abc"],
   active: true,
+  type: "full",
 };
 
 test("renders the app shell once a wallet is active", async () => {

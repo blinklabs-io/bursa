@@ -618,6 +618,49 @@ func TestLenientBech32Decode(t *testing.T) {
 	}
 }
 
+// testAccountXPrv returns a known account XPrv (m/1852'/1815'/0') derived from a fixed entropy.
+// Uses the same zero-entropy test vector already used by TestCardanoWalletVectors.
+func testAccountXPrv(t *testing.T) XPrv {
+	t.Helper()
+	entropy := make([]byte, 32) // 32 bytes of zeros — same as TestCardanoWalletVectors
+	root := FromBip39Entropy(entropy, []byte{})
+	return root.
+		Derive(HardenedIndex(1852)).
+		Derive(HardenedIndex(1815)).
+		Derive(HardenedIndex(0))
+}
+
+// TestXPubDeriveMatchesXPrvPublic verifies that public-key child derivation produces
+// the same result as private-key child derivation followed by extraction of the public key.
+func TestXPubDeriveMatchesXPrvPublic(t *testing.T) {
+	acct := testAccountXPrv(t)
+	xpub := acct.Public()
+	for _, i := range []uint32{0, 1, 2, 5, 100} {
+		childPrv := acct.Derive(i)
+		childPubViaPrv := childPrv.Public().PublicKey()
+		childPubViaPub, err := xpub.Derive(i)
+		if err != nil {
+			t.Fatalf("XPub.Derive(%d): %v", i, err)
+		}
+		if !bytes.Equal(childPubViaPub.PublicKey(), childPubViaPrv) {
+			t.Fatalf("index %d: XPub.Derive pubkey %x != XPrv.Derive pubkey %x",
+				i, childPubViaPub.PublicKey(), childPubViaPrv)
+		}
+		if !bytes.Equal(childPubViaPub.ChainCode(), childPrv.Public().ChainCode()) {
+			t.Fatalf("index %d: chain code mismatch: got %x, want %x",
+				i, childPubViaPub.ChainCode(), childPrv.Public().ChainCode())
+		}
+	}
+}
+
+// TestXPubDeriveRejectsHardened verifies that hardened index derivation from XPub returns an error.
+func TestXPubDeriveRejectsHardened(t *testing.T) {
+	xpub := testAccountXPrv(t).Public()
+	if _, err := xpub.Derive(0x80000000); err == nil {
+		t.Fatal("hardened index must return an error")
+	}
+}
+
 // TestCIP3IcarusTestVectors validates CIP-3 Icarus master key derivation against
 // official test vectors from https://cips.cardano.org/cip/CIP-0003
 func TestCIP3IcarusTestVectors(t *testing.T) {

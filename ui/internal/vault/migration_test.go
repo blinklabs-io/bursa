@@ -16,6 +16,7 @@ package vault
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -199,5 +200,99 @@ func TestFormat1VaultWrongPasswordFails(t *testing.T) {
 	}
 	if string(probe["format"]) != "1" {
 		t.Fatalf("format after failed unlock = %s, want 1 (unchanged)", probe["format"])
+	}
+}
+
+func TestFormat1VaultMigrationWriteFailureAbortsUnlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vault.json")
+	seal, open := keystore.CheapTestSealer()
+	idx := &index{Wallets: []WalletMeta{{
+		ID:      "legacy-wallet-1",
+		Name:    "legacy",
+		Network: "preview",
+	}}}
+	writeFormat1Vault(t, path, seal, idx, nil)
+
+	persistErr := errors.New("persist unavailable")
+	v := New(path)
+	v.SetCipher(func([]byte, string) ([]byte, error) {
+		return nil, persistErr
+	}, open)
+	if _, err := v.Unlock(vaultPw); !errors.Is(err, persistErr) {
+		t.Fatalf("Unlock error = %v, want migration persistence error", err)
+	}
+	if _, err := v.Wallets(); !errors.Is(err, ErrLocked) {
+		t.Fatalf("Wallets error = %v, want ErrLocked", err)
+	}
+}
+
+func TestFormat2WithoutWalletCountUnlocksReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vault.json")
+	seal, open := keystore.CheapTestSealer()
+
+	v1 := New(path)
+	v1.SetCipher(seal, open)
+	if err := v1.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	meta, err := v1.AddWallet("main", mnemonicA, "preview", vaultPw, spendPwA, window)
+	if err != nil {
+		t.Fatalf("AddWallet: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read vault: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("unmarshal vault: %v", err)
+	}
+	delete(fields, "wallet_count")
+	withoutCount, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("marshal vault without wallet_count: %v", err)
+	}
+	if err := os.WriteFile(path, withoutCount, 0o600); err != nil {
+		t.Fatalf("write vault without wallet_count: %v", err)
+	}
+
+	// Model a vault mounted read-only. Unlock only needs to read and decrypt this
+	// format-2 file; optional cleartext metadata is deferred to a future write.
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatalf("chmod vault: %v", err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod vault directory: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0o700)
+		_ = os.Chmod(path, 0o600)
+	})
+
+	v2 := New(path)
+	v2.SetCipher(seal, open)
+	wallets, err := v2.Unlock(vaultPw)
+	if err != nil {
+		t.Fatalf("Unlock read-only format-2 vault: %v", err)
+	}
+	if len(wallets) != 1 || wallets[0].ID != meta.ID {
+		t.Fatalf("wallets = %+v, want wallet %q", wallets, meta.ID)
+	}
+	if v2.ActiveID() != meta.ID {
+		t.Fatalf("active wallet = %q, want %q", v2.ActiveID(), meta.ID)
+	}
+	afterUnlock, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read vault after unlock: %v", err)
+	}
+	var afterFields map[string]json.RawMessage
+	if err := json.Unmarshal(afterUnlock, &afterFields); err != nil {
+		t.Fatalf("unmarshal vault after unlock: %v", err)
+	}
+	if _, ok := afterFields["wallet_count"]; ok {
+		t.Fatal("Unlock unexpectedly rewrote optional wallet_count metadata")
 	}
 }

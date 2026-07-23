@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
 
 const (
@@ -597,5 +598,98 @@ func TestPersistenceAcrossHandles(t *testing.T) {
 	seed, err := v2.UnlockSeed(spendPwA)
 	if err != nil || string(seed) != mnemonicA {
 		t.Fatalf("fresh-handle seed unlock: err=%v", err)
+	}
+}
+
+// hasSeedBlob reads the raw on-disk envelope and returns true if a seed blob
+// entry exists for the given wallet id. Hardware wallets must have no such
+// entry.
+func hasSeedBlob(t *testing.T, v *Vault, id string) bool {
+	t.Helper()
+	blob, err := os.ReadFile(v.path)
+	if err != nil {
+		t.Fatalf("hasSeedBlob ReadFile: %v", err)
+	}
+	var env envelope
+	if err := json.Unmarshal(blob, &env); err != nil {
+		t.Fatalf("hasSeedBlob Unmarshal: %v", err)
+	}
+	_, ok := env.Seeds[id]
+	return ok
+}
+
+func TestAddHardwareWallet(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Derive a fixed bech32 account xpub from the known test mnemonic.
+	xpub, err := wallet.AccountXpubFromMnemonicBytes([]byte(mnemonicA))
+	if err != nil {
+		t.Fatalf("AccountXpubFromMnemonicBytes: %v", err)
+	}
+
+	const hwWindowN = 5
+	meta, err := v.AddHardwareWallet("My Ledger", xpub, "preview", vaultPw, 0, hwWindowN)
+	if err != nil {
+		t.Fatalf("AddHardwareWallet: %v", err)
+	}
+
+	if meta.Type != WalletTypeHardware {
+		t.Fatalf("wallet type = %q, want %q", meta.Type, WalletTypeHardware)
+	}
+	// The stored xpub must match.
+	if meta.AccountXpub != xpub {
+		t.Fatalf("AccountXpub = %q, want %q", meta.AccountXpub, xpub)
+	}
+	// The correct number of receive addresses must be derived.
+	if len(meta.Account.ReceiveAddresses) != hwWindowN {
+		t.Fatalf("ReceiveAddresses = %d, want %d", len(meta.Account.ReceiveAddresses), hwWindowN)
+	}
+	// The added wallet becomes active.
+	if v.ActiveID() != meta.ID {
+		t.Fatalf("active = %q, want %q", v.ActiveID(), meta.ID)
+	}
+
+	// Critical: no seed blob may be persisted for this wallet id.
+	if hasSeedBlob(t, v, meta.ID) {
+		t.Fatal("hardware wallet must persist NO seed material")
+	}
+	// The cleartext count metadata, rather than the seed map, must keep status
+	// accurate while the index is locked and after a process relaunch.
+	v.Lock()
+	if got := v.WalletCount(); got != 1 {
+		t.Fatalf("WalletCount after lock = %d, want 1", got)
+	}
+
+	// Reload via a fresh handle to confirm the Hardware flag and xpub survive
+	// an unlock/re-read cycle.
+	v2 := New(v.path)
+	seal, open := keystore.CheapTestSealer()
+	v2.SetCipher(seal, open)
+	if got := v2.WalletCount(); got != 1 {
+		t.Fatalf("fresh-handle WalletCount before unlock = %d, want 1", got)
+	}
+	wallets, err := v2.Unlock(vaultPw)
+	if err != nil {
+		t.Fatalf("Unlock on fresh handle: %v", err)
+	}
+	if len(wallets) != 1 {
+		t.Fatalf("fresh-handle wallets = %d, want 1", len(wallets))
+	}
+	reloaded := wallets[0]
+	if reloaded.Type != WalletTypeHardware {
+		t.Fatalf("wallet type after reload = %q, want %q", reloaded.Type, WalletTypeHardware)
+	}
+	if reloaded.AccountXpub != xpub {
+		t.Fatalf("AccountXpub after reload = %q, want %q", reloaded.AccountXpub, xpub)
+	}
+	if len(reloaded.Account.ReceiveAddresses) != hwWindowN {
+		t.Fatalf("ReceiveAddresses after reload = %d, want %d", len(reloaded.Account.ReceiveAddresses), hwWindowN)
+	}
+	// Still no seed blob after reload.
+	if hasSeedBlob(t, v2, meta.ID) {
+		t.Fatal("hardware wallet seed blob appeared after reload")
 	}
 }

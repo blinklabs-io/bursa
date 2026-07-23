@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	apollo "github.com/blinklabs-io/apollo/v2"
 	"github.com/blinklabs-io/apollo/v2/backend"
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
@@ -18,6 +19,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/blinklabs-io/gouroboros/ledger"
+	"github.com/blinklabs-io/gouroboros/ledger/babbage"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/blinklabs-io/gouroboros/ledger/conway"
 	"github.com/blinklabs-io/gouroboros/ledger/shelley"
@@ -132,6 +134,31 @@ func (o *fakeOutput) Utxorpc() (*utxorpc.TxOutput, error) { return nil, nil }
 func (o *fakeOutput) ScriptRef() lcommon.Script           { return nil }
 func (o *fakeOutput) ToPlutusData() data.PlutusData       { return nil }
 func (o *fakeOutput) String() string                      { return o.address.String() }
+
+// fakeOutputWithAssets is like fakeOutput but also carries native assets — used
+// to construct test UTxOs that contain native tokens so apollo can forward them.
+type fakeOutputWithAssets struct {
+	fakeOutput
+	assets *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput]
+}
+
+func (o *fakeOutputWithAssets) Assets() *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput] {
+	return o.assets
+}
+
+// newFakeMultiAsset creates a minimal MultiAsset with one policy/asset entry.
+func newFakeMultiAsset(policyHex, assetNameHex string, qty int64) *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput] {
+	policyBytes, _ := hex.DecodeString(policyHex)
+	assetBytes, _ := hex.DecodeString(assetNameHex)
+	var policyID lcommon.Blake2b224
+	copy(policyID[:], policyBytes)
+	assetName := cbor.NewByteString(assetBytes)
+	data := map[lcommon.Blake2b224]map[cbor.ByteString]lcommon.MultiAssetTypeOutput{
+		policyID: {assetName: new(big.Int).SetInt64(qty)},
+	}
+	ma := lcommon.NewMultiAsset(data)
+	return &ma
+}
 
 // backend.ChainContext implementation for fakeChain.
 func (fc *fakeChain) ProtocolParams(_ context.Context) (backend.ProtocolParameters, error) {
@@ -1760,6 +1787,17 @@ func TestWitnessTxRejectsWalletChanged(t *testing.T) {
 	}
 }
 
+// mustNewAddress is a test helper that converts a bech32 address string and
+// fails the test if it cannot be parsed.
+func mustNewAddress(t *testing.T, addr string) lcommon.Address {
+	t.Helper()
+	a, err := lcommon.NewAddress(addr)
+	if err != nil {
+		t.Fatalf("lcommon.NewAddress(%q): %v", addr, err)
+	}
+	return a
+}
+
 // TestSetWalletCreatesKeystoreAndEnablesBuild exercises the SetWallet lifecycle
 // against a real keystore: before SetWallet, Build reports ErrNoWallet; after,
 // the keystore exists and Build works; re-attaching needs the correct password.
@@ -1804,5 +1842,498 @@ func TestSetWalletCreatesKeystoreAndEnablesBuild(t *testing.T) {
 	}
 	if _, err := s.SetWallet(differentMnemonic, "preview", "spend-password-1"); err == nil {
 		t.Fatal("SetWallet re-attach with different mnemonic should fail")
+	}
+}
+
+func TestHardwareSignRequest(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	recipientAcct, err := wallet.Derive(differentMnemonic, "preview", 1)
+	if err != nil {
+		t.Fatalf("derive recipient account: %v", err)
+	}
+	recipientAddr := recipientAcct.ReceiveAddresses[0]
+
+	fc := newFakeChain(10_000_000, addr0)
+	s := NewService(fc, nil, acct)
+
+	// Build a pending transaction.
+	pv, err := s.Build(context.Background(), SendRequest{To: recipientAddr, Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// Get the hardware sign request.
+	req, err := s.HardwareSignRequest(pv.PendingID)
+	if err != nil {
+		t.Fatalf("HardwareSignRequest: %v", err)
+	}
+
+	// Verify basic fields.
+	if req.Network != "preview" {
+		t.Fatalf("Network = %q, want preview", req.Network)
+	}
+	if req.NetworkID != 0 {
+		t.Fatalf("NetworkID = %d, want 0", req.NetworkID)
+	}
+	if req.ProtocolMagic != 2 {
+		t.Fatalf("ProtocolMagic = %d, want 2", req.ProtocolMagic)
+	}
+	if !req.IncludeNetworkID {
+		t.Fatal("IncludeNetworkID must preserve the network-id field from the payment body")
+	}
+	if req.Unsupported != "" {
+		t.Fatalf("Unsupported must be empty for simple payment, got %q", req.Unsupported)
+	}
+	if req.Fee == "" || req.Fee == "0" {
+		t.Fatalf("Fee = %q, want non-zero", req.Fee)
+	}
+	if req.UnsignedTxCBOR == "" {
+		t.Fatal("UnsignedTxCBOR must not be empty")
+	}
+	wantRequired := keyHashesHex(bodyRequiredSigners(t, req.UnsignedTxCBOR))
+	if !equalStringSets(req.RequiredSigners, wantRequired) || len(req.RequiredSigners) == 0 {
+		t.Fatalf("RequiredSigners = %v, want body required signers %v", req.RequiredSigners, wantRequired)
+	}
+
+	// Verify inputs have paths (payment tx funds from addr0 at index 0).
+	if len(req.Inputs) == 0 {
+		t.Fatal("expected at least one input")
+	}
+	hasPath := false
+	for _, inp := range req.Inputs {
+		if inp.Path != "" {
+			hasPath = true
+			// Path must follow CIP-1852 format.
+			if inp.Path != "1852'/1815'/0'/0/0" {
+				t.Fatalf("unexpected path %q for index 0 payment key", inp.Path)
+			}
+		}
+	}
+	if !hasPath {
+		t.Fatal("at least one input should have a derivation path")
+	}
+
+	// Verify outputs are present with lovelace.
+	if len(req.Outputs) == 0 {
+		t.Fatal("expected at least one output")
+	}
+	sawRecipient := false
+	sawChange := false
+	for _, out := range req.Outputs {
+		if out.Lovelace == "" || out.Lovelace == "0" {
+			t.Fatalf("output lovelace must be non-zero: %+v", out)
+		}
+		if out.AddressHex == "" {
+			t.Fatalf("output AddressHex must not be empty: %+v", out)
+		}
+		if out.AddressBech32 == "" {
+			t.Fatalf("output AddressBech32 must not be empty: %+v", out)
+		}
+		switch out.AddressBech32 {
+		case recipientAddr:
+			sawRecipient = true
+			if out.PaymentPath != "" || out.StakePath != "" {
+				t.Fatalf("third-party recipient must not have device paths: %+v", out)
+			}
+		case addr0:
+			sawChange = true
+			if out.PaymentPath != "1852'/1815'/0'/0/0" {
+				t.Fatalf("change payment path = %q, want account 0 external index 0", out.PaymentPath)
+			}
+			if out.StakePath != "1852'/1815'/0'/2/0" {
+				t.Fatalf("change stake path = %q, want account 0 stake index 0", out.StakePath)
+			}
+		}
+	}
+	if !sawRecipient || !sawChange {
+		t.Fatalf("outputs must include recipient and change: %+v", req.Outputs)
+	}
+}
+
+func TestHardwareSignRequestPreprodProtocolMagic(t *testing.T) {
+	acct, err := wallet.Derive(testMnemonic, "preprod", 2)
+	if err != nil {
+		t.Fatalf("derive preprod account: %v", err)
+	}
+	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
+	s := NewService(fc, nil, acct)
+
+	pv, err := s.Build(context.Background(), SendRequest{
+		To:       acct.ReceiveAddresses[1],
+		Lovelace: "1000000",
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	req, err := s.HardwareSignRequest(pv.PendingID)
+	if err != nil {
+		t.Fatalf("HardwareSignRequest: %v", err)
+	}
+
+	if req.NetworkID != 0 {
+		t.Fatalf("NetworkID = %d, want 0", req.NetworkID)
+	}
+	if req.ProtocolMagic != 1 {
+		t.Fatalf("ProtocolMagic = %d, want 1", req.ProtocolMagic)
+	}
+}
+
+func TestHardwareSignRequestUsesAccountIndex(t *testing.T) {
+	root, err := bursa.GetRootKeyFromMnemonic(testMnemonic, "")
+	if err != nil {
+		t.Fatalf("root key: %v", err)
+	}
+	accountKey, err := bursa.GetAccountKey(root, 2)
+	if err != nil {
+		t.Fatalf("account key: %v", err)
+	}
+	acct, err := wallet.DeriveFromAccountXpub(accountKey.Public().String(), "preview", 2, 3)
+	if err != nil {
+		t.Fatalf("derive account 2: %v", err)
+	}
+	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
+	s := NewService(fc, nil, acct)
+	pv, err := s.Build(context.Background(), SendRequest{
+		To: acct.ReceiveAddresses[1], Lovelace: "1000000",
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	req, err := s.HardwareSignRequest(pv.PendingID)
+	if err != nil {
+		t.Fatalf("HardwareSignRequest: %v", err)
+	}
+	if got := req.Inputs[0].Path; got != "1852'/1815'/2'/0/0" {
+		t.Fatalf("input path = %q, want account 2", got)
+	}
+	for _, out := range req.Outputs {
+		if out.PaymentPath != "" && !strings.HasPrefix(out.PaymentPath, "1852'/1815'/2'/") {
+			t.Fatalf("owned output payment path = %q, want account 2", out.PaymentPath)
+		}
+		if out.StakePath != "" && out.StakePath != "1852'/1815'/2'/2/0" {
+			t.Fatalf("owned output stake path = %q, want account 2", out.StakePath)
+		}
+	}
+}
+
+func TestHardwareSignRequestUnknownPending(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
+	s := NewService(fc, nil, acct)
+
+	_, err := s.HardwareSignRequest("does-not-exist")
+	if err == nil {
+		t.Fatal("expected error for unknown pending id")
+	}
+	if !errors.Is(err, ErrUnknownPending) {
+		t.Fatalf("expected ErrUnknownPending, got %v", err)
+	}
+}
+
+// TestHardwareSignRequestGuard verifies the safety property: txs with
+// certificates, withdrawals, or native-asset outputs set Unsupported and do
+// NOT leak signing inputs/paths for the certificate and withdrawal cases
+// (where the guard fires before inputs are built).
+func TestHardwareSignRequestGuard(t *testing.T) {
+	acct, err := wallet.Derive(testMnemonic, "preview", 5)
+	if err != nil {
+		t.Fatalf("wallet.Derive: %v", err)
+	}
+	addr0 := acct.ReceiveAddresses[0]
+	addr3 := acct.ReceiveAddresses[3]
+	recvAddr := acct.ReceiveAddresses[4]
+
+	t.Run("certificate tx is rejected", func(t *testing.T) {
+		fc := newFakeChain(5_000_000, addr0)
+		fc.addUTxO(5_000_000, addr3, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc03", 0)
+		s := NewService(fc, nil, acct)
+
+		// Build an initial pending, then replace the builder with one that
+		// includes a stake-registration certificate.
+		pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4000000"})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		s.mu.Lock()
+		p := s.pending[pv.PendingID]
+		s.mu.Unlock()
+
+		changeAddr, _ := lcommon.NewAddress(addr0)
+		a := apollo.New(fc).
+			SetWallet(apollo.NewExternalWallet(changeAddr)).
+			SetChangeAddress(changeAddr).
+			SetFeePadding(feePaddingLovelace).
+			AddLoadedUTxOs(fc.utxos[addr0]...).
+			AddLoadedUTxOs(fc.utxos[addr3]...).
+			PayToAddress(mustNewAddress(t, recvAddr), 1_000_000)
+		a, err = a.RegisterStake(acct.StakeAddress)
+		if err != nil {
+			t.Fatalf("RegisterStake: %v", err)
+		}
+		a, err = a.CompleteContext(context.Background())
+		if err != nil {
+			t.Fatalf("Complete with cert: %v", err)
+		}
+		utxoAddr := make(map[string]string)
+		for _, u := range fc.utxos[addr0] {
+			utxoAddr[makeUtxoRef(u)] = addr0
+		}
+		for _, u := range fc.utxos[addr3] {
+			utxoAddr[makeUtxoRef(u)] = addr3
+		}
+		s.mu.Lock()
+		s.pending[pv.PendingID] = &pending{
+			tx:       a,
+			utxoAddr: utxoAddr,
+			created:  p.created,
+			walletID: p.walletID,
+			account:  p.account,
+		}
+		s.mu.Unlock()
+
+		req, err := s.HardwareSignRequest(pv.PendingID)
+		if err != nil {
+			t.Fatalf("HardwareSignRequest: %v", err)
+		}
+		if req.Unsupported == "" {
+			t.Fatal("expected Unsupported to be set for a cert tx")
+		}
+		// Guard fires before inputs are built: no paths should leak.
+		for _, inp := range req.Inputs {
+			if inp.Path != "" {
+				t.Fatalf("cert guard leaked a signing path: %q", inp.Path)
+			}
+		}
+		if len(req.Inputs) > 0 {
+			t.Fatalf("cert guard: expected no inputs in result, got %d", len(req.Inputs))
+		}
+	})
+
+	t.Run("withdrawal tx is rejected", func(t *testing.T) {
+		fc := newFakeChain(5_000_000, addr0)
+		s := NewService(fc, nil, acct)
+
+		pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		s.mu.Lock()
+		p := s.pending[pv.PendingID]
+		s.mu.Unlock()
+
+		stakeAddr, err := lcommon.NewAddress(acct.StakeAddress)
+		if err != nil {
+			t.Fatalf("NewAddress(stake): %v", err)
+		}
+		changeAddr, _ := lcommon.NewAddress(addr0)
+		a := apollo.New(fc).
+			SetWallet(apollo.NewExternalWallet(changeAddr)).
+			SetChangeAddress(changeAddr).
+			SetFeePadding(feePaddingLovelace).
+			AddLoadedUTxOs(fc.utxos[addr0]...).
+			PayToAddress(mustNewAddress(t, recvAddr), 1_000_000).
+			AddWithdrawal(stakeAddr, 500_000, nil, nil)
+		a, err = a.CompleteContext(context.Background())
+		if err != nil {
+			t.Fatalf("Complete with withdrawal: %v", err)
+		}
+		utxoAddr := make(map[string]string)
+		for _, u := range fc.utxos[addr0] {
+			utxoAddr[makeUtxoRef(u)] = addr0
+		}
+		s.mu.Lock()
+		s.pending[pv.PendingID] = &pending{
+			tx:       a,
+			utxoAddr: utxoAddr,
+			created:  p.created,
+			walletID: p.walletID,
+			account:  p.account,
+		}
+		s.mu.Unlock()
+
+		req, err := s.HardwareSignRequest(pv.PendingID)
+		if err != nil {
+			t.Fatalf("HardwareSignRequest: %v", err)
+		}
+		if req.Unsupported == "" {
+			t.Fatal("expected Unsupported to be set for a withdrawal tx")
+		}
+		// Guard fires before inputs are built: no inputs should leak.
+		if len(req.Inputs) > 0 {
+			t.Fatalf("withdrawal guard: expected no inputs in result, got %d", len(req.Inputs))
+		}
+	})
+
+	t.Run("native-asset output is rejected", func(t *testing.T) {
+		// Fund addr0 with 5 ADA + 1 native token. Apollo needs the token in the
+		// input UTxO before it can route it to an output (coin selection enforces
+		// asset conservation). We inject a fakeOutputWithAssets for that UTxO so
+		// the builder can construct a tx whose outputs carry the native asset.
+		const (
+			policyHex    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" // 28 bytes
+			assetNameHex = "74657374"                                                 // "test"
+		)
+		nativeAssets := newFakeMultiAsset(policyHex, assetNameHex, 1) //nolint:gomnd
+		nativeToken := apollo.NewUnit(policyHex, assetNameHex, 1)
+
+		// Build the input UTxO manually with native assets.
+		var txIDBytes lcommon.Blake2b256
+		copy(txIDBytes[:], make([]byte, 32)) // all-zero hash
+		inputID := shelley.ShelleyTransactionInput{TxId: txIDBytes, OutputIndex: 0}
+		addr0Parsed, _ := lcommon.NewAddress(addr0)
+		inputOutput := &fakeOutputWithAssets{
+			fakeOutput: fakeOutput{address: addr0Parsed, lovelace: 5_000_000},
+			assets:     nativeAssets,
+		}
+		inputUTxO := lcommon.Utxo{Id: inputID, Output: inputOutput}
+
+		// Construct a fakeChain with the asset-bearing UTxO.
+		fc := &fakeChain{utxos: map[string][]lcommon.Utxo{addr0: {inputUTxO}}}
+		s := NewService(fc, nil, acct)
+
+		pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		s.mu.Lock()
+		p := s.pending[pv.PendingID]
+		s.mu.Unlock()
+
+		changeAddr, _ := lcommon.NewAddress(addr0)
+		// Build a tx that sends 2 ADA + the native token to recvAddr.
+		a := apollo.New(fc).
+			SetWallet(apollo.NewExternalWallet(changeAddr)).
+			SetChangeAddress(changeAddr).
+			SetFeePadding(feePaddingLovelace).
+			AddLoadedUTxOs(inputUTxO).
+			PayToAddress(mustNewAddress(t, recvAddr), 2_000_000, nativeToken)
+		a, err = a.CompleteContext(context.Background())
+		if err != nil {
+			t.Fatalf("Complete with native asset: %v", err)
+		}
+		ref := hex.EncodeToString(txIDBytes.Bytes()) + "#0"
+		utxoAddr := map[string]string{ref: addr0}
+		s.mu.Lock()
+		s.pending[pv.PendingID] = &pending{
+			tx:       a,
+			utxoAddr: utxoAddr,
+			created:  p.created,
+			walletID: p.walletID,
+			account:  p.account,
+		}
+		s.mu.Unlock()
+
+		req, err := s.HardwareSignRequest(pv.PendingID)
+		if err != nil {
+			t.Fatalf("HardwareSignRequest: %v", err)
+		}
+		if req.Unsupported == "" {
+			t.Fatal("expected Unsupported to be set for a native-asset output tx")
+		}
+		// Guard fires before inputs are built: no inputs should leak.
+		if len(req.Inputs) > 0 {
+			t.Fatalf("native-asset guard: expected no inputs in result, got %d", len(req.Inputs))
+		}
+	})
+}
+
+func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
+	type mutateBody func(*conway.ConwayTransactionBody)
+	var hash lcommon.Blake2b256
+	hash[0] = 1
+	networkID := uint8(1)
+	tests := []struct {
+		name   string
+		mutate mutateBody
+	}{
+		{"protocol update", func(b *conway.ConwayTransactionBody) { b.Update = &conway.ConwayTransactionPparamUpdate{} }},
+		{"auxiliary data hash", func(b *conway.ConwayTransactionBody) { b.TxAuxDataHash = &hash }},
+		{"validity interval start", func(b *conway.ConwayTransactionBody) { b.TxValidityIntervalStart = 1 }},
+		{"mint", func(b *conway.ConwayTransactionBody) { b.TxMint = &lcommon.MultiAsset[lcommon.MultiAssetTypeMint]{} }},
+		{"script data hash", func(b *conway.ConwayTransactionBody) { b.TxScriptDataHash = &hash }},
+		{"collateral", func(b *conway.ConwayTransactionBody) { b.TxCollateral = cbor.NewSetType(b.TxInputs.Items(), true) }},
+		{"mismatched network id", func(b *conway.ConwayTransactionBody) { b.TxNetworkId = &networkID }},
+		{"collateral return", func(b *conway.ConwayTransactionBody) { out := b.TxOutputs[0]; b.TxCollateralReturn = &out }},
+		{"total collateral", func(b *conway.ConwayTransactionBody) { b.TxTotalCollateral = 1 }},
+		{"reference inputs", func(b *conway.ConwayTransactionBody) { b.TxReferenceInputs = cbor.NewSetType(b.TxInputs.Items(), true) }},
+		{"voting procedures", func(b *conway.ConwayTransactionBody) {
+			b.TxVotingProcedures = lcommon.VotingProcedures{new(lcommon.Voter): {new(lcommon.GovActionId): {}}}
+		}},
+		{"proposal procedures", func(b *conway.ConwayTransactionBody) { b.TxProposalProcedures = []conway.ConwayProposalProcedure{{}} }},
+		{"current treasury value", func(b *conway.ConwayTransactionBody) { b.TxCurrentTreasuryValue = 1 }},
+		{"donation", func(b *conway.ConwayTransactionBody) { b.TxDonation = 1 }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			acct := mustDeriveTestAccount(t)
+			fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
+			s := NewService(fc, nil, acct)
+			pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			tx := s.pending[pv.PendingID].tx.GetTx()
+			tt.mutate(&tx.Body)
+
+			req, err := s.HardwareSignRequest(pv.PendingID)
+			if err != nil {
+				t.Fatalf("HardwareSignRequest: %v", err)
+			}
+			if req.Unsupported == "" {
+				t.Fatal("expected unsupported body feature to be rejected")
+			}
+			if len(req.Inputs) != 0 {
+				t.Fatalf("guard returned %d signing inputs", len(req.Inputs))
+			}
+		})
+	}
+
+	datumOptionCBOR, err := cbor.Encode([]any{babbage.DatumOptionTypeHash, hash})
+	if err != nil {
+		t.Fatalf("encode datum option: %v", err)
+	}
+	var datumOption babbage.BabbageTransactionOutputDatumOption
+	if _, err := cbor.Decode(datumOptionCBOR, &datumOption); err != nil {
+		t.Fatalf("decode datum option: %v", err)
+	}
+	outputTests := []struct {
+		name   string
+		mutate func(*babbage.BabbageTransactionOutput)
+	}{
+		{"output datum", func(out *babbage.BabbageTransactionOutput) {
+			out.DatumOption = &datumOption
+		}},
+		{"output script reference", func(out *babbage.BabbageTransactionOutput) {
+			out.TxOutScriptRef = &lcommon.ScriptRef{
+				Type:   lcommon.ScriptRefTypePlutusV1,
+				Script: lcommon.PlutusV1Script{0x01},
+			}
+		}},
+	}
+	for _, tt := range outputTests {
+		t.Run(tt.name, func(t *testing.T) {
+			acct := mustDeriveTestAccount(t)
+			fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
+			s := NewService(fc, nil, acct)
+			pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			tx := s.pending[pv.PendingID].tx.GetTx()
+			tt.mutate(&tx.Body.TxOutputs[0])
+
+			req, err := s.HardwareSignRequest(pv.PendingID)
+			if err != nil {
+				t.Fatalf("HardwareSignRequest: %v", err)
+			}
+			if req.Unsupported == "" {
+				t.Fatal("expected unsupported output feature to be rejected")
+			}
+			if len(req.Inputs) != 0 {
+				t.Fatalf("guard returned %d signing inputs", len(req.Inputs))
+			}
+		})
 	}
 }

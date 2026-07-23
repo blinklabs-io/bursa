@@ -110,11 +110,21 @@ export function App() {
   const activeWallet = wallets.find((w) => w.id === activeId) ?? null;
   const isReady = status.data?.state === "ready";
   const canQueryNode = status.data?.state === "ready" || status.data?.state === "syncing";
-  // Sending requires a fully synced node AND an active wallet (every vault
-  // wallet has an encrypted seed, so any active wallet can spend with its
-  // spending password).
-  const canSend = isReady && activeWallet !== null;
-  const canSign = activeWallet !== null;
+  // Regular sends require a fully synced node and either a full wallet (local
+  // seed signing) or a hardware wallet (on-device signing). Read-only and
+  // multi-signature wallets use their own non-local signing flows.
+  const canSend = isReady && (
+    activeWallet?.type === "full" || activeWallet?.type === "hardware"
+  );
+  // Sign/Offline/Operate all need the wallet's seed (message signing, air-gap
+  // signing, and cold/VRF/KES key derivation respectively). Hardware wallets
+  // are seedless (xpub-only) and sign only via the on-device path Send uses,
+  // so these flows must stay off for them.
+  const canSign = activeWallet?.type === "full";
+  // Multi-sig build/collect/submit only needs the same synced-node access as a
+  // regular send. Its optional "Sign here" and participant-key reveal actions
+  // derive CIP-1854 keys from the local seed, so those actions remain gated by
+  // canSign until Ledger multi-sig signing is available.
   // Swap shows node-local DEX prices/quotes (no spending, no signing), but
   // the DEX pool locators are mainnet-only. On preview/preprod the backend
   // returns ErrNotMainnet, so do not expose the route for testnet wallets.
@@ -239,8 +249,9 @@ export function App() {
 
   // Staking/governance is gated identically to send: a fully synced node AND an
   // active (spending-capable) wallet. A read-only or unsynced wallet falls back
-  // to Portfolio.
-  const canStake = isReady && activeWallet !== null;
+  // to Portfolio. Certificates also aren't supported on hardware yet (see
+  // spend.HardwareSignRequest), so hardware wallets are excluded too.
+  const canStake = isReady && activeWallet?.type === "full";
 
   // --- Unlocked: the normal wallet UI bound to the active wallet ----------
 
@@ -284,9 +295,17 @@ export function App() {
       </section>
     );
   } else if (route === "settings") {
-    content = <Settings account={toAccount(activeWallet)} spendingEnabled autoLock={autoLock} />;
+    content = (
+      <Settings
+        account={toAccount(activeWallet)}
+        walletType={activeWallet.type}
+        autoLock={autoLock}
+      />
+    );
   } else if (route === "send" && !canSend) {
     content = <Portfolio />;
+  } else if (route === "send" && canSend) {
+    content = <Send isHardware={activeWallet.type === "hardware"} />;
   } else if (route === "swap" && !canSwap) {
     // Guard deep-links (#/swap): DEX quotes need a queryable mainnet node, so
     // fall back to Portfolio while the node or active wallet cannot support it.
@@ -314,9 +333,9 @@ export function App() {
     content = canSign ? <Operate account={toAccount(activeWallet)} /> : <Portfolio />;
   } else if (route === "multisig") {
     // Managing multi-sig accounts (list/create/view) is local state and works on
-    // any active wallet; the spend sub-flow gates itself on canSend (synced node
-    // + spending-enabled wallet).
-    content = <MultiSig canSpend={canSend} />;
+    // any active wallet. Building and submitting spends requires a synced node;
+    // only local CIP-1854 key derivation/signing additionally requires a seed.
+    content = <MultiSig canSpend={isReady} canSign={canSign} />;
   } else if (route === "receive") {
     // Explorer links on each address need the active wallet's real network
     // (preview/preprod/mainnet), which the generic ROUTES map (no props)

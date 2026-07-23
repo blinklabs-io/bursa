@@ -16,6 +16,7 @@ const mobileWallet: WalletView = {
   stake_address: "stake_test1abc",
   addresses: ["addr_test1abc"],
   active: true,
+  type: "full",
 };
 
 function renderMobileNav(overrides: Partial<MobileNavProps> = {}) {

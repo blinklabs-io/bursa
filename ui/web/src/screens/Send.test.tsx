@@ -2,7 +2,13 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Send } from "./Send";
 import * as client from "../api/client";
 import { mockContacts } from "../test/mockContacts";
-import type { Preview, TxResult, HandleInfo, Contact } from "../api/types";
+import type { Preview, TxResult, HandleInfo, Contact, HardwareSignResponse } from "../api/types";
+import type { LedgerSession } from "../hw/ledger";
+
+// Mock the ledger module so tests don't try to open WebHID.
+vi.mock("../hw/ledger", () => ({
+  connectLedger: vi.fn(),
+}));
 
 const MOCK_PREVIEW: Preview = {
   pending_id: "pending-abc-123",
@@ -358,6 +364,26 @@ test("(g) buildSend error shown inline on compose phase", async () => {
 // --- ADA Handle resolution ---
 
 const MOCK_HANDLE: HandleInfo = { handle: "chris", address: "addr1resolvedhandle" };
+const MOCK_HW_SIGN_RESP: HardwareSignResponse = {
+  network: "preview",
+  network_id: 0,
+  include_network_id: true,
+  protocol_magic: 2,
+  inputs: [{ tx_hash_hex: "deadbeef", output_index: 0, path: "1852'/1815'/0'/0/0" }],
+  outputs: [
+    { address_hex: "60aabb", address_bech32: "addr_test1recipient", lovelace: "1000000" },
+    {
+      address_hex: "60ccdd",
+      address_bech32: "addr_test1change",
+      lovelace: "3800000",
+      payment_path: "1852'/1815'/0'/0/0",
+      stake_path: "1852'/1815'/0'/2/0",
+    },
+  ],
+  fee: "170000",
+  required_signers: ["aabbccdd"],
+  unsigned_tx_cbor: "84a4deadbeef",
+};
 
 test("(k) $handle recipient resolves and buildSend uses the resolved address", async () => {
   const resolveHandle = vi.spyOn(client, "resolveHandle").mockResolvedValue(MOCK_HANDLE);
@@ -496,4 +522,139 @@ test("(q) the Address book picker closes on a second click of the toggle", () =>
 
   fireEvent.click(toggle);
   expect(screen.queryByText("Alice")).not.toBeInTheDocument();
+});
+
+// --- Hardware wallet tests ---
+
+test("(r) hardware account: preview shows 'Confirm on your Ledger' with no password input", async () => {
+  vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+
+  render(<Send isHardware />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "addr_test1recipient" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
+  });
+
+  // Hardware: no password field, shows Ledger button.
+  expect(screen.queryByPlaceholderText(/spending password/i)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /confirm on.*ledger/i })).toBeInTheDocument();
+});
+
+test("(s) hardware account: confirm flow fetches sign request, calls signTx, submits hardware", async () => {
+  vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+  vi.spyOn(client, "getHardwareSignRequest").mockResolvedValue(MOCK_HW_SIGN_RESP);
+  vi.spyOn(client, "submitHardware").mockResolvedValue(MOCK_TX_RESULT);
+
+  const mockSignTx = vi.fn<LedgerSession["signTx"]>().mockResolvedValue("81825820aabb");
+  const mockClose = vi.fn().mockResolvedValue(undefined);
+  const { connectLedger } = await import("../hw/ledger");
+  vi.mocked(connectLedger).mockResolvedValue({
+    getAccountXpub: vi.fn(),
+    signTx: mockSignTx,
+    close: mockClose,
+  });
+
+  render(<Send isHardware />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "addr_test1recipient" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: /confirm on.*ledger/i }));
+
+  await waitFor(() => {
+    expect(client.getHardwareSignRequest).toHaveBeenCalledWith("pending-abc-123");
+    expect(mockSignTx).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tx: expect.objectContaining({
+          requiredSigners: [{ type: "required_signer_hash", hashHex: "aabbccdd" }],
+        }),
+      }),
+    );
+    expect(client.submitHardware).toHaveBeenCalledWith("pending-abc-123", "81825820aabb");
+  });
+
+  // The WebHID permission request must begin directly from the confirm click,
+  // before yielding to the backend signing-request fetch.
+  expect(vi.mocked(connectLedger).mock.invocationCallOrder[0]).toBeLessThan(
+    vi.mocked(client.getHardwareSignRequest).mock.invocationCallOrder[0],
+  );
+
+  const signRequest = mockSignTx.mock.calls[0][0];
+  expect(signRequest.tx.includeNetworkId).toBe(true);
+  expect(signRequest.tx.outputs).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ tokenBundle: [] }),
+    ]),
+  );
+  expect(signRequest.tx.outputs.every((output) => Array.isArray(output.tokenBundle))).toBe(true);
+  expect(signRequest.tx.outputs[0].destination).toEqual({
+    type: "third_party",
+    params: { addressHex: "60aabb" },
+  });
+  expect(signRequest.tx.outputs[1].destination).toEqual({
+    type: "device_owned",
+    params: {
+      type: 0,
+      params: {
+        spendingPath: [0x8000073c, 0x80000717, 0x80000000, 0, 0],
+        stakingPath: [0x8000073c, 0x80000717, 0x80000000, 2, 0],
+      },
+    },
+  });
+
+  await waitFor(() => {
+    expect(screen.getByText(new RegExp(MOCK_TX_RESULT.tx_hash))).toBeInTheDocument();
+    expect(mockClose).toHaveBeenCalledOnce();
+  });
+});
+
+test("(t) hardware account: unsupported tx closes the connected Ledger without signing", async () => {
+  vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+  vi.spyOn(client, "getHardwareSignRequest").mockResolvedValue({
+    ...MOCK_HW_SIGN_RESP,
+    unsupported: "certificates are not supported on hardware yet",
+  });
+
+  const { connectLedger } = await import("../hw/ledger");
+  const mockConnectLedger = vi.mocked(connectLedger);
+  const mockSignTx = vi.fn();
+  const mockClose = vi.fn().mockResolvedValue(undefined);
+  mockConnectLedger.mockClear();
+  mockConnectLedger.mockResolvedValue({
+    getAccountXpub: vi.fn(),
+    signTx: mockSignTx,
+    close: mockClose,
+  });
+
+  render(<Send isHardware />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "addr_test1recipient" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: /confirm on.*ledger/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/cannot be signed on hardware/i)).toBeInTheDocument();
+  });
+
+  expect(mockConnectLedger).toHaveBeenCalledOnce();
+  expect(mockSignTx).not.toHaveBeenCalled();
+  expect(mockClose).toHaveBeenCalledOnce();
 });

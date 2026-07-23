@@ -15,6 +15,7 @@ import type {
   CreateVaultRequest,
   UnlockVaultRequest,
   AddWalletRequest,
+  AddHardwareWalletRequest,
   MigrateLegacyKeystoreRequest,
   HistoryExpirySetting,
   AutoLockSetting,
@@ -55,6 +56,7 @@ import type {
   MultiSigUnsignedTx,
   MultiSigSignRequest,
   MultiSigSubmitRequest,
+  HardwareSignResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -151,6 +153,20 @@ export const migrateLegacyKeystore = (req: MigrateLegacyKeystoreRequest) =>
 export const generateMnemonic = () =>
   apiGet<{ mnemonic: string }>("/wallet/mnemonic/generate").then((r) => r.mnemonic);
 export const addWallet = (req: AddWalletRequest) => apiPost<WalletView>("/wallet", req);
+export const addHardwareWallet = (
+  name: string,
+  accountXpub: string,
+  accountIndex: number,
+  network: string,
+  vaultPassword: string,
+) =>
+  apiPost<WalletView>("/wallet/hardware", {
+    name,
+    account_xpub: accountXpub,
+    account_index: accountIndex,
+    network,
+    vault_password: vaultPassword,
+  } satisfies AddHardwareWalletRequest);
 export const activateWallet = (id: string) =>
   apiPost<WalletView>(`/wallet/${encodeURIComponent(id)}/activate`);
 export const removeWallet = (id: string, vaultPassword: string) =>
@@ -180,6 +196,14 @@ export const exportUnsigned = (id: string) =>
 export const signTx = (req: SignTxRequest) => apiPost<WitnessResult>("/wallet/sign-tx", req);
 export const submitSigned = (req: SubmitSignedRequest) =>
   apiPost<TxResult>("/wallet/submit-signed", req);
+
+// Hardware (Ledger) confirm-on-device signing via the air-gap submit path:
+// fetch the structured signing request, then submit the device-produced
+// witness against the same pending send.
+export const getHardwareSignRequest = (id: string) =>
+  apiGet<HardwareSignResponse>(`/wallet/send/${encodeURIComponent(id)}/hardware-sign-request`);
+export const submitHardware = (id: string, witnessCbor: string) =>
+  apiPost<TxResult>(`/wallet/send/${encodeURIComponent(id)}/submit-hardware`, { witness_cbor: witnessCbor });
 
 // ADA Handle ($name) resolution for the Send screen: resolves the handle NFT
 // to its current holding address through the node. name may carry a leading

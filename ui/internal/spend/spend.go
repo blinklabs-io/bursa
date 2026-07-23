@@ -1690,6 +1690,266 @@ func (s *Service) WitnessTx(
 	return wsCbor, nil
 }
 
+// HardwareSignRequest is the structured signing request the SPA passes to the
+// Ledger device (via ledgerjs). It contains decoded tx fields (NOT raw CBOR)
+// so the device can display them to the user and sign without parsing CBOR.
+//
+// Scope: payment transactions (inputs/outputs/fee/ttl/change) only.
+// Certificates and withdrawals are guarded — the caller must check Unsupported
+// before constructing a SignTransactionRequest.
+type HardwareSignRequest struct {
+	// Network: "mainnet", "preprod", or "preview".
+	Network string `json:"network"`
+	// NetworkID: 1 for mainnet, 0 for testnet.
+	NetworkID int `json:"network_id"`
+	// ProtocolMagic: 764824073 for mainnet, 1 for preprod, 2 for preview.
+	ProtocolMagic uint32 `json:"protocol_magic"`
+	// Inputs: one entry per tx input the wallet owns.
+	Inputs []HWInput `json:"inputs"`
+	// Outputs: all tx outputs.
+	Outputs []HWOutput `json:"outputs"`
+	// Fee: lovelace as decimal string.
+	Fee string `json:"fee"`
+	// TTL: slot number as decimal string, empty if absent.
+	TTL string `json:"ttl,omitempty"`
+	// RequiredSigners are the key hashes embedded in the transaction body. The
+	// Ledger request must include the identical set or it will sign a different
+	// body from UnsignedTxCBOR.
+	RequiredSigners []string `json:"required_signers"`
+	// IncludeNetworkID preserves body key 15 when it was present in the pending
+	// transaction, so Ledger reconstructs and signs the identical body.
+	IncludeNetworkID bool `json:"include_network_id,omitempty"`
+	// UnsignedTxCBOR: the raw tx hex, used by SubmitSigned.
+	UnsignedTxCBOR string `json:"unsigned_tx_cbor"`
+	// Unsupported: non-empty means this tx cannot be signed on hardware yet.
+	// The SPA MUST show this message and refuse to sign.
+	Unsupported string `json:"unsupported,omitempty"`
+}
+
+// HWInput is one transaction input in the hardware sign request.
+type HWInput struct {
+	TxHashHex   string `json:"tx_hash_hex"`
+	OutputIndex uint32 `json:"output_index"`
+	// Path is the CIP-1852 derivation path ("1852'/1815'/0'/0/3") for the
+	// payment key that must sign this input, or "" if the input is not ours.
+	Path string `json:"path,omitempty"`
+}
+
+// HWOutput is one transaction output in the hardware sign request.
+type HWOutput struct {
+	// AddressHex is the hex-encoded address bytes. It is used by the SPA for
+	// third-party outputs; device-owned outputs are reconstructed from paths.
+	AddressHex string `json:"address_hex"`
+	// AddressBech32 for display.
+	AddressBech32 string `json:"address_bech32"`
+	// Lovelace as decimal string.
+	Lovelace string `json:"lovelace"`
+	// PaymentPath and StakePath identify an output owned by this wallet. They
+	// are both set for our base addresses and omitted for third-party outputs.
+	PaymentPath string `json:"payment_path,omitempty"`
+	StakePath   string `json:"stake_path,omitempty"`
+	// Assets: native assets (NOT SUPPORTED yet — guard triggers if non-empty).
+	Assets []HWAsset `json:"assets,omitempty"`
+}
+
+// HWAsset is a native asset within an output.
+type HWAsset struct {
+	PolicyIDHex  string `json:"policy_id_hex"`
+	AssetNameHex string `json:"asset_name_hex"`
+	Amount       string `json:"amount"` // decimal string
+}
+
+// HardwareSignRequest returns the structured signing request the SPA passes to
+// the Ledger device. It decodes the pending transaction into discrete fields so
+// the device can display and sign them without parsing raw CBOR.
+//
+// Unlike Confirm it does NOT consume the pending entry — it is subject to the
+// same TTL. When an unsupported feature is detected the struct is still returned
+// with Unsupported set (and UnsignedTxCBOR populated) so the SPA can show the
+// user what was attempted.
+func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, error) {
+	// Held for the whole function (like ExportUnsigned) so every structured
+	// field and UnsignedTxCBOR are read from the same consistent snapshot of
+	// the pending entry - not released partway through and re-read after a
+	// concurrent Confirm/sweep could touch it.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.pending[pendingID]
+	expired := ok && s.now().Sub(p.created) > pendingTTL
+	if !ok {
+		return HardwareSignRequest{}, fmt.Errorf("%w: %q", ErrUnknownPending, pendingID)
+	}
+	if expired {
+		return HardwareSignRequest{}, fmt.Errorf("%w: %q", ErrExpiredPending, pendingID)
+	}
+
+	tx := p.tx.GetTx()
+	if tx == nil {
+		return HardwareSignRequest{}, errors.New("pending tx is nil")
+	}
+
+	cborBytes, err := p.tx.GetTxCbor()
+	if err != nil {
+		return HardwareSignRequest{}, fmt.Errorf("encode unsigned tx: %w", err)
+	}
+	unsignedTxCBOR := hex.EncodeToString(cborBytes)
+
+	// Determine network parameters.
+	acct := p.account
+	if acct == nil {
+		return HardwareSignRequest{}, ErrNoWallet
+	}
+	networkName := acct.Network
+	networkID := 0
+	var protocolMagic uint32
+	switch networkName {
+	case "mainnet":
+		networkID = 1
+		protocolMagic = 764824073
+	case "preprod":
+		protocolMagic = 1
+	default: // preview; the account network is validated when it is derived.
+		protocolMagic = 2
+	}
+
+	result := HardwareSignRequest{
+		Network:          networkName,
+		NetworkID:        networkID,
+		ProtocolMagic:    protocolMagic,
+		RequiredSigners:  keyHashesHex(tx.Body.RequiredSigners()),
+		UnsignedTxCBOR:   unsignedTxCBOR,
+		IncludeNetworkID: tx.Body.TxNetworkId != nil,
+	}
+	if tx.Body.TxNetworkId != nil && int(*tx.Body.TxNetworkId) != networkID {
+		result.Unsupported = "transaction network id does not match the active wallet"
+		return result, nil
+	}
+
+	// Guard unsupported features — still populate UnsignedTxCBOR so the SPA can
+	// show the user what was attempted.
+	if len(tx.Body.TxCertificates) > 0 {
+		result.Unsupported = "certificates are not supported on hardware yet"
+		return result, nil
+	}
+	if len(tx.Body.TxWithdrawals) > 0 {
+		result.Unsupported = "withdrawals are not supported on hardware yet"
+		return result, nil
+	}
+	// Note: TxWithdrawals is a map[*Address]uint64; len works on nil maps (returns 0).
+	var unsupportedBodyFeature string
+	switch {
+	case tx.Body.Update != nil:
+		unsupportedBodyFeature = "protocol update"
+	case tx.Body.TxAuxDataHash != nil:
+		unsupportedBodyFeature = "auxiliary data"
+	case tx.Body.TxValidityIntervalStart != 0:
+		unsupportedBodyFeature = "validity interval start"
+	case tx.Body.TxMint != nil:
+		unsupportedBodyFeature = "minting"
+	case tx.Body.TxScriptDataHash != nil:
+		unsupportedBodyFeature = "script data"
+	case len(tx.Body.TxCollateral.Items()) > 0:
+		unsupportedBodyFeature = "collateral inputs"
+	case tx.Body.TxCollateralReturn != nil:
+		unsupportedBodyFeature = "collateral return"
+	case tx.Body.TxTotalCollateral != 0:
+		unsupportedBodyFeature = "total collateral"
+	case len(tx.Body.TxReferenceInputs.Items()) > 0:
+		unsupportedBodyFeature = "reference inputs"
+	case len(tx.Body.TxVotingProcedures) > 0:
+		unsupportedBodyFeature = "voting procedures"
+	case len(tx.Body.TxProposalProcedures) > 0:
+		unsupportedBodyFeature = "proposal procedures"
+	case tx.Body.TxCurrentTreasuryValue != 0:
+		unsupportedBodyFeature = "current treasury value"
+	case tx.Body.TxDonation != 0:
+		unsupportedBodyFeature = "treasury donation"
+	}
+	if unsupportedBodyFeature != "" {
+		result.Unsupported = unsupportedBodyFeature + " is not supported on hardware yet"
+		return result, nil
+	}
+
+	// Guard: native assets in outputs are not supported yet. Check before
+	// building inputs so no signing paths are leaked (symmetric with the cert
+	// and withdrawal guards above).
+	for _, out := range tx.Body.TxOutputs {
+		if out.OutputAmount.Assets != nil {
+			result.Unsupported = "outputs with native assets are not supported on hardware yet"
+			return result, nil
+		}
+		if out.DatumOption != nil || out.TxOutScriptRef != nil {
+			result.Unsupported = "outputs with datum or script references are not supported on hardware yet"
+			return result, nil
+		}
+	}
+
+	// Build address → derivation path lookups for input signing and owned
+	// outputs. Although Build currently sends change to receive address 0, keep
+	// both roles here so future change-address selection remains correctly
+	// represented to the device.
+	accountNum := acct.AccountIndex
+	idxOf := make(map[string]int, len(acct.ReceiveAddresses))
+	pathOf := make(map[string]string, len(acct.ReceiveAddresses)+len(acct.ChangeAddresses))
+	for i, addr := range acct.ReceiveAddresses {
+		idxOf[addr] = i
+		pathOf[addr] = fmt.Sprintf("1852'/%d'/%d'/0/%d", 1815, accountNum, i)
+	}
+	for i, addr := range acct.ChangeAddresses {
+		pathOf[addr] = fmt.Sprintf("1852'/%d'/%d'/1/%d", 1815, accountNum, i)
+	}
+	stakePath := fmt.Sprintf("1852'/%d'/%d'/2/0", 1815, accountNum)
+
+	// Build inputs with paths.
+	// Every owned input gets its correct derivation path; the Ledger tolerates
+	// repeated paths. Dedup of witnessPathsNumeric happens on the SPA side.
+	inputs := make([]HWInput, 0, len(tx.Body.TxInputs.Items()))
+	for _, inp := range tx.Body.TxInputs.Items() {
+		ref := hex.EncodeToString(inp.TxId.Bytes()) + "#" + strconv.Itoa(int(inp.OutputIndex))
+		hwInp := HWInput{
+			TxHashHex:   hex.EncodeToString(inp.TxId.Bytes()),
+			OutputIndex: inp.OutputIndex,
+		}
+		addrStr, found := p.utxoAddr[ref]
+		if found {
+			if idx, owned := idxOf[addrStr]; owned {
+				hwInp.Path = fmt.Sprintf("1852'/%d'/%d'/0/%d", 1815, accountNum, idx)
+			}
+		}
+		inputs = append(inputs, hwInp)
+	}
+	result.Inputs = inputs
+
+	// Build outputs.
+	outputs := make([]HWOutput, 0, len(tx.Body.TxOutputs))
+	for _, out := range tx.Body.TxOutputs {
+		addr := out.OutputAddress
+		addrBytes, bytesErr := addr.Bytes()
+		if bytesErr != nil {
+			return HardwareSignRequest{}, fmt.Errorf("output address bytes: %w", bytesErr)
+		}
+		hwOut := HWOutput{
+			AddressHex:    hex.EncodeToString(addrBytes),
+			AddressBech32: addr.String(),
+			Lovelace:      strconv.FormatUint(out.OutputAmount.Amount, 10),
+		}
+		if paymentPath, owned := pathOf[addr.String()]; owned {
+			hwOut.PaymentPath = paymentPath
+			hwOut.StakePath = stakePath
+		}
+		outputs = append(outputs, hwOut)
+	}
+	result.Outputs = outputs
+
+	// Fee and TTL.
+	result.Fee = strconv.FormatUint(tx.Body.TxFee, 10)
+	if tx.Body.Ttl > 0 {
+		result.TTL = strconv.FormatUint(tx.Body.Ttl, 10)
+	}
+
+	return result, nil
+}
+
 // randID generates a 16-byte random hex string for pending IDs.
 func randID() string {
 	b := make([]byte, 16)

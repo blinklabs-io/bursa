@@ -39,6 +39,7 @@
 //	  "format": 2,
 //	  "key": { "password": <Container wrapping the VEK under the vault password> },
 //	  "index": <keystore Container, encrypted under the VEK>,
+//	  "wallet_count": 2,
 //	  "seeds": { "<wallet id>": <keystore Container, encrypted under spend pw> }
 //	}
 //
@@ -110,13 +111,27 @@ var (
 // derived account (stake address + receive-address window) and the account
 // xpub. The seed itself lives in the separate, spend-password-encrypted seeds
 // map and is never part of this record.
+//
+// For hardware wallets (Type==WalletTypeHardware) no seed blob exists at all: the device
+// holds the private key. Only the account xpub and the derived addresses are
+// stored, so read-only views (balances, history) work without any secret.
 type WalletMeta struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
 	Network     string          `json:"network"`
 	AccountXpub string          `json:"account_xpub"`
 	Account     *wallet.Account `json:"account"`
+	Type        WalletType      `json:"type"`
 }
+
+type WalletType string
+
+const (
+	WalletTypeFull           WalletType = "full"
+	WalletTypeReadOnly       WalletType = "read_only"
+	WalletTypeMultiSignature WalletType = "multi_signature"
+	WalletTypeHardware       WalletType = "hardware"
+)
 
 // index is the plaintext payload sealed under the vault password.
 type index struct {
@@ -143,10 +158,11 @@ type keySection struct {
 // per-wallet encrypted seed blobs keyed by wallet id. Format 1 envelopes have no
 // Key section; Key is omitted (omitempty) so a format-1 file round-trips cleanly.
 type envelope struct {
-	Format int                           `json:"format"`
-	Key    *keySection                   `json:"key,omitempty"`
-	Index  keystore.Container            `json:"index"`
-	Seeds  map[string]keystore.Container `json:"seeds"`
+	Format      int                           `json:"format"`
+	Key         *keySection                   `json:"key,omitempty"`
+	Index       keystore.Container            `json:"index"`
+	WalletCount int                           `json:"wallet_count,omitempty"`
+	Seeds       map[string]keystore.Container `json:"seeds"`
 }
 
 // Vault is a thread-safe handle to the on-disk vault file. When unlocked it
@@ -238,9 +254,10 @@ func (v *Vault) VerifyPassword(vaultPassword string) error {
 
 // WalletCount returns the number of wallets in the vault. It works whether the
 // vault is locked or unlocked: when unlocked it uses the cached index; when
-// locked it reads the envelope and counts the seed blobs (the index is
-// encrypted, but the seed map keys are wallet ids in cleartext, so a count is
-// available without the vault password). Returns 0 when no vault exists.
+// locked it reads the non-secret count persisted alongside the encrypted index.
+// Older envelopes did not carry that count, so their seed-blob count remains a
+// compatibility fallback until their next successful mutation refreshes it.
+// Returns 0 when no vault exists.
 func (v *Vault) WalletCount() int {
 	v.mu.RLock()
 	if v.idx != nil {
@@ -252,6 +269,9 @@ func (v *Vault) WalletCount() int {
 	env, err := v.readEnvelope()
 	if err != nil {
 		return 0
+	}
+	if env.WalletCount > 0 {
+		return env.WalletCount
 	}
 	return len(env.Seeds)
 }
@@ -295,17 +315,18 @@ func (v *Vault) Unlock(vaultPassword string) ([]WalletMeta, error) {
 		return nil, err
 	}
 	defer keystore.Zero(vek)
-	// Format-1 vaults have no key section: transparently re-key to format 2 so
-	// the next Unlock takes the modern path. If the rewrite fails (e.g. a
-	// read-only disk), abort the unlock and surface the error rather than caching
-	// an unlocked state over a file that is still legacy. The on-disk vault stays
-	// a valid format 1, so a later Unlock simply retries the upgrade — nothing is
-	// lost. Format-1 vaults never carry a TPM section, so persist with tpm=nil.
+	// Format-1 vaults must be transparently re-keyed to format 2 before they are
+	// considered unlocked. This migration is security-critical, so a failed
+	// persist must abort the unlock.
 	if env.Format == legacyFormatVersion {
-		if err := v.persistLocked(idx, env.Seeds, vek, vaultPassword, nil); err != nil {
-			return nil, fmt.Errorf("vault: upgrade format 1->2 failed: %w", err)
+		if err := v.persistLocked(idx, env.Seeds, vek, vaultPassword, tpmOf(env)); err != nil {
+			return nil, fmt.Errorf("vault: persist metadata failed: %w", err)
 		}
 	}
+	// wallet_count is only a cleartext status hint; the decrypted index above is
+	// authoritative. Older format-2 envelopes may omit it, and read-only vaults
+	// must still unlock when they cannot be rewritten. The next successful vault
+	// mutation goes through persistLocked and refreshes the count.
 	v.idx = idx
 	if len(idx.Wallets) == 1 {
 		v.activeID = idx.Wallets[0].ID
@@ -459,6 +480,63 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 	}
 	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
 	seeds[meta.ID] = seed
+	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env)); err != nil {
+		return WalletMeta{}, err
+	}
+	v.idx = newIdx
+	v.activeID = meta.ID
+	return meta, nil
+}
+
+// AddHardwareWallet adds a hardware-backed wallet to the vault. It derives the
+// read-only account from the account-level xpub (no mnemonic, no seed) and
+// stores it in the index under the vault password. No seed blob is written —
+// the hardware device holds the private key.
+//
+// The vault must be unlocked. A wallet whose xpub derives the same stake
+// address as an existing one is rejected (ErrDuplicateWallet). The added
+// wallet becomes active.
+func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPassword string, accountIndex uint32, windowN int) (WalletMeta, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.idx == nil {
+		return WalletMeta{}, ErrLocked
+	}
+
+	env, vek, idx, err := v.authenticatedEnvelopeLocked(vaultPassword)
+	if err != nil {
+		return WalletMeta{}, err
+	}
+	defer keystore.Zero(vek)
+
+	acct, err := wallet.DeriveFromAccountXpub(accountXpubBech32, network, accountIndex, windowN)
+	if err != nil {
+		return WalletMeta{}, fmt.Errorf("derive account from xpub: %w", err)
+	}
+
+	meta := WalletMeta{
+		ID:          newID(),
+		Name:        name,
+		Network:     network,
+		AccountXpub: accountXpubBech32,
+		Account:     acct,
+		Type:        WalletTypeHardware,
+	}
+
+	// Reject duplicate: same stake address means the same wallet.
+	for _, w := range idx.Wallets {
+		if w.Account != nil && meta.Account != nil && w.Account.StakeAddress == meta.Account.StakeAddress {
+			return WalletMeta{}, fmt.Errorf("%w: %q", ErrDuplicateWallet, w.Name)
+		}
+	}
+
+	// Re-seal the index with the new hardware wallet appended. The seeds map is
+	// unchanged — no seed blob is added for a hardware wallet.
+	seeds := env.Seeds
+	if seeds == nil {
+		seeds = map[string]keystore.Container{}
+	}
+	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
 	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env)); err != nil {
 		return WalletMeta{}, err
 	}
@@ -764,10 +842,11 @@ func (v *Vault) persistLocked(idx *index, seeds map[string]keystore.Container, v
 		return err
 	}
 	env := envelope{
-		Format: formatVersion,
-		Key:    &keySection{Password: wrapped, Tpm: tpm},
-		Index:  idxContainer,
-		Seeds:  seeds,
+		Format:      formatVersion,
+		Key:         &keySection{Password: wrapped, Tpm: tpm},
+		Index:       idxContainer,
+		WalletCount: len(idx.Wallets),
+		Seeds:       seeds,
 	}
 	out, err := json.Marshal(env)
 	if err != nil {
@@ -880,6 +959,7 @@ func (v *Vault) prepareWalletBytes(name string, mnemonic []byte, network, spendP
 		Network:     network,
 		AccountXpub: xpub,
 		Account:     acct,
+		Type:        WalletTypeFull,
 	}
 	return meta, seed, nil
 }
