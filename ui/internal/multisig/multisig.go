@@ -721,12 +721,15 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 	for i := range scripts {
 		hash := hex.EncodeToString(scripts[i].Hash().Bytes())
 		switch {
+		case stakeScriptHashes[hash]:
+			// Positively a stake/governance-purpose script (withdrawal,
+			// certificate, or governance-vote credential), not a payment spend.
+			// This is checked BEFORE the mint-policy case: a stake/gov script
+			// reused as a mint policy still needs its stake/gov witness, so it
+			// must not be routed to the vkey path — the stake purpose dominates.
+			stakePurpose = true
 		case mintPolicies[hash]:
 			// mint-only evidence — not a spend on this basis alone.
-		case stakeScriptHashes[hash]:
-			// Positively a stake/governance-purpose script (withdrawal or
-			// certificate credential), not a payment spend.
-			stakePurpose = true
 		default:
 			candidates = append(candidates, &scripts[i])
 		}
@@ -1186,9 +1189,10 @@ func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) 
 
 // stakeScriptCredentialHashes returns the set (hex-encoded, lower-case) of
 // script-hash credentials the tx body uses for a non-payment purpose: the
-// script credentials of reward withdrawals and of certificates (stake and
-// DRep/committee). An embedded native script whose hash appears here is present
-// to authorize that stake/governance action, not a payment spend, so InspectTx
+// script credentials of reward withdrawals, of certificates (stake and
+// DRep/committee), and of governance voters (DRep-script / committee-hot-script
+// votes). An embedded native script whose hash appears here is present to
+// authorize that stake/governance action, not a payment spend, so InspectTx
 // must not classify it as payment multisig. This mirrors spend.neededKeyHashes'
 // certificate/withdrawal walk but collects script-hash (not addr-key-hash)
 // credentials.
@@ -1239,6 +1243,21 @@ func stakeScriptCredentialHashes(tx *conway.ConwayTransaction) map[string]bool {
 		}
 		if payload, ok := addr.StakingPayload().(lcommon.AddressPayloadScriptHash); ok {
 			out[hex.EncodeToString(payload.Hash.Bytes())] = true
+		}
+	}
+	// Governance votes: a DRep-script or committee-hot-script voter authorizes
+	// its vote via a native script, exactly like a script-credentialed
+	// certificate. (Stake-pool voters are key-only, so they never carry an
+	// embedded native script.) Collect those voter hashes so a vote-by-native-
+	// script tx is not mis-classified as a payment spend.
+	for voter := range tx.Body.TxVotingProcedures {
+		if voter == nil {
+			continue
+		}
+		switch voter.Type {
+		case lcommon.VoterTypeDRepScriptHash,
+			lcommon.VoterTypeConstitutionalCommitteeHotScriptHash:
+			out[hex.EncodeToString(voter.Hash[:])] = true
 		}
 	}
 	return out

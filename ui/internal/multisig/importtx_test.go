@@ -293,6 +293,69 @@ func TestInspectTx_ScriptWithdrawalIsUnsupported(t *testing.T) {
 	}
 }
 
+// TestInspectTx_VotingProcedureScriptIsUnsupported covers the governance-vote
+// arm of the stake-purpose classifier: a DRep-script vote carries its native
+// script in the witness set to authorize the vote, NOT a payment spend.
+// InspectTx must NOT treat it as a payment-multisig spend (which would route it
+// to CosignImported and derive the wrong role-0 payment key); it must report a
+// recognizable-but-unsupported multisig (embedded script, threshold 0, no
+// participants).
+func TestInspectTx_VotingProcedureScriptIsUnsupported(t *testing.T) {
+	fc := newFakeChain()
+	svc := NewService(fc, nil, filepath.Join(t.TempDir(), "multisig.json"))
+
+	voteScript, err := composeScript(Policy{
+		Threshold:    1,
+		Participants: []Participant{{KeyHashHex: hex.EncodeToString(bytesRepeat(6, 28))}},
+	})
+	if err != nil {
+		t.Fatalf("composeScript: %v", err)
+	}
+	txHex := injectScriptVote(t, fc, voteScript)
+
+	info, err := svc.InspectTx(txHex)
+	if err != nil {
+		t.Fatalf("InspectTx: %v", err)
+	}
+	if !info.IsMultiSig || !info.ScriptEmbedded {
+		t.Fatalf("governance-vote script should classify as an embedded multisig: %+v", info)
+	}
+	if info.Threshold != 0 || len(info.Participants) != 0 {
+		t.Fatalf("governance-vote script must NOT be treated as a payment-multisig spend (want threshold 0, no participants): %+v", info)
+	}
+}
+
+// TestInspectTx_StakeScriptAlsoMintIsUnsupported covers the mint-vs-stake
+// precedence bug: a script that is both a stake/gov credential (here, a script-
+// credentialed withdrawal) AND reused as a mint policy must let the stake
+// purpose dominate. It must be classified as an unsupported stake/gov multisig
+// (threshold 0), NOT routed to the vkey path just because its hash also matches
+// a mint policy — the stake/gov witness would otherwise be left unsatisfied.
+func TestInspectTx_StakeScriptAlsoMintIsUnsupported(t *testing.T) {
+	fc := newFakeChain()
+	svc := NewService(fc, nil, filepath.Join(t.TempDir(), "multisig.json"))
+
+	script, err := composeScript(Policy{
+		Threshold:    1,
+		Participants: []Participant{{KeyHashHex: hex.EncodeToString(bytesRepeat(9, 28))}},
+	})
+	if err != nil {
+		t.Fatalf("composeScript: %v", err)
+	}
+	txHex := injectScriptWithdrawalAndMint(t, fc, script)
+
+	info, err := svc.InspectTx(txHex)
+	if err != nil {
+		t.Fatalf("InspectTx: %v", err)
+	}
+	if !info.IsMultiSig || !info.ScriptEmbedded {
+		t.Fatalf("stake script reused as a mint policy should classify as an embedded multisig: %+v", info)
+	}
+	if info.Threshold != 0 || len(info.Participants) != 0 {
+		t.Fatalf("stake-script-also-mint must NOT be routed to the vkey path (want threshold 0, no participants): %+v", info)
+	}
+}
+
 // TestStakeScriptCredentialHashes_Certificate exercises the certificate branch
 // of the stake-purpose detector directly: a stake-deregistration certificate
 // bearing a script credential must be collected (so InspectTx excludes that
@@ -322,6 +385,49 @@ func TestStakeScriptCredentialHashes_Certificate(t *testing.T) {
 	}
 }
 
+// TestStakeScriptCredentialHashes_VotingProcedure exercises the governance-vote
+// branch of the stake-purpose detector directly: DRep-script and committee-hot-
+// script voters authorize their vote via a native script and must be collected
+// (so InspectTx excludes those scripts from payment-spend candidates), while
+// key-hash voters (DRep-key, committee-hot-key, stake-pool) carry no script and
+// must not be collected.
+func TestStakeScriptCredentialHashes_VotingProcedure(t *testing.T) {
+	voterHash := func(fill byte) [28]byte {
+		var h [28]byte
+		copy(h[:], bytesRepeat(fill, 28))
+		return h
+	}
+	tx := &conway.ConwayTransaction{}
+	drepScript := voterHash(0xd1)
+	ccHotScript := voterHash(0xc2)
+	drepKey := voterHash(0xd3)
+	ccHotKey := voterHash(0xc4)
+	poolKey := voterHash(0x5e)
+	tx.Body.TxVotingProcedures = lcommon.VotingProcedures{
+		{Type: lcommon.VoterTypeDRepScriptHash, Hash: drepScript}:                       {},
+		{Type: lcommon.VoterTypeConstitutionalCommitteeHotScriptHash, Hash: ccHotScript}: {},
+		{Type: lcommon.VoterTypeDRepKeyHash, Hash: drepKey}:                              {},
+		{Type: lcommon.VoterTypeConstitutionalCommitteeHotKeyHash, Hash: ccHotKey}:       {},
+		{Type: lcommon.VoterTypeStakingPoolKeyHash, Hash: poolKey}:                       {},
+	}
+
+	got := stakeScriptCredentialHashes(tx)
+	if !got[hex.EncodeToString(drepScript[:])] {
+		t.Errorf("DRep-script voter hash not collected: %v", got)
+	}
+	if !got[hex.EncodeToString(ccHotScript[:])] {
+		t.Errorf("committee-hot-script voter hash not collected: %v", got)
+	}
+	for _, kh := range [][28]byte{drepKey, ccHotKey, poolKey} {
+		if got[hex.EncodeToString(kh[:])] {
+			t.Errorf("key-hash voter %x must not be collected as a stake script: %v", kh, got)
+		}
+	}
+	if len(got) != 2 {
+		t.Errorf("want exactly the 2 script voters, got %d: %v", len(got), got)
+	}
+}
+
 // injectScriptWithdrawal decodes an ordinary unsigned tx and rewrites it to
 // carry a reward-account withdrawal keyed by ns's script hash, plus ns in the
 // witness set — the shape a script-credentialed (stake-purpose) withdrawal
@@ -348,6 +454,41 @@ func injectScriptWithdrawal(t *testing.T, fc *fakeChain, ns *bursa.NativeScript)
 	tx.SetCbor(nil)
 	tx.Body.SetCbor(nil)
 	tx.WitnessSet.SetCbor(nil)
+	return encodeConwayTx(t, &tx)
+}
+
+// injectScriptVote decodes an ordinary unsigned tx and rewrites it to carry a
+// governance voting procedure cast by a DRep-script voter keyed by ns's script
+// hash, plus ns in the witness set — the shape a vote-by-native-script tx takes.
+// See mintOnlyTxHex for why this is done at the gouroboros struct level.
+func injectScriptVote(t *testing.T, fc *fakeChain, ns *bursa.NativeScript) string {
+	t.Helper()
+	tx := decodeConwayTx(t, ordinaryUnsignedTxHex(t, fc))
+
+	var voterHash [28]byte
+	copy(voterHash[:], ns.Hash().Bytes())
+	voter := &lcommon.Voter{Type: lcommon.VoterTypeDRepScriptHash, Hash: voterHash}
+	govAction := &lcommon.GovActionId{GovActionIdx: 0}
+	tx.Body.TxVotingProcedures = lcommon.VotingProcedures{
+		voter: {govAction: lcommon.VotingProcedure{Vote: 1}},
+	}
+	tx.WitnessSet.WsNativeScripts = gcbor.NewSetType([]lcommon.NativeScript{*ns}, true)
+
+	tx.SetCbor(nil)
+	tx.Body.SetCbor(nil)
+	tx.WitnessSet.SetCbor(nil)
+	return encodeConwayTx(t, &tx)
+}
+
+// injectScriptWithdrawalAndMint builds a script-credentialed withdrawal tx (as
+// injectScriptWithdrawal) and additionally mints one unit under the SAME script
+// hash as a mint policy — a stake/gov script reused as a mint policy. InspectTx
+// must let the stake purpose dominate the mint purpose and classify it as an
+// unsupported stake/gov multisig, not route it to the vkey path.
+func injectScriptWithdrawalAndMint(t *testing.T, fc *fakeChain, ns *bursa.NativeScript) string {
+	t.Helper()
+	tx := decodeConwayTx(t, injectScriptWithdrawal(t, fc, ns))
+	injectMint(t, &tx, hex.EncodeToString(ns.Hash().Bytes()), []lcommon.NativeScript{*ns})
 	return encodeConwayTx(t, &tx)
 }
 
