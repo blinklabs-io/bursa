@@ -1377,6 +1377,7 @@ type OperationalCertificate struct {
 	IssueNumber   uint64 // Certificate sequence/issue number
 	KesPeriod     uint64 // KES period at certificate creation
 	ColdSignature []byte // Cold key signature (64 bytes)
+	ColdVkey      []byte // Cold (pool) verification key (32 bytes)
 }
 
 // CreateOperationalCertificate creates a new operational certificate by signing
@@ -1407,11 +1408,34 @@ func CreateOperationalCertificate(
 			err,
 		)
 	}
+
+	// Derive the cold (pool) verification key from the cold signing key so
+	// the canonical NodeOperationalCertificate envelope can carry it. A real
+	// node cert is a 2-element structure [inner_cert, cold_vkey]; without the
+	// cold vkey the certificate cannot be verified or round-tripped.
+	var coldVkey ed25519.PublicKey
+	switch len(coldSkey) {
+	case ed25519.SeedSize:
+		coldVkey = ed25519.NewKeyFromSeed(coldSkey).
+			Public().(ed25519.PublicKey)
+	case ed25519.PrivateKeySize:
+		coldVkey = ed25519.PrivateKey(coldSkey).
+			Public().(ed25519.PublicKey)
+	default:
+		return nil, fmt.Errorf(
+			"cold signing key must be %d or %d bytes, got %d",
+			ed25519.SeedSize,
+			ed25519.PrivateKeySize,
+			len(coldSkey),
+		)
+	}
+
 	return &OperationalCertificate{
 		KesVkey:       opCert.KesVkey,
 		IssueNumber:   opCert.IssueNumber,
 		KesPeriod:     opCert.KesPeriod,
 		ColdSignature: opCert.ColdSignature,
+		ColdVkey:      coldVkey,
 	}, nil
 }
 

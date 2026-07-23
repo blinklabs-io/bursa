@@ -1612,16 +1612,35 @@ func parseSigningKey(data []byte) ([]byte, error) {
 	)
 }
 
-// encodeOpCertCBOR encodes an operational certificate to CBOR hex
+// encodeOpCertCBOR encodes an operational certificate to CBOR hex.
+//
+// The canonical NodeOperationalCertificate is a 2-element structure:
+//
+//	[[kes_vkey, counter, kes_period, signature], cold_vkey]
+//
+// i.e. the inner 4-tuple wrapped in an outer array whose second element is
+// the pool cold verification key. This matches cardano-cli / node output and
+// is what bursa's own decodeOpCert expects, so the emitted cert round-trips.
 func encodeOpCertCBOR(
 	opCert *bursa.OperationalCertificate,
 ) (string, error) {
-	// OpCert CBOR: [kes_vkey, counter, kes_period, signature]
-	certData := []any{
+	if len(opCert.ColdVkey) != 32 {
+		return "", fmt.Errorf(
+			"invalid operational certificate: cold_vkey expected 32 bytes, got %d",
+			len(opCert.ColdVkey),
+		)
+	}
+	// Inner cert: [kes_vkey, counter, kes_period, signature]
+	innerCert := []any{
 		opCert.KesVkey,
 		opCert.IssueNumber,
 		opCert.KesPeriod,
 		opCert.ColdSignature,
+	}
+	// Outer envelope: [inner_cert, cold_vkey]
+	certData := []any{
+		innerCert,
+		opCert.ColdVkey,
 	}
 	cborBytes, err := cbor.Encode(certData)
 	if err != nil {
