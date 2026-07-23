@@ -79,6 +79,12 @@ type Spender interface {
 	SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR string) (spend.TxResult, error)
 	BuildDelegation(ctx context.Context, req spend.DelegationRequest) (spend.DelegationPreview, error)
 	HardwareSignRequest(pendingID string) (spend.HardwareSignRequest, error)
+	// DecodeTx, CosignTx, and SubmitTxCbor back the "import transaction" flow:
+	// a user pastes a full tx CBOR built elsewhere (e.g. by a DApp or another
+	// wallet) to inspect it, add this wallet's witness(es), and broadcast it.
+	DecodeTx(ctx context.Context, txCbor string) (spend.TxSummary, error)
+	CosignTx(ctx context.Context, txCbor, password string, partialSign bool) (spend.CosignResult, error)
+	SubmitTxCbor(ctx context.Context, txCbor string) (spend.TxResult, error)
 }
 
 // NodeLookup is the node-backed verification/lookup surface the wallet uses to
@@ -254,6 +260,12 @@ type MultiSig interface {
 	Build(ctx context.Context, id string, req multisig.BuildRequest) (multisig.UnsignedTx, error)
 	Sign(unsignedTxCBOR, password string) (multisig.Witness, error)
 	Submit(ctx context.Context, id, unsignedTxCBOR string, witnessCBORs []string) (multisig.TxResult, error)
+	// InspectTx, CosignImported, and SubmitImported back the import-tx routes'
+	// classification/dispatch (decode-tx/cosign-tx/submit-tx): see
+	// importDecode, importCosign, and importSubmit below.
+	InspectTx(txCbor string) (multisig.TxInfo, error)
+	CosignImported(txCbor, password string) (multisig.CosignResult, error)
+	SubmitImported(ctx context.Context, txCbor string) (multisig.TxResult, error)
 }
 
 type decimalUint64 uint64
@@ -978,6 +990,53 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		serve(w, v, err)
 	}))
 
+	// Import transaction: paste a full tx CBOR built elsewhere to inspect it
+	// (decode-tx), add this wallet's witness(es) (cosign-tx), and broadcast the
+	// result (submit-tx). decode-tx and cosign-tx are ungated like sign-tx —
+	// pure crypto over the keystore/tx bytes, no node needed; submit-tx needs a
+	// synced node like submit-signed. Each handler classifies the pasted tx via
+	// ms.InspectTx and routes native-script multisig txs to the multisig
+	// service, ordinary vkey txs straight to the spender (see importDecode/
+	// importCosign/importSubmit below).
+	mux.HandleFunc("POST /wallet/decode-tx", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			TxCBOR string `json:"tx_cbor"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := importDecode(r.Context(), sp, ms, req.TxCBOR)
+		serve(w, v, err)
+	})
+
+	mux.HandleFunc("POST /wallet/cosign-tx", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			TxCBOR      string `json:"tx_cbor"`
+			Password    string `json:"password"`
+			PartialSign *bool  `json:"partial_sign,omitempty"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		partial := true
+		if req.PartialSign != nil {
+			partial = *req.PartialSign
+		}
+		v, err := importCosign(r.Context(), sp, ms, req.TxCBOR, req.Password, partial)
+		serve(w, v, err)
+	})
+
+	mux.HandleFunc("POST /wallet/submit-tx", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			TxCBOR string `json:"tx_cbor"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := importSubmit(r.Context(), sp, ms, req.TxCBOR)
+		serve(w, v, err)
+	}))
+
 	// Staking & governance. Pool/DRep lookups verify a pasted ID through the node
 	// (gated like reads — they only need the node serving queries). Building a
 	// delegation tx and confirming it are gated like sends (a fully synced node),
@@ -1401,6 +1460,59 @@ func registerMultiSigRoutes(mux *http.ServeMux, st Statuser, ms MultiSig, networ
 		v, err := ms.Submit(r.Context(), r.PathValue("id"), req.UnsignedTxCBOR, req.Witnesses)
 		serve(w, v, err)
 	}))
+}
+
+// importDecodeResponse is decode-tx's response: the vkey-path TxSummary with
+// an optional multisig classification block merged in. When the pasted tx is
+// a native-script multi-sig spend, Kind is overridden to "native_multisig"
+// and MultiSig carries the policy/participant detail from ms.InspectTx.
+type importDecodeResponse struct {
+	spend.TxSummary
+	MultiSig *multisig.TxInfo `json:"multisig,omitempty"`
+}
+
+// importDecode, importCosign, and importSubmit back the decode-tx/cosign-tx/
+// submit-tx routes. Each classifies the pasted tx via ms.InspectTx first and
+// routes native-script multi-sig transactions through the MultiSig service;
+// everything else (vkey path) delegates to the Spender, unchanged from the
+// prior (vkey-only) behavior.
+func importDecode(ctx context.Context, sp Spender, ms MultiSig, txCbor string) (importDecodeResponse, error) {
+	info, err := ms.InspectTx(txCbor)
+	if err != nil {
+		return importDecodeResponse{}, err
+	}
+	summary, err := sp.DecodeTx(ctx, txCbor)
+	if err != nil {
+		return importDecodeResponse{}, err
+	}
+	resp := importDecodeResponse{TxSummary: summary}
+	if info.IsMultiSig {
+		resp.Kind = "native_multisig"
+		resp.MultiSig = &info
+	}
+	return resp, nil
+}
+
+func importCosign(ctx context.Context, sp Spender, ms MultiSig, txCbor, password string, partial bool) (any, error) {
+	info, err := ms.InspectTx(txCbor)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsMultiSig {
+		return ms.CosignImported(txCbor, password)
+	}
+	return sp.CosignTx(ctx, txCbor, password, partial)
+}
+
+func importSubmit(ctx context.Context, sp Spender, ms MultiSig, txCbor string) (any, error) {
+	info, err := ms.InspectTx(txCbor)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsMultiSig {
+		return ms.SubmitImported(ctx, txCbor)
+	}
+	return sp.SubmitTxCbor(ctx, txCbor)
 }
 
 // decodeBody decodes a JSON request body into v, writing a 400 and returning

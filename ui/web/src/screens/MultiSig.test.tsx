@@ -140,18 +140,19 @@ test("spend flow: build then collect a threshold of witnesses and submit", async
   fireEvent.click(screen.getByRole("button", { name: /build transaction/i }));
 
   // Collect screen: progress starts at 0 of 2.
-  expect(await screen.findByText(/0 of 2 collected/i)).toBeInTheDocument();
+  expect(await screen.findByText(/0 of 2 signed/i)).toBeInTheDocument();
 
   // Sign here (1 of 2).
   fireEvent.change(screen.getByLabelText(/sign with this wallet/i), { target: { value: "pw" } });
   fireEvent.click(screen.getByRole("button", { name: /sign here/i }));
   await waitFor(() => expect(sign).toHaveBeenCalled());
-  expect(await screen.findByText(/1 of 2 collected/i)).toBeInTheDocument();
+  expect(await screen.findByText(/1 of 2 signed/i)).toBeInTheDocument();
 
   // Paste a second co-signer witness (2 of 2 → threshold met).
   fireEvent.change(screen.getByLabelText(/co-signer witness/i), { target: { value: "81a0sigB" } });
   fireEvent.click(screen.getByRole("button", { name: /add witness/i }));
-  expect(await screen.findByText(/2 of 2 collected/i)).toBeInTheDocument();
+  expect(await screen.findByText(/2 of 2 signed/i)).toBeInTheDocument();
+  expect(await screen.findByText(/threshold met/i)).toBeInTheDocument();
 
   // Submit.
   fireEvent.click(screen.getByRole("button", { name: /^submit$/i }));
@@ -187,7 +188,7 @@ test("seedless wallet can build, collect external witnesses, and submit without 
   fireEvent.click(screen.getByRole("button", { name: /build transaction/i }));
   await waitFor(() => expect(build).toHaveBeenCalled());
 
-  expect(await screen.findByText(/0 of 2 collected/i)).toBeInTheDocument();
+  expect(await screen.findByText(/0 of 2 signed/i)).toBeInTheDocument();
   expect(screen.queryByLabelText(/sign with this wallet/i)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /sign here/i })).not.toBeInTheDocument();
 

@@ -377,7 +377,7 @@ test("a hardware wallet can submit a multi-sig spend with external witnesses but
   fireEvent.change(screen.getByLabelText(/amount \(ada\)/i), { target: { value: "1" } });
   fireEvent.click(screen.getByRole("button", { name: /build transaction/i }));
 
-  expect(await screen.findByText(/0 of 1 collected/i)).toBeInTheDocument();
+  expect(await screen.findByText(/0 of 1 signed/i)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /sign here/i })).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText(/co-signer witness/i), { target: { value: "81a0external" } });
   fireEvent.click(screen.getByRole("button", { name: /add witness/i }));
@@ -388,6 +388,22 @@ test("a hardware wallet can submit a multi-sig spend with external witnesses but
       unsigned_tx_cbor: "84a400",
       witnesses: ["81a0external"],
     }),
+  );
+});
+
+test("deep-linking #/import with an active wallet renders the Import Transaction screen", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+  window.location.hash = "#/import";
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: /import transaction/i })).toBeInTheDocument(),
   );
 });
 

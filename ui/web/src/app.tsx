@@ -26,6 +26,7 @@ import { VerifyMessage } from "./screens/VerifyMessage";
 import { Offline } from "./screens/Offline";
 import { Operate } from "./screens/Operate";
 import { MultiSig } from "./screens/MultiSig";
+import { ImportTransaction } from "./screens/ImportTransaction";
 import { Settings } from "./screens/Settings";
 import { ConnectorApproval } from "./screens/ConnectorApproval";
 
@@ -65,6 +66,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "offline", label: "Offline" },
   { key: "operate", label: "Operate" },
   { key: "multisig", label: "Multi-sig" },
+  { key: "import", label: "Import Tx" },
   { key: "settings", label: "Settings" },
 ];
 
@@ -271,6 +273,7 @@ export function App() {
     else if (route === "offline" && canSign) activeRoute = "offline";
     else if (route === "operate" && canSign) activeRoute = "operate";
     else if (route === "multisig") activeRoute = "multisig";
+    else if (route === "import" && canSign) activeRoute = "import";
     else if (ROUTES.has(route) && route !== "send" && route !== "swap") activeRoute = route;
     else activeRoute = "portfolio";
   }
@@ -339,6 +342,11 @@ export function App() {
     // any active wallet. Building and submitting spends requires a synced node;
     // only local CIP-1854 key derivation/signing additionally requires a seed.
     content = <MultiSig canSpend={isReady} canSign={canSign} />;
+  } else if (route === "import") {
+    // Importing a transaction built elsewhere needs the active wallet's seed
+    // to add a signature (like Offline/Operate); submitting is separately
+    // gated inside the screen on the node being ready (canSubmit).
+    content = canSign ? <ImportTransaction canSubmit={isReady} /> : <Portfolio />;
   } else if (route === "receive") {
     // Explorer links on each address need the active wallet's real network
     // (preview/preprod/mainnet), which the generic ROUTES map (no props)
@@ -364,7 +372,8 @@ export function App() {
       (key === "staking" && !canStake) ||
       (key === "sign" && !canSign) ||
       (key === "offline" && !canSign) ||
-      (key === "operate" && !canSign);
+      (key === "operate" && !canSign) ||
+      (key === "import" && !canSign);
     return { key, label, disabled: gated, active: key === activeRoute };
   });
 
