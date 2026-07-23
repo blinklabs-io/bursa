@@ -30,7 +30,6 @@ import (
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
-	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
@@ -299,8 +298,9 @@ func (s *Service) RotateKES(password string, newKESIndex uint32, prevIssueNumber
 // OpCertPayload is the to-be-signed payload for an air-gapped opcert: the cold
 // key (held on an offline machine) signs PayloadHex with a standard Ed25519
 // key, and the resulting signature is fed back to AssembleOpCert. PayloadHex is
-// CBOR([kes_vkey, issue_number, kes_period]) — exactly what gouroboros'
-// CreateOpCert signs — so an external signer reproduces the same bytes.
+// the OCertSignable representation (kes_vkey || issue_number || kes_period, the
+// counters big-endian uint64) — exactly what gouroboros' CreateOpCert signs —
+// so an external signer reproduces the same bytes.
 type OpCertPayload struct {
 	PayloadHex  string `json:"payload_hex"`
 	KesVKeyHex  string `json:"kes_vkey_hex"`
@@ -319,11 +319,12 @@ func (s *Service) OpCertPayload(kesVKeyHex string, issueNumber, kesPeriod uint64
 	if len(kesVkey) != coldVKeyLen {
 		return OpCertPayload{}, fmt.Errorf("%w: KES vkey must be %d bytes, got %d", ErrInvalidRequest, coldVKeyLen, len(kesVkey))
 	}
-	// CBOR([kes_vkey, issue_number, kes_period]) — matches ledger.CreateOpCert.
-	payload, err := cbor.Encode([]any{kesVkey, issueNumber, kesPeriod})
-	if err != nil {
-		return OpCertPayload{}, fmt.Errorf("encode opcert payload: %w", err)
-	}
+	// The cold key signs the OCertSignable representation — the raw
+	// concatenation kes_vkey || issue_number || kes_period (both counters
+	// big-endian uint64), NOT a CBOR array. This mirrors ledger.CreateOpCert
+	// (gouroboros >= v0.187) and cardano-node/cardano-ledger; signing any other
+	// encoding yields a certificate that real blocks reject.
+	payload := lcommon.OpCertSignableBytes(kesVkey, issueNumber, kesPeriod)
 	return OpCertPayload{
 		PayloadHex:  hex.EncodeToString(payload),
 		KesVKeyHex:  hex.EncodeToString(kesVkey),
