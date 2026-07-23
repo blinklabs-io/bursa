@@ -7,7 +7,7 @@ require (
 	filippo.io/edwards25519 v1.2.0
 	github.com/MicahParks/keyfunc/v3 v3.8.0
 	github.com/blinklabs-io/go-bip39 v0.2.0
-	github.com/blinklabs-io/gouroboros v0.186.0
+	github.com/blinklabs-io/gouroboros v0.189.1
 	github.com/btcsuite/btcd/btcutil v1.2.0
 	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/getsops/sops/v3 v3.13.1
@@ -80,13 +80,13 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
-	github.com/blinklabs-io/plutigo v0.1.15 // indirect
+	github.com/blinklabs-io/plutigo v0.1.17 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.5.0 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.2.0 // indirect
 	github.com/btcsuite/btcd/chainhash/v2 v2.0.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/cloudflare/circl v1.6.3 // indirect
+	github.com/cloudflare/circl v1.6.4 // indirect
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
 	github.com/consensys/gnark-crypto v0.20.1 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
@@ -96,7 +96,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
-	github.com/ethereum/go-ethereum v1.17.3 // indirect
+	github.com/ethereum/go-ethereum v1.17.4 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
