@@ -1,18 +1,13 @@
 import { useState } from "react";
 import type { DexQuote } from "../api/types";
-import { computeDexQuote, ApiError } from "../api/client";
+import { computeDexQuote } from "../api/client";
 import { useDexPools } from "../api/hooks";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { Table } from "../components/Table";
 import { CopyButton } from "../components/CopyButton";
-
-function errorMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
+import { errorMessage } from "../errorMessage";
 
 // Render an asset unit compactly: ADA stays "lovelace", a long policy+name is
 // truncated in the middle so the row stays scannable.

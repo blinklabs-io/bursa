@@ -16,7 +16,6 @@ import {
   multiSigBuild,
   multiSigSign,
   multiSigSubmit,
-  ApiError,
 } from "../api/client";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
@@ -24,12 +23,7 @@ import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
 import { DownloadButton } from "../components/DownloadButton";
 import { formatAda, parseAda } from "../format";
-
-function errorMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
+import { errorMessage } from "../errorMessage";
 
 // A 28-byte Blake2b-224 key hash is 56 hex chars. Participant input currently
 // accepts only key hashes; vkeys must be hashed before being added here.

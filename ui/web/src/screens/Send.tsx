@@ -21,6 +21,7 @@ import { Table } from "../components/Table";
 import { CopyButton } from "../components/CopyButton";
 import { DownloadButton } from "../components/DownloadButton";
 import { formatAda, parseAda } from "../format";
+import { errorMessage } from "../errorMessage";
 
 // Human-readable device names for the hardware confirm UI.
 const DEVICE_LABELS: Record<HardwareKind, string> = {
@@ -34,12 +35,6 @@ type Phase = "compose" | "preview" | "done";
 interface AssetRow {
   unit: string;
   quantity: string;
-}
-
-function errorMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
-  if (err instanceof Error) return err.message;
-  return String(err);
 }
 
 // How long to wait after the user stops typing a "$handle" before querying

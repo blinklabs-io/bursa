@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTransactions } from "../api/hooks";
-import { getTransactionDetail, ApiError } from "../api/client";
+import { getTransactionDetail } from "../api/client";
 import type { Tx, TxDetail, TxDirection, TxIO } from "../api/types";
 import { Table } from "../components/Table";
 import { CopyButton } from "../components/CopyButton";
@@ -11,17 +11,12 @@ import { Drawer } from "../components/Drawer";
 import { ExplorerLink } from "../components/ExplorerLink";
 import { formatAda } from "../format";
 import { toCsv } from "../csv";
+import { errorMessage } from "../errorMessage";
 
 interface ActivityProps {
   // Optional so existing no-prop callers/tests keep working; the app always
   // passes the active wallet's real network when routing to this screen.
   network?: string;
-}
-
-function errorMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
-  if (err instanceof Error) return err.message;
-  return String(err);
 }
 
 /** Truncate a tx hash for display: first 8 … last 6 chars. */
