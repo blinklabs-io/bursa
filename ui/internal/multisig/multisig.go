@@ -2,7 +2,6 @@ package multisig
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -17,6 +16,7 @@ import (
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/txwitness"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/blinklabs-io/gouroboros/ledger/conway"
@@ -694,19 +694,54 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 		}
 	}
 
-	// An embedded native script is present for one of two reasons: it authorizes
-	// minting under its policy ID, or it satisfies a script-locked spend input.
+	// An embedded native script can be present for several reasons: it authorizes
+	// minting under its policy ID, satisfies a script-locked spend (payment)
+	// input, or authorizes a stake/governance action (a script-credentialed
+	// withdrawal or certificate). The mint and stake/gov purposes are resolvable
+	// from the tx body alone (mint policies, and the script-hash credentials of
+	// withdrawals/certificates); a payment spend is not (it would require
+	// resolving the referenced inputs against the chain, which needs a node).
+	//
 	// A script whose hash is a mint policy MAY be there only for minting, so its
-	// presence — even matching a saved account — is NOT proof of a spend
-	// (resolving the inputs would be required to know, and that needs a node).
-	// A script that is not a mint policy can only be there to satisfy a spend,
-	// so those are the candidate spend scripts.
+	// presence — even matching a saved account — is NOT proof of a spend. A
+	// script whose hash matches a withdrawal/certificate script credential is
+	// there for that stake/gov purpose: it must NOT be treated as a payment
+	// spend, because CosignImported derives the role-0 PAYMENT multisig key and
+	// would produce the wrong key for the legitimate owner (whose participation
+	// is via the stake/DRep key). Cosigning stake/gov native-script policies is
+	// not yet supported, so a tx carrying such a script is classified as an
+	// unsupported multi-sig (see below) rather than mis-signed as payment.
+	//
+	// After ruling out mint and stake/gov scripts, the remaining non-mint
+	// scripts can only be there to satisfy a spend, so those are the candidate
+	// payment-spend scripts.
+	stakeScriptHashes := stakeScriptCredentialHashes(&tx)
 	var candidates []*lcommon.NativeScript
+	stakePurpose := false
 	for i := range scripts {
 		hash := hex.EncodeToString(scripts[i].Hash().Bytes())
-		if !mintPolicies[hash] {
+		switch {
+		case mintPolicies[hash]:
+			// mint-only evidence — not a spend on this basis alone.
+		case stakeScriptHashes[hash]:
+			// Positively a stake/governance-purpose script (withdrawal or
+			// certificate credential), not a payment spend.
+			stakePurpose = true
+		default:
 			candidates = append(candidates, &scripts[i])
 		}
+	}
+	if stakePurpose {
+		// An embedded native script governs a withdrawal or certificate. The
+		// owner's participation is through the stake/DRep multi-sig key, which
+		// this import flow does not yet derive; classifying it as payment
+		// multisig would derive the wrong (role-0 payment) key. Report a
+		// recognizable-but-unsupported multi-sig (Threshold stays 0) so
+		// CosignImported/SubmitImported refuse it rather than derive the wrong
+		// key. This dominates even when a payment candidate is also present:
+		// satisfying only the payment script would still leave the stake/gov
+		// script unsigned, so the whole tx is unsupported here.
+		return TxInfo{IsMultiSig: true, ScriptEmbedded: true}, nil
 	}
 	switch len(candidates) {
 	case 0:
@@ -765,7 +800,7 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
 	signed := make(map[string]bool, len(tx.WitnessSet.VkeyWitnesses.Items()))
 	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
-		if !vkeyWitnessValid(w, bodyHash.Bytes()) {
+		if !txwitness.Valid(w, bodyHash.Bytes()) {
 			continue
 		}
 		kh := strings.ToLower(hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes()))
@@ -1098,7 +1133,7 @@ func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) 
 	signed := make(map[string]bool, len(tx.WitnessSet.VkeyWitnesses.Items()))
 	kept := make([]lcommon.VkeyWitness, 0, len(tx.WitnessSet.VkeyWitnesses.Items()))
 	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
-		if !vkeyWitnessValid(w, bodyHash.Bytes()) {
+		if !txwitness.Valid(w, bodyHash.Bytes()) {
 			continue
 		}
 		kh := strings.ToLower(hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes()))
@@ -1149,17 +1184,64 @@ func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) 
 // Helpers
 // ---------------------------------------------------------------------------
 
-// vkeyWitnessValid reports whether w is a genuine Ed25519 signature by w.Vkey
-// over msg (the tx body hash bytes). Cardano's BIP32-Ed25519 witnesses verify
-// under standard Ed25519 against the 32-byte public key, so a pasted tx
-// carrying a malformed or foreign witness — even one bearing a participant's
-// key — is rejected here rather than counted toward the threshold on key-hash
-// alone.
-func vkeyWitnessValid(w lcommon.VkeyWitness, msg []byte) bool {
-	if len(w.Vkey) != ed25519.PublicKeySize || len(w.Signature) != ed25519.SignatureSize {
-		return false
+// stakeScriptCredentialHashes returns the set (hex-encoded, lower-case) of
+// script-hash credentials the tx body uses for a non-payment purpose: the
+// script credentials of reward withdrawals and of certificates (stake and
+// DRep/committee). An embedded native script whose hash appears here is present
+// to authorize that stake/governance action, not a payment spend, so InspectTx
+// must not classify it as payment multisig. This mirrors spend.neededKeyHashes'
+// certificate/withdrawal walk but collects script-hash (not addr-key-hash)
+// credentials.
+func stakeScriptCredentialHashes(tx *conway.ConwayTransaction) map[string]bool {
+	out := make(map[string]bool)
+	addCred := func(cred *lcommon.Credential) {
+		if cred != nil && cred.CredType == lcommon.CredentialTypeScriptHash {
+			out[hex.EncodeToString(cred.Credential.Bytes())] = true
+		}
 	}
-	return ed25519.Verify(ed25519.PublicKey(w.Vkey), msg, w.Signature)
+	for _, cert := range tx.Body.Certificates() {
+		switch c := cert.(type) {
+		case *lcommon.StakeRegistrationCertificate:
+			addCred(&c.StakeCredential)
+		case *lcommon.StakeDeregistrationCertificate:
+			addCred(&c.StakeCredential)
+		case *lcommon.StakeDelegationCertificate:
+			addCred(c.StakeCredential)
+		case *lcommon.RegistrationCertificate:
+			addCred(&c.StakeCredential)
+		case *lcommon.DeregistrationCertificate:
+			addCred(&c.StakeCredential)
+		case *lcommon.VoteDelegationCertificate:
+			addCred(&c.StakeCredential)
+		case *lcommon.StakeVoteDelegationCertificate:
+			addCred(&c.StakeCredential)
+		case *lcommon.StakeRegistrationDelegationCertificate:
+			addCred(&c.StakeCredential)
+		case *lcommon.VoteRegistrationDelegationCertificate:
+			addCred(&c.StakeCredential)
+		case *lcommon.StakeVoteRegistrationDelegationCertificate:
+			addCred(&c.StakeCredential)
+		case *lcommon.RegistrationDrepCertificate:
+			addCred(&c.DrepCredential)
+		case *lcommon.DeregistrationDrepCertificate:
+			addCred(&c.DrepCredential)
+		case *lcommon.UpdateDrepCertificate:
+			addCred(&c.DrepCredential)
+		case *lcommon.AuthCommitteeHotCertificate:
+			addCred(&c.ColdCredential)
+		case *lcommon.ResignCommitteeColdCertificate:
+			addCred(&c.ColdCredential)
+		}
+	}
+	for addr := range tx.Body.TxWithdrawals {
+		if addr == nil {
+			continue
+		}
+		if payload, ok := addr.StakingPayload().(lcommon.AddressPayloadScriptHash); ok {
+			out[hex.EncodeToString(payload.Hash.Bytes())] = true
+		}
+	}
+	return out
 }
 
 // decodeScript reconstructs a native script from its hex CBOR.

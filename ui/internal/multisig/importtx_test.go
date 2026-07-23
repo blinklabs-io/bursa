@@ -259,6 +259,98 @@ func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 	}
 }
 
+// TestInspectTx_ScriptWithdrawalIsUnsupported covers the classification bug for
+// stake-purpose native scripts: a reward-account withdrawal governed by a
+// native script carries that script in the witness set, but it is there to
+// authorize a stake action, NOT a payment spend. InspectTx must NOT treat it as
+// a payment-multisig spend — doing so routes it to CosignImported, which
+// derives the role-0 PAYMENT multisig key and so produces the wrong key for the
+// legitimate owner (whose participation is via the stake/DRep key). It must be
+// reported as a recognizable-but-unsupported multisig (embedded script,
+// threshold 0, no participants) so CosignImported/SubmitImported refuse it.
+func TestInspectTx_ScriptWithdrawalIsUnsupported(t *testing.T) {
+	fc := newFakeChain()
+	svc := NewService(fc, nil, filepath.Join(t.TempDir(), "multisig.json"))
+
+	stakeScript, err := composeScript(Policy{
+		Threshold:    1,
+		Participants: []Participant{{KeyHashHex: hex.EncodeToString(bytesRepeat(5, 28))}},
+	})
+	if err != nil {
+		t.Fatalf("composeScript: %v", err)
+	}
+	txHex := injectScriptWithdrawal(t, fc, stakeScript)
+
+	info, err := svc.InspectTx(txHex)
+	if err != nil {
+		t.Fatalf("InspectTx: %v", err)
+	}
+	if !info.IsMultiSig || !info.ScriptEmbedded {
+		t.Fatalf("stake-script withdrawal should classify as an embedded multisig: %+v", info)
+	}
+	if info.Threshold != 0 || len(info.Participants) != 0 {
+		t.Fatalf("stake-script withdrawal must NOT be treated as a payment-multisig spend (want threshold 0, no participants): %+v", info)
+	}
+}
+
+// TestStakeScriptCredentialHashes_Certificate exercises the certificate branch
+// of the stake-purpose detector directly: a stake-deregistration certificate
+// bearing a script credential must be collected (so InspectTx excludes that
+// script from payment-spend candidates), while the same certificate with an
+// addr-key-hash credential must not be.
+func TestStakeScriptCredentialHashes_Certificate(t *testing.T) {
+	scriptHashHex := hex.EncodeToString(bytesRepeat(7, 28))
+	var credHash lcommon.Blake2b224
+	copy(credHash[:], bytesRepeat(7, 28))
+
+	scriptCred := func(credType uint) *conway.ConwayTransaction {
+		tx := &conway.ConwayTransaction{}
+		tx.Body.TxCertificates = []lcommon.CertificateWrapper{{
+			Type: uint(lcommon.CertificateTypeStakeDeregistration),
+			Certificate: &lcommon.StakeDeregistrationCertificate{
+				StakeCredential: lcommon.Credential{CredType: credType, Credential: credHash},
+			},
+		}}
+		return tx
+	}
+
+	if got := stakeScriptCredentialHashes(scriptCred(lcommon.CredentialTypeScriptHash)); !got[scriptHashHex] {
+		t.Fatalf("stake-deregistration script credential %s not collected: %v", scriptHashHex, got)
+	}
+	if got := stakeScriptCredentialHashes(scriptCred(lcommon.CredentialTypeAddrKeyHash)); len(got) != 0 {
+		t.Fatalf("addr-key-hash credential must not be collected as a stake script: %v", got)
+	}
+}
+
+// injectScriptWithdrawal decodes an ordinary unsigned tx and rewrites it to
+// carry a reward-account withdrawal keyed by ns's script hash, plus ns in the
+// witness set — the shape a script-credentialed (stake-purpose) withdrawal
+// takes. See mintOnlyTxHex for why this is done at the gouroboros struct level.
+func injectScriptWithdrawal(t *testing.T, fc *fakeChain, ns *bursa.NativeScript) string {
+	t.Helper()
+	tx := decodeConwayTx(t, ordinaryUnsignedTxHex(t, fc))
+
+	// Reward account (stake address) with a script staking credential: a header
+	// byte of AddressTypeNoneScript on the testnet network, then the 28-byte
+	// script hash.
+	scriptHash := ns.Hash()
+	raw := append(
+		[]byte{byte(lcommon.AddressTypeNoneScript<<4 | lcommon.AddressNetworkTestnet)},
+		scriptHash.Bytes()...,
+	)
+	addr, err := lcommon.NewAddressFromBytes(raw)
+	if err != nil {
+		t.Fatalf("reward addr: %v", err)
+	}
+	tx.Body.TxWithdrawals = map[*lcommon.Address]uint64{&addr: 1_000_000}
+	tx.WitnessSet.WsNativeScripts = gcbor.NewSetType([]lcommon.NativeScript{*ns}, true)
+
+	tx.SetCbor(nil)
+	tx.Body.SetCbor(nil)
+	tx.WitnessSet.SetCbor(nil)
+	return encodeConwayTx(t, &tx)
+}
+
 // mintOnlyTxHex builds an ordinary vkey-signed payment tx (via
 // ordinaryUnsignedTxHex — no script-locked input at all) and then injects a
 // mint of one unit under mintScript's policy ID plus mintScript itself into
