@@ -30,6 +30,7 @@ import type {
 } from "./types";
 import { encodeXpub } from "./xpub";
 import { encodeWitnessArray } from "./witness";
+import { isValidKeystoneXfp } from "./deviceKind";
 
 // ── BIP32 path helpers ───────────────────────────────────────────────────────
 
@@ -62,12 +63,16 @@ function normalizePath(path: string): string {
 
 // ── Capabilities ───────────────────────────────────────────────────────────
 
-// QR is a "sign a raw tx body + witness these paths" model: payments and simple
-// stake witnessing only. Structured multisig / pool-reg / governance are NOT
-// expressible over this request, so they are declared unsupported and gated off.
+// QR is a "sign a raw tx body + witness these paths" model. Today only the
+// payment inputs are mapped into the request's `utxos`; stake-key signer paths
+// are NOT yet mapped into `extraSigners`, so a certificate tx would be witnessed
+// incompletely. Staking is therefore advertised as UNSUPPORTED until those
+// signer paths are wired in — don't flip this back to `true` without also
+// populating `extraSigners` with the stake path(s). Structured multisig /
+// pool-reg / governance are likewise not expressible here and stay gated off.
 const KEYSTONE_QR_CAPABILITIES: HardwareCapabilities = {
   send: true,
-  staking: true,
+  staking: false,
   governance: false,
   multisig: false,
   poolReg: false,
@@ -245,10 +250,7 @@ export interface KeystoneAccountSync {
  * the one whose derivation origin is m/1852'/1815'/<account>' and re-encode it
  * through the shared hw/xpub.ts helper so it matches every other device.
  */
-export async function parseAccountSyncUR(
-  scanned: KeystoneScannedUR,
-  account: number,
-): Promise<KeystoneAccountSync> {
+async function decodeAccountSync(scanned: KeystoneScannedUR) {
   if (scanned.type !== "crypto-multi-accounts") {
     throw new Error(
       `Expected a Keystone account-sync QR (crypto-multi-accounts), got "${scanned.type}". ` +
@@ -262,6 +264,27 @@ export async function parseAccountSyncUR(
   // cast at each library boundary.
   const accounts = CryptoMultiAccounts.fromCBOR(B.from(scanned.cborHex, "hex") as unknown as Buffer);
   const xfp = toHex(new Uint8Array(accounts.getMasterFingerprint()));
+  return { accounts, xfp };
+}
+
+/**
+ * Read ONLY the device master fingerprint (xfp) from a scanned account-sync UR.
+ *
+ * The fingerprint is account-independent, so — unlike {@link parseAccountSyncUR}
+ * — this needs no account index and does not require a specific account key to be
+ * present. Used by Send's recovery flow to re-learn the xfp of an
+ * already-added wallet whose local hint was lost, without re-deriving its xpub.
+ */
+export async function parseAccountSyncXfp(scanned: KeystoneScannedUR): Promise<string> {
+  const { xfp } = await decodeAccountSync(scanned);
+  return xfp;
+}
+
+export async function parseAccountSyncUR(
+  scanned: KeystoneScannedUR,
+  account: number,
+): Promise<KeystoneAccountSync> {
+  const { accounts, xfp } = await decodeAccountSync(scanned);
   const wantHardened = accountPathStr(account); // "1852'/1815'/0'"
   const wantPlain = wantHardened.replace(/'/g, "h"); // some encoders render as "1852h/1815h/0h"
 
@@ -327,7 +350,20 @@ export async function connectKeystoneQR(
         "@keystonehq/bc-ur-registry-cardano"
       );
 
-      const xfp = opts.xfp ?? "00000000";
+      // The device master fingerprint is mandatory: it is how the Keystone
+      // recognises the witness paths as its own. It is learned only at
+      // account-sync and remembered as a local hint, so it CAN go missing (e.g.
+      // a browser-data wipe). Never fall back to a zero fingerprint — that would
+      // silently produce a request the device cannot match, so signing would
+      // appear to run but fail on-device. Block instead and steer the user to
+      // re-scan the account-sync QR (which yields the fingerprint again).
+      const xfp = opts.xfp;
+      if (!isValidKeystoneXfp(xfp)) {
+        throw new Error(
+          "This Keystone wallet's device fingerprint is missing. Re-scan the account-sync QR " +
+            "(open the Cardano account on the device and choose Sync / Connect Software Wallet) to recover it, then try again.",
+        );
+      }
       // Map the neutral request → a Keystone CardanoSignRequest:
       //   signData    = the unsigned tx body the device signs;
       //   utxos       = the wallet-owned inputs (path → which key witnesses);

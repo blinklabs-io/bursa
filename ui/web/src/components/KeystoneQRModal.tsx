@@ -27,6 +27,10 @@ export function useKeystoneQRBridge(): KeystoneQRBridgeHandle {
   const [phase, setPhase] = useState<Phase>("idle");
   const [fragments, setFragments] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Bumped to force-remount <QRScanner> so a failed scan (camera denied, or a
+  // corrupt/incomplete UR that stopped the reader) can be retried in place
+  // without tearing down and restarting the whole signing flow.
+  const [scanAttempt, setScanAttempt] = useState(0);
 
   const phaseRef = useRef<Phase>("idle");
   const resolverRef = useRef<{
@@ -70,6 +74,15 @@ export function useKeystoneQRBridge(): KeystoneQRBridgeHandle {
     bridge.close();
   }
 
+  // Retry a failed scan: clear the error and remount <QRScanner> (via its key)
+  // so a fresh camera + decoder session starts. The pending scanResponse()
+  // promise is still unresolved, so the recovered scan resolves it as normal.
+  function retryScan() {
+    setError(null);
+    setScanAttempt((n) => n + 1);
+    goto("scan");
+  }
+
   let body: ReactNode = null;
   if (phase === "display" || phase === "display-armed") {
     body = (
@@ -88,6 +101,7 @@ export function useKeystoneQRBridge(): KeystoneQRBridgeHandle {
     body = (
       <>
         <QRScanner
+          key={scanAttempt}
           onResult={(ur) => resolverRef.current?.resolve(ur)}
           onError={(message) => setError(message)}
         />
@@ -95,9 +109,13 @@ export function useKeystoneQRBridge(): KeystoneQRBridgeHandle {
     );
   }
 
+  // Offer Retry alongside Cancel whenever a scan has failed, so the user can
+  // rescan without abandoning (and rebuilding) the transaction.
+  const canRetry = phase === "scan" && error !== null;
+
   const element =
     phase === "idle" ? null : (
-      <div className="drawer-overlay" onClick={cancel}>
+      <div className="qr-modal-overlay" onClick={cancel}>
         <div
           className="qr-modal"
           role="dialog"
@@ -111,9 +129,12 @@ export function useKeystoneQRBridge(): KeystoneQRBridgeHandle {
               {error}
             </p>
           )}
-          <Button variant="ghost" onClick={cancel}>
-            Cancel
-          </Button>
+          <div className="qr-modal-actions">
+            {canRetry && <Button onClick={retryScan}>Retry scan</Button>}
+            <Button variant="ghost" onClick={cancel}>
+              Cancel
+            </Button>
+          </div>
         </div>
       </div>
     );

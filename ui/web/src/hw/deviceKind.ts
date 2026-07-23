@@ -130,7 +130,22 @@ export function setKeystoneXfp(walletId: string, xfp: string): void {
   }
 }
 
-/** Look up the stored Keystone master fingerprint, or `undefined` if unknown. */
+/**
+ * A Cardano/BIP32 master fingerprint is exactly 4 bytes → 8 hex digits. Anything
+ * else in local storage is corrupt (e.g. a truncated write, a hand-edited value,
+ * or a non-string smuggled in by a malformed JSON blob) and MUST NOT be forwarded
+ * into a sign-request, where it would make the device fail to match its paths.
+ */
+export function isValidKeystoneXfp(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}$/i.test(value);
+}
+
+/**
+ * Look up the stored Keystone master fingerprint, or `undefined` if unknown or
+ * malformed. Corrupt local state (a non-string, or a non-8-hex-digit value) is
+ * treated as unknown so it can never be forwarded into a QR signing request.
+ */
 export function getKeystoneXfp(walletId: string): string | undefined {
-  return readXfpMap()[walletId];
+  const xfp = readXfpMap()[walletId];
+  return isValidKeystoneXfp(xfp) ? xfp : undefined;
 }

@@ -13,7 +13,8 @@ import {
 import { useContacts } from "../api/hooks";
 import { connectHardware, connectDevice } from "../hw";
 import type { HardwareKind, HardwareSigner } from "../hw";
-import { getStoredDeviceKind, setDeviceKind, getKeystoneXfp } from "../hw/deviceKind";
+import { getStoredDeviceKind, setDeviceKind, getKeystoneXfp, setKeystoneXfp } from "../hw/deviceKind";
+import { parseAccountSyncXfp } from "../hw/keystone";
 import { useKeystoneQRBridge } from "../components/KeystoneQRModal";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
@@ -369,6 +370,15 @@ function PreviewPhase({
   const [externalConsent, setExternalConsent] = useState(false);
   // Keystone has two local transports; QR (air-gapped) is the primary one.
   const [keystoneTransport, setKeystoneTransport] = useState<"qr" | "usb">("qr");
+  // The Keystone device master fingerprint (xfp) for this wallet, sourced from
+  // the per-wallet local hint. QR signing REQUIRES it (the device matches its
+  // witness paths by it); when it is missing — e.g. after a browser-data wipe —
+  // we must NOT sign with a zero fingerprint. Instead the user re-scans the
+  // account-sync QR here to recover it (see handleKeystoneResync). Kept in state
+  // so a recovery updates the UI immediately.
+  const [keystoneXfp, setKeystoneXfpState] = useState<string | undefined>(() =>
+    walletId ? getKeystoneXfp(walletId) : undefined,
+  );
   // The QR modal bridge is always mounted (hooks can't be conditional); it
   // renders nothing until a Keystone QR flow drives it.
   const { bridge: keystoneBridge, element: keystoneModal } = useKeystoneQRBridge();
@@ -376,6 +386,42 @@ function PreviewPhase({
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState<UnsignedTx | null>(null);
+
+  // QR signing needs the device fingerprint; when it is missing the user must
+  // re-scan the account-sync QR before they can sign (see handleKeystoneResync).
+  const needsKeystoneResync = isKeystone && keystoneTransport === "qr" && keystoneXfp === undefined;
+
+  // Preload the WebUSB transport modules as soon as the USB transport is chosen,
+  // so their dynamic imports are already resolved when Confirm is clicked and
+  // TransportWebUSB.requestPermission() runs INSIDE the click's user-activation
+  // window. A cold first-time import could otherwise outlast the activation and
+  // the browser would refuse to open the device picker.
+  useEffect(() => {
+    if (isKeystone && keystoneTransport === "usb") {
+      void import("@keystonehq/hw-transport-webusb").catch(() => {});
+      void import("@keystonehq/hw-app-ada").catch(() => {});
+    }
+  }, [isKeystone, keystoneTransport]);
+
+  // Recover a lost Keystone fingerprint: re-scan the account-sync QR, read just
+  // the master fingerprint (account-independent), and persist it so QR signing
+  // can proceed. Mirrors the device-picker recovery pattern — no need to abandon
+  // and re-add the wallet.
+  async function handleKeystoneResync() {
+    setError(null);
+    setLoading(true);
+    try {
+      const scanned = await keystoneBridge.scanResponse();
+      const xfp = await parseAccountSyncXfp(scanned);
+      if (walletId) setKeystoneXfp(walletId, xfp);
+      setKeystoneXfpState(xfp);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      keystoneBridge.close();
+      setLoading(false);
+    }
+  }
 
   // Select a device to sign with. This is TENTATIVE: the hint is NOT persisted
   // here, only after a successful hardware send (see handleHardwareConfirm), so
@@ -434,14 +480,25 @@ function PreviewPhase({
         // (primary) drives the animated-QR + webcam modal; USB uses the
         // transport directly. The QR sign-request needs the device master
         // fingerprint captured at account-sync (see hw/keystone.ts).
-        session =
-          keystoneTransport === "qr"
-            ? await connectDevice("keystone", {
-                transport: "qr",
-                bridge: keystoneBridge,
-                xfp: walletId ? getKeystoneXfp(walletId) : undefined,
-              })
-            : await connectDevice("keystone", { transport: "usb" });
+        if (keystoneTransport === "qr") {
+          // Never start a QR sign flow without a real fingerprint: a zero fp
+          // would build a request the device cannot match. The button is
+          // disabled while it is missing (needsKeystoneResync), so this is
+          // defensive — steer the user to the recovery re-scan.
+          if (keystoneXfp === undefined) {
+            setError(
+              "This Keystone wallet's device fingerprint is missing. Re-scan the account-sync QR to recover it before signing.",
+            );
+            return;
+          }
+          session = await connectDevice("keystone", {
+            transport: "qr",
+            bridge: keystoneBridge,
+            xfp: keystoneXfp,
+          });
+        } else {
+          session = await connectDevice("keystone", { transport: "usb" });
+        }
       } else {
         // The confirm button is disabled until the Trezor consent box is
         // ticked, so this simply reports the already-given approval; the real
@@ -572,7 +629,24 @@ function PreviewPhase({
                 </label>
               </fieldset>
             )}
-            {deviceKind !== undefined && (
+            {needsKeystoneResync && (
+              // The device fingerprint hint was lost (e.g. browser-data wipe).
+              // QR signing cannot proceed without it, so recover it in place by
+              // re-scanning the account-sync QR rather than sending a request the
+              // device cannot match.
+              <fieldset className="field-group" style={{ border: "none", padding: 0, margin: 0 }}>
+                <legend className="field-label">Reconnect this Keystone</legend>
+                <p className="helper-text">
+                  We could not find this wallet&apos;s Keystone fingerprint on this browser
+                  (it may have been cleared). On the Keystone, open the Cardano account and
+                  choose Sync / Connect Software Wallet, then scan that QR to reconnect.
+                </p>
+                <Button onClick={handleKeystoneResync} disabled={loading}>
+                  {loading ? "Scanning…" : "Scan account-sync QR"}
+                </Button>
+              </fieldset>
+            )}
+            {deviceKind !== undefined && !needsKeystoneResync && (
               <p className="helper-text">
                 {isKeystone && keystoneTransport === "qr"
                   ? "Confirm to show the transaction as a QR for your Keystone, then scan its signature back."
@@ -622,10 +696,17 @@ function PreviewPhase({
                 loading ||
                 exporting ||
                 needsDeviceChoice ||
+                needsKeystoneResync ||
                 (needsExternalConsent && !externalConsent)
               }
             >
-              {loading ? "Signing…" : needsDeviceChoice ? "Choose a device" : `Confirm on ${deviceLabel}`}
+              {loading
+                ? "Signing…"
+                : needsDeviceChoice
+                  ? "Choose a device"
+                  : needsKeystoneResync
+                    ? "Reconnect Keystone"
+                    : `Confirm on ${deviceLabel}`}
             </Button>
           ) : (
             <Button onClick={handleConfirm} disabled={loading || exporting || !password}>

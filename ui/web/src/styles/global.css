@@ -1985,8 +1985,19 @@ a:hover {
 }
 
 /* Keystone air-gapped QR modal: animated request QR + webcam scanner. */
+/* A dedicated overlay that OWNS centering (both axes), so the modal never relies
+   on a parent's incidental layout to be centered. */
+.qr-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, black 55%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  z-index: 50;
+}
 .qr-modal {
-  margin: auto;
   width: min(420px, 100%);
   max-height: 100%;
   background: var(--surface);
@@ -1998,6 +2009,13 @@ a:hover {
   gap: var(--space-3);
   padding: var(--space-4);
   overflow-y: auto;
+}
+.qr-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
 }
 .qr-animated {
   display: flex;

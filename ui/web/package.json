@@ -20,6 +20,7 @@
     "@ngraveio/bc-ur": "^1.1.13",
     "@trezor/connect-web": "^9.7.3",
     "@zxing/browser": "^0.1.5",
+    "@zxing/library": "^0.21.0",
     "bech32": "^1.1.4",
     "qrcode.react": "^4.2.0",
     "react": "^19.0.0",

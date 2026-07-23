@@ -48,7 +48,13 @@ vi.mock("@keystonehq/hw-app-ada", () => ({
   TxRequiredSignerType: { HASH: "required_signer_hash" },
 }));
 
-import { connectKeystoneQR, connectKeystoneUSB, witnessSetToPairs, parseAccountSyncUR } from "./keystone";
+import {
+  connectKeystoneQR,
+  connectKeystoneUSB,
+  witnessSetToPairs,
+  parseAccountSyncUR,
+  parseAccountSyncXfp,
+} from "./keystone";
 import { encodeXpub } from "./xpub";
 import { encodeWitnessArray } from "./witness";
 import type { KeystoneQRBridge } from "./types";
@@ -138,16 +144,37 @@ function makeBridge(): KeystoneQRBridge & {
 // ── QR transport ──────────────────────────────────────────────────────────────
 
 describe("connectKeystoneQR", () => {
-  test("reports kind 'keystone' and QR capabilities (send + simple staking only)", async () => {
+  test("reports kind 'keystone' and conservative QR capabilities (send only)", async () => {
+    // Staking is advertised as UNSUPPORTED over QR until stake signer paths are
+    // mapped into extraSigners — otherwise certificate txs would be witnessed
+    // incompletely (see KEYSTONE_QR_CAPABILITIES in keystone.ts).
     const session = await connectKeystoneQR({ transport: "qr", bridge: makeBridge() });
     expect(session.kind).toBe("keystone");
     expect(session.capabilities).toEqual({
       send: true,
-      staking: true,
+      staking: false,
       governance: false,
       multisig: false,
       poolReg: false,
     });
+  });
+
+  test("signTx refuses to build a request with a missing fingerprint (no zero fp)", async () => {
+    // Without a valid xfp the device cannot match the witness paths; the signer
+    // must block rather than silently send 00000000.
+    const bridge = makeBridge();
+    const session = await connectKeystoneQR({ transport: "qr", bridge });
+    await expect(session.signTx(NEUTRAL_REQ)).rejects.toThrow(/fingerprint is missing/i);
+    // It must NOT have shown a request QR or scanned anything.
+    expect(bridge.displayRequest).not.toHaveBeenCalled();
+    expect(bridge.scanResponse).not.toHaveBeenCalled();
+  });
+
+  test("signTx refuses a malformed (non-8-hex) fingerprint", async () => {
+    const bridge = makeBridge();
+    const session = await connectKeystoneQR({ transport: "qr", bridge, xfp: "xyz" });
+    await expect(session.signTx(NEUTRAL_REQ)).rejects.toThrow(/fingerprint is missing/i);
+    expect(bridge.displayRequest).not.toHaveBeenCalled();
   });
 
   test("getAccountXpub extracts the account key from the account-sync UR and matches the shared vector", async () => {
@@ -206,7 +233,7 @@ describe("connectKeystoneQR", () => {
       type: "crypto-multi-accounts",
       cborHex: accountSyncCborHex(TEST_PUB_KEY_HEX, TEST_CHAIN_CODE_HEX, ACCT0_PATH),
     });
-    const session = await connectKeystoneQR({ transport: "qr", bridge });
+    const session = await connectKeystoneQR({ transport: "qr", bridge, xfp: "52744703" });
     await expect(session.signTx(NEUTRAL_REQ)).rejects.toThrow(/cardano-signature/i);
     expect(bridge.close).toHaveBeenCalled();
   });
@@ -220,7 +247,7 @@ describe("connectKeystoneQR", () => {
       type: "cardano-signature",
       cborHex: signatureCborHex(TEST_PUB_KEY_HEX, TEST_SIG_HEX),
     });
-    const opts = { transport: "qr" as const, bridge };
+    const opts = { transport: "qr" as const, bridge, xfp: "52744703" };
     expect("requestExternalConsent" in opts).toBe(false);
     const session = await connectKeystoneQR(opts);
     await expect(session.signTx(NEUTRAL_REQ)).resolves.toBeTypeOf("string");
@@ -282,6 +309,27 @@ describe("parseAccountSyncUR", () => {
         5,
       ),
     ).rejects.toThrow(/does not contain account 5/i);
+  });
+});
+
+describe("parseAccountSyncXfp", () => {
+  test("returns just the master fingerprint (account-independent recovery)", async () => {
+    // Even for an account not present in the sync UR, the master fingerprint is
+    // recoverable — it is account-independent — so Send can re-learn a lost xfp.
+    const xfp = await parseAccountSyncXfp({
+      type: "crypto-multi-accounts",
+      cborHex: accountSyncCborHex(TEST_PUB_KEY_HEX, TEST_CHAIN_CODE_HEX, ACCT0_PATH),
+    });
+    expect(xfp).toBe("52744703");
+  });
+
+  test("rejects a non-account-sync UR", async () => {
+    await expect(
+      parseAccountSyncXfp({
+        type: "cardano-signature",
+        cborHex: signatureCborHex(TEST_PUB_KEY_HEX, TEST_SIG_HEX),
+      }),
+    ).rejects.toThrow(/account-sync/i);
   });
 });
 

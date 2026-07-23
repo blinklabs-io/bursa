@@ -74,6 +74,19 @@ export function QRScanner({ onResult, onError }: QRScannerProps) {
               return;
             }
             setProgress(Math.round(decoder.getProgress() * 100));
+            // A structurally valid but corrupt multipart stream (e.g. mismatched
+            // fragment checksums) puts the decoder into a permanent error state
+            // WITHOUT ever reaching isComplete(). Detect that and surface it, or
+            // the UI would sit on "Scanning…" forever with no way to recover.
+            if (decoder.isError()) {
+              done = true;
+              controls?.stop();
+              onError?.(
+                decoder.resultError() ||
+                  "The scanned QR could not be decoded. Restart the exchange on the device and rescan.",
+              );
+              return;
+            }
             if (decoder.isComplete()) {
               done = true;
               controls?.stop();
