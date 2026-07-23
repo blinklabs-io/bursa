@@ -2,7 +2,6 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
-import { Select } from "../components/Select";
 import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
 import { addWallet, addHardwareWallet, generateMnemonic, ApiError } from "../api/client";
@@ -12,11 +11,29 @@ import type { WalletView } from "../api/types";
 import { MIN_PASSWORD_LEN, passwordLength } from "../password";
 import { CHALLENGE_WORD_COUNT, isChallengeAnswerCorrect, pickChallengeIndices, validateChallenge } from "../phraseChallenge";
 
-const NETWORK_OPTIONS = [
-  { value: "preview", label: "Preview" },
-  { value: "preprod", label: "Preprod" },
-  { value: "mainnet", label: "Mainnet" },
-];
+const NETWORK_LABELS: Record<string, string> = {
+  preview: "Preview",
+  preprod: "Preprod",
+  mainnet: "Mainnet",
+};
+
+function networkLabel(network: string): string {
+  return NETWORK_LABELS[network] ?? network ?? "";
+}
+
+// NetworkDisplay shows the network the wallet will be created on, read-only.
+// The embedded node runs exactly one network and the backend rejects any
+// mismatch, so there is nothing to choose — the value is shown for context.
+function NetworkDisplay({ network }: { network: string }) {
+  return (
+    <div className="field-group">
+      <label>Network</label>
+      <p className="helper-text" data-testid="wallet-network">
+        {networkLabel(network)} — set by the connected node
+      </p>
+    </div>
+  );
+}
 
 interface AddWalletProps {
   network: string;
@@ -56,7 +73,6 @@ export function AddWallet({
   // Shared form state
   const [name, setName] = useState("");
   const [mnemonic, setMnemonic] = useState("");
-  const [selectedNetwork, setSelectedNetwork] = useState(network);
   const [spendPassword, setSpendPassword] = useState("");
   const [vaultPassword, setVaultPassword] = useState("");
   const [ledgerAccountIndex, setLedgerAccountIndex] = useState("0");
@@ -133,7 +149,7 @@ export function AddWallet({
       const wallet = await addWallet({
         name: name.trim() || "Wallet",
         mnemonic: mnemonicToUse,
-        network: selectedNetwork,
+        network,
         vault_password: vaultPw,
         spend_password: spendPassword,
       });
@@ -183,7 +199,7 @@ export function AddWallet({
         name.trim() || "Ledger Wallet",
         xpub,
         accountIndex,
-        selectedNetwork,
+        network,
         vaultPw,
       );
       onAdded(wallet);
@@ -355,15 +371,7 @@ export function AddWallet({
             />
           </div>
 
-          <div className="field-group">
-            <label htmlFor="create-network">Network</label>
-            <Select
-              id="create-network"
-              options={NETWORK_OPTIONS}
-              value={selectedNetwork}
-              onChange={(e) => setSelectedNetwork(e.target.value)}
-            />
-          </div>
+          <NetworkDisplay network={network} />
 
           <div className="field-group">
             <label htmlFor="create-spend-password">Spending Password</label>
@@ -442,15 +450,7 @@ export function AddWallet({
             />
           </div>
 
-          <div className="field-group">
-            <label htmlFor="ledger-network">Network</label>
-            <Select
-              id="ledger-network"
-              options={NETWORK_OPTIONS}
-              value={selectedNetwork}
-              onChange={(e) => setSelectedNetwork(e.target.value)}
-            />
-          </div>
+          <NetworkDisplay network={network} />
 
           <div className="field-group">
             <label htmlFor="ledger-account-index">Account Index</label>
@@ -531,15 +531,7 @@ export function AddWallet({
           />
         </div>
 
-        <div className="field-group">
-          <label htmlFor="add-network">Network</label>
-          <Select
-            id="add-network"
-            options={NETWORK_OPTIONS}
-            value={selectedNetwork}
-            onChange={(e) => setSelectedNetwork(e.target.value)}
-          />
-        </div>
+        <NetworkDisplay network={network} />
 
         <div className="field-group">
           <label htmlFor="add-mnemonic">Recovery Phrase</label>

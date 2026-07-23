@@ -190,7 +190,10 @@ export function App() {
   }
 
   const vault = vaultStatus.data;
-  const network = "preview";
+  // The embedded node runs exactly one network; the create/add-wallet flows
+  // derive it from the live node status rather than letting the user pick a
+  // network that would never match the node (the backend rejects a mismatch).
+  const network = status.data?.network ?? "";
 
   if (!vault) {
     return (

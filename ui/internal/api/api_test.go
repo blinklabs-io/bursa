@@ -394,12 +394,18 @@ func TestStatusReturnsSnapshot(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/status = %d, want 200", rec.Code)
 	}
-	var got supervisor.Status
+	var got struct {
+		supervisor.Status
+		Network string `json:"network"`
+	}
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if got.State != want.State || got.Tip != want.Tip || got.CaughtUp != want.CaughtUp {
-		t.Fatalf("got %+v, want %+v", got, want)
+		t.Fatalf("got %+v, want %+v", got.Status, want)
+	}
+	if got.Network != "preview" {
+		t.Fatalf("network = %q, want %q", got.Network, "preview")
 	}
 }
 
