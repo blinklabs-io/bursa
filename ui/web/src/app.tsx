@@ -308,7 +308,7 @@ export function App() {
   } else if (route === "send" && !canSend) {
     content = <Portfolio />;
   } else if (route === "send" && canSend) {
-    content = <Send isHardware={activeWallet.type === "hardware"} />;
+    content = <Send isHardware={activeWallet.type === "hardware"} walletId={activeWallet.id} />;
   } else if (route === "swap" && !canSwap) {
     // Guard deep-links (#/swap): DEX quotes need a queryable mainnet node, so
     // fall back to Portfolio while the node or active wallet cannot support it.
