@@ -30,12 +30,19 @@ import (
 
 // SignRequest is the POST /v1/sign body.
 type SignRequest struct {
-	Type    string   `json:"type"`    // "tx" | "cip8"
+	Type    string   `json:"type"`    // "tx" | "cip8" | "opcert"
 	Cbor    string   `json:"cbor"`    // tx: hex CBOR or JSON envelope
 	Signers []string `json:"signers"` // tx: key hashes / addresses
 	Payload string   `json:"payload"` // cip8: hex
 	Address string   `json:"address"` // cip8: bech32
-	Key     string   `json:"key"`     // cip8: key hash
+	Key     string   `json:"key"`     // cip8 + opcert: cold/signing key hash
+
+	// opcert: cold-sign an operational certificate. The cold key (identified by
+	// Key) signs the canonical OCertSignable bytes; the cold key itself never
+	// leaves its custody backend.
+	KesVkey      string `json:"kes_vkey"`      // opcert: hex-encoded 32-byte KES verification key
+	IssueCounter uint64 `json:"issue_counter"` // opcert: operational certificate issue counter
+	KesPeriod    uint64 `json:"kes_period"`    // opcert: KES period
 }
 
 // SignTxResponse is returned for type=tx.
@@ -51,6 +58,18 @@ type SignTxResponse struct {
 type SignCIP8Response struct {
 	AuditID   string `json:"audit_id"`
 	Signature string `json:"signature"`
+	Key       string `json:"key"`
+}
+
+// SignOpCertResponse is returned for type=opcert. Signature is the 64-byte
+// cold-key Ed25519 signature over the OCertSignable bytes; ColdVkey is the
+// 32-byte cold verification key. Both are hex-encoded. Together with the
+// request's KES vkey/counter/period they form the opcert envelope
+// [[kes_vkey, counter, period, sig], cold_vkey].
+type SignOpCertResponse struct {
+	AuditID   string `json:"audit_id"`
+	Signature string `json:"signature"`
+	ColdVkey  string `json:"cold_vkey"`
 	Key       string `json:"key"`
 }
 
@@ -282,6 +301,47 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		}
 		s.audit(r, caller, "cip8", "signed", "audit_id", auditID, "key", req.Key, "address", req.Address)
 		writeJSON(w, http.StatusOK, SignCIP8Response{AuditID: auditID, Signature: res.SignatureHex, Key: res.KeyHex})
+	case "opcert":
+		kesVkey, err := hex.DecodeString(req.KesVkey)
+		if err != nil {
+			s.audit(r, caller, "opcert", "bad_request", "audit_id", auditID, "key", req.Key)
+			writeErr(w, http.StatusBadRequest, "invalid kes_vkey hex")
+			return
+		}
+		// Enforce the caller ACL against the cold key exactly like the cip8 path.
+		if s.acl.Restricted() {
+			h, err := backend.ParseKeyHash(req.Key)
+			if err == nil && !s.acl.Allows(caller, h) {
+				s.coord.Metrics().ObserveDeny("acl")
+				s.audit(r, caller, "opcert", "denied", "audit_id", auditID, "key", req.Key, "reason", "caller ACL")
+				writeErr(w, http.StatusForbidden, "caller is not authorized for this key")
+				return
+			}
+		}
+		res, code, err := s.coord.SignOpCert(r.Context(), kesVkey, req.IssueCounter, req.KesPeriod, req.Key)
+		if err != nil {
+			st := codeToStatus(code)
+			if st >= 500 {
+				s.logger.Error("SignOpCert error",
+					"caller", caller,
+					"audit_id", auditID,
+					"code", code,
+					"error", err,
+				)
+				s.audit(r, caller, "opcert", "error", "audit_id", auditID, "key", req.Key)
+				if st == http.StatusBadGateway {
+					writeErr(w, st, "backend error")
+				} else {
+					writeErr(w, st, "internal server error")
+				}
+				return
+			}
+			s.audit(r, caller, "opcert", string(code), "audit_id", auditID, "key", req.Key, "error", err.Error())
+			writeErr(w, st, err.Error())
+			return
+		}
+		s.audit(r, caller, "opcert", "signed", "audit_id", auditID, "key", req.Key)
+		writeJSON(w, http.StatusOK, SignOpCertResponse{AuditID: auditID, Signature: res.SignatureHex, ColdVkey: res.ColdVKeyHex, Key: res.KeyHex})
 	default:
 		s.audit(r, caller, req.Type, "bad_request", "audit_id", auditID)
 		writeErr(w, http.StatusBadRequest, "unknown request type")

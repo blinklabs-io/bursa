@@ -311,3 +311,26 @@ func TestEvaluateCIP8(t *testing.T) {
 		t.Fatalf("expected deny: cip8 not in allowed_requests")
 	}
 }
+
+func TestEvaluateOpCert(t *testing.T) {
+	// Deny-by-default: no policy entry at all.
+	e, err := NewEngine(nil)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	if e.EvaluateOpCert(mustHash(t, hashA)).Allow {
+		t.Fatalf("expected deny: no policy configured")
+	}
+
+	// Policy entry present but opcert not in allowed_requests.
+	e2, h2 := engineWith(t, KeyPolicy{AllowedRequests: []string{"tx"}})
+	if e2.EvaluateOpCert(h2).Allow {
+		t.Fatalf("expected deny: opcert not in allowed_requests")
+	}
+
+	// Explicitly allowed.
+	e3, h3 := engineWith(t, KeyPolicy{AllowedRequests: []string{"opcert"}})
+	if !e3.EvaluateOpCert(h3).Allow {
+		t.Fatalf("expected allow when opcert is in allowed_requests")
+	}
+}
