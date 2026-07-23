@@ -22,6 +22,9 @@ export interface Status {
   caughtUp: boolean;
   bootstrap?: BootstrapProgress;
   error?: string;
+  // The network the embedded node runs on ("preview" | "preprod" | "mainnet").
+  // The node runs exactly one network; wallet flows derive it from here.
+  network: string;
 }
 
 export interface Account {

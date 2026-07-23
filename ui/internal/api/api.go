@@ -334,6 +334,14 @@ type handleInfo struct {
 
 const defaultWindow = 20
 
+// statusResponse is the GET /status response: the supervisor's node snapshot
+// plus the network the embedded node runs on. The node runs exactly one
+// network, so the SPA sources it from here rather than letting the user pick.
+type statusResponse struct {
+	supervisor.Status
+	Network string `json:"network"`
+}
+
 // vaultStatus is the GET /vault/status response.
 type vaultStatus struct {
 	Exists         bool `json:"exists"`
@@ -402,7 +410,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, st.Status())
+		writeJSON(w, http.StatusOK, statusResponse{Status: st.Status(), Network: network})
 	})
 
 	// bindActive pushes the active wallet's read-only account onto the read and

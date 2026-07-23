@@ -76,6 +76,18 @@ test("with a known vault password the vault field is hidden and add sends all fi
   await waitFor(() => expect(onAdded).toHaveBeenCalledWith(created));
 });
 
+test("the network is shown read-only (no selector) and taken from the node", () => {
+  render(<AddWallet network="preprod" knownVaultPassword="vault-password-xyz" onAdded={vi.fn()} />);
+  goToRestore();
+
+  // The old network <Select> is gone: there is no network combobox to pick a
+  // network the node isn't running.
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+
+  // The node's network is shown read-only for context.
+  expect(screen.getByTestId("wallet-network")).toHaveTextContent(/Preprod/i);
+});
+
 test("without a known vault password the vault field is shown and required", async () => {
   const spy = vi.spyOn(client, "addWallet").mockResolvedValue(created);
   const onAdded = vi.fn();

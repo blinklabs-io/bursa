@@ -10,6 +10,7 @@ test("(a) bootstrap download phase shows bytes, ETA, percent and the progress ba
         state: "bootstrapping",
         tip: 0,
         caughtUp: false,
+        network: "preview",
         bootstrap: {
           phase: "bootstrap",
           percent: 42.5,
@@ -34,6 +35,7 @@ test("(b) block-replay phase shows block count, slot range and the era label", (
         state: "bootstrapping",
         tip: 0,
         caughtUp: false,
+        network: "preview",
         bootstrap: {
           phase: "backfill",
           percent: 71,
@@ -59,6 +61,7 @@ test("(c) the phase stepper marks earlier phases done and the current one active
         state: "bootstrapping",
         tip: 0,
         caughtUp: false,
+        network: "preview",
         bootstrap: { phase: "immutable_copy", percent: 10 },
       }}
       onLoadAnyway={noop}
@@ -76,7 +79,7 @@ test("(d) chain sync shows how far behind the tip and the block slot", () => {
   const threeDaysAgo = new Date(Date.now() - 3 * 86400 * 1000).toISOString();
   render(
     <Syncing
-      status={{ state: "syncing", tip: 115748244, caughtUp: false, latestBlockTime: threeDaysAgo }}
+      status={{ state: "syncing", tip: 115748244, caughtUp: false, network: "preview", latestBlockTime: threeDaysAgo }}
       onLoadAnyway={noop}
     />,
   );
@@ -87,7 +90,7 @@ test("(d) chain sync shows how far behind the tip and the block slot", () => {
 test("(e) indeterminate sync progress is announced to assistive technology", () => {
   render(
     <Syncing
-      status={{ state: "starting", tip: 0, caughtUp: false }}
+      status={{ state: "starting", tip: 0, caughtUp: false, network: "preview" }}
       onLoadAnyway={noop}
     />,
   );
@@ -98,7 +101,7 @@ test("(e) indeterminate sync progress is announced to assistive technology", () 
 test("(f) error state surfaces the node error in an alert", () => {
   render(
     <Syncing
-      status={{ state: "error", tip: 0, caughtUp: false, error: "genesis import failed" }}
+      status={{ state: "error", tip: 0, caughtUp: false, network: "preview", error: "genesis import failed" }}
       onLoadAnyway={noop}
     />,
   );
@@ -112,6 +115,7 @@ test("(g) retained bootstrap diagnostics do not override an error state", () => 
         state: "error",
         tip: 0,
         caughtUp: false,
+        network: "preview",
         error: "mithril bootstrap: download failed",
         bootstrap: { phase: "bootstrap", percent: 40 },
       }}
@@ -126,7 +130,7 @@ test("(g) retained bootstrap diagnostics do not override an error state", () => 
 test("(h) the escape hatch invokes onLoadAnyway", () => {
   const onLoadAnyway = vi.fn();
   render(
-    <Syncing status={{ state: "syncing", tip: 0, caughtUp: false }} onLoadAnyway={onLoadAnyway} />,
+    <Syncing status={{ state: "syncing", tip: 0, caughtUp: false, network: "preview" }} onLoadAnyway={onLoadAnyway} />,
   );
   fireEvent.click(screen.getByRole("button", { name: /load wallet anyway/i }));
   expect(onLoadAnyway).toHaveBeenCalled();

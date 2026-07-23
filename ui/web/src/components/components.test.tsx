@@ -21,7 +21,7 @@ const mobileWallet: WalletView = {
 
 function renderMobileNav(overrides: Partial<MobileNavProps> = {}) {
   const props: MobileNavProps = {
-    status: { state: "ready", tip: 0, caughtUp: true },
+    status: { state: "ready", tip: 0, caughtUp: true, network: "preview" },
     activeWallet: mobileWallet,
     wallets: [mobileWallet],
     activeId: mobileWallet.id,
@@ -85,6 +85,7 @@ test("SyncBanner shows error detail ahead of retained bootstrap diagnostics", ()
         state: "error",
         tip: 0,
         caughtUp: false,
+        network: "preview",
         error: "mithril bootstrap: download failed",
         bootstrap: { phase: "bootstrap", percent: 40 },
       }}
