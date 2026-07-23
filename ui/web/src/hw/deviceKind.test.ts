@@ -17,11 +17,10 @@ describe("getStoredDeviceKind", () => {
     expect(getStoredDeviceKind("w2")).toBe("trezor");
   });
 
-  test("rejects a stale keystone hint (disabled this phase)", () => {
-    // A "keystone" hint must NOT select an unsupported signer — the allowlist
-    // omits it, so a stored keystone value reads back as unknown.
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ w1: "keystone" }));
-    expect(getStoredDeviceKind("w1")).toBeUndefined();
+  test("honors a stored keystone hint", () => {
+    // Keystone is an implemented signer now, so its hint is a recognised kind.
+    setDeviceKind("w1", "keystone");
+    expect(getStoredDeviceKind("w1")).toBe("keystone");
   });
 
   test("rejects an unrecognised value", () => {
@@ -33,7 +32,7 @@ describe("getStoredDeviceKind", () => {
 describe("getDeviceKind", () => {
   test("defaults to ledger when nothing recognised is stored", () => {
     expect(getDeviceKind("w1")).toBe("ledger");
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ w1: "keystone" }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ w1: "bogus" }));
     expect(getDeviceKind("w1")).toBe("ledger");
   });
 

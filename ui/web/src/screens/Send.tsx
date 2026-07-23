@@ -11,9 +11,10 @@ import {
   ApiError,
 } from "../api/client";
 import { useContacts } from "../api/hooks";
-import { connectHardware } from "../hw";
+import { connectHardware, connectDevice } from "../hw";
 import type { HardwareKind, HardwareSigner } from "../hw";
-import { getStoredDeviceKind, setDeviceKind } from "../hw/deviceKind";
+import { getStoredDeviceKind, setDeviceKind, getKeystoneXfp } from "../hw/deviceKind";
+import { useKeystoneQRBridge } from "../components/KeystoneQRModal";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
@@ -359,12 +360,18 @@ function PreviewPhase({
   const needsDeviceChoice = isHardware && deviceKind === undefined;
   const deviceLabel = deviceKind ? DEVICE_LABELS[deviceKind] : "";
   // Trezor reaches connect.trezor.io, so its confirm is gated on an explicit
-  // acknowledgement (consent law); local devices (Ledger) need no such gate.
+  // acknowledgement (consent law); local devices (Ledger, Keystone) need none.
   const needsExternalConsent = deviceKind === "trezor";
+  const isKeystone = deviceKind === "keystone";
 
   // password is only used in the software (!isHardware) confirm path; hooks cannot be conditional.
   const [password, setPassword] = useState("");
   const [externalConsent, setExternalConsent] = useState(false);
+  // Keystone has two local transports; QR (air-gapped) is the primary one.
+  const [keystoneTransport, setKeystoneTransport] = useState<"qr" | "usb">("qr");
+  // The QR modal bridge is always mounted (hooks can't be conditional); it
+  // renders nothing until a Keystone QR flow drives it.
+  const { bridge: keystoneBridge, element: keystoneModal } = useKeystoneQRBridge();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -419,14 +426,29 @@ function PreviewPhase({
     let session: HardwareSigner | null = null;
     try {
       // 1. Connect directly from the click handler so a first-time user can
-      // grant WebHID permission while browser user activation is still live.
-      // The device kind is the one recorded when this wallet was added (or the
-      // one the user just chose when no hint was stored).
-      // The confirm button is disabled until the Trezor consent box is ticked,
-      // so this simply reports the already-given approval; the real gate lives
-      // in connectTrezor and refuses to init() without it. For a local device
-      // (Ledger) the callback is ignored.
-      session = await connectHardware(kind, async () => externalConsent);
+      // grant WebHID/WebUSB permission while browser user activation is still
+      // live. The device kind is the one recorded when this wallet was added
+      // (or the one the user just chose when no hint was stored).
+      if (kind === "keystone") {
+        // Keystone is fully local on both transports — no consent gate. QR
+        // (primary) drives the animated-QR + webcam modal; USB uses the
+        // transport directly. The QR sign-request needs the device master
+        // fingerprint captured at account-sync (see hw/keystone.ts).
+        session =
+          keystoneTransport === "qr"
+            ? await connectDevice("keystone", {
+                transport: "qr",
+                bridge: keystoneBridge,
+                xfp: walletId ? getKeystoneXfp(walletId) : undefined,
+              })
+            : await connectDevice("keystone", { transport: "usb" });
+      } else {
+        // The confirm button is disabled until the Trezor consent box is
+        // ticked, so this simply reports the already-given approval; the real
+        // gate lives in connectTrezor and refuses to init() without it. For a
+        // local device (Ledger) the callback is ignored.
+        session = await connectHardware(kind, async () => externalConsent);
+      }
 
       // 2. Fetch the structured signing request once the device is connected.
       const signResp = await getHardwareSignRequest(preview.pending_id);
@@ -504,11 +526,11 @@ function PreviewPhase({
               <fieldset className="field-group" style={{ border: "none", padding: 0, margin: 0 }}>
                 <legend className="field-label">Which device backs this wallet?</legend>
                 <p className="helper-text">
-                  We could not tell whether this hardware wallet is a Ledger or a
-                  Trezor. Choose the device you used to add it; you can change
-                  this if a connection attempt fails.
+                  We could not tell which hardware wallet this is. Choose the
+                  device you used to add it; you can change this if a connection
+                  attempt fails.
                 </p>
-                {(["ledger", "trezor"] as const).map((k) => (
+                {(["ledger", "trezor", "keystone"] as const).map((k) => (
                   <label className="checkbox-row" key={k}>
                     <input
                       type="radio"
@@ -523,9 +545,38 @@ function PreviewPhase({
                 ))}
               </fieldset>
             )}
+            {isKeystone && (
+              <fieldset className="field-group" style={{ border: "none", padding: 0, margin: 0 }}>
+                <legend className="field-label">Keystone connection</legend>
+                <label className="checkbox-row">
+                  <input
+                    type="radio"
+                    name="send-keystone-transport"
+                    value="qr"
+                    checked={keystoneTransport === "qr"}
+                    onChange={() => setKeystoneTransport("qr")}
+                    aria-label="Air-gapped QR"
+                  />
+                  Air-gapped QR (offline)
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="radio"
+                    name="send-keystone-transport"
+                    value="usb"
+                    checked={keystoneTransport === "usb"}
+                    onChange={() => setKeystoneTransport("usb")}
+                    aria-label="USB"
+                  />
+                  USB cable
+                </label>
+              </fieldset>
+            )}
             {deviceKind !== undefined && (
               <p className="helper-text">
-                Connect your {deviceLabel} and confirm the transaction on the device.
+                {isKeystone && keystoneTransport === "qr"
+                  ? "Confirm to show the transaction as a QR for your Keystone, then scan its signature back."
+                  : `Connect your ${deviceLabel} and confirm the transaction on the device.`}
               </p>
             )}
             {needsExternalConsent && (
@@ -621,6 +672,7 @@ function PreviewPhase({
           </div>
         )}
       </div>
+      {keystoneModal}
     </Card>
   );
 }

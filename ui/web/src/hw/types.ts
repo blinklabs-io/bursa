@@ -83,16 +83,83 @@ export interface ExternalConnectOptions {
  */
 export type ConnectOptions = LocalConnectOptions | ExternalConnectOptions;
 
+// ── Keystone (air-gapped QR + USB) ───────────────────────────────────────────
+//
+// Keystone is fully LOCAL for both transports — QR is offline paper/camera and
+// USB is a direct cable — so NO external-consent gate applies (unlike Trezor).
+// The QR transport needs a UI bridge because signing is a two-way, user-driven
+// exchange (show an animated QR → user scans it with the device → user scans the
+// device's reply back through the webcam). The bridge below is that seam: the UI
+// owns pixels + camera; hw/keystone.ts owns all UR/CBOR. Everything stays local.
+
+/**
+ * A single Uniform Resource decoded from a scanned QR (or QR animation). `type`
+ * is the UR type (e.g. "cardano-signature", "crypto-multi-accounts") and
+ * `cborHex` is its raw CBOR payload as hex. hw/keystone.ts decodes it into the
+ * concrete Keystone registry item.
+ */
+export interface KeystoneScannedUR {
+  type: string;
+  cborHex: string;
+}
+
+/**
+ * UI bridge for the air-gapped QR transport. Implemented by the screen (a modal
+ * that renders the animated QR and the webcam scanner); consumed by the Keystone
+ * signer. Purely local — no method contacts the network.
+ */
+export interface KeystoneQRBridge {
+  /**
+   * Display the request to the user as an animated QR. `fragments` are the UR
+   * part strings the UI cycles through as QR frames. For account-sync (no
+   * request to show) this is never called.
+   */
+  displayRequest(fragments: string[]): void;
+  /**
+   * Prompt the user to scan the device's reply through the webcam and resolve
+   * with the decoded UR. Rejects if the user cancels or the camera is denied.
+   */
+  scanResponse(): Promise<KeystoneScannedUR>;
+  /** Tear down the modal + camera. Always invoked in a finally. */
+  close(): void;
+}
+
+/**
+ * Air-gapped QR transport options. `xfp` is the device master fingerprint
+ * captured during account-sync (needed so the device recognises the witness
+ * paths as its own); the screen sources it from its per-wallet local store.
+ */
+export interface KeystoneQRConnectOptions {
+  transport: "qr";
+  bridge: KeystoneQRBridge;
+  xfp?: string;
+}
+
+/** Direct-USB transport options (best-effort; young vendor SDK). */
+export interface KeystoneUSBConnectOptions {
+  transport: "usb";
+}
+
+/**
+ * Options for connecting a Keystone. A discriminated union on `transport`:
+ * "qr" (primary, air-gapped) or "usb" (secondary). Both are local, so — unlike
+ * {@link ExternalConnectOptions} — neither carries a consent callback.
+ */
+export type KeystoneConnectOptions =
+  | KeystoneQRConnectOptions
+  | KeystoneUSBConnectOptions;
+
 /**
  * Ties each {@link HardwareKind} to the connect-options it accepts, so the
  * factory can discriminate at compile time: a local device (Ledger) can NEVER
  * be handed a cloud-consent callback, and an external device (Trezor) can NEVER
  * be connected without one. Enforced via the kind-specific `connectDevice`
- * overloads in hw/index.ts. (Keystone is unsupported this phase; it accepts the
- * broad union and is rejected at runtime.)
+ * overloads in hw/index.ts. Keystone is local on both transports (QR and USB),
+ * so it takes {@link KeystoneConnectOptions} — a transport choice, never a
+ * cloud-consent callback.
  */
 export interface ConnectOptionsByKind {
   ledger: LocalConnectOptions;
   trezor: ExternalConnectOptions;
-  keystone: ConnectOptions;
+  keystone: KeystoneConnectOptions;
 }
