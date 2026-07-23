@@ -42,7 +42,7 @@ func TestRootKeyFromMnemonicBytesMatchesString(t *testing.T) {
 func TestRootKeyFromMnemonicBytesRejectsInvalid(t *testing.T) {
 	for _, m := range []string{"", "invalid mnemonic"} {
 		if _, err := RootKeyFromMnemonicBytes([]byte(m)); err == nil {
-			t.Fatalf("expected error for invalid mnemonic %q", m)
+			t.Errorf("expected error for invalid mnemonic %q", m)
 		}
 	}
 }
