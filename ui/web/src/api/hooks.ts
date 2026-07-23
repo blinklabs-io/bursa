@@ -119,7 +119,7 @@ export function useAsync<T>(
   // therefore pass a STABLE `fn`: a module-level function (as the useStatus,
   // useBalance, etc. helpers below do) or one wrapped in useCallback. A caller
   // that passes an unstable `fn` will silently only ever see the value from the
-  // first render's closure. `refresh`/`tick` is the supported way to refetch.
+  // first render's closure. `refresh` is the supported way to refetch.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick, enabled, pollMs]);
 

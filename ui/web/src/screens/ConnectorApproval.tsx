@@ -23,6 +23,7 @@ import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
 import { Input } from "../components/Input";
+import { StatusPill } from "../components/StatusPill";
 import { ApiError } from "../api/client";
 import { subscribePending, decide } from "../api/connector";
 import { notifyPending } from "../connectorNotify";
@@ -102,6 +103,11 @@ export function ConnectorApproval() {
   // open, so a click intended for the request the user was reading cannot land
   // on a substituted one. See the swap-detection layout effect below.
   const [needsReReview, setNeedsReReview] = useState(false);
+  // degraded tracks the SSE stream's health: true while the browser reports a
+  // connection error (and is auto-reconnecting), false once it (re)opens. When
+  // true we show an unobtrusive "reconnecting" pill so a stalled queue does not
+  // look like an empty one.
+  const [degraded, setDegraded] = useState(false);
 
   // Track IDs we have already notified so we don't re-notify on re-renders.
   const notifiedIds = useRef<Set<string>>(new Set());
@@ -111,17 +117,20 @@ export function ConnectorApproval() {
   const shownID = useRef<string | null>(null);
 
   useEffect(() => {
-    const unsub = subscribePending((snapshot) => {
-      const ordered = orderPending(snapshot);
-      setPending(ordered);
+    const unsub = subscribePending(
+      (snapshot) => {
+        const ordered = orderPending(snapshot);
+        setPending(ordered);
 
-      for (const req of ordered) {
-        if (!notifiedIds.current.has(req.id)) {
-          notifiedIds.current.add(req.id);
-          notifyPending(req);
+        for (const req of ordered) {
+          if (!notifiedIds.current.has(req.id)) {
+            notifiedIds.current.add(req.id);
+            notifyPending(req);
+          }
         }
-      }
-    });
+      },
+      (isDegraded) => setDegraded(isDegraded),
+    );
     return unsub;
   }, []);
 
@@ -258,6 +267,15 @@ export function ConnectorApproval() {
         style={{ width: "100%", maxWidth: "420px" }}
       >
         <Card title="dApp Request">
+          {degraded && (
+            <div
+              style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.75rem" }}
+            >
+              <span role="status" aria-live="polite">
+                <StatusPill tone="warn">Reconnecting to node…</StatusPill>
+              </span>
+            </div>
+          )}
           <dl className="stat-list" style={{ marginBottom: "1rem" }}>
             <dt>Origin</dt>
             <dd>

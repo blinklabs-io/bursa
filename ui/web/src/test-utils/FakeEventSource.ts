@@ -22,12 +22,17 @@ export class FakeEventSource {
 
   // emitError simulates a transient/persistent connection error. The browser's
   // EventSource auto-reconnects, so this does NOT flip readyState to CLOSED.
+  // A closed stream is inert: a real EventSource delivers no events after
+  // close(), so neither do we.
   emitError() {
+    if (this.closed) return;
     this.onerror?.({});
   }
 
-  // emitOpen simulates the stream (re)connecting.
+  // emitOpen simulates the stream (re)connecting. Like emitError, this is a
+  // no-op once the stream has been closed.
   emitOpen() {
+    if (this.closed) return;
     this.onopen?.({});
   }
 

@@ -224,6 +224,23 @@ test("subscribePending reports degraded state on error and recovery on reopen", 
   unsub();
 });
 
+test("subscribePending delivers no onError callbacks after unsubscribe", () => {
+  const states: boolean[] = [];
+  const unsub = subscribePending(
+    () => {},
+    (degraded) => states.push(degraded),
+  );
+  const es = FakeEventSource.instances[0];
+
+  unsub();
+
+  // A real closed EventSource never fires onerror/onopen again; the fake must
+  // match so post-unsubscribe tests cannot observe impossible callbacks.
+  es.emitError();
+  es.emitOpen();
+  expect(states).toEqual([]);
+});
+
 test("subscribePending tolerates an error with no onError callback", () => {
   expect(() => {
     const unsub = subscribePending(() => {});
