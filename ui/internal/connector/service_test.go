@@ -344,19 +344,25 @@ func TestServiceSubscribe(t *testing.T) {
 	}()
 
 	// enable will enqueue a request; the subscriber should see it.
-	done := make(chan struct{})
+	handleDone := make(chan error, 1)
+	handleCtx := ctx(t)
 	go func() {
-		_, _ = s.Handle(ctx(t), "https://f.io", "enable", nil)
+		_, err := s.Handle(handleCtx, "https://f.io", "enable", nil)
+		handleDone <- err
 	}()
-	go func() {
-		select {
-		case <-ch:
-		case <-time.After(3 * time.Second):
-			t.Errorf("subscriber did not receive request")
-		}
-		close(done)
-	}()
-	<-done
+
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("subscriber did not receive request")
+	}
+
+	// Wait for Handle to finish writing the grant before t.TempDir cleanup.
+	// Returning immediately after the notification races the atomic grant-file
+	// rename with removal of the temporary directory.
+	if err := <-handleDone; err != nil {
+		t.Fatalf("enable: %v", err)
+	}
 }
 
 // TestServiceUnpair verifies Unpair clears the token.
