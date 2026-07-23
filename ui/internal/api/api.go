@@ -1164,7 +1164,67 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// everything else is served by the embedded frontend.
 	mux.Handle("/", spa)
 
-	return mux
+	// Wrap the whole mux in the same-origin / DNS-rebind guard. The /vault/* and
+	// /wallet/* routes register directly on the mux with no per-handler origin
+	// check, so this middleware is the single point that enforces it for them.
+	return sameOriginGuard(mux)
+}
+
+// sameOriginGuard wraps the API mux with a uniform same-origin / DNS-rebind
+// guard for the non-connector routes.
+//
+// Because the server listens only on loopback, a malicious web page can reach
+// these endpoints via DNS rebinding (it resolves its own hostname to 127.0.0.1,
+// so the browser sends the request to us with a public Host header). The
+// /vault/* and /wallet/* routes have no per-handler origin check, so this
+// middleware is where that class of request is rejected.
+//
+// The /connector/* routes are skipped: they already carry their own guards — a
+// bearer token for the extension-facing routes and in-handler
+// sameOrigin/strictSameOrigin for the SPA-facing ones — and an extension request
+// legitimately carries a chrome-extension:// Origin that would fail
+// strictSameOrigin here. Re-guarding them would break the connector.
+//
+// For every guarded request:
+//   - The Host must be a loopback address (isLoopbackHost). A non-loopback Host
+//     means a DNS-rebound cross-site page reached us; reject it. sameOrigin and
+//     strictSameOrigin already enforce this, but checking it up front rejects
+//     every method — including ones with no origin semantics — uniformly.
+//   - State-changing methods (POST/PUT/DELETE/PATCH) require strictSameOrigin:
+//     an Origin header that is present AND matches the server's own scheme+host.
+//   - Other methods (GET/HEAD, plus the SPA's navigations and asset loads) use
+//     sameOrigin, which additionally trusts the absent-Origin case that
+//     same-origin browser GETs produce — but only over a loopback Host.
+//
+// It reuses connector.go's sameOrigin/strictSameOrigin/isLoopbackHost verbatim
+// so the SPA's own calls decide identically to the connector's SPA routes: in
+// prod the SPA is served from 127.0.0.1:8090 (same origin as its fetches); in
+// dev the vite proxy forwards to the backend preserving the browser's
+// localhost:<port> Host and Origin (both loopback, and matching), so they pass.
+func sameOriginGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Connector routes carry their own guards; do not double-guard.
+		if strings.HasPrefix(r.URL.Path, "/connector/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Loopback Host is required for every guarded request.
+		if !isLoopbackHost(r.Host) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+			return
+		}
+		allowed := sameOrigin(r)
+		switch r.Method {
+		case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
+			// State-changing methods must carry a matching Origin.
+			allowed = strictSameOrigin(r)
+		}
+		if !allowed {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // walletList maps vault metadata to the client-facing wallet views, marking the
