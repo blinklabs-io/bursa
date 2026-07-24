@@ -239,6 +239,23 @@ func (e *Engine) EvaluateTx(hash backend.KeyHash, insp *bursa.TxInspection) Deci
 	return allow()
 }
 
+// EvaluateOpCert authorizes (or denies) an operational-certificate cold-signing
+// request for the key identified by hash. Deny-by-default: a key may produce a
+// cold signature over the OCertSignable bytes only when it has a policy entry
+// that lists "opcert" in allowed_requests. Unlike tx/cip8 there is no bounded
+// sub-policy: the KES vkey, issue counter, and KES period are operator-supplied
+// values with no ledger-value semantics to constrain here.
+func (e *Engine) EvaluateOpCert(hash backend.KeyHash) Decision {
+	p, ok := e.byHash[hash]
+	if !ok {
+		return deny("no policy configured for key %s", hash)
+	}
+	if !p.allows("opcert") {
+		return deny("key %s may not sign operational certificates", hash)
+	}
+	return allow()
+}
+
 // EvaluateCIP8 authorizes (or denies) a CIP-8/CIP-30 data-signing request.
 func (e *Engine) EvaluateCIP8(hash backend.KeyHash, payloadLen int, addressMatches bool) Decision {
 	p, ok := e.byHash[hash]
