@@ -254,3 +254,14 @@ test("FakeEventSource exposes browser-compatible readyState constants", () => {
   expect(FakeEventSource.OPEN).toBe(1);
   expect(FakeEventSource.CLOSED).toBe(2);
 });
+
+test("FakeEventSource.emit after close() fires no onmessage", () => {
+  const es = new FakeEventSource("/connector/events");
+  let messages = 0;
+  es.onmessage = () => {
+    messages += 1;
+  };
+  es.close();
+  es.emit("{}");
+  expect(messages).toBe(0);
+});
