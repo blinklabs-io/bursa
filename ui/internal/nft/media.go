@@ -65,6 +65,7 @@ func validateImage(data []byte) error {
 		var cfg image.Config
 		cfg, _, err = image.DecodeConfig(bytes.NewReader(data))
 		if err == nil {
+			//nolint:gosec // G115: cfg.Width/Height come from image.DecodeConfig for gif/jpeg/png only; those decoders return non-negative dimensions bounded far below math.MaxUint32, and both are range-checked against maxImageDimension below.
 			width, height = uint32(cfg.Width), uint32(cfg.Height)
 			pixels = uint64(width) * uint64(height)
 			switch contentType {
@@ -76,7 +77,7 @@ func validateImage(data []byte) error {
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("%w: invalid %s: %v", ErrUnsafeImage, contentType, err)
+		return fmt.Errorf("%w: invalid %s: %w", ErrUnsafeImage, contentType, err)
 	}
 	if width == 0 || height == 0 {
 		return fmt.Errorf("%w: image has zero dimensions", ErrUnsafeImage)
@@ -200,6 +201,7 @@ func pngResourceCost(data []byte, staticPixels uint64) (uint64, error) {
 	var frames int
 	for pos+12 <= len(data) {
 		size := uint64(binary.BigEndian.Uint32(data[pos : pos+4]))
+		//nolint:gosec // G115: len(data)-pos-12 is non-negative by the loop guard (pos+12 <= len(data)), so the int->uint64 conversion cannot lose the sign.
 		if size > uint64(len(data)-pos-12) {
 			return 0, errors.New("truncated PNG chunk")
 		}
@@ -225,6 +227,7 @@ func pngResourceCost(data []byte, staticPixels uint64) (uint64, error) {
 			pixels += framePixels
 			frames++
 		}
+		//nolint:gosec // G115: size was bounded above (<= len(data)-pos-12) so it fits in int.
 		pos += 12 + int(size)
 		if typ == "IEND" {
 			if frames == 0 {
@@ -248,10 +251,12 @@ func webpResourceCost(data []byte) (width, height uint32, pixels uint64, err err
 	var framePixels uint64
 	var frameCount uint64
 	var stillPixels uint64
+	//nolint:gosec // G115: declared was checked to be <= len(data) above, so it fits in int.
 	for pos+8 <= int(declared) {
 		typ := string(data[pos : pos+4])
 		size := int(binary.LittleEndian.Uint32(data[pos+4 : pos+8]))
 		pos += 8
+		//nolint:gosec // G115: declared was checked to be <= len(data) above, so it fits in int.
 		if size < 0 || size > int(declared)-pos {
 			return 0, 0, 0, errors.New("truncated WebP chunk")
 		}
