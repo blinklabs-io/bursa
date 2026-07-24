@@ -5,9 +5,11 @@ import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
 import { addWallet, addHardwareWallet, generateMnemonic, ApiError } from "../api/client";
-import { connectHardware } from "../hw";
+import { connectHardware, connectDevice } from "../hw";
 import type { HardwareKind, HardwareSigner } from "../hw";
-import { setDeviceKind } from "../hw/deviceKind";
+import { setDeviceKind, setKeystoneXfp } from "../hw/deviceKind";
+import { parseAccountSyncUR } from "../hw/keystone";
+import { useKeystoneQRBridge } from "../components/KeystoneQRModal";
 import type { WalletView } from "../api/types";
 import { MIN_PASSWORD_LEN, passwordLength } from "../password";
 import { CHALLENGE_WORD_COUNT, isChallengeAnswerCorrect, pickChallengeIndices, validateChallenge } from "../phraseChallenge";
@@ -51,12 +53,11 @@ interface AddWalletProps {
 // Mode within the Add Wallet flow.
 type Mode = "choose" | "create" | "create-confirm" | "restore" | "hardware";
 
-// Selectable hardware devices. Keystone is listed but disabled until its
-// signer lands, so users can see it is planned without being able to pick it.
+// Selectable hardware devices.
 const DEVICE_OPTIONS: { kind: HardwareKind; label: string; disabled?: boolean }[] = [
   { kind: "ledger", label: "Ledger" },
   { kind: "trezor", label: "Trezor" },
-  { kind: "keystone", label: "Keystone (coming soon)", disabled: true },
+  { kind: "keystone", label: "Keystone" },
 ];
 
 const DEVICE_LABELS: Record<HardwareKind, string> = {
@@ -96,6 +97,11 @@ export function AddWallet({
   const [deviceKind, setDeviceKindState] = useState<HardwareKind>("ledger");
   const [accountIndex, setAccountIndex] = useState("0");
   const [externalConsent, setExternalConsent] = useState(false);
+  // Keystone has two local transports; QR (air-gapped) is the primary one.
+  const [keystoneTransport, setKeystoneTransport] = useState<"qr" | "usb">("qr");
+  // The QR modal bridge is always mounted (hooks can't be conditional); it
+  // renders nothing until a Keystone QR flow drives it.
+  const { bridge: keystoneBridge, element: keystoneModal } = useKeystoneQRBridge();
 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -214,14 +220,45 @@ export function AddWallet({
 
     setLoading(true);
     let session: HardwareSigner | null = null;
+    const defaultName = `${DEVICE_LABELS[deviceKind]} Wallet`;
     try {
-      // connectHardware dispatches to the right connector. For Trezor the
-      // consent box gates the connect button, so this reports the given
-      // approval; the real init() gate lives inside connectTrezor. For Ledger
-      // the callback is ignored.
-      session = await connectHardware(deviceKind, async () => externalConsent);
+      if (deviceKind === "keystone" && keystoneTransport === "qr") {
+        // Air-gapped account-sync: the account xpub arrives on its OWN QR
+        // (crypto-multi-accounts), scanned through the webcam modal — never a
+        // network round-trip and never the sign registry. parseAccountSyncUR
+        // re-encodes it through the shared xpub helper (byte-identical to every
+        // other device) and hands back the device master fingerprint we must
+        // remember so Send can sign over QR later.
+        let xfp: string;
+        let xpub: string;
+        try {
+          const scanned = await keystoneBridge.scanResponse();
+          const sync = await parseAccountSyncUR(scanned, account);
+          xpub = sync.xpub;
+          xfp = sync.xfp;
+        } finally {
+          keystoneBridge.close();
+        }
+        const wallet = await addHardwareWallet(name.trim() || defaultName, xpub, account, network, vaultPw);
+        setDeviceKind(wallet.id, "keystone");
+        // The xfp is a client-only hint (localStorage), not server-persisted
+        // wallet state. If it is ever missing or cleared, Send detects that
+        // (needsKeystoneResync) and prompts an account-sync re-scan to recover
+        // it before any QR signing — so a lost hint is non-fatal.
+        setKeystoneXfp(wallet.id, xfp);
+        onAdded(wallet);
+        return;
+      }
+
+      // Ledger, Trezor, and Keystone-over-USB connect to a live device and read
+      // the account xpub from it. For Trezor the consent box gates the connect
+      // button, so this reports the given approval; the real init() gate lives
+      // inside connectTrezor. For local devices the callback is ignored.
+      session =
+        deviceKind === "keystone"
+          ? await connectDevice("keystone", { transport: "usb" })
+          : await connectHardware(deviceKind, async () => externalConsent);
       const xpub = await session.getAccountXpub(account);
-      const defaultName = `${DEVICE_LABELS[deviceKind]} Wallet`;
       const wallet = await addHardwareWallet(
         name.trim() || defaultName,
         xpub,
@@ -471,8 +508,12 @@ export function AddWallet({
   if (mode === "hardware") {
     const deviceLabel = DEVICE_LABELS[deviceKind];
     // Trezor reaches connect.trezor.io; its connect is gated on explicit
-    // acknowledgement (consent law). Ledger (WebHID) needs no such gate.
+    // acknowledgement (consent law). Ledger (WebHID) and Keystone (local QR/USB)
+    // need no such gate.
     const needsExternalConsent = deviceKind === "trezor";
+    const isKeystone = deviceKind === "keystone";
+    const isKeystoneQR = isKeystone && keystoneTransport === "qr";
+    const connectVerb = isKeystoneQR ? "Scan account QR" : `Connect ${deviceLabel}`;
     return (
       <Card title="Connect hardware wallet">
         <form onSubmit={handleHardwareConnect}>
@@ -497,6 +538,36 @@ export function AddWallet({
               </label>
             ))}
           </fieldset>
+
+          {isKeystone && (
+            <fieldset className="field-group" style={{ border: "none", padding: 0, margin: 0 }}>
+              <legend className="field-label">Connection</legend>
+              <label className="checkbox-row">
+                <input
+                  type="radio"
+                  name="hw-keystone-transport"
+                  value="qr"
+                  checked={keystoneTransport === "qr"}
+                  disabled={loading}
+                  onChange={() => { setError(null); setKeystoneTransport("qr"); }}
+                  aria-label="Air-gapped QR"
+                />
+                Air-gapped QR (offline)
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="radio"
+                  name="hw-keystone-transport"
+                  value="usb"
+                  checked={keystoneTransport === "usb"}
+                  disabled={loading}
+                  onChange={() => { setError(null); setKeystoneTransport("usb"); }}
+                  aria-label="USB"
+                />
+                USB cable
+              </label>
+            </fieldset>
+          )}
 
           <div className="field-group">
             <label htmlFor="hw-name">Wallet Name</label>
@@ -554,8 +625,9 @@ export function AddWallet({
           )}
 
           <p className="helper-text">
-            Connect your {deviceLabel} device, open the Cardano app, then click Connect.
-            No spending password is needed — the device signs every transaction.
+            {isKeystoneQR
+              ? "On your Keystone, open the Cardano account and choose Sync / Connect Software Wallet, then scan the account QR it shows. No spending password is needed — the device signs every transaction."
+              : `Connect your ${deviceLabel} device, open the Cardano app, then click Connect. No spending password is needed — the device signs every transaction.`}
           </p>
 
           {error && (
@@ -569,7 +641,7 @@ export function AddWallet({
               type="submit"
               disabled={loading || (needsExternalConsent && !externalConsent)}
             >
-              {loading ? "Connecting…" : `Connect ${deviceLabel}`}
+              {loading ? (isKeystoneQR ? "Scanning…" : "Connecting…") : connectVerb}
             </Button>
             <Button
               type="button"
@@ -586,6 +658,7 @@ export function AddWallet({
             )}
           </div>
         </form>
+        {keystoneModal}
       </Card>
     );
   }
