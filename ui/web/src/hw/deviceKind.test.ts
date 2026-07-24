@@ -57,8 +57,13 @@ describe("isValidKeystoneXfp", () => {
     expect(isValidKeystoneXfp("ABCDEF01")).toBe(true);
   });
 
+  test("accepts boundary/edge fingerprints that are structurally valid hex", () => {
+    expect(isValidKeystoneXfp("00000000")).toBe(true); // all-zeros
+    expect(isValidKeystoneXfp("99999999")).toBe(true); // all-nines
+    expect(isValidKeystoneXfp("aBcDeF01")).toBe(true); // mixed-case hex
+  });
+
   test("rejects malformed or non-string values", () => {
-    expect(isValidKeystoneXfp("00000000")).toBe(true); // structurally valid hex
     expect(isValidKeystoneXfp("5274470")).toBe(false); // too short
     expect(isValidKeystoneXfp("527447033")).toBe(false); // too long
     expect(isValidKeystoneXfp("5274470g")).toBe(false); // non-hex

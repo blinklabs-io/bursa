@@ -241,6 +241,10 @@ export function AddWallet({
         }
         const wallet = await addHardwareWallet(name.trim() || defaultName, xpub, account, network, vaultPw);
         setDeviceKind(wallet.id, "keystone");
+        // The xfp is a client-only hint (localStorage), not server-persisted
+        // wallet state. If it is ever missing or cleared, Send detects that
+        // (needsKeystoneResync) and prompts an account-sync re-scan to recover
+        // it before any QR signing — so a lost hint is non-fatal.
         setKeystoneXfp(wallet.id, xfp);
         onAdded(wallet);
         return;
