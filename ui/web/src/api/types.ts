@@ -393,6 +393,21 @@ export interface PoolIDResult {
   pool_id_hex: string;
 }
 
+// NFT media. Discovery is node-local (the embedded node's asset metadata);
+// images are fetched by an embedded IPFS client only when the user has enabled
+// NFT media (off by default).
+export interface NFT {
+  unit: string; // asset id (policy + hex asset name)
+  name: string;
+  description?: string;
+  image_cid?: string; // IPFS CID of the image, or absent if none/unsupported
+  cached: boolean; // whether the image bytes are already on disk
+}
+
+export interface NftMediaSetting {
+  enabled: boolean;
+}
+
 // A wallet as listed by the vault: read-only fields plus whether it's active.
 // The encrypted seed is never exposed.
 export type WalletType = "full" | "read_only" | "multi_signature" | "hardware";

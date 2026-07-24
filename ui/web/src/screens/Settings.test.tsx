@@ -107,6 +107,13 @@ beforeEach(() => {
   mockAutoLock({ minutes: 15 });
   mockTPMStatus(tpmUnavailable);
   mockConnector();
+  vi.spyOn(hooks, "useNftMedia").mockReturnValue({
+    enabled: false,
+    loading: false,
+    saving: false,
+    error: null,
+    setEnabled: vi.fn(),
+  });
 });
 
 afterEach(() => {
@@ -599,4 +606,27 @@ test("connector card recovers after a transient missing endpoint", async () => {
   await waitFor(() =>
     expect(screen.getByText("dApp Connector")).toBeInTheDocument(),
   );
+});
+
+test("NFT media is off by default and requires an explicit opt-in", () => {
+  mockStatus("ready");
+  const setEnabled = vi.fn();
+  vi.spyOn(hooks, "useNftMedia").mockReturnValue({
+    enabled: false, loading: false, saving: false, error: null, setEnabled,
+  });
+  renderSettings();
+  fireEvent.click(screen.getByRole("button", { name: /turn on nft media/i }));
+  expect(setEnabled).toHaveBeenCalledWith(true);
+});
+
+test("enabled NFT media can be turned off", () => {
+  mockStatus("ready");
+  const setEnabled = vi.fn();
+  vi.spyOn(hooks, "useNftMedia").mockReturnValue({
+    enabled: true, loading: false, saving: false, error: null, setEnabled,
+  });
+  renderSettings();
+  expect(screen.getByText("On")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /turn off nft media/i }));
+  expect(setEnabled).toHaveBeenCalledWith(false);
 });

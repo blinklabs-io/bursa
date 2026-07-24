@@ -44,6 +44,13 @@ beforeEach(() => {
   // Default: no metadata resolved for any asset (the common case, since most
   // assets have none on-chain). Individual tests override with mockAssetMetadata.
   mockAssetMetadata({});
+  vi.spyOn(hooks, "useNftMedia").mockReturnValue({
+    enabled: false,
+    loading: false,
+    saving: false,
+    error: null,
+    setEnabled: vi.fn(),
+  });
 });
 
 afterEach(() => {
@@ -256,4 +263,48 @@ test("(m) the search box is not rendered when there are no native tokens", () =>
   render(<Portfolio />);
 
   expect(screen.queryByPlaceholderText(/search/i)).not.toBeInTheDocument();
+});
+
+test("NFT media off links to Settings without fetching the NFT list", () => {
+  mockBalance("0", []);
+  mockDelegation();
+  const nftSpy = vi.spyOn(hooks, "useNfts");
+  render(<Portfolio />);
+  expect(screen.getByText(/media off/i)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
+  expect(nftSpy).not.toHaveBeenCalled();
+});
+
+test("NFT media on renders same-origin image thumbnails", () => {
+  mockBalance("0", []);
+  mockDelegation();
+  vi.spyOn(hooks, "useNftMedia").mockReturnValue({
+    enabled: true, loading: false, saving: false, error: null, setEnabled: vi.fn(),
+  });
+  vi.spyOn(hooks, "useNfts").mockReturnValue({
+    data: [{ unit: "policy.token", name: "Token", image_cid: "bafyimage", cached: false }],
+    error: null, loading: false, refresh: vi.fn(), setData: vi.fn(),
+  });
+  render(<Portfolio />);
+  expect(screen.getByRole("img", { name: "Token" })).toHaveAttribute(
+    "src", "/wallet/nft/policy.token/image",
+  );
+});
+
+test("NFT image load failure renders the empty thumbnail", () => {
+  mockBalance("0", []);
+  mockDelegation();
+  vi.spyOn(hooks, "useNftMedia").mockReturnValue({
+    enabled: true, loading: false, saving: false, error: null, setEnabled: vi.fn(),
+  });
+  vi.spyOn(hooks, "useNfts").mockReturnValue({
+    data: [{ unit: "policy.token", name: "Token", image_cid: "bafyimage", cached: false }],
+    error: null, loading: false, refresh: vi.fn(), setData: vi.fn(),
+  });
+
+  const { container } = render(<Portfolio />);
+  fireEvent.error(screen.getByRole("img", { name: "Token" }));
+
+  expect(screen.queryByRole("img", { name: "Token" })).not.toBeInTheDocument();
+  expect(container.querySelector(".nft-thumb-empty")).toBeInTheDocument();
 });

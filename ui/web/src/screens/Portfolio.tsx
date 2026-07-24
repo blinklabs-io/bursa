@@ -1,11 +1,64 @@
 import { useMemo, useState } from "react";
-import { useBalance, useDelegation, useAssetMetadata } from "../api/hooks";
+import { useBalance, useDelegation, useAssetMetadata, useNfts, useNftMedia } from "../api/hooks";
 import { Card } from "../components/Card";
 import { Table } from "../components/Table";
 import { StatusPill } from "../components/StatusPill";
 import { Input } from "../components/Input";
 import { formatAda, formatTokenQuantity } from "../format";
 import { extractAssetMeta, assetDisplayName, assetMatchesQuery } from "../tokenMeta";
+import { nftImageUrl } from "../api/client";
+import { navigate } from "../router";
+
+function NftList() {
+  const nfts = useNfts();
+  if (nfts.loading) return <p className="muted">Loading…</p>;
+  if (nfts.error) return <p role="alert" className="error-text">{nfts.error.message}</p>;
+  if (!nfts.data?.length) return <p className="muted">No NFTs</p>;
+  return (
+    <div className="nft-grid">
+      {nfts.data.map((n) => (
+        <figure className="nft-item" key={n.unit}>
+          <NftThumbnail unit={n.unit} name={n.name} hasImage={Boolean(n.image_cid)} />
+          <figcaption className="nft-name">{n.name || n.unit}</figcaption>
+        </figure>
+      ))}
+    </div>
+  );
+}
+
+function NftThumbnail({ unit, name, hasImage }: { unit: string; name: string; hasImage: boolean }) {
+  const [failed, setFailed] = useState(false);
+  if (!hasImage || failed) {
+    return <div className="nft-thumb nft-thumb-empty" aria-hidden="true" />;
+  }
+  return (
+    <img
+      className="nft-thumb"
+      src={nftImageUrl(unit)}
+      alt={name || unit}
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function NftGallery() {
+  const media = useNftMedia();
+  if (media.loading) return <p className="muted">Loading…</p>;
+  if (media.error) return <p role="alert" className="error-text">{media.error.message}</p>;
+  if (!media.enabled) {
+    return (
+      <p className="muted">
+        Media off — enable NFT media in{" "}
+        <a href="#/settings" onClick={(e) => { e.preventDefault(); navigate("settings"); }}>
+          Settings
+        </a>{" "}
+        to fetch images.
+      </p>
+    );
+  }
+  return <NftList />;
+}
 
 export function Portfolio() {
   const balance = useBalance();
@@ -79,6 +132,10 @@ export function Portfolio() {
             )}
           </>
         )}
+      </Card>
+
+      <Card title="NFTs">
+        <NftGallery />
       </Card>
 
       <Card title="Delegation">
