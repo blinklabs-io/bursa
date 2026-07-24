@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,46 +12,55 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package wallet
+package bursa
 
 import (
 	"bytes"
 	"crypto/sha256"
 
-	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
 	bip39 "github.com/blinklabs-io/go-bip39"
 )
 
-// RootKeyFromMnemonicBytes derives a CIP-1852 root key from a zeroable mnemonic
-// byte slice. It mirrors bursa.GetRootKeyFromMnemonic without materializing the
-// full mnemonic as an immutable Go string, so signing paths that hold the
-// decrypted mnemonic in a zeroable buffer can derive without leaving an
-// un-zeroable copy on the heap. The caller keeps ownership of, and must zero,
-// the mnemonic slice it passes in.
+// GetRootKeyFromMnemonicBytes derives the CIP-1852 root key from a mnemonic held
+// in a zeroable byte slice, without ever materializing it as an immutable Go
+// string. This is the entry point signing paths should use so the decrypted
+// mnemonic never lingers on the heap in a string that cannot be zeroed; callers
+// remain responsible for zeroing the byte slice they pass in.
 //
-// The ui module pins the bursa root module to a published commit (there is no
-// local replace directive), so this lives here rather than calling a root-module
-// helper: it lets the wallet's own packages derive from bytes without depending
-// on an unreleased bursa version.
-func RootKeyFromMnemonicBytes(mnemonic []byte) (bip32.XPrv, error) {
+// go-bip39 (v0.2.0) exposes no byte-oriented decode: every public entry point
+// (IsMnemonicValid, EntropyFromMnemonic) takes a string and would force an
+// immutable copy of the mnemonic. To avoid that, the BIP39 mnemonic->entropy
+// decode (word lookup + checksum verification) is reimplemented here over the
+// byte slice, using only go-bip39's word list. It produces entropy identical to
+// bip39.EntropyFromMnemonic for a valid mnemonic.
+func GetRootKeyFromMnemonicBytes(
+	mnemonic []byte,
+	password string,
+) (bip32.XPrv, error) {
 	entropy, err := entropyFromMnemonicBytes(mnemonic)
 	if err != nil {
 		return nil, err
 	}
 	defer zeroBytes(entropy)
-	return bursa.GetRootKey(entropy, nil), nil
+	pwBytes := []byte{}
+	if password != "" {
+		pwBytes = []byte(password)
+	}
+	return GetRootKey(entropy, pwBytes), nil
 }
 
+// entropyFromMnemonicBytes decodes BIP39 entropy from a mnemonic byte slice,
+// verifying the checksum, without allocating an immutable mnemonic string.
 func entropyFromMnemonicBytes(mnemonic []byte) ([]byte, error) {
 	words := bytes.Fields(mnemonic)
 	if len(words)%3 != 0 || len(words) < 12 || len(words) > 24 {
-		return nil, bursa.ErrInvalidMnemonic
+		return nil, ErrInvalidMnemonic
 	}
 
 	wordList := bip39.GetWordList()
 	if len(wordList) != 2048 {
-		return nil, bursa.ErrInvalidMnemonic
+		return nil, ErrInvalidMnemonic
 	}
 
 	entropyLen := len(words) / 3 * 4
@@ -61,7 +70,7 @@ func entropyFromMnemonicBytes(mnemonic []byte) ([]byte, error) {
 	for i, word := range words {
 		index, ok := mnemonicWordIndex(word, wordList)
 		if !ok {
-			return nil, bursa.ErrInvalidMnemonic
+			return nil, ErrInvalidMnemonic
 		}
 		writeMnemonicIndexBits(data, i, index)
 	}
@@ -71,13 +80,15 @@ func entropyFromMnemonicBytes(mnemonic []byte) ([]byte, error) {
 	gotChecksum := data[entropyLen] >> checksumShift
 	wantChecksum := hash[0] >> checksumShift
 	if gotChecksum != wantChecksum {
-		return nil, bursa.ErrInvalidMnemonic
+		return nil, ErrInvalidMnemonic
 	}
 	entropy := make([]byte, entropyLen)
 	copy(entropy, data[:entropyLen])
 	return entropy, nil
 }
 
+// writeMnemonicIndexBits writes the 11-bit word index for the word at wordOffset
+// into the packed bit buffer out (big-endian, matching BIP39 encoding).
 func writeMnemonicIndexBits(out []byte, wordOffset, index int) {
 	for bit := 0; bit < 11; bit++ {
 		if index&(1<<uint(10-bit)) == 0 {
@@ -88,6 +99,8 @@ func writeMnemonicIndexBits(out []byte, wordOffset, index int) {
 	}
 }
 
+// mnemonicWordIndex returns the BIP39 word list index for word, comparing over
+// bytes so the mnemonic is never converted to a string.
 func mnemonicWordIndex(word []byte, wordList []string) (int, bool) {
 	for i, candidate := range wordList {
 		if len(word) != len(candidate) {
@@ -107,6 +120,7 @@ func mnemonicWordIndex(word []byte, wordList []string) (int, bool) {
 	return 0, false
 }
 
+// zeroBytes overwrites b with zeros.
 func zeroBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
