@@ -130,7 +130,7 @@ func TestNFTListReady(t *testing.T) {
 	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}},
 		&fakeNFTs{list: []nft.NFT{{Unit: "policyAtoken", Name: "Token A", ImageCID: "bafyimage"}}})
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft", nil))
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/nft", nil))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"Token A"`) {
 		t.Fatalf("GET /wallet/nft = %d body=%q", rec.Code, rec.Body.String())
 	}
@@ -139,14 +139,14 @@ func TestNFTListReady(t *testing.T) {
 func TestNFTListGatedAndNoWallet(t *testing.T) {
 	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, &fakeNFTs{})
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft", nil))
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/nft", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /wallet/nft while starting = %d, want 503", rec.Code)
 	}
 
 	h = nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, &fakeNFTs{listErr: nft.ErrNoWallet})
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft", nil))
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/nft", nil))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("GET /wallet/nft without wallet = %d, want 409", rec.Code)
 	}
@@ -156,13 +156,13 @@ func TestNFTImageConsentGate(t *testing.T) {
 	nf := &fakeNFTs{imageBytes: []byte("PNG")}
 	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, nf)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft/policyAtoken/image", nil))
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/nft/policyAtoken/image", nil))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("disabled image = %d, want 403", rec.Code)
 	}
 	nf.enabled = true
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft/policyAtoken/image", nil))
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/nft/policyAtoken/image", nil))
 	if rec.Code != http.StatusOK || rec.Body.String() != "PNG" || nf.servedUnit != "policyAtoken" {
 		t.Fatalf("enabled image = %d body=%q unit=%q", rec.Code, rec.Body.String(), nf.servedUnit)
 	}
@@ -172,7 +172,7 @@ func TestNFTImageGatedWhileNodeStarts(t *testing.T) {
 	nf := &fakeNFTs{enabled: true, imageBytes: []byte("PNG")}
 	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, nf)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft/policyAtoken/image", nil))
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/nft/policyAtoken/image", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("image while starting = %d, want 503", rec.Code)
 	}
@@ -185,13 +185,13 @@ func TestNFTSettingsToggleAndValidation(t *testing.T) {
 	nf := &fakeNFTs{}
 	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, nf)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/nft-media", strings.NewReader(`{"enabled":true}`)))
+	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/nft-media", strings.NewReader(`{"enabled":true}`)))
 	if rec.Code != http.StatusOK || !nf.enabled {
 		t.Fatalf("enable = %d enabled=%v", rec.Code, nf.enabled)
 	}
 	nf.setCalled = false
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/wallet/settings/nft-media", strings.NewReader(`{}`)))
+	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/nft-media", strings.NewReader(`{}`)))
 	if rec.Code != http.StatusBadRequest || nf.setCalled {
 		t.Fatalf("missing enabled = %d setCalled=%v", rec.Code, nf.setCalled)
 	}
@@ -200,12 +200,12 @@ func TestNFTSettingsToggleAndValidation(t *testing.T) {
 func TestNFTNilServiceDegradesGracefully(t *testing.T) {
 	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, nil)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/nft", nil))
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/nft", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("nil service list = %d, want 503", rec.Code)
 	}
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet/settings/nft-media", nil))
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/nft-media", nil))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":false`) {
 		t.Fatalf("nil service setting = %d body=%q", rec.Code, rec.Body.String())
 	}
