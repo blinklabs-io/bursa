@@ -16,7 +16,10 @@ export class FakeEventSource {
     FakeEventSource.instances.push(this);
   }
 
+  // A closed stream is inert: a real EventSource delivers no message events
+  // after close(), so neither do we.
   emit(data: string) {
+    if (this.closed) return;
     this.onmessage?.({ data });
   }
 
