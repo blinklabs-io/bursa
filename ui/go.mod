@@ -9,7 +9,7 @@ require (
 	github.com/blinklabs-io/go-bip39 v0.2.0
 	github.com/blinklabs-io/gouroboros v0.188.0
 	github.com/blinklabs-io/plutigo v0.1.16
-	github.com/blinklabs-io/shai v0.0.0-20260628035521-fe7bb3b9cf94
+	github.com/blinklabs-io/shai v0.0.0-20260724152428-02e3f7d23dd8
 	github.com/btcsuite/btcd/btcutil v1.2.0
 	github.com/glebarez/go-sqlite v1.21.2
 	github.com/google/go-tpm v0.9.8
