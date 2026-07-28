@@ -8,6 +8,7 @@ import type { HardwareSigner } from "../hw";
 // Mock the hardware factory so tests don't try to open WebHID / a Trezor popup.
 vi.mock("../hw", () => ({
   connectHardware: vi.fn(),
+  connectDevice: vi.fn(),
 }));
 
 // Send-parity capabilities shared by the mock signers below.
@@ -794,6 +795,66 @@ test("(w) a successful hardware send persists the chosen device kind", async () 
     expect(screen.getByText(new RegExp(MOCK_TX_RESULT.tx_hash))).toBeInTheDocument();
   });
   expect(getStoredDeviceKind("hw-persist")).toBe("ledger");
+
+  localStorage.clear();
+});
+
+test("(x) Keystone QR with a missing fingerprint blocks signing and prompts a re-scan", async () => {
+  vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+  localStorage.clear();
+  // Known to be a Keystone, but its fingerprint hint is absent (e.g. a
+  // browser-data wipe) — QR signing must not proceed with a zero fingerprint.
+  localStorage.setItem("bursa.hw.deviceKind", JSON.stringify({ "hw-ks": "keystone" }));
+
+  const { connectDevice } = await import("../hw");
+  const mockConnect = vi.mocked(connectDevice);
+  mockConnect.mockReset();
+
+  render(<Send isHardware walletId="hw-ks" />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "addr_test1recipient" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
+  });
+
+  // The recovery prompt is shown and the confirm button is blocked (never a
+  // silent zero-fingerprint sign).
+  expect(screen.getByText(/reconnect this keystone/i)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /scan account-sync qr/i })).toBeInTheDocument();
+  const confirm = screen.getByRole("button", { name: /reconnect keystone/i });
+  expect(confirm).toBeDisabled();
+
+  // Clicking the disabled confirm does nothing; no device connection is started.
+  fireEvent.click(confirm);
+  expect(mockConnect).not.toHaveBeenCalled();
+
+  localStorage.clear();
+});
+
+test("(y) Keystone QR with a stored fingerprint enables the confirm button", async () => {
+  vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+  localStorage.clear();
+  localStorage.setItem("bursa.hw.deviceKind", JSON.stringify({ "hw-ks2": "keystone" }));
+  localStorage.setItem("bursa.hw.keystoneXfp", JSON.stringify({ "hw-ks2": "52744703" }));
+
+  render(<Send isHardware walletId="hw-ks2" />);
+
+  const inputs = screen.getAllByRole("textbox");
+  fireEvent.change(inputs[0], { target: { value: "addr_test1recipient" } });
+  fireEvent.change(inputs[1], { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
+  });
+
+  // A valid fingerprint means no recovery prompt and a ready confirm button.
+  expect(screen.queryByText(/reconnect this keystone/i)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /confirm on.*keystone/i })).not.toBeDisabled();
 
   localStorage.clear();
 });

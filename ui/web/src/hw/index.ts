@@ -11,10 +11,12 @@ import type {
   ExternalConnectOptions,
   HardwareKind,
   HardwareSigner,
+  KeystoneConnectOptions,
   LocalConnectOptions,
 } from "./types";
 import { connectLedger } from "./ledger";
 import { connectTrezor } from "./trezor";
+import { connectKeystone } from "./keystone";
 
 export type {
   HardwareKind,
@@ -24,6 +26,11 @@ export type {
   ConnectOptionsByKind,
   LocalConnectOptions,
   ExternalConnectOptions,
+  KeystoneConnectOptions,
+  KeystoneQRConnectOptions,
+  KeystoneUSBConnectOptions,
+  KeystoneQRBridge,
+  KeystoneScannedUR,
 } from "./types";
 
 /**
@@ -39,7 +46,10 @@ export type {
  * {@link connectTrezor} — so this factory only narrows types and forwards; it
  * does not re-implement the consent gate.
  *
- * @throws Error for an unimplemented kind (Keystone is not supported yet).
+ * Keystone is LOCAL on both transports, so it takes a transport choice
+ * ({@link KeystoneConnectOptions}) rather than a consent callback.
+ *
+ * @throws Error for an unknown kind.
  */
 export function connectDevice(
   kind: "ledger",
@@ -51,11 +61,11 @@ export function connectDevice(
 ): Promise<HardwareSigner>;
 export function connectDevice(
   kind: "keystone",
-  opts?: ConnectOptionsByKind["keystone"],
+  opts: ConnectOptionsByKind["keystone"],
 ): Promise<HardwareSigner>;
 export function connectDevice(
   kind: HardwareKind,
-  opts?: LocalConnectOptions | ExternalConnectOptions,
+  opts?: LocalConnectOptions | ExternalConnectOptions | KeystoneConnectOptions,
 ): Promise<HardwareSigner> {
   switch (kind) {
     case "ledger":
@@ -66,7 +76,9 @@ export function connectDevice(
       // present and typed here.
       return connectTrezor(opts as ExternalConnectOptions);
     case "keystone":
-      throw new Error("Keystone hardware wallets are not yet supported");
+      // Both Keystone transports are local; connectKeystone dispatches on the
+      // transport in `opts` (QR needs a UI bridge, USB needs nothing).
+      return connectKeystone(opts as KeystoneConnectOptions);
     default: {
       // Exhaustiveness guard: a new HardwareKind must add a case above.
       const never: never = kind;
@@ -84,6 +96,12 @@ export function connectDevice(
  * cannot know the kind at compile time does not re-derive which kinds need
  * consent. `requestExternalConsent` is consulted ONLY for external-network
  * devices (Trezor); local devices (Ledger) ignore it.
+ *
+ * Keystone is NOT handled here: its only user-facing transport is air-gapped QR,
+ * which needs a UI bridge this signature cannot supply, so the screens drive it
+ * directly through {@link connectDevice}("keystone", { transport: "qr", … }).
+ * This dispatcher refuses Keystone rather than silently falling back to the
+ * ungated USB transport (see connectKeystoneUSB — not user-selectable).
  */
 export function connectHardware(
   kind: HardwareKind,
@@ -95,7 +113,9 @@ export function connectHardware(
     case "trezor":
       return connectDevice("trezor", { requestExternalConsent });
     case "keystone":
-      return connectDevice("keystone");
+      throw new Error(
+        "Keystone must be connected over its air-gapped QR transport via connectDevice(\"keystone\", { transport: \"qr\", … }); the USB transport is not user-selectable.",
+      );
     default: {
       const never: never = kind;
       throw new Error(`Unknown hardware device kind: ${String(never)}`);

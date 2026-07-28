@@ -1909,6 +1909,18 @@ func TestHardwareSignRequest(t *testing.T) {
 				t.Fatalf("unexpected path %q for index 0 payment key", inp.Path)
 			}
 		}
+		// Each owned input must carry its resolved value + address so an
+		// air-gapped signer can display the inputs and compute the fee. The
+		// single fake UTxO holds 10_000_000 lovelace at addr0.
+		if inp.Lovelace != "10000000" {
+			t.Fatalf("input Lovelace = %q, want 10000000 (resolved from coin selection)", inp.Lovelace)
+		}
+		if inp.AddressBech32 != addr0 {
+			t.Fatalf("input AddressBech32 = %q, want %q", inp.AddressBech32, addr0)
+		}
+		if len(inp.Assets) != 0 {
+			t.Fatalf("ADA-only input must carry no assets, got %+v", inp.Assets)
+		}
 	}
 	if !hasPath {
 		t.Fatal("at least one input should have a derivation path")

@@ -3,23 +3,27 @@ import type { HardwareSigner } from "./types";
 
 // Mock the concrete connectors so the factory can be exercised without opening
 // WebHID or loading connect.trezor.io.
-const { mockConnectLedger, mockConnectTrezor } = vi.hoisted(() => ({
+const { mockConnectLedger, mockConnectTrezor, mockConnectKeystone } = vi.hoisted(() => ({
   mockConnectLedger: vi.fn(),
   mockConnectTrezor: vi.fn(),
+  mockConnectKeystone: vi.fn(),
 }));
 
 vi.mock("./ledger", () => ({ connectLedger: mockConnectLedger }));
 vi.mock("./trezor", () => ({ connectTrezor: mockConnectTrezor }));
+vi.mock("./keystone", () => ({ connectKeystone: mockConnectKeystone }));
 
 import { connectDevice, connectHardware } from "./index";
 
 const fakeLedger = { kind: "ledger" } as unknown as HardwareSigner;
 const fakeTrezor = { kind: "trezor" } as unknown as HardwareSigner;
+const fakeKeystone = { kind: "keystone" } as unknown as HardwareSigner;
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockConnectLedger.mockResolvedValue(fakeLedger);
   mockConnectTrezor.mockResolvedValue(fakeTrezor);
+  mockConnectKeystone.mockResolvedValue(fakeKeystone);
 });
 
 describe("connectDevice factory", () => {
@@ -38,8 +42,17 @@ describe("connectDevice factory", () => {
     expect(session).toBe(fakeTrezor);
   });
 
-  test("keystone is not supported and throws", () => {
-    expect(() => connectDevice("keystone")).toThrow(/not yet supported/i);
+  test("keystone dispatches to connectKeystone, forwarding the transport options", async () => {
+    const bridge = {
+      displayRequest: () => {},
+      scanResponse: async () => ({ type: "", cborHex: "" }),
+      close: () => {},
+    };
+    const session = await connectDevice("keystone", { transport: "qr", bridge });
+    expect(mockConnectKeystone).toHaveBeenCalledWith({ transport: "qr", bridge });
+    expect(mockConnectLedger).not.toHaveBeenCalled();
+    expect(mockConnectTrezor).not.toHaveBeenCalled();
+    expect(session).toBe(fakeKeystone);
   });
 });
 
@@ -76,7 +89,11 @@ describe("connectHardware (dynamic kind)", () => {
     expect(mockConnectLedger).not.toHaveBeenCalled();
   });
 
-  test("keystone throws (unsupported this phase)", () => {
-    expect(() => connectHardware("keystone", async () => true)).toThrow(/not yet supported/i);
+  test("keystone is refused here (its only user-facing transport is QR, driven via connectDevice)", () => {
+    const consent = vi.fn().mockResolvedValue(true);
+    // connectHardware must NOT silently fall back to the ungated USB transport;
+    // the air-gapped QR flow is driven directly through connectDevice.
+    expect(() => connectHardware("keystone", consent)).toThrow(/air-gapped QR/i);
+    expect(mockConnectKeystone).not.toHaveBeenCalled();
   });
 });

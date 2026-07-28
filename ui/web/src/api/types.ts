@@ -429,6 +429,15 @@ export interface HWInput {
   tx_hash_hex: string;
   output_index: number;
   path?: string; // CIP-1852 path, e.g. "1852'/1815'/0'/0/0"
+  // lovelace + address_bech32 are the resolved value of the input UTxO. A
+  // Cardano input references only (tx_hash, output_index), so an air-gapped
+  // signer (Keystone QR) needs these to display the inputs and compute the fee
+  // on-device. Omitted when the backend could not resolve the input's value.
+  lovelace?: string; // decimal string
+  address_bech32?: string;
+  // Native assets on the input UTxO (informational). The Keystone UTxO registry
+  // carries lovelace + address only, so these are display metadata.
+  assets?: { policy_id_hex: string; asset_name_hex: string; amount: string }[];
 }
 
 export interface HWOutput {

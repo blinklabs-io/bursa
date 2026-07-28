@@ -180,11 +180,42 @@ const feePaddingLovelace = 1000
 // pending holds a completed but unsigned tx while awaiting Confirm.
 type pending struct {
 	tx        *apollo.Apollo
-	utxoAddr  map[string]string // "txhash#index" → bech32 address (for signing)
+	utxoAddr  map[string]string       // "txhash#index" → bech32 address (for signing)
+	utxoValue map[string]hwInputValue // "txhash#index" → resolved input value (hardware display); nil for cert txs
 	created   time.Time
 	walletID  string
 	account   *wallet.Account
 	certKinds []CertKind // non-nil for delegation txs; drives stake/DRep witness addition at Confirm
+}
+
+// hwInputValue is a resolved input UTxO's value, retained at build time so the
+// hardware sign request can show each input's amount (+ native assets) on the
+// device. A Cardano input references only (txid, index) — its value is NOT in
+// the tx body — so an air-gapped signer (Keystone QR) cannot display the inputs
+// or compute the fee without it being supplied out of band.
+type hwInputValue struct {
+	lovelace uint64
+	assets   []HWAsset
+}
+
+// hwInputValueOf resolves a loaded UTxO into its lovelace + native-asset value.
+func hwInputValueOf(u lcommon.Utxo) hwInputValue {
+	v := hwInputValue{lovelace: u.Output.Amount().Uint64()}
+	if ma := u.Output.Assets(); ma != nil {
+		for _, pol := range ma.Policies() {
+			for _, name := range ma.Assets(pol) {
+				qty := ma.Asset(pol, name)
+				if qty != nil && qty.Sign() > 0 {
+					v.assets = append(v.assets, HWAsset{
+						PolicyIDHex:  hex.EncodeToString(pol.Bytes()),
+						AssetNameHex: hex.EncodeToString(name),
+						Amount:       qty.String(),
+					})
+				}
+			}
+		}
+	}
+	return v
 }
 
 // Service builds and holds pending send transactions.
@@ -315,6 +346,7 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 	// later signing. We pre-load them so Apollo's coin selection can see them
 	// without needing a live chain query inside Complete().
 	utxoAddr := make(map[string]string)
+	utxoValue := make(map[string]hwInputValue)
 	var loaded []lcommon.Utxo
 	for _, addrStr := range acct.ReceiveAddresses {
 		addr, err := lcommon.NewAddress(addrStr)
@@ -328,7 +360,9 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 		if len(utxos) > 0 {
 			loaded = append(loaded, utxos...)
 			for _, u := range utxos {
-				utxoAddr[makeUtxoRef(u)] = addrStr
+				ref := makeUtxoRef(u)
+				utxoAddr[ref] = addrStr
+				utxoValue[ref] = hwInputValueOf(u)
 			}
 		}
 	}
@@ -398,11 +432,12 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 	}
 	s.sweepExpiredLocked()
 	s.pending[id] = &pending{
-		tx:       a,
-		utxoAddr: utxoAddr,
-		created:  s.now(),
-		walletID: walletID,
-		account:  cloneAccount(acct),
+		tx:        a,
+		utxoAddr:  utxoAddr,
+		utxoValue: utxoValue,
+		created:   s.now(),
+		walletID:  walletID,
+		account:   cloneAccount(acct),
 	}
 	s.mu.Unlock()
 
@@ -2300,6 +2335,17 @@ type HWInput struct {
 	// Path is the CIP-1852 derivation path ("1852'/1815'/0'/0/3") for the
 	// payment key that must sign this input, or "" if the input is not ours.
 	Path string `json:"path,omitempty"`
+	// Lovelace is the input UTxO's ADA value (decimal string), resolved from the
+	// coin-selection inputs at build time. A Cardano input references only
+	// (txid, index), so an air-gapped signer (Keystone QR) needs this to display
+	// the inputs and compute the fee on-device. Empty when the value is unknown.
+	Lovelace string `json:"lovelace,omitempty"`
+	// AddressBech32 is the input UTxO's address, for on-device display.
+	AddressBech32 string `json:"address_bech32,omitempty"`
+	// Assets are the input UTxO's native assets (informational; the Keystone UTxO
+	// registry carries lovelace + address only, so these are display metadata for
+	// devices that can use them). Empty for ADA-only inputs.
+	Assets []HWAsset `json:"assets,omitempty"`
 }
 
 // HWOutput is one transaction output in the hardware sign request.
@@ -2479,9 +2525,16 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 		}
 		addrStr, found := p.utxoAddr[ref]
 		if found {
+			hwInp.AddressBech32 = addrStr
 			if idx, owned := idxOf[addrStr]; owned {
 				hwInp.Path = fmt.Sprintf("1852'/%d'/%d'/0/%d", 1815, accountNum, idx)
 			}
+		}
+		// Per-input amount + assets, resolved from coin-selection at build time.
+		// The air-gapped device shows these and derives the fee from them.
+		if val, ok := p.utxoValue[ref]; ok {
+			hwInp.Lovelace = strconv.FormatUint(val.lovelace, 10)
+			hwInp.Assets = val.assets
 		}
 		inputs = append(inputs, hwInp)
 	}

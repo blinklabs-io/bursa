@@ -271,8 +271,8 @@ test("Connect hardware: Ledger is the default device; connects, adds wallet, sto
 
   // Ledger radio is selected by default.
   expect(screen.getByRole("radio", { name: /ledger/i })).toBeChecked();
-  // Keystone is listed but disabled (coming soon).
-  expect(screen.getByRole("radio", { name: /keystone/i })).toBeDisabled();
+  // Keystone is now a selectable device.
+  expect(screen.getByRole("radio", { name: /^keystone$/i })).toBeEnabled();
 
   // Fill in wallet name
   fireEvent.change(screen.getByLabelText(/wallet name/i), { target: { value: "Ledger Main" } });
@@ -384,4 +384,22 @@ test("Connect hardware: WebHID unavailable error message is shown", async () => 
     ).toBeInTheDocument(),
   );
   expect(onAdded).not.toHaveBeenCalled();
+});
+
+test("Connect hardware: Keystone is air-gapped QR only (no user-selectable USB transport)", async () => {
+  render(<AddWallet network="preview" knownVaultPassword="vault-pw" onAdded={vi.fn()} />);
+  goToHardware();
+
+  fireEvent.click(screen.getByRole("radio", { name: /^keystone$/i }));
+
+  // USB rides an unverified SDK, so it is NOT offered: there is no transport
+  // radio at all — Keystone connects air-gapped over QR only.
+  expect(screen.queryByRole("radio", { name: /^usb$/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("radio", { name: /air-gapped qr/i })).not.toBeInTheDocument();
+  expect(screen.getByText(/connects air-gapped over qr/i)).toBeInTheDocument();
+
+  // Keystone is local — no connect.trezor.io consent box appears.
+  expect(screen.queryByRole("checkbox", { name: /connect\.trezor\.io/i })).not.toBeInTheDocument();
+  // The QR flow scans an account QR rather than "connecting".
+  expect(screen.getByRole("button", { name: /scan account qr/i })).toBeInTheDocument();
 });
