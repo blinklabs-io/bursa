@@ -473,7 +473,7 @@ func (s *Service) SignData(addrStr string, message []byte, password string) (sig
 		}
 	}()
 
-	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
 	if err != nil {
 		return "", "", fmt.Errorf("root key: %w", err)
 	}
@@ -531,7 +531,7 @@ func (s *Service) PubDRepKey(password string) ([]byte, error) {
 		}
 	}()
 
-	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}
@@ -587,7 +587,7 @@ func (s *Service) PubStakeKey(password string) ([]byte, error) {
 		}
 	}()
 
-	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}
@@ -900,7 +900,7 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	}()
 
 	// --- step 3: derive account key ---
-	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
 	if err != nil {
 		return TxResult{}, fmt.Errorf("root key: %w", err)
 	}
@@ -1207,7 +1207,7 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 		}
 	}()
 
-	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
 	if err != nil {
 		return Witness{}, fmt.Errorf("root key: %w", err)
 	}
@@ -1653,7 +1653,7 @@ func (s *Service) CosignTx(
 			mnemonicBytes[i] = 0
 		}
 	}()
-	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
 	if err != nil {
 		return CosignResult{}, fmt.Errorf("root key: %w", err)
 	}
@@ -1969,7 +1969,7 @@ func (s *Service) WitnessTx(
 		}
 	}()
 
-	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}

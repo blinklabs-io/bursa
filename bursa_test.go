@@ -584,6 +584,79 @@ func TestGetRootKeyFromMnemonic(t *testing.T) {
 	}
 }
 
+func TestGetRootKeyFromMnemonicBytes(t *testing.T) {
+	// Independent oracle. The byte decoder is validated against
+	// go-bip39's EntropyFromMnemonic (the upstream decoder, not the code
+	// under test) rather than against GetRootKeyFromMnemonic — which now
+	// delegates to GetRootKeyFromMnemonicBytes and so would only compare the
+	// decoder with itself. For each of the five legal BIP39 word counts a valid
+	// mnemonic is sourced from fixed entropy via go-bip39's encoder, decoded
+	// back through the upstream decoder, and both entropyFromMnemonicBytes and
+	// GetRootKeyFromMnemonicBytes are asserted to agree. This exercises every
+	// checksumShift value (12/15/18/21/24 words -> shift 4/3/2/1/0).
+	t.Run("matches upstream decoder", func(t *testing.T) {
+		for _, words := range []int{12, 15, 18, 21, 24} {
+			// entropyLen bytes: 4 per 3 words (128..256 bits).
+			entropy := make([]byte, words/3*4)
+			for i := range entropy {
+				entropy[i] = byte(i*7 + 3) // deterministic, non-uniform
+			}
+
+			// Source a valid mnemonic from fixed entropy via the upstream
+			// encoder, so the vector is a real BIP39 mnemonic of this length.
+			mnemonic, err := bip39.NewMnemonic(entropy)
+			require.NoError(t, err, "%d words: NewMnemonic", words)
+			require.Len(t, strings.Fields(mnemonic), words)
+
+			// Oracle: decode with the upstream decoder, independent of the
+			// code under test.
+			wantEntropy, err := bip39.EntropyFromMnemonic(mnemonic)
+			require.NoError(t, err, "%d words: EntropyFromMnemonic", words)
+			assert.Equal(t, entropy, wantEntropy,
+				"%d words: upstream round-trip", words)
+
+			gotEntropy, err := entropyFromMnemonicBytes([]byte(mnemonic))
+			require.NoError(t, err, "%d words: entropyFromMnemonicBytes", words)
+			assert.Equal(t, wantEntropy, gotEntropy,
+				"%d words: byte decoder disagrees with upstream", words)
+
+			for _, password := range []string{"", "testpassword"} {
+				var pwBytes []byte
+				if password != "" {
+					pwBytes = []byte(password)
+				}
+				want := GetRootKey(wantEntropy, pwBytes)
+				got, err := GetRootKeyFromMnemonicBytes([]byte(mnemonic), password)
+				require.NoError(t, err,
+					"%d words: GetRootKeyFromMnemonicBytes(%q)", words, password)
+				assert.Equal(t, []byte(want), []byte(got),
+					"%d words: root key mismatch for password %q", words, password)
+			}
+		}
+	})
+
+	t.Run("rejects invalid mnemonic", func(t *testing.T) {
+		// A 12-word mnemonic whose last token is not in the BIP39 word list:
+		// legal length, so it reaches word lookup and fails there.
+		unknownWord := "abandon abandon abandon abandon abandon abandon " +
+			"abandon abandon abandon abandon abandon zzzzzz"
+		// All-"abandon": every token is a valid word and the length is legal,
+		// so it reaches checksum verification and fails there (the valid
+		// all-zero-entropy mnemonic ends in "about", not "abandon"). Confirmed
+		// checksum-invalid via bip39.EntropyFromMnemonic (returns an error).
+		_, err := bip39.EntropyFromMnemonic(
+			"abandon abandon abandon abandon abandon abandon " +
+				"abandon abandon abandon abandon abandon abandon")
+		require.Error(t, err, "sanity: all-abandon must be checksum-invalid")
+		invalidChecksum := "abandon abandon abandon abandon abandon abandon " +
+			"abandon abandon abandon abandon abandon abandon"
+		for _, m := range []string{"", "invalid mnemonic", unknownWord, invalidChecksum} {
+			_, err := GetRootKeyFromMnemonicBytes([]byte(m), "")
+			assert.ErrorIs(t, err, ErrInvalidMnemonic)
+		}
+	})
+}
+
 func TestCIP0003KeyGeneration(t *testing.T) {
 	// Test CIP-0003 compliance for wallet key generation
 	// These test vectors validate the complete key generation pipeline:

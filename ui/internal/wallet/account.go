@@ -50,7 +50,7 @@ func AccountXpub(mnemonic string) (string, error) {
 
 // AccountXpubFromMnemonicBytes is the zeroable-byte variant of AccountXpub.
 func AccountXpubFromMnemonicBytes(mnemonic []byte) (string, error) {
-	root, err := rootKeyFromMnemonicBytes(mnemonic)
+	root, err := RootKeyFromMnemonicBytes(mnemonic)
 	if err != nil {
 		return "", fmt.Errorf("root key from mnemonic: %w", err)
 	}
@@ -89,7 +89,7 @@ func DeriveFromMnemonicBytes(mnemonic []byte, network string, windowN int) (*Acc
 	if err != nil {
 		return nil, err
 	}
-	root, err := rootKeyFromMnemonicBytes(mnemonic)
+	root, err := RootKeyFromMnemonicBytes(mnemonic)
 	if err != nil {
 		return nil, fmt.Errorf("root key from mnemonic: %w", err)
 	}
