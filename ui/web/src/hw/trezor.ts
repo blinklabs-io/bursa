@@ -43,10 +43,9 @@ function parseBip32Path(pathStr: string): number[] {
 
 // ── Trezor Connect manifest / init ────────────────────────────────────────────
 
-// Placeholder contact advertised in the Trezor Connect manifest.
-// TODO: production contact — replace with the approved production
-// support/attribution address before shipping.
-const TREZOR_MANIFEST_CONTACT_EMAIL = "wallet@blinklabs.io";
+// Contact advertised in the Trezor Connect manifest so Trezor can reach the
+// maintainers about integration issues.
+const TREZOR_MANIFEST_CONTACT_EMAIL = "support@blinklabs.io";
 
 // Trezor requires a manifest identifying the calling app so it can reach out if
 // an integration misbehaves. This is the local Bursa wallet's identity; appUrl
