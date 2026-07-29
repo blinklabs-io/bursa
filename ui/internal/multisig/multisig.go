@@ -17,6 +17,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/txwitness"
+	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/blinklabs-io/gouroboros/ledger/conway"
@@ -458,7 +459,7 @@ func (s *Service) MyKey(password string) (MyKey, error) {
 		zeroBytes(mnemonicBytes)
 	}()
 
-	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
 	if err != nil {
 		return MyKey{}, fmt.Errorf("root key: %w", err)
 	}
@@ -864,7 +865,7 @@ func (s *Service) Sign(unsignedTxCBOR, password string) (Witness, error) {
 		zeroBytes(mnemonicBytes)
 	}()
 
-	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
 	if err != nil {
 		return Witness{}, fmt.Errorf("root key: %w", err)
 	}
@@ -1107,7 +1108,7 @@ func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) 
 		zeroBytes(mnemonicBytes)
 	}()
 
-	rootKey, err = bursa.GetRootKeyFromMnemonic(string(mnemonicBytes), "")
+	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
 	if err != nil {
 		return CosignResult{}, fmt.Errorf("root key: %w", err)
 	}
