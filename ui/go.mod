@@ -3,6 +3,7 @@ module github.com/blinklabs-io/bursa/ui
 go 1.26.0
 
 require (
+	fyne.io/systray v1.12.1
 	github.com/blinklabs-io/apollo/v2 v2.0.0-20260625155554-2c0d64b7d8e9
 	github.com/blinklabs-io/bursa v0.16.1-0.20260723122856-2f8b123a98ae
 	github.com/blinklabs-io/dingo v0.66.2
@@ -127,6 +128,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
 	github.com/google/go-cmp v0.7.0 // indirect

@@ -28,6 +28,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/blinklabs-io/bursa/ui/internal/desktoptray"
 	webview "github.com/webview/webview_go"
 )
 
@@ -83,6 +84,26 @@ func awaitUI(ctx context.Context, url string, logger *slog.Logger, srvErr <-chan
 		<-stopped
 		w.Destroy()
 	}()
+
+	// Minimize/close-to-tray (single-process "Option B"): a system-tray item
+	// that shares this one webview run loop rather than a second controller
+	// process. Closing or minimizing the window hides it — the embedded node
+	// keeps running — and the tray's Open re-shows it. The tray's Quit performs
+	// a real shutdown by terminating the run loop, which unblocks w.Run() below
+	// so main() can Stop the boot stack (node + control surface).
+	//
+	// New must run on this (main) goroutine before w.Run(): it installs the
+	// native close-interception hook, which touches the window. w.Window() is
+	// valid immediately after webview.New (the native window already exists).
+	tray := desktoptray.New(desktoptray.Config{
+		Window:    w.Window(),
+		Dispatch:  w.Dispatch,
+		Terminate: w.Terminate,
+		StatusURL: url,
+		Logger:    logger,
+	})
+	tray.Launch()
+	defer tray.Stop()
 
 	logger.Info("opening webview window", "url", url)
 	w.Navigate(url)
