@@ -1,8 +1,13 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import wasm from "vite-plugin-wasm";
+import topLevelAwait from "vite-plugin-top-level-await";
 
 export default defineConfig({
-  plugins: [react()],
+  // wasm + topLevelAwait let the (dynamically imported, code-split) Keystone USB
+  // SDK load its WebAssembly serialization lib. They only affect that async
+  // chunk; the initial bundle is unaffected.
+  plugins: [react(), wasm(), topLevelAwait()],
   build: { outDir: "../internal/webui/dist", emptyOutDir: true },
   server: {
     proxy: {
