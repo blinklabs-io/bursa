@@ -1,6 +1,13 @@
 # Determine root directory
 ROOT_DIR=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 
+# Default GOOS to the host's Go environment. The webview conditionals below
+# (the -H=windowsgui GUI linker flag and the .exe output suffix) key off this
+# variable; without a default it is empty when GOOS is not exported, dropping
+# both on native Windows hosts. A GOOS set in the environment or on the command
+# line still wins (?= only assigns when unset).
+GOOS ?= $(shell go env GOOS)
+
 # Gather all .go files for use in dependencies below
 GO_FILES=$(shell find $(ROOT_DIR) -name '*.go')
 
@@ -16,9 +23,14 @@ GO_LDFLAGS=-ldflags "-X '$(GOMODULE)/internal/version.Version=$(shell git descri
 # The nested ui/ module is a separate Go module; mirror the version-ldflags
 # pattern against its module path for the embedded-SPA wallet binary.
 UI_GOMODULE=$(shell grep ^module $(ROOT_DIR)/ui/go.mod | awk '{ print $$2 }')
-UI_GO_LDFLAGS=-ldflags "-X '$(UI_GOMODULE)/internal/version.Version=$(shell git describe --tags --exact-match 2>/dev/null)' -X '$(UI_GOMODULE)/internal/version.CommitHash=$(shell git rev-parse --short HEAD)'"
+UI_LDFLAGS_CONTENT=-X '$(UI_GOMODULE)/internal/version.Version=$(shell git describe --tags --exact-match 2>/dev/null)' -X '$(UI_GOMODULE)/internal/version.CommitHash=$(shell git rev-parse --short HEAD)'
+UI_GO_LDFLAGS=-ldflags "$(UI_LDFLAGS_CONTENT)"
+# The webview desktop build must link the Windows GUI subsystem so launching it
+# does not spawn a console window. -H=windowsgui is only valid for
+# GOOS=windows, so it is appended conditionally.
+UI_WEBVIEW_LDFLAGS=-ldflags "$(UI_LDFLAGS_CONTENT)$(if $(filter windows,$(GOOS)), -H=windowsgui,)"
 
-.PHONY: build wallet wallet-binary mod-tidy clean test
+.PHONY: build wallet wallet-binary wallet-webview wallet-binary-webview bundle-macos pkg-macos pkg-macos-adhoc mod-tidy clean test
 
 # Alias for building program binary
 build: $(BINARIES)
@@ -39,6 +51,39 @@ wallet-binary:
 		$(UI_GO_LDFLAGS) \
 		-o bursa-wallet \
 		./cmd/bursa-wallet
+
+# Build the webview desktop wallet: the web bundle first, then the CGO +
+# `-tags webview` variant (native system webview: WKWebView/mac, WebView2/win,
+# webkit2gtk/linux). CANNOT be cross-compiled; build on a native runner of the
+# target arch with a C toolchain + the platform webview dev headers present.
+wallet-webview:
+	cd ui/web && npm ci && npm run build
+	$(MAKE) wallet-binary-webview
+
+# Compile only the webview bursa-wallet binary, assuming the web bundle has
+# already been built into the //go:embed dist target. Honors GOOS/GOARCH.
+wallet-binary-webview:
+	cd ui && CGO_ENABLED=1 go build \
+		$(UI_WEBVIEW_LDFLAGS) \
+		-tags webview \
+		-o bursa-wallet$(if $(filter windows,$(GOOS)),.exe,) \
+		./cmd/bursa-wallet
+
+# Build an ad-hoc-signed macOS Bursa.app + .pkg for LOCAL testing (no Developer
+# ID needed). The pkg itself is unsigned; install with
+# `sudo installer -pkg <pkg> -target /`. Alias of pkg-macos-adhoc for symmetry
+# with adder's bundle-macos.
+bundle-macos: pkg-macos-adhoc
+
+# Build a (signed + notarized when secrets are set) macOS .pkg installer
+# containing Bursa.app. See packaging/macos/build-pkg.sh for the env-var
+# contract.
+pkg-macos:
+	./packaging/macos/build-pkg.sh
+
+# Build an ad-hoc-signed macOS .pkg for LOCAL testing (no Developer ID needed).
+pkg-macos-adhoc:
+	ADHOC=1 ./packaging/macos/build-pkg.sh
 
 # Builds and installs binary in ~/.local/bin
 install: build
