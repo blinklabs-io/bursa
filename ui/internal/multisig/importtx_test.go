@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	apollo "github.com/blinklabs-io/apollo/v2"
+	apollo "github.com/Salvionied/apollo/v2"
 	"github.com/blinklabs-io/bursa"
 	gcbor "github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
@@ -404,7 +404,7 @@ func TestStakeScriptCredentialHashes_VotingProcedure(t *testing.T) {
 	ccHotKey := voterHash(0xc4)
 	poolKey := voterHash(0x5e)
 	tx.Body.TxVotingProcedures = lcommon.VotingProcedures{
-		{Type: lcommon.VoterTypeDRepScriptHash, Hash: drepScript}:                       {},
+		{Type: lcommon.VoterTypeDRepScriptHash, Hash: drepScript}:                        {},
 		{Type: lcommon.VoterTypeConstitutionalCommitteeHotScriptHash, Hash: ccHotScript}: {},
 		{Type: lcommon.VoterTypeDRepKeyHash, Hash: drepKey}:                              {},
 		{Type: lcommon.VoterTypeConstitutionalCommitteeHotKeyHash, Hash: ccHotKey}:       {},
@@ -925,14 +925,14 @@ func ordinaryUnsignedTxHex(t *testing.T, fc *fakeChain) string {
 	a := apollo.New(fc).
 		SetWallet(apollo.NewExternalWallet(addr)).
 		SetChangeAddress(addr)
-	utxos, err := fc.Utxos(context.Background(), addr)
+	utxos, err := fc.Utxos(addr)
 	if err != nil {
 		t.Fatalf("utxos: %v", err)
 	}
 	a = a.AddLoadedUTxOs(utxos...)
 	a = a.PayToAddress(addr, 1_000_000)
 
-	a, err = a.CompleteContext(context.Background())
+	a, err = a.WithContext(context.Background()).Complete()
 	if err != nil {
 		t.Fatalf("complete ordinary tx: %v", err)
 	}

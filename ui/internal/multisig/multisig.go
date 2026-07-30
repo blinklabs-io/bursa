@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	apollo "github.com/blinklabs-io/apollo/v2"
-	"github.com/blinklabs-io/apollo/v2/backend"
+	apollo "github.com/Salvionied/apollo/v2"
+	"github.com/Salvionied/apollo/v2/backend"
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
@@ -494,7 +494,7 @@ func (s *Service) Balance(ctx context.Context, id string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("script address: %w", err)
 	}
-	utxos, err := s.chain.Utxos(ctx, addr)
+	utxos, err := backend.UtxosContext(ctx, s.chain, addr)
 	if err != nil {
 		return "", fmt.Errorf("utxos for %s: %w", acct.ScriptAddress, err)
 	}
@@ -533,7 +533,7 @@ func (s *Service) multisigFeePadding(ctx context.Context, participantCount int) 
 	if extraWitnesses < 1 {
 		return feePaddingLovelace, nil
 	}
-	pp, err := s.chain.ProtocolParams(ctx)
+	pp, err := backend.ProtocolParamsContext(ctx, s.chain)
 	if err != nil {
 		return 0, err
 	}
@@ -587,7 +587,7 @@ func (s *Service) Build(ctx context.Context, id string, req BuildRequest) (Unsig
 		SetChangeAddress(scriptAddr).
 		SetFeePadding(padding)
 
-	utxos, err := s.chain.Utxos(ctx, scriptAddr)
+	utxos, err := backend.UtxosContext(ctx, s.chain, scriptAddr)
 	if err != nil {
 		return UnsignedTx{}, fmt.Errorf("utxos for %s: %w", acct.ScriptAddress, err)
 	}
@@ -627,7 +627,7 @@ func (s *Service) Build(ctx context.Context, id string, req BuildRequest) (Unsig
 		a = a.SetTtl(int64(ttl)) //nolint:gosec // bounded above
 	}
 
-	a, err = a.CompleteContext(ctx)
+	a, err = a.WithContext(ctx).Complete()
 	if err != nil {
 		if isInsufficientFundsError(err) {
 			return UnsignedTx{}, fmt.Errorf("%w: %w", ErrInsufficientFunds, err)
@@ -969,7 +969,10 @@ func (s *Service) Submit(ctx context.Context, id, unsignedTxCBOR string, witness
 	tx.SetCbor(nil)
 	tx.WitnessSet.SetCbor(nil)
 
-	txHash, err := a.SubmitContext(context.WithoutCancel(ctx))
+	// Submit passes this context to backend.SubmitTxContext, so detach from the
+	// request context: the tx is fully signed and a client disconnect must not
+	// cancel the node broadcast and strand it.
+	txHash, err := a.WithContext(context.WithoutCancel(ctx)).Submit()
 	if err != nil {
 		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}
@@ -1028,7 +1031,10 @@ func (s *Service) SubmitImported(ctx context.Context, txCbor string) (TxResult, 
 	tx.SetCbor(nil)
 	tx.WitnessSet.SetCbor(nil)
 
-	txHash, err := a.SubmitContext(context.WithoutCancel(ctx))
+	// Submit passes this context to backend.SubmitTxContext, so detach from the
+	// request context: the tx is fully signed and a client disconnect must not
+	// cancel the node broadcast and strand it.
+	txHash, err := a.WithContext(context.WithoutCancel(ctx)).Submit()
 	if err != nil {
 		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}

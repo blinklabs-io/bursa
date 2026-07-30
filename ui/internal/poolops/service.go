@@ -24,8 +24,8 @@ import (
 	"strings"
 	"sync"
 
-	apollo "github.com/blinklabs-io/apollo/v2"
-	"github.com/blinklabs-io/apollo/v2/backend"
+	apollo "github.com/Salvionied/apollo/v2"
+	"github.com/Salvionied/apollo/v2/backend"
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
@@ -711,7 +711,7 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 		if err != nil {
 			return TxResult{}, fmt.Errorf("address %q: %w", addrStr, err)
 		}
-		utxos, err := s.chain.Utxos(ctx, addr)
+		utxos, err := backend.UtxosContext(ctx, s.chain, addr)
 		if err != nil {
 			return TxResult{}, fmt.Errorf("utxos for %s: %w", addrStr, err)
 		}
@@ -728,7 +728,7 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 	a = a.DeregisterPool(operator, epoch).
 		AddRequiredSigner(operator)
 
-	a, err = a.CompleteContext(ctx)
+	a, err = a.WithContext(ctx).Complete()
 	if err != nil {
 		return TxResult{}, fmt.Errorf("complete transaction: %w", err)
 	}
@@ -780,7 +780,10 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 		return TxResult{}, fmt.Errorf("cold-key witness: %w", err)
 	}
 
-	txHash, err := a.SubmitContext(context.WithoutCancel(ctx))
+	// Submit passes this context to backend.SubmitTxContext, so detach from the
+	// request context: the tx is fully signed and a client disconnect must not
+	// cancel the node broadcast and strand it.
+	txHash, err := a.WithContext(context.WithoutCancel(ctx)).Submit()
 	if err != nil {
 		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}

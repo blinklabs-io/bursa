@@ -8,7 +8,7 @@ import (
 	"math/big"
 	"testing"
 
-	apollobackend "github.com/blinklabs-io/apollo/v2/backend"
+	apollobackend "github.com/Salvionied/apollo/v2/backend"
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
 	gocbor "github.com/blinklabs-io/gouroboros/cbor"
@@ -896,7 +896,7 @@ type fakeSpendChain struct {
 
 var _ apollobackend.ChainContext = (*fakeSpendChain)(nil)
 
-func (f *fakeSpendChain) ProtocolParams(_ context.Context) (apollobackend.ProtocolParameters, error) {
+func (f *fakeSpendChain) ProtocolParams() (apollobackend.ProtocolParameters, error) {
 	return apollobackend.ProtocolParameters{
 		MinFeeConstant:    155381,
 		MinFeeCoefficient: 44,
@@ -904,7 +904,7 @@ func (f *fakeSpendChain) ProtocolParams(_ context.Context) (apollobackend.Protoc
 		CoinsPerUtxoByte:  "4310",
 	}, nil
 }
-func (f *fakeSpendChain) GenesisParams(_ context.Context) (apollobackend.GenesisParameters, error) {
+func (f *fakeSpendChain) GenesisParams() (apollobackend.GenesisParameters, error) {
 	return apollobackend.GenesisParameters{
 		ActiveSlotsCoefficient: 0.05,
 		EpochLength:            432000,
@@ -912,26 +912,26 @@ func (f *fakeSpendChain) GenesisParams(_ context.Context) (apollobackend.Genesis
 		NetworkMagic:           1,
 	}, nil
 }
-func (f *fakeSpendChain) NetworkId() uint8                               { return 0 }
-func (f *fakeSpendChain) CurrentEpoch(_ context.Context) (uint64, error) { return 500, nil }
-func (f *fakeSpendChain) MaxTxFee(_ context.Context) (uint64, error) {
-	pp, _ := f.ProtocolParams(context.Background())
+func (f *fakeSpendChain) NetworkId() uint8              { return 0 }
+func (f *fakeSpendChain) CurrentEpoch() (uint64, error) { return 500, nil }
+func (f *fakeSpendChain) MaxTxFee() (uint64, error) {
+	pp, _ := f.ProtocolParams()
 	return apollobackend.ComputeMaxTxFee(pp)
 }
-func (f *fakeSpendChain) Tip(_ context.Context) (uint64, error) { return 10_000_000, nil }
-func (f *fakeSpendChain) Utxos(_ context.Context, _ lcommon.Address) ([]lcommon.Utxo, error) {
+func (f *fakeSpendChain) Tip() (uint64, error) { return 10_000_000, nil }
+func (f *fakeSpendChain) Utxos(_ lcommon.Address) ([]lcommon.Utxo, error) {
 	return nil, nil
 }
-func (f *fakeSpendChain) SubmitTx(_ context.Context, _ []byte) (lcommon.Blake2b256, error) {
+func (f *fakeSpendChain) SubmitTx(_ []byte) (lcommon.Blake2b256, error) {
 	return f.submitHash, f.submitErr
 }
-func (f *fakeSpendChain) EvaluateTx(_ context.Context, _ []byte, _ []lcommon.Utxo) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
+func (f *fakeSpendChain) EvaluateTx(_ []byte, _ []lcommon.Utxo) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
 	return nil, nil
 }
-func (f *fakeSpendChain) UtxoByRef(_ context.Context, _ lcommon.Blake2b256, _ uint32) (*lcommon.Utxo, error) {
+func (f *fakeSpendChain) UtxoByRef(_ lcommon.Blake2b256, _ uint32) (*lcommon.Utxo, error) {
 	return nil, nil
 }
-func (f *fakeSpendChain) ScriptCbor(_ context.Context, _ lcommon.Blake2b224) ([]byte, error) {
+func (f *fakeSpendChain) ScriptCbor(_ lcommon.Blake2b224) ([]byte, error) {
 	return nil, nil
 }
 

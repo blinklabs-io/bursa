@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	apollo "github.com/blinklabs-io/apollo/v2"
-	"github.com/blinklabs-io/apollo/v2/backend"
+	apollo "github.com/Salvionied/apollo/v2"
+	"github.com/Salvionied/apollo/v2/backend"
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
@@ -353,7 +353,7 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 		if err != nil {
 			return Preview{}, fmt.Errorf("address %q: %w", addrStr, err)
 		}
-		utxos, err := s.chain.Utxos(ctx, addr)
+		utxos, err := backend.UtxosContext(ctx, s.chain, addr)
 		if err != nil {
 			return Preview{}, fmt.Errorf("utxos for %s: %w", addrStr, err)
 		}
@@ -397,7 +397,7 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 		}
 		next = next.PayToAddress(recvAddr, int64(lovelace), units...) //nolint:gosec // validated by parseAmount
 
-		next, err = next.CompleteContext(ctx)
+		next, err = next.WithContext(ctx).Complete()
 		if err != nil {
 			if isInsufficientFundsError(err) {
 				return Preview{}, fmt.Errorf("%w: %w", ErrInsufficientFunds, err)
@@ -1050,7 +1050,7 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	// Detach from the request context: the pending entry has already been
 	// consumed and the tx signed, so a client disconnect here must not cancel the
 	// broadcast and strand a transaction that can no longer be replayed.
-	txHash, err := a.SubmitContext(context.WithoutCancel(ctx))
+	txHash, err := a.WithContext(context.WithoutCancel(ctx)).Submit()
 	if err != nil {
 		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}
@@ -1346,7 +1346,7 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 		needed[hex.EncodeToString(signer.Bytes())] = true
 	}
 	for _, inp := range tx.Body.Inputs() {
-		u, err := s.chain.UtxoByRef(ctx, inp.Id(), inp.Index())
+		u, err := backend.UtxoByRefContext(ctx, s.chain, inp.Id(), inp.Index())
 		if err != nil {
 			return TxResult{}, fmt.Errorf("resolve input %s#%d: %w",
 				hex.EncodeToString(inp.Id().Bytes()), inp.Index(), err)
@@ -1397,7 +1397,7 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 
 	// Detach from the request context: once submitted the inputs are consumed, so
 	// a client disconnect must not strand a broadcast (mirrors Confirm).
-	txHash, err := a.SubmitContext(context.WithoutCancel(ctx))
+	txHash, err := a.WithContext(context.WithoutCancel(ctx)).Submit()
 	if err != nil {
 		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}
@@ -1425,7 +1425,9 @@ func certKindsRequireWitnesses(kinds []CertKind) (needsStake, needsDRep bool) {
 // externally-signed transactions (CIP-30 connector); it reuses the same
 // backend.ChainContext the spend service uses for its own Confirm flow.
 func (s *Service) Submit(ctx context.Context, txBytes []byte) (string, error) {
-	txHash, err := s.chain.SubmitTx(context.WithoutCancel(ctx), txBytes)
+	// Detach from the request context: the tx is already signed, so a client
+	// disconnect must not cancel the node broadcast and strand it.
+	txHash, err := backend.SubmitTxContext(context.WithoutCancel(ctx), s.chain, txBytes)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}
@@ -1578,7 +1580,7 @@ func (s *Service) addInputKeyHashes(ctx context.Context, tx *conway.ConwayTransa
 	}
 	resolvedAll := true
 	for _, inp := range inputs {
-		u, err := s.chain.UtxoByRef(ctx, inp.Id(), inp.Index())
+		u, err := backend.UtxoByRefContext(ctx, s.chain, inp.Id(), inp.Index())
 		if err != nil || u == nil || u.Output == nil {
 			resolvedAll = false
 			continue
@@ -1662,7 +1664,7 @@ func (s *Service) CosignTx(
 	// -- required-signer and cert credentials still match without it).
 	var inputAddrs []string
 	for _, inp := range tx.Body.Inputs() {
-		u, err := s.chain.UtxoByRef(ctx, inp.Id(), inp.Index())
+		u, err := backend.UtxoByRefContext(ctx, s.chain, inp.Id(), inp.Index())
 		if err != nil || u == nil || u.Output == nil {
 			continue
 		}
