@@ -15,6 +15,7 @@ import (
 	"github.com/Salvionied/apollo/v2/backend"
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
+	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	"github.com/blinklabs-io/gouroboros/cbor"
@@ -2044,140 +2045,17 @@ func TestHardwareSignRequestUnknownPending(t *testing.T) {
 }
 
 // TestHardwareSignRequestGuard verifies the safety property: txs with
-// certificates, withdrawals, or native-asset outputs set Unsupported and do
-// NOT leak signing inputs/paths for the certificate and withdrawal cases
-// (where the guard fires before inputs are built).
+// native-asset outputs (which a device cannot yet express) set Unsupported and
+// do NOT leak signing inputs/paths (the guard fires before inputs are built).
+// Certificates, withdrawals, and votes are no longer rejected — see the
+// signer-path tests below.
 func TestHardwareSignRequestGuard(t *testing.T) {
 	acct, err := wallet.Derive(testMnemonic, "preview", 5)
 	if err != nil {
 		t.Fatalf("wallet.Derive: %v", err)
 	}
 	addr0 := acct.ReceiveAddresses[0]
-	addr3 := acct.ReceiveAddresses[3]
 	recvAddr := acct.ReceiveAddresses[4]
-
-	t.Run("certificate tx is rejected", func(t *testing.T) {
-		// Two 3 ADA inputs so the 4 ADA send unambiguously requires both and
-		// leaves comfortable change (avoids a min-UTxO dead-zone change amount).
-		fc := newFakeChain(3_000_000, addr0)
-		fc.addUTxO(3_000_000, addr3, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc03", 0)
-		s := NewService(fc, nil, acct)
-
-		// Build an initial pending, then replace the builder with one that
-		// includes a stake-registration certificate.
-		pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4000000"})
-		if err != nil {
-			t.Fatalf("Build: %v", err)
-		}
-		s.mu.Lock()
-		p := s.pending[pv.PendingID]
-		s.mu.Unlock()
-
-		changeAddr, _ := lcommon.NewAddress(addr0)
-		a := apollo.New(fc).
-			SetWallet(apollo.NewExternalWallet(changeAddr)).
-			SetChangeAddress(changeAddr).
-			SetFeePadding(feePaddingLovelace).
-			AddLoadedUTxOs(fc.utxos[addr0]...).
-			AddLoadedUTxOs(fc.utxos[addr3]...).
-			PayToAddress(mustNewAddress(t, recvAddr), 1_000_000)
-		a, err = a.RegisterStake(acct.StakeAddress)
-		if err != nil {
-			t.Fatalf("RegisterStake: %v", err)
-		}
-		a, err = a.WithContext(context.Background()).Complete()
-		if err != nil {
-			t.Fatalf("Complete with cert: %v", err)
-		}
-		utxoAddr := make(map[string]string)
-		for _, u := range fc.utxos[addr0] {
-			utxoAddr[makeUtxoRef(u)] = addr0
-		}
-		for _, u := range fc.utxos[addr3] {
-			utxoAddr[makeUtxoRef(u)] = addr3
-		}
-		s.mu.Lock()
-		s.pending[pv.PendingID] = &pending{
-			tx:       a,
-			utxoAddr: utxoAddr,
-			created:  p.created,
-			walletID: p.walletID,
-			account:  p.account,
-		}
-		s.mu.Unlock()
-
-		req, err := s.HardwareSignRequest(pv.PendingID)
-		if err != nil {
-			t.Fatalf("HardwareSignRequest: %v", err)
-		}
-		if req.Unsupported == "" {
-			t.Fatal("expected Unsupported to be set for a cert tx")
-		}
-		// Guard fires before inputs are built: no paths should leak.
-		for _, inp := range req.Inputs {
-			if inp.Path != "" {
-				t.Fatalf("cert guard leaked a signing path: %q", inp.Path)
-			}
-		}
-		if len(req.Inputs) > 0 {
-			t.Fatalf("cert guard: expected no inputs in result, got %d", len(req.Inputs))
-		}
-	})
-
-	t.Run("withdrawal tx is rejected", func(t *testing.T) {
-		fc := newFakeChain(5_000_000, addr0)
-		s := NewService(fc, nil, acct)
-
-		pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
-		if err != nil {
-			t.Fatalf("Build: %v", err)
-		}
-		s.mu.Lock()
-		p := s.pending[pv.PendingID]
-		s.mu.Unlock()
-
-		stakeAddr, err := lcommon.NewAddress(acct.StakeAddress)
-		if err != nil {
-			t.Fatalf("NewAddress(stake): %v", err)
-		}
-		changeAddr, _ := lcommon.NewAddress(addr0)
-		a := apollo.New(fc).
-			SetWallet(apollo.NewExternalWallet(changeAddr)).
-			SetChangeAddress(changeAddr).
-			SetFeePadding(feePaddingLovelace).
-			AddLoadedUTxOs(fc.utxos[addr0]...).
-			PayToAddress(mustNewAddress(t, recvAddr), 1_000_000).
-			AddWithdrawal(stakeAddr, 500_000, nil, nil)
-		a, err = a.WithContext(context.Background()).Complete()
-		if err != nil {
-			t.Fatalf("Complete with withdrawal: %v", err)
-		}
-		utxoAddr := make(map[string]string)
-		for _, u := range fc.utxos[addr0] {
-			utxoAddr[makeUtxoRef(u)] = addr0
-		}
-		s.mu.Lock()
-		s.pending[pv.PendingID] = &pending{
-			tx:       a,
-			utxoAddr: utxoAddr,
-			created:  p.created,
-			walletID: p.walletID,
-			account:  p.account,
-		}
-		s.mu.Unlock()
-
-		req, err := s.HardwareSignRequest(pv.PendingID)
-		if err != nil {
-			t.Fatalf("HardwareSignRequest: %v", err)
-		}
-		if req.Unsupported == "" {
-			t.Fatal("expected Unsupported to be set for a withdrawal tx")
-		}
-		// Guard fires before inputs are built: no inputs should leak.
-		if len(req.Inputs) > 0 {
-			t.Fatalf("withdrawal guard: expected no inputs in result, got %d", len(req.Inputs))
-		}
-	})
 
 	t.Run("native-asset output is rejected", func(t *testing.T) {
 		// Fund addr0 with 5 ADA + 1 native token. Apollo needs the token in the
@@ -2271,9 +2149,6 @@ func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
 		{"collateral return", func(b *conway.ConwayTransactionBody) { out := b.TxOutputs[0]; b.TxCollateralReturn = &out }},
 		{"total collateral", func(b *conway.ConwayTransactionBody) { b.TxTotalCollateral = 1 }},
 		{"reference inputs", func(b *conway.ConwayTransactionBody) { b.TxReferenceInputs = cbor.NewSetType(b.TxInputs.Items(), true) }},
-		{"voting procedures", func(b *conway.ConwayTransactionBody) {
-			b.TxVotingProcedures = lcommon.VotingProcedures{new(lcommon.Voter): {new(lcommon.GovActionId): {}}}
-		}},
 		{"proposal procedures", func(b *conway.ConwayTransactionBody) { b.TxProposalProcedures = []conway.ConwayProposalProcedure{{}} }},
 		{"current treasury value", func(b *conway.ConwayTransactionBody) { b.TxCurrentTreasuryValue = 1 }},
 		{"donation", func(b *conway.ConwayTransactionBody) { b.TxDonation = 1 }},
@@ -2349,5 +2224,363 @@ func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
 				t.Fatalf("guard returned %d signing inputs", len(req.Inputs))
 			}
 		})
+	}
+}
+
+// TestHardwareSignRequestStakeDelegationCarriesCertSigners verifies a
+// stake-delegation transaction is signable on hardware (not Unsupported) and
+// that the request carries the wallet's stake-key derivation path for every
+// certificate it must witness, plus the change-output path.
+func TestHardwareSignRequestStakeDelegationCarriesCertSigners(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
+	s := NewService(fc, nil, acct)
+	s.SetChainQuerier(newFakeQuerier()) // fresh wallet → stake registration + delegation
+
+	pv, err := s.BuildDelegation(context.Background(), DelegationRequest{PoolID: validPoolID})
+	if err != nil {
+		t.Fatalf("BuildDelegation: %v", err)
+	}
+	req, err := s.HardwareSignRequest(pv.PendingID)
+	if err != nil {
+		t.Fatalf("HardwareSignRequest: %v", err)
+	}
+	if req.Unsupported != "" {
+		t.Fatalf("staking tx must be signable, got Unsupported = %q", req.Unsupported)
+	}
+
+	addr0 := mustNewAddress(t, acct.ReceiveAddresses[0])
+	wantStakeHash := hex.EncodeToString(addr0.StakeKeyHash().Bytes())
+	const wantStakePath = "1852'/1815'/0'/2/0"
+	seen := map[string]bool{}
+	for _, cs := range req.CertificateSigners {
+		seen[cs.CertKind] = true
+		if cs.Role != "stake" {
+			t.Fatalf("cert signer role = %q, want stake", cs.Role)
+		}
+		if cs.Path != wantStakePath {
+			t.Fatalf("cert signer path = %q, want %q", cs.Path, wantStakePath)
+		}
+		if cs.KeyHashHex != wantStakeHash {
+			t.Fatalf("cert signer key hash = %q, want stake key hash %q", cs.KeyHashHex, wantStakeHash)
+		}
+	}
+	for _, want := range []string{"stake_registration", "stake_delegation"} {
+		if !seen[want] {
+			t.Fatalf("missing cert signer for %q; got %+v", want, req.CertificateSigners)
+		}
+	}
+	// Change returns to the wallet → a change-output path is surfaced.
+	if len(req.ChangeOutputs) == 0 {
+		t.Fatalf("expected at least one change output path; outputs=%+v", req.Outputs)
+	}
+	for _, co := range req.ChangeOutputs {
+		if co.Path == "" || co.StakePath != wantStakePath {
+			t.Fatalf("change output = %+v, want non-empty path and stake path %q", co, wantStakePath)
+		}
+		if co.Index < 0 || co.Index >= len(req.Outputs) {
+			t.Fatalf("change output index %d out of range (%d outputs)", co.Index, len(req.Outputs))
+		}
+		if req.Outputs[co.Index].PaymentPath != co.Path {
+			t.Fatalf("change output index %d path %q != output payment path %q", co.Index, co.Path, req.Outputs[co.Index].PaymentPath)
+		}
+	}
+}
+
+// TestHardwareSignRequestSelfDRepRegistrationCarriesDRepSigner verifies a
+// self-DRep registration surfaces the wallet's DRep-key path (role 3) for the
+// drep_registration certificate.
+func TestHardwareSignRequestSelfDRepRegistrationCarriesDRepSigner(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	fc := newFakeChain(700_000_000, acct.ReceiveAddresses[0]) // cover 2₳ + 500₳ deposits + fee
+	s := NewService(fc, nil, acct)
+	q := newFakeQuerier()
+	q.account = chain.AccountInfo{Registered: true, Active: true, WithdrawableAmount: "0"}
+	q.drepErr = chain.ErrNotFound // own DRep not yet registered → emit the reg cert
+	s.SetChainQuerier(q)
+
+	pv, err := s.BuildDelegation(context.Background(), DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf}})
+	if err != nil {
+		t.Fatalf("BuildDelegation register self: %v", err)
+	}
+	req, err := s.HardwareSignRequest(pv.PendingID)
+	if err != nil {
+		t.Fatalf("HardwareSignRequest: %v", err)
+	}
+	if req.Unsupported != "" {
+		t.Fatalf("governance tx must be signable, got Unsupported = %q", req.Unsupported)
+	}
+	const wantDRepPath = "1852'/1815'/0'/3/0"
+	wantDRepHash := strings.ToLower(acct.DRepKeyHash)
+	found := false
+	for _, cs := range req.CertificateSigners {
+		if cs.CertKind != "registration_drep" {
+			continue
+		}
+		found = true
+		if cs.Role != "drep" || cs.Path != wantDRepPath {
+			t.Fatalf("drep cert signer = %+v, want role drep path %q", cs, wantDRepPath)
+		}
+		if cs.KeyHashHex != wantDRepHash {
+			t.Fatalf("drep cert signer key hash = %q, want %q", cs.KeyHashHex, wantDRepHash)
+		}
+	}
+	if !found {
+		t.Fatalf("no registration_drep cert signer; got %+v", req.CertificateSigners)
+	}
+}
+
+// TestHardwareSignRequestWithdrawalCarriesStakeSigner verifies a reward
+// withdrawal surfaces the wallet's stake-key path as a withdrawal signer.
+func TestHardwareSignRequestWithdrawalCarriesStakeSigner(t *testing.T) {
+	acct, err := wallet.Derive(testMnemonic, "preview", 5)
+	if err != nil {
+		t.Fatalf("wallet.Derive: %v", err)
+	}
+	addr0 := acct.ReceiveAddresses[0]
+	recvAddr := acct.ReceiveAddresses[4]
+
+	fc := newFakeChain(5_000_000, addr0)
+	s := NewService(fc, nil, acct)
+	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	s.mu.Lock()
+	p := s.pending[pv.PendingID]
+	s.mu.Unlock()
+
+	stakeAddr, err := lcommon.NewAddress(acct.StakeAddress)
+	if err != nil {
+		t.Fatalf("NewAddress(stake): %v", err)
+	}
+	changeAddr, _ := lcommon.NewAddress(addr0)
+	a := apollo.New(fc).
+		SetWallet(apollo.NewExternalWallet(changeAddr)).
+		SetChangeAddress(changeAddr).
+		SetFeePadding(feePaddingLovelace).
+		AddLoadedUTxOs(fc.utxos[addr0]...).
+		PayToAddress(mustNewAddress(t, recvAddr), 1_000_000).
+		AddWithdrawal(stakeAddr, 500_000, nil, nil)
+	a, err = a.WithContext(context.Background()).Complete()
+	if err != nil {
+		t.Fatalf("Complete with withdrawal: %v", err)
+	}
+	utxoAddr := make(map[string]string)
+	for _, u := range fc.utxos[addr0] {
+		utxoAddr[makeUtxoRef(u)] = addr0
+	}
+	s.mu.Lock()
+	s.pending[pv.PendingID] = &pending{
+		tx:       a,
+		utxoAddr: utxoAddr,
+		created:  p.created,
+		walletID: p.walletID,
+		account:  p.account,
+	}
+	s.mu.Unlock()
+
+	req, err := s.HardwareSignRequest(pv.PendingID)
+	if err != nil {
+		t.Fatalf("HardwareSignRequest: %v", err)
+	}
+	if req.Unsupported != "" {
+		t.Fatalf("withdrawal tx must be signable, got Unsupported = %q", req.Unsupported)
+	}
+	if len(req.WithdrawalSigners) != 1 {
+		t.Fatalf("want exactly one withdrawal signer, got %+v", req.WithdrawalSigners)
+	}
+	ws := req.WithdrawalSigners[0]
+	addr0Parsed := mustNewAddress(t, addr0)
+	wantStakeHash := hex.EncodeToString(addr0Parsed.StakeKeyHash().Bytes())
+	if ws.Role != "stake" || ws.Path != "1852'/1815'/0'/2/0" || ws.KeyHashHex != wantStakeHash {
+		t.Fatalf("withdrawal signer = %+v, want stake role, path 1852'/1815'/0'/2/0, key hash %q", ws, wantStakeHash)
+	}
+	if ws.RewardAddressBech32 != acct.StakeAddress {
+		t.Fatalf("withdrawal reward address = %q, want %q", ws.RewardAddressBech32, acct.StakeAddress)
+	}
+}
+
+// TestHardwareSignRequestDRepVoteCarriesVoteSigner verifies a Conway
+// governance vote (a voting procedure whose voter is the wallet's DRep key)
+// surfaces the DRep-key path as a vote signer.
+func TestHardwareSignRequestDRepVoteCarriesVoteSigner(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
+	s := NewService(fc, nil, acct)
+	pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// Attach a DRep-key-hash voter for the wallet's own DRep credential.
+	drepHash, err := hex.DecodeString(acct.DRepKeyHash)
+	if err != nil {
+		t.Fatalf("decode drep key hash: %v", err)
+	}
+	var voter lcommon.Voter
+	voter.Type = lcommon.VoterTypeDRepKeyHash
+	copy(voter.Hash[:], drepHash)
+	tx := s.pending[pv.PendingID].tx.GetTx()
+	tx.Body.TxVotingProcedures = lcommon.VotingProcedures{
+		&voter: {new(lcommon.GovActionId): lcommon.VotingProcedure{}},
+	}
+
+	req, err := s.HardwareSignRequest(pv.PendingID)
+	if err != nil {
+		t.Fatalf("HardwareSignRequest: %v", err)
+	}
+	if req.Unsupported != "" {
+		t.Fatalf("vote tx must be signable, got Unsupported = %q", req.Unsupported)
+	}
+	if len(req.VoteSigners) != 1 {
+		t.Fatalf("want exactly one vote signer, got %+v", req.VoteSigners)
+	}
+	vs := req.VoteSigners[0]
+	if vs.Voter != "drep" || vs.Role != "drep" || vs.Path != "1852'/1815'/0'/3/0" {
+		t.Fatalf("vote signer = %+v, want drep voter/role, path 1852'/1815'/0'/3/0", vs)
+	}
+	if vs.KeyHashHex != strings.ToLower(acct.DRepKeyHash) {
+		t.Fatalf("vote signer key hash = %q, want %q", vs.KeyHashHex, acct.DRepKeyHash)
+	}
+}
+
+// TestHardwareSignRequestMultisigExtraSigners verifies a native-multisig-style
+// spend — where the transaction requires an extra key (body key 14) that is not
+// already an input signer — surfaces that participant key as an extra signer,
+// while inputs the wallet spends keep their own paths (and are not repeated).
+func TestHardwareSignRequestMultisigExtraSigners(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
+	s := NewService(fc, nil, acct)
+	pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	addr0 := mustNewAddress(t, acct.ReceiveAddresses[0])
+	stakeHash := addr0.StakeKeyHash()
+	tx := s.pending[pv.PendingID].tx.GetTx()
+	// Add the wallet's stake key as an explicit required signer — standing in
+	// for a CIP-1854 multisig participant that is not one of the tx inputs.
+	items := append(tx.Body.TxRequiredSigners.Items(), stakeHash)
+	tx.Body.TxRequiredSigners = cbor.NewSetType[lcommon.Blake2b224](items, true)
+
+	req, err := s.HardwareSignRequest(pv.PendingID)
+	if err != nil {
+		t.Fatalf("HardwareSignRequest: %v", err)
+	}
+	if req.Unsupported != "" {
+		t.Fatalf("multisig-style tx must be signable, got Unsupported = %q", req.Unsupported)
+	}
+
+	// Inputs the wallet spends still carry their derivation path.
+	hasInputPath := false
+	for _, inp := range req.Inputs {
+		if inp.Path == "1852'/1815'/0'/0/0" {
+			hasInputPath = true
+		}
+	}
+	if !hasInputPath {
+		t.Fatalf("expected the owned input to keep its path; inputs=%+v", req.Inputs)
+	}
+
+	// The stake key (not an input signer) is surfaced as an extra signer.
+	wantStakeHash := hex.EncodeToString(stakeHash.Bytes())
+	found := false
+	for _, es := range req.ExtraSigners {
+		if es.KeyHashHex == wantStakeHash {
+			found = true
+			if es.Role != "stake" || es.Path != "1852'/1815'/0'/2/0" {
+				t.Fatalf("extra signer = %+v, want stake role, path 1852'/1815'/0'/2/0", es)
+			}
+		}
+		// A payment key already covered by an input must NOT be duplicated here.
+		if es.Path == "1852'/1815'/0'/0/0" {
+			t.Fatalf("extra signer duplicated an input path: %+v", es)
+		}
+	}
+	if !found {
+		t.Fatalf("stake participant key not surfaced as extra signer; got %+v", req.ExtraSigners)
+	}
+}
+
+// TestHardwareSignRequestForeignDRepVoteUnsupported verifies the safety property
+// behind the vote path: a governance vote whose voter is a DRep key hash the
+// wallet does NOT own must not be presented as signable. resolveSignerData has
+// no derivation path for it, so it must set Unsupported (the device can never
+// produce that witness) rather than return an empty VoteSigners slice — which
+// the SPA would treat as a signable payment with the vote witness silently
+// missing.
+func TestHardwareSignRequestForeignDRepVoteUnsupported(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
+	s := NewService(fc, nil, acct)
+	pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// A DRep key-hash voter whose hash is NOT this wallet's DRep key.
+	var voter lcommon.Voter
+	voter.Type = lcommon.VoterTypeDRepKeyHash
+	for i := range voter.Hash {
+		voter.Hash[i] = 0x11
+	}
+	tx := s.pending[pv.PendingID].tx.GetTx()
+	tx.Body.TxVotingProcedures = lcommon.VotingProcedures{
+		&voter: {new(lcommon.GovActionId): lcommon.VotingProcedure{}},
+	}
+
+	req, err := s.HardwareSignRequest(pv.PendingID)
+	if err != nil {
+		t.Fatalf("HardwareSignRequest: %v", err)
+	}
+	if req.Unsupported == "" {
+		t.Fatal("foreign DRep vote must set Unsupported, not be presented as signable")
+	}
+	if len(req.VoteSigners) != 0 {
+		t.Fatalf("no vote signer may be fabricated for a foreign DRep; got %+v", req.VoteSigners)
+	}
+}
+
+// TestHardwareSignRequestForeignCertCredentialUnsupported verifies the safety
+// property behind the certificate path: a certificate whose signing credential
+// is a stake key the wallet does NOT own (a co-signer's key, or — via the same
+// branch — a script hash) must set Unsupported rather than resolve to an empty
+// CertificateSigners slice the SPA would treat as signable.
+func TestHardwareSignRequestForeignCertCredentialUnsupported(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
+	s := NewService(fc, nil, acct)
+	pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// A stake-delegation certificate keyed on a credential this wallet does not
+	// own — it can never witness it.
+	foreignCred := lcommon.Credential{
+		CredType:   lcommon.CredentialTypeAddrKeyHash,
+		Credential: lcommon.Blake2b224Hash([]byte("foreign stake key")),
+	}
+	tx := s.pending[pv.PendingID].tx.GetTx()
+	tx.Body.TxCertificates = []lcommon.CertificateWrapper{{
+		Type: uint(lcommon.CertificateTypeStakeDelegation),
+		Certificate: &lcommon.StakeDelegationCertificate{
+			CertType:        uint(lcommon.CertificateTypeStakeDelegation),
+			StakeCredential: &foreignCred,
+		},
+	}}
+
+	req, err := s.HardwareSignRequest(pv.PendingID)
+	if err != nil {
+		t.Fatalf("HardwareSignRequest: %v", err)
+	}
+	if req.Unsupported == "" {
+		t.Fatal("foreign certificate credential must set Unsupported, not be presented as signable")
+	}
+	if len(req.CertificateSigners) != 0 {
+		t.Fatalf("no cert signer may be fabricated for a foreign credential; got %+v", req.CertificateSigners)
 	}
 }

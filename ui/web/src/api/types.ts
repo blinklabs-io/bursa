@@ -449,6 +449,54 @@ export interface HWOutput {
   assets?: { policy_id_hex: string; asset_name_hex: string; amount: string }[];
 }
 
+// HWChangeOutput identifies a wallet-owned output (by its index in outputs)
+// with the derivation path of its change address, so a device can verify the
+// change returns to this wallet without re-deriving every output.
+export interface HWChangeOutput {
+  index: number; // position in the outputs array
+  path: string; // CIP-1852 payment-key path of the change address
+  stake_path?: string; // CIP-1852 stake-key path (base addresses only)
+}
+
+// HWCertSigner is one wallet-owned key that must witness a certificate.
+export interface HWCertSigner {
+  // cert_kind carries the Go certLabel vocabulary (e.g. "stake_delegation",
+  // "registration_drep", "pool_registration"), NOT the exported CertKind union —
+  // keep it typed string.
+  cert_kind: string;
+  role: string; // CIP-1852 role of the key: "stake" | "drep"
+  path: string; // CIP-1852 derivation path
+  key_hash_hex: string;
+}
+
+// HWWithdrawalSigner is the wallet's stake key that must witness a reward
+// withdrawal.
+export interface HWWithdrawalSigner {
+  reward_address_bech32?: string;
+  role: string; // "stake"
+  path: string;
+  key_hash_hex: string;
+}
+
+// HWVoteSigner is the wallet's key that must witness a governance vote.
+export interface HWVoteSigner {
+  voter: string; // "drep"
+  role: string; // "drep"
+  path: string;
+  key_hash_hex: string;
+}
+
+// HWExtraSigner is a wallet-owned key required as an explicit signer (body key
+// 14) that is not already an input signer — e.g. a CIP-1854 native-multisig
+// participant. xfp (4-byte master-key fingerprint, hex) is filled in
+// client-side from the per-wallet fingerprint store before reaching the device.
+export interface HWExtraSigner {
+  xfp?: string;
+  role: string;
+  path: string;
+  key_hash_hex: string;
+}
+
 export interface HardwareSignResponse {
   network: string;
   network_id: number;
@@ -456,6 +504,15 @@ export interface HardwareSignResponse {
   protocol_magic: number;
   inputs: HWInput[];
   outputs: HWOutput[];
+  // change_outputs, certificate_signers, withdrawal_signers, vote_signers, and
+  // extra_signers carry the wallet's own derivation paths for the keys that
+  // staking / governance / multisig transactions must witness. A device that
+  // only signs payments ignores them.
+  change_outputs?: HWChangeOutput[];
+  certificate_signers?: HWCertSigner[];
+  withdrawal_signers?: HWWithdrawalSigner[];
+  vote_signers?: HWVoteSigner[];
+  extra_signers?: HWExtraSigner[];
   fee: string;
   ttl?: string;
   required_signers: string[];
