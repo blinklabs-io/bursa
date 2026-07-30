@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	apollo "github.com/blinklabs-io/apollo/v2"
-	"github.com/blinklabs-io/apollo/v2/backend"
+	apollo "github.com/Salvionied/apollo/v2"
+	"github.com/Salvionied/apollo/v2/backend"
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
@@ -106,31 +106,31 @@ func (o *fakeOutput) ScriptRef() lcommon.Script           { return nil }
 func (o *fakeOutput) ToPlutusData() data.PlutusData       { return nil }
 func (o *fakeOutput) String() string                      { return o.address.String() }
 
-func (fc *fakeChain) ProtocolParams(_ context.Context) (backend.ProtocolParameters, error) {
+func (fc *fakeChain) ProtocolParams() (backend.ProtocolParameters, error) {
 	return fc.pp, nil
 }
-func (fc *fakeChain) GenesisParams(_ context.Context) (backend.GenesisParameters, error) {
+func (fc *fakeChain) GenesisParams() (backend.GenesisParameters, error) {
 	return backend.GenesisParameters{ActiveSlotsCoefficient: 0.05, EpochLength: 432000, SlotLength: 1, NetworkMagic: 1}, nil
 }
-func (fc *fakeChain) NetworkId() uint8                               { return 0 }
-func (fc *fakeChain) CurrentEpoch(_ context.Context) (uint64, error) { return 500, nil }
-func (fc *fakeChain) MaxTxFee(_ context.Context) (uint64, error) {
+func (fc *fakeChain) NetworkId() uint8              { return 0 }
+func (fc *fakeChain) CurrentEpoch() (uint64, error) { return 500, nil }
+func (fc *fakeChain) MaxTxFee() (uint64, error) {
 	return backend.ComputeMaxTxFee(fc.pp)
 }
-func (fc *fakeChain) Tip(_ context.Context) (uint64, error) { return 10_000_000, nil }
-func (fc *fakeChain) Utxos(_ context.Context, address lcommon.Address) ([]lcommon.Utxo, error) {
+func (fc *fakeChain) Tip() (uint64, error) { return 10_000_000, nil }
+func (fc *fakeChain) Utxos(address lcommon.Address) ([]lcommon.Utxo, error) {
 	return fc.utxos[address.String()], nil
 }
-func (fc *fakeChain) SubmitTx(_ context.Context, tx []byte) (lcommon.Blake2b256, error) {
+func (fc *fakeChain) SubmitTx(tx []byte) (lcommon.Blake2b256, error) {
 	fc.submitMu.Lock()
 	fc.submitCbor = append(fc.submitCbor[:0], tx...)
 	fc.submitMu.Unlock()
 	return fc.submitHash, nil
 }
-func (fc *fakeChain) EvaluateTx(_ context.Context, _ []byte, _ []lcommon.Utxo) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
+func (fc *fakeChain) EvaluateTx(_ []byte, _ []lcommon.Utxo) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
 	return nil, nil
 }
-func (fc *fakeChain) UtxoByRef(_ context.Context, txHash lcommon.Blake2b256, index uint32) (*lcommon.Utxo, error) {
+func (fc *fakeChain) UtxoByRef(txHash lcommon.Blake2b256, index uint32) (*lcommon.Utxo, error) {
 	for _, utxos := range fc.utxos {
 		for _, u := range utxos {
 			if u.Id.Id() == txHash && u.Id.Index() == index {
@@ -141,7 +141,7 @@ func (fc *fakeChain) UtxoByRef(_ context.Context, txHash lcommon.Blake2b256, ind
 	}
 	return nil, nil
 }
-func (fc *fakeChain) ScriptCbor(_ context.Context, _ lcommon.Blake2b224) ([]byte, error) {
+func (fc *fakeChain) ScriptCbor(_ lcommon.Blake2b224) ([]byte, error) {
 	return nil, nil
 }
 

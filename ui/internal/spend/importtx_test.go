@@ -8,7 +8,7 @@ import (
 	"errors"
 	"testing"
 
-	apollo "github.com/blinklabs-io/apollo/v2"
+	apollo "github.com/Salvionied/apollo/v2"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"

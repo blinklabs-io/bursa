@@ -10,7 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	apollo "github.com/blinklabs-io/apollo/v2"
+	apollo "github.com/Salvionied/apollo/v2"
+	"github.com/Salvionied/apollo/v2/backend"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
@@ -587,7 +588,7 @@ func (s *Service) buildDelegationTx(
 		if err != nil {
 			return nil, nil, fmt.Errorf("address %q: %w", addrStr, err)
 		}
-		utxos, err := s.chain.Utxos(ctx, addr)
+		utxos, err := backend.UtxosContext(ctx, s.chain, addr)
 		if err != nil {
 			return nil, nil, fmt.Errorf("utxos for %s: %w", addrStr, err)
 		}
@@ -621,7 +622,7 @@ func (s *Service) buildDelegationTx(
 			return nil, nil, err
 		}
 
-		next, err = next.CompleteContext(ctx)
+		next, err = next.WithContext(ctx).Complete()
 		if err != nil {
 			if isInsufficientFundsError(err) {
 				return nil, nil, fmt.Errorf("%w: %w", ErrInsufficientFunds, err)
