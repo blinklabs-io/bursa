@@ -28,6 +28,7 @@ import (
 	"github.com/blinklabs-io/dingo/config/cardano"
 	"github.com/blinklabs-io/dingo/connmanager"
 	"github.com/blinklabs-io/dingo/topology"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Config configures the embedded node. All network endpoints bind to loopback.
@@ -97,6 +98,15 @@ type Supervisor struct {
 		ran           bool
 	}
 
+	// promRegistry is the Prometheus registry the currently-running node was
+	// built with (a fresh one per launch, so a Reconnect never re-registers
+	// metrics on a shared registry). Diagnostics gathers it for the node's live
+	// connection-manager counts. nil until the first launch. topologyCfg is the
+	// embedded topology the node dials its outbound peers from; Diagnostics
+	// reports those as the configured-peer list. Both are guarded by mu.
+	promRegistry *prometheus.Registry
+	topologyCfg  *topology.TopologyConfig
+
 	now          func() time.Time // injectable clock for tests
 	bootstrapper Bootstrapper     // injectable for tests
 	nodeFactory  NodeFactory      // injectable for tests
@@ -134,11 +144,16 @@ func nodeConfigOptions(
 	historyExpiry bool,
 	cardanoCfg *cardano.CardanoNodeConfig,
 	topologyCfg *topology.TopologyConfig,
+	promRegistry prometheus.Registerer,
 ) []dingo.ConfigOptionFunc {
 	opts := []dingo.ConfigOptionFunc{
 		dingo.WithNetwork(cfg.Network),
 		dingo.WithCardanoNodeConfig(cardanoCfg),
 		dingo.WithTopologyConfig(topologyCfg),
+		// A per-launch Prometheus registry so Diagnostics can read the node's
+		// live connection-manager gauges (peer counts). Nothing scrapes this
+		// over the network; the wallet gathers it in-process on demand.
+		dingo.WithPrometheusRegistry(promRegistry),
 		dingo.WithDatabasePath(cfg.DataDir),
 		dingo.WithStorageMode(dingo.StorageModeAPI),
 		// Without an explicit capacity the mempool defaults to 0 bytes and
@@ -258,6 +273,11 @@ func (s *Supervisor) start(ctx context.Context) error {
 	if err != nil {
 		return fail(fmt.Errorf("load Dingo topology config: %w", err))
 	}
+	// Remember the topology so Diagnostics can report the node's configured
+	// outbound peers (bootstrap / local-root / public-root access points).
+	s.mu.Lock()
+	s.topologyCfg = topologyCfg
+	s.mu.Unlock()
 
 	// launch creates the node, marks it starting, and begins serving + polling.
 	// Used by both the direct and post-bootstrap paths.
@@ -267,7 +287,11 @@ func (s *Supervisor) start(ctx context.Context) error {
 		// bootstrap is still running, so reading earlier can freeze a stale value
 		// before the first node exists.
 		historyExpiry := s.cfg.historyExpiryEnabled()
-		nodeCfg := dingo.NewConfig(nodeConfigOptions(s.cfg, historyExpiry, cardanoCfg, topologyCfg)...)
+		// Fresh registry per launch: a Reconnect (Stop-then-relaunch) builds a
+		// new node, and reusing one registry would panic on duplicate metric
+		// registration. Diagnostics reads whichever registry is current.
+		reg := prometheus.NewRegistry()
+		nodeCfg := dingo.NewConfig(nodeConfigOptions(s.cfg, historyExpiry, cardanoCfg, topologyCfg, reg)...)
 		node, err := s.nodeFactory.New(nodeCfg)
 		if err != nil {
 			return err
@@ -275,6 +299,7 @@ func (s *Supervisor) start(ctx context.Context) error {
 		s.mu.Lock()
 		s.applied.historyExpiry = historyExpiry
 		s.applied.ran = true
+		s.promRegistry = reg
 		s.mu.Unlock()
 		s.setStateForRun(runID, StateStarting)
 		go func() {

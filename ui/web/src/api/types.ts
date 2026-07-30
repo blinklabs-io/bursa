@@ -775,3 +775,77 @@ export interface CosignResult {
   signed_count?: number;
   threshold?: number;
 }
+
+// --- Node diagnostics (GET /diagnostics) -------------------------------------
+// Mirrors ui/internal/diagnostics.Report. Everything here is node-local (no
+// external calls). Optional fields are omitted by the backend when a value is
+// not obtainable (e.g. epoch/blockHeight while the node cannot serve queries,
+// or a library version in an unversioned dev build) — never fabricated.
+
+export interface DiagnosticsNode {
+  network: string;
+  dingoVersion?: string;
+  gouroborosVersion?: string;
+  goVersion?: string;
+}
+
+export interface DiagnosticsSync {
+  state: NodeState;
+  tip: number;
+  epoch?: number;
+  blockHeight?: number;
+  latestBlockTime?: string;
+  caughtUp: boolean;
+  secondsBehind?: number;
+  bootstrapPercent?: number;
+  bootstrapPhase?: string;
+  error?: string;
+}
+
+// ConfiguredPeer is one outbound access point from the node's topology
+// (bootstrap / local-root / public-root). It is a CONFIGURED peer, not proof of
+// a live connection — the embedded node's public API exposes no per-peer live
+// connection list, so the live signal is the aggregate counts above.
+export interface ConfiguredPeer {
+  address: string;
+  port: number;
+  source: string;
+}
+
+export interface DiagnosticsPeers {
+  available: boolean;
+  total: number;
+  inbound: number;
+  outbound: number;
+  duplex: number;
+  fullDuplex: number;
+  unidirectional: number;
+  configured: ConfiguredPeer[];
+}
+
+export interface DiagnosticsListen {
+  controlSurface: string;
+  blockfrostPort: number;
+  utxorpcPort: number;
+  nodeSocket: string;
+}
+
+export interface DiagnosticsUptime {
+  startedAt: string;
+  seconds: number;
+}
+
+export interface DiagnosticsLog {
+  available: boolean;
+  path?: string;
+  dir?: string;
+}
+
+export interface Diagnostics {
+  node: DiagnosticsNode;
+  sync: DiagnosticsSync;
+  peers: DiagnosticsPeers;
+  listen: DiagnosticsListen;
+  uptime: DiagnosticsUptime;
+  log: DiagnosticsLog;
+}

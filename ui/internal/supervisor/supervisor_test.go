@@ -40,8 +40,8 @@ func baseConfig() Config {
 // history-expiry setting unexported with no getter, so the option set is the
 // smallest observable seam for the wiring.
 func TestNodeConfigOptionsHistoryExpiryOptIn(t *testing.T) {
-	off := nodeConfigOptions(baseConfig(), false, nil, nil)
-	on := nodeConfigOptions(baseConfig(), true, nil, nil)
+	off := nodeConfigOptions(baseConfig(), false, nil, nil, nil)
+	on := nodeConfigOptions(baseConfig(), true, nil, nil, nil)
 
 	if len(on) != len(off)+1 {
 		t.Fatalf(

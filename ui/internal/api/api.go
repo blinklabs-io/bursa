@@ -29,6 +29,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
+	"github.com/blinklabs-io/bursa/ui/internal/diagnostics"
 	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
@@ -151,10 +152,24 @@ type LegacyKeystore interface {
 	Unlock(password string) ([]byte, error)
 }
 
+// Diagnostics is the node-local diagnostics surface: a point-in-time report
+// (versions, network, sync, peers, listen ports, uptime, log path) and a log
+// export. It is entirely node-local (no external calls), so it needs no
+// external-consent gate. May be nil, in which case the /diagnostics routes are
+// not registered.
+type Diagnostics interface {
+	Report(ctx context.Context) diagnostics.Report
+	// LogAvailable reports whether an exportable log file exists.
+	LogAvailable() bool
+	// WriteLogsZip streams the log file(s) as a zip archive to w.
+	WriteLogsZip(w io.Writer) error
+}
+
 type handlerOptions struct {
-	legacy    LegacyKeystore
-	connector *connector.Service
-	nfts      NFTs
+	legacy      LegacyKeystore
+	connector   *connector.Service
+	nfts        NFTs
+	diagnostics Diagnostics
 }
 
 type HandlerOption func(*handlerOptions)
@@ -176,6 +191,11 @@ func WithConnector(svc *connector.Service) HandlerOption {
 // WithNFTs enables the optional NFT discovery and media endpoints.
 func WithNFTs(nfts NFTs) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.nfts = nfts }
+}
+
+// WithDiagnostics enables the node-local diagnostics + log-export endpoints.
+func WithDiagnostics(d Diagnostics) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.diagnostics = d }
 }
 
 // SettingsController is the user-facing app-settings surface. It exposes the
@@ -440,6 +460,37 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, statusResponse{Status: st.Status(), Network: network})
 	})
+
+	// Node diagnostics + log export. Deliberately UNGATED (like /status): a
+	// diagnostics view must work in every node state — especially while syncing,
+	// bootstrapping, or after an error, which is exactly when a user reaches for
+	// it. It is node-local only (no external calls), so there is no
+	// external-consent gate; the sameOriginGuard wrapping the whole mux still
+	// applies. Like /status, these routes are intentionally not vault-unlock
+	// gated: they expose only node/process telemetry (never key material), and
+	// must work before/without a wallet being unlocked. Registered only when a
+	// Diagnostics provider is supplied.
+	if cfg.diagnostics != nil {
+		diag := cfg.diagnostics
+		mux.HandleFunc("GET /diagnostics", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, diag.Report(r.Context()))
+		})
+		// GET /diagnostics/logs streams the wallet's log file(s) as a zip for a
+		// browser download. 404 when there is no log file to export (e.g. the
+		// wallet is not configured to write logs to a file).
+		mux.HandleFunc("GET /diagnostics/logs", func(w http.ResponseWriter, _ *http.Request) {
+			if !diag.LogAvailable() {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "log export unavailable"})
+				return
+			}
+			w.Header().Set("Content-Type", "application/zip")
+			w.Header().Set("Content-Disposition", `attachment; filename="bursa-wallet-logs.zip"`)
+			// Headers are committed before streaming; a mid-stream write error
+			// (rare — existence was just checked) truncates the download rather
+			// than rewriting the status, which is the best a stream can do.
+			_ = diag.WriteLogsZip(w)
+		})
+	}
 
 	// bindActive pushes the active wallet's read-only account onto the read and
 	// spend services so existing endpoints operate on it. Called after unlock,

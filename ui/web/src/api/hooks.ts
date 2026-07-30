@@ -13,6 +13,7 @@ import type {
   DexPoolsResponse,
   AssetInfo,
   NFT,
+  Diagnostics,
 } from "./types";
 import {
   getStatus,
@@ -30,6 +31,7 @@ import {
   getNfts,
   getNftMedia,
   setNftMedia,
+  getDiagnostics,
 } from "./client";
 
 export interface AsyncState<T> {
@@ -151,6 +153,10 @@ export const useContacts = (): AsyncState<Contact[]> => useAsync(getContacts);
 export const useDexPools = (): AsyncState<DexPoolsResponse> =>
   useAsync(getDexPools, { pollMs: 15000 });
 export const useNfts = (): AsyncState<NFT[]> => useAsync(getNfts);
+// Diagnostics live-polls like status (node-local, cheap). 5s is frequent
+// enough to watch peers/sync move without hammering the node.
+export const useDiagnostics = (): AsyncState<Diagnostics> =>
+  useAsync(getDiagnostics, { pollMs: 5000 });
 
 export interface NftMediaState {
   enabled: boolean;

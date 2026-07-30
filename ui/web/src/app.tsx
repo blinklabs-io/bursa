@@ -28,6 +28,7 @@ import { Operate } from "./screens/Operate";
 import { MultiSig } from "./screens/MultiSig";
 import { ImportTransaction } from "./screens/ImportTransaction";
 import { Settings } from "./screens/Settings";
+import { Diagnostics } from "./screens/Diagnostics";
 import { ConnectorApproval } from "./screens/ConnectorApproval";
 
 // A Map (not a plain object) so a crafted hash like "#/constructor" or
@@ -51,6 +52,10 @@ const ROUTES = new Map<string, () => ReactElement>([
   ["send", Send],
   ["swap", Swap],
   ["contacts", Contacts],
+  // Diagnostics is node-level and takes no props, so it resolves straight from
+  // this map (via the final content-selection else) and is highlighted through
+  // ROUTES.has below.
+  ["diagnostics", Diagnostics],
 ]);
 
 const NAV: { key: string; label: string }[] = [
@@ -67,6 +72,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "operate", label: "Operate" },
   { key: "multisig", label: "Multi-sig" },
   { key: "import", label: "Import Tx" },
+  { key: "diagnostics", label: "Diagnostics" },
   { key: "settings", label: "Settings" },
 ];
 
