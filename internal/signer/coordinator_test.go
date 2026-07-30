@@ -49,12 +49,18 @@ type fakeKey struct {
 	pub     ed25519.PublicKey
 	priv    ed25519.PrivateKey
 	hash    backend.KeyHash
+	typ     backend.KeyType
 	signErr error
 }
 
 func (k *fakeKey) Hash() backend.KeyHash        { return k.hash }
 func (k *fakeKey) PublicKey() ed25519.PublicKey { return k.pub }
-func (k *fakeKey) Type() backend.KeyType        { return backend.KeyTypePayment }
+func (k *fakeKey) Type() backend.KeyType {
+	if k.typ != "" {
+		return k.typ
+	}
+	return backend.KeyTypePayment
+}
 func (k *fakeKey) Extended() bool               { return false }
 func (k *fakeKey) Backend() string              { return "fake" }
 func (k *fakeKey) Sign(_ context.Context, d []byte) ([]byte, error) {
@@ -416,5 +422,47 @@ func TestSignTx_NoSigners(t *testing.T) {
 	}
 	if !IsBadRequest(err) {
 		t.Fatalf("expected IsBadRequest true, got false; err=%v", err)
+	}
+}
+
+// TestSignOpCert_PoolKeySucceeds: a stake-pool cold key with the opcert
+// permission produces a cold signature.
+func TestSignOpCert_PoolKeySucceeds(t *testing.T) {
+	k := newFakeKey(t)
+	k.typ = backend.KeyTypePool
+	c, _ := newCoordinator(t, k,
+		policy.KeyPolicy{AllowedRequests: []string{"opcert"}},
+		watermark.NewMemWatermark(), fakeCardano{})
+
+	res, code, err := c.SignOpCert(context.Background(), make([]byte, kesVkeySize), 1, 2, k.hash.String())
+	if err != nil {
+		t.Fatalf("SignOpCert: unexpected error: %v (code=%s)", err, code)
+	}
+	if res == nil || res.SignatureHex == "" {
+		t.Fatalf("expected a signature result, got %+v", res)
+	}
+}
+
+// TestSignOpCert_NonPoolKeyRejected: even when a (misconfigured) policy grants
+// the opcert permission to a non-pool key, opcert signing must be refused
+// because operational certificates are signed only by stake-pool cold keys.
+func TestSignOpCert_NonPoolKeyRejected(t *testing.T) {
+	k := newFakeKey(t) // Type() defaults to KeyTypePayment
+	c, m := newCoordinator(t, k,
+		policy.KeyPolicy{AllowedRequests: []string{"opcert"}},
+		watermark.NewMemWatermark(), fakeCardano{})
+
+	res, code, err := c.SignOpCert(context.Background(), make([]byte, kesVkeySize), 1, 2, k.hash.String())
+	if err == nil {
+		t.Fatal("expected error for non-pool key, got nil")
+	}
+	if code != CodeBadRequest {
+		t.Fatalf("expected CodeBadRequest, got %s", code)
+	}
+	if res != nil {
+		t.Fatalf("expected nil result, got %+v", res)
+	}
+	if got := testutil.ToFloat64(m.denials.WithLabelValues(string(CodeBadRequest))); got != 1 {
+		t.Fatalf("expected 1 bad_request denial metric, got %v", got)
 	}
 }

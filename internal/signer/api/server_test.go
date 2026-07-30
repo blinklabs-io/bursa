@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -207,6 +208,198 @@ func TestHandleGetKey(t *testing.T) {
 		handler.ServeHTTP(rr, req)
 		if rr.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+}
+
+// newOpCertServer builds a server whose cold key allows the given request
+// types. It returns the server, the cold key hash, and the cold public key so
+// tests can verify produced signatures.
+func newOpCertServer(t *testing.T, allowedRequests []string, acl *CallerACL) (*Server, backend.KeyHash, ed25519.PublicKey) {
+	t.Helper()
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	b := backend.NewSoftwareBackend("software")
+	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePool)
+	if err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	pol := policy.KeyPolicy{Hash: h.String(), AllowedRequests: allowedRequests}
+	eng, err := policy.NewEngine([]policy.KeyPolicy{pol})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	coord := signer.New(signer.Deps{
+		Resolver:  backend.NewResolver(b),
+		Policy:    eng,
+		Watermark: watermark.NewMemWatermark(),
+		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
+	})
+	srv := NewServer(coord, backend.NewResolver(b), eng, acl, func(string) (string, error) { return "tester", nil })
+	return srv, h, pub
+}
+
+// TestHandleSignOpCert_Valid verifies a cold-sign request returns a signature
+// that verifies against the KES vkey/counter/period with the cold public key.
+func TestHandleSignOpCert_Valid(t *testing.T) {
+	srv, h, coldPub := newOpCertServer(t, []string{"opcert"}, nil)
+
+	kesVkey := bytes.Repeat([]byte{0xAB}, 32)
+	const issueCounter = uint64(7)
+	const kesPeriod = uint64(42)
+
+	body, _ := json.Marshal(SignRequest{
+		Type:         "opcert",
+		Key:          h.String(),
+		KesVkey:      hex.EncodeToString(kesVkey),
+		IssueCounter: issueCounter,
+		KesPeriod:    kesPeriod,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req = req.WithContext(context.Background())
+	rr := httptest.NewRecorder()
+	srv.handleSign(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp SignOpCertResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Key != h.String() {
+		t.Errorf("expected key %s, got %s", h.String(), resp.Key)
+	}
+	if resp.ColdVkey != hex.EncodeToString(coldPub) {
+		t.Errorf("cold_vkey mismatch: got %s", resp.ColdVkey)
+	}
+	sig, err := hex.DecodeString(resp.Signature)
+	if err != nil {
+		t.Fatalf("signature not hex: %v", err)
+	}
+	if len(sig) != ed25519.SignatureSize {
+		t.Fatalf("expected %d-byte signature, got %d", ed25519.SignatureSize, len(sig))
+	}
+	// The signature must verify over the canonical OCertSignable bytes.
+	signable := lcommon.OpCertSignableBytes(kesVkey, issueCounter, kesPeriod)
+	if !ed25519.Verify(coldPub, signable, sig) {
+		t.Fatal("cold-key signature failed to verify over OCertSignable bytes")
+	}
+	// A signature over different opcert parameters must NOT verify (guards
+	// against signing the wrong payload).
+	wrong := lcommon.OpCertSignableBytes(kesVkey, issueCounter+1, kesPeriod)
+	if ed25519.Verify(coldPub, wrong, sig) {
+		t.Fatal("signature unexpectedly verified over mismatched parameters")
+	}
+}
+
+// TestHandleSignOpCert_MalformedInput rejects bad KES vkey hex and wrong-length
+// KES vkeys with 400.
+func TestHandleSignOpCert_MalformedInput(t *testing.T) {
+	srv, h, _ := newOpCertServer(t, []string{"opcert"}, nil)
+
+	t.Run("non-hex kes_vkey", func(t *testing.T) {
+		body, _ := json.Marshal(SignRequest{Type: "opcert", Key: h.String(), KesVkey: "zzzz"})
+		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		rr := httptest.NewRecorder()
+		srv.handleSign(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("wrong-length kes_vkey", func(t *testing.T) {
+		body, _ := json.Marshal(SignRequest{
+			Type:    "opcert",
+			Key:     h.String(),
+			KesVkey: hex.EncodeToString(bytes.Repeat([]byte{0x01}, 16)),
+		})
+		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		rr := httptest.NewRecorder()
+		srv.handleSign(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for short KES vkey, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("invalid key id", func(t *testing.T) {
+		body, _ := json.Marshal(SignRequest{
+			Type:    "opcert",
+			Key:     "nothex",
+			KesVkey: hex.EncodeToString(bytes.Repeat([]byte{0x01}, 32)),
+		})
+		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		rr := httptest.NewRecorder()
+		srv.handleSign(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for invalid key id, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+}
+
+// TestHandleSignOpCert_PolicyDenied verifies deny-by-default: a cold key whose
+// policy does not list "opcert" cannot cold-sign (403).
+func TestHandleSignOpCert_PolicyDenied(t *testing.T) {
+	// Key allows only "tx", not "opcert".
+	srv, h, _ := newOpCertServer(t, []string{"tx"}, nil)
+
+	body, _ := json.Marshal(SignRequest{
+		Type:    "opcert",
+		Key:     h.String(),
+		KesVkey: hex.EncodeToString(bytes.Repeat([]byte{0x02}, 32)),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	srv.handleSign(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for policy denial, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestHandleSignOpCert_ACLDenied verifies the caller ACL gates opcert exactly
+// like the other sign types: an unlisted caller gets 403.
+func TestHandleSignOpCert_ACLDenied(t *testing.T) {
+	// Build with a placeholder ACL, then rebuild with an ACL keyed on the real
+	// cold key hash.
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	b := backend.NewSoftwareBackend("software")
+	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePool)
+	if err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	pol := policy.KeyPolicy{Hash: h.String(), AllowedRequests: []string{"opcert"}}
+	eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
+	coord := signer.New(signer.Deps{
+		Resolver:  backend.NewResolver(b),
+		Policy:    eng,
+		Watermark: watermark.NewMemWatermark(),
+		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
+	})
+	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {h}})
+	srv := NewServer(coord, backend.NewResolver(b), eng, acl, func(string) (string, error) { return "tester", nil })
+
+	body, _ := json.Marshal(SignRequest{
+		Type:    "opcert",
+		Key:     h.String(),
+		KesVkey: hex.EncodeToString(bytes.Repeat([]byte{0x03}, 32)),
+	})
+
+	t.Run("bob denied", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		req = withCaller(req, "bob")
+		rr := httptest.NewRecorder()
+		srv.handleSign(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 for bob, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("alice allowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		req = withCaller(req, "alice")
+		rr := httptest.NewRecorder()
+		srv.handleSign(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200 for alice, got %d: %s", rr.Code, rr.Body.String())
 		}
 	})
 }
