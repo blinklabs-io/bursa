@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -2294,13 +2295,19 @@ func (s *Service) deriveWitnesses(
 	return witnesses, nil
 }
 
-// HardwareSignRequest is the structured signing request the SPA passes to the
-// Ledger device (via ledgerjs). It contains decoded tx fields (NOT raw CBOR)
-// so the device can display them to the user and sign without parsing CBOR.
+// HardwareSignRequest is the structured signing request the SPA passes to a
+// hardware device. It contains decoded tx fields (NOT raw CBOR) so the device
+// can display them to the user and sign without parsing CBOR.
 //
-// Scope: payment transactions (inputs/outputs/fee/ttl/change) only.
-// Certificates and withdrawals are guarded — the caller must check Unsupported
-// before constructing a SignTransactionRequest.
+// Scope: payment transactions plus the signer data staking / governance /
+// multisig transactions need. Beyond inputs/outputs/fee/ttl/change it also
+// carries the wallet's own derivation paths for the keys that must witness the
+// transaction's certificates, reward withdrawals, and governance votes, one
+// entry per change output, and any extra (e.g. CIP-1854 multisig) signer paths.
+// These fields are device-agnostic: a device that only signs payments ignores
+// them. Features a device genuinely cannot express (native-asset outputs,
+// scripts, minting, proposals, …) still set Unsupported, and the caller MUST
+// check it before signing.
 type HardwareSignRequest struct {
 	// Network: "mainnet", "preprod", or "preview".
 	Network string `json:"network"`
@@ -2312,6 +2319,31 @@ type HardwareSignRequest struct {
 	Inputs []HWInput `json:"inputs"`
 	// Outputs: all tx outputs.
 	Outputs []HWOutput `json:"outputs"`
+	// ChangeOutputs identifies, by their index in Outputs, the outputs that pay
+	// back to this wallet, with the derivation path of the change address, so a
+	// device can verify the change is genuinely ours. Empty for a tx with no
+	// wallet-owned outputs.
+	ChangeOutputs []HWChangeOutput `json:"change_outputs,omitempty"`
+	// CertificateSigners are the wallet's own derivation paths for the keys that
+	// must witness the transaction's certificates (stake registration/
+	// delegation, DRep vote-delegation, DRep registration, and — for a self-owned
+	// pool — the pool owner). One entry per (certificate, owned key) pair; empty
+	// for a tx with no certificates the wallet signs.
+	CertificateSigners []HWCertSigner `json:"certificate_signers,omitempty"`
+	// WithdrawalSigners are the wallet's stake-key paths that must witness reward
+	// withdrawals, one entry per reward account the wallet owns.
+	WithdrawalSigners []HWWithdrawalSigner `json:"withdrawal_signers,omitempty"`
+	// VoteSigners are the wallet's own paths for the keys that must witness the
+	// transaction's governance votes (a Conway DRep vote is an ordinary tx; the
+	// DRep key is expressed here as a signer path).
+	VoteSigners []HWVoteSigner `json:"vote_signers,omitempty"`
+	// ExtraSigners are wallet-owned keys the transaction requires as explicit
+	// signers (body key 14) that are not already covered by an input — notably
+	// the participating key of a CIP-1854 native-multisig spend. Script-locked
+	// inputs carry no path (their HWInput.Path is empty). The XFP is filled in by
+	// the client from its per-wallet fingerprint store before the request reaches
+	// the device.
+	ExtraSigners []HWExtraSigner `json:"extra_signers,omitempty"`
 	// Fee: lovelace as decimal string.
 	Fee string `json:"fee"`
 	// TTL: slot number as decimal string, empty if absent.
@@ -2372,6 +2404,69 @@ type HWAsset struct {
 	PolicyIDHex  string `json:"policy_id_hex"`
 	AssetNameHex string `json:"asset_name_hex"`
 	Amount       string `json:"amount"` // decimal string
+}
+
+// HWChangeOutput points at a wallet-owned output (by its index in Outputs) and
+// gives the derivation path of its change address so a device can confirm the
+// change returns to this wallet without re-deriving every output.
+type HWChangeOutput struct {
+	// Index is the position of the output in the Outputs slice.
+	Index int `json:"index"`
+	// Path is the CIP-1852 payment-key path of the change address.
+	Path string `json:"path"`
+	// StakePath is the CIP-1852 stake-key path of the change address (base
+	// addresses only).
+	StakePath string `json:"stake_path,omitempty"`
+}
+
+// HWCertSigner is one wallet-owned key that must witness a certificate.
+type HWCertSigner struct {
+	// CertKind is the certificate's snake_case kind (e.g. "stake_delegation",
+	// "registration_drep", "pool_registration").
+	CertKind string `json:"cert_kind"`
+	// Role is the CIP-1852 role of the required key: "stake" or "drep".
+	Role string `json:"role"`
+	// Path is the CIP-1852 derivation path of the key.
+	Path string `json:"path"`
+	// KeyHashHex is the hex-encoded key hash the certificate references.
+	KeyHashHex string `json:"key_hash_hex"`
+}
+
+// HWWithdrawalSigner is the wallet's stake key that must witness a reward
+// withdrawal.
+type HWWithdrawalSigner struct {
+	// RewardAddressBech32 is the reward (stake) address the withdrawal drains.
+	RewardAddressBech32 string `json:"reward_address_bech32,omitempty"`
+	// Role is always "stake".
+	Role string `json:"role"`
+	// Path is the CIP-1852 stake-key path.
+	Path string `json:"path"`
+	// KeyHashHex is the hex-encoded stake key hash.
+	KeyHashHex string `json:"key_hash_hex"`
+}
+
+// HWVoteSigner is the wallet's key that must witness a governance vote.
+type HWVoteSigner struct {
+	// Voter is the voter role: "drep" (the only self-signable voter kind for a
+	// wallet — committee and pool voters are not derived here).
+	Voter string `json:"voter"`
+	// Role is the CIP-1852 role of the required key ("drep").
+	Role string `json:"role"`
+	// Path is the CIP-1852 derivation path of the key.
+	Path string `json:"path"`
+	// KeyHashHex is the hex-encoded voter key hash.
+	KeyHashHex string `json:"key_hash_hex"`
+}
+
+// HWExtraSigner is a wallet-owned key required as an explicit signer (body key
+// 14) but not already covered by an input — e.g. a CIP-1854 native-multisig
+// participant. XFP is the 4-byte master-key fingerprint (hex); it is left empty
+// here and filled in client-side from the per-wallet fingerprint store.
+type HWExtraSigner struct {
+	XFP        string `json:"xfp,omitempty"`
+	Role       string `json:"role"`
+	Path       string `json:"path"`
+	KeyHashHex string `json:"key_hash_hex"`
 }
 
 // HardwareSignRequest returns the structured signing request the SPA passes to
@@ -2441,15 +2536,11 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 	}
 
 	// Guard unsupported features — still populate UnsignedTxCBOR so the SPA can
-	// show the user what was attempted.
-	if len(tx.Body.TxCertificates) > 0 {
-		result.Unsupported = "certificates are not supported on hardware yet"
-		return result, nil
-	}
-	if len(tx.Body.TxWithdrawals) > 0 {
-		result.Unsupported = "withdrawals are not supported on hardware yet"
-		return result, nil
-	}
+	// show the user what was attempted. Certificates, reward withdrawals, and
+	// governance votes are NOT guarded: the wallet's signer paths for them are
+	// resolved below (resolveSignerData) so staking / governance / multisig txs
+	// can be signed on hardware. Features a device cannot express are still
+	// rejected.
 	// Note: TxWithdrawals is a map[*Address]uint64; len works on nil maps (returns 0).
 	var unsupportedBodyFeature string
 	switch {
@@ -2471,8 +2562,6 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 		unsupportedBodyFeature = "total collateral"
 	case len(tx.Body.TxReferenceInputs.Items()) > 0:
 		unsupportedBodyFeature = "reference inputs"
-	case len(tx.Body.TxVotingProcedures) > 0:
-		unsupportedBodyFeature = "voting procedures"
 	case len(tx.Body.TxProposalProcedures) > 0:
 		unsupportedBodyFeature = "proposal procedures"
 	case tx.Body.TxCurrentTreasuryValue != 0:
@@ -2486,8 +2575,7 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 	}
 
 	// Guard: native assets in outputs are not supported yet. Check before
-	// building inputs so no signing paths are leaked (symmetric with the cert
-	// and withdrawal guards above).
+	// building inputs so no signing paths are leaked.
 	for _, out := range tx.Body.TxOutputs {
 		if out.OutputAmount.Assets != nil {
 			result.Unsupported = "outputs with native assets are not supported on hardware yet"
@@ -2542,9 +2630,11 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 	}
 	result.Inputs = inputs
 
-	// Build outputs.
+	// Build outputs. Every wallet-owned output is also recorded in ChangeOutputs
+	// (by its index) so a device can verify the change returns to this wallet.
 	outputs := make([]HWOutput, 0, len(tx.Body.TxOutputs))
-	for _, out := range tx.Body.TxOutputs {
+	var changeOutputs []HWChangeOutput
+	for i, out := range tx.Body.TxOutputs {
 		addr := out.OutputAddress
 		addrBytes, bytesErr := addr.Bytes()
 		if bytesErr != nil {
@@ -2558,10 +2648,23 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 		if paymentPath, owned := pathOf[addr.String()]; owned {
 			hwOut.PaymentPath = paymentPath
 			hwOut.StakePath = stakePath
+			changeOutputs = append(changeOutputs, HWChangeOutput{
+				Index:     i,
+				Path:      paymentPath,
+				StakePath: stakePath,
+			})
 		}
 		outputs = append(outputs, hwOut)
 	}
 	result.Outputs = outputs
+	result.ChangeOutputs = changeOutputs
+
+	// Resolve the wallet's own signer paths for certificates, reward
+	// withdrawals, governance votes, and any extra required signers (e.g. a
+	// CIP-1854 multisig participant). A device that only signs payments ignores
+	// these; staking / governance / multisig flows use them to derive the exact
+	// keys that must witness the transaction.
+	resolveSignerData(tx, acct, &result)
 
 	// Fee and TTL.
 	result.Fee = strconv.FormatUint(tx.Body.TxFee, 10)
@@ -2570,6 +2673,315 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 	}
 
 	return result, nil
+}
+
+// Reasons set on HardwareSignRequest.Unsupported when a required certificate,
+// withdrawal, or vote witness has no resolvable wallet path. They are per-
+// category (not per-credential) so the value is deterministic regardless of Go
+// map iteration order.
+const (
+	unsupportedCertReason       = "certificate requires a key this wallet cannot derive"
+	unsupportedWithdrawalReason = "reward withdrawal requires a key this wallet cannot derive"
+	unsupportedVoteReason       = "governance vote requires a key this wallet cannot derive"
+)
+
+// resolveSignerData populates the request's certificate, withdrawal, vote, and
+// extra-signer paths by matching the credentials in the transaction body
+// against the wallet's own key hashes. It is derived entirely from the real tx
+// being signed and the account's derived keys — nothing is fabricated.
+//
+// A REQUIRED witness the wallet cannot derive (a script-hash or foreign-key
+// certificate/withdrawal credential, or a non-DRep-key voter) sets
+// result.Unsupported and returns: the device could never produce that witness,
+// so the request must not be presented as signable with the missing signer
+// silently absent. An explicit body-key-14 required signer this wallet does not
+// own is different — in a native-multisig spend that is a co-signer's key,
+// legitimately signed on their own device — so it is skipped, not flagged.
+func resolveSignerData(
+	tx *conway.ConwayTransaction,
+	acct *wallet.Account,
+	result *HardwareSignRequest,
+) {
+	accountNum := acct.AccountIndex
+	stakePath := fmt.Sprintf("1852'/%d'/%d'/2/0", 1815, accountNum)
+	drepPath := fmt.Sprintf("1852'/%d'/%d'/3/0", 1815, accountNum)
+
+	// The wallet's own key hashes, keyed by hex, mapped to their role + path.
+	// Payment key hashes cover every derived receive/change address, so an extra
+	// required signer that is one of the wallet's payment keys is resolvable too.
+	// Population order (receive → change → stake → DRep) is intentional: the four
+	// roles derive to distinct key hashes so they do not collide, and the later
+	// stake/DRep writes deliberately take precedence over any earlier entry if a
+	// hash ever coincided — a cert/withdrawal/vote must resolve to its stake or
+	// DRep role, never be masked by a payment entry.
+	type roleKey struct{ role, path string }
+	owned := make(map[string]roleKey)
+	for i, addrStr := range acct.ReceiveAddresses {
+		if addr, err := lcommon.NewAddress(addrStr); err == nil {
+			owned[hex.EncodeToString(addr.PaymentKeyHash().Bytes())] = roleKey{
+				role: "payment",
+				path: fmt.Sprintf("1852'/%d'/%d'/0/%d", 1815, accountNum, i),
+			}
+		}
+	}
+	for i, addrStr := range acct.ChangeAddresses {
+		if addr, err := lcommon.NewAddress(addrStr); err == nil {
+			owned[hex.EncodeToString(addr.PaymentKeyHash().Bytes())] = roleKey{
+				role: "payment",
+				path: fmt.Sprintf("1852'/%d'/%d'/1/%d", 1815, accountNum, i),
+			}
+		}
+	}
+	var stakeKeyHashHex string
+	if len(acct.ReceiveAddresses) > 0 {
+		if addr, err := lcommon.NewAddress(acct.ReceiveAddresses[0]); err == nil {
+			stakeKeyHashHex = hex.EncodeToString(addr.StakeKeyHash().Bytes())
+			owned[stakeKeyHashHex] = roleKey{role: "stake", path: stakePath}
+		}
+	}
+	drepKeyHashHex := strings.ToLower(acct.DRepKeyHash)
+	if drepKeyHashHex != "" {
+		owned[drepKeyHashHex] = roleKey{role: "drep", path: drepPath}
+	}
+
+	hexHash := func(kh lcommon.Blake2b224) string { return hex.EncodeToString(kh.Bytes()) }
+
+	// Certificates: every certificate whose signing credential is a stake- or
+	// DRep-key credential MUST be witnessed by that key. If the credential is a
+	// script hash, or a key hash this wallet does not own (a co-signer's key),
+	// the device can never produce the witness — flag the whole request
+	// Unsupported rather than returning a signer slice that silently omits it,
+	// which the SPA would present as signable. Certificate types keyed on a
+	// non-CIP-1852 key (pool cold key, committee, genesis, MIR) fall through to
+	// owned-key-hash resolution below (e.g. a self-owned pool owner witness) and
+	// are not flagged here.
+	for _, cert := range tx.Body.Certificates() {
+		kind := certLabel(cert)
+		if cred, isKeyCert := certSigningCredential(cert); isKeyCert {
+			if cred.CredType != lcommon.CredentialTypeAddrKeyHash {
+				result.Unsupported = unsupportedCertReason
+				return
+			}
+			khHex := hex.EncodeToString(cred.Credential[:])
+			rk, owns := owned[khHex]
+			if !owns || (rk.role != "stake" && rk.role != "drep") {
+				result.Unsupported = unsupportedCertReason
+				return
+			}
+			result.CertificateSigners = append(result.CertificateSigners, HWCertSigner{
+				CertKind:   kind,
+				Role:       rk.role,
+				Path:       rk.path,
+				KeyHashHex: khHex,
+			})
+			continue
+		}
+		// Non-key-credential certificate (e.g. pool registration): surface each
+		// wallet-owned addr-key-hash credential it references (self-owned pool
+		// owner / reward account). Foreign key hashes here belong to co-owners or
+		// the pool operator's cold key and are simply not this wallet's to sign.
+		for _, khHex := range certRequiredKeyHashes(cert) {
+			rk, ok := owned[khHex]
+			if !ok || rk.role == "payment" {
+				continue
+			}
+			result.CertificateSigners = append(result.CertificateSigners, HWCertSigner{
+				CertKind:   kind,
+				Role:       rk.role,
+				Path:       rk.path,
+				KeyHashHex: khHex,
+			})
+		}
+	}
+
+	// Reward withdrawals: every withdrawal MUST be witnessed by its reward
+	// account's stake key. A script-hash reward account or a foreign stake key is
+	// not wallet-derivable — flag Unsupported rather than dropping it silently.
+	// TxWithdrawals is a Go map (randomized iteration); collect then sort by
+	// KeyHashHex so WithdrawalSigners is deterministic.
+	var withdrawalSigners []HWWithdrawalSigner
+	for addr := range tx.Body.TxWithdrawals {
+		if addr == nil {
+			continue
+		}
+		payload, ok := addr.StakingPayload().(lcommon.AddressPayloadKeyHash)
+		if !ok {
+			result.Unsupported = unsupportedWithdrawalReason
+			return
+		}
+		khHex := hexHash(payload.Hash)
+		rk, owns := owned[khHex]
+		if !owns || rk.role != "stake" {
+			result.Unsupported = unsupportedWithdrawalReason
+			return
+		}
+		withdrawalSigners = append(withdrawalSigners, HWWithdrawalSigner{
+			RewardAddressBech32: addr.String(),
+			Role:                rk.role,
+			Path:                rk.path,
+			KeyHashHex:          khHex,
+		})
+	}
+	sort.Slice(withdrawalSigners, func(i, j int) bool {
+		return withdrawalSigners[i].KeyHashHex < withdrawalSigners[j].KeyHashHex
+	})
+	result.WithdrawalSigners = withdrawalSigners
+
+	// Governance votes: every voting procedure MUST be witnessed by its voter.
+	// Only a DRep key-hash voter that is this wallet's DRep key is wallet-
+	// derivable (CIP-1852 role 3); constitutional-committee-hot voters, stake-
+	// pool voters, and DRep script hashes are witnessed by keys/scripts this
+	// wallet cannot derive — flag Unsupported instead of returning no signer.
+	// VotingProcedures is a Go map (randomized iteration); collect then sort by
+	// KeyHashHex so VoteSigners is deterministic.
+	var voteSigners []HWVoteSigner
+	for voter := range tx.Body.VotingProcedures() {
+		if voter == nil {
+			continue
+		}
+		if voter.Type != lcommon.VoterTypeDRepKeyHash {
+			result.Unsupported = unsupportedVoteReason
+			return
+		}
+		khHex := hex.EncodeToString(voter.Hash[:])
+		rk, owns := owned[khHex]
+		if !owns || rk.role != "drep" {
+			result.Unsupported = unsupportedVoteReason
+			return
+		}
+		voteSigners = append(voteSigners, HWVoteSigner{
+			Voter:      "drep",
+			Role:       rk.role,
+			Path:       rk.path,
+			KeyHashHex: khHex,
+		})
+	}
+	sort.Slice(voteSigners, func(i, j int) bool {
+		return voteSigners[i].KeyHashHex < voteSigners[j].KeyHashHex
+	})
+	result.VoteSigners = voteSigners
+
+	// Extra signers: explicit required signers (body key 14) that this wallet
+	// owns but that are not already covered by an input path — notably the
+	// participating key of a CIP-1854 native-multisig spend, where the input is
+	// script-locked (and so carries no path of its own). A payment key that is
+	// already an input signer is not repeated here.
+	//
+	// Dedup is by derivation path. That is correct for the single-account request
+	// this builds (one account's keys derive to distinct paths); a future multi-
+	// account request that could surface two accounts' keys with the same relative
+	// path would need key-hash dedup instead — out of scope here.
+	coveredPath := make(map[string]bool, len(result.Inputs))
+	for _, inp := range result.Inputs {
+		if inp.Path != "" {
+			coveredPath[inp.Path] = true
+		}
+	}
+	for _, kh := range tx.Body.RequiredSigners() {
+		khHex := hexHash(kh)
+		rk, owns := owned[khHex]
+		if !owns || coveredPath[rk.path] {
+			continue
+		}
+		result.ExtraSigners = append(result.ExtraSigners, HWExtraSigner{
+			Role:       rk.role,
+			Path:       rk.path,
+			KeyHashHex: khHex,
+		})
+	}
+}
+
+// certSigningCredential returns the single stake- or DRep-key credential that a
+// certificate must be witnessed by, for the certificate types a CIP-1852 wallet
+// signs directly. The bool is false for certificate types whose required
+// witness is not one such credential — pool registration/retirement (operator
+// cold key + owner key hashes), committee auth/resign, genesis-key delegation,
+// and MIR — which resolveSignerData resolves through their owned addr-key-hash
+// credentials (e.g. a self-owned pool owner) instead.
+func certSigningCredential(cert lcommon.Certificate) (lcommon.Credential, bool) {
+	switch c := cert.(type) {
+	case *lcommon.StakeRegistrationCertificate:
+		return c.StakeCredential, true
+	case *lcommon.StakeDeregistrationCertificate:
+		return c.StakeCredential, true
+	case *lcommon.StakeDelegationCertificate:
+		if c.StakeCredential == nil {
+			return lcommon.Credential{}, false
+		}
+		return *c.StakeCredential, true
+	case *lcommon.RegistrationCertificate:
+		return c.StakeCredential, true
+	case *lcommon.DeregistrationCertificate:
+		return c.StakeCredential, true
+	case *lcommon.VoteDelegationCertificate:
+		return c.StakeCredential, true
+	case *lcommon.StakeVoteDelegationCertificate:
+		return c.StakeCredential, true
+	case *lcommon.StakeRegistrationDelegationCertificate:
+		return c.StakeCredential, true
+	case *lcommon.VoteRegistrationDelegationCertificate:
+		return c.StakeCredential, true
+	case *lcommon.StakeVoteRegistrationDelegationCertificate:
+		return c.StakeCredential, true
+	case *lcommon.RegistrationDrepCertificate:
+		return c.DrepCredential, true
+	case *lcommon.DeregistrationDrepCertificate:
+		return c.DrepCredential, true
+	case *lcommon.UpdateDrepCertificate:
+		return c.DrepCredential, true
+	default:
+		return lcommon.Credential{}, false
+	}
+}
+
+// certRequiredKeyHashes returns the hex-encoded addr-key-hash credentials a
+// certificate needs witnessed. Script-hash credentials are omitted (a device
+// derives only key paths). It mirrors the credential extraction in
+// neededKeyHashes and adds the pool-owner / reward-account key hashes of a pool
+// registration so a self-owned pool's owner witness resolves.
+func certRequiredKeyHashes(cert lcommon.Certificate) []string {
+	var out []string
+	add := func(cred *lcommon.Credential) {
+		if cred != nil && cred.CredType == lcommon.CredentialTypeAddrKeyHash {
+			out = append(out, hex.EncodeToString(cred.Credential[:]))
+		}
+	}
+	switch c := cert.(type) {
+	case *lcommon.StakeRegistrationCertificate:
+		add(&c.StakeCredential)
+	case *lcommon.StakeDeregistrationCertificate:
+		add(&c.StakeCredential)
+	case *lcommon.StakeDelegationCertificate:
+		add(c.StakeCredential)
+	case *lcommon.RegistrationCertificate:
+		add(&c.StakeCredential)
+	case *lcommon.DeregistrationCertificate:
+		add(&c.StakeCredential)
+	case *lcommon.VoteDelegationCertificate:
+		add(&c.StakeCredential)
+	case *lcommon.StakeVoteDelegationCertificate:
+		add(&c.StakeCredential)
+	case *lcommon.StakeRegistrationDelegationCertificate:
+		add(&c.StakeCredential)
+	case *lcommon.VoteRegistrationDelegationCertificate:
+		add(&c.StakeCredential)
+	case *lcommon.StakeVoteRegistrationDelegationCertificate:
+		add(&c.StakeCredential)
+	case *lcommon.RegistrationDrepCertificate:
+		add(&c.DrepCredential)
+	case *lcommon.DeregistrationDrepCertificate:
+		add(&c.DrepCredential)
+	case *lcommon.UpdateDrepCertificate:
+		add(&c.DrepCredential)
+	case *lcommon.PoolRegistrationCertificate:
+		for _, owner := range c.PoolOwners {
+			out = append(out, hex.EncodeToString(owner.Bytes()))
+		}
+		out = append(out, hex.EncodeToString(c.RewardAccount.Bytes()))
+	case *lcommon.PoolRetirementCertificate:
+		// The pool cold key is not a CIP-1852 wallet key, so nothing to resolve.
+	}
+	return out
 }
 
 // randID generates a 16-byte random hex string for pending IDs.
