@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -43,14 +44,25 @@ func main() {
 }
 
 func run() error {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
 	network := envOr("BURSA_NETWORK", "preview")
 	dataDir := filepath.Join(home, ".bursa-wallet", network)
+
+	// Log to a file under the data dir in addition to stderr, so the
+	// Diagnostics screen can export the logs. A failure to open the file is
+	// non-fatal: fall back to stderr-only and leave log export disabled.
+	logFilePath, logCloser := openLogFile(dataDir)
+	if logCloser != nil {
+		defer func() { _ = logCloser.Close() }()
+	}
+	var logDst io.Writer = os.Stderr
+	if logCloser != nil {
+		logDst = io.MultiWriter(os.Stderr, logCloser)
+	}
+	logger := slog.New(slog.NewTextHandler(logDst, nil))
 
 	// Mithril fast-sync is on by default; BURSA_SYNC=genesis opts out.
 	mithrilEnabled := !strings.EqualFold(envOr("BURSA_SYNC", "mithril"), "genesis")
@@ -71,6 +83,7 @@ func run() error {
 		// (default off) is the source of truth thereafter.
 		LeanDefault:      envBool("BURSA_LEAN", false),
 		ConnectorEnabled: envBool("BURSA_CONNECTOR", false),
+		LogFilePath:      logFilePath,
 	})
 	if err != nil {
 		return err
@@ -82,6 +95,25 @@ func run() error {
 	// opens a native window onto the same loopback UI and waits for it to close.
 	uiErr := awaitUI(ctx, app.URL(), logger, app.Err())
 	return uiErr
+}
+
+// openLogFile creates <dataDir>/logs/bursa-wallet.log (appending) and returns
+// its path plus the open file for the logger to also write to. On any failure
+// it returns ("", nil): logging then stays stderr-only and log export is
+// disabled, rather than blocking startup.
+func openLogFile(dataDir string) (string, *os.File) {
+	logDir := filepath.Join(dataDir, "logs")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, "bursa-wallet: could not create log dir:", err)
+		return "", nil
+	}
+	path := filepath.Join(logDir, "bursa-wallet.log")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "bursa-wallet: could not open log file:", err)
+		return "", nil
+	}
+	return path, f
 }
 
 func envOr(key, def string) string {

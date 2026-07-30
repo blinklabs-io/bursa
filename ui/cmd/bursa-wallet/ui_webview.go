@@ -23,12 +23,11 @@ package main
 import (
 	"context"
 	"log/slog"
-	"net/url"
-	"os/exec"
 	"runtime"
 	"time"
 
 	"github.com/blinklabs-io/bursa/ui/internal/desktoptray"
+	"github.com/blinklabs-io/bursa/ui/internal/openexternal"
 	webview "github.com/webview/webview_go"
 )
 
@@ -57,7 +56,7 @@ func awaitUI(ctx context.Context, url string, logger *slog.Logger, srvErr <-chan
 	// browser. Bind before Navigate so the function exists for the first
 	// page load, not just subsequent ones.
 	if err := w.Bind("bursaOpenExternal", func(rawurl string) {
-		openExternal(logger, rawurl)
+		openexternal.Open(logger, rawurl)
 	}); err != nil {
 		logger.Warn("failed to bind bursaOpenExternal", "error", err)
 	}
@@ -115,44 +114,4 @@ func awaitUI(ctx context.Context, url string, logger *slog.Logger, srvErr <-chan
 	default:
 		return nil
 	}
-}
-
-// openExternal opens rawurl in the OS's default browser, never in the
-// embedded webview. It is the Go side of the `bursaOpenExternal` JS bridge
-// bound above: the frontend calls this instead of letting an anchor's own
-// `target="_blank"` navigate the wallet window.
-//
-// rawurl is validated before use — it must parse as an absolute http(s) URL —
-// so a compromised or buggy frontend can't smuggle a `file://` path or an
-// arbitrary shell-meaningful string into an external command. Anything else
-// is logged and dropped rather than opened.
-func openExternal(logger *slog.Logger, rawurl string) {
-	u, err := url.Parse(rawurl)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
-		logger.Warn("refusing to open external URL", "url", rawurl)
-		return
-	}
-
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "linux":
-		cmd = exec.Command("xdg-open", u.String())
-	case "darwin":
-		cmd = exec.Command("open", u.String())
-	case "windows":
-		// rundll32's url.dll opener takes the URL as its sole argument; it
-		// does not go through a shell, so no extra quoting is needed.
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", u.String())
-	default:
-		logger.Warn("no external-browser opener for this OS", "os", runtime.GOOS, "url", u.String())
-		return
-	}
-
-	// Fire-and-forget: the wallet doesn't wait on or manage the browser
-	// process's lifetime, it only launches it.
-	if err := cmd.Start(); err != nil {
-		logger.Warn("failed to open external URL", "url", u.String(), "error", err)
-		return
-	}
-	go func() { _ = cmd.Wait() }()
 }

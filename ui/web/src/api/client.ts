@@ -61,6 +61,7 @@ import type {
   CosignResult,
   NFT,
   NftMediaSetting,
+  Diagnostics,
 } from "./types";
 
 export class ApiError extends Error {
@@ -332,3 +333,9 @@ export const getNftMedia = () => apiGet<NftMediaSetting>("/wallet/settings/nft-m
 export const setNftMedia = (enabled: boolean) =>
   apiPut<NftMediaSetting>("/wallet/settings/nft-media", { enabled });
 export const nftImageUrl = (unit: string) => `/wallet/nft/${encodeURIComponent(unit)}/image`;
+
+// Node diagnostics (node-local; no external calls). getDiagnostics polls the
+// full report; diagnosticsLogsUrl is the direct download URL for the log-export
+// zip (used as an <a href> / bridge target rather than a JSON fetch).
+export const getDiagnostics = () => apiGet<Diagnostics>("/diagnostics");
+export const diagnosticsLogsUrl = () => "/diagnostics/logs";

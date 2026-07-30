@@ -46,6 +46,7 @@ func (f *fakeConnectorBackend) RewardAddresses(_ context.Context) ([]string, err
 func (f *fakeConnectorBackend) Collateral(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (f *fakeConnectorBackend) SignTx(_ context.Context, _ string, _ bool, _ string) (string, error) {
 	return "", nil
 }
@@ -55,6 +56,7 @@ func (f *fakeConnectorBackend) PubDRepKey(_ string) (string, error)             
 func (f *fakeConnectorBackend) RegisteredPubStakeKeys(_ string) ([]string, error) {
 	return nil, nil
 }
+
 func (f *fakeConnectorBackend) UnregisteredPubStakeKeys(_ string) ([]string, error) {
 	return nil, nil
 }

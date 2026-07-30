@@ -39,6 +39,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
+	"github.com/blinklabs-io/bursa/ui/internal/diagnostics"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
@@ -109,6 +110,11 @@ type Config struct {
 	// It is disabled by default so the extension-facing routes are absent unless
 	// the caller explicitly enables them.
 	ConnectorEnabled bool
+	// LogFilePath is the file the Logger also writes to. When set, the
+	// diagnostics screen exposes it and the /diagnostics/logs endpoint can
+	// export it. Empty (the default, e.g. mobile / stderr-only) disables log
+	// export; the caller owns the file's lifecycle.
+	LogFilePath string
 }
 
 // App is a booted wallet stack: a running supervised node and an HTTP control
@@ -154,6 +160,7 @@ type App struct {
 // has already given up on (see ui/mobile's cleanupLateStart, which relies on
 // this to make its unconditional wait for Boot's result safe).
 func Boot(ctx context.Context, cfg Config) (*App, error) {
+	startedAt := time.Now()
 	if cfg.Network == "" {
 		return nil, errors.New("boot: network is required")
 	}
@@ -336,7 +343,23 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		return nil, err
 	}
 
-	handlerOpts := []api.HandlerOption{api.WithLegacyKeystore(legacyKeyStore)}
+	// Node-local diagnostics: versions/network/sync/peers/ports/uptime + log
+	// export. Everything it reports is node-local, so it needs no consent gate.
+	diagSvc := diagnostics.New(sup, diagnostics.Config{
+		Network:        cfg.Network,
+		ControlAddr:    func() string { return listener.Addr().String() },
+		BlockfrostPort: blockfrostPort,
+		UtxorpcPort:    utxorpcPort,
+		NodeSocket:     filepath.Join(cfg.DataDir, "node.socket"),
+		LogPath:        cfg.LogFilePath,
+		StartedAt:      startedAt,
+		Chain:          diagChain{c: chainClient},
+	})
+
+	handlerOpts := []api.HandlerOption{
+		api.WithLegacyKeystore(legacyKeyStore),
+		api.WithDiagnostics(diagSvc),
+	}
 	if connectorSvc != nil {
 		handlerOpts = append(handlerOpts, api.WithConnector(connectorSvc))
 	}
@@ -489,6 +512,28 @@ func (c *settingsController) AutoLockMinutes() int { return c.store.AutoLockMinu
 
 func (c *settingsController) SetAutoLockMinutes(minutes int) error {
 	return c.store.SetAutoLockMinutes(minutes)
+}
+
+// diagChain adapts the loopback Blockfrost chain client to the diagnostics
+// ChainQuery surface (current epoch + tip block height). Both are best-effort:
+// diagnostics omits the field when the lookup fails (e.g. the node is not yet
+// serving queries), so these never fabricate a value.
+type diagChain struct{ c *chain.Client }
+
+func (d diagChain) LatestEpoch(ctx context.Context) (uint64, error) {
+	info, err := d.c.LatestEpoch(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return info.Epoch, nil
+}
+
+func (d diagChain) LatestBlockHeight(ctx context.Context) (uint64, error) {
+	tip, err := d.c.LatestBlock(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return tip.Height, nil
 }
 
 // genesisAdapter adapts the loopback Blockfrost chain client to the genesis
