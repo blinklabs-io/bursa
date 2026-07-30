@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blinklabs-io/apollo/v2/backend/utxorpc"
+	"github.com/Salvionied/apollo/v2/backend/utxorpc"
 
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
