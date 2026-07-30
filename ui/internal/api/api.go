@@ -60,6 +60,9 @@ type Wallet interface {
 	// the node has no record of hash.
 	TransactionDetail(ctx context.Context, hash string) (wallet.TxDetail, error)
 	Delegation(ctx context.Context) (wallet.DelegationView, error)
+	// Rewards returns the per-epoch stake-reward history for the active
+	// wallet's stake address (read node-locally, like Delegation).
+	Rewards(ctx context.Context) (wallet.RewardHistory, error)
 }
 
 // Spender is the spending surface the API exposes for the active wallet:
@@ -839,6 +842,13 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	}))
 	mux.HandleFunc("GET /wallet/delegation", gated(st, func(w http.ResponseWriter, r *http.Request) {
 		v, err := wl.Delegation(r.Context())
+		serve(w, v, err)
+	}))
+	// Read-only per-epoch stake-reward history for the active wallet, read from
+	// the embedded node (same source as delegation) — no external calls, so no
+	// consent gate; gated like other reads on a queryable node.
+	mux.HandleFunc("GET /wallet/rewards", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		v, err := wl.Rewards(r.Context())
 		serve(w, v, err)
 	}))
 

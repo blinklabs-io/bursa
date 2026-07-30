@@ -300,6 +300,33 @@ func TestAccountRewards(t *testing.T) {
 	}
 }
 
+func TestAccountRewardsType(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/accounts/stake_test1xyz/rewards" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// First row reports a reward type, second omits the field entirely.
+		_, _ = w.Write([]byte(`[
+			{"epoch":42,"amount":"2000","pool_id":"pool1abc","type":"member"},
+			{"epoch":43,"amount":"3000","pool_id":"pool1abc"}
+		]`))
+	})
+	got, err := c.AccountRewards(context.Background(), "stake_test1xyz")
+	if err != nil {
+		t.Fatalf("AccountRewards: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Type != "member" {
+		t.Fatalf("got[0].Type = %q, want member", got[0].Type)
+	}
+	if got[1].Type != "" {
+		t.Fatalf("got[1].Type = %q, want empty (type omitted)", got[1].Type)
+	}
+}
+
 func TestAccountRewardsNotFound(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {

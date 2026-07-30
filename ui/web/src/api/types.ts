@@ -103,6 +103,21 @@ export interface DelegationView {
   note: string;
 }
 
+// One epoch's stake reward (amount is a decimal lovelace STRING; type is
+// "member"/"leader" when the node reports it).
+export interface RewardEntry {
+  epoch: number;
+  amount: string;
+  pool_id: string;
+  type?: string;
+}
+
+export interface RewardHistory {
+  rewards: RewardEntry[];
+  provisional: boolean;
+  note: string;
+}
+
 // spend: quantity / lovelace are decimal STRINGS (uint64 server-side), matching
 // the read side — so values beyond the JS safe-integer range (2^53) survive the
 // JSON round-trip without being silently rounded.

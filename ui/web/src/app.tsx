@@ -21,6 +21,7 @@ import { Send } from "./screens/Send";
 import { Swap } from "./screens/Swap";
 import { Contacts } from "./screens/Contacts";
 import { Staking } from "./screens/Staking";
+import { RewardHistory } from "./screens/RewardHistory";
 import { SignMessage } from "./screens/SignMessage";
 import { VerifyMessage } from "./screens/VerifyMessage";
 import { Offline } from "./screens/Offline";
@@ -66,6 +67,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "swap", label: "Swap" },
   { key: "contacts", label: "Contacts" },
   { key: "staking", label: "Staking" },
+  { key: "rewards", label: "Rewards" },
   { key: "sign", label: "Sign" },
   { key: "verify", label: "Verify" },
   { key: "offline", label: "Offline" },
@@ -274,6 +276,7 @@ export function App() {
     else if (route === "send" && canSend) activeRoute = "send";
     else if (route === "swap" && canSwap) activeRoute = "swap";
     else if (route === "staking" && canStake) activeRoute = "staking";
+    else if (route === "rewards") activeRoute = "rewards";
     else if (route === "sign" && canSign) activeRoute = "sign";
     else if (route === "verify") activeRoute = "verify";
     else if (route === "offline" && canSign) activeRoute = "offline";
@@ -327,6 +330,11 @@ export function App() {
     // spending-enabled wallet. A read-only or unsynced wallet falls back to
     // Portfolio.
     content = canStake ? <Staking network={activeWallet.network} /> : <Portfolio />;
+  } else if (route === "rewards") {
+    // Read-only per-epoch reward history for the active wallet's stake
+    // address. Node-local read (no signing, no spend), so it is available to
+    // any active wallet; the pool explorer links need the wallet's network.
+    content = <RewardHistory network={activeWallet.network} />;
   } else if (route === "sign") {
     content = canSign ? <SignMessage account={toAccount(activeWallet)} /> : <Portfolio />;
   } else if (route === "verify") {

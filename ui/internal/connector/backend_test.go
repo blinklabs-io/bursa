@@ -106,6 +106,10 @@ func (b *walletChainBridge) AddressTransactions(_ context.Context, _ string) ([]
 	return nil, nil
 }
 
+func (b *walletChainBridge) AccountRewards(_ context.Context, _ string) ([]chain.Reward, error) {
+	return nil, nil
+}
+
 // twoKnownUTxOs returns two deterministic chain.UTxO values and their
 // expected tx hashes / indices / lovelace amounts for round-trip assertions.
 func twoKnownUTxOs(addr string) []chain.UTxO {
