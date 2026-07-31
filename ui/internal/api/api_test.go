@@ -551,6 +551,7 @@ type fakeWallet struct {
 	gotNetwork       string
 	txDetail         wallet.TxDetail
 	txDetailErr      error
+	rewards          wallet.RewardHistory
 }
 
 func (f *fakeWallet) SetAccount(acct *wallet.Account) error {
@@ -605,6 +606,13 @@ func (f *fakeWallet) Delegation(_ context.Context) (wallet.DelegationView, error
 		return wallet.DelegationView{}, wallet.ErrNoWallet
 	}
 	return wallet.DelegationView{}, nil
+}
+
+func (f *fakeWallet) Rewards(_ context.Context) (wallet.RewardHistory, error) {
+	if !f.set {
+		return wallet.RewardHistory{}, wallet.ErrNoWallet
+	}
+	return f.rewards, nil
 }
 
 // --- Vault lifecycle --------------------------------------------------------
@@ -879,6 +887,63 @@ func TestAddWalletEnablesReadsAndSpend(t *testing.T) {
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/balance", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /wallet/balance after add = %d, want 200", rec.Code)
+	}
+}
+
+func TestWalletRewardsPopulated(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	fw := &fakeWallet{set: true, rewards: wallet.RewardHistory{
+		Rewards: []wallet.RewardEntry{
+			{Epoch: 500, Amount: "1234567", PoolID: "pool1abc", Type: "member"},
+			{Epoch: 501, Amount: "2345678", PoolID: "pool1abc", Type: "member"},
+		},
+		Provisional: true,
+		Note:        "rewards are provisional",
+	}}
+	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/rewards", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/rewards = %d, want 200 (body=%q)", rec.Code, rec.Body.String())
+	}
+	var got wallet.RewardHistory
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode rewards: %v", err)
+	}
+	if len(got.Rewards) != 2 || got.Rewards[0].Epoch != 500 || got.Rewards[0].Amount != "1234567" {
+		t.Fatalf("unexpected rewards payload: %+v", got)
+	}
+	if !got.Provisional {
+		t.Fatalf("expected provisional=true, got %+v", got)
+	}
+}
+
+func TestWalletRewardsEmptyAndNoWallet(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+
+	// Active wallet with no rewards yet → 200 with an empty list.
+	fw := &fakeWallet{set: true, rewards: wallet.RewardHistory{Rewards: []wallet.RewardEntry{}, Provisional: true}}
+	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/rewards", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/rewards (empty) = %d, want 200", rec.Code)
+	}
+	var got wallet.RewardHistory
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode rewards: %v", err)
+	}
+	if len(got.Rewards) != 0 {
+		t.Fatalf("expected empty rewards, got %+v", got.Rewards)
+	}
+
+	// No active wallet → 409 (ErrNoWallet), like the other wallet reads.
+	h = NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/rewards", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("GET /wallet/rewards without wallet = %d, want 409", rec.Code)
 	}
 }
 

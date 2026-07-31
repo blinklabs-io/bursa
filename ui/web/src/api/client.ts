@@ -5,6 +5,7 @@ import type {
   Tx,
   TxDetail,
   DelegationView,
+  RewardHistory,
   Preview,
   TxResult,
   SendRequest,
@@ -183,6 +184,7 @@ export const getTransactions = () => apiGet<Tx[]>("/wallet/transactions");
 export const getTransactionDetail = (hash: string) =>
   apiGet<TxDetail>(`/wallet/transactions/${encodeURIComponent(hash)}`);
 export const getDelegation = () => apiGet<DelegationView>("/wallet/delegation");
+export const getRewards = () => apiGet<RewardHistory>("/wallet/rewards");
 export const buildSend = (req: SendRequest) => apiPost<Preview>("/wallet/send", req);
 export const confirmSend = (id: string, password: string) =>
   apiPost<TxResult>(`/wallet/send/${encodeURIComponent(id)}/confirm`, { password });

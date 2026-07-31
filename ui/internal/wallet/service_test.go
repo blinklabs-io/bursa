@@ -27,6 +27,9 @@ type fakeChain struct {
 	txUTxOErrs  map[string]error
 	latestBlock chain.BlockTip
 	latestErr   error
+
+	rewards    []chain.Reward
+	rewardsErr error
 }
 
 func (f *fakeChain) Account(_ context.Context, _ string) (chain.AccountInfo, error) {
@@ -70,6 +73,10 @@ func (f *fakeChain) TransactionUTxOs(_ context.Context, hash string) (chain.TxUT
 
 func (f *fakeChain) LatestBlock(_ context.Context) (chain.BlockTip, error) {
 	return f.latestBlock, f.latestErr
+}
+
+func (f *fakeChain) AccountRewards(_ context.Context, _ string) ([]chain.Reward, error) {
+	return f.rewards, f.rewardsErr
 }
 
 func TestServiceNoWallet(t *testing.T) {
@@ -182,6 +189,48 @@ func TestServiceEmptyAccount(t *testing.T) {
 	}
 	if dv.PoolID != nil || dv.Active || dv.RewardsSum != "0" || dv.Withdrawable != "0" {
 		t.Fatalf("delegation on empty account = %+v, want not active / no pool / zero amounts", dv)
+	}
+}
+
+func TestServiceRewards(t *testing.T) {
+	// No wallet set → ErrNoWallet.
+	s := NewService(&fakeChain{})
+	if _, err := s.Rewards(context.Background()); !errors.Is(err, ErrNoWallet) {
+		t.Fatalf("Rewards without wallet: err = %v, want ErrNoWallet", err)
+	}
+
+	// Populated history: entries pass through, marked provisional.
+	fc := &fakeChain{rewards: []chain.Reward{
+		{Epoch: 500, Amount: "1234567", PoolID: "pool1abc", Type: "member"},
+		{Epoch: 501, Amount: "2345678", PoolID: "pool1abc"},
+	}}
+	s = NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 3); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	rh, err := s.Rewards(context.Background())
+	if err != nil {
+		t.Fatalf("Rewards: %v", err)
+	}
+	if len(rh.Rewards) != 2 || rh.Rewards[0].Epoch != 500 || rh.Rewards[0].Type != "member" {
+		t.Fatalf("rewards = %+v, want two entries with epoch 500 member first", rh.Rewards)
+	}
+	if !rh.Provisional {
+		t.Fatalf("rewards should be provisional: %+v", rh)
+	}
+
+	// Stake key not yet on chain (ErrNotFound) → empty history, no error.
+	fc = &fakeChain{rewardsErr: chain.ErrNotFound}
+	s = NewService(fc)
+	if _, err := s.SetWallet(testMnemonic, "preview", 3); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	rh, err = s.Rewards(context.Background())
+	if err != nil {
+		t.Fatalf("Rewards on empty account: %v", err)
+	}
+	if len(rh.Rewards) != 0 {
+		t.Fatalf("rewards on empty account = %+v, want empty", rh.Rewards)
 	}
 }
 

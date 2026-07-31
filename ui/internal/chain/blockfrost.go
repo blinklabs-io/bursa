@@ -134,11 +134,14 @@ type Delegation struct {
 	PoolID      string `json:"pool_id"`
 }
 
-// Reward mirrors one entry of GET /api/v0/accounts/{stake}/rewards.
+// Reward mirrors one entry of GET /api/v0/accounts/{stake}/rewards. Type is the
+// reward kind (e.g. "member"/"leader") when the node reports it; it is optional
+// because not every reward source populates it.
 type Reward struct {
 	Epoch  int32  `json:"epoch"`
 	Amount string `json:"amount"`
 	PoolID string `json:"pool_id"`
+	Type   string `json:"type"`
 }
 
 // PoolInfo describes a stake pool's on-chain parameters, as the wallet needs

@@ -260,6 +260,7 @@ a:hover {
 .portfolio,
 .receive,
 .activity,
+.reward-history,
 .staking,
 .screen-settings,
 .send-form,
@@ -1335,6 +1336,14 @@ a:hover {
 }
 .activity-filters select.field {
   flex: 0 1 180px;
+}
+
+/* Reward-history summary: total rewards banner above the per-epoch table. */
+.reward-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
 }
 
 /* Direction indicator: a small arrow + label, color-coded like a ledger

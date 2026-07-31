@@ -23,6 +23,7 @@ type chainQuerier interface {
 	Transaction(ctx context.Context, hash string) (chain.TxInfo, error)
 	TransactionUTxOs(ctx context.Context, hash string) (chain.TxUTxOs, error)
 	LatestBlock(ctx context.Context) (chain.BlockTip, error)
+	AccountRewards(ctx context.Context, stakeAddr string) ([]chain.Reward, error)
 }
 
 // AddressView is the receive-address view: the derived window, the chain-seen
@@ -44,6 +45,25 @@ type DelegationView struct {
 	Withdrawable string  `json:"withdrawable_amount"`
 	Provisional  bool    `json:"provisional"`
 	Note         string  `json:"note"`
+}
+
+// RewardEntry is one epoch's stake reward for the active wallet's stake
+// address, mirroring one chain.Reward. Type is the reward kind (e.g.
+// "member"/"leader") when the node reports it; empty otherwise.
+type RewardEntry struct {
+	Epoch  int32  `json:"epoch"`
+	Amount string `json:"amount"`
+	PoolID string `json:"pool_id"`
+	Type   string `json:"type,omitempty"`
+}
+
+// RewardHistory is the per-epoch stake-reward history (newest epochs last, as
+// the node returns them). Provisional mirrors DelegationView: dingo's reward
+// accounting has open issues, so the amounts are advisory.
+type RewardHistory struct {
+	Rewards     []RewardEntry `json:"rewards"`
+	Provisional bool          `json:"provisional"`
+	Note        string        `json:"note"`
 }
 
 // Service holds the active read-only account and queries the chain for views.
@@ -470,5 +490,34 @@ func (s *Service) Delegation(ctx context.Context) (DelegationView, error) {
 		Withdrawable: info.WithdrawableAmount,
 		Provisional:  true,
 		Note:         "rewards are provisional; dingo reward accounting has open issues (#2373-#2376)",
+	}, nil
+}
+
+// Rewards returns the per-epoch stake-reward history for the active wallet's
+// stake address, read node-locally through the chain client. A stake key not
+// yet seen on chain (ErrNotFound) yields an empty history rather than an error.
+func (s *Service) Rewards(ctx context.Context) (RewardHistory, error) {
+	acct, err := s.currentAccount()
+	if err != nil {
+		return RewardHistory{}, err
+	}
+	rewards, err := s.chain.AccountRewards(ctx, acct.StakeAddress)
+	if err != nil && !errors.Is(err, chain.ErrNotFound) {
+		return RewardHistory{}, err
+	}
+	// ErrNotFound: stake key not registered / no rewards yet → empty history.
+	entries := make([]RewardEntry, 0, len(rewards))
+	for _, r := range rewards {
+		entries = append(entries, RewardEntry{
+			Epoch:  r.Epoch,
+			Amount: r.Amount,
+			PoolID: r.PoolID,
+			Type:   r.Type,
+		})
+	}
+	return RewardHistory{
+		Rewards:     entries,
+		Provisional: true,
+		Note:        "rewards are provisional; dingo reward accounting has open issues (#2373-#2376)",
 	}, nil
 }

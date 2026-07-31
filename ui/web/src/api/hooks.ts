@@ -5,6 +5,7 @@ import type {
   AddressView,
   Tx,
   DelegationView,
+  RewardHistory,
   VaultStatus,
   HistoryExpirySetting,
   AutoLockSetting,
@@ -22,6 +23,7 @@ import {
   getAddresses,
   getTransactions,
   getDelegation,
+  getRewards,
   getHistoryExpiry,
   getAutoLock,
   getTPMStatus,
@@ -146,6 +148,7 @@ export const useBalance = (): AsyncState<Balance> => useAsync(getBalance);
 export const useAddresses = (): AsyncState<AddressView> => useAsync(getAddresses);
 export const useTransactions = (): AsyncState<Tx[]> => useAsync(getTransactions);
 export const useDelegation = (): AsyncState<DelegationView> => useAsync(getDelegation);
+export const useRewards = (): AsyncState<RewardHistory> => useAsync(getRewards);
 export const useHistoryExpiry = (): AsyncState<HistoryExpirySetting> => useAsync(getHistoryExpiry);
 export const useAutoLock = (): AsyncState<AutoLockSetting> => useAsync(getAutoLock);
 export const useTPMStatus = (): AsyncState<TPMStatus> => useAsync(getTPMStatus);
