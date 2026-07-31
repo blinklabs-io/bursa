@@ -95,64 +95,12 @@ export function getDeviceKind(walletId: string): HardwareKind {
 
 // ── Keystone master fingerprint (xfp) ────────────────────────────────────────
 //
-// A Keystone signing over QR must stamp its wallet master fingerprint on the
-// sign-request so the device recognises the witness paths as its own. That
-// fingerprint is learned only during account-sync (it rides the
-// crypto-multi-accounts QR), so it is remembered here — a purely local,
-// non-secret hint keyed by wallet id, exactly like the device-kind hint above.
-
-// localStorage key for the wallet-id → xfp map.
-export const KEYSTONE_XFP_KEY = "bursa.hw.keystoneXfp";
-
-function readXfpMap(): Record<string, string> {
-  if (typeof localStorage === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(KEYSTONE_XFP_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === "object") return parsed as Record<string, string>;
-    return {};
-  } catch {
-    return {};
-  }
-}
-
-/** Record the Keystone master fingerprint (hex) for a hardware wallet id. */
-export function setKeystoneXfp(walletId: string, xfp: string): void {
-  if (typeof localStorage === "undefined") return;
-  try {
-    const map = readXfpMap();
-    map[walletId] = xfp;
-    localStorage.setItem(KEYSTONE_XFP_KEY, JSON.stringify(map));
-  } catch {
-    // Best-effort: a full/blocked store just means the fingerprint is not
-    // remembered. The QR sign flow then treats the hint as absent and blocks
-    // signing (prompting an account-sync re-scan) rather than fabricating a zero.
-  }
-}
-
-/**
- * A Cardano/BIP32 master fingerprint is exactly 4 bytes → 8 hex digits. Anything
- * else in local storage is corrupt (e.g. a truncated write, a hand-edited value,
- * or a non-string smuggled in by a malformed JSON blob) and MUST NOT be forwarded
- * into a sign-request, where it would make the device fail to match its paths.
- *
- * "00000000" is deliberately VALID: a genuine all-zero fingerprint reported by a
- * real device is a legitimate (1-in-2^32) value, and this guard blocks the
- * ABSENCE of a fingerprint (undefined / corrupt storage), never a real one. The
- * QR signer only refuses to FABRICATE a zero when the hint is missing (see the
- * xfp note in keystone.ts) — it does not reject a device-reported zero.
- */
-export function isValidKeystoneXfp(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}$/i.test(value);
-}
-
-/**
- * Look up the stored Keystone master fingerprint, or `undefined` if unknown or
- * malformed. Corrupt local state (a non-string, or a non-8-hex-digit value) is
- * treated as unknown so it can never be forwarded into a QR signing request.
- */
-export function getKeystoneXfp(walletId: string): string | undefined {
-  const xfp = readXfpMap()[walletId];
-  return isValidKeystoneXfp(xfp) ? xfp : undefined;
-}
+// The per-wallet master-fingerprint store now lives in the device-agnostic
+// hw/qr/xfp module (any air-gapped-QR device can use it). These Keystone-named
+// re-exports preserve the existing import sites and the localStorage key.
+export {
+  XFP_STORAGE_KEY as KEYSTONE_XFP_KEY,
+  isValidXfp as isValidKeystoneXfp,
+  setWalletXfp as setKeystoneXfp,
+  getWalletXfp as getKeystoneXfp,
+} from "./qr/xfp";

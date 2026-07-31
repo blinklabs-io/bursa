@@ -30,7 +30,9 @@ import type {
 } from "./types";
 import { encodeXpub } from "./xpub";
 import { encodeWitnessArray } from "./witness";
-import { isValidKeystoneXfp } from "./deviceKind";
+import { decodeCbor, type CborValue } from "./qr/cbor";
+import { ensureBuffer, encodeUR } from "./qr/ur";
+import { isValidXfp } from "./qr/xfp";
 
 // ── BIP32 path helpers ───────────────────────────────────────────────────────
 
@@ -93,117 +95,14 @@ const KEYSTONE_USB_CAPABILITIES: HardwareCapabilities = {
 // across more frames, which the receiver reassembles.
 const UR_MAX_FRAGMENT_LEN = 200;
 
-// ── buffer polyfill (lazy) ───────────────────────────────────────────────────
-
-/**
- * The @keystonehq CBOR libraries read a global `Buffer`, which browsers do not
- * provide. We install one lazily — only when a Keystone flow actually runs — so
- * the `buffer` shim rides the code-split Keystone chunk and never bloats the
- * initial bundle. Exported so the QR scanner component (which decodes URs with
- * @ngraveio/bc-ur) can share the exact same guarantee.
- */
-export async function ensureBuffer(): Promise<void> {
-  const g = globalThis as unknown as { Buffer?: unknown };
-  if (typeof g.Buffer === "undefined") {
-    const mod = await import("buffer");
-    g.Buffer = mod.Buffer;
-  }
-}
-
-// ── Minimal CBOR reader (witness-set extraction only) ────────────────────────
+// ── Witness-set extraction ────────────────────────────────────────────────────
 //
 // Keystone's `cardano-signature` UR carries a serialized TransactionWitnessSet,
 // but the backend's submit endpoint wants the RAW vkey-witness array
-// ([[pubkey, sig], …]) that hw/witness.ts produces. We therefore decode just
-// enough CBOR to pull the vkey witnesses (map key 0) out of the witness set and
-// re-encode them through the shared encoder, so Keystone's witness output is
+// ([[pubkey, sig], …]) that hw/witness.ts produces. We use the shared CBOR reader
+// (hw/qr/cbor.ts) to pull the vkey witnesses (map key 0) out of the witness set
+// and re-encode them through the shared encoder, so Keystone's witness output is
 // byte-identical to Ledger's and Trezor's.
-
-type CborValue = number | Uint8Array | string | CborValue[] | Map<number, CborValue>;
-
-// This decoder parses input that arrives off a camera (a scanned QR), so every
-// multi-byte read is bounds-checked against the buffer length: past the end,
-// `buf[i]` yields `undefined`, which would otherwise coerce to a plausible-looking
-// zero/NaN length and produce a silently-empty witness. Overrun MUST throw here so
-// a truncated/hostile frame fails at the parse rather than at submission.
-function need(buf: Uint8Array, pos: number, n: number): void {
-  if (pos + n > buf.length) {
-    throw new Error(`CBOR: unexpected end of input (need ${n} byte(s) at offset ${pos}, have ${buf.length})`);
-  }
-}
-
-/** Decode one CBOR data item at `offset`; returns the value and the next offset. */
-function decodeCbor(buf: Uint8Array, offset: number): { value: CborValue; next: number } {
-  need(buf, offset, 1);
-  const first = buf[offset];
-  const major = first >> 5;
-  const info = first & 0x1f;
-  let len = info;
-  let pos = offset + 1;
-  if (info === 24) {
-    need(buf, pos, 1);
-    len = buf[pos];
-    pos += 1;
-  } else if (info === 25) {
-    need(buf, pos, 2);
-    len = (buf[pos] << 8) | buf[pos + 1];
-    pos += 2;
-  } else if (info === 26) {
-    need(buf, pos, 4);
-    len = (buf[pos] * 0x1000000) + (buf[pos + 1] << 16) + (buf[pos + 2] << 8) + buf[pos + 3];
-    pos += 4;
-  } else if (info === 27) {
-    // 64-bit length: witness sets never approach 2^53, so a Number is safe here.
-    need(buf, pos, 8);
-    len = 0;
-    for (let i = 0; i < 8; i++) len = len * 256 + buf[pos + i];
-    pos += 8;
-  } else if (info > 27) {
-    throw new Error(`CBOR: unsupported additional-info ${info}`);
-  }
-
-  switch (major) {
-    case 0: // unsigned int
-      return { value: len, next: pos };
-    case 2: { // byte string
-      need(buf, pos, len);
-      const value = buf.slice(pos, pos + len);
-      return { value, next: pos + len };
-    }
-    case 3: { // text string
-      need(buf, pos, len);
-      const value = new TextDecoder().decode(buf.slice(pos, pos + len));
-      return { value, next: pos + len };
-    }
-    case 4: { // array
-      const arr: CborValue[] = [];
-      let p = pos;
-      for (let i = 0; i < len; i++) {
-        const r = decodeCbor(buf, p);
-        arr.push(r.value);
-        p = r.next;
-      }
-      return { value: arr, next: p };
-    }
-    case 5: { // map
-      const map = new Map<number, CborValue>();
-      let p = pos;
-      for (let i = 0; i < len; i++) {
-        const k = decodeCbor(buf, p);
-        const v = decodeCbor(buf, k.next);
-        map.set(k.value as number, v.value);
-        p = v.next;
-      }
-      return { value: map, next: p };
-    }
-    case 6: { // tag — unwrap (e.g. the Conway set tag 258 around the witness array)
-      const r = decodeCbor(buf, pos);
-      return { value: r.value, next: r.next };
-    }
-    default:
-      throw new Error(`CBOR: unsupported major type ${major}`);
-  }
-}
 
 function toHex(bytes: Uint8Array): string {
   let out = "";
@@ -441,9 +340,9 @@ export async function connectKeystoneQR(
       // the user to re-scan the account-sync QR (which yields the fingerprint
       // again). Note: this blocks the ABSENCE of a fingerprint — a genuine
       // all-zero xfp reported by a real device is a valid (1-in-2^32) value and
-      // is intentionally accepted (see isValidKeystoneXfp in deviceKind.ts).
+      // is intentionally accepted (see isValidXfp in hw/qr/xfp.ts).
       const xfp = opts.xfp;
-      if (!isValidKeystoneXfp(xfp)) {
+      if (!isValidXfp(xfp)) {
         throw new Error(
           "This Keystone wallet's device fingerprint is missing. Re-scan the account-sync QR " +
             "(open the Cardano account on the device and choose Sync / Connect Software Wallet) to recover it, then try again.",
@@ -469,7 +368,14 @@ export async function connectKeystoneQR(
       );
 
       // Show the animated request QR, then wait for the user to scan the reply.
-      const fragments = signRequest.toUREncoder(UR_MAX_FRAGMENT_LEN).encodeWhole();
+      // The BC-UR2 transport (hw/qr/ur.ts) turns the request's {UR type, CBOR}
+      // into the animated-QR part strings.
+      const reqUR = signRequest.toUR();
+      const fragments = await encodeUR(
+        reqUR.type,
+        new Uint8Array(reqUR.cbor),
+        UR_MAX_FRAGMENT_LEN,
+      );
       bridge.displayRequest(fragments);
       try {
         const scanned = await bridge.scanResponse();
