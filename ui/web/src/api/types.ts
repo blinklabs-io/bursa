@@ -550,6 +550,19 @@ export interface HardwareSignResponse {
   unsupported?: string; // non-empty = this tx type cannot be signed on hardware yet
 }
 
+// CIP-8 hardware message signing: the seedless signing metadata a hardware
+// device needs to sign a message for one of the wallet's own receive addresses.
+// Returned by GET /wallet/sign-data/hardware-request; the message payload is
+// carried to the device separately by the SPA.
+export interface HardwareSignDataRequest {
+  address_bech32: string;
+  address_hex: string;
+  signing_path: string; // CIP-1852 payment-key path, e.g. "1852'/1815'/0'/0/0"
+  stake_path: string; // CIP-1852 stake-key path, e.g. "1852'/1815'/0'/2/0"
+  network_id: number; // 1 = mainnet, 0 = testnets
+  protocol_magic: number; // mainnet 764824073, preprod 1, preview 2
+}
+
 export interface CreateVaultRequest {
   password: string; // vault password
 }

@@ -59,6 +59,7 @@ import type {
   MultiSigSignRequest,
   MultiSigSubmitRequest,
   HardwareSignResponse,
+  HardwareSignDataRequest,
   TxSummary,
   CosignResult,
   NFT,
@@ -210,6 +211,14 @@ export const submitSigned = (req: SubmitSignedRequest) =>
 // witness against the same pending send.
 export const getHardwareSignRequest = (id: string) =>
   apiGet<HardwareSignResponse>(`/wallet/send/${encodeURIComponent(id)}/hardware-sign-request`);
+
+// CIP-8 hardware message signing: resolve the seedless signing metadata (paths +
+// network) a hardware device needs to sign a message for one of the wallet's own
+// receive addresses. The device then produces the COSE_Sign1 / COSE_Key.
+export const getHardwareSignDataRequest = (address: string) =>
+  apiGet<HardwareSignDataRequest>(
+    `/wallet/sign-data/hardware-request?address=${encodeURIComponent(address)}`,
+  );
 export const submitHardware = (id: string, witnessCbor: string) =>
   apiPost<TxResult>(`/wallet/send/${encodeURIComponent(id)}/submit-hardware`, { witness_cbor: witnessCbor });
 

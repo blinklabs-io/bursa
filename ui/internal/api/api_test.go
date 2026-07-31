@@ -1358,6 +1358,10 @@ type fakeSpender struct {
 	hwSignReqErr error
 	gotHWSignID  string
 
+	hwSignDataReq    spend.HardwareSignDataRequest
+	hwSignDataReqErr error
+	gotHWSignDataAddr string
+
 	// import-tx (decode-tx/cosign-tx/submit-tx vkey path); methods defined in
 	// importtx_test.go alongside the tests that exercise them.
 	decodeResult     spend.TxSummary
@@ -1447,6 +1451,14 @@ func (f *fakeSpender) HardwareSignRequest(pendingID string) (spend.HardwareSignR
 		return spend.HardwareSignRequest{}, f.hwSignReqErr
 	}
 	return f.hwSignReq, nil
+}
+
+func (f *fakeSpender) SignDataHardwareRequest(addr string) (spend.HardwareSignDataRequest, error) {
+	f.gotHWSignDataAddr = addr
+	if f.hwSignDataReqErr != nil {
+		return spend.HardwareSignDataRequest{}, f.hwSignDataReqErr
+	}
+	return f.hwSignDataReq, nil
 }
 
 func (f *fakeSpender) BuildDelegation(_ context.Context, _ spend.DelegationRequest) (spend.DelegationPreview, error) {
@@ -3617,6 +3629,57 @@ func TestHardwareSignRequestRoute(t *testing.T) {
 	if len(got.RequiredSigners) != 1 || got.RequiredSigners[0] != "aabbccdd" {
 		t.Fatalf("required signers wrong: %+v", got.RequiredSigners)
 	}
+}
+
+func TestSignDataHardwareRequestRoute(t *testing.T) {
+	sp := &fakeSpender{hwSignDataReq: spend.HardwareSignDataRequest{
+		AddressBech32: "addr_test1recv",
+		AddressHex:    "60aabb",
+		SigningPath:   "1852'/1815'/0'/0/0",
+		StakePath:     "1852'/1815'/0'/2/0",
+		NetworkID:     0,
+		ProtocolMagic: 2,
+	}}
+	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	t.Run("resolves paths for an owned address", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/sign-data/hardware-request?address=addr_test1recv", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /sign-data/hardware-request = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		var got spend.HardwareSignDataRequest
+		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if sp.gotHWSignDataAddr != "addr_test1recv" {
+			t.Fatalf("gotHWSignDataAddr = %q, want addr_test1recv", sp.gotHWSignDataAddr)
+		}
+		if got.SigningPath != "1852'/1815'/0'/0/0" || got.StakePath != "1852'/1815'/0'/2/0" {
+			t.Fatalf("paths wrong: %+v", got)
+		}
+		if got.NetworkID != 0 || got.ProtocolMagic != 2 {
+			t.Fatalf("network fields wrong: %+v", got)
+		}
+	})
+
+	t.Run("missing address is 400", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/sign-data/hardware-request", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("missing address = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("foreign address surfaces 400", func(t *testing.T) {
+		spErr := &fakeSpender{hwSignDataReqErr: fmt.Errorf("%w: not owned", spend.ErrInvalidRequest)}
+		hErr := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, spErr, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		hErr.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/sign-data/hardware-request?address=addr_test1foreign", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("foreign address = %d, want 400", rec.Code)
+		}
+	})
 }
 
 func TestSubmitHardwareRoute(t *testing.T) {
