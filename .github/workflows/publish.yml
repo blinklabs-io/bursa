@@ -175,35 +175,45 @@ jobs:
         with:
           subject-path: 'bursa'
 
-  # Build the embedded-SPA wallet binary (ui/cmd/bursa-wallet) from the nested
-  # ui/ module across the same os/arch matrix as build-binaries. Only the
-  # default (non-webview) build is shipped: it is pure Go and cross-compiles
-  # cleanly. The `webview` variant needs CGO + system webkit and cannot be
-  # cross-compiled, so it is intentionally excluded here.
+  # Build + package the Bursa desktop wallet (ui/cmd/bursa-wallet).
+  #
+  # The desktop app is the `-tags webview` variant (CGO + a system webview:
+  # WKWebView on macOS, WebView2 on Windows, webkit2gtk on Linux) and CANNOT be
+  # cross-compiled, so each installer is built on a NATIVE per-arch runner:
+  #   * macOS  -> signed + notarized .pkg (build-pkg.sh) on macos-15 / macos-15-intel
+  #   * Windows-> signed .msi (build-msi.ps1) on windows-latest / windows-11-arm
+  #   * Linux  -> a native webview binary (webkit2gtk), shipped as a tarball
+  #   * FreeBSD-> the pure-Go headless cross-build (no system webview), tarball
+  # Signing/notarization is env-gated: unsigned artifacts are produced on
+  # non-tag pushes (validating the packaging path) and signed ones on tags.
   build-wallet-binaries:
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - runner: macos-latest
+          - runner: macos-15
             os: darwin
             arch: arm64
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+          - runner: windows-latest
+            os: windows
+            arch: amd64
+          - runner: windows-11-arm
+            os: windows
+            arch: arm64
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
           - runner: ubuntu-latest
             os: freebsd
             arch: amd64
           - runner: ubuntu-latest
             os: freebsd
-            arch: arm64
-          - runner: ubuntu-latest
-            os: linux
-            arch: amd64
-          - runner: ubuntu-latest
-            os: linux
-            arch: arm64
-          - runner: ubuntu-latest
-            os: windows
-            arch: amd64
-          - runner: ubuntu-latest
-            os: windows
             arch: arm64
     runs-on: ${{ matrix.runner }}
     needs: [create-draft-release]
@@ -216,7 +226,15 @@ jobs:
       packages: write
       statuses: write
     steps:
-      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
+      - name: Set RELEASE_TAG (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $tagName = $env:GITHUB_REF -replace 'refs/tags/', ''
+          echo "RELEASE_TAG=$tagName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Set RELEASE_TAG
+        if: matrix.os != 'windows'
+        run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> \"$GITHUB_ENV\""
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           fetch-depth: '0'
@@ -226,41 +244,380 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
           go-version: 1.26.x
-      # Build the web bundle first so the //go:embed dist target is populated.
-      - name: Build web bundle
-        run: cd ui/web && npm ci && npm run build
-      - name: Build wallet binary
-        run: CGO_ENABLED=0 GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} make wallet-binary
 
-      # TODO: code-signing the wallet binary (Windows jsign / macOS codesign +
-      # notarization) is not yet mirrored from build-binaries. Ship it unsigned
-      # for now; wire up the same signing steps once the wallet is GA.
-
-      - name: Upload release asset
-        if: startsWith(github.ref, 'refs/tags/')
+      # ---- Per-OS webview build dependencies -------------------------------
+      - name: Set up MSYS2 MinGW64 for Windows amd64 CGO
+        if: matrix.os == 'windows' && matrix.arch == 'amd64'
+        id: msys2-amd64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+      - name: Set up MSYS2 clangarm64 for Windows arm64 CGO
+        if: matrix.os == 'windows' && matrix.arch == 'arm64'
+        id: msys2-arm64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: true
+          install: >-
+            mingw-w64-clang-aarch64-clang
+      - name: Install Linux webview dependencies
+        if: matrix.os == 'linux'
         run: |
-          _filename=bursa-wallet-${{ env.RELEASE_TAG }}-${{ matrix.os }}-${{ matrix.arch }}
-          if [[ ${{ matrix.os }} == windows ]]; then
-            _filename=${_filename}.exe
-          fi
-          if [[ "${{ matrix.os }}" == "windows" || "${{ matrix.os }}" == "linux" || "${{ matrix.os }}" == "freebsd" ]]; then
-            cp ui/bursa-wallet ${_filename}
-          fi
-          if [[ "${{ matrix.os }}" == "darwin" ]]; then
-            _filename=bursa-wallet-${{ env.RELEASE_TAG }}-${{ matrix.os }}-${{ matrix.arch }}.zip
-            cp ui/bursa-wallet bursa-wallet
-            zip -r ${_filename} bursa-wallet
-          fi
-          curl \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary @${_filename} \
-            https://uploads.github.com/repos/${{ github.repository_owner }}/bursa/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}
+          sudo apt-get update
+          sudo apt-get install -y gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
 
-      - name: Attest binary
+      # ---- macOS: signed + notarized .pkg ----------------------------------
+      #
+      # On tag pushes: import both Developer ID certs, store notarytool creds,
+      # then run build-pkg.sh which produces a signed + notarized + stapled
+      # .pkg under dist/. On non-tag pushes: run build-pkg.sh unsigned to
+      # validate the packaging path on every push. build-pkg.sh builds the web
+      # bundle and the webview binary itself.
+      - name: Build macOS .pkg
+        if: matrix.os == 'darwin'
+        env:
+          IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
+          MATRIX_ARCH: ${{ matrix.arch }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # NEW secret: the "Developer ID Installer" cert used by productsign.
+          # When absent, build-pkg.sh emits an UNSIGNED .pkg (env-gated).
+          APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ "${IS_RELEASE}" = "true" ] && [ -n "${APPLE_CERTIFICATE}" ]; then
+            echo "::group::Import Apple Developer ID certificate(s)"
+            echo -n "${APPLE_CERTIFICATE}" | base64 --decode -o apple_app.p12
+
+            security create-keychain  -p "${APPLE_KEYCHAIN_PASSWORD}" build.keychain
+            security default-keychain -s build.keychain
+            security set-keychain-settings -lut 21600 build.keychain
+            security unlock-keychain  -p "${APPLE_KEYCHAIN_PASSWORD}" build.keychain
+
+            # Application cert signs the binary / .app.
+            security import apple_app.p12 -k build.keychain -P "${APPLE_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign
+            export SIGNING_IDENTITY="Developer ID Application: Blink Labs Software (${APPLE_TEAM_ID})"
+
+            # Installer cert (NEW, optional) signs the .pkg. Absent => unsigned pkg.
+            if [ -n "${APPLE_INSTALLER_CERTIFICATE}" ]; then
+              echo -n "${APPLE_INSTALLER_CERTIFICATE}" | base64 --decode -o apple_installer.p12
+              security import apple_installer.p12 -k build.keychain -P "${APPLE_INSTALLER_CERTIFICATE_PASSWORD}" -T /usr/bin/productsign
+              export INSTALLER_IDENTITY="Developer ID Installer: Blink Labs Software (${APPLE_TEAM_ID})"
+            else
+              echo "APPLE_INSTALLER_CERTIFICATE not set - the .pkg will be UNSIGNED (add the secret to sign it)."
+            fi
+
+            security set-key-partition-list -S apple-tool:,apple:,codesign:,productsign: -s -k "${APPLE_KEYCHAIN_PASSWORD}" build.keychain
+            rm -f apple_app.p12 apple_installer.p12
+            echo "::endgroup::"
+
+            echo "::group::Store notarytool credentials"
+            xcrun notarytool store-credentials "bursa-notary" \
+              --apple-id "${APPLE_ID}" \
+              --team-id  "${APPLE_TEAM_ID}" \
+              --password "${APPLE_APP_SPECIFIC_PASSWORD}"
+            # The password is now persisted in the keychain profile; drop it
+            # from the environment so nothing downstream can read it (mirrors
+            # the Windows path null-clearing JSIGN_STOREPASS after use).
+            unset APPLE_APP_SPECIFIC_PASSWORD
+            echo "::endgroup::"
+
+            export TEAM_ID="${APPLE_TEAM_ID}"
+            export NOTARY_PROFILE="bursa-notary"
+            export VERSION="${RELEASE_TAG#v}"
+          fi
+
+          export ARCH="${MATRIX_ARCH}"
+          ./packaging/macos/build-pkg.sh
+
+          # SECURITY: never publish an unsigned / un-notarized .pkg as a release
+          # asset. A genuinely distributable pkg needs BOTH identities - the app
+          # cert (SIGNING_IDENTITY) signs the binary/.app and the installer cert
+          # (INSTALLER_IDENTITY) signs the .pkg and gates notarization. On a real
+          # tag push, if either is missing, fail loudly instead of uploading +
+          # attesting an unsigned installer. Unsigned output stays allowed ONLY
+          # for non-tag/dev builds (which merely validate the packaging path).
+          if [ "${IS_RELEASE}" = "true" ] && { [ -z "${SIGNING_IDENTITY:-}" ] || [ -z "${INSTALLER_IDENTITY:-}" ]; }; then
+            echo "::error::Refusing to publish an unsigned macOS .pkg for a release: both APPLE_CERTIFICATE (app signing) and APPLE_INSTALLER_CERTIFICATE (installer signing + notarization) must be set on tag pushes."
+            exit 1
+          fi
+
+          if [ -n "${INSTALLER_IDENTITY:-}" ]; then
+            echo "::group::Verify pkg with spctl (must be accepted + Notarized Developer ID)"
+            PKG_PATH="dist/bursa-wallet-${VERSION}-darwin-${MATRIX_ARCH}.pkg"
+            spctl_out=$(spctl -a -vv --type install "${PKG_PATH}" 2>&1)
+            echo "${spctl_out}"
+            echo "${spctl_out}" | grep -q 'accepted'
+            echo "${spctl_out}" | grep -q 'Notarized Developer ID'
+            echo "::endgroup::"
+          fi
+
+      # ---- Windows: build the webview .exe (validates the CGO build) -------
+      - name: Build web bundle (Windows)
+        if: matrix.os == 'windows'
+        shell: bash
+        run: cd ui/web && npm ci && npm run build
+      - name: Build webview exe (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        env:
+          MATRIX_ARCH: ${{ matrix.arch }}
+          MSYS2_LOC_AMD64: ${{ steps.msys2-amd64.outputs.msys2-location }}
+          MSYS2_LOC_ARM64: ${{ steps.msys2-arm64.outputs.msys2-location }}
+        run: |
+          $env:GOOS = "windows"
+          $env:GOARCH = "$env:MATRIX_ARCH"
+          $env:CGO_ENABLED = "1"
+          if ("$env:MATRIX_ARCH" -eq "amd64") {
+            $msys2Loc = "$env:MSYS2_LOC_AMD64"
+            $env:CC = "$msys2Loc\mingw64\bin\gcc.exe"
+            $env:CXX = "$msys2Loc\mingw64\bin\g++.exe"
+          } else {
+            $msys2Loc = "$env:MSYS2_LOC_ARM64"
+            $env:CC = "$msys2Loc\clangarm64\bin\clang.exe"
+            $env:CXX = "$msys2Loc\clangarm64\bin\clang++.exe"
+          }
+          & $env:CC --version
+          Push-Location ui
+          go build -tags webview -ldflags "-s -w -H=windowsgui" -o "$env:GITHUB_WORKSPACE\bursa-wallet.exe" ./cmd/bursa-wallet
+          if ($LASTEXITCODE -ne 0) { Write-Error "webview exe build failed"; exit 1 }
+          Pop-Location
+
+      # ---- Windows signing (tags only): sign the .exe BEFORE the MSI wraps it
+      - name: Set up Java
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0 https://github.com/actions/setup-java/releases/tag/v5.6.0
+        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
+        with:
+          java-version: 21
+          distribution: 'temurin'
+      - id: 'auth'
+        name: Authenticate with Google Cloud
+        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0 https://github.com/google-github-actions/auth/releases/tag/v3.0.0
+        with:
+          credentials_json: '${{ secrets.CERTIFICATE_SA_CREDENTIALS }}'
+      - name: Set up Cloud SDK
+        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1 https://github.com/google-github-actions/setup-gcloud/releases/tag/v3.0.1
+      - name: Sign Windows binary (bursa-wallet.exe)
+        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
+        shell: pwsh
+        run: |
+          Write-Host "Downloading jsign.jar"
+          Invoke-WebRequest -Uri "https://github.com/ebourg/jsign/releases/download/6.0/jsign-6.0.jar" -OutFile "jsign.jar"
+          $expectedHash = "05ca18d4ab7b8c2183289b5378d32860f0ea0f3bdab1f1b8cae5894fb225fa8a"
+          $actualHash = (Get-FileHash -Path "jsign.jar" -Algorithm SHA256).Hash.ToLower()
+          if ($actualHash -ne $expectedHash) {
+            Write-Error "Hash verification failed for jsign.jar (expected $expectedHash, got $actualHash)"
+            exit 1
+          }
+          [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${{ secrets.CERTIFICATE_CHAIN }}")) | Out-File -FilePath "codesign-chain.pem" -Encoding utf8
+          $ACCESS_TOKEN = & gcloud auth print-access-token
+          Write-Host "::add-mask::$ACCESS_TOKEN"
+          $filename = "bursa-wallet.exe"
+          if (-not (Test-Path $filename)) { Write-Error "Expected binary not found: $filename"; exit 1 }
+          Write-Host "Signing $filename"
+          java -jar jsign.jar `
+            --storetype ${{ secrets.CERTIFICATE_STORE_TYPE }} `
+            --storepass "$ACCESS_TOKEN" `
+            --keystore ${{ secrets.CERTIFICATE_KEYSTORE }} `
+            --alias ${{ secrets.CERTIFICATE_KEY_NAME }} `
+            --certfile "codesign-chain.pem" `
+            --alg SHA-256 `
+            --tsmode RFC3161 `
+            --tsaurl "http://timestamp.globalsign.com/tsa/r6advanced1" `
+            --tsretries 3 `
+            --tsretrywait 10 `
+            --name "Bursa" `
+            --url "https://github.com/blinklabs-io/bursa" `
+            $filename
+          if ($LASTEXITCODE -ne 0) { Write-Error "jsign failed on $filename"; exit 1 }
+          $sig = Get-AuthenticodeSignature $filename
+          if ($sig.Status -ne 'Valid') { Write-Error "signature not valid for ${filename}: $($sig.Status)"; exit 1 }
+          if ($null -eq $sig.TimeStamperCertificate) { Write-Error "signature for ${filename} is not timestamped"; exit 1 }
+          Write-Host "Signed + verified: $filename"
+          $ACCESS_TOKEN = $null
+          # jsign.jar and codesign-chain.pem are kept for the MSI-sign step.
+
+      - name: Install WiX toolset (Windows)
+        # Install WiX on every push so the MSI build (below) runs on non-tag
+        # pushes too, catching packaging regressions before a release.
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 4.0.5
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" --version
+      - name: Build MSI (Windows)
+        # Build the MSI on every push to validate the packaging path. Signing is
+        # gated on tags: branch pushes produce an UNSIGNED installer (build-msi.ps1
+        # skips signing when JSIGN_STOREPASS is empty), tags produce a signed one.
+        if: matrix.os == 'windows'
+        shell: pwsh
+        env:
+          IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
+          # Reuse the already-built exe: build-msi.ps1 skips its internal
+          # `go build` when BURSA_EXE points at an existing file. On tags this
+          # exe was signed in place by the signing step above.
+          BURSA_EXE: ${{ github.workspace }}\bursa-wallet.exe
+          ARCH: ${{ matrix.arch }}
+          JSIGN_JAR: ${{ github.workspace }}\jsign.jar
+          JSIGN_KEYSTORE: ${{ secrets.CERTIFICATE_KEYSTORE }}
+          JSIGN_STORETYPE: ${{ secrets.CERTIFICATE_STORE_TYPE }}
+          JSIGN_ALIAS: ${{ secrets.CERTIFICATE_KEY_NAME }}
+          JSIGN_CERTFILE: ${{ github.workspace }}\codesign-chain.pem
+          JSIGN_TSAURL: 'http://timestamp.globalsign.com/tsa/r6advanced1'
+        run: |
+          if ($env:IS_RELEASE -eq 'true') {
+            # Release: pin the MSI version to the cleaned tag and sign it.
+            $env:VERSION = $env:RELEASE_TAG
+            $ACCESS_TOKEN = & gcloud auth print-access-token
+            Write-Host "::add-mask::$ACCESS_TOKEN"
+            $env:JSIGN_STOREPASS = $ACCESS_TOKEN
+          } else {
+            # Non-tag push: leave VERSION unset so build-msi.ps1 derives it from
+            # `git describe`, and clear JSIGN_STOREPASS so signing is skipped.
+            $env:JSIGN_STOREPASS = $null
+          }
+          pwsh ./packaging/windows/build-msi.ps1
+          if ($LASTEXITCODE -ne 0) { Write-Error "build-msi.ps1 failed"; exit 1 }
+          if ($env:IS_RELEASE -eq 'true') {
+            $env:JSIGN_STOREPASS = $null
+            $ACCESS_TOKEN = $null
+            Remove-Item -Path "codesign-chain.pem" -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path "jsign.jar"          -Force -ErrorAction SilentlyContinue
+          }
+      - name: Verify MSI signature (Windows)
+        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
+        shell: pwsh
+        env:
+          MATRIX_ARCH: ${{ matrix.arch }}
+        run: |
+          $sdkRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          if (-not (Test-Path $sdkRoot)) { Write-Error "Windows SDK not found at $sdkRoot"; exit 1 }
+          $archDir = if ("$env:MATRIX_ARCH" -eq "arm64") { "arm64" } else { "x64" }
+          $signtool = Get-ChildItem -Path $sdkRoot -Recurse -Filter signtool.exe `
+            | Where-Object { $_.FullName -match "\\$archDir\\signtool\.exe$" } `
+            | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) {
+            $signtool = Get-ChildItem -Path $sdkRoot -Recurse -Filter signtool.exe `
+              | Sort-Object FullName -Descending | Select-Object -First 1
+          }
+          if (-not $signtool) { Write-Error "signtool.exe not found under $sdkRoot"; exit 1 }
+          $cleanVersion = "$env:RELEASE_TAG" -replace '^v', ''
+          $msi = "dist\bursa-wallet-$cleanVersion-windows-$env:MATRIX_ARCH.msi"
+          if (-not (Test-Path $msi)) { Write-Error "MSI not found at $msi"; exit 1 }
+          & $signtool.FullName verify /pa /v $msi
+          if ($LASTEXITCODE -ne 0) { Write-Error "signtool verify failed for $msi"; exit 1 }
+          Write-Host "MSI signature verified: $msi"
+
+      # ---- Linux: native webview binary; FreeBSD: headless cross-build -----
+      - name: Build Linux webview binary
+        if: matrix.os == 'linux'
+        env:
+          GOARCH: ${{ matrix.arch }}
+        run: make wallet-webview
+      - name: Build FreeBSD headless binary
+        if: matrix.os == 'freebsd'
+        env:
+          CGO_ENABLED: '0'
+          GOOS: freebsd
+          GOARCH: ${{ matrix.arch }}
+        run: make wallet
+
+      # ---- Uploads (tags only) ---------------------------------------------
+      - name: Upload release asset (macOS pkg)
+        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'darwin'
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_ARCH: ${{ matrix.arch }}
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          _version="${RELEASE_TAG#v}"
+          _filename="bursa-wallet-${_version}-${MATRIX_OS}-${MATRIX_ARCH}.pkg"
+          _path="dist/${_filename}"
+          curl --fail --show-error --silent \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @"${_path}" \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${_filename}"
+      - name: Upload release asset (Windows MSI)
+        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows'
+        shell: pwsh
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_ARCH: ${{ matrix.arch }}
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $cleanVersion = "$env:RELEASE_TAG" -replace '^v', ''
+          $msiPath  = "dist\bursa-wallet-$cleanVersion-windows-$env:MATRIX_ARCH.msi"
+          # Name the uploaded asset with the same v-stripped version as the file
+          # produced (and as the macOS .pkg upload), not the raw RELEASE_TAG.
+          $assetName = "bursa-wallet-$cleanVersion-$env:MATRIX_OS-$env:MATRIX_ARCH.msi"
+          if (-not (Test-Path $msiPath)) { Write-Error "MSI not found at $msiPath"; exit 1 }
+          "MSI_PATH=$msiPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $headers = @{
+            "Authorization" = "token $env:GH_TOKEN"
+            "Content-Type" = "application/octet-stream"
+          }
+          $uploadUrl = "https://uploads.github.com/repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID/assets?name=$assetName"
+          Invoke-RestMethod -Uri $uploadUrl -Method Post -Headers $headers -InFile $msiPath
+      - name: Upload release asset (Linux/FreeBSD binary)
+        if: startsWith(github.ref, 'refs/tags/') && (matrix.os == 'linux' || matrix.os == 'freebsd')
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_ARCH: ${{ matrix.arch }}
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Strip the leading "v" so the tarball name matches the macOS .pkg /
+          # Windows .msi asset naming convention (bursa-wallet-<x.y.z>-...).
+          _version="${RELEASE_TAG#v}"
+          _filename="bursa-wallet-${_version}-${MATRIX_OS}-${MATRIX_ARCH}.tar.gz"
+          cp ui/bursa-wallet bursa-wallet
+          tar czf "${_filename}" bursa-wallet
+          # Export the shipped tarball path so the attest step below can target
+          # the ACTUAL uploaded artifact (mirrors the Windows MSI_PATH pattern);
+          # attesting the raw binary would hash a file we do not ship.
+          echo "TARBALL_PATH=${_filename}" >> "$GITHUB_ENV"
+          curl --fail --show-error --silent \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @"${_filename}" \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${_filename}"
+
+      # ---- Attestations (tags only) ----------------------------------------
+      - name: Attest pkg (macOS)
+        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'darwin'
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0 https://github.com/actions/attest/releases/tag/v4.2.0
         with:
-          subject-path: 'ui/bursa-wallet'
+          subject-path: 'dist/*.pkg'
+      - name: Attest MSI (Windows)
+        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows'
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0 https://github.com/actions/attest/releases/tag/v4.2.0
+        with:
+          subject-path: ${{ env.MSI_PATH }}
+      - name: Attest binary (Linux/FreeBSD)
+        if: startsWith(github.ref, 'refs/tags/') && (matrix.os == 'linux' || matrix.os == 'freebsd')
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0 https://github.com/actions/attest/releases/tag/v4.2.0
+        with:
+          # Attest the shipped .tar.gz (exported by the upload step), not the raw
+          # binary, so the attested hash matches the released artifact.
+          subject-path: ${{ env.TARBALL_PATH }}
 
   build-images:
     strategy:

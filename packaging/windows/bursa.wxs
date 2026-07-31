@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 Blink Labs Software
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+    WiX v4 source for the Bursa desktop-wallet Windows installer (.msi).
+
+    Bursa is a SINGLE GUI binary (bursa-wallet.exe, built with `-tags webview`,
+    which renders via the Microsoft Edge WebView2 runtime). Builds a 64-bit
+    installer (x64 or arm64, selected by build-msi.ps1 via `wix build -arch`)
+    that places bursa-wallet.exe under %ProgramFiles%\Bursa\ and creates a Start
+    Menu shortcut.
+
+    Variables supplied on the command line by build-msi.ps1:
+      -d Version=<x.y.z>         product version (<=3 dot-separated integers)
+      -d BursaExe=<path>         path to the built bursa-wallet.exe
+      -d BursaIco=<path>         path to the app icon (.ico)
+      -d WebView2Setup=<path>    path to MicrosoftEdgeWebview2Setup.exe, or the
+                                 sentinel "NONE" to skip bundling the runtime.
+
+    Notes for maintainers:
+      * UpgradeCode is a FIXED GUID and must never change across releases; it is
+        what ties successive versions together for major upgrades. ProductCode
+        is auto-generated per build ("*").
+      * The product is 64-bit: StandardDirectory "ProgramFiles6432Folder"
+        resolves to %ProgramFiles% (the real 64-bit Program Files) and the
+        components are marked Bitness="always64" (a 64-bit flag orthogonal to
+        the -arch platform, so it is correct for both x64 and arm64).
+      * WebView2: the Fyne-less webview GUI needs the Edge WebView2 Evergreen
+        runtime. Windows 11 ships it; some Windows 10 / Server SKUs do not, so
+        the bootstrapper (MicrosoftEdgeWebview2Setup.exe) is bundled and run
+        silently at install time ONLY when a registry search shows the runtime
+        is absent. build-msi.ps1 passes the sentinel "NONE" to skip bundling.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package
+      Name="Bursa"
+      Manufacturer="Blink Labs Software"
+      Version="$(var.Version)"
+      UpgradeCode="FDD7CC1E-E063-43D1-9EE1-5F24426F0AA5"
+      Scope="perMachine"
+      Compressed="yes">
+
+    <!-- Embed the compressed payload directly in the .msi (single-file). -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Block downgrades and clean up older versions on reinstall. -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+    <!-- Stop the running app before replacing files. Without this, Windows
+         Installer cannot overwrite the in-use bursa-wallet.exe: it renames it
+         to a *.rbf rollback file and the old process keeps running, leaving an
+         orphaned node/engine the new install can no longer match or stop.
+         CloseMessage asks the GUI to quit; TerminateProcess force-kills with
+         the given exit code if it is still running after the timeout. The WiX
+         schema requires a nonzero exit code here (minValue=1) and only arms the
+         terminate flag for a nonzero value, so "0" would silently disable the
+         force-kill (or fail validation) rather than enable it. RebootPrompt="no"
+         keeps the install from demanding a reboot. -->
+    <util:CloseApplication
+        Id="CloseBursaWallet"
+        Target="bursa-wallet.exe"
+        CloseMessage="yes"
+        TerminateProcess="1"
+        RebootPrompt="no"
+        Timeout="10" />
+
+    <!-- Add/Remove Programs (ARP) metadata. Manufacturer above maps to the
+         "Publisher" field. -->
+    <Property Id="ARPCONTACT" Value="Blink Labs Software" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/blinklabs-io/bursa" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/blinklabs-io/bursa" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/blinklabs-io/bursa/releases" />
+    <!-- Prevent "Modify"/"Repair" buttons from offering surprises. -->
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- Application icon used by ARP. -->
+    <Icon Id="BursaIcon" SourceFile="$(var.BursaIco)" />
+    <Property Id="ARPPRODUCTICON" Value="BursaIcon" />
+
+    <!-- Detect an already-installed Edge WebView2 Evergreen runtime. The
+         Evergreen client registers its version ("pv") under the well-known GUID
+         below. A non-empty value sets WVIEW2, which gates the bootstrapper CA.
+         Per Microsoft's documented per-machine detection, on 64-bit Windows the
+         value lives at the LITERAL path
+         HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{GUID}\pv, so it
+         must be read in the 64-bit registry view. Bitness="always32" would make
+         the WOW64 redirector rewrite SOFTWARE -> SOFTWARE\WOW6432Node a second
+         time (yielding a bogus WOW6432Node\WOW6432Node path that never
+         matches); always64 reads the documented key verbatim. -->
+    <Property Id="WVIEW2">
+      <RegistrySearch
+          Id="WebView2EvergreenSearch"
+          Root="HKLM"
+          Key="SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+          Name="pv"
+          Type="raw"
+          Bitness="always64" />
+    </Property>
+
+    <!-- %ProgramFiles%\Bursa\ (64-bit) -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Bursa" />
+    </StandardDirectory>
+
+    <!-- Start Menu\Programs (advertised shortcut target dir) -->
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <!-- ==== Components ==== -->
+
+    <ComponentGroup Id="BursaComponents" Directory="INSTALLFOLDER">
+      <!-- bursa-wallet.exe (single GUI binary) -->
+      <Component Id="cmp_bursa_wallet_exe" Bitness="always64" Guid="*">
+        <File Id="fil_bursa_wallet_exe"
+              Source="$(var.BursaExe)"
+              Name="bursa-wallet.exe"
+              KeyPath="yes" />
+      </Component>
+
+      <!-- Edge WebView2 Evergreen bootstrapper. Bundled next to the app so it
+           can be run silently by a deferred custom action when the runtime is
+           missing. Optional: build-msi.ps1 passes "NONE" to skip bundling. -->
+      <?if $(var.WebView2Setup) != "NONE" ?>
+      <Component Id="cmp_webview2_setup" Bitness="always64" Guid="*">
+        <File Id="fil_webview2_setup"
+              Source="$(var.WebView2Setup)"
+              Name="MicrosoftEdgeWebview2Setup.exe"
+              KeyPath="yes" />
+      </Component>
+      <?endif?>
+
+      <!-- Start Menu shortcut for the wallet, in its own per-machine component.
+           Placed directly in ProgramMenuFolder (overriding the group dir). The
+           registry value under HKMU (-> HKLM for perMachine) is the keypath a
+           non-advertised shortcut requires; no RemoveFolder is needed because
+           the shortcut is removed with the component. -->
+      <Component Id="cmp_bursa_shortcut"
+                 Directory="ProgramMenuFolder"
+                 Bitness="always64"
+                 Guid="*">
+        <Shortcut Id="sc_bursa_wallet"
+                  Name="Bursa"
+                  Description="Bursa Cardano full-node wallet"
+                  Target="[INSTALLFOLDER]bursa-wallet.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="BursaIcon" />
+
+        <RegistryValue Root="HKMU"
+                       Key="Software\Blink Labs Software\Bursa"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- The single feature that installs everything. -->
+    <Feature Id="Main" Title="Bursa" Level="1">
+      <ComponentGroupRef Id="BursaComponents" />
+    </Feature>
+
+    <!-- Silently install the WebView2 Evergreen runtime after our files are laid
+         down, but only when it is not already present (NOT WVIEW2) and we are
+         not uninstalling (NOT REMOVE). Deferred + no-impersonate so it runs
+         with elevation from the just-installed bootstrapper.
+
+         Return="ignore" is INTENTIONAL (not a swallowed error): the Microsoft
+         Evergreen bootstrapper hands off to a separate elevated installer and
+         can return a nonzero / non-standard exit code before the runtime
+         install has actually finished. Treating that as a hard failure would
+         roll back an otherwise-good Bursa install over a runtime step that
+         often completes moments later (and the app degrades gracefully if the
+         runtime is briefly absent), so we ignore its return code rather than
+         fail the whole MSI on it. -->
+    <?if $(var.WebView2Setup) != "NONE" ?>
+    <CustomAction Id="InstallWebView2Runtime"
+                  FileRef="fil_webview2_setup"
+                  ExeCommand="/silent /install"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="InstallWebView2Runtime"
+              Before="InstallFinalize"
+              Condition="NOT WVIEW2 AND NOT REMOVE" />
+    </InstallExecuteSequence>
+    <?endif?>
+
+  </Package>
+</Wix>

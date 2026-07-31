@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        CFBundleExecutable points at the single GUI binary: opening Bursa.app
+        launches bursa-wallet, which boots the embedded node + control surface
+        and opens the native webview window onto it. The __VERSION__ token is
+        substituted by build-pkg.sh at build time.
+    -->
+    <key>CFBundleExecutable</key>
+    <string>bursa-wallet</string>
+    <key>CFBundleIconFile</key>
+    <string>bursa</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.blinklabssoftware.bursa</string>
+    <key>CFBundleName</key>
+    <string>Bursa</string>
+    <key>CFBundleDisplayName</key>
+    <string>Bursa</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <!-- Bursa is a regular windowed app (Dock icon + window), not a menu-bar
+         accessory, so LSUIElement is false. -->
+    <key>LSUIElement</key>
+    <false/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
