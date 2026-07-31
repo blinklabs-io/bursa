@@ -98,6 +98,9 @@ type Spender interface {
 // touches the network; *chain.Client satisfies this interface.
 type NodeLookup interface {
 	Pool(ctx context.Context, poolID string) (chain.PoolInfo, error)
+	// Pools returns the node's full stake-pool directory (from
+	// /pools/extended) for the read-only browse/search screen.
+	Pools(ctx context.Context) ([]chain.PoolInfo, error)
 	DRep(ctx context.Context, drepID string) (chain.DRepInfo, error)
 	AssetAddresses(ctx context.Context, asset string) ([]chain.AssetAddress, error)
 	// Asset returns on-chain identity/metadata for a native asset (unit =
@@ -1157,6 +1160,29 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		serve(w, v, err)
 	}))
 
+	// Read-only stake-pool directory: browse/search the pools the node has
+	// indexed (from /pools/extended) for delegation. Node-local like the DEX
+	// pools list — nothing leaves 127.0.0.1 — so there is deliberately NO
+	// external-consent gate; it is gated like other reads (a queryable node).
+	// Search (q) and pagination (page/count) are applied server-side over the
+	// node's list. This is a DIFFERENT surface from /wallet/dex/pools (AMM
+	// liquidity pools).
+	mux.HandleFunc("GET /wallet/pools", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if lookup == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "pool directory unavailable"})
+			return
+		}
+		pools, err := lookup.Pools(r.Context())
+		if err != nil {
+			serveLookup(w, poolDirectoryResponse{}, err)
+			return
+		}
+		q := r.URL.Query()
+		writeJSON(w, http.StatusOK, filterAndPagePools(
+			pools, q.Get("q"), q.Get("page"), q.Get("count"),
+		))
+	}))
+
 	// Staking & governance. Pool/DRep lookups verify a pasted ID through the node
 	// (gated like reads — they only need the node serving queries). Building a
 	// delegation tx and confirming it are gated like sends (a fully synced node),
@@ -1386,6 +1412,68 @@ func serveLookup[T any](w http.ResponseWriter, v T, err error) {
 	default:
 		writeJSON(w, http.StatusBadGateway, errBody(err))
 	}
+}
+
+// poolDirectoryResponse is the GET /wallet/pools response: one page of the
+// node's stake-pool directory plus the total number of pools that matched the
+// search, so the client can page through them.
+type poolDirectoryResponse struct {
+	Pools []chain.PoolInfo `json:"pools"`
+	Total int              `json:"total"`
+	Page  int              `json:"page"`
+	Count int              `json:"count"`
+}
+
+const (
+	poolDirDefaultCount = 50
+	poolDirMaxCount     = 200
+)
+
+// filterAndPagePools applies the read-only directory's server-side search and
+// pagination over the node's full pool list. The search (q) is a
+// case-insensitive substring match against the pool's bech32 ID and hex ID —
+// the identity fields the node's /pools/extended list exposes. page is 1-based;
+// count is clamped to [1, poolDirMaxCount]. Invalid/absent page or count fall
+// back to their defaults rather than erroring.
+func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poolDirectoryResponse {
+	needle := strings.ToLower(strings.TrimSpace(q))
+	matched := make([]chain.PoolInfo, 0, len(pools))
+	for _, p := range pools {
+		if needle == "" ||
+			strings.Contains(strings.ToLower(p.PoolID), needle) ||
+			strings.Contains(strings.ToLower(p.Hex), needle) {
+			matched = append(matched, p)
+		}
+	}
+
+	count := poolDirDefaultCount
+	if n, err := strconv.Atoi(countStr); err == nil && n > 0 {
+		count = n
+	}
+	if count > poolDirMaxCount {
+		count = poolDirMaxCount
+	}
+	page := 1
+	if n, err := strconv.Atoi(pageStr); err == nil && n > 1 {
+		page = n
+	}
+
+	total := len(matched)
+	// (page-1)*count can overflow to a negative int for a very large page, so
+	// clamp start on both sides before slicing to avoid an out-of-range panic.
+	start := (page - 1) * count
+	if start < 0 || start > total {
+		start = total
+	}
+	end := start + count
+	if end < start || end > total {
+		end = total
+	}
+	pageItems := matched[start:end]
+	if pageItems == nil {
+		pageItems = []chain.PoolInfo{}
+	}
+	return poolDirectoryResponse{Pools: pageItems, Total: total, Page: page, Count: count}
 }
 
 // registerPoolRoutes wires the Stake Pool Operations (SPO) endpoints under

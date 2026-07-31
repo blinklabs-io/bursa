@@ -27,6 +27,7 @@ import type {
   SignTxRequest,
   SubmitSignedRequest,
   PoolInfo,
+  PoolDirectoryResponse,
   DRepInfo,
   AssetInfo,
   DelegationRequest,
@@ -223,6 +224,18 @@ export const resolveHandle = (name: string) =>
 // through the same Confirm path the send flow uses.
 export const getPool = (id: string) => apiGet<PoolInfo>(`/wallet/pool/${encodeURIComponent(id)}`);
 export const getDRep = (id: string) => apiGet<DRepInfo>(`/wallet/drep/${encodeURIComponent(id)}`);
+
+// Read-only stake-pool directory (node-local; distinct from the DEX AMM pools).
+// Browse/search the pools the node has indexed, for delegation. Search (q) and
+// pagination (page/count) are applied server-side over the node's list.
+export const getPoolDirectory = (params?: { q?: string; page?: number; count?: number }) => {
+  const qs = new URLSearchParams();
+  if (params?.q) qs.set("q", params.q);
+  if (params?.page && params.page > 1) qs.set("page", String(params.page));
+  if (params?.count) qs.set("count", String(params.count));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiGet<PoolDirectoryResponse>(`/wallet/pools${suffix}`);
+};
 
 // Native-asset on-chain metadata (node-only; see ../tokenMeta.ts for how the
 // Portfolio screen interprets it, with a fallback when it's absent).

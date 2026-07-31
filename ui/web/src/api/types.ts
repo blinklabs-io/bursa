@@ -235,8 +235,10 @@ export interface SubmitSignedRequest {
 
 // --- staking & governance ---
 
-// PoolInfo mirrors GET /wallet/pool/{id}: a node-verified stake pool readout.
-// margin_cost is a fraction (0.02 = 2%); the lovelace fields are decimal strings.
+// PoolInfo mirrors GET /wallet/pool/{id} and one entry of the GET /wallet/pools
+// directory: a node-verified stake pool readout. margin_cost / live_saturation
+// are fractions (0.02 = 2%, 1.0 = fully saturated); the lovelace fields are
+// decimal strings.
 export interface PoolInfo {
   pool_id: string;
   hex: string;
@@ -246,6 +248,19 @@ export interface PoolInfo {
   declared_pledge: string;
   fixed_cost: string;
   margin_cost: number;
+  live_saturation: number;
+}
+
+// PoolDirectoryResponse mirrors GET /wallet/pools: one page of the node's
+// stake-pool directory (from /pools/extended) plus the total number of pools
+// matching the search, for the read-only browse/search screen. This is the
+// stake-pool directory for delegation — distinct from the DEX AMM pools
+// (DexPoolsResponse).
+export interface PoolDirectoryResponse {
+  pools: PoolInfo[];
+  total: number;
+  page: number;
+  count: number;
 }
 
 // DRepInfo mirrors GET /wallet/drep/{id}: confirms a DRep exists on chain.

@@ -159,6 +159,10 @@ type PoolInfo struct {
 	DeclaredPledge string  `json:"declared_pledge"`
 	FixedCost      string  `json:"fixed_cost"`
 	MarginCost     float64 `json:"margin_cost"`
+	// LiveSaturation is the pool's live stake as a fraction of the saturation
+	// point (1.0 = fully saturated), as reported by /pools/extended. It is 0
+	// when the node's list omits it.
+	LiveSaturation float64 `json:"live_saturation"`
 }
 
 // ProtocolParams holds the protocol parameters the wallet needs for delegation:
@@ -583,6 +587,15 @@ func (c *Client) Pool(ctx context.Context, poolID string) (PoolInfo, error) {
 		}
 	}
 	return PoolInfo{}, fmt.Errorf("%w: /api/v0/pools/extended exceeded %d pages", errPageLimitExceeded, maxPages)
+}
+
+// Pools returns the full stake-pool directory the node has indexed, drawn from
+// the paginated GET /api/v0/pools/extended list (the same source Pool filters).
+// It is used by the read-only pool-directory browser; the per-page cache Pool
+// maintains is deliberately not consulted or populated here, since the directory
+// wants the complete list rather than a single lookup.
+func (c *Client) Pools(ctx context.Context) ([]PoolInfo, error) {
+	return getAllPages[PoolInfo](ctx, c, "/api/v0/pools/extended")
 }
 
 func (c *Client) cachedPool(poolID string) (PoolInfo, bool, bool) {

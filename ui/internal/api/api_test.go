@@ -466,10 +466,12 @@ func (f *fakeVault) DisableTPM(password string) error {
 // fakeLookup implements the api.NodeLookup interface (pool/DRep/asset
 // node-verified lookups) for handler tests.
 type fakeLookup struct {
-	pool    chain.PoolInfo
-	poolErr error
-	drep    chain.DRepInfo
-	drepErr error
+	pool     chain.PoolInfo
+	poolErr  error
+	pools    []chain.PoolInfo
+	poolsErr error
+	drep     chain.DRepInfo
+	drepErr  error
 
 	asset    chain.AssetInfo
 	assetErr error
@@ -478,6 +480,10 @@ type fakeLookup struct {
 
 func (f *fakeLookup) Pool(_ context.Context, _ string) (chain.PoolInfo, error) {
 	return f.pool, f.poolErr
+}
+
+func (f *fakeLookup) Pools(_ context.Context) ([]chain.PoolInfo, error) {
+	return f.pools, f.poolsErr
 }
 
 func (f *fakeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, error) {
@@ -491,6 +497,116 @@ func (f *fakeLookup) AssetAddresses(_ context.Context, _ string) ([]chain.AssetA
 func (f *fakeLookup) Asset(_ context.Context, unit string) (chain.AssetInfo, error) {
 	f.gotUnit = unit
 	return f.asset, f.assetErr
+}
+
+// poolDirectoryResult mirrors the GET /wallet/pools JSON response for tests.
+type poolDirectoryResult struct {
+	Pools []chain.PoolInfo `json:"pools"`
+	Total int              `json:"total"`
+	Page  int              `json:"page"`
+	Count int              `json:"count"`
+}
+
+func decodePoolDirectory(t *testing.T, rec *httptest.ResponseRecorder) poolDirectoryResult {
+	t.Helper()
+	var got poolDirectoryResult
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return got
+}
+
+func TestGetPoolDirectory(t *testing.T) {
+	lookup := &fakeLookup{pools: []chain.PoolInfo{
+		{PoolID: "pool1aaa", Hex: "aa", LiveStake: "5000000000", MarginCost: 0.05, LiveSaturation: 0.42},
+		{PoolID: "pool1bbb", Hex: "bb", LiveStake: "9000000000", MarginCost: 0.02, LiveSaturation: 0.90},
+	}}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pools", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/pools = %d, want 200", rec.Code)
+	}
+	got := decodePoolDirectory(t, rec)
+	if got.Total != 2 || len(got.Pools) != 2 || got.Page != 1 {
+		t.Fatalf("directory = %+v, want 2 pools on page 1", got)
+	}
+	if got.Pools[1].PoolID != "pool1bbb" || got.Pools[1].LiveSaturation != 0.90 {
+		t.Fatalf("pool[1] = %+v, want pool1bbb with saturation 0.90", got.Pools[1])
+	}
+}
+
+func TestGetPoolDirectorySearchFilter(t *testing.T) {
+	lookup := &fakeLookup{pools: []chain.PoolInfo{
+		{PoolID: "pool1aaa", Hex: "aa"},
+		{PoolID: "pool1bbb", Hex: "bb"},
+	}}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pools?q=BBB", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/pools?q=BBB = %d, want 200", rec.Code)
+	}
+	got := decodePoolDirectory(t, rec)
+	if got.Total != 1 || len(got.Pools) != 1 || got.Pools[0].PoolID != "pool1bbb" {
+		t.Fatalf("filtered directory = %+v, want only pool1bbb", got)
+	}
+}
+
+func TestGetPoolDirectoryEmpty(t *testing.T) {
+	lookup := &fakeLookup{pools: nil}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pools", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/pools = %d, want 200", rec.Code)
+	}
+	got := decodePoolDirectory(t, rec)
+	if got.Total != 0 || len(got.Pools) != 0 {
+		t.Fatalf("empty directory = %+v, want 0 pools", got)
+	}
+}
+
+func TestGetPoolDirectoryPageOverflow(t *testing.T) {
+	lookup := &fakeLookup{pools: []chain.PoolInfo{
+		{PoolID: "pool1aaa", Hex: "aa"},
+		{PoolID: "pool1bbb", Hex: "bb"},
+	}}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		// (page-1)*count overflows int64 to a negative start; must not panic.
+		{"overflow", "/wallet/pools?page=9223372036854775807&count=50"},
+		// One page past the end: a valid but empty page.
+		{"just-past-end", "/wallet/pools?page=2&count=50"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, tc.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want 200", tc.path, rec.Code)
+			}
+			got := decodePoolDirectory(t, rec)
+			if got.Total != 2 || len(got.Pools) != 0 {
+				t.Fatalf("overflow page = %+v, want total 2 with an empty page", got)
+			}
+		})
+	}
+}
+
+func TestGetPoolDirectoryNilLookup(t *testing.T) {
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pools", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /wallet/pools with nil lookup = %d, want 503", rec.Code)
+	}
 }
 
 func (f *fakeVault) AddHardwareWallet(name, accountXpubBech32, network, vaultPw string, accountIndex uint32, _ int) (vault.WalletMeta, error) {
@@ -3076,6 +3192,10 @@ type fakeNodeLookup struct {
 
 func (f *fakeNodeLookup) Pool(_ context.Context, _ string) (chain.PoolInfo, error) {
 	return f.pool, f.poolErr
+}
+
+func (f *fakeNodeLookup) Pools(_ context.Context) ([]chain.PoolInfo, error) {
+	return nil, chain.ErrNotFound
 }
 
 func (f *fakeNodeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, error) {
