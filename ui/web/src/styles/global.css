@@ -543,6 +543,22 @@ a:hover {
   color: var(--accent);
 }
 
+/* Inline pool id + explorer link inside a directory table cell. */
+.pool-id-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Pager for the stake-pool directory (Previous / status / Next). */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
 /* ---------------------------------------------------------------- tables -- */
 .table-wrap {
   overflow-x: auto;

@@ -13,6 +13,7 @@ const MOCK_POOL: PoolInfo = {
   declared_pledge: "100000000000",
   fixed_cost: "340000000",
   margin_cost: 0.02,
+  live_saturation: 0.42,
 };
 
 const MOCK_DREP: DRepInfo = {

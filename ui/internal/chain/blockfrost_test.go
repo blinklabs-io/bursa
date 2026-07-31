@@ -472,6 +472,29 @@ func TestPoolNotInList(t *testing.T) {
 	}
 }
 
+func TestPoolsReturnsFullList(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/pools/extended" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"pool_id":"pool1aaa","hex":"aa","margin_cost":0.05,"live_stake":"5000000000","live_saturation":0.42},
+			{"pool_id":"pool1bbb","hex":"bb","margin_cost":0.02,"live_stake":"9000000000","live_saturation":0.90}
+		]`))
+	})
+	got, err := c.Pools(context.Background())
+	if err != nil {
+		t.Fatalf("Pools: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Pools returned %d pools, want 2", len(got))
+	}
+	if got[1].PoolID != "pool1bbb" || got[1].LiveSaturation != 0.90 || got[1].LiveStake != "9000000000" {
+		t.Fatalf("pool[1] = %+v, want pool1bbb / saturation 0.90 / live 9000000000", got[1])
+	}
+}
+
 func TestDRep(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
