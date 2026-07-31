@@ -14,9 +14,16 @@ import {
   getDRep,
   buildDelegation,
   confirmDelegation,
+  getHardwareSignRequest,
+  submitHardware,
   ApiError,
 } from "../api/client";
 import { useDelegation } from "../api/hooks";
+import { connectDevice } from "../hw";
+import type { HardwareSigner } from "../hw";
+import { getKeystoneXfp, setKeystoneXfp } from "../hw/deviceKind";
+import { recoverSeedSignerXfp } from "../hw/seedsigner";
+import { useSeedSignerQRBridge } from "../components/SeedSignerQRModal";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
@@ -403,14 +410,44 @@ const CERT_MARK: Record<Cert["kind"], string> = {
 
 interface PreviewPhaseProps {
   preview: DelegationPreview;
+  // A SeedSigner hardware wallet signs the delegation air-gapped over QR
+  // (its device supports certificates / votes); a full wallet signs locally
+  // with its spending password. Only SeedSigner reaches here as hardware (the
+  // app's canStake gate excludes the certificate-incapable hardware devices).
+  isHardware?: boolean;
+  walletId?: string;
   onBack: () => void;
   onDone: (result: TxResult) => void;
 }
 
-function PreviewPhase({ preview, onBack, onDone }: PreviewPhaseProps) {
+function PreviewPhase({ preview, isHardware, walletId, onBack, onDone }: PreviewPhaseProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // SeedSigner air-gapped signing: the device master fingerprint (xfp) is
+  // required so the device matches its witness paths; it is a per-wallet local
+  // hint that can go missing (browser-data wipe), in which case the user
+  // re-imports the account to recover it before signing.
+  const [airGapXfp, setAirGapXfp] = useState<string | undefined>(() =>
+    walletId ? getKeystoneXfp(walletId) : undefined,
+  );
+  const { bridge: seedSignerBridge, element: seedSignerModal } = useSeedSignerQRBridge();
+  const needsAirGapResync = (isHardware ?? false) && airGapXfp === undefined;
+
+  async function handleAirGapResync() {
+    setError(null);
+    setLoading(true);
+    try {
+      const xfp = await recoverSeedSignerXfp(seedSignerBridge);
+      if (walletId) setKeystoneXfp(walletId, xfp);
+      setAirGapXfp(xfp);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function handleConfirm() {
     setError(null);
@@ -420,6 +457,37 @@ function PreviewPhase({ preview, onBack, onDone }: PreviewPhaseProps) {
     } catch (e) {
       setError(errorMessage(e));
     } finally {
+      setLoading(false);
+    }
+  }
+
+  // Hardware confirm: connect the SeedSigner over QR → fetch the neutral signing
+  // request for this delegation pending id → sign on the device → submit the
+  // witness. This reuses the exact neutral hardware-signing flow Send uses; the
+  // delegation shares the same pending store, so the send-scoped endpoints apply.
+  async function handleHardwareConfirm() {
+    setError(null);
+    if (airGapXfp === undefined) {
+      setError(
+        "This SeedSigner wallet's device fingerprint is missing. Re-import the account to recover it before signing.",
+      );
+      return;
+    }
+    setLoading(true);
+    let session: HardwareSigner | null = null;
+    try {
+      session = await connectDevice("seedsigner", { bridge: seedSignerBridge, xfp: airGapXfp });
+      const signResp = await getHardwareSignRequest(preview.pending_id);
+      if (signResp.unsupported) {
+        setError(`This transaction cannot be signed on hardware: ${signResp.unsupported}`);
+        return;
+      }
+      const witnessCbor = await session.signTx(signResp);
+      onDone(await submitHardware(preview.pending_id, witnessCbor));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      if (session) await session.close().catch(() => {});
       setLoading(false);
     }
   }
@@ -467,37 +535,85 @@ function PreviewPhase({ preview, onBack, onDone }: PreviewPhaseProps) {
         </dl>
       </Card>
 
-      <Card title="Spending password">
+      <Card title={isHardware ? "Sign on your SeedSigner" : "Spending password"}>
         <div className="staking-form">
-          <label htmlFor="staking-password">Spending password</label>
-          <Input
-            id="staking-password"
-            type="password"
-            placeholder="Spending password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            disabled={loading}
-          />
-          <p className="helper-text">
-            Signs locally; the transaction is submitted through your own node.
-          </p>
+          {isHardware ? (
+            needsAirGapResync ? (
+              <>
+                <p className="helper-text">
+                  We could not find this wallet&apos;s SeedSigner fingerprint on this browser
+                  (it may have been cleared). On the SeedSigner, load your seed and choose
+                  Export account, then scan that QR to reconnect.
+                </p>
+                {error && (
+                  <p role="alert" className="error-text">
+                    {error}
+                  </p>
+                )}
+                <div className="preview-actions">
+                  <Button variant="ghost" onClick={onBack} disabled={loading}>
+                    Back
+                  </Button>
+                  <Button onClick={handleAirGapResync} disabled={loading}>
+                    {loading ? "Scanning…" : "Scan account QR"}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="helper-text">
+                  Confirm to show the transaction as a QR for your SeedSigner, then scan its
+                  signature back. Submitted through your own node.
+                </p>
+                {error && (
+                  <p role="alert" className="error-text">
+                    {error}
+                  </p>
+                )}
+                <div className="preview-actions">
+                  <Button variant="ghost" onClick={onBack} disabled={loading}>
+                    Back
+                  </Button>
+                  <Button onClick={handleHardwareConfirm} disabled={loading}>
+                    {loading ? "Signing…" : "Confirm on SeedSigner"}
+                  </Button>
+                </div>
+              </>
+            )
+          ) : (
+            <>
+              <label htmlFor="staking-password">Spending password</label>
+              <Input
+                id="staking-password"
+                type="password"
+                placeholder="Spending password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
+              />
+              <p className="helper-text">
+                Signs locally; the transaction is submitted through your own node.
+              </p>
 
-          {error && (
-            <p role="alert" className="error-text">
-              {error}
-            </p>
+              {error && (
+                <p role="alert" className="error-text">
+                  {error}
+                </p>
+              )}
+
+              <div className="preview-actions">
+                <Button variant="ghost" onClick={onBack} disabled={loading}>
+                  Back
+                </Button>
+                <Button onClick={handleConfirm} disabled={loading || !password}>
+                  {loading ? "Submitting…" : "Confirm & sign"}
+                </Button>
+              </div>
+            </>
           )}
-
-          <div className="preview-actions">
-            <Button variant="ghost" onClick={onBack} disabled={loading}>
-              Back
-            </Button>
-            <Button onClick={handleConfirm} disabled={loading || !password}>
-              {loading ? "Submitting…" : "Confirm & sign"}
-            </Button>
-          </div>
         </div>
       </Card>
+      {seedSignerModal}
     </div>
   );
 }
@@ -583,9 +699,14 @@ interface StakingProps {
   // Optional so existing no-prop callers/tests keep working; the app always
   // passes the active wallet's real network when routing to this screen.
   network?: string;
+  // A SeedSigner hardware wallet delegates by signing air-gapped over QR
+  // (the app only routes staking to a hardware wallet whose device supports
+  // certificates — i.e. SeedSigner); walletId keys its per-wallet fingerprint.
+  isHardware?: boolean;
+  walletId?: string;
 }
 
-export function Staking({ network = "preview" }: StakingProps = {}) {
+export function Staking({ network = "preview", isHardware, walletId }: StakingProps = {}) {
   const delegation = useDelegation();
 
   const [phase, setPhase] = useState<Phase>("status");
@@ -653,6 +774,8 @@ export function Staking({ network = "preview" }: StakingProps = {}) {
     return (
       <PreviewPhase
         preview={preview}
+        isHardware={isHardware}
+        walletId={walletId}
         onBack={() => setPhase(previewFrom)}
         onDone={handleDone}
       />

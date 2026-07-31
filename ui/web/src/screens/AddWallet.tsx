@@ -8,8 +8,11 @@ import { addWallet, addHardwareWallet, generateMnemonic, ApiError } from "../api
 import { connectHardware } from "../hw";
 import type { HardwareKind, HardwareSigner } from "../hw";
 import { setDeviceKind, setKeystoneXfp } from "../hw/deviceKind";
+import { setWalletXfp } from "../hw/qr/xfp";
 import { parseAccountSyncUR } from "../hw/keystone";
+import { importSeedSignerAccount } from "../hw/seedsigner";
 import { useKeystoneQRBridge } from "../components/KeystoneQRModal";
+import { useSeedSignerQRBridge } from "../components/SeedSignerQRModal";
 import type { WalletView } from "../api/types";
 import { MIN_PASSWORD_LEN, passwordLength } from "../password";
 import { CHALLENGE_WORD_COUNT, isChallengeAnswerCorrect, pickChallengeIndices, validateChallenge } from "../phraseChallenge";
@@ -58,12 +61,14 @@ const DEVICE_OPTIONS: { kind: HardwareKind; label: string; disabled?: boolean }[
   { kind: "ledger", label: "Ledger" },
   { kind: "trezor", label: "Trezor" },
   { kind: "keystone", label: "Keystone" },
+  { kind: "seedsigner", label: "SeedSigner" },
 ];
 
 const DEVICE_LABELS: Record<HardwareKind, string> = {
   ledger: "Ledger",
   trezor: "Trezor",
   keystone: "Keystone",
+  seedsigner: "SeedSigner",
 };
 
 export function AddWallet({
@@ -104,6 +109,9 @@ export function AddWallet({
   // The QR modal bridge is always mounted (hooks can't be conditional); it
   // renders nothing until a Keystone QR flow drives it.
   const { bridge: keystoneBridge, element: keystoneModal } = useKeystoneQRBridge();
+  // SeedSigner is likewise air-gapped QR only; its own bridge drives the
+  // account-request → account-response exchange for the import below.
+  const { bridge: seedSignerBridge, element: seedSignerModal } = useSeedSignerQRBridge();
 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -248,6 +256,27 @@ export function AddWallet({
         // (needsKeystoneResync) and prompts an account-sync re-scan to recover
         // it before any QR signing — so a lost hint is non-fatal.
         setKeystoneXfp(wallet.id, xfp);
+        onAdded(wallet);
+        return;
+      }
+
+      if (deviceKind === "seedsigner") {
+        // Air-gapped account import: display a `cardano-account-req` QR, then
+        // scan the device's `cardano-account` reply. importSeedSignerAccount
+        // re-encodes the xpub through the shared helper (byte-identical to every
+        // other device) and hands back the master fingerprint we must remember
+        // so Send can sign over QR later. Same client-only-hint semantics as
+        // Keystone: a lost xfp is recoverable by re-importing.
+        const acct = await importSeedSignerAccount(seedSignerBridge, account);
+        const wallet = await addHardwareWallet(
+          name.trim() || defaultName,
+          acct.xpub,
+          account,
+          network,
+          vaultPw,
+        );
+        setDeviceKind(wallet.id, "seedsigner");
+        setWalletXfp(wallet.id, acct.xfp);
         onAdded(wallet);
         return;
       }
@@ -512,10 +541,11 @@ export function AddWallet({
     // need no such gate.
     const needsExternalConsent = deviceKind === "trezor";
     const isKeystone = deviceKind === "keystone";
-    // Keystone is air-gapped QR only (USB is not user-selectable — see the note
-    // at the keystoneTransport removal above), so "is Keystone" implies QR.
-    const isKeystoneQR = isKeystone;
-    const connectVerb = isKeystoneQR ? "Scan account QR" : `Connect ${deviceLabel}`;
+    const isSeedSigner = deviceKind === "seedsigner";
+    // Keystone and SeedSigner are air-gapped QR only, so account import is a
+    // scan-a-QR flow rather than a live cable connect.
+    const isAirGapQR = isKeystone || isSeedSigner;
+    const connectVerb = isAirGapQR ? "Scan account QR" : `Connect ${deviceLabel}`;
     return (
       <Card title="Connect hardware wallet">
         <form onSubmit={handleHardwareConnect}>
@@ -541,9 +571,9 @@ export function AddWallet({
             ))}
           </fieldset>
 
-          {isKeystone && (
+          {isAirGapQR && (
             <p className="helper-text">
-              Keystone connects air-gapped over QR — no cable, nothing leaves your node.
+              {deviceLabel} connects air-gapped over QR — no cable, nothing leaves your node.
             </p>
           )}
 
@@ -603,9 +633,11 @@ export function AddWallet({
           )}
 
           <p className="helper-text">
-            {isKeystoneQR
+            {isKeystone
               ? "On your Keystone, open the Cardano account and choose Sync / Connect Software Wallet, then scan the account QR it shows. No spending password is needed — the device signs every transaction."
-              : `Connect your ${deviceLabel} device, open the Cardano app, then click Connect. No spending password is needed — the device signs every transaction.`}
+              : isSeedSigner
+                ? "On your SeedSigner, load your seed and choose Export account, then scan the account QR it shows. No spending password is needed — the device signs every transaction."
+                : `Connect your ${deviceLabel} device, open the Cardano app, then click Connect. No spending password is needed — the device signs every transaction.`}
           </p>
 
           {error && (
@@ -619,7 +651,7 @@ export function AddWallet({
               type="submit"
               disabled={loading || (needsExternalConsent && !externalConsent)}
             >
-              {loading ? (isKeystoneQR ? "Scanning…" : "Connecting…") : connectVerb}
+              {loading ? (isAirGapQR ? "Scanning…" : "Connecting…") : connectVerb}
             </Button>
             <Button
               type="button"
@@ -637,6 +669,7 @@ export function AddWallet({
           </div>
         </form>
         {keystoneModal}
+        {seedSignerModal}
       </Card>
     );
   }

@@ -2,7 +2,21 @@ import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { Staking } from "./Staking";
 import * as client from "../api/client";
 import * as hooks from "../api/hooks";
-import type { DelegationPreview, TxResult, PoolInfo, DRepInfo } from "../api/types";
+import type {
+  DelegationPreview,
+  TxResult,
+  PoolInfo,
+  DRepInfo,
+  HardwareSignResponse,
+} from "../api/types";
+
+// Mock the hardware factory so the SeedSigner staking path signs via a stubbed
+// session rather than driving a real QR exchange. Software tests never call it.
+const { mockSeedSignerSignTx, mockConnectDevice } = vi.hoisted(() => ({
+  mockSeedSignerSignTx: vi.fn(),
+  mockConnectDevice: vi.fn(),
+}));
+vi.mock("../hw", () => ({ connectDevice: mockConnectDevice }));
 
 const MOCK_POOL: PoolInfo = {
   pool_id: "pool1abc",
@@ -415,4 +429,84 @@ test("(l) a buildDelegation error (e.g. no change) is shown inline on the form",
   await waitFor(() => expect(screen.getByText(/nothing to do/i)).toBeInTheDocument());
   // Still on the set-up form.
   expect(screen.getByRole("button", { name: /review delegation/i })).toBeInTheDocument();
+});
+
+// --- SeedSigner hardware delegation (air-gapped QR) ---
+
+const MOCK_HW_SIGN_RESP: HardwareSignResponse = {
+  network: "preview",
+  network_id: 0,
+  protocol_magic: 2,
+  inputs: [{ tx_hash_hex: "deadbeef", output_index: 0, path: "1852'/1815'/0'/0/0" }],
+  outputs: [],
+  change_outputs: [{ index: 0, path: "1852'/1815'/0'/1/0" }],
+  certificate_signers: [
+    { cert_kind: "stake_delegation", role: "stake", path: "1852'/1815'/0'/2/0", key_hash_hex: "aa" },
+  ],
+  fee: "174000",
+  required_signers: [],
+  unsigned_tx_cbor: "84a4deadbeef",
+};
+
+test("(m) SeedSigner hardware wallet signs the delegation air-gapped and submits the witness", async () => {
+  mockDelegation({ active: false });
+  vi.spyOn(client, "buildDelegation").mockResolvedValue(MOCK_PREVIEW);
+  const getReq = vi.spyOn(client, "getHardwareSignRequest").mockResolvedValue(MOCK_HW_SIGN_RESP);
+  const submit = vi.spyOn(client, "submitHardware").mockResolvedValue(MOCK_TX_RESULT);
+  localStorage.clear();
+  // A valid stored fingerprint means no recovery prompt — signing can proceed.
+  localStorage.setItem("bursa.hw.keystoneXfp", JSON.stringify({ "hw-stk": "52744703" }));
+  mockSeedSignerSignTx.mockReset().mockResolvedValue("81825820aabb");
+  mockConnectDevice.mockReset().mockResolvedValue({
+    kind: "seedsigner",
+    capabilities: { send: true, staking: true, governance: true, multisig: true, poolReg: false },
+    getAccountXpub: vi.fn(),
+    signTx: mockSeedSignerSignTx,
+    close: vi.fn().mockResolvedValue(undefined),
+  });
+
+  render(<Staking isHardware walletId="hw-stk" />);
+
+  fireEvent.change(screen.getByPlaceholderText(/pool1\.\.\./i), { target: { value: "pool1abc" } });
+  fireEvent.click(screen.getByRole("button", { name: /review delegation/i }));
+
+  // A hardware wallet has no spending-password field — it signs on the device.
+  await waitFor(() => expect(screen.getByText(/register stake key/i)).toBeInTheDocument());
+  expect(screen.queryByPlaceholderText(/spending password/i)).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /confirm on seedsigner/i }));
+
+  await waitFor(() => {
+    expect(mockConnectDevice.mock.calls[0][0]).toBe("seedsigner");
+    expect(getReq).toHaveBeenCalledWith("del-pending-1");
+    // The NEUTRAL backend request is passed straight to the device signer.
+    expect(mockSeedSignerSignTx).toHaveBeenCalledWith(MOCK_HW_SIGN_RESP);
+    expect(submit).toHaveBeenCalledWith("del-pending-1", "81825820aabb");
+  });
+  await waitFor(() =>
+    expect(screen.getByText(new RegExp(MOCK_TX_RESULT.tx_hash))).toBeInTheDocument(),
+  );
+
+  localStorage.clear();
+});
+
+test("(n) SeedSigner staking with a missing fingerprint prompts a re-import, no device connect", async () => {
+  mockDelegation({ active: false });
+  vi.spyOn(client, "buildDelegation").mockResolvedValue(MOCK_PREVIEW);
+  localStorage.clear();
+  mockConnectDevice.mockReset();
+
+  render(<Staking isHardware walletId="hw-stk-noxfp" />);
+
+  fireEvent.change(screen.getByPlaceholderText(/pool1\.\.\./i), { target: { value: "pool1abc" } });
+  fireEvent.click(screen.getByRole("button", { name: /review delegation/i }));
+
+  await waitFor(() => expect(screen.getByText(/register stake key/i)).toBeInTheDocument());
+  // A missing fingerprint shows the re-import prompt, never a confirm button, and
+  // never starts a device connection with a fabricated zero fingerprint.
+  expect(screen.getByRole("button", { name: /scan account qr/i })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /confirm on seedsigner/i })).not.toBeInTheDocument();
+  expect(mockConnectDevice).not.toHaveBeenCalled();
+
+  localStorage.clear();
 });
