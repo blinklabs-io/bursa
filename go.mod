@@ -5,7 +5,7 @@ go 1.25.8
 require (
 	cloud.google.com/go/secretmanager v1.21.0
 	filippo.io/edwards25519 v1.2.0
-	github.com/MicahParks/keyfunc/v3 v3.8.0
+	github.com/MicahParks/keyfunc/v3 v3.8.1
 	github.com/blinklabs-io/go-bip39 v0.2.0
 	github.com/blinklabs-io/gouroboros v0.189.4
 	github.com/btcsuite/btcd/btcutil v1.2.0
@@ -54,7 +54,7 @@ require (
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.58.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.58.0 // indirect
 	github.com/KyleBanks/depth v1.2.1 // indirect
-	github.com/MicahParks/jwkset v0.11.0 // indirect
+	github.com/MicahParks/jwkset v0.11.1 // indirect
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20251001021608-1fe7b43fc4d6 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.42.1 // indirect
