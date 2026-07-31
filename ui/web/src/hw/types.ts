@@ -9,6 +9,7 @@
  */
 
 import type { HardwareSignResponse } from "../api/types";
+import type { AirGapQRBridge, ScannedUR } from "./qr/types";
 
 /** Which hardware device a signer talks to. */
 export type HardwareKind = "ledger" | "trezor" | "keystone";
@@ -93,36 +94,19 @@ export type ConnectOptions = LocalConnectOptions | ExternalConnectOptions;
 // owns pixels + camera; hw/keystone.ts owns all UR/CBOR. Everything stays local.
 
 /**
- * A single Uniform Resource decoded from a scanned QR (or QR animation). `type`
- * is the UR type (e.g. "cardano-signature", "crypto-multi-accounts") and
- * `cborHex` is its raw CBOR payload as hex. hw/keystone.ts decodes it into the
- * concrete Keystone registry item.
+ * A single Uniform Resource decoded from a scanned QR. Keystone-named alias of
+ * the shared {@link ScannedUR}; hw/keystone.ts decodes it into the concrete
+ * Keystone registry item.
  */
-export interface KeystoneScannedUR {
-  type: string;
-  cborHex: string;
-}
+export type KeystoneScannedUR = ScannedUR;
 
 /**
- * UI bridge for the air-gapped QR transport. Implemented by the screen (a modal
- * that renders the animated QR and the webcam scanner); consumed by the Keystone
- * signer. Purely local — no method contacts the network.
+ * UI bridge for the air-gapped QR transport. Keystone-named alias of the shared
+ * {@link AirGapQRBridge}: implemented by the screen (the modal that renders the
+ * animated QR and the webcam scanner) and consumed by the Keystone signer.
+ * Purely local — no method contacts the network.
  */
-export interface KeystoneQRBridge {
-  /**
-   * Display the request to the user as an animated QR. `fragments` are the UR
-   * part strings the UI cycles through as QR frames. For account-sync (no
-   * request to show) this is never called.
-   */
-  displayRequest(fragments: string[]): void;
-  /**
-   * Prompt the user to scan the device's reply through the webcam and resolve
-   * with the decoded UR. Rejects if the user cancels or the camera is denied.
-   */
-  scanResponse(): Promise<KeystoneScannedUR>;
-  /** Tear down the modal + camera. Always invoked in a finally. */
-  close(): void;
-}
+export type KeystoneQRBridge = AirGapQRBridge;
 
 /**
  * Air-gapped QR transport options. `xfp` is the device master fingerprint

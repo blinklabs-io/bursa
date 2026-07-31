@@ -7,9 +7,9 @@ const QR_BG = "#ffffff";
 const QR_FG = "#0c0f15";
 const DEFAULT_SIZE = 240;
 
-// How long each frame is shown, in milliseconds. Slow enough that a Keystone
-// camera reliably captures each frame, fast enough that a multi-part animation
-// completes in a few seconds.
+// How long each frame is shown, in milliseconds. Slow enough that an air-gapped
+// device camera reliably captures each frame, fast enough that a multi-part
+// animation completes in a few seconds.
 const DEFAULT_INTERVAL_MS = 300;
 
 interface AnimatedQRProps {
