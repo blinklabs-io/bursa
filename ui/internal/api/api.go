@@ -102,6 +102,9 @@ type NodeLookup interface {
 	// /pools/extended) for the read-only browse/search screen.
 	Pools(ctx context.Context) ([]chain.PoolInfo, error)
 	DRep(ctx context.Context, drepID string) (chain.DRepInfo, error)
+	// DReps returns the node's full DRep directory (read node-locally from
+	// Dingo's metadata DB) for the read-only browse/search screen.
+	DReps(ctx context.Context) ([]chain.DRepInfo, error)
 	AssetAddresses(ctx context.Context, asset string) ([]chain.AssetAddress, error)
 	// Asset returns on-chain identity/metadata for a native asset (unit =
 	// policy ID + hex asset name). Most assets have no indexed on-chain
@@ -1183,6 +1186,27 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		))
 	}))
 
+	// Read-only DRep directory: browse/search the delegated representatives the
+	// node has indexed, to inform vote-delegation. Node-local (read from Dingo's
+	// metadata DB, nothing leaves 127.0.0.1) — so, like the pool directory,
+	// there is deliberately NO external-consent gate. Search (q) and pagination
+	// (page/count) are applied server-side over the node's list.
+	mux.HandleFunc("GET /wallet/dreps", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if lookup == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drep directory unavailable"})
+			return
+		}
+		dreps, err := lookup.DReps(r.Context())
+		if err != nil {
+			serveLookup(w, drepDirectoryResponse{}, err)
+			return
+		}
+		q := r.URL.Query()
+		writeJSON(w, http.StatusOK, filterAndPageDReps(
+			dreps, q.Get("q"), q.Get("page"), q.Get("count"),
+		))
+	}))
+
 	// Staking & governance. Pool/DRep lookups verify a pasted ID through the node
 	// (gated like reads — they only need the node serving queries). Building a
 	// delegation tx and confirming it are gated like sends (a fully synced node),
@@ -1474,6 +1498,63 @@ func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poo
 		pageItems = []chain.PoolInfo{}
 	}
 	return poolDirectoryResponse{Pools: pageItems, Total: total, Page: page, Count: count}
+}
+
+// drepDirectoryResponse is the GET /wallet/dreps response: one page of the
+// node's DRep directory plus the total number of DReps that matched the search,
+// so the client can page through them.
+type drepDirectoryResponse struct {
+	DReps []chain.DRepInfo `json:"dreps"`
+	Total int              `json:"total"`
+	Page  int              `json:"page"`
+	Count int              `json:"count"`
+}
+
+// filterAndPageDReps applies the read-only directory's server-side search and
+// pagination over the node's full DRep list. The search (q) is a
+// case-insensitive substring match against the DRep's bech32 id, hex
+// credential, and metadata anchor URL. page is 1-based; count is clamped to
+// [1, poolDirMaxCount]. Invalid/absent page or count fall back to their
+// defaults rather than erroring. start/end are clamped on both sides so a very
+// large page can't overflow the slice bounds and panic.
+func filterAndPageDReps(dreps []chain.DRepInfo, q, pageStr, countStr string) drepDirectoryResponse {
+	needle := strings.ToLower(strings.TrimSpace(q))
+	matched := make([]chain.DRepInfo, 0, len(dreps))
+	for _, d := range dreps {
+		if needle == "" ||
+			strings.Contains(strings.ToLower(d.DRepID), needle) ||
+			strings.Contains(strings.ToLower(d.Hex), needle) ||
+			strings.Contains(strings.ToLower(d.AnchorURL), needle) {
+			matched = append(matched, d)
+		}
+	}
+
+	count := poolDirDefaultCount
+	if n, err := strconv.Atoi(countStr); err == nil && n > 0 {
+		count = n
+	}
+	if count > poolDirMaxCount {
+		count = poolDirMaxCount
+	}
+	page := 1
+	if n, err := strconv.Atoi(pageStr); err == nil && n > 1 {
+		page = n
+	}
+
+	total := len(matched)
+	start := (page - 1) * count
+	if start < 0 || start > total {
+		start = total
+	}
+	end := start + count
+	if end < start || end > total {
+		end = total
+	}
+	pageItems := matched[start:end]
+	if pageItems == nil {
+		pageItems = []chain.DRepInfo{}
+	}
+	return drepDirectoryResponse{DReps: pageItems, Total: total, Page: page, Count: count}
 }
 
 // registerPoolRoutes wires the Stake Pool Operations (SPO) endpoints under

@@ -1,6 +1,7 @@
 package chain
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/hex"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/btcsuite/btcd/btcutil/bech32"
 )
 
 const blockfrostNotFoundJSON = `{"status_code":404,"error":"Not Found","message":"The requested component has not been found."}`
@@ -527,6 +529,134 @@ func TestDRepNotFound(t *testing.T) {
 	_, err := c.DRep(context.Background(), "drep1missing")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("404 should map to ErrNotFound, got %v", err)
+	}
+}
+
+func TestDRepsFromDingoMetadata(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metadata.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	for _, ddl := range []string{
+		`CREATE TABLE drep (
+			credential_tag integer NOT NULL,
+			credential blob NOT NULL,
+			anchor_url text,
+			active boolean NOT NULL
+		)`,
+		`CREATE TABLE account (
+			credential_tag integer NOT NULL,
+			staking_key blob NOT NULL,
+			drep blob,
+			drep_type integer,
+			active boolean NOT NULL,
+			reward integer
+		)`,
+		`CREATE TABLE utxo (
+			credential_tag integer NOT NULL,
+			staking_key blob NOT NULL,
+			amount integer NOT NULL,
+			deleted_slot integer NOT NULL
+		)`,
+	} {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatalf("create table: %v", err)
+		}
+	}
+
+	credA := make([]byte, lcommon.AddressHashSize) // key-hash DRep with delegators
+	credB := make([]byte, lcommon.AddressHashSize) // script-hash DRep, no delegators
+	for i := range credA {
+		credA[i] = 0xa1
+		credB[i] = 0xb2
+	}
+	if _, err := db.Exec(
+		`INSERT INTO drep (credential_tag, credential, anchor_url, active) VALUES (?, ?, ?, 1), (?, ?, ?, 1)`,
+		dingoAccountCredentialKeyHash, credA, "https://example.com/drep.json",
+		dingoAccountCredentialScript, credB, "",
+	); err != nil {
+		t.Fatalf("insert drep: %v", err)
+	}
+	// A short/malformed credential and an unknown credential_tag must both be
+	// skipped rather than surfaced (or cause an error).
+	if _, err := db.Exec(
+		`INSERT INTO drep (credential_tag, credential, anchor_url, active) VALUES (?, ?, ?, 1), (?, ?, ?, 1)`,
+		dingoAccountCredentialKeyHash, []byte{0xc3, 0xc3}, "",
+		byte(99), bytes.Repeat([]byte{0xc4}, lcommon.AddressHashSize), "",
+	); err != nil {
+		t.Fatalf("insert skip-path drep rows: %v", err)
+	}
+	// One delegator to DRep A: 1_000_000 lovelace of UTxO + 500_000 reward.
+	stakingKey := make([]byte, lcommon.AddressHashSize)
+	for i := range stakingKey {
+		stakingKey[i] = byte(i + 1)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO account (credential_tag, staking_key, drep, drep_type, active, reward) VALUES (?, ?, ?, ?, 1, 500000)`,
+		dingoAccountCredentialKeyHash, stakingKey, credA, dingoDRepTypeAddrKeyHash,
+	); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO utxo (credential_tag, staking_key, amount, deleted_slot) VALUES (?, ?, 1000000, 0)`,
+		dingoAccountCredentialKeyHash, stakingKey,
+	); err != nil {
+		t.Fatalf("insert utxo: %v", err)
+	}
+
+	c := NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir))
+	got, err := c.DReps(context.Background())
+	if err != nil {
+		t.Fatalf("DReps: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("DReps returned %d dreps, want 2 (the short credential and unknown credential_tag rows must be skipped)", len(got))
+	}
+	byHex := map[string]DRepInfo{}
+	for _, d := range got {
+		byHex[d.Hex] = d
+	}
+	a, ok := byHex[hex.EncodeToString(credA)]
+	if !ok {
+		t.Fatalf("DRep A (%x) missing from %+v", credA, got)
+	}
+	if !strings.HasPrefix(a.DRepID, "drep1") || a.HasScript || !a.Active || !a.Registered {
+		t.Fatalf("DRep A = %+v, want drep1… key-hash, active/registered", a)
+	}
+	if a.Amount != "1500000" || a.LiveStake != "1500000" {
+		t.Fatalf("DRep A voting power = %q, want 1500000", a.Amount)
+	}
+	if a.AnchorURL != "https://example.com/drep.json" {
+		t.Fatalf("DRep A anchor = %q, want the inserted url", a.AnchorURL)
+	}
+	// The bech32 id must round-trip back to DRep A's credential hash.
+	if _, data5, derr := bech32.DecodeNoLimit(a.DRepID); derr != nil {
+		t.Fatalf("decode drep id: %v", derr)
+	} else if raw, cerr := bech32.ConvertBits(data5, 5, 8, false); cerr != nil {
+		t.Fatalf("convert drep id: %v", cerr)
+	} else if len(raw) != lcommon.AddressHashSize+1 || !strings.EqualFold(hex.EncodeToString(raw[1:]), a.Hex) {
+		t.Fatalf("drep id %q does not encode credential %x", a.DRepID, credA)
+	}
+
+	b, ok := byHex[hex.EncodeToString(credB)]
+	if !ok {
+		t.Fatalf("DRep B (%x) missing from %+v", credB, got)
+	}
+	if !b.HasScript || b.Amount != "0" {
+		t.Fatalf("DRep B = %+v, want script-hash with zero voting power", b)
+	}
+}
+
+func TestDRepsNoDataDir(t *testing.T) {
+	c := NewClientURL("http://127.0.0.1:1")
+	got, err := c.DReps(context.Background())
+	if err != nil {
+		t.Fatalf("DReps without data dir: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("DReps without data dir = %+v, want empty", got)
 	}
 }
 

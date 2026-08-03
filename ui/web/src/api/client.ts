@@ -29,6 +29,7 @@ import type {
   PoolInfo,
   PoolDirectoryResponse,
   DRepInfo,
+  DRepDirectoryResponse,
   AssetInfo,
   DelegationRequest,
   DelegationPreview,
@@ -235,6 +236,18 @@ export const getPoolDirectory = (params?: { q?: string; page?: number; count?: n
   if (params?.count) qs.set("count", String(params.count));
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return apiGet<PoolDirectoryResponse>(`/wallet/pools${suffix}`);
+};
+
+// Read-only DRep directory (node-local): browse/search the delegated
+// representatives the node has indexed, to inform vote-delegation. Search (q)
+// and pagination (page/count) are applied server-side over the node's list.
+export const getDReps = (params?: { q?: string; page?: number; count?: number }) => {
+  const qs = new URLSearchParams();
+  if (params?.q) qs.set("q", params.q);
+  if (params?.page && params.page > 1) qs.set("page", String(params.page));
+  if (params?.count) qs.set("count", String(params.count));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiGet<DRepDirectoryResponse>(`/wallet/dreps${suffix}`);
 };
 
 // Native-asset on-chain metadata (node-only; see ../tokenMeta.ts for how the

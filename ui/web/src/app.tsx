@@ -23,6 +23,7 @@ import { Contacts } from "./screens/Contacts";
 import { Staking } from "./screens/Staking";
 import { RewardHistory } from "./screens/RewardHistory";
 import { PoolDirectory } from "./screens/PoolDirectory";
+import { DRepDirectory } from "./screens/DRepDirectory";
 import { SignMessage } from "./screens/SignMessage";
 import { VerifyMessage } from "./screens/VerifyMessage";
 import { Offline } from "./screens/Offline";
@@ -70,6 +71,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "staking", label: "Staking" },
   { key: "rewards", label: "Rewards" },
   { key: "pools", label: "Stake Pools" },
+  { key: "dreps", label: "DReps" },
   { key: "sign", label: "Sign" },
   { key: "verify", label: "Verify" },
   { key: "offline", label: "Offline" },
@@ -280,6 +282,7 @@ export function App() {
     else if (route === "staking" && canStake) activeRoute = "staking";
     else if (route === "rewards") activeRoute = "rewards";
     else if (route === "pools" && canQueryNode) activeRoute = "pools";
+    else if (route === "dreps" && canQueryNode) activeRoute = "dreps";
     else if (route === "sign" && canSign) activeRoute = "sign";
     else if (route === "verify") activeRoute = "verify";
     else if (route === "offline" && canSign) activeRoute = "offline";
@@ -344,6 +347,12 @@ export function App() {
     // for any active wallet — including read-only ones. Falls back to Portfolio
     // while the node cannot serve queries.
     content = canQueryNode ? <PoolDirectory network={activeWallet.network} /> : <Portfolio />;
+  } else if (route === "dreps") {
+    // Read-only DRep directory: browse/search DReps the node has indexed, to
+    // inform vote-delegation. Needs only a queryable node (not a full sync, no
+    // spending), so it works for any active wallet — including read-only ones.
+    // Falls back to Portfolio while the node cannot serve queries.
+    content = canQueryNode ? <DRepDirectory network={activeWallet.network} /> : <Portfolio />;
   } else if (route === "sign") {
     content = canSign ? <SignMessage account={toAccount(activeWallet)} /> : <Portfolio />;
   } else if (route === "verify") {
@@ -394,6 +403,7 @@ export function App() {
       (key === "swap" && !canSwap) ||
       (key === "staking" && !canStake) ||
       (key === "pools" && !canQueryNode) ||
+      (key === "dreps" && !canQueryNode) ||
       (key === "sign" && !canSign) ||
       (key === "offline" && !canSign) ||
       (key === "operate" && !canSign) ||

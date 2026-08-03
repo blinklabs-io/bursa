@@ -263,7 +263,10 @@ export interface PoolDirectoryResponse {
   count: number;
 }
 
-// DRepInfo mirrors GET /wallet/drep/{id}: confirms a DRep exists on chain.
+// DRepInfo mirrors GET /wallet/drep/{id} and one entry of the GET /wallet/dreps
+// directory: a node-verified DRep readout. amount / live_stake are the DRep's
+// voting power as decimal lovelace strings. anchor_url is the on-chain metadata
+// pointer, present only in the directory listing (the wallet never fetches it).
 export interface DRepInfo {
   drep_id: string;
   hex: string;
@@ -272,6 +275,17 @@ export interface DRepInfo {
   amount: string;
   active: boolean;
   live_stake: string;
+  anchor_url?: string;
+}
+
+// DRepDirectoryResponse mirrors GET /wallet/dreps: one page of the node's DRep
+// directory (read node-locally from Dingo's metadata DB) plus the total number
+// of DReps matching the search, for the read-only browse/search screen.
+export interface DRepDirectoryResponse {
+  dreps: DRepInfo[];
+  total: number;
+  page: number;
+  count: number;
 }
 
 // AssetInfo mirrors GET /wallet/assets/{unit}: a native asset's on-chain
