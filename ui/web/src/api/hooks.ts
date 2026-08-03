@@ -33,8 +33,17 @@ import {
   getNfts,
   getNftMedia,
   setNftMedia,
+  getNotifications,
+  setNotifications,
+  getActivity,
   getDiagnostics,
 } from "./client";
+import {
+  notificationPermission,
+  requestNotificationPermission,
+  notificationsSupported,
+  raiseActivityNotification,
+} from "../notifications";
 
 export interface AsyncState<T> {
   data: T | null;
@@ -253,4 +262,134 @@ export function useAssetMetadata(units: string[]): Record<string, AssetInfo | un
   }, [key]);
 
   return metadata;
+}
+
+// NotificationsState backs the Settings toggle for node-local wallet-activity
+// notifications. `enabled` is the persisted preference (default off);
+// `permission` is the browser Notification permission ("unsupported" when the
+// API is absent, e.g. an OS-bridge-only desktop build). setEnabled(true)
+// requests the browser permission first (only ever in response to the user
+// opting in) and then persists the preference to the backend.
+export interface NotificationsState {
+  enabled: boolean;
+  permission: NotificationPermission | "unsupported";
+  supported: boolean;
+  loading: boolean;
+  saving: boolean;
+  error: Error | null;
+  setEnabled: (next: boolean) => Promise<void>;
+}
+
+export function useNotifications(): NotificationsState {
+  const [enabled, setEnabledState] = useState(false);
+  const [permission, setPermission] = useState<NotificationPermission | "unsupported">(
+    () => notificationPermission(),
+  );
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getNotifications()
+      .then((setting) => {
+        if (!cancelled) setEnabledState(setting.enabled);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const set = useCallback(async (next: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      // Ask for the OS/browser permission only when turning notifications ON,
+      // and only here — i.e. as a direct result of the user opting in.
+      if (next) {
+        setPermission(await requestNotificationPermission());
+      }
+      const setting = await setNotifications(next);
+      setEnabledState(setting.enabled);
+    } catch (err) {
+      setError(err as Error);
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  return {
+    enabled,
+    permission,
+    supported: notificationsSupported(),
+    loading,
+    saving,
+    error,
+    setEnabled: set,
+  };
+}
+
+// How often the activity poller asks the node for new wallet activity. Kept well
+// above the status poll (2s) so it stays cheap — notifications are not
+// latency-critical, and each poll runs the wallet's tx-history enrichment.
+const ACTIVITY_POLL_MS = 30000;
+
+// useActivityNotifications polls GET /wallet/activity while `active` and raises a
+// desktop/browser notification for each new event the backend reports. The
+// backend dedups server-side (its first poll after a wallet binds primes a
+// baseline and returns nothing, so history never notifies); a client-side seen
+// set guards against a re-render or overlapping poll double-raising within a
+// session. Pass active=false (wallet locked, notifications disabled, or no way
+// to notify) to stop polling entirely.
+//
+// walletId restarts the poller (and its seen set) whenever the active wallet
+// changes: the backend's dedup baseline is per-wallet, so a client-side seen
+// set that outlived a wallet switch could suppress a reward/tx notification
+// for the newly active wallet just because the same id was already seen for
+// the previous one (e.g. reward ids are only "reward:<epoch>").
+export function useActivityNotifications(active: boolean, walletId: string | null): void {
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    let inFlight = false;
+    const seen = new Set<string>();
+
+    const run = () => {
+      // Match useAsync: don't poll into a dead network or a backgrounded tab,
+      // and never overlap requests.
+      if (!navigator.onLine || document.hidden || inFlight) return;
+      inFlight = true;
+      getActivity()
+        .then((res) => {
+          if (cancelled) return;
+          for (const event of res.events) {
+            if (seen.has(event.id)) continue;
+            seen.add(event.id);
+            raiseActivityNotification(event);
+          }
+        })
+        .catch(() => {
+          // Best-effort: a failed poll (node busy, transient error) must not
+          // break the loop or surface an error — the next tick retries.
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+
+    // Prime immediately so the backend establishes its baseline right away, then
+    // poll on the interval.
+    run();
+    const id = setInterval(run, ACTIVITY_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [active, walletId]);
 }

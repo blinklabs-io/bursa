@@ -26,6 +26,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/blinklabs-io/bursa/ui/internal/desktopnotify"
 	"github.com/blinklabs-io/bursa/ui/internal/desktoptray"
 	"github.com/blinklabs-io/bursa/ui/internal/openexternal"
 	webview "github.com/webview/webview_go"
@@ -59,6 +60,17 @@ func awaitUI(ctx context.Context, url string, logger *slog.Logger, srvErr <-chan
 		openexternal.Open(logger, rawurl)
 	}); err != nil {
 		logger.Warn("failed to bind bursaOpenExternal", "error", err)
+	}
+
+	// Wallet-activity notifications: the frontend (notifications.ts) calls this
+	// bridge, when present, to raise a real OS-native notification for incoming
+	// funds / stake rewards; the plain browser build has no bridge and falls back
+	// to the browser Notification API. Bound before Navigate for the same reason
+	// as bursaOpenExternal.
+	if err := w.Bind("bursaNotify", func(title, body string) {
+		desktopnotify.Notify(logger, title, body)
+	}); err != nil {
+		logger.Warn("failed to bind bursaNotify", "error", err)
 	}
 
 	uiErr := make(chan error, 1)

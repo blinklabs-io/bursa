@@ -63,6 +63,8 @@ import type {
   CosignResult,
   NFT,
   NftMediaSetting,
+  NotificationsSetting,
+  ActivityResponse,
   Diagnostics,
 } from "./types";
 
@@ -347,6 +349,14 @@ export const getNfts = () => apiGet<NFT[]>("/wallet/nft");
 export const getNftMedia = () => apiGet<NftMediaSetting>("/wallet/settings/nft-media");
 export const setNftMedia = (enabled: boolean) =>
   apiPut<NftMediaSetting>("/wallet/settings/nft-media", { enabled });
+
+// Wallet-activity notifications: the persisted on/off preference and the
+// node-local activity poll the SPA drives to raise desktop/browser notifications.
+export const getNotifications = () =>
+  apiGet<NotificationsSetting>("/wallet/settings/notifications");
+export const setNotifications = (enabled: boolean) =>
+  apiPut<NotificationsSetting>("/wallet/settings/notifications", { enabled });
+export const getActivity = () => apiGet<ActivityResponse>("/wallet/activity");
 export const nftImageUrl = (unit: string) => `/wallet/nft/${encodeURIComponent(unit)}/image`;
 
 // Node diagnostics (node-local; no external calls). getDiagnostics polls the
