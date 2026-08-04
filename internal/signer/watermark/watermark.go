@@ -17,6 +17,8 @@ package watermark
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"sync"
 
@@ -25,6 +27,11 @@ import (
 
 // ErrConflict indicates a different payload was already signed for (key, scope).
 var ErrConflict = errors.New("watermark conflict: divergent payload for the same key and scope")
+
+// ErrCounterRegression indicates a monotonic counter was not strictly greater
+// than the highest already recorded for (key, scope). It is the anti-double-sign
+// guard for operational-certificate issue counters.
+var ErrCounterRegression = errors.New("watermark conflict: counter is not strictly greater than the highest already signed")
 
 // Mode controls how the coordinator applies the watermark.
 type Mode string
@@ -49,6 +56,61 @@ type Watermark interface {
 	Commit(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error
 }
 
+// CounterWatermark guards a strictly-increasing per-(key, scope) counter, such
+// as an operational-certificate issue counter. It is a distinct guard from the
+// divergent-payload Watermark: here the invariant is monotonicity (each recorded
+// value must exceed the previous), not payload equality. The Mem, Sqlite and
+// Postgres stores implement both interfaces on the same backing store.
+type CounterWatermark interface {
+	// CounterFor returns the highest counter recorded for (key, scope) and
+	// whether any record exists. It performs no mutation.
+	CounterFor(ctx context.Context, key backend.KeyHash, scope string) (uint64, bool, error)
+	// CheckAndCommitCounter atomically records counter as the new highest for
+	// (key, scope) if and only if it is strictly greater than the highest already
+	// recorded (or none exists). It returns ErrCounterRegression, recording
+	// nothing, when counter is not strictly greater. The check and commit are a
+	// single atomic operation so that two concurrent callers with the same
+	// counter cannot both succeed.
+	CheckAndCommitCounter(ctx context.Context, key backend.KeyHash, scope string, counter uint64) error
+}
+
+// Pinger is an optional interface a Watermark store implements when it has a
+// remote or file dependency whose reachability the readiness probe can verify.
+// Stores without an external dependency (e.g. MemWatermark) need not implement
+// it; the readiness probe treats their absence as always-ready.
+type Pinger interface {
+	// Ping verifies the store's backing dependency is reachable.
+	Ping(ctx context.Context) error
+}
+
+// counterEncode renders a uint64 as a fixed-width, big-endian hex string so that
+// lexicographic string comparison (used by the sqlite and postgres stores)
+// matches numeric comparison, and no lossy uint64->int64 conversion is needed.
+func counterEncode(counter uint64) string {
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], counter)
+	return hex.EncodeToString(b[:])
+}
+
+// counterDecode reverses counterEncode, rejecting any value that is not exactly
+// 8 hex-encoded bytes.
+func counterDecode(s string) (uint64, error) {
+	raw, err := hex.DecodeString(s)
+	if err != nil || len(raw) != 8 {
+		return 0, errors.New("corrupt stored counter")
+	}
+	return binary.BigEndian.Uint64(raw), nil
+}
+
+// Compile-time proof the in-process and sqlite stores satisfy both guards.
+var (
+	_ Watermark        = (*MemWatermark)(nil)
+	_ CounterWatermark = (*MemWatermark)(nil)
+	_ Watermark        = (*SqliteWatermark)(nil)
+	_ CounterWatermark = (*SqliteWatermark)(nil)
+	_ Pinger           = (*SqliteWatermark)(nil)
+)
+
 func recordKey(key backend.KeyHash, scope string) string { return key.String() + "|" + scope }
 
 func digest(payload []byte) [32]byte { return sha256.Sum256(payload) }
@@ -58,12 +120,15 @@ func digest(payload []byte) [32]byte { return sha256.Sum256(payload) }
 // (key, scope) pair, never evicted). It is suitable for testing and short-lived
 // single-process use only.
 type MemWatermark struct {
-	mu      sync.Mutex
-	records map[string][32]byte
+	mu       sync.Mutex
+	records  map[string][32]byte
+	counters map[string]uint64
 }
 
 // NewMemWatermark builds an empty in-memory watermark.
-func NewMemWatermark() *MemWatermark { return &MemWatermark{records: map[string][32]byte{}} }
+func NewMemWatermark() *MemWatermark {
+	return &MemWatermark{records: map[string][32]byte{}, counters: map[string]uint64{}}
+}
 
 func (m *MemWatermark) Check(_ context.Context, key backend.KeyHash, scope string, payload []byte) error {
 	m.mu.Lock()
@@ -96,5 +161,23 @@ func (m *MemWatermark) Commit(_ context.Context, key backend.KeyHash, scope stri
 	if _, ok := m.records[k]; !ok {
 		m.records[k] = digest(payload)
 	}
+	return nil
+}
+
+func (m *MemWatermark) CounterFor(_ context.Context, key backend.KeyHash, scope string) (uint64, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.counters[recordKey(key, scope)]
+	return v, ok, nil
+}
+
+func (m *MemWatermark) CheckAndCommitCounter(_ context.Context, key backend.KeyHash, scope string, counter uint64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := recordKey(key, scope)
+	if prev, ok := m.counters[k]; ok && counter <= prev {
+		return ErrCounterRegression
+	}
+	m.counters[k] = counter
 	return nil
 }
