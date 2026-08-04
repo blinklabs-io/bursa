@@ -129,6 +129,7 @@ mod-tidy:
 
 clean:
 	rm -f $(BINARIES)
+	rm -rf $(WEBVIEW_PKG_CONFIG_DIR)
 
 format: mod-tidy
 	go fmt ./...
