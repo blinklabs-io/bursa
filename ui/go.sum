@@ -145,8 +145,8 @@ github.com/blinklabs-io/bark v0.1.0 h1:hnFSOcnOlEUoHz7dFsT67aNVip+oYyPo6iKk6y1/T
 github.com/blinklabs-io/bark v0.1.0/go.mod h1:Csm/dR5sdx4T/N9cZ3ZO+3tFmSWFul2HnmWDQtugWms=
 github.com/blinklabs-io/bursa v0.16.1-0.20260723122856-2f8b123a98ae h1:QtuiW1YnvpMfp28liHcTPb2A/UUP4HeZDWpC6QP5XmM=
 github.com/blinklabs-io/bursa v0.16.1-0.20260723122856-2f8b123a98ae/go.mod h1:mcUIQifk8bNmCZ1tgh2IbxJa1GmRoDu6De5WUiboDHs=
-github.com/blinklabs-io/dingo v0.66.2 h1:x5QtTiID8dmPu0flt0HsuPb+n63edEAFVaFiAJgtcz4=
-github.com/blinklabs-io/dingo v0.66.2/go.mod h1:AwP/Sjq6SAgweq/ArLMakVKH6PmjqYMqWFKvET6OtvE=
+github.com/blinklabs-io/dingo v0.68.0 h1:wBqr3Sjii7o3BATUpjAN45i9eOn62jHDjipKEx05Jww=
+github.com/blinklabs-io/dingo v0.68.0/go.mod h1:mccpEtnTEeDCbFCeMPUXQNXW6lvvnL/bDnQRMQtSemA=
 github.com/blinklabs-io/go-bip39 v0.2.0 h1:rHYih+JzqaFVuP+UfvByKTAdJPeYtlvZu49yUGrZUk8=
 github.com/blinklabs-io/go-bip39 v0.2.0/go.mod h1:9Bp7a+XDc/KTPOqNnS7T/v1vH2lDXpmjM0GArwvOQL4=
 github.com/blinklabs-io/gouroboros v0.189.4 h1:9zW9iu+7c/Xou9jH9VoC71CZ9IdvcHvbf4u58u6tnzU=
@@ -155,8 +155,8 @@ github.com/blinklabs-io/ouroboros-mock v0.15.0 h1:IB35erNGObqilpOLkrmdp0fH2aKKoV
 github.com/blinklabs-io/ouroboros-mock v0.15.0/go.mod h1:ysGU8dMjG8ShMQco/aarR1xIRH7GPCIdhrnkM+J4IVA=
 github.com/blinklabs-io/plutigo v0.1.17 h1:44JJf9Y4G7fminNJp4H6fBQbW8nzrevSlap9a1V0EHs=
 github.com/blinklabs-io/plutigo v0.1.17/go.mod h1:X+Ydplpgftjjq5Y1Oc3dRebGgdBSeAbOi1+ItJhQths=
-github.com/blinklabs-io/shai v0.0.0-20260724152428-02e3f7d23dd8 h1:Z5Bq6fTeX/hlviFFrvSqrPrAvVHxdu/g/2Jp1kf17CY=
-github.com/blinklabs-io/shai v0.0.0-20260724152428-02e3f7d23dd8/go.mod h1:1O5SvQa/FuQMGYehvtQ8O1s9eIE3EmACFyN/csSzNoY=
+github.com/blinklabs-io/shai v0.0.0-20260802142328-c23aaf4bf701 h1:qR+6pyb1aipUHJAn4l6EYi8quPC3ECrY2l4Vmot/3M4=
+github.com/blinklabs-io/shai v0.0.0-20260802142328-c23aaf4bf701/go.mod h1:acY1CUd5+xNxdJsMT3IqdyGCndJGz/xSbvZHyHCp000=
 github.com/blockfrost/blockfrost-go v0.4.0 h1:sJuxmtoWUJ3sXfqTuFhYcFMdDNdo938nSX/KcLcAPQ0=
 github.com/blockfrost/blockfrost-go v0.4.0/go.mod h1:XdD+mryM/Rd/MqW1MfSQ0+Xfu2YnOGuwqMpLQa0jHvM=
 github.com/btcsuite/btcd/btcec/v2 v2.5.0 h1:KioMXOWa76b86sTZZOmbzv/ldaQCmB8KFAyn5PbB8E8=
@@ -207,8 +207,8 @@ github.com/decred/dcrd/crypto/blake256 v1.1.0 h1:zPMNGQCm0g4QTY27fOCorQW7EryeQ/U
 github.com/decred/dcrd/crypto/blake256 v1.1.0/go.mod h1:2OfgNZ5wDpcsFmHmCK5gZTPcCXqlm2ArzUIkw9czNJo=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 h1:5RVFMOWjMyRy8cARdy79nAmgYw3hK/4HUq48LQ6Wwqo=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1/go.mod h1:ZXNYxsqcloTdSy/rNShjYzMhyjf0LaoftYK0p+A3h40=
-github.com/dgraph-io/badger/v4 v4.9.4 h1:bcw+waCpzRZ2nmcSPbnPvDVhiEsn98TKmvnAhK7r7LM=
-github.com/dgraph-io/badger/v4 v4.9.4/go.mod h1:nJjaJTUOSsQEBhsq209FmwCvMJzEA3e74RjZw6V2pQI=
+github.com/dgraph-io/badger/v4 v4.9.5 h1:zT46OMrF3ntqsfI3ynKp7hUkQrGlcK2CX5psQmH0iW0=
+github.com/dgraph-io/badger/v4 v4.9.5/go.mod h1:Xa9dAupjbwAacupWFCpa6YEn9E1PjBXkfZYr2I/8aWg=
 github.com/dgraph-io/ristretto/v2 v2.2.0 h1:bkY3XzJcXoMuELV8F+vS8kzNgicwQFAaGINAEJdWGOM=
 github.com/dgraph-io/ristretto/v2 v2.2.0/go.mod h1:RZrm63UmcBAaYWC1DotLYBmTvgkrs0+XhBd7Npn7/zI=
 github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da h1:aIftn67I1fkbMa512G+w+Pxci9hJPB8oMnkcP3iZF38=

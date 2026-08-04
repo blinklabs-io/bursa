@@ -6,11 +6,11 @@ require (
 	fyne.io/systray v1.12.1
 	github.com/Salvionied/apollo/v2 v2.0.0-20260729192515-7fa2cfd06025
 	github.com/blinklabs-io/bursa v0.16.1-0.20260723122856-2f8b123a98ae
-	github.com/blinklabs-io/dingo v0.66.2
+	github.com/blinklabs-io/dingo v0.68.0
 	github.com/blinklabs-io/go-bip39 v0.2.0
 	github.com/blinklabs-io/gouroboros v0.190.0
 	github.com/blinklabs-io/plutigo v0.1.17
-	github.com/blinklabs-io/shai v0.0.0-20260724152428-02e3f7d23dd8
+	github.com/blinklabs-io/shai v0.0.0-20260802142328-c23aaf4bf701
 	github.com/btcsuite/btcd/btcutil v1.2.0
 	github.com/glebarez/go-sqlite v1.21.2
 	github.com/google/go-tpm v0.9.8
@@ -104,7 +104,7 @@ require (
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
-	github.com/dgraph-io/badger/v4 v4.9.4 // indirect
+	github.com/dgraph-io/badger/v4 v4.9.5 // indirect
 	github.com/dgraph-io/ristretto/v2 v2.2.0 // indirect
 	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
