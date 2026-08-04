@@ -27,6 +27,7 @@ import (
 	"github.com/blinklabs-io/dingo"
 	"github.com/blinklabs-io/dingo/config/cardano"
 	"github.com/blinklabs-io/dingo/connmanager"
+	"github.com/blinklabs-io/dingo/plugin"
 	"github.com/blinklabs-io/dingo/topology"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -156,14 +157,28 @@ func nodeConfigOptions(
 		dingo.WithPrometheusRegistry(promRegistry),
 		dingo.WithDatabasePath(cfg.DataDir),
 		dingo.WithStorageMode(dingo.StorageModeAPI),
-		// Without an explicit capacity the mempool defaults to 0 bytes and
-		// rejects every transaction ("mempool full: capacity=0 bytes"), so the
-		// wallet could never submit a spend. Match Dingo's own Praos default
-		// (1 MiB) — ample for a single-user wallet submitting its own txs.
-		dingo.WithMempoolCapacity(1 << 20),
+		// Match Dingo's own Praos default mempool capacity (1 MiB) — ample for a
+		// single-user wallet submitting its own txs. In dingo v0.68 the mempool,
+		// blockfrost, and utxorpc APIs are configured as plugin selections rather
+		// than dedicated options; the default provider config carries capacity
+		// (mempool) and port (blockfrost/utxorpc).
+		dingo.WithPluginSelection(plugin.CapabilityMempool, plugin.Selection{
+			Provider: "default",
+			Config: map[string]any{
+				"capacity":           int64(1 << 20),
+				"evictionWatermark":  0.90,
+				"rejectionWatermark": 0.95,
+			},
+		}),
 		dingo.WithBindAddr("127.0.0.1"),
-		dingo.WithUtxorpcPort(cfg.UtxorpcPort),
-		dingo.WithBlockfrostPort(cfg.BlockfrostPort),
+		dingo.WithPluginSelection(plugin.CapabilityAPIUtxorpc, plugin.Selection{
+			Provider: "builtin",
+			Config:   map[string]any{"port": cfg.UtxorpcPort},
+		}),
+		dingo.WithPluginSelection(plugin.CapabilityAPIBlockfrost, plugin.Selection{
+			Provider: "builtin",
+			Config:   map[string]any{"port": cfg.BlockfrostPort},
+		}),
 		dingo.WithListeners(connmanager.ListenerConfig{
 			ListenNetwork: "unix",
 			ListenAddress: cfg.SocketPath,
