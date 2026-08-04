@@ -1,0 +1,63 @@
+[Unit]
+Description=Bursa KES agent for a Cardano block producer
+Documentation=https://github.com/blinklabs-io/bursa/tree/main/docs/signer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Dedicated, unprivileged service account. Create it once:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin bursa-kes-agent
+User=bursa-kes-agent
+Group=bursa-kes-agent
+
+EnvironmentFile=-/etc/bursa/kes-agent/kes-agent.env
+ExecStart=/usr/bin/bursa kes-agent --config /etc/bursa/kes-agent/kes-agent.yaml
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+
+# Unix sockets live here (mode 0600, owned by bursa-kes-agent). Grant the block
+# producer access by adding its user to the bursa-kes-agent group, or by
+# co-locating both under a shared group and setting kes_agent.socket_mode: "0660".
+#   service_socket: /run/bursa/kes-agent/service.sock
+#   control_socket: /run/bursa/kes-agent/control.sock
+RuntimeDirectory=bursa/kes-agent
+RuntimeDirectoryMode=0710
+# Durable KES period guard file: /var/lib/bursa/kes-agent/guard.json
+StateDirectory=bursa/kes-agent
+StateDirectoryMode=0700
+
+# The KES signing key is held in mlock'd memory; raise the memlock limit so the
+# lock succeeds. 64 MiB is ample for the agent's small locked buffers.
+LimitMEMLOCK=67108864
+
+# --- Sandboxing / hardening ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# Unix sockets for the producer/control; AF_INET(6) only for the optional
+# Prometheus metrics endpoint.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,398 @@
+openapi: 3.1.0
+info:
+  title: Bursa Remote Signer API
+  description: |
+    HTTP API for the bursa remote signing service (`bursa signer`). The signer
+    holds no wallet state; it resolves keys from configured custody backends
+    (software/file, SOPS, Vault, PKCS#11/HSM) and produces Cardano signatures
+    under a per-key policy engine and an anti-double-sign watermark.
+
+    Every `/v1/*` endpoint is authenticated by one of three composable schemes,
+    tried in precedence order **mTLS client certificate > authorized-keys
+    request signing > bearer JWT** (HS256 shared secret or JWKS
+    RS256/ES256/EdDSA). All three resolve to a single caller identity; an
+    optional caller ACL (`signer.callers`) then restricts that identity to a set
+    of key hashes. The `/healthz`, `/readyz` and `/metrics` endpoints are
+    unauthenticated.
+
+    Error responses use `{"error": "<message>"}`. 5xx bodies are masked; the
+    real cause is logged server-side under the response `audit_id`.
+  version: "1.0.0"
+  license:
+    name: Apache-2.0
+servers:
+  - url: https://signer.example.internal:8090
+    description: Signer over TLS (production)
+  - url: http://127.0.0.1:8090
+    description: Loopback (development, plaintext permitted)
+tags:
+  - name: sign
+  - name: keys
+  - name: ops
+# Any ONE of the configured schemes authenticates a request (server precedence
+# is mTLS > request signing > JWT).
+security:
+  - mtlsAuth: []
+  - requestSigningAuth: []
+  - bearerAuth: []
+paths:
+  /v1/sign:
+    post:
+      tags: [sign]
+      summary: Sign a transaction, CIP-8 payload, or operational certificate
+      description: |
+        Dispatches on the request `type`:
+          * `tx`     - witness a Cardano transaction for the listed signers.
+          * `cip8`   - produce a CIP-8 / CIP-30 signed message.
+          * `opcert` - cold-sign a node operational certificate; the cold key
+            never leaves its backend. The 64-byte signature plus the 32-byte
+            cold verification key are returned so the caller can assemble the
+            `[[kes_vkey, counter, period, sig], cold_vkey]` envelope.
+        The request body is limited to 1 MiB.
+      security:
+        - mtlsAuth: []
+        - requestSigningAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignRequest'
+            examples:
+              tx:
+                value:
+                  type: tx
+                  cbor: "84a3008182582000..."
+                  signers: ["a1b2c3...e2d1"]
+              cip8:
+                value:
+                  type: cip8
+                  payload: "48656c6c6f"
+                  address: "addr1q..."
+                  key: "a1b2c3...e2d1"
+              opcert:
+                value:
+                  type: opcert
+                  key: "a1b2c3...e2d1"
+                  kes_vkey: "0f0e0d...aabb"
+                  issue_counter: 3
+                  kes_period: 512
+      responses:
+        '200':
+          description: Signed. Body shape depends on the request type.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SignTxResponse'
+                  - $ref: '#/components/schemas/SignCIP8Response'
+                  - $ref: '#/components/schemas/SignOpCertResponse'
+        '400':
+          description: Malformed request (bad JSON, unknown type, bad hex).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Caller ACL denied the requested key(s).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SignTxResponse'
+                  - $ref: '#/components/schemas/Error'
+        '404':
+          description: Requested key not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Watermark conflict (would sign at or below a recorded period).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: Request body exceeded 1 MiB.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: Unsupported operation for the resolved key/backend.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: Internal error (body masked).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502':
+          description: Custody backend error (body masked).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /v1/keys:
+    get:
+      tags: [keys]
+      summary: List keys the caller may use
+      description: |
+        Returns keys visible to the authenticated caller. When a caller ACL is
+        configured, keys the caller is not authorized for are omitted.
+      security:
+        - mtlsAuth: []
+        - requestSigningAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Key list (may be empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/KeyInfo' }
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /v1/keys/{hash}:
+    get:
+      tags: [keys]
+      summary: Get one key and its effective policy
+      description: |
+        Returns key details including the effective policy. Callers not
+        authorized for the key receive 404 (not 403) so key existence cannot be
+        probed.
+      security:
+        - mtlsAuth: []
+        - requestSigningAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          description: Hex blake2b-224 key hash (28 bytes / 56 hex chars).
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{56}$'
+      responses:
+        '200':
+          description: Key detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KeyInfo' }
+        '400':
+          description: Invalid key hash.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Key not found or caller not authorized.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /healthz:
+    get:
+      tags: [ops]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Process is alive.
+  /readyz:
+    get:
+      tags: [ops]
+      summary: Readiness probe
+      security: []
+      responses:
+        '200':
+          description: Process is ready to serve.
+  /metrics:
+    get:
+      tags: [ops]
+      summary: Prometheus metrics
+      security: []
+      responses:
+        '200':
+          description: Prometheus text exposition format.
+          content:
+            text/plain:
+              schema:
+                type: string
+components:
+  securitySchemes:
+    mtlsAuth:
+      type: mutualTLS
+      description: |
+        TLS client-certificate authentication (`signer.client_ca_cert`). The
+        client certificate is verified against the configured CA during the TLS
+        handshake; the caller identity is the first URI SAN, else the first DNS
+        SAN, else the Subject CommonName. With `signer.require_client_cert` a
+        verified certificate is mandatory on every connection. Highest
+        precedence: when present it overrides request-signing and JWT.
+    requestSigningAuth:
+      type: apiKey
+      in: header
+      name: X-Bursa-Signature
+      description: |
+        Authorized-keys request signing (`signer.authorized_keys`). The caller
+        signs the canonical string
+        `METHOD|PATH|HEX(SHA-256(body))|TIMESTAMP|NONCE` with its Ed25519
+        private key and sends four headers:
+          * `X-Bursa-Signature` - lower-case hex of the 64-byte Ed25519 signature
+          * `X-Bursa-Key`       - caller identity naming a configured key
+          * `X-Bursa-Timestamp` - Unix seconds (decimal), used in the signature
+          * `X-Bursa-Nonce`     - a client-unique value per request
+        The server rejects timestamps outside ±`signer.request_sign_skew_seconds`
+        (default 60) and reused `(key, nonce)` pairs. `X-Bursa-Key` keys the
+        caller ACL. Tried after mTLS and before JWT.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT validated by either an HS256 shared secret (`signer.jwt_secret`,
+        development) or JWKS (`signer.jwks_url`, RS256/ES256/EdDSA, production).
+        `iss`/`aud` are enforced when `signer.jwt_issuer`/`signer.jwt_audience`
+        are configured. The `sub` claim keys the caller ACL. Lowest precedence.
+  schemas:
+    SignRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [tx, cip8, opcert]
+        cbor:
+          type: string
+          description: tx - hex CBOR or JSON envelope of the transaction.
+        signers:
+          type: array
+          description: tx - key hashes or addresses to witness with.
+          items: { type: string }
+        payload:
+          type: string
+          description: cip8 - hex-encoded payload to sign.
+        address:
+          type: string
+          description: cip8 - bech32 address selecting the signing key.
+        key:
+          type: string
+          description: cip8/opcert - cold/signing key hash (hex blake2b-224).
+        kes_vkey:
+          type: string
+          description: opcert - hex-encoded 32-byte KES verification key.
+        issue_counter:
+          type: integer
+          format: int64
+          description: opcert - operational certificate issue counter.
+        kes_period:
+          type: integer
+          format: int64
+          description: opcert - KES period.
+    SignTxResponse:
+      type: object
+      properties:
+        audit_id:
+          type: string
+          description: Per-request correlation ID (also in server logs).
+        tx_id:
+          type: string
+        witnesses:
+          type: array
+          items:
+            type: string
+            description: Hex-encoded witness.
+        signed_tx:
+          type: string
+          description: Hex-encoded signed transaction, when the signer assembled it.
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/SignerError' }
+    SignCIP8Response:
+      type: object
+      properties:
+        audit_id: { type: string }
+        signature:
+          type: string
+          description: Hex-encoded CIP-8 signature.
+        key:
+          type: string
+          description: Hex-encoded signing key.
+    SignOpCertResponse:
+      type: object
+      properties:
+        audit_id: { type: string }
+        signature:
+          type: string
+          description: Hex-encoded 64-byte cold-key signature over the OCert signable bytes.
+        cold_vkey:
+          type: string
+          description: Hex-encoded 32-byte cold verification key.
+        key:
+          type: string
+          description: Hex-encoded cold key hash that signed.
+    SignerError:
+      type: object
+      properties:
+        signer:
+          type: string
+          description: The signer/key this error applies to.
+        code:
+          type: string
+          enum: [bad_request, not_found, denied, conflict, unsupported, backend, internal]
+        reason:
+          type: string
+          description: Human-readable reason. Masked to "backend error" for 5xx-class codes.
+    KeyPolicySummary:
+      type: object
+      properties:
+        allowed_requests:
+          type: array
+          items: { type: string }
+          description: Request kinds this key may serve (empty = deny all).
+        tx_policy:
+          type: object
+          description: Effective transaction policy, when set.
+        cip8_policy:
+          type: object
+          description: Effective CIP-8 policy, when set.
+    KeyInfo:
+      type: object
+      properties:
+        hash:
+          type: string
+          description: Hex blake2b-224 key hash.
+        type:
+          type: string
+          description: Cardano key type (payment, stake, drep, cc-hot, cc-cold, pool, policy).
+        extended:
+          type: boolean
+          description: Whether the key is an extended BIP32-Ed25519 key.
+        backend:
+          type: string
+          description: Name of the custody backend serving the key.
+        policy:
+          allOf:
+            - $ref: '#/components/schemas/KeyPolicySummary'
+          description: Present on the key-detail endpoint only.
+    Error:
+      type: object
+      properties:
+        error:
+          type: string

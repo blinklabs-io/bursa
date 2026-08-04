@@ -36,18 +36,25 @@ type Config struct {
 
 // SignerConfig holds configuration for the bursa signer daemon.
 type SignerConfig struct {
-	ListenAddress string                `yaml:"listen_address" envconfig:"SIGNER_LISTEN_ADDRESS"`
-	ListenPort    uint                  `yaml:"listen_port"    envconfig:"SIGNER_LISTEN_PORT"`
-	JWTSecret     string                `yaml:"jwt_secret"     envconfig:"SIGNER_JWT_SECRET"`
-	JWKSURL       string                `yaml:"jwks_url"       envconfig:"SIGNER_JWKS_URL"`
-	JWTIssuer     string                `yaml:"jwt_issuer"     envconfig:"SIGNER_JWT_ISSUER"`
-	JWTAudience   string                `yaml:"jwt_audience"   envconfig:"SIGNER_JWT_AUDIENCE"`
-	TLSCertFile   string                `yaml:"tls_cert_file"  envconfig:"SIGNER_TLS_CERT_FILE"`
-	TLSKeyFile    string                `yaml:"tls_key_file"   envconfig:"SIGNER_TLS_KEY_FILE"`
-	Watermark     SignerWatermarkConfig `yaml:"watermark"`
-	Backends      []SignerBackendConfig `yaml:"backends"`
-	Keys          []SignerKeyConfig     `yaml:"keys"`
-	Callers       []SignerCallerConfig  `yaml:"callers"`
+	ListenAddress string `yaml:"listen_address" envconfig:"SIGNER_LISTEN_ADDRESS"`
+	ListenPort    uint   `yaml:"listen_port"    envconfig:"SIGNER_LISTEN_PORT"`
+	JWTSecret     string `yaml:"jwt_secret"     envconfig:"SIGNER_JWT_SECRET"`
+	JWKSURL       string `yaml:"jwks_url"       envconfig:"SIGNER_JWKS_URL"`
+	JWTIssuer     string `yaml:"jwt_issuer"     envconfig:"SIGNER_JWT_ISSUER"`
+	JWTAudience   string `yaml:"jwt_audience"   envconfig:"SIGNER_JWT_AUDIENCE"`
+	TLSCertFile   string `yaml:"tls_cert_file"  envconfig:"SIGNER_TLS_CERT_FILE"`
+	TLSKeyFile    string `yaml:"tls_key_file"   envconfig:"SIGNER_TLS_KEY_FILE"`
+	// AllowInsecureFileBackend opts in to running the plaintext software/file
+	// key backend while bound to a non-loopback address. The software backend
+	// loads private key material into process memory and is intended for
+	// development only; production deployments should use a Vault or SOPS
+	// backend. Defaults to false: boot fails if a software/file backend is
+	// configured on a non-loopback listen address without this flag.
+	AllowInsecureFileBackend bool                  `yaml:"allow_insecure_file_backend" envconfig:"SIGNER_ALLOW_INSECURE_FILE_BACKEND"`
+	Watermark                SignerWatermarkConfig `yaml:"watermark"`
+	Backends                 []SignerBackendConfig `yaml:"backends"`
+	Keys                     []SignerKeyConfig     `yaml:"keys"`
+	Callers                  []SignerCallerConfig  `yaml:"callers"`
 }
 
 // SignerCallerConfig grants a JWT subject access to specific keys.
