@@ -1,4 +1,4 @@
-import { parseAda, formatTokenQuantity } from "./format";
+import { parseAda, formatTokenQuantity, shortId } from "./format";
 
 // --- parseAda tests ---
 
@@ -101,4 +101,20 @@ test("formatTokenQuantity: decimals beyond the sane cap is returned unchanged (D
 
 test("formatTokenQuantity: decimals at the cap boundary still formats normally", () => {
   expect(formatTokenQuantity("1" + "0".repeat(18), 18)).toBe("1");
+});
+
+// --- shortId tests ---
+// Shared truncation used by the pool directory and governance action
+// browser tables so long bech32/hex ids stay scannable.
+
+test("shortId: leaves short ids unchanged", () => {
+  expect(shortId("short")).toBe("short");
+});
+
+test("shortId: leaves an id at exactly the 24-char threshold unchanged", () => {
+  expect(shortId("a".repeat(24))).toBe("a".repeat(24));
+});
+
+test("shortId: truncates a longer id to first 14 + ellipsis + last 6", () => {
+  expect(shortId("abcdefghijklmnopqrstuvwxyz0123456789")).toBe("abcdefghijklmn…456789");
 });

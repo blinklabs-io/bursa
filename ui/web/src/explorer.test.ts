@@ -2,7 +2,7 @@ import { explorerUrl } from "./explorer";
 import type { ExplorerKind } from "./explorer";
 
 const NETWORKS = ["mainnet", "preprod", "preview"] as const;
-const KINDS: ExplorerKind[] = ["tx", "address", "pool", "drep"];
+const KINDS: ExplorerKind[] = ["tx", "address", "pool", "drep", "govaction"];
 
 const EXPECTED_HOST: Record<(typeof NETWORKS)[number], string> = {
   mainnet: "cardanoscan.io",
@@ -15,6 +15,7 @@ const EXPECTED_PATH: Record<ExplorerKind, string> = {
   address: "address",
   pool: "pool",
   drep: "drep",
+  govaction: "govAction",
 };
 
 for (const network of NETWORKS) {

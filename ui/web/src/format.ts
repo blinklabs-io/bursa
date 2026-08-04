@@ -107,6 +107,19 @@ export function parseAda(ada: string): string {
  *   formatTokenQuantity("150", 2)     → "1.5"
  *   formatTokenQuantity("12345", 0)   → "12345"
  */
+/**
+ * Truncate a long bech32/hex id in the middle so table rows stay scannable.
+ * Ids of 24 chars or fewer are returned unchanged.
+ *
+ * Examples:
+ *   shortId("abcdefghijklmnopqrstuvwxyz0123456789") → "abcdefghijklmn…456789"
+ *   shortId("short") → "short"
+ */
+export function shortId(id: string): string {
+  if (id.length <= 24) return id;
+  return `${id.slice(0, 14)}…${id.slice(-6)}`;
+}
+
 const MAX_TOKEN_DECIMALS = 18;
 
 export function formatTokenQuantity(quantity: string, decimals: number): string {

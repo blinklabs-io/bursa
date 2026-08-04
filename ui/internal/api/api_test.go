@@ -473,6 +473,9 @@ type fakeLookup struct {
 	drep     chain.DRepInfo
 	drepErr  error
 
+	govActions    []chain.GovernanceAction
+	govActionsErr error
+
 	asset    chain.AssetInfo
 	assetErr error
 	gotUnit  string
@@ -488,6 +491,10 @@ func (f *fakeLookup) Pools(_ context.Context) ([]chain.PoolInfo, error) {
 
 func (f *fakeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, error) {
 	return f.drep, f.drepErr
+}
+
+func (f *fakeLookup) GovernanceActions(_ context.Context) ([]chain.GovernanceAction, error) {
+	return f.govActions, f.govActionsErr
 }
 
 func (f *fakeLookup) AssetAddresses(_ context.Context, _ string) ([]chain.AssetAddress, error) {
@@ -606,6 +613,115 @@ func TestGetPoolDirectoryNilLookup(t *testing.T) {
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pools", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /wallet/pools with nil lookup = %d, want 503", rec.Code)
+	}
+}
+
+// governanceActionsResult mirrors the GET /wallet/governance-actions JSON
+// response for tests.
+type governanceActionsResult struct {
+	Actions []chain.GovernanceAction `json:"actions"`
+	Total   int                      `json:"total"`
+	Page    int                      `json:"page"`
+	Count   int                      `json:"count"`
+}
+
+func decodeGovernanceActions(t *testing.T, rec *httptest.ResponseRecorder) governanceActionsResult {
+	t.Helper()
+	var got governanceActionsResult
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return got
+}
+
+func sampleGovActions() []chain.GovernanceAction {
+	return []chain.GovernanceAction{
+		{ActionID: "gov_action1aaa", TxHash: "aa", ActionIndex: 0, Type: "info", Status: "active", ProposedEpoch: 100, YesVotes: 2, NoVotes: 1, AbstainVotes: 0, Deposit: "100000000000"},
+		{ActionID: "gov_action1bbb", TxHash: "bb", ActionIndex: 1, Type: "treasury-withdrawal", Status: "enacted", ProposedEpoch: 90, Deposit: "100000000000"},
+	}
+}
+
+func TestGetGovernanceActions(t *testing.T) {
+	lookup := &fakeLookup{govActions: sampleGovActions()}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/governance-actions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/governance-actions = %d, want 200", rec.Code)
+	}
+	got := decodeGovernanceActions(t, rec)
+	if got.Total != 2 || len(got.Actions) != 2 || got.Page != 1 {
+		t.Fatalf("actions = %+v, want 2 actions on page 1", got)
+	}
+	if got.Actions[0].Type != "info" || got.Actions[0].YesVotes != 2 {
+		t.Fatalf("action[0] = %+v, want info with 2 yes votes", got.Actions[0])
+	}
+}
+
+func TestGetGovernanceActionsSearchFilter(t *testing.T) {
+	lookup := &fakeLookup{govActions: sampleGovActions()}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/governance-actions?q=treasury", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/governance-actions?q=treasury = %d, want 200", rec.Code)
+	}
+	got := decodeGovernanceActions(t, rec)
+	if got.Total != 1 || len(got.Actions) != 1 || got.Actions[0].Type != "treasury-withdrawal" {
+		t.Fatalf("filtered = %+v, want only the treasury-withdrawal action", got)
+	}
+}
+
+func TestGetGovernanceActionsEmpty(t *testing.T) {
+	lookup := &fakeLookup{govActions: nil}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/governance-actions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/governance-actions = %d, want 200", rec.Code)
+	}
+	got := decodeGovernanceActions(t, rec)
+	if got.Total != 0 || len(got.Actions) != 0 {
+		t.Fatalf("empty = %+v, want 0 actions", got)
+	}
+}
+
+func TestGetGovernanceActionsPageOverflow(t *testing.T) {
+	lookup := &fakeLookup{govActions: sampleGovActions()}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		// (page-1)*count overflows int64 to a negative start; must not panic.
+		{"overflow", "/wallet/governance-actions?page=9223372036854775807&count=50"},
+		// One page past the end: a valid but empty page.
+		{"just-past-end", "/wallet/governance-actions?page=2&count=50"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, tc.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want 200", tc.path, rec.Code)
+			}
+			got := decodeGovernanceActions(t, rec)
+			if got.Total != 2 || len(got.Actions) != 0 {
+				t.Fatalf("overflow page = %+v, want total 2 with an empty page", got)
+			}
+		})
+	}
+}
+
+func TestGetGovernanceActionsNilLookup(t *testing.T) {
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/governance-actions", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /wallet/governance-actions with nil lookup = %d, want 503", rec.Code)
 	}
 }
 
@@ -3200,6 +3316,10 @@ func (f *fakeNodeLookup) Pools(_ context.Context) ([]chain.PoolInfo, error) {
 
 func (f *fakeNodeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, error) {
 	return f.drep, f.drepErr
+}
+
+func (f *fakeNodeLookup) GovernanceActions(_ context.Context) ([]chain.GovernanceAction, error) {
+	return nil, nil
 }
 
 func (f *fakeNodeLookup) AssetAddresses(_ context.Context, asset string) ([]chain.AssetAddress, error) {
