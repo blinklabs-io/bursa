@@ -382,46 +382,29 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 		return Preview{}, fmt.Errorf("%w: lovelace: %w", ErrInvalidRequest, err)
 	}
 	// Complete with the selected input payment key hashes embedded as Conway
-	// required signers. The first pass discovers selected inputs; later passes
-	// rebuild the tx with that signer set so fee estimation covers the bound body.
-	var a *apollo.Apollo
-	var required []lcommon.Blake2b224
-	maxAttempts := len(acct.ReceiveAddresses) + 2
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		next := apollo.New(s.chain).
-			SetWallet(apollo.NewExternalWallet(changeAddr)).
-			SetChangeAddress(changeAddr).
-			SetFeePadding(feePaddingLovelace).
-			AddLoadedUTxOs(loaded...)
-		for _, kh := range required {
-			next = next.AddRequiredSigner(kh)
+	// required signers (the first pass discovers selected inputs; later passes
+	// rebuild the tx with that signer set so fee estimation covers the bound body).
+	//
+	// A send that would leave change just below the min-UTxO floor puts Apollo in
+	// the "dust-change dead-zone": adding a change output raises the fee estimate,
+	// which drops the change below the floor, which removes the output, which
+	// lowers the fee — Apollo's evaluation loop oscillates and Complete() reports
+	// "evaluation transaction did not converge". When that happens, retry forcing
+	// a growing, largest-first prefix of the loaded UTxOs in as explicit inputs
+	// until the combined change clears the floor (see completeForcingPrefix). This
+	// pulls in only the minimum extra inputs needed — usually one, matching the
+	// legacy builder's "silently pull in another input" behaviour — rather than
+	// forcing the whole wallet, which would blow past MaxTxSize on large wallets.
+	addrCount := len(acct.ReceiveAddresses)
+	a, err := s.completeSend(ctx, changeAddr, recvAddr, lovelace, units, loaded, utxoAddr, addrCount, false)
+	if err != nil {
+		if !isNonConvergenceError(err) {
+			return Preview{}, mapCompleteErr(err)
 		}
-		next = next.PayToAddress(recvAddr, int64(lovelace), units...) //nolint:gosec // validated by parseAmount
-
-		next, err = next.WithContext(ctx).Complete()
-		if err != nil {
-			if isInsufficientFundsError(err) {
-				return Preview{}, fmt.Errorf("%w: %w", ErrInsufficientFunds, err)
-			}
-			return Preview{}, fmt.Errorf("complete transaction: %w", err)
-		}
-
-		tx := next.GetTx()
-		if tx == nil {
-			return Preview{}, errors.New("completed tx is nil")
-		}
-		actual, err := requiredPaymentKeyHashesForInputs(tx.Body.Inputs(), utxoAddr)
+		a, err = s.completeForcingPrefix(ctx, changeAddr, recvAddr, lovelace, units, loaded, utxoAddr, addrCount)
 		if err != nil {
 			return Preview{}, err
 		}
-		if sameKeyHashSet(required, actual) {
-			a = next
-			break
-		}
-		required = actual
-	}
-	if a == nil {
-		return Preview{}, errors.New("required signer set did not converge")
 	}
 
 	// Store the pending entry (sweeping any that have outlived their TTL first).
@@ -443,6 +426,205 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 	s.mu.Unlock()
 
 	return toPreview(id, a), nil
+}
+
+// completeSend runs Apollo coin selection + fee estimation for a single payment,
+// iterating until the Conway required-signer set (derived from the selected
+// inputs) is stable so fee estimation covers the fully-bound body.
+//
+// When forceInputs is false, Apollo selects inputs from the loaded pool. When it
+// is true, every UTxO in loaded is added as an explicit input and no coin
+// selection runs — the caller (completeForcingPrefix) passes a bounded,
+// largest-first prefix of the wallet's UTxOs to escape the min-UTxO dust-change
+// dead-zone so the combined change clears the min-UTxO floor.
+func (s *Service) completeSend(
+	ctx context.Context,
+	changeAddr, recvAddr lcommon.Address,
+	lovelace uint64,
+	units []apollo.Unit,
+	loaded []lcommon.Utxo,
+	utxoAddr map[string]string,
+	addrCount int,
+	forceInputs bool,
+) (*apollo.Apollo, error) {
+	var required []lcommon.Blake2b224
+	// The loop reruns Complete() until the Conway required-signer set stops
+	// growing. That set is discovered from the selected inputs, so it grows by at
+	// least one distinct payment-key hash per iteration and is bounded by the
+	// distinct signers, which cannot exceed either the number of loaded UTxOs
+	// (signers ≤ inputs ≤ len(loaded)) or the number of derived receive addresses
+	// (every input's key hash comes from one of them). Bounding by the smaller of
+	// the two keeps the worst case tight — a 400-UTxO / 20-address wallet caps at
+	// 22 Complete() calls, not 402. +2 covers a full convergence plus a final
+	// confirming pass. (addrCount ≤ 0 falls back to the loaded-count bound.)
+	bound := len(loaded)
+	if addrCount > 0 && addrCount < bound {
+		bound = addrCount
+	}
+	maxAttempts := bound + 2
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		next := apollo.New(s.chain).
+			SetWallet(apollo.NewExternalWallet(changeAddr)).
+			SetChangeAddress(changeAddr).
+			SetFeePadding(feePaddingLovelace)
+		if forceInputs {
+			for _, u := range loaded {
+				next = next.AddInput(u)
+			}
+		} else {
+			next = next.AddLoadedUTxOs(loaded...)
+		}
+		for _, kh := range required {
+			next = next.AddRequiredSigner(kh)
+		}
+		next = next.PayToAddress(recvAddr, int64(lovelace), units...) //nolint:gosec // validated by parseAmount
+
+		next, err := next.WithContext(ctx).Complete()
+		if err != nil {
+			return nil, err
+		}
+		tx := next.GetTx()
+		if tx == nil {
+			return nil, errors.New("completed tx is nil")
+		}
+		actual, err := requiredPaymentKeyHashesForInputs(tx.Body.Inputs(), utxoAddr)
+		if err != nil {
+			return nil, err
+		}
+		if sameKeyHashSet(required, actual) {
+			return next, nil
+		}
+		required = actual
+	}
+	return nil, errors.New("required signer set did not converge")
+}
+
+// vkeyWitnessSizeEstimate is the CBOR size of one vkey witness: a 2-element
+// array of a 32-byte verification key and a 64-byte Ed25519 signature —
+// array(2) header (1) + bytes(32) (2+32) + bytes(64) (2+64) = 101 bytes, rounded
+// up to 102 to cover the per-element set overhead. Complete() leaves the witness
+// set empty (witnesses are attached later at Confirm/Sign time), so the size
+// guard projects the SIGNED size by adding one such witness per input.
+const vkeyWitnessSizeEstimate = 102
+
+// completeForcingPrefix escapes the min-UTxO dust-change dead-zone by forcing a
+// growing, largest-first prefix of the wallet's UTxOs as explicit inputs,
+// stopping at the SMALLEST prefix that converges. Going largest-first means the
+// converging prefix is usually just one extra input, so inputs, fee, tx size,
+// and address linkage all stay bounded to the minimum needed instead of forcing
+// the whole wallet (which crosses MaxTxSize on large wallets).
+//
+// It sorts a COPY of loaded so the caller's slice — and the utxoAddr/utxoValue
+// maps keyed off the same UTxO references — are left untouched.
+func (s *Service) completeForcingPrefix(
+	ctx context.Context,
+	changeAddr, recvAddr lcommon.Address,
+	lovelace uint64,
+	units []apollo.Unit,
+	loaded []lcommon.Utxo,
+	utxoAddr map[string]string,
+	addrCount int,
+) (*apollo.Apollo, error) {
+	sorted := make([]lcommon.Utxo, len(loaded))
+	copy(sorted, loaded)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sorted[i].Output.Amount().Uint64() > sorted[j].Output.Amount().Uint64()
+	})
+
+	for k := 1; k <= len(sorted); k++ {
+		a, err := s.completeSend(ctx, changeAddr, recvAddr, lovelace, units, sorted[:k], utxoAddr, addrCount, true)
+		if err != nil {
+			// Insufficient funds: the forced prefix does not yet cover payment+fee.
+			// Non-convergence: still inside the dust-change dead-zone. Either way,
+			// grow the prefix by one more (larger-first) UTxO and retry.
+			if isInsufficientFundsError(err) || isNonConvergenceError(err) {
+				continue
+			}
+			return nil, mapCompleteErr(err)
+		}
+		// Converged on the minimal forced set. Reject it locally if signing it
+		// would exceed the chain's MaxTxSize, turning a would-be submit-time
+		// failure into a clear, pre-approval error.
+		if err := s.guardTxSize(a); err != nil {
+			return nil, err
+		}
+		return a, nil
+	}
+
+	return nil, fmt.Errorf(
+		"%w: the amount leaves change below the minimum UTxO and no additional inputs are available to cover it",
+		ErrInsufficientFunds,
+	)
+}
+
+// guardTxSize rejects a completed tx whose projected SIGNED size exceeds the
+// chain's MaxTxSize protocol parameter. Complete() produces a body with an empty
+// witness set (vkey witnesses are attached at Confirm/Sign time), so the signed
+// size is estimated as the completed CBOR plus one vkey witness per input that
+// lacks one. That per-input count is a deliberate conservative UPPER BOUND:
+// Confirm signs once per distinct input address, so the real tx carries at most
+// one witness per input and fewer when inputs share an address. Over-estimating
+// only ever makes the guard reject a shade earlier — it can never let an
+// oversized tx reach SubmitTx.
+func (s *Service) guardTxSize(a *apollo.Apollo) error {
+	pp, err := s.chain.ProtocolParams()
+	if err != nil {
+		return fmt.Errorf("protocol params: %w", err)
+	}
+	if pp.MaxTxSize <= 0 {
+		return nil // no size limit configured; nothing to guard against
+	}
+	cborBytes, err := a.GetTxCbor()
+	if err != nil {
+		return fmt.Errorf("encode tx for size check: %w", err)
+	}
+	tx := a.GetTx()
+	numInputs, existingWitnesses := 0, 0
+	if tx != nil {
+		numInputs = len(tx.Body.Inputs())
+		existingWitnesses = len(tx.WitnessSet.VkeyWitnesses.Items())
+	}
+	missingWitnesses := numInputs - existingWitnesses
+	if missingWitnesses < 0 {
+		missingWitnesses = 0
+	}
+	signedSize := len(cborBytes) + missingWitnesses*vkeyWitnessSizeEstimate
+	if signedSize > pp.MaxTxSize {
+		return fmt.Errorf(
+			"%w: transaction would exceed the maximum size (%d/%d bytes); reduce the amount or consolidate UTxOs",
+			ErrInsufficientFunds, signedSize, pp.MaxTxSize,
+		)
+	}
+	return nil
+}
+
+// mapCompleteErr maps a completeSend error to the caller-facing Build error for
+// the arms shared between the first attempt and the forced-prefix retry: an
+// Apollo insufficient-funds error becomes ErrInsufficientFunds; anything else is
+// wrapped as "complete transaction". Non-convergence is handled separately by
+// the caller (it drives the forced-input retry) and is never passed here.
+func mapCompleteErr(err error) error {
+	if isInsufficientFundsError(err) {
+		return fmt.Errorf("%w: %w", ErrInsufficientFunds, err)
+	}
+	return fmt.Errorf("complete transaction: %w", err)
+}
+
+// isNonConvergenceError reports whether err is Apollo's fee/evaluation
+// non-convergence error. It surfaces in the min-UTxO dust-change dead-zone,
+// where leaving change just under the min-UTxO floor makes Apollo's fee estimate
+// oscillate across the boundary.
+//
+// The exact phrase "evaluation transaction did not converge" was verified
+// against apollo v2.0.0-20260729192515-7fa2cfd06025 (see ui/go.mod); recheck it
+// on every apollo bump, as this is a string-coupled match. It MUST keep the full
+// phrase and never be shortened to "did not converge": completeSend's own
+// "required signer set did not converge" error also contains that substring, so
+// a shortened matcher would misread bursa's signer-convergence failure as the
+// Apollo dust dead-zone and trigger a spurious forced-input retry.
+func isNonConvergenceError(err error) bool {
+	return err != nil &&
+		strings.Contains(err.Error(), "evaluation transaction did not converge")
 }
 
 // SignData signs an arbitrary message with the wallet key for one of the
