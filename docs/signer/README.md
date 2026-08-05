@@ -40,10 +40,18 @@ Systemd units, an `EnvironmentFile` example, and a Dockerfile live in
 
 ## Quick start (development)
 
+`signer.example.yaml` documents the full production shape (JWKS auth, TLS,
+Vault) with placeholder values that don't exist on a fresh machine, so copy it
+and trim it down for a loopback run rather than passing it as-is:
+
 ```sh
-bursa signer --config docs/signer/signer.example.yaml
+cp docs/signer/signer.example.yaml /tmp/signer-dev.yaml
+# In /tmp/signer-dev.yaml:
+#   - clear jwks_url (blank string) and set jwt_secret to a random >=32-byte
+#     value (exactly one of the two may be set)
+#   - clear tls_cert_file and tls_key_file (loopback may run plaintext)
+bursa signer --config /tmp/signer-dev.yaml
 ```
 
-Bind to loopback with `signer.jwt_secret` set (>=32 bytes) for the simplest
-local setup. For anything exposed off-host, follow the [runbook](runbook.md) to
-configure TLS, JWKS, and a Vault or SOPS backend.
+For anything exposed off-host, follow the [runbook](runbook.md) to configure
+TLS, JWKS, and a Vault or SOPS backend.

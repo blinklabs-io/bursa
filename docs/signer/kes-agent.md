@@ -25,14 +25,27 @@ For the socket wire format, see
 
 ## Sockets
 
-Two Unix-domain sockets, both created with mode `socket_mode` (default `0600`):
+Two Unix-domain sockets, each with its own independent mode (default `0600`,
+owner-only):
 
-- **service socket** (`service_socket`) - the block producer connects here.
-- **control socket** (`control_socket`) - operator key management.
+- **service socket** (`service_socket`, mode `service_socket_mode`) - the
+  block producer connects here.
+- **control socket** (`control_socket`, mode `control_socket_mode`) -
+  operator key management. Can drop/install keys; keep this owner-only.
 
-Because access is governed by filesystem permissions, place the sockets in a
-directory owned by the service user and readable only by the producer's user.
-Do not expose them over a network; front with a Unix socket only.
+Access is governed purely by filesystem permissions - do not expose either
+socket over a network. A pathname Unix-socket client needs *write* permission
+on the socket itself, plus *execute* (search) permission on every parent
+directory; read access alone is not sufficient. There are two supported ways
+for the block producer (a different UID) to reach the service socket:
+
+- Run the producer and the agent under the same UID, or
+- Add the producer's user to the agent's group and set
+  `service_socket_mode: "0660"`.
+
+Never apply the same widening to `control_socket_mode` - doing so would let
+the producer's group drop or install KES keys. Keep it at the owner-only
+default `0600` regardless of how `service_socket_mode` is configured.
 
 ## Key lifecycle (control socket)
 

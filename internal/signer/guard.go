@@ -45,14 +45,13 @@ func IsLoopbackListenAddress(addr string) bool {
 }
 
 // isSoftwareFileBackend reports whether c is the plaintext, in-process
-// software/file key backend.
+// software/file key backend. The only key-backend types BuildBackends accepts
+// are "software", "sops", and "vault" (config.SignerBackendConfig.Type); a
+// literal Type of "file" is not a valid key backend (it is only a watermark
+// store type) and would never reach here in a functioning configuration, so
+// it is intentionally not matched.
 func isSoftwareFileBackend(c config.SignerBackendConfig) bool {
-	switch c.Type {
-	case "software", "file":
-		return true
-	default:
-		return false
-	}
+	return c.Type == "software"
 }
 
 // CheckFileBackendGuard enforces the production posture for the plaintext

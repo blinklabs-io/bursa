@@ -7,7 +7,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 # Dedicated, unprivileged service account. Create it once:
-#   useradd --system --no-create-home --shell /usr/sbin/nologin bursa-signer
+#   groupadd --system bursa-signer
+#   useradd --system --no-create-home --shell /usr/sbin/nologin -g bursa-signer bursa-signer
 User=bursa-signer
 Group=bursa-signer
 
@@ -44,6 +45,8 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 UMask=0077
+# A crash must not persist key material to disk in a core dump.
+LimitCORE=0
 
 # Writable state for the durable (file/SQLite) watermark:
 #   signer.watermark.path: /var/lib/bursa/signer/watermark.sqlite

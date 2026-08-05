@@ -84,6 +84,19 @@ signer.callers ACL, any valid token may use any configured key.`,
 				logger.Warn("no signer.callers configured; any valid token may use any configured key")
 			}
 
+			// Insecure-file-backend guardrail: the software/file backend loads
+			// plaintext key material in-process. Refuse to start when exposed on
+			// a non-loopback address unless explicitly opted in; warn loudly
+			// otherwise. Run this BEFORE BuildBackends so a refused, unsafe
+			// configuration is rejected before any key material is read off
+			// disk or decrypted into process memory.
+			if warn, gerr := signer.CheckFileBackendGuard(cfg.Signer.Backends, cfg.Signer.ListenAddress, cfg.Signer.AllowInsecureFileBackend); gerr != nil {
+				logger.Error("insecure file backend refused", "error", gerr)
+				os.Exit(1)
+			} else if warn != "" {
+				logger.Warn(warn)
+			}
+
 			// Signal-cancellable root context for graceful shutdown.
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -98,17 +111,6 @@ signer.callers ACL, any valid token may use any configured key.`,
 				os.Exit(1)
 			}
 			resolver := backend.NewResolver(backends...)
-
-			// Insecure-file-backend guardrail: the software/file backend loads
-			// plaintext key material in-process. Refuse to start when exposed on
-			// a non-loopback address unless explicitly opted in; warn loudly
-			// otherwise.
-			if warn, gerr := signer.CheckFileBackendGuard(cfg.Signer.Backends, cfg.Signer.ListenAddress, cfg.Signer.AllowInsecureFileBackend); gerr != nil {
-				logger.Error("insecure file backend refused", "error", gerr)
-				os.Exit(1)
-			} else if warn != "" {
-				logger.Warn(warn)
-			}
 
 			// Fix 5: ambiguous duplicate-hash check — same key hash in multiple
 			// backends is a config error; fail at boot rather than silently
