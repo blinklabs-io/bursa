@@ -51,6 +51,27 @@ function walletOnAccount1(): WalletView {
   };
 }
 
+// The wallet the server returns from addAccount() once the new account is
+// derived — distinct from the `wallet` fixture in that it carries the freshly
+// added Account #2. active_account_index is still 0 here: derivation alone
+// does not switch the active account server-side, that's the follow-up
+// selectAccount() call.
+function walletWithAddedAccount2(): WalletView {
+  return {
+    ...wallet,
+    accounts: [
+      ...wallet.accounts!,
+      {
+        index: 2,
+        label: "Account #2",
+        stake_address: "stake_test1acct2",
+        first_address: "addr_test1acct2",
+        active: false,
+      },
+    ],
+  };
+}
+
 function renderSwitcher(overrides: Partial<Parameters<typeof AccountSwitcher>[0]> = {}) {
   const props = { wallet, onChanged: vi.fn(), ...overrides };
   render(<AccountSwitcher {...props} />);
@@ -141,11 +162,12 @@ test("adding an account derives the next index then selects it", async () => {
 });
 
 test("a selection failure after a successful add is reported distinctly, not as an add failure", async () => {
-  const add = vi.spyOn(client, "addAccount").mockResolvedValue(wallet);
+  const addedWallet = walletWithAddedAccount2();
+  const add = vi.spyOn(client, "addAccount").mockResolvedValue(addedWallet);
   vi.spyOn(client, "selectAccount").mockRejectedValue(
     new client.ApiError(500, "node unavailable"),
   );
-  renderSwitcher();
+  const { onChanged } = renderSwitcher();
 
   fireEvent.click(screen.getByRole("button", { name: /add account/i }));
   fireEvent.change(screen.getByPlaceholderText(/vault password/i), {
@@ -157,11 +179,18 @@ test("a selection failure after a successful add is reported distinctly, not as 
   fireEvent.click(screen.getByRole("button", { name: /derive account/i }));
 
   await waitFor(() => expect(add).toHaveBeenCalled());
+  // The freshly derived wallet (with Account #2) must reach the parent even
+  // though the follow-up switch below fails - otherwise the parent would be
+  // stuck showing the stale, pre-add account list.
+  await waitFor(() => expect(onChanged).toHaveBeenCalledWith(addedWallet));
   // The add itself succeeded, so the error must say switching failed - not
   // that the (already-derived) account failed to add.
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent(/added, but switching to it failed/i),
   );
+  // And onChanged must not have been called a second time with some other
+  // (e.g. post-selection) wallet - the add's result is the last thing reported.
+  expect(onChanged).toHaveBeenCalledTimes(1);
 });
 
 test("hardware wallets cannot derive a new account", async () => {
