@@ -48,6 +48,16 @@ type SignerConfig struct {
 	Backends      []SignerBackendConfig `yaml:"backends"`
 	Keys          []SignerKeyConfig     `yaml:"keys"`
 	Callers       []SignerCallerConfig  `yaml:"callers"`
+	// CallerPolicies optionally narrows a caller's authority for specific keys.
+	// Shape: caller subject -> key hash (hex) -> tx-policy overrides (mapped to
+	// policy.CallerTxOverride at setup). An override can only further restrict
+	// the key's base policy (intersection); it never widens authority.
+	CallerPolicies map[string]map[string]map[string]any `yaml:"caller_policies"`
+	// PolicyHookURL, when set, enables an external policy hook: after the static
+	// policy allows, the signer POSTs the parsed operation summary and signs only
+	// on an allow response (fail closed). Off by default.
+	PolicyHookURL       string `yaml:"policy_hook_url"        envconfig:"SIGNER_POLICY_HOOK_URL"`
+	PolicyHookTimeoutMs uint   `yaml:"policy_hook_timeout_ms" envconfig:"SIGNER_POLICY_HOOK_TIMEOUT_MS"`
 }
 
 // SignerCallerConfig grants a JWT subject access to specific keys.
