@@ -23,11 +23,17 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
 // kesVkeySize is the length in bytes of a KES verification key (Ed25519-sized).
 const kesVkeySize = 32
+
+// opcertCounterScope namespaces the monotonic issue-counter watermark. The
+// record key already embeds the cold-key hash, so this scope only separates
+// opcert-counter records from tx/cip8 payload watermarks for the same key.
+const opcertCounterScope = "opcert-counter"
 
 // OpCertResult is the outcome of an operational-certificate cold-signing request.
 type OpCertResult struct {
@@ -98,6 +104,43 @@ func (c *Coordinator) SignOpCert(ctx context.Context, kesVkey []byte, issueCount
 		return nil, CodeBadRequest, fmt.Errorf("opcert signing requires a %q key, got %q", backend.KeyTypePool, ref.Type())
 	}
 
+	// Anti-double-sign: the operational-certificate issue counter must strictly
+	// increase per cold key. A stale or duplicate counter is refused before the
+	// cold key ever signs, so a compromised or buggy caller cannot re-issue an
+	// opcert for a counter already used.
+	var (
+		counterWM               watermark.CounterWatermark
+		counterConflictReported bool
+	)
+	if c.deps.WMMode != watermark.ModeOff {
+		cw, ok := c.deps.Watermark.(watermark.CounterWatermark)
+		if !ok {
+			c.deps.Logger.Error("sign", "type", "opcert", "caller-key", hash.String(), "result", "internal-error", "reason", "watermark store does not support monotonic counters")
+			c.deps.Metrics.observe("opcert", string(CodeInternal))
+			return nil, CodeInternal, errors.New("watermark store does not support opcert issue counters")
+		}
+		counterWM = cw
+		stored, exists, cerr := cw.CounterFor(ctx, hash, opcertCounterScope)
+		if cerr != nil {
+			c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "error", "reason", cerr.Error())
+			c.deps.Metrics.observe("opcert", string(CodeBackend))
+			c.deps.Metrics.observeBackendError("watermark")
+			return nil, CodeBackend, fmt.Errorf("opcert counter lookup: %w", cerr)
+		}
+		if exists && issueCounter <= stored {
+			counterConflictReported = true
+			c.deps.Metrics.observeWatermarkConflict()
+			if c.deps.WMMode == watermark.ModeEnforce {
+				c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "issue-counter", issueCounter, "stored-counter", stored, "result", "denied", "reason", "issue counter is not strictly greater than the highest signed")
+				c.deps.Metrics.observe("opcert", string(CodeConflict))
+				c.deps.Metrics.observeDeny(string(CodeConflict))
+				return nil, CodeConflict, fmt.Errorf("opcert issue counter %d is not greater than the highest signed %d for this cold key", issueCounter, stored)
+			}
+			// warn mode: log and allow; the signature is still produced.
+			c.deps.Logger.Warn("sign", "type", "opcert", "caller-key", hash.String(), "issue-counter", issueCounter, "stored-counter", stored, "result", "warn", "reason", "issue counter is not strictly greater than the highest signed (warn mode)")
+		}
+	}
+
 	// The cold key signs the raw OCertSignable bytes directly (this is NOT a
 	// CBOR encoding). Building it via gouroboros keeps the byte layout identical
 	// to cardano-node / cardano-ledger and to Part A's canonical envelope.
@@ -134,7 +177,42 @@ func (c *Coordinator) SignOpCert(ctx context.Context, kesVkey []byte, issueCount
 		return nil, CodeInternal, errors.New("produced signature failed verification")
 	}
 
-	c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "signed")
+	// Persist the new highest counter only after a verified signature. The commit
+	// is an atomic advance-if-greater, so if a concurrent request advanced the
+	// counter past ours between the pre-sign check and here, we lose the race and
+	// must discard this signature rather than return a second opcert for a
+	// now-stale counter.
+	if counterWM != nil {
+		if werr := counterWM.CheckAndCommitCounter(ctx, hash, opcertCounterScope, issueCounter); werr != nil {
+			if errors.Is(werr, watermark.ErrCounterRegression) {
+				if c.deps.WMMode == watermark.ModeEnforce {
+					c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "issue-counter", issueCounter, "result", "denied", "reason", "issue counter regression detected at commit (concurrent signer)")
+					c.deps.Metrics.observe("opcert", string(CodeConflict))
+					c.deps.Metrics.observeDeny(string(CodeConflict))
+					c.deps.Metrics.observeWatermarkConflict()
+					return nil, CodeConflict, fmt.Errorf("opcert issue counter %d is not greater than the highest signed for this cold key", issueCounter)
+				}
+				// warn mode: the stored counter already meets or exceeds ours;
+				// nothing to advance. The signature is still returned. Only log
+				// and meter here if the pre-sign check did not already do so for
+				// this same request, so a request that was stale from the start
+				// is not double-counted.
+				if !counterConflictReported {
+					c.deps.Logger.Warn("sign", "type", "opcert", "caller-key", hash.String(), "issue-counter", issueCounter, "result", "warn", "reason", "issue counter regression detected at commit (concurrent signer; warn mode)")
+					c.deps.Metrics.observeWatermarkConflict()
+				}
+			} else {
+				c.deps.Logger.Error("sign", "type", "opcert", "caller-key", hash.String(), "result", "error", "reason", werr.Error())
+				if c.deps.WMMode == watermark.ModeEnforce {
+					c.deps.Metrics.observe("opcert", string(CodeBackend))
+					c.deps.Metrics.observeBackendError("watermark")
+					return nil, CodeBackend, fmt.Errorf("opcert counter commit: %w", werr)
+				}
+			}
+		}
+	}
+
+	c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "issue-counter", issueCounter, "result", "signed")
 	c.deps.Metrics.observe("opcert", "signed")
 	return &OpCertResult{
 		SignatureHex: hex.EncodeToString(sig),
