@@ -84,4 +84,18 @@ test("surfaces an API error", async () => {
 
   render(<DRepDirectory network="preview" />);
   expect(await screen.findByRole("alert")).toHaveTextContent(/node not ready/i);
+  // The error is the sole result state — it must not also claim no DReps
+  // were found, which would misrepresent a failed request as an empty one.
+  expect(screen.queryByText(/no dreps found/i)).not.toBeInTheDocument();
+});
+
+test("hides the Delegate shortcut when the active wallet cannot stake", async () => {
+  vi.spyOn(client, "getDReps").mockResolvedValue(directory([DREP_A]));
+
+  render(<DRepDirectory network="preview" canDelegate={false} />);
+
+  expect(
+    await screen.findByRole("button", { name: `Copy drep id ${DREP_A.drep_id}` }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Delegate" })).not.toBeInTheDocument();
 });

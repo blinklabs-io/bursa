@@ -36,6 +36,12 @@ const DREP_COLUMNS = [
 
 interface DRepDirectoryProps {
   network: string;
+  // Whether the active wallet can reach Staking (a synced node AND a
+  // spending-enabled wallet — see app.tsx's canStake). Read-only and hardware
+  // wallets cannot, so the per-row "Delegate" shortcut is hidden for them
+  // rather than silently landing on Portfolio when clicked. Defaults to true
+  // so existing callers/tests that don't pass it keep the prior behavior.
+  canDelegate?: boolean;
 }
 
 // DRepDirectory is a read-only browse/search screen for the delegated
@@ -43,7 +49,7 @@ interface DRepDirectoryProps {
 // local node (no external service), so it needs no consent gate. It does not
 // delegate: copy a DRep ID and paste it into Staking, or use "Delegate" to jump
 // there.
-export function DRepDirectory({ network }: DRepDirectoryProps) {
+export function DRepDirectory({ network, canDelegate = true }: DRepDirectoryProps) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<DRepDirectoryResponse | null>(null);
@@ -104,9 +110,11 @@ export function DRepDirectory({ network }: DRepDirectoryProps) {
     actions: (
       <span className="pool-id-cell">
         <CopyButton value={d.drep_id} aria-label={`Copy drep id ${d.drep_id}`} />
-        <Button variant="ghost" onClick={() => navigate("staking")}>
-          Delegate
-        </Button>
+        {canDelegate && (
+          <Button variant="ghost" onClick={() => navigate("staking")}>
+            Delegate
+          </Button>
+        )}
       </span>
     ),
   }));
@@ -141,7 +149,7 @@ export function DRepDirectory({ network }: DRepDirectoryProps) {
 
         {loading && !data ? (
           <p className="muted">Reading DReps from the local node…</p>
-        ) : rows.length === 0 ? (
+        ) : error ? null : rows.length === 0 ? (
           <p className="muted">
             {query.trim() ? "No DReps match your search." : "No DReps found."}
           </p>

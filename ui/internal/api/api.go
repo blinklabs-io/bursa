@@ -1453,36 +1453,34 @@ const (
 	poolDirMaxCount     = 200
 )
 
-// filterAndPagePools applies the read-only directory's server-side search and
-// pagination over the node's full pool list. The search (q) is a
-// case-insensitive substring match against the pool's bech32 ID and hex ID —
-// the identity fields the node's /pools/extended list exposes. page is 1-based;
-// count is clamped to [1, poolDirMaxCount]. Invalid/absent page or count fall
-// back to their defaults rather than erroring.
-func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poolDirectoryResponse {
+// filterAndPage applies a read-only directory's server-side search and
+// pagination over a full item list. matches decides whether an item satisfies
+// the (already lower-cased, trimmed) search needle. page is 1-based; count is
+// clamped to [1, poolDirMaxCount]. Invalid/absent page or count fall back to
+// their defaults rather than erroring. start/end are clamped on both sides so
+// a very large page can't overflow the slice bounds and panic.
+func filterAndPage[T any](items []T, q, pageStr, countStr string, matches func(T, string) bool) (pageItems []T, total, page, count int) {
 	needle := strings.ToLower(strings.TrimSpace(q))
-	matched := make([]chain.PoolInfo, 0, len(pools))
-	for _, p := range pools {
-		if needle == "" ||
-			strings.Contains(strings.ToLower(p.PoolID), needle) ||
-			strings.Contains(strings.ToLower(p.Hex), needle) {
-			matched = append(matched, p)
+	matched := make([]T, 0, len(items))
+	for _, item := range items {
+		if needle == "" || matches(item, needle) {
+			matched = append(matched, item)
 		}
 	}
 
-	count := poolDirDefaultCount
+	count = poolDirDefaultCount
 	if n, err := strconv.Atoi(countStr); err == nil && n > 0 {
 		count = n
 	}
 	if count > poolDirMaxCount {
 		count = poolDirMaxCount
 	}
-	page := 1
+	page = 1
 	if n, err := strconv.Atoi(pageStr); err == nil && n > 1 {
 		page = n
 	}
 
-	total := len(matched)
+	total = len(matched)
 	// (page-1)*count can overflow to a negative int for a very large page, so
 	// clamp start on both sides before slicing to avoid an out-of-range panic.
 	start := (page - 1) * count
@@ -1493,10 +1491,22 @@ func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poo
 	if end < start || end > total {
 		end = total
 	}
-	pageItems := matched[start:end]
+	pageItems = matched[start:end]
 	if pageItems == nil {
-		pageItems = []chain.PoolInfo{}
+		pageItems = []T{}
 	}
+	return pageItems, total, page, count
+}
+
+// filterAndPagePools applies the read-only directory's server-side search and
+// pagination over the node's full pool list. The search (q) is a
+// case-insensitive substring match against the pool's bech32 ID and hex ID —
+// the identity fields the node's /pools/extended list exposes.
+func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poolDirectoryResponse {
+	pageItems, total, page, count := filterAndPage(pools, q, pageStr, countStr, func(p chain.PoolInfo, needle string) bool {
+		return strings.Contains(strings.ToLower(p.PoolID), needle) ||
+			strings.Contains(strings.ToLower(p.Hex), needle)
+	})
 	return poolDirectoryResponse{Pools: pageItems, Total: total, Page: page, Count: count}
 }
 
@@ -1513,47 +1523,13 @@ type drepDirectoryResponse struct {
 // filterAndPageDReps applies the read-only directory's server-side search and
 // pagination over the node's full DRep list. The search (q) is a
 // case-insensitive substring match against the DRep's bech32 id, hex
-// credential, and metadata anchor URL. page is 1-based; count is clamped to
-// [1, poolDirMaxCount]. Invalid/absent page or count fall back to their
-// defaults rather than erroring. start/end are clamped on both sides so a very
-// large page can't overflow the slice bounds and panic.
+// credential, and metadata anchor URL.
 func filterAndPageDReps(dreps []chain.DRepInfo, q, pageStr, countStr string) drepDirectoryResponse {
-	needle := strings.ToLower(strings.TrimSpace(q))
-	matched := make([]chain.DRepInfo, 0, len(dreps))
-	for _, d := range dreps {
-		if needle == "" ||
-			strings.Contains(strings.ToLower(d.DRepID), needle) ||
+	pageItems, total, page, count := filterAndPage(dreps, q, pageStr, countStr, func(d chain.DRepInfo, needle string) bool {
+		return strings.Contains(strings.ToLower(d.DRepID), needle) ||
 			strings.Contains(strings.ToLower(d.Hex), needle) ||
-			strings.Contains(strings.ToLower(d.AnchorURL), needle) {
-			matched = append(matched, d)
-		}
-	}
-
-	count := poolDirDefaultCount
-	if n, err := strconv.Atoi(countStr); err == nil && n > 0 {
-		count = n
-	}
-	if count > poolDirMaxCount {
-		count = poolDirMaxCount
-	}
-	page := 1
-	if n, err := strconv.Atoi(pageStr); err == nil && n > 1 {
-		page = n
-	}
-
-	total := len(matched)
-	start := (page - 1) * count
-	if start < 0 || start > total {
-		start = total
-	}
-	end := start + count
-	if end < start || end > total {
-		end = total
-	}
-	pageItems := matched[start:end]
-	if pageItems == nil {
-		pageItems = []chain.DRepInfo{}
-	}
+			strings.Contains(strings.ToLower(d.AnchorURL), needle)
+	})
 	return drepDirectoryResponse{DReps: pageItems, Total: total, Page: page, Count: count}
 }
 
