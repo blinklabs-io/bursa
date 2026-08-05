@@ -36,18 +36,40 @@ type Config struct {
 
 // SignerConfig holds configuration for the bursa signer daemon.
 type SignerConfig struct {
-	ListenAddress string                `yaml:"listen_address" envconfig:"SIGNER_LISTEN_ADDRESS"`
-	ListenPort    uint                  `yaml:"listen_port"    envconfig:"SIGNER_LISTEN_PORT"`
-	JWTSecret     string                `yaml:"jwt_secret"     envconfig:"SIGNER_JWT_SECRET"`
-	JWKSURL       string                `yaml:"jwks_url"       envconfig:"SIGNER_JWKS_URL"`
-	JWTIssuer     string                `yaml:"jwt_issuer"     envconfig:"SIGNER_JWT_ISSUER"`
-	JWTAudience   string                `yaml:"jwt_audience"   envconfig:"SIGNER_JWT_AUDIENCE"`
-	TLSCertFile   string                `yaml:"tls_cert_file"  envconfig:"SIGNER_TLS_CERT_FILE"`
-	TLSKeyFile    string                `yaml:"tls_key_file"   envconfig:"SIGNER_TLS_KEY_FILE"`
-	Watermark     SignerWatermarkConfig `yaml:"watermark"`
-	Backends      []SignerBackendConfig `yaml:"backends"`
-	Keys          []SignerKeyConfig     `yaml:"keys"`
-	Callers       []SignerCallerConfig  `yaml:"callers"`
+	ListenAddress string `yaml:"listen_address" envconfig:"SIGNER_LISTEN_ADDRESS"`
+	ListenPort    uint   `yaml:"listen_port"    envconfig:"SIGNER_LISTEN_PORT"`
+	JWTSecret     string `yaml:"jwt_secret"     envconfig:"SIGNER_JWT_SECRET"`
+	JWKSURL       string `yaml:"jwks_url"       envconfig:"SIGNER_JWKS_URL"`
+	JWTIssuer     string `yaml:"jwt_issuer"     envconfig:"SIGNER_JWT_ISSUER"`
+	JWTAudience   string `yaml:"jwt_audience"   envconfig:"SIGNER_JWT_AUDIENCE"`
+	TLSCertFile   string `yaml:"tls_cert_file"  envconfig:"SIGNER_TLS_CERT_FILE"`
+	TLSKeyFile    string `yaml:"tls_key_file"   envconfig:"SIGNER_TLS_KEY_FILE"`
+	// ClientCACert is a PEM file of CA certificate(s) used to verify TLS client
+	// certificates (mTLS). When set, TLS client-cert auth is enabled and the
+	// caller identity is derived from the verified client certificate.
+	ClientCACert string `yaml:"client_ca_cert" envconfig:"SIGNER_CLIENT_CA_CERT"`
+	// RequireClientCert makes a verified client certificate mandatory on every
+	// connection (tls.RequireAndVerifyClientCert). When false and ClientCACert
+	// is set, a client cert is optional (tls.VerifyClientCertIfGiven) and other
+	// auth modes remain available on connections without one.
+	RequireClientCert bool `yaml:"require_client_cert" envconfig:"SIGNER_REQUIRE_CLIENT_CERT"`
+	// RequestSignSkewSeconds is the ± timestamp window (seconds) accepted for
+	// authorized-keys request signatures. Zero uses the 60s default.
+	RequestSignSkewSeconds int                         `yaml:"request_sign_skew_seconds" envconfig:"SIGNER_REQUEST_SIGN_SKEW_SECONDS"`
+	Watermark              SignerWatermarkConfig       `yaml:"watermark"`
+	Backends               []SignerBackendConfig       `yaml:"backends"`
+	Keys                   []SignerKeyConfig           `yaml:"keys"`
+	Callers                []SignerCallerConfig        `yaml:"callers"`
+	AuthorizedKeys         []SignerAuthorizedKeyConfig `yaml:"authorized_keys"`
+}
+
+// SignerAuthorizedKeyConfig registers an Ed25519 public key that may
+// authenticate via the authorized-keys request-signing scheme. Caller is the
+// identity fed to the CallerACL; Ed25519PubkeyHex is the hex-encoded 32-byte
+// public key that must verify the request signature.
+type SignerAuthorizedKeyConfig struct {
+	Caller           string `yaml:"caller"`
+	Ed25519PubkeyHex string `yaml:"ed25519_pubkey_hex"`
 }
 
 // SignerCallerConfig grants a JWT subject access to specific keys.

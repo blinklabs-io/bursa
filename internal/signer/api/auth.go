@@ -130,21 +130,106 @@ func write401(w http.ResponseWriter, msg string) {
 	}
 }
 
-// JWTMiddleware authenticates requests, injecting the caller subject into context.
-func JWTMiddleware(validate Validator, next http.Handler) http.Handler {
+// Authentication errors returned by Authenticators. All map to 401 except the
+// two below that carry their own HTTP status (see writeAuthError). Sentinels
+// are unexported: the middleware maps them to responses, callers only see the
+// generic wire messages so failures cannot be distinguished by attackers.
+var (
+	errInvalidToken     = errors.New("invalid token")
+	errInvalidSignature = errors.New("invalid request signature")
+	errUnknownKey       = errors.New("unknown authorized key")
+	errStaleTimestamp   = errors.New("request timestamp outside allowed window")
+	errReplay           = errors.New("request nonce already used")
+	errNoCertIdentity   = errors.New("client certificate carries no usable identity")
+	errNonceCacheFull   = errors.New("nonce cache full")
+	errBodyTooLarge     = errors.New("request body too large")
+	errNilRequest       = errors.New("nil request")
+)
+
+// Authenticator resolves the caller identity for a request from one credential
+// scheme (JWT bearer, mTLS client cert, or authorized-keys request signing).
+//
+// It returns:
+//   - (caller, true, nil)  when it positively identifies the caller;
+//   - ("", false, nil)     when the request carries no credential for this
+//     scheme — the chain proceeds to the next Authenticator (downgrade to a
+//     weaker configured scheme is intentional and only happens when the
+//     stronger scheme presented nothing);
+//   - ("", true, err)      when a credential for this scheme IS present but is
+//     invalid — the chain rejects immediately and does NOT fall through, so a
+//     bad JWT cannot be retried as a signed request and vice-versa.
+type Authenticator interface {
+	Authenticate(r *http.Request) (caller string, ok bool, err error)
+}
+
+// jwtAuthenticator adapts a bearer-token Validator to the Authenticator chain.
+type jwtAuthenticator struct{ validate Validator }
+
+// JWTAuthenticator returns an Authenticator that validates Authorization:
+// Bearer tokens with the supplied Validator.
+func JWTAuthenticator(validate Validator) Authenticator { return jwtAuthenticator{validate} }
+
+func (j jwtAuthenticator) Authenticate(r *http.Request) (string, bool, error) {
+	if r == nil || r.Header == nil {
+		return "", true, errNilRequest
+	}
+	authz := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if !strings.HasPrefix(authz, prefix) {
+		return "", false, nil
+	}
+	subject, err := j.validate(strings.TrimPrefix(authz, prefix))
+	if err != nil || subject == "" {
+		return "", true, errInvalidToken
+	}
+	return subject, true, nil
+}
+
+// writeAuthError maps an Authenticator error to an HTTP response. All auth
+// failures collapse to a generic 401 except capacity/size conditions that have
+// their own status.
+func writeAuthError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errNonceCacheFull):
+		writeErr(w, http.StatusServiceUnavailable, "nonce cache full")
+	case errors.Is(err, errBodyTooLarge):
+		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large")
+	default:
+		write401(w, "invalid credentials")
+	}
+}
+
+// AuthMiddleware runs the ordered Authenticator chain, injecting the resolved
+// caller subject into the request context (same context key the ACL reads).
+// The first scheme that presents a credential decides the request: a valid
+// credential authenticates it, an invalid one rejects it. Only schemes that
+// present nothing are skipped. An empty chain fails closed (always 401).
+func AuthMiddleware(chain []Authenticator, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authz := r.Header.Get("Authorization")
-		const prefix = "Bearer "
-		if !strings.HasPrefix(authz, prefix) {
-			write401(w, "missing bearer token")
+		for _, a := range chain {
+			caller, ok, err := a.Authenticate(r)
+			if err != nil {
+				writeAuthError(w, err)
+				return
+			}
+			if !ok {
+				continue
+			}
+			if caller == "" {
+				write401(w, "invalid credentials")
+				return
+			}
+			ctx := context.WithValue(r.Context(), callerKey, caller)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
-		subject, err := validate(strings.TrimPrefix(authz, prefix))
-		if err != nil || subject == "" {
-			write401(w, "invalid token")
-			return
-		}
-		ctx := context.WithValue(r.Context(), callerKey, subject)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		write401(w, "authentication required")
 	})
+}
+
+// JWTMiddleware authenticates requests with a single JWT Authenticator,
+// injecting the caller subject into context. Retained for callers that only
+// need bearer-token auth; the composable path is AuthMiddleware.
+func JWTMiddleware(validate Validator, next http.Handler) http.Handler {
+	return AuthMiddleware([]Authenticator{JWTAuthenticator(validate)}, next)
 }

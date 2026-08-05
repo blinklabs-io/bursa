@@ -96,11 +96,16 @@ type Server struct {
 	resolver *backend.Resolver
 	policies *policy.Engine
 	acl      *CallerACL
-	validate Validator
+	validate Validator     // JWT bearer authenticator (nil when JWT is unconfigured)
+	mtlsAuth Authenticator // mTLS client-cert authenticator (nil when disabled)
+	reqSign  Authenticator // authorized-keys request-signing authenticator (nil when disabled)
 	logger   *slog.Logger
 }
 
-// NewServer builds the API server. The logger defaults to logging.GetLogger().
+// NewServer builds the API server. validate is the JWT bearer Validator and may
+// be nil when only mTLS and/or request-signing auth are configured. mTLS and
+// request-signing authenticators are attached via SetMTLSAuthenticator /
+// SetRequestSigningAuthenticator. The logger defaults to logging.GetLogger().
 func NewServer(coord *signer.Coordinator, resolver *backend.Resolver, policies *policy.Engine, acl *CallerACL, validate Validator) *Server {
 	return &Server{
 		coord:    coord,
@@ -111,6 +116,14 @@ func NewServer(coord *signer.Coordinator, resolver *backend.Resolver, policies *
 		logger:   logging.GetLogger(),
 	}
 }
+
+// SetMTLSAuthenticator enables TLS client-certificate authentication. It takes
+// precedence over request-signing and JWT in the auth chain.
+func (s *Server) SetMTLSAuthenticator(a Authenticator) { s.mtlsAuth = a }
+
+// SetRequestSigningAuthenticator enables authorized-keys request-signing
+// authentication. It is tried after mTLS and before JWT.
+func (s *Server) SetRequestSigningAuthenticator(a Authenticator) { s.reqSign = a }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -445,7 +458,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sign", s.handleSign)
 	mux.HandleFunc("GET /v1/keys", s.handleListKeys)
 	mux.HandleFunc("GET /v1/keys/{hash}", s.handleGetKey)
-	return JWTMiddleware(s.validate, mux)
+	// Auth chain precedence: mTLS (transport identity) > request-signing >
+	// JWT bearer. The first scheme that presents a credential decides the
+	// request; only schemes presenting nothing are skipped. An empty chain
+	// fails closed (always 401).
+	var chain []Authenticator
+	if s.mtlsAuth != nil {
+		chain = append(chain, s.mtlsAuth)
+	}
+	if s.reqSign != nil {
+		chain = append(chain, s.reqSign)
+	}
+	if s.validate != nil {
+		chain = append(chain, JWTAuthenticator(s.validate))
+	}
+	return AuthMiddleware(chain, mux)
 }
 
 // HealthHandler returns the unauthenticated health/metrics mux.

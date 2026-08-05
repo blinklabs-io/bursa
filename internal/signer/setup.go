@@ -17,6 +17,8 @@ package signer
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -196,6 +198,34 @@ func BuildCallerACL(callers []config.SignerCallerConfig) (map[string][]backend.K
 			hashes = append(hashes, h)
 		}
 		out[c.Subject] = hashes
+	}
+	return out, nil
+}
+
+// BuildAuthorizedKeys parses the configured authorized-keys request-signing
+// registrations into caller -> Ed25519 public key. Returns nil when none are
+// configured. Each entry must have a non-empty caller (unique) and a hex
+// 32-byte Ed25519 public key.
+func BuildAuthorizedKeys(keys []config.SignerAuthorizedKeyConfig) (map[string]ed25519.PublicKey, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]ed25519.PublicKey, len(keys))
+	for _, k := range keys {
+		if k.Caller == "" {
+			return nil, errors.New("signer.authorized_keys entry missing caller")
+		}
+		if _, dup := out[k.Caller]; dup {
+			return nil, fmt.Errorf("duplicate signer.authorized_keys caller %q", k.Caller)
+		}
+		raw, err := hex.DecodeString(k.Ed25519PubkeyHex)
+		if err != nil {
+			return nil, fmt.Errorf("authorized key %q: invalid ed25519_pubkey_hex: %w", k.Caller, err)
+		}
+		if len(raw) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("authorized key %q: ed25519_pubkey_hex must be %d bytes, got %d", k.Caller, ed25519.PublicKeySize, len(raw))
+		}
+		out[k.Caller] = ed25519.PublicKey(raw)
 	}
 	return out, nil
 }
