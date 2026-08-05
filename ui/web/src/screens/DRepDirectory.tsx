@@ -126,7 +126,13 @@ export function DRepDirectory({ network, canDelegate = true }: DRepDirectoryProp
           Browse and search the delegated representatives your embedded node has
           indexed — read directly from the node, no external service is
           contacted. To delegate your voting power, copy a DRep ID and paste it
-          into <strong>Staking</strong>, or use <strong>Delegate</strong>.
+          into <strong>Staking</strong>
+          {canDelegate && (
+            <>
+              , or use <strong>Delegate</strong>
+            </>
+          )}
+          .
         </p>
 
         <label htmlFor="drep-search">Search by DRep ID or metadata</label>

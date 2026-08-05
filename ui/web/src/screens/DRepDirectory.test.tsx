@@ -92,10 +92,27 @@ test("surfaces an API error", async () => {
 test("hides the Delegate shortcut when the active wallet cannot stake", async () => {
   vi.spyOn(client, "getDReps").mockResolvedValue(directory([DREP_A]));
 
-  render(<DRepDirectory network="preview" canDelegate={false} />);
+  const { container } = render(
+    <DRepDirectory network="preview" canDelegate={false} />,
+  );
 
   expect(
     await screen.findByRole("button", { name: `Copy drep id ${DREP_A.drep_id}` }),
   ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Delegate" })).not.toBeInTheDocument();
+  // The intro copy must not point users at a "Delegate" shortcut that isn't
+  // rendered for read-only/hardware wallets.
+  const helperText = container.querySelector(".helper-text")?.textContent ?? "";
+  expect(helperText).toMatch(/paste it into Staking\.$/);
+  expect(helperText).not.toMatch(/or use Delegate/);
+});
+
+test("mentions the Delegate shortcut in the intro copy when it is available", async () => {
+  vi.spyOn(client, "getDReps").mockResolvedValue(directory([DREP_A]));
+
+  const { container } = render(<DRepDirectory network="preview" />);
+  await screen.findByText("Active");
+
+  const helperText = container.querySelector(".helper-text")?.textContent ?? "";
+  expect(helperText).toMatch(/or use Delegate\.$/);
 });
