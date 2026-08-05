@@ -693,3 +693,58 @@ func TestAddHardwareWallet(t *testing.T) {
 		t.Fatal("hardware wallet seed blob appeared after reload")
 	}
 }
+
+// TestAddHardwareWalletNonzeroAccountIndexIsActive covers importing a hardware
+// wallet at a nonzero CIP-1852 account index (e.g. a device exposing account
+// #1 rather than #0). Such a wallet's Accounts list has no index-0 entry, so
+// the active selection must be stamped to accountIndex — otherwise
+// Wallets/SetActive/Active would report an active index (0) that does not
+// exist for this wallet, even though ActiveAccount() falls back correctly.
+func TestAddHardwareWalletNonzeroAccountIndexIsActive(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	xpub, err := wallet.AccountXpubForIndexFromMnemonicBytes([]byte(mnemonicA), 1)
+	if err != nil {
+		t.Fatalf("AccountXpubForIndexFromMnemonicBytes: %v", err)
+	}
+
+	meta, err := v.AddHardwareWallet("My Ledger", xpub, "preview", vaultPw, 1, window)
+	if err != nil {
+		t.Fatalf("AddHardwareWallet: %v", err)
+	}
+	if meta.ActiveAccountIndex != 1 {
+		t.Fatalf("returned meta ActiveAccountIndex = %d, want 1", meta.ActiveAccountIndex)
+	}
+
+	wallets, err := v.Wallets()
+	if err != nil {
+		t.Fatalf("Wallets: %v", err)
+	}
+	if len(wallets) != 1 || wallets[0].ActiveAccountIndex != 1 {
+		t.Fatalf("Wallets()[0].ActiveAccountIndex = %+v, want 1", wallets)
+	}
+
+	active, err := v.Active()
+	if err != nil {
+		t.Fatalf("Active: %v", err)
+	}
+	if active.ActiveAccountIndex != 1 {
+		t.Fatalf("Active().ActiveAccountIndex = %d, want 1", active.ActiveAccountIndex)
+	}
+
+	// Survives a lock/unlock cycle via a fresh handle (the selection is
+	// persisted in the cleartext envelope, independent of the vault password).
+	v2 := New(v.path)
+	seal, open := keystore.CheapTestSealer()
+	v2.SetCipher(seal, open)
+	reloaded, err := v2.Unlock(vaultPw)
+	if err != nil {
+		t.Fatalf("Unlock on fresh handle: %v", err)
+	}
+	if len(reloaded) != 1 || reloaded[0].ActiveAccountIndex != 1 {
+		t.Fatalf("reloaded ActiveAccountIndex = %+v, want 1", reloaded)
+	}
+}

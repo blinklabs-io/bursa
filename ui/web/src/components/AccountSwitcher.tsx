@@ -63,11 +63,15 @@ export function AccountSwitcher({ wallet, onChanged }: AccountSwitcherProps) {
     setError(null);
     setBusy(true);
     try {
-      await addAccount({
+      const added = await addAccount({
         account_index: nextIndex,
         vault_password: vaultPassword,
         spend_password: spendPassword,
       });
+      // Report the newly derived account immediately: it already exists
+      // server-side, so the parent must not be left showing the stale account
+      // list if the follow-up switch below fails.
+      onChanged(added);
       resetAddForm();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not add account");

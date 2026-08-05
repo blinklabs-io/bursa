@@ -374,7 +374,7 @@ func (v *Vault) Create(vaultPassword string) error {
 	defer keystore.Zero(vek)
 	idx := &index{Wallets: []WalletMeta{}}
 	v.activeAccounts = map[string]uint32{}
-	if err := v.persistLocked(idx, map[string]keystore.Container{}, vek, vaultPassword, nil); err != nil {
+	if err := v.persistLocked(idx, map[string]keystore.Container{}, vek, vaultPassword, nil, v.activeAccounts); err != nil {
 		return err
 	}
 	v.idx = idx
@@ -405,7 +405,7 @@ func (v *Vault) Unlock(vaultPassword string) ([]WalletMeta, error) {
 	// considered unlocked. This migration is security-critical, so a failed
 	// persist must abort the unlock.
 	if env.Format == legacyFormatVersion {
-		if err := v.persistLocked(idx, env.Seeds, vek, vaultPassword, tpmOf(env)); err != nil {
+		if err := v.persistLocked(idx, env.Seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
 			return nil, fmt.Errorf("vault: persist metadata failed: %w", err)
 		}
 	}
@@ -493,7 +493,7 @@ func (v *Vault) EnableTPM(vaultPassword string, pcrBound bool) error {
 	// Re-persist with the SAME VEK + the existing seeds, adding the TPM section
 	// and keeping the password protector. O(1): only the small key section is
 	// re-wrapped; index/seed blobs are untouched.
-	return v.persistLocked(idx, env.Seeds, vek, vaultPassword, &sec)
+	return v.persistLocked(idx, env.Seeds, vek, vaultPassword, &sec, v.activeAccounts)
 }
 
 // DisableTPM drops the TPM protector and re-persists with the password protector
@@ -511,7 +511,7 @@ func (v *Vault) DisableTPM(vaultPassword string) error {
 	if env.Key == nil || env.Key.Tpm == nil {
 		return nil // already password-only
 	}
-	return v.persistLocked(idx, env.Seeds, vek, vaultPassword, nil)
+	return v.persistLocked(idx, env.Seeds, vek, vaultPassword, nil, v.activeAccounts)
 }
 
 // Wallets returns the wallet list (read-only metadata). The vault must be
@@ -567,7 +567,7 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 	}
 	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
 	seeds[meta.ID] = seed
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env)); err != nil {
+	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
@@ -625,11 +625,29 @@ func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPasswor
 		seeds = map[string]keystore.Container{}
 	}
 	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env)); err != nil {
+	// A hardware wallet imported at a nonzero account index has no account 0 in
+	// its Accounts list, so it must be stamped active at accountIndex too —
+	// otherwise Wallets/SetActive/Active report index 0 (the map default) for a
+	// wallet that has no such account, while ActiveAccount() falls back to the
+	// imported one. Build the candidate selection map and only commit it to
+	// v.activeAccounts after the persist below succeeds.
+	nextActive := v.activeAccounts
+	if accountIndex != 0 {
+		nextActive = cloneActiveAccounts(v.activeAccounts)
+		if nextActive == nil {
+			nextActive = map[string]uint32{}
+		}
+		nextActive[meta.ID] = accountIndex
+	}
+	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive); err != nil {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
 	v.activeID = meta.ID
+	if accountIndex != 0 {
+		v.activeAccounts = nextActive
+		meta.ActiveAccountIndex = accountIndex
+	}
 	return meta, nil
 }
 
@@ -666,7 +684,7 @@ func (v *Vault) importWallet(name string, mnemonic []byte, network, vaultPasswor
 	defer keystore.Zero(vek)
 	idx := &index{Wallets: []WalletMeta{meta}}
 	seeds := map[string]keystore.Container{meta.ID: seed}
-	if err := v.persistLocked(idx, seeds, vek, vaultPassword, nil); err != nil {
+	if err := v.persistLocked(idx, seeds, vek, vaultPassword, nil, v.activeAccounts); err != nil {
 		return WalletMeta{}, err
 	}
 	v.idx = idx
@@ -703,13 +721,17 @@ func (v *Vault) RemoveWallet(id, vaultPassword string) error {
 	if len(newIdx.Wallets) == len(idx.Wallets) {
 		return fmt.Errorf("%w: %q", ErrUnknownWallet, id)
 	}
-	// Drop the removed wallet's account selection before persisting (persistLocked
-	// writes v.activeAccounts).
-	delete(v.activeAccounts, id)
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env)); err != nil {
+	// Drop the removed wallet's account selection from a candidate copy and
+	// persist that copy; only commit it to v.activeAccounts once the persist
+	// below succeeds, so a failed write never leaves the in-memory selection
+	// diverged from what is durably on disk.
+	nextActive := cloneActiveAccounts(v.activeAccounts)
+	delete(nextActive, id)
+	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive); err != nil {
 		return err
 	}
 	v.idx = newIdx
+	v.activeAccounts = nextActive
 	if v.activeID == id {
 		v.activeID = ""
 	}
@@ -833,7 +855,7 @@ func (v *Vault) AddAccount(id, vaultPassword, spendPassword string, accountIndex
 		}
 	}
 	newIdx := &index{Wallets: newWallets}
-	if err := v.persistLocked(newIdx, env.Seeds, vek, vaultPassword, tpmOf(env)); err != nil {
+	if err := v.persistLocked(newIdx, env.Seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
@@ -879,15 +901,20 @@ func (v *Vault) SelectAccount(id string, accountIndex uint32) (WalletMeta, error
 	if err != nil {
 		return WalletMeta{}, err
 	}
-	if v.activeAccounts == nil {
-		v.activeAccounts = map[string]uint32{}
+	// Build the candidate selection on a copy and only commit it to
+	// v.activeAccounts once the write below succeeds — otherwise a failed
+	// marshal/write would leave the in-memory selection ahead of the on-disk
+	// state, binding later reads (or signing) to an undurable choice.
+	next := cloneActiveAccounts(v.activeAccounts)
+	if next == nil {
+		next = map[string]uint32{}
 	}
 	if accountIndex == 0 {
-		delete(v.activeAccounts, id)
+		delete(next, id)
 	} else {
-		v.activeAccounts[id] = accountIndex
+		next[id] = accountIndex
 	}
-	env.ActiveAccounts = cloneActiveAccounts(v.activeAccounts)
+	env.ActiveAccounts = cloneActiveAccounts(next)
 	out, err := json.Marshal(env)
 	if err != nil {
 		return WalletMeta{}, err
@@ -895,6 +922,7 @@ func (v *Vault) SelectAccount(id string, accountIndex uint32) (WalletMeta, error
 	if err := writeFileAtomic(v.path, out, 0o600); err != nil {
 		return WalletMeta{}, err
 	}
+	v.activeAccounts = next
 
 	meta := *cloneWallet(&v.idx.Wallets[pos])
 	meta.ActiveAccountIndex = accountIndex
@@ -1086,7 +1114,14 @@ func (v *Vault) recoverVEKLocked(env envelope, vaultPassword string) ([]byte, er
 // re-persist (AddWallet, RemoveWallet, ...) never drops a TPM protector. The
 // password protector is ALWAYS written (the never-brick fallback). Callers hold
 // v.mu and own zeroing vek.
-func (v *Vault) persistLocked(idx *index, seeds map[string]keystore.Container, vek []byte, vaultPassword string, tpm *tpmSection) error {
+//
+// activeAccounts is the per-wallet active-selection map to persist. Callers
+// pass v.activeAccounts unchanged unless they are themselves changing the
+// selection (SelectAccount, RemoveWallet, AddHardwareWallet with a nonzero
+// imported index), in which case they must pass a candidate map and only
+// assign it to v.activeAccounts AFTER this call succeeds — so a failed persist
+// never leaves the in-memory selection diverged from what is durably on disk.
+func (v *Vault) persistLocked(idx *index, seeds map[string]keystore.Container, vek []byte, vaultPassword string, tpm *tpmSection, activeAccounts map[string]uint32) error {
 	idxContainer, err := v.sealIndex(idx, vek)
 	if err != nil {
 		return err
@@ -1101,7 +1136,7 @@ func (v *Vault) persistLocked(idx *index, seeds map[string]keystore.Container, v
 		Index:          idxContainer,
 		WalletCount:    len(idx.Wallets),
 		Seeds:          seeds,
-		ActiveAccounts: cloneActiveAccounts(v.activeAccounts),
+		ActiveAccounts: cloneActiveAccounts(activeAccounts),
 	}
 	out, err := json.Marshal(env)
 	if err != nil {
