@@ -128,11 +128,15 @@ export function App() {
   const canSend = isReady && (
     activeWallet?.type === "full" || activeWallet?.type === "hardware"
   );
-  // Sign/Offline/Operate all need the wallet's seed (message signing, air-gap
-  // signing, and cold/VRF/KES key derivation respectively). Hardware wallets
-  // are seedless (xpub-only) and sign only via the on-device path Send uses,
-  // so these flows must stay off for them.
+  // Offline/Operate need the wallet's seed (air-gap signing and cold/VRF/KES key
+  // derivation respectively). Hardware wallets are seedless (xpub-only) and sign
+  // only via the on-device path, so those flows stay off for them.
   const canSign = activeWallet?.type === "full";
+  // Message signing (CIP-8) is available to full wallets (keystore signing) AND
+  // hardware wallets (on-device signing via HardwareSigner.signMessage). The
+  // Sign screen routes to the right path per wallet type.
+  const canSignMessage =
+    activeWallet?.type === "full" || activeWallet?.type === "hardware";
   // Multi-sig build/collect/submit only needs the same synced-node access as a
   // regular send. Its optional "Sign here" and participant-key reveal actions
   // derive CIP-1854 keys from the local seed, so those actions remain gated by
@@ -280,7 +284,7 @@ export function App() {
     else if (route === "staking" && canStake) activeRoute = "staking";
     else if (route === "rewards") activeRoute = "rewards";
     else if (route === "pools" && canQueryNode) activeRoute = "pools";
-    else if (route === "sign" && canSign) activeRoute = "sign";
+    else if (route === "sign" && canSignMessage) activeRoute = "sign";
     else if (route === "verify") activeRoute = "verify";
     else if (route === "offline" && canSign) activeRoute = "offline";
     else if (route === "operate" && canSign) activeRoute = "operate";
@@ -345,7 +349,15 @@ export function App() {
     // while the node cannot serve queries.
     content = canQueryNode ? <PoolDirectory network={activeWallet.network} /> : <Portfolio />;
   } else if (route === "sign") {
-    content = canSign ? <SignMessage account={toAccount(activeWallet)} /> : <Portfolio />;
+    content = canSignMessage ? (
+      <SignMessage
+        account={toAccount(activeWallet)}
+        isHardware={activeWallet.type === "hardware"}
+        walletId={activeWallet.id}
+      />
+    ) : (
+      <Portfolio />
+    );
   } else if (route === "verify") {
     // Verification is pure crypto — available to any active wallet, even
     // read-only, since it neither needs a node nor the keystore.
@@ -394,7 +406,7 @@ export function App() {
       (key === "swap" && !canSwap) ||
       (key === "staking" && !canStake) ||
       (key === "pools" && !canQueryNode) ||
-      (key === "sign" && !canSign) ||
+      (key === "sign" && !canSignMessage) ||
       (key === "offline" && !canSign) ||
       (key === "operate" && !canSign) ||
       (key === "import" && !canSign);

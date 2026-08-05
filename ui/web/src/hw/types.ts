@@ -25,6 +25,41 @@ export interface HardwareCapabilities {
   governance: boolean;
   multisig: boolean;
   poolReg: boolean;
+  // signMessage is CIP-8 / CIP-30 signData message signing (COSE_Sign1 +
+  // COSE_Key). It is a distinct on-device operation from tx signing, so it has
+  // its own flag: a device may sign sends but not messages (or vice-versa).
+  signMessage: boolean;
+}
+
+/**
+ * Neutral request to sign a CIP-8 / CIP-30 message on a hardware device. Mirrors
+ * the backend's HardwareSignDataRequest plus the payload the user entered: the
+ * device-specific shaping (Ledger MessageData, Trezor cardanoSignMessage) is
+ * internal to each signer. The address is described BY PATH (payment + stake) so
+ * the device derives and recognises it as its own; `networkId`/`protocolMagic`
+ * let the device render the address it signs for.
+ */
+export interface HardwareSignMessageRequest {
+  /** The raw message bytes to sign, hex-encoded (the COSE payload). */
+  messageHex: string;
+  /** CIP-1852 payment-key path of the signing address ("1852'/1815'/0'/0/0"). */
+  signingPath: string;
+  /** CIP-1852 stake-key path of the account ("1852'/1815'/0'/2/0"). */
+  stakePath: string;
+  /** 1 = mainnet, 0 = testnets. */
+  networkId: number;
+  /** mainnet 764824073, preprod 1, preview 2. */
+  protocolMagic: number;
+}
+
+/**
+ * The CIP-8 / CIP-30 signData result: a hex COSE_Sign1 signature and hex
+ * COSE_Key. Byte-compatible with the software wallet's SignDataResult so the UI
+ * renders both identically and the backend verifier accepts either.
+ */
+export interface HardwareSignMessageResult {
+  signature: string; // COSE_Sign1, hex
+  key: string; // COSE_Key, hex
 }
 
 /**
@@ -51,6 +86,15 @@ export interface HardwareSigner {
    * @returns CBOR-encoded raw vkey-witness array hex string.
    */
   signTx(req: HardwareSignResponse): Promise<string>;
+
+  /**
+   * Sign a CIP-8 / CIP-30 message on the device, returning the COSE_Sign1
+   * signature + COSE_Key. Implementations whose {@link HardwareCapabilities}
+   * report `signMessage: false` MUST reject rather than pretend to sign, so a
+   * caller that skips the capability check still fails loudly.
+   * @param req - The neutral message-signing request.
+   */
+  signMessage(req: HardwareSignMessageRequest): Promise<HardwareSignMessageResult>;
 
   /** Release the device connection / dispose of any external transport. */
   close(): Promise<void>;
