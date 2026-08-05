@@ -24,6 +24,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -40,6 +41,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// maxRequestSignSkewSeconds bounds signer.request_sign_skew_seconds. It also
+// caps the nonce cache TTL (2x skew), so a very large skew is rejected at boot
+// rather than silently widening the replay window and shortening how long the
+// bounded nonce cache can absorb traffic before failing closed.
+const maxRequestSignSkewSeconds = 300
+
 func signerCommand() *cobra.Command {
 	var configFile string
 
@@ -48,10 +55,25 @@ func signerCommand() *cobra.Command {
 		Short: "Run the Cardano remote signing service",
 		Long: `Run the Cardano remote signing service.
 
-Authentication: configure exactly one of signer.jwt_secret (HS256, dev/simple)
-or signer.jwks_url (RS256/ES256/EdDSA via JWKS, production). Optional
-signer.jwt_issuer / signer.jwt_audience are enforced when set. Without a
-signer.callers ACL, any valid token may use any configured key.`,
+Authentication (at least one mode must be configured; modes are composable and
+resolve to a single caller identity fed to the signer.callers ACL):
+
+  JWT bearer          at most one of signer.jwt_secret (HS256, dev/simple) or
+                      signer.jwks_url (RS256/ES256/EdDSA via JWKS, production);
+                      optional signer.jwt_issuer / signer.jwt_audience are
+                      enforced when set. Caller is the token subject.
+  mTLS client cert    signer.client_ca_cert (PEM) + signer.require_client_cert.
+                      Caller is derived from the verified client certificate
+                      (first URI SAN, else first DNS SAN, else CN). Requires
+                      server TLS. Takes precedence over the other modes.
+  Request signing     signer.authorized_keys (caller + ed25519_pubkey_hex). The
+                      client signs METHOD|PATH|sha256(body)|timestamp|nonce and
+                      sends X-Bursa-{Signature,Timestamp,Nonce,Key}. Rejected
+                      outside signer.request_sign_skew_seconds (default 60) or on
+                      a reused (key,nonce). Caller is the named key.
+
+Without a signer.callers ACL, any authenticated caller may use any configured
+key.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			logging.ConfigureJSON()
 
@@ -73,8 +95,24 @@ signer.callers ACL, any valid token may use any configured key.`,
 			// Cheap config validation before any expensive I/O.
 			hasSecret := cfg.Signer.JWTSecret != ""
 			hasJWKS := cfg.Signer.JWKSURL != ""
-			if hasSecret == hasJWKS {
-				logger.Error("exactly one of signer.jwt_secret and signer.jwks_url must be set")
+			if hasSecret && hasJWKS {
+				logger.Error("at most one of signer.jwt_secret and signer.jwks_url may be set")
+				os.Exit(1)
+			}
+			hasJWT := hasSecret || hasJWKS
+			hasMTLS := cfg.Signer.ClientCACert != ""
+			hasReqSign := len(cfg.Signer.AuthorizedKeys) > 0
+			if !hasJWT && !hasMTLS && !hasReqSign {
+				logger.Error("at least one auth mode must be configured (signer.jwt_secret, signer.jwks_url, signer.client_ca_cert, or signer.authorized_keys)")
+				os.Exit(1)
+			}
+			if cfg.Signer.RequireClientCert && !hasMTLS {
+				logger.Error("signer.require_client_cert requires signer.client_ca_cert")
+				os.Exit(1)
+			}
+			authorizedKeys, err := signer.BuildAuthorizedKeys(cfg.Signer.AuthorizedKeys)
+			if err != nil {
+				logger.Error("invalid signer.authorized_keys", "error", err)
 				os.Exit(1)
 			}
 			aclMap, err := signer.BuildCallerACL(cfg.Signer.Callers)
@@ -140,13 +178,14 @@ signer.callers ACL, any valid token may use any configured key.`,
 			})
 
 			var validate api.Validator
-			if hasJWKS {
+			switch {
+			case hasJWKS:
 				validate, err = api.JWKSValidator(ctx, cfg.Signer.JWKSURL, cfg.Signer.JWTIssuer, cfg.Signer.JWTAudience)
 				if err != nil {
 					logger.Error("failed to initialize JWKS validator", "error", err)
 					os.Exit(1)
 				}
-			} else {
+			case hasSecret:
 				// Require a minimum of 32 bytes so the shared secret is not
 				// trivially brute-forceable.
 				if len(cfg.Signer.JWTSecret) < 32 {
@@ -155,16 +194,32 @@ signer.callers ACL, any valid token may use any configured key.`,
 				}
 				validate = api.HS256Validator([]byte(cfg.Signer.JWTSecret), cfg.Signer.JWTIssuer, cfg.Signer.JWTAudience)
 			}
-			// Both auth modes enforce jwt_issuer/jwt_audience when set; warn when
+			// Both JWT modes enforce jwt_issuer/jwt_audience when set; warn when
 			// either is unset so operators know any-issuer / any-audience tokens
 			// are accepted.
-			if cfg.Signer.JWTIssuer == "" {
+			if hasJWT && cfg.Signer.JWTIssuer == "" {
 				logger.Warn("signer.jwt_issuer is not set; tokens from any issuer signed by a trusted key will be accepted")
 			}
-			if cfg.Signer.JWTAudience == "" {
+			if hasJWT && cfg.Signer.JWTAudience == "" {
 				logger.Warn("signer.jwt_audience is not set; tokens for any audience signed by a trusted key will be accepted")
 			}
 			srv := api.NewServer(coord, resolver, eng, acl, validate)
+			if hasReqSign {
+				// Reject an out-of-range skew rather than silently falling back
+				// to the 60s default inside NewRequestSigningAuthenticator: an
+				// operator who deliberately tightens or misconfigures this
+				// value should get a boot-time error, not a quietly different
+				// security posture.
+				if cfg.Signer.RequestSignSkewSeconds < 0 || cfg.Signer.RequestSignSkewSeconds > maxRequestSignSkewSeconds {
+					logger.Error(
+						"signer.request_sign_skew_seconds must be between 0 and "+strconv.Itoa(maxRequestSignSkewSeconds),
+						"value", cfg.Signer.RequestSignSkewSeconds,
+					)
+					os.Exit(1)
+				}
+				skew := time.Duration(cfg.Signer.RequestSignSkewSeconds) * time.Second
+				srv.SetRequestSigningAuthenticator(api.NewRequestSigningAuthenticator(authorizedKeys, skew))
+			}
 
 			mux := http.NewServeMux()
 			mux.Handle("/v1/", srv.Handler())
@@ -175,6 +230,12 @@ signer.callers ACL, any valid token may use any configured key.`,
 			tlsConfigured := cfg.Signer.TLSCertFile != "" || cfg.Signer.TLSKeyFile != ""
 			if (cfg.Signer.TLSCertFile == "") != (cfg.Signer.TLSKeyFile == "") {
 				logger.Error("signer TLS requires both tls_cert_file and tls_key_file")
+				os.Exit(1)
+			}
+			// mTLS verifies client certs during the TLS handshake, so it needs
+			// server TLS enabled.
+			if hasMTLS && !tlsConfigured {
+				logger.Error("signer.client_ca_cert requires server TLS (signer.tls_cert_file and signer.tls_key_file)")
 				os.Exit(1)
 			}
 			if !tlsConfigured && !isLocalListenAddress(cfg.Signer.ListenAddress) {
@@ -190,7 +251,22 @@ signer.callers ACL, any valid token may use any configured key.`,
 				ReadHeaderTimeout: 10 * time.Second,
 			}
 			if tlsConfigured {
-				httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+				tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+				if hasMTLS {
+					pool, err := api.LoadClientCAPool(cfg.Signer.ClientCACert)
+					if err != nil {
+						logger.Error("failed to load signer.client_ca_cert", "error", err)
+						os.Exit(1)
+					}
+					tlsCfg.ClientCAs = pool
+					if cfg.Signer.RequireClientCert {
+						tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+					} else {
+						tlsCfg.ClientAuth = tls.VerifyClientCertIfGiven
+					}
+					srv.SetMTLSAuthenticator(api.NewMTLSAuthenticator())
+				}
+				httpServer.TLSConfig = tlsCfg
 			}
 			logger.Info("starting bursa signer", "address", addr, "tls", tlsConfigured)
 
