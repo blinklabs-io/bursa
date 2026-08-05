@@ -34,25 +34,31 @@ const (
 // ServeControl accepts connections on ln and processes control commands until
 // ctx is cancelled or ln is closed.
 func (a *Agent) ServeControl(ctx context.Context, ln net.Listener) error {
+	conns := newConnSet()
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
+		// Unblock any handler already parked in a read on a connection
+		// accepted before shutdown, so wg.Wait() below can complete.
+		conns.closeAll()
 	}()
 	var wg sync.WaitGroup
+	defer wg.Wait()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			select {
 			case <-ctx.Done():
-				wg.Wait()
 				return nil
 			default:
 				return fmt.Errorf("kesagent: control accept: %w", err)
 			}
 		}
+		conns.add(conn)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer conns.remove(conn)
 			a.handleControlConn(conn)
 		}()
 	}
@@ -60,6 +66,12 @@ func (a *Agent) ServeControl(ctx context.Context, ln net.Listener) error {
 
 func (a *Agent) handleControlConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
+	// Send the handshake Hello frame (matches the service socket; see the
+	// package doc comment in protocol.go).
+	if err := writeFrame(conn, Hello{Protocol: ProtocolID, Mode: a.cfg.Mode}); err != nil {
+		a.logger.Debug("control hello write failed", "error", err)
+		return
+	}
 	for {
 		var cmd Command
 		if err := readFrame(conn, &cmd); err != nil {

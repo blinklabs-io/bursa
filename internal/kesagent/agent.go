@@ -63,6 +63,7 @@ type keyState struct {
 	depth       uint64
 	period      uint64 // internal, 0-based key period
 	startPeriod uint64 // absolute KES period at internal period 0 (opcert period)
+	maxEvol     uint64 // max evolutions this key may serve, min(cfg.MaxKESEvolutions, kes.MaxPeriod(depth)); set at promotion
 	buf         *securemem.Buffer
 	vkey        []byte
 	opcert      []byte // installed opcert CBOR (active keys only)
@@ -72,7 +73,7 @@ type keyState struct {
 func (k *keyState) absPeriod() uint64 { return k.startPeriod + k.period }
 
 func (k *keyState) endPeriod() uint64 {
-	return k.startPeriod + kes.MaxPeriod(k.depth) - 1
+	return k.startPeriod + k.maxEvol - 1
 }
 
 func (k *keyState) close() {
@@ -95,7 +96,28 @@ type Agent struct {
 	subs    map[int]chan KeyPush
 	nextSub int
 
+	// guardedPeriod/guardedSet track the last KES period the scheduler (Tick)
+	// successfully authorized and broadcast, so a transient guard-store
+	// failure is retried on the next tick instead of being silently dropped
+	// for the rest of the period (evolveToLocked has already advanced
+	// a.active in memory regardless of guard-store success).
+	guardedPeriod uint64
+	guardedSet    bool
+
 	now func() time.Time // injectable clock (tests)
+}
+
+// maxEvolutions returns the effective evolution ceiling for keys created
+// under the current config: the smaller of the configured max opcert
+// evolutions and the KES tree's cryptographic evolution limit. Cardano
+// treats an opcert as expired once MaxKESEvolutions is reached even when the
+// KES tree itself could evolve further.
+func (a *Agent) maxEvolutions() uint64 {
+	m := a.cfg.MaxKESEvolutions
+	if treeMax := kes.MaxPeriod(a.cfg.Depth); treeMax < m {
+		m = treeMax
+	}
+	return m
 }
 
 // New constructs an Agent, validating configuration and opening the durable
@@ -179,6 +201,9 @@ func (a *Agent) GenStagedKey() ([]byte, error) {
 		securemem.Wipe(sk.Data)
 		return nil, err
 	}
+	if !buf.Locked() {
+		a.logger.Warn("KES secret key buffer could not be locked in memory (mlock unavailable or refused); key material may be swappable to disk")
+	}
 	if err := buf.Set(sk.Data); err != nil {
 		securemem.Wipe(sk.Data)
 		_ = buf.Close()
@@ -234,10 +259,7 @@ func (a *Agent) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
 			dec.kesPeriod, cur,
 		)
 	}
-	maxEvol := a.cfg.MaxKESEvolutions
-	if m := kes.MaxPeriod(a.cfg.Depth); m < maxEvol {
-		maxEvol = m
-	}
+	maxEvol := a.maxEvolutions()
 	if cur-dec.kesPeriod >= maxEvol {
 		return nil, fmt.Errorf(
 			"kesagent: opcert expired: %d evolutions since period %d >= max %d",
@@ -245,23 +267,37 @@ func (a *Agent) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
 		)
 	}
 
-	// Promote staged -> active.
-	a.active.close()
+	// Promote staged -> active, but keep the previous active key around
+	// (undestroyed) until authorization is known to succeed: a rollback
+	// refusal below must not leave the agent with no working key at all.
+	oldActive := a.active
 	ks := a.staged
 	a.staged = nil
 	ks.startPeriod = dec.kesPeriod
+	ks.maxEvol = maxEvol
 	ks.opcert = append([]byte(nil), opcertBytes...)
 	ks.exhausted = false
 	a.active = ks
 
 	// Evolve to the current period and serve.
 	a.evolveToLocked(cur)
+	if a.active == nil {
+		// evolveToLocked can only clear a.active on an internal key-store
+		// failure (see the buf.Set failure path); treat it the same as a
+		// guard refusal and restore the previous key.
+		a.active = oldActive
+		return nil, errors.New("kesagent: failed to evolve newly installed key to the current period")
+	}
 	if err := a.guard.Authorize(hex.EncodeToString(ks.vkey), a.active.absPeriod()); err != nil {
-		// Roll back the install: refuse to serve a rolled-back period.
+		// Roll back the install: keep serving the previous active key
+		// rather than discarding a working key on a rollback refusal.
 		a.active.close()
-		a.active = nil
+		a.active = oldActive
 		return nil, err
 	}
+	oldActive.close()
+	a.guardedPeriod = a.active.absPeriod()
+	a.guardedSet = true
 	a.metrics.setCurrentPeriod(a.active.absPeriod())
 	a.metrics.setExhausted(a.active.exhausted)
 	a.broadcastLocked()
@@ -282,6 +318,7 @@ func (a *Agent) DropKey(target string) error {
 	case "active":
 		a.active.close()
 		a.active = nil
+		a.guardedSet = false
 	case "staged":
 		a.staged.close()
 		a.staged = nil
@@ -290,10 +327,18 @@ func (a *Agent) DropKey(target string) error {
 		a.active = nil
 		a.staged.close()
 		a.staged = nil
+		a.guardedSet = false
 	default:
 		return fmt.Errorf("kesagent: unknown drop target %q", target)
 	}
-	a.metrics.setExhausted(false)
+	// Dropping only the staged key leaves the active key (and its exhaustion
+	// state) untouched; derive the gauge from whatever remains active rather
+	// than always clearing it.
+	if a.active != nil {
+		a.metrics.setExhausted(a.active.exhausted)
+	} else {
+		a.metrics.setExhausted(false)
+	}
 	a.logger.Info("dropped KES key", "target", target)
 	return nil
 }
@@ -345,7 +390,7 @@ func (a *Agent) Sign(period uint64, msg []byte) ([]byte, error) {
 func (a *Agent) evolveToLocked(targetAbs uint64) {
 	for a.active != nil && a.active.absPeriod() < targetAbs {
 		nextInternal := a.active.period + 1
-		if nextInternal >= kes.MaxPeriod(a.active.depth) {
+		if nextInternal >= a.active.maxEvol {
 			if !a.active.exhausted {
 				a.active.exhausted = true
 				a.metrics.setExhausted(true)
@@ -379,8 +424,15 @@ func (a *Agent) evolveToLocked(targetAbs uint64) {
 		a.active.buf.Zeroize()
 		if err := a.active.buf.Set(next.Data); err != nil {
 			securemem.Wipe(next.Data)
-			a.logger.Error("failed to store evolved KES key", "error", err)
-			a.active.exhausted = true
+			a.logger.Error("failed to store evolved KES key; discarding the key", "error", err)
+			// The buffer was already zeroized above and next.Data failed to
+			// land, so a.active.period is stale relative to its now-zeroed
+			// buffer contents. Discard the key entirely rather than leaving
+			// it installed: Sign() would otherwise happily sign over the
+			// zeroed buffer for the (unchanged) period it still reports.
+			a.active.close()
+			a.active = nil
+			a.metrics.setExhausted(true)
 			return
 		}
 		securemem.Wipe(next.Data) // erase the transient evolved copy
@@ -419,9 +471,12 @@ func (a *Agent) broadcastLocked() {
 		}
 		select {
 		case ch <- kp:
+			a.metrics.incServedKeys()
 		default:
+			// Subscriber channel is still full (shouldn't happen since we
+			// just drained it above, but be defensive): don't count a push
+			// that was dropped as served.
 		}
-		a.metrics.incServedKeys()
 	}
 }
 
@@ -456,20 +511,31 @@ func (a *Agent) Tick() {
 	if a.active == nil {
 		return
 	}
-	prev := a.active.absPeriod()
 	a.evolveToLocked(cur)
+	if a.active == nil {
+		// evolveToLocked discarded the key after a store failure.
+		return
+	}
 	newAbs := a.active.absPeriod()
 	a.metrics.setCurrentPeriod(newAbs)
 	a.metrics.setExhausted(a.active.exhausted)
-	if newAbs > prev {
-		if err := a.guard.Authorize(hex.EncodeToString(a.active.vkey), newAbs); err != nil {
-			a.logger.Error("period guard refused evolved key; not serving",
-				"error", err, "period", newAbs)
-			return
-		}
-		a.broadcastLocked()
-		a.logger.Info("evolved KES key", "active_period", newAbs)
+	// Authorize (and broadcast) whenever the current period hasn't already
+	// been successfully authorized: gating only on "did the in-memory key
+	// just evolve" would mean a transient guard-store failure (e.g. a full
+	// disk) is never retried, since evolveToLocked has already advanced
+	// a.active in memory and won't advance it again for the same period.
+	if a.guardedSet && a.guardedPeriod == newAbs {
+		return
 	}
+	if err := a.guard.Authorize(hex.EncodeToString(a.active.vkey), newAbs); err != nil {
+		a.logger.Error("period guard refused evolved key; not serving",
+			"error", err, "period", newAbs)
+		return
+	}
+	a.guardedPeriod = newAbs
+	a.guardedSet = true
+	a.broadcastLocked()
+	a.logger.Info("evolved KES key", "active_period", newAbs)
 }
 
 // Run drives the evolution scheduler until ctx is cancelled.

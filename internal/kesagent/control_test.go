@@ -18,6 +18,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/blinklabs-io/gouroboros/kes"
 )
@@ -32,7 +33,15 @@ func startControl(t *testing.T, a *Agent) net.Conn {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go func() { _ = a.ServeControl(ctx, ln) }()
-	return dial(t, sock)
+	conn := dial(t, sock)
+	var hello Hello
+	if err := readFrame(conn, &hello); err != nil {
+		t.Fatalf("read control hello: %v", err)
+	}
+	if hello.Protocol != ProtocolID {
+		t.Fatalf("bad control hello: %+v", hello)
+	}
+	return conn
 }
 
 func request(t *testing.T, conn net.Conn, cmd Command) Reply {
@@ -108,5 +117,38 @@ func TestControlUnknownCommand(t *testing.T) {
 	reply := request(t, conn, Command{Command: "bogus"})
 	if reply.Ok || reply.Error == "" {
 		t.Fatalf("expected error for unknown command, got %+v", reply)
+	}
+}
+
+// TestServeControlShutdownWithIdleConnection guards against a shutdown hang:
+// an idle client that never sends another command must not prevent
+// ServeControl from returning once ctx is cancelled.
+func TestServeControlShutdownWithIdleConnection(t *testing.T) {
+	cold := newColdKey(t)
+	a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(1))
+	sock := shortSocketPath(t, "ctrl-shutdown.sock")
+	ln, err := ListenUnix(sock, 0o600)
+	if err != nil {
+		t.Fatalf("ListenUnix: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() { done <- a.ServeControl(ctx, ln) }()
+
+	conn := dial(t, sock) // stays open and idle; never sends a command
+	var hello Hello
+	if err := readFrame(conn, &hello); err != nil {
+		t.Fatalf("read control hello: %v", err)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ServeControl returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ServeControl did not return within 2s of an idle connection outliving shutdown")
 	}
 }

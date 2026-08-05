@@ -183,11 +183,19 @@ func writeFrame(w io.Writer, v any) error {
 	}
 	var hdr [4]byte
 	binary.BigEndian.PutUint32(hdr[:], uint32(len(payload))) // #nosec G115 -- bounded by maxFrameLen
-	if _, err := w.Write(hdr[:]); err != nil {
+	n, err := w.Write(hdr[:])
+	if err != nil {
 		return fmt.Errorf("kesagent: write frame header: %w", err)
 	}
-	if _, err := w.Write(payload); err != nil {
+	if n != len(hdr) {
+		return fmt.Errorf("kesagent: write frame header: %w", io.ErrShortWrite)
+	}
+	n, err = w.Write(payload)
+	if err != nil {
 		return fmt.Errorf("kesagent: write frame payload: %w", err)
+	}
+	if n != len(payload) {
+		return fmt.Errorf("kesagent: write frame payload: %w", io.ErrShortWrite)
 	}
 	return nil
 }

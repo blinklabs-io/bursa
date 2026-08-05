@@ -53,25 +53,33 @@ func ListenUnix(path string, mode os.FileMode) (net.Listener, error) {
 // ServeService accepts connections on ln and serves them according to the
 // agent's configured mode. It returns when ctx is cancelled or ln is closed.
 func (a *Agent) ServeService(ctx context.Context, ln net.Listener) error {
+	conns := newConnSet()
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
+		// Unblock any handler already parked in a read on a connection
+		// accepted before shutdown (in particular handleSign, which has no
+		// other way to observe ctx cancellation while blocked in readFrame),
+		// so wg.Wait() below can complete.
+		conns.closeAll()
 	}()
 	var wg sync.WaitGroup
+	defer wg.Wait()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			select {
 			case <-ctx.Done():
-				wg.Wait()
 				return nil
 			default:
 				return fmt.Errorf("kesagent: service accept: %w", err)
 			}
 		}
+		conns.add(conn)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer conns.remove(conn)
 			a.handleServiceConn(ctx, conn)
 		}()
 	}
