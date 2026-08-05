@@ -174,11 +174,17 @@ func (j jwtAuthenticator) Authenticate(r *http.Request) (string, bool, error) {
 		return "", true, errNilRequest
 	}
 	authz := r.Header.Get("Authorization")
-	const prefix = "Bearer "
-	if !strings.HasPrefix(authz, prefix) {
+	// The "Bearer" scheme name is case-insensitive per RFC 7235 §2.1; match it
+	// as such so e.g. "bearer <token>" is not mistaken for "no credential
+	// presented" and downgraded to the next scheme in the chain.
+	parts := strings.Fields(authz)
+	if len(parts) == 0 || !strings.EqualFold(parts[0], "Bearer") {
 		return "", false, nil
 	}
-	subject, err := j.validate(strings.TrimPrefix(authz, prefix))
+	if len(parts) != 2 {
+		return "", true, errInvalidToken
+	}
+	subject, err := j.validate(parts[1])
 	if err != nil || subject == "" {
 		return "", true, errInvalidToken
 	}

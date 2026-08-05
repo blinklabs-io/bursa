@@ -24,6 +24,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -39,6 +40,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 )
+
+// maxRequestSignSkewSeconds bounds signer.request_sign_skew_seconds. It also
+// caps the nonce cache TTL (2x skew), so a very large skew is rejected at boot
+// rather than silently widening the replay window and shortening how long the
+// bounded nonce cache can absorb traffic before failing closed.
+const maxRequestSignSkewSeconds = 300
 
 func signerCommand() *cobra.Command {
 	var configFile string
@@ -198,6 +205,18 @@ key.`,
 			}
 			srv := api.NewServer(coord, resolver, eng, acl, validate)
 			if hasReqSign {
+				// Reject an out-of-range skew rather than silently falling back
+				// to the 60s default inside NewRequestSigningAuthenticator: an
+				// operator who deliberately tightens or misconfigures this
+				// value should get a boot-time error, not a quietly different
+				// security posture.
+				if cfg.Signer.RequestSignSkewSeconds < 0 || cfg.Signer.RequestSignSkewSeconds > maxRequestSignSkewSeconds {
+					logger.Error(
+						"signer.request_sign_skew_seconds must be between 0 and "+strconv.Itoa(maxRequestSignSkewSeconds),
+						"value", cfg.Signer.RequestSignSkewSeconds,
+					)
+					os.Exit(1)
+				}
 				skew := time.Duration(cfg.Signer.RequestSignSkewSeconds) * time.Second
 				srv.SetRequestSigningAuthenticator(api.NewRequestSigningAuthenticator(authorizedKeys, skew))
 			}

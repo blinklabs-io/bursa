@@ -39,10 +39,11 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 )
 
-// newACLServer builds a tx-signable server whose ACL grants only "alice" the
-// test key. It attaches mTLS and request-signing authenticators registering
-// "alice" and "bob" so ACL enforcement can be checked per caller source.
-func newACLServer(t *testing.T) (*Server, backend.KeyHash, map[string]ed25519.PrivateKey) {
+// newACLServerNoAuth builds the same tx-signable server as newACLServer,
+// whose ACL grants only "alice" the test key, but registers no
+// authenticators. Callers control exactly when SetMTLSAuthenticator /
+// SetRequestSigningAuthenticator run relative to Handler().
+func newACLServerNoAuth(t *testing.T) (*Server, backend.KeyHash) {
 	t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	b := backend.NewSoftwareBackend("software")
@@ -60,7 +61,15 @@ func newACLServer(t *testing.T) (*Server, backend.KeyHash, map[string]ed25519.Pr
 	})
 	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {h}})
 	// No JWT validator: exercise only the mTLS and request-signing chain entries.
-	srv := NewServer(coord, backend.NewResolver(b), eng, acl, nil)
+	return NewServer(coord, backend.NewResolver(b), eng, acl, nil), h
+}
+
+// newACLServer builds a tx-signable server whose ACL grants only "alice" the
+// test key. It attaches mTLS and request-signing authenticators registering
+// "alice" and "bob" so ACL enforcement can be checked per caller source.
+func newACLServer(t *testing.T) (*Server, backend.KeyHash, map[string]ed25519.PrivateKey) {
+	t.Helper()
+	srv, h := newACLServerNoAuth(t)
 
 	alicePub, alicePriv, _ := ed25519.GenerateKey(rand.Reader)
 	bobPub, bobPriv, _ := ed25519.GenerateKey(rand.Reader)
@@ -178,5 +187,59 @@ func TestAuthChain_MTLSPrecedence(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected mTLS identity (alice) to win -> 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestAuthChain_NoDowngrade confirms an invalid credential in the stronger
+// (mTLS) scheme rejects the request outright, even though a valid
+// request-signing credential for an ACL-allowed caller is also present. A
+// credential presented for a scheme must never be treated as "absent" just
+// because it fails to validate -- that would let an attacker retry a rejected
+// stronger credential as a weaker one.
+func TestAuthChain_NoDowngrade(t *testing.T) {
+	srv, h, keys := newACLServer(t)
+	handler := srv.Handler()
+	body := signTxBody(t, h)
+
+	bodyHash := sha256.Sum256(body)
+	tsStr := strconv.FormatInt(time.Now().Unix(), 10)
+	canonical := strings.Join([]string{http.MethodPost, "/v1/sign", hex.EncodeToString(bodyHash[:]), tsStr, "nd1"}, "|")
+	sig := ed25519.Sign(keys["alice"], []byte(canonical))
+	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req.Header.Set(HeaderKey, "alice")
+	req.Header.Set(HeaderTimestamp, tsStr)
+	req.Header.Set(HeaderNonce, "nd1")
+	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
+	// A client cert with no usable identity (no URI/DNS SAN, empty CN) is a
+	// credential presented but invalid (errNoCertIdentity), not absent.
+	req.TLS = certWithCN("")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 (no downgrade past invalid mTLS credential), got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestHandler_AuthenticatorRegisteredAfterHandlerCall guards against
+// Handler() memoizing the auth chain at the moment it is called: production
+// wiring (cmd/bursa/signer.go) builds the mux from srv.Handler() before the
+// TLS listener setup later calls SetMTLSAuthenticator. If Handler() captured
+// a fixed chain, an authenticator registered afterward would never take
+// effect -- an mTLS-only deployment would 401 every request. The chain must
+// be assembled per request from the server's current authenticator fields.
+func TestHandler_AuthenticatorRegisteredAfterHandlerCall(t *testing.T) {
+	srv, h := newACLServerNoAuth(t)
+	// Mirror production order: grab Handler() first...
+	handler := srv.Handler()
+	// ...then register the mTLS authenticator afterward.
+	srv.SetMTLSAuthenticator(NewMTLSAuthenticator())
+
+	body := signTxBody(t, h)
+	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req.TLS = certWithCN("alice")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 (mTLS authenticator set after Handler() must still apply), got %d: %s", rr.Code, rr.Body.String())
 	}
 }

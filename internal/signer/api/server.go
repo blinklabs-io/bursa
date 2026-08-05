@@ -452,27 +452,39 @@ func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handler returns the authenticated mux for the signer API.
+//
+// The auth chain is assembled per-request from the current s.mtlsAuth /
+// s.reqSign / s.validate fields rather than memoized here at construction
+// time. Callers are expected to wire authenticators via SetMTLSAuthenticator /
+// SetRequestSigningAuthenticator, but the order in which that happens relative
+// to this call must not matter: memoizing the chain here would silently drop
+// any authenticator registered after Handler() was called (e.g. mTLS wired up
+// later while setting up the TLS listener), turning a configured mTLS-only
+// deployment into an all-401 empty chain or an mTLS+JWT deployment into a
+// silent downgrade to JWT-only.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// Fix 5: use method-qualified pattern so Go's router emits 405+Allow automatically.
 	mux.HandleFunc("POST /v1/sign", s.handleSign)
 	mux.HandleFunc("GET /v1/keys", s.handleListKeys)
 	mux.HandleFunc("GET /v1/keys/{hash}", s.handleGetKey)
-	// Auth chain precedence: mTLS (transport identity) > request-signing >
-	// JWT bearer. The first scheme that presents a credential decides the
-	// request; only schemes presenting nothing are skipped. An empty chain
-	// fails closed (always 401).
-	var chain []Authenticator
-	if s.mtlsAuth != nil {
-		chain = append(chain, s.mtlsAuth)
-	}
-	if s.reqSign != nil {
-		chain = append(chain, s.reqSign)
-	}
-	if s.validate != nil {
-		chain = append(chain, JWTAuthenticator(s.validate))
-	}
-	return AuthMiddleware(chain, mux)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Auth chain precedence: mTLS (transport identity) > request-signing >
+		// JWT bearer. The first scheme that presents a credential decides the
+		// request; only schemes presenting nothing are skipped. An empty chain
+		// fails closed (always 401).
+		var chain []Authenticator
+		if s.mtlsAuth != nil {
+			chain = append(chain, s.mtlsAuth)
+		}
+		if s.reqSign != nil {
+			chain = append(chain, s.reqSign)
+		}
+		if s.validate != nil {
+			chain = append(chain, JWTAuthenticator(s.validate))
+		}
+		AuthMiddleware(chain, mux).ServeHTTP(w, r)
+	})
 }
 
 // HealthHandler returns the unauthenticated health/metrics mux.

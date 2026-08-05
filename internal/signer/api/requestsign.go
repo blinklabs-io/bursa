@@ -84,12 +84,23 @@ type RequestSigningAuthenticator struct {
 // key registrations and a timestamp skew (± window). A non-positive skew uses
 // the 60s default. The nonce cache TTL is twice the skew (covering both ends of
 // the window).
+//
+// Keys not of ed25519.PublicKeySize are dropped rather than stored: ed25519.Verify
+// panics on a malformed key, and BuildAuthorizedKeys already validates length,
+// but this constructor is exported, so a future or external caller passing a
+// short key must not be able to turn an unauthenticated request into a panic.
 func NewRequestSigningAuthenticator(keys map[string]ed25519.PublicKey, skew time.Duration) *RequestSigningAuthenticator {
+	valid := make(map[string]ed25519.PublicKey, len(keys))
+	for caller, pub := range keys {
+		if len(pub) == ed25519.PublicKeySize {
+			valid[caller] = pub
+		}
+	}
 	if skew <= 0 {
 		skew = 60 * time.Second
 	}
 	return &RequestSigningAuthenticator{
-		keys:    keys,
+		keys:    valid,
 		skew:    skew,
 		cache:   newNonceCache(2*skew, defaultNonceCacheMax),
 		now:     time.Now,
@@ -190,18 +201,28 @@ func newNonceCache(ttl time.Duration, max int) *nonceCache {
 // checkAndStore records id and returns nil, errReplay if id is already present
 // and unexpired, or errNonceCacheFull if the cache is at capacity (fail closed:
 // replay protection cannot be guaranteed, so the request is refused). Expired
-// entries are purged on every call, bounding memory to the accepted window.
+// entries are purged lazily — only when the cache is at or over capacity —
+// rather than scanning every live entry on every call: a full O(n) sweep under
+// the single cache-wide mutex on every request would serialize all
+// request-signing traffic and grow with cache occupancy. The bound is still
+// memory-safe: capacity is reclaimed before a legitimate new nonce is ever
+// rejected as full.
 func (c *nonceCache) checkAndStore(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now().UnixNano()
-	for k, exp := range c.entries {
-		if exp <= now {
-			delete(c.entries, k)
+	if exp, ok := c.entries[id]; ok {
+		if exp > now {
+			return errReplay
 		}
+		delete(c.entries, id)
 	}
-	if exp, ok := c.entries[id]; ok && exp > now {
-		return errReplay
+	if len(c.entries) >= c.max {
+		for k, exp := range c.entries {
+			if exp <= now {
+				delete(c.entries, k)
+			}
+		}
 	}
 	if len(c.entries) >= c.max {
 		return errNonceCacheFull

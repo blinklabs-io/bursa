@@ -190,10 +190,14 @@ func TestMTLSHandshake(t *testing.T) {
 	pool.AddCert(ca.cert)
 	serverTLSCert := tls.Certificate{Certificate: [][]byte{server.der}, PrivateKey: server.key}
 
-	// Handler records the caller resolved by the mTLS authenticator chain.
-	var gotCaller string
+	// Handler records the caller resolved by the mTLS authenticator chain. The
+	// handler runs on a server goroutine and the test reads the result on its
+	// own goroutine, so hand it off through a channel rather than a shared
+	// variable (the TCP round-trip orders the two in wall-clock time, but that
+	// ordering is invisible to the Go memory model / race detector).
+	callers := make(chan string, 1)
 	h := AuthMiddleware([]Authenticator{NewMTLSAuthenticator()}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotCaller = CallerFromContext(r.Context())
+		callers <- CallerFromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -207,8 +211,13 @@ func TestMTLSHandshake(t *testing.T) {
 		if resp != http.StatusOK {
 			t.Fatalf("expected 200, got %d", resp)
 		}
-		if gotCaller != "client-alice" {
-			t.Fatalf("expected caller client-alice, got %q", gotCaller)
+		select {
+		case got := <-callers:
+			if got != "client-alice" {
+				t.Fatalf("expected caller client-alice, got %q", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("handler did not record a caller")
 		}
 	})
 
