@@ -139,9 +139,15 @@ func (s *Service) Poll(ctx context.Context) ([]Event, error) {
 	}
 
 	if !s.primed {
-		// Baseline: record the current state without emitting anything.
+		// Baseline: record every existing receipt without emitting anything.
+		// This deliberately checks Direction only, NOT isIncoming's Pending
+		// exclusion: a transient tip-lookup failure degrades every tx to
+		// Pending=true (see wallet.Service.Transactions), and baselining with
+		// isIncoming would then drop an already-confirmed receipt from the
+		// baseline, causing it to be reported as newly "received" once the tip
+		// lookup recovers on a later poll.
 		for _, tx := range txs {
-			if isIncoming(tx) {
+			if tx.Direction == wallet.TxDirectionReceived {
 				s.seenTx[tx.TxHash] = true
 			}
 		}

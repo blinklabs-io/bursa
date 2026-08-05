@@ -370,8 +370,12 @@ export function useActivityNotifications(active: boolean, walletId: string | nul
           if (cancelled) return;
           for (const event of res.events) {
             if (seen.has(event.id)) continue;
-            seen.add(event.id);
-            raiseActivityNotification(event);
+            // Only record as seen once the notification actually raised: a
+            // constructor/bridge failure must not be silently mistaken for a
+            // delivered notification within this session's dedup set.
+            if (raiseActivityNotification(event)) {
+              seen.add(event.id);
+            }
           }
         })
         .catch(() => {

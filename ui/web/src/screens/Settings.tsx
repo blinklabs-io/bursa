@@ -488,6 +488,12 @@ function NotificationsCard({ notifications }: { notifications: NotificationsStat
   // permission can persist "on" yet never actually show a notification; surface
   // that so the toggle state isn't misleading.
   const permissionDenied = checked && notifications.permission === "denied";
+  // The preference can also be "on" (e.g. persisted from another browser/
+  // profile) while this browser's own Notification permission was never
+  // decided — the poller stays off and nothing prompts the user, since the
+  // permission request only fires on the toggle's off-to-on transition. Offer
+  // a direct way to (re-)request it rather than the on/off toggle workaround.
+  const permissionUndecided = checked && notifications.permission === "default";
 
   return (
     <Card title="Notifications">
@@ -535,6 +541,20 @@ function NotificationsCard({ notifications }: { notifications: NotificationsStat
       {permissionDenied && (
         <p role="status" className="setting-restart-note">
           Notification permission is blocked in your browser — allow it to receive alerts.
+        </p>
+      )}
+
+      {permissionUndecided && (
+        <p role="status" className="setting-restart-note">
+          Notification permission hasn&apos;t been granted in this browser yet.{" "}
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={notifications.saving}
+            onClick={() => void notifications.setEnabled(true)}
+          >
+            Grant permission
+          </button>
         </p>
       )}
 

@@ -120,6 +120,37 @@ func TestPendingIncomingTxIsNotEmitted(t *testing.T) {
 	}
 }
 
+func TestPrimingBaselinesPendingReceiptToAvoidFalseNotifyOnTipRecovery(t *testing.T) {
+	// A transient tip-lookup failure degrades every tx to Pending=true (see
+	// wallet.Service.Transactions), including ones that are actually already
+	// confirmed. If the very first (priming) poll for a wallet lands during such
+	// a failure, an already-confirmed receipt must still be baselined — not
+	// reported as "new" once a later poll's tip lookup recovers and the same tx
+	// correctly reports Pending=false.
+	degraded := received("tx1", "1000000")
+	degraded.Pending = true
+	r := &fakeReader{txs: []wallet.Tx{degraded}}
+	svc := New(r)
+	svc.SetActive("w1")
+	events, err := svc.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("priming must not emit history, got %v", events)
+	}
+
+	// Tip lookup recovers: the same tx now correctly reports Pending=false.
+	r.txs = []wallet.Tx{received("tx1", "1000000")}
+	events, err = svc.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("already-baselined tx must not re-emit once confirmed, got %v", events)
+	}
+}
+
 func TestSentAndSelfTxAreNotEmitted(t *testing.T) {
 	r := &fakeReader{}
 	svc := New(r)

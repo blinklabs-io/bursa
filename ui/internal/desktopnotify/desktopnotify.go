@@ -26,7 +26,6 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"unicode/utf8"
 )
 
 // maxFieldLen caps a sanitized title/body. A real notification is a short line
@@ -52,8 +51,10 @@ func Notify(logger *slog.Logger, title, body string) {
 	switch runtime.GOOS {
 	case "linux":
 		// notify-send takes summary and body as distinct argv entries — no shell,
-		// so the sanitized text is passed verbatim with no quoting concerns.
-		cmd = exec.Command("notify-send", title, body) //nolint:gosec // title/body are sanitized (Sanitize) to a safe printable subset
+		// so the sanitized text is passed verbatim with no quoting concerns. The
+		// leading "--" stops option parsing so a title/body starting with "-"
+		// (Sanitize does not forbid a leading dash) is never read as a flag.
+		cmd = exec.Command("notify-send", "--", title, body) //nolint:gosec // title/body are sanitized (Sanitize) to a safe printable subset
 	case "darwin":
 		// osascript embeds the text inside an AppleScript string literal. Sanitize
 		// has removed every double-quote and backslash, so wrapping in plain
@@ -87,29 +88,36 @@ func Notify(logger *slog.Logger, title, body string) {
 // shell/script-meaningful quoting characters (" ' ` \), collapses surrounding
 // whitespace, and caps the length. The notification copy is plain ASCII-ish
 // prose ("Received 12.5 ADA"), so this never loses meaningful content.
+//
+// The cap is enforced while writing, not by building the full sanitized string
+// and truncating afterward: an oversized (e.g. attacker-controlled bursaNotify)
+// input would otherwise still be fully processed and copied before the excess
+// is discarded, so maxFieldLen would bound the output but not the work done to
+// produce it. Stopping the write (and the scan) as soon as the cap is reached
+// keeps the defensive limit effective. Runes are only ever written whole, so
+// this can never bisect a multi-byte UTF-8 rune the way a byte-offset cut
+// could.
 func Sanitize(s string) string {
 	var b strings.Builder
+	n := 0
 	for _, r := range s {
+		if n >= maxFieldLen {
+			break
+		}
 		switch {
 		case r == '"' || r == '\'' || r == '`' || r == '\\':
 			// drop quoting/escape characters
+			continue
 		case r == '\n' || r == '\r' || r == '\t':
-			b.WriteByte(' ')
+			r = ' '
 		case r < 0x20 || r == 0x7f:
 			// drop other control characters
-		default:
-			b.WriteRune(r)
+			continue
 		}
+		b.WriteRune(r)
+		n++
 	}
-	out := strings.TrimSpace(b.String())
-	// Truncate by rune count, not byte offset — a byte-offset cut can bisect a
-	// multi-byte UTF-8 rune and leave an invalid string that renders as garbage
-	// (or breaks the macOS/PowerShell notifier scripts, which expect valid text).
-	if utf8.RuneCountInString(out) > maxFieldLen {
-		runes := []rune(out)
-		out = strings.TrimSpace(string(runes[:maxFieldLen]))
-	}
-	return out
+	return strings.TrimSpace(b.String())
 }
 
 // windowsToastScript builds the PowerShell balloon-tip command. title and body

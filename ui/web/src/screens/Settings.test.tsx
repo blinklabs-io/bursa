@@ -679,3 +679,20 @@ test("notifications card warns when browser permission is denied", () => {
   renderSettings();
   expect(screen.getByText(/permission is blocked/i)).toBeInTheDocument();
 });
+
+test("notifications card offers to (re-)request an undecided browser permission", () => {
+  mockStatus("ready");
+  const setEnabled = vi.fn();
+  mockNotifications({ enabled: true, permission: "default", setEnabled });
+  renderSettings();
+  expect(screen.getByText(/hasn.t been granted/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /grant permission/i }));
+  expect(setEnabled).toHaveBeenCalledWith(true);
+});
+
+test("notifications card shows no permission-undecided warning while off", () => {
+  mockStatus("ready");
+  mockNotifications({ enabled: false, permission: "default" });
+  renderSettings();
+  expect(screen.queryByText(/hasn.t been granted/i)).toBeNull();
+});
