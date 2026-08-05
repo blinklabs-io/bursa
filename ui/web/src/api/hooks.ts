@@ -7,6 +7,7 @@ import type {
   DelegationView,
   RewardHistory,
   VaultStatus,
+  AccountsResponse,
   HistoryExpirySetting,
   AutoLockSetting,
   TPMStatus,
@@ -19,6 +20,7 @@ import type {
 import {
   getStatus,
   getVaultStatus,
+  getAccounts,
   getBalance,
   getAddresses,
   getTransactions,
@@ -153,6 +155,11 @@ export const useHistoryExpiry = (): AsyncState<HistoryExpirySetting> => useAsync
 export const useAutoLock = (): AsyncState<AutoLockSetting> => useAsync(getAutoLock);
 export const useTPMStatus = (): AsyncState<TPMStatus> => useAsync(getTPMStatus);
 export const useContacts = (): AsyncState<Contact[]> => useAsync(getContacts);
+// useAccounts lists the active wallet's BIP44 accounts (with node-local balance
+// summaries). It is enabled only once a wallet is active; the caller refreshes
+// it after an account is added or the active wallet changes.
+export const useAccounts = (enabled: boolean): AsyncState<AccountsResponse> =>
+  useAsync(getAccounts, { enabled });
 export const useDexPools = (): AsyncState<DexPoolsResponse> =>
   useAsync(getDexPools, { pollMs: 15000 });
 export const useNfts = (): AsyncState<NFT[]> => useAsync(getNfts);

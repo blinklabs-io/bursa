@@ -513,7 +513,7 @@ func (s *Service) SignData(addrStr string, message []byte, password string) (sig
 	if err != nil {
 		return "", "", fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return "", "", fmt.Errorf("account key: %w", err)
 	}
@@ -571,7 +571,7 @@ func (s *Service) PubDRepKey(password string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return nil, fmt.Errorf("account key: %w", err)
 	}
@@ -627,7 +627,7 @@ func (s *Service) PubStakeKey(password string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return nil, fmt.Errorf("account key: %w", err)
 	}
@@ -935,21 +935,21 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 		}
 	}()
 
-	// --- step 3: derive account key ---
+	// --- step 3: derive account key (at the pending send's account index) ---
+	acct := p.account
+	if acct == nil {
+		return TxResult{}, ErrNoWallet
+	}
 	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
 	if err != nil {
 		return TxResult{}, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return TxResult{}, fmt.Errorf("account key: %w", err)
 	}
 
 	// --- step 4: build address → derivation-index lookup ---
-	acct := p.account
-	if acct == nil {
-		return TxResult{}, ErrNoWallet
-	}
 	idxOf := make(map[string]uint32, len(acct.ReceiveAddresses))
 	for i, addrStr := range acct.ReceiveAddresses {
 		idxOf[addrStr] = uint32(i) //nolint:gosec // bounded by window size
@@ -1247,7 +1247,7 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 	if err != nil {
 		return Witness{}, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return Witness{}, fmt.Errorf("account key: %w", err)
 	}
@@ -1695,7 +1695,7 @@ func (s *Service) CosignTx(
 	if err != nil {
 		return CosignResult{}, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return CosignResult{}, fmt.Errorf("account key: %w", err)
 	}
@@ -2011,7 +2011,7 @@ func (s *Service) WitnessTx(
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return nil, fmt.Errorf("account key: %w", err)
 	}

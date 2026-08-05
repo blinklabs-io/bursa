@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { WalletView } from "../api/types";
 import { activateWallet, ApiError } from "../api/client";
+import { AccountSwitcher } from "./AccountSwitcher";
 
 interface WalletSwitcherProps {
   wallets: WalletView[];
@@ -8,6 +9,9 @@ interface WalletSwitcherProps {
   onActivated: (wallet: WalletView) => void;
   onAddWallet: () => void;
   onLock: () => void;
+  // onAccountChanged propagates the updated active wallet after a BIP44 account
+  // switch or a newly derived account, so the rest of the app rebinds.
+  onAccountChanged?: (wallet: WalletView) => void;
 }
 
 // WalletSwitcher lists the vault's wallets in the sidebar and lets the user pick
@@ -19,9 +23,11 @@ export function WalletSwitcher({
   onActivated,
   onAddWallet,
   onLock,
+  onAccountChanged,
 }: WalletSwitcherProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const activeWallet = wallets.find((w) => w.id === activeId) ?? null;
 
   async function select(id: string) {
     if (id === activeId || busyId !== null) return;
@@ -63,6 +69,9 @@ export function WalletSwitcher({
         <p className="error-text" role="alert">
           {error}
         </p>
+      )}
+      {activeWallet && onAccountChanged && (
+        <AccountSwitcher wallet={activeWallet} onChanged={onAccountChanged} />
       )}
       <div className="wallet-switcher-actions">
         <button type="button" className="wallet-action" onClick={onAddWallet}>

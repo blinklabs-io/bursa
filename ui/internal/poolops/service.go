@@ -685,7 +685,9 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 	defer cold.zero()
 	operator := poolIDFromVKey(cold.vkey)
 
-	acctKey, err := bursa.GetAccountKey(root, 0)
+	// Fee-paying payment key is derived at the active account's index so pool
+	// retirement is funded from the account the wallet is currently bound to.
+	acctKey, err := bursa.GetAccountKey(root, acct.AccountIndex)
 	if err != nil {
 		return TxResult{}, fmt.Errorf("account key: %w", err)
 	}
