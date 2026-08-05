@@ -168,13 +168,11 @@ signer.callers ACL, any valid token may use any configured key.`,
 			srv := api.NewServer(coord, resolver, eng, acl, validate)
 
 			// Readiness probe: verify the process's runtime dependencies are
-			// usable. Backends were built at boot (checked above); the durable
-			// watermark store is the dependency that can become unreachable at
-			// runtime, so ping it when it has a remote/file backend.
+			// usable. Backends were validated at boot (the process exits above
+			// if none are configured); the durable watermark store is the
+			// dependency that can become unreachable at runtime, so ping it
+			// when it has a remote/file backend.
 			readyCheck := func(rctx context.Context) error {
-				if len(backends) == 0 {
-					return errors.New("no signer backends configured")
-				}
 				if p, ok := wm.(watermark.Pinger); ok {
 					return p.Ping(rctx)
 				}

@@ -190,10 +190,16 @@ func (s *PostgresWatermark) CheckAndCommitCounter(ctx context.Context, key backe
 	// the same counter for the same key cannot both advance it.
 	want := counterEncode(counter)
 	var have string
+	// The counter column is compared with an explicit "C" collation so the
+	// advance-if-greater guard always evaluates in raw byte order, matching
+	// counterEncode's big-endian hex encoding. Without this, a database
+	// (or column) using a non-"C" default collation could order the hex
+	// strings by locale rules instead of byte value, letting a lower counter
+	// advance or rejecting a valid higher one.
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO signer_counter_watermark (record_key, counter) VALUES ($1, $2)
 		 ON CONFLICT (record_key) DO UPDATE SET counter = EXCLUDED.counter, updated_at = extract(epoch from now())::bigint
-		 WHERE EXCLUDED.counter > signer_counter_watermark.counter
+		 WHERE (EXCLUDED.counter COLLATE "C") > (signer_counter_watermark.counter COLLATE "C")
 		 RETURNING counter`,
 		recordKey(key, scope), want).Scan(&have)
 	if errors.Is(err, pgx.ErrNoRows) {
