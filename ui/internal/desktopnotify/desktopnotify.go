@@ -33,6 +33,15 @@ import (
 // malformed value can never balloon into an oversized OS command argument.
 const maxFieldLen = 200
 
+// maxRawScanLen bounds how many runes of the raw input Sanitize will examine,
+// independent of maxFieldLen. Dropped characters (quotes/backslashes/control
+// chars) never advance the maxFieldLen counter, so an input consisting
+// entirely of such characters would otherwise be scanned in full no matter
+// how long it is. This is set generously above maxFieldLen so it never
+// affects legitimate input (including a run of leading whitespace ahead of
+// real text) while still bounding the worst case scan cost.
+const maxRawScanLen = 20 * maxFieldLen
+
 // Notify shows an OS-native desktop notification with the given title and body.
 // Both are sanitized (see Sanitize) before use so a compromised or buggy
 // frontend cannot smuggle quotes, backslashes, or control characters that would
@@ -97,13 +106,26 @@ func Notify(logger *slog.Logger, title, body string) {
 // keeps the defensive limit effective. Runes are only ever written whole, so
 // this can never bisect a multi-byte UTF-8 rune the way a byte-offset cut
 // could.
+//
+// Leading whitespace is skipped (not counted against maxFieldLen) rather than
+// written and trimmed off afterward: a run of leading whitespace long enough
+// to exhaust maxFieldLen would otherwise consume the entire budget before any
+// meaningful text is reached, discarding it. Dropped characters (quotes/
+// backslashes/control chars) don't advance the maxFieldLen counter either, so
+// a second, independent counter (maxRawScanLen) bounds the number of raw
+// input runes examined regardless of how many are skipped or dropped —
+// keeping the scan itself bounded even for a hostile input built entirely
+// from such characters.
 func Sanitize(s string) string {
 	var b strings.Builder
-	n := 0
+	n := 0       // runes written to b, bounded by maxFieldLen
+	scanned := 0 // raw input runes examined, bounded by maxRawScanLen
+	leading := true
 	for _, r := range s {
-		if n >= maxFieldLen {
+		if n >= maxFieldLen || scanned >= maxRawScanLen {
 			break
 		}
+		scanned++
 		switch {
 		case r == '"' || r == '\'' || r == '`' || r == '\\':
 			// drop quoting/escape characters
@@ -114,6 +136,11 @@ func Sanitize(s string) string {
 			// drop other control characters
 			continue
 		}
+		if leading && r == ' ' {
+			// skip leading whitespace without spending the maxFieldLen budget
+			continue
+		}
+		leading = false
 		b.WriteRune(r)
 		n++
 	}

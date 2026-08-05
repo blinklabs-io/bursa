@@ -51,6 +51,27 @@ func TestSanitizeCapsLength(t *testing.T) {
 	}
 }
 
+func TestSanitizeLeadingWhitespaceDoesNotConsumeCap(t *testing.T) {
+	// A run of leading whitespace long enough to exhaust maxFieldLen on its
+	// own must not crowd out the meaningful text that follows it.
+	in := strings.Repeat(" ", maxFieldLen) + "hello"
+	if got := Sanitize(in); got != "hello" {
+		t.Fatalf("Sanitize(huge leading whitespace + text) = %q, want %q", got, "hello")
+	}
+}
+
+func TestSanitizeBoundsScanOfDroppedChars(t *testing.T) {
+	// An input consisting entirely of dropped characters (quotes here) must
+	// not be scanned past maxRawScanLen. Trailing legitimate text placed
+	// beyond that bound acts as a witness: if the scan were unbounded it
+	// would appear in the output, but since it's well beyond maxRawScanLen
+	// it must not.
+	huge := strings.Repeat(`"`, maxRawScanLen*10) + "trailing"
+	if got := Sanitize(huge); got != "" {
+		t.Fatalf("Sanitize(huge all-dropped-char input) = %q, want empty (scan must be bounded, not reach trailing text)", got)
+	}
+}
+
 func TestSanitizeCapsLengthByRuneNotByte(t *testing.T) {
 	// Position a 3-byte rune (a CJK character) straddling the maxFieldLen
 	// boundary. A byte-offset truncation (out[:maxFieldLen]) would bisect it and
