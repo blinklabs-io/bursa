@@ -32,6 +32,11 @@ describe("getStoredDeviceKind", () => {
     expect(getStoredDeviceKind("w1")).toBe("keystone");
   });
 
+  test("honors a stored seedsigner hint", () => {
+    setDeviceKind("w1", "seedsigner");
+    expect(getStoredDeviceKind("w1")).toBe("seedsigner");
+  });
+
   test("rejects an unrecognised value", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ w1: "bogus" }));
     expect(getStoredDeviceKind("w1")).toBeUndefined();

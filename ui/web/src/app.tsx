@@ -3,6 +3,7 @@ import type { ReactElement } from "react";
 import type { Account, WalletView } from "./api/types";
 import { useStatus, useVaultStatus, useAutoLock } from "./api/hooks";
 import { lockVault, ApiError } from "./api/client";
+import { getStoredDeviceKind } from "./hw/deviceKind";
 import { useIdleLock } from "./useIdleLock";
 import { Button } from "./components/Button";
 import { SyncBanner } from "./components/SyncBanner";
@@ -262,11 +263,16 @@ export function App() {
     );
   }
 
-  // Staking/governance is gated identically to send: a fully synced node AND an
-  // active (spending-capable) wallet. A read-only or unsynced wallet falls back
-  // to Portfolio. Certificates also aren't supported on hardware yet (see
-  // spend.HardwareSignRequest), so hardware wallets are excluded too.
-  const canStake = isReady && activeWallet?.type === "full";
+  // Staking/governance needs a fully synced node AND a wallet that can witness a
+  // certificate tx: a full (local-seed) wallet, or a SeedSigner hardware wallet
+  // (its air-gapped QR device supports certificates/votes). Ledger/Trezor/
+  // Keystone hardware wallets can't sign certificates on-device yet, so they —
+  // like read-only and unsynced wallets — fall back to Portfolio.
+  const canStake =
+    isReady &&
+    (activeWallet?.type === "full" ||
+      (activeWallet?.type === "hardware" &&
+        getStoredDeviceKind(activeWallet.id) === "seedsigner"));
 
   // --- Unlocked: the normal wallet UI bound to the active wallet ----------
 
@@ -332,7 +338,15 @@ export function App() {
     // Staking/governance is gated like send: a synced node AND a
     // spending-enabled wallet. A read-only or unsynced wallet falls back to
     // Portfolio.
-    content = canStake ? <Staking network={activeWallet.network} /> : <Portfolio />;
+    content = canStake ? (
+      <Staking
+        network={activeWallet.network}
+        isHardware={activeWallet.type === "hardware"}
+        walletId={activeWallet.id}
+      />
+    ) : (
+      <Portfolio />
+    );
   } else if (route === "rewards") {
     // Read-only per-epoch reward history for the active wallet's stake
     // address. Node-local read (no signing, no spend), so it is available to
