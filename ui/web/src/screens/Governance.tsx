@@ -95,7 +95,7 @@ export function Governance({ network }: GovernanceProps) {
 
         {loading && !data ? (
           <p className="muted">Reading governance actions from the local node…</p>
-        ) : rows.length === 0 ? (
+        ) : error && !data ? null : rows.length === 0 ? (
           <p className="muted">
             {query.trim()
               ? "No governance actions match your search."

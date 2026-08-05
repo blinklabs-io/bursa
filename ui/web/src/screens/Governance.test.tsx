@@ -98,4 +98,6 @@ test("surfaces an API error", async () => {
 
   render(<Governance network="preview" />);
   expect(await screen.findByRole("alert")).toHaveTextContent(/node not ready/i);
+  // An unavailable node read must not be mistaken for an empty database.
+  expect(screen.queryByText(/no governance actions found/i)).not.toBeInTheDocument();
 });
