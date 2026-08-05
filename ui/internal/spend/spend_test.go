@@ -485,7 +485,9 @@ func TestBuildDeadZoneRejectsOversizeTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTxCbor: %v", err)
 	}
-	projected := len(cbor) + vkeyWitnessSizeEstimate // one distinct signing address
+	// One distinct signing address → one vkey witness, plus the one-time
+	// witness-set framing the guard accounts for.
+	projected := len(cbor) + vkeyWitnessSizeEstimate + witnessSetOverhead
 
 	// Same scenario, but MaxTxSize one byte under the true projection: the guard
 	// must reject and nothing may reach SubmitTx.

@@ -504,8 +504,16 @@ func (s *Service) completeSend(
 // array(2) header (1) + bytes(32) (2+32) + bytes(64) (2+64) = 101 bytes, rounded
 // up to 102 to cover the per-element set overhead. Complete() leaves the witness
 // set empty (witnesses are attached later at Confirm/Sign time), so the size
-// guard projects the SIGNED size by adding one such witness per input.
+// guard projects the SIGNED size by adding one such witness per distinct signer.
 const vkeyWitnessSizeEstimate = 102
+
+// witnessSetOverhead covers the one-time CBOR framing that appears when the
+// empty witness set gains its first vkey-witness field: the witness-set map key
+// plus the vkey-witness array header. It is added once (not per witness), so a
+// transaction sitting a few bytes under MaxTxSize is not projected as fitting
+// when the signed form would just exceed it. 8 bytes is conservative — enough to
+// cover a multi-byte array-length header for large witness counts.
+const witnessSetOverhead = 8
 
 // completeForcingPrefix escapes the min-UTxO dust-change dead-zone by forcing a
 // growing, largest-first prefix of the wallet's UTxOs as explicit inputs,
@@ -550,7 +558,7 @@ func (s *Service) completeForcingPrefix(
 		// Converged on the minimal forced set. Reject it locally if signing it
 		// would exceed the chain's MaxTxSize, turning a would-be submit-time
 		// failure into a clear, pre-approval error.
-		if err := s.guardTxSize(a, utxoAddr); err != nil {
+		if err := s.guardTxSize(ctx, a, utxoAddr); err != nil {
 			return nil, err
 		}
 		return a, nil
@@ -570,8 +578,8 @@ func (s *Service) completeForcingPrefix(
 // in Confirm), not once per input, so the projection counts distinct signing
 // addresses via utxoAddr — inputs sharing an address share one witness. An input
 // whose address is unknown is conservatively assumed to need its own witness.
-func (s *Service) guardTxSize(a *apollo.Apollo, utxoAddr map[string]string) error {
-	pp, err := s.chain.ProtocolParams()
+func (s *Service) guardTxSize(ctx context.Context, a *apollo.Apollo, utxoAddr map[string]string) error {
+	pp, err := backend.ProtocolParamsContext(ctx, s.chain)
 	if err != nil {
 		return fmt.Errorf("protocol params: %w", err)
 	}
@@ -601,7 +609,10 @@ func (s *Service) guardTxSize(a *apollo.Apollo, utxoAddr map[string]string) erro
 	if missingWitnesses < 0 {
 		missingWitnesses = 0
 	}
-	signedSize := len(cborBytes) + missingWitnesses*vkeyWitnessSizeEstimate
+	signedSize := len(cborBytes)
+	if missingWitnesses > 0 {
+		signedSize += missingWitnesses*vkeyWitnessSizeEstimate + witnessSetOverhead
+	}
 	if signedSize > pp.MaxTxSize {
 		return fmt.Errorf(
 			"%w: transaction would exceed the maximum size (%d/%d bytes); reduce the amount or consolidate UTxOs",
