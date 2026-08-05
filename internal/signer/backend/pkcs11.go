@@ -188,6 +188,11 @@ func (b *PKCS11Backend) loadKeys(cfg PKCS11Config) error {
 
 		pub, err := publicKeyForID(b.ctx, b.session, id)
 		if err != nil {
+			if errors.Is(err, errAmbiguousPublicKey) {
+				// A duplicate CKA_ID could bind this private key to an
+				// arbitrary public key object; refuse to guess.
+				return fmt.Errorf("pkcs11 load key %q: %w", label, err)
+			}
 			// A signing key with no readable public counterpart cannot be
 			// addressed by key hash; skip it rather than fail the whole load.
 			continue
@@ -260,8 +265,18 @@ func findEdwardsObjects(p *pkcs11.Ctx, session pkcs11.SessionHandle, class uint)
 	return out, nil
 }
 
+// errAmbiguousPublicKey is returned by publicKeyForID when a CKA_ID matches
+// more than one public key object. A token should never expose two public
+// key objects sharing a CKA_ID with a signing private key, but PKCS#11 does
+// not enforce uniqueness, so treat it as ambiguous rather than guessing which
+// one is the private key's real counterpart.
+var errAmbiguousPublicKey = errors.New("ambiguous public key match for CKA_ID")
+
 // publicKeyForID finds the Edwards public key object with the given CKA_ID and
-// returns its raw 32-byte Ed25519 public key.
+// returns its raw 32-byte Ed25519 public key. It returns errAmbiguousPublicKey
+// if more than one public key object shares the CKA_ID: silently picking one
+// could bind the private key to the wrong public key, corrupting KeyHash
+// registration and producing signatures that fail verification.
 func publicKeyForID(p *pkcs11.Ctx, session pkcs11.SessionHandle, id []byte) ([]byte, error) {
 	tmpl := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
@@ -271,7 +286,9 @@ func publicKeyForID(p *pkcs11.Ctx, session pkcs11.SessionHandle, id []byte) ([]b
 	if err := p.FindObjectsInit(session, tmpl); err != nil {
 		return nil, err
 	}
-	objs, _, err := p.FindObjects(session, 1)
+	// Ask for one more than we accept so a second match is detected here
+	// instead of silently truncated away by the token/driver.
+	objs, _, err := p.FindObjects(session, 2)
 	if err != nil {
 		_ = p.FindObjectsFinal(session)
 		return nil, err
@@ -281,6 +298,9 @@ func publicKeyForID(p *pkcs11.Ctx, session pkcs11.SessionHandle, id []byte) ([]b
 	}
 	if len(objs) == 0 {
 		return nil, errors.New("no matching public key object")
+	}
+	if len(objs) > 1 {
+		return nil, fmt.Errorf("%w %x: %d matching objects", errAmbiguousPublicKey, id, len(objs))
 	}
 	attrs, err := p.GetAttributeValue(session, objs[0], []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_EC_POINT, nil),

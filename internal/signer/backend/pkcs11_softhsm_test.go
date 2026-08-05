@@ -22,6 +22,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/asn1"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -242,5 +243,110 @@ func TestPKCS11Backend_SoftHSM(t *testing.T) {
 	soft := ed25519.Sign(priv, digest)
 	if !bytes.Equal(sig, soft) {
 		t.Fatalf("HSM signature != software signature\n hsm:  %x\n soft: %x", sig, soft)
+	}
+}
+
+// TestPKCS11Backend_SoftHSM_AmbiguousPublicKey verifies that a token exposing
+// two public key objects under the same CKA_ID as a signing private key
+// causes the backend to reject loading that key, rather than silently
+// pairing the private key with an arbitrary one of the ambiguous public
+// key objects (which would corrupt KeyHash registration).
+func TestPKCS11Backend_SoftHSM_AmbiguousPublicKey(t *testing.T) {
+	module, label, pin := setupSoftHSMToken(t)
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pubA, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pubB, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	// Provision the ambiguous objects with a fully torn-down provisioning
+	// session (Logout/CloseSession/Finalize all complete) before opening the
+	// backend's own session below — SoftHSM rejects a second C_Initialize
+	// while another is still live in the process.
+	func() {
+		p := pkcs11.New(module)
+		if p == nil {
+			t.Fatalf("load module %q", module)
+		}
+		if err := p.Initialize(); err != nil {
+			t.Fatalf("initialize: %v", err)
+		}
+		defer func() {
+			_ = p.Finalize()
+			p.Destroy()
+		}()
+
+		slot, err := findSlotByLabel(p, label)
+		if err != nil {
+			t.Fatalf("find slot: %v", err)
+		}
+		session, err := p.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
+		if err != nil {
+			t.Fatalf("open session: %v", err)
+		}
+		defer func() { _ = p.CloseSession(session) }()
+		if err := p.Login(session, pkcs11.CKU_USER, pin); err != nil {
+			t.Fatalf("login: %v", err)
+		}
+		defer func() { _ = p.Logout(session) }()
+
+		oid := ed25519OID(t)
+		id := []byte{0x02}
+
+		for _, pub := range []ed25519.PublicKey{pubA, pubB} {
+			ecPoint, err := asn1.Marshal([]byte(pub))
+			if err != nil {
+				t.Fatalf("marshal EC_POINT: %v", err)
+			}
+			pubTmpl := []*pkcs11.Attribute{
+				pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
+				pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, uint(ckkECEdwards)),
+				pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+				pkcs11.NewAttribute(pkcs11.CKA_VERIFY, true),
+				pkcs11.NewAttribute(pkcs11.CKA_EC_PARAMS, oid),
+				pkcs11.NewAttribute(pkcs11.CKA_EC_POINT, ecPoint),
+				pkcs11.NewAttribute(pkcs11.CKA_ID, id),
+				pkcs11.NewAttribute(pkcs11.CKA_LABEL, "bursa-ambiguous"),
+			}
+			if _, err := p.CreateObject(session, pubTmpl); err != nil {
+				t.Fatalf("create public key object: %v", err)
+			}
+		}
+
+		privTmpl := []*pkcs11.Attribute{
+			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
+			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, uint(ckkECEdwards)),
+			pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+			pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
+			pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
+			pkcs11.NewAttribute(pkcs11.CKA_EC_PARAMS, oid),
+			pkcs11.NewAttribute(pkcs11.CKA_VALUE, priv.Seed()),
+			pkcs11.NewAttribute(pkcs11.CKA_ID, id),
+			pkcs11.NewAttribute(pkcs11.CKA_LABEL, "bursa-ambiguous"),
+		}
+		if _, err := p.CreateObject(session, privTmpl); err != nil {
+			t.Fatalf("create private key object: %v", err)
+		}
+	}()
+
+	_, err = NewPKCS11Backend(PKCS11Config{
+		Name:       "hsm",
+		Module:     module,
+		TokenLabel: label,
+		PIN:        pin,
+	})
+	if err == nil {
+		t.Fatal("expected NewPKCS11Backend to fail on ambiguous CKA_ID, got nil error")
+	}
+	if !errors.Is(err, errAmbiguousPublicKey) {
+		t.Fatalf("expected errAmbiguousPublicKey, got: %v", err)
 	}
 }
