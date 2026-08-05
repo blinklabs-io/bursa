@@ -16,6 +16,8 @@ package signer
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
@@ -23,6 +25,40 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
+
+// pausingCounterWatermark wraps a CounterWatermark and, on the first call to
+// CounterFor, blocks the caller until released. Tests use it to force a
+// specific interleaving between two concurrent SignOpCert calls: the paused
+// goroutine's pre-sign lookup completes (and sees no conflict) before the
+// other goroutine commits, so any regression can only be detected later, at
+// commit time.
+//
+// The "first call" gate uses an atomic CompareAndSwap rather than sync.Once:
+// a second, concurrent Once.Do call blocks on Once's internal mutex until the
+// first call's function returns, which here would deadlock (the first call's
+// function only returns once the test observes the second call completing).
+// CompareAndSwap lets the second caller proceed immediately instead.
+type pausingCounterWatermark struct {
+	watermark.Watermark
+	counter watermark.CounterWatermark
+
+	paused   chan struct{} // closed once the pausing call's lookup has returned
+	release  chan struct{} // closed by the test to let the paused call continue
+	didPause atomic.Bool
+}
+
+func (p *pausingCounterWatermark) CounterFor(ctx context.Context, key backend.KeyHash, scope string) (uint64, bool, error) {
+	v, ok, err := p.counter.CounterFor(ctx, key, scope)
+	if p.didPause.CompareAndSwap(false, true) {
+		close(p.paused)
+		<-p.release
+	}
+	return v, ok, err
+}
+
+func (p *pausingCounterWatermark) CheckAndCommitCounter(ctx context.Context, key backend.KeyHash, scope string, counter uint64) error {
+	return p.counter.CheckAndCommitCounter(ctx, key, scope, counter)
+}
 
 func newOpCertCoordinator(t *testing.T, k *fakeKey, wm watermark.Watermark, mode watermark.Mode) (*Coordinator, *Metrics) {
 	t.Helper()
@@ -125,6 +161,56 @@ func TestSignOpCert_CounterWarnMode(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(m.watermarkConflicts); got != 1 {
 		t.Fatalf("watermark_conflicts_total = %v, want 1", got)
+	}
+}
+
+// TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression covers a
+// regression that is only detectable at commit time: two requests for the
+// same counter both pass the pre-sign lookup (neither sees the other's
+// counter yet), one commits first, and the other's commit then loses the
+// race. In warn mode, that losing request must still return a signature and
+// must emit exactly one conflict metric (not zero, and not double-counted
+// against the pre-sign path).
+func TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression(t *testing.T) {
+	k := newFakeKey(t)
+	pw := &pausingCounterWatermark{
+		Watermark: watermark.NewMemWatermark(),
+		counter:   watermark.NewMemWatermark(),
+		paused:    make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+	c, m := newOpCertCoordinator(t, k, pw, watermark.ModeWarn)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	var (
+		wg       sync.WaitGroup
+		loserRes *OpCertResult
+		loserErr error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// This call's CounterFor is the one that pauses (via pw.once): it
+		// sees no stored counter, then blocks before the winner commits.
+		loserRes, _, loserErr = c.SignOpCert(ctx, kes, 7, 2, k.hash.String())
+	}()
+
+	// Wait for the losing request's pre-sign lookup to complete before
+	// letting the winner run to completion (sign + commit) for the same
+	// counter.
+	<-pw.paused
+	if _, code, err := c.SignOpCert(ctx, kes, 7, 1, k.hash.String()); err != nil {
+		t.Fatalf("winner: unexpected error %v (code=%s)", err, code)
+	}
+	close(pw.release)
+	wg.Wait()
+
+	if loserErr != nil || loserRes == nil || loserRes.SignatureHex == "" {
+		t.Fatalf("loser: want successful warn-mode signature, got (res=%v, err=%v)", loserRes, loserErr)
+	}
+	if got := testutil.ToFloat64(m.watermarkConflicts); got != 1 {
+		t.Fatalf("watermark_conflicts_total = %v, want 1 (exactly once, detected at commit)", got)
 	}
 }
 

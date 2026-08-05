@@ -108,7 +108,10 @@ func (c *Coordinator) SignOpCert(ctx context.Context, kesVkey []byte, issueCount
 	// increase per cold key. A stale or duplicate counter is refused before the
 	// cold key ever signs, so a compromised or buggy caller cannot re-issue an
 	// opcert for a counter already used.
-	var counterWM watermark.CounterWatermark
+	var (
+		counterWM               watermark.CounterWatermark
+		counterConflictReported bool
+	)
 	if c.deps.WMMode != watermark.ModeOff {
 		cw, ok := c.deps.Watermark.(watermark.CounterWatermark)
 		if !ok {
@@ -125,6 +128,7 @@ func (c *Coordinator) SignOpCert(ctx context.Context, kesVkey []byte, issueCount
 			return nil, CodeBackend, fmt.Errorf("opcert counter lookup: %w", cerr)
 		}
 		if exists && issueCounter <= stored {
+			counterConflictReported = true
 			c.deps.Metrics.observeWatermarkConflict()
 			if c.deps.WMMode == watermark.ModeEnforce {
 				c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "issue-counter", issueCounter, "stored-counter", stored, "result", "denied", "reason", "issue counter is not strictly greater than the highest signed")
@@ -189,7 +193,14 @@ func (c *Coordinator) SignOpCert(ctx context.Context, kesVkey []byte, issueCount
 					return nil, CodeConflict, fmt.Errorf("opcert issue counter %d is not greater than the highest signed for this cold key", issueCounter)
 				}
 				// warn mode: the stored counter already meets or exceeds ours;
-				// nothing to advance. The signature is still returned.
+				// nothing to advance. The signature is still returned. Only log
+				// and meter here if the pre-sign check did not already do so for
+				// this same request, so a request that was stale from the start
+				// is not double-counted.
+				if !counterConflictReported {
+					c.deps.Logger.Warn("sign", "type", "opcert", "caller-key", hash.String(), "issue-counter", issueCounter, "result", "warn", "reason", "issue counter regression detected at commit (concurrent signer; warn mode)")
+					c.deps.Metrics.observeWatermarkConflict()
+				}
 			} else {
 				c.deps.Logger.Error("sign", "type", "opcert", "caller-key", hash.String(), "result", "error", "reason", werr.Error())
 				if c.deps.WMMode == watermark.ModeEnforce {
