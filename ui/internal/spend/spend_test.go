@@ -370,17 +370,6 @@ func fillDeadZoneUTxOs(fc *fakeChain, n int, addr string) {
 	}
 }
 
-// signedTxSizeEstimate mirrors Service.guardTxSize: completed CBOR plus one vkey
-// witness per input (Complete leaves the witness set empty).
-func signedTxSizeEstimate(t *testing.T, a *apollo.Apollo) int {
-	t.Helper()
-	cborBytes, err := a.GetTxCbor()
-	if err != nil {
-		t.Fatalf("GetTxCbor: %v", err)
-	}
-	return len(cborBytes) + len(a.GetTx().Body.Inputs())*vkeyWitnessSizeEstimate
-}
-
 // TestBuildDeadZoneForcesBoundedInputs proves the dust-change retry forces only
 // the minimum extra inputs (largest-first), not the whole wallet: a 50-UTxO
 // wallet whose 4-ADA send lands in the dead-zone must build with a small,
@@ -412,21 +401,6 @@ func TestBuildDeadZoneForcesBoundedInputs(t *testing.T) {
 		t.Fatalf("input set is not bounded to the minimum needed: got %d inputs", len(pv.Inputs))
 	}
 
-	// The built tx must be under MaxTxSize (proving the size guard would pass).
-	pp, err := fc.ProtocolParams()
-	if err != nil {
-		t.Fatalf("ProtocolParams: %v", err)
-	}
-	s.mu.Lock()
-	p := s.pending[pv.PendingID]
-	s.mu.Unlock()
-	if p == nil {
-		t.Fatal("pending entry missing")
-	}
-	if size := signedTxSizeEstimate(t, p.tx); size >= pp.MaxTxSize {
-		t.Fatalf("built tx size %d must be under MaxTxSize %d", size, pp.MaxTxSize)
-	}
-
 	// It must still sign and submit — proving the bounded forced set is valid.
 	res, err := s.Confirm(ctx, pv.PendingID, "pw")
 	if err != nil {
@@ -438,25 +412,90 @@ func TestBuildDeadZoneForcesBoundedInputs(t *testing.T) {
 	if fc.submitCalls != 1 {
 		t.Fatalf("expected SubmitTx called once, got %d", fc.submitCalls)
 	}
+	// Assert against the REAL signed bytes handed to SubmitTx. Measuring the
+	// actual tx — rather than re-deriving guardTxSize's own arithmetic — is what
+	// catches a wrong witness projection (an estimate that mirrors the code
+	// can't tell you the code is right).
+	pp, err := fc.ProtocolParams()
+	if err != nil {
+		t.Fatalf("ProtocolParams: %v", err)
+	}
+	if n := len(fc.submittedTxCbor()); n >= pp.MaxTxSize {
+		t.Fatalf("signed tx size %d must be under MaxTxSize %d", n, pp.MaxTxSize)
+	}
 }
 
-// TestBuildDeadZoneRejectsOversizeTx proves guardTxSize turns a would-be
-// oversized transaction into a clear pre-approval error instead of letting it
-// reach SubmitTx. With MaxTxSize set below the projected signed size, the
-// dead-zone retry must fail Build with an ErrInsufficientFunds carrying the
-// size-limit message — never return a Preview.
-func TestBuildDeadZoneRejectsOversizeTx(t *testing.T) {
+// TestBuildDeadZoneForcesLargestFirst proves the retry orders forced inputs by
+// lovelace descending: with one large UTxO among many small ones, it converges
+// on that single large input (k=1) rather than walking the small ones. Deleting
+// the sort in completeForcingPrefix makes this fail (the small UTxOs would be
+// forced first); an all-equal-value wallet can't distinguish the two.
+func TestBuildDeadZoneForcesLargestFirst(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	addr0 := acct.ReceiveAddresses[0]
 	recvAddr := acct.ReceiveAddresses[2]
 
+	// Thirty 5-ADA UTxOs (the dead-zone shape) plus one 100-ADA UTxO added last,
+	// so it is only reachable first if the retry sorts largest-first.
+	fc := newFakeChain(5_000_000, addr0)
+	fillDeadZoneUTxOs(fc, 29, addr0) // 30 x 5-ADA total
+	fc.addUTxO(100_000_000, addr0, fmt.Sprintf("%064x", 0x1000), 0)
+
+	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
+	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4000000"})
+	if err != nil {
+		t.Fatalf("Build should succeed: %v", err)
+	}
+	// The lone 100-ADA input covers the send with change well clear of the floor,
+	// so convergence is at exactly one input.
+	if len(pv.Inputs) != 1 {
+		t.Fatalf("expected largest-first to converge at 1 input, got %d: %v", len(pv.Inputs), pv.Inputs)
+	}
+}
+
+// TestBuildDeadZoneRejectsOversizeTx proves guardTxSize turns a would-be
+// oversized transaction into a clear pre-approval error instead of letting it
+// reach SubmitTx. The threshold is pinned to the branch's actual completed body
+// (measured with the guard disabled) plus one witness, minus a byte — so it
+// stays valid regardless of how witnesses are counted, rather than relying on
+// the counting method.
+func TestBuildDeadZoneRejectsOversizeTx(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	recvAddr := acct.ReceiveAddresses[2]
+	req := SendRequest{To: recvAddr, Lovelace: "4000000"}
+
+	// Measure the real completed dead-zone tx with the guard disabled. All UTxOs
+	// share addr0, so the signed tx carries exactly one vkey witness.
+	measure := newFakeChain(5_000_000, addr0)
+	fillDeadZoneUTxOs(measure, 9, addr0)
+	measure.pp.MaxTxSize = 0
+	ms := NewService(measure, fakeKeystore{mnemonic: testMnemonic}, acct)
+	mpv, err := ms.Build(context.Background(), req)
+	if err != nil {
+		t.Fatalf("measurement build (guard disabled) should succeed: %v", err)
+	}
+	ms.mu.Lock()
+	mp := ms.pending[mpv.PendingID]
+	ms.mu.Unlock()
+	if mp == nil {
+		t.Fatal("measurement pending entry missing")
+	}
+	cbor, err := mp.tx.GetTxCbor()
+	if err != nil {
+		t.Fatalf("GetTxCbor: %v", err)
+	}
+	projected := len(cbor) + vkeyWitnessSizeEstimate // one distinct signing address
+
+	// Same scenario, but MaxTxSize one byte under the true projection: the guard
+	// must reject and nothing may reach SubmitTx.
 	fc := newFakeChain(5_000_000, addr0)
 	fillDeadZoneUTxOs(fc, 9, addr0) // 10 UTxOs total on addr0
-	fc.pp.MaxTxSize = 400           // below any completed body + witness projection
+	fc.pp.MaxTxSize = projected - 1
 
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
 
-	_, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4000000"})
+	_, err = s.Build(context.Background(), req)
 	if !errors.Is(err, ErrInsufficientFunds) {
 		t.Fatalf("expected ErrInsufficientFunds, got %v", err)
 	}

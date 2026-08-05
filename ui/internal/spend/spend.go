@@ -527,6 +527,11 @@ func (s *Service) completeForcingPrefix(
 ) (*apollo.Apollo, error) {
 	sorted := make([]lcommon.Utxo, len(loaded))
 	copy(sorted, loaded)
+	// Order by lovelace descending. Output.Amount() is lovelace only (native
+	// assets live in Assets()), so for a token send the prefix grows by lovelace
+	// until it reaches the UTxO holding the asset — bounded by the
+	// asset-underflow arm of isInsufficientFundsError and by guardTxSize, not a
+	// correctness issue, just larger prefixes for token sends than ADA sends.
 	sort.SliceStable(sorted, func(i, j int) bool {
 		return sorted[i].Output.Amount().Uint64() > sorted[j].Output.Amount().Uint64()
 	})
@@ -545,7 +550,7 @@ func (s *Service) completeForcingPrefix(
 		// Converged on the minimal forced set. Reject it locally if signing it
 		// would exceed the chain's MaxTxSize, turning a would-be submit-time
 		// failure into a clear, pre-approval error.
-		if err := s.guardTxSize(a); err != nil {
+		if err := s.guardTxSize(a, utxoAddr); err != nil {
 			return nil, err
 		}
 		return a, nil
@@ -560,13 +565,12 @@ func (s *Service) completeForcingPrefix(
 // guardTxSize rejects a completed tx whose projected SIGNED size exceeds the
 // chain's MaxTxSize protocol parameter. Complete() produces a body with an empty
 // witness set (vkey witnesses are attached at Confirm/Sign time), so the signed
-// size is estimated as the completed CBOR plus one vkey witness per input that
-// lacks one. That per-input count is a deliberate conservative UPPER BOUND:
-// Confirm signs once per distinct input address, so the real tx carries at most
-// one witness per input and fewer when inputs share an address. Over-estimating
-// only ever makes the guard reject a shade earlier — it can never let an
-// oversized tx reach SubmitTx.
-func (s *Service) guardTxSize(a *apollo.Apollo) error {
+// size is projected as the completed CBOR plus the witnesses Confirm will add.
+// Confirm signs once per DISTINCT input address (see the distinct-address loop
+// in Confirm), not once per input, so the projection counts distinct signing
+// addresses via utxoAddr — inputs sharing an address share one witness. An input
+// whose address is unknown is conservatively assumed to need its own witness.
+func (s *Service) guardTxSize(a *apollo.Apollo, utxoAddr map[string]string) error {
 	pp, err := s.chain.ProtocolParams()
 	if err != nil {
 		return fmt.Errorf("protocol params: %w", err)
@@ -579,12 +583,21 @@ func (s *Service) guardTxSize(a *apollo.Apollo) error {
 		return fmt.Errorf("encode tx for size check: %w", err)
 	}
 	tx := a.GetTx()
-	numInputs, existingWitnesses := 0, 0
+	numSigners, existingWitnesses := 0, 0
 	if tx != nil {
-		numInputs = len(tx.Body.Inputs())
+		// One vkey witness per distinct input address (not per input).
+		seen := make(map[string]bool)
+		for _, inp := range tx.Body.Inputs() {
+			if addr, ok := utxoAddr[inputRef(inp)]; ok {
+				seen[addr] = true
+			} else {
+				numSigners++ // unknown input: assume its own witness
+			}
+		}
+		numSigners += len(seen)
 		existingWitnesses = len(tx.WitnessSet.VkeyWitnesses.Items())
 	}
-	missingWitnesses := numInputs - existingWitnesses
+	missingWitnesses := numSigners - existingWitnesses
 	if missingWitnesses < 0 {
 		missingWitnesses = 0
 	}
