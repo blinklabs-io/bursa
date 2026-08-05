@@ -48,11 +48,25 @@ func NewSqliteWatermark(path string) (*SqliteWatermark, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("create watermark table: %w", err)
 	}
+	// counter_watermark stores the highest monotonic counter (e.g. opcert issue
+	// counter) per (key, scope). counter is a big-endian, fixed-width hex string
+	// so that a lexicographic (default TEXT) comparison equals numeric ordering.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS counter_watermark (
+		record_key TEXT PRIMARY KEY,
+		counter TEXT NOT NULL,
+		updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+	)`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("create counter_watermark table: %w", err)
+	}
 	return &SqliteWatermark{db: db}, nil
 }
 
 // Close closes the underlying database.
 func (s *SqliteWatermark) Close() error { return s.db.Close() }
+
+// Ping verifies the sqlite database is reachable.
+func (s *SqliteWatermark) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 func (s *SqliteWatermark) Check(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error {
 	d := digest(payload)
@@ -101,6 +115,50 @@ func (s *SqliteWatermark) Commit(ctx context.Context, key backend.KeyHash, scope
 		recordKey(key, scope), hex.EncodeToString(d[:]))
 	if err != nil {
 		return fmt.Errorf("watermark commit: %w", err)
+	}
+	return nil
+}
+
+func (s *SqliteWatermark) CounterFor(ctx context.Context, key backend.KeyHash, scope string) (uint64, bool, error) {
+	var have string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT counter FROM counter_watermark WHERE record_key = ?`,
+		recordKey(key, scope)).Scan(&have)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("counter watermark lookup: %w", err)
+	}
+	v, err := counterDecode(have)
+	if err != nil {
+		return 0, false, fmt.Errorf("counter watermark: corrupt stored counter %q", have)
+	}
+	return v, true, nil
+}
+
+func (s *SqliteWatermark) CheckAndCommitCounter(ctx context.Context, key backend.KeyHash, scope string, counter uint64) error {
+	// Single atomic upsert: insert when no row exists, else update only when the
+	// new counter is strictly greater. When the guard fails the DO UPDATE is a
+	// no-op and RETURNING yields no row (sql.ErrNoRows) -> regression. This is the
+	// same pattern the payload watermark uses, so two concurrent callers with the
+	// same counter cannot both commit.
+	want := counterEncode(counter)
+	var have string
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO counter_watermark (record_key, counter) VALUES (?, ?)
+		 ON CONFLICT(record_key) DO UPDATE SET counter = excluded.counter, updated_at = strftime('%s','now')
+		 WHERE excluded.counter > counter_watermark.counter
+		 RETURNING counter`,
+		recordKey(key, scope), want).Scan(&have)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrCounterRegression
+	}
+	if err != nil {
+		return fmt.Errorf("counter watermark check and commit: %w", err)
+	}
+	if have != want {
+		return ErrCounterRegression
 	}
 	return nil
 }

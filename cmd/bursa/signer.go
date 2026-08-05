@@ -35,6 +35,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/blinklabs-io/bursa/internal/signer/operation"
 	"github.com/blinklabs-io/bursa/internal/signer/policy"
+	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
@@ -120,7 +121,7 @@ signer.callers ACL, any valid token may use any configured key.`,
 				logger.Error("invalid policy", "error", err)
 				os.Exit(1)
 			}
-			wm, mode, err := signer.BuildWatermark(cfg.Signer.Watermark)
+			wm, mode, err := signer.BuildWatermark(ctx, cfg.Signer.Watermark)
 			if err != nil {
 				logger.Error("failed to build watermark", "error", err)
 				os.Exit(1)
@@ -166,9 +167,21 @@ signer.callers ACL, any valid token may use any configured key.`,
 			}
 			srv := api.NewServer(coord, resolver, eng, acl, validate)
 
+			// Readiness probe: verify the process's runtime dependencies are
+			// usable. Backends were validated at boot (the process exits above
+			// if none are configured); the durable watermark store is the
+			// dependency that can become unreachable at runtime, so ping it
+			// when it has a remote/file backend.
+			readyCheck := func(rctx context.Context) error {
+				if p, ok := wm.(watermark.Pinger); ok {
+					return p.Ping(rctx)
+				}
+				return nil
+			}
+
 			mux := http.NewServeMux()
 			mux.Handle("/v1/", srv.Handler())
-			mux.Handle("/", api.HealthHandler())
+			mux.Handle("/", api.HealthHandler(readyCheck))
 			mux.Handle("/metrics", promhttp.Handler())
 
 			addr := fmt.Sprintf("%s:%d", cfg.Signer.ListenAddress, cfg.Signer.ListenPort)

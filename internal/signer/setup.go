@@ -201,7 +201,7 @@ func BuildCallerACL(callers []config.SignerCallerConfig) (map[string][]backend.K
 }
 
 // BuildWatermark constructs the configured watermark store and mode.
-func BuildWatermark(c config.SignerWatermarkConfig) (watermark.Watermark, watermark.Mode, error) {
+func BuildWatermark(ctx context.Context, c config.SignerWatermarkConfig) (watermark.Watermark, watermark.Mode, error) {
 	mode := watermark.Mode(c.Mode)
 	if mode == "" {
 		mode = watermark.ModeEnforce
@@ -215,7 +215,32 @@ func BuildWatermark(c config.SignerWatermarkConfig) (watermark.Watermark, waterm
 		}
 		wm, err := watermark.NewSqliteWatermark(c.Path)
 		return wm, mode, err
+	case "postgres":
+		dsn, err := watermarkPostgresDSN(c)
+		if err != nil {
+			return nil, mode, err
+		}
+		wm, err := watermark.NewPostgresWatermark(ctx, dsn)
+		return wm, mode, err
 	default:
 		return nil, mode, fmt.Errorf("unknown watermark type %q", c.Type)
 	}
+}
+
+// watermarkPostgresDSN resolves the Postgres connection string for a "postgres"
+// watermark config. dsn_env (an environment-variable name) takes precedence so
+// credentials stay out of the config file; dsn is a plaintext fallback. Exactly
+// one source must yield a non-empty value.
+func watermarkPostgresDSN(c config.SignerWatermarkConfig) (string, error) {
+	if c.DSNEnv != "" {
+		dsn := os.Getenv(c.DSNEnv)
+		if dsn == "" {
+			return "", fmt.Errorf("watermark dsn_env %q is set but the environment variable is empty", c.DSNEnv)
+		}
+		return dsn, nil
+	}
+	if c.DSN != "" {
+		return c.DSN, nil
+	}
+	return "", errors.New("watermark type \"postgres\" requires dsn or dsn_env")
 }
