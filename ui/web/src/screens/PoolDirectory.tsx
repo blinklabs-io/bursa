@@ -7,7 +7,7 @@ import { Button } from "../components/Button";
 import { Table } from "../components/Table";
 import { CopyButton } from "../components/CopyButton";
 import { ExplorerLink } from "../components/ExplorerLink";
-import { formatAda } from "../format";
+import { formatAda, shortId } from "../format";
 import { errorMessage } from "../errorMessage";
 
 // Debounce for the search box so each keystroke doesn't fire a request.
@@ -17,12 +17,6 @@ const SEARCH_DEBOUNCE_MS = 250;
 function pct(fraction: number): string {
   if (!Number.isFinite(fraction)) return "—";
   return `${(fraction * 100).toFixed(1)}%`;
-}
-
-// Truncate a long bech32 pool id in the middle so rows stay scannable.
-function shortId(id: string): string {
-  if (id.length <= 24) return id;
-  return `${id.slice(0, 14)}…${id.slice(-6)}`;
 }
 
 const POOL_COLUMNS = [

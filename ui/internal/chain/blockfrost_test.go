@@ -904,3 +904,187 @@ func TestAssetAddressesPaginated(t *testing.T) {
 		t.Fatalf("len = %d, want %d", len(got), pageSize+1)
 	}
 }
+
+// govProposalDDL and govVoteDDL mirror the subset of Dingo's metadata schema
+// (models.GovernanceProposal / models.GovernanceVote) that GovernanceActions
+// reads.
+const govProposalDDL = `CREATE TABLE governance_proposal (
+	id integer PRIMARY KEY,
+	tx_hash blob NOT NULL,
+	action_index integer NOT NULL,
+	action_type integer NOT NULL,
+	proposed_epoch integer NOT NULL,
+	expires_epoch integer NOT NULL,
+	enacted_epoch integer,
+	ratified_epoch integer,
+	expired_epoch integer,
+	anchor_url text,
+	deposit integer NOT NULL,
+	deleted_slot integer
+)`
+
+const govVoteDDL = `CREATE TABLE governance_vote (
+	id integer PRIMARY KEY,
+	proposal_id integer NOT NULL,
+	vote integer NOT NULL,
+	deleted_slot integer
+)`
+
+func TestGovernanceActionsFromDingoMetadata(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metadata.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(govProposalDDL); err != nil {
+		t.Fatalf("create governance_proposal: %v", err)
+	}
+	if _, err := db.Exec(govVoteDDL); err != nil {
+		t.Fatalf("create governance_vote: %v", err)
+	}
+
+	txHash := make([]byte, 32)
+	for i := range txHash {
+		txHash[i] = byte(i + 1)
+	}
+	// An active info action (type 6) in epoch 100, still open.
+	if _, err := db.Exec(
+		`INSERT INTO governance_proposal
+		 (id, tx_hash, action_index, action_type, proposed_epoch, expires_epoch, anchor_url, deposit)
+		 VALUES (1, ?, 0, ?, 100, 130, ?, 100000000000)`,
+		txHash, lcommon.GovActionTypeInfo, "https://example.test/info.json",
+	); err != nil {
+		t.Fatalf("insert active proposal: %v", err)
+	}
+	// An enacted treasury-withdrawal (type 2) in an earlier epoch.
+	otherHash := make([]byte, 32)
+	for i := range otherHash {
+		otherHash[i] = byte(0xA0 + i)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO governance_proposal
+		 (id, tx_hash, action_index, action_type, proposed_epoch, expires_epoch, enacted_epoch, anchor_url, deposit)
+		 VALUES (2, ?, 3, ?, 90, 120, 95, '', 100000000000)`,
+		otherHash, lcommon.GovActionTypeTreasuryWithdrawal,
+	); err != nil {
+		t.Fatalf("insert enacted proposal: %v", err)
+	}
+	// A soft-deleted (rolled-back) proposal must be excluded.
+	if _, err := db.Exec(
+		`INSERT INTO governance_proposal
+		 (id, tx_hash, action_index, action_type, proposed_epoch, expires_epoch, anchor_url, deposit, deleted_slot)
+		 VALUES (3, ?, 0, ?, 80, 110, '', 100000000000, 42)`,
+		txHash, lcommon.GovActionTypeInfo,
+	); err != nil {
+		t.Fatalf("insert deleted proposal: %v", err)
+	}
+	// Votes for proposal 1: 2 Yes, 1 No, 1 Abstain (+ a rolled-back Yes ignored).
+	for _, v := range []struct {
+		vote    int
+		deleted any
+	}{{1, nil}, {1, nil}, {0, nil}, {2, nil}, {1, 42}} {
+		if _, err := db.Exec(
+			`INSERT INTO governance_vote (proposal_id, vote, deleted_slot) VALUES (1, ?, ?)`,
+			v.vote, v.deleted,
+		); err != nil {
+			t.Fatalf("insert vote: %v", err)
+		}
+	}
+
+	c := NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir))
+	got, err := c.GovernanceActions(context.Background())
+	if err != nil {
+		t.Fatalf("GovernanceActions: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2 (deleted excluded)", len(got))
+	}
+	// Ordered by proposed_epoch DESC: proposal 1 (epoch 100) first.
+	a := got[0]
+	if a.Type != "info" || a.Status != "active" || a.ProposedEpoch != 100 {
+		t.Fatalf("action[0] = %+v, want info/active/epoch100", a)
+	}
+	if a.YesVotes != 2 || a.NoVotes != 1 || a.AbstainVotes != 1 {
+		t.Fatalf("action[0] tallies = %d/%d/%d, want 2/1/1", a.YesVotes, a.NoVotes, a.AbstainVotes)
+	}
+	if a.AnchorURL != "https://example.test/info.json" || a.Deposit != "100000000000" {
+		t.Fatalf("action[0] anchor/deposit = %q/%q", a.AnchorURL, a.Deposit)
+	}
+	if !strings.HasPrefix(a.ActionID, "gov_action1") {
+		t.Fatalf("action[0] id = %q, want CIP-129 gov_action1… bech32", a.ActionID)
+	}
+	if a.TxHash != hex.EncodeToString(txHash) {
+		t.Fatalf("action[0] tx_hash = %q", a.TxHash)
+	}
+	if got[1].Type != "treasury-withdrawal" || got[1].Status != "enacted" {
+		t.Fatalf("action[1] = %+v, want treasury-withdrawal/enacted", got[1])
+	}
+	if got[1].YesVotes != 0 || got[1].NoVotes != 0 || got[1].AbstainVotes != 0 {
+		t.Fatalf("action[1] tallies = %+v, want all zero", got[1])
+	}
+}
+
+func TestGovernanceActionsNoDataDir(t *testing.T) {
+	c := NewClientURL("http://127.0.0.1:1")
+	got, err := c.GovernanceActions(context.Background())
+	if err != nil {
+		t.Fatalf("GovernanceActions: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("len = %d, want 0 with no data dir", len(got))
+	}
+}
+
+func TestGovernanceActionsMissingTable(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metadata.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	// A metadata DB that exists but has no governance tables (partial backfill).
+	if _, err := db.Exec(`CREATE TABLE account (id integer)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	db.Close()
+
+	c := NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir))
+	got, err := c.GovernanceActions(context.Background())
+	if err != nil {
+		t.Fatalf("GovernanceActions: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("len = %d, want 0 when governance tables absent", len(got))
+	}
+}
+
+func TestGovActionStatus(t *testing.T) {
+	valid := func(v int64) sql.NullInt64 { return sql.NullInt64{Int64: v, Valid: true} }
+	var unset sql.NullInt64
+
+	tests := []struct {
+		name    string
+		enacted sql.NullInt64
+		ratified,
+		expired sql.NullInt64
+		want string
+	}{
+		{"none set is active", unset, unset, unset, "active"},
+		{"ratified only", unset, valid(10), unset, "ratified"},
+		{"expired only", unset, unset, valid(10), "expired"},
+		{"enacted only", valid(10), unset, unset, "enacted"},
+		{"enacted takes priority over ratified and expired", valid(12), valid(11), valid(10), "enacted"},
+		// A ratified action can still lapse into expired (e.g. it ratified but
+		// never got enacted before its expiration epoch); expired must win so
+		// the browser doesn't show a stale "ratified" status.
+		{"expired takes priority over ratified", unset, valid(10), valid(11), "expired"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := govActionStatus(tc.enacted, tc.ratified, tc.expired)
+			if got != tc.want {
+				t.Fatalf("govActionStatus(%v, %v, %v) = %q, want %q", tc.enacted, tc.ratified, tc.expired, got, tc.want)
+			}
+		})
+	}
+}

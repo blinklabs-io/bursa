@@ -263,6 +263,37 @@ export interface PoolDirectoryResponse {
   count: number;
 }
 
+// GovernanceAction mirrors one entry in GET /wallet/governance-actions: a Conway
+// governance action (proposal) the embedded node has recorded, with its
+// lifecycle status and Yes/No/Abstain vote tallies. Read from the node's local
+// metadata DB — no external service is contacted. action_id is the CIP-129
+// bech32 gov_action1… identifier (falling back to txhash#index if it can't be
+// encoded). deposit is lovelace as a decimal string.
+export interface GovernanceAction {
+  action_id: string;
+  tx_hash: string;
+  action_index: number;
+  type: string;
+  proposed_epoch: number;
+  expires_epoch: number;
+  status: string;
+  anchor_url: string;
+  deposit: string;
+  yes_votes: number;
+  no_votes: number;
+  abstain_votes: number;
+}
+
+// GovernanceActionsResponse mirrors GET /wallet/governance-actions: one page of
+// the node's recorded governance actions plus the total matching the search,
+// for the read-only browse/search screen.
+export interface GovernanceActionsResponse {
+  actions: GovernanceAction[];
+  total: number;
+  page: number;
+  count: number;
+}
+
 // DRepInfo mirrors GET /wallet/drep/{id}: confirms a DRep exists on chain.
 export interface DRepInfo {
   drep_id: string;

@@ -102,6 +102,9 @@ type NodeLookup interface {
 	// /pools/extended) for the read-only browse/search screen.
 	Pools(ctx context.Context) ([]chain.PoolInfo, error)
 	DRep(ctx context.Context, drepID string) (chain.DRepInfo, error)
+	// GovernanceActions returns the Conway governance actions (proposals) the
+	// node has recorded, for the read-only governance-action browser.
+	GovernanceActions(ctx context.Context) ([]chain.GovernanceAction, error)
 	AssetAddresses(ctx context.Context, asset string) ([]chain.AssetAddress, error)
 	// Asset returns on-chain identity/metadata for a native asset (unit =
 	// policy ID + hex asset name). Most assets have no indexed on-chain
@@ -1183,6 +1186,29 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		))
 	}))
 
+	// Read-only governance-action (Conway proposal) browser: browse/search the
+	// governance actions the node has recorded, with their type, lifecycle
+	// status, and vote tallies. Node-local like the pool directory — the data is
+	// read from the embedded node's local metadata DB, nothing leaves 127.0.0.1 —
+	// so there is deliberately NO external-consent gate; it is gated like other
+	// reads (a queryable node). Search (q) and pagination (page/count) are
+	// applied server-side over the node's list.
+	mux.HandleFunc("GET /wallet/governance-actions", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if lookup == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "governance actions unavailable"})
+			return
+		}
+		actions, err := lookup.GovernanceActions(r.Context())
+		if err != nil {
+			serveLookup(w, governanceActionsResponse{}, err)
+			return
+		}
+		q := r.URL.Query()
+		writeJSON(w, http.StatusOK, filterAndPageGovernanceActions(
+			actions, q.Get("q"), q.Get("page"), q.Get("count"),
+		))
+	}))
+
 	// Staking & governance. Pool/DRep lookups verify a pasted ID through the node
 	// (gated like reads — they only need the node serving queries). Building a
 	// delegation tx and confirming it are gated like sends (a fully synced node),
@@ -1474,6 +1500,63 @@ func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poo
 		pageItems = []chain.PoolInfo{}
 	}
 	return poolDirectoryResponse{Pools: pageItems, Total: total, Page: page, Count: count}
+}
+
+// governanceActionsResponse is the GET /wallet/governance-actions response: one
+// page of the node's recorded governance actions plus the total number that
+// matched the search, so the client can page through them.
+type governanceActionsResponse struct {
+	Actions []chain.GovernanceAction `json:"actions"`
+	Total   int                      `json:"total"`
+	Page    int                      `json:"page"`
+	Count   int                      `json:"count"`
+}
+
+// filterAndPageGovernanceActions applies the read-only browser's server-side
+// search and pagination over the node's full governance-action list. The search
+// (q) is a case-insensitive substring match against the action ID, tx hash, and
+// type label. page is 1-based; count is clamped to [1, poolDirMaxCount].
+// Invalid/absent page or count fall back to their defaults rather than erroring.
+func filterAndPageGovernanceActions(actions []chain.GovernanceAction, q, pageStr, countStr string) governanceActionsResponse {
+	needle := strings.ToLower(strings.TrimSpace(q))
+	matched := make([]chain.GovernanceAction, 0, len(actions))
+	for _, a := range actions {
+		if needle == "" ||
+			strings.Contains(strings.ToLower(a.ActionID), needle) ||
+			strings.Contains(strings.ToLower(a.TxHash), needle) ||
+			strings.Contains(strings.ToLower(a.Type), needle) {
+			matched = append(matched, a)
+		}
+	}
+
+	count := poolDirDefaultCount
+	if n, err := strconv.Atoi(countStr); err == nil && n > 0 {
+		count = n
+	}
+	if count > poolDirMaxCount {
+		count = poolDirMaxCount
+	}
+	page := 1
+	if n, err := strconv.Atoi(pageStr); err == nil && n > 1 {
+		page = n
+	}
+
+	total := len(matched)
+	// (page-1)*count can overflow to a negative int for a very large page, so
+	// clamp start on both sides before slicing to avoid an out-of-range panic.
+	start := (page - 1) * count
+	if start < 0 || start > total {
+		start = total
+	}
+	end := start + count
+	if end < start || end > total {
+		end = total
+	}
+	pageItems := matched[start:end]
+	if pageItems == nil {
+		pageItems = []chain.GovernanceAction{}
+	}
+	return governanceActionsResponse{Actions: pageItems, Total: total, Page: page, Count: count}
 }
 
 // registerPoolRoutes wires the Stake Pool Operations (SPO) endpoints under
