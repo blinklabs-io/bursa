@@ -1,7 +1,7 @@
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Settings } from "./Settings";
 import * as hooks from "../api/hooks";
-import type { AsyncState } from "../api/hooks";
+import type { AsyncState, NotificationsState } from "../api/hooks";
 import * as client from "../api/client";
 import * as connectorApi from "../api/connector";
 import type {
@@ -63,6 +63,24 @@ function mockAutoLock(setting: AutoLockSetting | null, loading = false) {
   };
 }
 
+// Like autoLock, the wallet-activity notifications state is owned by App and
+// passed down as a prop; tests build it directly. Default to a loaded, disabled,
+// supported state so existing Settings assertions are unaffected.
+let notificationsState: NotificationsState;
+
+function mockNotifications(overrides: Partial<NotificationsState> = {}) {
+  notificationsState = {
+    enabled: false,
+    permission: "default",
+    supported: true,
+    loading: false,
+    saving: false,
+    error: null,
+    setEnabled: vi.fn(async () => undefined),
+    ...overrides,
+  };
+}
+
 // renderSettings wraps render(<Settings .../>) with the module's current
 // autoLockState so every call site doesn't need to thread it explicitly.
 function renderSettings(props: Partial<Pick<Parameters<typeof Settings>[0], "account" | "walletType">> = {}) {
@@ -71,6 +89,7 @@ function renderSettings(props: Partial<Pick<Parameters<typeof Settings>[0], "acc
       account={props.account ?? mockAccount}
       walletType={props.walletType ?? "read_only"}
       autoLock={autoLockState}
+      notifications={notificationsState}
     />,
   );
 }
@@ -105,6 +124,7 @@ const tpmEnabledPCR: TPMStatus = { available: true, enabled: true, pcrBound: tru
 beforeEach(() => {
   mockHistoryExpiry({ enabled: false, restart_required: false });
   mockAutoLock({ minutes: 15 });
+  mockNotifications();
   mockTPMStatus(tpmUnavailable);
   mockConnector();
   vi.spyOn(hooks, "useNftMedia").mockReturnValue({
@@ -629,4 +649,50 @@ test("enabled NFT media can be turned off", () => {
   expect(screen.getByText("On")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /turn off nft media/i }));
   expect(setEnabled).toHaveBeenCalledWith(false);
+});
+
+test("notifications are off by default and the toggle opts in", () => {
+  mockStatus("ready");
+  const setEnabled = vi.fn();
+  mockNotifications({ enabled: false, setEnabled });
+  renderSettings();
+  const toggle = screen.getByRole("switch", { name: /activity notifications/i });
+  expect(toggle).not.toBeChecked();
+  fireEvent.click(toggle);
+  expect(setEnabled).toHaveBeenCalledWith(true);
+});
+
+test("enabled notifications can be turned off", () => {
+  mockStatus("ready");
+  const setEnabled = vi.fn();
+  mockNotifications({ enabled: true, permission: "granted", setEnabled });
+  renderSettings();
+  const toggle = screen.getByRole("switch", { name: /activity notifications/i });
+  expect(toggle).toBeChecked();
+  fireEvent.click(toggle);
+  expect(setEnabled).toHaveBeenCalledWith(false);
+});
+
+test("notifications card warns when browser permission is denied", () => {
+  mockStatus("ready");
+  mockNotifications({ enabled: true, permission: "denied" });
+  renderSettings();
+  expect(screen.getByText(/permission is blocked/i)).toBeInTheDocument();
+});
+
+test("notifications card offers to (re-)request an undecided browser permission", () => {
+  mockStatus("ready");
+  const setEnabled = vi.fn();
+  mockNotifications({ enabled: true, permission: "default", setEnabled });
+  renderSettings();
+  expect(screen.getByText(/hasn.t been granted/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /grant permission/i }));
+  expect(setEnabled).toHaveBeenCalledWith(true);
+});
+
+test("notifications card shows no permission-undecided warning while off", () => {
+  mockStatus("ready");
+  mockNotifications({ enabled: false, permission: "default" });
+  renderSettings();
+  expect(screen.queryByText(/hasn.t been granted/i)).toBeNull();
 });

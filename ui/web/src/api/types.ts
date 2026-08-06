@@ -438,6 +438,29 @@ export interface NftMediaSetting {
   enabled: boolean;
 }
 
+// App setting: whether node-local wallet-activity notifications (incoming funds
+// / stake rewards) are enabled. Default off until the user opts in. Takes effect
+// immediately client-side.
+export interface NotificationsSetting {
+  enabled: boolean;
+}
+
+// One node-local wallet-activity occurrence, as returned by GET /wallet/activity.
+// kind is "received" (a newly confirmed incoming transaction) or "reward" (a new
+// per-epoch stake reward). lovelace is the decimal amount received / rewarded.
+// id is a stable dedup key ("tx:<hash>" or "reward:<epoch>").
+export interface ActivityEvent {
+  id: string;
+  kind: "received" | "reward";
+  lovelace: string;
+  tx_hash?: string;
+  epoch?: number;
+}
+
+export interface ActivityResponse {
+  events: ActivityEvent[];
+}
+
 // A wallet as listed by the vault: read-only fields plus whether it's active.
 // The encrypted seed is never exposed.
 export type WalletType = "full" | "read_only" | "multi_signature" | "hardware";
