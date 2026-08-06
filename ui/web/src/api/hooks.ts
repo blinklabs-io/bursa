@@ -366,14 +366,16 @@ export function useActivityNotifications(active: boolean, walletId: string | nul
       if (!navigator.onLine || document.hidden || inFlight) return;
       inFlight = true;
       getActivity()
-        .then((res) => {
+        .then(async (res) => {
           if (cancelled) return;
           for (const event of res.events) {
             if (seen.has(event.id)) continue;
             // Only record as seen once the notification actually raised: a
-            // constructor/bridge failure must not be silently mistaken for a
-            // delivered notification within this session's dedup set.
-            if (raiseActivityNotification(event)) {
+            // constructor/bridge failure (or, on the desktop bridge, a failed
+            // OS notifier start) must not be silently mistaken for a
+            // delivered notification within this session's dedup set — the
+            // next poll will see the same event again and retry it.
+            if (await raiseActivityNotification(event, walletId ?? "")) {
               seen.add(event.id);
             }
           }

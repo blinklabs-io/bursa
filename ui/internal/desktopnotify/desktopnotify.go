@@ -45,15 +45,18 @@ const maxRawScanLen = 20 * maxFieldLen
 // Notify shows an OS-native desktop notification with the given title and body.
 // Both are sanitized (see Sanitize) before use so a compromised or buggy
 // frontend cannot smuggle quotes, backslashes, or control characters that would
-// break out of the notifier's argument/script string. It is fire-and-forget:
-// the wallet does not wait on or manage the notifier process's lifetime, and any
-// failure is logged and dropped rather than surfaced.
-func Notify(logger *slog.Logger, title, body string) {
+// break out of the notifier's argument/script string. It reports whether the
+// notifier process was successfully started — the wallet does not wait on or
+// manage its lifetime beyond that, but a failure to even start it must be
+// reported to the caller (the bursaNotify bridge) rather than silently
+// dropped, since the frontend uses this to decide whether the event may be
+// marked as delivered.
+func Notify(logger *slog.Logger, title, body string) bool {
 	title = Sanitize(title)
 	body = Sanitize(body)
 	// Nothing meaningful to show — refuse rather than pop an empty notification.
 	if title == "" && body == "" {
-		return
+		return false
 	}
 
 	var cmd *exec.Cmd
@@ -78,18 +81,26 @@ func Notify(logger *slog.Logger, title, body string) {
 		cmd = exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script) //nolint:gosec // title/body are sanitized (Sanitize); no single-quotes remain
 	default:
 		logger.Warn("no desktop notifier for this OS", "os", runtime.GOOS)
-		return
+		return false
 	}
 
+	return start(logger, cmd)
+}
+
+// start launches cmd and reports whether it was successfully started. Split
+// out from Notify so the start/failure outcome is unit-testable with an
+// injected command, independent of the OS-specific notifier selection above.
+func start(logger *slog.Logger, cmd *exec.Cmd) bool {
 	if err := cmd.Start(); err != nil {
 		logger.Warn("failed to raise desktop notification", "error", err)
-		return
+		return false
 	}
 	go func() {
 		if err := cmd.Wait(); err != nil {
 			logger.Warn("desktop notifier process exited with error", "error", err)
 		}
 	}()
+	return true
 }
 
 // Sanitize reduces s to a safe, single-line printable subset for use as a

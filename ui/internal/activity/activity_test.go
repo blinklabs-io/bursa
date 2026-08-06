@@ -206,6 +206,57 @@ func TestNewRewardEpochEmitsEventThenDedups(t *testing.T) {
 	}
 }
 
+func TestUnorderedRewardHistoryPreservesLowerEpoch(t *testing.T) {
+	// The reward reader's ordering is not guaranteed. If Poll trusted the
+	// source order, a descending/unordered slice would let a higher epoch
+	// advance the watermark before a genuinely lower (but still new) epoch is
+	// checked, silently dropping the lower epoch instead of reporting it.
+	r := &fakeReader{
+		rewards: wallet.RewardHistory{Rewards: []wallet.RewardEntry{{Epoch: 100, Amount: "5"}}},
+	}
+	svc := New(r)
+	svc.SetActive("w1")
+	if _, err := svc.Poll(context.Background()); err != nil { // baseline lastEpoch=100
+		t.Fatalf("prime: %v", err)
+	}
+
+	// Epochs 101 and 102 both appear for the first time, but out of order
+	// (descending).
+	r.rewards = wallet.RewardHistory{Rewards: []wallet.RewardEntry{
+		{Epoch: 102, Amount: "9000000"},
+		{Epoch: 100, Amount: "5"},
+		{Epoch: 101, Amount: "7000000"},
+	}}
+	events, err := svc.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("want 2 reward events (101 and 102), got %d (%v)", len(events), events)
+	}
+	if events[0].Epoch != 101 || events[0].ID != "reward:101" {
+		t.Fatalf("want epoch 101 reported first (ascending), got %+v", events[0])
+	}
+	if events[1].Epoch != 102 || events[1].ID != "reward:102" {
+		t.Fatalf("want epoch 102 reported second, got %+v", events[1])
+	}
+
+	// Both epochs must now be deduped, regardless of the order they arrive in
+	// again.
+	r.rewards = wallet.RewardHistory{Rewards: []wallet.RewardEntry{
+		{Epoch: 102, Amount: "9000000"},
+		{Epoch: 101, Amount: "7000000"},
+		{Epoch: 100, Amount: "5"},
+	}}
+	events, err = svc.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("already-seen epochs must not re-emit, got %v", events)
+	}
+}
+
 func TestSetActiveResetsBaseline(t *testing.T) {
 	r := &fakeReader{}
 	svc := New(r)

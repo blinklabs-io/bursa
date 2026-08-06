@@ -15,10 +15,17 @@
 package desktopnotify
 
 import (
+	"io"
+	"log/slog"
+	"os/exec"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 func TestSanitizeStripsQuotingAndControlChars(t *testing.T) {
 	cases := []struct {
@@ -92,6 +99,32 @@ func TestSanitizeRemovesAllInjectionChars(t *testing.T) {
 		if strings.Contains(got, bad) {
 			t.Fatalf("Sanitize left %q in %q", bad, got)
 		}
+	}
+}
+
+func TestStartReportsFailureThenSuccessOnRetry(t *testing.T) {
+	// A failed cmd.Start() (e.g. notifier binary missing) must be reported to
+	// the caller rather than logged and silently dropped — the frontend uses
+	// this to decide whether the activity event may be marked as delivered
+	// (and therefore not retried). A subsequent successful start (retry) must
+	// report true.
+	logger := discardLogger()
+
+	failing := exec.Command("bursa-desktopnotify-test-binary-does-not-exist")
+	if got := start(logger, failing); got {
+		t.Fatalf("start() with a nonexistent binary = %v, want false", got)
+	}
+
+	succeeding := exec.Command("true")
+	if got := start(logger, succeeding); !got {
+		t.Fatalf("start() with a valid binary = %v, want true (retry after failure must succeed)", got)
+	}
+}
+
+func TestNotifyReturnsFalseForEmptyInput(t *testing.T) {
+	logger := discardLogger()
+	if got := Notify(logger, "", ""); got {
+		t.Fatalf("Notify(empty, empty) = %v, want false (nothing to show)", got)
 	}
 }
 

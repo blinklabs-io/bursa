@@ -71,14 +71,25 @@ export function notificationText(event: ActivityEvent): { title: string; body: s
 
 // raiseActivityNotification shows a notification for one activity event, using
 // the desktop bridge when present and otherwise the browser Notification API.
-// It returns true when a notification was raised. It never throws — a failure to
-// notify must not break the polling loop.
-export function raiseActivityNotification(event: ActivityEvent): boolean {
+// It resolves true when a notification was raised. It never throws/rejects — a
+// failure to notify must not break the polling loop.
+//
+// walletId scopes the browser Notification API's dedup tag (see below) and is
+// otherwise unused — the desktop bridge has no tag/dedup concept of its own.
+//
+// The desktop path awaits the bridge's result rather than firing-and-forgetting
+// it: `window.bursaNotify` resolves to whether the OS notifier process actually
+// started (see desktopnotify.Notify), so a start failure (e.g. notify-send
+// missing) must resolve false here too — otherwise the caller would mark the
+// event as delivered and never retry it.
+export async function raiseActivityNotification(
+  event: ActivityEvent,
+  walletId: string,
+): Promise<boolean> {
   const { title, body } = notificationText(event);
   if (typeof window !== "undefined" && typeof window.bursaNotify === "function") {
     try {
-      window.bursaNotify(title, body);
-      return true;
+      return await window.bursaNotify(title, body);
     } catch {
       return false;
     }
@@ -91,9 +102,14 @@ export function raiseActivityNotification(event: ActivityEvent): boolean {
     return false;
   }
   try {
-    // The tag dedups OS-side too: a re-shown event with the same id replaces
-    // rather than stacks.
-    new window.Notification(title, { body, tag: event.id });
+    // The tag is namespaced by wallet, not just the event id: two different
+    // wallets can report the same event id (e.g. reward:101 is only unique
+    // per-wallet), and the browser Notification API replaces rather than
+    // stacks a notification sharing an existing tag. Without the wallet
+    // prefix, the same-epoch reward from a second wallet would silently
+    // replace the first wallet's still-fresh notification instead of raising
+    // its own.
+    new window.Notification(title, { body, tag: `${walletId}:${event.id}` });
     return true;
   } catch {
     return false;

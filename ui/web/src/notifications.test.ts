@@ -97,32 +97,42 @@ test("notificationText formats a reward event as ADA", () => {
 // raiseActivityNotification — browser Notification path
 // ---------------------------------------------------------------------------
 
-test("raises a browser Notification when permission is granted", () => {
+test("raises a browser Notification when permission is granted", async () => {
   installMockNotification("granted");
-  const ok = raiseActivityNotification(received);
+  const ok = await raiseActivityNotification(received, "wallet1");
   expect(ok).toBe(true);
   expect(MockNotification.instances).toHaveLength(1);
   expect(MockNotification.instances[0].title).toBe("Funds received");
   expect(MockNotification.instances[0].options?.body).toBe("Received 2.5 ADA");
-  // The event id is used as the OS-side dedup tag.
-  expect(MockNotification.instances[0].options?.tag).toBe("tx:abc");
+  // The dedup tag is namespaced by wallet, not just the event id.
+  expect(MockNotification.instances[0].options?.tag).toBe("wallet1:tx:abc");
 });
 
-test("does nothing when notification permission is denied", () => {
+test("namespaces the dedup tag by wallet so two wallets with the same-epoch reward do not collide", async () => {
+  installMockNotification("granted");
+  await raiseActivityNotification(reward, "walletA");
+  await raiseActivityNotification(reward, "walletB");
+  expect(MockNotification.instances).toHaveLength(2);
+  const tags = MockNotification.instances.map((n) => n.options?.tag);
+  expect(tags).toEqual(["walletA:reward:101", "walletB:reward:101"]);
+  expect(new Set(tags).size).toBe(2);
+});
+
+test("does nothing when notification permission is denied", async () => {
   installMockNotification("denied");
-  const ok = raiseActivityNotification(received);
+  const ok = await raiseActivityNotification(received, "wallet1");
   expect(ok).toBe(false);
   expect(MockNotification.instances).toHaveLength(0);
 });
 
-test("does nothing when the Notification API is unsupported", () => {
+test("does nothing when the Notification API is unsupported", async () => {
   restoreNotification();
   Reflect.deleteProperty(globalThis, "Notification");
-  const ok = raiseActivityNotification(received);
+  const ok = await raiseActivityNotification(received, "wallet1");
   expect(ok).toBe(false);
 });
 
-test("returns false rather than throwing when the Notification constructor throws", () => {
+test("returns false rather than throwing when the Notification constructor throws", async () => {
   class ThrowingNotification {
     static permission: NotificationPermission = "granted";
     static requestPermission = vi.fn();
@@ -131,34 +141,45 @@ test("returns false rather than throwing when the Notification constructor throw
     }
   }
   globalThis.Notification = ThrowingNotification as unknown as typeof Notification;
-  expect(() => raiseActivityNotification(received)).not.toThrow();
-  expect(raiseActivityNotification(received)).toBe(false);
+  await expect(raiseActivityNotification(received, "wallet1")).resolves.toBe(false);
 });
 
 // ---------------------------------------------------------------------------
 // raiseActivityNotification — desktop bridge path
 // ---------------------------------------------------------------------------
 
-test("prefers the desktop bursaNotify bridge over the browser Notification", () => {
+test("prefers the desktop bursaNotify bridge over the browser Notification", async () => {
   installMockNotification("granted");
-  const bridge = vi.fn();
+  const bridge = vi.fn(() => true);
   window.bursaNotify = bridge;
-  const ok = raiseActivityNotification(reward);
+  const ok = await raiseActivityNotification(reward, "wallet1");
   expect(ok).toBe(true);
   expect(bridge).toHaveBeenCalledWith("Staking reward", "Staking reward: 7 ADA");
   // The browser Notification must NOT also fire when the bridge handled it.
   expect(MockNotification.instances).toHaveLength(0);
 });
 
-test("returns false rather than throwing when the desktop bridge throws", () => {
+test("returns false rather than throwing when the desktop bridge throws", async () => {
   installMockNotification("granted");
   window.bursaNotify = vi.fn(() => {
     throw new Error("bridge failed");
   });
-  expect(() => raiseActivityNotification(reward)).not.toThrow();
-  expect(raiseActivityNotification(reward)).toBe(false);
+  await expect(raiseActivityNotification(reward, "wallet1")).resolves.toBe(false);
   // The bridge owns the call once present; its failure must not fall through
   // to the browser Notification API.
+  expect(MockNotification.instances).toHaveLength(0);
+});
+
+test("reports a desktop notifier start failure, then true on retry (does not fall back to the browser API)", async () => {
+  installMockNotification("granted");
+  // First call: the OS notifier process failed to start (e.g. notify-send
+  // missing) — desktopnotify.Notify resolves false, and that must propagate
+  // rather than being coerced into "delivered".
+  window.bursaNotify = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  await expect(raiseActivityNotification(reward, "wallet1")).resolves.toBe(false);
+  // Retry (the caller — useActivityNotifications — re-sends the same event on
+  // the next poll since it was never marked "seen"): the notifier is back.
+  await expect(raiseActivityNotification(reward, "wallet1")).resolves.toBe(true);
   expect(MockNotification.instances).toHaveLength(0);
 });
 

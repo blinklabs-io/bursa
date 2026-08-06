@@ -6,7 +6,9 @@
 //     instead of navigating the embedded webview (see components/ExplorerLink.tsx).
 //   - `bursaNotify` raises a real OS-native notification for a wallet-activity
 //     event; the plain browser build falls back to the Notification API (see
-//     notifications.ts).
+//     notifications.ts). It resolves to whether the notifier actually started
+//     — webview.Bind always returns a promise-wrapped result to JS, hence the
+//     `boolean | Promise<boolean>` union rather than a plain boolean.
 // The headless (browser) build never injects these, so callers must always
 // feature-detect before use.
 export {};
@@ -14,6 +16,6 @@ export {};
 declare global {
   interface Window {
     bursaOpenExternal?: (url: string) => void;
-    bursaNotify?: (title: string, body: string) => void;
+    bursaNotify?: (title: string, body: string) => boolean | Promise<boolean>;
   }
 }

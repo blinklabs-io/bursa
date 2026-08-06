@@ -29,6 +29,7 @@ package activity
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"sync"
 
@@ -124,6 +125,18 @@ func (s *Service) Poll(ctx context.Context) ([]Event, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The watermark logic below (both the baseline and event loops) assumes
+	// chronological order so it can track "highest epoch seen so far" with a
+	// single running value. The reader's ordering is not guaranteed (a real
+	// node/API may return unordered or descending history), so sort a copy
+	// ascending here rather than trust the source order — otherwise a lower
+	// epoch arriving after a higher one in the slice is skipped by the
+	// already-advanced watermark, silently dropping (baseline) or losing
+	// (event loop) that epoch's notification.
+	sortedRewards := slices.Clone(rewards.Rewards)
+	slices.SortFunc(sortedRewards, func(a, b wallet.RewardEntry) int {
+		return int(a.Epoch) - int(b.Epoch)
+	})
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -151,7 +164,7 @@ func (s *Service) Poll(ctx context.Context) ([]Event, error) {
 				s.seenTx[tx.TxHash] = true
 			}
 		}
-		for _, r := range rewards.Rewards {
+		for _, r := range sortedRewards {
 			if !s.hasEpoch || r.Epoch > s.lastEpoch {
 				s.lastEpoch = r.Epoch
 				s.hasEpoch = true
@@ -174,7 +187,7 @@ func (s *Service) Poll(ctx context.Context) ([]Event, error) {
 			TxHash:   tx.TxHash,
 		})
 	}
-	for _, r := range rewards.Rewards {
+	for _, r := range sortedRewards {
 		if s.hasEpoch && r.Epoch <= s.lastEpoch {
 			continue
 		}
