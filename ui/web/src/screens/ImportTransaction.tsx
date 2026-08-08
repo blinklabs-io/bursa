@@ -128,8 +128,9 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
   // is_complete is meaningless for multisig (spend.DecodeTx reads it true
   // immediately since it never sees multisig required-signers) — gate
   // multisig readiness on the authoritative signed_count/threshold instead.
+  const msThreshold = ms?.threshold ?? 0;
   const readyToSubmit = ms?.is_multisig
-    ? ms.signed_count >= (ms.threshold ?? 0)
+    ? msThreshold > 0 && ms.signed_count >= msThreshold
     : (summary?.is_complete ?? false);
 
   return (
