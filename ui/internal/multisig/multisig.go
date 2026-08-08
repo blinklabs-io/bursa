@@ -262,6 +262,9 @@ func composeScript(p Policy) (*bursa.NativeScript, error) {
 // produces) is rejected as ErrInvalidTx rather than silently accepted or
 // panicked on.
 func PolicyFromScript(ns *bursa.NativeScript) (Policy, error) {
+	if ns == nil {
+		return Policy{}, fmt.Errorf("%w: nil native script", ErrInvalidTx)
+	}
 	var p Policy
 	// composeScript emits exactly one threshold clause and at most one clause of
 	// each time-lock type. A non-canonical script (multiple N-of-K clauses, or
