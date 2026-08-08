@@ -531,6 +531,71 @@ func TestBuildDeadZoneSizeGuardDisabled(t *testing.T) {
 	}
 }
 
+// TestBuildRejectsOversizeTxOnPlainPath proves the size guard covers the
+// ordinary coin-selected build, not only the dust-change retry. A large send
+// that never enters the dead-zone can still select enough inputs to exceed
+// MaxTxSize; guarding only the retry path would let that reach SubmitTx and be
+// rejected by the node after the user had already approved it.
+func TestBuildRejectsOversizeTxOnPlainPath(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	recvAddr := acct.ReceiveAddresses[2]
+
+	// 40 x 10 ADA. A 200-ADA send needs ~21 inputs and leaves ~200 ADA change,
+	// far clear of the min-UTxO floor, so the first Complete() converges and the
+	// dead-zone retry never runs — this exercises the plain path only.
+	const utxoValue, walletUTxOs = 10_000_000, 40
+	req := SendRequest{To: recvAddr, Lovelace: "200000000"}
+
+	fill := func(fc *fakeChain) {
+		for i := 1; i < walletUTxOs; i++ {
+			fc.addUTxO(utxoValue, addr0, fmt.Sprintf("%064x", i), 0)
+		}
+	}
+
+	// Measure the real completed tx with the guard disabled. All UTxOs share
+	// addr0, so the signed tx carries exactly one vkey witness.
+	measure := newFakeChain(utxoValue, addr0)
+	fill(measure)
+	measure.pp.MaxTxSize = 0
+	ms := NewService(measure, fakeKeystore{mnemonic: testMnemonic}, acct)
+	mpv, err := ms.Build(context.Background(), req)
+	if err != nil {
+		t.Fatalf("measurement build (guard disabled) should succeed: %v", err)
+	}
+	if len(mpv.Inputs) < 2 {
+		t.Fatalf("expected a multi-input coin selection, got %d", len(mpv.Inputs))
+	}
+	ms.mu.Lock()
+	mp := ms.pending[mpv.PendingID]
+	ms.mu.Unlock()
+	if mp == nil {
+		t.Fatal("measurement pending entry missing")
+	}
+	cbor, err := mp.tx.GetTxCbor()
+	if err != nil {
+		t.Fatalf("GetTxCbor: %v", err)
+	}
+	projected := len(cbor) + vkeyWitnessSizeEstimate + witnessSetOverhead
+
+	// Same scenario, MaxTxSize one byte under the true projection.
+	fc := newFakeChain(utxoValue, addr0)
+	fill(fc)
+	fc.pp.MaxTxSize = projected - 1
+	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	_, err = s.Build(context.Background(), req)
+	if !errors.Is(err, ErrInsufficientFunds) {
+		t.Fatalf("expected ErrInsufficientFunds for an oversize plain send, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "exceed the maximum size") {
+		t.Fatalf("expected a size-limit message, got: %v", err)
+	}
+	if fc.submitCalls != 0 {
+		t.Fatalf("oversized tx must never be submitted, got %d SubmitTx calls", fc.submitCalls)
+	}
+}
+
 func TestIsInsufficientFundsError(t *testing.T) {
 	tests := []struct {
 		name string

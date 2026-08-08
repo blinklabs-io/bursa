@@ -407,6 +407,15 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 		}
 	}
 
+	// Reject locally if signing this would exceed the chain's MaxTxSize, turning a
+	// would-be submit-time rejection into a clear, pre-approval error. This covers
+	// BOTH paths: the forced-prefix retry can consume extra inputs, but an
+	// ordinary coin-selected send of a large amount can select enough inputs to
+	// cross the limit on its own without ever entering the dead-zone.
+	if err := s.guardTxSize(ctx, a, utxoAddr); err != nil {
+		return Preview{}, err
+	}
+
 	// Store the pending entry (sweeping any that have outlived their TTL first).
 	id := s.mkID()
 	s.mu.Lock()
@@ -555,12 +564,9 @@ func (s *Service) completeForcingPrefix(
 			}
 			return nil, mapCompleteErr(err)
 		}
-		// Converged on the minimal forced set. Reject it locally if signing it
-		// would exceed the chain's MaxTxSize, turning a would-be submit-time
-		// failure into a clear, pre-approval error.
-		if err := s.guardTxSize(ctx, a, utxoAddr); err != nil {
-			return nil, err
-		}
+		// Converged on the minimal forced set. The MaxTxSize check lives in Build
+		// so it covers the coin-selected path too; growing the prefix further
+		// would only add inputs, so there is nothing to gain by checking here.
 		return a, nil
 	}
 
@@ -611,7 +617,15 @@ func (s *Service) guardTxSize(ctx context.Context, a *apollo.Apollo, utxoAddr ma
 	}
 	signedSize := len(cborBytes)
 	if missingWitnesses > 0 {
-		signedSize += missingWitnesses*vkeyWitnessSizeEstimate + witnessSetOverhead
+		signedSize += missingWitnesses * vkeyWitnessSizeEstimate
+		// The one-time witness-set framing is only NEW when the completed tx has
+		// no vkey witnesses yet. If it already carries some, that framing is
+		// already inside cborBytes and adding it again would double-count.
+		// Complete() always leaves the set empty today, so this is a guard
+		// against the projection drifting if that ever changes.
+		if existingWitnesses == 0 {
+			signedSize += witnessSetOverhead
+		}
 	}
 	if signedSize > pp.MaxTxSize {
 		return fmt.Errorf(
