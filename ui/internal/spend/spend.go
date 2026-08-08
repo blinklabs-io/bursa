@@ -123,7 +123,7 @@ type TxSummarySigner struct {
 // multisig vs. already complete) and reports which of the wallet's own keys
 // could still add a required signature.
 type TxSummary struct {
-	Kind               string            `json:"kind"` // "vkey"|"native_multisig"|"complete"|"unknown"
+	Kind               string            `json:"kind"` // "vkey"|"native_multisig"
 	Outputs            []TxSummaryOutput `json:"outputs"`
 	Fee                string            `json:"fee"`
 	TTL                uint64            `json:"ttl,omitempty"`
