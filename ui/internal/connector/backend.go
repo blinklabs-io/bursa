@@ -338,7 +338,7 @@ func (b *WalletBackend) SignTx(ctx context.Context, txHex string, partialSign bo
 	// signing target) is blake2b-256 of these exact body bytes; re-encoding the
 	// decoded struct can produce a different (canonicalised) byte sequence, which
 	// would make every witness sign the wrong hash and the node reject the tx.
-	bodyCbor, err := extractTxBodyCbor(txBytes)
+	bodyCbor, err := spend.ExtractTxBodyCbor(txBytes)
 	if err != nil {
 		return "", err
 	}
@@ -358,25 +358,6 @@ func (b *WalletBackend) SignTx(ctx context.Context, txHex string, partialSign bo
 		return "", err
 	}
 	return hex.EncodeToString(wsCbor), nil
-}
-
-// extractTxBodyCbor returns the raw CBOR bytes of the transaction body (element
-// [0] of the outer transaction array), preserving them exactly as supplied so the
-// signing hash (blake2b-256 of the body) matches what the node computes. It does
-// NOT re-encode the decoded struct.
-func extractTxBodyCbor(txBytes []byte) ([]byte, error) {
-	var outer []gocbor.RawMessage
-	if _, err := gocbor.Decode(txBytes, &outer); err != nil {
-		return nil, fmt.Errorf("decode tx as CBOR array: %w", err)
-	}
-	if len(outer) < 1 {
-		return nil, errors.New("transaction CBOR array is empty (no body element)")
-	}
-	body := []byte(outer[0])
-	if len(body) == 0 {
-		return nil, errors.New("transaction body element is empty")
-	}
-	return body, nil
 }
 
 // resolveInputAddresses looks up which of this wallet's derived receive or
