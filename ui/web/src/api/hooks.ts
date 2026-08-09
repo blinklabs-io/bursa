@@ -370,11 +370,21 @@ export function useActivityNotifications(active: boolean, walletId: string | nul
           if (cancelled) return;
           for (const event of res.events) {
             if (seen.has(event.id)) continue;
-            // Only record as seen once the notification actually raised: a
-            // constructor/bridge failure (or, on the desktop bridge, a failed
-            // OS notifier start) must not be silently mistaken for a
-            // delivered notification within this session's dedup set — the
-            // next poll will see the same event again and retry it.
+            // Re-check cancellation before every raise, not just once above:
+            // raiseActivityNotification is async, so each iteration's await
+            // can yield past a wallet switch/lock that tore this effect down
+            // mid-loop. Without this, a still-in-flight iteration would go on
+            // to notify for a wallet that is no longer active.
+            if (cancelled) return;
+            // Delivery here is best-effort/fire-and-forget: the server-side
+            // activity detector (ui/internal/activity) already removes each
+            // event from what it will ever report again the moment it is
+            // included in a poll response, regardless of what happens to it
+            // client-side. So a failed raise (constructor/bridge failure, or
+            // on the desktop bridge a failed OS notifier start) is NOT
+            // retried on a later poll — there is no redelivery. Gating on the
+            // result still avoids adding a failed event to this session's
+            // local dedup set for no reason, but it is not a retry mechanism.
             if (await raiseActivityNotification(event, walletId ?? "")) {
               seen.add(event.id);
             }

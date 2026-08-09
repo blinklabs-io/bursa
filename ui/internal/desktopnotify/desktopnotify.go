@@ -26,7 +26,19 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
+
+// notifyStartGrace bounds how long start waits to observe an immediate
+// notifier exit before assuming success. cmd.Start() only confirms the OS
+// could launch the process — a notifier binary that launches fine but
+// immediately errors out (e.g. no display/session, D-Bus unavailable) would
+// otherwise still be reported as delivered. Waiting this long for an early
+// exit catches that case while still returning well before a notifier that
+// stays running (to display a toast, or on Windows to hold the balloon tip
+// open) has a chance to finish — start must never block on the full process
+// lifetime.
+const notifyStartGrace = 200 * time.Millisecond
 
 // maxFieldLen caps a sanitized title/body. A real notification is a short line
 // ("Received 12.5 ADA"); anything longer is truncated defensively so a
@@ -87,20 +99,36 @@ func Notify(logger *slog.Logger, title, body string) bool {
 	return start(logger, cmd)
 }
 
-// start launches cmd and reports whether it was successfully started. Split
-// out from Notify so the start/failure outcome is unit-testable with an
-// injected command, independent of the OS-specific notifier selection above.
+// start launches cmd and reports whether it was successfully started AND
+// did not fail within notifyStartGrace. Split out from Notify so the
+// start/failure outcome is unit-testable with an injected command,
+// independent of the OS-specific notifier selection above.
 func start(logger *slog.Logger, cmd *exec.Cmd) bool {
 	if err := cmd.Start(); err != nil {
 		logger.Warn("failed to raise desktop notification", "error", err)
 		return false
 	}
-	go func() {
-		if err := cmd.Wait(); err != nil {
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
 			logger.Warn("desktop notifier process exited with error", "error", err)
+			return false
 		}
-	}()
-	return true
+		return true
+	case <-time.After(notifyStartGrace):
+		// Still running past the grace window: treat it as delivered rather
+		// than block the caller on the notifier's full lifetime. Any failure
+		// observed after this point is logged but can no longer change the
+		// already-reported result.
+		go func() {
+			if err := <-done; err != nil {
+				logger.Warn("desktop notifier process exited with error", "error", err)
+			}
+		}()
+		return true
+	}
 }
 
 // Sanitize reduces s to a safe, single-line printable subset for use as a

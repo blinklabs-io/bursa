@@ -108,6 +108,10 @@ func TestStartReportsFailureThenSuccessOnRetry(t *testing.T) {
 	// this to decide whether the activity event may be marked as delivered
 	// (and therefore not retried). A subsequent successful start (retry) must
 	// report true.
+	//
+	// The "succeeding" command uses `go version` rather than a Unix-only
+	// binary (e.g. `true`) so this test also passes on Windows, which this
+	// package has a notifier path for.
 	logger := discardLogger()
 
 	failing := exec.Command("bursa-desktopnotify-test-binary-does-not-exist")
@@ -115,9 +119,25 @@ func TestStartReportsFailureThenSuccessOnRetry(t *testing.T) {
 		t.Fatalf("start() with a nonexistent binary = %v, want false", got)
 	}
 
-	succeeding := exec.Command("true")
+	succeeding := exec.Command("go", "version")
 	if got := start(logger, succeeding); !got {
 		t.Fatalf("start() with a valid binary = %v, want true (retry after failure must succeed)", got)
+	}
+}
+
+func TestStartReportsFalseOnImmediateExitFailure(t *testing.T) {
+	// cmd.Start() only confirms the OS could launch the process. A notifier
+	// that starts fine but exits with an error before notifyStartGrace
+	// elapses (e.g. no display/session available) must not be reported as a
+	// successful delivery.
+	logger := discardLogger()
+
+	// An unknown `go` subcommand starts the go binary successfully but exits
+	// quickly with a non-zero status — portable across the OSes this
+	// package supports, unlike a shell-only failing command.
+	failingFast := exec.Command("go", "bursa-desktopnotify-unknown-subcommand")
+	if got := start(logger, failingFast); got {
+		t.Fatalf("start() with a command that exits with an error = %v, want false", got)
 	}
 }
 
