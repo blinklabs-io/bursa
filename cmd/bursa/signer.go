@@ -102,6 +102,22 @@ key.`,
 			hasJWT := hasSecret || hasJWKS
 			hasMTLS := cfg.Signer.ClientCACert != ""
 			hasReqSign := len(cfg.Signer.AuthorizedKeys) > 0
+			if hasReqSign {
+				// Reject an out-of-range skew rather than silently falling back
+				// to the 60s default inside NewRequestSigningAuthenticator: an
+				// operator who deliberately tightens or misconfigures this
+				// value should get a boot-time error, not a quietly different
+				// security posture. Checked here, alongside the other cheap
+				// config checks, so it fails fast before backend/policy/JWKS
+				// initialization.
+				if cfg.Signer.RequestSignSkewSeconds < 0 || cfg.Signer.RequestSignSkewSeconds > maxRequestSignSkewSeconds {
+					logger.Error(
+						"signer.request_sign_skew_seconds must be between 0 and "+strconv.Itoa(maxRequestSignSkewSeconds),
+						"value", cfg.Signer.RequestSignSkewSeconds,
+					)
+					os.Exit(1)
+				}
+			}
 			if !hasJWT && !hasMTLS && !hasReqSign {
 				logger.Error("at least one auth mode must be configured (signer.jwt_secret, signer.jwks_url, signer.client_ca_cert, or signer.authorized_keys)")
 				os.Exit(1)
@@ -205,18 +221,6 @@ key.`,
 			}
 			srv := api.NewServer(coord, resolver, eng, acl, validate)
 			if hasReqSign {
-				// Reject an out-of-range skew rather than silently falling back
-				// to the 60s default inside NewRequestSigningAuthenticator: an
-				// operator who deliberately tightens or misconfigures this
-				// value should get a boot-time error, not a quietly different
-				// security posture.
-				if cfg.Signer.RequestSignSkewSeconds < 0 || cfg.Signer.RequestSignSkewSeconds > maxRequestSignSkewSeconds {
-					logger.Error(
-						"signer.request_sign_skew_seconds must be between 0 and "+strconv.Itoa(maxRequestSignSkewSeconds),
-						"value", cfg.Signer.RequestSignSkewSeconds,
-					)
-					os.Exit(1)
-				}
 				skew := time.Duration(cfg.Signer.RequestSignSkewSeconds) * time.Second
 				srv.SetRequestSigningAuthenticator(api.NewRequestSigningAuthenticator(authorizedKeys, skew))
 			}
