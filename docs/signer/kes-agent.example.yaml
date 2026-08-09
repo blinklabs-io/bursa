@@ -20,6 +20,15 @@ kes_agent:
   # producer's group access.
   service_socket_mode: "0600"      # env: KESAGENT_SERVICE_SOCKET_MODE
   control_socket_mode: "0600"      # env: KESAGENT_CONTROL_SOCKET_MODE
+  # NOTE: #675 (open, unmerged as of this writing) implements socket
+  # permissions with a single shared `socket_mode` field (env
+  # KESAGENT_SOCKET_MODE) applied to both sockets, not yet the independent
+  # service_socket_mode/control_socket_mode split shown here. This split is
+  # the intended target shape - control_socket_mode must stay owner-only
+  # even when service_socket_mode is later widened for the block producer's
+  # group, which a single shared mode cannot express. #675 needs a
+  # follow-up to add these two fields before a config using these exact
+  # names takes effect; track that before both PRs merge.
 
   # Pool COLD VERIFICATION key. The agent only ever holds the cold vkey; the
   # cold signing key never touches the agent. Provide one of:

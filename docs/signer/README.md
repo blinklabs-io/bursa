@@ -41,17 +41,43 @@ Systemd units, an `EnvironmentFile` example, and a Dockerfile live in
 ## Quick start (development)
 
 `signer.example.yaml` documents the full production shape (JWKS auth, TLS,
-Vault) with placeholder values that don't exist on a fresh machine, so copy it
-and trim it down for a loopback run rather than passing it as-is:
+a Vault backend, a SOPS/GCP backend, a caller ACL, and a durable watermark
+path) with placeholder values that don't exist on a fresh machine. Passing it
+as-is won't boot: `BuildBackends` dials the Vault and GCP Secret Manager
+placeholders at startup, and the watermark's SQLite path
+(`/var/lib/bursa/signer/watermark.sqlite`) doesn't exist on a fresh machine
+either. Copy it and cut it down to a dependency-free loopback config instead:
 
 ```sh
+mkdir -p /tmp/signer-dev-keys   # may stay empty; see note below
 cp docs/signer/signer.example.yaml /tmp/signer-dev.yaml
 # In /tmp/signer-dev.yaml:
 #   - clear jwks_url (blank string) and set jwt_secret to a random >=32-byte
 #     value (exactly one of the two may be set)
 #   - clear tls_cert_file and tls_key_file (loopback may run plaintext)
+#   - replace the `backends:` list with a single software entry:
+#       backends:
+#         - name: "local-dev"
+#           type: "software"
+#           path: "/tmp/signer-dev-keys"
+#     (drop the vault-prod and sops-secrets entries - each dials a real
+#     backend at boot and fails without one)
+#   - drop the top-level `keys:` entry (it references the now-removed
+#     vault-prod backend); add one back for `local-dev`, keyed on the real
+#     key's hash, once you've dropped a *.skey into the software backend's
+#     `path` - see the runbook's `bursa key` guidance
+#   - drop the `callers:` list (an absent ACL is unrestricted, which is fine
+#     for a local smoke test)
+#   - drop the top-level `google:` block (only read by the sops backend)
+#   - change `watermark.type` to `mem` (drops the requirement for a
+#     pre-existing `/var/lib/bursa/signer` directory; non-durable, which is
+#     fine for development)
 bursa signer --config /tmp/signer-dev.yaml
 ```
+
+This boots with no external dependencies. It can't sign anything until you
+load a real key into `/tmp/signer-dev-keys` and add back a matching `keys:`
+policy entry - see the [runbook](runbook.md).
 
 For anything exposed off-host, follow the [runbook](runbook.md) to configure
 TLS, JWKS, and a Vault or SOPS backend.
