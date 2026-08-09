@@ -208,18 +208,26 @@ func TestDecodeTx_WithdrawalsSortedByAddress(t *testing.T) {
 		t.Fatalf("encode modified tx: %v", err)
 	}
 
-	got, err := svc.DecodeTx(context.Background(), hex.EncodeToString(newTxBytes))
-	if err != nil {
-		t.Fatalf("DecodeTx: %v", err)
-	}
-	if len(got.Withdrawals) != 2 {
-		t.Fatalf("got %d withdrawals, want 2: %+v", len(got.Withdrawals), got.Withdrawals)
-	}
 	want := []string{addrHi.String(), addrLo.String()}
 	sort.Strings(want)
-	gotAddrs := []string{got.Withdrawals[0].Address, got.Withdrawals[1].Address}
-	if gotAddrs[0] != want[0] || gotAddrs[1] != want[1] {
-		t.Fatalf("withdrawals order = %v, want sorted %v", gotAddrs, want)
+
+	// DecodeTx re-parses TxWithdrawals from the tx body on every call, and Go
+	// randomizes map iteration order per-run, so a single call would only
+	// catch a dropped sort about half the time. Repeat the decode so the test
+	// reliably fails if the production sort is ever removed.
+	txHex := hex.EncodeToString(newTxBytes)
+	for attempt := 0; attempt < 32; attempt++ {
+		got, err := svc.DecodeTx(context.Background(), txHex)
+		if err != nil {
+			t.Fatalf("DecodeTx (attempt %d): %v", attempt, err)
+		}
+		if len(got.Withdrawals) != 2 {
+			t.Fatalf("attempt %d: got %d withdrawals, want 2: %+v", attempt, len(got.Withdrawals), got.Withdrawals)
+		}
+		gotAddrs := []string{got.Withdrawals[0].Address, got.Withdrawals[1].Address}
+		if gotAddrs[0] != want[0] || gotAddrs[1] != want[1] {
+			t.Fatalf("attempt %d: withdrawals order = %v, want sorted %v", attempt, gotAddrs, want)
+		}
 	}
 }
 
