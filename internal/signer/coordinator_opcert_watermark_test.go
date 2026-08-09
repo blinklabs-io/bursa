@@ -16,6 +16,7 @@ package signer
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,6 +26,47 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
+
+// capturingHandler is a minimal slog.Handler that retains every record it
+// receives, so tests can assert on the exact audit fields a log line
+// carries (not just that some log call happened).
+type capturingHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *capturingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *capturingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+
+func (h *capturingHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *capturingHandler) WithGroup(_ string) slog.Handler      { return h }
+
+// findByReason returns the first captured record carrying a "reason" attr
+// equal to reason, if any.
+func (h *capturingHandler) findByReason(reason string) (slog.Record, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range h.records {
+		match := false
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == "reason" && a.Value.String() == reason {
+				match = true
+				return false
+			}
+			return true
+		})
+		if match {
+			return r, true
+		}
+	}
+	return slog.Record{}, false
+}
 
 // pausingCounterWatermark wraps a CounterWatermark and, on the first call to
 // CounterFor, blocks the caller until released. Tests use it to force a
@@ -62,6 +104,15 @@ func (p *pausingCounterWatermark) CheckAndCommitCounter(ctx context.Context, key
 
 func newOpCertCoordinator(t *testing.T, k *fakeKey, wm watermark.Watermark, mode watermark.Mode) (*Coordinator, *Metrics) {
 	t.Helper()
+	return newOpCertCoordinatorWithLogger(t, k, wm, mode, nil)
+}
+
+// newOpCertCoordinatorWithLogger is like newOpCertCoordinator but lets a test
+// inject a logger (e.g. one backed by capturingHandler) to assert on the
+// exact fields an audit log line carries. A nil logger defaults to
+// slog.Default(), matching newOpCertCoordinator's prior behavior.
+func newOpCertCoordinatorWithLogger(t *testing.T, k *fakeKey, wm watermark.Watermark, mode watermark.Mode, logger *slog.Logger) (*Coordinator, *Metrics) {
+	t.Helper()
 	k.typ = backend.KeyTypePool
 	eng, err := policy.NewEngine([]policy.KeyPolicy{{
 		Hash:            k.hash.String(),
@@ -78,6 +129,7 @@ func newOpCertCoordinator(t *testing.T, k *fakeKey, wm watermark.Watermark, mode
 		WMMode:    mode,
 		Cardano:   fakeCardano{},
 		Metrics:   m,
+		Logger:    logger,
 	}), m
 }
 
@@ -211,6 +263,71 @@ func TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(m.watermarkConflicts); got != 1 {
 		t.Fatalf("watermark_conflicts_total = %v, want 1 (exactly once, detected at commit)", got)
+	}
+}
+
+// TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression_AuditFields covers
+// the same commit-time-only regression as
+// TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression, but asserts on
+// the audit record's fields directly: the commit-time warn log must include
+// the stored counter that won the race, so the record can be correlated to
+// it, matching the fields the pre-sign warn path records.
+func TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression_AuditFields(t *testing.T) {
+	k := newFakeKey(t)
+	pw := &pausingCounterWatermark{
+		Watermark: watermark.NewMemWatermark(),
+		counter:   watermark.NewMemWatermark(),
+		paused:    make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+	h := &capturingHandler{}
+	c, _ := newOpCertCoordinatorWithLogger(t, k, pw, watermark.ModeWarn, slog.New(h))
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	var (
+		wg       sync.WaitGroup
+		loserRes *OpCertResult
+		loserErr error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		loserRes, _, loserErr = c.SignOpCert(ctx, kes, 7, 2, k.hash.String())
+	}()
+
+	<-pw.paused
+	if _, code, err := c.SignOpCert(ctx, kes, 7, 1, k.hash.String()); err != nil {
+		t.Fatalf("winner: unexpected error %v (code=%s)", err, code)
+	}
+	close(pw.release)
+	wg.Wait()
+
+	if loserErr != nil || loserRes == nil || loserRes.SignatureHex == "" {
+		t.Fatalf("loser: want successful warn-mode signature, got (res=%v, err=%v)", loserRes, loserErr)
+	}
+
+	rec, ok := h.findByReason("issue counter regression detected at commit (concurrent signer; warn mode)")
+	if !ok {
+		t.Fatalf("commit-time warn audit record not found")
+	}
+	var (
+		hasStored bool
+		stored    uint64
+	)
+	rec.Attrs(func(a slog.Attr) bool {
+		if a.Key == "stored-counter" {
+			hasStored = true
+			stored = a.Value.Uint64()
+			return false
+		}
+		return true
+	})
+	if !hasStored {
+		t.Fatalf("commit-time warn audit record is missing the stored-counter field")
+	}
+	if stored != 7 {
+		t.Fatalf("stored-counter = %d, want 7 (the counter that won the race)", stored)
 	}
 }
 

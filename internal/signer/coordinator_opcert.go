@@ -198,7 +198,16 @@ func (c *Coordinator) SignOpCert(ctx context.Context, kesVkey []byte, issueCount
 				// this same request, so a request that was stale from the start
 				// is not double-counted.
 				if !counterConflictReported {
-					c.deps.Logger.Warn("sign", "type", "opcert", "caller-key", hash.String(), "issue-counter", issueCounter, "result", "warn", "reason", "issue counter regression detected at commit (concurrent signer; warn mode)")
+					args := []any{"type", "opcert", "caller-key", hash.String(), "issue-counter", issueCounter}
+					// Best-effort: include the counter that won the race so this
+					// audit record can be correlated to it, matching the fields
+					// the pre-sign warn path records. A lookup failure here must
+					// not block returning the already-produced signature.
+					if stored, ok, cerr := counterWM.CounterFor(ctx, hash, opcertCounterScope); cerr == nil && ok {
+						args = append(args, "stored-counter", stored)
+					}
+					args = append(args, "result", "warn", "reason", "issue counter regression detected at commit (concurrent signer; warn mode)")
+					c.deps.Logger.Warn("sign", args...)
 					c.deps.Metrics.observeWatermarkConflict()
 				}
 			} else {
