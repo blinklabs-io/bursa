@@ -152,3 +152,44 @@ func TestServeControlShutdownWithIdleConnection(t *testing.T) {
 		t.Fatal("ServeControl did not return within 2s of an idle connection outliving shutdown")
 	}
 }
+
+// TestServeControlListenerCloseUnblocksIdleHandler guards against a hang on
+// the other shutdown path: a listener closed directly (without ctx being
+// cancelled) takes the non-context Accept-error return, which must still
+// close tracked connections before the deferred wg.Wait(), or an idle
+// client's handler blocked in readFrame would keep ServeControl from
+// returning forever.
+func TestServeControlListenerCloseUnblocksIdleHandler(t *testing.T) {
+	cold := newColdKey(t)
+	a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(1))
+	sock := shortSocketPath(t, "ctrl-lnclose.sock")
+	ln, err := ListenUnix(sock, 0o600)
+	if err != nil {
+		t.Fatalf("ListenUnix: %v", err)
+	}
+	// Note: ctx is intentionally never cancelled; only the listener is
+	// closed, so the ctx-cancellation goroutine's conns.closeAll() never
+	// runs and the fix under test is the accept-error return path's own
+	// cleanup.
+	ctx := context.Background()
+
+	done := make(chan error, 1)
+	go func() { done <- a.ServeControl(ctx, ln) }()
+
+	conn := dial(t, sock) // stays open and idle; never sends a command
+	var hello Hello
+	if err := readFrame(conn, &hello); err != nil {
+		t.Fatalf("read control hello: %v", err)
+	}
+
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+	select {
+	case <-done:
+		// Any return (with or without an Accept error) is fine; what matters
+		// is that it doesn't hang on the idle handler.
+	case <-time.After(2 * time.Second):
+		t.Fatal("ServeControl did not return within 2s of a direct listener close with an idle connection")
+	}
+}

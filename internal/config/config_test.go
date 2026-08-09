@@ -169,3 +169,58 @@ func TestLoadConfigFile_EmptyPath(t *testing.T) {
 		t.Errorf("default port: got %d, want 8090", cfg.Signer.ListenPort)
 	}
 }
+
+func TestKESAgentConfig_SocketModeDefaults(t *testing.T) {
+	globalConfig = defaultConfig()
+	cfg, err := LoadConfigFile("")
+	if err != nil {
+		t.Fatalf("LoadConfigFile: %v", err)
+	}
+	if cfg.KESAgent.ServiceSocketMode != "0600" {
+		t.Errorf("default service_socket_mode: got %q, want 0600", cfg.KESAgent.ServiceSocketMode)
+	}
+	if cfg.KESAgent.ControlSocketMode != "0600" {
+		t.Errorf("default control_socket_mode: got %q, want 0600", cfg.KESAgent.ControlSocketMode)
+	}
+}
+
+func TestKESAgentConfig_SocketModeFileAndEnv(t *testing.T) {
+	yaml := `
+kes_agent:
+  mode: "serve-key"
+  service_socket: "/run/bursa/service.sock"
+  control_socket: "/run/bursa/control.sock"
+  service_socket_mode: "0660"
+  control_socket_mode: "0600"
+`
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "bursa.yml")
+	if err := os.WriteFile(cfgFile, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+
+	globalConfig = defaultConfig()
+	cfg, err := LoadConfigFile(cfgFile)
+	if err != nil {
+		t.Fatalf("LoadConfigFile: %v", err)
+	}
+	if cfg.KESAgent.ServiceSocketMode != "0660" {
+		t.Errorf("service_socket_mode: got %q, want 0660", cfg.KESAgent.ServiceSocketMode)
+	}
+	if cfg.KESAgent.ControlSocketMode != "0600" {
+		t.Errorf("control_socket_mode: got %q, want 0600", cfg.KESAgent.ControlSocketMode)
+	}
+
+	// Env override must beat the file value, and each field has its own
+	// independent env var.
+	globalConfig = defaultConfig()
+	t.Setenv("KESAGENT_SERVICE_SOCKET_MODE", "0640")
+	t.Setenv("KESAGENT_CONTROL_SOCKET_MODE", "0600")
+	cfg2, err := LoadConfigFile(cfgFile)
+	if err != nil {
+		t.Fatalf("LoadConfigFile (env override): %v", err)
+	}
+	if cfg2.KESAgent.ServiceSocketMode != "0640" {
+		t.Errorf("env override service_socket_mode: got %q, want 0640", cfg2.KESAgent.ServiceSocketMode)
+	}
+}

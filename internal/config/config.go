@@ -44,8 +44,16 @@ type KESAgentConfig struct {
 	ServiceSocket string `yaml:"service_socket" envconfig:"KESAGENT_SERVICE_SOCKET"`
 	// ControlSocket is the Unix socket for gen/install/drop/info commands.
 	ControlSocket string `yaml:"control_socket" envconfig:"KESAGENT_CONTROL_SOCKET"`
-	// SocketMode is the octal file mode for both sockets (default 0600).
-	SocketMode string `yaml:"socket_mode" envconfig:"KESAGENT_SOCKET_MODE"`
+	// ServiceSocketMode is the octal file mode for the service socket, which
+	// the block producer connects to (default 0600). It may be widened (e.g.
+	// "0660" with the producer added to the agent's group) to let a
+	// different-UID producer reach it.
+	ServiceSocketMode string `yaml:"service_socket_mode" envconfig:"KESAGENT_SERVICE_SOCKET_MODE"`
+	// ControlSocketMode is the octal file mode for the control socket, which
+	// handles gen-staged-key/install-key/drop-key/info (default 0600). It must
+	// never be widened to group/other access: those commands can drop or
+	// install KES keys.
+	ControlSocketMode string `yaml:"control_socket_mode" envconfig:"KESAGENT_CONTROL_SOCKET_MODE"`
 	// ColdVKeyFile is a path to the pool cold verification key (cardano-cli
 	// text envelope or raw/hex). The agent only ever holds the cold vkey.
 	ColdVKeyFile string `yaml:"cold_vkey_file" envconfig:"KESAGENT_COLD_VKEY_FILE"`
@@ -192,10 +200,11 @@ func defaultConfig() Config {
 			},
 		},
 		KESAgent: KESAgentConfig{
-			SlotLength:       1,
-			MaxKESEvolutions: 62,
-			SocketMode:       "0600",
-			EvolveInterval:   "1m",
+			SlotLength:        1,
+			MaxKESEvolutions:  62,
+			ServiceSocketMode: "0600",
+			ControlSocketMode: "0600",
+			EvolveInterval:    "1m",
 		},
 	}
 }

@@ -119,9 +119,18 @@ func runKesAgent(configFile string) int {
 		logger.Error("failed to load cold verification key", "error", err)
 		return 1
 	}
-	socketMode, err := parseSocketMode(kc.SocketMode)
+	serviceSocketMode, err := parseSocketMode(kc.ServiceSocketMode)
 	if err != nil {
-		logger.Error("invalid kes_agent.socket_mode", "error", err)
+		logger.Error("invalid kes_agent.service_socket_mode", "error", err)
+		return 1
+	}
+	controlSocketMode, err := parseSocketMode(kc.ControlSocketMode)
+	if err != nil {
+		logger.Error("invalid kes_agent.control_socket_mode", "error", err)
+		return 1
+	}
+	if err := validateControlSocketMode(controlSocketMode); err != nil {
+		logger.Error("invalid kes_agent.control_socket_mode", "error", err)
 		return 1
 	}
 	evolveInterval := time.Minute
@@ -153,13 +162,13 @@ func runKesAgent(configFile string) int {
 	}
 	defer agent.Close()
 
-	serviceLn, err := kesagent.ListenUnix(kc.ServiceSocket, socketMode)
+	serviceLn, err := kesagent.ListenUnix(kc.ServiceSocket, serviceSocketMode)
 	if err != nil {
 		logger.Error("failed to open service socket", "error", err)
 		return 1
 	}
 
-	controlLn, err := kesagent.ListenUnix(kc.ControlSocket, socketMode)
+	controlLn, err := kesagent.ListenUnix(kc.ControlSocket, controlSocketMode)
 	if err != nil {
 		logger.Error("failed to open control socket", "error", err)
 		_ = serviceLn.Close()
@@ -237,7 +246,12 @@ func loadColdVKey(hexStr, filePath string) ([]byte, error) {
 	// A raw 32-byte binary file (one of the documented formats) is not valid
 	// hex or JSON text, so it must be detected before routing through
 	// ReadCborInput, which only understands hex-encoded or envelope text.
-	if len(fileBytes) == 32 {
+	// Guard the heuristic with looksLikeText: raw key material is random
+	// bytes and vanishingly unlikely to be all printable text, so a 32-byte
+	// file that IS text-shaped (e.g. malformed/truncated hex or JSON that
+	// happens to be 32 bytes long) still falls through to the decode path
+	// below and surfaces a clear error instead of being silently accepted.
+	if len(fileBytes) == 32 && !looksLikeText(fileBytes) {
 		return unwrapVKey(fileBytes)
 	}
 	raw, err := bursa.ReadCborInput(fileBytes)
@@ -245,6 +259,22 @@ func loadColdVKey(hexStr, filePath string) ([]byte, error) {
 		return nil, err
 	}
 	return unwrapVKey(raw)
+}
+
+// looksLikeText reports whether b consists entirely of printable ASCII and
+// common whitespace (spaces, tabs, newlines) -- the shape of hex-encoded or
+// JSON-envelope key files. Raw 32-byte key material is random and
+// vanishingly unlikely to satisfy this.
+func looksLikeText(b []byte) bool {
+	for _, c := range b {
+		switch {
+		case c == '\n' || c == '\r' || c == '\t':
+			continue
+		case c < 0x20 || c > 0x7e:
+			return false
+		}
+	}
+	return true
 }
 
 // unwrapVKey returns the raw 32-byte key from either a bare 32-byte value or a
@@ -275,4 +305,19 @@ func parseSocketMode(s string) (os.FileMode, error) {
 		return 0, fmt.Errorf("socket mode %q: %w", s, err)
 	}
 	return os.FileMode(v), nil
+}
+
+// validateControlSocketMode rejects a control-socket mode that grants group
+// or other write access. The control socket accepts gen-staged-key,
+// install-key, and drop-key commands, so a group/other-writable peer could
+// install or drop KES keys; unlike the service socket, it must never be
+// widened beyond owner-only write access.
+func validateControlSocketMode(mode os.FileMode) error {
+	if mode.Perm()&0o022 != 0 {
+		return fmt.Errorf(
+			"control socket mode %04o must not grant group or other write access",
+			mode.Perm(),
+		)
+	}
+	return nil
 }

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/gouroboros/kes"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func TestCurrentKESPeriodMath(t *testing.T) {
@@ -213,6 +214,48 @@ func TestEvolveExhaustion(t *testing.T) {
 	// It reached its last servable period (start 0 + MaxPeriod-1 = 3).
 	if info.ActivePeriod != 3 {
 		t.Fatalf("ActivePeriod = %d, want 3 (last evolution)", info.ActivePeriod)
+	}
+}
+
+// TestEvolveToLockedDiscardClearsExhaustedGauge exercises the no-active-key
+// discard path evolveToLocked takes on a buf.Set failure directly (bypassing
+// the crypto evolution itself, which requires a correctly-sized, open
+// buffer and so can't be made to fail buf.Set in isolation -- Set only
+// errors on a length mismatch, which kes.Update never produces, or on
+// ErrClosed, which requires a concurrent Close() that a.mu serializes away
+// in every real call path). It manufactures the discard by calling the same
+// close+nil+metrics sequence evolveToLocked runs on that failure, then
+// asserts the invariants Sign/Tick/InstallKey all depend on afterward: no
+// active key, and the exhausted gauge cleared rather than left reporting a
+// (nonexistent) exhausted key.
+func TestEvolveToLockedDiscardClearsExhaustedGauge(t *testing.T) {
+	cold := newColdKey(t)
+	a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(1))
+	metrics := NewMetrics()
+	a.metrics = metrics
+	vkey, _ := a.GenStagedKey()
+	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 1, cold)); err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+	metrics.setExhausted(true) // simulate a stale "exhausted" reading
+
+	// Run evolveToLocked's discard-on-failure sequence directly.
+	a.mu.Lock()
+	a.active.close()
+	a.active = nil
+	a.metrics.setExhausted(false)
+	a.mu.Unlock()
+
+	if got := testutil.ToFloat64(metrics.exhausted); got != 0 {
+		t.Fatalf("exhausted gauge = %v, want 0 (no active key, not an exhausted one)", got)
+	}
+
+	// Sign must observe the discarded key and return ErrNoActiveKey, not
+	// dereference it (this is the guard added in Sign to match Tick and
+	// InstallKey, for whichever path -- present or future -- leaves
+	// a.active nil after evolveToLocked runs).
+	if _, err := a.Sign(2, []byte("msg")); !errors.Is(err, ErrNoActiveKey) {
+		t.Fatalf("Sign after key discard: want ErrNoActiveKey, got %v", err)
 	}
 }
 

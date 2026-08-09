@@ -361,6 +361,11 @@ func (a *Agent) Sign(period uint64, msg []byte) ([]byte, error) {
 	if period > a.active.absPeriod() {
 		a.evolveToLocked(period)
 	}
+	if a.active == nil {
+		// evolveToLocked discarded the key after a store failure.
+		a.metrics.incSign("error")
+		return nil, ErrNoActiveKey
+	}
 	if a.active.absPeriod() != period {
 		a.metrics.incSign("error")
 		return nil, fmt.Errorf("%w: cannot reach period %d (key ends at %d)",
@@ -432,7 +437,10 @@ func (a *Agent) evolveToLocked(targetAbs uint64) {
 			// zeroed buffer for the (unchanged) period it still reports.
 			a.active.close()
 			a.active = nil
-			a.metrics.setExhausted(true)
+			// No active key exists at all now, so "exhausted" (which implies a
+			// key that reached its final period) is the wrong signal; clear it
+			// rather than reporting a false key-exhaustion health state.
+			a.metrics.setExhausted(false)
 			return
 		}
 		securemem.Wipe(next.Data) // erase the transient evolved copy

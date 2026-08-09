@@ -64,7 +64,14 @@ func (a *Agent) ServeService(ctx context.Context, ln net.Listener) error {
 		conns.closeAll()
 	}()
 	var wg sync.WaitGroup
-	defer wg.Wait()
+	// Close every tracked connection before waiting on every return path, not
+	// just the ctx-cancellation goroutine above: a listener closed externally
+	// (or any non-context Accept error) must also unblock handlers already
+	// parked in a blocking read, or wg.Wait() below hangs forever.
+	defer func() {
+		conns.closeAll()
+		wg.Wait()
+	}()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
