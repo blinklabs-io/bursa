@@ -1715,6 +1715,8 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	for _, c := range tx.Body.Certificates() {
 		out.Certificates = append(out.Certificates, certLabel(c))
 	}
+	// TxWithdrawals is a Go map (randomized iteration); collect then sort by
+	// reward address so out.Withdrawals is deterministic.
 	for addr, amount := range tx.Body.TxWithdrawals {
 		if addr == nil {
 			continue
@@ -1724,6 +1726,9 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 			Lovelace: strconv.FormatUint(amount, 10),
 		})
 	}
+	sort.Slice(out.Withdrawals, func(i, j int) bool {
+		return out.Withdrawals[i].Address < out.Withdrawals[j].Address
+	})
 
 	// Existing signatures already present in the witness set. A witness counts
 	// toward `present` (the "already covered" set used for wallet_can_add and
