@@ -17,6 +17,7 @@
 package bursa
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +27,19 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
 )
+
+const testSecretKeyMnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+
+func writeBursaSecretKey(t *testing.T) string {
+	t.Helper()
+	wallet, err := NewWallet(testSecretKeyMnemonic)
+	require.NoError(t, err)
+	data, err := json.Marshal(wallet.PaymentSKey)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "secret.skey")
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	return path
+}
 
 func bursaCurrentUserSID(t *testing.T) string {
 	t.Helper()
@@ -53,31 +67,23 @@ func setBursaDACL(t *testing.T, path, sddl string) {
 }
 
 func TestLoadSecretKeyFromFileWindowsChecksOpenHandle(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "secret.skey")
-	require.NoError(t, os.WriteFile(path, []byte("test"), 0o600))
+	path := writeBursaSecretKey(t)
 	setBursaDACL(t, path, "D:(A;;GR;;;WD)")
 
-	file, err := os.Open(path)
-	require.NoError(t, err)
-	defer file.Close()
-	err = checkOpenFilePermissions(file)
+	_, err := LoadSecretKeyFromFile(path)
 	assert.ErrorIs(t, err, ErrInsecureFileMode)
 }
 
 func TestLoadSecretKeyFromFileWindowsAllowsOwner(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "secret.skey")
-	require.NoError(t, os.WriteFile(path, []byte("test"), 0o600))
+	path := writeBursaSecretKey(t)
 	setBursaDACL(t, path, fmt.Sprintf("D:P(A;;GA;;;%s)", bursaCurrentUserSID(t)))
 
-	file, err := os.Open(path)
-	require.NoError(t, err)
-	defer file.Close()
-	assert.NoError(t, checkOpenFilePermissions(file))
+	_, err := LoadSecretKeyFromFile(path)
+	assert.NoError(t, err)
 }
 
 func TestLoadSecretKeyFromFileWindowsRejectsNullDACL(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "secret.skey")
-	require.NoError(t, os.WriteFile(path, []byte("test"), 0o600))
+	path := writeBursaSecretKey(t)
 	require.NoError(t, windows.SetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,
@@ -85,8 +91,17 @@ func TestLoadSecretKeyFromFileWindowsRejectsNullDACL(t *testing.T) {
 		nil, nil, nil, nil,
 	))
 
-	file, err := os.Open(path)
-	require.NoError(t, err)
-	defer file.Close()
-	assert.ErrorIs(t, checkOpenFilePermissions(file), ErrInsecureFileMode)
+	_, err := LoadSecretKeyFromFile(path)
+	assert.ErrorIs(t, err, ErrInsecureFileMode)
+}
+
+func TestAccessAllowedACEFormsWindows(t *testing.T) {
+	for _, aceType := range []string{"A", "OA", "XA", "ZA"} {
+		t.Run(aceType, func(t *testing.T) {
+			sddl := fmt.Sprintf("O:SYD:(%s;;GR;;;WD)", aceType)
+			sd, err := windows.SecurityDescriptorFromString(sddl)
+			require.NoError(t, err)
+			assert.ErrorIs(t, checkOpenSecurityDescriptor("test.skey", sd), ErrInsecureFileMode)
+		})
+	}
 }

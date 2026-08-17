@@ -58,7 +58,7 @@ func RunSignData(addressHex, payloadText, payloadHex, signingKeyFile string) err
 	if err != nil {
 		return err
 	}
-	lk, err := bursa.LoadKeyFromFile(signingKeyFile)
+	lk, err := bursa.LoadSecretKeyFromFile(signingKeyFile)
 	if err != nil {
 		return err
 	}

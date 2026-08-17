@@ -33,6 +33,24 @@ var insecureKeyFileSIDs = map[string]string{
 	"S-1-5-11":     "Authenticated Users",
 }
 
+func isAccessAllowedACEType(aceType string) bool {
+	switch aceType {
+	case "A", "OA", "XA", "ZA":
+		return true
+	default:
+		return false
+	}
+}
+
+func isKnownNonGrantACEType(aceType string) bool {
+	switch aceType {
+	case "D", "OD", "XD", "AU", "AL", "OU", "OL", "XU", "ML", "RA", "SP", "TL", "FL":
+		return true
+	default:
+		return false
+	}
+}
+
 func checkOpenFilePermissions(file *os.File) error {
 	descriptor, err := windows.GetSecurityInfo(
 		windows.Handle(file.Fd()),
@@ -42,23 +60,27 @@ func checkOpenFilePermissions(file *os.File) error {
 	if err != nil {
 		return fmt.Errorf("failed to get security info for %q: %w", file.Name(), err)
 	}
+	return checkOpenSecurityDescriptor(file.Name(), descriptor)
+}
+
+func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCRIPTOR) error {
 	daclObject, _, err := descriptor.DACL()
 	if err != nil || daclObject == nil {
 		return fmt.Errorf(
 			"secret key file %q has no restrictive DACL: %w",
-			file.Name(), ErrInsecureFileMode,
+			path, ErrInsecureFileMode,
 		)
 	}
 	sddl := descriptor.String()
 	if sddl == "" {
-		return fmt.Errorf("failed to read security descriptor for %q", file.Name())
+		return fmt.Errorf("failed to read security descriptor for %q", path)
 	}
 
 	daclStart := strings.Index(sddl, "D:")
 	if daclStart < 0 {
 		return fmt.Errorf(
 			"secret key file %q has no DACL (unrestricted access): %w",
-			file.Name(), ErrInsecureFileMode,
+			path, ErrInsecureFileMode,
 		)
 	}
 	dacl := sddl[daclStart+2:]
@@ -66,7 +88,7 @@ func checkOpenFilePermissions(file *os.File) error {
 	if owner == "" {
 		return fmt.Errorf(
 			"secret key file %q has no owner in its security descriptor: %w",
-			file.Name(), ErrInsecureFileMode,
+			path, ErrInsecureFileMode,
 		)
 	}
 	allowed := map[string]bool{
@@ -86,23 +108,39 @@ func checkOpenFilePermissions(file *os.File) error {
 		}
 		end := strings.IndexByte(dacl[start:], ')')
 		if end < 0 {
-			break
+			return fmt.Errorf(
+				"secret key file %q has unterminated DACL ACE: %w",
+				path, ErrInsecureFileMode,
+			)
 		}
-		fields := strings.Split(dacl[start+1:start+end], ";")
+		ace := dacl[start+1 : start+end]
+		fields := strings.Split(ace, ";")
 		dacl = dacl[start+end+1:]
-		if len(fields) < 6 || fields[0] != "A" {
-			continue
+		if len(fields) < 6 {
+			return fmt.Errorf(
+				"secret key file %q has malformed DACL ACE %q: %w",
+				path, ace, ErrInsecureFileMode,
+			)
+		}
+		if !isAccessAllowedACEType(fields[0]) {
+			if isKnownNonGrantACEType(fields[0]) {
+				continue
+			}
+			return fmt.Errorf(
+				"secret key file %q has unsupported DACL ACE type %q: %w",
+				path, fields[0], ErrInsecureFileMode,
+			)
 		}
 		if name, ok := insecureKeyFileSIDs[fields[5]]; ok {
 			return fmt.Errorf(
 				"secret key file %q grants access to %s: %w",
-				file.Name(), name, ErrInsecureFileMode,
+				path, name, ErrInsecureFileMode,
 			)
 		}
 		if !allowed[fields[5]] {
 			return fmt.Errorf(
 				"secret key file %q grants access to unexpected trustee %s: %w",
-				file.Name(), fields[5], ErrInsecureFileMode,
+				path, fields[5], ErrInsecureFileMode,
 			)
 		}
 	}

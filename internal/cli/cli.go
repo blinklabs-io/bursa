@@ -1078,7 +1078,7 @@ func RunCertOpCert(
 	}
 
 	// Read pool cold signing key
-	coldSkeyData, err := os.ReadFile(coldSkeyFile)
+	coldSkeyData, err := bursa.ReadSecretKeyFile(coldSkeyFile)
 	if err != nil {
 		return fmt.Errorf("failed to read cold skey file: %w", err)
 	}

@@ -2672,23 +2672,52 @@ func LoadKeyFromFile(path string) (*LoadedKey, error) {
 	return key, nil
 }
 
-// LoadSecretKeyFromFile loads a secret key from a file after checking the
-// permissions of the open file handle. Use this for secret key files that must
-// not be readable by group or other users. LoadKeyFromFile remains available
-// for public artifacts such as operational certificates.
-func LoadSecretKeyFromFile(path string) (*LoadedKey, error) {
+const maxSecretKeyFileSize = 1 << 20
+
+// ReadSecretKeyFile reads a secret-key file after checking the permissions of
+// the open file handle. It preserves the raw formats accepted by callers that
+// parse key bytes themselves.
+func ReadSecretKeyFile(path string) ([]byte, error) {
 	file, err := os.Open(path) // #nosec G304 -- caller-provided key path
 	if err != nil {
 		return nil, fmt.Errorf("failed to open secret key file %q: %w", path, err)
 	}
 	defer file.Close() //nolint:errcheck // read-only handle
 
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat secret key file %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf(
+			"secret key file %q is not a regular file (mode %s)",
+			path, info.Mode(),
+		)
+	}
 	if err := checkOpenFilePermissions(file); err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(file)
+	data, err := io.ReadAll(io.LimitReader(file, maxSecretKeyFileSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read secret key file %q: %w", path, err)
+	}
+	if len(data) > maxSecretKeyFileSize {
+		return nil, fmt.Errorf(
+			"secret key file %q exceeds maximum size of %d bytes",
+			path, maxSecretKeyFileSize,
+		)
+	}
+	return data, nil
+}
+
+// LoadSecretKeyFromFile loads a secret key from a file after checking the
+// permissions of the open file handle. Use this for secret key files that must
+// not be readable by group or other users. LoadKeyFromFile remains available
+// for public artifacts such as operational certificates.
+func LoadSecretKeyFromFile(path string) (*LoadedKey, error) {
+	data, err := ReadSecretKeyFile(path)
+	if err != nil {
+		return nil, err
 	}
 	key, err := LoadKeyFromBytes(data)
 	if err != nil {
