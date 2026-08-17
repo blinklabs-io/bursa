@@ -278,11 +278,13 @@ export function Activity({ network = "preview" }: ActivityProps = {}) {
     );
   }
 
+  // Fee and block height are drill-down facts, not scanning facts: the detail
+  // drawer already shows both in full. Carrying them in the list pushed the
+  // table past its width, which cost the Details action its place on screen --
+  // an eight-column row that does not fit serves nobody.
   const columns = [
     { key: "direction", label: "Direction" },
     { key: "amount", label: "Amount" },
-    { key: "fee", label: "Fee" },
-    { key: "block_height", label: "Block" },
     { key: "time", label: "Time" },
     { key: "confirmations", label: "Confirmations" },
     { key: "tx_hash", label: "Tx Hash" },
@@ -293,8 +295,6 @@ export function Activity({ network = "preview" }: ActivityProps = {}) {
   const rows = filtered.map((tx) => ({
     direction: <DirectionBadge direction={tx.direction} />,
     amount: <NetAmount tx={tx} />,
-    fee: tx.direction ? `${formatAda(tx.fee)} ADA` : <span className="muted">—</span>,
-    block_height: tx.block_height,
     time: formatBlockTime(tx.block_time),
     confirmations: <Confirmations tx={tx} />,
     tx_hash: (

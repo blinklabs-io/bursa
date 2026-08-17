@@ -83,12 +83,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("(a) renders block heights for each transaction", () => {
+test("(a) block height is kept out of the list and left to the detail drawer", () => {
   mockTransactions([TX1, TX2]);
   render(<Activity />);
 
-  expect(screen.getByText("12345")).toBeInTheDocument();
-  expect(screen.getByText("12300")).toBeInTheDocument();
+  // Scanning the list is about direction/amount/time; the block height is a
+  // drill-down fact, shown in the drawer and exported in the CSV.
+  expect(screen.queryByText("12345")).not.toBeInTheDocument();
+  expect(screen.queryByText("12300")).not.toBeInTheDocument();
 });
 
 test("(b) renders truncated tx hash with a CopyButton that copies the FULL hash", async () => {
@@ -114,10 +116,10 @@ test("(c) preserves API order (newest-first — TX1 row appears before TX2 row)"
   mockTransactions([TX1, TX2]);
   render(<Activity />);
 
-  const cells = screen.getAllByText(/^1[23]\d{3}$/);
-  // TX1 block 12345 should come before TX2 block 12300
-  expect(cells[0].textContent).toBe("12345");
-  expect(cells[1].textContent).toBe("12300");
+  // Identify rows by direction: TX1 is received, TX2 is sent.
+  const rows = screen.getAllByRole("row").slice(1); // drop the header row
+  expect(rows[0]).toHaveTextContent("Received");
+  expect(rows[1]).toHaveTextContent("Sent");
 });
 
 test("(d) empty list renders 'No transactions yet' message", () => {
@@ -174,11 +176,11 @@ test("(h) shows a direction indicator and signed net amount per row", () => {
   expect(table.getByText("-1.5 ADA")).toBeInTheDocument();
 });
 
-test("(i) shows the fee per row", () => {
+test("(i) keeps the fee out of the list -- the detail drawer carries it", () => {
   mockTransactions([TX1]);
   render(<Activity />);
 
-  expect(screen.getByText("0.17 ADA")).toBeInTheDocument();
+  expect(screen.queryByText("0.17 ADA")).not.toBeInTheDocument();
 });
 
 test("(j) shows a Pending pill for unconfirmed transactions and a count otherwise", () => {
@@ -283,10 +285,9 @@ test("(q) a pruned tx (null asset_deltas, no enrichment) renders without crashin
 
   expect(() => render(<Activity />)).not.toThrow();
 
-  // Direction shows "Unknown" for the pruned tx; its known block height and
-  // confirmations (from the history call, not enrichment) still render.
+  // Direction shows "Unknown" for the pruned tx; its confirmation count (from
+  // the history call, not enrichment) still renders.
   expect(screen.getByText("Unknown")).toBeInTheDocument();
-  expect(screen.getByText("500")).toBeInTheDocument();
   expect(screen.getByText("200")).toBeInTheDocument();
 
   // The CSV export must not throw even though asset_deltas is null — the
