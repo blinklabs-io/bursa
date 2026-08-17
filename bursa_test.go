@@ -306,6 +306,21 @@ func TestLoadWalletDirPartial(t *testing.T) {
 	assert.NotContains(t, keyMap, "corrupted.vkey")
 }
 
+func TestLoadWalletDirSkipsPermissiveSecretKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	secretPath := filepath.Join(tmpDir, "payment.skey")
+	publicPath := filepath.Join(tmpDir, "payment.vkey")
+	secret := `{"type":"PaymentSigningKeyShelley_ed25519","description":"Payment Signing Key","cborHex":"5820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
+	public := `{"type":"PaymentVerificationKeyShelley_ed25519","description":"Payment Verification Key","cborHex":"5820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
+	require.NoError(t, os.WriteFile(secretPath, []byte(secret), 0o644))
+	require.NoError(t, os.WriteFile(publicPath, []byte(public), 0o644))
+
+	loaded, err := LoadWalletDir(tmpDir, true)
+	require.NoError(t, err)
+	require.Len(t, loaded, 1)
+	assert.Equal(t, "payment.vkey", loaded[0].File)
+}
+
 func TestLoadWalletDirEmpty(t *testing.T) {
 	// Create a temporary directory
 	tmpDir := t.TempDir()

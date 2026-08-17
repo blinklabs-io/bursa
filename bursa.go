@@ -2753,12 +2753,12 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 			continue
 		}
 		p := filepath.Join(dir, n)
-		b, err := os.ReadFile(p)
-		if err != nil {
-			// Skip files that can't be read
-			continue
+		var loadedKeyFile *LoadedKey
+		if strings.HasSuffix(n, ".skey") {
+			loadedKeyFile, err = LoadSecretKeyFromFile(p)
+		} else {
+			loadedKeyFile, err = LoadKeyFromFile(p)
 		}
-		loadedKeyFile, err := parseKeyEnvelope(b)
 		if err != nil {
 			// Skip files that can't be parsed
 			continue
