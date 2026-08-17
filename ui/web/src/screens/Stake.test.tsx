@@ -107,6 +107,35 @@ test("choosing a pool in the directory hands it to the delegation form", async (
   expect(poolField).toBeInTheDocument();
 });
 
+test("choosing a pool works for a wallet that ALREADY delegates", async () => {
+  // The regression this covers: with an active delegation the delegation tab
+  // opens on its status panel ("Change delegation"), so a Delegate click that
+  // only prefilled the field left the user staring at the status panel with no
+  // sign anything had happened. Switching tabs unmounts the delegation screen,
+  // so the intent has to survive to its next mount.
+  stubDelegation(true);
+  render(<Stake network="mainnet" initialTab="pools" />);
+
+  const delegateButtons = await screen.findAllByRole("button", { name: "Delegate" });
+  fireEvent.click(delegateButtons[1]);
+
+  expect(await screen.findByDisplayValue(POOL_B)).toBeInTheDocument();
+});
+
+test("returning to the delegation tab later opens on status, not compose", async () => {
+  stubDelegation(true);
+  render(<Stake network="mainnet" initialTab="pools" />);
+
+  fireEvent.click((await screen.findAllByRole("button", { name: "Delegate" }))[0]);
+  expect(await screen.findByDisplayValue(POOL_A)).toBeInTheDocument();
+
+  // The intent is consumed, so a later visit is an ordinary one.
+  fireEvent.click(screen.getByRole("tab", { name: "Rewards" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Delegation" }));
+
+  expect(await screen.findByRole("button", { name: /change delegation/i })).toBeInTheDocument();
+});
+
 test("a wallet that cannot delegate still gets rewards and pools", async () => {
   render(<Stake network="mainnet" canDelegate={false} />);
 

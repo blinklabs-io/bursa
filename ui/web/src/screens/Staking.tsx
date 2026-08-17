@@ -709,10 +709,14 @@ interface StakingProps {
   // as the fallback) so this screen still stands alone.
   poolId?: string;
   setPoolId?: (id: string) => void;
-  // Incremented by the parent when the user picks a pool from the directory:
-  // a change moves this screen into its compose phase, so "Delegate" on a
-  // directory row lands on a filled-in form rather than the status panel.
-  composeSignal?: number;
+  // Set by the parent when the user picks a pool from the directory, so
+  // "Delegate" on a directory row lands on a filled-in form rather than on the
+  // status panel an already-delegating wallet would otherwise see. Read at
+  // mount because switching tabs unmounts this screen.
+  startInCompose?: boolean;
+  // Called once the initial phase has been taken, so the parent can clear the
+  // intent and a later return to this tab opens on status as usual.
+  onComposeStarted?: () => void;
 }
 
 export function Staking({
@@ -721,11 +725,12 @@ export function Staking({
   walletId,
   poolId: poolIdProp,
   setPoolId: setPoolIdProp,
-  composeSignal = 0,
+  startInCompose = false,
+  onComposeStarted,
 }: StakingProps = {}) {
   const delegation = useDelegation();
 
-  const [phase, setPhase] = useState<Phase>("status");
+  const [phase, setPhase] = useState<Phase>(startInCompose ? "compose" : "status");
   const [previewFrom, setPreviewFrom] = useState<Phase>("status");
   const [preview, setPreview] = useState<DelegationPreview | null>(null);
   const [txResult, setTxResult] = useState<TxResult | null>(null);
@@ -739,15 +744,11 @@ export function Staking({
   const [anchorUrl, setAnchorUrl] = useState("");
   const [anchorHash, setAnchorHash] = useState("");
 
-  // Skip the initial render: a fresh mount must land on the status panel, not
-  // jump straight into an empty compose form.
-  const seenSignal = useRef(composeSignal);
+  // Report the consumed intent exactly once, on mount.
   useEffect(() => {
-    if (composeSignal !== seenSignal.current) {
-      seenSignal.current = composeSignal;
-      setPhase("compose");
-    }
-  }, [composeSignal]);
+    if (startInCompose) onComposeStarted?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (delegation.loading) {
     return <p>Loading…</p>;

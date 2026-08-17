@@ -52,14 +52,15 @@ export function Stake({
   // survives a tab switch — the whole point of merging these is that you can
   // browse Pools and come back without losing what you had typed.
   const [poolId, setPoolId] = useState("");
-  // Bumped when the user picks a pool from the directory. Staking watches it to
-  // jump into its compose phase, which is what makes "Delegate" on a row a
-  // complete action rather than just a field prefill.
-  const [delegateNonce, setDelegateNonce] = useState(0);
+  // Set when the user picks a pool from the directory. Switching tabs unmounts
+  // the delegation screen, so this is read at its next mount rather than
+  // signalled to a live component -- and cleared once taken, so coming back to
+  // the tab later opens on the status panel as usual.
+  const [composeIntent, setComposeIntent] = useState(false);
 
   function handleDelegate(id: string) {
     setPoolId(id);
-    setDelegateNonce((n) => n + 1);
+    setComposeIntent(true);
     setTab("delegation");
   }
 
@@ -89,7 +90,8 @@ export function Stake({
                   walletId={walletId}
                   poolId={poolId}
                   setPoolId={setPoolId}
-                  composeSignal={delegateNonce}
+                  startInCompose={composeIntent}
+                  onComposeStarted={() => setComposeIntent(false)}
                 />
               );
             case "rewards":
