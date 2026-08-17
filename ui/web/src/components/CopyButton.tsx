@@ -62,26 +62,32 @@ export function CopyButton({
   }
 
   return (
-    <button
-      type="button"
-      className={copied ? "btn-icon copied" : "btn-icon"}
-      onClick={handleClick}
-      // The name carries the state as well as the identity: with a copy
-      // control beside every address and hash, a bare "Copied" would leave a
-      // screen-reader user unable to tell WHICH one they copied.
-      aria-label={copied ? `${label} (copied)` : label}
-      title={copied ? `${label} (copied)` : label}
-    >
-      {copied ? <CheckGlyph /> : <CopyGlyph />}
+    // display:contents, so wrapping the button to hold its live region changes
+    // nothing about layout — these sit inside flex rows and table cells.
+    <span className="copy-control">
+      <button
+        type="button"
+        className={copied ? "btn-icon copied" : "btn-icon"}
+        onClick={handleClick}
+        // The name carries the state as well as the identity: with a copy
+        // control beside every address and hash, a bare "Copied" would leave a
+        // screen-reader user unable to tell WHICH one they copied.
+        aria-label={copied ? `${label} (copied)` : label}
+        title={copied ? `${label} (copied)` : label}
+      >
+        {copied ? <CheckGlyph /> : <CopyGlyph />}
+      </button>
       {/* A changed accessible name on an already-focused control is not
-          reliably announced, so success also goes through a live region. It is
-          rendered ONLY while copied, so the document never holds a crowd of
-          empty status nodes competing to be "the" status. */}
+          reliably announced, so success also goes through a live region.
+          Outside the button, not within it: several screen readers treat an
+          interactive control as one unit and never process content changes
+          inside it. Rendered ONLY while copied, so the document never holds a
+          crowd of empty status nodes competing to be "the" status. */}
       {copied && (
         <span className="sr-only" role="status">
           {label} copied
         </span>
       )}
-    </button>
+    </span>
   );
 }

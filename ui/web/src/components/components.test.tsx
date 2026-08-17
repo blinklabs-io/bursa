@@ -80,7 +80,11 @@ test("CopyButton copies its value and shows feedback on success", async () => {
   expect(await screen.findByRole("button", { name: /\(copied\)$/ })).toBeInTheDocument();
   // A changed name on an already-focused control is not reliably announced, so
   // the success also goes through a live region — present only while copied.
-  expect(screen.getByRole("status")).toHaveTextContent(/copied/i);
+  const status = screen.getByRole("status");
+  expect(status).toHaveTextContent(/copied/i);
+  // Outside the button: several screen readers treat an interactive control as
+  // one unit and never process content changes inside it.
+  expect(status.closest("button")).toBeNull();
 });
 
 test("SyncBanner shows error detail ahead of retained bootstrap diagnostics", () => {

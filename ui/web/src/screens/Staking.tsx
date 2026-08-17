@@ -792,6 +792,11 @@ export function Staking({
   function handleDone(result: TxResult) {
     setTxResult(result);
     setPhase("done");
+    // The draft has been spent. Leaving it (and the composing flag) set would
+    // reopen the old form behind the user's back if they switched tabs while
+    // the receipt was up.
+    setDraft(() => EMPTY_DRAFT);
+    setComposingProp?.(false);
   }
 
   function handleReset() {

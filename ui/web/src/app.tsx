@@ -290,8 +290,11 @@ export function App() {
     else if (route === "send" && canSend) activeRoute = "send";
     else if (route === "swap" && canSwap) activeRoute = "swap";
     // The legacy per-screen routes now resolve to tabs of the merged screen,
-    // so an old bookmark or a link in the wild still highlights Stake.
-    else if (STAKE_ROUTES.has(route) && canQueryNode) activeRoute = "stake";
+    // so an old bookmark or a link in the wild still highlights Stake. No node
+    // condition here: the screen itself is ungated, and a highlight that
+    // disagreed with what is rendered would point at Portfolio while Stake is
+    // on screen — and mislabel the error boundary with it.
+    else if (STAKE_ROUTES.has(route)) activeRoute = "stake";
     else if (route === "sign" && canSign) activeRoute = "sign";
     else if (route === "verify") activeRoute = "verify";
     else if (route === "offline" && canSign) activeRoute = "offline";

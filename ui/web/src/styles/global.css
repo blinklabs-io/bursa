@@ -411,6 +411,12 @@ a:hover {
   background: var(--accent-strong);
   border-color: var(--accent-strong);
 }
+/* Wrapper holding a copy button and its live region. display:contents keeps
+   it out of the layout entirely, so the button lays out exactly as before. */
+.copy-control {
+  display: contents;
+}
+
 /* Screen-reader-only text: in the accessibility tree, out of the layout. */
 .sr-only {
   position: absolute;
@@ -628,7 +634,6 @@ a:hover {
   margin: var(--space-3) 0;
   overflow-x: auto;
   white-space: pre-wrap;
-  word-break: break-word;
 }
 
 /* A table row's trailing controls: an action plus its icon companions. */

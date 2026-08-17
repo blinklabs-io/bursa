@@ -93,3 +93,29 @@ test("a thrown null still renders a readable message", () => {
   );
   expect(screen.getByRole("alert")).toHaveTextContent(/an unexpected error occurred/i);
 });
+
+test("an error thrown by the destination survives the reset", () => {
+  // Navigating changes resetKey in the same commit that the destination
+  // throws. Clearing on any key change would discard that fresh error,
+  // remount, throw again and log the same fault twice.
+  function Harness() {
+    const [route, setRoute] = useState("swap");
+    return (
+      <>
+        <button onClick={() => setRoute("portfolio")}>go portfolio</button>
+        <ErrorBoundary label={route} resetKey={route}>
+          <Boom explode />
+        </ErrorBoundary>
+      </>
+    );
+  }
+  render(<Harness />);
+  expect(screen.getByRole("alert")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("go portfolio"));
+
+  // Still showing a fallback, now for the destination, rather than flickering
+  // through a cleared state.
+  expect(screen.getByRole("alert")).toBeInTheDocument();
+  expect(screen.getByText(/the portfolio screen could not be displayed/i)).toBeInTheDocument();
+});

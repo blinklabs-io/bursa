@@ -23,8 +23,12 @@ interface StakeProps {
   // and the pool directory are node-local reads available to any active wallet,
   // so the screen stays reachable and only the Delegation tab explains itself.
   canDelegate?: boolean;
-  // Whether the node can answer queries. Only the pool directory needs it;
-  // rewards and the delegation status come from the account read.
+  // Whether the node can answer queries. Used to gate the pool directory,
+  // which is a whole-network browse. Rewards and delegation status are
+  // node-backed account reads too and will surface their own error if the node
+  // is down — they are left ungated because the routes they replaced were, and
+  // narrowing that silently on merge would take reward history away from
+  // read-only wallets.
   canQueryNode?: boolean;
   // Which tab to open on. Lets the legacy #/rewards and #/pools routes land
   // where the user expected rather than dumping them on Delegation.
@@ -121,8 +125,7 @@ export function Stake({
                   <Card title="Pools">
                     <p className="helper-text">
                       The pool directory is read from your node, which is not
-                      answering queries yet. Delegation status and reward
-                      history above do not need it.
+                      answering queries yet. Try again once it is ready.
                     </p>
                   </Card>
                 );

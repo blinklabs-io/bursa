@@ -48,9 +48,13 @@ export class ErrorBoundary extends Component<Props, State> {
     return { message: message || "An unexpected error occurred.", capturedAt: undefined };
   }
 
-  componentDidUpdate(prev: Props) {
+  componentDidUpdate(prev: Props, prevState: State) {
     if (this.state.message === null) return;
     if (prev.resetKey === this.props.resetKey) return;
+    // The error arrived in THIS commit (there was none before it), so it
+    // belongs to the destination, not the screen being left. Clearing it here
+    // would remount, throw again, and log the same fault twice.
+    if (prevState.message === null) return;
     // A new resetKey means the user navigated; give the subtree a clean try
     // rather than pinning them to the failed screen. Only clear an error
     // captured under an EARLIER key though: if the destination throws during
