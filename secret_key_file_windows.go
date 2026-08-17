@@ -14,12 +14,20 @@ func openSecretKeyFile(path string) (*os.File, error) {
 }
 
 func createSecretKeyFile(path string) (*os.File, error) {
+	return createWindowsSecretKeyFile(path, windows.CREATE_ALWAYS)
+}
+
+func createSecretKeyFileExclusive(path string) (*os.File, error) {
+	return createWindowsSecretKeyFile(path, windows.CREATE_NEW)
+}
+
+func createWindowsSecretKeyFile(path string, creationDisposition uint32) (*os.File, error) {
 	handle, err := windows.CreateFile(
 		windows.StringToUTF16Ptr(path),
 		windows.GENERIC_WRITE|windows.READ_CONTROL|windows.WRITE_DAC,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
-		windows.CREATE_ALWAYS,
+		creationDisposition,
 		windows.FILE_ATTRIBUTE_NORMAL,
 		0,
 	)

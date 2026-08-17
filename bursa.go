@@ -17,6 +17,7 @@ package bursa
 import (
 	"bytes"
 	"crypto/ed25519"
+	crand "crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -2733,6 +2734,27 @@ func WriteSecretKeyFile(path string, data []byte) error {
 // permissions required by RestrictSecretKeyFilePermissions.
 func CreateSecretKeyFile(path string) (*os.File, error) {
 	return createSecretKeyFile(path)
+}
+
+// CreateSecretKeyTempFile creates a uniquely named owner-only temporary file
+// without closing and reopening the handle, preserving exclusive creation.
+func CreateSecretKeyTempFile(dir, pattern string) (*os.File, error) {
+	var suffix [8]byte
+	for range 100 {
+		if _, err := crand.Read(suffix[:]); err != nil {
+			return nil, err
+		}
+		path := filepath.Join(dir, pattern+fmt.Sprintf("%x", suffix))
+		file, err := createSecretKeyFileExclusive(path)
+		if err == nil {
+			return file, nil
+		}
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		return nil, err
+	}
+	return nil, fmt.Errorf("failed to create unique secret key file in %q", dir)
 }
 
 // RestrictSecretKeyFilePermissions applies the platform-specific owner-only
