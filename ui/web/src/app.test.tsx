@@ -778,9 +778,7 @@ test("the routes the absorbed screens used to own still resolve", async () => {
 });
 
 test("#/receive opens Receive while the nav still points at Portfolio", async () => {
-  // Send and Receive are Portfolio actions, so the highlight is deliberate —
-  // but the screen on display is Receive, and the error boundary must say so
-  // rather than blaming Portfolio for a fault in a different screen.
+  // Send and Receive are Portfolio actions, so the highlight is deliberate.
   vi.spyOn(hooks, "useAddresses").mockReturnValue({
     data: { receive: ["addr_test1abc"], used: [], next_unused: "addr_test1abc" },
     error: null,
@@ -795,4 +793,38 @@ test("#/receive opens Receive while the nav still points at Portfolio", async ()
     "page",
   );
   expect(await screen.findByText(/next unused address/i)).toBeInTheDocument();
+});
+
+test("a fault in Receive is reported as Receive, not as Portfolio", async () => {
+  // The nav highlight collapses receive onto Portfolio, so the boundary label
+  // has to come from somewhere else — otherwise a crash here sends the reader
+  // to a screen that is working fine. Exercise the boundary rather than
+  // asserting the label indirectly.
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(hooks, "useAddresses").mockImplementation(() => {
+    throw new Error("addresses blew up");
+  });
+  window.location.hash = "#/receive";
+  await unlockAndGetSidebar(walletA);
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(/the receive screen could not be displayed/i);
+  expect(alert).not.toHaveTextContent(/portfolio/i);
+});
+
+test("a route that falls back to Portfolio is reported as Portfolio", async () => {
+  // #/swap on a testnet wallet declines the request and renders Portfolio, so
+  // naming the route the user asked for would point at a screen that never
+  // appeared.
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  // Not useBalance: the unlock helper stubs that one, and its stub would win.
+  vi.spyOn(hooks, "useAssetMetadata").mockImplementation(() => {
+    throw new Error("metadata blew up");
+  });
+  window.location.hash = "#/swap";
+  await unlockAndGetSidebar(walletA); // preview network → canSwap is false
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(/the portfolio screen could not be displayed/i);
+  expect(alert).not.toHaveTextContent(/swap screen/i);
 });
