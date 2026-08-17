@@ -1,4 +1,4 @@
-import { parseAda, formatTokenQuantity } from "./format";
+import { parseAda, formatAda, formatTokenQuantity } from "./format";
 
 // --- parseAda tests ---
 
@@ -73,12 +73,13 @@ test("formatTokenQuantity: works with 2 decimals", () => {
   expect(formatTokenQuantity("150", 2)).toBe("1.5");
 });
 
-test("formatTokenQuantity: 0 decimals returns the raw integer unchanged", () => {
-  expect(formatTokenQuantity("12345", 0)).toBe("12345");
+test("formatTokenQuantity: 0 decimals applies no decimal scaling, only grouping", () => {
+  expect(formatTokenQuantity("12345", 0)).toBe("12,345");
+  expect(formatTokenQuantity("999", 0)).toBe("999");
 });
 
-test("formatTokenQuantity: negative decimals is treated as no-op (returned unchanged)", () => {
-  expect(formatTokenQuantity("12345", -1)).toBe("12345");
+test("formatTokenQuantity: negative decimals applies no decimal scaling", () => {
+  expect(formatTokenQuantity("12345", -1)).toBe("12,345");
 });
 
 test("formatTokenQuantity: a non-integer quantity string is returned unchanged", () => {
@@ -86,7 +87,7 @@ test("formatTokenQuantity: a non-integer quantity string is returned unchanged",
 });
 
 test("formatTokenQuantity: preserves values beyond 2^53 (no precision ceiling)", () => {
-  expect(formatTokenQuantity("9007199255000000", 6)).toBe("9007199255");
+  expect(formatTokenQuantity("9007199255000000", 6)).toBe("9,007,199,255");
 });
 
 test("formatTokenQuantity: formats a negative quantity", () => {
@@ -96,9 +97,35 @@ test("formatTokenQuantity: formats a negative quantity", () => {
 test("formatTokenQuantity: decimals beyond the sane cap is returned unchanged (DoS guard)", () => {
   // decimals comes from on-chain metadata anyone can mint arbitrary values
   // into; an unbounded value must never reach BigInt exponentiation.
-  expect(formatTokenQuantity("12345", 1_000_000_000)).toBe("12345");
+  expect(formatTokenQuantity("12345", 1_000_000_000)).toBe("12,345");
 });
 
 test("formatTokenQuantity: decimals at the cap boundary still formats normally", () => {
   expect(formatTokenQuantity("1" + "0".repeat(18), 18)).toBe("1");
+});
+
+// --- digit grouping ------------------------------------------------------
+
+test("formatAda groups the integer part so large balances stay readable", () => {
+  expect(formatAda("63120000000000")).toBe("63,120,000");
+  expect(formatAda("4820657123")).toBe("4,820.657123");
+  expect(formatAda("1000000")).toBe("1");
+  expect(formatAda("999999999")).toBe("999.999999");
+  expect(formatAda("-250000000")).toBe("-250");
+});
+
+test("formatAda leaves amounts under a thousand ungrouped", () => {
+  expect(formatAda("31840221")).toBe("31.840221");
+  expect(formatAda("0")).toBe("0");
+});
+
+test("formatTokenQuantity groups whole-token amounts, with and without decimals", () => {
+  // decimals: 0 tokens (SNEK, HOSKY) still need grouping.
+  expect(formatTokenQuantity("1250000", 0)).toBe("1,250,000");
+  expect(formatTokenQuantity("88000000", 0)).toBe("88,000,000");
+  expect(formatTokenQuantity("1234567890", 6)).toBe("1,234.56789");
+});
+
+test("formatTokenQuantity leaves a non-numeric quantity alone", () => {
+  expect(formatTokenQuantity("not-a-number", 0)).toBe("not-a-number");
 });

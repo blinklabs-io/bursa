@@ -38,7 +38,9 @@ test("(a) next unused address card copies the FULL address", async () => {
   expect(copyButtons.length).toBeGreaterThanOrEqual(1);
   fireEvent.click(copyButtons[0]);
   expect(writeText).toHaveBeenCalledWith(ADDR_B);
-  expect(await screen.findByText("Copied")).toBeInTheDocument();
+  // The control is icon-only, so the copied state rides on its
+  // accessible name rather than visible text.
+  expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
 });
 
 test("(b) renders a table listing all receive addresses", () => {
