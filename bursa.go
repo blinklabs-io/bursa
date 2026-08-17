@@ -2729,6 +2729,12 @@ func WriteSecretKeyFile(path string, data []byte) error {
 	return nil
 }
 
+// CreateSecretKeyFile opens or creates a secret-key file with the platform
+// permissions required by RestrictSecretKeyFilePermissions.
+func CreateSecretKeyFile(path string) (*os.File, error) {
+	return createSecretKeyFile(path)
+}
+
 // RestrictSecretKeyFilePermissions applies the platform-specific owner-only
 // permissions to an already-open secret file. Callers can use this for an
 // atomic temporary-file workflow before renaming the file into place.

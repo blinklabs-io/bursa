@@ -75,6 +75,13 @@ func writeSecretFileAtomic(path string, data []byte) error {
 			_ = os.Remove(tmpName)
 		}
 	}()
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	tmp, err = bursa.CreateSecretKeyFile(tmpName)
+	if err != nil {
+		return err
+	}
 	if err := bursa.RestrictSecretKeyFilePermissions(tmp); err != nil {
 		_ = tmp.Close()
 		return err
