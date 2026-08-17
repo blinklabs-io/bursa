@@ -44,28 +44,39 @@ func isAccessAllowedACEType(aceType string) bool {
 
 func isKnownNonGrantACEType(aceType string) bool {
 	switch aceType {
-	case "D", "OD", "XD", "AU", "AL", "OU", "OL", "XU", "ML", "RA", "SP", "TL", "FL":
+	case "D", "OD", "XD", "ZD",
+		"AU", "AL", "OU", "OL", "XU", "XL", "ZU", "ZL",
+		"ML", "RA", "SP", "TL", "FL":
 		return true
 	default:
 		return false
 	}
 }
 
-func restrictSecretKeyFilePermissions(file *os.File) error {
+func ownerOnlySecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, string, error) {
 	var token windows.Token
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &token); err != nil {
-		return fmt.Errorf("failed to open process token: %w", err)
+		return nil, "", fmt.Errorf("failed to open process token: %w", err)
 	}
 	defer token.Close()
 	user, err := token.GetTokenUser()
 	if err != nil {
-		return fmt.Errorf("failed to get current user SID: %w", err)
+		return nil, "", fmt.Errorf("failed to get current user SID: %w", err)
 	}
+	userSID := user.User.Sid.String()
 	descriptor, err := windows.SecurityDescriptorFromString(
-		fmt.Sprintf("D:P(A;;GA;;;%s)", user.User.Sid.String()),
+		fmt.Sprintf("O:%[1]sD:P(A;;GA;;;%[1]s)", userSID),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create owner-only security descriptor: %w", err)
+		return nil, "", fmt.Errorf("failed to create owner-only security descriptor: %w", err)
+	}
+	return descriptor, userSID, nil
+}
+
+func restrictSecretKeyFilePermissions(file *os.File) error {
+	descriptor, _, err := ownerOnlySecurityDescriptor()
+	if err != nil {
+		return err
 	}
 	dacl, _, err := descriptor.DACL()
 	if err != nil {
@@ -129,6 +140,11 @@ func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCR
 		"CO":  true, // Creator Owner
 		"OW":  true, // Owner Rights
 	}
+	_, currentUser, err := ownerOnlySecurityDescriptor()
+	if err != nil {
+		return err
+	}
+	allowed[currentUser] = true
 	if saclStart := strings.Index(dacl, "S:"); saclStart >= 0 {
 		dacl = dacl[:saclStart]
 	}

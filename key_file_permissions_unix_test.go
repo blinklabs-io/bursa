@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build unix
 
 // Copyright 2026 Blink Labs Software
 //
@@ -65,4 +65,44 @@ func TestReadSecretKeyFileRejectsFIFO(t *testing.T) {
 	_, err := ReadSecretKeyFile(path)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "is not a regular file")
+}
+
+func TestCreateSecretKeyFileUnixIsExclusiveAndRestrictive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secret.skey")
+	file, err := CreateSecretKeyFile(path)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	_, err = CreateSecretKeyFile(path)
+	assert.Error(t, err)
+
+	target := filepath.Join(dir, "target.skey")
+	require.NoError(t, os.WriteFile(target, []byte("unchanged"), 0o600))
+	link := filepath.Join(dir, "link.skey")
+	require.NoError(t, os.Symlink(target, link))
+	_, err = CreateSecretKeyFile(link)
+	assert.Error(t, err)
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "unchanged", string(data))
+}
+
+func TestLoadWalletDirSkipsPermissiveSecretKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	secretPath := filepath.Join(tmpDir, "payment.skey")
+	publicPath := filepath.Join(tmpDir, "payment.vkey")
+	secret := `{"type":"PaymentSigningKeyShelley_ed25519","description":"Payment Signing Key","cborHex":"5820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
+	public := `{"type":"PaymentVerificationKeyShelley_ed25519","description":"Payment Verification Key","cborHex":"5820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
+	require.NoError(t, os.WriteFile(secretPath, []byte(secret), 0o644))
+	require.NoError(t, os.WriteFile(publicPath, []byte(public), 0o644))
+
+	loaded, err := LoadWalletDir(tmpDir, true)
+	require.NoError(t, err)
+	require.Len(t, loaded, 1)
+	assert.Equal(t, "payment.vkey", loaded[0].File)
 }

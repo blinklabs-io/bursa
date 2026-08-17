@@ -86,11 +86,26 @@ func TestWriteSecretKeyFileWindowsCreatesOwnerOnlyFile(t *testing.T) {
 	path := writeBursaSecretKey(t)
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	require.NoError(t, os.Remove(path))
+	setBursaDACL(t, path, "D:(A;;GA;;;WD)")
 
 	require.NoError(t, WriteSecretKeyFile(path, data))
 	_, err = LoadSecretKeyFromFile(path)
 	assert.NoError(t, err)
+}
+
+func TestCreateSecretKeyFileWindowsIsExclusiveAndUnshared(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secret.skey")
+	file, err := CreateSecretKeyFile(path)
+	require.NoError(t, err)
+	defer file.Close()
+
+	_, err = CreateSecretKeyFile(path)
+	assert.Error(t, err)
+	reader, err := os.Open(path)
+	if reader != nil {
+		_ = reader.Close()
+	}
+	assert.Error(t, err)
 }
 
 func TestLoadSecretKeyFromFileWindowsRejectsNullDACL(t *testing.T) {
@@ -115,4 +130,19 @@ func TestAccessAllowedACEFormsWindows(t *testing.T) {
 			assert.ErrorIs(t, checkOpenSecurityDescriptor("test.skey", sd), ErrInsecureFileMode)
 		})
 	}
+}
+
+func TestKnownNonGrantACEFormsWindows(t *testing.T) {
+	for _, aceType := range []string{"ZD", "XL", "ZU", "ZL"} {
+		t.Run(aceType, func(t *testing.T) {
+			assert.True(t, isKnownNonGrantACEType(aceType))
+		})
+	}
+}
+
+func TestWindowsAllowsCurrentUserWhenOwnerDiffers(t *testing.T) {
+	sddl := fmt.Sprintf("O:SYD:P(A;;GA;;;%s)", bursaCurrentUserSID(t))
+	descriptor, err := windows.SecurityDescriptorFromString(sddl)
+	require.NoError(t, err)
+	assert.NoError(t, checkOpenSecurityDescriptor("test.skey", descriptor))
 }

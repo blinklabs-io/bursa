@@ -2711,29 +2711,64 @@ func ReadSecretKeyFile(path string) ([]byte, error) {
 	return data, nil
 }
 
-// WriteSecretKeyFile writes secret-key data with restrictive permissions.
-// The platform-specific implementation creates an owner-only file handle so
-// generated keys remain loadable by LoadSecretKeyFromFile.
+// WriteSecretKeyFile atomically replaces a secret-key file with owner-only
+// contents. The destination is left untouched until the secured temporary file
+// has been written and synced.
 func WriteSecretKeyFile(path string, data []byte) error {
-	file, err := createSecretKeyFile(path)
+	dir := filepath.Dir(path)
+	file, err := CreateSecretKeyTempFile(
+		dir,
+		"."+filepath.Base(path)+".tmp-",
+	)
 	if err != nil {
-		return fmt.Errorf("failed to create secret key file %q: %w", path, err)
+		return fmt.Errorf("failed to create temporary secret key file: %w", err)
 	}
-	defer file.Close() //nolint:errcheck // write-only handle
-	if err := restrictSecretKeyFilePermissions(file); err != nil {
-		return fmt.Errorf("failed to restrict secret key file %q: %w", path, err)
-	}
+	tmpName := file.Name()
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = file.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
 
 	if _, err := file.Write(data); err != nil {
-		return fmt.Errorf("failed to write secret key file %q: %w", path, err)
+		return fmt.Errorf("failed to write temporary secret key file: %w", err)
 	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("failed to sync temporary secret key file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary secret key file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("failed to replace secret key file %q: %w", path, err)
+	}
+	if dirFile, err := os.Open(dir); err == nil {
+		if syncErr := dirFile.Sync(); syncErr != nil {
+			_ = dirFile.Close()
+			return fmt.Errorf("failed to sync secret key directory: %w", syncErr)
+		}
+		if err := dirFile.Close(); err != nil {
+			return fmt.Errorf("failed to close secret key directory: %w", err)
+		}
+	}
+	removeTmp = false
 	return nil
 }
 
-// CreateSecretKeyFile opens or creates a secret-key file with the platform
-// permissions required by RestrictSecretKeyFilePermissions.
+// CreateSecretKeyFile exclusively creates an owner-only secret-key file.
 func CreateSecretKeyFile(path string) (*os.File, error) {
-	return createSecretKeyFile(path)
+	file, err := createSecretKeyFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := restrictSecretKeyFilePermissions(file); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return nil, err
+	}
+	return file, nil
 }
 
 // CreateSecretKeyTempFile creates a uniquely named owner-only temporary file
@@ -2744,9 +2779,14 @@ func CreateSecretKeyTempFile(dir, pattern string) (*os.File, error) {
 		if _, err := crand.Read(suffix[:]); err != nil {
 			return nil, err
 		}
-		path := filepath.Join(dir, pattern+fmt.Sprintf("%x", suffix))
+		path := filepath.Join(dir, pattern+hex.EncodeToString(suffix[:]))
 		file, err := createSecretKeyFileExclusive(path)
 		if err == nil {
+			if err := restrictSecretKeyFilePermissions(file); err != nil {
+				_ = file.Close()
+				_ = os.Remove(path)
+				return nil, err
+			}
 			return file, nil
 		}
 		if errors.Is(err, fs.ErrExist) {
@@ -2813,7 +2853,7 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 		} else {
 			loadedKeyFile, err = LoadKeyFromFile(p)
 		}
-		if err != nil {
+		if err != nil || loadedKeyFile == nil {
 			// Skip files that can't be parsed
 			continue
 		}
