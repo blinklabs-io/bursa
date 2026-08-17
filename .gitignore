@@ -36,3 +36,6 @@ stake.skey
 stake.vkey
 .worktrees/
 .superpowers/
+
+# Generated webkit2gtk-4.0 pkg-config shim for the Linux webview build
+.pkgconfig/

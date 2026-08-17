@@ -3,11 +3,13 @@ import type { ReactElement } from "react";
 import type { Account, WalletView } from "./api/types";
 import { useStatus, useVaultStatus, useAutoLock } from "./api/hooks";
 import { lockVault, ApiError } from "./api/client";
+import { getStoredDeviceKind } from "./hw/deviceKind";
 import { useIdleLock } from "./useIdleLock";
 import { Button } from "./components/Button";
 import { SyncBanner } from "./components/SyncBanner";
 import { WalletSwitcher } from "./components/WalletSwitcher";
 import { MobileNav } from "./components/MobileNav";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useHashRoute, navigate } from "./router";
 import { CreateVault } from "./screens/CreateVault";
 import { UnlockVault } from "./screens/UnlockVault";
@@ -20,9 +22,7 @@ import { Activity } from "./screens/Activity";
 import { Send } from "./screens/Send";
 import { Swap } from "./screens/Swap";
 import { Contacts } from "./screens/Contacts";
-import { Staking } from "./screens/Staking";
-import { RewardHistory } from "./screens/RewardHistory";
-import { PoolDirectory } from "./screens/PoolDirectory";
+import { Stake } from "./screens/Stake";
 import { SignMessage } from "./screens/SignMessage";
 import { VerifyMessage } from "./screens/VerifyMessage";
 import { Offline } from "./screens/Offline";
@@ -60,6 +60,15 @@ const ROUTES = new Map<string, () => ReactElement>([
   ["diagnostics", Diagnostics],
 ]);
 
+// Stake merged three screens; the old routes stay valid and open the matching
+// tab so existing bookmarks and links keep working.
+const STAKE_ROUTES = new Map<string, "delegation" | "rewards" | "pools">([
+  ["stake", "delegation"],
+  ["staking", "delegation"],
+  ["rewards", "rewards"],
+  ["pools", "pools"],
+]);
+
 const NAV: { key: string; label: string }[] = [
   { key: "portfolio", label: "Portfolio" },
   { key: "receive", label: "Receive" },
@@ -67,9 +76,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "send", label: "Send" },
   { key: "swap", label: "Swap" },
   { key: "contacts", label: "Contacts" },
-  { key: "staking", label: "Staking" },
-  { key: "rewards", label: "Rewards" },
-  { key: "pools", label: "Stake Pools" },
+  { key: "stake", label: "Stake" },
   { key: "sign", label: "Sign" },
   { key: "verify", label: "Verify" },
   { key: "offline", label: "Offline" },
@@ -271,11 +278,16 @@ export function App() {
     );
   }
 
-  // Staking/governance is gated identically to send: a fully synced node AND an
-  // active (spending-capable) wallet. A read-only or unsynced wallet falls back
-  // to Portfolio. Certificates also aren't supported on hardware yet (see
-  // spend.HardwareSignRequest), so hardware wallets are excluded too.
-  const canStake = isReady && activeWallet?.type === "full";
+  // Staking/governance needs a fully synced node AND a wallet that can witness a
+  // certificate tx: a full (local-seed) wallet, or a SeedSigner hardware wallet
+  // (its air-gapped QR device supports certificates/votes). Ledger/Trezor/
+  // Keystone hardware wallets can't sign certificates on-device yet, so they —
+  // like read-only and unsynced wallets — fall back to Portfolio.
+  const canStake =
+    isReady &&
+    (activeWallet?.type === "full" ||
+      (activeWallet?.type === "hardware" &&
+        getStoredDeviceKind(activeWallet.id) === "seedsigner"));
 
   // --- Unlocked: the normal wallet UI bound to the active wallet ----------
 
@@ -286,9 +298,12 @@ export function App() {
     if (route === "settings") activeRoute = "settings";
     else if (route === "send" && canSend) activeRoute = "send";
     else if (route === "swap" && canSwap) activeRoute = "swap";
-    else if (route === "staking" && canStake) activeRoute = "staking";
-    else if (route === "rewards") activeRoute = "rewards";
-    else if (route === "pools" && canQueryNode) activeRoute = "pools";
+    // The legacy per-screen routes now resolve to tabs of the merged screen,
+    // so an old bookmark or a link in the wild still highlights Stake. No node
+    // condition here: the screen itself is ungated, and a highlight that
+    // disagreed with what is rendered would point at Portfolio while Stake is
+    // on screen — and mislabel the error boundary with it.
+    else if (STAKE_ROUTES.has(route)) activeRoute = "stake";
     else if (route === "sign" && canSign) activeRoute = "sign";
     else if (route === "verify") activeRoute = "verify";
     else if (route === "offline" && canSign) activeRoute = "offline";
@@ -337,22 +352,23 @@ export function App() {
     // Guard deep-links (#/swap): DEX quotes need a queryable mainnet node, so
     // fall back to Portfolio while the node or active wallet cannot support it.
     content = <Portfolio />;
-  } else if (route === "staking") {
-    // Staking/governance is gated like send: a synced node AND a
-    // spending-enabled wallet. A read-only or unsynced wallet falls back to
-    // Portfolio.
-    content = canStake ? <Staking network={activeWallet.network} /> : <Portfolio />;
-  } else if (route === "rewards") {
-    // Read-only per-epoch reward history for the active wallet's stake
-    // address. Node-local read (no signing, no spend), so it is available to
-    // any active wallet; the pool explorer links need the wallet's network.
-    content = <RewardHistory network={activeWallet.network} />;
-  } else if (route === "pools") {
-    // Read-only stake-pool directory: browse/search pools the node has indexed.
-    // Needs only a queryable node (not a full sync, no spending), so it works
-    // for any active wallet — including read-only ones. Falls back to Portfolio
-    // while the node cannot serve queries.
-    content = canQueryNode ? <PoolDirectory network={activeWallet.network} /> : <Portfolio />;
+  } else if (STAKE_ROUTES.has(route)) {
+    // Delegation, rewards and the pool directory are one screen, and it is not
+    // gated as a whole: reward history is a plain account read that the old
+    // #/rewards route offered to any active wallet whatever the node was
+    // doing, and merging the screens must not quietly take that away. Each tab
+    // states its own requirement instead — Delegation when this wallet cannot
+    // sign a certificate, Pools when the node cannot answer queries.
+    content = (
+      <Stake
+        network={activeWallet.network}
+        isHardware={activeWallet.type === "hardware"}
+        walletId={activeWallet.id}
+        canDelegate={canStake}
+        canQueryNode={canQueryNode}
+        initialTab={STAKE_ROUTES.get(route)}
+      />
+    );
   } else if (route === "sign") {
     content = canSign ? <SignMessage account={toAccount(activeWallet)} /> : <Portfolio />;
   } else if (route === "verify") {
@@ -401,8 +417,6 @@ export function App() {
       addingWallet ||
       (key === "send" && !canSend) ||
       (key === "swap" && !canSwap) ||
-      (key === "staking" && !canStake) ||
-      (key === "pools" && !canQueryNode) ||
       (key === "sign" && !canSign) ||
       (key === "offline" && !canSign) ||
       (key === "operate" && !canSign) ||
@@ -466,7 +480,21 @@ export function App() {
           className="content"
           key={`${activeWallet?.id ?? "none"}:${activeWallet?.active_account_index ?? 0}`}
         >
-          {content}
+          {/* Scoped to the screen, not the shell: a screen that throws must not
+              take the nav and wallet switcher with it, or there is no way to
+              navigate out of the failure. resetKey clears the error on
+              navigation. */}
+          {/* resetKey is the raw route, not activeRoute: the latter collapses
+              stake/staking/rewards/pools to one nav key, so moving between
+              those would not clear a caught error. addingWallet is in the key
+              too — it swaps the content without changing the route, and is a
+              shell recovery action that must not land on a stale fallback. */}
+          <ErrorBoundary
+            label={activeRoute || "wallet"}
+            resetKey={`${route}:${addingWallet}`}
+          >
+            {content}
+          </ErrorBoundary>
         </main>
       </div>
       {/* Global connector approval overlay: rendered on top of all screens when
