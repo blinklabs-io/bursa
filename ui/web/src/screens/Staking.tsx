@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   DelegationRequest,
   DelegationPreview,
@@ -704,9 +704,25 @@ interface StakingProps {
   // certificates — i.e. SeedSigner); walletId keys its per-wallet fingerprint.
   isHardware?: boolean;
   walletId?: string;
+  // The pool-ID draft is owned by the parent Stake screen so it survives a tab
+  // switch to the pool directory and back. Left optional (with internal state
+  // as the fallback) so this screen still stands alone.
+  poolId?: string;
+  setPoolId?: (id: string) => void;
+  // Incremented by the parent when the user picks a pool from the directory:
+  // a change moves this screen into its compose phase, so "Delegate" on a
+  // directory row lands on a filled-in form rather than the status panel.
+  composeSignal?: number;
 }
 
-export function Staking({ network = "preview", isHardware, walletId }: StakingProps = {}) {
+export function Staking({
+  network = "preview",
+  isHardware,
+  walletId,
+  poolId: poolIdProp,
+  setPoolId: setPoolIdProp,
+  composeSignal = 0,
+}: StakingProps = {}) {
   const delegation = useDelegation();
 
   const [phase, setPhase] = useState<Phase>("status");
@@ -715,11 +731,23 @@ export function Staking({ network = "preview", isHardware, walletId }: StakingPr
   const [txResult, setTxResult] = useState<TxResult | null>(null);
 
   // Compose draft lives at the top so Back returns to in-progress entry.
-  const [poolId, setPoolId] = useState("");
+  const [poolIdLocal, setPoolIdLocal] = useState("");
+  const poolId = poolIdProp ?? poolIdLocal;
+  const setPoolId = setPoolIdProp ?? setPoolIdLocal;
   const [voteType, setVoteType] = useState<VoteType | null>(null);
   const [drepId, setDrepId] = useState("");
   const [anchorUrl, setAnchorUrl] = useState("");
   const [anchorHash, setAnchorHash] = useState("");
+
+  // Skip the initial render: a fresh mount must land on the status panel, not
+  // jump straight into an empty compose form.
+  const seenSignal = useRef(composeSignal);
+  useEffect(() => {
+    if (composeSignal !== seenSignal.current) {
+      seenSignal.current = composeSignal;
+      setPhase("compose");
+    }
+  }, [composeSignal]);
 
   if (delegation.loading) {
     return <p>Loading…</p>;

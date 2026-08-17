@@ -21,9 +21,7 @@ import { Activity } from "./screens/Activity";
 import { Send } from "./screens/Send";
 import { Swap } from "./screens/Swap";
 import { Contacts } from "./screens/Contacts";
-import { Staking } from "./screens/Staking";
-import { RewardHistory } from "./screens/RewardHistory";
-import { PoolDirectory } from "./screens/PoolDirectory";
+import { Stake } from "./screens/Stake";
 import { SignMessage } from "./screens/SignMessage";
 import { VerifyMessage } from "./screens/VerifyMessage";
 import { Offline } from "./screens/Offline";
@@ -61,6 +59,15 @@ const ROUTES = new Map<string, () => ReactElement>([
   ["diagnostics", Diagnostics],
 ]);
 
+// Stake merged three screens; the old routes stay valid and open the matching
+// tab so existing bookmarks and links keep working.
+const STAKE_ROUTES = new Map<string, "delegation" | "rewards" | "pools">([
+  ["stake", "delegation"],
+  ["staking", "delegation"],
+  ["rewards", "rewards"],
+  ["pools", "pools"],
+]);
+
 const NAV: { key: string; label: string }[] = [
   { key: "portfolio", label: "Portfolio" },
   { key: "receive", label: "Receive" },
@@ -68,9 +75,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "send", label: "Send" },
   { key: "swap", label: "Swap" },
   { key: "contacts", label: "Contacts" },
-  { key: "staking", label: "Staking" },
-  { key: "rewards", label: "Rewards" },
-  { key: "pools", label: "Stake Pools" },
+  { key: "stake", label: "Stake" },
   { key: "sign", label: "Sign" },
   { key: "verify", label: "Verify" },
   { key: "offline", label: "Offline" },
@@ -283,9 +288,9 @@ export function App() {
     if (route === "settings") activeRoute = "settings";
     else if (route === "send" && canSend) activeRoute = "send";
     else if (route === "swap" && canSwap) activeRoute = "swap";
-    else if (route === "staking" && canStake) activeRoute = "staking";
-    else if (route === "rewards") activeRoute = "rewards";
-    else if (route === "pools" && canQueryNode) activeRoute = "pools";
+    // The legacy per-screen routes now resolve to tabs of the merged screen,
+    // so an old bookmark or a link in the wild still highlights Stake.
+    else if (STAKE_ROUTES.has(route) && canQueryNode) activeRoute = "stake";
     else if (route === "sign" && canSign) activeRoute = "sign";
     else if (route === "verify") activeRoute = "verify";
     else if (route === "offline" && canSign) activeRoute = "offline";
@@ -334,30 +339,22 @@ export function App() {
     // Guard deep-links (#/swap): DEX quotes need a queryable mainnet node, so
     // fall back to Portfolio while the node or active wallet cannot support it.
     content = <Portfolio />;
-  } else if (route === "staking") {
-    // Staking/governance is gated like send: a synced node AND a
-    // spending-enabled wallet. A read-only or unsynced wallet falls back to
-    // Portfolio.
-    content = canStake ? (
-      <Staking
+  } else if (STAKE_ROUTES.has(route)) {
+    // Delegation, rewards and the pool directory are one screen. It needs only
+    // a queryable node, so read-only wallets still get rewards and pools; the
+    // Delegation tab explains itself when this wallet cannot sign a
+    // certificate, rather than the whole screen vanishing.
+    content = canQueryNode ? (
+      <Stake
         network={activeWallet.network}
         isHardware={activeWallet.type === "hardware"}
         walletId={activeWallet.id}
+        canDelegate={canStake}
+        initialTab={STAKE_ROUTES.get(route)}
       />
     ) : (
       <Portfolio />
     );
-  } else if (route === "rewards") {
-    // Read-only per-epoch reward history for the active wallet's stake
-    // address. Node-local read (no signing, no spend), so it is available to
-    // any active wallet; the pool explorer links need the wallet's network.
-    content = <RewardHistory network={activeWallet.network} />;
-  } else if (route === "pools") {
-    // Read-only stake-pool directory: browse/search pools the node has indexed.
-    // Needs only a queryable node (not a full sync, no spending), so it works
-    // for any active wallet — including read-only ones. Falls back to Portfolio
-    // while the node cannot serve queries.
-    content = canQueryNode ? <PoolDirectory network={activeWallet.network} /> : <Portfolio />;
   } else if (route === "sign") {
     content = canSign ? <SignMessage account={toAccount(activeWallet)} /> : <Portfolio />;
   } else if (route === "verify") {
@@ -406,8 +403,7 @@ export function App() {
       addingWallet ||
       (key === "send" && !canSend) ||
       (key === "swap" && !canSwap) ||
-      (key === "staking" && !canStake) ||
-      (key === "pools" && !canQueryNode) ||
+      (key === "stake" && !canQueryNode) ||
       (key === "sign" && !canSign) ||
       (key === "offline" && !canSign) ||
       (key === "operate" && !canSign) ||

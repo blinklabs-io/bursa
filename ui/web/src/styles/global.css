@@ -598,6 +598,13 @@ a:hover {
   color: var(--accent);
 }
 
+/* A table row's trailing controls: an action plus its icon companions. */
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 /* Inline pool id + explorer link inside a directory table cell. */
 .pool-id-cell {
   display: inline-flex;
@@ -1309,15 +1316,21 @@ a:hover {
   margin-bottom: var(--space-1);
 }
 /* Tab / mode strips read as instrument selectors. */
-.operate-tabs,
+.tabs,
 .mode-toggle {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
+}
+/* A tab strip sits above its panel with room to breathe. */
+.tabs {
+  margin-bottom: var(--space-3);
+}
+.mode-toggle {
   border-top: 1px solid var(--border);
   padding-top: var(--space-3);
 }
-.operate-tab {
+.tab {
   font-family: var(--mono);
   font-size: 0.6875rem;
   font-weight: 600;
@@ -1330,16 +1343,16 @@ a:hover {
   padding: 8px var(--space-3);
   cursor: pointer;
 }
-.operate-tab:hover {
+.tab:hover {
   color: var(--text);
   border-color: var(--accent);
 }
-.operate-tab.active {
+.tab.active {
   color: var(--accent-text);
   background: var(--accent);
   border-color: var(--accent);
 }
-.operate-tab:focus-visible {
+.tab:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px var(--accent-dim);
 }
@@ -2006,11 +2019,11 @@ a:hover {
   }
 
   /* Operate-tab strip: wrap onto two lines if needed. */
-  .operate-tabs,
+  .tabs,
   .mode-toggle {
     flex-wrap: wrap;
   }
-  .operate-tab {
+  .tab {
     min-height: 44px;
   }
 }
