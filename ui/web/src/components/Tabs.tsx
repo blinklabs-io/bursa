@@ -55,7 +55,7 @@ export function Tabs<K extends string>({
 
   return (
     <>
-      <div className="tabs" role="tablist">
+      <div className="tabset" role="tablist">
         {tabs.map(({ key, label }, idx) => (
           <button
             key={key}
@@ -68,7 +68,7 @@ export function Tabs<K extends string>({
             aria-selected={active === key}
             aria-controls={`${id}-panel-${key}`}
             tabIndex={active === key ? 0 : -1}
-            className={active === key ? "tab active" : "tab"}
+            className={active === key ? "tabset-tab active" : "tabset-tab"}
             onClick={() => onSelect(key)}
             onKeyDown={(e) => handleKeyDown(e, idx)}
           >

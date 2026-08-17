@@ -158,3 +158,25 @@ test("the pool draft survives a trip to the directory and back", async () => {
   fireEvent.click(screen.getByRole("tab", { name: "Delegation" }));
   expect(await screen.findByDisplayValue("pool1typed-by-hand")).toBeInTheDocument();
 });
+
+test("changing route switches tab on an already-mounted screen", async () => {
+  // #/pools -> #/rewards is the same component in the same place, so initial
+  // state alone would strand the user on whichever tab they arrived at.
+  const { rerender } = render(<Stake network="mainnet" initialTab="pools" />);
+  expect(await screen.findByRole("tab", { name: "Pools" })).toHaveAttribute("aria-selected", "true");
+
+  rerender(<Stake network="mainnet" initialTab="rewards" />);
+
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Rewards" })).toHaveAttribute("aria-selected", "true"),
+  );
+});
+
+test("a wallet that cannot delegate is not offered a Delegate action", async () => {
+  render(<Stake network="mainnet" canDelegate={false} initialTab="pools" />);
+
+  expect(await screen.findByText(/stake pool directory/i)).toBeInTheDocument();
+  // The button would hand a pool to a tab that only explains why it cannot be
+  // used, dropping the choice with no feedback.
+  expect(screen.queryByRole("button", { name: "Delegate" })).not.toBeInTheDocument();
+});

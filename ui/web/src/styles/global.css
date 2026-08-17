@@ -411,19 +411,6 @@ a:hover {
   background: var(--accent-strong);
   border-color: var(--accent-strong);
 }
-/* Screen-reader-only text: kept in the accessibility tree, out of the layout. */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
-}
-
 /* Icon-only control (copy, and anything else that is a glyph plus a label).
    Square by construction so it can never wrap its content the way a text
    button in a narrow table cell does, and sized to stay a comfortable
@@ -454,12 +441,15 @@ a:hover {
   background: var(--inset);
   border-color: var(--border);
 }
+/* Success colour has to survive the pointer still resting on the control it
+   was just clicked with, which is the common case. */
+.btn-icon.copied,
+.btn-icon.copied:hover:not(:disabled) {
+  color: var(--ok);
+}
 .btn-icon:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
-}
-.btn-icon.copied {
-  color: var(--ok);
 }
 .btn-icon:disabled {
   opacity: 0.38;
@@ -1345,22 +1335,26 @@ a:hover {
   color: var(--text-muted);
   margin-bottom: var(--space-1);
 }
-/* Tab / mode strips read as instrument selectors. */
-.tabs,
+/* Tab / mode strips read as instrument selectors.
+   Deliberately NOT named .tab: that class is already taken above by Offline's
+   underline-style .tab-bar, and reusing it would restyle that screen. */
+.tabset,
 .mode-toggle {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
 }
-/* A tab strip sits above its panel with room to breathe. */
-.tabs {
+/* A standalone tab strip sits above its panel with room to breathe; a mode
+   toggle sits below the copy it switches. */
+.tabset {
   margin-bottom: var(--space-3);
 }
 .mode-toggle {
   border-top: 1px solid var(--border);
   padding-top: var(--space-3);
 }
-.tab {
+.operate-tab,
+.tabset-tab {
   font-family: var(--mono);
   font-size: 0.6875rem;
   font-weight: 600;
@@ -1373,16 +1367,19 @@ a:hover {
   padding: 8px var(--space-3);
   cursor: pointer;
 }
-.tab:hover {
+.operate-tab:hover,
+.tabset-tab:hover {
   color: var(--text);
   border-color: var(--accent);
 }
-.tab.active {
+.operate-tab.active,
+.tabset-tab.active {
   color: var(--accent-text);
   background: var(--accent);
   border-color: var(--accent);
 }
-.tab:focus-visible {
+.operate-tab:focus-visible,
+.tabset-tab:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px var(--accent-dim);
 }
@@ -2049,11 +2046,12 @@ a:hover {
   }
 
   /* Operate-tab strip: wrap onto two lines if needed. */
-  .tabs,
+  .tabset,
   .mode-toggle {
     flex-wrap: wrap;
   }
-  .tab {
+  .operate-tab,
+  .tabset-tab {
     min-height: 44px;
   }
 }

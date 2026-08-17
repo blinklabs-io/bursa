@@ -117,17 +117,31 @@ export function parseAda(ada: string): string {
  * "decimals" value force an unbounded BigInt allocation and hang the tab.
  *
  * Examples:
- *   formatTokenQuantity("4500000", 6) → "4.5"
- *   formatTokenQuantity("150", 2)     → "1.5"
- *   formatTokenQuantity("12345", 0)   → "12345"
+ * Decimals outside 0..18, or a non-integer, mean the scale is unknown: the
+ * quantity is returned untouched rather than dressed up as a token amount.
+ * A non-numeric quantity is likewise returned as-is. Otherwise the integer
+ * part is grouped with thousands separators.
+ *
+ * Examples:
+ *   formatTokenQuantity("4500000", 6)   → "4.5"
+ *   formatTokenQuantity("150", 2)       → "1.5"
+ *   formatTokenQuantity("12345", 0)     → "12,345"
+ *   formatTokenQuantity("1234567890", 6) → "1,234.56789"
+ *   formatTokenQuantity("12345", 99)    → "12345"   (scale unknown)
  */
 const MAX_TOKEN_DECIMALS = 18;
 
 export function formatTokenQuantity(quantity: string, decimals: number): string {
   if (!/^-?\d+$/.test(quantity)) return quantity;
+  // An out-of-range or non-integer decimals value means the scale is unknown,
+  // so the raw base-unit count is returned untouched: grouping it would dress
+  // it up as a whole-token amount we cannot actually vouch for.
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > MAX_TOKEN_DECIMALS) {
+    return quantity;
+  }
   // A zero-decimal token (SNEK, HOSKY) has no fractional part to render, but
   // its whole-unit count still needs grouping.
-  if (!Number.isInteger(decimals) || decimals <= 0 || decimals > MAX_TOKEN_DECIMALS) {
+  if (decimals === 0) {
     const negative = quantity.startsWith("-");
     return (negative ? "-" : "") + groupDigits(quantity.replace(/^-/, ""));
   }

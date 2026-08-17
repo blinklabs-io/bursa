@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card } from "../components/Card";
 import { Tabs } from "../components/Tabs";
 import type { TabDef } from "../components/Tabs";
@@ -47,6 +47,13 @@ export function Stake({
   initialTab = "delegation",
 }: StakeProps = {}) {
   const [tab, setTab] = useState<Tab>(initialTab);
+
+  // The route can change while this screen stays mounted (#/pools -> #/rewards
+  // is the same component in the same place), and initial state would ignore
+  // that, leaving the user on whichever tab they first arrived at.
+  useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab]);
 
   // The delegation draft's pool ID lives here rather than inside Staking so it
   // survives a tab switch — the whole point of merging these is that you can
@@ -97,7 +104,15 @@ export function Stake({
             case "rewards":
               return <RewardHistory network={network} />;
             case "pools":
-              return <PoolDirectory network={network} onDelegate={handleDelegate} />;
+              // No delegate action for a wallet that cannot delegate: the
+              // button would hand the pool to a tab that only explains why it
+              // is unavailable, silently dropping the choice.
+              return (
+                <PoolDirectory
+                  network={network}
+                  onDelegate={canDelegate ? handleDelegate : undefined}
+                />
+              );
           }
         }}
       </Tabs>

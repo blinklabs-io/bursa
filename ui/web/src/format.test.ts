@@ -78,8 +78,10 @@ test("formatTokenQuantity: 0 decimals applies no decimal scaling, only grouping"
   expect(formatTokenQuantity("999", 0)).toBe("999");
 });
 
-test("formatTokenQuantity: negative decimals applies no decimal scaling", () => {
-  expect(formatTokenQuantity("12345", -1)).toBe("12,345");
+test("formatTokenQuantity: negative decimals leaves the quantity untouched", () => {
+  // The scale is unknown, so grouping would dress a base-unit count up as a
+  // token amount we cannot vouch for.
+  expect(formatTokenQuantity("12345", -1)).toBe("12345");
 });
 
 test("formatTokenQuantity: a non-integer quantity string is returned unchanged", () => {
@@ -97,7 +99,7 @@ test("formatTokenQuantity: formats a negative quantity", () => {
 test("formatTokenQuantity: decimals beyond the sane cap is returned unchanged (DoS guard)", () => {
   // decimals comes from on-chain metadata anyone can mint arbitrary values
   // into; an unbounded value must never reach BigInt exponentiation.
-  expect(formatTokenQuantity("12345", 1_000_000_000)).toBe("12,345");
+  expect(formatTokenQuantity("12345", 1_000_000_000)).toBe("12345");
 });
 
 test("formatTokenQuantity: decimals at the cap boundary still formats normally", () => {

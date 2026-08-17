@@ -25,7 +25,11 @@ test("a throwing screen shows a recoverable panel instead of a blank page", () =
   expect(screen.getByRole("alert")).toHaveTextContent(/something went wrong/i);
   // Names the screen, and reassures about funds — this is a wallet.
   expect(screen.getByText(/the swap screen could not be displayed/i)).toBeInTheDocument();
-  expect(screen.getByText(/funds are unaffected/i)).toBeInTheDocument();
+  expect(screen.getByText(/keys are safe/i)).toBeInTheDocument();
+  // Must NOT claim nothing was submitted: a throw can land after a submission,
+  // and a false all-clear invites a duplicate send.
+  expect(screen.queryByText(/nothing was submitted/i)).not.toBeInTheDocument();
+  expect(screen.getByText(/check Activity before trying again/i)).toBeInTheDocument();
   // The underlying message is kept, so a bug report can carry it.
   expect(screen.getByText(/price_impact_pct is undefined/)).toBeInTheDocument();
 });
@@ -60,4 +64,32 @@ test("navigating to another screen clears the error", () => {
   // Without the resetKey the user would be pinned to the failed screen.
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(screen.getByText("screen content")).toBeInTheDocument();
+});
+
+test("a non-Error throw does not crash the fallback itself", () => {
+  function ThrowsString(): React.ReactElement {
+    // Nothing guarantees a child throws an Error; reading .message off a
+    // string, null or undefined in the fallback would re-throw and restore the
+    // blank page this component exists to prevent.
+    throw "boom";
+  }
+  render(
+    <ErrorBoundary label="swap">
+      <ThrowsString />
+    </ErrorBoundary>,
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(/something went wrong/i);
+  expect(screen.getByText("boom")).toBeInTheDocument();
+});
+
+test("a thrown null still renders a readable message", () => {
+  function ThrowsNull(): React.ReactElement {
+    throw null;
+  }
+  render(
+    <ErrorBoundary label="swap">
+      <ThrowsNull />
+    </ErrorBoundary>,
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(/an unexpected error occurred/i);
 });

@@ -106,7 +106,7 @@ test("(b) renders truncated tx hash with a CopyButton that copies the FULL hash"
   expect(writeText).toHaveBeenCalledWith(TX1.tx_hash);
   // The control is icon-only, so the copied state rides on its
   // accessible name rather than visible text.
-  expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /\(copied\)$/ })).toBeInTheDocument();
 
   // At least the beginning of the hash should be visible
   expect(screen.getByText(new RegExp(TX1.tx_hash.slice(0, 8)))).toBeInTheDocument();

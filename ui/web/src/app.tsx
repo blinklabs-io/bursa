@@ -467,7 +467,10 @@ export function App() {
               take the nav and wallet switcher with it, or there is no way to
               navigate out of the failure. resetKey clears the error on
               navigation. */}
-          <ErrorBoundary label={activeRoute || "wallet"} resetKey={activeRoute}>
+          {/* resetKey is the raw route, not activeRoute: the latter collapses
+              stake/staking/rewards/pools to one nav key, so moving between
+              those would not clear a caught error. */}
+          <ErrorBoundary label={activeRoute || "wallet"} resetKey={route}>
             {content}
           </ErrorBoundary>
         </main>

@@ -141,7 +141,7 @@ test("(b) renders stake address in monospace and a CopyButton for it", async () 
   expect(writeText).toHaveBeenCalledWith(mockAccount.stake_address);
   // The control is icon-only, so the copied state rides on its
   // accessible name rather than visible text.
-  expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /\(copied\)$/ })).toBeInTheDocument();
 });
 
 test("(c) renders sync state pill from useStatus", () => {

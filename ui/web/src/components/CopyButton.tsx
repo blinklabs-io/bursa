@@ -70,8 +70,12 @@ export function CopyButton({
       // the button's own accessible name — which is re-announced on the
       // focused control after the click. A live region here instead would mean
       // 39 of them in the document competing to be "the" status.
-      aria-label={copied ? "Copied" : label}
-      title={copied ? "Copied" : label}
+      //
+      // The label is kept alongside the state: with a copy control beside every
+      // address and hash on a screen, a bare "Copied" would leave a
+      // screen-reader user unable to tell WHICH one they just copied.
+      aria-label={copied ? `${label} (copied)` : label}
+      title={copied ? `${label} (copied)` : label}
     >
       {copied ? <CheckGlyph /> : <CopyGlyph />}
     </button>

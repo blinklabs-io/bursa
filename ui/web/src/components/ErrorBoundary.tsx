@@ -12,7 +12,10 @@ interface Props {
 }
 
 interface State {
-  error: Error | null;
+  // Normalised to a string: a child may throw a non-Error (a string, null,
+  // even undefined), and reading .message off that in the fallback would throw
+  // again — restoring exactly the blank page this exists to prevent.
+  message: string | null;
 }
 
 /**
@@ -29,27 +32,33 @@ interface State {
  * survive, not to assume away.
  */
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { error: null };
+  state: State = { message: null };
 
-  static getDerivedStateFromError(error: Error): State {
-    return { error };
+  static getDerivedStateFromError(error: unknown): State {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string" && error !== ""
+          ? error
+          : "An unexpected error occurred.";
+    return { message: message || "An unexpected error occurred." };
   }
 
   componentDidUpdate(prev: Props) {
     // A new resetKey means the user navigated; give the subtree a clean try
     // rather than pinning them to the failed screen.
-    if (this.state.error !== null && prev.resetKey !== this.props.resetKey) {
-      this.setState({ error: null });
+    if (this.state.message !== null && prev.resetKey !== this.props.resetKey) {
+      this.setState({ message: null });
     }
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo) {
+  componentDidCatch(error: unknown, info: ErrorInfo) {
     console.error("Unhandled error in", this.props.label ?? "the wallet UI", error, info.componentStack);
   }
 
   render() {
-    const { error } = this.state;
-    if (error === null) return this.props.children;
+    const { message } = this.state;
+    if (message === null) return this.props.children;
 
     return (
       <div className="card error-boundary" role="alert">
@@ -58,18 +67,20 @@ export class ErrorBoundary extends Component<Props, State> {
           {this.props.label
             ? `The ${this.props.label} screen could not be displayed.`
             : "This screen could not be displayed."}{" "}
-          Your wallet and funds are unaffected — nothing was submitted.
+          Your keys are safe — this is a display fault, not a change to your
+          wallet.
         </p>
         <p className="helper-text">
-          Move to another screen to carry on, or reload to start fresh. If it
-          keeps happening, the details below help us fix it.
+          If you had just submitted something, this does not tell you whether it
+          went through: check Activity before trying again, so you do not send
+          twice. Otherwise, move to another screen to carry on, or reload.
         </p>
-        <pre className="error-detail">{error.message}</pre>
+        <pre className="error-detail">{message}</pre>
         <div className="preview-actions">
           <button
             type="button"
             className="btn primary"
-            onClick={() => this.setState({ error: null })}
+            onClick={() => this.setState({ message: null })}
           >
             Try again
           </button>
