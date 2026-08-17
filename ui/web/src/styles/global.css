@@ -641,8 +641,16 @@ a:hover {
 .table td {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
-  vertical-align: top;
+  /* Middle, not top: cells pair a value with an icon control, and top
+     alignment left the icon floating above the text it belongs to. */
+  vertical-align: middle;
   color: var(--text);
+  /* Cell values here are hashes, addresses, amounts and timestamps -- atomic
+     tokens that mean nothing broken across lines. Wrapping them was turning
+     three-line cells into triple-height rows; .table-wrap already scrolls
+     horizontally, which is the right way to handle a table that outgrows its
+     column. */
+  white-space: nowrap;
 }
 .table tr:last-child td {
   border-bottom: none;
