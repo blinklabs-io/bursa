@@ -119,3 +119,16 @@ func TestLoadWalletDirSkipsPermissiveSecretKey(t *testing.T) {
 	require.Len(t, loaded, 1)
 	assert.Equal(t, "payment.vkey", loaded[0].File)
 }
+
+func TestLoadWalletDirSurfacesInsecureWhenNoKeysLoad(t *testing.T) {
+	tmpDir := t.TempDir()
+	secretPath := filepath.Join(tmpDir, "payment.skey")
+	secret := `{"type":"PaymentSigningKeyShelley_ed25519","description":"Payment Signing Key","cborHex":"5820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
+	require.NoError(t, os.WriteFile(secretPath, []byte(secret), 0o644))
+
+	// The only key file is a permission-rejected secret key, so the caller must
+	// receive ErrInsecureFileMode rather than the misleading fs.ErrNotExist.
+	_, err := LoadWalletDir(tmpDir, true)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInsecureFileMode)
+}

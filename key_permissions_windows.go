@@ -133,9 +133,12 @@ func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCR
 			path, ErrInsecureFileMode,
 		)
 	}
+	// Built-in Administrators (BA) is deliberately NOT allowed: a secret key
+	// file must not be readable by every local administrator, so a DACL such as
+	// (A;;GA;;;BA) is rejected. Only the file owner, the current user, the OS
+	// (Local System), and the owner-equivalent aliases may hold an allow ACE.
 	allowed := map[string]bool{
 		owner: true,
-		"BA":  true, // Built-in Administrators
 		"SY":  true, // Local System
 		"CO":  true, // Creator Owner
 		"OW":  true, // Owner Rights

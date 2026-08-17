@@ -2831,6 +2831,12 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 	// Most wallets have around 6 key files
 	out := make([]*LoadedKey, 0, 8)
 
+	// firstInsecure records the first secret key rejected for insecure
+	// permissions, so that a directory whose only key files are all
+	// permission-rejected surfaces that reason instead of the misleading
+	// fs.ErrNotExist returned for an empty result.
+	var firstInsecure error
+
 	for _, e := range files {
 		if e.IsDir() {
 			continue
@@ -2848,13 +2854,22 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 			loadedKeyFile, err = LoadKeyFromFile(p)
 		}
 		if err != nil || loadedKeyFile == nil {
-			// Skip files that can't be parsed
+			// Skip files that can't be parsed, but remember an insecure-mode
+			// rejection so it can be surfaced if nothing else loads.
+			if firstInsecure == nil && errors.Is(err, ErrInsecureFileMode) {
+				firstInsecure = fmt.Errorf(
+					"secret key file %q has insecure permissions: %w", p, err,
+				)
+			}
 			continue
 		}
 		loadedKeyFile.File = n
 		out = append(out, loadedKeyFile)
 	}
 	if len(out) == 0 {
+		if firstInsecure != nil {
+			return nil, firstInsecure
+		}
 		return nil, fs.ErrNotExist
 	}
 

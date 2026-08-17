@@ -93,6 +93,19 @@ func TestWriteSecretKeyFileWindowsCreatesOwnerOnlyFile(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestLoadSecretKeyFromFileWindowsRejectsAdministrators(t *testing.T) {
+	path := writeBursaSecretKey(t)
+	// A valid owner allow ACE plus a Built-in Administrators allow ACE: the
+	// Administrators grant must be rejected so a secret key is not readable by
+	// every local administrator.
+	setBursaDACL(t, path, fmt.Sprintf(
+		"D:P(A;;GA;;;%s)(A;;GA;;;BA)", bursaCurrentUserSID(t),
+	))
+
+	_, err := LoadSecretKeyFromFile(path)
+	assert.ErrorIs(t, err, ErrInsecureFileMode)
+}
+
 func TestCreateSecretKeyFileWindowsIsExclusiveAndUnshared(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "secret.skey")
 	file, err := CreateSecretKeyFile(path)
