@@ -30,7 +30,12 @@ UI_GO_LDFLAGS=-ldflags "$(UI_LDFLAGS_CONTENT)"
 # GOOS=windows, so it is appended conditionally.
 UI_WEBVIEW_LDFLAGS=-ldflags "$(UI_LDFLAGS_CONTENT)$(if $(filter windows,$(GOOS)), -H=windowsgui,)"
 
-.PHONY: build wallet wallet-binary wallet-webview wallet-binary-webview bundle-macos pkg-macos pkg-macos-adhoc mod-tidy clean test
+# Holds the generated webkit2gtk-4.0 pkg-config shim (see webkit-shim below).
+# Prepended to PKG_CONFIG_PATH for webview builds; harmless when it does not
+# exist, which is the case on every target that needs no shim.
+WEBVIEW_PKG_CONFIG_DIR=$(ROOT_DIR)/.pkgconfig
+
+.PHONY: build wallet wallet-binary wallet-webview wallet-binary-webview webkit-shim bundle-macos pkg-macos pkg-macos-adhoc mod-tidy clean test
 
 # Alias for building program binary
 build: $(BINARIES)
@@ -62,12 +67,38 @@ wallet-webview:
 
 # Compile only the webview bursa-wallet binary, assuming the web bundle has
 # already been built into the //go:embed dist target. Honors GOOS/GOARCH.
-wallet-binary-webview:
-	cd ui && CGO_ENABLED=1 go build \
+wallet-binary-webview: webkit-shim
+	cd ui && CGO_ENABLED=1 \
+		PKG_CONFIG_PATH="$(WEBVIEW_PKG_CONFIG_DIR)$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH),)" \
+		go build \
 		$(UI_WEBVIEW_LDFLAGS) \
 		-tags webview \
 		-o bursa-wallet$(if $(filter windows,$(GOOS)),.exe,) \
 		./cmd/bursa-wallet
+
+# github.com/webview/webview_go hardcodes `pkg-config: gtk+-3.0 webkit2gtk-4.0`
+# and offers no 4.1 build tag; the pinned commit is also upstream's latest, so
+# there is no newer version to bump to. Ubuntu 24.04+ (and every distro that
+# dropped EOL libsoup2) ships only webkit2gtk-4.1, where the build fails with
+# "Package webkit2gtk-4.0 was not found in the pkg-config search path".
+#
+# When 4.0 is genuinely absent but 4.1 is present, generate a forwarding .pc so
+# pkg-config resolves the 4.0 request to the 4.1 headers and libs. webview_go
+# only uses WebKitGTK APIs that are identical across the two; they differ in
+# libsoup2 vs libsoup3, which webview_go does not touch. The stale shim is
+# removed first so the probe sees the true system state — a host with a real
+# 4.0 installed gets no shim and links against it directly.
+webkit-shim:
+ifeq ($(GOOS),linux)
+	@rm -f $(WEBVIEW_PKG_CONFIG_DIR)/webkit2gtk-4.0.pc
+	@if ! pkg-config --exists webkit2gtk-4.0 && pkg-config --exists webkit2gtk-4.1; then \
+		mkdir -p $(WEBVIEW_PKG_CONFIG_DIR); \
+		printf 'Name: webkit2gtk-4.0\nDescription: Shim forwarding to webkit2gtk-4.1\nVersion: %s\nRequires: webkit2gtk-4.1\n' \
+			"$$(pkg-config --modversion webkit2gtk-4.1)" \
+			> $(WEBVIEW_PKG_CONFIG_DIR)/webkit2gtk-4.0.pc; \
+		echo "webkit2gtk-4.0 absent; generated 4.1 forwarding shim in $(WEBVIEW_PKG_CONFIG_DIR)"; \
+	fi
+endif
 
 # Build an ad-hoc-signed macOS Bursa.app + .pkg for LOCAL testing (no Developer
 # ID needed). The pkg itself is unsigned; install with
@@ -98,6 +129,7 @@ mod-tidy:
 
 clean:
 	rm -f $(BINARIES)
+	rm -rf $(WEBVIEW_PKG_CONFIG_DIR)
 
 format: mod-tidy
 	go fmt ./...

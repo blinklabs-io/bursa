@@ -16,11 +16,13 @@ const DEVICE_LABELS: Record<HardwareKind, string> = {
   ledger: "Ledger",
   trezor: "Trezor",
   keystone: "Keystone",
+  seedsigner: "SeedSigner",
 };
 
-// The devices that can sign a CIP-8 message today. Keystone's air-gapped QR
-// CIP-8 flow is not wired yet (its capabilities.signMessage is false), so it is
-// not offered here — a Keystone-backed wallet shows the unsupported state below.
+// The devices that can sign a CIP-8 message today. Keystone's and SeedSigner's
+// air-gapped QR CIP-8 flows are not wired yet (their capabilities.signMessage
+// is false), so neither is offered here — a wallet backed by either shows the
+// unsupported state below instead.
 const MESSAGE_SIGN_KINDS = ["ledger", "trezor"] as const;
 
 interface SignMessageProps {
@@ -65,11 +67,15 @@ export function SignMessage({ account, isHardware = false, walletId }: SignMessa
 
   const deviceKind = chosenKind;
   const needsExternalConsent = deviceKind === "trezor";
-  // A Keystone-backed wallet cannot sign messages here yet: its QR CIP-8 flow is
-  // not implemented, so surface a clear unsupported state instead of a picker.
-  const keystoneUnsupported = isHardware && storedKind === "keystone";
-  // Show the device picker when the wallet is hardware, is not the unsupported
-  // Keystone, and no message-capable device kind is known yet.
+  // A Keystone- or SeedSigner-backed wallet cannot sign messages here yet:
+  // their air-gapped QR CIP-8 flow is not implemented, so surface a clear
+  // unsupported state instead of a picker.
+  const storedKindUnsupported =
+    storedKind !== undefined &&
+    !(MESSAGE_SIGN_KINDS as readonly string[]).includes(storedKind);
+  const keystoneUnsupported = isHardware && storedKindUnsupported;
+  // Show the device picker when the wallet is hardware, is not an unsupported
+  // stored device, and no message-capable device kind is known yet.
   const showDevicePicker = isHardware && !keystoneUnsupported && deviceKind === undefined;
 
   const addressOptions = account.receive_addresses.map((a) => ({ value: a, label: a }));
@@ -144,8 +150,10 @@ export function SignMessage({ account, isHardware = false, walletId }: SignMessa
 
         {keystoneUnsupported ? (
           <p role="alert" className="error-text">
-            Message signing is not supported on Keystone yet. Use a Ledger or
-            Trezor hardware wallet, or a full (seed) wallet, to sign a message.
+            Message signing is not supported on{" "}
+            {storedKind ? DEVICE_LABELS[storedKind] : "this device"} yet. Use a
+            Ledger or Trezor hardware wallet, or a full (seed) wallet, to sign
+            a message.
           </p>
         ) : (
           <>
@@ -235,7 +243,6 @@ export function SignMessage({ account, isHardware = false, walletId }: SignMessa
                     setPassword(e.target.value);
                     clearResult();
                   }}
-                  placeholder="Spending password"
                   aria-label="Spending password"
                   disabled={loading}
                 />
@@ -275,12 +282,12 @@ export function SignMessage({ account, isHardware = false, walletId }: SignMessa
                 <p className="field-label">Signature (COSE_Sign1)</p>
                 <div className="tx-hash-row">
                   <code className="tx-hash">{result.signature}</code>
-                  <CopyButton value={result.signature} />
+                  <CopyButton value={result.signature} ariaLabel="Copy signature" />
                 </div>
                 <p className="field-label">Key (COSE_Key)</p>
                 <div className="tx-hash-row">
                   <code className="tx-hash">{result.key}</code>
-                  <CopyButton value={result.key} />
+                  <CopyButton value={result.key} ariaLabel="Copy COSE key" />
                 </div>
               </div>
             )}

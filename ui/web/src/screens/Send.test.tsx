@@ -98,7 +98,7 @@ test("(b) preview→confirm: confirmSend called with pending_id and password; tx
   });
 
   // Enter password
-  const passwordInput = screen.getByPlaceholderText(/spending password/i);
+  const passwordInput = screen.getByLabelText(/spending password/i);
   fireEvent.change(passwordInput, { target: { value: "s3cr3t" } });
 
   // Click confirm
@@ -138,7 +138,7 @@ test("(c) confirmSend error keeps preview phase so user can retry", async () => 
   });
 
   // Enter wrong password and confirm
-  const passwordInput = screen.getByPlaceholderText(/spending password/i);
+  const passwordInput = screen.getByLabelText(/spending password/i);
   fireEvent.change(passwordInput, { target: { value: "wrong" } });
   fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
 
@@ -152,7 +152,7 @@ test("(c) confirmSend error keeps preview phase so user can retry", async () => 
   });
 
   // Still on preview phase (password input still present, not done)
-  expect(screen.getByPlaceholderText(/spending password/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/spending password/i)).toBeInTheDocument();
 
   // NOT showing tx_hash
   expect(screen.queryByText(new RegExp(MOCK_TX_RESULT.tx_hash))).not.toBeInTheDocument();
@@ -198,7 +198,7 @@ test("(e) 'Send another' resets to compose phase", async () => {
     expect(screen.getByText(/2 inputs/i)).toBeInTheDocument();
   });
 
-  const passwordInput = screen.getByPlaceholderText(/spending password/i);
+  const passwordInput = screen.getByLabelText(/spending password/i);
   fireEvent.change(passwordInput, { target: { value: "s3cr3t" } });
   fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
 

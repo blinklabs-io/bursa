@@ -411,3 +411,21 @@ test("Connect hardware: Keystone is air-gapped QR only (no user-selectable USB t
   // The QR flow scans an account QR rather than "connecting".
   expect(screen.getByRole("button", { name: /scan account qr/i })).toBeInTheDocument();
 });
+
+test("Connect hardware: SeedSigner is a selectable air-gapped QR device", async () => {
+  render(<AddWallet network="preview" knownVaultPassword="vault-pw" onAdded={vi.fn()} />);
+  goToHardware();
+
+  // SeedSigner is offered in the device picker.
+  const seedsigner = screen.getByRole("radio", { name: /^seedsigner$/i });
+  expect(seedsigner).toBeEnabled();
+  fireEvent.click(seedsigner);
+
+  // Air-gapped QR only: no USB/QR transport radio, no consent box.
+  expect(screen.queryByRole("radio", { name: /^usb$/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: /connect\.trezor\.io/i })).not.toBeInTheDocument();
+  expect(screen.getByText(/connects air-gapped over qr/i)).toBeInTheDocument();
+  // The account is imported by scanning a QR, not by "connecting".
+  expect(screen.getByText(/export account/i)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /scan account qr/i })).toBeInTheDocument();
+});

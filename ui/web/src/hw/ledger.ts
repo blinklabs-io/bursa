@@ -10,7 +10,6 @@
  * implementation; the parity vector is exercised in ledger.test.ts.
  */
 
-import TransportWebHID from "@ledgerhq/hw-transport-webhid";
 import Ada from "@cardano-foundation/ledgerjs-hw-app-cardano";
 import type {
   AssetGroup,
@@ -208,6 +207,11 @@ export async function connectLedger(): Promise<HardwareSigner> {
     throw new Error("WebHID not available — open this in a Chromium browser");
   }
 
+  // Loaded on demand, as trezor.ts and keystone.ts load their transports: this
+  // keeps the WebHID transport (and the Node-shaped globals it reaches for) out
+  // of the initial bundle, so a user who never touches a Ledger never pays for
+  // it and a fault in it cannot take down app startup.
+  const { default: TransportWebHID } = await import("@ledgerhq/hw-transport-webhid");
   const transport = await TransportWebHID.create();
   const cardano = new Ada(transport);
 

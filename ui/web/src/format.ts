@@ -1,4 +1,16 @@
 /**
+ * Insert thousands separators into a run of integer digits.
+ *
+ * Balances, stake and token supplies in this wallet routinely run to eight or
+ * more digits, where an ungrouped run is genuinely hard to read at a glance
+ * ("63120000000000"). Applied to the integer part only; fractional digits are
+ * never grouped.
+ */
+function groupDigits(digits: string): string {
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/**
  * Convert a lovelace amount (as a string) to an ADA display string.
  *
  * Uses BigInt to avoid float precision loss on values that exceed 2^53.
@@ -13,6 +25,22 @@
  *   formatAda("0")              → "0"
  */
 export function formatAda(lovelace: string): string {
+  return adaString(lovelace, true);
+}
+
+/**
+ * Convert lovelace to an ADA string WITHOUT thousands separators.
+ *
+ * For machine-readable output — CSV columns, file exports — where a grouped
+ * "1,500" is read as text or splits the column rather than parsing as a
+ * number. Display code wants formatAda; anything another program will parse
+ * wants this.
+ */
+export function formatAdaPlain(lovelace: string): string {
+  return adaString(lovelace, false);
+}
+
+function adaString(lovelace: string, group: boolean): string {
   // BigInt() throws on a non-integer string; guard so a malformed API value
   // (e.g. an empty rewards field) shows through instead of crashing the screen.
   if (!/^-?\d+$/.test(lovelace)) {
@@ -26,13 +54,15 @@ export function formatAda(lovelace: string): string {
   const intPart = abs / LOVELACE_PER_ADA;
   const fracPart = abs % LOVELACE_PER_ADA;
 
+  const intStr = group ? groupDigits(intPart.toString()) : intPart.toString();
+
   if (fracPart === BigInt(0)) {
-    return (isNegative ? "-" : "") + intPart.toString();
+    return (isNegative ? "-" : "") + intStr;
   }
 
   // Pad to 6 digits, then strip trailing zeros.
   const fracStr = fracPart.toString().padStart(6, "0").replace(/0+$/, "");
-  return (isNegative ? "-" : "") + intPart.toString() + "." + fracStr;
+  return (isNegative ? "-" : "") + intStr + "." + fracStr;
 }
 
 /**
@@ -103,15 +133,34 @@ export function parseAda(ada: string): string {
  * "decimals" value force an unbounded BigInt allocation and hang the tab.
  *
  * Examples:
- *   formatTokenQuantity("4500000", 6) → "4.5"
- *   formatTokenQuantity("150", 2)     → "1.5"
- *   formatTokenQuantity("12345", 0)   → "12345"
+ * Decimals outside 0..18, or a non-integer, mean the scale is unknown: the
+ * quantity is returned untouched rather than dressed up as a token amount.
+ * A non-numeric quantity is likewise returned as-is. Otherwise the integer
+ * part is grouped with thousands separators.
+ *
+ * Examples:
+ *   formatTokenQuantity("4500000", 6)   → "4.5"
+ *   formatTokenQuantity("150", 2)       → "1.5"
+ *   formatTokenQuantity("12345", 0)     → "12,345"
+ *   formatTokenQuantity("1234567890", 6) → "1,234.56789"
+ *   formatTokenQuantity("12345", 99)    → "12345"   (scale unknown)
  */
 const MAX_TOKEN_DECIMALS = 18;
 
 export function formatTokenQuantity(quantity: string, decimals: number): string {
-  if (!Number.isInteger(decimals) || decimals <= 0 || decimals > MAX_TOKEN_DECIMALS) return quantity;
   if (!/^-?\d+$/.test(quantity)) return quantity;
+  // An out-of-range or non-integer decimals value means the scale is unknown,
+  // so the raw base-unit count is returned untouched: grouping it would dress
+  // it up as a whole-token amount we cannot actually vouch for.
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > MAX_TOKEN_DECIMALS) {
+    return quantity;
+  }
+  // A zero-decimal token (SNEK, HOSKY) has no fractional part to render, but
+  // its whole-unit count still needs grouping.
+  if (decimals === 0) {
+    const negative = quantity.startsWith("-");
+    return (negative ? "-" : "") + groupDigits(quantity.replace(/^-/, ""));
+  }
 
   const base = BigInt(10) ** BigInt(decimals);
   const raw = BigInt(quantity);
@@ -121,10 +170,12 @@ export function formatTokenQuantity(quantity: string, decimals: number): string 
   const intPart = abs / base;
   const fracPart = abs % base;
 
+  const intStr = groupDigits(intPart.toString());
+
   if (fracPart === BigInt(0)) {
-    return (isNegative ? "-" : "") + intPart.toString();
+    return (isNegative ? "-" : "") + intStr;
   }
 
   const fracStr = fracPart.toString().padStart(decimals, "0").replace(/0+$/, "");
-  return (isNegative ? "-" : "") + intPart.toString() + "." + fracStr;
+  return (isNegative ? "-" : "") + intStr + "." + fracStr;
 }

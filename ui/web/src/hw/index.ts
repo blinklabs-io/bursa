@@ -13,10 +13,12 @@ import type {
   HardwareSigner,
   KeystoneConnectOptions,
   LocalConnectOptions,
+  SeedSignerConnectOptions,
 } from "./types";
 import { connectLedger } from "./ledger";
 import { connectTrezor } from "./trezor";
 import { connectKeystone } from "./keystone";
+import { connectSeedSigner } from "./seedsigner";
 
 export type {
   HardwareKind,
@@ -33,6 +35,9 @@ export type {
   KeystoneUSBConnectOptions,
   KeystoneQRBridge,
   KeystoneScannedUR,
+  SeedSignerConnectOptions,
+  SeedSignerQRBridge,
+  SeedSignerScannedUR,
 } from "./types";
 
 /**
@@ -66,8 +71,16 @@ export function connectDevice(
   opts: ConnectOptionsByKind["keystone"],
 ): Promise<HardwareSigner>;
 export function connectDevice(
+  kind: "seedsigner",
+  opts: ConnectOptionsByKind["seedsigner"],
+): Promise<HardwareSigner>;
+export function connectDevice(
   kind: HardwareKind,
-  opts?: LocalConnectOptions | ExternalConnectOptions | KeystoneConnectOptions,
+  opts?:
+    | LocalConnectOptions
+    | ExternalConnectOptions
+    | KeystoneConnectOptions
+    | SeedSignerConnectOptions,
 ): Promise<HardwareSigner> {
   switch (kind) {
     case "ledger":
@@ -81,6 +94,10 @@ export function connectDevice(
       // Both Keystone transports are local; connectKeystone dispatches on the
       // transport in `opts` (QR needs a UI bridge, USB needs nothing).
       return connectKeystone(opts as KeystoneConnectOptions);
+    case "seedsigner":
+      // SeedSigner is air-gapped QR only; connectSeedSigner drives the animated
+      // QR + webcam exchange through the bridge in `opts`.
+      return connectSeedSigner(opts as SeedSignerConnectOptions);
     default: {
       // Exhaustiveness guard: a new HardwareKind must add a case above.
       const never: never = kind;
@@ -117,6 +134,10 @@ export function connectHardware(
     case "keystone":
       throw new Error(
         "Keystone must be connected over its air-gapped QR transport via connectDevice(\"keystone\", { transport: \"qr\", … }); the USB transport is not user-selectable.",
+      );
+    case "seedsigner":
+      throw new Error(
+        "SeedSigner must be connected over its air-gapped QR transport via connectDevice(\"seedsigner\", { bridge, … }); it has no network transport this dispatcher can supply.",
       );
     default: {
       const never: never = kind;

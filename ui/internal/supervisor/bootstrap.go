@@ -22,8 +22,8 @@ import (
 	"path/filepath"
 
 	"github.com/blinklabs-io/dingo"
-	"github.com/blinklabs-io/dingo/database"
 	"github.com/blinklabs-io/dingo/mithril"
+	"github.com/blinklabs-io/dingo/plugin"
 )
 
 // bootstrapMarker is written inside the node DB dir once a Mithril bootstrap
@@ -54,16 +54,19 @@ func (b mithrilBootstrapper) Bootstrap(ctx context.Context, p BootstrapParams) e
 // syncConfigFor builds the mithril.SyncConfig for a bootstrap. The storage mode
 // and blob/metadata plugins MUST match the node's, or the imported DB will not
 // open; we bind them to the same dingo defaults the supervisor's node uses
-// (StorageModeAPI + database.DefaultConfig) so they can't silently drift.
-// CardanoNodeConfig is left nil so mithril.Sync loads it from the embedded
-// config for Network (same source the node uses).
+// (StorageModeAPI + badger blob / sqlite metadata, dingo's default plugin
+// selections) so they can't silently drift. CardanoNodeConfig is left nil so
+// mithril.Sync loads it from the embedded config for Network (same source the
+// node uses).
 func syncConfigFor(p BootstrapParams, logger *slog.Logger) mithril.SyncConfig {
 	return mithril.SyncConfig{
-		Network:          p.Network,
-		DataDir:          p.DataDir,
-		StorageMode:      string(dingo.StorageModeAPI),
-		BlobPlugin:       database.DefaultConfig.BlobPlugin,
-		MetadataPlugin:   database.DefaultConfig.MetadataPlugin,
+		Network:     p.Network,
+		DataDir:     p.DataDir,
+		StorageMode: string(dingo.StorageModeAPI),
+		StoragePlugins: mithril.StoragePlugins{
+			Blob:     plugin.Selection{Provider: "badger"},
+			Metadata: plugin.Selection{Provider: "sqlite"},
+		},
 		VerifyCertChain:  true,
 		CleanupAfterLoad: true,
 		// dingo v0.55.0's API-mode backfill phase requires a positive batch size
