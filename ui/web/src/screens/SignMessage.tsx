@@ -89,7 +89,6 @@ export function SignMessage({ account }: SignMessageProps) {
             setPassword(e.target.value);
             clearResult();
           }}
-          placeholder="Spending password"
           aria-label="Spending password"
           disabled={loading}
         />
@@ -109,12 +108,12 @@ export function SignMessage({ account }: SignMessageProps) {
             <p className="field-label">Signature (COSE_Sign1)</p>
             <div className="tx-hash-row">
               <code className="tx-hash">{result.signature}</code>
-              <CopyButton value={result.signature} />
+              <CopyButton value={result.signature} ariaLabel="Copy signature" />
             </div>
             <p className="field-label">Key (COSE_Key)</p>
             <div className="tx-hash-row">
               <code className="tx-hash">{result.key}</code>
-              <CopyButton value={result.key} />
+              <CopyButton value={result.key} ariaLabel="Copy COSE key" />
             </div>
           </div>
         )}

@@ -28,7 +28,9 @@ func TestSyncConfigForMapsFields(t *testing.T) {
 	if sc.Network != "preview" || sc.DataDir != "/data/db" {
 		t.Fatalf("network/datadir: %+v", sc)
 	}
-	if sc.StorageMode != "api" || sc.BlobPlugin != "badger" || sc.MetadataPlugin != "sqlite" {
+	if sc.StorageMode != "api" ||
+		sc.StoragePlugins.Blob.Provider != "badger" ||
+		sc.StoragePlugins.Metadata.Provider != "sqlite" {
 		t.Fatalf("storage/plugins: %+v", sc)
 	}
 	if !sc.VerifyCertChain || !sc.CleanupAfterLoad {

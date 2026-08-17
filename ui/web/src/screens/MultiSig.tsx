@@ -236,12 +236,12 @@ function CreateView({ canSign, onCancel, onCreated }: CreateViewProps) {
                 <p className="helper-text">Share this key-hash so others can include you.</p>
                 <div className="tx-hash-row">
                   <code className="tx-hash">{myKeyHash}</code>
-                  <CopyButton value={myKeyHash} />
+                  <CopyButton value={myKeyHash} ariaLabel="Copy my key hash" />
                 </div>
                 {myKeyVkey && (
                   <div className="tx-hash-row">
                     <code className="tx-hash">vkey: {myKeyVkey}</code>
-                    <CopyButton value={myKeyVkey} />
+                    <CopyButton value={myKeyVkey} ariaLabel="Copy my verification key" />
                   </div>
                 )}
                 <Button
@@ -427,7 +427,7 @@ function DetailView({ account, canSpend, canSign, onBack, onDeleted }: DetailVie
       <Card title={account.label}>
         <p className="field-label">Script address (receive)</p>
         <p className="mono address-full">{account.script_address}</p>
-        <CopyButton value={account.script_address} />
+        <CopyButton value={account.script_address} ariaLabel="Copy script address" />
 
         <dl className="preview-summary">
           <div className="dl-row">
@@ -543,7 +543,7 @@ function SpendFlow({ account, canSpend, canSign, onSpent }: SpendFlowProps) {
           <p className="field-label">Transaction hash</p>
           <div className="tx-hash-row">
             <code className="tx-hash">{result.tx_hash}</code>
-            <CopyButton value={result.tx_hash} />
+            <CopyButton value={result.tx_hash} ariaLabel="Copy transaction hash" />
           </div>
           <Button onClick={reset}>Spend again</Button>
         </div>
@@ -685,7 +685,7 @@ function CollectAndSubmit({
         <p className="field-label">Unsigned transaction (CBOR)</p>
         <div className="tx-hash-row">
           <code className="tx-hash">{built.unsigned_tx_cbor}</code>
-          <CopyButton value={built.unsigned_tx_cbor} />
+          <CopyButton value={built.unsigned_tx_cbor} ariaLabel="Copy unsigned transaction CBOR" />
           <DownloadButton
             value={built.unsigned_tx_cbor}
             filename="multisig-unsigned-tx.cbor"

@@ -1,8 +1,8 @@
-import { useRef } from "react";
 import { useState } from "react";
-import type { KeyboardEvent } from "react";
 import type { Account } from "../api/types";
 import { Card } from "../components/Card";
+import { Tabs } from "../components/Tabs";
+import type { TabDef } from "../components/Tabs";
 import { Credentials } from "./operate/Credentials";
 import { OperationalCert } from "./operate/OperationalCert";
 import { Registration } from "./operate/Registration";
@@ -15,7 +15,7 @@ interface OperateProps {
 
 type Tab = "credentials" | "opcert" | "registration" | "retirement" | "metadata";
 
-const TABS: { key: Tab; label: string }[] = [
+const TABS: readonly TabDef<Tab>[] = [
   { key: "credentials", label: "Credentials" },
   { key: "opcert", label: "Operational cert" },
   { key: "registration", label: "Registration" },
@@ -30,21 +30,6 @@ const TABS: { key: Tab; label: string }[] = [
 // the active wallet (spending operations require the spend password).
 export function Operate({ account }: OperateProps) {
   const [tab, setTab] = useState<Tab>("credentials");
-  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
-
-  function handleKeyDown(e: KeyboardEvent<HTMLButtonElement>, idx: number) {
-    let next = idx;
-    if (e.key === "ArrowRight") {
-      next = (idx + 1) % TABS.length;
-    } else if (e.key === "ArrowLeft") {
-      next = (idx - 1 + TABS.length) % TABS.length;
-    } else {
-      return;
-    }
-    e.preventDefault();
-    setTab(TABS[next].key);
-    tabRefs.current[next]?.focus();
-  }
 
   function renderPanel(key: Tab) {
     switch (key) {
@@ -68,37 +53,11 @@ export function Operate({ account }: OperateProps) {
           Operate a stake pool from this wallet&rsquo;s seed, or air-gap the cold
           key. All data comes from your own node — nothing is fetched externally.
         </p>
-        <div className="operate-tabs" role="tablist">
-          {TABS.map(({ key, label }, idx) => (
-            <button
-              key={key}
-              ref={(el) => { tabRefs.current[idx] = el; }}
-              role="tab"
-              id={`operate-tab-${key}`}
-              aria-selected={tab === key}
-              aria-controls={`operate-panel-${key}`}
-              tabIndex={tab === key ? 0 : -1}
-              className={tab === key ? "operate-tab active" : "operate-tab"}
-              onClick={() => setTab(key)}
-              onKeyDown={(e) => handleKeyDown(e, idx)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
       </Card>
 
-      {TABS.map(({ key }) => (
-        <div
-          key={key}
-          role="tabpanel"
-          id={`operate-panel-${key}`}
-          aria-labelledby={`operate-tab-${key}`}
-          hidden={tab !== key}
-        >
-          {tab === key ? renderPanel(key) : null}
-        </div>
-      ))}
+      <Tabs id="operate" tabs={TABS} active={tab} onSelect={setTab}>
+        {(key) => renderPanel(key)}
+      </Tabs>
     </div>
   );
 }

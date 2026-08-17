@@ -808,7 +808,7 @@ export interface TxSummaryMultiSig {
 
 // spend.TxSummary, with the api-layer's optional multisig.TxInfo attached.
 export interface TxSummary {
-  kind: "vkey" | "native_multisig" | "complete" | "unknown";
+  kind: "vkey" | "native_multisig";
   outputs: TxSummaryOutput[];
   fee: string;
   ttl?: number;
