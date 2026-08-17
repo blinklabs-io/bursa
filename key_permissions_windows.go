@@ -31,6 +31,12 @@ var insecureKeyFileSIDs = map[string]string{
 	"S-1-5-32-545": `BUILTIN\Users`,
 	"AU":           "Authenticated Users",
 	"S-1-5-11":     "Authenticated Users",
+	// Built-in Administrators is rejected as a trustee outright (both the SDDL
+	// alias and its numeric SID) so an allow ACE granting every local
+	// administrator is refused even when the file is owned by that group
+	// (O:BA), where the owner allow-list would otherwise re-admit it.
+	"BA":           `BUILTIN\Administrators`,
+	"S-1-5-32-544": `BUILTIN\Administrators`,
 }
 
 func isAccessAllowedACEType(aceType string) bool {
@@ -133,10 +139,10 @@ func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCR
 			path, ErrInsecureFileMode,
 		)
 	}
-	// Built-in Administrators (BA) is deliberately NOT allowed: a secret key
-	// file must not be readable by every local administrator, so a DACL such as
-	// (A;;GA;;;BA) is rejected. Only the file owner, the current user, the OS
-	// (Local System), and the owner-equivalent aliases may hold an allow ACE.
+	// Built-in Administrators is rejected earlier via insecureKeyFileSIDs (so an
+	// (A;;GA;;;BA) ACE fails even when the owner is BA); it is therefore absent
+	// here. Only the file owner, the current user, the OS (Local System), and
+	// the owner-equivalent aliases may hold an allow ACE.
 	allowed := map[string]bool{
 		owner: true,
 		"SY":  true, // Local System

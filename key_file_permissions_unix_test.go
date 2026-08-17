@@ -111,8 +111,11 @@ func TestLoadWalletDirSkipsPermissiveSecretKey(t *testing.T) {
 	publicPath := filepath.Join(tmpDir, "payment.vkey")
 	secret := `{"type":"PaymentSigningKeyShelley_ed25519","description":"Payment Signing Key","cborHex":"5820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
 	public := `{"type":"PaymentVerificationKeyShelley_ed25519","description":"Payment Verification Key","cborHex":"5820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
-	require.NoError(t, os.WriteFile(secretPath, []byte(secret), 0o644))
+	require.NoError(t, os.WriteFile(secretPath, []byte(secret), 0o600))
 	require.NoError(t, os.WriteFile(publicPath, []byte(public), 0o644))
+	// Force the insecure mode with Chmod so a restrictive umask (e.g. 0o077)
+	// cannot silently narrow it to 0o600 and defeat the rejection this asserts.
+	require.NoError(t, os.Chmod(secretPath, 0o644))
 
 	loaded, err := LoadWalletDir(tmpDir, true)
 	require.NoError(t, err)
@@ -124,7 +127,10 @@ func TestLoadWalletDirSurfacesInsecureWhenNoKeysLoad(t *testing.T) {
 	tmpDir := t.TempDir()
 	secretPath := filepath.Join(tmpDir, "payment.skey")
 	secret := `{"type":"PaymentSigningKeyShelley_ed25519","description":"Payment Signing Key","cborHex":"5820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
-	require.NoError(t, os.WriteFile(secretPath, []byte(secret), 0o644))
+	require.NoError(t, os.WriteFile(secretPath, []byte(secret), 0o600))
+	// Force the insecure mode with Chmod so a restrictive umask (e.g. 0o077)
+	// cannot silently narrow it to 0o600 and defeat the rejection this asserts.
+	require.NoError(t, os.Chmod(secretPath, 0o644))
 
 	// The only key file is a permission-rejected secret key, so the caller must
 	// receive ErrInsecureFileMode rather than the misleading fs.ErrNotExist.
