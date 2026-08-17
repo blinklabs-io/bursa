@@ -175,6 +175,15 @@ export function App() {
     setActiveId(wallet.id);
   }
 
+  // applyAccountChanged replaces the active wallet's record with the updated one
+  // returned after a BIP44 account switch / new-account derivation, so the whole
+  // app (keyed by wallet id + active account index) rebinds to it.
+  function applyAccountChanged(wallet: WalletView) {
+    setLockError(null);
+    setWallets((prev) => prev.map((w) => (w.id === wallet.id ? { ...wallet, active: true } : w)));
+    setActiveId(wallet.id);
+  }
+
   async function handleLock() {
     setLockError(null);
     try {
@@ -432,6 +441,7 @@ export function App() {
         onAddWallet={() => setAddingWallet(true)}
         onLock={handleLock}
         onNavigate={navigate}
+        onAccountChanged={applyAccountChanged}
       />
 
       <div className="layout">
@@ -447,6 +457,7 @@ export function App() {
             onActivated={applyActivated}
             onAddWallet={() => setAddingWallet(true)}
             onLock={handleLock}
+            onAccountChanged={applyAccountChanged}
           />
           {lockError && (
             <p className="error-text" role="alert">
@@ -465,7 +476,10 @@ export function App() {
             </button>
           ))}
         </nav>
-        <main className="content" key={activeWallet?.id ?? "none"}>
+        <main
+          className="content"
+          key={`${activeWallet?.id ?? "none"}:${activeWallet?.active_account_index ?? 0}`}
+        >
           {/* Scoped to the screen, not the shell: a screen that throws must not
               take the nav and wallet switcher with it, or there is no way to
               navigate out of the failure. resetKey clears the error on

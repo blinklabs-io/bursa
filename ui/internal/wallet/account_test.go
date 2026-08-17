@@ -157,6 +157,61 @@ func TestDeriveInvalidWindow(t *testing.T) {
 	}
 }
 
+// TestDeriveAccountIndexDiffersAndMatchesVectors is the multi-account derivation
+// guard: account index 1 must produce a DIFFERENT stake address and receive
+// window than account 0, must record its AccountIndex, and must match the
+// canonical bursa.NewWallet(WithAccountID) vector for that index.
+func TestDeriveAccountIndexDiffersAndMatchesVectors(t *testing.T) {
+	acct0, err := DeriveAccount(testMnemonic, "preview", 0, 5)
+	if err != nil {
+		t.Fatalf("DeriveAccount(0): %v", err)
+	}
+	acct1, err := DeriveAccount(testMnemonic, "preview", 1, 5)
+	if err != nil {
+		t.Fatalf("DeriveAccount(1): %v", err)
+	}
+	if acct0.AccountIndex != 0 || acct1.AccountIndex != 1 {
+		t.Fatalf("AccountIndex = %d,%d, want 0,1", acct0.AccountIndex, acct1.AccountIndex)
+	}
+	if acct0.StakeAddress == acct1.StakeAddress {
+		t.Fatalf("account 0 and 1 share stake address %q", acct0.StakeAddress)
+	}
+	if acct0.ReceiveAddresses[0] == acct1.ReceiveAddresses[0] {
+		t.Fatalf("account 0 and 1 share receive[0] %q", acct0.ReceiveAddresses[0])
+	}
+
+	// Standard vector: account 1 must match bursa's own account-1 derivation.
+	w1, err := bursa.NewWallet(testMnemonic, bursa.WithNetwork("preview"), bursa.WithAccountID(1))
+	if err != nil {
+		t.Fatalf("NewWallet(account 1): %v", err)
+	}
+	if acct1.ReceiveAddresses[0] != w1.PaymentAddress {
+		t.Fatalf("account1 receive[0] = %q, want %q", acct1.ReceiveAddresses[0], w1.PaymentAddress)
+	}
+	if acct1.StakeAddress != w1.StakeAddress {
+		t.Fatalf("account1 stake = %q, want %q", acct1.StakeAddress, w1.StakeAddress)
+	}
+
+	// Derive is the account-0 shorthand and must equal DeriveAccount(…, 0, …).
+	acctDefault, err := Derive(testMnemonic, "preview", 5)
+	if err != nil {
+		t.Fatalf("Derive: %v", err)
+	}
+	if acctDefault.StakeAddress != acct0.StakeAddress {
+		t.Fatalf("Derive != DeriveAccount(0): %q vs %q", acctDefault.StakeAddress, acct0.StakeAddress)
+	}
+}
+
+// TestDeriveAccountRejectsHardenedIndex guards the account-index bound.
+func TestDeriveAccountRejectsHardenedIndex(t *testing.T) {
+	if _, err := DeriveAccount(testMnemonic, "preview", 1<<31, 1); err == nil {
+		t.Fatal("DeriveAccount with hardened index = nil error, want rejection")
+	}
+	if _, err := AccountXpubForIndexFromMnemonicBytes([]byte(testMnemonic), 1<<31); err == nil {
+		t.Fatal("AccountXpubForIndexFromMnemonicBytes hardened index = nil error, want rejection")
+	}
+}
+
 func TestDeriveFromAccountXpubMatchesMnemonic(t *testing.T) {
 	mnemonic := testMnemonic
 	fromMnem, err := DeriveFromMnemonicBytes([]byte(mnemonic), "preview", 5)
