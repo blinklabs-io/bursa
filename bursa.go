@@ -17,11 +17,13 @@ package bursa
 import (
 	"bytes"
 	"crypto/ed25519"
+	crand "crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -2671,6 +2673,151 @@ func LoadKeyFromFile(path string) (*LoadedKey, error) {
 	return key, nil
 }
 
+const maxSecretKeyFileSize = 1 << 20
+
+// ReadSecretKeyFile reads a secret-key file after checking the permissions of
+// the open file handle. It preserves the raw formats accepted by callers that
+// parse key bytes themselves.
+func ReadSecretKeyFile(path string) ([]byte, error) {
+	file, err := openSecretKeyFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open secret key file %q: %w", path, err)
+	}
+	defer file.Close() //nolint:errcheck // read-only handle
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat secret key file %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf(
+			"secret key file %q is not a regular file (mode %s)",
+			path, info.Mode(),
+		)
+	}
+	if err := checkOpenFilePermissions(file); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxSecretKeyFileSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read secret key file %q: %w", path, err)
+	}
+	if len(data) > maxSecretKeyFileSize {
+		return nil, fmt.Errorf(
+			"secret key file %q exceeds maximum size of %d bytes",
+			path, maxSecretKeyFileSize,
+		)
+	}
+	return data, nil
+}
+
+// WriteSecretKeyFile atomically replaces a secret-key file with owner-only
+// contents. The destination is left untouched until the secured temporary file
+// has been written and synced.
+func WriteSecretKeyFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	file, err := CreateSecretKeyTempFile(
+		dir,
+		"."+filepath.Base(path)+".tmp-",
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create temporary secret key file: %w", err)
+	}
+	tmpName := file.Name()
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = file.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := file.Write(data); err != nil {
+		return fmt.Errorf("failed to write temporary secret key file: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("failed to sync temporary secret key file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary secret key file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("failed to replace secret key file %q: %w", path, err)
+	}
+	if err := syncSecretKeyDirectory(dir); err != nil {
+		return fmt.Errorf("failed to sync secret key directory: %w", err)
+	}
+	removeTmp = false
+	return nil
+}
+
+// CreateSecretKeyFile exclusively creates an owner-only secret-key file.
+func CreateSecretKeyFile(path string) (*os.File, error) {
+	file, err := createSecretKeyFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := restrictSecretKeyFilePermissions(file); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return nil, err
+	}
+	return file, nil
+}
+
+// CreateSecretKeyTempFile creates a uniquely named owner-only temporary file
+// without closing and reopening the handle, preserving exclusive creation.
+func CreateSecretKeyTempFile(dir, pattern string) (*os.File, error) {
+	var suffix [8]byte
+	for range 100 {
+		if _, err := crand.Read(suffix[:]); err != nil {
+			return nil, err
+		}
+		path := filepath.Join(dir, pattern+hex.EncodeToString(suffix[:]))
+		file, err := createSecretKeyFileExclusive(path)
+		if err == nil {
+			if err := restrictSecretKeyFilePermissions(file); err != nil {
+				_ = file.Close()
+				_ = os.Remove(path)
+				return nil, err
+			}
+			return file, nil
+		}
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		return nil, err
+	}
+	return nil, fmt.Errorf("failed to create unique secret key file in %q", dir)
+}
+
+// RestrictSecretKeyFilePermissions applies the platform-specific owner-only
+// permissions to an already-open secret file. Callers can use this for an
+// atomic temporary-file workflow before renaming the file into place.
+func RestrictSecretKeyFilePermissions(file *os.File) error {
+	return restrictSecretKeyFilePermissions(file)
+}
+
+// LoadSecretKeyFromFile loads a secret key from a file after checking the
+// permissions of the open file handle. Use this for secret key files that must
+// not be readable by group or other users. LoadKeyFromFile remains available
+// for public artifacts such as operational certificates.
+func LoadSecretKeyFromFile(path string) (*LoadedKey, error) {
+	data, err := ReadSecretKeyFile(path)
+	if err != nil {
+		return nil, err
+	}
+	key, err := LoadKeyFromBytes(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse secret key file %q: %w", path, err)
+	}
+	if len(key.SKey) == 0 {
+		return nil, fmt.Errorf("key file %q does not contain a secret key", path)
+	}
+	key.File = filepath.Base(path)
+	return key, nil
+}
+
 func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 	if dir == "" {
 		return nil, errors.New("directory path cannot be empty")
@@ -2684,6 +2831,12 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 	// Most wallets have around 6 key files
 	out := make([]*LoadedKey, 0, 8)
 
+	// firstInsecure records the first secret key rejected for insecure
+	// permissions, so that a directory whose only key files are all
+	// permission-rejected surfaces that reason instead of the misleading
+	// fs.ErrNotExist returned for an empty result.
+	var firstInsecure error
+
 	for _, e := range files {
 		if e.IsDir() {
 			continue
@@ -2694,20 +2847,29 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 			continue
 		}
 		p := filepath.Join(dir, n)
-		b, err := os.ReadFile(p)
-		if err != nil {
-			// Skip files that can't be read
-			continue
+		var loadedKeyFile *LoadedKey
+		if strings.HasSuffix(n, ".skey") {
+			loadedKeyFile, err = LoadSecretKeyFromFile(p)
+		} else {
+			loadedKeyFile, err = LoadKeyFromFile(p)
 		}
-		loadedKeyFile, err := parseKeyEnvelope(b)
-		if err != nil {
-			// Skip files that can't be parsed
+		if err != nil || loadedKeyFile == nil {
+			// Skip files that can't be parsed, but remember an insecure-mode
+			// rejection so it can be surfaced if nothing else loads.
+			if firstInsecure == nil && errors.Is(err, ErrInsecureFileMode) {
+				firstInsecure = fmt.Errorf(
+					"secret key file %q has insecure permissions: %w", p, err,
+				)
+			}
 			continue
 		}
 		loadedKeyFile.File = n
 		out = append(out, loadedKeyFile)
 	}
 	if len(out) == 0 {
+		if firstInsecure != nil {
+			return nil, firstInsecure
+		}
 		return nil, fs.ErrNotExist
 	}
 

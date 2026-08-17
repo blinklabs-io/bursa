@@ -115,7 +115,7 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 					continue
 				}
 				path := filepath.Join(c.Path, e.Name())
-				data, err := os.ReadFile(path)
+				data, err := bursa.ReadSecretKeyFile(path)
 				if err != nil {
 					return nil, fmt.Errorf("read key %q: %w", e.Name(), err)
 				}
