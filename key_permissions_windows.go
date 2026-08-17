@@ -1,0 +1,125 @@
+//go:build windows
+
+// Copyright 2026 Blink Labs Software
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package bursa
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"golang.org/x/sys/windows"
+)
+
+var insecureKeyFileSIDs = map[string]string{
+	"WD":           "Everyone",
+	"S-1-1-0":      "Everyone",
+	"BU":           `BUILTIN\Users`,
+	"S-1-5-32-545": `BUILTIN\Users`,
+	"AU":           "Authenticated Users",
+	"S-1-5-11":     "Authenticated Users",
+}
+
+func checkOpenFilePermissions(file *os.File) error {
+	descriptor, err := windows.GetSecurityInfo(
+		windows.Handle(file.Fd()),
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to get security info for %q: %w", file.Name(), err)
+	}
+	daclObject, _, err := descriptor.DACL()
+	if err != nil || daclObject == nil {
+		return fmt.Errorf(
+			"secret key file %q has no restrictive DACL: %w",
+			file.Name(), ErrInsecureFileMode,
+		)
+	}
+	sddl := descriptor.String()
+	if sddl == "" {
+		return fmt.Errorf("failed to read security descriptor for %q", file.Name())
+	}
+
+	daclStart := strings.Index(sddl, "D:")
+	if daclStart < 0 {
+		return fmt.Errorf(
+			"secret key file %q has no DACL (unrestricted access): %w",
+			file.Name(), ErrInsecureFileMode,
+		)
+	}
+	dacl := sddl[daclStart+2:]
+	owner := sddlSection(sddl, "O:")
+	if owner == "" {
+		return fmt.Errorf(
+			"secret key file %q has no owner in its security descriptor: %w",
+			file.Name(), ErrInsecureFileMode,
+		)
+	}
+	allowed := map[string]bool{
+		owner: true,
+		"BA":  true, // Built-in Administrators
+		"SY":  true, // Local System
+		"CO":  true, // Creator Owner
+		"OW":  true, // Owner Rights
+	}
+	if saclStart := strings.Index(dacl, "S:"); saclStart >= 0 {
+		dacl = dacl[:saclStart]
+	}
+	for {
+		start := strings.IndexByte(dacl, '(')
+		if start < 0 {
+			break
+		}
+		end := strings.IndexByte(dacl[start:], ')')
+		if end < 0 {
+			break
+		}
+		fields := strings.Split(dacl[start+1:start+end], ";")
+		dacl = dacl[start+end+1:]
+		if len(fields) < 6 || fields[0] != "A" {
+			continue
+		}
+		if name, ok := insecureKeyFileSIDs[fields[5]]; ok {
+			return fmt.Errorf(
+				"secret key file %q grants access to %s: %w",
+				file.Name(), name, ErrInsecureFileMode,
+			)
+		}
+		if !allowed[fields[5]] {
+			return fmt.Errorf(
+				"secret key file %q grants access to unexpected trustee %s: %w",
+				file.Name(), fields[5], ErrInsecureFileMode,
+			)
+		}
+	}
+	return nil
+}
+
+func sddlSection(sddl, section string) string {
+	start := strings.Index(sddl, section)
+	if start < 0 {
+		return ""
+	}
+	value := sddl[start+len(section):]
+	end := len(value)
+	for _, next := range []string{"O:", "G:", "D:", "S:"} {
+		if idx := strings.Index(value, next); idx >= 0 && idx < end {
+			end = idx
+		}
+	}
+	return value[:end]
+}

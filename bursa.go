@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -2666,6 +2667,35 @@ func LoadKeyFromFile(path string) (*LoadedKey, error) {
 	key, err := parseKeyEnvelope(data)
 	if err != nil {
 		return nil, err
+	}
+	key.File = filepath.Base(path)
+	return key, nil
+}
+
+// LoadSecretKeyFromFile loads a secret key from a file after checking the
+// permissions of the open file handle. Use this for secret key files that must
+// not be readable by group or other users. LoadKeyFromFile remains available
+// for public artifacts such as operational certificates.
+func LoadSecretKeyFromFile(path string) (*LoadedKey, error) {
+	file, err := os.Open(path) // #nosec G304 -- caller-provided key path
+	if err != nil {
+		return nil, fmt.Errorf("failed to open secret key file %q: %w", path, err)
+	}
+	defer file.Close() //nolint:errcheck // read-only handle
+
+	if err := checkOpenFilePermissions(file); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read secret key file %q: %w", path, err)
+	}
+	key, err := LoadKeyFromBytes(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse secret key file %q: %w", path, err)
+	}
+	if len(key.SKey) == 0 {
+		return nil, fmt.Errorf("key file %q does not contain a secret key", path)
 	}
 	key.File = filepath.Base(path)
 	return key, nil
