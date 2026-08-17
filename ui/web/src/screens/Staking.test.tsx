@@ -200,8 +200,8 @@ test("(c) Review delegation builds the request and shows the itemized confirm", 
   // Itemized confirm: each cert summary plus the 2 ADA deposit and total.
   await waitFor(() => expect(screen.getByText(/register stake key/i)).toBeInTheDocument());
   expect(screen.getByText(/delegate stake to pool1abc/i)).toBeInTheDocument();
-  expect(screen.getByText(/2 ₳ deposit/)).toBeInTheDocument(); // 2000000 lovelace
-  expect(screen.getByText(/2\.174 ₳/)).toBeInTheDocument(); // total 2174000 lovelace
+  expect(screen.getByText(/2 ADA deposit/)).toBeInTheDocument(); // 2000000 lovelace
+  expect(screen.getByText(/2\.174 ADA/)).toBeInTheDocument(); // total 2174000 lovelace
 });
 
 // --- 4-way voting-power picker ---
@@ -224,8 +224,8 @@ test("(e) choosing 'register self' reveals the optional anchor fields + deposit 
 
   expect(screen.getByPlaceholderText(/example\.org\/my-drep/i)).toBeInTheDocument();
   expect(screen.getByText(/exact deposit amounts are read from your node/i)).toBeInTheDocument();
-  expect(screen.queryByText(/500 ₳ deposit/i)).not.toBeInTheDocument();
-  expect(screen.queryByText(/2 ₳ stake-key deposit/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/500 ADA deposit/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/2 ADA stake-key deposit/i)).not.toBeInTheDocument();
 });
 
 test("register-self metadata hash without a URL blocks Review", async () => {
@@ -327,7 +327,7 @@ test("(i) active wallet shows withdraw + change; Withdraw builds a withdraw-only
 
   // Status shows Registered + the withdrawable amount.
   expect(screen.getByText(/registered/i)).toBeInTheDocument();
-  expect(screen.getByText(/14\.207 ₳/)).toBeInTheDocument();
+  expect(screen.getByText(/14\.207 ADA/)).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /withdraw rewards/i }));
 

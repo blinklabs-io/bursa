@@ -12,6 +12,18 @@
  *   formatAda("1000001")        → "1.000001"
  *   formatAda("0")              → "0"
  */
+/**
+ * Insert thousands separators into a run of integer digits.
+ *
+ * Balances, stake and token supplies in this wallet routinely run to eight or
+ * more digits, where an ungrouped run is genuinely hard to read at a glance
+ * ("63120000000000"). Applied to the integer part only; fractional digits are
+ * never grouped.
+ */
+function groupDigits(digits: string): string {
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 export function formatAda(lovelace: string): string {
   // BigInt() throws on a non-integer string; guard so a malformed API value
   // (e.g. an empty rewards field) shows through instead of crashing the screen.
@@ -26,13 +38,15 @@ export function formatAda(lovelace: string): string {
   const intPart = abs / LOVELACE_PER_ADA;
   const fracPart = abs % LOVELACE_PER_ADA;
 
+  const intStr = groupDigits(intPart.toString());
+
   if (fracPart === BigInt(0)) {
-    return (isNegative ? "-" : "") + intPart.toString();
+    return (isNegative ? "-" : "") + intStr;
   }
 
   // Pad to 6 digits, then strip trailing zeros.
   const fracStr = fracPart.toString().padStart(6, "0").replace(/0+$/, "");
-  return (isNegative ? "-" : "") + intPart.toString() + "." + fracStr;
+  return (isNegative ? "-" : "") + intStr + "." + fracStr;
 }
 
 /**
@@ -110,8 +124,13 @@ export function parseAda(ada: string): string {
 const MAX_TOKEN_DECIMALS = 18;
 
 export function formatTokenQuantity(quantity: string, decimals: number): string {
-  if (!Number.isInteger(decimals) || decimals <= 0 || decimals > MAX_TOKEN_DECIMALS) return quantity;
   if (!/^-?\d+$/.test(quantity)) return quantity;
+  // A zero-decimal token (SNEK, HOSKY) has no fractional part to render, but
+  // its whole-unit count still needs grouping.
+  if (!Number.isInteger(decimals) || decimals <= 0 || decimals > MAX_TOKEN_DECIMALS) {
+    const negative = quantity.startsWith("-");
+    return (negative ? "-" : "") + groupDigits(quantity.replace(/^-/, ""));
+  }
 
   const base = BigInt(10) ** BigInt(decimals);
   const raw = BigInt(quantity);
@@ -121,10 +140,12 @@ export function formatTokenQuantity(quantity: string, decimals: number): string 
   const intPart = abs / base;
   const fracPart = abs % base;
 
+  const intStr = groupDigits(intPart.toString());
+
   if (fracPart === BigInt(0)) {
-    return (isNegative ? "-" : "") + intPart.toString();
+    return (isNegative ? "-" : "") + intStr;
   }
 
   const fracStr = fracPart.toString().padStart(decimals, "0").replace(/0+$/, "");
-  return (isNegative ? "-" : "") + intPart.toString() + "." + fracStr;
+  return (isNegative ? "-" : "") + intStr + "." + fracStr;
 }

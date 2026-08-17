@@ -283,9 +283,9 @@ function Compose(props: ComposeProps) {
           <p className="verified-readout">
             <span className="verified-tick">✓ Verified by your node</span>
             {" · "}margin {pct(pool.margin_cost)}
-            {" · "}pledge {formatAda(pool.declared_pledge)} ₳
-            {" · "}fixed {formatAda(pool.fixed_cost)} ₳
-            {" · "}live stake {formatAda(pool.live_stake)} ₳
+            {" · "}pledge {formatAda(pool.declared_pledge)} ADA
+            {" · "}fixed {formatAda(pool.fixed_cost)} ADA
+            {" · "}live stake {formatAda(pool.live_stake)} ADA
             <ExplorerLink network={network} kind="pool" id={pool.pool_id} />
           </p>
         )}
@@ -502,9 +502,9 @@ function PreviewPhase({ preview, isHardware, walletId, onBack, onDone }: Preview
               <span className="cert-body">{c.summary}</span>
               <span className="cert-amt">
                 {c.deposit_lovelace
-                  ? `${formatAda(c.deposit_lovelace)} ₳ deposit`
+                  ? `${formatAda(c.deposit_lovelace)} ADA deposit`
                   : c.amount_lovelace
-                    ? `${formatAda(c.amount_lovelace)} ₳`
+                    ? `${formatAda(c.amount_lovelace)} ADA`
                     : "—"}
               </span>
             </div>
@@ -514,23 +514,23 @@ function PreviewPhase({ preview, isHardware, walletId, onBack, onDone }: Preview
         <dl className="preview-summary">
           <div className="dl-row">
             <dt>Network fee</dt>
-            <dd>{formatAda(preview.fee)} ₳</dd>
+            <dd>{formatAda(preview.fee)} ADA</dd>
           </div>
           {preview.deposit !== "0" && (
             <div className="dl-row">
               <dt>Refundable deposit</dt>
-              <dd>{formatAda(preview.deposit)} ₳</dd>
+              <dd>{formatAda(preview.deposit)} ADA</dd>
             </div>
           )}
           {preview.withdrawal && (
             <div className="dl-row">
               <dt>Withdrawal</dt>
-              <dd>{formatAda(preview.withdrawal)} ₳</dd>
+              <dd>{formatAda(preview.withdrawal)} ADA</dd>
             </div>
           )}
           <div className="dl-row">
             <dt>Total to confirm</dt>
-            <dd className="total-accent">{formatAda(preview.total)} ₳</dd>
+            <dd className="total-accent">{formatAda(preview.total)} ADA</dd>
           </div>
         </dl>
       </Card>
@@ -670,7 +670,7 @@ function ActiveState({ poolId, withdrawable, note, onChange, onWithdraw, network
       <Card title="Rewards">
         <div className="dl-row">
           <dt className="field-label">Withdrawable</dt>
-          <dd className="total-accent mono">{formatAda(withdrawable)} ₳</dd>
+          <dd className="total-accent mono">{formatAda(withdrawable)} ADA</dd>
         </div>
 
         {error && (
