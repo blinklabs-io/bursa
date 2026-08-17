@@ -1,4 +1,4 @@
-import { parseAda, formatAda, formatTokenQuantity } from "./format";
+import { parseAda, formatAda, formatAdaPlain, formatTokenQuantity } from "./format";
 
 // --- parseAda tests ---
 
@@ -130,4 +130,15 @@ test("formatTokenQuantity groups whole-token amounts, with and without decimals"
 
 test("formatTokenQuantity leaves a non-numeric quantity alone", () => {
   expect(formatTokenQuantity("not-a-number", 0)).toBe("not-a-number");
+});
+
+test("formatAdaPlain leaves digits ungrouped for machine output", () => {
+  // CSV and file exports must parse as numbers; a grouped "1,500" is read as
+  // text or splits the column.
+  expect(formatAdaPlain("1500000000")).toBe("1500");
+  expect(formatAdaPlain("63120000000000")).toBe("63120000");
+  expect(formatAdaPlain("4820657123")).toBe("4820.657123");
+  expect(formatAdaPlain("-250000000")).toBe("-250");
+  // Same value, grouped, for display.
+  expect(formatAda("1500000000")).toBe("1,500");
 });

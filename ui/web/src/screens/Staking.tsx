@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type {
   DelegationRequest,
   DelegationPreview,
@@ -627,7 +627,7 @@ function DonePhase({ result, onReset }: { result: TxResult; onReset: () => void 
         <p className="field-label">Transaction hash</p>
         <div className="tx-hash-row">
           <code className="tx-hash">{result.tx_hash}</code>
-          <CopyButton value={result.tx_hash} />
+          <CopyButton value={result.tx_hash} ariaLabel="Copy transaction hash" />
         </div>
         <Button onClick={onReset}>Back to staking</Button>
       </div>
@@ -694,6 +694,24 @@ function ActiveState({ poolId, withdrawable, note, onChange, onWithdraw, network
 
 // --- Top-level Staking screen ---
 
+// The delegation compose draft. Owned by the parent Stake screen, because
+// switching tabs unmounts this one and every field would otherwise be lost.
+export interface ComposeDraft {
+  poolId: string;
+  voteType: VoteType | null;
+  drepId: string;
+  anchorUrl: string;
+  anchorHash: string;
+}
+
+const EMPTY_DRAFT: ComposeDraft = {
+  poolId: "",
+  voteType: null,
+  drepId: "",
+  anchorUrl: "",
+  anchorHash: "",
+};
+
 interface StakingProps {
   // Optional so existing no-prop callers/tests keep working; the app always
   // passes the active wallet's real network when routing to this screen.
@@ -703,51 +721,46 @@ interface StakingProps {
   // certificates — i.e. SeedSigner); walletId keys its per-wallet fingerprint.
   isHardware?: boolean;
   walletId?: string;
-  // The pool-ID draft is owned by the parent Stake screen so it survives a tab
+  // The compose draft is owned by the parent Stake screen so it survives a tab
   // switch to the pool directory and back. Left optional (with internal state
   // as the fallback) so this screen still stands alone.
-  poolId?: string;
-  setPoolId?: (id: string) => void;
-  // Set by the parent when the user picks a pool from the directory, so
-  // "Delegate" on a directory row lands on a filled-in form rather than on the
-  // status panel an already-delegating wallet would otherwise see. Read at
-  // mount because switching tabs unmounts this screen.
-  startInCompose?: boolean;
-  // Called once the initial phase has been taken, so the parent can clear the
-  // intent and a later return to this tab opens on status as usual.
-  onComposeStarted?: () => void;
+  draft?: ComposeDraft;
+  setDraft?: (update: (prev: ComposeDraft) => ComposeDraft) => void;
+  // Whether the user is part-way through composing. Owned by the parent for
+  // the same reason the draft is: switching tabs unmounts this screen, and
+  // coming back to a status panel with a half-filled draft hidden behind
+  // "Change delegation" loses the user's place. Also how "Delegate" on a
+  // directory row lands on a filled-in form rather than the status panel an
+  // already-delegating wallet would otherwise see.
+  composing?: boolean;
+  setComposing?: (composing: boolean) => void;
 }
 
 export function Staking({
   network = "preview",
   isHardware,
   walletId,
-  poolId: poolIdProp,
-  setPoolId: setPoolIdProp,
-  startInCompose = false,
-  onComposeStarted,
+  draft: draftProp,
+  setDraft: setDraftProp,
+  composing: composingProp,
+  setComposing: setComposingProp,
 }: StakingProps = {}) {
   const delegation = useDelegation();
 
-  const [phase, setPhase] = useState<Phase>(startInCompose ? "compose" : "status");
+  const [phase, setPhase] = useState<Phase>(composingProp ? "compose" : "status");
   const [previewFrom, setPreviewFrom] = useState<Phase>("status");
   const [preview, setPreview] = useState<DelegationPreview | null>(null);
   const [txResult, setTxResult] = useState<TxResult | null>(null);
 
-  // Compose draft lives at the top so Back returns to in-progress entry.
-  const [poolIdLocal, setPoolIdLocal] = useState("");
-  const poolId = poolIdProp ?? poolIdLocal;
-  const setPoolId = setPoolIdProp ?? setPoolIdLocal;
-  const [voteType, setVoteType] = useState<VoteType | null>(null);
-  const [drepId, setDrepId] = useState("");
-  const [anchorUrl, setAnchorUrl] = useState("");
-  const [anchorHash, setAnchorHash] = useState("");
+  // Compose draft lives above this screen (or locally when it stands alone) so
+  // Back — and a trip to another tab — returns to in-progress entry.
+  const [draftLocal, setDraftLocal] = useState<ComposeDraft>(EMPTY_DRAFT);
+  const draft = draftProp ?? draftLocal;
+  const setDraft = setDraftProp ?? setDraftLocal;
+  const setField = <K extends keyof ComposeDraft>(key: K) => (value: ComposeDraft[K]) =>
+    setDraft((prev) => ({ ...prev, [key]: value }));
+  const { poolId, voteType, drepId, anchorUrl, anchorHash } = draft;
 
-  // Report the consumed intent exactly once, on mount.
-  useEffect(() => {
-    if (startInCompose) onComposeStarted?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   if (delegation.loading) {
     return <p>Loading…</p>;
@@ -765,6 +778,9 @@ export function Staking({
 
   function goCompose() {
     setPhase("compose");
+    // Remember it above this screen, so a trip to another tab returns here
+    // rather than to the status panel.
+    setComposingProp?.(true);
   }
 
   function handlePreview(p: DelegationPreview, from: Phase = "compose") {
@@ -781,12 +797,9 @@ export function Staking({
   function handleReset() {
     setPreview(null);
     setTxResult(null);
-    setPoolId("");
-    setVoteType(null);
-    setDrepId("");
-    setAnchorUrl("");
-    setAnchorHash("");
+    setDraft(() => EMPTY_DRAFT);
     setPhase("status");
+    setComposingProp?.(false);
     delegation.refresh();
   }
 
@@ -833,15 +846,15 @@ export function Staking({
       <StatusPanel poolId={del?.pool_id ?? null} active={isActive} network={network} />
       <Compose
         poolId={poolId}
-        setPoolId={setPoolId}
+        setPoolId={setField("poolId")}
         voteType={voteType}
-        setVoteType={setVoteType}
+        setVoteType={setField("voteType")}
         drepId={drepId}
-        setDrepId={setDrepId}
+        setDrepId={setField("drepId")}
         anchorUrl={anchorUrl}
-        setAnchorUrl={setAnchorUrl}
+        setAnchorUrl={setField("anchorUrl")}
         anchorHash={anchorHash}
-        setAnchorHash={setAnchorHash}
+        setAnchorHash={setField("anchorHash")}
         onPreview={handlePreview}
         network={network}
       />

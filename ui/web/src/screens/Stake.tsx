@@ -3,6 +3,7 @@ import { Card } from "../components/Card";
 import { Tabs } from "../components/Tabs";
 import type { TabDef } from "../components/Tabs";
 import { Staking } from "./Staking";
+import type { ComposeDraft } from "./Staking";
 import { RewardHistory } from "./RewardHistory";
 import { PoolDirectory } from "./PoolDirectory";
 
@@ -22,6 +23,9 @@ interface StakeProps {
   // and the pool directory are node-local reads available to any active wallet,
   // so the screen stays reachable and only the Delegation tab explains itself.
   canDelegate?: boolean;
+  // Whether the node can answer queries. Only the pool directory needs it;
+  // rewards and the delegation status come from the account read.
+  canQueryNode?: boolean;
   // Which tab to open on. Lets the legacy #/rewards and #/pools routes land
   // where the user expected rather than dumping them on Delegation.
   initialTab?: Tab;
@@ -44,6 +48,7 @@ export function Stake({
   isHardware,
   walletId,
   canDelegate = true,
+  canQueryNode = true,
   initialTab = "delegation",
 }: StakeProps = {}) {
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -55,19 +60,26 @@ export function Stake({
     setTab(initialTab);
   }, [initialTab]);
 
-  // The delegation draft's pool ID lives here rather than inside Staking so it
-  // survives a tab switch — the whole point of merging these is that you can
-  // browse Pools and come back without losing what you had typed.
-  const [poolId, setPoolId] = useState("");
-  // Set when the user picks a pool from the directory. Switching tabs unmounts
-  // the delegation screen, so this is read at its next mount rather than
-  // signalled to a live component -- and cleared once taken, so coming back to
-  // the tab later opens on the status panel as usual.
-  const [composeIntent, setComposeIntent] = useState(false);
+  // The whole delegation draft lives here rather than inside Staking, because
+  // switching tabs unmounts that screen. Lifting only the pool ID would still
+  // have thrown away a chosen vote target, DRep ID and anchor the moment the
+  // user glanced at the directory — the opposite of what merging these was
+  // for.
+  const [draft, setDraft] = useState<ComposeDraft>({
+    poolId: "",
+    voteType: null,
+    drepId: "",
+    anchorUrl: "",
+    anchorHash: "",
+  });
+  // Whether the delegation form is open. Switching tabs unmounts that screen,
+  // so this — like the draft — has to live above it, or the user comes back to
+  // a status panel with their half-filled form hidden.
+  const [composing, setComposing] = useState(false);
 
   function handleDelegate(id: string) {
-    setPoolId(id);
-    setComposeIntent(true);
+    setDraft((prev) => ({ ...prev, poolId: id }));
+    setComposing(true);
     setTab("delegation");
   }
 
@@ -95,15 +107,26 @@ export function Stake({
                   network={network}
                   isHardware={isHardware}
                   walletId={walletId}
-                  poolId={poolId}
-                  setPoolId={setPoolId}
-                  startInCompose={composeIntent}
-                  onComposeStarted={() => setComposeIntent(false)}
+                  draft={draft}
+                  setDraft={setDraft}
+                  composing={composing}
+                  setComposing={setComposing}
                 />
               );
             case "rewards":
               return <RewardHistory network={network} />;
             case "pools":
+              if (!canQueryNode) {
+                return (
+                  <Card title="Pools">
+                    <p className="helper-text">
+                      The pool directory is read from your node, which is not
+                      answering queries yet. Delegation status and reward
+                      history above do not need it.
+                    </p>
+                  </Card>
+                );
+              }
               // No delegate action for a wallet that cannot delegate: the
               // button would hand the pool to a tab that only explains why it
               // is unavailable, silently dropping the choice.

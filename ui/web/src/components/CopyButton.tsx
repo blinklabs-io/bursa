@@ -66,18 +66,22 @@ export function CopyButton({
       type="button"
       className={copied ? "btn-icon copied" : "btn-icon"}
       onClick={handleClick}
-      // The glyph swap is invisible to a screen reader, so the state rides on
-      // the button's own accessible name — which is re-announced on the
-      // focused control after the click. A live region here instead would mean
-      // 39 of them in the document competing to be "the" status.
-      //
-      // The label is kept alongside the state: with a copy control beside every
-      // address and hash on a screen, a bare "Copied" would leave a
-      // screen-reader user unable to tell WHICH one they just copied.
+      // The name carries the state as well as the identity: with a copy
+      // control beside every address and hash, a bare "Copied" would leave a
+      // screen-reader user unable to tell WHICH one they copied.
       aria-label={copied ? `${label} (copied)` : label}
       title={copied ? `${label} (copied)` : label}
     >
       {copied ? <CheckGlyph /> : <CopyGlyph />}
+      {/* A changed accessible name on an already-focused control is not
+          reliably announced, so success also goes through a live region. It is
+          rendered ONLY while copied, so the document never holds a crowd of
+          empty status nodes competing to be "the" status. */}
+      {copied && (
+        <span className="sr-only" role="status">
+          {label} copied
+        </span>
+      )}
     </button>
   );
 }

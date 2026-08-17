@@ -129,7 +129,7 @@ function SignTab({ setBusy }: ActionTabProps) {
           <p className="field-label">Witness (CBOR)</p>
           <div className="tx-hash-row">
             <code className="tx-hash">{result.witness_cbor}</code>
-            <CopyButton value={result.witness_cbor} />
+            <CopyButton value={result.witness_cbor} ariaLabel="Copy witness CBOR" />
             <DownloadButton value={result.witness_cbor} filename="witness.cbor" label="Download" />
           </div>
         </div>
@@ -229,7 +229,7 @@ function SubmitTab({ setBusy }: ActionTabProps) {
           <p className="field-label">Transaction hash</p>
           <div className="tx-hash-row">
             <code className="tx-hash">{result.tx_hash}</code>
-            <CopyButton value={result.tx_hash} />
+            <CopyButton value={result.tx_hash} ariaLabel="Copy transaction hash" />
           </div>
         </div>
       )}

@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
-import { Activity } from "./Activity";
+import { Activity, transactionsToCsv } from "./Activity";
 import * as hooks from "../api/hooks";
 import * as client from "../api/client";
 import type { Tx, TxDetail } from "../api/types";
@@ -322,4 +322,19 @@ test("(s) each row has an external explorer link to the FULL tx hash, scoped to 
   expect(link).toHaveAttribute("href", `https://cardanoscan.io/transaction/${TX1.tx_hash}`);
   expect(link).toHaveAttribute("target", "_blank");
   expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+});
+
+test("(s) CSV amounts are ungrouped so they parse as numbers", () => {
+  // 1,500 ADA — above the grouping threshold, which is the whole point.
+  const big = { ...TX1, net_lovelace: "1500000000", fee: "1200000" };
+  const text = transactionsToCsv([big]);
+
+  // Grouped display values ("1,500") reach a CSV consumer as quoted text or
+  // split the column outright.
+  expect(text).toContain("1500");
+  expect(text).not.toContain("1,500");
+  const amountCells = text.trim().split("\n").slice(1).flatMap((line) => line.split(",").slice(2, 4));
+  for (const cell of amountCells) {
+    expect(cell).toMatch(/^-?\d+(\.\d+)?$/);
+  }
 });

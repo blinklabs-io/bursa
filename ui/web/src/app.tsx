@@ -341,20 +341,21 @@ export function App() {
     // fall back to Portfolio while the node or active wallet cannot support it.
     content = <Portfolio />;
   } else if (STAKE_ROUTES.has(route)) {
-    // Delegation, rewards and the pool directory are one screen. It needs only
-    // a queryable node, so read-only wallets still get rewards and pools; the
-    // Delegation tab explains itself when this wallet cannot sign a
-    // certificate, rather than the whole screen vanishing.
-    content = canQueryNode ? (
+    // Delegation, rewards and the pool directory are one screen, and it is not
+    // gated as a whole: reward history is a plain account read that the old
+    // #/rewards route offered to any active wallet whatever the node was
+    // doing, and merging the screens must not quietly take that away. Each tab
+    // states its own requirement instead — Delegation when this wallet cannot
+    // sign a certificate, Pools when the node cannot answer queries.
+    content = (
       <Stake
         network={activeWallet.network}
         isHardware={activeWallet.type === "hardware"}
         walletId={activeWallet.id}
         canDelegate={canStake}
+        canQueryNode={canQueryNode}
         initialTab={STAKE_ROUTES.get(route)}
       />
-    ) : (
-      <Portfolio />
     );
   } else if (route === "sign") {
     content = canSign ? <SignMessage account={toAccount(activeWallet)} /> : <Portfolio />;
@@ -404,7 +405,6 @@ export function App() {
       addingWallet ||
       (key === "send" && !canSend) ||
       (key === "swap" && !canSwap) ||
-      (key === "stake" && !canQueryNode) ||
       (key === "sign" && !canSign) ||
       (key === "offline" && !canSign) ||
       (key === "operate" && !canSign) ||
@@ -469,8 +469,13 @@ export function App() {
               navigation. */}
           {/* resetKey is the raw route, not activeRoute: the latter collapses
               stake/staking/rewards/pools to one nav key, so moving between
-              those would not clear a caught error. */}
-          <ErrorBoundary label={activeRoute || "wallet"} resetKey={route}>
+              those would not clear a caught error. addingWallet is in the key
+              too — it swaps the content without changing the route, and is a
+              shell recovery action that must not land on a stale fallback. */}
+          <ErrorBoundary
+            label={activeRoute || "wallet"}
+            resetKey={`${route}:${addingWallet}`}
+          >
             {content}
           </ErrorBoundary>
         </main>

@@ -78,6 +78,9 @@ test("CopyButton copies its value and shows feedback on success", async () => {
   // "Copied" appears only after the async write resolves. The control is icon-only, so the copied state rides on its
   // accessible name rather than visible text.
   expect(await screen.findByRole("button", { name: /\(copied\)$/ })).toBeInTheDocument();
+  // A changed name on an already-focused control is not reliably announced, so
+  // the success also goes through a live region — present only while copied.
+  expect(screen.getByRole("status")).toHaveTextContent(/copied/i);
 });
 
 test("SyncBanner shows error detail ahead of retained bootstrap diagnostics", () => {

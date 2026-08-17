@@ -1,4 +1,16 @@
 /**
+ * Insert thousands separators into a run of integer digits.
+ *
+ * Balances, stake and token supplies in this wallet routinely run to eight or
+ * more digits, where an ungrouped run is genuinely hard to read at a glance
+ * ("63120000000000"). Applied to the integer part only; fractional digits are
+ * never grouped.
+ */
+function groupDigits(digits: string): string {
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/**
  * Convert a lovelace amount (as a string) to an ADA display string.
  *
  * Uses BigInt to avoid float precision loss on values that exceed 2^53.
@@ -12,19 +24,23 @@
  *   formatAda("1000001")        → "1.000001"
  *   formatAda("0")              → "0"
  */
-/**
- * Insert thousands separators into a run of integer digits.
- *
- * Balances, stake and token supplies in this wallet routinely run to eight or
- * more digits, where an ungrouped run is genuinely hard to read at a glance
- * ("63120000000000"). Applied to the integer part only; fractional digits are
- * never grouped.
- */
-function groupDigits(digits: string): string {
-  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+export function formatAda(lovelace: string): string {
+  return adaString(lovelace, true);
 }
 
-export function formatAda(lovelace: string): string {
+/**
+ * Convert lovelace to an ADA string WITHOUT thousands separators.
+ *
+ * For machine-readable output — CSV columns, file exports — where a grouped
+ * "1,500" is read as text or splits the column rather than parsing as a
+ * number. Display code wants formatAda; anything another program will parse
+ * wants this.
+ */
+export function formatAdaPlain(lovelace: string): string {
+  return adaString(lovelace, false);
+}
+
+function adaString(lovelace: string, group: boolean): string {
   // BigInt() throws on a non-integer string; guard so a malformed API value
   // (e.g. an empty rewards field) shows through instead of crashing the screen.
   if (!/^-?\d+$/.test(lovelace)) {
@@ -38,7 +54,7 @@ export function formatAda(lovelace: string): string {
   const intPart = abs / LOVELACE_PER_ADA;
   const fracPart = abs % LOVELACE_PER_ADA;
 
-  const intStr = groupDigits(intPart.toString());
+  const intStr = group ? groupDigits(intPart.toString()) : intPart.toString();
 
   if (fracPart === BigInt(0)) {
     return (isNegative ? "-" : "") + intStr;

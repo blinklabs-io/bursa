@@ -367,7 +367,7 @@ export function AddWallet({
         </div>
 
         <div style={{ margin: "var(--space-3) 0", display: "flex", gap: "var(--space-2)" }}>
-          <CopyButton value={generatedMnemonic} />
+          <CopyButton value={generatedMnemonic} ariaLabel="Copy recovery phrase" />
         </div>
 
         <div className="backup-warning">

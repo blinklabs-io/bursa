@@ -122,18 +122,20 @@ test("choosing a pool works for a wallet that ALREADY delegates", async () => {
   expect(await screen.findByDisplayValue(POOL_B)).toBeInTheDocument();
 });
 
-test("returning to the delegation tab later opens on status, not compose", async () => {
+test("the compose form stays open across a trip to another tab", async () => {
+  // An already-delegating wallet opens on its status panel, so if the compose
+  // view were not remembered the user would come back from the directory to
+  // "Change delegation" with their half-filled form hidden behind it.
   stubDelegation(true);
   render(<Stake network="mainnet" initialTab="pools" />);
 
   fireEvent.click((await screen.findAllByRole("button", { name: "Delegate" }))[0]);
   expect(await screen.findByDisplayValue(POOL_A)).toBeInTheDocument();
 
-  // The intent is consumed, so a later visit is an ordinary one.
   fireEvent.click(screen.getByRole("tab", { name: "Rewards" }));
   fireEvent.click(screen.getByRole("tab", { name: "Delegation" }));
 
-  expect(await screen.findByRole("button", { name: /change delegation/i })).toBeInTheDocument();
+  expect(await screen.findByDisplayValue(POOL_A)).toBeInTheDocument();
 });
 
 test("a wallet that cannot delegate still gets rewards and pools", async () => {
@@ -179,4 +181,33 @@ test("a wallet that cannot delegate is not offered a Delegate action", async () 
   // The button would hand a pool to a tab that only explains why it cannot be
   // used, dropping the choice with no feedback.
   expect(screen.queryByRole("button", { name: "Delegate" })).not.toBeInTheDocument();
+});
+
+test("the whole delegation draft survives a trip to another tab", async () => {
+  render(<Stake network="mainnet" />);
+
+  const pool = await screen.findByLabelText(/stake pool/i);
+  fireEvent.change(pool, { target: { value: "pool1typed" } });
+  // A vote target is part of the same draft; lifting only the pool ID would
+  // have thrown this away the moment the user glanced at the directory.
+  fireEvent.click(screen.getByLabelText(/always abstain/i));
+
+  fireEvent.click(screen.getByRole("tab", { name: "Pools" }));
+  expect(await screen.findByText(/stake pool directory/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Delegation" }));
+
+  expect(await screen.findByDisplayValue("pool1typed")).toBeInTheDocument();
+  expect(screen.getByLabelText(/always abstain/i)).toBeChecked();
+});
+
+test("rewards stay reachable when the node cannot answer queries", async () => {
+  // The old #/rewards route had no node gate; merging the screens must not
+  // quietly take reward history away from a read-only or offline-node wallet.
+  render(<Stake network="mainnet" canQueryNode={false} canDelegate={false} initialTab="rewards" />);
+
+  expect(await screen.findByRole("tab", { name: "Rewards" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByText("541")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("tab", { name: "Pools" }));
+  expect(await screen.findByText(/not answering queries yet/i)).toBeInTheDocument();
 });

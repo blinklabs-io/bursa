@@ -16,6 +16,9 @@ interface State {
   // even undefined), and reading .message off that in the fallback would throw
   // again — restoring exactly the blank page this exists to prevent.
   message: string | null;
+  // The resetKey in force when the error was captured, so navigation clears
+  // only errors that predate it.
+  capturedAt: string | undefined;
 }
 
 /**
@@ -32,7 +35,7 @@ interface State {
  * survive, not to assume away.
  */
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { message: null };
+  state: State = { message: null, capturedAt: undefined };
 
   static getDerivedStateFromError(error: unknown): State {
     const message =
@@ -41,18 +44,25 @@ export class ErrorBoundary extends Component<Props, State> {
         : typeof error === "string" && error !== ""
           ? error
           : "An unexpected error occurred.";
-    return { message: message || "An unexpected error occurred." };
+    // capturedAt is filled in by componentDidCatch, which has access to props.
+    return { message: message || "An unexpected error occurred.", capturedAt: undefined };
   }
 
   componentDidUpdate(prev: Props) {
+    if (this.state.message === null) return;
+    if (prev.resetKey === this.props.resetKey) return;
     // A new resetKey means the user navigated; give the subtree a clean try
-    // rather than pinning them to the failed screen.
-    if (this.state.message !== null && prev.resetKey !== this.props.resetKey) {
-      this.setState({ message: null });
+    // rather than pinning them to the failed screen. Only clear an error
+    // captured under an EARLIER key though: if the destination throws during
+    // the same commit, its fresh error arrives with the new key and clearing it
+    // would remount, throw again, and log twice before settling.
+    if (this.state.capturedAt !== this.props.resetKey) {
+      this.setState({ message: null, capturedAt: undefined });
     }
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
+    this.setState({ capturedAt: this.props.resetKey });
     console.error("Unhandled error in", this.props.label ?? "the wallet UI", error, info.componentStack);
   }
 
@@ -80,7 +90,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <button
             type="button"
             className="btn primary"
-            onClick={() => this.setState({ message: null })}
+            onClick={() => this.setState({ message: null, capturedAt: undefined })}
           >
             Try again
           </button>

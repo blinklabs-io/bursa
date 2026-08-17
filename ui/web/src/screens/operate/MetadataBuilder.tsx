@@ -105,12 +105,12 @@ export function MetadataBuilder() {
             <p className="field-label">Metadata hash (Blake2b-256)</p>
             <div className="tx-hash-row">
               <code className="tx-hash accent">{result.hash_hex}</code>
-              <CopyButton value={result.hash_hex} />
+              <CopyButton value={result.hash_hex} ariaLabel="Copy metadata hash" />
             </div>
             <p className="field-label">Canonical JSON (host this at your metadata URL)</p>
             <div className="tx-hash-row">
               <code className="tx-hash">{result.json}</code>
-              <CopyButton value={result.json} />
+              <CopyButton value={result.json} ariaLabel="Copy metadata JSON" />
             </div>
           </div>
         )}
