@@ -92,6 +92,19 @@ func TestCreateSecretKeyFileUnixIsExclusiveAndRestrictive(t *testing.T) {
 	assert.Equal(t, "unchanged", string(data))
 }
 
+func TestWriteSecretKeyFileUnixAtomicallyReplacesExisting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secret.skey")
+	require.NoError(t, os.WriteFile(path, []byte("old"), 0o644))
+	require.NoError(t, WriteSecretKeyFile(path, []byte("new")))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "new", string(data))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
 func TestLoadWalletDirSkipsPermissiveSecretKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	secretPath := filepath.Join(tmpDir, "payment.skey")

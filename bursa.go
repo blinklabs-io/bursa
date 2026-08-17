@@ -2744,14 +2744,8 @@ func WriteSecretKeyFile(path string, data []byte) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("failed to replace secret key file %q: %w", path, err)
 	}
-	if dirFile, err := os.Open(dir); err == nil {
-		if syncErr := dirFile.Sync(); syncErr != nil {
-			_ = dirFile.Close()
-			return fmt.Errorf("failed to sync secret key directory: %w", syncErr)
-		}
-		if err := dirFile.Close(); err != nil {
-			return fmt.Errorf("failed to close secret key directory: %w", err)
-		}
+	if err := syncSecretKeyDirectory(dir); err != nil {
+		return fmt.Errorf("failed to sync secret key directory: %w", err)
 	}
 	removeTmp = false
 	return nil
