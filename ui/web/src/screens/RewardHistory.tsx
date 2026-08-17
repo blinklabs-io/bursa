@@ -73,7 +73,7 @@ export function RewardHistory({ network = "preview" }: RewardHistoryProps = {}) 
     pool: r.pool_id ? (
       <span className="hash-cell">
         <span className="mono">{truncatePool(r.pool_id)}</span>
-        <CopyButton value={r.pool_id} />
+        <CopyButton value={r.pool_id} ariaLabel="Copy pool ID" />
         <ExplorerLink
           network={network}
           kind="pool"

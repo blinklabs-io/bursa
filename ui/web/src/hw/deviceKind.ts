@@ -28,7 +28,7 @@ export const STORAGE_KEY = "bursa.hw.deviceKind";
 
 // Kinds we accept from storage. All implemented signers are listed; an
 // unrecognised value falls back to the documented "ledger" default.
-const KNOWN_KINDS: readonly HardwareKind[] = ["ledger", "trezor", "keystone"];
+const KNOWN_KINDS: readonly HardwareKind[] = ["ledger", "trezor", "keystone", "seedsigner"];
 
 type DeviceKindMap = Record<string, HardwareKind>;
 

@@ -6,10 +6,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"testing"
 
 	apollo "github.com/Salvionied/apollo/v2"
+	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/blinklabs-io/gouroboros/ledger/conway"
 
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
@@ -149,6 +152,93 @@ func TestDecodeTx_VkeySummary(t *testing.T) {
 	if !found {
 		t.Errorf("wallet_can_add %+v does not contain expected payment key hash %s", got.WalletCanAdd, wantKeyHash)
 	}
+}
+
+// TestDecodeTx_WithdrawalsSortedByAddress covers a transaction with multiple
+// reward withdrawals. TxWithdrawals is a Go map (randomized iteration order),
+// so without an explicit sort the rendered summary's Withdrawals would come
+// back in a different order on every call. This builds a fixture with two
+// withdrawals whose reward addresses are deliberately out of lexical order
+// as constructed, and asserts DecodeTx always reports them sorted.
+func TestDecodeTx_WithdrawalsSortedByAddress(t *testing.T) {
+	svc, _, unsignedCbor := buildUnsignedSendFixture(t)
+	txBytes, err := hex.DecodeString(unsignedCbor)
+	if err != nil {
+		t.Fatalf("decode unsigned cbor: %v", err)
+	}
+
+	var outer []cbor.RawMessage
+	if _, err := cbor.Decode(txBytes, &outer); err != nil {
+		t.Fatalf("decode tx as CBOR array: %v", err)
+	}
+	if len(outer) < 1 {
+		t.Fatal("tx array has no body element")
+	}
+
+	var body conway.ConwayTransactionBody
+	if _, err := cbor.Decode(outer[0], &body); err != nil {
+		t.Fatalf("decode tx body: %v", err)
+	}
+
+	addrHi, err := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, lcommon.AddressNetworkTestnet, nil, bytesRepeat(0xff, 28))
+	if err != nil {
+		t.Fatalf("NewAddressFromParts(hi): %v", err)
+	}
+	addrLo, err := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, lcommon.AddressNetworkTestnet, nil, bytesRepeat(0x00, 28))
+	if err != nil {
+		t.Fatalf("NewAddressFromParts(lo): %v", err)
+	}
+	// Insert the map entries "backwards" (higher address first) so a naive
+	// unsorted append would very likely fail a strict order check; the real
+	// guard is the assertion against a lexically-sorted `want` below, which
+	// holds regardless of map iteration order.
+	body.TxWithdrawals = map[*lcommon.Address]uint64{
+		&addrHi: 3_000_000,
+		&addrLo: 1_500_000,
+	}
+
+	newBodyBytes, err := cbor.Encode(&body)
+	if err != nil {
+		t.Fatalf("encode modified tx body: %v", err)
+	}
+	outer[0] = cbor.RawMessage(newBodyBytes)
+
+	newTxBytes, err := cbor.Encode(outer)
+	if err != nil {
+		t.Fatalf("encode modified tx: %v", err)
+	}
+
+	want := []string{addrHi.String(), addrLo.String()}
+	sort.Strings(want)
+
+	// DecodeTx re-parses TxWithdrawals from the tx body on every call, and Go
+	// randomizes map iteration order per-run, so a single call would only
+	// catch a dropped sort about half the time. Repeat the decode so the test
+	// reliably fails if the production sort is ever removed.
+	txHex := hex.EncodeToString(newTxBytes)
+	for attempt := 0; attempt < 32; attempt++ {
+		got, err := svc.DecodeTx(context.Background(), txHex)
+		if err != nil {
+			t.Fatalf("DecodeTx (attempt %d): %v", attempt, err)
+		}
+		if len(got.Withdrawals) != 2 {
+			t.Fatalf("attempt %d: got %d withdrawals, want 2: %+v", attempt, len(got.Withdrawals), got.Withdrawals)
+		}
+		gotAddrs := []string{got.Withdrawals[0].Address, got.Withdrawals[1].Address}
+		if gotAddrs[0] != want[0] || gotAddrs[1] != want[1] {
+			t.Fatalf("attempt %d: withdrawals order = %v, want sorted %v", attempt, gotAddrs, want)
+		}
+	}
+}
+
+// bytesRepeat returns an n-byte slice with every byte set to b, for
+// constructing distinct fixed-length key hashes in tests.
+func bytesRepeat(b byte, n int) []byte {
+	s := make([]byte, n)
+	for i := range s {
+		s[i] = b
+	}
+	return s
 }
 
 func TestCosignTx_MergesPreservingExisting(t *testing.T) {

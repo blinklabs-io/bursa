@@ -12,7 +12,7 @@ import type { HardwareSignResponse } from "../api/types";
 import type { AirGapQRBridge, ScannedUR } from "./qr/types";
 
 /** Which hardware device a signer talks to. */
-export type HardwareKind = "ledger" | "trezor" | "keystone";
+export type HardwareKind = "ledger" | "trezor" | "keystone" | "seedsigner";
 
 /**
  * What a given device can sign today. Send-parity is the current baseline for
@@ -133,6 +133,40 @@ export type KeystoneConnectOptions =
   | KeystoneQRConnectOptions
   | KeystoneUSBConnectOptions;
 
+// ── SeedSigner (air-gapped QR only) ──────────────────────────────────────────
+//
+// SeedSigner is fully AIR-GAPPED: no cable, no radio, no network — every byte
+// travels as an animated QR through the local webcam. Like Keystone's QR
+// transport it needs a UI bridge (the modal that shows the animated QR and runs
+// the scanner) and, being fully local, carries NO external-consent gate. Unlike
+// Keystone it has no USB transport at all — QR is its only transport.
+
+/**
+ * A single Uniform Resource decoded from a scanned QR. SeedSigner-named alias of
+ * the shared {@link ScannedUR}; hw/seedsigner.ts decodes it into the concrete
+ * bespoke SeedSigner payload.
+ */
+export type SeedSignerScannedUR = ScannedUR;
+
+/**
+ * UI bridge for the SeedSigner air-gapped QR transport. SeedSigner-named alias
+ * of the shared {@link AirGapQRBridge}. Purely local — no method contacts the
+ * network.
+ */
+export type SeedSignerQRBridge = AirGapQRBridge;
+
+/**
+ * Options for connecting a SeedSigner. `bridge` drives the animated-QR + webcam
+ * exchange; `xfp` is the device master fingerprint captured at account import
+ * (needed so the device recognises the witness paths as its own — the screen
+ * sources it from its per-wallet local store). No consent callback: SeedSigner
+ * is local on its only transport.
+ */
+export interface SeedSignerConnectOptions {
+  bridge: SeedSignerQRBridge;
+  xfp?: string;
+}
+
 /**
  * Ties each {@link HardwareKind} to the connect-options it accepts, so the
  * factory can discriminate at compile time: a local device (Ledger) can NEVER
@@ -140,10 +174,12 @@ export type KeystoneConnectOptions =
  * be connected without one. Enforced via the kind-specific `connectDevice`
  * overloads in hw/index.ts. Keystone is local on both transports (QR and USB),
  * so it takes {@link KeystoneConnectOptions} — a transport choice, never a
- * cloud-consent callback.
+ * cloud-consent callback. SeedSigner is air-gapped QR only, so it takes a
+ * {@link SeedSignerConnectOptions} bridge, likewise never a consent callback.
  */
 export interface ConnectOptionsByKind {
   ledger: LocalConnectOptions;
   trezor: ExternalConnectOptions;
   keystone: KeystoneConnectOptions;
+  seedsigner: SeedSignerConnectOptions;
 }
