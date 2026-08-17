@@ -535,7 +535,7 @@ function PreviewPhase({ preview, isHardware, walletId, onBack, onDone }: Preview
         </dl>
       </Card>
 
-      <Card title={isHardware ? "Sign on your SeedSigner" : "Spending password"}>
+      <Card title={isHardware ? "Sign on your SeedSigner" : "Confirm"}>
         <div className="staking-form">
           {isHardware ? (
             needsAirGapResync ? (
@@ -586,7 +586,6 @@ function PreviewPhase({ preview, isHardware, walletId, onBack, onDone }: Preview
               <Input
                 id="staking-password"
                 type="password"
-                placeholder="Spending password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={loading}

@@ -107,7 +107,6 @@ function SignTab({ setBusy }: ActionTabProps) {
           setPassword(e.target.value);
           clearResult();
         }}
-        placeholder="Spending password"
         aria-label="Spending password"
         disabled={loading}
       />

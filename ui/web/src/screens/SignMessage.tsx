@@ -89,7 +89,6 @@ export function SignMessage({ account }: SignMessageProps) {
             setPassword(e.target.value);
             clearResult();
           }}
-          placeholder="Spending password"
           aria-label="Spending password"
           disabled={loading}
         />

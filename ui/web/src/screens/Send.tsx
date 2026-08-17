@@ -655,7 +655,6 @@ function PreviewPhase({
             <Input
               id="spend-password"
               type="password"
-              placeholder="Spending password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />

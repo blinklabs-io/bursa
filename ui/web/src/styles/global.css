@@ -549,6 +549,14 @@ a:hover {
   font-family: var(--mono);
   text-align: right;
   color: var(--text);
+  /* Values here are addresses, pool IDs and hashes. In a flex row they would
+     otherwise push past the card edge and be clipped with no ellipsis and no
+     way to read the rest -- visible on any narrow viewport. min-width:0 lets
+     the item shrink; overflow-wrap lets a long identifier break rather than
+     overflow. Wrapping rather than truncating because these rows carry no copy
+     control, so hiding characters would lose them. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .provisional-notice dd {
   font-family: var(--font);
@@ -596,6 +604,28 @@ a:hover {
 .explorer-link:hover,
 .explorer-link:focus-visible {
   color: var(--accent);
+}
+
+/* Recoverable failure panel from ErrorBoundary. */
+.error-boundary {
+  max-width: 640px;
+  border-color: color-mix(in srgb, var(--error) 40%, var(--border));
+}
+.error-boundary h2 {
+  color: var(--error);
+}
+.error-detail {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-3) 0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* A table row's trailing controls: an action plus its icon companions. */

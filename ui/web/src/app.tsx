@@ -9,6 +9,7 @@ import { Button } from "./components/Button";
 import { SyncBanner } from "./components/SyncBanner";
 import { WalletSwitcher } from "./components/WalletSwitcher";
 import { MobileNav } from "./components/MobileNav";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useHashRoute, navigate } from "./router";
 import { CreateVault } from "./screens/CreateVault";
 import { UnlockVault } from "./screens/UnlockVault";
@@ -461,7 +462,15 @@ export function App() {
             </button>
           ))}
         </nav>
-        <main className="content" key={activeWallet?.id ?? "none"}>{content}</main>
+        <main className="content" key={activeWallet?.id ?? "none"}>
+          {/* Scoped to the screen, not the shell: a screen that throws must not
+              take the nav and wallet switcher with it, or there is no way to
+              navigate out of the failure. resetKey clears the error on
+              navigation. */}
+          <ErrorBoundary label={activeRoute || "wallet"} resetKey={activeRoute}>
+            {content}
+          </ErrorBoundary>
+        </main>
       </div>
       {/* Global connector approval overlay: rendered on top of all screens when
           a dApp has pending consent requests. Mounts regardless of current route
