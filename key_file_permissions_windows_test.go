@@ -82,6 +82,17 @@ func TestLoadSecretKeyFromFileWindowsAllowsOwner(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestWriteSecretKeyFileWindowsCreatesOwnerOnlyFile(t *testing.T) {
+	path := writeBursaSecretKey(t)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(path))
+
+	require.NoError(t, WriteSecretKeyFile(path, data))
+	_, err = LoadSecretKeyFromFile(path)
+	assert.NoError(t, err)
+}
+
 func TestLoadSecretKeyFromFileWindowsRejectsNullDACL(t *testing.T) {
 	path := writeBursaSecretKey(t)
 	require.NoError(t, windows.SetNamedSecurityInfo(

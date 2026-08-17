@@ -51,6 +51,37 @@ func isKnownNonGrantACEType(aceType string) bool {
 	}
 }
 
+func restrictSecretKeyFilePermissions(file *os.File) error {
+	var token windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &token); err != nil {
+		return fmt.Errorf("failed to open process token: %w", err)
+	}
+	defer token.Close()
+	user, err := token.GetTokenUser()
+	if err != nil {
+		return fmt.Errorf("failed to get current user SID: %w", err)
+	}
+	descriptor, err := windows.SecurityDescriptorFromString(
+		fmt.Sprintf("D:P(A;;GA;;;%s)", user.User.Sid.String()),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create owner-only security descriptor: %w", err)
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		return fmt.Errorf("failed to get owner-only DACL: %w", err)
+	}
+	if err := windows.SetSecurityInfo(
+		windows.Handle(file.Fd()),
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	); err != nil {
+		return fmt.Errorf("failed to set owner-only DACL: %w", err)
+	}
+	return nil
+}
+
 func checkOpenFilePermissions(file *os.File) error {
 	descriptor, err := windows.GetSecurityInfo(
 		windows.Handle(file.Fd()),

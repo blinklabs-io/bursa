@@ -105,7 +105,7 @@ func RunCreate(cfg *config.Config, output string) {
 			for k, v := range m {
 				g.Go(func() error {
 					path := filepath.Join(output, k)
-					err = os.WriteFile(path, []byte(v), 0o600)
+					err = writeWalletOutput(path, []byte(v))
 					if err != nil {
 						return err
 					}
@@ -229,7 +229,7 @@ func RunRestore(
 			for k, v := range m {
 				g.Go(func() error {
 					path := filepath.Join(output, k)
-					err = os.WriteFile(path, []byte(v), 0o600)
+					err = writeWalletOutput(path, []byte(v))
 					if err != nil {
 						return err
 					}
@@ -2539,16 +2539,15 @@ func writeKeyFile(kf bursa.KeyFile, path string) error {
 		return fmt.Errorf("failed to format key file: %w", err)
 	}
 
-	err = os.WriteFile(path, []byte(keyStr), 0o600)
-	if err != nil {
+	if err := bursa.WriteSecretKeyFile(path, []byte(keyStr)); err != nil {
 		return fmt.Errorf("failed to write key file %s: %w", path, err)
 	}
-
-	// Ensure secure permissions even if file already existed
-	err = os.Chmod(path, 0o600)
-	if err != nil {
-		return fmt.Errorf("failed to set secure permissions on key file %s: %w", path, err)
-	}
-
 	return nil
+}
+
+func writeWalletOutput(path string, data []byte) error {
+	if strings.HasSuffix(path, ".skey") {
+		return bursa.WriteSecretKeyFile(path, data)
+	}
+	return os.WriteFile(path, data, 0o600)
 }

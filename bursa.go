@@ -2678,7 +2678,7 @@ const maxSecretKeyFileSize = 1 << 20
 // the open file handle. It preserves the raw formats accepted by callers that
 // parse key bytes themselves.
 func ReadSecretKeyFile(path string) ([]byte, error) {
-	file, err := os.Open(path) // #nosec G304 -- caller-provided key path
+	file, err := openSecretKeyFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open secret key file %q: %w", path, err)
 	}
@@ -2708,6 +2708,25 @@ func ReadSecretKeyFile(path string) ([]byte, error) {
 		)
 	}
 	return data, nil
+}
+
+// WriteSecretKeyFile writes secret-key data with restrictive permissions.
+// The platform-specific implementation creates an owner-only file handle so
+// generated keys remain loadable by LoadSecretKeyFromFile.
+func WriteSecretKeyFile(path string, data []byte) error {
+	file, err := createSecretKeyFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to create secret key file %q: %w", path, err)
+	}
+	defer file.Close() //nolint:errcheck // write-only handle
+	if err := restrictSecretKeyFilePermissions(file); err != nil {
+		return fmt.Errorf("failed to restrict secret key file %q: %w", path, err)
+	}
+
+	if _, err := file.Write(data); err != nil {
+		return fmt.Errorf("failed to write secret key file %q: %w", path, err)
+	}
+	return nil
 }
 
 // LoadSecretKeyFromFile loads a secret key from a file after checking the

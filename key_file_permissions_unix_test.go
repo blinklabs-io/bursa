@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -55,4 +56,13 @@ func TestLoadSecretKeyFromFilePreservesFileName(t *testing.T) {
 	key, err := LoadSecretKeyFromFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Base(path), key.File)
+}
+
+func TestReadSecretKeyFileRejectsFIFO(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secret.skey")
+	require.NoError(t, syscall.Mkfifo(path, 0o600))
+
+	_, err := ReadSecretKeyFile(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is not a regular file")
 }
