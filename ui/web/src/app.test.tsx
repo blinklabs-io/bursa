@@ -749,19 +749,50 @@ test("a wallet that cannot spend gets a disabled Send, not a dead end", async ()
 
 test("the routes the absorbed screens used to own still resolve", async () => {
   // Old links and bookmarks must not break just because the screen moved.
-  for (const [hash, expected] of [
-    ["#/contacts", "Settings"],
-    ["#/sign", "Settings"],
-    ["#/verify", "Settings"],
-    ["#/diagnostics", "Settings"],
-    ["#/receive", "Portfolio"],
+  // Asserting the nav highlight alone is not enough: every one of these
+  // highlights Settings, so a mis-mapped SETTINGS_ROUTES entry would sail
+  // through while opening the wrong panel. Check the panel that opened.
+  for (const [hash, navEntry, panel] of [
+    ["#/contacts", "Settings", "Address book"],
+    ["#/sign", "Settings", "Tools"],
+    ["#/verify", "Settings", "Tools"],
+    ["#/diagnostics", "Settings", "Diagnostics"],
+    ["#/settings", "Settings", "General"],
   ] as const) {
     window.location.hash = hash;
     const sidebar = await unlockAndGetSidebar(walletA);
-    const active = within(sidebar).getByRole("button", { name: expected });
-    expect(active).toHaveAttribute("aria-current", "page");
+
+    expect(within(sidebar).getByRole("button", { name: navEntry })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(await screen.findByRole("tab", { name: panel })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
     cleanup();
     vi.restoreAllMocks();
     stubAutoLock(0);
   }
+});
+
+test("#/receive opens Receive while the nav still points at Portfolio", async () => {
+  // Send and Receive are Portfolio actions, so the highlight is deliberate —
+  // but the screen on display is Receive, and the error boundary must say so
+  // rather than blaming Portfolio for a fault in a different screen.
+  vi.spyOn(hooks, "useAddresses").mockReturnValue({
+    data: { receive: ["addr_test1abc"], used: [], next_unused: "addr_test1abc" },
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+  window.location.hash = "#/receive";
+  const sidebar = await unlockAndGetSidebar(walletA);
+
+  expect(within(sidebar).getByRole("button", { name: "Portfolio" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  expect(await screen.findByText(/next unused address/i)).toBeInTheDocument();
 });

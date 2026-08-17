@@ -312,6 +312,15 @@ export function App() {
     else activeRoute = "portfolio";
   }
 
+  // What the boundary calls the failed screen. Deliberately NOT activeRoute:
+  // that is the NAV highlight, which collapses several routes onto one entry
+  // (send/receive highlight Portfolio, the stake family highlights Stake). A
+  // fallback reading "the portfolio screen could not be displayed" while Send
+  // is what broke sends the reader to the wrong place.
+  const screenLabel = addingWallet
+    ? "add wallet"
+    : route || "wallet";
+
   let content: ReactElement;
   if (addingWallet) {
     content = (
@@ -486,7 +495,7 @@ export function App() {
               too — it swaps the content without changing the route, and is a
               shell recovery action that must not land on a stale fallback. */}
           <ErrorBoundary
-            label={activeRoute || "wallet"}
+            label={screenLabel}
             resetKey={`${route}:${addingWallet}`}
           >
             {content}
