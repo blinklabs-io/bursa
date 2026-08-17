@@ -197,7 +197,9 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		res, perr, err := s.coord.SignTx(r.Context(), []byte(req.Cbor), signers)
+		// Thread the authenticated caller so the coordinator can apply any
+		// per-caller policy override.
+		res, perr, err := s.coord.SignTx(signer.WithCaller(r.Context(), caller), []byte(req.Cbor), signers)
 		if err != nil {
 			if signer.IsBadRequest(err) {
 				s.audit(r, caller, "tx", "bad_request", "audit_id", auditID, "signers", req.Signers, "error", err.Error())
