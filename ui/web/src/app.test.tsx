@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent, act, within } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act, within, cleanup } from "@testing-library/react";
 import { App } from "./app";
 import * as hooks from "./api/hooks";
 import * as client from "./api/client";
@@ -677,4 +677,91 @@ test("[Fix 1] changing the auto-lock timeout in Settings propagates to the idle 
 
   expect(lockSpy).not.toHaveBeenCalled();
   vi.useRealTimers();
+});
+
+// --- Absorbed destinations ------------------------------------------------
+
+// Unlocks with the given wallet and returns the desktop sidebar, so nav
+// assertions are not confused by the mobile drawer rendering the same labels.
+async function unlockAndGetSidebar(wallet: WalletView): Promise<HTMLElement> {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([{ ...wallet, active: true }]);
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  await waitFor(() => expect(document.querySelector(".sidebar")).not.toBeNull());
+  return document.querySelector(".sidebar") as HTMLElement;
+}
+
+test("the nav carries only destinations, not actions or housekeeping", async () => {
+  const sidebar = await unlockAndGetSidebar(walletA);
+  const q = within(sidebar);
+
+  expect(
+    q.getAllByRole("button").map((b) => b.textContent).filter((t) =>
+      ["Portfolio", "Activity", "Stake", "Swap", "Multi-sig", "Import Tx", "Offline", "Operate", "Settings"].includes(t ?? ""),
+    ),
+  ).toHaveLength(9);
+
+  // Send and Receive are actions on the Portfolio; the rest are Settings
+  // panels. None of them earns a nav entry.
+  for (const gone of ["Send", "Receive", "Contacts", "Sign", "Verify", "Diagnostics"]) {
+    expect(q.queryByRole("button", { name: gone })).not.toBeInTheDocument();
+  }
+});
+
+test("Send and Receive are offered on the balance they act on", async () => {
+  await unlockAndGetSidebar(walletA);
+
+  const main = document.querySelector("main") as HTMLElement;
+  const q = within(main);
+  expect(await q.findByRole("button", { name: "Send" })).toBeInTheDocument();
+  expect(q.getByRole("button", { name: "Receive" })).toBeInTheDocument();
+});
+
+test("Send on the Portfolio actually reaches the send flow", async () => {
+  // Send is no longer in the nav, so this button is the only way in. Asserting
+  // it renders is not enough — it has to be enabled and it has to navigate.
+  await unlockAndGetSidebar(walletA);
+  const main = document.querySelector("main") as HTMLElement;
+
+  const send = await within(main).findByRole("button", { name: "Send" });
+  expect(send).toBeEnabled();
+
+  fireEvent.click(send);
+
+  await waitFor(() => expect(window.location.hash).toBe("#/send"));
+  expect(await screen.findByText(/send ada/i)).toBeInTheDocument();
+});
+
+test("a wallet that cannot spend gets a disabled Send, not a dead end", async () => {
+  await unlockAndGetSidebar({ ...walletA, type: "read_only" });
+  const main = document.querySelector("main") as HTMLElement;
+
+  expect(await within(main).findByRole("button", { name: "Send" })).toBeDisabled();
+  // Receive needs nothing, so it stays available.
+  expect(within(main).getByRole("button", { name: "Receive" })).toBeEnabled();
+});
+
+test("the routes the absorbed screens used to own still resolve", async () => {
+  // Old links and bookmarks must not break just because the screen moved.
+  for (const [hash, expected] of [
+    ["#/contacts", "Settings"],
+    ["#/sign", "Settings"],
+    ["#/verify", "Settings"],
+    ["#/diagnostics", "Settings"],
+    ["#/receive", "Portfolio"],
+  ] as const) {
+    window.location.hash = hash;
+    const sidebar = await unlockAndGetSidebar(walletA);
+    const active = within(sidebar).getByRole("button", { name: expected });
+    expect(active).toHaveAttribute("aria-current", "page");
+    cleanup();
+    vi.restoreAllMocks();
+    stubAutoLock(0);
+  }
 });

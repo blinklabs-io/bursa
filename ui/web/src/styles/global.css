@@ -319,6 +319,12 @@ a:hover {
   outline-offset: -2px;
 }
 .account-name {
+  /* Let the label give way to the balance instead of wrapping "Account 0"
+     onto two lines in a 232px sidebar. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.8125rem;
   font-weight: 600;
 }
@@ -415,6 +421,14 @@ a:hover {
   text-transform: uppercase;
   color: var(--text-muted);
   margin-bottom: var(--space-3);
+}
+
+/* The balance card's primary actions. */
+.portfolio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 /* Hero readout — the balance, in big gold monospace. */
