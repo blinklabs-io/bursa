@@ -411,6 +411,70 @@ a:hover {
   background: var(--accent-strong);
   border-color: var(--accent-strong);
 }
+/* Wrapper holding a copy button and its live region. display:contents keeps
+   it out of the layout entirely, so the button lays out exactly as before. */
+.copy-control {
+  display: contents;
+}
+
+/* Screen-reader-only text: in the accessibility tree, out of the layout. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Icon-only control (copy, and anything else that is a glyph plus a label).
+   Square by construction so it can never wrap its content the way a text
+   button in a narrow table cell does, and sized to stay a comfortable
+   pointer target. */
+.btn-icon {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  vertical-align: middle;
+  transition:
+    color 0.14s ease,
+    background 0.14s ease,
+    border-color 0.14s ease;
+}
+.btn-icon:hover:not(:disabled) {
+  color: var(--accent);
+  background: var(--inset);
+  border-color: var(--border);
+}
+/* Success colour has to survive the pointer still resting on the control it
+   was just clicked with, which is the common case. */
+.btn-icon.copied,
+.btn-icon.copied:hover:not(:disabled) {
+  color: var(--ok);
+}
+.btn-icon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.btn-icon:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
 .btn.ghost {
   background: transparent;
   color: var(--accent);
@@ -494,6 +558,14 @@ a:hover {
   font-family: var(--mono);
   text-align: right;
   color: var(--text);
+  /* Values here are addresses, pool IDs and hashes. In a flex row they would
+     otherwise push past the card edge and be clipped with no ellipsis and no
+     way to read the rest -- visible on any narrow viewport. min-width:0 lets
+     the item shrink; overflow-wrap lets a long identifier break rather than
+     overflow. Wrapping rather than truncating because these rows carry no copy
+     control, so hiding characters would lose them. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .provisional-notice dd {
   font-family: var(--font);
@@ -543,6 +615,34 @@ a:hover {
   color: var(--accent);
 }
 
+/* Recoverable failure panel from ErrorBoundary. */
+.error-boundary {
+  max-width: 640px;
+  border-color: color-mix(in srgb, var(--error) 40%, var(--border));
+}
+.error-boundary h2 {
+  color: var(--error);
+}
+.error-detail {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-3) 0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+/* A table row's trailing controls: an action plus its icon companions. */
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 /* Inline pool id + explorer link inside a directory table cell. */
 .pool-id-cell {
   display: inline-flex;
@@ -586,8 +686,16 @@ a:hover {
 .table td {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
-  vertical-align: top;
+  /* Middle, not top: cells pair a value with an icon control, and top
+     alignment left the icon floating above the text it belongs to. */
+  vertical-align: middle;
   color: var(--text);
+  /* Cell values here are hashes, addresses, amounts and timestamps -- atomic
+     tokens that mean nothing broken across lines. Wrapping them was turning
+     three-line cells into triple-height rows; .table-wrap already scrolls
+     horizontally, which is the right way to handle a table that outgrows its
+     column. */
+  white-space: nowrap;
 }
 .table tr:last-child td {
   border-bottom: none;
@@ -1245,16 +1353,26 @@ a:hover {
   color: var(--text-muted);
   margin-bottom: var(--space-1);
 }
-/* Tab / mode strips read as instrument selectors. */
-.operate-tabs,
+/* Tab / mode strips read as instrument selectors.
+   Deliberately NOT named .tab: that class is already taken above by Offline's
+   underline-style .tab-bar, and reusing it would restyle that screen. */
+.tabset,
 .mode-toggle {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
+}
+/* A standalone tab strip sits above its panel with room to breathe; a mode
+   toggle sits below the copy it switches. */
+.tabset {
+  margin-bottom: var(--space-3);
+}
+.mode-toggle {
   border-top: 1px solid var(--border);
   padding-top: var(--space-3);
 }
-.operate-tab {
+.operate-tab,
+.tabset-tab {
   font-family: var(--mono);
   font-size: 0.6875rem;
   font-weight: 600;
@@ -1267,16 +1385,19 @@ a:hover {
   padding: 8px var(--space-3);
   cursor: pointer;
 }
-.operate-tab:hover {
+.operate-tab:hover,
+.tabset-tab:hover {
   color: var(--text);
   border-color: var(--accent);
 }
-.operate-tab.active {
+.operate-tab.active,
+.tabset-tab.active {
   color: var(--accent-text);
   background: var(--accent);
   border-color: var(--accent);
 }
-.operate-tab:focus-visible {
+.operate-tab:focus-visible,
+.tabset-tab:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px var(--accent-dim);
 }
@@ -1943,11 +2064,12 @@ a:hover {
   }
 
   /* Operate-tab strip: wrap onto two lines if needed. */
-  .operate-tabs,
+  .tabset,
   .mode-toggle {
     flex-wrap: wrap;
   }
-  .operate-tab {
+  .operate-tab,
+  .tabset-tab {
     min-height: 44px;
   }
 }

@@ -131,6 +131,32 @@ const multisigBelowThreshold: TxSummary = {
   },
 };
 
+test("multisig: submit stays disabled for an unrecognized native-script tx (threshold 0)", async () => {
+  vi.spyOn(client, "decodeTx").mockResolvedValue({
+    ...vkeySummary,
+    kind: "native_multisig",
+    wallet_can_add: [],
+    is_complete: true,
+    multisig: {
+      is_multisig: true,
+      threshold: 0,
+      signed_count: 0,
+      script_embedded: true,
+    },
+  });
+
+  render(<ImportTransaction canSubmit={true} />);
+
+  fireEvent.change(screen.getByLabelText(/transaction cbor/i), {
+    target: { value: "84a4" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /decode/i }));
+
+  const submitBtn = await screen.findByRole("button", { name: /submit to network/i });
+  expect(submitBtn).toBeDisabled();
+  expect(submitBtn).not.toHaveTextContent(/need 0 more/i);
+});
+
 test("multisig: cosign affordance shows and submit stays gated on threshold, then unlocks once met", async () => {
   const decodeSpy = vi.spyOn(client, "decodeTx").mockResolvedValue(multisigBelowThreshold);
   const cosignSpy = vi.spyOn(client, "cosignTx").mockResolvedValue({

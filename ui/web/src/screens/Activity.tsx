@@ -9,7 +9,7 @@ import { Select } from "../components/Select";
 import { DownloadButton } from "../components/DownloadButton";
 import { Drawer } from "../components/Drawer";
 import { ExplorerLink } from "../components/ExplorerLink";
-import { formatAda } from "../format";
+import { formatAda, formatAdaPlain } from "../format";
 import { toCsv } from "../csv";
 import { errorMessage } from "../errorMessage";
 
@@ -92,7 +92,9 @@ function Confirmations({ tx }: { tx: Tx }) {
  * carries `direction: ""` and a null `asset_deltas` from the API despite the
  * TS type, so it must export cleanly with blank cells rather than throw.
  */
-function transactionsToCsv(txs: Tx[]): string {
+// Exported for test: the CSV column contract (ungrouped numbers) is worth
+// asserting directly rather than through a Blob the test environment cannot read.
+export function transactionsToCsv(txs: Tx[]): string {
   const headers = [
     "tx_hash",
     "direction",
@@ -106,8 +108,10 @@ function transactionsToCsv(txs: Tx[]): string {
   const rows = txs.map((t) => [
     t.tx_hash,
     t.direction || "unknown",
-    t.direction ? formatAda(t.net_lovelace) : "",
-    t.direction ? formatAda(t.fee) : "",
+    // Plain, not grouped: a CSV consumer must read these as numbers, and
+    // "1,500" either quotes as text or splits the column.
+    t.direction ? formatAdaPlain(t.net_lovelace) : "",
+    t.direction ? formatAdaPlain(t.fee) : "",
     t.block_height,
     new Date(t.block_time * 1000).toISOString(),
     t.pending ? "pending" : String(t.confirmations),
@@ -175,7 +179,7 @@ function TransactionDetailDrawer({ hash, onClose }: { hash: string; onClose: () 
               <dt>Hash</dt>
               <dd className="tx-hash-row">
                 <span className="tx-hash">{detail.tx_hash}</span>
-                <CopyButton value={detail.tx_hash} />
+                <CopyButton value={detail.tx_hash} ariaLabel="Copy transaction hash" />
               </dd>
             </div>
             <div className="dl-row">
@@ -278,11 +282,13 @@ export function Activity({ network = "preview" }: ActivityProps = {}) {
     );
   }
 
+  // Fee and block height are drill-down facts, not scanning facts: the detail
+  // drawer already shows both in full. Carrying them in the list pushed the
+  // table past its width, which cost the Details action its place on screen --
+  // an eight-column row that does not fit serves nobody.
   const columns = [
     { key: "direction", label: "Direction" },
     { key: "amount", label: "Amount" },
-    { key: "fee", label: "Fee" },
-    { key: "block_height", label: "Block" },
     { key: "time", label: "Time" },
     { key: "confirmations", label: "Confirmations" },
     { key: "tx_hash", label: "Tx Hash" },
@@ -293,14 +299,12 @@ export function Activity({ network = "preview" }: ActivityProps = {}) {
   const rows = filtered.map((tx) => ({
     direction: <DirectionBadge direction={tx.direction} />,
     amount: <NetAmount tx={tx} />,
-    fee: tx.direction ? `${formatAda(tx.fee)} ADA` : <span className="muted">—</span>,
-    block_height: tx.block_height,
     time: formatBlockTime(tx.block_time),
     confirmations: <Confirmations tx={tx} />,
     tx_hash: (
       <span className="hash-cell">
         <span className="mono">{truncateHash(tx.tx_hash)}</span>
-        <CopyButton value={tx.tx_hash} />
+        <CopyButton value={tx.tx_hash} ariaLabel="Copy transaction hash" />
         <ExplorerLink
           network={network}
           kind="tx"

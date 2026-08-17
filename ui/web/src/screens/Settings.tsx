@@ -566,7 +566,7 @@ export function Settings({ account, walletType, autoLock }: SettingsProps) {
       <Card title="Stake Address">
         <div className="row-copy">
           <code className="mono">{account.stake_address}</code>
-          <CopyButton value={account.stake_address} />
+          <CopyButton value={account.stake_address} ariaLabel="Copy stake address" />
         </div>
       </Card>
 

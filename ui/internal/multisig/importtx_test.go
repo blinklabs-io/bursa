@@ -68,6 +68,16 @@ func TestPolicyFromScript_TimeLocked(t *testing.T) {
 	}
 }
 
+// TestPolicyFromScript_Nil covers a nil native script (e.g. a malformed
+// imported tx with no witness script attached): it must return ErrInvalidTx
+// rather than panicking on the nil dereference.
+func TestPolicyFromScript_Nil(t *testing.T) {
+	_, err := PolicyFromScript(nil)
+	if !errors.Is(err, ErrInvalidTx) {
+		t.Fatalf("PolicyFromScript(nil) error = %v, want ErrInvalidTx", err)
+	}
+}
+
 // TestPolicyFromScript_UnsupportedShape covers a script shape composeScript
 // never emits (a bare pubkey script, with no threshold clause at all): it
 // must be rejected as ErrInvalidTx, not silently accepted or panicked on.

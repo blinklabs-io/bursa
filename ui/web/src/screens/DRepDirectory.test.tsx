@@ -37,8 +37,8 @@ test("lists DReps read from the node with formatted voting power and status", as
 
   render(<DRepDirectory network="preview" />);
 
-  // 1500000000 lovelace → 1500 ADA; active/inactive statuses shown.
-  expect(await screen.findByText("1500")).toBeInTheDocument();
+  // 1500000000 lovelace → 1,500 ADA (grouped); active/inactive statuses shown.
+  expect(await screen.findByText("1,500")).toBeInTheDocument();
   expect(screen.getByText("Active")).toBeInTheDocument();
   expect(screen.getByText("Inactive")).toBeInTheDocument();
   // Copy affordance carries the full (untruncated) drep id.
