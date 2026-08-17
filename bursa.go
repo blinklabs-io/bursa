@@ -2729,6 +2729,13 @@ func WriteSecretKeyFile(path string, data []byte) error {
 	return nil
 }
 
+// RestrictSecretKeyFilePermissions applies the platform-specific owner-only
+// permissions to an already-open secret file. Callers can use this for an
+// atomic temporary-file workflow before renaming the file into place.
+func RestrictSecretKeyFilePermissions(file *os.File) error {
+	return restrictSecretKeyFilePermissions(file)
+}
+
 // LoadSecretKeyFromFile loads a secret key from a file after checking the
 // permissions of the open file handle. Use this for secret key files that must
 // not be readable by group or other users. LoadKeyFromFile remains available

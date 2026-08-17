@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/sops"
 )
 
@@ -74,7 +75,7 @@ func writeSecretFileAtomic(path string, data []byte) error {
 			_ = os.Remove(tmpName)
 		}
 	}()
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := bursa.RestrictSecretKeyFilePermissions(tmp); err != nil {
 		_ = tmp.Close()
 		return err
 	}

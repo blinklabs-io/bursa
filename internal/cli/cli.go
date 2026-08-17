@@ -2546,7 +2546,7 @@ func writeKeyFile(kf bursa.KeyFile, path string) error {
 }
 
 func writeWalletOutput(path string, data []byte) error {
-	if strings.HasSuffix(path, ".skey") {
+	if strings.HasSuffix(path, ".skey") || filepath.Base(path) == "seed.txt" {
 		return bursa.WriteSecretKeyFile(path, data)
 	}
 	return os.WriteFile(path, data, 0o600)
