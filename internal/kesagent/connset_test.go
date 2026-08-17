@@ -37,24 +37,51 @@ func TestConnSetCloseAllClosesTrackedConns(t *testing.T) {
 	}
 }
 
-// TestConnSetAddAfterCloseAllClosesImmediately guards against the shutdown
-// race this connSet exists to close: a connection accepted concurrently with
-// shutdown (after closeAll's pass has already run, but before the accept
-// loop could register it) must not be tracked and left open -- add must
-// close it immediately so its handler goroutine unblocks right away instead
-// of hanging in a blocking read forever.
-func TestConnSetAddAfterCloseAllClosesImmediately(t *testing.T) {
+// TestConnSetAddAfterCloseAllIsRefused guards against the shutdown race this
+// connSet exists to handle: a connection accepted concurrently with shutdown
+// (after closeAll's pass has already run, but before the accept loop could
+// register it) must not be tracked. add reports false so the accept loop
+// closes the connection itself, keeping its handler goroutine from hanging in
+// a blocking read forever.
+func TestConnSetAddAfterCloseAllIsRefused(t *testing.T) {
 	s := newConnSet()
 	s.closeAll() // simulate shutdown having already completed a pass
 
 	server, client := net.Pipe()
 	t.Cleanup(func() { _ = client.Close() })
-	s.add(server)
+	t.Cleanup(func() { _ = server.Close() })
+	if s.add(server) {
+		t.Fatal("add after closeAll must be refused so the caller closes the connection")
+	}
+}
 
-	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
-	buf := make([]byte, 1)
-	if _, err := client.Read(buf); err == nil {
-		t.Fatal("expected a connection added after closeAll to be closed immediately")
+// TestConnSetEnforcesMaxTrackedConns verifies the concurrent-connection ceiling:
+// add refuses connections beyond maxTrackedConns and accepts again once a slot
+// is freed via remove.
+func TestConnSetEnforcesMaxTrackedConns(t *testing.T) {
+	s := newConnSet()
+	tracked := make([]net.Conn, 0, maxTrackedConns)
+	for i := 0; i < maxTrackedConns; i++ {
+		server, client := net.Pipe()
+		t.Cleanup(func() { _ = server.Close() })
+		t.Cleanup(func() { _ = client.Close() })
+		if !s.add(server) {
+			t.Fatalf("add %d within the cap should succeed", i)
+		}
+		tracked = append(tracked, server)
+	}
+
+	over, overClient := net.Pipe()
+	t.Cleanup(func() { _ = over.Close() })
+	t.Cleanup(func() { _ = overClient.Close() })
+	if s.add(over) {
+		t.Fatal("add beyond maxTrackedConns must be refused")
+	}
+
+	// Freeing a slot lets a new connection be tracked again.
+	s.remove(tracked[0])
+	if !s.add(over) {
+		t.Fatal("add after freeing a slot should succeed")
 	}
 }
 

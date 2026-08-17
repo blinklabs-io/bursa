@@ -89,6 +89,9 @@ func TestServiceServeKeyMode(t *testing.T) {
 	}
 
 	conn := dial(t, sock)
+	// Bound every read below so a handler that fails to send a frame fails the
+	// test fast instead of blocking until the go-test timeout.
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 
 	var hello Hello
 	if err := readFrame(conn, &hello); err != nil {
@@ -144,6 +147,9 @@ func TestServiceSignMode(t *testing.T) {
 	go func() { _ = a.ServeService(ctx, ln) }()
 
 	conn := dial(t, sock)
+	// Bound every read below so a handler that fails to send a frame fails the
+	// test fast instead of blocking until the go-test timeout.
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	var hello Hello
 	if err := readFrame(conn, &hello); err != nil {
 		t.Fatalf("read hello: %v", err)

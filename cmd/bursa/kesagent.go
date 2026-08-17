@@ -124,6 +124,10 @@ func runKesAgent(configFile string) int {
 		logger.Error("invalid kes_agent.service_socket_mode", "error", err)
 		return 1
 	}
+	if err := validateServiceSocketMode(serviceSocketMode); err != nil {
+		logger.Error("invalid kes_agent.service_socket_mode", "error", err)
+		return 1
+	}
 	controlSocketMode, err := parseSocketMode(kc.ControlSocketMode)
 	if err != nil {
 		logger.Error("invalid kes_agent.control_socket_mode", "error", err)
@@ -305,6 +309,22 @@ func parseSocketMode(s string) (os.FileMode, error) {
 		return 0, fmt.Errorf("socket mode %q: %w", s, err)
 	}
 	return os.FileMode(v), nil
+}
+
+// validateServiceSocketMode rejects a service-socket mode that grants other
+// (world) write access. Connecting to a Unix socket requires write permission
+// on the socket file, so a world-writable service socket would let any local
+// user receive a pushed KES signing key (serve-key mode) or submit sign
+// requests (sign mode). Group write is intentionally still allowed: the
+// documented producer setup shares the service socket with a dedicated group.
+func validateServiceSocketMode(mode os.FileMode) error {
+	if mode.Perm()&0o002 != 0 {
+		return fmt.Errorf(
+			"service socket mode %04o must not grant other (world) write access",
+			mode.Perm(),
+		)
+	}
+	return nil
 }
 
 // validateControlSocketMode rejects a control-socket mode that grants group

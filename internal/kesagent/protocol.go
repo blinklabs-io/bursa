@@ -87,11 +87,13 @@
 package kesagent
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"time"
 )
 
 const (
@@ -100,6 +102,13 @@ const (
 
 	// maxFrameLen caps a single frame payload to guard against abuse.
 	maxFrameLen = 1 << 20 // 1 MiB
+
+	// frameBodyReadTimeout bounds how long a frame body may take to arrive
+	// once its length header has been read. It applies only to the body read
+	// (never the header read, where an idle connection legitimately blocks
+	// between requests), so a client that announces a frame then stalls the
+	// body cannot hold a connection slot and its goroutine indefinitely.
+	frameBodyReadTimeout = 10 * time.Second
 )
 
 // Socket modes for the service socket.
@@ -213,10 +222,25 @@ func readFrame(r io.Reader, v any) error {
 	if n > maxFrameLen {
 		return fmt.Errorf("kesagent: frame too large (%d bytes)", n)
 	}
-	payload := make([]byte, n)
-	if _, err := io.ReadFull(r, payload); err != nil {
+	// A frame body must arrive contiguously once its header has been read, so
+	// bound the body read with a deadline (cleared afterward). This only
+	// affects readers that expose SetReadDeadline (net.Conn); in-memory
+	// readers used in tests are unaffected. The header read above is
+	// deliberately left un-deadlined so idle/long-lived connections may block
+	// there between frames.
+	if d, ok := r.(interface{ SetReadDeadline(time.Time) error }); ok {
+		_ = d.SetReadDeadline(time.Now().Add(frameBodyReadTimeout))
+		defer func() { _ = d.SetReadDeadline(time.Time{}) }()
+	}
+	// Grow the payload buffer as bytes actually arrive rather than
+	// pre-allocating the full advertised length: a client that announces a
+	// large frame (up to maxFrameLen) but never sends the body then ties up
+	// only what it actually delivered, not the whole advertised buffer.
+	var buf bytes.Buffer
+	if _, err := io.CopyN(&buf, r, int64(n)); err != nil {
 		return fmt.Errorf("kesagent: read frame payload: %w", err)
 	}
+	payload := buf.Bytes()
 	if err := json.Unmarshal(payload, v); err != nil {
 		return fmt.Errorf("kesagent: unmarshal frame: %w", err)
 	}

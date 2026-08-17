@@ -79,6 +79,32 @@ func TestValidateControlSocketMode(t *testing.T) {
 	}
 }
 
+func TestValidateServiceSocketMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    os.FileMode
+		wantErr bool
+	}{
+		{name: "owner-only default", mode: 0o600},
+		{name: "group readable is fine", mode: 0o640},
+		{name: "group writable allowed (documented producer group)", mode: 0o660},
+		{name: "other readable is fine", mode: 0o604},
+		{name: "other writable rejected", mode: 0o602, wantErr: true},
+		{name: "world writable rejected", mode: 0o666, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateServiceSocketMode(tt.mode)
+			if tt.wantErr && err == nil {
+				t.Fatalf("validateServiceSocketMode(%o): expected error, got nil", tt.mode)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("validateServiceSocketMode(%o): unexpected error: %v", tt.mode, err)
+			}
+		})
+	}
+}
+
 func TestLooksLikeText(t *testing.T) {
 	tests := []struct {
 		name string

@@ -82,7 +82,12 @@ func (a *Agent) ServeService(ctx context.Context, ln net.Listener) error {
 				return fmt.Errorf("kesagent: service accept: %w", err)
 			}
 		}
-		conns.add(conn)
+		if !conns.add(conn) {
+			// Shutting down, or the concurrent-connection ceiling was hit:
+			// close and drop this connection rather than serving it.
+			_ = conn.Close()
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

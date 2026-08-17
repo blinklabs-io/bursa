@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -140,6 +141,16 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 	}
 	if cfg.SlotsPerKESPeriod == 0 {
 		return nil, errors.New("kesagent: slots_per_kes_period must be positive")
+	}
+	// SlotLength > 0 is guaranteed above, so guard the KES-period-duration
+	// multiplication (SlotLength * SlotsPerKESPeriod) against int64 overflow.
+	// An oversized slots_per_kes_period would otherwise wrap to a non-positive
+	// duration and silently freeze currentKESPeriod at 0, stalling evolution.
+	if cfg.SlotsPerKESPeriod > uint64(math.MaxInt64)/uint64(cfg.SlotLength) {
+		return nil, fmt.Errorf(
+			"kesagent: slot_length (%s) * slots_per_kes_period (%d) overflows the KES period duration",
+			cfg.SlotLength, cfg.SlotsPerKESPeriod,
+		)
 	}
 	if cfg.MaxKESEvolutions == 0 {
 		cfg.MaxKESEvolutions = 62
