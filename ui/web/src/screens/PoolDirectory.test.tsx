@@ -44,7 +44,7 @@ test("lists stake pools read from the node with formatted margin/pledge/saturati
   expect(await screen.findByText("5.0%")).toBeInTheDocument();
   expect(screen.getByText("42.0%")).toBeInTheDocument();
   expect(screen.getByText("100")).toBeInTheDocument(); // 100000000 lovelace pledge → 100 ADA
-  expect(screen.getByText("5000")).toBeInTheDocument(); // 5000000000 → 5000 ADA
+  expect(screen.getByText("5,000")).toBeInTheDocument(); // 5000000000 → 5000 ADA
   // Copy affordance carries the full (untruncated) pool id.
   expect(
     screen.getByRole("button", { name: `Copy pool id ${POOL_A.pool_id}` }),

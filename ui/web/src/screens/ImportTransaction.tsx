@@ -240,7 +240,6 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Spending password"
                 aria-label="Spending password"
                 disabled={busy}
               />

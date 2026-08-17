@@ -283,9 +283,9 @@ function Compose(props: ComposeProps) {
           <p className="verified-readout">
             <span className="verified-tick">✓ Verified by your node</span>
             {" · "}margin {pct(pool.margin_cost)}
-            {" · "}pledge {formatAda(pool.declared_pledge)} ₳
-            {" · "}fixed {formatAda(pool.fixed_cost)} ₳
-            {" · "}live stake {formatAda(pool.live_stake)} ₳
+            {" · "}pledge {formatAda(pool.declared_pledge)} ADA
+            {" · "}fixed {formatAda(pool.fixed_cost)} ADA
+            {" · "}live stake {formatAda(pool.live_stake)} ADA
             <ExplorerLink network={network} kind="pool" id={pool.pool_id} />
           </p>
         )}
@@ -502,9 +502,9 @@ function PreviewPhase({ preview, isHardware, walletId, onBack, onDone }: Preview
               <span className="cert-body">{c.summary}</span>
               <span className="cert-amt">
                 {c.deposit_lovelace
-                  ? `${formatAda(c.deposit_lovelace)} ₳ deposit`
+                  ? `${formatAda(c.deposit_lovelace)} ADA deposit`
                   : c.amount_lovelace
-                    ? `${formatAda(c.amount_lovelace)} ₳`
+                    ? `${formatAda(c.amount_lovelace)} ADA`
                     : "—"}
               </span>
             </div>
@@ -514,28 +514,28 @@ function PreviewPhase({ preview, isHardware, walletId, onBack, onDone }: Preview
         <dl className="preview-summary">
           <div className="dl-row">
             <dt>Network fee</dt>
-            <dd>{formatAda(preview.fee)} ₳</dd>
+            <dd>{formatAda(preview.fee)} ADA</dd>
           </div>
           {preview.deposit !== "0" && (
             <div className="dl-row">
               <dt>Refundable deposit</dt>
-              <dd>{formatAda(preview.deposit)} ₳</dd>
+              <dd>{formatAda(preview.deposit)} ADA</dd>
             </div>
           )}
           {preview.withdrawal && (
             <div className="dl-row">
               <dt>Withdrawal</dt>
-              <dd>{formatAda(preview.withdrawal)} ₳</dd>
+              <dd>{formatAda(preview.withdrawal)} ADA</dd>
             </div>
           )}
           <div className="dl-row">
             <dt>Total to confirm</dt>
-            <dd className="total-accent">{formatAda(preview.total)} ₳</dd>
+            <dd className="total-accent">{formatAda(preview.total)} ADA</dd>
           </div>
         </dl>
       </Card>
 
-      <Card title={isHardware ? "Sign on your SeedSigner" : "Spending password"}>
+      <Card title={isHardware ? "Sign on your SeedSigner" : "Confirm"}>
         <div className="staking-form">
           {isHardware ? (
             needsAirGapResync ? (
@@ -586,7 +586,6 @@ function PreviewPhase({ preview, isHardware, walletId, onBack, onDone }: Preview
               <Input
                 id="staking-password"
                 type="password"
-                placeholder="Spending password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={loading}
@@ -628,7 +627,7 @@ function DonePhase({ result, onReset }: { result: TxResult; onReset: () => void 
         <p className="field-label">Transaction hash</p>
         <div className="tx-hash-row">
           <code className="tx-hash">{result.tx_hash}</code>
-          <CopyButton value={result.tx_hash} />
+          <CopyButton value={result.tx_hash} ariaLabel="Copy transaction hash" />
         </div>
         <Button onClick={onReset}>Back to staking</Button>
       </div>
@@ -670,7 +669,7 @@ function ActiveState({ poolId, withdrawable, note, onChange, onWithdraw, network
       <Card title="Rewards">
         <div className="dl-row">
           <dt className="field-label">Withdrawable</dt>
-          <dd className="total-accent mono">{formatAda(withdrawable)} ₳</dd>
+          <dd className="total-accent mono">{formatAda(withdrawable)} ADA</dd>
         </div>
 
         {error && (
@@ -695,6 +694,24 @@ function ActiveState({ poolId, withdrawable, note, onChange, onWithdraw, network
 
 // --- Top-level Staking screen ---
 
+// The delegation compose draft. Owned by the parent Stake screen, because
+// switching tabs unmounts this one and every field would otherwise be lost.
+export interface ComposeDraft {
+  poolId: string;
+  voteType: VoteType | null;
+  drepId: string;
+  anchorUrl: string;
+  anchorHash: string;
+}
+
+const EMPTY_DRAFT: ComposeDraft = {
+  poolId: "",
+  voteType: null,
+  drepId: "",
+  anchorUrl: "",
+  anchorHash: "",
+};
+
 interface StakingProps {
   // Optional so existing no-prop callers/tests keep working; the app always
   // passes the active wallet's real network when routing to this screen.
@@ -704,22 +721,46 @@ interface StakingProps {
   // certificates — i.e. SeedSigner); walletId keys its per-wallet fingerprint.
   isHardware?: boolean;
   walletId?: string;
+  // The compose draft is owned by the parent Stake screen so it survives a tab
+  // switch to the pool directory and back. Left optional (with internal state
+  // as the fallback) so this screen still stands alone.
+  draft?: ComposeDraft;
+  setDraft?: (update: (prev: ComposeDraft) => ComposeDraft) => void;
+  // Whether the user is part-way through composing. Owned by the parent for
+  // the same reason the draft is: switching tabs unmounts this screen, and
+  // coming back to a status panel with a half-filled draft hidden behind
+  // "Change delegation" loses the user's place. Also how "Delegate" on a
+  // directory row lands on a filled-in form rather than the status panel an
+  // already-delegating wallet would otherwise see.
+  composing?: boolean;
+  setComposing?: (composing: boolean) => void;
 }
 
-export function Staking({ network = "preview", isHardware, walletId }: StakingProps = {}) {
+export function Staking({
+  network = "preview",
+  isHardware,
+  walletId,
+  draft: draftProp,
+  setDraft: setDraftProp,
+  composing: composingProp,
+  setComposing: setComposingProp,
+}: StakingProps = {}) {
   const delegation = useDelegation();
 
-  const [phase, setPhase] = useState<Phase>("status");
+  const [phase, setPhase] = useState<Phase>(composingProp ? "compose" : "status");
   const [previewFrom, setPreviewFrom] = useState<Phase>("status");
   const [preview, setPreview] = useState<DelegationPreview | null>(null);
   const [txResult, setTxResult] = useState<TxResult | null>(null);
 
-  // Compose draft lives at the top so Back returns to in-progress entry.
-  const [poolId, setPoolId] = useState("");
-  const [voteType, setVoteType] = useState<VoteType | null>(null);
-  const [drepId, setDrepId] = useState("");
-  const [anchorUrl, setAnchorUrl] = useState("");
-  const [anchorHash, setAnchorHash] = useState("");
+  // Compose draft lives above this screen (or locally when it stands alone) so
+  // Back — and a trip to another tab — returns to in-progress entry.
+  const [draftLocal, setDraftLocal] = useState<ComposeDraft>(EMPTY_DRAFT);
+  const draft = draftProp ?? draftLocal;
+  const setDraft = setDraftProp ?? setDraftLocal;
+  const setField = <K extends keyof ComposeDraft>(key: K) => (value: ComposeDraft[K]) =>
+    setDraft((prev) => ({ ...prev, [key]: value }));
+  const { poolId, voteType, drepId, anchorUrl, anchorHash } = draft;
+
 
   if (delegation.loading) {
     return <p>Loading…</p>;
@@ -737,6 +778,9 @@ export function Staking({ network = "preview", isHardware, walletId }: StakingPr
 
   function goCompose() {
     setPhase("compose");
+    // Remember it above this screen, so a trip to another tab returns here
+    // rather than to the status panel.
+    setComposingProp?.(true);
   }
 
   function handlePreview(p: DelegationPreview, from: Phase = "compose") {
@@ -748,17 +792,19 @@ export function Staking({ network = "preview", isHardware, walletId }: StakingPr
   function handleDone(result: TxResult) {
     setTxResult(result);
     setPhase("done");
+    // The draft has been spent. Leaving it (and the composing flag) set would
+    // reopen the old form behind the user's back if they switched tabs while
+    // the receipt was up.
+    setDraft(() => EMPTY_DRAFT);
+    setComposingProp?.(false);
   }
 
   function handleReset() {
     setPreview(null);
     setTxResult(null);
-    setPoolId("");
-    setVoteType(null);
-    setDrepId("");
-    setAnchorUrl("");
-    setAnchorHash("");
+    setDraft(() => EMPTY_DRAFT);
     setPhase("status");
+    setComposingProp?.(false);
     delegation.refresh();
   }
 
@@ -805,15 +851,15 @@ export function Staking({ network = "preview", isHardware, walletId }: StakingPr
       <StatusPanel poolId={del?.pool_id ?? null} active={isActive} network={network} />
       <Compose
         poolId={poolId}
-        setPoolId={setPoolId}
+        setPoolId={setField("poolId")}
         voteType={voteType}
-        setVoteType={setVoteType}
+        setVoteType={setField("voteType")}
         drepId={drepId}
-        setDrepId={setDrepId}
+        setDrepId={setField("drepId")}
         anchorUrl={anchorUrl}
-        setAnchorUrl={setAnchorUrl}
+        setAnchorUrl={setField("anchorUrl")}
         anchorHash={anchorHash}
-        setAnchorHash={setAnchorHash}
+        setAnchorHash={setField("anchorHash")}
         onPreview={handlePreview}
         network={network}
       />

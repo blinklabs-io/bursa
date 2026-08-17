@@ -655,7 +655,6 @@ function PreviewPhase({
             <Input
               id="spend-password"
               type="password"
-              placeholder="Spending password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
@@ -712,7 +711,7 @@ function PreviewPhase({
                 <p className="field-label">Unsigned transaction (CBOR)</p>
                 <div className="tx-hash-row">
                   <code className="tx-hash">{exported.unsigned_tx_cbor}</code>
-                  <CopyButton value={exported.unsigned_tx_cbor} />
+                  <CopyButton value={exported.unsigned_tx_cbor} ariaLabel="Copy unsigned transaction CBOR" />
                   <DownloadButton
                     value={exported.unsigned_tx_cbor}
                     filename="unsigned-tx.cbor"
@@ -757,7 +756,7 @@ function DonePhase({ result, onReset }: DonePhaseProps) {
         <p className="field-label">Transaction hash</p>
         <div className="tx-hash-row">
           <code className="tx-hash">{result.tx_hash}</code>
-          <CopyButton value={result.tx_hash} />
+          <CopyButton value={result.tx_hash} ariaLabel="Copy transaction hash" />
         </div>
         <Button onClick={onReset}>Send another</Button>
       </div>
