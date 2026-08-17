@@ -1819,22 +1819,33 @@ func (s *Service) addInputKeyHashes(ctx context.Context, tx *conway.ConwayTransa
 	return resolvedAll
 }
 
-// extractTxBodyCbor returns the raw CBOR bytes of the transaction body (element
+// ExtractTxBodyCbor returns the raw CBOR bytes of the transaction body (element
 // [0] of the outer transaction array), preserving them exactly as supplied so the
 // signing hash (blake2b-256 of the body) matches what the node computes. It does
-// NOT re-encode the decoded struct. This mirrors connector.extractTxBodyCbor;
-// CosignTx uses this copy so the spend package does not depend on connector.
-func extractTxBodyCbor(txBytes []byte) ([]byte, error) {
+// NOT re-encode the decoded struct. This is the canonical implementation shared
+// with the connector package (CIP-30 signing); spend's own call sites use the
+// private extractTxBodyCbor below, which wraps these errors with ErrInvalidTx.
+func ExtractTxBodyCbor(txBytes []byte) ([]byte, error) {
 	var outer []cbor.RawMessage
 	if _, err := cbor.Decode(txBytes, &outer); err != nil {
-		return nil, fmt.Errorf("%w: decode tx as CBOR array: %w", ErrInvalidTx, err)
+		return nil, fmt.Errorf("decode tx as CBOR array: %w", err)
 	}
 	if len(outer) < 1 {
-		return nil, fmt.Errorf("%w: transaction CBOR array is empty (no body element)", ErrInvalidTx)
+		return nil, errors.New("transaction CBOR array is empty (no body element)")
 	}
 	body := []byte(outer[0])
 	if len(body) == 0 {
-		return nil, fmt.Errorf("%w: transaction body element is empty", ErrInvalidTx)
+		return nil, errors.New("transaction body element is empty")
+	}
+	return body, nil
+}
+
+// extractTxBodyCbor wraps ExtractTxBodyCbor's errors with ErrInvalidTx so
+// spend's internal call sites keep their existing error classification.
+func extractTxBodyCbor(txBytes []byte) ([]byte, error) {
+	body, err := ExtractTxBodyCbor(txBytes)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidTx, err)
 	}
 	return body, nil
 }
