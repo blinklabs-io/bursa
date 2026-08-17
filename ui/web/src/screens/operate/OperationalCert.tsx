@@ -65,12 +65,12 @@ function OpCertResult({ opcert }: { opcert: OpCert }) {
       <p className="field-label">KES verification key</p>
       <div className="tx-hash-row">
         <code className="tx-hash">{opcert.kes_vkey_hex}</code>
-        <CopyButton value={opcert.kes_vkey_hex} />
+        <CopyButton value={opcert.kes_vkey_hex} ariaLabel="Copy KES verification key" />
       </div>
       <p className="field-label">Cold signature</p>
       <div className="tx-hash-row">
         <code className="tx-hash">{opcert.cold_signature_hex}</code>
-        <CopyButton value={opcert.cold_signature_hex} />
+        <CopyButton value={opcert.cold_signature_hex} ariaLabel="Copy cold signature" />
       </div>
     </div>
   );
@@ -375,7 +375,7 @@ function AirGapOpCert({ currentKESPeriod }: { currentKESPeriod?: number }) {
           <p className="field-label">Payload to sign (hex)</p>
           <div className="tx-hash-row">
             <code className="tx-hash">{payload.payload_hex}</code>
-            <CopyButton value={payload.payload_hex} />
+            <CopyButton value={payload.payload_hex} ariaLabel="Copy operational certificate payload" />
           </div>
         </div>
       )}

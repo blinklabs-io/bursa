@@ -17,16 +17,22 @@ package operation
 import (
 	"encoding/hex"
 	"fmt"
+	"sort"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/internal/signer/policy"
+	"github.com/blinklabs-io/gouroboros/ledger"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
 // Cardano is the subset of the bursa toolkit the coordinator needs. It is an
 // interface so the coordinator can be tested with a fake.
 type Cardano interface {
-	// Inspect decodes a transaction into its structured summary.
+	// Inspect decodes a transaction into its structured summary (counts/booleans).
 	Inspect(txCbor []byte) (*bursa.TxInspection, error)
+	// Operations decodes the operation TYPES present in a transaction — the
+	// certificate kinds and governance voters — for per-kind policy gating.
+	Operations(txCbor []byte) (policy.TxOps, error)
 	// TxID returns the 32-byte transaction id (the witness signing message).
 	TxID(txCbor []byte) ([]byte, error)
 	// Assemble merges vkey witnesses into a transaction, preserving the body.
@@ -38,6 +44,43 @@ type BursaCardano struct{}
 
 func (BursaCardano) Inspect(txCbor []byte) (*bursa.TxInspection, error) {
 	return bursa.InspectTransaction(txCbor)
+}
+
+// Operations decodes the certificate kinds and governance voter identities from
+// a transaction. Certificate kinds are returned in transaction order; voters
+// are sorted (by kind then id) for deterministic output. Voter DRep credential
+// ids are hex-encoded.
+func (BursaCardano) Operations(txCbor []byte) (policy.TxOps, error) {
+	txType, err := ledger.DetermineTransactionType(txCbor)
+	if err != nil {
+		return policy.TxOps{}, fmt.Errorf("failed to determine transaction era: %w", err)
+	}
+	tx, err := ledger.NewTransactionFromCbor(txType, txCbor)
+	if err != nil {
+		return policy.TxOps{}, fmt.Errorf("failed to decode transaction: %w", err)
+	}
+	var ops policy.TxOps
+	for _, cert := range tx.Certificates() {
+		ops.Certificates = append(ops.Certificates, policy.CertificateKindName(cert.Type()))
+	}
+	for voter := range tx.VotingProcedures() {
+		if voter == nil {
+			continue
+		}
+		kind := policy.VoterKindName(voter.Type)
+		vi := policy.VoterInfo{Kind: kind}
+		if policy.IsDrepVoterKind(kind) {
+			vi.DrepId = hex.EncodeToString(voter.Hash[:])
+		}
+		ops.Voters = append(ops.Voters, vi)
+	}
+	sort.Slice(ops.Voters, func(i, j int) bool {
+		if ops.Voters[i].Kind != ops.Voters[j].Kind {
+			return ops.Voters[i].Kind < ops.Voters[j].Kind
+		}
+		return ops.Voters[i].DrepId < ops.Voters[j].DrepId
+	})
+	return ops, nil
 }
 
 func (BursaCardano) TxID(txCbor []byte) ([]byte, error) {

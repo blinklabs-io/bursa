@@ -161,13 +161,6 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
 
       {summary && (
         <div className="import-preview">
-          {summary.kind === "unknown" && (
-            <p role="alert" className="warn-text">
-              Some parts of this transaction could not be decoded. Review carefully
-              before signing.
-            </p>
-          )}
-
           <dl className="preview-summary">
             <div className="dl-row">
               <dt>Fee</dt>
@@ -240,7 +233,6 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Spending password"
                 aria-label="Spending password"
                 disabled={busy}
               />

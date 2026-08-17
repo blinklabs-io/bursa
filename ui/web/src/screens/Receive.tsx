@@ -87,7 +87,7 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
       ),
       copy: (
         <>
-          <CopyButton value={addr} />
+          <CopyButton value={addr} ariaLabel="Copy this receive address" />
           <ExplorerLink
             network={network}
             kind="address"
@@ -108,7 +108,7 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
           )}
           <div className="receive-next-details">
             <p className="mono address-full">{nextUnused}</p>
-            <CopyButton value={nextUnused} />
+            <CopyButton value={nextUnused} ariaLabel="Copy next unused address" />
             {nextUnused && <ExplorerLink network={network} kind="address" id={nextUnused} />}
           </div>
         </div>

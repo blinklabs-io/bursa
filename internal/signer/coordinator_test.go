@@ -32,11 +32,14 @@ import (
 
 type fakeCardano struct {
 	insp      *bursa.TxInspection
+	ops       policy.TxOps
+	opsErr    error
 	txid      []byte
 	assembled []byte
 }
 
 func (f fakeCardano) Inspect([]byte) (*bursa.TxInspection, error) { return f.insp, nil }
+func (f fakeCardano) Operations([]byte) (policy.TxOps, error)     { return f.ops, f.opsErr }
 func (f fakeCardano) TxID([]byte) ([]byte, error)                 { return f.txid, nil }
 func (f fakeCardano) Assemble([]byte, []lcommon.VkeyWitness) ([]byte, error) {
 	return f.assembled, nil
