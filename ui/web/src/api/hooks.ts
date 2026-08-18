@@ -257,7 +257,13 @@ export function useGovernanceActions(params: { q: string; page: number }): Gover
           }
         })
         .catch((e: Error) => {
-          if (!cancelled) setError(e);
+          if (!cancelled) {
+            setError(e);
+            // Drop the previous query/page's rows: the pager and search box
+            // already show the new request, so leaving them would present
+            // stale results as the answer to it, alongside the error.
+            setData(null);
+          }
         })
         .finally(() => {
           if (!cancelled) setLoading(false);

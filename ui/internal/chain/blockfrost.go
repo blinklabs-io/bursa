@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blinklabs-io/dingo/database/models"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	_ "github.com/glebarez/go-sqlite"
 )
@@ -675,10 +676,12 @@ var govActionTypeNames = map[uint8]string{
 }
 
 // Governance vote choices as stored by Dingo (models.GovernanceVote.Vote).
+// Taken from Dingo's own constants rather than redeclared, so a renumbering
+// upstream is a compile error here instead of a silently mis-attributed tally.
 const (
-	dingoGovVoteNo      = 0
-	dingoGovVoteYes     = 1
-	dingoGovVoteAbstain = 2
+	dingoGovVoteNo      = models.VoteNo
+	dingoGovVoteYes     = models.VoteYes
+	dingoGovVoteAbstain = models.VoteAbstain
 )
 
 // GovernanceActions lists the Conway governance actions (proposals) the embedded
@@ -817,6 +820,15 @@ func governanceVoteTallies(ctx context.Context, db *sql.DB) (map[uint64]govVoteT
 			t.no += count
 		case dingoGovVoteAbstain:
 			t.abstain += count
+		default:
+			// A vote choice this build does not know about. Dropping it
+			// silently would under-report the tally and make the displayed
+			// numbers disagree with the chain, so surface it instead.
+			return nil, fmt.Errorf(
+				"unknown governance vote choice %d for proposal %d",
+				vote,
+				proposalID,
+			)
 		}
 		tallies[proposalID] = t
 	}
