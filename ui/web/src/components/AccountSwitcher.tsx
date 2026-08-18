@@ -114,7 +114,7 @@ export function AccountSwitcher({ wallet, onChanged }: AccountSwitcherProps) {
               >
                 <span className="account-name">{a.label}</span>
                 {bal && (
-                  <span className="account-balance">{formatAda(bal.lovelace)} ₳</span>
+                  <span className="account-balance">{formatAda(bal.lovelace)} ADA</span>
                 )}
               </button>
             </li>

@@ -93,7 +93,7 @@ test("lists every account with its label, marks the active one, and overlays nod
   expect(screen.getByText("Account #0")).toBeInTheDocument();
   expect(screen.getByText("Account #1")).toBeInTheDocument();
   // Balances are not on the WalletView — they arrive once useAccounts resolves.
-  expect(await screen.findByText("1.5 ₳")).toBeInTheDocument();
+  expect(await screen.findByText("1.5 ADA")).toBeInTheDocument();
 
   const active = screen.getByRole("button", { name: /account #0/i });
   expect(active).toHaveAttribute("aria-current", "true");
@@ -109,7 +109,7 @@ test("renders accounts without balances when /wallet/accounts is unavailable", a
   // The list still renders from the WalletView; no balance chip is shown.
   expect(screen.getByText("Account #0")).toBeInTheDocument();
   await waitFor(() => expect(client.getAccounts).toHaveBeenCalled());
-  expect(screen.queryByText(/₳/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/ADA/)).not.toBeInTheDocument();
 });
 
 test("selecting an inactive account switches it server-side and reports the result", async () => {
