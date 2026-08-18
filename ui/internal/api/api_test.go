@@ -3827,9 +3827,10 @@ func TestSameOriginGuardSkipsConnector(t *testing.T) {
 }
 
 // TestMultiSigCreateReportsActivationFailure covers the case where the script
-// wallet is persisted but selecting it fails: reads and sends stay bound to the
-// previous wallet, so answering 200 with the new wallet marked active would be
-// a claim the client cannot check.
+// wallet is persisted but selecting it fails. The wallet exists, so the request
+// did not fail — but the response must not claim it is active, because reads
+// and sends still answer for the previous wallet. The client reconciles from
+// that flag and can activate the wallet by id.
 func TestMultiSigCreateReportsActivationFailure(t *testing.T) {
 	acct := multisig.Account{
 		ID:            "ms-1",
@@ -3853,30 +3854,27 @@ func TestMultiSigCreateReportsActivationFailure(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/multisig", bytes.NewBufferString(createBody)))
 
-	// Three things at once: a failure status so this cannot be read as "created
-	// and activated", the activation error, and the created wallet's ID — the
-	// wallet exists now, and re-POSTing the same policy hits the
-	// duplicate-script check, leaving no other way to reach it.
-	if rec.Code == http.StatusOK {
-		t.Fatalf("POST /wallet/multisig = 200, want a failure status: %s", rec.Body.String())
+	// The wallet was created, so this is not a failed request: a 5xx would
+	// misdescribe it, and a client retrying hits the duplicate-script check.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /wallet/multisig = %d, want 200 (the wallet was created): %s",
+			rec.Code, rec.Body.String())
 	}
+	// Decoded rather than substring-matched: the nested account carries its own
+	// "active" field.
 	var got struct {
-		Error  string `json:"error"`
-		Wallet struct {
-			ID     string `json:"id"`
-			Active bool   `json:"active"`
-		} `json:"wallet"`
+		ID     string `json:"id"`
+		Active bool   `json:"active"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v (body %s)", err, rec.Body.String())
 	}
-	if got.Error == "" {
-		t.Fatalf("response carries no activation error: %s", rec.Body.String())
+	if got.Active {
+		t.Fatalf("response claims the wallet is active despite the failed selection: %s",
+			rec.Body.String())
 	}
-	if got.Wallet.Active {
-		t.Fatalf("response claims the wallet is active despite the failure: %s", rec.Body.String())
-	}
-	if got.Wallet.ID == "" {
-		t.Fatalf("response carries no wallet id, so the created wallet is unreachable: %s", rec.Body.String())
+	if got.ID == "" {
+		t.Fatalf("response carries no wallet id, so the created wallet is unreachable: %s",
+			rec.Body.String())
 	}
 }

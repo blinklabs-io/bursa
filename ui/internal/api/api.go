@@ -1910,29 +1910,19 @@ func registerMultiSigRoutes(
 		// Adding a wallet selects it, as the other add-wallet paths do. Without
 		// this the response would claim the new wallet is active while balance
 		// and send requests kept answering for the previous one.
-		active, aErr := vlt.SetActive(meta.ID)
-		if aErr != nil {
-			// The wallet is persisted but the selection did not move, so reads
-			// and sends still answer for the previous one. The response has to
-			// carry three things at once, and a plain serve() can only manage
-			// one of them: a non-2xx status, so the caller cannot read this as
-			// "created and activated"; the activation error; and the created
-			// wallet's ID, because the wallet exists now and re-POSTing the
-			// same policy hits the duplicate-script check, leaving no other way
-			// to reach it. The wallet view is included with a non-matching
-			// active id so `active` reads false.
-			writeJSON(w, http.StatusInternalServerError, struct {
-				Error  string     `json:"error"`
-				Wallet walletView `json:"wallet"`
-			}{
-				Error:  aErr.Error(),
-				Wallet: toWalletView(meta, ""),
-			})
-			return
+		// Adding a wallet selects it, as the other add-wallet paths do. When the
+		// selection fails the wallet is still created, so the response says so
+		// with a truthful active flag rather than a failure status: a 5xx would
+		// misdescribe a request that did create the resource, and a client
+		// retrying it hits the duplicate-script check. The client reconciles
+		// from `active` (see applyAdded) and can activate the wallet by id.
+		activeID := ""
+		if active, aErr := vlt.SetActive(meta.ID); aErr == nil {
+			bindActive(active)
+			meta = active
+			activeID = meta.ID
 		}
-		bindActive(active)
-		meta = active
-		serve(w, toWalletView(meta, meta.ID), nil)
+		serve(w, toWalletView(meta, activeID), nil)
 	})
 
 	// The active wallet's own CIP-1854 multi-sig participant key, to share. Needs
