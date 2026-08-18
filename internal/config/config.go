@@ -77,17 +77,22 @@ type SignerWatermarkConfig struct {
 // SignerBackendConfig configures a key-custody backend.
 type SignerBackendConfig struct {
 	Name          string                   `yaml:"name"`
-	Type          string                   `yaml:"type"`           // "software" | "sops" | "vault"
+	Type          string                   `yaml:"type"`           // "software" | "sops" | "vault" | "pkcs11"
 	Path          string                   `yaml:"path"`           // software: key dir
 	PassphraseEnv string                   `yaml:"passphrase_env"` // software: env var holding the key-file passphrase
 	SecretPrefix  string                   `yaml:"secret_prefix"`  // sops: secret short-name prefix within google.project
 	Address       string                   `yaml:"address"`        // vault
 	TransitMount  string                   `yaml:"transit_mount"`  // vault
 	TokenEnv      string                   `yaml:"token_env"`      // vault: env var holding the token (default VAULT_TOKEN)
-	Keys          []SignerBackendKeyConfig `yaml:"keys"`           // vault: explicit transit key list
+	Module        string                   `yaml:"module"`         // pkcs11: path to the PKCS#11 module (.so)
+	TokenLabel    string                   `yaml:"token_label"`    // pkcs11: token label used to select the slot
+	Slot          *uint                    `yaml:"slot"`           // pkcs11: explicit slot id (alternative to token_label)
+	PINEnv        string                   `yaml:"pin_env"`        // pkcs11: env var holding the user PIN (never stored in config)
+	Keys          []SignerBackendKeyConfig `yaml:"keys"`           // vault: explicit transit key list; pkcs11: optional CKA_LABEL filter + key type
 }
 
-// SignerBackendKeyConfig names a remote key and its Cardano key type.
+// SignerBackendKeyConfig names a remote key and its Cardano key type. For vault
+// Name is the transit key name; for pkcs11 Name is the object's CKA_LABEL.
 type SignerBackendKeyConfig struct {
 	Name string `yaml:"name"`
 	Type string `yaml:"type"` // payment|stake|drep|cc-hot|cc-cold|pool|policy
