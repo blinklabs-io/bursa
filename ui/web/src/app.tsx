@@ -393,6 +393,7 @@ export function App() {
     // inform vote-delegation. Needs only a queryable node (not a full sync, no
     // spending), so it works for any active wallet — including read-only ones.
     // Falls back to Portfolio while the node cannot serve queries.
+    if (!canQueryNode) screenLabel = "portfolio";
     content = canQueryNode ? (
       <DRepDirectory network={activeWallet.network} canDelegate={canStake} />
     ) : (
