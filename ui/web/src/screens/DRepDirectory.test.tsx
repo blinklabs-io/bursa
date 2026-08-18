@@ -116,3 +116,39 @@ test("mentions the Delegate shortcut in the intro copy when it is available", as
   const helperText = container.querySelector(".helper-text")?.textContent ?? "";
   expect(helperText).toMatch(/or use Delegate\.$/);
 });
+
+test("marks the results stale while a new page is still loading", async () => {
+  // The pager advances to the requested page immediately, so the rows for the
+  // previous page must not read as the answer to the new one.
+  let resolveSecond: ((value: DRepDirectoryResponse) => void) | undefined;
+  const pending = new Promise<DRepDirectoryResponse>((resolve) => {
+    resolveSecond = resolve;
+  });
+  let call = 0;
+  vi.spyOn(client, "getDReps").mockImplementation(() => {
+    call += 1;
+    return call === 1
+      ? Promise.resolve(directory([DREP_A], { total: 100, count: 1 }))
+      : pending;
+  });
+
+  render(<DRepDirectory network="preview" />);
+  await screen.findByText(/drep1aaaa/i);
+
+  const busyRegion = () => screen.getByText(/drep1aaaa/i).closest("[aria-busy]");
+  expect(busyRegion()).toHaveAttribute("aria-busy", "false");
+
+  fireEvent.click(screen.getByRole("button", { name: /next/i }));
+
+  // Still showing page 1's row, but now explicitly marked busy, so the stale
+  // rows do not silently read as page 2.
+  await waitFor(() => {
+    expect(busyRegion()).toHaveAttribute("aria-busy", "true");
+  });
+  expect(screen.getByRole("status")).toHaveTextContent(/updating/i);
+
+  resolveSecond?.(directory([DREP_B], { total: 100, count: 1, page: 2 }));
+  await waitFor(() => {
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});

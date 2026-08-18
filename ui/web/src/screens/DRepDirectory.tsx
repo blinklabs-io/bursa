@@ -160,7 +160,11 @@ export function DRepDirectory({ network, canDelegate = true }: DRepDirectoryProp
             {query.trim() ? "No DReps match your search." : "No DReps found."}
           </p>
         ) : (
-          <>
+          // aria-busy while a debounced request is in flight: the pager below
+          // reflects the requested page immediately, so without this the rows
+          // for the previous query/page read as the answer to the new one.
+          // Kept visible rather than blanked so typing does not flicker.
+          <div aria-busy={loading}>
             <Table columns={DREP_COLUMNS} rows={rows} />
             <div className="pager">
               <Button
@@ -181,7 +185,12 @@ export function DRepDirectory({ network, canDelegate = true }: DRepDirectoryProp
                 Next
               </Button>
             </div>
-          </>
+            {loading && (
+              <p className="muted" role="status">
+                Updating…
+              </p>
+            )}
+          </div>
         )}
       </Card>
     </div>
