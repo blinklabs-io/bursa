@@ -73,6 +73,25 @@ type Deps struct {
 	Cardano   operation.Cardano
 	Logger    *slog.Logger
 	Metrics   *Metrics
+	// PolicyHook, when non-nil, is consulted after the static policy allows a
+	// tx-signing decision; signing proceeds only if it returns nil (fail closed).
+	PolicyHook PolicyHook
+}
+
+// callerCtxKey types the context value carrying the authenticated caller.
+type callerCtxKey struct{}
+
+// WithCaller returns a context carrying the authenticated caller subject so
+// that SignTx can apply any per-caller policy override. The API layer sets this
+// from its authenticated request context before invoking the coordinator.
+func WithCaller(ctx context.Context, caller string) context.Context {
+	return context.WithValue(ctx, callerCtxKey{}, caller)
+}
+
+// callerFromContext returns the caller subject set by WithCaller, or "".
+func callerFromContext(ctx context.Context) string {
+	s, _ := ctx.Value(callerCtxKey{}).(string)
+	return s
 }
 
 // Coordinator orchestrates a single signing request end-to-end.
@@ -151,6 +170,11 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []st
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
+	ops, err := c.deps.Cardano.Operations(raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
+	}
+	caller := callerFromContext(ctx)
 	txid, err := c.deps.Cardano.TxID(raw)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
@@ -194,12 +218,24 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []st
 			c.deps.Metrics.observeBackendError("resolver")
 			continue
 		}
-		if dec := c.deps.Policy.EvaluateTx(hash, insp); !dec.Allow {
+		if dec := c.deps.Policy.EvaluateTx(hash, insp, policy.WithCaller(caller), policy.WithOps(ops)); !dec.Allow {
 			errs = append(errs, SignerError{Signer: s, Code: CodeDenied, Reason: dec.Reason})
 			c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "denied", "reason", dec.Reason)
 			c.deps.Metrics.observe("tx", string(CodeDenied))
 			c.deps.Metrics.observeDeny(string(CodeDenied))
 			continue
+		}
+		// Optional external policy hook: consulted only after the static policy
+		// allows, and fail-closed (any error denies signing).
+		if c.deps.PolicyHook != nil {
+			sum := summarizeTx(caller, hash.String(), insp, ops)
+			if herr := c.deps.PolicyHook.Authorize(ctx, sum); herr != nil {
+				errs = append(errs, SignerError{Signer: s, Code: CodeDenied, Reason: herr.Error()})
+				c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "denied", "reason", "policy hook: "+herr.Error())
+				c.deps.Metrics.observe("tx", string(CodeDenied))
+				c.deps.Metrics.observeDeny(string(CodeDenied))
+				continue
+			}
 		}
 		watermarkCommitted := false
 		if c.deps.WMMode == watermark.ModeEnforce {

@@ -5,6 +5,12 @@ import {
   type FormEvent,
 } from "react";
 import { Card } from "../components/Card";
+import { Tabs } from "../components/Tabs";
+import type { TabDef } from "../components/Tabs";
+import { Contacts } from "./Contacts";
+import { Diagnostics } from "./Diagnostics";
+import { SignMessage } from "./SignMessage";
+import { VerifyMessage } from "./VerifyMessage";
 import { StatusPill } from "../components/StatusPill";
 import { CopyButton } from "../components/CopyButton";
 import { Button } from "../components/Button";
@@ -462,7 +468,7 @@ function TPMCard({
   );
 }
 
-export function Settings({ account, walletType, autoLock }: SettingsProps) {
+function GeneralSettings({ account, walletType, autoLock }: SettingsProps) {
   const status = useStatus();
   const tpmStatusQuery = useTPMStatus();
   const [connectorMissing, setConnectorMissing] = useState(false);
@@ -765,6 +771,102 @@ export function Settings({ account, walletType, autoLock }: SettingsProps) {
           ) : null}
         </Card>
       )}
+    </div>
+  );
+}
+
+type SettingsTab = "general" | "contacts" | "tools" | "diagnostics";
+
+const SETTINGS_TABS: readonly TabDef<SettingsTab>[] = [
+  { key: "general", label: "General" },
+  { key: "contacts", label: "Address book" },
+  { key: "tools", label: "Tools" },
+  { key: "diagnostics", label: "Diagnostics" },
+];
+
+interface SettingsScreenProps extends SettingsProps {
+  // The active wallet id, threaded to the message-signing tool so a hardware
+  // wallet can resolve which device backs it and sign on-device.
+  walletId: string;
+  // Which panel to open on, so the routes these screens used to own still land
+  // where their old links pointed.
+  initialTab?: SettingsTab;
+  // Whether this wallet can sign against the local keystore (a full/seed
+  // wallet). Hardware wallets can't, but still sign messages on-device, so the
+  // message-signing tool is offered to them too — only watch-only and
+  // multi-signature wallets get the explanation instead of a form.
+  canSign?: boolean;
+}
+
+/**
+ * Settings is where the wallet's own housekeeping lives.
+ *
+ * Address book, message signing/verification and node diagnostics were four
+ * more top-level destinations, each used rarely and none of them a place you
+ * go to do wallet work. They are panels here, which is what they always were.
+ */
+export function Settings({
+  account,
+  walletType,
+  walletId,
+  autoLock,
+  initialTab = "general",
+  canSign = false,
+}: SettingsScreenProps) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
+
+  // Hardware wallets sign messages on-device (no keystore/seed), so the
+  // message-signing tool is available to them as well as to full wallets.
+  const isHardware = walletType === "hardware";
+
+  // The route can change under a mounted screen (#/contacts -> #/diagnostics),
+  // and initial state alone would ignore it.
+  useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab]);
+
+  return (
+    <div className="screen-settings-shell">
+      <Tabs id="settings" tabs={SETTINGS_TABS} active={tab} onSelect={setTab}>
+        {(key) => {
+          switch (key) {
+            case "general":
+              return (
+                <GeneralSettings
+                  account={account}
+                  walletType={walletType}
+                  autoLock={autoLock}
+                />
+              );
+            case "contacts":
+              return <Contacts />;
+            case "tools":
+              return canSign || isHardware ? (
+                <div className="settings-tools">
+                  <SignMessage
+                    account={account}
+                    isHardware={isHardware}
+                    walletId={walletId}
+                  />
+                  <VerifyMessage />
+                </div>
+              ) : (
+                <div className="settings-tools">
+                  <Card title="Sign message">
+                    <p className="helper-text">
+                      Signing a message needs this wallet&rsquo;s seed, which a
+                      watch-only or multi-signature wallet does not hold here.
+                      Verifying a signature works for any wallet.
+                    </p>
+                  </Card>
+                  <VerifyMessage />
+                </div>
+              );
+            case "diagnostics":
+              return <Diagnostics />;
+          }
+        }}
+      </Tabs>
     </div>
   );
 }

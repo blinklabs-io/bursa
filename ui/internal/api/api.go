@@ -53,6 +53,10 @@ type Wallet interface {
 	// SetAccount(nil) clears the active account binding.
 	SetAccount(acct *wallet.Account) error
 	Balance(ctx context.Context) (wallet.Balance, error)
+	// BalanceForAccount aggregates the balance of an explicitly supplied account
+	// (not necessarily the bound one) — used to summarize each account in the
+	// multi-account listing without rebinding.
+	BalanceForAccount(ctx context.Context, acct *wallet.Account) (wallet.Balance, error)
 	Addresses(ctx context.Context) (wallet.AddressView, error)
 	Transactions(ctx context.Context) ([]wallet.Tx, error)
 	// TransactionDetail returns the drill-down view (inputs/outputs, every
@@ -132,6 +136,9 @@ type Vault interface {
 	RemoveWallet(id, vaultPassword string) error
 	SetActive(id string) (vault.WalletMeta, error)
 	Active() (vault.WalletMeta, error)
+	// Multi-account (BIP44 account switching) for the active/bound wallet.
+	AddAccount(id, vaultPassword, spendPassword string, accountIndex uint32, windowN int) (vault.WalletMeta, error)
+	SelectAccount(id string, accountIndex uint32) (vault.WalletMeta, error)
 	// TPM feature: machine-binding of the at-rest vault.
 	TPMStatus() vault.TPMStatusInfo
 	EnableTPM(vaultPassword string, pcrBound bool) error
@@ -417,6 +424,41 @@ type walletView struct {
 	Addresses    []string         `json:"addresses"`
 	Active       bool             `json:"active"`
 	Type         vault.WalletType `json:"type"`
+	// Accounts lists every derived BIP44 account of this wallet (index-ordered).
+	// ActiveAccountIndex marks which one the read/spend endpoints are bound to.
+	// StakeAddress/Addresses above reflect that active account.
+	Accounts           []accountSummary `json:"accounts"`
+	ActiveAccountIndex uint32           `json:"active_account_index"`
+}
+
+// accountSummary is the per-account entry in a wallet view / accounts listing:
+// the CIP-1852 index, a display label, the account's stake address and first
+// receive address, whether it is the active account, and (only in the balances
+// listing) a balance summary.
+type accountSummary struct {
+	Index        uint32          `json:"index"`
+	Label        string          `json:"label"`
+	StakeAddress string          `json:"stake_address"`
+	FirstAddress string          `json:"first_address"`
+	Active       bool            `json:"active"`
+	Balance      *wallet.Balance `json:"balance,omitempty"`
+}
+
+func accountLabel(index uint32) string {
+	return fmt.Sprintf("Account #%d", index)
+}
+
+func toAccountSummary(acct *wallet.Account, activeIndex uint32) accountSummary {
+	s := accountSummary{
+		Index:        acct.AccountIndex,
+		Label:        accountLabel(acct.AccountIndex),
+		StakeAddress: acct.StakeAddress,
+		Active:       acct.AccountIndex == activeIndex,
+	}
+	if len(acct.ReceiveAddresses) > 0 {
+		s.FirstAddress = acct.ReceiveAddresses[0]
+	}
+	return s
 }
 
 func toWalletView(w vault.WalletMeta, activeID string) walletView {
@@ -430,15 +472,25 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 		walletType = vault.WalletTypeFull
 	}
 	v := walletView{
-		ID:      w.ID,
-		Name:    w.Name,
-		Network: w.Network,
-		Active:  w.ID == activeID,
-		Type:    walletType,
+		ID:                 w.ID,
+		Name:               w.Name,
+		Network:            w.Network,
+		Active:             w.ID == activeID,
+		Type:               walletType,
+		ActiveAccountIndex: w.ActiveAccountIndex,
+		Accounts:           []accountSummary{},
 	}
-	if w.Account != nil {
-		v.StakeAddress = w.Account.StakeAddress
-		v.Addresses = w.Account.ReceiveAddresses
+	// StakeAddress/Addresses reflect the ACTIVE account (multi-account switching)
+	// so the SPA's address/stake views follow the selection.
+	if active := w.ActiveAccount(); active != nil {
+		v.StakeAddress = active.StakeAddress
+		v.Addresses = active.ReceiveAddresses
+	}
+	for _, acct := range w.AccountList() {
+		if acct == nil {
+			continue
+		}
+		v.Accounts = append(v.Accounts, toAccountSummary(acct, w.ActiveAccountIndex))
 	}
 	return v
 }
@@ -506,19 +558,22 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// spend services so existing endpoints operate on it. Called after unlock,
 	// activate, and add.
 	bindActive := func(w vault.WalletMeta) {
-		if w.Account == nil {
+		// Bind the wallet's ACTIVE account (multi-account selection), not merely
+		// the canonical index-0 account, so reads/spends follow the switch.
+		acct := w.ActiveAccount()
+		if acct == nil {
 			return
 		}
-		_ = wl.SetAccount(w.Account)
-		sp.SetAccount(w.ID, w.Account)
+		_ = wl.SetAccount(acct)
+		sp.SetAccount(w.ID, acct)
 		// Pool operations run on the same active wallet; attach both the wallet
 		// ID and its account so the SPO toolkit always derives credentials from
 		// the wallet whose account data is current.
 		if po != nil {
-			po.SetAccount(w.ID, w.Account)
+			po.SetAccount(w.ID, acct)
 		}
 		if cfg.connector != nil {
-			cfg.connector.SetActiveAccount(w.ID, w.Account)
+			cfg.connector.SetActiveAccount(w.ID, acct)
 		}
 	}
 	clearActive := func() {
@@ -799,6 +854,103 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			return
 		}
 		bindActive(meta)
+		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
+	})
+
+	// --- Multi-account (BIP44 account switching) -----------------------------
+
+	// GET /wallet/accounts lists the active wallet's derived BIP44 accounts, each
+	// with its index, label, stake/first address, active flag, and a best-effort
+	// balance summary (node-local). It is not gated: switching accounts must work
+	// even before the node is synced, so a balance that cannot be computed yet is
+	// simply omitted rather than failing the listing.
+	mux.HandleFunc("GET /wallet/accounts", func(w http.ResponseWriter, r *http.Request) {
+		active, err := vlt.Active()
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		out := struct {
+			Accounts           []accountSummary `json:"accounts"`
+			ActiveAccountIndex uint32           `json:"active_account_index"`
+		}{Accounts: []accountSummary{}, ActiveAccountIndex: active.ActiveAccountIndex}
+		nodeReady := st.Status().State == supervisor.StateReady
+		for _, acct := range active.AccountList() {
+			if acct == nil {
+				continue
+			}
+			summary := toAccountSummary(acct, active.ActiveAccountIndex)
+			if nodeReady {
+				if bal, err := wl.BalanceForAccount(r.Context(), acct); err == nil {
+					b := bal
+					summary.Balance = &b
+				}
+			}
+			out.Accounts = append(out.Accounts, summary)
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
+
+	// POST /wallet/account/select sets the active BIP44 account index for the
+	// active wallet and rebinds the read/spend/pool services to it. The selection
+	// is persisted (cleartext, non-secret) so no password is required — like
+	// switching the active wallet. The account must already be derived.
+	mux.HandleFunc("POST /wallet/account/select", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AccountIndex uint32 `json:"account_index"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		active, err := vlt.Active()
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		meta, err := vlt.SelectAccount(active.ID, req.AccountIndex)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		bindActive(meta)
+		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
+	})
+
+	// POST /wallet/accounts derives and adds a new BIP44 account to the active
+	// wallet. Deriving a hardened account needs the seed (spend_password); storing
+	// its read-only material needs the vault_password (index re-seal). The new
+	// account is not auto-selected — the client selects it afterward.
+	mux.HandleFunc("POST /wallet/accounts", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AccountIndex  uint32 `json:"account_index"`
+			VaultPassword string `json:"vault_password"`
+			SpendPassword string `json:"spend_password"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if req.AccountIndex >= 1<<31 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_index must be less than 2147483648"})
+			return
+		}
+		if req.VaultPassword == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vault_password is required"})
+			return
+		}
+		if req.SpendPassword == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "spend_password is required"})
+			return
+		}
+		active, err := vlt.Active()
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		meta, err := vlt.AddAccount(active.ID, req.VaultPassword, req.SpendPassword, req.AccountIndex, defaultWindow)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
 	})
 
@@ -1876,10 +2028,12 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404: no vault yet
 	case errors.Is(err, vault.ErrVaultExists):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: vault already exists
-	case errors.Is(err, vault.ErrUnknownWallet):
+	case errors.Is(err, vault.ErrUnknownWallet), errors.Is(err, vault.ErrUnknownAccount):
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
-	case errors.Is(err, vault.ErrDuplicateWallet):
+	case errors.Is(err, vault.ErrDuplicateWallet), errors.Is(err, vault.ErrDuplicateAccount):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409
+	case errors.Is(err, vault.ErrNoSeed):
+		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400: cannot derive an account without a seed
 	case errors.Is(err, vault.ErrLocked), errors.Is(err, vault.ErrNoActiveWallet),
 		errors.Is(err, wallet.ErrNoWallet), errors.Is(err, spend.ErrNoWallet),
 		errors.Is(err, poolops.ErrNoWallet), errors.Is(err, multisig.ErrNoKeystore):

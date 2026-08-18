@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/sops"
 )
 
@@ -45,6 +46,9 @@ func TestRunKeyEncryptInPlaceTightensPermissions(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("mode = %v, want 0600", got)
+	}
+	if _, err := bursa.ReadSecretKeyFile(keyFile); err != nil {
+		t.Fatalf("encrypted key permission check: %v", err)
 	}
 	encrypted, err := os.ReadFile(keyFile)
 	if err != nil {
@@ -100,11 +104,28 @@ func TestRunKeyDecryptTightensOutputPermissions(t *testing.T) {
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("mode = %v, want 0600", got)
 	}
+	if _, err := bursa.ReadSecretKeyFile(outFile); err != nil {
+		t.Fatalf("decrypted key permission check: %v", err)
+	}
 	decrypted, err := os.ReadFile(outFile)
 	if err != nil {
 		t.Fatalf("read output file: %v", err)
 	}
 	if !bytes.Equal(decrypted, plaintext) {
 		t.Fatalf("decrypted data mismatch")
+	}
+}
+
+func TestWriteWalletOutputProtectsSeed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "seed.txt")
+	if err := writeWalletOutput(path, []byte("secret mnemonic")); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	data, err := bursa.ReadSecretKeyFile(path)
+	if err != nil {
+		t.Fatalf("read seed permission check: %v", err)
+	}
+	if string(data) != "secret mnemonic" {
+		t.Fatalf("seed contents = %q", data)
 	}
 }
