@@ -40,6 +40,7 @@ type fakeCardano struct{ pub ed25519.PublicKey }
 func (fakeCardano) Inspect([]byte) (*bursa.TxInspection, error) {
 	return &bursa.TxInspection{TxId: "deadbeef", TTL: 1, Outputs: []bursa.TxOutput{{Address: "addr1ok", Lovelace: "1"}}}, nil
 }
+func (fakeCardano) Operations([]byte) (policy.TxOps, error)                { return policy.TxOps{}, nil }
 func (fakeCardano) TxID([]byte) ([]byte, error)                            { return make([]byte, 32), nil }
 func (fakeCardano) Assemble([]byte, []lcommon.VkeyWitness) ([]byte, error) { return []byte{0x9}, nil }
 

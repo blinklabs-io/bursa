@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent, act, within } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act, within, cleanup } from "@testing-library/react";
 import { App } from "./app";
 import * as hooks from "./api/hooks";
 import * as client from "./api/client";
@@ -677,4 +677,154 @@ test("[Fix 1] changing the auto-lock timeout in Settings propagates to the idle 
 
   expect(lockSpy).not.toHaveBeenCalled();
   vi.useRealTimers();
+});
+
+// --- Absorbed destinations ------------------------------------------------
+
+// Unlocks with the given wallet and returns the desktop sidebar, so nav
+// assertions are not confused by the mobile drawer rendering the same labels.
+async function unlockAndGetSidebar(wallet: WalletView): Promise<HTMLElement> {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([{ ...wallet, active: true }]);
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  await waitFor(() => expect(document.querySelector(".sidebar")).not.toBeNull());
+  return document.querySelector(".sidebar") as HTMLElement;
+}
+
+test("the nav carries only destinations, not actions or housekeeping", async () => {
+  const sidebar = await unlockAndGetSidebar(walletA);
+  const q = within(sidebar);
+
+  expect(
+    q.getAllByRole("button").map((b) => b.textContent).filter((t) =>
+      ["Portfolio", "Activity", "Stake", "Swap", "Multi-sig", "Import Tx", "Offline", "Operate", "Settings"].includes(t ?? ""),
+    ),
+  ).toHaveLength(9);
+
+  // Send and Receive are actions on the Portfolio; the rest are Settings
+  // panels. None of them earns a nav entry.
+  for (const gone of ["Send", "Receive", "Contacts", "Sign", "Verify", "Diagnostics"]) {
+    expect(q.queryByRole("button", { name: gone })).not.toBeInTheDocument();
+  }
+});
+
+test("Send and Receive are offered on the balance they act on", async () => {
+  await unlockAndGetSidebar(walletA);
+
+  const main = document.querySelector("main") as HTMLElement;
+  const q = within(main);
+  expect(await q.findByRole("button", { name: "Send" })).toBeInTheDocument();
+  expect(q.getByRole("button", { name: "Receive" })).toBeInTheDocument();
+});
+
+test("Send on the Portfolio actually reaches the send flow", async () => {
+  // Send is no longer in the nav, so this button is the only way in. Asserting
+  // it renders is not enough — it has to be enabled and it has to navigate.
+  await unlockAndGetSidebar(walletA);
+  const main = document.querySelector("main") as HTMLElement;
+
+  const send = await within(main).findByRole("button", { name: "Send" });
+  expect(send).toBeEnabled();
+
+  fireEvent.click(send);
+
+  await waitFor(() => expect(window.location.hash).toBe("#/send"));
+  expect(await screen.findByText(/send ada/i)).toBeInTheDocument();
+});
+
+test("a wallet that cannot spend gets a disabled Send, not a dead end", async () => {
+  await unlockAndGetSidebar({ ...walletA, type: "read_only" });
+  const main = document.querySelector("main") as HTMLElement;
+
+  expect(await within(main).findByRole("button", { name: "Send" })).toBeDisabled();
+  // Receive needs nothing, so it stays available.
+  expect(within(main).getByRole("button", { name: "Receive" })).toBeEnabled();
+});
+
+test("the routes the absorbed screens used to own still resolve", async () => {
+  // Old links and bookmarks must not break just because the screen moved.
+  // Asserting the nav highlight alone is not enough: every one of these
+  // highlights Settings, so a mis-mapped SETTINGS_ROUTES entry would sail
+  // through while opening the wrong panel. Check the panel that opened.
+  for (const [hash, navEntry, panel] of [
+    ["#/contacts", "Settings", "Address book"],
+    ["#/sign", "Settings", "Tools"],
+    ["#/verify", "Settings", "Tools"],
+    ["#/diagnostics", "Settings", "Diagnostics"],
+    ["#/settings", "Settings", "General"],
+  ] as const) {
+    window.location.hash = hash;
+    const sidebar = await unlockAndGetSidebar(walletA);
+
+    expect(within(sidebar).getByRole("button", { name: navEntry })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(await screen.findByRole("tab", { name: panel })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    cleanup();
+    vi.restoreAllMocks();
+    stubAutoLock(0);
+  }
+});
+
+test("#/receive opens Receive while the nav still points at Portfolio", async () => {
+  // Send and Receive are Portfolio actions, so the highlight is deliberate.
+  vi.spyOn(hooks, "useAddresses").mockReturnValue({
+    data: { receive: ["addr_test1abc"], used: [], next_unused: "addr_test1abc" },
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+  window.location.hash = "#/receive";
+  const sidebar = await unlockAndGetSidebar(walletA);
+
+  expect(within(sidebar).getByRole("button", { name: "Portfolio" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  expect(await screen.findByText(/next unused address/i)).toBeInTheDocument();
+});
+
+test("a fault in Receive is reported as Receive, not as Portfolio", async () => {
+  // The nav highlight collapses receive onto Portfolio, so the boundary label
+  // has to come from somewhere else — otherwise a crash here sends the reader
+  // to a screen that is working fine. Exercise the boundary rather than
+  // asserting the label indirectly.
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(hooks, "useAddresses").mockImplementation(() => {
+    throw new Error("addresses blew up");
+  });
+  window.location.hash = "#/receive";
+  await unlockAndGetSidebar(walletA);
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(/the receive screen could not be displayed/i);
+  expect(alert).not.toHaveTextContent(/portfolio/i);
+});
+
+test("a route that falls back to Portfolio is reported as Portfolio", async () => {
+  // #/swap on a testnet wallet declines the request and renders Portfolio, so
+  // naming the route the user asked for would point at a screen that never
+  // appeared.
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  // Not useBalance: the unlock helper stubs that one, and its stub would win.
+  vi.spyOn(hooks, "useAssetMetadata").mockImplementation(() => {
+    throw new Error("metadata blew up");
+  });
+  window.location.hash = "#/swap";
+  await unlockAndGetSidebar(walletA); // preview network → canSwap is false
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(/the portfolio screen could not be displayed/i);
+  expect(alert).not.toHaveTextContent(/swap screen/i);
 });

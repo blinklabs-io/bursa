@@ -92,6 +92,11 @@ type fakeVault struct {
 	hwCalled        bool
 	gotXpub         string
 	gotAccountIndex uint32
+
+	// multi-account
+	addAccountErr    error
+	selectAccountErr error
+	activeAccounts   map[string]uint32
 }
 
 type fakeNFTs struct {
@@ -348,10 +353,50 @@ func (f *fakeVault) Active() (vault.WalletMeta, error) {
 	}
 	for _, w := range f.wallets {
 		if w.ID == f.activeID {
+			w.ActiveAccountIndex = f.activeAccounts[w.ID]
 			return w, nil
 		}
 	}
 	return vault.WalletMeta{}, vault.ErrNoActiveWallet
+}
+
+func (f *fakeVault) AddAccount(id, vaultPw, spendPw string, accountIndex uint32, _ int) (vault.WalletMeta, error) {
+	if f.addAccountErr != nil {
+		return vault.WalletMeta{}, f.addAccountErr
+	}
+	f.gotVault = vaultPw
+	f.gotSpend = spendPw
+	for i := range f.wallets {
+		if f.wallets[i].ID == id {
+			acct := sampleAccount(f.wallets[i].Network)
+			acct.AccountIndex = accountIndex
+			acct.StakeAddress = fmt.Sprintf("stake_test1acct%d", accountIndex)
+			f.wallets[i].Accounts = append(f.wallets[i].AccountList(), acct)
+			return f.wallets[i], nil
+		}
+	}
+	return vault.WalletMeta{}, fmt.Errorf("%w: %q", vault.ErrUnknownWallet, id)
+}
+
+func (f *fakeVault) SelectAccount(id string, accountIndex uint32) (vault.WalletMeta, error) {
+	if f.selectAccountErr != nil {
+		return vault.WalletMeta{}, f.selectAccountErr
+	}
+	for i := range f.wallets {
+		if f.wallets[i].ID == id {
+			if f.wallets[i].AccountByIndex(accountIndex) == nil {
+				return vault.WalletMeta{}, fmt.Errorf("%w: index %d", vault.ErrUnknownAccount, accountIndex)
+			}
+			if f.activeAccounts == nil {
+				f.activeAccounts = map[string]uint32{}
+			}
+			f.activeAccounts[id] = accountIndex
+			w := f.wallets[i]
+			w.ActiveAccountIndex = accountIndex
+			return w, nil
+		}
+	}
+	return vault.WalletMeta{}, fmt.Errorf("%w: %q", vault.ErrUnknownWallet, id)
 }
 
 // fakeSettings is an in-memory SettingsController for handler tests.
@@ -781,9 +826,15 @@ type fakeWallet struct {
 	set              bool
 	setAccountCalled bool
 	gotNetwork       string
+	gotAccountIndex  uint32
 	txDetail         wallet.TxDetail
 	txDetailErr      error
 	rewards          wallet.RewardHistory
+	// balances, when non-nil, gives BalanceForAccount a distinct balance per
+	// account index (keyed by wallet.Account.AccountIndex) — lets tests verify
+	// per-account balance attribution instead of every account echoing the same
+	// fixed `balance`.
+	balances map[uint32]wallet.Balance
 }
 
 func (f *fakeWallet) SetAccount(acct *wallet.Account) error {
@@ -796,12 +847,25 @@ func (f *fakeWallet) SetAccount(acct *wallet.Account) error {
 	f.set = true
 	f.setAccountCalled = true
 	f.gotNetwork = acct.Network
+	f.gotAccountIndex = acct.AccountIndex
 	return nil
 }
 
 func (f *fakeWallet) Balance(_ context.Context) (wallet.Balance, error) {
 	if !f.set {
 		return wallet.Balance{}, wallet.ErrNoWallet
+	}
+	return f.balance, nil
+}
+
+func (f *fakeWallet) BalanceForAccount(_ context.Context, acct *wallet.Account) (wallet.Balance, error) {
+	if acct == nil {
+		return wallet.Balance{}, wallet.ErrNoWallet
+	}
+	if f.balances != nil {
+		if b, ok := f.balances[acct.AccountIndex]; ok {
+			return b, nil
+		}
 	}
 	return f.balance, nil
 }

@@ -473,14 +473,48 @@ export interface NftMediaSetting {
 // The encrypted seed is never exposed.
 export type WalletType = "full" | "read_only" | "multi_signature" | "hardware";
 
+// AccountSummary is one BIP44 account of a wallet: its CIP-1852 index, a display
+// label ("Account #N"), the account's stake address and first receive address,
+// whether it is the wallet's active account, and (only in the GET
+// /wallet/accounts listing, when the node is ready) a node-local balance summary.
+export interface AccountSummary {
+  index: number;
+  label: string;
+  stake_address: string;
+  first_address: string;
+  active: boolean;
+  balance?: Balance;
+}
+
 export interface WalletView {
   id: string;
   name: string;
   network: string;
+  // stake_address / addresses reflect the ACTIVE account (multi-account switch).
   stake_address: string;
   addresses: string[];
   active: boolean;
   type: WalletType;
+  // Every derived BIP44 account of this wallet, and which one is active. The
+  // server always populates both; they are optional here only so pre-existing
+  // WalletView fixtures/mocks remain valid, and the UI reads them defensively.
+  accounts?: AccountSummary[];
+  active_account_index?: number;
+}
+
+// GET /wallet/accounts response: the active wallet's accounts (with best-effort
+// balances) plus the selected index.
+export interface AccountsResponse {
+  accounts: AccountSummary[];
+  active_account_index: number;
+}
+
+// Deriving a new BIP44 account: needs the seed (spend password) to derive the
+// hardened account, and the vault password to store its read-only material.
+export interface AddAccountRequest {
+  account_index: number;
+  vault_password: string;
+  spend_password: string;
 }
 
 // Hardware signing request — structured tx fields for the Ledger device.

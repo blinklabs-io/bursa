@@ -256,6 +256,137 @@ a:hover {
   outline-offset: -2px;
 }
 
+/* Account switcher (BIP44 accounts within the active wallet). */
+.account-switcher {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-1);
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--border);
+}
+.account-switcher-label {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: var(--space-1) var(--space-2);
+}
+.account-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.account-item {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.account-item:hover:not(:disabled) {
+  background: var(--inset);
+  color: var(--text);
+}
+.account-item.active {
+  background: var(--accent-dim);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
+}
+.account-item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.account-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.account-name {
+  /* Let the label give way to the balance instead of wrapping "Account 0"
+     onto two lines in a 232px sidebar. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.account-balance {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.account-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+}
+.account-add-label {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.account-add-input {
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--inset);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 0.8125rem;
+}
+.account-add-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.account-add-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.account-add-submit {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: var(--radius);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.account-add-submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.account-add-submit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* Screen containers stack their panels with consistent rhythm. */
 .portfolio,
 .receive,
@@ -290,6 +421,14 @@ a:hover {
   text-transform: uppercase;
   color: var(--text-muted);
   margin-bottom: var(--space-3);
+}
+
+/* The balance card's primary actions. */
+.portfolio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 /* Hero readout — the balance, in big gold monospace. */
