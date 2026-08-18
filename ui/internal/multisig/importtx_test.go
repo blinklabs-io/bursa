@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/big"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -133,7 +132,7 @@ func bytesRepeat(b byte, n int) []byte {
 // so far, plus pick up the saved account's label via FindByScriptHash.
 func TestInspectTx_EmbeddedScript(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, nil, &memAccounts{})
 	_, khA, _ := multiSigKeyHash(t, mnemonicA)
 	_, khB, _ := multiSigKeyHash(t, mnemonicB)
 	khC := hex.EncodeToString(bytesRepeat(3, 28))
@@ -196,7 +195,7 @@ func TestInspectTx_EmbeddedScript(t *testing.T) {
 // wallet isn't a "participant" of the mint policy.
 func TestInspectTx_MintOnlyIsNotMultiSig(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, nil, &memAccounts{})
 
 	// A bare pubkey native script used purely as a minting policy (not a
 	// multisig N-of-M threshold script, and not saved as an account here).
@@ -226,7 +225,7 @@ func TestInspectTx_MintOnlyIsNotMultiSig(t *testing.T) {
 // policy ID) and the tx must still classify as multisig.
 func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, nil, &memAccounts{})
 	_, khA, _ := multiSigKeyHash(t, mnemonicA)
 	_, khB, _ := multiSigKeyHash(t, mnemonicB)
 
@@ -280,7 +279,7 @@ func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 // threshold 0, no participants) so CosignImported/SubmitImported refuse it.
 func TestInspectTx_ScriptWithdrawalIsUnsupported(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, nil, &memAccounts{})
 
 	stakeScript, err := composeScript(Policy{
 		Threshold:    1,
@@ -312,7 +311,7 @@ func TestInspectTx_ScriptWithdrawalIsUnsupported(t *testing.T) {
 // participants).
 func TestInspectTx_VotingProcedureScriptIsUnsupported(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, nil, &memAccounts{})
 
 	voteScript, err := composeScript(Policy{
 		Threshold:    1,
@@ -343,7 +342,7 @@ func TestInspectTx_VotingProcedureScriptIsUnsupported(t *testing.T) {
 // a mint policy — the stake/gov witness would otherwise be left unsatisfied.
 func TestInspectTx_StakeScriptAlsoMintIsUnsupported(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, nil, &memAccounts{})
 
 	script, err := composeScript(Policy{
 		Threshold:    1,
@@ -586,7 +585,7 @@ func encodeConwayTx(t *testing.T, tx *conway.ConwayTransaction) string {
 // unsigned tx CBOR and asserts it is not classified as multisig.
 func TestInspectTx_NotMultiSig(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, nil, &memAccounts{})
 
 	info, err := svc.InspectTx(ordinaryUnsignedTxHex(t, fc))
 	if err != nil {
@@ -604,7 +603,7 @@ func TestInspectTx_NotMultiSig(t *testing.T) {
 // hex that doesn't even decode.
 func TestInspectTx_MalformedHex(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, nil, &memAccounts{})
 	if _, err := svc.InspectTx("not-hex-at-all"); !errors.Is(err, ErrInvalidTx) {
 		t.Fatalf("InspectTx(bad hex) error = %v, want ErrInvalidTx", err)
 	}
@@ -615,7 +614,7 @@ func TestInspectTx_MalformedHex(t *testing.T) {
 // search still finds the valid one rather than aborting on the bad record.
 func TestFindByScriptHash_SkipsDecodeErrors(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, nil, &memAccounts{})
 	_, khA, _ := multiSigKeyHash(t, mnemonicA)
 
 	acct, err := createForTest(svc, CreateRequest{
@@ -635,9 +634,7 @@ func TestFindByScriptHash_SkipsDecodeErrors(t *testing.T) {
 	// Inject a second, corrupt account directly into the store (bypassing
 	// Create, which would validate the script).
 	corrupt := Account{ID: "corrupt", Label: "corrupt", Network: "preview", ScriptCBOR: "zz-not-hex"}
-	if err := svc.accounts.(*store).add(corrupt); err != nil {
-		t.Fatalf("add corrupt account: %v", err)
-	}
+	svc.accounts.(*memAccounts).add(corrupt)
 
 	got, ok, err := svc.FindByScriptHash(wantHash)
 	if err != nil {
@@ -662,7 +659,7 @@ func TestFindByScriptHash_SkipsDecodeErrors(t *testing.T) {
 func TestCosignImported_AddsAndMerges(t *testing.T) {
 	fc := newFakeChain()
 	ks := newTestKeystore(t, mnemonicA)
-	svc := NewService(fc, ks, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, ks, &memAccounts{})
 
 	mk, err := svc.MyKey("test-password-123")
 	if err != nil {
@@ -715,7 +712,7 @@ func TestCosignImported_AddsAndMerges(t *testing.T) {
 func TestCosignImported_NotAParticipant(t *testing.T) {
 	fc := newFakeChain()
 	ks := newTestKeystore(t, mnemonicA)
-	svc := NewService(fc, ks, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, ks, &memAccounts{})
 
 	acct, err := createForTest(svc, CreateRequest{
 		Label:   "foreign",
@@ -754,8 +751,8 @@ func TestCosignImported_PreservesOtherCosigner(t *testing.T) {
 
 	// Two independent wallets (separate keystores + separate on-disk stores),
 	// sharing only the fake chain.
-	svcA := NewService(fc, ksA, newStore(filepath.Join(t.TempDir(), "a.json")))
-	svcB := NewService(fc, ksB, newStore(filepath.Join(t.TempDir(), "b.json")))
+	svcA := NewService(fc, ksA, &memAccounts{})
+	svcB := NewService(fc, ksB, &memAccounts{})
 
 	mkA, err := svcA.MyKey("test-password-123")
 	if err != nil {
@@ -830,7 +827,7 @@ func TestCosignImported_PreservesOtherCosigner(t *testing.T) {
 func TestSubmitImported_BelowThresholdRejected(t *testing.T) {
 	fc := newFakeChain()
 	ks := newTestKeystore(t, mnemonicA)
-	svc := NewService(fc, ks, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, ks, &memAccounts{})
 
 	mk, err := svc.MyKey("test-password-123")
 	if err != nil {
@@ -867,7 +864,7 @@ func TestSubmitImported_BelowThresholdRejected(t *testing.T) {
 func TestSubmitImported_ThresholdMetBroadcasts(t *testing.T) {
 	fc := newFakeChain()
 	ks := newTestKeystore(t, mnemonicA)
-	svc := NewService(fc, ks, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, ks, &memAccounts{})
 
 	mk, err := svc.MyKey("test-password-123")
 	if err != nil {

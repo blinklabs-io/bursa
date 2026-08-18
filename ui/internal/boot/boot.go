@@ -22,8 +22,8 @@ package boot
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
