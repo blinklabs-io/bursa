@@ -26,6 +26,7 @@ export function NodeNotReady({
   const status = useStatus();
   const state = status.data?.state;
   const bootstrap = status.data?.bootstrap;
+  const statusError = status.data?.error || status.error?.message;
 
   useEffect(() => {
     if (!refresh) return;
@@ -33,11 +34,11 @@ export function NodeNotReady({
     return () => clearInterval(id);
   }, [refresh]);
 
-  if (state === "error") {
+  if (state === "error" || statusError) {
     return (
       <Card title="Node error">
         <p role="alert" className="error-text">
-          {status.data?.error || "The node reported an error."}
+          {statusError || "The node reported an error."}
         </p>
       </Card>
     );

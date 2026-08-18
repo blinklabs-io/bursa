@@ -38,3 +38,17 @@ test("reports a supervisor error", () => {
   expect(screen.getByRole("alert")).toHaveTextContent(/node failed to start/i);
   expect(screen.queryByText(/nothing is wrong/i)).not.toBeInTheDocument();
 });
+
+test("reports a failed status request", () => {
+  vi.spyOn(hooks, "useStatus").mockReturnValue({
+    data: null,
+    error: new Error("status unavailable"),
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+
+  render(<NodeNotReady what="Your balance" />);
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/status unavailable/i);
+  expect(screen.queryByText(/nothing is wrong/i)).not.toBeInTheDocument();
+});
