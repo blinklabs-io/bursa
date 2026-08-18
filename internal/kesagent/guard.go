@@ -121,49 +121,64 @@ func (g *PeriodGuard) Authorize(vkeyHex string, period uint64) error {
 	// roll back on failure, so a failed persist leaves the floor unchanged and
 	// the next Authorize re-attempts it instead of taking the equal-skip above
 	// over a floor that was never durably written.
+	//
+	// Rolling back is only correct while the new floor has NOT reached disk. Once
+	// the rename commits, the guard file holds the higher floor; restoring the
+	// lower one in memory would let a later Authorize accept a period between the
+	// old and new floors and persist it, moving the durable floor backwards --
+	// precisely the rollback this guard exists to prevent. So a post-commit
+	// failure (a directory sync that could not be completed) keeps the new floor
+	// in memory and surfaces the error.
 	prevFloor, prevSet, prevVkey := g.floor, g.set, g.vkey
 	g.floor = period
 	g.set = true
 	g.vkey = vkeyHex
-	if err := g.persistLocked(); err != nil {
-		g.floor, g.set, g.vkey = prevFloor, prevSet, prevVkey
+	committed, err := g.persistLocked()
+	if err != nil {
+		if !committed {
+			g.floor, g.set, g.vkey = prevFloor, prevSet, prevVkey
+		}
 		return err
 	}
 	return nil
 }
 
-func (g *PeriodGuard) persistLocked() error {
+// persistLocked writes the guard state durably. It reports whether the new
+// state reached the guard file: once the rename commits, the on-disk floor has
+// advanced even if a later step (the parent-directory sync) fails, and the
+// caller must not roll its in-memory floor back below it.
+func (g *PeriodGuard) persistLocked() (committed bool, err error) {
 	if g.path == "" {
-		return nil
+		return true, nil
 	}
 	st := guardState{Floor: g.floor, Set: g.set, Vkey: g.vkey}
 	data, err := json.Marshal(st)
 	if err != nil {
-		return fmt.Errorf("kesagent: marshal guard state: %w", err)
+		return false, fmt.Errorf("kesagent: marshal guard state: %w", err)
 	}
 	dir := filepath.Dir(g.path)
 	tmp, err := os.CreateTemp(dir, ".kesguard-*")
 	if err != nil {
-		return fmt.Errorf("kesagent: create guard temp file: %w", err)
+		return false, fmt.Errorf("kesagent: create guard temp file: %w", err)
 	}
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("kesagent: write guard temp file: %w", err)
+		return false, fmt.Errorf("kesagent: write guard temp file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("kesagent: sync guard temp file: %w", err)
+		return false, fmt.Errorf("kesagent: sync guard temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("kesagent: close guard temp file: %w", err)
+		return false, fmt.Errorf("kesagent: close guard temp file: %w", err)
 	}
 	if err := os.Chmod(tmpName, 0o600); err != nil {
-		return fmt.Errorf("kesagent: chmod guard temp file: %w", err)
+		return false, fmt.Errorf("kesagent: chmod guard temp file: %w", err)
 	}
 	if err := os.Rename(tmpName, g.path); err != nil {
-		return fmt.Errorf("kesagent: rename guard file: %w", err)
+		return false, fmt.Errorf("kesagent: rename guard file: %w", err)
 	}
 	// Sync the parent directory too: without this, a crash right after the
 	// rename can lose the directory-entry update on some filesystems and
@@ -173,13 +188,13 @@ func (g *PeriodGuard) persistLocked() error {
 		syncErr := dirFile.Sync()
 		closeErr := dirFile.Close()
 		if syncErr != nil {
-			return fmt.Errorf("kesagent: sync guard dir %q: %w", dir, syncErr)
+			return true, fmt.Errorf("kesagent: sync guard dir %q: %w", dir, syncErr)
 		}
 		if closeErr != nil {
-			return fmt.Errorf("kesagent: close guard dir %q: %w", dir, closeErr)
+			return true, fmt.Errorf("kesagent: close guard dir %q: %w", dir, closeErr)
 		}
 	} else {
-		return fmt.Errorf("kesagent: open guard dir %q: %w", dir, err)
+		return true, fmt.Errorf("kesagent: open guard dir %q: %w", dir, err)
 	}
-	return nil
+	return true, nil
 }

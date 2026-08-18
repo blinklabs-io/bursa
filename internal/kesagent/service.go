@@ -51,7 +51,49 @@ func ListenUnix(path string, mode os.FileMode) (net.Listener, error) {
 	// staging directory (which no other user can traverse), chmod the socket to
 	// its final mode there, and only expose it at its advertised path via an
 	// atomic rename. This avoids the process-global, listen-racy syscall.Umask
-	// approach and stays pure-Go / cross-platform.
+	// approach and stays pure-Go / cross-platform. A path too long to stage
+	// falls back to a umask-bracketed direct bind (see below).
+	ln, err := listenStaged(path, mode)
+	if err == nil {
+		return ln, nil
+	}
+	// The staging path is longer than the advertised one (an extra directory
+	// component), so a path close to the platform's sockaddr_un limit can bind
+	// directly while the staged one cannot. Rather than refusing a configuration
+	// that worked before, fall back to binding at the final path with the umask
+	// tightened for the duration, which closes the same window without needing
+	// the extra component. The umask is process-global and therefore racy against
+	// concurrent listens, which is why it is the fallback and not the default.
+	var fallbackLn net.Listener
+	umaskErr := withTightUmask(func() error {
+		l, lerr := net.Listen("unix", path)
+		fallbackLn = l
+		return lerr
+	})
+	if umaskErr != nil {
+		// Report the staged failure too: if the direct bind failed for an
+		// unrelated reason, the staged error is the more informative one.
+		return nil, fmt.Errorf(
+			"kesagent: listen %q: %w (staged listen also failed: %w)",
+			path, umaskErr, err,
+		)
+	}
+	if fallbackLn == nil {
+		return nil, fmt.Errorf("kesagent: listen %q: no listener produced", path)
+	}
+	// The umask only bounds the birth mode; apply the requested mode explicitly
+	// (it may be more restrictive, and non-unix builds have no umask at all).
+	if err := os.Chmod(path, mode); err != nil {
+		_ = fallbackLn.Close()
+		return nil, fmt.Errorf("kesagent: chmod socket %q: %w", path, err)
+	}
+	return fallbackLn, nil
+}
+
+// listenStaged binds the socket inside a fresh 0700 directory, applies the final
+// mode there, and publishes it at path with an atomic rename, so the socket is
+// never reachable by another user at a looser mode.
+func listenStaged(path string, mode os.FileMode) (net.Listener, error) {
 	stagingDir, err := os.MkdirTemp(filepath.Dir(path), ".kes-sock-")
 	if err != nil {
 		return nil, fmt.Errorf("kesagent: create socket staging dir for %q: %w", path, err)
@@ -60,7 +102,7 @@ func ListenUnix(path string, mode os.FileMode) (net.Listener, error) {
 	stagingPath := filepath.Join(stagingDir, "s")
 	ln, err := net.Listen("unix", stagingPath)
 	if err != nil {
-		return nil, fmt.Errorf("kesagent: listen %q: %w", path, err)
+		return nil, fmt.Errorf("kesagent: listen %q: %w", stagingPath, err)
 	}
 	if err := os.Chmod(stagingPath, mode); err != nil {
 		_ = ln.Close()

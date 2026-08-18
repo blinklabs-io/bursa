@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/bursa/internal/kesagent/securemem"
 	"github.com/blinklabs-io/gouroboros/kes"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
@@ -217,18 +218,14 @@ func TestEvolveExhaustion(t *testing.T) {
 	}
 }
 
-// TestEvolveToLockedDiscardClearsExhaustedGauge exercises the no-active-key
-// discard path evolveToLocked takes on a buf.Set failure directly (bypassing
-// the crypto evolution itself, which requires a correctly-sized, open
-// buffer and so can't be made to fail buf.Set in isolation -- Set only
-// errors on a length mismatch, which kes.Update never produces, or on
-// ErrClosed, which requires a concurrent Close() that a.mu serializes away
-// in every real call path). It manufactures the discard by calling the same
-// close+nil+metrics sequence evolveToLocked runs on that failure, then
-// asserts the invariants Sign/Tick/InstallKey all depend on afterward: no
-// active key, and the exhausted gauge cleared rather than left reporting a
-// (nonexistent) exhausted key.
-func TestEvolveToLockedDiscardClearsExhaustedGauge(t *testing.T) {
+// TestEvolveToLockedDiscardsKeyWhenStoreFails drives evolveToLocked's real
+// discard-on-failure branch by making the locked-buffer store fail, rather than
+// hand-replicating the close+nil+metrics sequence (which would assert only what
+// the test itself just did). The branch matters because the buffer has already
+// been zeroized by the time the store runs: leaving the key installed would let
+// Sign produce a signature over zeroed key material for the period the key
+// still claims.
+func TestEvolveToLockedDiscardsKeyWhenStoreFails(t *testing.T) {
 	cold := newColdKey(t)
 	a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(1))
 	metrics := NewMetrics()
@@ -237,23 +234,27 @@ func TestEvolveToLockedDiscardClearsExhaustedGauge(t *testing.T) {
 	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 1, cold)); err != nil {
 		t.Fatalf("InstallKey: %v", err)
 	}
-	metrics.setExhausted(true) // simulate a stale "exhausted" reading
+	metrics.setExhausted(true) // stale reading that the discard must clear
 
-	// Run evolveToLocked's discard-on-failure sequence directly.
+	orig := storeEvolvedKey
+	storeEvolvedKey = func(*securemem.Buffer, []byte) error {
+		return errors.New("simulated locked-buffer store failure")
+	}
+	t.Cleanup(func() { storeEvolvedKey = orig })
+
+	// Ask for a later period so evolveToLocked actually iterates and reaches
+	// the store step.
 	a.mu.Lock()
-	a.active.close()
-	a.active = nil
-	a.metrics.setExhausted(false)
+	a.evolveToLocked(a.active.absPeriod() + 1)
+	active := a.active
 	a.mu.Unlock()
 
+	if active != nil {
+		t.Fatal("active key retained after a failed store; it holds a zeroized buffer")
+	}
 	if got := testutil.ToFloat64(metrics.exhausted); got != 0 {
 		t.Fatalf("exhausted gauge = %v, want 0 (no active key, not an exhausted one)", got)
 	}
-
-	// Sign must observe the discarded key and return ErrNoActiveKey, not
-	// dereference it (this is the guard added in Sign to match Tick and
-	// InstallKey, for whichever path -- present or future -- leaves
-	// a.active nil after evolveToLocked runs).
 	if _, err := a.Sign(2, []byte("msg")); !errors.Is(err, ErrNoActiveKey) {
 		t.Fatalf("Sign after key discard: want ErrNoActiveKey, got %v", err)
 	}
@@ -295,5 +296,42 @@ func TestInstallRefusedByGuardFloor(t *testing.T) {
 	}
 	if a.Info().HasActiveKey {
 		t.Fatal("no active key should remain after refused install")
+	}
+}
+
+// TestInfoReportsActiveIssueNumberAndOpCert covers the two fields an operator
+// needs to confirm a KES rotation took effect: the issue counter the network
+// uses to accept the pool's blocks, and the opcert bytes themselves, which in
+// sign mode are otherwise unobtainable from the agent.
+func TestInfoReportsActiveIssueNumberAndOpCert(t *testing.T) {
+	cold := newColdKey(t)
+	a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(1))
+	vkey, _ := a.GenStagedKey()
+	const issueNumber = 7
+	opcert := makeOpCert(t, vkey, issueNumber, 1, cold)
+	info, err := a.InstallKey(opcert)
+	if err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+	if info.ActiveIssueNumber != issueNumber {
+		t.Fatalf("ActiveIssueNumber = %d, want %d", info.ActiveIssueNumber, issueNumber)
+	}
+	if !bytes.Equal(info.ActiveOpCert, opcert) {
+		t.Fatalf("ActiveOpCert = %x, want the installed opcert %x", info.ActiveOpCert, opcert)
+	}
+	// Info() must report the same thing as the InstallKey response.
+	later := a.Info()
+	if later.ActiveIssueNumber != issueNumber || !bytes.Equal(later.ActiveOpCert, opcert) {
+		t.Fatalf("Info() = (issue %d, opcert %x), want (%d, %x)",
+			later.ActiveIssueNumber, later.ActiveOpCert, issueNumber, opcert)
+	}
+	// With no active key the fields must not report a stale certificate.
+	if err := a.DropKey("all"); err != nil {
+		t.Fatalf("DropKey: %v", err)
+	}
+	dropped := a.Info()
+	if dropped.ActiveIssueNumber != 0 || dropped.ActiveOpCert != nil {
+		t.Fatalf("after DropKey: issue %d opcert %x, want zero/nil",
+			dropped.ActiveIssueNumber, dropped.ActiveOpCert)
 	}
 }

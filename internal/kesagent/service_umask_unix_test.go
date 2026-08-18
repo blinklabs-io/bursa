@@ -56,3 +56,63 @@ func TestListenUnixMode0600UnderPermissiveUmask(t *testing.T) {
 	}
 	_ = conn.Close()
 }
+
+// TestListenUnixNearPathnameLimit covers a socket path that fits within the
+// platform's sockaddr_un limit but leaves no room for the staging directory
+// component ListenUnix normally binds inside. Such a path bound fine before
+// staging was introduced, so it must keep working — via the umask-bracketed
+// fallback — rather than failing with "invalid argument".
+func TestListenUnixNearPathnameLimit(t *testing.T) {
+	// sockaddr_un.sun_path holds 108 bytes including the NUL terminator.
+	const maxSunPath = 107
+	// The staged path adds "/.kes-sock-<10 random>/s" to the parent directory.
+	const stagingOverhead = len("/.kes-sock-0123456789/s")
+
+	base := "s.sock"
+	dir := t.TempDir()
+	// Pad the directory so the final path still fits but the staged one cannot.
+	target := maxSunPath - len(base) - 1
+	if len(dir) > target {
+		t.Skipf("temp dir %q (%d bytes) is already too long for this case", dir, len(dir))
+	}
+	for len(dir)+stagingOverhead <= maxSunPath {
+		next := dir + "/p"
+		if len(next)+1+len(base) > maxSunPath {
+			break
+		}
+		if err := os.Mkdir(next, 0o700); err != nil {
+			t.Fatalf("mkdir %q: %v", next, err)
+		}
+		dir = next
+	}
+	sock := dir + "/" + base
+	if len(sock) > maxSunPath {
+		t.Fatalf("constructed path %d bytes, want <= %d", len(sock), maxSunPath)
+	}
+	if len(dir)+stagingOverhead <= maxSunPath {
+		t.Skipf("could not build a directory long enough to overflow staging (dir %d bytes)", len(dir))
+	}
+
+	// Permissive umask: the fallback must still publish a 0600 socket.
+	old := syscall.Umask(0)
+	defer syscall.Umask(old)
+
+	ln, err := ListenUnix(sock, 0o600)
+	if err != nil {
+		t.Fatalf("ListenUnix(%d-byte path): %v", len(sock), err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	fi, err := os.Stat(sock)
+	if err != nil {
+		t.Fatalf("stat socket: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("socket mode = %04o, want 0600 even on the fallback path", perm)
+	}
+	conn, err := net.DialTimeout("unix", sock, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial published socket: %v", err)
+	}
+	_ = conn.Close()
+}

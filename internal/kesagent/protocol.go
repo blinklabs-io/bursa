@@ -167,13 +167,21 @@ type Reply struct {
 
 // AgentInfo is the status snapshot returned by the info command.
 type AgentInfo struct {
-	Version          string `json:"version"`
-	Mode             string `json:"mode"`
-	HasActiveKey     bool   `json:"has_active_key"`
-	ActivePeriod     uint64 `json:"active_period"`     // current absolute KES period of the active key
-	ActiveStart      uint64 `json:"active_start"`      // absolute KES period the opcert was issued for
-	ActiveEnd        uint64 `json:"active_end"`        // last absolute KES period the key can serve
-	ActiveKESVKey    []byte `json:"active_kes_vkey"`   // 32-byte KES vkey (nil if none)
+	Version       string `json:"version"`
+	Mode          string `json:"mode"`
+	HasActiveKey  bool   `json:"has_active_key"`
+	ActivePeriod  uint64 `json:"active_period"`   // current absolute KES period of the active key
+	ActiveStart   uint64 `json:"active_start"`    // absolute KES period the opcert was issued for
+	ActiveEnd     uint64 `json:"active_end"`      // last absolute KES period the key can serve
+	ActiveKESVKey []byte `json:"active_kes_vkey"` // 32-byte KES vkey (nil if none)
+	// ActiveIssueNumber is the opcert issue counter the agent is serving. It is
+	// the field the network uses to decide whether to accept the pool's blocks,
+	// so an operator needs it to confirm a rotation actually took effect.
+	ActiveIssueNumber uint64 `json:"active_issue_number"`
+	// ActiveOpCert is the installed opcert CBOR. In sign mode the producer never
+	// receives the key, so this is the only way to confirm the agent and the
+	// producer agree on the certificate after a KES rotation.
+	ActiveOpCert     []byte `json:"active_opcert,omitempty"`
 	StagedKESVKey    []byte `json:"staged_kes_vkey"`   // 32-byte staged KES vkey (nil if none)
 	Exhausted        bool   `json:"exhausted"`         // active key has run out of evolutions
 	CurrentPeriod    uint64 `json:"current_period"`    // agent's computed current KES period

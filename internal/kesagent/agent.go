@@ -68,6 +68,7 @@ type keyState struct {
 	buf         *securemem.Buffer
 	vkey        []byte
 	opcert      []byte // installed opcert CBOR (active keys only)
+	issueNumber uint64 // opcert issue counter (active keys only)
 	exhausted   bool
 }
 
@@ -287,6 +288,7 @@ func (a *Agent) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
 	ks.startPeriod = dec.kesPeriod
 	ks.maxEvol = maxEvol
 	ks.opcert = append([]byte(nil), opcertBytes...)
+	ks.issueNumber = dec.issueNumber
 	ks.exhausted = false
 	a.active = ks
 
@@ -401,6 +403,15 @@ func (a *Agent) Sign(period uint64, msg []byte) ([]byte, error) {
 	return sig, nil
 }
 
+// storeEvolvedKey writes an evolved KES key into the active locked buffer. It
+// is a variable so tests can exercise the discard-on-failure branch in
+// evolveToLocked, which is otherwise unreachable: Buffer.Set fails only on a
+// closed buffer or a length mismatch, and a.mu serializes both away in every
+// real call path.
+var storeEvolvedKey = func(buf *securemem.Buffer, data []byte) error {
+	return buf.Set(data)
+}
+
 // evolveToLocked evolves the active key forward until its absolute period
 // reaches targetAbs or the key is exhausted. Caller must hold a.mu.
 func (a *Agent) evolveToLocked(targetAbs uint64) {
@@ -438,7 +449,7 @@ func (a *Agent) evolveToLocked(targetAbs uint64) {
 		// Interim forward-erasure: wipe the spent key material now, then install
 		// the evolved key. TODO adopt gouroboros SecretKey.Zeroize once pinned.
 		a.active.buf.Zeroize()
-		if err := a.active.buf.Set(next.Data); err != nil {
+		if err := storeEvolvedKey(a.active.buf, next.Data); err != nil {
 			securemem.Wipe(next.Data)
 			a.logger.Error("failed to store evolved KES key; discarding the key", "error", err)
 			// The buffer was already zeroized above and next.Data failed to
@@ -613,6 +624,8 @@ func (a *Agent) infoLocked() *AgentInfo {
 		info.ActiveStart = a.active.startPeriod
 		info.ActiveEnd = a.active.endPeriod()
 		info.ActiveKESVKey = append([]byte(nil), a.active.vkey...)
+		info.ActiveIssueNumber = a.active.issueNumber
+		info.ActiveOpCert = append([]byte(nil), a.active.opcert...)
 		info.Exhausted = a.active.exhausted
 	}
 	if a.staged != nil {
