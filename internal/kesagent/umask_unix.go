@@ -16,17 +16,27 @@
 
 package kesagent
 
-import "syscall"
+import (
+	"sync"
+	"syscall"
+)
 
 // withTightUmask runs fn with the process umask set to 0177, so any file it
 // creates is born with at most owner read/write and never passes through a
 // world-accessible state.
 //
-// The umask is process-global, so this is only sound for callers that are not
-// creating other files concurrently. It is used solely as the fallback path in
-// ListenUnix, where the preferred staging-directory approach does not fit
+// umaskMu serializes the critical section: two concurrent callers would
+// otherwise let one restore the original umask while the other has not yet
+// created its file, so that file would be born with the permissive mode.
+var umaskMu sync.Mutex
+
+// The umask is process-global, so this still cannot protect files created by
+// unrelated goroutines while it is held. It is used solely as the fallback path
+// in ListenUnix, where the preferred staging-directory approach does not fit
 // within the platform's socket pathname limit.
 func withTightUmask(fn func() error) error {
+	umaskMu.Lock()
+	defer umaskMu.Unlock()
 	old := syscall.Umask(0o177)
 	defer syscall.Umask(old)
 	return fn()

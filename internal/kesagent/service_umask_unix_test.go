@@ -63,10 +63,13 @@ func TestListenUnixMode0600UnderPermissiveUmask(t *testing.T) {
 // staging was introduced, so it must keep working — via the umask-bracketed
 // fallback — rather than failing with "invalid argument".
 func TestListenUnixNearPathnameLimit(t *testing.T) {
-	// sockaddr_un.sun_path holds 108 bytes including the NUL terminator.
-	const maxSunPath = 107
+	// sun_path is 108 bytes on Linux but 104 on macOS and the BSDs, so take it
+	// from the platform's own sockaddr rather than assuming Linux's size: a
+	// hardcoded 107 would build paths this platform cannot bind at all, testing
+	// a bind failure instead of the fallback.
+	maxSunPath := len(syscall.RawSockaddrUnix{}.Path) - 1
 	// The staged path adds "/.kes-sock-<10 random>/s" to the parent directory.
-	const stagingOverhead = len("/.kes-sock-0123456789/s")
+	stagingOverhead := len("/.kes-sock-0123456789/s")
 
 	base := "s.sock"
 	dir := t.TempDir()

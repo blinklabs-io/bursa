@@ -335,3 +335,42 @@ func TestInfoReportsActiveIssueNumberAndOpCert(t *testing.T) {
 			dropped.ActiveIssueNumber, dropped.ActiveOpCert)
 	}
 }
+
+// TestSubscribeRefusesKeyBelowGuardFloor covers the case where the active key
+// and the guard floor have diverged: an install advances the floor, then fails
+// and restores the previous (lower-period) key. Serving that key would let a
+// producer sign below the monotonic floor, which is the rollback the guard
+// exists to prevent — so neither a new subscriber nor a broadcast may receive
+// it.
+func TestSubscribeRefusesKeyBelowGuardFloor(t *testing.T) {
+	cold := newColdKey(t)
+	a := testAgent(t, ModeServeKey, cold, kes.CardanoKesDepth, atPeriod(1))
+	vkey, _ := a.GenStagedKey()
+	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 1, cold)); err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+
+	// Sanity: with the floor at the active period, a subscriber gets the key.
+	id, _, current := a.subscribe()
+	if current == nil {
+		t.Fatal("subscribe returned no key push while the key is at the floor")
+	}
+	securemem.Wipe(current.KESSignKey)
+	a.unsubscribe(id)
+
+	// Advance the floor past the active key, as a failed install would.
+	a.mu.Lock()
+	active := a.active.absPeriod()
+	a.mu.Unlock()
+	if err := a.guard.Authorize("newer-key", active+1); err != nil {
+		t.Fatalf("advance guard floor: %v", err)
+	}
+
+	id, _, current = a.subscribe()
+	defer a.unsubscribe(id)
+	if current != nil {
+		securemem.Wipe(current.KESSignKey)
+		t.Fatalf("subscribe served a key at period %d below guard floor %d",
+			active, active+1)
+	}
+}

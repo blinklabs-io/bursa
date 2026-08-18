@@ -476,6 +476,18 @@ func (a *Agent) buildKeyPushLocked() (KeyPush, bool) {
 	if a.active == nil {
 		return KeyPush{}, false
 	}
+	// Never hand a producer a key for a period the guard has already moved past:
+	// serving it would let the producer sign below the monotonic floor, which is
+	// the rollback the guard exists to prevent. The two can diverge when an
+	// install advances the floor but then fails and restores the previous key.
+	if floor, set := a.guard.Floor(); set && a.active.absPeriod() < floor {
+		a.logger.Warn("refusing to serve a key below the period guard floor",
+			"active_period", a.active.absPeriod(),
+			"floor", floor,
+			"kes_vkey", hex.EncodeToString(a.active.vkey),
+		)
+		return KeyPush{}, false
+	}
 	return KeyPush{
 		Type:       "key_push",
 		Period:     a.active.absPeriod(),

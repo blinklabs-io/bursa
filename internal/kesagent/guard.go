@@ -49,7 +49,11 @@ type PeriodGuard struct {
 	path  string // empty => in-memory only (non-durable)
 	floor uint64
 	set   bool
-	vkey  string // hex of the active KES vkey at the current floor (informational)
+	// durable is false when floor reached the guard file but its directory
+	// entry was not synced, so the value can still be lost by a crash. The
+	// equal-period fast path must not skip persisting while it is false.
+	durable bool
+	vkey    string // hex of the active KES vkey at the current floor (informational)
 }
 
 type guardState struct {
@@ -61,7 +65,10 @@ type guardState struct {
 // NewPeriodGuard opens (or creates) a guard backed by the file at path. An
 // empty path yields a non-durable in-memory guard (tests / ephemeral use).
 func NewPeriodGuard(path string) (*PeriodGuard, error) {
-	g := &PeriodGuard{path: path}
+	// durable starts true: an in-memory guard has nothing to persist, an absent
+	// or empty file has no floor to lose, and a floor read back from the file was
+	// written and synced by a previous run.
+	g := &PeriodGuard{path: path, durable: true}
 	if path == "" {
 		return g, nil
 	}
@@ -110,10 +117,13 @@ func (g *PeriodGuard) Authorize(vkeyHex string, period uint64) error {
 	// period, so this is the common case). The durable state already records
 	// this floor, so skip the temp-file + fsync + rename — ~240x the cost of the
 	// KES signature and paid under a.mu on the block-production path. Only the
-	// informational vkey is updated in memory. This is safe because g.floor is
-	// committed in memory only after a successful persist (see below), so
-	// period == g.floor implies it was already durably written.
-	if g.set && period == g.floor {
+	// informational vkey is updated in memory.
+	//
+	// It requires g.durable, not just g.set: a floor whose rename committed but
+	// whose directory entry was never synced can still be lost by a crash, so
+	// skipping the write here would leave that gap unretried for the rest of the
+	// period. In that state fall through and persist again.
+	if g.set && g.durable && period == g.floor {
 		g.vkey = vkeyHex
 		return nil
 	}
@@ -130,16 +140,22 @@ func (g *PeriodGuard) Authorize(vkeyHex string, period uint64) error {
 	// failure (a directory sync that could not be completed) keeps the new floor
 	// in memory and surfaces the error.
 	prevFloor, prevSet, prevVkey := g.floor, g.set, g.vkey
+	prevDurable := g.durable
 	g.floor = period
 	g.set = true
 	g.vkey = vkeyHex
+	g.durable = false
 	committed, err := g.persistLocked()
 	if err != nil {
 		if !committed {
 			g.floor, g.set, g.vkey = prevFloor, prevSet, prevVkey
+			g.durable = prevDurable
 		}
+		// A committed-but-unsynced floor stays in memory (it must never move
+		// backwards) but remains non-durable, so the next Authorize retries.
 		return err
 	}
+	g.durable = true
 	return nil
 }
 
