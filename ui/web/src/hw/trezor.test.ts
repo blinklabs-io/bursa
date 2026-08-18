@@ -1,12 +1,14 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 
 // ── Hoisted mock state (declared before the vi.mock factory runs) ─────────────
-const { mockInit, mockGetPublicKey, mockSignTransaction, mockDispose } = vi.hoisted(() => ({
-  mockInit: vi.fn().mockResolvedValue(undefined),
-  mockGetPublicKey: vi.fn(),
-  mockSignTransaction: vi.fn(),
-  mockDispose: vi.fn(),
-}));
+const { mockInit, mockGetPublicKey, mockSignTransaction, mockSignMessage, mockDispose } =
+  vi.hoisted(() => ({
+    mockInit: vi.fn().mockResolvedValue(undefined),
+    mockGetPublicKey: vi.fn(),
+    mockSignTransaction: vi.fn(),
+    mockSignMessage: vi.fn(),
+    mockDispose: vi.fn(),
+  }));
 
 // Fully mock @trezor/connect-web — no real network, iframe, or popup is loaded.
 // trezor.ts imports this dynamically, but vi.mock still intercepts the import.
@@ -15,6 +17,7 @@ vi.mock("@trezor/connect-web", () => ({
     init: mockInit,
     cardanoGetPublicKey: mockGetPublicKey,
     cardanoSignTransaction: mockSignTransaction,
+    cardanoSignMessage: mockSignMessage,
     dispose: mockDispose,
   },
   PROTO: {
@@ -75,6 +78,16 @@ beforeEach(() => {
       witnesses: [{ type: 1, pubKey: TEST_PUB_KEY_HEX, signature: "aabbccdd".repeat(16) }],
     },
   });
+  mockSignMessage.mockResolvedValue({
+    success: true,
+    payload: {
+      signature: "aabbccdd".repeat(16),
+      pubKey: TEST_PUB_KEY_HEX,
+      // Trezor assembles the full COSE structures on-device and returns them.
+      coseSignature: "84" + "device-cose-sign1",
+      coseKey: "a4" + "device-cose-key",
+    },
+  });
 });
 
 describe("connectTrezor consent gate", () => {
@@ -124,7 +137,7 @@ describe("connectTrezor consent gate", () => {
 });
 
 describe("connectTrezor session", () => {
-  test("reports kind 'trezor' and send-only capabilities", async () => {
+  test("reports kind 'trezor' and send + message-signing capabilities", async () => {
     const session = await connectTrezor({ requestExternalConsent: approve });
     expect(session.kind).toBe("trezor");
     expect(session.capabilities).toEqual({
@@ -133,6 +146,7 @@ describe("connectTrezor session", () => {
       governance: false,
       multisig: false,
       poolReg: false,
+      signMessage: true,
     });
     await session.close();
   });
@@ -249,6 +263,50 @@ describe("connectTrezor session", () => {
     mockSignTransaction.mockResolvedValueOnce({ success: false, payload: { error: "user cancelled" } });
     const session = await connectTrezor({ requestExternalConsent: approve });
     await expect(session.signTx(NEUTRAL_REQ)).rejects.toThrow("user cancelled");
+    await session.close();
+  });
+
+  const MSG_REQ = {
+    messageHex: "48656c6c6f", // "Hello"
+    signingPath: "1852'/1815'/0'/0/0",
+    stakePath: "1852'/1815'/0'/2/0",
+    networkId: 1,
+    protocolMagic: 764824073,
+  };
+
+  test("signMessage maps the neutral request to Trezor cardanoSignMessage params", async () => {
+    const session = await connectTrezor({ requestExternalConsent: approve });
+    await session.signMessage(MSG_REQ);
+
+    expect(mockSignMessage).toHaveBeenCalledOnce();
+    const params = mockSignMessage.mock.calls[0][0];
+    expect(params.path).toEqual([0x8000073c, 0x80000717, 0x80000000, 0, 0]);
+    expect(params.payload).toBe("48656c6c6f");
+    expect(params.networkId).toBe(1);
+    // protocolMagic MUST be threaded through: without it the device signs the
+    // message in an undefined network context (mainnet magic 764824073 here).
+    expect(params.protocolMagic).toBe(764824073);
+    expect(params.addressParameters).toEqual({
+      addressType: 0, // PROTO.CardanoAddressType.BASE
+      path: [0x8000073c, 0x80000717, 0x80000000, 0, 0],
+      stakingPath: [0x8000073c, 0x80000717, 0x80000000, 2, 0],
+    });
+    await session.close();
+  });
+
+  test("signMessage returns the device-assembled coseSignature + coseKey", async () => {
+    const session = await connectTrezor({ requestExternalConsent: approve });
+    const { signature, key } = await session.signMessage(MSG_REQ);
+    // Trezor assembles the COSE structures itself; the signer passes them through.
+    expect(signature).toBe("84" + "device-cose-sign1");
+    expect(key).toBe("a4" + "device-cose-key");
+    await session.close();
+  });
+
+  test("signMessage throws on an unsuccessful device response", async () => {
+    mockSignMessage.mockResolvedValueOnce({ success: false, payload: { error: "user cancelled" } });
+    const session = await connectTrezor({ requestExternalConsent: approve });
+    await expect(session.signMessage(MSG_REQ)).rejects.toThrow("user cancelled");
     await session.close();
   });
 

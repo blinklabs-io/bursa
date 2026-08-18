@@ -20,15 +20,23 @@ import type {
 } from "@cardano-foundation/ledgerjs-hw-app-cardano";
 import {
   AddressType,
+  MessageAddressFieldType,
   TransactionSigningMode,
   TxOutputDestinationType,
   TxOutputFormat,
   TxRequiredSignerType,
 } from "@cardano-foundation/ledgerjs-hw-app-cardano";
 import type { HardwareSignResponse } from "../api/types";
-import type { HardwareCapabilities, HardwareSigner } from "./types";
+import type {
+  HardwareCapabilities,
+  HardwareSignMessageRequest,
+  HardwareSignMessageResult,
+  HardwareSigner,
+} from "./types";
 import { encodeXpub } from "./xpub";
 import { encodeWitnessArray } from "./witness";
+import { encodeCoseSign1, encodeCoseKey } from "./cose";
+import { hexToBytes } from "./hex";
 
 // ── BIP32 path ───────────────────────────────────────────────────────────────
 
@@ -47,6 +55,51 @@ function parseBip32Path(pathStr: string): number[] {
     const n = parseInt(hardened ? seg.slice(0, -1) : seg, 10);
     return hardened ? n + HARDENED : n;
   });
+}
+
+// ── CIP-8 message hashing threshold ───────────────────────────────────────────
+//
+// The Cardano Ledger app streams the CIP-8 message in chunks and REJECTS a
+// non-hashed message that overflows the first chunk (SDK error
+// MESSAGE_DATA_LONG_NON_HASHED_MSG). The first-chunk capacity depends on whether
+// the app renders the message as ASCII text or as hex, mirroring the pinned SDK
+// (@cardano-foundation/ledgerjs-hw-app-cardano 7.1.4,
+// dist/interactions/signMessage.js):
+//
+//   MAX_CIP8_MSG_FIRST_CHUNK_ASCII_SIZE = 198  (printable-ASCII messages)
+//   MAX_CIP8_MSG_FIRST_CHUNK_HEX_SIZE   =  99  (everything else)
+//
+// so any message strictly longer than its threshold MUST be signed with
+// hashPayload:true (device hashes with Blake2b-224 before signing). We reproduce
+// the SDK's own isAscii() test (dist/parsing/messageData.js) — since we pass
+// preferHexDisplay:false, isAscii = isAscii(messageHex) — to pick the matching
+// threshold, so our decision agrees with the app's chunker exactly.
+const MAX_CIP8_MSG_FIRST_CHUNK_ASCII_SIZE = 198;
+const MAX_CIP8_MSG_FIRST_CHUNK_HEX_SIZE = 99;
+
+// isPrintableAsciiMessage mirrors the Ledger SDK's isAscii(): every byte must be
+// printable ASCII (0x20–0x7e), the message must be non-empty, and it must not
+// start/end with a space or contain a double space.
+function isPrintableAsciiMessage(bytes: Uint8Array): boolean {
+  if (bytes.length === 0) return false;
+  const SPACE = 0x20;
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] < SPACE || bytes[i] > 0x7e) return false;
+  }
+  if (bytes[0] === SPACE || bytes[bytes.length - 1] === SPACE) return false;
+  for (let i = 0; i + 1 < bytes.length; i++) {
+    if (bytes[i] === SPACE && bytes[i + 1] === SPACE) return false;
+  }
+  return true;
+}
+
+// needsHashedPayload returns true when the raw message is too long to be signed
+// unhashed for how the device will render it (ASCII vs hex first-chunk limit).
+function needsHashedPayload(messageBytes: Uint8Array): boolean {
+  const threshold = isPrintableAsciiMessage(messageBytes)
+    ? MAX_CIP8_MSG_FIRST_CHUNK_ASCII_SIZE
+    : MAX_CIP8_MSG_FIRST_CHUNK_HEX_SIZE;
+  return messageBytes.length > threshold;
 }
 
 // ── Neutral → ledgerjs mapping ────────────────────────────────────────────────
@@ -128,14 +181,16 @@ function mapToSignRequest(resp: HardwareSignResponse): SignTransactionRequest {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-// Ledger currently signs send (ordinary) transactions on-device; the other
-// flows are declared unsupported until their neutral→ledgerjs mappings land.
+// Ledger signs send (ordinary) transactions and CIP-8 messages on-device; the
+// other tx flows are declared unsupported until their neutral→ledgerjs mappings
+// land.
 const LEDGER_CAPABILITIES: HardwareCapabilities = {
   send: true,
   staking: false,
   governance: false,
   multisig: false,
   poolReg: false,
+  signMessage: true,
 };
 
 /**
@@ -196,6 +251,48 @@ export async function connectLedger(): Promise<HardwareSigner> {
 
       // 3. Encode the raw witness array expected by SubmitSigned.
       return encodeWitnessArray(resolved);
+    },
+
+    async signMessage(req: HardwareSignMessageRequest): Promise<HardwareSignMessageResult> {
+      // The device signs the CIP-8 Sig_structure and returns the raw pieces
+      // (signature + public key + the address field it put in the protected
+      // header); hw/cose.ts assembles them into the COSE_Sign1 / COSE_Key the
+      // backend verifier and dApps expect. The DEVICE_OWNED base address mirrors
+      // the software path (bursa.SignData).
+      //
+      // hashPayload: the Ledger app refuses a non-hashed message that overflows
+      // its first streaming chunk, so a normal login/proof message can be too
+      // long to sign unhashed. For those we set hashPayload:true (device hashes
+      // with Blake2b-224 before signing) and record it in the COSE "hashed"
+      // header; the bursa verifier re-hashes the raw payload, so the raw message
+      // still goes in the COSE payload field either way. Short messages keep
+      // hashPayload:false — byte-identical to the software path.
+      const messageBytes = hexToBytes(req.messageHex);
+      const hashPayload = needsHashedPayload(messageBytes);
+      const signingPath = parseBip32Path(req.signingPath);
+      const { signatureHex, signingPublicKeyHex, addressFieldHex } =
+        await cardano.signMessage({
+          messageHex: req.messageHex,
+          signingPath,
+          hashPayload,
+          preferHexDisplay: false,
+          addressFieldType: MessageAddressFieldType.ADDRESS,
+          address: {
+            type: AddressType.BASE_PAYMENT_KEY_STAKE_KEY,
+            params: {
+              spendingPath: signingPath,
+              stakingPath: parseBip32Path(req.stakePath),
+            },
+          },
+          network: {
+            networkId: req.networkId,
+            protocolMagic: req.protocolMagic,
+          },
+        });
+      return {
+        signature: encodeCoseSign1(addressFieldHex, req.messageHex, signatureHex, hashPayload),
+        key: encodeCoseKey(signingPublicKeyHex),
+      };
     },
 
     async close(): Promise<void> {

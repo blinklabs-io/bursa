@@ -1,7 +1,13 @@
 import { useState, useEffect } from "react";
 import type { ReactElement } from "react";
 import type { Account, WalletView } from "./api/types";
-import { useStatus, useVaultStatus, useAutoLock } from "./api/hooks";
+import {
+  useStatus,
+  useVaultStatus,
+  useAutoLock,
+  useNotifications,
+  useActivityNotifications,
+} from "./api/hooks";
 import { lockVault, ApiError } from "./api/client";
 import { getStoredDeviceKind } from "./hw/deviceKind";
 import { useIdleLock } from "./useIdleLock";
@@ -10,6 +16,9 @@ import { SyncBanner } from "./components/SyncBanner";
 import { WalletSwitcher } from "./components/WalletSwitcher";
 import { MobileNav } from "./components/MobileNav";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { CommandPalette } from "./components/CommandPalette";
+import type { Command } from "./components/CommandPalette";
+import { operatorModeEnabled, setOperatorMode } from "./operatorMode";
 import { useHashRoute, navigate } from "./router";
 import { CreateVault } from "./screens/CreateVault";
 import { UnlockVault } from "./screens/UnlockVault";
@@ -20,11 +29,11 @@ import { Portfolio } from "./screens/Portfolio";
 import { Receive } from "./screens/Receive";
 import { Activity } from "./screens/Activity";
 import { Send } from "./screens/Send";
+import { MultiSigSpend } from "./screens/MultiSig";
 import { Swap } from "./screens/Swap";
 import { Stake } from "./screens/Stake";
 import { Offline } from "./screens/Offline";
 import { Operate } from "./screens/Operate";
-import { MultiSig } from "./screens/MultiSig";
 import { ImportTransaction } from "./screens/ImportTransaction";
 import { Settings } from "./screens/Settings";
 import { ConnectorApproval } from "./screens/ConnectorApproval";
@@ -73,17 +82,20 @@ const SETTINGS_ROUTES = new Map<string, "general" | "contacts" | "tools" | "diag
 // Send and Receive are actions on the Portfolio rather than destinations, so
 // they keep their routes (deep links, and the Portfolio buttons) without
 // costing a nav entry.
-const PORTFOLIO_ROUTES = new Set(["portfolio", "send", "receive"]);
+const PORTFOLIO_ROUTES = new Set(["portfolio", "send", "receive", "multisig"]);
 
+// Spending from a multi-signature wallet is a mode of Send rather than a screen
+// of its own, so the old #/multisig link resolves here too.
+const SEND_ROUTES = new Set(["send", "multisig"]);
+
+// Operate is appended when operator mode is on; see operatorMode.ts. Import Tx
+// and Offline are reachable from the send flow and the command palette rather
+// than costing a permanent entry each.
 const NAV: { key: string; label: string }[] = [
   { key: "portfolio", label: "Portfolio" },
   { key: "activity", label: "Activity" },
   { key: "stake", label: "Stake" },
   { key: "swap", label: "Swap" },
-  { key: "multisig", label: "Multi-sig" },
-  { key: "import", label: "Import Tx" },
-  { key: "offline", label: "Offline" },
-  { key: "operate", label: "Operate" },
   { key: "settings", label: "Settings" },
 ];
 
@@ -109,6 +121,10 @@ export function App() {
   // instance inside Settings would have its own useState and never be seen by
   // the idle timer here (see useAsync in api/hooks.ts: no shared cache).
   const autoLock = useAutoLock();
+  // Lifted here (like autoLock) so the Settings toggle and the activity poller
+  // below share one copy: toggling notifications in Settings immediately
+  // starts/stops polling in this same session.
+  const notifications = useNotifications();
   const route = useHashRoute();
 
   // Vault session state, established after create/unlock and kept in memory.
@@ -125,15 +141,44 @@ export function App() {
   // syncing, dismissing the boot Syncing view for this session.
   const [loadAnyway, setLoadAnyway] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Owned here because App builds the nav from it. Settings toggles it through
+  // the setter below, so the entry appears the moment it is switched on rather
+  // than after some unrelated re-render.
+  const [operatorMode, setOperatorModeState] = useState(operatorModeEnabled);
+
+  // Cmd/Ctrl-K from anywhere. Bound at the window so it works whatever has
+  // focus, and it toggles so the same key closes it.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const activeWallet = wallets.find((w) => w.id === activeId) ?? null;
+  // A multi-signature wallet spends from a native script. Send routes into the
+  // collect-witnesses flow for it, and the screens that need a seed stay off.
+  const multiSigAccount = activeWallet?.multisig ?? undefined;
+  const multiSigError = activeWallet?.multisig_error;
   const isReady = status.data?.state === "ready";
   const canQueryNode = status.data?.state === "ready" || status.data?.state === "syncing";
   // Regular sends require a fully synced node and either a full wallet (local
   // seed signing) or a hardware wallet (on-device signing). Read-only and
   // multi-signature wallets use their own non-local signing flows.
   const canSend = isReady && (
-    activeWallet?.type === "full" || activeWallet?.type === "hardware"
+    activeWallet?.type === "full" ||
+    activeWallet?.type === "hardware" ||
+    // A multi-signature wallet can absolutely spend — it just collects the
+    // other signatures first instead of signing in one step.
+    // ...and only when its policy actually decoded. A script wallet whose
+    // policy is unreadable has no spend flow at all, and letting canSend say
+    // otherwise would drop it into the seed-based one.
+    (activeWallet?.type === "multi_signature" && multiSigAccount !== undefined)
   );
   // Sign/Offline/Operate all need the wallet's seed (message signing, air-gap
   // signing, and cold/VRF/KES key derivation respectively). Hardware wallets
@@ -158,13 +203,24 @@ export function App() {
   }
 
   function applyAdded(wallet: WalletView) {
-    // A newly added wallet becomes active server-side; merge it in and select it.
+    // A newly added wallet is normally selected server-side, but the selection
+    // can fail after the wallet is persisted. Trust the flag the server sent
+    // rather than assuming: forcing active:true here would show the new wallet
+    // as selected while balance and send requests still answered for the
+    // previous one, and would hide the wallet the user needs to click.
     setLockError(null);
     setWallets((prev) => {
       const without = prev.filter((w) => w.id !== wallet.id);
-      return [...without.map((w) => ({ ...w, active: false })), { ...wallet, active: true }];
+      if (!wallet.active) {
+        // Selection did not move: merge the wallet in, leave the existing
+        // selection alone, and let the user pick it from the list.
+        return [...without, wallet];
+      }
+      return [...without.map((w) => ({ ...w, active: false })), wallet];
     });
-    setActiveId(wallet.id);
+    if (wallet.active) {
+      setActiveId(wallet.id);
+    }
     setUnlocked(true);
     setAddingWallet(false);
   }
@@ -208,6 +264,16 @@ export function App() {
   // failed (autoLock.data stays null), fail SAFE by assuming the default
   // timeout rather than fail OPEN by leaving auto-lock permanently disabled.
   useIdleLock(autoLock.loading ? 0 : (autoLock.data?.minutes ?? 15), () => void handleLock(), unlocked);
+
+  // Wallet-activity notifications: poll node-local activity and raise a
+  // desktop/browser notification for new incoming funds / stake rewards, but
+  // only while the vault is unlocked, the user has enabled notifications, and we
+  // can actually notify (browser permission granted, or the desktop OS-native
+  // bridge is present). Anything else keeps the poller off.
+  const canNotify =
+    notifications.permission === "granted" ||
+    (typeof window !== "undefined" && typeof window.bursaNotify === "function");
+  useActivityNotifications(unlocked && notifications.enabled && canNotify, activeId);
 
   // --- Pre-unlock flows: render full-screen, no sidebar -------------------
 
@@ -306,7 +372,6 @@ export function App() {
     else if (STAKE_ROUTES.has(route)) activeRoute = "stake";
     else if (route === "offline" && canSign) activeRoute = "offline";
     else if (route === "operate" && canSign) activeRoute = "operate";
-    else if (route === "multisig") activeRoute = "multisig";
     else if (route === "import" && canSign) activeRoute = "import";
     else if (ROUTES.has(route) && route !== "swap") activeRoute = route;
     else activeRoute = "portfolio";
@@ -329,6 +394,7 @@ export function App() {
     screenLabel = "add wallet";
     content = (
       <AddWallet
+          canSign={canSign}
         network={network}
         onAdded={applyAdded}
         onCancel={() => setAddingWallet(false)}
@@ -353,21 +419,39 @@ export function App() {
       <Settings
         account={toAccount(activeWallet)}
         walletType={activeWallet.type}
+        walletId={activeWallet.id}
         autoLock={autoLock}
+        notifications={notifications}
         canSign={canSign}
+        operatorMode={operatorMode}
+        onOperatorModeChange={(enabled) => {
+          setOperatorMode(enabled);
+          setOperatorModeState(enabled);
+        }}
         initialTab={SETTINGS_ROUTES.get(route)}
       />
     );
-  } else if (route === "send" && !canSend) {
+  } else if (SEND_ROUTES.has(route) && !canSend) {
     screenLabel = "portfolio";
-    content = <Portfolio canSend={canSend} />;
-  } else if (route === "send" && canSend) {
-    content = <Send isHardware={activeWallet.type === "hardware"} walletId={activeWallet.id} />;
+    content = <Portfolio canSend={canSend} multiSigError={multiSigError} />;
+  } else if (SEND_ROUTES.has(route) && canSend) {
+    // A multi-signature wallet spends by collecting co-signer witnesses rather
+    // than signing in one step, so Send means a different flow for it.
+    content = multiSigAccount ? (
+      <MultiSigSpend
+        account={multiSigAccount}
+        canSpend={isReady}
+        canSign={canSign}
+        onSpent={() => {}}
+      />
+    ) : (
+      <Send isHardware={activeWallet.type === "hardware"} walletId={activeWallet.id} />
+    );
   } else if (route === "swap" && !canSwap) {
     // Guard deep-links (#/swap): DEX quotes need a queryable mainnet node, so
     // fall back to Portfolio while the node or active wallet cannot support it.
     screenLabel = "portfolio";
-    content = <Portfolio canSend={canSend} />;
+    content = <Portfolio canSend={canSend} multiSigError={multiSigError} />;
   } else if (STAKE_ROUTES.has(route)) {
     // Delegation, rewards and the pool directory are one screen, and it is not
     // gated as a whole: reward history is a plain account read that the old
@@ -389,25 +473,20 @@ export function App() {
     // Air-gap signing needs the active wallet's seed (to sign) but no node for
     // the sign step; falls back to Portfolio without an active wallet.
     if (!canSign) screenLabel = "portfolio";
-    content = canSign ? <Offline /> : <Portfolio canSend={canSend} />;
+    content = canSign ? <Offline /> : <Portfolio canSend={canSend} multiSigError={multiSigError} />;
   } else if (route === "operate") {
     // Pool operations derive cold/VRF/KES keys from the seed and need the spend
     // password. A wallet must be active; otherwise fall back to Portfolio. Most
     // pool ops are offline; only retirement submission needs a synced node,
     // gated at the API.
     if (!canSign) screenLabel = "portfolio";
-    content = canSign ? <Operate account={toAccount(activeWallet)} /> : <Portfolio canSend={canSend} />;
-  } else if (route === "multisig") {
-    // Managing multi-sig accounts (list/create/view) is local state and works on
-    // any active wallet. Building and submitting spends requires a synced node;
-    // only local CIP-1854 key derivation/signing additionally requires a seed.
-    content = <MultiSig canSpend={isReady} canSign={canSign} />;
+    content = canSign ? <Operate account={toAccount(activeWallet)} /> : <Portfolio canSend={canSend} multiSigError={multiSigError} />;
   } else if (route === "import") {
     // Importing a transaction built elsewhere needs the active wallet's seed
     // to add a signature (like Offline/Operate); submitting is separately
     // gated inside the screen on the node being ready (canSubmit).
     if (!canSign) screenLabel = "portfolio";
-    content = canSign ? <ImportTransaction canSubmit={isReady} /> : <Portfolio canSend={canSend} />;
+    content = canSign ? <ImportTransaction canSubmit={isReady} /> : <Portfolio canSend={canSend} multiSigError={multiSigError} />;
   } else if (route === "receive") {
     // Explorer links on each address need the active wallet's real network
     // (preview/preprod/mainnet), which the generic ROUTES map (no props)
@@ -424,12 +503,76 @@ export function App() {
     // it through the props-less ROUTES map would silently disable it.
     const Screen = ROUTES.get(route);
     if (!Screen) screenLabel = "portfolio";
-    content = Screen && route !== "portfolio" ? <Screen /> : <Portfolio canSend={canSend} />;
+    content = Screen && route !== "portfolio" ? <Screen /> : <Portfolio canSend={canSend} multiSigError={multiSigError} />;
   }
 
   // Build the nav item descriptors once, shared between desktop sidebar and
   // mobile drawer so gating logic only lives in one place.
-  const navItems = NAV.map(({ key, label }) => {
+  // The nav carries the places you go; this carries the things you do. Every
+  // command is also reachable by pointing and clicking somewhere — a palette is
+  // invisible to anyone who does not know it exists, so it must never be the
+  // only route to a feature.
+  // The handler binds Cmd-K and Ctrl-K alike, so the hint must not promise a
+  // modifier the user's keyboard does not have.
+  const paletteShortcutLabel =
+    typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform)
+      ? "\u2318K"
+      : "Ctrl+K";
+  // Disabled commands say which gate is closed. Swap needs a reachable node AND
+  // mainnet, and Send needs a reachable node AND a wallet that can spend, so a
+  // single fixed string is wrong for whichever half is actually failing.
+  const swapDisabledReason = !activeWallet
+    ? "Select a wallet"
+    : !canQueryNode
+      ? "Needs a synced node"
+      : "Mainnet only";
+  const sendDisabledReason = !isReady
+    ? "Needs a synced node"
+    : "This wallet cannot spend";
+  const commands: Command[] = [
+    { id: "portfolio", label: "Portfolio", group: "Go", keywords: "balance tokens nfts home", run: () => navigate("portfolio") },
+    { id: "activity", label: "Activity", group: "Go", keywords: "history transactions", run: () => navigate("activity") },
+    { id: "stake", label: "Stake", group: "Go", keywords: "delegate rewards pools", run: () => navigate("stake") },
+    { id: "swap", label: "Swap", group: "Go", keywords: "dex trade quote", run: () => navigate("swap"), disabled: !canSwap, disabledReason: swapDisabledReason },
+    { id: "settings", label: "Settings", group: "Go", keywords: "preferences node connector", run: () => navigate("settings") },
+
+    { id: "send", label: "Send", group: "Move funds", keywords: "pay transfer spend", run: () => navigate("send"), disabled: !canSend, disabledReason: sendDisabledReason },
+    { id: "receive", label: "Receive", group: "Move funds", keywords: "address qr deposit", run: () => navigate("receive") },
+    {
+      id: "import",
+      label: "Finish a transaction someone sent you",
+      group: "Move funds",
+      keywords: "import cosign paste cbor witness multisig",
+      run: () => navigate("import"),
+      disabled: !canSign,
+      disabledReason: "Needs this wallet's seed",
+    },
+    {
+      id: "offline",
+      label: "Sign a transaction offline",
+      group: "Move funds",
+      keywords: "air gap airgap cold export witness",
+      run: () => navigate("offline"),
+      disabled: !canSign,
+      disabledReason: "Needs this wallet's seed",
+    },
+
+    { id: "contacts", label: "Address book", group: "Tools", keywords: "contacts recipients names", run: () => navigate("contacts") },
+    { id: "sign", label: "Sign a message", group: "Tools", keywords: "cip-8 cip-30 prove ownership", run: () => navigate("sign"), disabled: !canSign, disabledReason: "Needs this wallet's seed" },
+    { id: "verify", label: "Verify a signature", group: "Tools", keywords: "cip-8 check message", run: () => navigate("verify") },
+    { id: "diagnostics", label: "Node diagnostics", group: "Tools", keywords: "peers sync logs health", run: () => navigate("diagnostics") },
+
+    { id: "operate", label: "Stake pool operations", group: "Operate", keywords: "spo pool cold vrf kes opcert registration", run: () => navigate("operate"), disabled: !canSign, disabledReason: "Needs this wallet's seed" },
+
+    { id: "add-wallet", label: "Add a wallet", group: "Wallet", keywords: "create restore hardware multisig new", run: () => setAddingWallet(true) },
+    { id: "lock", label: "Lock the vault", group: "Wallet", keywords: "logout sign out secure", run: () => void handleLock() },
+  ];
+
+  const navEntries = operatorMode
+    ? [...NAV.slice(0, -1), { key: "operate", label: "Pool Ops" }, NAV[NAV.length - 1]]
+    : NAV;
+
+  const navItems = navEntries.map(({ key, label }) => {
     const gated =
       activeWallet === null ||
       addingWallet ||
@@ -447,6 +590,7 @@ export function App() {
 
       {/* Mobile-only: top bar + slide-out drawer. Hidden on desktop via CSS. */}
       <MobileNav
+            onOpenPalette={() => setPaletteOpen(true)}
         status={status.data ?? null}
         activeWallet={activeWallet}
         wallets={wallets}
@@ -480,6 +624,15 @@ export function App() {
               {lockError}
             </p>
           )}
+          <button
+            type="button"
+            className="palette-trigger"
+            onClick={() => setPaletteOpen(true)}
+            aria-haspopup="dialog"
+          >
+            <span>Search…</span>
+            <span className="palette-kbd" aria-hidden="true">{paletteShortcutLabel}</span>
+          </button>
           {navItems.map(({ key, label, disabled, active }) => (
             <button
               key={key}
@@ -517,6 +670,11 @@ export function App() {
           a dApp has pending consent requests. Mounts regardless of current route
           so requests are never silently missed. */}
       <ConnectorApproval />
+      <CommandPalette
+        open={paletteOpen}
+        commands={commands}
+        onClose={() => setPaletteOpen(false)}
+      />
     </div>
   );
 }

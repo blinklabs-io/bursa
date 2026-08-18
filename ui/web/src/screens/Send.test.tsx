@@ -12,7 +12,14 @@ vi.mock("../hw", () => ({
 }));
 
 // Send-parity capabilities shared by the mock signers below.
-const HW_CAPS = { send: true, staking: false, governance: false, multisig: false, poolReg: false };
+const HW_CAPS = {
+  send: true,
+  staking: false,
+  governance: false,
+  multisig: false,
+  poolReg: false,
+  signMessage: true,
+};
 
 const MOCK_PREVIEW: Preview = {
   pending_id: "pending-abc-123",
@@ -594,6 +601,7 @@ test("(s) hardware account: confirm flow connects device, fetches sign request, 
     capabilities: HW_CAPS,
     getAccountXpub: vi.fn(),
     signTx: mockSignTx,
+    signMessage: vi.fn<HardwareSigner["signMessage"]>(),
     close: mockClose,
   });
 
@@ -652,6 +660,7 @@ test("(t) hardware account: unsupported tx closes the connected device without s
     capabilities: HW_CAPS,
     getAccountXpub: vi.fn(),
     signTx: mockSignTx,
+    signMessage: vi.fn<HardwareSigner["signMessage"]>(),
     close: mockClose,
   });
 
@@ -769,6 +778,7 @@ test("(w) a successful hardware send persists the chosen device kind", async () 
     capabilities: HW_CAPS,
     getAccountXpub: vi.fn(),
     signTx: vi.fn<HardwareSigner["signTx"]>().mockResolvedValue("81825820aabb"),
+    signMessage: vi.fn<HardwareSigner["signMessage"]>(),
     close: vi.fn().mockResolvedValue(undefined),
   });
 

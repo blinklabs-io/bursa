@@ -47,6 +47,9 @@ interface MobileNavProps {
   onLock: () => void;
   onNavigate: (key: string) => void;
   onAccountChanged?: (wallet: WalletView) => void;
+  // Opens the command palette. The sidebar trigger and Cmd/Ctrl-K are both
+  // unavailable on touch layouts, so without this the palette has no route in.
+  onOpenPalette?: () => void;
 }
 
 // MobileNav renders on viewports narrower than 768 px. It replaces the fixed
@@ -68,6 +71,7 @@ export function MobileNav({
   onLock,
   onNavigate,
   onAccountChanged,
+  onOpenPalette,
 }: MobileNavProps) {
   const [open, setOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -227,6 +231,19 @@ export function MobileNav({
               ✕
             </button>
           </div>
+
+          {onOpenPalette && (
+            <button
+              type="button"
+              className="mobile-drawer-search"
+              onClick={() => {
+                setOpen(false);
+                onOpenPalette();
+              }}
+            >
+              Search…
+            </button>
+          )}
 
           {/* Wallet switcher block */}
           <WalletSwitcher

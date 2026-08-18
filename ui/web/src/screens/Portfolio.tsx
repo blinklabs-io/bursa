@@ -64,12 +64,16 @@ function NftGallery() {
 }
 
 interface PortfolioProps {
+  // Set when this wallet's stored multi-signature policy could not be read. It
+  // still receives and reports a balance; it just cannot spend, and saying so
+  // beats a Send button that leads nowhere.
+  multiSigError?: string;
   // Whether this wallet on this node can build a spend. Receive needs nothing,
   // so it is always offered.
   canSend?: boolean;
 }
 
-export function Portfolio({ canSend = false }: PortfolioProps = {}) {
+export function Portfolio({ canSend = false, multiSigError }: PortfolioProps = {}) {
   const balance = useBalance();
   const delegation = useDelegation();
   const [query, setQuery] = useState("");
@@ -129,6 +133,11 @@ export function Portfolio({ canSend = false }: PortfolioProps = {}) {
         {/* Send and Receive are actions, not places. They sit on the balance
             they act on — where you already are when you decide to move funds —
             rather than costing two entries in a nav you have to scan. */}
+        {multiSigError && (
+          <p role="alert" className="error-text">
+            {multiSigError}
+          </p>
+        )}
         <div className="portfolio-actions">
           <Button onClick={() => navigate("send")} disabled={!canSend}>
             Send
