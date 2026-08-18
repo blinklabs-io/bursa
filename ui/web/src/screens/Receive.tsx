@@ -47,7 +47,7 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
   }
 
   if (addresses.error instanceof ApiError && addresses.error.status === 503) {
-    return <NodeNotReady what="Your receive address" />;
+    return <NodeNotReady what="Your receive address" refresh={addresses.refresh} />;
   }
   if (addresses.error) {
     return (
