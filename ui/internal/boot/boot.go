@@ -57,6 +57,23 @@ import (
 // Unlock decrypts the ACTIVE wallet's seed under the supplied spending password;
 // Create is unsupported (wallets are added via the vault) and Exists is true
 // whenever a wallet is active.
+// scriptVault adapts the vault to the narrow surface the multi-signature
+// migration needs. The dependency runs this way round on purpose: the vault
+// must not learn what a multi-signature policy is, so it stores the policy
+// opaquely and this bridges the two types.
+type scriptVault struct{ v *vault.Vault }
+
+func (s scriptVault) AddScriptWallet(name, network string, w multisig.ScriptWallet, vaultPassword string) error {
+	_, err := s.v.AddScriptWallet(name, network, vault.ScriptMeta{
+		Policy:        w.Policy,
+		ScriptCBOR:    w.ScriptCBOR,
+		ScriptAddress: w.ScriptAddress,
+	}, vaultPassword)
+	return err
+}
+
+func (s scriptVault) ScriptAddresses() ([]string, error) { return s.v.ScriptAddresses() }
+
 type vaultKeystore struct{ v *vault.Vault }
 
 func (k vaultKeystore) Exists() bool { return k.v.ActiveID() != "" }
@@ -265,7 +282,27 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 
 	// Native multi-sig accounts are persisted under the data dir; signing uses
 	// the active wallet's CIP-1854 key, decrypted from the vault on demand.
-	multisigSvc := multisig.NewService(chainCtx, vaultKeystore{v: vlt}, filepath.Join(cfg.DataDir, "multisig.json"))
+	multisigStorePath := filepath.Join(cfg.DataDir, "multisig.json")
+	multisigSvc := multisig.NewService(chainCtx, vaultKeystore{v: vlt}, multisigStorePath)
+
+	// Multi-signature accounts predate the vault and were kept in a plain file
+	// beside it. Move them in on unlock, so they are behind the vault password
+	// and appear as wallets. The migration verifies the vault holds them before
+	// removing the file; a failure leaves it alone and is retried next unlock,
+	// which is why this reports a count and logs its own trouble rather than
+	// propagating an error that would block entry to the wallet.
+	migrateScripts := func(vaultPassword string) int {
+		n, err := multisig.MigrateStoreToVault(multisigStorePath, scriptVault{v: vlt}, vaultPassword)
+		if err != nil {
+			logger.Warn(
+				"multi-signature accounts not migrated into the vault; the store is intact and this will retry",
+				"error", err,
+			)
+		} else if n > 0 {
+			logger.Info("migrated multi-signature accounts into the vault", "count", n)
+		}
+		return n
+	}
 
 	var connectorSvc *connector.Service
 	if cfg.ConnectorEnabled {
@@ -359,6 +396,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	handlerOpts := []api.HandlerOption{
 		api.WithLegacyKeystore(legacyKeyStore),
 		api.WithDiagnostics(diagSvc),
+		api.WithScriptMigration(migrateScripts),
 	}
 	if connectorSvc != nil {
 		handlerOpts = append(handlerOpts, api.WithConnector(connectorSvc))

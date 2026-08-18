@@ -792,3 +792,24 @@ func TestServiceTransactionDetailTipLookupFailureDoesNotNotFound(t *testing.T) {
 		t.Fatalf("direction = %v, want sent (unaffected by tip failure)", detail.Direction)
 	}
 }
+
+// A script (multi-signature) account has no stake credential. Its addresses are
+// exactly the script address, and the node must not be asked to resolve an
+// empty stake address — that is a malformed request, not a miss.
+func TestScanAddressesSkipsDiscoveryWithoutAStakeAddress(t *testing.T) {
+	// A discovery call would surface as this error; the point is that it is
+	// never made.
+	svc := &Service{chain: &fakeChain{
+		addressesErr: errors.New("node asked to resolve an empty stake address"),
+	}}
+
+	addrs, err := svc.scanAddresses(context.Background(), &Account{
+		ReceiveAddresses: []string{"addr1_script", "addr1_script", ""},
+	})
+	if err != nil {
+		t.Fatalf("scanAddresses: %v", err)
+	}
+	if len(addrs) != 1 || addrs[0] != "addr1_script" {
+		t.Fatalf("addrs = %v, want the script address once, blanks dropped", addrs)
+	}
+}

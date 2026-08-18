@@ -179,11 +179,23 @@ type Diagnostics interface {
 }
 
 type handlerOptions struct {
-	legacy      LegacyKeystore
-	connector   *connector.Service
-	nfts        NFTs
-	diagnostics Diagnostics
+	legacy         LegacyKeystore
+	connector      *connector.Service
+	nfts           NFTs
+	diagnostics    Diagnostics
+	migrateScripts ScriptMigrator
 }
+
+// ScriptMigrator moves saved multi-signature accounts out of the standalone
+// store and into the vault, returning how many it moved.
+//
+// It runs on unlock, the only point where the vault password is in hand. It
+// reports a count rather than an error on purpose: a migration that cannot run
+// must never fail the unlock — the store is left intact and the accounts are
+// still there to move next time, which beats refusing entry to a wallet over a
+// housekeeping step. Reporting the failure is the migrator's own job, since it
+// is constructed where a logger exists and this package has none.
+type ScriptMigrator func(vaultPassword string) int
 
 type HandlerOption func(*handlerOptions)
 
@@ -209,6 +221,13 @@ func WithNFTs(nfts NFTs) HandlerOption {
 // WithDiagnostics enables the node-local diagnostics + log-export endpoints.
 func WithDiagnostics(d Diagnostics) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.diagnostics = d }
+}
+
+// WithScriptMigration runs the multi-signature store migration on unlock. The
+// caller supplies the closure because only it knows both the vault and the
+// store path.
+func WithScriptMigration(m ScriptMigrator) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.migrateScripts = m }
 }
 
 // SettingsController is the user-facing app-settings surface. It exposes the
@@ -628,6 +647,15 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		if err != nil {
 			serve(w, struct{}{}, err)
 			return
+		}
+		// Unlock is the only moment the vault password is available, so it is
+		// where saved multi-signature accounts move out of their standalone
+		// store and into the vault. Re-read the wallet list when any moved, so
+		// the response already includes them.
+		if cfg.migrateScripts != nil && cfg.migrateScripts(req.Password) > 0 {
+			if refreshed, rErr := vlt.Wallets(); rErr == nil {
+				wallets = refreshed
+			}
 		}
 		// Unlock auto-activates a sole wallet; bind it so reads work immediately.
 		if active, err := vlt.Active(); err == nil {
