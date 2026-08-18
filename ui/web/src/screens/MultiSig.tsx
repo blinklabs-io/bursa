@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type {
+  WalletView,
   MultiSigAccount,
   MultiSigParticipant,
   MultiSigUnsignedTx,
@@ -8,11 +9,8 @@ import type {
   WitnessResult,
 } from "../api/types";
 import {
-  listMultiSig,
   createMultiSig,
-  deleteMultiSig,
   multiSigMyKey,
-  multiSigBalance,
   multiSigBuild,
   multiSigSign,
   multiSigSubmit,
@@ -23,7 +21,7 @@ import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
 import { DownloadButton } from "../components/DownloadButton";
 import { MultiSigProgress } from "../components/MultiSigProgress";
-import { formatAda, parseAda } from "../format";
+import { parseAda } from "../format";
 import { errorMessage } from "../errorMessage";
 
 // A 28-byte Blake2b-224 key hash is 56 hex chars. Participant input currently
@@ -46,57 +44,25 @@ function ErrorText({ message }: { message: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// List view
-// ---------------------------------------------------------------------------
-
-interface ListViewProps {
-  accounts: MultiSigAccount[];
-  onCreate: () => void;
-  onOpen: (acct: MultiSigAccount) => void;
-}
-
-function ListView({ accounts, onCreate, onOpen }: ListViewProps) {
-  return (
-    <Card title="Multi-sig Accounts">
-      <p className="helper-text">
-        Saved native-script accounts: an N-of-M signing policy (optionally
-        time-locked) with a shared script address. Fund the script address, then
-        spend by collecting a threshold of co-signer witnesses.
-      </p>
-      {accounts.length === 0 ? (
-        <p className="muted">No multi-sig accounts yet.</p>
-      ) : (
-        <ul className="ms-account-list">
-          {accounts.map((a) => (
-            <li key={a.id} className="ms-account-item">
-              <button className="ms-account-open" onClick={() => onOpen(a)}>
-                <span className="ms-account-label">{a.label}</span>
-                <span className="ms-account-policy">
-                  {a.policy.threshold}-of-{a.policy.participants.length}
-                  {(a.policy.invalid_before != null || a.policy.invalid_after != null) && " · time-locked"}
-                </span>
-                <span className="mono ms-account-addr">{a.script_address}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <Button onClick={onCreate}>+ New multi-sig account</Button>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Create view
 // ---------------------------------------------------------------------------
 
-interface CreateViewProps {
+interface ComposeMultiSigProps {
   canSign: boolean;
   onCancel: () => void;
-  onCreated: (acct: MultiSigAccount) => void;
+  onCreated: (wallet: WalletView) => void;
 }
 
-function CreateView({ canSign, onCancel, onCreated }: CreateViewProps) {
+/**
+ * Composes an N-of-M native-script policy into a multi-signature wallet.
+ *
+ * This lives in the add-wallet flow rather than on a screen of its own, because
+ * a multi-signature account is a wallet: it appears in the switcher, it holds a
+ * balance, and you spend from it with Send. Creating one is a vault write, which
+ * is also where the vault password legitimately comes from.
+ */
+export function ComposeMultiSig({ canSign, onCancel, onCreated }: ComposeMultiSigProps) {
+  const [vaultPassword, setVaultPassword] = useState("");
   const mounted = useMountedRef();
   const [label, setLabel] = useState("");
   const [threshold, setThreshold] = useState("2");
@@ -193,9 +159,13 @@ function CreateView({ canSign, onCancel, onCreated }: CreateViewProps) {
     }
     setLoading(true);
     try {
-      const acct = await createMultiSig({ label: label.trim(), policy });
+      const created = await createMultiSig({
+        label: label.trim(),
+        policy,
+        vault_password: vaultPassword,
+      });
       if (!mounted.current) return;
-      onCreated(acct);
+      onCreated(created);
     } catch (e) {
       if (mounted.current) setError(errorMessage(e));
     } finally {
@@ -350,14 +320,28 @@ function CreateView({ canSign, onCancel, onCreated }: CreateViewProps) {
           />
         </div>
 
+        {/* Storing the account is a vault write, so it needs the vault
+            password — the same one every other add-wallet path asks for. */}
+        <label htmlFor="ms-vault-pw">Vault password</label>
+        <Input
+          id="ms-vault-pw"
+          type="password"
+          value={vaultPassword}
+          onChange={(e) => setVaultPassword(e.target.value)}
+          disabled={loading}
+        />
+
         {error && <ErrorText message={error} />}
 
         <div className="preview-actions">
           <Button variant="ghost" onClick={onCancel} disabled={loading}>
             Cancel
           </Button>
-          <Button onClick={handleCreate} disabled={loading || participants.length === 0}>
-            {loading ? "Creating…" : "Create account"}
+          <Button
+            onClick={handleCreate}
+            disabled={loading || participants.length === 0 || !vaultPassword}
+          >
+            {loading ? "Creating…" : "Create wallet"}
           </Button>
         </div>
       </div>
@@ -366,127 +350,26 @@ function CreateView({ canSign, onCancel, onCreated }: CreateViewProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Detail view (receive address, balance, policy, spend flow)
-// ---------------------------------------------------------------------------
-
-interface DetailViewProps {
-  account: MultiSigAccount;
-  canSpend: boolean;
-  canSign: boolean;
-  onBack: () => void;
-  onDeleted: () => void;
-}
-
-function DetailView({ account, canSpend, canSign, onBack, onDeleted }: DetailViewProps) {
-  const mounted = useMountedRef();
-  const [balance, setBalance] = useState<string | null>(null);
-  const [balanceError, setBalanceError] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-
-  const loadBalance = useCallback(
-    async (isCancelled: () => boolean = () => !mounted.current) => {
-      try {
-        const b = await multiSigBalance(account.id);
-        if (isCancelled()) return;
-        setBalance(b.lovelace);
-        setBalanceError(null);
-      } catch (e) {
-        if (!isCancelled()) setBalanceError(errorMessage(e));
-      }
-    },
-    [account.id, mounted],
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    void loadBalance(() => cancelled || !mounted.current);
-    return () => {
-      cancelled = true;
-    };
-  }, [loadBalance, mounted]);
-
-  async function handleDelete() {
-    setDeleteError(null);
-    setDeleting(true);
-    try {
-      await deleteMultiSig(account.id);
-      if (!mounted.current) return;
-      onDeleted();
-    } catch (e) {
-      // Stay put and show why: navigating away on failure would leave the user
-      // thinking the account was removed when it's still there.
-      if (mounted.current) setDeleteError(errorMessage(e));
-    } finally {
-      if (mounted.current) setDeleting(false);
-    }
-  }
-
-  return (
-    <div className="ms-detail">
-      <Card title={account.label}>
-        <p className="field-label">Script address (receive)</p>
-        <p className="mono address-full">{account.script_address}</p>
-        <CopyButton value={account.script_address} ariaLabel="Copy script address" />
-
-        <dl className="preview-summary">
-          <div className="dl-row">
-            <dt>Policy</dt>
-            <dd>
-              {account.policy.threshold}-of-{account.policy.participants.length}
-              {account.policy.invalid_before != null && ` · from slot ${account.policy.invalid_before}`}
-              {account.policy.invalid_after != null && ` · until slot ${account.policy.invalid_after}`}
-            </dd>
-          </div>
-          <div className="dl-row">
-            <dt>Balance</dt>
-            <dd>{balanceError ? "—" : balance != null ? `${formatAda(balance)} ADA` : "…"}</dd>
-          </div>
-        </dl>
-
-        <p className="field-label">Participants</p>
-        <ul className="signer-list">
-          {account.policy.participants.map((p) => (
-            <li key={p.key_hash_hex}>
-              <code className="tx-hash">{p.label ? `${p.label}: ` : ""}{p.key_hash_hex}</code>
-            </li>
-          ))}
-        </ul>
-
-        {deleteError && <ErrorText message={deleteError} />}
-
-        <div className="preview-actions">
-          <Button variant="ghost" onClick={onBack}>
-            Back
-          </Button>
-          <Button variant="ghost" onClick={handleDelete} disabled={deleting}>
-            {deleting ? "Deleting…" : "Delete"}
-          </Button>
-        </div>
-      </Card>
-
-      <SpendFlow
-        account={account}
-        canSpend={canSpend}
-        canSign={canSign}
-        onSpent={() => void loadBalance()}
-      />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Spend flow: build → collect witnesses (progress) → submit
 // ---------------------------------------------------------------------------
 
-interface SpendFlowProps {
+interface MultiSigSpendProps {
   account: MultiSigAccount;
   canSpend: boolean;
   canSign: boolean;
   onSpent: () => void;
 }
 
-function SpendFlow({ account, canSpend, canSign, onSpent }: SpendFlowProps) {
+/**
+ * Spends from a multi-signature wallet: build, collect co-signer witnesses,
+ * submit.
+ *
+ * Send routes here when the active wallet is a script one. A plain wallet signs
+ * and submits in one step; this one cannot, because the other signatures come
+ * from other people — which is the whole difference, and why it is a mode of
+ * Send rather than a separate destination.
+ */
+export function MultiSigSpend({ account, canSpend, canSign, onSpent }: MultiSigSpendProps) {
   const [to, setTo] = useState("");
   const [ada, setAda] = useState("");
   const [built, setBuilt] = useState<MultiSigUnsignedTx | null>(null);
@@ -740,92 +623,5 @@ function CollectAndSubmit({
         </div>
       </div>
     </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Top-level screen
-// ---------------------------------------------------------------------------
-
-type View = "list" | "create" | "detail";
-
-interface MultiSigProps {
-  canSpend: boolean;
-  canSign: boolean;
-}
-
-export function MultiSig({ canSpend, canSign }: MultiSigProps) {
-  const mounted = useMountedRef();
-  const [view, setView] = useState<View>("list");
-  const [accounts, setAccounts] = useState<MultiSigAccount[]>([]);
-  const [selected, setSelected] = useState<MultiSigAccount | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const refresh = useCallback(async () => {
-    if (!mounted.current) return;
-    setLoading(true);
-    try {
-      const a = await listMultiSig();
-      if (!mounted.current) return;
-      setAccounts(a);
-      setError(null);
-    } catch (e) {
-      if (mounted.current) setError(errorMessage(e));
-    } finally {
-      if (mounted.current) setLoading(false);
-    }
-  }, [mounted]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  if (view === "create") {
-    return (
-      <CreateView
-        canSign={canSign}
-        onCancel={() => setView("list")}
-        onCreated={(acct) => {
-          setSelected(acct);
-          void refresh();
-          setView("detail");
-        }}
-      />
-    );
-  }
-
-  if (view === "detail" && selected) {
-    return (
-      <DetailView
-        account={selected}
-        canSpend={canSpend}
-        canSign={canSign}
-        onBack={() => {
-          setSelected(null);
-          void refresh();
-          setView("list");
-        }}
-        onDeleted={() => {
-          setSelected(null);
-          void refresh();
-          setView("list");
-        }}
-      />
-    );
-  }
-
-  if (loading) return <p>Loading…</p>;
-  if (error) return <ErrorText message={error} />;
-
-  return (
-    <ListView
-      accounts={accounts}
-      onCreate={() => setView("create")}
-      onOpen={(a) => {
-        setSelected(a);
-        setView("detail");
-      }}
-    />
   );
 }

@@ -309,23 +309,53 @@ test("an active wallet on a ready node can reach Send", async () => {
   await waitFor(() => expect(screen.getByText("Send ADA")).toBeInTheDocument());
 });
 
-test.each(["read_only", "multi_signature"] as const)(
-  "%s wallet cannot enter the regular Send flow",
-  async (type) => {
-    stubStatus("ready");
-    stubVault({ exists: true, locked: true, wallet_count: 1 });
-    quietPortfolio();
-    vi.spyOn(client, "unlockVault").mockResolvedValue([{ ...walletA, type }]);
-    window.location.hash = "#/send";
+test("read_only wallet cannot enter the regular Send flow", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([{ ...walletA, type: "read_only" }]);
+  window.location.hash = "#/send";
 
-    render(<App />);
-    fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
-    fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
-    await waitFor(() => expect(screen.getByText("Balance")).toBeInTheDocument());
-    expect(screen.queryByText("Send ADA")).not.toBeInTheDocument();
-  },
-);
+  await waitFor(() => expect(screen.getByText("Balance")).toBeInTheDocument());
+  expect(screen.queryByText("Send ADA")).not.toBeInTheDocument();
+});
+
+test("a multi-signature wallet sends by collecting witnesses, not by signing", async () => {
+  // It used to be barred from Send entirely, which was wrong: it can spend, it
+  // just gathers the other signatures first. Send routes it to that flow.
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([
+    {
+      ...walletA,
+      type: "multi_signature",
+      stake_address: "",
+      addresses: ["addr_test1wqscript"],
+      multisig: {
+        id: walletA.id,
+        label: "Treasury",
+        network: "preview",
+        policy: { threshold: 2, participants: [{ key_hash_hex: "a".repeat(56) }] },
+        script_cbor: "8201",
+        script_address: "addr_test1wqscript",
+      },
+    },
+  ]);
+  window.location.hash = "#/send";
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  // The collect-witnesses flow, not the ordinary one.
+  expect(await screen.findByRole("button", { name: /build transaction/i })).toBeInTheDocument();
+  expect(screen.queryByText("Send ADA")).not.toBeInTheDocument();
+});
 
 test("Settings identifies a hardware wallet as using on-device signing", async () => {
   stubStatus("ready");
@@ -341,35 +371,39 @@ test("Settings identifies a hardware wallet as using on-device signing", async (
   expect(screen.queryByText(/read.?only/i)).not.toBeInTheDocument();
 });
 
-test("a hardware wallet can submit a multi-sig spend with external witnesses but cannot sign locally", async () => {
+test("a seedless multi-signature wallet submits with external witnesses only", async () => {
+  // The active wallet IS the script account now, so this arrives through Send
+  // rather than through a screen listing accounts.
   stubStatus("ready");
   stubVault({ exists: true, locked: true, wallet_count: 1 });
-  vi.spyOn(client, "unlockVault").mockResolvedValue([hardwareWallet]);
-  vi.spyOn(client, "listMultiSig").mockResolvedValue([{
-    id: "acct1",
-    label: "Treasury",
-    network: "preview",
-    policy: {
-      threshold: 1,
-      participants: [{ key_hash_hex: "a".repeat(56) }],
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([
+    {
+      ...hardwareWallet,
+      type: "multi_signature",
+      stake_address: "",
+      addresses: ["addr_test1wqscriptaddressxyz"],
+      multisig: {
+        id: "acct1",
+        label: "Treasury",
+        network: "preview",
+        policy: { threshold: 1, participants: [{ key_hash_hex: "a".repeat(56) }] },
+        script_cbor: "8200",
+        script_address: "addr_test1wqscriptaddressxyz",
+      },
     },
-    script_cbor: "8200",
-    script_address: "addr_test1wqscriptaddressxyz",
-  }]);
-  vi.spyOn(client, "multiSigBalance").mockResolvedValue({ lovelace: "0" });
+  ]);
   vi.spyOn(client, "multiSigBuild").mockResolvedValue({
     unsigned_tx_cbor: "84a400",
     required_signers: ["a".repeat(56)],
     threshold: 1,
   });
   const submit = vi.spyOn(client, "multiSigSubmit").mockResolvedValue({ tx_hash: "feedface" });
-  window.location.hash = "#/multisig";
+  window.location.hash = "#/send";
 
   render(<App />);
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
   fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
-
-  fireEvent.click(await screen.findByText("Treasury"));
 
   fireEvent.change(await screen.findByLabelText(/recipient address/i), {
     target: { value: "addr_test1recipient" },
@@ -378,6 +412,7 @@ test("a hardware wallet can submit a multi-sig spend with external witnesses but
   fireEvent.click(screen.getByRole("button", { name: /build transaction/i }));
 
   expect(await screen.findByText(/0 of 1 signed/i)).toBeInTheDocument();
+  // Seedless: no local signing offered.
   expect(screen.queryByRole("button", { name: /sign here/i })).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText(/co-signer witness/i), { target: { value: "81a0external" } });
   fireEvent.click(screen.getByRole("button", { name: /add witness/i }));
@@ -389,6 +424,35 @@ test("a hardware wallet can submit a multi-sig spend with external witnesses but
       witnesses: ["81a0external"],
     }),
   );
+});
+
+test("the old #/multisig link lands on the spend flow", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([
+    {
+      ...walletA,
+      type: "multi_signature",
+      stake_address: "",
+      addresses: ["addr_test1wqscript"],
+      multisig: {
+        id: walletA.id,
+        label: "Treasury",
+        network: "preview",
+        policy: { threshold: 2, participants: [{ key_hash_hex: "a".repeat(56) }] },
+        script_cbor: "8201",
+        script_address: "addr_test1wqscript",
+      },
+    },
+  ]);
+  window.location.hash = "#/multisig";
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  expect(await screen.findByRole("button", { name: /build transaction/i })).toBeInTheDocument();
 });
 
 test("deep-linking #/import with an active wallet renders the Import Transaction screen", async () => {
@@ -703,13 +767,15 @@ test("the nav carries only destinations, not actions or housekeeping", async () 
 
   expect(
     q.getAllByRole("button").map((b) => b.textContent).filter((t) =>
-      ["Portfolio", "Activity", "Stake", "Swap", "Multi-sig", "Import Tx", "Offline", "Operate", "Settings"].includes(t ?? ""),
+      ["Portfolio", "Activity", "Stake", "Swap", "Import Tx", "Offline", "Operate", "Settings"].includes(t ?? ""),
     ),
-  ).toHaveLength(9);
+  ).toHaveLength(8);
 
   // Send and Receive are actions on the Portfolio; the rest are Settings
   // panels. None of them earns a nav entry.
-  for (const gone of ["Send", "Receive", "Contacts", "Sign", "Verify", "Diagnostics"]) {
+  // Multi-sig joined them: it is a wallet in the switcher now, spent from
+  // through Send, so it no longer earns a destination either.
+  for (const gone of ["Send", "Receive", "Contacts", "Sign", "Verify", "Diagnostics", "Multi-sig"]) {
     expect(q.queryByRole("button", { name: gone })).not.toBeInTheDocument();
   }
 });
@@ -828,3 +894,86 @@ test("a route that falls back to Portfolio is reported as Portfolio", async () =
   expect(alert).toHaveTextContent(/the portfolio screen could not be displayed/i);
   expect(alert).not.toHaveTextContent(/swap screen/i);
 });
+
+test("a multi-signature wallet with an unreadable policy cannot spend, and says why", async () => {
+  // The wallet type says multi_signature but the policy did not decode, so
+  // there is no spend flow. Letting canSend say otherwise would drop it into
+  // the seed-based one, which cannot work for a script wallet.
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([
+    {
+      ...walletA,
+      type: "multi_signature",
+      stake_address: "",
+      addresses: ["addr_test1wqscript"],
+      multisig_error: "This account's signing policy could not be read, so it cannot spend. Its funds are safe.",
+    },
+  ]);
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  await waitFor(() => expect(document.querySelector(".sidebar")).not.toBeNull());
+  const main = document.querySelector("main") as HTMLElement;
+  expect(await within(main).findByRole("alert")).toHaveTextContent(/policy could not be read/i);
+  expect(within(main).getByRole("button", { name: "Send" })).toBeDisabled();
+  // Receiving is unaffected — the address is still valid.
+  expect(within(main).getByRole("button", { name: "Receive" })).toBeEnabled();
+});
+
+test("a newly added wallet that the server did not select stays unselected", async () => {
+  // Mirror of the server-side case: creation can persist the wallet while the
+  // selection fails, and the response then reports active:false. Forcing
+  // active:true here would show the new wallet as selected while balance and
+  // send requests still answered for the previous one.
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([{ ...walletA, active: true }]);
+  const created: WalletView = {
+    id: "ms-1",
+    name: "Treasury",
+    network: "preview",
+    stake_address: "",
+    addresses: ["addr_test1wq"],
+    active: false,
+    type: "multi_signature",
+  };
+  vi.spyOn(client, "addWallet").mockResolvedValue(created);
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
+
+  fireEvent.click(screen.getAllByRole("button", { name: /add wallet/i })[0]);
+  fireEvent.click(await screen.findByRole("button", { name: /restore from recovery phrase/i }));
+  fireEvent.change(await screen.findByLabelText(/wallet name/i), {
+    target: { value: "Treasury" },
+  });
+  fireEvent.change(screen.getByLabelText(/recovery phrase/i), {
+    target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
+  });
+  fireEvent.change(screen.getByLabelText(/^vault password$/i), {
+    target: { value: "vault-password-xyz" },
+  });
+  fireEvent.change(screen.getByLabelText(/spending password/i), {
+    target: { value: "spend-password-aaa" },
+  });
+  // The form's own submit is the last match; the first is the sidebar entry
+  // point that opened it.
+  const submits = screen.getAllByRole("button", { name: /add wallet/i });
+  fireEvent.click(submits[submits.length - 1]);
+
+  // The wallet is merged into the list…
+  await waitFor(() => expect(screen.getAllByText("Treasury").length).toBeGreaterThan(0));
+  // …but the previous wallet keeps the selection, matching what the server said.
+  const current = document.querySelectorAll('[aria-current="true"]');
+  const currentNames = Array.from(current).map((el) => el.textContent ?? "");
+  expect(currentNames.some((n) => n.includes("Treasury"))).toBe(false);
+  expect(currentNames.some((n) => n.includes("Main"))).toBe(true);
+});
+

@@ -1,3 +1,6 @@
 node_modules
 dist
 coverage
+
+# Vite dependency pre-bundling cache (regenerated on every dev run).
+.vite

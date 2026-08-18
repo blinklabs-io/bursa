@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { MultiSig } from "./MultiSig";
+import { ComposeMultiSig, MultiSigSpend } from "./MultiSig";
 import * as client from "../api/client";
-import type { MultiSigAccount } from "../api/types";
+import type { MultiSigAccount, WalletView } from "../api/types";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -25,72 +25,73 @@ const sampleAccount: MultiSigAccount = {
   script_address: "addr_test1wqscriptaddressxyz",
 };
 
-test("lists saved multi-sig accounts with their policy summary", async () => {
-  vi.spyOn(client, "listMultiSig").mockResolvedValue([sampleAccount]);
+const createdWallet: WalletView = {
+  id: "acct1",
+  name: "Treasury",
+  network: "preview",
+  stake_address: "",
+  addresses: ["addr_test1wqscriptaddressxyz"],
+  active: true,
+  type: "multi_signature",
+  multisig: sampleAccount,
+};
 
-  render(<MultiSig canSpend={true} canSign={true} />);
+// --- Composing a multi-signature wallet -----------------------------------
 
-  expect(await screen.findByText("Treasury")).toBeInTheDocument();
-  expect(screen.getByText(/2-of-2/)).toBeInTheDocument();
-});
-
-test("shows a user-facing error when listing multi-sig accounts fails", async () => {
-  vi.spyOn(client, "listMultiSig").mockRejectedValue(new Error("list failed"));
-
-  render(<MultiSig canSpend={true} canSign={true} />);
-
-  expect(await screen.findByRole("alert")).toHaveTextContent("list failed");
-});
-
-test("create flow: reveals my-key and creates an account", async () => {
-  vi.spyOn(client, "listMultiSig").mockResolvedValue([]);
+test("composes a policy into a wallet, revealing this wallet's own key first", async () => {
   const myKey = vi
     .spyOn(client, "multiSigMyKey")
     .mockResolvedValue({ vkey_hex: "c".repeat(64), key_hash_hex: KH_A });
-  const create = vi.spyOn(client, "createMultiSig").mockResolvedValue(sampleAccount);
-  vi.spyOn(client, "multiSigBalance").mockResolvedValue({ lovelace: "0" });
+  const create = vi.spyOn(client, "createMultiSig").mockResolvedValue(createdWallet);
+  const onCreated = vi.fn();
 
-  render(<MultiSig canSpend={true} canSign={true} />);
-
-  fireEvent.click(await screen.findByRole("button", { name: /new multi-sig account/i }));
+  render(<ComposeMultiSig canSign onCancel={vi.fn()} onCreated={onCreated} />);
 
   fireEvent.change(screen.getByLabelText(/^label$/i), { target: { value: "Treasury" } });
 
-  // Reveal my key.
   fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "pw" } });
   fireEvent.click(screen.getByRole("button", { name: /reveal my key/i }));
   await waitFor(() => expect(myKey).toHaveBeenCalledWith("pw"));
   fireEvent.click(await screen.findByRole("button", { name: /add myself/i }));
 
-  // Add a co-signer key-hash.
   fireEvent.change(screen.getByLabelText(/participant key hash/i), { target: { value: KH_B } });
   fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
-  fireEvent.click(screen.getByRole("button", { name: /create account/i }));
+  // Storing it is a vault write, so it needs the vault password like any other
+  // add-wallet path.
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-pw" } });
+  fireEvent.click(screen.getByRole("button", { name: /create wallet/i }));
 
   await waitFor(() => expect(create).toHaveBeenCalled());
   const arg = create.mock.calls[0][0];
   expect(arg.label).toBe("Treasury");
   expect(arg.policy.threshold).toBe(2);
   expect(arg.policy.participants).toHaveLength(2);
+  expect(arg.vault_password).toBe("vault-pw");
+
+  // The result is a wallet, and it goes back to the add-wallet flow as one.
+  expect(onCreated).toHaveBeenCalledWith(createdWallet);
 });
 
-test("seedless wallet can add external participants without revealing a local key", async () => {
-  vi.spyOn(client, "listMultiSig").mockResolvedValue([]);
+test("cannot create without the vault password", () => {
+  render(<ComposeMultiSig canSign onCancel={vi.fn()} onCreated={vi.fn()} />);
 
-  render(<MultiSig canSpend={true} canSign={false} />);
-  fireEvent.click(await screen.findByRole("button", { name: /new multi-sig account/i }));
+  fireEvent.change(screen.getByLabelText(/participant key hash/i), { target: { value: KH_B } });
+  fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+  expect(screen.getByRole("button", { name: /create wallet/i })).toBeDisabled();
+});
+
+test("a seedless wallet can add external participants without revealing a local key", () => {
+  render(<ComposeMultiSig canSign={false} onCancel={vi.fn()} onCreated={vi.fn()} />);
 
   expect(screen.queryByText("Your participant key (CIP-1854)")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /reveal my key/i })).not.toBeInTheDocument();
   expect(screen.getByLabelText(/participant key hash/i)).toBeInTheDocument();
 });
 
-test("create rejects a malformed co-signer key hash", async () => {
-  vi.spyOn(client, "listMultiSig").mockResolvedValue([]);
-
-  render(<MultiSig canSpend={true} canSign={true} />);
-  fireEvent.click(await screen.findByRole("button", { name: /new multi-sig account/i }));
+test("rejects a malformed co-signer key hash", async () => {
+  render(<ComposeMultiSig canSign onCancel={vi.fn()} onCreated={vi.fn()} />);
 
   fireEvent.change(screen.getByLabelText(/participant key hash/i), { target: { value: "xyz" } });
   fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
@@ -98,28 +99,28 @@ test("create rejects a malformed co-signer key hash", async () => {
   expect(await screen.findByText(/56 hex characters/i)).toBeInTheDocument();
 });
 
-test("delete flow removes the selected account from the list", async () => {
-  vi.spyOn(client, "listMultiSig")
-    .mockResolvedValueOnce([sampleAccount])
-    .mockResolvedValueOnce([]);
-  vi.spyOn(client, "multiSigBalance").mockResolvedValue({ lovelace: "0" });
-  const del = vi.spyOn(client, "deleteMultiSig").mockResolvedValue({ status: "deleted" });
+// --- Spending from one -----------------------------------------------------
 
-  render(<MultiSig canSpend={true} canSign={true} />);
+function renderSpend(canSign = true, canSpend = true) {
+  return render(
+    <MultiSigSpend
+      account={sampleAccount}
+      canSpend={canSpend}
+      canSign={canSign}
+      onSpent={vi.fn()}
+    />,
+  );
+}
 
-  fireEvent.click(await screen.findByText("Treasury"));
-  fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+async function buildASpend() {
+  fireEvent.change(await screen.findByLabelText(/recipient address/i), {
+    target: { value: "addr_test1recipient" },
+  });
+  fireEvent.change(screen.getByLabelText(/amount \(ada\)/i), { target: { value: "3" } });
+  fireEvent.click(screen.getByRole("button", { name: /build transaction/i }));
+}
 
-  await waitFor(() => expect(del).toHaveBeenCalledWith("acct1"));
-  expect(await screen.findByText(/no multi-sig accounts yet/i)).toBeInTheDocument();
-});
-
-test("spend flow: build then collect a threshold of witnesses and submit", async () => {
-  vi.spyOn(client, "listMultiSig").mockResolvedValue([sampleAccount]);
-  const balance = vi
-    .spyOn(client, "multiSigBalance")
-    .mockResolvedValueOnce({ lovelace: "10000000" })
-    .mockResolvedValueOnce({ lovelace: "7000000" });
+test("build, collect a threshold of witnesses, submit", async () => {
   vi.spyOn(client, "multiSigBuild").mockResolvedValue({
     unsigned_tx_cbor: "84a400",
     required_signers: [KH_A, KH_B],
@@ -128,33 +129,21 @@ test("spend flow: build then collect a threshold of witnesses and submit", async
   const sign = vi.spyOn(client, "multiSigSign").mockResolvedValue({ witness_cbor: "81a0sigA" });
   const submit = vi.spyOn(client, "multiSigSubmit").mockResolvedValue({ tx_hash: "feedface" });
 
-  render(<MultiSig canSpend={true} canSign={true} />);
+  renderSpend();
+  await buildASpend();
 
-  fireEvent.click(await screen.findByText("Treasury"));
-
-  // Build a spend.
-  fireEvent.change(await screen.findByLabelText(/recipient address/i), {
-    target: { value: "addr_test1recipient" },
-  });
-  fireEvent.change(screen.getByLabelText(/amount \(ada\)/i), { target: { value: "3" } });
-  fireEvent.click(screen.getByRole("button", { name: /build transaction/i }));
-
-  // Collect screen: progress starts at 0 of 2.
   expect(await screen.findByText(/0 of 2 signed/i)).toBeInTheDocument();
 
-  // Sign here (1 of 2).
   fireEvent.change(screen.getByLabelText(/sign with this wallet/i), { target: { value: "pw" } });
   fireEvent.click(screen.getByRole("button", { name: /sign here/i }));
   await waitFor(() => expect(sign).toHaveBeenCalled());
   expect(await screen.findByText(/1 of 2 signed/i)).toBeInTheDocument();
 
-  // Paste a second co-signer witness (2 of 2 → threshold met).
   fireEvent.change(screen.getByLabelText(/co-signer witness/i), { target: { value: "81a0sigB" } });
   fireEvent.click(screen.getByRole("button", { name: /add witness/i }));
   expect(await screen.findByText(/2 of 2 signed/i)).toBeInTheDocument();
   expect(await screen.findByText(/threshold met/i)).toBeInTheDocument();
 
-  // Submit.
   fireEvent.click(screen.getByRole("button", { name: /^submit$/i }));
   await waitFor(() =>
     expect(submit).toHaveBeenCalledWith("acct1", {
@@ -163,13 +152,9 @@ test("spend flow: build then collect a threshold of witnesses and submit", async
     }),
   );
   expect(await screen.findByText("feedface")).toBeInTheDocument();
-  await waitFor(() => expect(balance).toHaveBeenCalledTimes(2));
-  expect(await screen.findByText("7 ADA")).toBeInTheDocument();
 });
 
-test("seedless wallet can build, collect external witnesses, and submit without signing locally", async () => {
-  vi.spyOn(client, "listMultiSig").mockResolvedValue([sampleAccount]);
-  vi.spyOn(client, "multiSigBalance").mockResolvedValue({ lovelace: "10000000" });
+test("a seedless wallet can collect external witnesses and submit without signing locally", async () => {
   const build = vi.spyOn(client, "multiSigBuild").mockResolvedValue({
     unsigned_tx_cbor: "84a400",
     required_signers: [KH_A, KH_B],
@@ -178,14 +163,8 @@ test("seedless wallet can build, collect external witnesses, and submit without 
   const sign = vi.spyOn(client, "multiSigSign");
   const submit = vi.spyOn(client, "multiSigSubmit").mockResolvedValue({ tx_hash: "feedface" });
 
-  render(<MultiSig canSpend={true} canSign={false} />);
-  fireEvent.click(await screen.findByText("Treasury"));
-
-  fireEvent.change(await screen.findByLabelText(/recipient address/i), {
-    target: { value: "addr_test1recipient" },
-  });
-  fireEvent.change(screen.getByLabelText(/amount \(ada\)/i), { target: { value: "3" } });
-  fireEvent.click(screen.getByRole("button", { name: /build transaction/i }));
+  renderSpend(false);
+  await buildASpend();
   await waitFor(() => expect(build).toHaveBeenCalled());
 
   expect(await screen.findByText(/0 of 2 signed/i)).toBeInTheDocument();
@@ -207,52 +186,30 @@ test("seedless wallet can build, collect external witnesses, and submit without 
   expect(sign).not.toHaveBeenCalled();
 });
 
-test("shows a user-facing error when building a multi-sig spend fails", async () => {
-  vi.spyOn(client, "listMultiSig").mockResolvedValue([sampleAccount]);
-  vi.spyOn(client, "multiSigBalance").mockResolvedValue({ lovelace: "10000000" });
+test("shows a user-facing error when building fails", async () => {
   vi.spyOn(client, "multiSigBuild").mockRejectedValue(new Error("build failed"));
 
-  render(<MultiSig canSpend={true} canSign={true} />);
-
-  fireEvent.click(await screen.findByText("Treasury"));
-  fireEvent.change(await screen.findByLabelText(/recipient address/i), {
-    target: { value: "addr_test1recipient" },
-  });
-  fireEvent.change(screen.getByLabelText(/amount \(ada\)/i), { target: { value: "3" } });
-  fireEvent.click(screen.getByRole("button", { name: /build transaction/i }));
+  renderSpend();
+  await buildASpend();
 
   expect(await screen.findByRole("alert")).toHaveTextContent("build failed");
 });
 
-test("submit is disabled until the threshold is met", async () => {
-  vi.spyOn(client, "listMultiSig").mockResolvedValue([sampleAccount]);
-  vi.spyOn(client, "multiSigBalance").mockResolvedValue({ lovelace: "10000000" });
+test("submit stays disabled until the threshold is met", async () => {
   vi.spyOn(client, "multiSigBuild").mockResolvedValue({
     unsigned_tx_cbor: "84a400",
     required_signers: [KH_A, KH_B],
     threshold: 2,
   });
 
-  render(<MultiSig canSpend={true} canSign={true} />);
-  fireEvent.click(await screen.findByText("Treasury"));
-  fireEvent.change(await screen.findByLabelText(/recipient address/i), {
-    target: { value: "addr_test1recipient" },
-  });
-  fireEvent.change(screen.getByLabelText(/amount \(ada\)/i), { target: { value: "3" } });
-  fireEvent.click(screen.getByRole("button", { name: /build transaction/i }));
+  renderSpend();
+  await buildASpend();
 
-  // The submit button reads "Need 2 more" and is disabled.
   expect(await screen.findByRole("button", { name: /need 2 more/i })).toBeDisabled();
 });
 
-test("spend is unavailable when canSpend is false", async () => {
-  vi.spyOn(client, "listMultiSig").mockResolvedValue([sampleAccount]);
-  vi.spyOn(client, "multiSigBalance").mockResolvedValue({ lovelace: "0" });
+test("spending is unavailable without a synced node", async () => {
+  renderSpend(true, false);
 
-  render(<MultiSig canSpend={false} canSign={true} />);
-  fireEvent.click(await screen.findByText("Treasury"));
-
-  expect(
-    await screen.findByText(/spending needs a fully synced node/i),
-  ).toBeInTheDocument();
+  expect(await screen.findByText(/spending needs a fully synced node/i)).toBeInTheDocument();
 });

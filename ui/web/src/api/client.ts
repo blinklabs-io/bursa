@@ -61,6 +61,7 @@ import type {
   MultiSigSignRequest,
   MultiSigSubmitRequest,
   HardwareSignResponse,
+  HardwareSignDataRequest,
   TxSummary,
   CosignResult,
   NFT,
@@ -221,6 +222,14 @@ export const submitSigned = (req: SubmitSignedRequest) =>
 // witness against the same pending send.
 export const getHardwareSignRequest = (id: string) =>
   apiGet<HardwareSignResponse>(`/wallet/send/${encodeURIComponent(id)}/hardware-sign-request`);
+
+// CIP-8 hardware message signing: resolve the seedless signing metadata (paths +
+// network) a hardware device needs to sign a message for one of the wallet's own
+// receive addresses. The device then produces the COSE_Sign1 / COSE_Key.
+export const getHardwareSignDataRequest = (address: string) =>
+  apiGet<HardwareSignDataRequest>(
+    `/wallet/sign-data/hardware-request?address=${encodeURIComponent(address)}`,
+  );
 export const submitHardware = (id: string, witnessCbor: string) =>
   apiPost<TxResult>(`/wallet/send/${encodeURIComponent(id)}/submit-hardware`, { witness_cbor: witnessCbor });
 
@@ -327,12 +336,12 @@ export const computeDexQuote = (req: DexQuoteRequest) =>
 
 // Native multi-signature accounts.
 export const listMultiSig = () => apiGet<MultiSigAccount[]>("/wallet/multisig");
+// Composes the policy into a script and stores it as a vault wallet, so the
+// response is the new wallet rather than a standalone account record.
 export const createMultiSig = (req: CreateMultiSigRequest) =>
-  apiPost<MultiSigAccount>("/wallet/multisig", req);
+  apiPost<WalletView>("/wallet/multisig", req);
 export const getMultiSig = (id: string) =>
   apiGet<MultiSigAccount>(`/wallet/multisig/${encodeURIComponent(id)}`);
-export const deleteMultiSig = (id: string) =>
-  request<{ status: string }>("DELETE", `/wallet/multisig/${encodeURIComponent(id)}`);
 export const multiSigMyKey = (password: string) =>
   apiPost<MultiSigMyKey>("/wallet/multisig/my-key", { password });
 export const multiSigBalance = (id: string) =>
