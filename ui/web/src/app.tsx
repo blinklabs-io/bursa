@@ -16,6 +16,9 @@ import { SyncBanner } from "./components/SyncBanner";
 import { WalletSwitcher } from "./components/WalletSwitcher";
 import { MobileNav } from "./components/MobileNav";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { CommandPalette } from "./components/CommandPalette";
+import type { Command } from "./components/CommandPalette";
+import { operatorModeEnabled, setOperatorMode } from "./operatorMode";
 import { useHashRoute, navigate } from "./router";
 import { CreateVault } from "./screens/CreateVault";
 import { UnlockVault } from "./screens/UnlockVault";
@@ -85,14 +88,14 @@ const PORTFOLIO_ROUTES = new Set(["portfolio", "send", "receive", "multisig"]);
 // of its own, so the old #/multisig link resolves here too.
 const SEND_ROUTES = new Set(["send", "multisig"]);
 
+// Operate is appended when operator mode is on; see operatorMode.ts. Import Tx
+// and Offline are reachable from the send flow and the command palette rather
+// than costing a permanent entry each.
 const NAV: { key: string; label: string }[] = [
   { key: "portfolio", label: "Portfolio" },
   { key: "activity", label: "Activity" },
   { key: "stake", label: "Stake" },
   { key: "swap", label: "Swap" },
-  { key: "import", label: "Import Tx" },
-  { key: "offline", label: "Offline" },
-  { key: "operate", label: "Operate" },
   { key: "settings", label: "Settings" },
 ];
 
@@ -138,6 +141,24 @@ export function App() {
   // syncing, dismissing the boot Syncing view for this session.
   const [loadAnyway, setLoadAnyway] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Owned here because App builds the nav from it. Settings toggles it through
+  // the setter below, so the entry appears the moment it is switched on rather
+  // than after some unrelated re-render.
+  const [operatorMode, setOperatorModeState] = useState(operatorModeEnabled);
+
+  // Cmd/Ctrl-K from anywhere. Bound at the window so it works whatever has
+  // focus, and it toggles so the same key closes it.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const activeWallet = wallets.find((w) => w.id === activeId) ?? null;
   // A multi-signature wallet spends from a native script. Send routes into the
@@ -402,6 +423,11 @@ export function App() {
         autoLock={autoLock}
         notifications={notifications}
         canSign={canSign}
+        operatorMode={operatorMode}
+        onOperatorModeChange={(enabled) => {
+          setOperatorMode(enabled);
+          setOperatorModeState(enabled);
+        }}
         initialTab={SETTINGS_ROUTES.get(route)}
       />
     );
@@ -482,7 +508,71 @@ export function App() {
 
   // Build the nav item descriptors once, shared between desktop sidebar and
   // mobile drawer so gating logic only lives in one place.
-  const navItems = NAV.map(({ key, label }) => {
+  // The nav carries the places you go; this carries the things you do. Every
+  // command is also reachable by pointing and clicking somewhere — a palette is
+  // invisible to anyone who does not know it exists, so it must never be the
+  // only route to a feature.
+  // The handler binds Cmd-K and Ctrl-K alike, so the hint must not promise a
+  // modifier the user's keyboard does not have.
+  const paletteShortcutLabel =
+    typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform)
+      ? "\u2318K"
+      : "Ctrl+K";
+  // Disabled commands say which gate is closed. Swap needs a reachable node AND
+  // mainnet, and Send needs a reachable node AND a wallet that can spend, so a
+  // single fixed string is wrong for whichever half is actually failing.
+  const swapDisabledReason = !activeWallet
+    ? "Select a wallet"
+    : !canQueryNode
+      ? "Needs a synced node"
+      : "Mainnet only";
+  const sendDisabledReason = !isReady
+    ? "Needs a synced node"
+    : "This wallet cannot spend";
+  const commands: Command[] = [
+    { id: "portfolio", label: "Portfolio", group: "Go", keywords: "balance tokens nfts home", run: () => navigate("portfolio") },
+    { id: "activity", label: "Activity", group: "Go", keywords: "history transactions", run: () => navigate("activity") },
+    { id: "stake", label: "Stake", group: "Go", keywords: "delegate rewards pools", run: () => navigate("stake") },
+    { id: "swap", label: "Swap", group: "Go", keywords: "dex trade quote", run: () => navigate("swap"), disabled: !canSwap, disabledReason: swapDisabledReason },
+    { id: "settings", label: "Settings", group: "Go", keywords: "preferences node connector", run: () => navigate("settings") },
+
+    { id: "send", label: "Send", group: "Move funds", keywords: "pay transfer spend", run: () => navigate("send"), disabled: !canSend, disabledReason: sendDisabledReason },
+    { id: "receive", label: "Receive", group: "Move funds", keywords: "address qr deposit", run: () => navigate("receive") },
+    {
+      id: "import",
+      label: "Finish a transaction someone sent you",
+      group: "Move funds",
+      keywords: "import cosign paste cbor witness multisig",
+      run: () => navigate("import"),
+      disabled: !canSign,
+      disabledReason: "Needs this wallet's seed",
+    },
+    {
+      id: "offline",
+      label: "Sign a transaction offline",
+      group: "Move funds",
+      keywords: "air gap airgap cold export witness",
+      run: () => navigate("offline"),
+      disabled: !canSign,
+      disabledReason: "Needs this wallet's seed",
+    },
+
+    { id: "contacts", label: "Address book", group: "Tools", keywords: "contacts recipients names", run: () => navigate("contacts") },
+    { id: "sign", label: "Sign a message", group: "Tools", keywords: "cip-8 cip-30 prove ownership", run: () => navigate("sign"), disabled: !canSign, disabledReason: "Needs this wallet's seed" },
+    { id: "verify", label: "Verify a signature", group: "Tools", keywords: "cip-8 check message", run: () => navigate("verify") },
+    { id: "diagnostics", label: "Node diagnostics", group: "Tools", keywords: "peers sync logs health", run: () => navigate("diagnostics") },
+
+    { id: "operate", label: "Stake pool operations", group: "Operate", keywords: "spo pool cold vrf kes opcert registration", run: () => navigate("operate"), disabled: !canSign, disabledReason: "Needs this wallet's seed" },
+
+    { id: "add-wallet", label: "Add a wallet", group: "Wallet", keywords: "create restore hardware multisig new", run: () => setAddingWallet(true) },
+    { id: "lock", label: "Lock the vault", group: "Wallet", keywords: "logout sign out secure", run: () => void handleLock() },
+  ];
+
+  const navEntries = operatorMode
+    ? [...NAV.slice(0, -1), { key: "operate", label: "Pool Ops" }, NAV[NAV.length - 1]]
+    : NAV;
+
+  const navItems = navEntries.map(({ key, label }) => {
     const gated =
       activeWallet === null ||
       addingWallet ||
@@ -500,6 +590,7 @@ export function App() {
 
       {/* Mobile-only: top bar + slide-out drawer. Hidden on desktop via CSS. */}
       <MobileNav
+            onOpenPalette={() => setPaletteOpen(true)}
         status={status.data ?? null}
         activeWallet={activeWallet}
         wallets={wallets}
@@ -533,6 +624,15 @@ export function App() {
               {lockError}
             </p>
           )}
+          <button
+            type="button"
+            className="palette-trigger"
+            onClick={() => setPaletteOpen(true)}
+            aria-haspopup="dialog"
+          >
+            <span>Search…</span>
+            <span className="palette-kbd" aria-hidden="true">{paletteShortcutLabel}</span>
+          </button>
           {navItems.map(({ key, label, disabled, active }) => (
             <button
               key={key}
@@ -570,6 +670,11 @@ export function App() {
           a dApp has pending consent requests. Mounts regardless of current route
           so requests are never silently missed. */}
       <ConnectorApproval />
+      <CommandPalette
+        open={paletteOpen}
+        commands={commands}
+        onClose={() => setPaletteOpen(false)}
+      />
     </div>
   );
 }

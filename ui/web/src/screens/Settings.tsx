@@ -36,6 +36,10 @@ import type { Account, AutoLockSetting, NodeState, TPMStatus, WalletType } from 
 
 interface SettingsProps {
   account: Account;
+  // Whether the stake-pool operator tooling is shown in the nav. Owned by App,
+  // which builds the nav from it, so toggling here takes effect immediately.
+  operatorMode?: boolean;
+  onOperatorModeChange?: (enabled: boolean) => void;
   walletType: WalletType;
   // The auto-lock AsyncState, lifted up to and owned by App (see app.tsx) so
   // this screen's save path and App's useIdleLock share the same value — a
@@ -575,7 +579,14 @@ function NotificationsCard({ notifications }: { notifications: NotificationsStat
   );
 }
 
-function GeneralSettings({ account, walletType, autoLock, notifications }: SettingsProps) {
+function GeneralSettings({
+  account,
+  walletType,
+  autoLock,
+  notifications,
+  operatorMode = false,
+  onOperatorModeChange = () => {},
+}: SettingsProps) {
   const status = useStatus();
   const tpmStatusQuery = useTPMStatus();
   const [connectorMissing, setConnectorMissing] = useState(false);
@@ -731,6 +742,26 @@ function GeneralSettings({ account, walletType, autoLock, notifications }: Setti
             onClick={() => void nftMedia.setEnabled(!nftMedia.enabled)}
           >
             {nftMedia.saving ? "Saving…" : nftMedia.enabled ? "Turn off NFT media" : "Turn on NFT media"}
+          </Button>
+        </div>
+      </Card>
+
+      <Card title="Stake Pool Operations">
+        <p className="helper-text">
+          Shows the pool operator toolkit — cold, VRF and KES credentials,
+          operational certificates, registration and retirement — in the
+          navigation. Off by default, because most people do not run a pool.
+        </p>
+        <StatusPill tone={operatorMode ? "ok" : "muted"}>
+          {operatorMode ? "Shown" : "Hidden"}
+        </StatusPill>
+        <div className="preview-actions">
+          <Button
+            variant={operatorMode ? "ghost" : "primary"}
+            aria-pressed={operatorMode}
+            onClick={() => onOperatorModeChange(!operatorMode)}
+          >
+            {operatorMode ? "Hide pool operations" : "Show pool operations"}
           </Button>
         </div>
       </Card>
@@ -922,6 +953,8 @@ export function Settings({
   notifications,
   initialTab = "general",
   canSign = false,
+  operatorMode = false,
+  onOperatorModeChange,
 }: SettingsScreenProps) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
 
@@ -946,6 +979,8 @@ export function Settings({
                   account={account}
                   walletType={walletType}
                   autoLock={autoLock}
+                  operatorMode={operatorMode}
+                  onOperatorModeChange={onOperatorModeChange}
                   notifications={notifications}
                 />
               );

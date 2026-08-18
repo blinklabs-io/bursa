@@ -213,3 +213,29 @@ test("spending is unavailable without a synced node", async () => {
 
   expect(await screen.findByText(/spending needs a fully synced node/i)).toBeInTheDocument();
 });
+
+test("does not ask for the vault password when the caller already has it", async () => {
+  const create = vi.spyOn(client, "createMultiSig").mockResolvedValue(createdWallet);
+
+  render(
+    <ComposeMultiSig
+      canSign
+      knownVaultPassword="already-known"
+      onCancel={vi.fn()}
+      onCreated={vi.fn()}
+    />,
+  );
+
+  // First-run just created the vault; asking again would be asking twice for
+  // the same secret.
+  expect(screen.queryByLabelText(/vault password/i)).not.toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText(/^label$/i), { target: { value: "Treasury" } });
+  fireEvent.change(screen.getByLabelText(/required signatures/i), { target: { value: "1" } });
+  fireEvent.change(screen.getByLabelText(/participant key hash/i), { target: { value: KH_B } });
+  fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+  fireEvent.click(screen.getByRole("button", { name: /create wallet/i }));
+
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  expect(create.mock.calls[0][0].vault_password).toBe("already-known");
+});

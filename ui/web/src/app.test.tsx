@@ -765,19 +765,70 @@ test("the nav carries only destinations, not actions or housekeeping", async () 
   const sidebar = await unlockAndGetSidebar(walletA);
   const q = within(sidebar);
 
+  // An EXACT set, deliberately not a filtered count. Filtering to the expected
+  // labels and then counting them can only catch a removal: a screen that adds
+  // a sixth destination is filtered out of its own assertion and sails through.
   expect(
-    q.getAllByRole("button").map((b) => b.textContent).filter((t) =>
-      ["Portfolio", "Activity", "Stake", "Swap", "Import Tx", "Offline", "Operate", "Settings"].includes(t ?? ""),
-    ),
-  ).toHaveLength(8);
+    Array.from(sidebar.querySelectorAll(".nav-item")).map((b) => b.textContent),
+  ).toEqual(["Portfolio", "Activity", "Stake", "Swap", "Settings"]);
 
   // Send and Receive are actions on the Portfolio; the rest are Settings
   // panels. None of them earns a nav entry.
   // Multi-sig joined them: it is a wallet in the switcher now, spent from
   // through Send, so it no longer earns a destination either.
-  for (const gone of ["Send", "Receive", "Contacts", "Sign", "Verify", "Diagnostics", "Multi-sig"]) {
+  // Import Tx, Offline and Pool Ops left too: the first two are reached from
+  // the send flow and the palette, and pool operations appear only for the
+  // minority who turn operator mode on.
+  for (const gone of [
+    "Send", "Receive", "Contacts", "Sign", "Verify",
+    "Diagnostics", "Multi-sig", "Import Tx", "Offline", "Operate", "Pool Ops",
+  ]) {
     expect(q.queryByRole("button", { name: gone })).not.toBeInTheDocument();
   }
+});
+
+// With the nav down to five destinations, the palette is how everything else is
+// found — so it gets the same exact-set treatment as the nav above. A screen
+// that is routed but listed in neither surface is unreachable, which is a real
+// failure mode here, not a hypothetical one.
+async function openPalette(wallet: WalletView): Promise<HTMLElement> {
+  const sidebar = await unlockAndGetSidebar(wallet);
+  fireEvent.click(within(sidebar).getByRole("button", { name: /search/i }));
+  return await screen.findByRole("dialog", { name: /command palette/i });
+}
+
+test("the palette lists every destination the nav no longer carries", async () => {
+  const palette = await openPalette(walletA);
+
+  expect(
+    Array.from(palette.querySelectorAll('[role="option"]')).map((o) =>
+      o.id.replace("palette-cmd-", ""),
+    ),
+  ).toEqual([
+    "portfolio", "activity", "stake", "swap", "settings",
+    "send", "receive", "import", "offline",
+    "contacts", "sign", "verify", "diagnostics",
+    "operate", "add-wallet", "lock",
+  ]);
+});
+
+// Being listed is not the same as working. These three have no nav entry at
+// all, so the palette is the only way in: assert the command is enabled, that
+// activating it navigates, and that the palette gets out of the way.
+test.each([
+  ["Address book", "#/contacts"],
+  ["Node diagnostics", "#/diagnostics"],
+  ["Sign a transaction offline", "#/offline"],
+])("%s is actually reachable from the palette", async (label, hash) => {
+  const palette = await openPalette(walletA);
+
+  const cmd = within(palette).getByRole("option", { name: new RegExp(label, "i") });
+  expect(cmd).toBeEnabled();
+
+  fireEvent.click(cmd);
+
+  await waitFor(() => expect(window.location.hash).toBe(hash));
+  await waitFor(() => expect(document.querySelector(".palette")).toBeNull());
 });
 
 test("Send and Receive are offered on the balance they act on", async () => {
@@ -895,6 +946,86 @@ test("a route that falls back to Portfolio is reported as Portfolio", async () =
   expect(alert).not.toHaveTextContent(/swap screen/i);
 });
 
+// --- Command palette -------------------------------------------------------
+
+test("the palette has a visible trigger, not just a shortcut", async () => {
+  // A palette nobody knows about is a palette nobody uses. It must be reachable
+  // by pointing and clicking, and the trigger teaches the key.
+  const sidebar = await unlockAndGetSidebar(walletA);
+
+  const trigger = within(sidebar).getByRole("button", { name: /search/i });
+  expect(trigger).toBeInTheDocument();
+  // Non-Mac platform (jsdom default): the handler binds Ctrl-K too, so the hint
+  // must not promise a modifier this keyboard does not have.
+  expect(trigger).toHaveTextContent("Ctrl+K");
+
+  fireEvent.click(trigger);
+  expect(await screen.findByRole("dialog", { name: /command palette/i })).toBeInTheDocument();
+});
+
+test("the palette trigger shows the Mac shortcut on a Mac", async () => {
+  // platform is an inherited getter on Navigator.prototype, not an own
+  // property, so getOwnPropertyDescriptor returns undefined here and there is
+  // nothing to put back — the override has to be deleted instead, or "MacIntel"
+  // leaks into every later test in this file.
+  const original = Object.getOwnPropertyDescriptor(window.navigator, "platform");
+  Object.defineProperty(window.navigator, "platform", {
+    value: "MacIntel",
+    configurable: true,
+  });
+  try {
+    const sidebar = await unlockAndGetSidebar(walletA);
+    const trigger = within(sidebar).getByRole("button", { name: /search/i });
+    expect(trigger).toHaveTextContent("⌘K");
+  } finally {
+    if (original) {
+      Object.defineProperty(window.navigator, "platform", original);
+    } else {
+      delete (window.navigator as unknown as Record<string, unknown>).platform;
+    }
+  }
+});
+
+test("the palette hint stays platform-correct after the Mac test", () => {
+  // Guards the restore above: a leaked "MacIntel" override would make this
+  // read as a Mac long after that test finished.
+  expect(/Mac|iPhone|iPad/.test(window.navigator.platform)).toBe(false);
+});
+
+test("Cmd-K opens the palette and reaches a screen that left the nav", async () => {
+  await unlockAndGetSidebar(walletA);
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  const dialog = await screen.findByRole("dialog", { name: /command palette/i });
+
+  // Offline has no nav entry any more; the palette is one of its routes in.
+  fireEvent.change(within(dialog).getByRole("combobox"), { target: { value: "air gap" } });
+  fireEvent.click(within(dialog).getByRole("option", { name: /offline/i }));
+
+  await waitFor(() => expect(window.location.hash).toBe("#/offline"));
+});
+
+test("pool operations stay out of the nav until turned on", async () => {
+  const sidebar = await unlockAndGetSidebar(walletA);
+  expect(within(sidebar).queryByRole("button", { name: "Pool Ops" })).not.toBeInTheDocument();
+
+  // Reachable regardless — hidden from the nav is not hidden from the wallet.
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  const dialog = await screen.findByRole("dialog", { name: /command palette/i });
+  fireEvent.change(within(dialog).getByRole("combobox"), { target: { value: "pool" } });
+  expect(within(dialog).getByRole("option", { name: /stake pool operations/i })).toBeInTheDocument();
+});
+
+test("operator mode puts Pool Ops in the nav", async () => {
+  window.localStorage.setItem("bursa.operatorMode", "1");
+  try {
+    const sidebar = await unlockAndGetSidebar(walletA);
+    expect(within(sidebar).getByRole("button", { name: "Pool Ops" })).toBeInTheDocument();
+  } finally {
+    window.localStorage.removeItem("bursa.operatorMode");
+  }
+});
+
 test("a multi-signature wallet with an unreadable policy cannot spend, and says why", async () => {
   // The wallet type says multi_signature but the policy did not decode, so
   // there is no spend flow. Letting canSend say otherwise would drop it into
@@ -922,6 +1053,24 @@ test("a multi-signature wallet with an unreadable policy cannot spend, and says 
   expect(within(main).getByRole("button", { name: "Send" })).toBeDisabled();
   // Receiving is unaffected — the address is still valid.
   expect(within(main).getByRole("button", { name: "Receive" })).toBeEnabled();
+});
+
+test("turning on operator mode adds Pool Ops without a reload", async () => {
+  // The nav is built by App, so a preference written only inside Settings would
+  // not show up until some unrelated re-render.
+  const sidebar = await unlockAndGetSidebar(walletA);
+  expect(within(sidebar).queryByRole("button", { name: "Pool Ops" })).not.toBeInTheDocument();
+
+  try {
+    fireEvent.click(within(sidebar).getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: /show pool operations/i }));
+
+    expect(await within(sidebar).findByRole("button", { name: "Pool Ops" })).toBeInTheDocument();
+  } finally {
+    // Restore even when an assertion above throws: otherwise operator mode
+    // leaks into every later test in this file.
+    window.localStorage.removeItem("bursa.operatorMode");
+  }
 });
 
 test("a newly added wallet that the server did not select stays unselected", async () => {
@@ -976,4 +1125,3 @@ test("a newly added wallet that the server did not select stays unselected", asy
   expect(currentNames.some((n) => n.includes("Treasury"))).toBe(false);
   expect(currentNames.some((n) => n.includes("Main"))).toBe(true);
 });
-

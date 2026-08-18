@@ -2008,12 +2008,11 @@ func registerMultiSigRoutes(
 		// Adding a wallet selects it, as the other add-wallet paths do. Without
 		// this the response would claim the new wallet is active while balance
 		// and send requests kept answering for the previous one.
-		// Adding a wallet selects it, as the other add-wallet paths do. When the
-		// selection fails the wallet is still created, so the response says so
-		// with a truthful active flag rather than a failure status: a 5xx would
-		// misdescribe a request that did create the resource, and a client
-		// retrying it hits the duplicate-script check. The client reconciles
-		// from `active` (see applyAdded) and can activate the wallet by id.
+		// When the selection fails the wallet is still created, so the response
+		// says so with a truthful active flag rather than a failure status: a 5xx
+		// would misdescribe a request that did create the resource, and a client
+		// retrying it hits the duplicate-script check. The client reconciles from
+		// `active` (see applyAdded) and can activate the wallet by id.
 		activeID := ""
 		if active, aErr := vlt.SetActive(meta.ID); aErr == nil {
 			bindActive(active)
