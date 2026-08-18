@@ -129,7 +129,7 @@ type Vault interface {
 	ImportWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
 	ImportWalletMnemonicBytes(name string, mnemonic []byte, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
 	AddHardwareWallet(name, accountXpubBech32, network, vaultPassword string, accountIndex uint32, windowN int) (vault.WalletMeta, error)
-	AddScriptWallet(name, network string, script vault.ScriptMeta, vaultPassword string) (vault.WalletMeta, error)
+	AddScriptWallet(id, name, network string, script vault.ScriptMeta, vaultPassword string) (vault.WalletMeta, error)
 	RemoveWallet(id, vaultPassword string) error
 	SetActive(id string) (vault.WalletMeta, error)
 	Active() (vault.WalletMeta, error)
@@ -452,6 +452,10 @@ type walletView struct {
 	// and script address to build a spend from it, since that flow collects
 	// co-signer witnesses rather than signing with a local seed.
 	MultiSig *multisig.Account `json:"multisig,omitempty"`
+	// Set instead of MultiSig when the stored policy will not decode, so the SPA
+	// can state the record is corrupt rather than infer a spend flow that does
+	// not exist.
+	MultiSigError string `json:"multisig_error,omitempty"`
 }
 
 // accountSummary is the per-account entry in a wallet view / accounts listing:
@@ -512,9 +516,13 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 	if w.IsScript() {
 		var policy multisig.Policy
 		// A policy that will not parse is a corrupt record rather than a fatal
-		// one: the wallet still lists and receives, it just cannot compose a
-		// spend, and the spend path reports that itself.
-		if err := json.Unmarshal(w.Script.Policy, &policy); err == nil {
+		// one: the wallet still lists and receives. But the SPA decides HOW to
+		// spend from this field, so leaving it silently nil on a wallet still
+		// typed multi_signature would send it down the seed-based flow. Say so
+		// instead.
+		if err := json.Unmarshal(w.Script.Policy, &policy); err != nil {
+			v.MultiSigError = "This account's signing policy could not be read, so it cannot spend. Its funds are safe."
+		} else {
 			v.MultiSig = &multisig.Account{
 				ID:            w.ID,
 				Label:         w.Name,
@@ -1490,7 +1498,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	}
 
 	if ms != nil {
-		registerMultiSigRoutes(mux, st, vlt, ms, network)
+		registerMultiSigRoutes(mux, st, vlt, ms, network, bindActive)
 	}
 
 	if cfg.connector != nil {
@@ -1843,7 +1851,14 @@ func registerPoolRoutes(mux *http.ServeMux, st Statuser, po PoolOps) {
 // wallet's own participant key are local/offline; balance is a node read
 // (gated); build and submit need a synced node (readyGate); sign is pure crypto
 // over the keystore (ungated).
-func registerMultiSigRoutes(mux *http.ServeMux, st Statuser, vlt Vault, ms MultiSig, network string) {
+func registerMultiSigRoutes(
+	mux *http.ServeMux,
+	st Statuser,
+	vlt Vault,
+	ms MultiSig,
+	network string,
+	bindActive func(vault.WalletMeta),
+) {
 	// List saved multi-sig accounts.
 	mux.HandleFunc("GET /wallet/multisig", func(w http.ResponseWriter, _ *http.Request) {
 		v, err := ms.List()
@@ -1881,7 +1896,9 @@ func registerMultiSigRoutes(mux *http.ServeMux, st Statuser, vlt Vault, ms Multi
 			serve(w, struct{}{}, err)
 			return
 		}
-		meta, err := vlt.AddScriptWallet(acct.Label, acct.Network, vault.ScriptMeta{
+		// Empty id: this is a new account, so the vault assigns one. Migration is
+		// the only caller that supplies an existing id.
+		meta, err := vlt.AddScriptWallet("", acct.Label, acct.Network, vault.ScriptMeta{
 			Policy:        policy,
 			ScriptCBOR:    acct.ScriptCBOR,
 			ScriptAddress: acct.ScriptAddress,
@@ -1889,6 +1906,13 @@ func registerMultiSigRoutes(mux *http.ServeMux, st Statuser, vlt Vault, ms Multi
 		if err != nil {
 			serve(w, struct{}{}, err)
 			return
+		}
+		// Adding a wallet selects it, as the other add-wallet paths do. Without
+		// this the response would claim the new wallet is active while balance
+		// and send requests kept answering for the previous one.
+		if active, aErr := vlt.SetActive(meta.ID); aErr == nil {
+			bindActive(active)
+			meta = active
 		}
 		serve(w, toWalletView(meta, meta.ID), nil)
 	})

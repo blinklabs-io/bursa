@@ -894,3 +894,32 @@ test("a route that falls back to Portfolio is reported as Portfolio", async () =
   expect(alert).toHaveTextContent(/the portfolio screen could not be displayed/i);
   expect(alert).not.toHaveTextContent(/swap screen/i);
 });
+
+test("a multi-signature wallet with an unreadable policy cannot spend, and says why", async () => {
+  // The wallet type says multi_signature but the policy did not decode, so
+  // there is no spend flow. Letting canSend say otherwise would drop it into
+  // the seed-based one, which cannot work for a script wallet.
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([
+    {
+      ...walletA,
+      type: "multi_signature",
+      stake_address: "",
+      addresses: ["addr_test1wqscript"],
+      multisig_error: "This account's signing policy could not be read, so it cannot spend. Its funds are safe.",
+    },
+  ]);
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+  await waitFor(() => expect(document.querySelector(".sidebar")).not.toBeNull());
+  const main = document.querySelector("main") as HTMLElement;
+  expect(await within(main).findByRole("alert")).toHaveTextContent(/policy could not be read/i);
+  expect(within(main).getByRole("button", { name: "Send" })).toBeDisabled();
+  // Receiving is unaffected — the address is still valid.
+  expect(within(main).getByRole("button", { name: "Receive" })).toBeEnabled();
+});

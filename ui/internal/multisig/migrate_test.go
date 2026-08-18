@@ -13,17 +13,26 @@ import (
 // "do not delete unless it really landed" guarantees are testable.
 type fakeVault struct {
 	added      []ScriptWallet
+	addedIDs   []string
 	addErr     error
 	listErr    error
 	swallowAdd bool // accept the add but do not record it, simulating a silent loss
 }
 
-func (f *fakeVault) AddScriptWallet(_, _ string, s ScriptWallet, _ string) error {
+func (f *fakeVault) AddScriptWallet(id, _, _ string, s ScriptWallet, _ string) error {
 	if f.addErr != nil {
 		return f.addErr
 	}
+	// The vault rejects a script address it already holds; mirror that, since
+	// it is what a duplicate entry in one legacy file would hit.
+	for _, existing := range f.added {
+		if existing.ScriptAddress == s.ScriptAddress {
+			return errors.New("duplicate wallet")
+		}
+	}
 	if !f.swallowAdd {
 		f.added = append(f.added, s)
+		f.addedIDs = append(f.addedIDs, id)
 	}
 	return nil
 }
@@ -190,5 +199,41 @@ func TestMigrateKeepsTheFileWhenTheVaultCannotBeRead(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("store file must survive: %v", err)
+	}
+}
+
+func TestMigratePreservesTheAccountID(t *testing.T) {
+	path := writeStore(t, twoAccounts())
+	v := &fakeVault{}
+
+	if _, err := MigrateStoreToVault(path, v, "vault-pw"); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	// Links and requests already reference these ids. A migration that renames
+	// what it moves breaks every one of them.
+	if len(v.addedIDs) != 2 || v.addedIDs[0] != "a" || v.addedIDs[1] != "b" {
+		t.Fatalf("ids = %v, want the legacy [a b]", v.addedIDs)
+	}
+}
+
+func TestMigrateToleratesADuplicateInsideTheStore(t *testing.T) {
+	accounts := twoAccounts()
+	// The same script address twice: the vault rejects the second, so without
+	// tracking what this run already wrote the migration would fail having
+	// actually succeeded.
+	dupe := accounts[0]
+	dupe.ID = "a-again"
+	path := writeStore(t, append(accounts, dupe))
+	v := &fakeVault{}
+
+	n, err := MigrateStoreToVault(path, v, "vault-pw")
+	if err != nil {
+		t.Fatalf("migrate with a duplicated entry: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("migrated = %d, want 2 (the duplicate skipped)", n)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a completed migration should still retire the file")
 	}
 }

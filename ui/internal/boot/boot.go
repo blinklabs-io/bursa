@@ -64,8 +64,8 @@ import (
 // opaquely and this bridges the two types.
 type scriptVault struct{ v *vault.Vault }
 
-func (s scriptVault) AddScriptWallet(name, network string, w multisig.ScriptWallet, vaultPassword string) error {
-	_, err := s.v.AddScriptWallet(name, network, vault.ScriptMeta{
+func (s scriptVault) AddScriptWallet(id, name, network string, w multisig.ScriptWallet, vaultPassword string) error {
+	_, err := s.v.AddScriptWallet(id, name, network, vault.ScriptMeta{
 		Policy:        w.Policy,
 		ScriptCBOR:    w.ScriptCBOR,
 		ScriptAddress: w.ScriptAddress,

@@ -12,7 +12,9 @@ import (
 // so this package does not depend on the vault package (the dependency runs the
 // other way — the vault must not know what a multi-signature policy is).
 type VaultSink interface {
-	AddScriptWallet(name, network string, script ScriptWallet, vaultPassword string) error
+	// id carries the legacy account's own identifier, so references to it keep
+	// resolving after the move.
+	AddScriptWallet(id, name, network string, script ScriptWallet, vaultPassword string) error
 	ScriptAddresses() ([]string, error)
 }
 
@@ -73,13 +75,17 @@ func MigrateStoreToVault(storePath string, v VaultSink, vaultPassword string) (m
 		if err != nil {
 			return migrated, fmt.Errorf("encode policy for %q: %w", a.Label, err)
 		}
-		if err := v.AddScriptWallet(a.Label, a.Network, ScriptWallet{
+		if err := v.AddScriptWallet(a.ID, a.Label, a.Network, ScriptWallet{
 			Policy:        policy,
 			ScriptCBOR:    a.ScriptCBOR,
 			ScriptAddress: a.ScriptAddress,
 		}, vaultPassword); err != nil {
 			return migrated, fmt.Errorf("add %q to vault: %w", a.Label, err)
 		}
+		// Record it immediately: a legacy store holding the same script address
+		// twice would otherwise send the duplicate to the vault, which rejects
+		// it, failing a migration that had in fact done its job.
+		have[a.ScriptAddress] = struct{}{}
 		migrated++
 	}
 
