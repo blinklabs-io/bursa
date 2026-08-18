@@ -155,36 +155,45 @@ export function DRepDirectory({ network, canDelegate = true }: DRepDirectoryProp
 
         {loading && !data ? (
           <p className="muted">Reading DReps from the local node…</p>
-        ) : error ? null : rows.length === 0 ? (
-          <p className="muted">
-            {query.trim() ? "No DReps match your search." : "No DReps found."}
-          </p>
-        ) : (
+        ) : error ? null : (
           // aria-busy while a debounced request is in flight: the pager below
           // reflects the requested page immediately, so without this the rows
           // for the previous query/page read as the answer to the new one.
           // Kept visible rather than blanked so typing does not flicker.
+          //
+          // This wraps the empty state too: a previous search that matched
+          // nothing would otherwise keep saying "No DReps match your search."
+          // for the whole of the next in-flight request, contradicting the
+          // pager and offering no sign that anything is happening.
           <div aria-busy={loading}>
-            <Table columns={DREP_COLUMNS} rows={rows} />
-            <div className="pager">
-              <Button
-                variant="ghost"
-                disabled={!hasPrev}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                Previous
-              </Button>
-              <span className="muted">
-                Page {page} of {pageCount} · {total} DRep{total === 1 ? "" : "s"}
-              </span>
-              <Button
-                variant="ghost"
-                disabled={!hasNext}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next
-              </Button>
-            </div>
+            {rows.length === 0 ? (
+              <p className="muted">
+                {query.trim() ? "No DReps match your search." : "No DReps found."}
+              </p>
+            ) : (
+              <>
+                <Table columns={DREP_COLUMNS} rows={rows} />
+                <div className="pager">
+                  <Button
+                    variant="ghost"
+                    disabled={!hasPrev}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    Previous
+                  </Button>
+                  <span className="muted">
+                    Page {page} of {pageCount} · {total} DRep{total === 1 ? "" : "s"}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    disabled={!hasNext}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </>
+            )}
             {loading && (
               <p className="muted" role="status">
                 Updating…

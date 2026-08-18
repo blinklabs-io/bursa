@@ -152,3 +152,35 @@ test("marks the results stale while a new page is still loading", async () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 });
+
+test("marks an empty result set busy while the next query loads", async () => {
+  // The previous search matching nothing must not leave "No DReps match your
+  // search." standing as the answer to the query now in flight.
+  let resolveSecond: ((value: DRepDirectoryResponse) => void) | undefined;
+  const pending = new Promise<DRepDirectoryResponse>((resolve) => {
+    resolveSecond = resolve;
+  });
+  let call = 0;
+  vi.spyOn(client, "getDReps").mockImplementation(() => {
+    call += 1;
+    return call === 1 ? Promise.resolve(directory([])) : pending;
+  });
+
+  render(<DRepDirectory network="preview" />);
+  const empty = await screen.findByText(/no dreps found/i);
+  expect(empty.closest("[aria-busy]")).toHaveAttribute("aria-busy", "false");
+
+  fireEvent.change(screen.getByLabelText(/search by drep id/i), {
+    target: { value: "zzz" },
+  });
+
+  await waitFor(() => {
+    expect(
+      screen.getByText(/no dreps/i).closest("[aria-busy]"),
+    ).toHaveAttribute("aria-busy", "true");
+  });
+  expect(screen.getByRole("status")).toHaveTextContent(/updating/i);
+
+  resolveSecond?.(directory([DREP_A]));
+  await screen.findByText(/drep1aaaa/i);
+});
