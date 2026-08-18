@@ -827,7 +827,12 @@ func (v *Vault) ActiveAccountIndexFor(id string) uint32 {
 //
 // Deduplicated on the script address: the same policy composed twice is the same
 // account, and re-running a migration must not add it again.
-func (v *Vault) AddScriptWallet(name, network string, script ScriptMeta, vaultPassword string) (WalletMeta, error) {
+//
+// id is normally empty and one is generated. Migration passes the account's
+// existing id so links and requests that already reference it keep resolving —
+// a migration that silently renames what it moves is a migration that breaks
+// every reference to it.
+func (v *Vault) AddScriptWallet(id, name, network string, script ScriptMeta, vaultPassword string) (WalletMeta, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.idx == nil {
@@ -859,14 +864,17 @@ func (v *Vault) AddScriptWallet(name, network string, script ScriptMeta, vaultPa
 		ReceiveAddresses: []string{script.ScriptAddress},
 	}
 
+	if id == "" {
+		id = newID()
+	}
 	meta := WalletMeta{
-		ID:       newID(),
+		ID:       id,
 		Name:     name,
 		Network:  network,
 		Account:  acct,
 		Accounts: []*wallet.Account{acct},
 		Type:     WalletTypeMultiSignature,
-		Script:   &script,
+		Script:   cloneScript(&script),
 	}
 
 	seeds := env.Seeds
@@ -878,7 +886,31 @@ func (v *Vault) AddScriptWallet(name, network string, script ScriptMeta, vaultPa
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
+	// Adopt the new wallet as active only when nothing else is, matching the
+	// seeded and hardware paths. Migration must NOT steal the selection: it runs
+	// on unlock, and moving the user to a script wallet they did not choose
+	// would be a surprising side effect of housekeeping.
+	if v.activeID == "" {
+		v.activeID = meta.ID
+	}
 	return meta, nil
+}
+
+// cloneScript deep-copies script material, including the policy bytes.
+//
+// Wallets/Active hand out defensive copies so a caller cannot reach back into
+// the sealed index. A shared *ScriptMeta (or a shared Policy slice) would defeat
+// that: a caller could mutate vault state in memory without persisting it, and
+// race the readers while doing so.
+func cloneScript(s *ScriptMeta) *ScriptMeta {
+	if s == nil {
+		return nil
+	}
+	out := *s
+	if s.Policy != nil {
+		out.Policy = append(json.RawMessage(nil), s.Policy...)
+	}
+	return &out
 }
 
 // ScriptAddresses returns the script address of every multi-signature wallet in
@@ -1440,6 +1472,7 @@ func cloneWallets(in []WalletMeta) []WalletMeta {
 func cloneWallet(w *WalletMeta) *WalletMeta {
 	c := *w
 	c.Account = cloneAccountPtr(w.Account)
+	c.Script = cloneScript(w.Script)
 	if w.Accounts != nil {
 		c.Accounts = make([]*wallet.Account, 0, len(w.Accounts))
 		for _, a := range w.Accounts {

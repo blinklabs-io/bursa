@@ -657,7 +657,7 @@ func TestGetPoolDirectoryNilLookup(t *testing.T) {
 	}
 }
 
-func (f *fakeVault) AddScriptWallet(name, network string, script vault.ScriptMeta, vaultPw string) (vault.WalletMeta, error) {
+func (f *fakeVault) AddScriptWallet(id, name, network string, script vault.ScriptMeta, vaultPw string) (vault.WalletMeta, error) {
 	if f.scriptErr != nil {
 		return vault.WalletMeta{}, f.scriptErr
 	}
@@ -665,8 +665,11 @@ func (f *fakeVault) AddScriptWallet(name, network string, script vault.ScriptMet
 	f.gotName = name
 	f.gotVault = vaultPw
 	f.gotScript = script
+	if id == "" {
+		id = "ms1"
+	}
 	meta := vault.WalletMeta{
-		ID:      "ms1",
+		ID:      id,
 		Name:    name,
 		Network: network,
 		Type:    vault.WalletTypeMultiSignature,

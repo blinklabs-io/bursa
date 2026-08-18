@@ -763,7 +763,7 @@ func TestAddScriptWallet(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	meta, err := v.AddScriptWallet("Treasury 2-of-3", "preview", testScript("addr_test1wscript"), vaultPw)
+	meta, err := v.AddScriptWallet("", "Treasury 2-of-3", "preview", testScript("addr_test1wscript"), vaultPw)
 	if err != nil {
 		t.Fatalf("AddScriptWallet: %v", err)
 	}
@@ -793,7 +793,7 @@ func TestAddScriptWalletSurvivesLockUnlock(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := v.AddScriptWallet("Treasury", "preview", testScript("addr_test1wscript"), vaultPw); err != nil {
+	if _, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wscript"), vaultPw); err != nil {
 		t.Fatalf("AddScriptWallet: %v", err)
 	}
 
@@ -832,13 +832,13 @@ func TestAddScriptWalletRejectsDuplicateScriptAddress(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := v.AddScriptWallet("Treasury", "preview", testScript("addr_test1wsame"), vaultPw); err != nil {
+	if _, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wsame"), vaultPw); err != nil {
 		t.Fatalf("first add: %v", err)
 	}
 
 	// Same policy composed twice is the same account. This is also what makes
 	// re-running the migration safe.
-	_, err := v.AddScriptWallet("Treasury copy", "preview", testScript("addr_test1wsame"), vaultPw)
+	_, err := v.AddScriptWallet("", "Treasury copy", "preview", testScript("addr_test1wsame"), vaultPw)
 	if !errors.Is(err, ErrDuplicateWallet) {
 		t.Fatalf("err = %v, want ErrDuplicateWallet", err)
 	}
@@ -852,7 +852,7 @@ func TestScriptAddressesListsOnlyScriptWallets(t *testing.T) {
 	if _, err := v.AddWallet("Seeded", mnemonicA, "preview", vaultPw, spendPwA, window); err != nil {
 		t.Fatalf("AddWallet: %v", err)
 	}
-	if _, err := v.AddScriptWallet("Treasury", "preview", testScript("addr_test1wscript"), vaultPw); err != nil {
+	if _, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wscript"), vaultPw); err != nil {
 		t.Fatalf("AddScriptWallet: %v", err)
 	}
 
@@ -872,7 +872,7 @@ func TestAddScriptWalletRequiresUnlock(t *testing.T) {
 	}
 	v.Lock()
 
-	if _, err := v.AddScriptWallet("Treasury", "preview", testScript("addr_test1wscript"), vaultPw); !errors.Is(err, ErrLocked) {
+	if _, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wscript"), vaultPw); !errors.Is(err, ErrLocked) {
 		t.Fatalf("err = %v, want ErrLocked", err)
 	}
 }

@@ -473,6 +473,9 @@ export interface WalletView {
   // to build a spend, which collects co-signer witnesses rather than signing
   // with a local seed.
   multisig?: MultiSigAccount;
+  // Set instead of multisig when the stored policy will not decode. The wallet
+  // still lists and receives; it just cannot spend.
+  multisig_error?: string;
 }
 
 // GET /wallet/accounts response: the active wallet's accounts (with best-effort
