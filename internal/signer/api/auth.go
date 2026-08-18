@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/MicahParks/keyfunc/v3"
@@ -120,10 +121,43 @@ func JWKSValidator(ctx context.Context, jwksURL, issuer, audience string) (Valid
 	}, nil
 }
 
-// write401 sends a properly-formed JSON 401 with WWW-Authenticate header.
-func write401(w http.ResponseWriter, msg string) {
+// challenger is implemented by Authenticators that have a WWW-Authenticate
+// scheme to advertise. Schemes with no HTTP challenge to offer (mTLS, which is
+// negotiated at the TLS layer, and request signing, which has no registered
+// scheme) do not implement it.
+type challenger interface{ challenge() string }
+
+func (jwtAuthenticator) challenge() string { return "Bearer" }
+
+// authChallenge builds the WWW-Authenticate value for a chain, preserving
+// order and dropping duplicates. It returns "" when no configured scheme has a
+// challenge, in which case the header is omitted rather than advertising a
+// scheme the deployment does not accept.
+func authChallenge(chain []Authenticator) string {
+	var schemes []string
+	for _, a := range chain {
+		c, ok := a.(challenger)
+		if !ok {
+			continue
+		}
+		v := c.challenge()
+		if v == "" || slices.Contains(schemes, v) {
+			continue
+		}
+		schemes = append(schemes, v)
+	}
+	return strings.Join(schemes, ", ")
+}
+
+// write401 sends a properly-formed JSON 401. challenge is the WWW-Authenticate
+// value for the configured chain; an empty value omits the header, so an
+// mTLS-only or request-signing-only deployment does not tell clients to retry
+// with a Bearer token it will never accept.
+func write401(w http.ResponseWriter, msg string, challenge string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("WWW-Authenticate", "Bearer")
+	if challenge != "" {
+		w.Header().Set("WWW-Authenticate", challenge)
+	}
 	w.WriteHeader(http.StatusUnauthorized)
 	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
 		http.Error(w, "encoding error", http.StatusInternalServerError)
@@ -194,14 +228,14 @@ func (j jwtAuthenticator) Authenticate(r *http.Request) (string, bool, error) {
 // writeAuthError maps an Authenticator error to an HTTP response. All auth
 // failures collapse to a generic 401 except capacity/size conditions that have
 // their own status.
-func writeAuthError(w http.ResponseWriter, err error) {
+func writeAuthError(w http.ResponseWriter, err error, challenge string) {
 	switch {
 	case errors.Is(err, errNonceCacheFull):
 		writeErr(w, http.StatusServiceUnavailable, "nonce cache full")
 	case errors.Is(err, errBodyTooLarge):
 		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large")
 	default:
-		write401(w, "invalid credentials")
+		write401(w, "invalid credentials", challenge)
 	}
 }
 
@@ -211,25 +245,26 @@ func writeAuthError(w http.ResponseWriter, err error) {
 // credential authenticates it, an invalid one rejects it. Only schemes that
 // present nothing are skipped. An empty chain fails closed (always 401).
 func AuthMiddleware(chain []Authenticator, next http.Handler) http.Handler {
+	challenge := authChallenge(chain)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for _, a := range chain {
 			caller, ok, err := a.Authenticate(r)
 			if err != nil {
-				writeAuthError(w, err)
+				writeAuthError(w, err, challenge)
 				return
 			}
 			if !ok {
 				continue
 			}
 			if caller == "" {
-				write401(w, "invalid credentials")
+				write401(w, "invalid credentials", challenge)
 				return
 			}
 			ctx := context.WithValue(r.Context(), callerKey, caller)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
-		write401(w, "authentication required")
+		write401(w, "authentication required", challenge)
 	})
 }
 
