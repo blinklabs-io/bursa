@@ -159,7 +159,9 @@ test("(b) renders stake address in monospace and a CopyButton for it", async () 
   // The copy button must copy the FULL stake address.
   fireEvent.click(screen.getByRole("button", { name: /copy/i }));
   expect(writeText).toHaveBeenCalledWith(mockAccount.stake_address);
-  expect(await screen.findByText("Copied")).toBeInTheDocument();
+  // The control is icon-only, so the copied state rides on its
+  // accessible name rather than visible text.
+  expect(await screen.findByRole("button", { name: /\(copied\)$/ })).toBeInTheDocument();
 });
 
 test("(c) renders sync state pill from useStatus", () => {

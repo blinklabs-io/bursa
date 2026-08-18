@@ -34,7 +34,7 @@ func RunTxSign(txFile string, signingKeyFiles []string, outFile string) error {
 	}
 	signers := make([]*bursa.LoadedKey, 0, len(signingKeyFiles))
 	for _, p := range signingKeyFiles {
-		lk, err := bursa.LoadKeyFromFile(p)
+		lk, err := bursa.LoadSecretKeyFromFile(p)
 		if err != nil {
 			return err
 		}
@@ -59,7 +59,7 @@ func RunTxWitness(txFile, signingKeyFile, outFile string) error {
 	if err != nil {
 		return err
 	}
-	lk, err := bursa.LoadKeyFromFile(signingKeyFile)
+	lk, err := bursa.LoadSecretKeyFromFile(signingKeyFile)
 	if err != nil {
 		return err
 	}

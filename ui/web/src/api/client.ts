@@ -13,6 +13,8 @@ import type {
   SignDataResult,
   VaultStatus,
   WalletView,
+  AccountsResponse,
+  AddAccountRequest,
   CreateVaultRequest,
   UnlockVaultRequest,
   AddWalletRequest,
@@ -178,6 +180,13 @@ export const addHardwareWallet = (
   } satisfies AddHardwareWalletRequest);
 export const activateWallet = (id: string) =>
   apiPost<WalletView>(`/wallet/${encodeURIComponent(id)}/activate`);
+
+// Multi-account (BIP44 account switching) for the active wallet.
+export const getAccounts = () => apiGet<AccountsResponse>("/wallet/accounts");
+export const selectAccount = (accountIndex: number) =>
+  apiPost<WalletView>("/wallet/account/select", { account_index: accountIndex });
+export const addAccount = (req: AddAccountRequest) =>
+  apiPost<WalletView>("/wallet/accounts", req);
 export const removeWallet = (id: string, vaultPassword: string) =>
   apiDelete<{ removed: boolean }>(`/wallet/${encodeURIComponent(id)}`, { vault_password: vaultPassword });
 

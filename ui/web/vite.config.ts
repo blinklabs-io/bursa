@@ -16,6 +16,10 @@ export default defineConfig({
       "/vault": "http://127.0.0.1:8090",
       "/wallet": "http://127.0.0.1:8090",
       "/connector": "http://127.0.0.1:8090",
+      // The Diagnostics screen reads /diagnostics and downloads /diagnostics/logs.
+      // Without this the screen is broken under `npm run dev`: the request falls
+      // through to the SPA fallback and the screen reports a JSON parse error.
+      "/diagnostics": "http://127.0.0.1:8090",
     },
   },
   test: {

@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
-import { Activity } from "./Activity";
+import { Activity, transactionsToCsv } from "./Activity";
 import * as hooks from "../api/hooks";
 import * as client from "../api/client";
 import type { Tx, TxDetail } from "../api/types";
@@ -83,12 +83,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("(a) renders block heights for each transaction", () => {
+test("(a) block height is kept out of the list and left to the detail drawer", () => {
   mockTransactions([TX1, TX2]);
   render(<Activity />);
 
-  expect(screen.getByText("12345")).toBeInTheDocument();
-  expect(screen.getByText("12300")).toBeInTheDocument();
+  // Scanning the list is about direction/amount/time; the block height is a
+  // drill-down fact, shown in the drawer and exported in the CSV.
+  expect(screen.queryByText("12345")).not.toBeInTheDocument();
+  expect(screen.queryByText("12300")).not.toBeInTheDocument();
 });
 
 test("(b) renders truncated tx hash with a CopyButton that copies the FULL hash", async () => {
@@ -102,7 +104,9 @@ test("(b) renders truncated tx hash with a CopyButton that copies the FULL hash"
   expect(copyButtons.length).toBeGreaterThanOrEqual(1);
   fireEvent.click(copyButtons[0]);
   expect(writeText).toHaveBeenCalledWith(TX1.tx_hash);
-  expect(await screen.findByText("Copied")).toBeInTheDocument();
+  // The control is icon-only, so the copied state rides on its
+  // accessible name rather than visible text.
+  expect(await screen.findByRole("button", { name: /\(copied\)$/ })).toBeInTheDocument();
 
   // At least the beginning of the hash should be visible
   expect(screen.getByText(new RegExp(TX1.tx_hash.slice(0, 8)))).toBeInTheDocument();
@@ -112,10 +116,10 @@ test("(c) preserves API order (newest-first — TX1 row appears before TX2 row)"
   mockTransactions([TX1, TX2]);
   render(<Activity />);
 
-  const cells = screen.getAllByText(/^1[23]\d{3}$/);
-  // TX1 block 12345 should come before TX2 block 12300
-  expect(cells[0].textContent).toBe("12345");
-  expect(cells[1].textContent).toBe("12300");
+  // Identify rows by direction: TX1 is received, TX2 is sent.
+  const rows = screen.getAllByRole("row").slice(1); // drop the header row
+  expect(rows[0]).toHaveTextContent("Received");
+  expect(rows[1]).toHaveTextContent("Sent");
 });
 
 test("(d) empty list renders 'No transactions yet' message", () => {
@@ -172,11 +176,11 @@ test("(h) shows a direction indicator and signed net amount per row", () => {
   expect(table.getByText("-1.5 ADA")).toBeInTheDocument();
 });
 
-test("(i) shows the fee per row", () => {
+test("(i) keeps the fee out of the list -- the detail drawer carries it", () => {
   mockTransactions([TX1]);
   render(<Activity />);
 
-  expect(screen.getByText("0.17 ADA")).toBeInTheDocument();
+  expect(screen.queryByText("0.17 ADA")).not.toBeInTheDocument();
 });
 
 test("(j) shows a Pending pill for unconfirmed transactions and a count otherwise", () => {
@@ -281,10 +285,9 @@ test("(q) a pruned tx (null asset_deltas, no enrichment) renders without crashin
 
   expect(() => render(<Activity />)).not.toThrow();
 
-  // Direction shows "Unknown" for the pruned tx; its known block height and
-  // confirmations (from the history call, not enrichment) still render.
+  // Direction shows "Unknown" for the pruned tx; its confirmation count (from
+  // the history call, not enrichment) still renders.
   expect(screen.getByText("Unknown")).toBeInTheDocument();
-  expect(screen.getByText("500")).toBeInTheDocument();
   expect(screen.getByText("200")).toBeInTheDocument();
 
   // The CSV export must not throw even though asset_deltas is null — the
@@ -319,4 +322,19 @@ test("(s) each row has an external explorer link to the FULL tx hash, scoped to 
   expect(link).toHaveAttribute("href", `https://cardanoscan.io/transaction/${TX1.tx_hash}`);
   expect(link).toHaveAttribute("target", "_blank");
   expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+});
+
+test("(s) CSV amounts are ungrouped so they parse as numbers", () => {
+  // 1,500 ADA — above the grouping threshold, which is the whole point.
+  const big = { ...TX1, net_lovelace: "1500000000", fee: "1200000" };
+  const text = transactionsToCsv([big]);
+
+  // Grouped display values ("1,500") reach a CSV consumer as quoted text or
+  // split the column outright.
+  expect(text).toContain("1500");
+  expect(text).not.toContain("1,500");
+  const amountCells = text.trim().split("\n").slice(1).flatMap((line) => line.split(",").slice(2, 4));
+  for (const cell of amountCells) {
+    expect(cell).toMatch(/^-?\d+(\.\d+)?$/);
+  }
 });
