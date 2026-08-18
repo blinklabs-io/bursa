@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Status, WalletView } from "../api/types";
 import type { Tone } from "./StatusPill";
 import { WalletSwitcher } from "./WalletSwitcher";
+import { CliButton } from "./CliButton";
 
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -189,6 +190,13 @@ export function MobileNav({
           )}
           {stateChip}
         </div>
+
+        {onOpenPalette && (
+          <CliButton
+            onOpen={onOpenPalette}
+            className="cli-button-mobile"
+          />
+        )}
 
         <button
           ref={hamburgerRef}

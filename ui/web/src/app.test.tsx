@@ -831,6 +831,20 @@ test.each([
   await waitFor(() => expect(document.querySelector(".palette")).toBeNull());
 });
 
+// The nav carries five destinations; everything else lives in the palette, so
+// the palette needs a permanent affordance in the chrome rather than only a
+// keyboard shortcut. Drive it: click the glyph, get the dialog.
+test("the command line has a permanent affordance in the chrome", async () => {
+  const sidebar = await unlockAndGetSidebar(walletA);
+
+  const cli = within(sidebar).getByRole("button", { name: /open the command line/i });
+  expect(cli).toBeEnabled();
+
+  fireEvent.click(cli);
+
+  expect(await screen.findByRole("dialog", { name: /command palette/i })).toBeInTheDocument();
+});
+
 test("Send and Receive are offered on the balance they act on", async () => {
   await unlockAndGetSidebar(walletA);
 

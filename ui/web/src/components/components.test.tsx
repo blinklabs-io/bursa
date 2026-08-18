@@ -87,6 +87,39 @@ test("CopyButton copies its value and shows feedback on success", async () => {
   expect(status.closest("button")).toBeNull();
 });
 
+// On a touch layout there is no Cmd/Ctrl-K and the sidebar's "Search…" pill is
+// hidden, so this button is the palette's only one-tap route in. Asserting it
+// renders is not enough — it has to actually fire.
+test("the mobile top bar opens the command line in one tap", () => {
+  const onOpenPalette = vi.fn();
+  renderMobileNav({ onOpenPalette });
+
+  const cli = screen.getByRole("button", { name: /open the command line/i });
+  expect(cli).toBeEnabled();
+
+  fireEvent.click(cli);
+
+  expect(onOpenPalette).toHaveBeenCalledTimes(1);
+});
+
+// The drawer does not have to be open for it to work: needing two taps to reach
+// the surface that carries most destinations is the thing this fixes.
+test("the mobile command line does not require opening the drawer first", () => {
+  const onOpenPalette = vi.fn();
+  renderMobileNav({ onOpenPalette });
+
+  // The drawer panel is always in the DOM (it slides in via a class), so assert
+  // the state a user would perceive: the menu is still shut.
+  expect(screen.getByRole("button", { name: /open menu/i })).toHaveAttribute("aria-expanded", "false");
+  expect(document.querySelector(".mobile-drawer-open")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: /open the command line/i }));
+
+  expect(document.querySelector(".mobile-drawer-open")).toBeNull();
+
+  expect(onOpenPalette).toHaveBeenCalledTimes(1);
+});
+
 test("SyncBanner shows error detail ahead of retained bootstrap diagnostics", () => {
   render(
     <SyncBanner
