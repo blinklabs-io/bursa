@@ -448,6 +448,10 @@ type walletView struct {
 	// StakeAddress/Addresses above reflect that active account.
 	Accounts           []accountSummary `json:"accounts"`
 	ActiveAccountIndex uint32           `json:"active_account_index"`
+	// MultiSig is set only on a multi-signature wallet. The SPA needs the policy
+	// and script address to build a spend from it, since that flow collects
+	// co-signer witnesses rather than signing with a local seed.
+	MultiSig *multisig.Account `json:"multisig,omitempty"`
 }
 
 // accountSummary is the per-account entry in a wallet view / accounts listing:
@@ -504,6 +508,22 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 	if active := w.ActiveAccount(); active != nil {
 		v.StakeAddress = active.StakeAddress
 		v.Addresses = active.ReceiveAddresses
+	}
+	if w.IsScript() {
+		var policy multisig.Policy
+		// A policy that will not parse is a corrupt record rather than a fatal
+		// one: the wallet still lists and receives, it just cannot compose a
+		// spend, and the spend path reports that itself.
+		if err := json.Unmarshal(w.Script.Policy, &policy); err == nil {
+			v.MultiSig = &multisig.Account{
+				ID:            w.ID,
+				Label:         w.Name,
+				Network:       w.Network,
+				Policy:        policy,
+				ScriptCBOR:    w.Script.ScriptCBOR,
+				ScriptAddress: w.Script.ScriptAddress,
+			}
+		}
 	}
 	for _, acct := range w.AccountList() {
 		if acct == nil {

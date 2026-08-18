@@ -20,11 +20,11 @@ import { Portfolio } from "./screens/Portfolio";
 import { Receive } from "./screens/Receive";
 import { Activity } from "./screens/Activity";
 import { Send } from "./screens/Send";
+import { MultiSigSpend } from "./screens/MultiSig";
 import { Swap } from "./screens/Swap";
 import { Stake } from "./screens/Stake";
 import { Offline } from "./screens/Offline";
 import { Operate } from "./screens/Operate";
-import { MultiSig } from "./screens/MultiSig";
 import { ImportTransaction } from "./screens/ImportTransaction";
 import { Settings } from "./screens/Settings";
 import { ConnectorApproval } from "./screens/ConnectorApproval";
@@ -73,14 +73,17 @@ const SETTINGS_ROUTES = new Map<string, "general" | "contacts" | "tools" | "diag
 // Send and Receive are actions on the Portfolio rather than destinations, so
 // they keep their routes (deep links, and the Portfolio buttons) without
 // costing a nav entry.
-const PORTFOLIO_ROUTES = new Set(["portfolio", "send", "receive"]);
+const PORTFOLIO_ROUTES = new Set(["portfolio", "send", "receive", "multisig"]);
+
+// Spending from a multi-signature wallet is a mode of Send rather than a screen
+// of its own, so the old #/multisig link resolves here too.
+const SEND_ROUTES = new Set(["send", "multisig"]);
 
 const NAV: { key: string; label: string }[] = [
   { key: "portfolio", label: "Portfolio" },
   { key: "activity", label: "Activity" },
   { key: "stake", label: "Stake" },
   { key: "swap", label: "Swap" },
-  { key: "multisig", label: "Multi-sig" },
   { key: "import", label: "Import Tx" },
   { key: "offline", label: "Offline" },
   { key: "operate", label: "Operate" },
@@ -127,13 +130,20 @@ export function App() {
   const [lockError, setLockError] = useState<string | null>(null);
 
   const activeWallet = wallets.find((w) => w.id === activeId) ?? null;
+  // A multi-signature wallet spends from a native script. Send routes into the
+  // collect-witnesses flow for it, and the screens that need a seed stay off.
+  const multiSigAccount = activeWallet?.multisig ?? undefined;
   const isReady = status.data?.state === "ready";
   const canQueryNode = status.data?.state === "ready" || status.data?.state === "syncing";
   // Regular sends require a fully synced node and either a full wallet (local
   // seed signing) or a hardware wallet (on-device signing). Read-only and
   // multi-signature wallets use their own non-local signing flows.
   const canSend = isReady && (
-    activeWallet?.type === "full" || activeWallet?.type === "hardware"
+    activeWallet?.type === "full" ||
+    activeWallet?.type === "hardware" ||
+    // A multi-signature wallet can absolutely spend — it just collects the
+    // other signatures first instead of signing in one step.
+    activeWallet?.type === "multi_signature"
   );
   // Sign/Offline/Operate all need the wallet's seed (message signing, air-gap
   // signing, and cold/VRF/KES key derivation respectively). Hardware wallets
@@ -306,7 +316,6 @@ export function App() {
     else if (STAKE_ROUTES.has(route)) activeRoute = "stake";
     else if (route === "offline" && canSign) activeRoute = "offline";
     else if (route === "operate" && canSign) activeRoute = "operate";
-    else if (route === "multisig") activeRoute = "multisig";
     else if (route === "import" && canSign) activeRoute = "import";
     else if (ROUTES.has(route) && route !== "swap") activeRoute = route;
     else activeRoute = "portfolio";
@@ -329,6 +338,7 @@ export function App() {
     screenLabel = "add wallet";
     content = (
       <AddWallet
+          canSign={canSign}
         network={network}
         onAdded={applyAdded}
         onCancel={() => setAddingWallet(false)}
@@ -358,11 +368,22 @@ export function App() {
         initialTab={SETTINGS_ROUTES.get(route)}
       />
     );
-  } else if (route === "send" && !canSend) {
+  } else if (SEND_ROUTES.has(route) && !canSend) {
     screenLabel = "portfolio";
     content = <Portfolio canSend={canSend} />;
-  } else if (route === "send" && canSend) {
-    content = <Send isHardware={activeWallet.type === "hardware"} walletId={activeWallet.id} />;
+  } else if (SEND_ROUTES.has(route) && canSend) {
+    // A multi-signature wallet spends by collecting co-signer witnesses rather
+    // than signing in one step, so Send means a different flow for it.
+    content = multiSigAccount ? (
+      <MultiSigSpend
+        account={multiSigAccount}
+        canSpend={isReady}
+        canSign={canSign}
+        onSpent={() => {}}
+      />
+    ) : (
+      <Send isHardware={activeWallet.type === "hardware"} walletId={activeWallet.id} />
+    );
   } else if (route === "swap" && !canSwap) {
     // Guard deep-links (#/swap): DEX quotes need a queryable mainnet node, so
     // fall back to Portfolio while the node or active wallet cannot support it.
@@ -397,11 +418,6 @@ export function App() {
     // gated at the API.
     if (!canSign) screenLabel = "portfolio";
     content = canSign ? <Operate account={toAccount(activeWallet)} /> : <Portfolio canSend={canSend} />;
-  } else if (route === "multisig") {
-    // Managing multi-sig accounts (list/create/view) is local state and works on
-    // any active wallet. Building and submitting spends requires a synced node;
-    // only local CIP-1854 key derivation/signing additionally requires a seed.
-    content = <MultiSig canSpend={isReady} canSign={canSign} />;
   } else if (route === "import") {
     // Importing a transaction built elsewhere needs the active wallet's seed
     // to add a signature (like Offline/Operate); submitting is separately

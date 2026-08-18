@@ -469,6 +469,10 @@ export interface WalletView {
   // WalletView fixtures/mocks remain valid, and the UI reads them defensively.
   accounts?: AccountSummary[];
   active_account_index?: number;
+  // Set only on a multi-signature wallet: the policy and script address needed
+  // to build a spend, which collects co-signer witnesses rather than signing
+  // with a local seed.
+  multisig?: MultiSigAccount;
 }
 
 // GET /wallet/accounts response: the active wallet's accounts (with best-effort
@@ -712,6 +716,9 @@ export interface CreateMultiSigRequest {
   label: string;
   network?: string;
   policy: MultiSigPolicy;
+  // A multi-signature account is a vault wallet now, so composing one is a
+  // vault write and needs the vault password like any other add-wallet call.
+  vault_password: string;
 }
 
 // The wallet's own CIP-1854 participant identity, to share with co-signers.
