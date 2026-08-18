@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kesagent
+package bursa
 
 import (
 	"crypto/ed25519"
@@ -24,25 +24,28 @@ import (
 	"github.com/blinklabs-io/gouroboros/ledger"
 )
 
-// decodedOpCert holds the fields decoded from a canonical node operational
-// certificate CBOR envelope.
-type decodedOpCert struct {
-	kesVkey     []byte
-	issueNumber uint64
-	kesPeriod   uint64
-	coldSig     []byte
-	coldVkey    []byte
+// DecodedOpCert holds the fields decoded from a node operational certificate
+// CBOR envelope.
+type DecodedOpCert struct {
+	KESVKey     []byte
+	IssueNumber uint64
+	KESPeriod   uint64
+	ColdSig     []byte
+	ColdVKey    []byte
 }
 
-// decodeOpCert decodes a node operational certificate from CBOR.
+// DecodeOpCert decodes a node operational certificate from CBOR.
 //
-// Wire format (matches bursa / cardano-node):
+// Wire format (matches cardano-node / cardano-cli):
 //
 //	[[kes_vkey, issue_number, kes_period, cold_signature], cold_vkey]
 //
-// This mirrors bursa's own decodeOpCert; it is duplicated here to keep the
-// agent package self-contained (the root helper is unexported).
-func decodeOpCert(certBytes []byte) (*decodedOpCert, error) {
+// The outer array has two elements: the 4-element inner certificate array and
+// the 32-byte cold verification key. All six validation rules (outer/inner
+// arity, cold-vkey and kes-vkey types + lengths, non-negative counters, and the
+// cold-signature type + length) are enforced here so this is the single trusted
+// parser for opcerts across the module (both key loading and the KES agent).
+func DecodeOpCert(certBytes []byte) (*DecodedOpCert, error) {
 	var outer []any
 	if _, err := cbor.Decode(certBytes, &outer); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal OpCert CBOR: %w", err)
@@ -83,11 +86,11 @@ func decodeOpCert(certBytes []byte) (*decodedOpCert, error) {
 			kes.PublicKeySize, len(kesVkey),
 		)
 	}
-	issueNumber, err := asUint64(cert[1], "issue_number")
+	issueNumber, err := opCertUint64(cert[1], "issue_number")
 	if err != nil {
 		return nil, err
 	}
-	kesPeriod, err := asUint64(cert[2], "kes_period")
+	kesPeriod, err := opCertUint64(cert[2], "kes_period")
 	if err != nil {
 		return nil, err
 	}
@@ -101,16 +104,28 @@ func decodeOpCert(certBytes []byte) (*decodedOpCert, error) {
 			ed25519.SignatureSize, len(coldSig),
 		)
 	}
-	return &decodedOpCert{
-		kesVkey:     kesVkey,
-		issueNumber: issueNumber,
-		kesPeriod:   kesPeriod,
-		coldSig:     coldSig,
-		coldVkey:    coldVkey,
+	return &DecodedOpCert{
+		KESVKey:     kesVkey,
+		IssueNumber: issueNumber,
+		KESPeriod:   kesPeriod,
+		ColdSig:     coldSig,
+		ColdVKey:    coldVkey,
 	}, nil
 }
 
-func asUint64(v any, field string) (uint64, error) {
+// LedgerOpCert converts to the gouroboros ledger.OpCert for signature checks.
+func (d *DecodedOpCert) LedgerOpCert() *ledger.OpCert {
+	return &ledger.OpCert{
+		KesVkey:       d.KESVKey,
+		IssueNumber:   d.IssueNumber,
+		KesPeriod:     d.KESPeriod,
+		ColdSignature: d.ColdSig,
+	}
+}
+
+// opCertUint64 accepts the uint64/int64 forms CBOR may decode a non-negative
+// integer into, rejecting negatives and other types.
+func opCertUint64(v any, field string) (uint64, error) {
 	switch n := v.(type) {
 	case uint64:
 		return n, nil
@@ -118,18 +133,8 @@ func asUint64(v any, field string) (uint64, error) {
 		if n < 0 {
 			return 0, fmt.Errorf("invalid OpCert: %s cannot be negative, got %d", field, n)
 		}
-		return uint64(n), nil
+		return uint64(n), nil // #nosec G115 -- negative rejected above
 	default:
 		return 0, fmt.Errorf("invalid OpCert: %s has unexpected type %T", field, v)
-	}
-}
-
-// ledgerOpCert converts to the gouroboros ledger.OpCert for signature checks.
-func (d *decodedOpCert) ledgerOpCert() *ledger.OpCert {
-	return &ledger.OpCert{
-		KesVkey:       d.kesVkey,
-		IssueNumber:   d.issueNumber,
-		KesPeriod:     d.kesPeriod,
-		ColdSignature: d.coldSig,
 	}
 }
