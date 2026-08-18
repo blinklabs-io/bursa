@@ -26,10 +26,10 @@
  * the assembled witness array are byte-for-byte identical for identical key
  * material (exercised in seedsigner.test.ts).
  *
- * NOTE on CIP-8 message signing: `signMessage` is intentionally NOT implemented
- * here. It is being added to the HardwareSigner interface in a separate in-flight
- * change; the SeedSigner CIP-8 payloads (cardano-cip8-sig-req/res) land in a
- * follow-up once that interface method exists on main.
+ * NOTE on CIP-8 message signing: `signMessage` rejects here (capabilities
+ * reports `signMessage: false`). The bespoke SeedSigner CIP-8 payloads
+ * (cardano-cip8-sig-req/res) are a follow-up; this device is treated the same
+ * as Keystone in the Sign screen until then.
  */
 
 import type { HardwareSignResponse } from "../api/types";
@@ -39,6 +39,7 @@ import type {
 } from "./qr/types";
 import type {
   HardwareCapabilities,
+  HardwareSignMessageResult,
   HardwareSigner,
   SeedSignerConnectOptions,
 } from "./types";
@@ -83,7 +84,21 @@ const SEEDSIGNER_CAPABILITIES: HardwareCapabilities = {
   governance: true,
   multisig: true,
   poolReg: false,
+  // signMessage (CIP-8) over the air-gapped QR transport is not wired yet.
+  signMessage: false,
 };
+
+// signMessage is not yet implemented for SeedSigner: CIP-8 over the air-gapped
+// QR transport needs its own UR message-signing request/response encoding.
+// The method rejects (rather than being absent) so callers that skip the
+// capabilities.signMessage check still fail loudly instead of silently. It
+// takes no argument (a narrower signature is still assignable to the
+// interface's signMessage) so the unused request parameter is not carried.
+function seedSignerSignMessageUnsupported(): Promise<HardwareSignMessageResult> {
+  return Promise.reject(
+    new Error("Message signing is not supported on SeedSigner yet."),
+  );
+}
 
 // ── small helpers ─────────────────────────────────────────────────────────────
 
@@ -460,6 +475,8 @@ export async function connectSeedSigner(
         bridge.close();
       }
     },
+
+    signMessage: seedSignerSignMessageUnsupported,
 
     async close(): Promise<void> {
       // No persistent transport for QR; make sure any open modal/camera is torn

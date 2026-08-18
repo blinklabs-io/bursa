@@ -785,11 +785,16 @@ const SETTINGS_TABS: readonly TabDef<SettingsTab>[] = [
 ];
 
 interface SettingsScreenProps extends SettingsProps {
+  // The active wallet id, threaded to the message-signing tool so a hardware
+  // wallet can resolve which device backs it and sign on-device.
+  walletId: string;
   // Which panel to open on, so the routes these screens used to own still land
   // where their old links pointed.
   initialTab?: SettingsTab;
-  // Message signing needs the wallet's seed; a hardware or watch-only wallet
-  // gets the explanation rather than a form that cannot work.
+  // Whether this wallet can sign against the local keystore (a full/seed
+  // wallet). Hardware wallets can't, but still sign messages on-device, so the
+  // message-signing tool is offered to them too — only watch-only and
+  // multi-signature wallets get the explanation instead of a form.
   canSign?: boolean;
 }
 
@@ -803,11 +808,16 @@ interface SettingsScreenProps extends SettingsProps {
 export function Settings({
   account,
   walletType,
+  walletId,
   autoLock,
   initialTab = "general",
   canSign = false,
 }: SettingsScreenProps) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
+
+  // Hardware wallets sign messages on-device (no keystore/seed), so the
+  // message-signing tool is available to them as well as to full wallets.
+  const isHardware = walletType === "hardware";
 
   // The route can change under a mounted screen (#/contacts -> #/diagnostics),
   // and initial state alone would ignore it.
@@ -831,9 +841,13 @@ export function Settings({
             case "contacts":
               return <Contacts />;
             case "tools":
-              return canSign ? (
+              return canSign || isHardware ? (
                 <div className="settings-tools">
-                  <SignMessage account={account} />
+                  <SignMessage
+                    account={account}
+                    isHardware={isHardware}
+                    walletId={walletId}
+                  />
                   <VerifyMessage />
                 </div>
               ) : (
@@ -841,7 +855,7 @@ export function Settings({
                   <Card title="Sign message">
                     <p className="helper-text">
                       Signing a message needs this wallet&rsquo;s seed, which a
-                      hardware or watch-only wallet does not hold here.
+                      watch-only or multi-signature wallet does not hold here.
                       Verifying a signature works for any wallet.
                     </p>
                   </Card>

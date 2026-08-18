@@ -378,6 +378,7 @@ export function App() {
       <Settings
         account={toAccount(activeWallet)}
         walletType={activeWallet.type}
+        walletId={activeWallet.id}
         autoLock={autoLock}
         canSign={canSign}
         initialTab={SETTINGS_ROUTES.get(route)}

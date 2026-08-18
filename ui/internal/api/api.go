@@ -88,6 +88,10 @@ type Spender interface {
 	SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR string) (spend.TxResult, error)
 	BuildDelegation(ctx context.Context, req spend.DelegationRequest) (spend.DelegationPreview, error)
 	HardwareSignRequest(pendingID string) (spend.HardwareSignRequest, error)
+	// SignDataHardwareRequest resolves the seedless CIP-1852 paths + network a
+	// hardware device needs to sign a CIP-8 message for one of the wallet's own
+	// receive addresses.
+	SignDataHardwareRequest(addr string) (spend.HardwareSignDataRequest, error)
 	// DecodeTx, CosignTx, and SubmitTxCbor back the "import transaction" flow:
 	// a user pastes a full tx CBOR built elsewhere (e.g. by a DApp or another
 	// wallet) to inspect it, add this wallet's witness(es), and broadcast it.
@@ -1137,6 +1141,20 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		}
 		sig, key, err := sp.SignData(req.Address, []byte(req.Message), req.Password)
 		serve(w, map[string]string{"signature": sig, "key": key}, err)
+	})
+
+	// CIP-8 hardware message signing: resolve the seedless signing metadata
+	// (CIP-1852 paths + network) a hardware device needs to sign a message for one
+	// of the wallet's own receive addresses. Ungated like sign-data — pure
+	// derivation over the active account, no node and no keystore unlock.
+	mux.HandleFunc("GET /wallet/sign-data/hardware-request", func(w http.ResponseWriter, r *http.Request) {
+		addr := r.URL.Query().Get("address")
+		if addr == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "address is required"})
+			return
+		}
+		req, err := sp.SignDataHardwareRequest(addr)
+		serve(w, req, err)
 	})
 
 	// App settings: the lean-node (history-expiry) profile. Ungated — it is a
