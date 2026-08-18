@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -116,7 +117,7 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 					continue
 				}
 				path := filepath.Join(c.Path, e.Name())
-				data, err := os.ReadFile(path)
+				data, err := bursa.ReadSecretKeyFile(path)
 				if err != nil {
 					return nil, fmt.Errorf("read key %q: %w", e.Name(), err)
 				}
@@ -228,6 +229,56 @@ func BuildAuthorizedKeys(keys []config.SignerAuthorizedKeyConfig) (map[string]ed
 		out[k.Caller] = ed25519.PublicKey(raw)
 	}
 	return out, nil
+}
+
+// BuildCallerPolicies maps the configured caller_policies (caller -> key hash
+// hex -> raw tx-override map) into typed per-caller overrides for the policy
+// engine. Returns nil when none are configured. Each override is validated by a
+// JSON round-trip (unknown keys rejected) so a typo fails at boot.
+func BuildCallerPolicies(cfg map[string]map[string]map[string]any) (map[string]map[backend.KeyHash]*policy.CallerTxOverride, error) {
+	if len(cfg) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]map[backend.KeyHash]*policy.CallerTxOverride, len(cfg))
+	for caller, byKey := range cfg {
+		if caller == "" {
+			return nil, errors.New("signer.caller_policies entry has empty caller subject")
+		}
+		if len(byKey) == 0 {
+			continue
+		}
+		m := make(map[backend.KeyHash]*policy.CallerTxOverride, len(byKey))
+		for hashHex, raw := range byKey {
+			h, err := backend.ParseKeyHash(hashHex)
+			if err != nil {
+				return nil, fmt.Errorf("caller %q key %q: %w", caller, hashHex, err)
+			}
+			var ov policy.CallerTxOverride
+			if err := remap(raw, &ov); err != nil {
+				return nil, fmt.Errorf("caller %q key %q override: %w", caller, hashHex, err)
+			}
+			m[h] = &ov
+		}
+		out[caller] = m
+	}
+	return out, nil
+}
+
+// BuildPolicyHook constructs the optional external policy hook from config.
+// Returns nil when signer.policy_hook_url is unset (hook disabled).
+func BuildPolicyHook(cfg config.SignerConfig) PolicyHook {
+	if cfg.PolicyHookURL == "" {
+		return nil
+	}
+	// Bound the configured timeout before the signed conversion so a large
+	// value cannot overflow time.Duration (~292 years is far beyond any sane
+	// hook timeout).
+	timeoutMs := cfg.PolicyHookTimeoutMs
+	const maxTimeoutMs = uint(24 * 60 * 60 * 1000) // 1 day
+	if timeoutMs > maxTimeoutMs {
+		timeoutMs = maxTimeoutMs
+	}
+	return NewHTTPPolicyHook(cfg.PolicyHookURL, time.Duration(timeoutMs)*time.Millisecond)
 }
 
 // BuildWatermark constructs the configured watermark store and mode.

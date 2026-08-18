@@ -22,6 +22,7 @@
     "@zxing/browser": "^0.1.5",
     "@zxing/library": "^0.21.0",
     "bech32": "^1.1.4",
+    "buffer": "^6.0.3",
     "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

@@ -357,12 +357,12 @@ export function Registration({ account }: { account: Account }) {
             <p className="field-label">Pool ID</p>
             <div className="tx-hash-row">
               <code className="tx-hash accent">{result.pool_id}</code>
-              <CopyButton value={result.pool_id} />
+              <CopyButton value={result.pool_id} ariaLabel="Copy pool ID" />
             </div>
             <p className="field-label">Certificate (CBOR hex)</p>
             <div className="tx-hash-row">
               <code className="tx-hash">{result.cbor_hex}</code>
-              <CopyButton value={result.cbor_hex} />
+              <CopyButton value={result.cbor_hex} ariaLabel="Copy certificate CBOR" />
             </div>
           </div>
         )}

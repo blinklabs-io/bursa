@@ -36,13 +36,16 @@ const POOL_COLUMNS = [
 
 interface PoolDirectoryProps {
   network: string;
+  // Hands a chosen pool to the delegation form. Optional so the directory can
+  // still be rendered on its own as a pure browser.
+  onDelegate?: (poolId: string) => void;
 }
 
-// PoolDirectory is a read-only browse/search screen for the stake pools the
-// embedded node has indexed. Data comes entirely from the local node (no
-// external service), so it needs no consent gate. It does not delegate: copy a
-// pool ID and paste it into Staking to delegate to it.
-export function PoolDirectory({ network }: PoolDirectoryProps) {
+// PoolDirectory is the browse/search view for the stake pools the embedded
+// node has indexed. Data comes entirely from the local node (no external
+// service), so it needs no consent gate. Choosing a pool hands it to the
+// delegation form; it does not itself submit anything.
+export function PoolDirectory({ network, onDelegate }: PoolDirectoryProps) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<PoolDirectoryResponse | null>(null);
@@ -92,7 +95,16 @@ export function PoolDirectory({ network }: PoolDirectoryProps) {
     pledge: formatAda(p.declared_pledge),
     live_stake: formatAda(p.live_stake),
     saturation: pct(p.live_saturation),
-    actions: <CopyButton value={p.pool_id} aria-label={`Copy pool id ${p.pool_id}`} />,
+    actions: (
+      <span className="row-actions">
+        {onDelegate && (
+          <Button variant="ghost" onClick={() => onDelegate(p.pool_id)}>
+            Delegate
+          </Button>
+        )}
+        <CopyButton value={p.pool_id} aria-label={`Copy pool id ${p.pool_id}`} />
+      </span>
+    ),
   }));
 
   return (
@@ -100,8 +112,7 @@ export function PoolDirectory({ network }: PoolDirectoryProps) {
       <Card title="Stake Pool Directory">
         <p className="helper-text">
           Browse and search stake pools your embedded node has indexed — read
-          directly from the node, no external service is contacted. To delegate,
-          copy a pool ID and paste it into <strong>Staking</strong>.
+          directly from the node, no external service is contacted.
         </p>
 
         <label htmlFor="pool-search">Search by pool ID</label>

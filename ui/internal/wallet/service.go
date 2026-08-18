@@ -85,6 +85,7 @@ func cloneAccount(acct *Account) *Account {
 	}
 	return &Account{
 		Network:          acct.Network,
+		AccountIndex:     acct.AccountIndex,
 		StakeAddress:     acct.StakeAddress,
 		ReceiveAddresses: cloneStringSlice(acct.ReceiveAddresses),
 		DRepKeyHash:      acct.DRepKeyHash,
@@ -161,12 +162,23 @@ func (s *Service) scanAddresses(ctx context.Context, acct *Account) ([]string, e
 	return out, nil
 }
 
-// Balance aggregates the UTxO set across the account's addresses (chain-seen and
-// derived; see scanAddresses).
+// Balance aggregates the UTxO set across the active account's addresses
+// (chain-seen and derived; see scanAddresses).
 func (s *Service) Balance(ctx context.Context) (Balance, error) {
 	acct, err := s.currentAccount()
 	if err != nil {
 		return Balance{}, err
+	}
+	return s.BalanceForAccount(ctx, acct)
+}
+
+// BalanceForAccount aggregates the UTxO set for an explicitly supplied account,
+// independent of the currently bound one. It backs the multi-account listing,
+// which shows a per-account balance summary without rebinding the service. A nil
+// account is treated as "no wallet".
+func (s *Service) BalanceForAccount(ctx context.Context, acct *Account) (Balance, error) {
+	if acct == nil {
+		return Balance{}, ErrNoWallet
 	}
 	addrs, err := s.scanAddresses(ctx, acct)
 	if err != nil {
