@@ -61,21 +61,22 @@ func (f fakeStatuser) Status() supervisor.Status { return f.s }
 // memory: Unlock/Lock toggle locked; AddWallet appends and activates; the active
 // wallet drives reads/spends.
 type fakeVault struct {
-	exists     bool
-	locked     bool
-	wallets    []vault.WalletMeta
-	activeID   string
-	createErr  error
-	unlockErr  error
-	addErr     error
-	addCalled  bool
-	importErr  error
-	imported   bool
-	gotName    string
-	gotNetwork string
-	gotSpend   string
-	gotVault   string
-	gotSeed    []byte
+	exists       bool
+	locked       bool
+	wallets      []vault.WalletMeta
+	activeID     string
+	setActiveErr error
+	createErr    error
+	unlockErr    error
+	addErr       error
+	addCalled    bool
+	importErr    error
+	imported     bool
+	gotName      string
+	gotNetwork   string
+	gotSpend     string
+	gotVault     string
+	gotSeed      []byte
 
 	// TPM fakes
 	tpmStatus          vault.TPMStatusInfo
@@ -341,6 +342,9 @@ func (f *fakeVault) RemoveWallet(id, _ string) error {
 }
 
 func (f *fakeVault) SetActive(id string) (vault.WalletMeta, error) {
+	if f.setActiveErr != nil {
+		return vault.WalletMeta{}, f.setActiveErr
+	}
 	for _, w := range f.wallets {
 		if w.ID == id {
 			f.activeID = id
@@ -1716,7 +1720,6 @@ type fakeMultiSig struct {
 	listErr    error
 	getErr     error
 	createErr  error
-	deleteErr  error
 	myKeyErr   error
 	balanceErr error
 	buildErr   error
@@ -1725,7 +1728,6 @@ type fakeMultiSig struct {
 
 	gotGetID         string
 	gotCreate        multisig.CreateRequest
-	gotDeleteID      string
 	gotMyKeyPass     string
 	gotBalanceID     string
 	gotBuildID       string
@@ -3821,5 +3823,40 @@ func TestSameOriginGuardSkipsConnector(t *testing.T) {
 	}
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("POST /connector/pair (initiate) = %d, want 202 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMultiSigCreateReportsActivationFailure covers the case where the script
+// wallet is persisted but selecting it fails: reads and sends stay bound to the
+// previous wallet, so answering 200 with the new wallet marked active would be
+// a claim the client cannot check.
+func TestMultiSigCreateReportsActivationFailure(t *testing.T) {
+	acct := multisig.Account{
+		ID:            "ms-1",
+		Label:         "Treasury",
+		Network:       "preview",
+		ScriptCBOR:    "8200",
+		ScriptAddress: "addr_test1wq" + strings.Repeat("q", 20),
+		Policy:        multisig.Policy{Threshold: 1},
+	}
+	ms := &fakeMultiSig{accounts: []multisig.Account{acct}, account: acct}
+	fv := &fakeVault{setActiveErr: errors.New("selection storage unavailable")}
+	h := NewHandler(
+		fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}},
+		fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{},
+		nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler(),
+	)
+
+	createBody := `{"label":"Treasury","vault_password":"vault-password-xyz",` +
+		`"policy":{"threshold":1,"participants":[{"key_hash_hex":"` +
+		strings.Repeat("a", 56) + `"}]}}`
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/multisig", bytes.NewBufferString(createBody)))
+
+	if rec.Code == http.StatusOK {
+		t.Fatalf("POST /wallet/multisig = 200 body %s, want the activation failure surfaced", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"active":true`) {
+		t.Fatalf("response claims the wallet is active despite the failure: %s", rec.Body.String())
 	}
 }

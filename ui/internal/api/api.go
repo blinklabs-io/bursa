@@ -1910,10 +1910,17 @@ func registerMultiSigRoutes(
 		// Adding a wallet selects it, as the other add-wallet paths do. Without
 		// this the response would claim the new wallet is active while balance
 		// and send requests kept answering for the previous one.
-		if active, aErr := vlt.SetActive(meta.ID); aErr == nil {
-			bindActive(active)
-			meta = active
+		active, aErr := vlt.SetActive(meta.ID)
+		if aErr != nil {
+			// The wallet is persisted but the selection did not move, so reads
+			// and sends still answer for the previous one. Reporting it as
+			// active would be a lie the client cannot detect; surface the
+			// failure instead and let the caller retry the activation.
+			serve(w, struct{}{}, aErr)
+			return
 		}
+		bindActive(active)
+		meta = active
 		serve(w, toWalletView(meta, meta.ID), nil)
 	})
 
