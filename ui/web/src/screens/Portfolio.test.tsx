@@ -308,3 +308,27 @@ test("NFT image load failure renders the empty thumbnail", () => {
   expect(screen.queryByRole("img", { name: "Token" })).not.toBeInTheDocument();
   expect(container.querySelector(".nft-thumb-empty")).toBeInTheDocument();
 });
+
+// A greyed Send with no reason leaves someone guessing whether the wallet is
+// broken or just waiting. The palette has always said why; the button now does.
+test("a disabled Send says why it is disabled", () => {
+  mockBalance("5000000", []);
+  mockDelegation();
+  mockAssetMetadata({});
+
+  render(<Portfolio canSend={false} sendDisabledReason="Needs a synced node" />);
+
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  expect(screen.getByText(/send is unavailable — needs a synced node/i)).toBeInTheDocument();
+});
+
+test("an enabled Send explains nothing", () => {
+  mockBalance("5000000", []);
+  mockDelegation();
+  mockAssetMetadata({});
+
+  render(<Portfolio canSend sendDisabledReason="Needs a synced node" />);
+
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  expect(screen.queryByText(/send is unavailable/i)).not.toBeInTheDocument();
+});

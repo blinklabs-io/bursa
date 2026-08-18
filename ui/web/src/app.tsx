@@ -180,6 +180,13 @@ export function App() {
     // otherwise would drop it into the seed-based one.
     (activeWallet?.type === "multi_signature" && multiSigAccount !== undefined)
   );
+
+  // Why Send is off, in one place: the palette and the button on the balance
+  // both show it, and two surfaces explaining the same block differently is
+  // how they drift.
+  const sendDisabledReason = !isReady
+    ? "Needs a synced node"
+    : "This wallet cannot spend";
   // Sign/Offline/Operate all need the wallet's seed (message signing, air-gap
   // signing, and cold/VRF/KES key derivation respectively). Hardware wallets
   // are seedless (xpub-only) and sign only via the on-device path Send uses,
@@ -433,7 +440,7 @@ export function App() {
     );
   } else if (SEND_ROUTES.has(route) && !canSend) {
     screenLabel = "portfolio";
-    content = <Portfolio canSend={canSend} multiSigError={multiSigError} />;
+    content = <Portfolio canSend={canSend} sendDisabledReason={sendDisabledReason} multiSigError={multiSigError} />;
   } else if (SEND_ROUTES.has(route) && canSend) {
     // A multi-signature wallet spends by collecting co-signer witnesses rather
     // than signing in one step, so Send means a different flow for it.
@@ -451,7 +458,7 @@ export function App() {
     // Guard deep-links (#/swap): DEX quotes need a queryable mainnet node, so
     // fall back to Portfolio while the node or active wallet cannot support it.
     screenLabel = "portfolio";
-    content = <Portfolio canSend={canSend} multiSigError={multiSigError} />;
+    content = <Portfolio canSend={canSend} sendDisabledReason={sendDisabledReason} multiSigError={multiSigError} />;
   } else if (STAKE_ROUTES.has(route)) {
     // Delegation, rewards and the pool directory are one screen, and it is not
     // gated as a whole: reward history is a plain account read that the old
@@ -473,20 +480,20 @@ export function App() {
     // Air-gap signing needs the active wallet's seed (to sign) but no node for
     // the sign step; falls back to Portfolio without an active wallet.
     if (!canSign) screenLabel = "portfolio";
-    content = canSign ? <Offline /> : <Portfolio canSend={canSend} multiSigError={multiSigError} />;
+    content = canSign ? <Offline /> : <Portfolio canSend={canSend} sendDisabledReason={sendDisabledReason} multiSigError={multiSigError} />;
   } else if (route === "operate") {
     // Pool operations derive cold/VRF/KES keys from the seed and need the spend
     // password. A wallet must be active; otherwise fall back to Portfolio. Most
     // pool ops are offline; only retirement submission needs a synced node,
     // gated at the API.
     if (!canSign) screenLabel = "portfolio";
-    content = canSign ? <Operate account={toAccount(activeWallet)} /> : <Portfolio canSend={canSend} multiSigError={multiSigError} />;
+    content = canSign ? <Operate account={toAccount(activeWallet)} /> : <Portfolio canSend={canSend} sendDisabledReason={sendDisabledReason} multiSigError={multiSigError} />;
   } else if (route === "import") {
     // Importing a transaction built elsewhere needs the active wallet's seed
     // to add a signature (like Offline/Operate); submitting is separately
     // gated inside the screen on the node being ready (canSubmit).
     if (!canSign) screenLabel = "portfolio";
-    content = canSign ? <ImportTransaction canSubmit={isReady} /> : <Portfolio canSend={canSend} multiSigError={multiSigError} />;
+    content = canSign ? <ImportTransaction canSubmit={isReady} /> : <Portfolio canSend={canSend} sendDisabledReason={sendDisabledReason} multiSigError={multiSigError} />;
   } else if (route === "receive") {
     // Explorer links on each address need the active wallet's real network
     // (preview/preprod/mainnet), which the generic ROUTES map (no props)
@@ -503,7 +510,7 @@ export function App() {
     // it through the props-less ROUTES map would silently disable it.
     const Screen = ROUTES.get(route);
     if (!Screen) screenLabel = "portfolio";
-    content = Screen && route !== "portfolio" ? <Screen /> : <Portfolio canSend={canSend} multiSigError={multiSigError} />;
+    content = Screen && route !== "portfolio" ? <Screen /> : <Portfolio canSend={canSend} sendDisabledReason={sendDisabledReason} multiSigError={multiSigError} />;
   }
 
   // Build the nav item descriptors once, shared between desktop sidebar and
@@ -526,9 +533,6 @@ export function App() {
     : !canQueryNode
       ? "Needs a synced node"
       : "Mainnet only";
-  const sendDisabledReason = !isReady
-    ? "Needs a synced node"
-    : "This wallet cannot spend";
   const commands: Command[] = [
     { id: "portfolio", label: "Portfolio", group: "Go", keywords: "balance tokens nfts home", run: () => navigate("portfolio") },
     { id: "activity", label: "Activity", group: "Go", keywords: "history transactions", run: () => navigate("activity") },

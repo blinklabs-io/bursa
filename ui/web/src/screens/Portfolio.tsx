@@ -69,9 +69,13 @@ interface PortfolioProps {
   // Whether this wallet on this node can build a spend. Receive needs nothing,
   // so it is always offered.
   canSend?: boolean;
+  // Why Send is off, when it is. A greyed button with no reason leaves someone
+  // guessing whether the wallet is broken or just waiting; the command palette
+  // has always said why, and this is the same string.
+  sendDisabledReason?: string;
 }
 
-export function Portfolio({ canSend = false, multiSigError }: PortfolioProps = {}) {
+export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }: PortfolioProps = {}) {
   const balance = useBalance();
   const delegation = useDelegation();
   const [query, setQuery] = useState("");
@@ -137,6 +141,9 @@ export function Portfolio({ canSend = false, multiSigError }: PortfolioProps = {
             Receive
           </Button>
         </div>
+        {!canSend && sendDisabledReason && (
+          <p className="helper-text">Send is unavailable — {sendDisabledReason.toLowerCase()}.</p>
+        )}
       </Card>
 
       <Card title="Native Tokens">

@@ -36,6 +36,13 @@ type AddressView struct {
 	NextUnused string   `json:"next_unused"`
 }
 
+// provisionalRewardsNote is shown to the user beside a provisional rewards
+// figure. It deliberately does not name dingo or its issue numbers: the person
+// reading it is looking at their own wallet, and an upstream tracker reference
+// tells them nothing they can act on. The cause stays recorded on
+// DelegationView below, where the people who can act on it will read it.
+const provisionalRewardsNote = "Rewards are provisional and may not match on-chain totals exactly."
+
 // DelegationView is the delegation/rewards summary. Rewards are provisional —
 // dingo has open reward-accounting bugs (#2373–#2376).
 type DelegationView struct {
@@ -522,7 +529,7 @@ func (s *Service) Delegation(ctx context.Context) (DelegationView, error) {
 			RewardsSum:   "0",
 			Withdrawable: "0",
 			Provisional:  true,
-			Note:         "rewards are provisional; dingo reward accounting has open issues (#2373-#2376)",
+			Note:         provisionalRewardsNote,
 		}, nil
 	}
 	info, err := s.chain.Account(ctx, acct.StakeAddress)
@@ -540,7 +547,7 @@ func (s *Service) Delegation(ctx context.Context) (DelegationView, error) {
 		RewardsSum:   info.RewardsSum,
 		Withdrawable: info.WithdrawableAmount,
 		Provisional:  true,
-		Note:         "rewards are provisional; dingo reward accounting has open issues (#2373-#2376)",
+		Note:         provisionalRewardsNote,
 	}, nil
 }
 
@@ -558,7 +565,7 @@ func (s *Service) Rewards(ctx context.Context) (RewardHistory, error) {
 		return RewardHistory{
 			Rewards:     []RewardEntry{},
 			Provisional: true,
-			Note:        "rewards are provisional; dingo reward accounting has open issues (#2373-#2376)",
+			Note:        provisionalRewardsNote,
 		}, nil
 	}
 	rewards, err := s.chain.AccountRewards(ctx, acct.StakeAddress)
@@ -578,6 +585,6 @@ func (s *Service) Rewards(ctx context.Context) (RewardHistory, error) {
 	return RewardHistory{
 		Rewards:     entries,
 		Provisional: true,
-		Note:        "rewards are provisional; dingo reward accounting has open issues (#2373-#2376)",
+		Note:        provisionalRewardsNote,
 	}, nil
 }
