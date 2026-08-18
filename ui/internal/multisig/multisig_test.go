@@ -230,11 +230,11 @@ func TestComposeScriptRejectsBadThreshold(t *testing.T) {
 
 func TestCreateListGetDelete(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, filepath.Join(t.TempDir(), "multisig.json"))
+	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
 	_, khA, _ := multiSigKeyHash(t, mnemonicA)
 	_, khB, _ := multiSigKeyHash(t, mnemonicB)
 
-	acct, err := svc.Create(CreateRequest{
+	acct, err := createForTest(svc, CreateRequest{
 		Label:   "treasury",
 		Network: "preview",
 		Policy:  Policy{Threshold: 2, Participants: []Participant{{KeyHashHex: khA}, {KeyHashHex: khB}}},
@@ -247,7 +247,7 @@ func TestCreateListGetDelete(t *testing.T) {
 	}
 
 	// Persisted: a fresh service reading the same file sees it.
-	svc2 := NewService(fc, nil, svc.store.path)
+	svc2 := NewService(fc, nil, newStore(svc.accounts.(*store).path))
 	list, err := svc2.List()
 	if err != nil || len(list) != 1 || list[0].ID != acct.ID {
 		t.Fatalf("List after reload: %v, %+v", err, list)
@@ -258,8 +258,11 @@ func TestCreateListGetDelete(t *testing.T) {
 		t.Fatalf("Get: %v %+v", err, got)
 	}
 
-	if err := svc2.Delete(acct.ID); err != nil {
-		t.Fatalf("Delete: %v", err)
+	// Removal is a vault wallet operation now (DELETE /wallet/{id}), so the
+	// service no longer deletes; the store still can, and that is what the
+	// migration-era file path exercises here.
+	if err := svc2.accounts.(*store).remove(acct.ID); err != nil {
+		t.Fatalf("remove: %v", err)
 	}
 	if _, err := svc2.Get(acct.ID); !errors.Is(err, ErrUnknownAccount) {
 		t.Fatalf("expected ErrUnknownAccount after delete, got %v", err)
@@ -299,7 +302,7 @@ func TestStoreRemoveRollsBackOnPersistFailure(t *testing.T) {
 func TestMyKeyMatchesParticipantDerivation(t *testing.T) {
 	fc := newFakeChain()
 	ks := newTestKeystore(t, mnemonicA)
-	svc := NewService(fc, ks, filepath.Join(t.TempDir(), "multisig.json"))
+	svc := NewService(fc, ks, newStore(filepath.Join(t.TempDir(), "multisig.json")))
 
 	mk, err := svc.MyKey("test-password-123")
 	if err != nil {
@@ -314,7 +317,7 @@ func TestMyKeyMatchesParticipantDerivation(t *testing.T) {
 func TestMyKeyWrongPassword(t *testing.T) {
 	fc := newFakeChain()
 	ks := newTestKeystore(t, mnemonicA)
-	svc := NewService(fc, ks, filepath.Join(t.TempDir(), "multisig.json"))
+	svc := NewService(fc, ks, newStore(filepath.Join(t.TempDir(), "multisig.json")))
 	if _, err := svc.MyKey("wrong-password-xx"); !errors.Is(err, ErrWrongPassword) {
 		t.Fatalf("expected ErrWrongPassword, got %v", err)
 	}
@@ -332,8 +335,8 @@ func TestSpendFlow(t *testing.T) {
 	_, khB, _ := multiSigKeyHash(t, mnemonicB)
 
 	// Participant A's service creates the account (its store).
-	svcA := NewService(fc, ksA, filepath.Join(t.TempDir(), "a.json"))
-	acct, err := svcA.Create(CreateRequest{
+	svcA := NewService(fc, ksA, newStore(filepath.Join(t.TempDir(), "a.json")))
+	acct, err := createForTest(svcA, CreateRequest{
 		Label:   "joint",
 		Network: "preview",
 		Policy:  Policy{Threshold: 2, Participants: []Participant{{KeyHashHex: khA}, {KeyHashHex: khB}}},
@@ -367,7 +370,7 @@ func TestSpendFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sign A: %v", err)
 	}
-	svcB := NewService(fc, ksB, filepath.Join(t.TempDir(), "b.json"))
+	svcB := NewService(fc, ksB, newStore(filepath.Join(t.TempDir(), "b.json")))
 	witB, err := svcB.Sign(built.UnsignedTxCBOR, "test-password-123")
 	if err != nil {
 		t.Fatalf("Sign B: %v", err)
@@ -443,12 +446,12 @@ func assertSubmittedWitnesses(t *testing.T, fc *fakeChain, acct Account, khA, kh
 
 func TestBuildTimelockValidityInterval(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, filepath.Join(t.TempDir(), "multisig.json"))
+	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
 	_, khA, _ := multiSigKeyHash(t, mnemonicA)
 	before := uint64(1234)
 	after := uint64(5678)
 
-	acct, err := svc.Create(CreateRequest{
+	acct, err := createForTest(svc, CreateRequest{
 		Label:   "timelocked",
 		Network: "preview",
 		Policy: Policy{
@@ -493,7 +496,7 @@ func TestBuildTimelockValidityInterval(t *testing.T) {
 		{name: "invalid after", invalidAfter: &tooLarge, want: "invalid_after slot out of range"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			acct, err := svc.Create(CreateRequest{
+			acct, err := createForTest(svc, CreateRequest{
 				Label:   tc.name,
 				Network: "preview",
 				Policy: Policy{
@@ -517,9 +520,9 @@ func TestBuildTimelockValidityInterval(t *testing.T) {
 
 func TestBuildNoUTxOs(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, filepath.Join(t.TempDir(), "multisig.json"))
+	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
 	_, khA, _ := multiSigKeyHash(t, mnemonicA)
-	acct, err := svc.Create(CreateRequest{
+	acct, err := createForTest(svc, CreateRequest{
 		Label:   "empty",
 		Network: "preview",
 		Policy:  Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: khA}}},

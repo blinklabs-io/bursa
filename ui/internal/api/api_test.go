@@ -90,6 +90,9 @@ type fakeVault struct {
 	// hardware wallet
 	hwErr           error
 	hwCalled        bool
+	scriptCalled    bool
+	scriptErr       error
+	gotScript       vault.ScriptMeta
 	gotXpub         string
 	gotAccountIndex uint32
 
@@ -652,6 +655,27 @@ func TestGetPoolDirectoryNilLookup(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /wallet/pools with nil lookup = %d, want 503", rec.Code)
 	}
+}
+
+func (f *fakeVault) AddScriptWallet(name, network string, script vault.ScriptMeta, vaultPw string) (vault.WalletMeta, error) {
+	if f.scriptErr != nil {
+		return vault.WalletMeta{}, f.scriptErr
+	}
+	f.scriptCalled = true
+	f.gotName = name
+	f.gotVault = vaultPw
+	f.gotScript = script
+	meta := vault.WalletMeta{
+		ID:      "ms1",
+		Name:    name,
+		Network: network,
+		Type:    vault.WalletTypeMultiSignature,
+		Script:  &script,
+		Account: &wallet.Account{Network: network, ReceiveAddresses: []string{script.ScriptAddress}},
+	}
+	f.wallets = append(f.wallets, meta)
+	f.activeID = meta.ID
+	return meta, nil
 }
 
 func (f *fakeVault) AddHardwareWallet(name, accountXpubBech32, network, vaultPw string, accountIndex uint32, _ int) (vault.WalletMeta, error) {
@@ -1732,14 +1756,9 @@ func (f *fakeMultiSig) Get(id string) (multisig.Account, error) {
 	return f.account, f.getErr
 }
 
-func (f *fakeMultiSig) Create(req multisig.CreateRequest) (multisig.Account, error) {
+func (f *fakeMultiSig) Compose(req multisig.CreateRequest) (multisig.Account, error) {
 	f.gotCreate = req
 	return f.account, f.createErr
-}
-
-func (f *fakeMultiSig) Delete(id string) error {
-	f.gotDeleteID = id
-	return f.deleteErr
 }
 
 func (f *fakeMultiSig) MyKey(password string) (multisig.MyKey, error) {
@@ -1797,7 +1816,8 @@ func TestMultiSigRoutesUngatedWhileNodeNotReady(t *testing.T) {
 		myKey:    multisig.MyKey{KeyHashHex: strings.Repeat("b", 56), VKeyHex: strings.Repeat("c", 64)},
 		witness:  multisig.Witness{WitnessCBOR: "81825820"},
 	}
-	h := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
+	fv := &fakeVault{}
+	h := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/multisig", nil))
@@ -1806,13 +1826,22 @@ func TestMultiSigRoutesUngatedWhileNodeNotReady(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	createBody := `{"label":"Treasury","policy":{"threshold":1,"participants":[{"key_hash_hex":"` + strings.Repeat("a", 56) + `"}]}}`
+	// A multi-signature account is a wallet now, so creating one is a vault
+	// write and carries the vault password like any other add-wallet call.
+	createBody := `{"label":"Treasury","vault_password":"vault-password-xyz","policy":{"threshold":1,"participants":[{"key_hash_hex":"` + strings.Repeat("a", 56) + `"}]}}`
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/multisig", bytes.NewBufferString(createBody)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /wallet/multisig = %d body %s, want 200", rec.Code, rec.Body.String())
 	}
 	if ms.gotCreate.Label != "Treasury" || ms.gotCreate.Network != "preview" || ms.gotCreate.Policy.Threshold != 1 {
-		t.Fatalf("create args = %+v, want label/network/policy", ms.gotCreate)
+		t.Fatalf("compose args = %+v, want label/network/policy", ms.gotCreate)
+	}
+	// The composed script must actually land in the vault, not just be returned.
+	if !fv.scriptCalled {
+		t.Fatal("composing an account must store it as a vault wallet")
+	}
+	if fv.gotScript.ScriptAddress == "" || fv.gotVault != "vault-password-xyz" {
+		t.Fatalf("vault got script=%+v password=%q", fv.gotScript, fv.gotVault)
 	}
 
 	rec = httptest.NewRecorder()

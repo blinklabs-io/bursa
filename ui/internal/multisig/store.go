@@ -100,7 +100,9 @@ func (s *store) persistLocked() error {
 // list returns a deep copy of the saved accounts, so a caller holding the
 // result past the lock release cannot observe later add/remove calls through
 // shared backing arrays or time-lock pointers.
-func (s *store) list() ([]Account, error) {
+// List satisfies AccountSource, so the file store can still back tests and the
+// migration reader.
+func (s *store) List() ([]Account, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.loadLocked(); err != nil {
@@ -115,7 +117,8 @@ func (s *store) list() ([]Account, error) {
 
 // get returns a deep copy of the account with the given id, or
 // ErrUnknownAccount. See list for why a deep copy matters here.
-func (s *store) get(id string) (Account, error) {
+// Get satisfies AccountSource.
+func (s *store) Get(id string) (Account, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.loadLocked(); err != nil {

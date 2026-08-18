@@ -23,6 +23,7 @@ package boot
 import (
 	"context"
 	"errors"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -73,6 +74,58 @@ func (s scriptVault) AddScriptWallet(name, network string, w multisig.ScriptWall
 }
 
 func (s scriptVault) ScriptAddresses() ([]string, error) { return s.v.ScriptAddresses() }
+
+// scriptAccounts reads saved multi-signature accounts back out of the vault for
+// the multisig service, which spends from them but no longer stores them. The
+// wallet ID is the account ID, so links and requests survive the move.
+type scriptAccounts struct{ v *vault.Vault }
+
+func (s scriptAccounts) List() ([]multisig.Account, error) {
+	metas, err := s.v.Wallets()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]multisig.Account, 0, len(metas))
+	for _, m := range metas {
+		if !m.IsScript() {
+			continue
+		}
+		acct, err := scriptAccountFromMeta(m)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, acct)
+	}
+	return out, nil
+}
+
+func (s scriptAccounts) Get(id string) (multisig.Account, error) {
+	metas, err := s.v.Wallets()
+	if err != nil {
+		return multisig.Account{}, err
+	}
+	for _, m := range metas {
+		if m.ID == id && m.IsScript() {
+			return scriptAccountFromMeta(m)
+		}
+	}
+	return multisig.Account{}, multisig.ErrUnknownAccount
+}
+
+func scriptAccountFromMeta(m vault.WalletMeta) (multisig.Account, error) {
+	var policy multisig.Policy
+	if err := json.Unmarshal(m.Script.Policy, &policy); err != nil {
+		return multisig.Account{}, fmt.Errorf("wallet %q: decode multi-signature policy: %w", m.Name, err)
+	}
+	return multisig.Account{
+		ID:            m.ID,
+		Label:         m.Name,
+		Network:       m.Network,
+		Policy:        policy,
+		ScriptCBOR:    m.Script.ScriptCBOR,
+		ScriptAddress: m.Script.ScriptAddress,
+	}, nil
+}
 
 type vaultKeystore struct{ v *vault.Vault }
 
@@ -283,7 +336,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// Native multi-sig accounts are persisted under the data dir; signing uses
 	// the active wallet's CIP-1854 key, decrypted from the vault on demand.
 	multisigStorePath := filepath.Join(cfg.DataDir, "multisig.json")
-	multisigSvc := multisig.NewService(chainCtx, vaultKeystore{v: vlt}, multisigStorePath)
+	multisigSvc := multisig.NewService(chainCtx, vaultKeystore{v: vlt}, scriptAccounts{v: vlt})
 
 	// Multi-signature accounts predate the vault and were kept in a plain file
 	// beside it. Move them in on unlock, so they are behind the vault password
