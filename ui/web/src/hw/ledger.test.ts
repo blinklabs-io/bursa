@@ -6,6 +6,7 @@ const {
   mockCreate,
   mockGetExtendedPublicKey,
   mockSignTransaction,
+  mockSignMessage,
   mockAdaConstructor,
 } = vi.hoisted(() => {
   const mockTransport = { close: vi.fn().mockResolvedValue(undefined) };
@@ -25,13 +26,27 @@ const {
     auxiliaryDataSupplement: null,
   });
 
+  const mockSignMessage = vi.fn().mockResolvedValue({
+    signatureHex: "ab".repeat(64),
+    signingPublicKeyHex: "cd".repeat(32),
+    addressFieldHex: "0011",
+  });
+
   const mockAdaInstance = {
     getExtendedPublicKey: mockGetExtendedPublicKey,
     signTransaction: mockSignTransaction,
+    signMessage: mockSignMessage,
   };
   const mockAdaConstructor = vi.fn().mockImplementation(() => mockAdaInstance);
 
-  return { mockTransport, mockCreate, mockGetExtendedPublicKey, mockSignTransaction, mockAdaConstructor };
+  return {
+    mockTransport,
+    mockCreate,
+    mockGetExtendedPublicKey,
+    mockSignTransaction,
+    mockSignMessage,
+    mockAdaConstructor,
+  };
 });
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
@@ -123,12 +138,18 @@ describe("connectLedger", () => {
       witnesses: [{ path: ACCT0_PATH, witnessSignatureHex: MOCK_WITNESS_SIG_HEX }],
       auxiliaryDataSupplement: null,
     });
+    mockSignMessage.mockResolvedValue({
+      signatureHex: "ab".repeat(64),
+      signingPublicKeyHex: "cd".repeat(32),
+      addressFieldHex: "0011",
+    });
     mockTransport.close.mockResolvedValue(undefined);
     // mockAdaConstructor still returns the hoisted mockAdaInstance with the
     // now-cleared fns; restore default mock returns set above via the fns.
     mockAdaConstructor.mockImplementation(() => ({
       getExtendedPublicKey: mockGetExtendedPublicKey,
       signTransaction: mockSignTransaction,
+      signMessage: mockSignMessage,
     }));
     setWebHID(true);
   });
@@ -151,7 +172,7 @@ describe("connectLedger", () => {
     await session.close();
   });
 
-  test("reports kind 'ledger' and send-only capabilities", async () => {
+  test("reports kind 'ledger' and send + message-signing capabilities", async () => {
     const session = await connectLedger();
     expect(session.kind).toBe("ledger");
     expect(session.capabilities).toEqual({
@@ -160,6 +181,7 @@ describe("connectLedger", () => {
       governance: false,
       multisig: false,
       poolReg: false,
+      signMessage: true,
     });
     await session.close();
   });
@@ -300,6 +322,82 @@ describe("connectLedger", () => {
       // The CBOR hex must contain both the pubkey and the sig as substrings
       expect(result).toContain(MOCK_WITNESS_PUB_HEX);
       expect(result).toContain(MOCK_WITNESS_SIG_HEX);
+      await session.close();
+    });
+  });
+
+  describe("signMessage", () => {
+    const MSG_REQ = {
+      messageHex: "48656c6c6f", // "Hello"
+      signingPath: "1852'/1815'/0'/0/0",
+      stakePath: "1852'/1815'/0'/2/0",
+      networkId: 1,
+      protocolMagic: 764824073,
+    };
+
+    test("maps the neutral request to a ledgerjs MessageData (ADDRESS, unhashed)", async () => {
+      const session = await connectLedger();
+      await session.signMessage(MSG_REQ);
+
+      expect(mockSignMessage).toHaveBeenCalledOnce();
+      const req = mockSignMessage.mock.calls[0][0];
+      expect(req.messageHex).toBe("48656c6c6f");
+      expect(req.hashPayload).toBe(false);
+      expect(req.addressFieldType).toBe("address"); // MessageAddressFieldType.ADDRESS
+      expect(req.signingPath).toEqual([0x8000073c, 0x80000717, 0x80000000, 0, 0]);
+      expect(req.address).toEqual({
+        type: 0, // AddressType.BASE_PAYMENT_KEY_STAKE_KEY
+        params: {
+          spendingPath: [0x8000073c, 0x80000717, 0x80000000, 0, 0],
+          stakingPath: [0x8000073c, 0x80000717, 0x80000000, 2, 0],
+        },
+      });
+      expect(req.network).toEqual({ networkId: 1, protocolMagic: 764824073 });
+      await session.close();
+    });
+
+    test("assembles COSE_Sign1 + COSE_Key from the device's raw pieces", async () => {
+      const session = await connectLedger();
+      const { signature, key } = await session.signMessage(MSG_REQ);
+
+      // Byte-for-byte the canonical COSE the software path (bursa.SignData) emits
+      // for the same address field / payload / signature / pubkey — see
+      // cose.test.ts for the independent oracle vectors.
+      expect(signature).toBe(
+        "844ea201276761646472657373420011a166686173686564f44548656c6c6f5840" +
+          "ab".repeat(64),
+      );
+      expect(key).toBe("a4010103272006215820" + "cd".repeat(32));
+      await session.close();
+    });
+
+    test("hashes a message that overflows the Ledger first-chunk limit", async () => {
+      // The Cardano Ledger app rejects a non-hashed message longer than its
+      // first streaming chunk (198 bytes for ASCII). A normal login/proof
+      // message can exceed that, so the signer MUST switch to hashPayload:true
+      // (device hashes with Blake2b-224) and record it in the COSE "hashed"
+      // header — otherwise signMessage() would throw MESSAGE_DATA_LONG_NON_HASHED_MSG.
+      const longAscii = "A".repeat(200); // 200 printable-ASCII bytes > 198
+      const messageHex = Array.from(longAscii, () => "41").join("");
+      const session = await connectLedger();
+      const { signature } = await session.signMessage({ ...MSG_REQ, messageHex });
+
+      // The device is asked to hash the payload…
+      expect(mockSignMessage).toHaveBeenCalledOnce();
+      expect(mockSignMessage.mock.calls[0][0].hashPayload).toBe(true);
+
+      // …and the assembled COSE carries the unprotected {"hashed": true} header
+      // (a1 66 686173686564 f5) while still storing the RAW message as payload,
+      // which the bursa verifier re-hashes before checking the signature.
+      expect(signature).toContain("a166686173686564f5");
+      expect(signature).toContain(messageHex);
+      await session.close();
+    });
+
+    test("keeps hashPayload false for a short message", async () => {
+      const session = await connectLedger();
+      await session.signMessage(MSG_REQ);
+      expect(mockSignMessage.mock.calls[0][0].hashPayload).toBe(false);
       await session.close();
     });
   });

@@ -65,11 +65,14 @@ function mockAutoLock(setting: AutoLockSetting | null, loading = false) {
 
 // renderSettings wraps render(<Settings .../>) with the module's current
 // autoLockState so every call site doesn't need to thread it explicitly.
-function renderSettings(props: Partial<Pick<Parameters<typeof Settings>[0], "account" | "walletType">> = {}) {
+function renderSettings(
+  props: Partial<Pick<Parameters<typeof Settings>[0], "account" | "walletType" | "walletId">> = {},
+) {
   return render(
     <Settings
       account={props.account ?? mockAccount}
       walletType={props.walletType ?? "read_only"}
+      walletId={props.walletId ?? "wallet-1"}
       autoLock={autoLockState}
     />,
   );

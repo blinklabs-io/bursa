@@ -193,13 +193,24 @@ export function App() {
   }
 
   function applyAdded(wallet: WalletView) {
-    // A newly added wallet becomes active server-side; merge it in and select it.
+    // A newly added wallet is normally selected server-side, but the selection
+    // can fail after the wallet is persisted. Trust the flag the server sent
+    // rather than assuming: forcing active:true here would show the new wallet
+    // as selected while balance and send requests still answered for the
+    // previous one, and would hide the wallet the user needs to click.
     setLockError(null);
     setWallets((prev) => {
       const without = prev.filter((w) => w.id !== wallet.id);
-      return [...without.map((w) => ({ ...w, active: false })), { ...wallet, active: true }];
+      if (!wallet.active) {
+        // Selection did not move: merge the wallet in, leave the existing
+        // selection alone, and let the user pick it from the list.
+        return [...without, wallet];
+      }
+      return [...without.map((w) => ({ ...w, active: false })), wallet];
     });
-    setActiveId(wallet.id);
+    if (wallet.active) {
+      setActiveId(wallet.id);
+    }
     setUnlocked(true);
     setAddingWallet(false);
   }
@@ -388,6 +399,7 @@ export function App() {
       <Settings
         account={toAccount(activeWallet)}
         walletType={activeWallet.type}
+        walletId={activeWallet.id}
         autoLock={autoLock}
         canSign={canSign}
         operatorMode={operatorMode}

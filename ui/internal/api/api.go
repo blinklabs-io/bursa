@@ -88,6 +88,10 @@ type Spender interface {
 	SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR string) (spend.TxResult, error)
 	BuildDelegation(ctx context.Context, req spend.DelegationRequest) (spend.DelegationPreview, error)
 	HardwareSignRequest(pendingID string) (spend.HardwareSignRequest, error)
+	// SignDataHardwareRequest resolves the seedless CIP-1852 paths + network a
+	// hardware device needs to sign a CIP-8 message for one of the wallet's own
+	// receive addresses.
+	SignDataHardwareRequest(addr string) (spend.HardwareSignDataRequest, error)
 	// DecodeTx, CosignTx, and SubmitTxCbor back the "import transaction" flow:
 	// a user pastes a full tx CBOR built elsewhere (e.g. by a DApp or another
 	// wallet) to inspect it, add this wallet's witness(es), and broadcast it.
@@ -1139,6 +1143,20 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		serve(w, map[string]string{"signature": sig, "key": key}, err)
 	})
 
+	// CIP-8 hardware message signing: resolve the seedless signing metadata
+	// (CIP-1852 paths + network) a hardware device needs to sign a message for one
+	// of the wallet's own receive addresses. Ungated like sign-data — pure
+	// derivation over the active account, no node and no keystore unlock.
+	mux.HandleFunc("GET /wallet/sign-data/hardware-request", func(w http.ResponseWriter, r *http.Request) {
+		addr := r.URL.Query().Get("address")
+		if addr == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "address is required"})
+			return
+		}
+		req, err := sp.SignDataHardwareRequest(addr)
+		serve(w, req, err)
+	})
+
 	// App settings: the lean-node (history-expiry) profile. Ungated — it is a
 	// config setting, not a node query, so it is readable/settable regardless of
 	// sync state. History expiry is a node-construction option, so a change only
@@ -1910,11 +1928,18 @@ func registerMultiSigRoutes(
 		// Adding a wallet selects it, as the other add-wallet paths do. Without
 		// this the response would claim the new wallet is active while balance
 		// and send requests kept answering for the previous one.
+		// When the selection fails the wallet is still created, so the response
+		// says so with a truthful active flag rather than a failure status: a 5xx
+		// would misdescribe a request that did create the resource, and a client
+		// retrying it hits the duplicate-script check. The client reconciles from
+		// `active` (see applyAdded) and can activate the wallet by id.
+		activeID := ""
 		if active, aErr := vlt.SetActive(meta.ID); aErr == nil {
 			bindActive(active)
 			meta = active
+			activeID = meta.ID
 		}
-		serve(w, toWalletView(meta, meta.ID), nil)
+		serve(w, toWalletView(meta, activeID), nil)
 	})
 
 	// The active wallet's own CIP-1854 multi-sig participant key, to share. Needs

@@ -1072,3 +1072,56 @@ test("turning on operator mode adds Pool Ops without a reload", async () => {
     window.localStorage.removeItem("bursa.operatorMode");
   }
 });
+
+test("a newly added wallet that the server did not select stays unselected", async () => {
+  // Mirror of the server-side case: creation can persist the wallet while the
+  // selection fails, and the response then reports active:false. Forcing
+  // active:true here would show the new wallet as selected while balance and
+  // send requests still answered for the previous one.
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([{ ...walletA, active: true }]);
+  const created: WalletView = {
+    id: "ms-1",
+    name: "Treasury",
+    network: "preview",
+    stake_address: "",
+    addresses: ["addr_test1wq"],
+    active: false,
+    type: "multi_signature",
+  };
+  vi.spyOn(client, "addWallet").mockResolvedValue(created);
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
+
+  fireEvent.click(screen.getAllByRole("button", { name: /add wallet/i })[0]);
+  fireEvent.click(await screen.findByRole("button", { name: /restore from recovery phrase/i }));
+  fireEvent.change(await screen.findByLabelText(/wallet name/i), {
+    target: { value: "Treasury" },
+  });
+  fireEvent.change(screen.getByLabelText(/recovery phrase/i), {
+    target: { value: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12" },
+  });
+  fireEvent.change(screen.getByLabelText(/^vault password$/i), {
+    target: { value: "vault-password-xyz" },
+  });
+  fireEvent.change(screen.getByLabelText(/spending password/i), {
+    target: { value: "spend-password-aaa" },
+  });
+  // The form's own submit is the last match; the first is the sidebar entry
+  // point that opened it.
+  const submits = screen.getAllByRole("button", { name: /add wallet/i });
+  fireEvent.click(submits[submits.length - 1]);
+
+  // The wallet is merged into the list…
+  await waitFor(() => expect(screen.getAllByText("Treasury").length).toBeGreaterThan(0));
+  // …but the previous wallet keeps the selection, matching what the server said.
+  const current = document.querySelectorAll('[aria-current="true"]');
+  const currentNames = Array.from(current).map((el) => el.textContent ?? "");
+  expect(currentNames.some((n) => n.includes("Treasury"))).toBe(false);
+  expect(currentNames.some((n) => n.includes("Main"))).toBe(true);
+});
