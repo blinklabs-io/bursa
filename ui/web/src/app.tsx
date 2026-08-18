@@ -1,7 +1,13 @@
 import { useState, useEffect } from "react";
 import type { ReactElement } from "react";
 import type { Account, WalletView } from "./api/types";
-import { useStatus, useVaultStatus, useAutoLock } from "./api/hooks";
+import {
+  useStatus,
+  useVaultStatus,
+  useAutoLock,
+  useNotifications,
+  useActivityNotifications,
+} from "./api/hooks";
 import { lockVault, ApiError } from "./api/client";
 import { getStoredDeviceKind } from "./hw/deviceKind";
 import { useIdleLock } from "./useIdleLock";
@@ -115,6 +121,10 @@ export function App() {
   // instance inside Settings would have its own useState and never be seen by
   // the idle timer here (see useAsync in api/hooks.ts: no shared cache).
   const autoLock = useAutoLock();
+  // Lifted here (like autoLock) so the Settings toggle and the activity poller
+  // below share one copy: toggling notifications in Settings immediately
+  // starts/stops polling in this same session.
+  const notifications = useNotifications();
   const route = useHashRoute();
 
   // Vault session state, established after create/unlock and kept in memory.
@@ -254,6 +264,16 @@ export function App() {
   // failed (autoLock.data stays null), fail SAFE by assuming the default
   // timeout rather than fail OPEN by leaving auto-lock permanently disabled.
   useIdleLock(autoLock.loading ? 0 : (autoLock.data?.minutes ?? 15), () => void handleLock(), unlocked);
+
+  // Wallet-activity notifications: poll node-local activity and raise a
+  // desktop/browser notification for new incoming funds / stake rewards, but
+  // only while the vault is unlocked, the user has enabled notifications, and we
+  // can actually notify (browser permission granted, or the desktop OS-native
+  // bridge is present). Anything else keeps the poller off.
+  const canNotify =
+    notifications.permission === "granted" ||
+    (typeof window !== "undefined" && typeof window.bursaNotify === "function");
+  useActivityNotifications(unlocked && notifications.enabled && canNotify, activeId);
 
   // --- Pre-unlock flows: render full-screen, no sidebar -------------------
 
@@ -401,6 +421,7 @@ export function App() {
         walletType={activeWallet.type}
         walletId={activeWallet.id}
         autoLock={autoLock}
+        notifications={notifications}
         canSign={canSign}
         operatorMode={operatorMode}
         onOperatorModeChange={(enabled) => {
