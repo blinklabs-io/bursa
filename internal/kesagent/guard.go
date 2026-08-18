@@ -106,10 +106,30 @@ func (g *PeriodGuard) Authorize(vkeyHex string, period uint64) error {
 			g.floor,
 		)
 	}
+	// Fast path: the floor is unchanged (a producer signs many headers per KES
+	// period, so this is the common case). The durable state already records
+	// this floor, so skip the temp-file + fsync + rename — ~240x the cost of the
+	// KES signature and paid under a.mu on the block-production path. Only the
+	// informational vkey is updated in memory. This is safe because g.floor is
+	// committed in memory only after a successful persist (see below), so
+	// period == g.floor implies it was already durably written.
+	if g.set && period == g.floor {
+		g.vkey = vkeyHex
+		return nil
+	}
+	// Advancing the floor: persist BEFORE committing the new value in memory, and
+	// roll back on failure, so a failed persist leaves the floor unchanged and
+	// the next Authorize re-attempts it instead of taking the equal-skip above
+	// over a floor that was never durably written.
+	prevFloor, prevSet, prevVkey := g.floor, g.set, g.vkey
 	g.floor = period
 	g.set = true
 	g.vkey = vkeyHex
-	return g.persistLocked()
+	if err := g.persistLocked(); err != nil {
+		g.floor, g.set, g.vkey = prevFloor, prevSet, prevVkey
+		return err
+	}
+	return nil
 }
 
 func (g *PeriodGuard) persistLocked() error {

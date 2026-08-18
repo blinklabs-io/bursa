@@ -35,8 +35,14 @@ const (
 // ctx is cancelled or ln is closed.
 func (a *Agent) ServeControl(ctx context.Context, ln net.Listener) error {
 	conns := newConnSet()
+	// srvCtx is cancelled on every return path so the watchdog goroutine always
+	// exits; otherwise it stays parked forever when ServeControl returns via a
+	// closed listener or an Accept error (permanently so under
+	// context.Background(), whose Done() is a nil channel).
+	srvCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	go func() {
-		<-ctx.Done()
+		<-srvCtx.Done()
 		_ = ln.Close()
 		// Unblock any handler already parked in a read on a connection
 		// accepted before shutdown, so wg.Wait() below can complete.

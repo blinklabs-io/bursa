@@ -478,23 +478,33 @@ func (a *Agent) buildKeyPushLocked() (KeyPush, bool) {
 // broadcastLocked pushes the current key to all serve-key subscribers. Caller
 // holds a.mu.
 func (a *Agent) broadcastLocked() {
-	kp, ok := a.buildKeyPushLocked()
+	base, ok := a.buildKeyPushLocked()
 	if !ok {
 		return
 	}
+	// base.KESSignKey is a plaintext clone of the locked signing key. Hand each
+	// subscriber its OWN copy (so one handler wiping its copy after writing
+	// cannot corrupt another's) and wipe every copy the moment it is no longer
+	// needed, so superseded key material does not linger on the swappable heap
+	// and defeat the forward-erasure done on evolution.
+	defer securemem.Wipe(base.KESSignKey)
 	for _, ch := range a.subs {
-		// Latest-wins: drain any stale push, then enqueue the newest.
+		kp := base
+		kp.KESSignKey = append([]byte(nil), base.KESSignKey...)
+		// Latest-wins: drain and wipe any stale push, then enqueue the newest.
 		select {
-		case <-ch:
+		case stale := <-ch:
+			securemem.Wipe(stale.KESSignKey)
 		default:
 		}
 		select {
 		case ch <- kp:
 			a.metrics.incServedKeys()
 		default:
-			// Subscriber channel is still full (shouldn't happen since we
-			// just drained it above, but be defensive): don't count a push
-			// that was dropped as served.
+			// Subscriber channel is still full (shouldn't happen since we just
+			// drained it above, but be defensive): wipe the copy we could not
+			// deliver rather than dropping it un-erased, and don't count it.
+			securemem.Wipe(kp.KESSignKey)
 		}
 	}
 }
@@ -517,6 +527,15 @@ func (a *Agent) subscribe() (int, chan KeyPush, *KeyPush) {
 func (a *Agent) unsubscribe(id int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// Drain and wipe any key push still queued for this subscriber so its
+	// plaintext signing-key copy does not outlive the subscription on the heap.
+	if ch, ok := a.subs[id]; ok {
+		select {
+		case kp := <-ch:
+			securemem.Wipe(kp.KESSignKey)
+		default:
+		}
+	}
 	delete(a.subs, id)
 }
 

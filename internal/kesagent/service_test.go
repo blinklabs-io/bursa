@@ -20,6 +20,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -126,6 +127,127 @@ func TestServiceServeKeyMode(t *testing.T) {
 	}
 	if kp2.Period != 6 {
 		t.Fatalf("re-push period = %d, want 6", kp2.Period)
+	}
+}
+
+// TestServeServiceWatchdogDoesNotLeak verifies the ctx-watchdog goroutine exits
+// on the listener-close return path (not only on ctx cancellation): running many
+// ServeService calls under context.Background() that each return via ln.Close()
+// must not accumulate parked goroutines.
+func TestServeServiceWatchdogDoesNotLeak(t *testing.T) {
+	cold := newColdKey(t)
+	// Let the runtime settle, then take a baseline.
+	time.Sleep(50 * time.Millisecond)
+	base := runtime.NumGoroutine()
+
+	const rounds = 20
+	for i := 0; i < rounds; i++ {
+		a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(1))
+		sock := shortSocketPath(t, "leak.sock")
+		ln, err := ListenUnix(sock, 0o600)
+		if err != nil {
+			t.Fatalf("ListenUnix: %v", err)
+		}
+		done := make(chan error, 1)
+		// context.Background(): its Done() is a nil channel, so the pre-fix
+		// watchdog would park forever here.
+		go func() { done <- a.ServeService(context.Background(), ln) }()
+		if err := ln.Close(); err != nil {
+			t.Fatalf("close listener: %v", err)
+		}
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("ServeService did not return after listener close")
+		}
+	}
+
+	// Poll: leaked watchdogs would keep the count ~rounds above baseline.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got := runtime.NumGoroutine()
+		if got <= base+3 {
+			return // settled back to baseline
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutines did not settle: baseline %d, now %d (leaked ~%d)", base, got, got-base)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestServeKeyMultipleSubscribersReceiveIntactKey guards the per-subscriber key
+// cloning in broadcastLocked: each serve-key subscriber must receive its own
+// intact (non-zeroed) copy of the signing key, so one handler wiping its copy
+// after writing cannot corrupt another subscriber's.
+func TestServeKeyMultipleSubscribersReceiveIntactKey(t *testing.T) {
+	cold := newColdKey(t)
+	a := testAgent(t, ModeServeKey, cold, kes.CardanoKesDepth, atPeriod(5))
+	vkey, _ := a.GenStagedKey()
+	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 3, cold)); err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+	sock := shortSocketPath(t, "svc-multi.sock")
+	ln, err := ListenUnix(sock, 0o600)
+	if err != nil {
+		t.Fatalf("ListenUnix: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = a.ServeService(ctx, ln) }()
+
+	readPush := func(c net.Conn) KeyPush {
+		t.Helper()
+		_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var hello Hello
+		if err := readFrame(c, &hello); err != nil {
+			t.Fatalf("read hello: %v", err)
+		}
+		var kp KeyPush
+		if err := readFrame(c, &kp); err != nil {
+			t.Fatalf("read key push: %v", err)
+		}
+		return kp
+	}
+	nonZero := func(b []byte) bool {
+		for _, x := range b {
+			if x != 0 {
+				return true
+			}
+		}
+		return false
+	}
+
+	c1 := dial(t, sock)
+	c2 := dial(t, sock)
+	kp1 := readPush(c1)
+	kp2 := readPush(c2)
+	if !nonZero(kp1.KESSignKey) || !nonZero(kp2.KESSignKey) {
+		t.Fatal("a subscriber received a zeroed signing key")
+	}
+	if !bytes.Equal(kp1.KESSignKey, kp2.KESSignKey) {
+		t.Fatal("subscribers received divergent signing keys")
+	}
+
+	// A broadcast (via evolution) must also deliver intact, equal copies.
+	a.now = func() time.Time { return atPeriod(6) }
+	a.Tick()
+	readRepush := func(c net.Conn) KeyPush {
+		t.Helper()
+		_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var kp KeyPush
+		if err := readFrame(c, &kp); err != nil {
+			t.Fatalf("read re-push: %v", err)
+		}
+		return kp
+	}
+	rp1 := readRepush(c1)
+	rp2 := readRepush(c2)
+	if rp1.Period != 6 || rp2.Period != 6 {
+		t.Fatalf("re-push periods = %d,%d want 6,6", rp1.Period, rp2.Period)
+	}
+	if !nonZero(rp1.KESSignKey) || !bytes.Equal(rp1.KESSignKey, rp2.KESSignKey) {
+		t.Fatal("broadcast delivered a zeroed or divergent signing key across subscribers")
 	}
 }
 

@@ -21,7 +21,10 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
+
+	"github.com/blinklabs-io/bursa/internal/kesagent/securemem"
 )
 
 // ListenUnix creates a Unix-domain listener at path with the given file mode,
@@ -39,13 +42,33 @@ func ListenUnix(path string, mode os.FileMode) (net.Listener, error) {
 			return nil, fmt.Errorf("kesagent: remove stale socket %q: %w", path, err)
 		}
 	}
-	ln, err := net.Listen("unix", path)
+	// net.Listen creates the socket under the process umask, so its requested
+	// mode only lands one Chmod later — a window in which the socket can be
+	// world-writable (under umask 0/0002) and a connection made during it
+	// survives the tightening (Unix checks permission at connect time). Behind
+	// this socket is the KES block-production signing key, so close the window
+	// rather than trusting the deployment umask: bind inside a fresh 0700
+	// staging directory (which no other user can traverse), chmod the socket to
+	// its final mode there, and only expose it at its advertised path via an
+	// atomic rename. This avoids the process-global, listen-racy syscall.Umask
+	// approach and stays pure-Go / cross-platform.
+	stagingDir, err := os.MkdirTemp(filepath.Dir(path), ".kes-sock-")
+	if err != nil {
+		return nil, fmt.Errorf("kesagent: create socket staging dir for %q: %w", path, err)
+	}
+	defer func() { _ = os.RemoveAll(stagingDir) }()
+	stagingPath := filepath.Join(stagingDir, "s")
+	ln, err := net.Listen("unix", stagingPath)
 	if err != nil {
 		return nil, fmt.Errorf("kesagent: listen %q: %w", path, err)
 	}
-	if err := os.Chmod(path, mode); err != nil {
+	if err := os.Chmod(stagingPath, mode); err != nil {
 		_ = ln.Close()
 		return nil, fmt.Errorf("kesagent: chmod socket %q: %w", path, err)
+	}
+	if err := os.Rename(stagingPath, path); err != nil {
+		_ = ln.Close()
+		return nil, fmt.Errorf("kesagent: publish socket %q: %w", path, err)
 	}
 	return ln, nil
 }
@@ -54,8 +77,15 @@ func ListenUnix(path string, mode os.FileMode) (net.Listener, error) {
 // agent's configured mode. It returns when ctx is cancelled or ln is closed.
 func (a *Agent) ServeService(ctx context.Context, ln net.Listener) error {
 	conns := newConnSet()
+	// srvCtx is cancelled on every return path (not just external ctx
+	// cancellation), so the watchdog goroutine below always exits — otherwise it
+	// stays parked in the receive forever when ServeService returns via a closed
+	// listener or an Accept error, and permanently so under context.Background()
+	// (whose Done() is a nil channel).
+	srvCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	go func() {
-		<-ctx.Done()
+		<-srvCtx.Done()
 		_ = ln.Close()
 		// Unblock any handler already parked in a read on a connection
 		// accepted before shutdown (in particular handleSign, which has no
@@ -128,7 +158,12 @@ func (a *Agent) handleServeKey(ctx context.Context, conn net.Conn) {
 	}()
 
 	if current != nil {
-		if err := writeFrame(conn, *current); err != nil {
+		err := writeFrame(conn, *current)
+		// Wipe the plaintext signing-key copy as soon as it has been written
+		// (or failed to): it is a swappable-heap clone the securemem locking
+		// and forward-erasure elsewhere exist to avoid leaving behind.
+		securemem.Wipe(current.KESSignKey)
+		if err != nil {
 			a.logger.Debug("service key push write failed", "error", err)
 			return
 		}
@@ -140,7 +175,9 @@ func (a *Agent) handleServeKey(ctx context.Context, conn net.Conn) {
 		case <-connClosed:
 			return
 		case kp := <-ch:
-			if err := writeFrame(conn, kp); err != nil {
+			err := writeFrame(conn, kp)
+			securemem.Wipe(kp.KESSignKey) // erase this subscriber's copy
+			if err != nil {
 				a.logger.Debug("service key push write failed", "error", err)
 				return
 			}
