@@ -765,11 +765,12 @@ test("the nav carries only destinations, not actions or housekeeping", async () 
   const sidebar = await unlockAndGetSidebar(walletA);
   const q = within(sidebar);
 
+  // An EXACT set, deliberately not a filtered count. Filtering to the expected
+  // labels and then counting them can only catch a removal: a screen that adds
+  // a sixth destination is filtered out of its own assertion and sails through.
   expect(
-    q.getAllByRole("button").map((b) => b.textContent).filter((t) =>
-      ["Portfolio", "Activity", "Stake", "Swap", "Settings"].includes(t ?? ""),
-    ),
-  ).toHaveLength(5);
+    Array.from(sidebar.querySelectorAll(".nav-item")).map((b) => b.textContent),
+  ).toEqual(["Portfolio", "Activity", "Stake", "Swap", "Settings"]);
 
   // Send and Receive are actions on the Portfolio; the rest are Settings
   // panels. None of them earns a nav entry.
@@ -784,6 +785,50 @@ test("the nav carries only destinations, not actions or housekeeping", async () 
   ]) {
     expect(q.queryByRole("button", { name: gone })).not.toBeInTheDocument();
   }
+});
+
+// With the nav down to five destinations, the palette is how everything else is
+// found — so it gets the same exact-set treatment as the nav above. A screen
+// that is routed but listed in neither surface is unreachable, which is a real
+// failure mode here, not a hypothetical one.
+async function openPalette(wallet: WalletView): Promise<HTMLElement> {
+  const sidebar = await unlockAndGetSidebar(wallet);
+  fireEvent.click(within(sidebar).getByRole("button", { name: /search/i }));
+  return await screen.findByRole("dialog", { name: /command palette/i });
+}
+
+test("the palette lists every destination the nav no longer carries", async () => {
+  const palette = await openPalette(walletA);
+
+  expect(
+    Array.from(palette.querySelectorAll('[role="option"]')).map((o) =>
+      o.id.replace("palette-cmd-", ""),
+    ),
+  ).toEqual([
+    "portfolio", "activity", "stake", "swap", "settings",
+    "send", "receive", "import", "offline",
+    "contacts", "sign", "verify", "diagnostics",
+    "operate", "add-wallet", "lock",
+  ]);
+});
+
+// Being listed is not the same as working. These three have no nav entry at
+// all, so the palette is the only way in: assert the command is enabled, that
+// activating it navigates, and that the palette gets out of the way.
+test.each([
+  ["Address book", "#/contacts"],
+  ["Node diagnostics", "#/diagnostics"],
+  ["Sign a transaction offline", "#/offline"],
+])("%s is actually reachable from the palette", async (label, hash) => {
+  const palette = await openPalette(walletA);
+
+  const cmd = within(palette).getByRole("option", { name: new RegExp(label, "i") });
+  expect(cmd).toBeEnabled();
+
+  fireEvent.click(cmd);
+
+  await waitFor(() => expect(window.location.hash).toBe(hash));
+  await waitFor(() => expect(document.querySelector(".palette")).toBeNull());
 });
 
 test("Send and Receive are offered on the balance they act on", async () => {
