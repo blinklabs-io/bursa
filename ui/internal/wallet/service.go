@@ -146,6 +146,23 @@ func (s *Service) currentAccount() (*Account, error) {
 // account-reported set still matters once registered: it surfaces used/change
 // addresses outside the derived receive window.
 func (s *Service) scanAddresses(ctx context.Context, acct *Account) ([]string, error) {
+	// A script (multi-signature) account has no stake credential, so there is
+	// no account to discover addresses under — its addresses are exactly the
+	// script address it was created with. Asking the node to resolve an empty
+	// stake address is not a not-found, it is a malformed request.
+	if acct.StakeAddress == "" {
+		out := make([]string, 0, len(acct.ReceiveAddresses))
+		seen := make(map[string]bool, len(acct.ReceiveAddresses))
+		for _, a := range acct.ReceiveAddresses {
+			if a == "" || seen[a] {
+				continue
+			}
+			seen[a] = true
+			out = append(out, a)
+		}
+		return out, nil
+	}
+
 	discovered, err := s.chain.AccountAddresses(ctx, acct.StakeAddress)
 	if err != nil && !errors.Is(err, chain.ErrNotFound) {
 		return nil, err
