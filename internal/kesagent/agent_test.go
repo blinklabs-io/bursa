@@ -374,3 +374,47 @@ func TestSubscribeRefusesKeyBelowGuardFloor(t *testing.T) {
 			active, active+1)
 	}
 }
+
+// TestQueuedPushBelowFloorIsDroppedOnRollback covers the gap between the guard
+// floor and an already-enqueued push: buildKeyPushLocked refuses to build a
+// below-floor push, but one enqueued while the key and floor still agreed sits
+// in the subscriber's channel, and a serve-key client reading it would be
+// handed a key for a period the floor has since passed.
+func TestQueuedPushBelowFloorIsDroppedOnRollback(t *testing.T) {
+	cold := newColdKey(t)
+	a := testAgent(t, ModeServeKey, cold, kes.CardanoKesDepth, atPeriod(1))
+	vkey, _ := a.GenStagedKey()
+	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 1, cold)); err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+
+	// A subscriber with a push queued at the current (soon to be stale) period.
+	id, ch, current := a.subscribe()
+	defer a.unsubscribe(id)
+	if current == nil {
+		t.Fatal("subscribe returned no key push")
+	}
+	securemem.Wipe(current.KESSignKey)
+	a.mu.Lock()
+	a.broadcastLocked()
+	active := a.active.absPeriod()
+	a.mu.Unlock()
+	if len(ch) != 1 {
+		t.Fatalf("queued pushes = %d, want 1 before the floor advances", len(ch))
+	}
+
+	// Advance the floor past the queued push, as a committed-but-failed
+	// install would, then run the drain.
+	if err := a.guard.Authorize("newer-key", active+1); err != nil {
+		t.Fatalf("advance floor: %v", err)
+	}
+	a.mu.Lock()
+	a.dropQueuedPushesBelowFloorLocked()
+	a.mu.Unlock()
+
+	if len(ch) != 0 {
+		kp := <-ch
+		t.Fatalf("a push for period %d survived a floor advance to %d",
+			kp.Period, active+1)
+	}
+}

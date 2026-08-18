@@ -306,6 +306,12 @@ func (a *Agent) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
 		// rather than discarding a working key on a rollback refusal.
 		a.active.close()
 		a.active = oldActive
+		// The floor may have advanced anyway (a rename that committed before a
+		// later step failed), which would leave the restored key below it.
+		// buildKeyPushLocked refuses to build such a push, but a push built
+		// before this call can still be sitting in a subscriber's channel;
+		// drain those so a producer cannot sign below the committed floor.
+		a.dropQueuedPushesBelowFloorLocked()
 		return nil, err
 	}
 	oldActive.close()
@@ -528,6 +534,41 @@ func (a *Agent) broadcastLocked() {
 			// drained it above, but be defensive): wipe the copy we could not
 			// deliver rather than dropping it un-erased, and don't count it.
 			securemem.Wipe(kp.KESSignKey)
+		}
+	}
+}
+
+// dropQueuedPushesBelowFloorLocked drains and wipes any queued key push whose
+// period is below the guard floor. Caller holds a.mu.
+//
+// buildKeyPushLocked refuses to build a below-floor push, but that only covers
+// pushes not yet built: a push enqueued while the key and the floor still
+// agreed stays in its subscriber's buffered channel, and a serve-key client
+// reading it would be handed a key for a period the floor has since passed.
+func (a *Agent) dropQueuedPushesBelowFloorLocked() {
+	floor, set := a.guard.Floor()
+	if !set {
+		return
+	}
+	for id, ch := range a.subs {
+		select {
+		case kp := <-ch:
+			if kp.Period < floor {
+				a.logger.Warn("dropping queued KES key push below the guard floor",
+					"subscriber", id,
+					"push_period", kp.Period,
+					"floor", floor,
+				)
+				securemem.Wipe(kp.KESSignKey)
+				continue
+			}
+			// Above the floor: put it back rather than dropping a valid push.
+			select {
+			case ch <- kp:
+			default:
+				securemem.Wipe(kp.KESSignKey)
+			}
+		default:
 		}
 	}
 }
