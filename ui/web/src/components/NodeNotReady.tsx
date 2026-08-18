@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Card } from "./Card";
 import { useStatus } from "../api/hooks";
 import { bootstrapPhaseLabel } from "../bootstrapPhases";
@@ -13,10 +14,35 @@ import { bootstrapPhaseLabel } from "../bootstrapPhases";
 // specific, expected, self-resolving condition (the node's own 503 while it
 // starts up); real faults still surface as errors so they stay visible.
 // `verb` agrees with `what`: some callers name one thing, some name two.
-export function NodeNotReady({ what, verb = "comes" }: { what: string; verb?: string }) {
+export function NodeNotReady({
+  what,
+  verb = "comes",
+  refresh,
+}: {
+  what: string;
+  verb?: string;
+  refresh?: () => void;
+}) {
   const status = useStatus();
   const state = status.data?.state;
   const bootstrap = status.data?.bootstrap;
+  const statusError = status.data?.error || status.error?.message;
+
+  useEffect(() => {
+    if (!refresh) return;
+    const id = setInterval(refresh, 2000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  if (state === "error" || statusError) {
+    return (
+      <Card title="Node error">
+        <p role="alert" className="error-text">
+          {statusError || "The node reported an error."}
+        </p>
+      </Card>
+    );
+  }
 
   return (
     <Card title="Waiting for the node">

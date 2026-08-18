@@ -347,3 +347,34 @@ test("a real fault is still reported as an error", () => {
   expect(screen.getByRole("alert")).toHaveTextContent(/balance blew up/i);
   expect(screen.queryByText(/waiting for the node/i)).not.toBeInTheDocument();
 });
+
+test("a real delegation fault is not masked by a not-ready balance", () => {
+  vi.spyOn(hooks, "useBalance").mockReturnValue({
+    data: null, error: new ApiError(503, "node not ready"), loading: false, refresh: vi.fn(),
+  } as never);
+  vi.spyOn(hooks, "useDelegation").mockReturnValue({
+    data: null, error: new ApiError(500, "delegation blew up"), loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Portfolio canSend={false} />);
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/delegation blew up/i);
+  expect(screen.queryByText(/waiting for the node/i)).not.toBeInTheDocument();
+});
+
+test("a supervisor error is shown instead of a reassuring wait state", () => {
+  mockBalance("0", []);
+  mockDelegation();
+  vi.spyOn(hooks, "useBalance").mockReturnValue({
+    data: null, error: new ApiError(503, "node not ready"), loading: false, refresh: vi.fn(),
+  } as never);
+  vi.spyOn(hooks, "useStatus").mockReturnValue({
+    data: { state: "error", error: "node failed to start", tip: 0, caughtUp: false, network: "preview" },
+    error: null, loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Portfolio canSend={false} />);
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/node failed to start/i);
+  expect(screen.queryByText(/nothing is wrong/i)).not.toBeInTheDocument();
+});

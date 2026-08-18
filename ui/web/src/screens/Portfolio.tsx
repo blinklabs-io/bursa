@@ -94,17 +94,26 @@ export function Portfolio({ canSend = false, multiSigError }: PortfolioProps = {
   // fault: say so instead of dropping a bare server error into a blank screen.
   // Real faults still surface as errors.
   const notReady = (e: Error | null) => e instanceof ApiError && e.status === 503;
-  if (notReady(balance.error) || notReady(delegation.error)) {
-    return <NodeNotReady what="Your balance and delegation" verb="come" />;
-  }
-  // Show the first error encountered (balance errors take priority).
-  if (balance.error) {
+  const balanceNotReady = notReady(balance.error);
+  const delegationNotReady = notReady(delegation.error);
+  if (balance.error && !balanceNotReady) {
     return <p role="alert" className="error-text">{balance.error.message}</p>;
   }
-  if (delegation.error) {
+  if (delegation.error && !delegationNotReady) {
     return <p role="alert" className="error-text">{delegation.error.message}</p>;
   }
-
+  if (balanceNotReady || delegationNotReady) {
+    return (
+      <NodeNotReady
+        what="Your balance and delegation"
+        verb="come"
+        refresh={() => {
+          balance.refresh();
+          delegation.refresh();
+        }}
+      />
+    );
+  }
   const del = delegation.data;
 
   // A fresh wallet returns zeros/empty — treat it as valid, not an error.

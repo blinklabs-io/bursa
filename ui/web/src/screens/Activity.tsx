@@ -269,7 +269,7 @@ export function Activity({ network = "preview" }: ActivityProps = {}) {
   }
 
   if (txs.error instanceof ApiError && txs.error.status === 503) {
-    return <NodeNotReady what="Your transaction history" />;
+    return <NodeNotReady what="Your transaction history" refresh={txs.refresh} />;
   }
 
   if (txs.error) {
