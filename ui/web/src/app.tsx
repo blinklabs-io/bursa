@@ -12,7 +12,7 @@ import { MobileNav } from "./components/MobileNav";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { CommandPalette } from "./components/CommandPalette";
 import type { Command } from "./components/CommandPalette";
-import { operatorModeEnabled } from "./operatorMode";
+import { operatorModeEnabled, setOperatorMode } from "./operatorMode";
 import { useHashRoute, navigate } from "./router";
 import { CreateVault } from "./screens/CreateVault";
 import { UnlockVault } from "./screens/UnlockVault";
@@ -132,9 +132,10 @@ export function App() {
   const [loadAnyway, setLoadAnyway] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // Read once per render rather than held in state: Settings writes it and a
-  // re-render picks it up, and it is a preference, not a value to keep in sync.
-  const operatorMode = operatorModeEnabled();
+  // Owned here because App builds the nav from it. Settings toggles it through
+  // the setter below, so the entry appears the moment it is switched on rather
+  // than after some unrelated re-render.
+  const [operatorMode, setOperatorModeState] = useState(operatorModeEnabled);
 
   // Cmd/Ctrl-K from anywhere. Bound at the window so it works whatever has
   // focus, and it toggles so the same key closes it.
@@ -389,6 +390,11 @@ export function App() {
         walletType={activeWallet.type}
         autoLock={autoLock}
         canSign={canSign}
+        operatorMode={operatorMode}
+        onOperatorModeChange={(enabled) => {
+          setOperatorMode(enabled);
+          setOperatorModeState(enabled);
+        }}
         initialTab={SETTINGS_ROUTES.get(route)}
       />
     );

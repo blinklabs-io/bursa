@@ -319,6 +319,7 @@ export function AddWallet({
     return (
       <ComposeMultiSig
         canSign={canSign}
+        knownVaultPassword={knownVaultPassword}
         onCancel={() => { setError(null); setMode("choose"); }}
         onCreated={onAdded}
       />

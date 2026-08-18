@@ -103,3 +103,35 @@ test("a shrinking result list does not strand the cursor past the end", () => {
   fireEvent.keyDown(input, { key: "Enter" });
   expect(list[0].run).toHaveBeenCalled();
 });
+
+test("Tab is trapped inside the palette", () => {
+  render(<CommandPalette open commands={cmds()} onClose={vi.fn()} />);
+
+  const dialog = screen.getByRole("dialog");
+  const focusable = Array.from(dialog.querySelectorAll<HTMLElement>("input, button"));
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+
+  // aria-modal alone would let Tab walk out into the sidebar behind it.
+  last.focus();
+  fireEvent.keyDown(dialog, { key: "Tab" });
+  expect(document.activeElement).toBe(first);
+
+  first.focus();
+  fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+  expect(document.activeElement).toBe(last);
+});
+
+test("closing returns focus to whatever opened it", () => {
+  const trigger = document.createElement("button");
+  document.body.appendChild(trigger);
+  trigger.focus();
+
+  const { rerender } = render(<CommandPalette open commands={cmds()} onClose={vi.fn()} />);
+  expect(document.activeElement).not.toBe(trigger);
+
+  rerender(<CommandPalette open={false} commands={cmds()} onClose={vi.fn()} />);
+
+  expect(document.activeElement).toBe(trigger);
+  trigger.remove();
+});

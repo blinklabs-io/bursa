@@ -978,3 +978,16 @@ test("a multi-signature wallet with an unreadable policy cannot spend, and says 
   // Receiving is unaffected — the address is still valid.
   expect(within(main).getByRole("button", { name: "Receive" })).toBeEnabled();
 });
+
+test("turning on operator mode adds Pool Ops without a reload", async () => {
+  // The nav is built by App, so a preference written only inside Settings would
+  // not show up until some unrelated re-render.
+  const sidebar = await unlockAndGetSidebar(walletA);
+  expect(within(sidebar).queryByRole("button", { name: "Pool Ops" })).not.toBeInTheDocument();
+
+  fireEvent.click(within(sidebar).getByRole("button", { name: "Settings" }));
+  fireEvent.click(await screen.findByRole("button", { name: /show pool operations/i }));
+
+  expect(await within(sidebar).findByRole("button", { name: "Pool Ops" })).toBeInTheDocument();
+  window.localStorage.removeItem("bursa.operatorMode");
+});

@@ -48,6 +48,10 @@ export function CommandPalette({ open, commands, onClose }: CommandPaletteProps)
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // Whatever had focus before, so closing returns the user where they were
+  // rather than dropping focus at the top of the document.
+  const restoreFocusTo = useRef<HTMLElement | null>(null);
 
   const results = useMemo(
     () => commands.filter((c) => matches(c, query.trim())),
@@ -56,17 +60,33 @@ export function CommandPalette({ open, commands, onClose }: CommandPaletteProps)
 
   // Reopening should feel like a fresh start, not a resumed session.
   useEffect(() => {
-    if (open) {
-      setQuery("");
-      setCursor(0);
-      inputRef.current?.focus();
-    }
+    if (!open) return;
+    restoreFocusTo.current = document.activeElement as HTMLElement | null;
+    setQuery("");
+    setCursor(0);
+    inputRef.current?.focus();
+    return () => {
+      // Only take focus back if it is still going begging — a command may have
+      // moved it somewhere deliberately.
+      const active = document.activeElement;
+      if (!active || active === document.body) restoreFocusTo.current?.focus();
+    };
   }, [open]);
 
   // A shrinking result list must not strand the cursor past the end.
   useEffect(() => {
     setCursor((c) => (c >= results.length ? 0 : c));
   }, [results.length]);
+
+  // Keep the selection visible: arrowing past the fold would otherwise let a
+  // keyboard user run a command they cannot see.
+  useEffect(() => {
+    const active = listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
+    // Optional chaining on the method too: not every environment implements
+    // it (jsdom does not), and keeping the selection visible is a nicety that
+    // must not throw where it is unavailable.
+    active?.scrollIntoView?.({ block: "nearest" });
+  }, [cursor, results.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -102,6 +122,28 @@ export function CommandPalette({ open, commands, onClose }: CommandPaletteProps)
       e.preventDefault();
       const cmd = results[cursor];
       if (cmd) choose(cmd);
+      return;
+    }
+    if (e.key === "Tab") {
+      // aria-modal tells assistive tech this is modal, but without a trap Tab
+      // still walks out into the sidebar behind it and lets the user operate
+      // controls the dialog is supposedly covering.
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'input, button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable || focusable.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     }
   }
 
@@ -109,6 +151,7 @@ export function CommandPalette({ open, commands, onClose }: CommandPaletteProps)
     <>
       <div className="palette-overlay" aria-hidden="true" onClick={onClose} />
       <div
+        ref={dialogRef}
         className="palette"
         role="dialog"
         aria-modal="true"

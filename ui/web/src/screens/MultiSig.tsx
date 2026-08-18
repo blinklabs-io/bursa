@@ -49,6 +49,9 @@ function ErrorText({ message }: { message: string }) {
 
 interface ComposeMultiSigProps {
   canSign: boolean;
+  // Passed when the caller already has it — during first-run, the vault was
+  // just created and asking again would be asking twice for the same secret.
+  knownVaultPassword?: string;
   onCancel: () => void;
   onCreated: (wallet: WalletView) => void;
 }
@@ -61,8 +64,14 @@ interface ComposeMultiSigProps {
  * balance, and you spend from it with Send. Creating one is a vault write, which
  * is also where the vault password legitimately comes from.
  */
-export function ComposeMultiSig({ canSign, onCancel, onCreated }: ComposeMultiSigProps) {
+export function ComposeMultiSig({
+  canSign,
+  knownVaultPassword,
+  onCancel,
+  onCreated,
+}: ComposeMultiSigProps) {
   const [vaultPassword, setVaultPassword] = useState("");
+  const effectiveVaultPassword = knownVaultPassword ?? vaultPassword;
   const mounted = useMountedRef();
   const [label, setLabel] = useState("");
   const [threshold, setThreshold] = useState("2");
@@ -162,7 +171,7 @@ export function ComposeMultiSig({ canSign, onCancel, onCreated }: ComposeMultiSi
       const created = await createMultiSig({
         label: label.trim(),
         policy,
-        vault_password: vaultPassword,
+        vault_password: effectiveVaultPassword,
       });
       if (!mounted.current) return;
       onCreated(created);
@@ -321,15 +330,20 @@ export function ComposeMultiSig({ canSign, onCancel, onCreated }: ComposeMultiSi
         </div>
 
         {/* Storing the account is a vault write, so it needs the vault
-            password — the same one every other add-wallet path asks for. */}
-        <label htmlFor="ms-vault-pw">Vault password</label>
-        <Input
-          id="ms-vault-pw"
-          type="password"
-          value={vaultPassword}
-          onChange={(e) => setVaultPassword(e.target.value)}
-          disabled={loading}
-        />
+            password — the same one every other add-wallet path asks for, and
+            hidden when the caller already has it. */}
+        {knownVaultPassword === undefined && (
+          <>
+            <label htmlFor="ms-vault-pw">Vault password</label>
+            <Input
+              id="ms-vault-pw"
+              type="password"
+              value={vaultPassword}
+              onChange={(e) => setVaultPassword(e.target.value)}
+              disabled={loading}
+            />
+          </>
+        )}
 
         {error && <ErrorText message={error} />}
 
@@ -339,7 +353,7 @@ export function ComposeMultiSig({ canSign, onCancel, onCreated }: ComposeMultiSi
           </Button>
           <Button
             onClick={handleCreate}
-            disabled={loading || participants.length === 0 || !vaultPassword}
+            disabled={loading || participants.length === 0 || !effectiveVaultPassword}
           >
             {loading ? "Creating…" : "Create wallet"}
           </Button>

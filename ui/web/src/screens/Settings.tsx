@@ -7,7 +7,6 @@ import {
 import { Card } from "../components/Card";
 import { Tabs } from "../components/Tabs";
 import type { TabDef } from "../components/Tabs";
-import { operatorModeEnabled, setOperatorMode } from "../operatorMode";
 import { Contacts } from "./Contacts";
 import { Diagnostics } from "./Diagnostics";
 import { SignMessage } from "./SignMessage";
@@ -37,6 +36,10 @@ import type { Account, AutoLockSetting, NodeState, TPMStatus, WalletType } from 
 
 interface SettingsProps {
   account: Account;
+  // Whether the stake-pool operator tooling is shown in the nav. Owned by App,
+  // which builds the nav from it, so toggling here takes effect immediately.
+  operatorMode?: boolean;
+  onOperatorModeChange?: (enabled: boolean) => void;
   walletType: WalletType;
   // The auto-lock AsyncState, lifted up to and owned by App (see app.tsx) so
   // this screen's save path and App's useIdleLock share the same value — a
@@ -469,7 +472,13 @@ function TPMCard({
   );
 }
 
-function GeneralSettings({ account, walletType, autoLock }: SettingsProps) {
+function GeneralSettings({
+  account,
+  walletType,
+  autoLock,
+  operatorMode = false,
+  onOperatorModeChange = () => {},
+}: SettingsProps) {
   const status = useStatus();
   const tpmStatusQuery = useTPMStatus();
   const [connectorMissing, setConnectorMissing] = useState(false);
@@ -563,9 +572,6 @@ function GeneralSettings({ account, walletType, autoLock }: SettingsProps) {
     }
   }
   const nftMedia = useNftMedia();
-  // Local display preference, not wallet state — see operatorMode.ts. Mirrored
-  // into state so the toggle re-renders immediately rather than on next nav.
-  const [operatorMode, setOperatorModeState] = useState(operatorModeEnabled());
 
   return (
     <div className="screen-settings">
@@ -643,10 +649,7 @@ function GeneralSettings({ account, walletType, autoLock }: SettingsProps) {
           <Button
             variant={operatorMode ? "ghost" : "primary"}
             aria-pressed={operatorMode}
-            onClick={() => {
-              setOperatorMode(!operatorMode);
-              setOperatorModeState(!operatorMode);
-            }}
+            onClick={() => onOperatorModeChange(!operatorMode)}
           >
             {operatorMode ? "Hide pool operations" : "Show pool operations"}
           </Button>
@@ -833,6 +836,8 @@ export function Settings({
   autoLock,
   initialTab = "general",
   canSign = false,
+  operatorMode = false,
+  onOperatorModeChange,
 }: SettingsScreenProps) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
 
@@ -853,6 +858,8 @@ export function Settings({
                   account={account}
                   walletType={walletType}
                   autoLock={autoLock}
+                  operatorMode={operatorMode}
+                  onOperatorModeChange={onOperatorModeChange}
                 />
               );
             case "contacts":
