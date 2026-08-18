@@ -1088,3 +1088,58 @@ func TestGovActionStatus(t *testing.T) {
 		})
 	}
 }
+
+// TestGovernanceActionsSkipsUnknownVoteKind covers a Dingo that has added a
+// vote choice this build does not know. The screen is a read-only browser over
+// node-local data, so one unrecognized vote must not fail the whole query —
+// that would surface as a 503 and blank the governance screen entirely. The
+// known tallies still have to be right.
+func TestGovernanceActionsSkipsUnknownVoteKind(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metadata.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(govProposalDDL); err != nil {
+		t.Fatalf("create governance_proposal: %v", err)
+	}
+	if _, err := db.Exec(govVoteDDL); err != nil {
+		t.Fatalf("create governance_vote: %v", err)
+	}
+
+	txHash := make([]byte, 32)
+	for i := range txHash {
+		txHash[i] = byte(i + 1)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO governance_proposal
+		 (id, tx_hash, action_index, action_type, proposed_epoch, expires_epoch, anchor_url, deposit)
+		 VALUES (1, ?, 0, ?, 100, 130, '', 100000000000)`,
+		txHash, lcommon.GovActionTypeInfo,
+	); err != nil {
+		t.Fatalf("insert proposal: %v", err)
+	}
+	// One Yes, one No, and two of a kind from the future.
+	for _, vote := range []int{1, 0, 7, 7} {
+		if _, err := db.Exec(
+			`INSERT INTO governance_vote (proposal_id, vote, deleted_slot) VALUES (1, ?, NULL)`,
+			vote,
+		); err != nil {
+			t.Fatalf("insert vote: %v", err)
+		}
+	}
+
+	c := NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir))
+	got, err := c.GovernanceActions(context.Background())
+	if err != nil {
+		t.Fatalf("GovernanceActions with an unknown vote kind: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("actions = %d, want 1", len(got))
+	}
+	if got[0].YesVotes != 1 || got[0].NoVotes != 1 || got[0].AbstainVotes != 0 {
+		t.Fatalf("tallies = yes %d no %d abstain %d, want 1/1/0 with the unknown kind skipped",
+			got[0].YesVotes, got[0].NoVotes, got[0].AbstainVotes)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -821,14 +822,20 @@ func governanceVoteTallies(ctx context.Context, db *sql.DB) (map[uint64]govVoteT
 		case dingoGovVoteAbstain:
 			t.abstain += count
 		default:
-			// A vote choice this build does not know about. Dropping it
-			// silently would under-report the tally and make the displayed
-			// numbers disagree with the chain, so surface it instead.
-			return nil, fmt.Errorf(
-				"unknown governance vote choice %d for proposal %d",
-				vote,
-				proposalID,
+			// A vote choice this build does not know about — a Dingo that has
+			// added one. Skip it rather than failing the query: this is a
+			// read-only browser over node-local data, and erroring here turns
+			// one unrecognized vote into a 503 that blanks the whole
+			// governance screen. The tally under-reports that vote, which is
+			// what every older client does with a newer chain, so it is logged
+			// rather than hidden.
+			slog.Warn(
+				"skipping governance vote of an unknown kind",
+				"vote", vote,
+				"proposal_id", proposalID,
+				"count", count,
 			)
+			continue
 		}
 		tallies[proposalID] = t
 	}
