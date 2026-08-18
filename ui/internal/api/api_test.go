@@ -3853,10 +3853,22 @@ func TestMultiSigCreateReportsActivationFailure(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/multisig", bytes.NewBufferString(createBody)))
 
-	if rec.Code == http.StatusOK {
-		t.Fatalf("POST /wallet/multisig = 200 body %s, want the activation failure surfaced", rec.Body.String())
+	// Not active — the selection never moved — but the wallet exists now, so
+	// the response has to carry its ID: re-POSTing the same policy hits the
+	// duplicate-script check, leaving no other way to reach it. Decoded rather
+	// than substring-matched, since the nested account carries its own
+	// "active" field.
+	var got struct {
+		ID     string `json:"id"`
+		Active bool   `json:"active"`
 	}
-	if strings.Contains(rec.Body.String(), `"active":true`) {
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v (body %s)", err, rec.Body.String())
+	}
+	if got.Active {
 		t.Fatalf("response claims the wallet is active despite the failure: %s", rec.Body.String())
+	}
+	if got.ID == "" {
+		t.Fatalf("response carries no wallet id, so the created wallet is unreachable: %s", rec.Body.String())
 	}
 }

@@ -1913,10 +1913,15 @@ func registerMultiSigRoutes(
 		active, aErr := vlt.SetActive(meta.ID)
 		if aErr != nil {
 			// The wallet is persisted but the selection did not move, so reads
-			// and sends still answer for the previous one. Reporting it as
-			// active would be a lie the client cannot detect; surface the
-			// failure instead and let the caller retry the activation.
-			serve(w, struct{}{}, aErr)
+			// and sends still answer for the previous one. Two things must both
+			// be true in the response: it must not claim the new wallet is
+			// active (a lie the client cannot detect), and it must still carry
+			// the wallet's ID — the wallet exists now, re-POSTing the same
+			// policy hits the duplicate-script check, so without the ID the
+			// created wallet is unreachable. Returning the view with a
+			// non-matching active id gives the client exactly what it needs to
+			// call the activate endpoint itself.
+			serve(w, toWalletView(meta, ""), nil)
 			return
 		}
 		bindActive(active)
