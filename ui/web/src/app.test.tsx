@@ -955,10 +955,29 @@ test("the palette has a visible trigger, not just a shortcut", async () => {
 
   const trigger = within(sidebar).getByRole("button", { name: /search/i });
   expect(trigger).toBeInTheDocument();
-  expect(trigger).toHaveTextContent("⌘K");
+  // Non-Mac platform (jsdom default): the handler binds Ctrl-K too, so the hint
+  // must not promise a modifier this keyboard does not have.
+  expect(trigger).toHaveTextContent("Ctrl+K");
 
   fireEvent.click(trigger);
   expect(await screen.findByRole("dialog", { name: /command palette/i })).toBeInTheDocument();
+});
+
+test("the palette trigger shows the Mac shortcut on a Mac", async () => {
+  const original = Object.getOwnPropertyDescriptor(window.navigator, "platform");
+  Object.defineProperty(window.navigator, "platform", {
+    value: "MacIntel",
+    configurable: true,
+  });
+  try {
+    const sidebar = await unlockAndGetSidebar(walletA);
+    const trigger = within(sidebar).getByRole("button", { name: /search/i });
+    expect(trigger).toHaveTextContent("⌘K");
+  } finally {
+    if (original) {
+      Object.defineProperty(window.navigator, "platform", original);
+    }
+  }
 });
 
 test("Cmd-K opens the palette and reaches a screen that left the nav", async () => {
@@ -1030,9 +1049,14 @@ test("turning on operator mode adds Pool Ops without a reload", async () => {
   const sidebar = await unlockAndGetSidebar(walletA);
   expect(within(sidebar).queryByRole("button", { name: "Pool Ops" })).not.toBeInTheDocument();
 
-  fireEvent.click(within(sidebar).getByRole("button", { name: "Settings" }));
-  fireEvent.click(await screen.findByRole("button", { name: /show pool operations/i }));
+  try {
+    fireEvent.click(within(sidebar).getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: /show pool operations/i }));
 
-  expect(await within(sidebar).findByRole("button", { name: "Pool Ops" })).toBeInTheDocument();
-  window.localStorage.removeItem("bursa.operatorMode");
+    expect(await within(sidebar).findByRole("button", { name: "Pool Ops" })).toBeInTheDocument();
+  } finally {
+    // Restore even when an assertion above throws: otherwise operator mode
+    // leaks into every later test in this file.
+    window.localStorage.removeItem("bursa.operatorMode");
+  }
 });

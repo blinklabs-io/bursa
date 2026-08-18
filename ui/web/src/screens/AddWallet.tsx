@@ -334,7 +334,7 @@ export function AddWallet({
         <p className="helper-text" style={{ marginBottom: "var(--space-3)" }}>
           Create a brand-new wallet with a freshly generated recovery phrase,
           restore an existing one from a phrase you already have, connect a
-          hardware wallet (Ledger or Trezor), or compose a multi-signature
+          hardware wallet, or compose a multi-signature
           wallet that several people sign for together.
         </p>
         <div className="preview-actions" style={{ flexDirection: "column" }}>

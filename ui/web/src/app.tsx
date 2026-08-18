@@ -479,14 +479,29 @@ export function App() {
   // command is also reachable by pointing and clicking somewhere — a palette is
   // invisible to anyone who does not know it exists, so it must never be the
   // only route to a feature.
+  // The handler binds Cmd-K and Ctrl-K alike, so the hint must not promise a
+  // modifier the user's keyboard does not have.
+  const paletteShortcutLabel =
+    typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform)
+      ? "\u2318K"
+      : "Ctrl+K";
+  // Disabled commands say which gate is closed. Swap needs a reachable node AND
+  // mainnet, and Send needs a reachable node AND a wallet that can spend, so a
+  // single fixed string is wrong for whichever half is actually failing.
+  const swapDisabledReason = !canQueryNode
+    ? "Needs a synced node"
+    : "Mainnet only";
+  const sendDisabledReason = !isReady
+    ? "Needs a synced node"
+    : "This wallet cannot spend";
   const commands: Command[] = [
     { id: "portfolio", label: "Portfolio", group: "Go", keywords: "balance tokens nfts home", run: () => navigate("portfolio") },
     { id: "activity", label: "Activity", group: "Go", keywords: "history transactions", run: () => navigate("activity") },
     { id: "stake", label: "Stake", group: "Go", keywords: "delegate rewards pools", run: () => navigate("stake") },
-    { id: "swap", label: "Swap", group: "Go", keywords: "dex trade quote", run: () => navigate("swap"), disabled: !canSwap, disabledReason: "Mainnet only" },
+    { id: "swap", label: "Swap", group: "Go", keywords: "dex trade quote", run: () => navigate("swap"), disabled: !canSwap, disabledReason: swapDisabledReason },
     { id: "settings", label: "Settings", group: "Go", keywords: "preferences node connector", run: () => navigate("settings") },
 
-    { id: "send", label: "Send", group: "Move funds", keywords: "pay transfer spend", run: () => navigate("send"), disabled: !canSend, disabledReason: "Needs a synced node" },
+    { id: "send", label: "Send", group: "Move funds", keywords: "pay transfer spend", run: () => navigate("send"), disabled: !canSend, disabledReason: sendDisabledReason },
     { id: "receive", label: "Receive", group: "Move funds", keywords: "address qr deposit", run: () => navigate("receive") },
     {
       id: "import",
@@ -540,6 +555,7 @@ export function App() {
 
       {/* Mobile-only: top bar + slide-out drawer. Hidden on desktop via CSS. */}
       <MobileNav
+            onOpenPalette={() => setPaletteOpen(true)}
         status={status.data ?? null}
         activeWallet={activeWallet}
         wallets={wallets}
@@ -580,7 +596,7 @@ export function App() {
             aria-haspopup="dialog"
           >
             <span>Search…</span>
-            <span className="palette-kbd" aria-hidden="true">⌘K</span>
+            <span className="palette-kbd" aria-hidden="true">{paletteShortcutLabel}</span>
           </button>
           {navItems.map(({ key, label, disabled, active }) => (
             <button

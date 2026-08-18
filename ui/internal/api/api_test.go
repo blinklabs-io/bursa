@@ -1716,7 +1716,6 @@ type fakeMultiSig struct {
 	listErr    error
 	getErr     error
 	createErr  error
-	deleteErr  error
 	myKeyErr   error
 	balanceErr error
 	buildErr   error
@@ -1725,7 +1724,6 @@ type fakeMultiSig struct {
 
 	gotGetID         string
 	gotCreate        multisig.CreateRequest
-	gotDeleteID      string
 	gotMyKeyPass     string
 	gotBalanceID     string
 	gotBuildID       string
