@@ -964,6 +964,10 @@ test("the palette has a visible trigger, not just a shortcut", async () => {
 });
 
 test("the palette trigger shows the Mac shortcut on a Mac", async () => {
+  // platform is an inherited getter on Navigator.prototype, not an own
+  // property, so getOwnPropertyDescriptor returns undefined here and there is
+  // nothing to put back — the override has to be deleted instead, or "MacIntel"
+  // leaks into every later test in this file.
   const original = Object.getOwnPropertyDescriptor(window.navigator, "platform");
   Object.defineProperty(window.navigator, "platform", {
     value: "MacIntel",
@@ -976,8 +980,16 @@ test("the palette trigger shows the Mac shortcut on a Mac", async () => {
   } finally {
     if (original) {
       Object.defineProperty(window.navigator, "platform", original);
+    } else {
+      delete (window.navigator as unknown as Record<string, unknown>).platform;
     }
   }
+});
+
+test("the palette hint stays platform-correct after the Mac test", () => {
+  // Guards the restore above: a leaked "MacIntel" override would make this
+  // read as a Mac long after that test finished.
+  expect(/Mac|iPhone|iPad/.test(window.navigator.platform)).toBe(false);
 });
 
 test("Cmd-K opens the palette and reaches a screen that left the nav", async () => {

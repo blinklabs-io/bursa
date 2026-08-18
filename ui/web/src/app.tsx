@@ -488,9 +488,11 @@ export function App() {
   // Disabled commands say which gate is closed. Swap needs a reachable node AND
   // mainnet, and Send needs a reachable node AND a wallet that can spend, so a
   // single fixed string is wrong for whichever half is actually failing.
-  const swapDisabledReason = !canQueryNode
-    ? "Needs a synced node"
-    : "Mainnet only";
+  const swapDisabledReason = !activeWallet
+    ? "Select a wallet"
+    : !canQueryNode
+      ? "Needs a synced node"
+      : "Mainnet only";
   const sendDisabledReason = !isReady
     ? "Needs a synced node"
     : "This wallet cannot spend";
