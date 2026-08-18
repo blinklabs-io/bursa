@@ -255,7 +255,7 @@ export function Syncing({ status, onLoadAnyway }: SyncingProps) {
         </button>
         <p className="helper-text">
           {status.state === "error"
-            ? "You can still open your wallet to see its addresses and settings, but balances and history need a running node."
+            ? "You can still open your wallet and reach its settings, but balances, history and addresses are all read through the node and need it running."
             : "You can open a wallet now, but balances and history stay incomplete until syncing finishes."}
         </p>
       </footer>
