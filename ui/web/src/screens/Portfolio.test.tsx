@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Portfolio } from "./Portfolio";
 import * as hooks from "../api/hooks";
+import { ApiError } from "../api/client";
 import type { AssetInfo } from "../api/types";
 
 function mockBalance(lovelace: string, assets: { unit: string; quantity: string }[]) {
@@ -307,4 +308,42 @@ test("NFT image load failure renders the empty thumbnail", () => {
 
   expect(screen.queryByRole("img", { name: "Token" })).not.toBeInTheDocument();
   expect(container.querySelector(".nft-thumb-empty")).toBeInTheDocument();
+});
+// The read-only escape hatch lets people in before the node can answer, so this
+// is the first screen a new user sees on a fresh install. A bare "node not
+// ready" in an empty page reads as a broken wallet; the node is simply starting.
+test("a node that cannot answer yet is explained, not dumped as an error", () => {
+  vi.spyOn(hooks, "useBalance").mockReturnValue({
+    data: null, error: new ApiError(503, "node not ready"), loading: false, refresh: vi.fn(),
+  } as never);
+  mockDelegation();
+  mockAssetMetadata({});
+  vi.spyOn(hooks, "useStatus").mockReturnValue({
+    data: { state: "bootstrapping", tip: 0, caughtUp: false, network: "preview",
+            bootstrap: { phase: "bootstrap", percent: 58.7 } },
+    error: null, loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Portfolio canSend={false} />);
+
+  expect(screen.getByText(/waiting for the node/i)).toBeInTheDocument();
+  // The progress the app already knows about, rather than a dead end.
+  expect(screen.getByText(/download snapshot · 58\.7%/i)).toBeInTheDocument();
+  expect(screen.queryByText(/^node not ready$/i)).not.toBeInTheDocument();
+});
+
+// The corollary: swallowing genuine faults into a reassuring "still starting"
+// message would hide real breakage, so anything that is not the node's own
+// not-ready gate must still surface as an error.
+test("a real fault is still reported as an error", () => {
+  vi.spyOn(hooks, "useBalance").mockReturnValue({
+    data: null, error: new ApiError(500, "balance blew up"), loading: false, refresh: vi.fn(),
+  } as never);
+  mockDelegation();
+  mockAssetMetadata({});
+
+  render(<Portfolio canSend={false} />);
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/balance blew up/i);
+  expect(screen.queryByText(/waiting for the node/i)).not.toBeInTheDocument();
 });

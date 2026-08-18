@@ -338,3 +338,32 @@ test("(s) CSV amounts are ungrouped so they parse as numbers", () => {
     expect(cell).toMatch(/^-?\d+(\.\d+)?$/);
   }
 });
+// Activity is the other screen a user lands on before the node can answer, so it
+// gets the same treatment as Portfolio: an expected, self-resolving wait is
+// explained, while genuine faults stay visible as errors.
+test("a node that cannot answer yet is explained, not dumped as an error", () => {
+  vi.spyOn(hooks, "useTransactions").mockReturnValue({
+    data: null, error: new client.ApiError(503, "node not ready"), loading: false, refresh: vi.fn(),
+  } as never);
+  vi.spyOn(hooks, "useStatus").mockReturnValue({
+    data: { state: "bootstrapping", tip: 0, caughtUp: false, network: "preview",
+            bootstrap: { phase: "bootstrap", percent: 12.5 } },
+    error: null, loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Activity network="preview" />);
+
+  expect(screen.getByText(/waiting for the node/i)).toBeInTheDocument();
+  expect(screen.getByText(/download snapshot · 12\.5%/i)).toBeInTheDocument();
+});
+
+test("a real fault is still reported as an error", () => {
+  vi.spyOn(hooks, "useTransactions").mockReturnValue({
+    data: null, error: new client.ApiError(500, "history blew up"), loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Activity network="preview" />);
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/history blew up/i);
+  expect(screen.queryByText(/waiting for the node/i)).not.toBeInTheDocument();
+});

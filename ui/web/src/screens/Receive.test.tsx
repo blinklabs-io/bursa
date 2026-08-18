@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Receive } from "./Receive";
 import * as hooks from "../api/hooks";
+import { ApiError } from "../api/client";
 
 const ADDR_A = "addr_test1qpfqpgxzsq8d6l5n5qxkdqqvxqqtd2syvxsw0mkzmq2dzn7y2y5a3uqquasklznf6xvxn0tmxy2cjaslt9yq5ygz4dqsv9r4pk";
 const ADDR_B = "addr_test1qqy2j78ks2htj6x5p2xztqpvqxqqtd2syvxsw0mkzmq2dzny0cjaslt9yq5ygz4dqsv9r4pkzuqquasklznf6xvxn0tmxwtest2";
@@ -130,4 +131,35 @@ test("(h) each address gets an external explorer link, scoped to the wallet's ne
     (l) => l.getAttribute("href") === `https://preprod.cardanoscan.io/address/${ADDR_A}`,
   );
   expect(rowLink).toBeDefined();
+});
+// Receive is gated on the node too (the next-unused-address lookup reads the
+// chain), so a user who came in through the read-only escape hatch hits this
+// before anything else. It must explain, not dump a server error.
+test("a node that cannot answer yet is explained, not dumped as an error", () => {
+  vi.spyOn(hooks, "useAddresses").mockReturnValue({
+    data: null, error: new ApiError(503, "node not ready"), loading: false, refresh: vi.fn(),
+  } as never);
+  vi.spyOn(hooks, "useStatus").mockReturnValue({
+    data: { state: "bootstrapping", tip: 0, caughtUp: false, network: "preview",
+            bootstrap: { phase: "immutable_copy", percent: 22.6 } },
+    error: null, loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Receive network="preview" />);
+
+  expect(screen.getByText(/waiting for the node/i)).toBeInTheDocument();
+  expect(screen.getByText(/copy chain history · 22\.6%/i)).toBeInTheDocument();
+  // The copy must not promise receiving works while the address is unavailable.
+  expect(screen.queryByText(/ready to receive/i)).not.toBeInTheDocument();
+});
+
+test("a real fault is still reported as an error", () => {
+  vi.spyOn(hooks, "useAddresses").mockReturnValue({
+    data: null, error: new ApiError(500, "addresses blew up"), loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Receive network="preview" />);
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/addresses blew up/i);
+  expect(screen.queryByText(/waiting for the node/i)).not.toBeInTheDocument();
 });

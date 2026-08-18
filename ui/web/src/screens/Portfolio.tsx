@@ -9,6 +9,8 @@ import { formatAda, formatTokenQuantity } from "../format";
 import { extractAssetMeta, assetDisplayName, assetMatchesQuery } from "../tokenMeta";
 import { nftImageUrl } from "../api/client";
 import { navigate } from "../router";
+import { NodeNotReady } from "../components/NodeNotReady";
+import { ApiError } from "../api/client";
 
 function NftList() {
   const nfts = useNfts();
@@ -84,6 +86,13 @@ export function Portfolio({ canSend = false }: PortfolioProps = {}) {
     return <p>Loading…</p>;
   }
 
+  // A node that cannot answer yet is an expected, self-resolving state, not a
+  // fault: say so instead of dropping a bare server error into a blank screen.
+  // Real faults still surface as errors.
+  const notReady = (e: Error | null) => e instanceof ApiError && e.status === 503;
+  if (notReady(balance.error) || notReady(delegation.error)) {
+    return <NodeNotReady what="Your balance and delegation" verb="come" />;
+  }
   // Show the first error encountered (balance errors take priority).
   if (balance.error) {
     return <p role="alert" className="error-text">{balance.error.message}</p>;

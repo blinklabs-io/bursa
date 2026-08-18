@@ -5,6 +5,8 @@ import { Card } from "../components/Card";
 import { Table } from "../components/Table";
 import { CopyButton } from "../components/CopyButton";
 import { ExplorerLink } from "../components/ExplorerLink";
+import { NodeNotReady } from "../components/NodeNotReady";
+import { ApiError } from "../api/client";
 
 interface ReceiveProps {
   // Optional so existing no-prop callers/tests keep working; the app always
@@ -44,6 +46,9 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
     return <p>Loading…</p>;
   }
 
+  if (addresses.error instanceof ApiError && addresses.error.status === 503) {
+    return <NodeNotReady what="Your receive address" />;
+  }
   if (addresses.error) {
     return (
       <p role="alert" className="error-text">

@@ -12,6 +12,8 @@ import { ExplorerLink } from "../components/ExplorerLink";
 import { formatAda, formatAdaPlain } from "../format";
 import { toCsv } from "../csv";
 import { errorMessage } from "../errorMessage";
+import { NodeNotReady } from "../components/NodeNotReady";
+import { ApiError } from "../api/client";
 
 interface ActivityProps {
   // Optional so existing no-prop callers/tests keep working; the app always
@@ -264,6 +266,10 @@ export function Activity({ network = "preview" }: ActivityProps = {}) {
 
   if (txs.loading) {
     return <p>Loading…</p>;
+  }
+
+  if (txs.error instanceof ApiError && txs.error.status === 503) {
+    return <NodeNotReady what="Your transaction history" />;
   }
 
   if (txs.error) {
