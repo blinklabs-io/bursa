@@ -1,5 +1,11 @@
 # Annotated example configuration for `bursa kes-agent` (introduced in #675).
 # Pass with --config or the BURSA_CONFIG environment variable.
+#
+# Requires a bursa build that includes the `kes-agent` command. Every key below
+# is read by that daemon and by nothing else: a build without it ignores this
+# file entirely, so the socket paths and modes documented here take effect only
+# once #675 has landed in the binary you are running. Check with
+# `bursa kes-agent --help` before relying on these permissions.
 
 kes_agent:
   # Mode:

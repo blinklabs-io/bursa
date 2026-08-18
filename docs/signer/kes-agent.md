@@ -4,6 +4,11 @@
 of IOG's kes-agent, serving a Go block producer (dingo) rather than
 cardano-node. It was introduced in #675.
 
+It requires a bursa build that includes the `kes-agent` command; the
+configuration described here is consumed by that daemon and by nothing else, so
+on a build without it these settings — including the socket modes — have no
+effect. Verify with `bursa kes-agent --help`.
+
 The agent holds the block-production KES signing key in locked (mlock'd) secure
 memory, evolves it forward-securely each KES period, and serves it to the
 producer over Unix-domain sockets. **The pool cold signing key never touches the
