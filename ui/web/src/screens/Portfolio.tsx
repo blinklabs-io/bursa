@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useBalance, useDelegation, useAssetMetadata, useNfts, useNftMedia } from "../api/hooks";
+import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { Table } from "../components/Table";
 import { StatusPill } from "../components/StatusPill";
@@ -60,7 +61,13 @@ function NftGallery() {
   return <NftList />;
 }
 
-export function Portfolio() {
+interface PortfolioProps {
+  // Whether this wallet on this node can build a spend. Receive needs nothing,
+  // so it is always offered.
+  canSend?: boolean;
+}
+
+export function Portfolio({ canSend = false }: PortfolioProps = {}) {
   const balance = useBalance();
   const delegation = useDelegation();
   const [query, setQuery] = useState("");
@@ -110,6 +117,17 @@ export function Portfolio() {
     <div className="portfolio">
       <Card title="Balance">
         <p className="balance-ada">{formatAda(lovelace)} ADA</p>
+        {/* Send and Receive are actions, not places. They sit on the balance
+            they act on — where you already are when you decide to move funds —
+            rather than costing two entries in a nav you have to scan. */}
+        <div className="portfolio-actions">
+          <Button onClick={() => navigate("send")} disabled={!canSend}>
+            Send
+          </Button>
+          <Button variant="ghost" onClick={() => navigate("receive")}>
+            Receive
+          </Button>
+        </div>
       </Card>
 
       <Card title="Native Tokens">

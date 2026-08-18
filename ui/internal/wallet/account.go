@@ -36,6 +36,10 @@ type Account struct {
 	ChangeAddresses  []string `json:"change_addresses,omitempty"`
 }
 
+// hardenedKeyStart is the CIP-1852 hardened-key boundary. A valid account index
+// must be below it (the account component m/1852'/1815'/<account>' is hardened).
+const hardenedKeyStart = uint32(1 << 31)
+
 // AccountXpub returns the Bech32-encoded extended public key for the CIP-1852
 // account m/1852'/1815'/0' derived from the mnemonic. It is stored in the vault
 // index as a stable account identifier and for any future xpub-based read-only
@@ -45,21 +49,31 @@ func AccountXpub(mnemonic string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("root key from mnemonic: %w", err)
 	}
-	return accountXpubFromRoot(root)
+	return accountXpubFromRoot(root, 0)
 }
 
-// AccountXpubFromMnemonicBytes is the zeroable-byte variant of AccountXpub.
+// AccountXpubFromMnemonicBytes is the zeroable-byte variant of AccountXpub (for
+// the canonical account index 0).
 func AccountXpubFromMnemonicBytes(mnemonic []byte) (string, error) {
+	return AccountXpubForIndexFromMnemonicBytes(mnemonic, 0)
+}
+
+// AccountXpubForIndexFromMnemonicBytes returns the account-level extended public
+// key for the given CIP-1852 account index (m/1852'/1815'/<accountIndex>').
+func AccountXpubForIndexFromMnemonicBytes(mnemonic []byte, accountIndex uint32) (string, error) {
+	if accountIndex >= hardenedKeyStart {
+		return "", fmt.Errorf("account index must be less than %d, got %d", hardenedKeyStart, accountIndex)
+	}
 	root, err := RootKeyFromMnemonicBytes(mnemonic)
 	if err != nil {
 		return "", fmt.Errorf("root key from mnemonic: %w", err)
 	}
-	return accountXpubFromRoot(root)
+	return accountXpubFromRoot(root, accountIndex)
 }
 
-func accountXpubFromRoot(root bip32.XPrv) (string, error) {
+func accountXpubFromRoot(root bip32.XPrv, accountIndex uint32) (string, error) {
 	defer zeroXPrv(root)
-	acctKey, err := bursa.GetAccountKey(root, 0)
+	acctKey, err := bursa.GetAccountKey(root, accountIndex)
 	if err != nil {
 		return "", fmt.Errorf("account key: %w", err)
 	}
@@ -67,12 +81,19 @@ func accountXpubFromRoot(root bip32.XPrv) (string, error) {
 	return acctKey.Public().String(), nil
 }
 
-// Derive builds the account for the given mnemonic and network, producing the
-// stake address plus windowN external receive addresses and windowN internal
-// change addresses (indices 0..windowN-1), all bound to the canonical stake key
-// m/1852'/1815'/0'/2/0.
+// Derive builds the canonical account (index 0). See DeriveAccount for the
+// account-index-parameterized form.
 func Derive(mnemonic, network string, windowN int) (*Account, error) {
-	netID, err := validateDeriveInputs(network, windowN)
+	return DeriveAccount(mnemonic, network, 0, windowN)
+}
+
+// DeriveAccount builds the account at the given CIP-1852 account index
+// (m/1852'/1815'/<accountIndex>') for the mnemonic and network, producing the
+// stake address plus windowN external receive addresses and windowN internal
+// change addresses (indices 0..windowN-1), all bound to that account's stake key
+// (role 2, index 0).
+func DeriveAccount(mnemonic, network string, accountIndex uint32, windowN int) (*Account, error) {
+	netID, err := validateDeriveInputs(network, windowN, accountIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -80,12 +101,17 @@ func Derive(mnemonic, network string, windowN int) (*Account, error) {
 	if err != nil {
 		return nil, fmt.Errorf("root key from mnemonic: %w", err)
 	}
-	return deriveFromRoot(root, network, netID, windowN)
+	return deriveFromRoot(root, network, netID, accountIndex, windowN)
 }
 
-// DeriveFromMnemonicBytes is the zeroable-byte variant of Derive.
+// DeriveFromMnemonicBytes is the zeroable-byte variant of Derive (account 0).
 func DeriveFromMnemonicBytes(mnemonic []byte, network string, windowN int) (*Account, error) {
-	netID, err := validateDeriveInputs(network, windowN)
+	return DeriveAccountFromMnemonicBytes(mnemonic, network, 0, windowN)
+}
+
+// DeriveAccountFromMnemonicBytes is the zeroable-byte variant of DeriveAccount.
+func DeriveAccountFromMnemonicBytes(mnemonic []byte, network string, accountIndex uint32, windowN int) (*Account, error) {
+	netID, err := validateDeriveInputs(network, windowN, accountIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -93,12 +119,15 @@ func DeriveFromMnemonicBytes(mnemonic []byte, network string, windowN int) (*Acc
 	if err != nil {
 		return nil, fmt.Errorf("root key from mnemonic: %w", err)
 	}
-	return deriveFromRoot(root, network, netID, windowN)
+	return deriveFromRoot(root, network, netID, accountIndex, windowN)
 }
 
-func validateDeriveInputs(network string, windowN int) (uint8, error) {
+func validateDeriveInputs(network string, windowN int, accountIndex uint32) (uint8, error) {
 	if windowN < 1 {
 		return 0, fmt.Errorf("windowN must be at least 1, got %d", windowN)
+	}
+	if accountIndex >= hardenedKeyStart {
+		return 0, fmt.Errorf("account index must be less than %d, got %d", hardenedKeyStart, accountIndex)
 	}
 	netID, err := cardanonet.AddressNetworkID(network)
 	if err != nil {
@@ -107,9 +136,9 @@ func validateDeriveInputs(network string, windowN int) (uint8, error) {
 	return netID, nil
 }
 
-func deriveFromRoot(root bip32.XPrv, network string, netID uint8, windowN int) (*Account, error) {
+func deriveFromRoot(root bip32.XPrv, network string, netID uint8, accountIndex uint32, windowN int) (*Account, error) {
 	defer zeroXPrv(root)
-	acctKey, err := bursa.GetAccountKey(root, 0)
+	acctKey, err := bursa.GetAccountKey(root, accountIndex)
 	if err != nil {
 		return nil, fmt.Errorf("account key: %w", err)
 	}
@@ -166,6 +195,7 @@ func deriveFromRoot(root bip32.XPrv, network string, netID uint8, windowN int) (
 
 	return &Account{
 		Network:          network,
+		AccountIndex:     accountIndex,
 		StakeAddress:     stakeAddr.String(),
 		ReceiveAddresses: receive,
 		DRepKeyHash:      drepHash,
@@ -189,11 +219,7 @@ func deriveFromRoot(root bip32.XPrv, network string, netID uint8, windowN int) (
 // cannot be recovered from the xpub itself, but is needed later to build the
 // derivation paths a hardware device signs with.
 func DeriveFromAccountXpub(accountXpubBech32, network string, accountIndex uint32, windowN int) (*Account, error) {
-	const hardenedKeyStart = uint32(1 << 31)
-	if accountIndex >= hardenedKeyStart {
-		return nil, fmt.Errorf("account index must be less than %d, got %d", hardenedKeyStart, accountIndex)
-	}
-	netID, err := validateDeriveInputs(network, windowN)
+	netID, err := validateDeriveInputs(network, windowN, accountIndex)
 	if err != nil {
 		return nil, err
 	}
