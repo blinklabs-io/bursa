@@ -149,10 +149,10 @@ const vkeyWitnessCBORBytes = 1 + (2 + 32) + (2 + 64)
 // spend is exported as CBOR and coordinated off-band, so build returns the
 // unsigned tx directly (like the air-gap export) rather than holding it.
 type Service struct {
-	chain backend.ChainContext
-	keys  Keystore // may be nil; then my-key and signing are unavailable
+	chain    backend.ChainContext
+	keys     Keystore // may be nil; then my-key and signing are unavailable
 	accounts AccountSource
-	mkID  func() string
+	mkID     func() string
 }
 
 // AccountSource is where saved multi-signature accounts are read from. Since

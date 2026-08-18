@@ -6,7 +6,6 @@ import (
 	"errors"
 	"math"
 	"math/big"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -230,7 +229,7 @@ func TestComposeScriptRejectsBadThreshold(t *testing.T) {
 
 func TestCreateListGetDelete(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, nil, &memAccounts{})
 	_, khA, _ := multiSigKeyHash(t, mnemonicA)
 	_, khB, _ := multiSigKeyHash(t, mnemonicB)
 
@@ -247,7 +246,7 @@ func TestCreateListGetDelete(t *testing.T) {
 	}
 
 	// Persisted: a fresh service reading the same file sees it.
-	svc2 := NewService(fc, nil, newStore(svc.accounts.(*store).path))
+	svc2 := NewService(fc, nil, svc.accounts)
 	list, err := svc2.List()
 	if err != nil || len(list) != 1 || list[0].ID != acct.ID {
 		t.Fatalf("List after reload: %v, %+v", err, list)
@@ -259,50 +258,17 @@ func TestCreateListGetDelete(t *testing.T) {
 	}
 
 	// Removal is a vault wallet operation now (DELETE /wallet/{id}), so the
-	// service no longer deletes; the store still can, and that is what the
-	// migration-era file path exercises here.
-	if err := svc2.accounts.(*store).remove(acct.ID); err != nil {
-		t.Fatalf("remove: %v", err)
-	}
+	// service no longer deletes — the account simply leaves its source.
+	svc2.accounts.(*memAccounts).remove(acct.ID)
 	if _, err := svc2.Get(acct.ID); !errors.Is(err, ErrUnknownAccount) {
 		t.Fatalf("expected ErrUnknownAccount after delete, got %v", err)
-	}
-}
-
-func TestStoreAddRollsBackOnPersistFailure(t *testing.T) {
-	s := newStore(filepath.Join(t.TempDir(), "missing", "multisig.json"))
-	s.loaded = true
-	s.accounts = []Account{{ID: "existing", Label: "existing"}}
-
-	if err := s.add(Account{ID: "new", Label: "new"}); err == nil {
-		t.Fatal("add succeeded with unwritable store path, want error")
-	}
-	if len(s.accounts) != 1 || s.accounts[0].ID != "existing" {
-		t.Fatalf("accounts after failed add = %+v, want original existing account", s.accounts)
-	}
-}
-
-func TestStoreRemoveRollsBackOnPersistFailure(t *testing.T) {
-	s := newStore(filepath.Join(t.TempDir(), "missing", "multisig.json"))
-	s.loaded = true
-	s.accounts = []Account{
-		{ID: "a", Label: "a"},
-		{ID: "b", Label: "b"},
-		{ID: "c", Label: "c"},
-	}
-
-	if err := s.remove("b"); err == nil {
-		t.Fatal("remove succeeded with unwritable store path, want error")
-	}
-	if len(s.accounts) != 3 || s.accounts[0].ID != "a" || s.accounts[1].ID != "b" || s.accounts[2].ID != "c" {
-		t.Fatalf("accounts after failed remove = %+v, want original a,b,c", s.accounts)
 	}
 }
 
 func TestMyKeyMatchesParticipantDerivation(t *testing.T) {
 	fc := newFakeChain()
 	ks := newTestKeystore(t, mnemonicA)
-	svc := NewService(fc, ks, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, ks, &memAccounts{})
 
 	mk, err := svc.MyKey("test-password-123")
 	if err != nil {
@@ -317,7 +283,7 @@ func TestMyKeyMatchesParticipantDerivation(t *testing.T) {
 func TestMyKeyWrongPassword(t *testing.T) {
 	fc := newFakeChain()
 	ks := newTestKeystore(t, mnemonicA)
-	svc := NewService(fc, ks, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, ks, &memAccounts{})
 	if _, err := svc.MyKey("wrong-password-xx"); !errors.Is(err, ErrWrongPassword) {
 		t.Fatalf("expected ErrWrongPassword, got %v", err)
 	}
@@ -335,7 +301,7 @@ func TestSpendFlow(t *testing.T) {
 	_, khB, _ := multiSigKeyHash(t, mnemonicB)
 
 	// Participant A's service creates the account (its store).
-	svcA := NewService(fc, ksA, newStore(filepath.Join(t.TempDir(), "a.json")))
+	svcA := NewService(fc, ksA, &memAccounts{})
 	acct, err := createForTest(svcA, CreateRequest{
 		Label:   "joint",
 		Network: "preview",
@@ -370,7 +336,7 @@ func TestSpendFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sign A: %v", err)
 	}
-	svcB := NewService(fc, ksB, newStore(filepath.Join(t.TempDir(), "b.json")))
+	svcB := NewService(fc, ksB, &memAccounts{})
 	witB, err := svcB.Sign(built.UnsignedTxCBOR, "test-password-123")
 	if err != nil {
 		t.Fatalf("Sign B: %v", err)
@@ -446,7 +412,7 @@ func assertSubmittedWitnesses(t *testing.T, fc *fakeChain, acct Account, khA, kh
 
 func TestBuildTimelockValidityInterval(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, nil, &memAccounts{})
 	_, khA, _ := multiSigKeyHash(t, mnemonicA)
 	before := uint64(1234)
 	after := uint64(5678)
@@ -520,7 +486,7 @@ func TestBuildTimelockValidityInterval(t *testing.T) {
 
 func TestBuildNoUTxOs(t *testing.T) {
 	fc := newFakeChain()
-	svc := NewService(fc, nil, newStore(filepath.Join(t.TempDir(), "multisig.json")))
+	svc := NewService(fc, nil, &memAccounts{})
 	_, khA, _ := multiSigKeyHash(t, mnemonicA)
 	acct, err := createForTest(svc, CreateRequest{
 		Label:   "empty",
