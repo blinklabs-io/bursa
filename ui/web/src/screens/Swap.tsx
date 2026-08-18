@@ -147,7 +147,7 @@ function OrderPanel({ quote, onBack }: OrderPanelProps) {
         <p className="field-label">Order parameters (JSON)</p>
         <div className="tx-hash-row">
           <code className="tx-hash">{orderJson}</code>
-          <CopyButton value={orderJson} />
+          <CopyButton value={orderJson} ariaLabel="Copy order JSON" />
         </div>
 
         <Button variant="ghost" onClick={onBack}>

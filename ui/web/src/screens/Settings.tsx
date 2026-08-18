@@ -5,6 +5,12 @@ import {
   type FormEvent,
 } from "react";
 import { Card } from "../components/Card";
+import { Tabs } from "../components/Tabs";
+import type { TabDef } from "../components/Tabs";
+import { Contacts } from "./Contacts";
+import { Diagnostics } from "./Diagnostics";
+import { SignMessage } from "./SignMessage";
+import { VerifyMessage } from "./VerifyMessage";
 import { StatusPill } from "../components/StatusPill";
 import { CopyButton } from "../components/CopyButton";
 import { Button } from "../components/Button";
@@ -462,7 +468,7 @@ function TPMCard({
   );
 }
 
-export function Settings({ account, walletType, autoLock }: SettingsProps) {
+function GeneralSettings({ account, walletType, autoLock }: SettingsProps) {
   const status = useStatus();
   const tpmStatusQuery = useTPMStatus();
   const [connectorMissing, setConnectorMissing] = useState(false);
@@ -566,7 +572,7 @@ export function Settings({ account, walletType, autoLock }: SettingsProps) {
       <Card title="Stake Address">
         <div className="row-copy">
           <code className="mono">{account.stake_address}</code>
-          <CopyButton value={account.stake_address} />
+          <CopyButton value={account.stake_address} ariaLabel="Copy stake address" />
         </div>
       </Card>
 
@@ -765,6 +771,88 @@ export function Settings({ account, walletType, autoLock }: SettingsProps) {
           ) : null}
         </Card>
       )}
+    </div>
+  );
+}
+
+type SettingsTab = "general" | "contacts" | "tools" | "diagnostics";
+
+const SETTINGS_TABS: readonly TabDef<SettingsTab>[] = [
+  { key: "general", label: "General" },
+  { key: "contacts", label: "Address book" },
+  { key: "tools", label: "Tools" },
+  { key: "diagnostics", label: "Diagnostics" },
+];
+
+interface SettingsScreenProps extends SettingsProps {
+  // Which panel to open on, so the routes these screens used to own still land
+  // where their old links pointed.
+  initialTab?: SettingsTab;
+  // Message signing needs the wallet's seed; a hardware or watch-only wallet
+  // gets the explanation rather than a form that cannot work.
+  canSign?: boolean;
+}
+
+/**
+ * Settings is where the wallet's own housekeeping lives.
+ *
+ * Address book, message signing/verification and node diagnostics were four
+ * more top-level destinations, each used rarely and none of them a place you
+ * go to do wallet work. They are panels here, which is what they always were.
+ */
+export function Settings({
+  account,
+  walletType,
+  autoLock,
+  initialTab = "general",
+  canSign = false,
+}: SettingsScreenProps) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
+
+  // The route can change under a mounted screen (#/contacts -> #/diagnostics),
+  // and initial state alone would ignore it.
+  useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab]);
+
+  return (
+    <div className="screen-settings-shell">
+      <Tabs id="settings" tabs={SETTINGS_TABS} active={tab} onSelect={setTab}>
+        {(key) => {
+          switch (key) {
+            case "general":
+              return (
+                <GeneralSettings
+                  account={account}
+                  walletType={walletType}
+                  autoLock={autoLock}
+                />
+              );
+            case "contacts":
+              return <Contacts />;
+            case "tools":
+              return canSign ? (
+                <div className="settings-tools">
+                  <SignMessage account={account} />
+                  <VerifyMessage />
+                </div>
+              ) : (
+                <div className="settings-tools">
+                  <Card title="Sign message">
+                    <p className="helper-text">
+                      Signing a message needs this wallet&rsquo;s seed, which a
+                      hardware or watch-only wallet does not hold here.
+                      Verifying a signature works for any wallet.
+                    </p>
+                  </Card>
+                  <VerifyMessage />
+                </div>
+              );
+            case "diagnostics":
+              return <Diagnostics />;
+          }
+        }}
+      </Tabs>
     </div>
   );
 }

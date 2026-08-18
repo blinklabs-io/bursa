@@ -3,27 +3,32 @@ import type { HardwareSigner } from "./types";
 
 // Mock the concrete connectors so the factory can be exercised without opening
 // WebHID or loading connect.trezor.io.
-const { mockConnectLedger, mockConnectTrezor, mockConnectKeystone } = vi.hoisted(() => ({
-  mockConnectLedger: vi.fn(),
-  mockConnectTrezor: vi.fn(),
-  mockConnectKeystone: vi.fn(),
-}));
+const { mockConnectLedger, mockConnectTrezor, mockConnectKeystone, mockConnectSeedSigner } =
+  vi.hoisted(() => ({
+    mockConnectLedger: vi.fn(),
+    mockConnectTrezor: vi.fn(),
+    mockConnectKeystone: vi.fn(),
+    mockConnectSeedSigner: vi.fn(),
+  }));
 
 vi.mock("./ledger", () => ({ connectLedger: mockConnectLedger }));
 vi.mock("./trezor", () => ({ connectTrezor: mockConnectTrezor }));
 vi.mock("./keystone", () => ({ connectKeystone: mockConnectKeystone }));
+vi.mock("./seedsigner", () => ({ connectSeedSigner: mockConnectSeedSigner }));
 
 import { connectDevice, connectHardware } from "./index";
 
 const fakeLedger = { kind: "ledger" } as unknown as HardwareSigner;
 const fakeTrezor = { kind: "trezor" } as unknown as HardwareSigner;
 const fakeKeystone = { kind: "keystone" } as unknown as HardwareSigner;
+const fakeSeedSigner = { kind: "seedsigner" } as unknown as HardwareSigner;
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockConnectLedger.mockResolvedValue(fakeLedger);
   mockConnectTrezor.mockResolvedValue(fakeTrezor);
   mockConnectKeystone.mockResolvedValue(fakeKeystone);
+  mockConnectSeedSigner.mockResolvedValue(fakeSeedSigner);
 });
 
 describe("connectDevice factory", () => {
@@ -53,6 +58,18 @@ describe("connectDevice factory", () => {
     expect(mockConnectLedger).not.toHaveBeenCalled();
     expect(mockConnectTrezor).not.toHaveBeenCalled();
     expect(session).toBe(fakeKeystone);
+  });
+
+  test("seedsigner dispatches to connectSeedSigner, forwarding the bridge options", async () => {
+    const bridge = {
+      displayRequest: () => {},
+      scanResponse: async () => ({ type: "", cborHex: "" }),
+      close: () => {},
+    };
+    const session = await connectDevice("seedsigner", { bridge, xfp: "52744703" });
+    expect(mockConnectSeedSigner).toHaveBeenCalledWith({ bridge, xfp: "52744703" });
+    expect(mockConnectKeystone).not.toHaveBeenCalled();
+    expect(session).toBe(fakeSeedSigner);
   });
 });
 
@@ -95,5 +112,11 @@ describe("connectHardware (dynamic kind)", () => {
     // the air-gapped QR flow is driven directly through connectDevice.
     expect(() => connectHardware("keystone", consent)).toThrow(/air-gapped QR/i);
     expect(mockConnectKeystone).not.toHaveBeenCalled();
+  });
+
+  test("seedsigner is refused here (QR-only, driven via connectDevice with a bridge)", () => {
+    const consent = vi.fn().mockResolvedValue(true);
+    expect(() => connectHardware("seedsigner", consent)).toThrow(/air-gapped QR/i);
+    expect(mockConnectSeedSigner).not.toHaveBeenCalled();
   });
 });

@@ -46,6 +46,7 @@ interface MobileNavProps {
   onAddWallet: () => void;
   onLock: () => void;
   onNavigate: (key: string) => void;
+  onAccountChanged?: (wallet: WalletView) => void;
 }
 
 // MobileNav renders on viewports narrower than 768 px. It replaces the fixed
@@ -66,6 +67,7 @@ export function MobileNav({
   onAddWallet,
   onLock,
   onNavigate,
+  onAccountChanged,
 }: MobileNavProps) {
   const [open, setOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -233,6 +235,7 @@ export function MobileNav({
             onActivated={(w) => { onActivated(w); setOpen(false); }}
             onAddWallet={() => { onAddWallet(); setOpen(false); }}
             onLock={onLock}
+            onAccountChanged={onAccountChanged}
           />
 
           {lockError && (

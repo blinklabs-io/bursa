@@ -15,7 +15,9 @@ import { connectHardware, connectDevice } from "../hw";
 import type { HardwareKind, HardwareSigner } from "../hw";
 import { getStoredDeviceKind, setDeviceKind, getKeystoneXfp, setKeystoneXfp } from "../hw/deviceKind";
 import { parseAccountSyncXfp } from "../hw/keystone";
+import { recoverSeedSignerXfp } from "../hw/seedsigner";
 import { useKeystoneQRBridge } from "../components/KeystoneQRModal";
+import { useSeedSignerQRBridge } from "../components/SeedSignerQRModal";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
@@ -30,6 +32,7 @@ const DEVICE_LABELS: Record<HardwareKind, string> = {
   ledger: "Ledger",
   trezor: "Trezor",
   keystone: "Keystone",
+  seedsigner: "SeedSigner",
 };
 
 type Phase = "compose" | "preview" | "done";
@@ -364,50 +367,64 @@ function PreviewPhase({
   // acknowledgement (consent law); local devices (Ledger, Keystone) need none.
   const needsExternalConsent = deviceKind === "trezor";
   const isKeystone = deviceKind === "keystone";
+  const isSeedSigner = deviceKind === "seedsigner";
+  // Keystone and SeedSigner both sign fully air-gapped over QR (fully local, no
+  // consent gate). They share the same fingerprint store and recovery pattern;
+  // only the account-recovery exchange differs (Keystone: scan an account-sync
+  // QR; SeedSigner: show an account-request QR, then scan the reply).
+  const isAirGap = isKeystone || isSeedSigner;
 
   // password is only used in the software (!isHardware) confirm path; hooks cannot be conditional.
   const [password, setPassword] = useState("");
   const [externalConsent, setExternalConsent] = useState(false);
-  // Keystone signs air-gapped over QR ONLY. A USB signer exists in the code
-  // (hw/keystone.ts connectKeystoneUSB) but rides a young, unverified vendor SDK
-  // never exercised against real hardware, so it is NOT user-selectable here.
-  // The Keystone device master fingerprint (xfp) for this wallet, sourced from
-  // the per-wallet local hint. QR signing REQUIRES it (the device matches its
-  // witness paths by it); when it is missing — e.g. after a browser-data wipe —
-  // we must NOT sign with a zero fingerprint. Instead the user re-scans the
-  // account-sync QR here to recover it (see handleKeystoneResync). Kept in state
-  // so a recovery updates the UI immediately.
-  const [keystoneXfp, setKeystoneXfpState] = useState<string | undefined>(() =>
+  // The air-gapped device master fingerprint (xfp) for this wallet, sourced from
+  // the per-wallet local hint (a single store shared by every air-gapped-QR
+  // device). QR signing REQUIRES it (the device matches its witness paths by it);
+  // when it is missing — e.g. after a browser-data wipe — we must NOT sign with a
+  // zero fingerprint. Instead the user re-imports the account here to recover it
+  // (see handleAirGapResync). Kept in state so a recovery updates the UI at once.
+  const [airGapXfp, setAirGapXfp] = useState<string | undefined>(() =>
     walletId ? getKeystoneXfp(walletId) : undefined,
   );
-  // The QR modal bridge is always mounted (hooks can't be conditional); it
-  // renders nothing until a Keystone QR flow drives it.
+  // Both QR modal bridges are always mounted (hooks can't be conditional); each
+  // renders nothing until its device's QR flow drives it.
   const { bridge: keystoneBridge, element: keystoneModal } = useKeystoneQRBridge();
+  const { bridge: seedSignerBridge, element: seedSignerModal } = useSeedSignerQRBridge();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState<UnsignedTx | null>(null);
 
   // QR signing needs the device fingerprint; when it is missing the user must
-  // re-scan the account-sync QR before they can sign (see handleKeystoneResync).
-  const needsKeystoneResync = isKeystone && keystoneXfp === undefined;
+  // re-import the account before they can sign (see handleAirGapResync).
+  const needsAirGapResync = isAirGap && airGapXfp === undefined;
 
-  // Recover a lost Keystone fingerprint: re-scan the account-sync QR, read just
-  // the master fingerprint (account-independent), and persist it so QR signing
-  // can proceed. Mirrors the device-picker recovery pattern — no need to abandon
-  // and re-add the wallet.
-  async function handleKeystoneResync() {
+  // Recover a lost air-gapped fingerprint: re-run the device's account exchange,
+  // read just the master fingerprint (account-independent), and persist it so QR
+  // signing can proceed. Mirrors the device-picker recovery pattern — no need to
+  // abandon and re-add the wallet.
+  async function handleAirGapResync() {
     setError(null);
     setLoading(true);
     try {
-      const scanned = await keystoneBridge.scanResponse();
-      const xfp = await parseAccountSyncXfp(scanned);
+      let xfp: string;
+      if (isSeedSigner) {
+        // SeedSigner recovery re-runs the account-request → account-response
+        // exchange (recoverSeedSignerXfp tears the bridge down itself).
+        xfp = await recoverSeedSignerXfp(seedSignerBridge);
+      } else {
+        try {
+          const scanned = await keystoneBridge.scanResponse();
+          xfp = await parseAccountSyncXfp(scanned);
+        } finally {
+          keystoneBridge.close();
+        }
+      }
       if (walletId) setKeystoneXfp(walletId, xfp);
-      setKeystoneXfpState(xfp);
+      setAirGapXfp(xfp);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
-      keystoneBridge.close();
       setLoading(false);
     }
   }
@@ -464,25 +481,28 @@ function PreviewPhase({
       // grant WebHID/WebUSB permission while browser user activation is still
       // live. The device kind is the one recorded when this wallet was added
       // (or the one the user just chose when no hint was stored).
-      if (kind === "keystone") {
-        // Keystone is air-gapped QR only — fully local, no consent gate. The
-        // animated-QR + webcam modal drives the exchange; the sign-request needs
-        // the device master fingerprint captured at account-sync (hw/keystone.ts).
-        // Never start a QR sign flow without a real fingerprint: a missing fp
-        // would build a request the device cannot match. The button is disabled
-        // while it is missing (needsKeystoneResync), so this is defensive —
-        // steer the user to the recovery re-scan.
-        if (keystoneXfp === undefined) {
+      if (isAirGap) {
+        // Keystone and SeedSigner are air-gapped QR only — fully local, no
+        // consent gate. The animated-QR + webcam modal drives the exchange; the
+        // sign-request needs the device master fingerprint captured at account
+        // import. Never start a QR sign flow without a real fingerprint: a
+        // missing fp would build a request the device cannot match. The button is
+        // disabled while it is missing (needsAirGapResync), so this is defensive
+        // — steer the user to the recovery re-import.
+        if (airGapXfp === undefined) {
           setError(
-            "This Keystone wallet's device fingerprint is missing. Re-scan the account-sync QR to recover it before signing.",
+            `This ${deviceLabel} wallet's device fingerprint is missing. Re-import the account to recover it before signing.`,
           );
           return;
         }
-        session = await connectDevice("keystone", {
-          transport: "qr",
-          bridge: keystoneBridge,
-          xfp: keystoneXfp,
-        });
+        session =
+          kind === "seedsigner"
+            ? await connectDevice("seedsigner", { bridge: seedSignerBridge, xfp: airGapXfp })
+            : await connectDevice("keystone", {
+                transport: "qr",
+                bridge: keystoneBridge,
+                xfp: airGapXfp,
+              });
       } else {
         // The confirm button is disabled until the Trezor consent box is
         // ticked, so this simply reports the already-given approval; the real
@@ -571,7 +591,7 @@ function PreviewPhase({
                   device you used to add it; you can change this if a connection
                   attempt fails.
                 </p>
-                {(["ledger", "trezor", "keystone"] as const).map((k) => (
+                {(["ledger", "trezor", "keystone", "seedsigner"] as const).map((k) => (
                   <label className="checkbox-row" key={k}>
                     <input
                       type="radio"
@@ -586,27 +606,33 @@ function PreviewPhase({
                 ))}
               </fieldset>
             )}
-            {needsKeystoneResync && (
+            {needsAirGapResync && (
               // The device fingerprint hint was lost (e.g. browser-data wipe).
               // QR signing cannot proceed without it, so recover it in place by
-              // re-scanning the account-sync QR rather than sending a request the
-              // device cannot match.
+              // re-importing the account rather than sending a request the device
+              // cannot match.
               <fieldset className="field-group" style={{ border: "none", padding: 0, margin: 0 }}>
-                <legend className="field-label">Reconnect this Keystone</legend>
+                <legend className="field-label">Reconnect this {deviceLabel}</legend>
                 <p className="helper-text">
-                  We could not find this wallet&apos;s Keystone fingerprint on this browser
-                  (it may have been cleared). On the Keystone, open the Cardano account and
-                  choose Sync / Connect Software Wallet, then scan that QR to reconnect.
+                  We could not find this wallet&apos;s {deviceLabel} fingerprint on this browser
+                  (it may have been cleared).{" "}
+                  {isSeedSigner
+                    ? "On the SeedSigner, load your seed and choose Export account, then scan that QR to reconnect."
+                    : "On the Keystone, open the Cardano account and choose Sync / Connect Software Wallet, then scan that QR to reconnect."}
                 </p>
-                <Button onClick={handleKeystoneResync} disabled={loading}>
-                  {loading ? "Scanning…" : "Scan account-sync QR"}
+                <Button onClick={handleAirGapResync} disabled={loading}>
+                  {loading
+                    ? "Scanning…"
+                    : isSeedSigner
+                      ? "Scan account QR"
+                      : "Scan account-sync QR"}
                 </Button>
               </fieldset>
             )}
-            {deviceKind !== undefined && !needsKeystoneResync && (
+            {deviceKind !== undefined && !needsAirGapResync && (
               <p className="helper-text">
-                {isKeystone
-                  ? "Confirm to show the transaction as a QR for your Keystone, then scan its signature back."
+                {isAirGap
+                  ? `Confirm to show the transaction as a QR for your ${deviceLabel}, then scan its signature back.`
                   : `Connect your ${deviceLabel} and confirm the transaction on the device.`}
               </p>
             )}
@@ -629,7 +655,6 @@ function PreviewPhase({
             <Input
               id="spend-password"
               type="password"
-              placeholder="Spending password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
@@ -653,7 +678,7 @@ function PreviewPhase({
                 loading ||
                 exporting ||
                 needsDeviceChoice ||
-                needsKeystoneResync ||
+                needsAirGapResync ||
                 (needsExternalConsent && !externalConsent)
               }
             >
@@ -661,8 +686,8 @@ function PreviewPhase({
                 ? "Signing…"
                 : needsDeviceChoice
                   ? "Choose a device"
-                  : needsKeystoneResync
-                    ? "Reconnect Keystone"
+                  : needsAirGapResync
+                    ? `Reconnect ${deviceLabel}`
                     : `Confirm on ${deviceLabel}`}
             </Button>
           ) : (
@@ -686,7 +711,7 @@ function PreviewPhase({
                 <p className="field-label">Unsigned transaction (CBOR)</p>
                 <div className="tx-hash-row">
                   <code className="tx-hash">{exported.unsigned_tx_cbor}</code>
-                  <CopyButton value={exported.unsigned_tx_cbor} />
+                  <CopyButton value={exported.unsigned_tx_cbor} ariaLabel="Copy unsigned transaction CBOR" />
                   <DownloadButton
                     value={exported.unsigned_tx_cbor}
                     filename="unsigned-tx.cbor"
@@ -711,6 +736,7 @@ function PreviewPhase({
         )}
       </div>
       {keystoneModal}
+      {seedSignerModal}
     </Card>
   );
 }
@@ -730,7 +756,7 @@ function DonePhase({ result, onReset }: DonePhaseProps) {
         <p className="field-label">Transaction hash</p>
         <div className="tx-hash-row">
           <code className="tx-hash">{result.tx_hash}</code>
-          <CopyButton value={result.tx_hash} />
+          <CopyButton value={result.tx_hash} ariaLabel="Copy transaction hash" />
         </div>
         <Button onClick={onReset}>Send another</Button>
       </div>
