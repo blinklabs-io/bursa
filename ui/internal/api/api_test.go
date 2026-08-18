@@ -418,6 +418,11 @@ type fakeSettings struct {
 	setAutoLockErr        error
 	setAutoLockCalled     bool
 	setAutoLockCalledWith int
+
+	notifications          bool
+	setNotificationsErr    error
+	setNotificationsCalled bool
+	setNotificationsWith   bool
 }
 
 func (f *fakeSettings) HistoryExpiry() bool { return f.enabled }
@@ -443,6 +448,18 @@ func (f *fakeSettings) SetAutoLockMinutes(minutes int) error {
 		return f.setAutoLockErr
 	}
 	f.autoLockMinutes = minutes
+	return nil
+}
+
+func (f *fakeSettings) Notifications() bool { return f.notifications }
+
+func (f *fakeSettings) SetNotifications(enabled bool) error {
+	f.setNotificationsCalled = true
+	f.setNotificationsWith = enabled
+	if f.setNotificationsErr != nil {
+		return f.setNotificationsErr
+	}
+	f.notifications = enabled
 	return nil
 }
 

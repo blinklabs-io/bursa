@@ -23,7 +23,7 @@ import {
   useNftMedia,
   useAsync,
 } from "../api/hooks";
-import type { AsyncState } from "../api/hooks";
+import type { AsyncState, NotificationsState } from "../api/hooks";
 import {
   setHistoryExpiry as putHistoryExpiry,
   setAutoLock as putAutoLock,
@@ -42,6 +42,10 @@ interface SettingsProps {
   // change here must be visible to the idle timer in the same session, with
   // no reload.
   autoLock: AsyncState<AutoLockSetting>;
+  // The wallet-activity notifications state, lifted to and owned by App (see
+  // app.tsx) so a toggle here immediately drives App's activity poller — no
+  // reload, no second independent hook instance.
+  notifications: NotificationsState;
 }
 
 function syncTone(state: NodeState): "ok" | "warn" | "error" | "muted" {
@@ -468,7 +472,110 @@ function TPMCard({
   );
 }
 
-function GeneralSettings({ account, walletType, autoLock }: SettingsProps) {
+// NotificationsCard is the user-facing control for node-local wallet-activity
+// notifications: a desktop/browser notification when the active wallet receives
+// ADA or a staking reward. Off by default; turning it on requests the browser
+// Notification permission (the desktop build uses an OS-native bridge instead).
+// Detection is entirely node-local — nothing leaves the machine.
+//
+// `notifications` is App's useNotifications() state, passed down rather than
+// called again here (compare AutoLockCard) so the toggle here immediately
+// starts/stops App's activity poller in the same session.
+function NotificationsCard({ notifications }: { notifications: NotificationsState }) {
+  const checked = notifications.enabled;
+  // A browser with neither the desktop bridge nor the Notification API can
+  // never actually raise a notification; block turning the preference ON in
+  // that case (an already-persisted "on" from another environment may still
+  // be turned back off) so the toggle state never claims a promise it can't
+  // keep.
+  const disabled =
+    notifications.loading || notifications.saving || (!notifications.supported && !checked);
+  // A browser that granted the feature preference but denied the OS/browser
+  // permission can persist "on" yet never actually show a notification; surface
+  // that so the toggle state isn't misleading.
+  const permissionDenied = checked && notifications.permission === "denied";
+  // The preference can also be "on" (e.g. persisted from another browser/
+  // profile) while this browser's own Notification permission was never
+  // decided — the poller stays off and nothing prompts the user, since the
+  // permission request only fires on the toggle's off-to-on transition. Offer
+  // a direct way to (re-)request it rather than the on/off toggle workaround.
+  const permissionUndecided = checked && notifications.permission === "default";
+
+  return (
+    <Card title="Notifications">
+      <div className="setting-toggle-row">
+        <label htmlFor="wallet-notifications" className="setting-toggle-label">
+          Activity notifications
+        </label>
+        <label className="switch">
+          <input
+            id="wallet-notifications"
+            type="checkbox"
+            role="switch"
+            aria-checked={checked}
+            checked={checked}
+            disabled={disabled}
+            onChange={(e) => void notifications.setEnabled(e.target.checked)}
+          />
+          <span className="switch-track" aria-hidden="true">
+            <span className="switch-thumb" />
+          </span>
+        </label>
+      </div>
+
+      {notifications.loading ? (
+        <p className="muted">Loading…</p>
+      ) : (
+        <p className="setting-state">
+          {checked ? "On" : "Off"}
+          {notifications.saving && " · saving…"}
+        </p>
+      )}
+
+      {notifications.error && (
+        <p role="alert" className="error-text">
+          {notifications.error.message}
+        </p>
+      )}
+
+      {!notifications.supported && (
+        <p className="helper-text">
+          This browser does not support notifications.
+        </p>
+      )}
+
+      {permissionDenied && (
+        <p role="status" className="setting-restart-note">
+          Notification permission is blocked in your browser — allow it to receive alerts.
+        </p>
+      )}
+
+      {permissionUndecided && (
+        <p role="status" className="setting-restart-note">
+          Notification permission hasn&apos;t been granted in this browser yet.{" "}
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={notifications.saving}
+            onClick={() => void notifications.setEnabled(true)}
+          >
+            Grant permission
+          </button>
+        </p>
+      )}
+
+      <div className="setting-copy">
+        <p>
+          Get a desktop notification when your active wallet receives ADA or a
+          staking reward. Detection is entirely node-local — your wallet watches
+          its own node&apos;s data and nothing leaves this machine.
+        </p>
+      </div>
+    </Card>
+  );
+}
+
+function GeneralSettings({ account, walletType, autoLock, notifications }: SettingsProps) {
   const status = useStatus();
   const tpmStatusQuery = useTPMStatus();
   const [connectorMissing, setConnectorMissing] = useState(false);
@@ -604,6 +711,8 @@ function GeneralSettings({ account, walletType, autoLock }: SettingsProps) {
       <LeanStorageCard />
 
       <AutoLockCard setting={autoLock} />
+
+      <NotificationsCard notifications={notifications} />
 
       <Card title="NFT Media">
         <p className="helper-text">
@@ -810,6 +919,7 @@ export function Settings({
   walletType,
   walletId,
   autoLock,
+  notifications,
   initialTab = "general",
   canSign = false,
 }: SettingsScreenProps) {
@@ -836,6 +946,7 @@ export function Settings({
                   account={account}
                   walletType={walletType}
                   autoLock={autoLock}
+                  notifications={notifications}
                 />
               );
             case "contacts":

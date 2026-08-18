@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/Salvionied/apollo/v2/backend/utxorpc"
+	"github.com/blinklabs-io/bursa/ui/internal/activity"
 	"github.com/blinklabs-io/bursa/ui/internal/api"
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
@@ -302,6 +303,12 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	chainClient := chain.NewClient(blockfrostPort, chain.WithDingoDataDir(nodeDataDir))
 	walletSvc := wallet.NewService(chainClient)
 
+	// Node-local wallet-activity detector: diffs the active wallet's confirmed
+	// incoming transactions and stake-reward epochs on each SPA poll to surface
+	// desktop/browser notifications. It reads only walletSvc's node-local views,
+	// so it makes no external calls.
+	activitySvc := activity.New(walletSvc)
+
 	// The vault is the encrypted multi-wallet store: a single file under the data
 	// dir holding the wallet index (encrypted under the vault password) and each
 	// wallet's seed (encrypted under its own spending password). It replaces the
@@ -450,6 +457,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		api.WithLegacyKeystore(legacyKeyStore),
 		api.WithDiagnostics(diagSvc),
 		api.WithScriptMigration(migrateScripts),
+		api.WithActivity(activitySvc),
 	}
 	if connectorSvc != nil {
 		handlerOpts = append(handlerOpts, api.WithConnector(connectorSvc))
@@ -603,6 +611,15 @@ func (c *settingsController) AutoLockMinutes() int { return c.store.AutoLockMinu
 
 func (c *settingsController) SetAutoLockMinutes(minutes int) error {
 	return c.store.SetAutoLockMinutes(minutes)
+}
+
+// Notifications and SetNotifications pass straight through to the persisted
+// settings store: like auto-lock, the wallet-activity notification preference
+// is a pure client-side/UI setting with no node-construction dependency.
+func (c *settingsController) Notifications() bool { return c.store.Notifications() }
+
+func (c *settingsController) SetNotifications(enabled bool) error {
+	return c.store.SetNotifications(enabled)
 }
 
 // diagChain adapts the loopback Blockfrost chain client to the diagnostics

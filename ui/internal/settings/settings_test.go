@@ -366,3 +366,62 @@ func TestSeedDefaultFalseStillPersistsFirstRun(t *testing.T) {
 		t.Fatal("first-run SeedDefault(false) should lock in false, not be re-seeded to true")
 	}
 }
+
+// TestNotificationsDefaultsOffWhenAbsent: a missing settings file yields a
+// store whose wallet-activity notifications default to off.
+func TestNotificationsDefaultsOffWhenAbsent(t *testing.T) {
+	s, err := Load(tmpPath(t))
+	if err != nil {
+		t.Fatalf("Load with no file: %v", err)
+	}
+	if s.Notifications() {
+		t.Fatal("notifications should default to false when no file exists")
+	}
+}
+
+// TestNotificationsSetPersistsRoundTrip: on → reload → off → reload.
+func TestNotificationsSetPersistsRoundTrip(t *testing.T) {
+	path := tmpPath(t)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := s.SetNotifications(true); err != nil {
+		t.Fatalf("SetNotifications(true): %v", err)
+	}
+	if !s.Notifications() {
+		t.Fatal("in-memory value not updated after SetNotifications(true)")
+	}
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !reloaded.Notifications() {
+		t.Fatal("persisted notifications=true did not survive reload")
+	}
+	if err := reloaded.SetNotifications(false); err != nil {
+		t.Fatalf("SetNotifications(false): %v", err)
+	}
+	again, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload after off: %v", err)
+	}
+	if again.Notifications() {
+		t.Fatal("persisted notifications=false did not survive reload")
+	}
+}
+
+// TestNotificationsRollsBackOnPersistError: a write failure must not leave the
+// in-memory value changed.
+func TestNotificationsRollsBackOnPersistError(t *testing.T) {
+	s := &Store{
+		path: filepath.Join(t.TempDir(), "missing-parent", "settings.json"),
+		d:    data{Version: settingsVersion},
+	}
+	if err := s.SetNotifications(true); err == nil {
+		t.Fatal("expected SetNotifications to fail writing into a missing dir")
+	}
+	if s.Notifications() {
+		t.Fatal("notifications must roll back to false after a failed persist")
+	}
+}

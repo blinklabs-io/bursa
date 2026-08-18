@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	bursa "github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/ui/internal/activity"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
@@ -183,12 +184,24 @@ type Diagnostics interface {
 	WriteLogsZip(w io.Writer) error
 }
 
+// Activity is the node-local wallet-activity detector the API polls: each call
+// returns only the events (incoming funds / stake rewards) that appeared since
+// the previous call for the active wallet. SetActive rebinds it to the active
+// wallet (pushed by the same bind/clear points as the read services) so its
+// dedup baseline follows the wallet in view. May be nil, in which case the
+// /wallet/activity route is not registered.
+type Activity interface {
+	SetActive(walletID string)
+	Poll(ctx context.Context) ([]activity.Event, error)
+}
+
 type handlerOptions struct {
 	legacy         LegacyKeystore
 	connector      *connector.Service
 	nfts           NFTs
 	diagnostics    Diagnostics
 	migrateScripts ScriptMigrator
+	activity       Activity
 }
 
 // ScriptMigrator moves saved multi-signature accounts out of the standalone
@@ -235,6 +248,12 @@ func WithScriptMigration(m ScriptMigrator) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.migrateScripts = m }
 }
 
+// WithActivity enables the node-local wallet-activity polling endpoint
+// (GET /wallet/activity) and keeps the detector bound to the active wallet.
+func WithActivity(a Activity) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.activity = a }
+}
+
 // SettingsController is the user-facing app-settings surface. It exposes the
 // persisted lean-node (history-expiry) profile and whether a node restart is
 // still needed for the persisted value to take effect (history expiry is a
@@ -256,6 +275,12 @@ type SettingsController interface {
 	// SetAutoLockMinutes persists the idle auto-lock timeout. It rejects any
 	// value outside the offered set (see settings.AutoLockOptions).
 	SetAutoLockMinutes(minutes int) error
+	// Notifications reports whether node-local wallet-activity notifications are
+	// enabled (default off until the user opts in). Like auto-lock it is a pure
+	// client-side/UI preference — no node behaviour depends on it.
+	Notifications() bool
+	// SetNotifications persists the wallet-activity notification preference.
+	SetNotifications(enabled bool) error
 }
 
 // autoLockOptions are the only accepted auto-lock timeouts (minutes; 0 = Off).
@@ -626,6 +651,11 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		if cfg.connector != nil {
 			cfg.connector.SetActiveAccount(w.ID, acct)
 		}
+		// Rebind the activity detector so its dedup baseline follows the wallet
+		// currently in view (a wallet switch re-primes against the new history).
+		if cfg.activity != nil {
+			cfg.activity.SetActive(w.ID)
+		}
 	}
 	clearActive := func() {
 		_ = wl.SetAccount(nil)
@@ -635,6 +665,9 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		}
 		if cfg.connector != nil {
 			cfg.connector.SetActiveAccount("", nil)
+		}
+		if cfg.activity != nil {
+			cfg.activity.SetActive("")
 		}
 	}
 	legacyAvailable := func() bool {
@@ -1071,6 +1104,27 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		serve(w, v, err)
 	}))
 
+	// Node-local wallet activity: the events (newly confirmed incoming funds,
+	// new stake-reward epochs) that appeared since the SPA's previous poll for
+	// the active wallet, used to raise desktop/browser notifications. It reads
+	// only node-local wallet state (the same Transactions/Rewards paths as the
+	// reads above), so there is no external-consent gate; gated like other reads
+	// on a queryable node. Registered only when an Activity detector is supplied.
+	if cfg.activity != nil {
+		act := cfg.activity
+		mux.HandleFunc("GET /wallet/activity", gated(st, func(w http.ResponseWriter, r *http.Request) {
+			events, err := act.Poll(r.Context())
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			if events == nil {
+				events = []activity.Event{}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"events": events})
+		}))
+	}
+
 	// DEX swap quotes. These read ONLY from the embedded node (pool UTxOs at the
 	// DEX script addresses), so there is deliberately NO external-consent gate —
 	// nothing leaves 127.0.0.1. They are gated like other wallet reads: a node
@@ -1217,6 +1271,32 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]int{"minutes": settings.AutoLockMinutes()})
+	})
+
+	// App settings: the wallet-activity notification preference. Ungated for the
+	// same reason as auto-lock — it is a local UI preference, not a node query,
+	// and takes effect immediately (the frontend's activity poller reads it
+	// directly). Default off until the user opts in.
+	mux.HandleFunc("GET /wallet/settings/notifications", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.Notifications()})
+	})
+	mux.HandleFunc("PUT /wallet/settings/notifications", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if req.Enabled == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "enabled is required"})
+			return
+		}
+		if err := settings.SetNotifications(*req.Enabled); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.Notifications()})
 	})
 
 	// --- Address book (local-only, no network) -------------------------------
