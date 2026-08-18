@@ -767,15 +767,21 @@ test("the nav carries only destinations, not actions or housekeeping", async () 
 
   expect(
     q.getAllByRole("button").map((b) => b.textContent).filter((t) =>
-      ["Portfolio", "Activity", "Stake", "Swap", "Import Tx", "Offline", "Operate", "Settings"].includes(t ?? ""),
+      ["Portfolio", "Activity", "Stake", "Swap", "Settings"].includes(t ?? ""),
     ),
-  ).toHaveLength(8);
+  ).toHaveLength(5);
 
   // Send and Receive are actions on the Portfolio; the rest are Settings
   // panels. None of them earns a nav entry.
   // Multi-sig joined them: it is a wallet in the switcher now, spent from
   // through Send, so it no longer earns a destination either.
-  for (const gone of ["Send", "Receive", "Contacts", "Sign", "Verify", "Diagnostics", "Multi-sig"]) {
+  // Import Tx, Offline and Pool Ops left too: the first two are reached from
+  // the send flow and the palette, and pool operations appear only for the
+  // minority who turn operator mode on.
+  for (const gone of [
+    "Send", "Receive", "Contacts", "Sign", "Verify",
+    "Diagnostics", "Multi-sig", "Import Tx", "Offline", "Operate", "Pool Ops",
+  ]) {
     expect(q.queryByRole("button", { name: gone })).not.toBeInTheDocument();
   }
 });
@@ -893,4 +899,53 @@ test("a route that falls back to Portfolio is reported as Portfolio", async () =
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent(/the portfolio screen could not be displayed/i);
   expect(alert).not.toHaveTextContent(/swap screen/i);
+});
+
+// --- Command palette -------------------------------------------------------
+
+test("the palette has a visible trigger, not just a shortcut", async () => {
+  // A palette nobody knows about is a palette nobody uses. It must be reachable
+  // by pointing and clicking, and the trigger teaches the key.
+  const sidebar = await unlockAndGetSidebar(walletA);
+
+  const trigger = within(sidebar).getByRole("button", { name: /search/i });
+  expect(trigger).toBeInTheDocument();
+  expect(trigger).toHaveTextContent("⌘K");
+
+  fireEvent.click(trigger);
+  expect(await screen.findByRole("dialog", { name: /command palette/i })).toBeInTheDocument();
+});
+
+test("Cmd-K opens the palette and reaches a screen that left the nav", async () => {
+  await unlockAndGetSidebar(walletA);
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  const dialog = await screen.findByRole("dialog", { name: /command palette/i });
+
+  // Offline has no nav entry any more; the palette is one of its routes in.
+  fireEvent.change(within(dialog).getByRole("combobox"), { target: { value: "air gap" } });
+  fireEvent.click(within(dialog).getByRole("option", { name: /offline/i }));
+
+  await waitFor(() => expect(window.location.hash).toBe("#/offline"));
+});
+
+test("pool operations stay out of the nav until turned on", async () => {
+  const sidebar = await unlockAndGetSidebar(walletA);
+  expect(within(sidebar).queryByRole("button", { name: "Pool Ops" })).not.toBeInTheDocument();
+
+  // Reachable regardless — hidden from the nav is not hidden from the wallet.
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  const dialog = await screen.findByRole("dialog", { name: /command palette/i });
+  fireEvent.change(within(dialog).getByRole("combobox"), { target: { value: "pool" } });
+  expect(within(dialog).getByRole("option", { name: /stake pool operations/i })).toBeInTheDocument();
+});
+
+test("operator mode puts Pool Ops in the nav", async () => {
+  window.localStorage.setItem("bursa.operatorMode", "1");
+  try {
+    const sidebar = await unlockAndGetSidebar(walletA);
+    expect(within(sidebar).getByRole("button", { name: "Pool Ops" })).toBeInTheDocument();
+  } finally {
+    window.localStorage.removeItem("bursa.operatorMode");
+  }
 });

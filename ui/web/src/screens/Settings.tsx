@@ -7,6 +7,7 @@ import {
 import { Card } from "../components/Card";
 import { Tabs } from "../components/Tabs";
 import type { TabDef } from "../components/Tabs";
+import { operatorModeEnabled, setOperatorMode } from "../operatorMode";
 import { Contacts } from "./Contacts";
 import { Diagnostics } from "./Diagnostics";
 import { SignMessage } from "./SignMessage";
@@ -562,6 +563,9 @@ function GeneralSettings({ account, walletType, autoLock }: SettingsProps) {
     }
   }
   const nftMedia = useNftMedia();
+  // Local display preference, not wallet state — see operatorMode.ts. Mirrored
+  // into state so the toggle re-renders immediately rather than on next nav.
+  const [operatorMode, setOperatorModeState] = useState(operatorModeEnabled());
 
   return (
     <div className="screen-settings">
@@ -622,6 +626,29 @@ function GeneralSettings({ account, walletType, autoLock }: SettingsProps) {
             onClick={() => void nftMedia.setEnabled(!nftMedia.enabled)}
           >
             {nftMedia.saving ? "Saving…" : nftMedia.enabled ? "Turn off NFT media" : "Turn on NFT media"}
+          </Button>
+        </div>
+      </Card>
+
+      <Card title="Stake Pool Operations">
+        <p className="helper-text">
+          Shows the pool operator toolkit — cold, VRF and KES credentials,
+          operational certificates, registration and retirement — in the
+          navigation. Off by default, because most people do not run a pool.
+        </p>
+        <StatusPill tone={operatorMode ? "ok" : "muted"}>
+          {operatorMode ? "Shown" : "Hidden"}
+        </StatusPill>
+        <div className="preview-actions">
+          <Button
+            variant={operatorMode ? "ghost" : "primary"}
+            aria-pressed={operatorMode}
+            onClick={() => {
+              setOperatorMode(!operatorMode);
+              setOperatorModeState(!operatorMode);
+            }}
+          >
+            {operatorMode ? "Hide pool operations" : "Show pool operations"}
           </Button>
         </div>
       </Card>
