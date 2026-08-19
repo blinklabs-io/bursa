@@ -96,6 +96,11 @@ export function AccountSwitcher({ wallet, onChanged }: AccountSwitcherProps) {
     }
   }
 
+  // A multi-signature wallet spends from a script, not from derived keys, so it
+  // has no BIP44 accounts at all. Rendering the section for it would leave a
+  // heading over nothing and offer an "Add account" that cannot apply.
+  if (accounts.length === 0) return null;
+
   return (
     <div className="account-switcher">
       <div className="account-switcher-label">Accounts</div>

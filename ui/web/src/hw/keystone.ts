@@ -23,6 +23,7 @@
 import type { HardwareSignResponse } from "../api/types";
 import type {
   HardwareCapabilities,
+  HardwareSignMessageResult,
   HardwareSigner,
   KeystoneConnectOptions,
   KeystoneQRConnectOptions,
@@ -33,6 +34,18 @@ import { encodeWitnessArray } from "./witness";
 import { decodeCbor, type CborValue } from "./qr/cbor";
 import { ensureBuffer, encodeUR } from "./qr/ur";
 import { isValidXfp } from "./qr/xfp";
+
+// signMessage is not yet implemented for Keystone: CIP-8 over the air-gapped QR
+// transport needs the shared QR modal that lands with the SeedSigner work. The
+// method rejects (rather than being absent) so callers that skip the
+// capabilities.signMessage check still fail loudly instead of silently. It takes
+// no argument (a narrower signature is still assignable to the interface's
+// signMessage) so the unused request parameter is not carried.
+function keystoneSignMessageUnsupported(): Promise<HardwareSignMessageResult> {
+  return Promise.reject(
+    new Error("Message signing is not supported on Keystone yet."),
+  );
+}
 
 // ── BIP32 path helpers ───────────────────────────────────────────────────────
 
@@ -78,6 +91,10 @@ const KEYSTONE_QR_CAPABILITIES: HardwareCapabilities = {
   governance: false,
   multisig: false,
   poolReg: false,
+  // CIP-8 message signing over the air-gapped QR transport (the
+  // cardano-cip8-sig-req/res UR flow) needs the shared QR modal that lands with
+  // the SeedSigner work; gated off until then.
+  signMessage: false,
 };
 
 // USB rides a young, unverified vendor SDK. We do not claim more than the
@@ -88,6 +105,7 @@ const KEYSTONE_USB_CAPABILITIES: HardwareCapabilities = {
   governance: false,
   multisig: false,
   poolReg: false,
+  signMessage: false,
 };
 
 // UR animated-QR fragment size (bytes of CBOR per frame). Small enough that each
@@ -394,6 +412,8 @@ export async function connectKeystoneQR(
       }
     },
 
+    signMessage: keystoneSignMessageUnsupported,
+
     async close(): Promise<void> {
       // No persistent transport for QR; make sure any open modal/camera is torn
       // down (idempotent — bridge.close guards its own state).
@@ -528,6 +548,8 @@ export async function connectKeystoneUSB(): Promise<HardwareSigner> {
       );
       return encodeWitnessArray(resolved);
     },
+
+    signMessage: keystoneSignMessageUnsupported,
 
     async close(): Promise<void> {
       await transport.close();

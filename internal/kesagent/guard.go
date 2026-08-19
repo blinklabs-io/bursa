@@ -1,0 +1,216 @@
+// Copyright 2026 Blink Labs Software
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package kesagent
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+)
+
+// ErrPeriodRollback is returned when a serve/sign is attempted at a KES period
+// below the highest period already served or signed.
+var ErrPeriodRollback = errors.New(
+	"kesagent: KES period rollback refused (period below monotonic floor)",
+)
+
+// PeriodGuard enforces a monotonic non-decreasing floor on the KES period the
+// agent will serve or sign for. It protects against re-serving an already
+// superseded period after a clock jump, a process restart, or a stale key
+// re-install — a belt-and-suspenders complement to KES forward security.
+//
+// The floor is a single global value (KES periods are absolute, derived from
+// the genesis system-start and slot schedule, so they are comparable across
+// keys). A period strictly below the floor is refused; a period equal to the
+// floor is allowed, because a block producer legitimately signs many block
+// headers within a single KES period.
+//
+// The floor is persisted to a small JSON file with an atomic write
+// (temp-file + rename) so it survives restarts. This store is intentionally
+// self-contained; it can be migrated onto the shared signer watermark store
+// later.
+type PeriodGuard struct {
+	mu    sync.Mutex
+	path  string // empty => in-memory only (non-durable)
+	floor uint64
+	set   bool
+	// durable is false when floor reached the guard file but its directory
+	// entry was not synced, so the value can still be lost by a crash. The
+	// equal-period fast path must not skip persisting while it is false.
+	durable bool
+	vkey    string // hex of the active KES vkey at the current floor (informational)
+}
+
+type guardState struct {
+	Floor uint64 `json:"floor"`
+	Set   bool   `json:"set"`
+	Vkey  string `json:"kes_vkey,omitempty"`
+}
+
+// NewPeriodGuard opens (or creates) a guard backed by the file at path. An
+// empty path yields a non-durable in-memory guard (tests / ephemeral use).
+func NewPeriodGuard(path string) (*PeriodGuard, error) {
+	// durable starts true: an in-memory guard has nothing to persist, an absent
+	// or empty file has no floor to lose, and a floor read back from the file was
+	// written and synced by a previous run.
+	g := &PeriodGuard{path: path, durable: true}
+	if path == "" {
+		return g, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return g, nil
+		}
+		return nil, fmt.Errorf("kesagent: read guard file %q: %w", path, err)
+	}
+	if len(data) == 0 {
+		return g, nil
+	}
+	var st guardState
+	if err := json.Unmarshal(data, &st); err != nil {
+		return nil, fmt.Errorf("kesagent: parse guard file %q: %w", path, err)
+	}
+	g.floor = st.Floor
+	g.set = st.Set
+	g.vkey = st.Vkey
+	return g, nil
+}
+
+// Floor returns the current monotonic floor and whether it has been set.
+func (g *PeriodGuard) Floor() (uint64, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.floor, g.set
+}
+
+// Authorize checks that period is not a rollback and, when allowed, advances
+// the floor to period. vkeyHex is recorded for diagnostics. It returns
+// ErrPeriodRollback if period is below the current floor.
+func (g *PeriodGuard) Authorize(vkeyHex string, period uint64) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.set && period < g.floor {
+		return fmt.Errorf(
+			"%w: period %d < floor %d",
+			ErrPeriodRollback,
+			period,
+			g.floor,
+		)
+	}
+	// Fast path: the floor is unchanged (a producer signs many headers per KES
+	// period, so this is the common case). The durable state already records
+	// this floor, so skip the temp-file + fsync + rename — ~240x the cost of the
+	// KES signature and paid under a.mu on the block-production path. Only the
+	// informational vkey is updated in memory.
+	//
+	// It requires g.durable, not just g.set: a floor whose rename committed but
+	// whose directory entry was never synced can still be lost by a crash, so
+	// skipping the write here would leave that gap unretried for the rest of the
+	// period. In that state fall through and persist again.
+	if g.set && g.durable && period == g.floor {
+		g.vkey = vkeyHex
+		return nil
+	}
+	// Advancing the floor: persist BEFORE committing the new value in memory, and
+	// roll back on failure, so a failed persist leaves the floor unchanged and
+	// the next Authorize re-attempts it instead of taking the equal-skip above
+	// over a floor that was never durably written.
+	//
+	// Rolling back is only correct while the new floor has NOT reached disk. Once
+	// the rename commits, the guard file holds the higher floor; restoring the
+	// lower one in memory would let a later Authorize accept a period between the
+	// old and new floors and persist it, moving the durable floor backwards --
+	// precisely the rollback this guard exists to prevent. So a post-commit
+	// failure (a directory sync that could not be completed) keeps the new floor
+	// in memory and surfaces the error.
+	prevFloor, prevSet, prevVkey := g.floor, g.set, g.vkey
+	prevDurable := g.durable
+	g.floor = period
+	g.set = true
+	g.vkey = vkeyHex
+	g.durable = false
+	committed, err := g.persistLocked()
+	if err != nil {
+		if !committed {
+			g.floor, g.set, g.vkey = prevFloor, prevSet, prevVkey
+			g.durable = prevDurable
+		}
+		// A committed-but-unsynced floor stays in memory (it must never move
+		// backwards) but remains non-durable, so the next Authorize retries.
+		return err
+	}
+	g.durable = true
+	return nil
+}
+
+// persistLocked writes the guard state durably. It reports whether the new
+// state reached the guard file: once the rename commits, the on-disk floor has
+// advanced even if a later step (the parent-directory sync) fails, and the
+// caller must not roll its in-memory floor back below it.
+func (g *PeriodGuard) persistLocked() (committed bool, err error) {
+	if g.path == "" {
+		return true, nil
+	}
+	st := guardState{Floor: g.floor, Set: g.set, Vkey: g.vkey}
+	data, err := json.Marshal(st)
+	if err != nil {
+		return false, fmt.Errorf("kesagent: marshal guard state: %w", err)
+	}
+	dir := filepath.Dir(g.path)
+	tmp, err := os.CreateTemp(dir, ".kesguard-*")
+	if err != nil {
+		return false, fmt.Errorf("kesagent: create guard temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return false, fmt.Errorf("kesagent: write guard temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return false, fmt.Errorf("kesagent: sync guard temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return false, fmt.Errorf("kesagent: close guard temp file: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		return false, fmt.Errorf("kesagent: chmod guard temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, g.path); err != nil {
+		return false, fmt.Errorf("kesagent: rename guard file: %w", err)
+	}
+	// Sync the parent directory too: without this, a crash right after the
+	// rename can lose the directory-entry update on some filesystems and
+	// restore an earlier (lower) floor on restart -- exactly the rollback
+	// this guard exists to prevent.
+	if dirFile, err := os.Open(dir); err == nil {
+		syncErr := dirFile.Sync()
+		closeErr := dirFile.Close()
+		if syncErr != nil {
+			return true, fmt.Errorf("kesagent: sync guard dir %q: %w", dir, syncErr)
+		}
+		if closeErr != nil {
+			return true, fmt.Errorf("kesagent: close guard dir %q: %w", dir, closeErr)
+		}
+	} else {
+		return true, fmt.Errorf("kesagent: open guard dir %q: %w", dir, err)
+	}
+	return true, nil
+}

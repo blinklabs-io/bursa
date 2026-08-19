@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	bursa "github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/ui/internal/activity"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
@@ -88,6 +89,10 @@ type Spender interface {
 	SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR string) (spend.TxResult, error)
 	BuildDelegation(ctx context.Context, req spend.DelegationRequest) (spend.DelegationPreview, error)
 	HardwareSignRequest(pendingID string) (spend.HardwareSignRequest, error)
+	// SignDataHardwareRequest resolves the seedless CIP-1852 paths + network a
+	// hardware device needs to sign a CIP-8 message for one of the wallet's own
+	// receive addresses.
+	SignDataHardwareRequest(addr string) (spend.HardwareSignDataRequest, error)
 	// DecodeTx, CosignTx, and SubmitTxCbor back the "import transaction" flow:
 	// a user pastes a full tx CBOR built elsewhere (e.g. by a DApp or another
 	// wallet) to inspect it, add this wallet's witness(es), and broadcast it.
@@ -132,6 +137,7 @@ type Vault interface {
 	ImportWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
 	ImportWalletMnemonicBytes(name string, mnemonic []byte, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
 	AddHardwareWallet(name, accountXpubBech32, network, vaultPassword string, accountIndex uint32, windowN int) (vault.WalletMeta, error)
+	AddScriptWallet(id, name, network string, script vault.ScriptMeta, vaultPassword string) (vault.WalletMeta, error)
 	RemoveWallet(id, vaultPassword string) error
 	SetActive(id string) (vault.WalletMeta, error)
 	Active() (vault.WalletMeta, error)
@@ -181,12 +187,36 @@ type Diagnostics interface {
 	WriteLogsZip(w io.Writer) error
 }
 
-type handlerOptions struct {
-	legacy      LegacyKeystore
-	connector   *connector.Service
-	nfts        NFTs
-	diagnostics Diagnostics
+// Activity is the node-local wallet-activity detector the API polls: each call
+// returns only the events (incoming funds / stake rewards) that appeared since
+// the previous call for the active wallet. SetActive rebinds it to the active
+// wallet (pushed by the same bind/clear points as the read services) so its
+// dedup baseline follows the wallet in view. May be nil, in which case the
+// /wallet/activity route is not registered.
+type Activity interface {
+	SetActive(walletID string)
+	Poll(ctx context.Context) ([]activity.Event, error)
 }
+
+type handlerOptions struct {
+	legacy         LegacyKeystore
+	connector      *connector.Service
+	nfts           NFTs
+	diagnostics    Diagnostics
+	migrateScripts ScriptMigrator
+	activity       Activity
+}
+
+// ScriptMigrator moves saved multi-signature accounts out of the standalone
+// store and into the vault, returning how many it moved.
+//
+// It runs on unlock, the only point where the vault password is in hand. It
+// reports a count rather than an error on purpose: a migration that cannot run
+// must never fail the unlock — the store is left intact and the accounts are
+// still there to move next time, which beats refusing entry to a wallet over a
+// housekeeping step. Reporting the failure is the migrator's own job, since it
+// is constructed where a logger exists and this package has none.
+type ScriptMigrator func(vaultPassword string) int
 
 type HandlerOption func(*handlerOptions)
 
@@ -214,6 +244,19 @@ func WithDiagnostics(d Diagnostics) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.diagnostics = d }
 }
 
+// WithScriptMigration runs the multi-signature store migration on unlock. The
+// caller supplies the closure because only it knows both the vault and the
+// store path.
+func WithScriptMigration(m ScriptMigrator) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.migrateScripts = m }
+}
+
+// WithActivity enables the node-local wallet-activity polling endpoint
+// (GET /wallet/activity) and keeps the detector bound to the active wallet.
+func WithActivity(a Activity) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.activity = a }
+}
+
 // SettingsController is the user-facing app-settings surface. It exposes the
 // persisted lean-node (history-expiry) profile and whether a node restart is
 // still needed for the persisted value to take effect (history expiry is a
@@ -235,6 +278,12 @@ type SettingsController interface {
 	// SetAutoLockMinutes persists the idle auto-lock timeout. It rejects any
 	// value outside the offered set (see settings.AutoLockOptions).
 	SetAutoLockMinutes(minutes int) error
+	// Notifications reports whether node-local wallet-activity notifications are
+	// enabled (default off until the user opts in). Like auto-lock it is a pure
+	// client-side/UI preference — no node behaviour depends on it.
+	Notifications() bool
+	// SetNotifications persists the wallet-activity notification preference.
+	SetNotifications(enabled bool) error
 }
 
 // autoLockOptions are the only accepted auto-lock timeouts (minutes; 0 = Off).
@@ -289,15 +338,18 @@ type DexQuoter interface {
 	Quote(ctx context.Context, assetIn, assetOut string, amountIn uint64) (dex.Quote, error)
 }
 
-// MultiSig is the native multi-signature surface the API exposes: managing saved
-// multi-sig accounts (list/create/get/delete), sharing the wallet's own CIP-1854
-// participant key, and the spend flow (balance/build/sign/submit) against a saved
-// account's script address.
+// MultiSig is the native multi-signature surface the API exposes: reading saved
+// multi-sig accounts, composing a policy into a script, sharing the wallet's own
+// CIP-1854 participant key, and the spend flow (balance/build/sign/submit)
+// against an account's script address.
+//
+// Creating and removing accounts are NOT here: those accounts are vault wallets
+// now, so they are added and removed through the vault's own wallet flows,
+// which is also where the vault password legitimately lives.
 type MultiSig interface {
 	List() ([]multisig.Account, error)
 	Get(id string) (multisig.Account, error)
-	Create(req multisig.CreateRequest) (multisig.Account, error)
-	Delete(id string) error
+	Compose(req multisig.CreateRequest) (multisig.Account, error)
 	MyKey(password string) (multisig.MyKey, error)
 	Balance(ctx context.Context, id string) (string, error)
 	Build(ctx context.Context, id string, req multisig.BuildRequest) (multisig.UnsignedTx, error)
@@ -428,6 +480,14 @@ type walletView struct {
 	// StakeAddress/Addresses above reflect that active account.
 	Accounts           []accountSummary `json:"accounts"`
 	ActiveAccountIndex uint32           `json:"active_account_index"`
+	// MultiSig is set only on a multi-signature wallet. The SPA needs the policy
+	// and script address to build a spend from it, since that flow collects
+	// co-signer witnesses rather than signing with a local seed.
+	MultiSig *multisig.Account `json:"multisig,omitempty"`
+	// Set instead of MultiSig when the stored policy will not decode, so the SPA
+	// can state the record is corrupt rather than infer a spend flow that does
+	// not exist.
+	MultiSigError string `json:"multisig_error,omitempty"`
 }
 
 // accountSummary is the per-account entry in a wallet view / accounts listing:
@@ -484,6 +544,26 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 	if active := w.ActiveAccount(); active != nil {
 		v.StakeAddress = active.StakeAddress
 		v.Addresses = active.ReceiveAddresses
+	}
+	if w.IsScript() {
+		var policy multisig.Policy
+		// A policy that will not parse is a corrupt record rather than a fatal
+		// one: the wallet still lists and receives. But the SPA decides HOW to
+		// spend from this field, so leaving it silently nil on a wallet still
+		// typed multi_signature would send it down the seed-based flow. Say so
+		// instead.
+		if err := json.Unmarshal(w.Script.Policy, &policy); err != nil {
+			v.MultiSigError = "This account's signing policy could not be read, so it cannot spend. Its funds are safe."
+		} else {
+			v.MultiSig = &multisig.Account{
+				ID:            w.ID,
+				Label:         w.Name,
+				Network:       w.Network,
+				Policy:        policy,
+				ScriptCBOR:    w.Script.ScriptCBOR,
+				ScriptAddress: w.Script.ScriptAddress,
+			}
+		}
 	}
 	for _, acct := range w.AccountList() {
 		if acct == nil {
@@ -574,6 +654,11 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		if cfg.connector != nil {
 			cfg.connector.SetActiveAccount(w.ID, acct)
 		}
+		// Rebind the activity detector so its dedup baseline follows the wallet
+		// currently in view (a wallet switch re-primes against the new history).
+		if cfg.activity != nil {
+			cfg.activity.SetActive(w.ID)
+		}
 	}
 	clearActive := func() {
 		_ = wl.SetAccount(nil)
@@ -583,6 +668,9 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		}
 		if cfg.connector != nil {
 			cfg.connector.SetActiveAccount("", nil)
+		}
+		if cfg.activity != nil {
+			cfg.activity.SetActive("")
 		}
 	}
 	legacyAvailable := func() bool {
@@ -631,6 +719,15 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		if err != nil {
 			serve(w, struct{}{}, err)
 			return
+		}
+		// Unlock is the only moment the vault password is available, so it is
+		// where saved multi-signature accounts move out of their standalone
+		// store and into the vault. Re-read the wallet list when any moved, so
+		// the response already includes them.
+		if cfg.migrateScripts != nil && cfg.migrateScripts(req.Password) > 0 {
+			if refreshed, rErr := vlt.Wallets(); rErr == nil {
+				wallets = refreshed
+			}
 		}
 		// Unlock auto-activates a sole wallet; bind it so reads work immediately.
 		if active, err := vlt.Active(); err == nil {
@@ -1010,6 +1107,27 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		serve(w, v, err)
 	}))
 
+	// Node-local wallet activity: the events (newly confirmed incoming funds,
+	// new stake-reward epochs) that appeared since the SPA's previous poll for
+	// the active wallet, used to raise desktop/browser notifications. It reads
+	// only node-local wallet state (the same Transactions/Rewards paths as the
+	// reads above), so there is no external-consent gate; gated like other reads
+	// on a queryable node. Registered only when an Activity detector is supplied.
+	if cfg.activity != nil {
+		act := cfg.activity
+		mux.HandleFunc("GET /wallet/activity", gated(st, func(w http.ResponseWriter, r *http.Request) {
+			events, err := act.Poll(r.Context())
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			if events == nil {
+				events = []activity.Event{}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"events": events})
+		}))
+	}
+
 	// DEX swap quotes. These read ONLY from the embedded node (pool UTxOs at the
 	// DEX script addresses), so there is deliberately NO external-consent gate —
 	// nothing leaves 127.0.0.1. They are gated like other wallet reads: a node
@@ -1082,6 +1200,20 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		serve(w, map[string]string{"signature": sig, "key": key}, err)
 	})
 
+	// CIP-8 hardware message signing: resolve the seedless signing metadata
+	// (CIP-1852 paths + network) a hardware device needs to sign a message for one
+	// of the wallet's own receive addresses. Ungated like sign-data — pure
+	// derivation over the active account, no node and no keystore unlock.
+	mux.HandleFunc("GET /wallet/sign-data/hardware-request", func(w http.ResponseWriter, r *http.Request) {
+		addr := r.URL.Query().Get("address")
+		if addr == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "address is required"})
+			return
+		}
+		req, err := sp.SignDataHardwareRequest(addr)
+		serve(w, req, err)
+	})
+
 	// App settings: the lean-node (history-expiry) profile. Ungated — it is a
 	// config setting, not a node query, so it is readable/settable regardless of
 	// sync state. History expiry is a node-construction option, so a change only
@@ -1142,6 +1274,32 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]int{"minutes": settings.AutoLockMinutes()})
+	})
+
+	// App settings: the wallet-activity notification preference. Ungated for the
+	// same reason as auto-lock — it is a local UI preference, not a node query,
+	// and takes effect immediately (the frontend's activity poller reads it
+	// directly). Default off until the user opts in.
+	mux.HandleFunc("GET /wallet/settings/notifications", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.Notifications()})
+	})
+	mux.HandleFunc("PUT /wallet/settings/notifications", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if req.Enabled == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "enabled is required"})
+			return
+		}
+		if err := settings.SetNotifications(*req.Enabled); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.Notifications()})
 	})
 
 	// --- Address book (local-only, no network) -------------------------------
@@ -1464,7 +1622,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	}
 
 	if ms != nil {
-		registerMultiSigRoutes(mux, st, ms, network)
+		registerMultiSigRoutes(mux, st, vlt, ms, network, bindActive)
 	}
 
 	if cfg.connector != nil {
@@ -1874,16 +2032,28 @@ func registerPoolRoutes(mux *http.ServeMux, st Statuser, po PoolOps) {
 // wallet's own participant key are local/offline; balance is a node read
 // (gated); build and submit need a synced node (readyGate); sign is pure crypto
 // over the keystore (ungated).
-func registerMultiSigRoutes(mux *http.ServeMux, st Statuser, ms MultiSig, network string) {
+func registerMultiSigRoutes(
+	mux *http.ServeMux,
+	st Statuser,
+	vlt Vault,
+	ms MultiSig,
+	network string,
+	bindActive func(vault.WalletMeta),
+) {
 	// List saved multi-sig accounts.
 	mux.HandleFunc("GET /wallet/multisig", func(w http.ResponseWriter, _ *http.Request) {
 		v, err := ms.List()
 		serve(w, v, err)
 	})
 
-	// Create a saved multi-sig account from a policy.
+	// Create a multi-signature account. It is a wallet now, so it is composed
+	// from the policy and then stored in the vault, which is why this needs the
+	// vault password like any other add-wallet call.
 	mux.HandleFunc("POST /wallet/multisig", func(w http.ResponseWriter, r *http.Request) {
-		var req multisig.CreateRequest
+		var req struct {
+			multisig.CreateRequest
+			VaultPassword string `json:"vault_password"`
+		}
 		if !decodeBody(w, r, &req) {
 			return
 		}
@@ -1892,8 +2062,47 @@ func registerMultiSigRoutes(mux *http.ServeMux, st Statuser, ms MultiSig, networ
 			return
 		}
 		req.Network = net
-		v, err := ms.Create(req)
-		serve(w, v, err)
+		if !requirePassword(w, req.VaultPassword) {
+			return
+		}
+		// Compose first: an invalid policy should be rejected before the vault is
+		// touched at all.
+		acct, err := ms.Compose(req.CreateRequest)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		policy, err := json.Marshal(acct.Policy)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		// Empty id: this is a new account, so the vault assigns one. Migration is
+		// the only caller that supplies an existing id.
+		meta, err := vlt.AddScriptWallet("", acct.Label, acct.Network, vault.ScriptMeta{
+			Policy:        policy,
+			ScriptCBOR:    acct.ScriptCBOR,
+			ScriptAddress: acct.ScriptAddress,
+		}, req.VaultPassword)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		// Adding a wallet selects it, as the other add-wallet paths do. Without
+		// this the response would claim the new wallet is active while balance
+		// and send requests kept answering for the previous one.
+		// When the selection fails the wallet is still created, so the response
+		// says so with a truthful active flag rather than a failure status: a 5xx
+		// would misdescribe a request that did create the resource, and a client
+		// retrying it hits the duplicate-script check. The client reconciles from
+		// `active` (see applyAdded) and can activate the wallet by id.
+		activeID := ""
+		if active, aErr := vlt.SetActive(meta.ID); aErr == nil {
+			bindActive(active)
+			meta = active
+			activeID = meta.ID
+		}
+		serve(w, toWalletView(meta, activeID), nil)
 	})
 
 	// The active wallet's own CIP-1854 multi-sig participant key, to share. Needs
@@ -1913,12 +2122,6 @@ func registerMultiSigRoutes(mux *http.ServeMux, st Statuser, ms MultiSig, networ
 	mux.HandleFunc("GET /wallet/multisig/{id}", func(w http.ResponseWriter, r *http.Request) {
 		v, err := ms.Get(r.PathValue("id"))
 		serve(w, v, err)
-	})
-
-	// Delete a saved account.
-	mux.HandleFunc("DELETE /wallet/multisig/{id}", func(w http.ResponseWriter, r *http.Request) {
-		err := ms.Delete(r.PathValue("id"))
-		serve(w, map[string]string{"status": "deleted"}, err)
 	})
 
 	// Balance held at the account's script address.

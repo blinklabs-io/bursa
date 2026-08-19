@@ -211,3 +211,26 @@ test("surfaces an ApiError message when switching fails", async () => {
   await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/unknown account/i));
   expect(onChanged).not.toHaveBeenCalled();
 });
+
+test("a wallet with no derived accounts renders no account section", () => {
+  // A multi-signature wallet spends from a script, so it has no BIP44 accounts.
+  // The heading and its "Add account" button would apply to nothing.
+  const { container } = render(
+    <AccountSwitcher
+      wallet={{
+        id: "ms1",
+        name: "Treasury 2-of-3",
+        network: "mainnet",
+        stake_address: "",
+        addresses: ["addr1script"],
+        active: true,
+        type: "multi_signature",
+      }}
+      onChanged={vi.fn()}
+    />,
+  );
+
+  expect(container).toBeEmptyDOMElement();
+  expect(screen.queryByText(/accounts/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /add account/i })).not.toBeInTheDocument();
+});

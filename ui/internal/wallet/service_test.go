@@ -792,3 +792,69 @@ func TestServiceTransactionDetailTipLookupFailureDoesNotNotFound(t *testing.T) {
 		t.Fatalf("direction = %v, want sent (unaffected by tip failure)", detail.Direction)
 	}
 }
+
+// A script (multi-signature) account has no stake credential. Its addresses are
+// exactly the script address, and the node must not be asked to resolve an
+// empty stake address — that is a malformed request, not a miss.
+func TestScanAddressesSkipsDiscoveryWithoutAStakeAddress(t *testing.T) {
+	// A discovery call would surface as this error; the point is that it is
+	// never made.
+	svc := &Service{chain: &fakeChain{
+		addressesErr: errors.New("node asked to resolve an empty stake address"),
+	}}
+
+	addrs, err := svc.scanAddresses(context.Background(), &Account{
+		ReceiveAddresses: []string{"addr1_script", "addr1_script", ""},
+	})
+	if err != nil {
+		t.Fatalf("scanAddresses: %v", err)
+	}
+	if len(addrs) != 1 || addrs[0] != "addr1_script" {
+		t.Fatalf("addrs = %v, want the script address once, blanks dropped", addrs)
+	}
+}
+
+// TestScriptAccountViewsSkipStakeLookups covers a script (multi-signature)
+// account, which has no stake credential. Every stake-address view must answer
+// locally: passing an empty stake address to the node is a malformed request,
+// not a not-found, so it must never reach the chain client. Each fake below
+// errors on the call it guards, so a regression shows up as that error rather
+// than as a silently wrong view.
+func TestScriptAccountViewsSkipStakeLookups(t *testing.T) {
+	const scriptAddr = "addr1_script"
+	acct := &Account{ReceiveAddresses: []string{scriptAddr}}
+
+	svc := &Service{chain: &fakeChain{
+		addressesErr: errors.New("node asked to resolve an empty stake address"),
+		accountErr:   errors.New("node asked to resolve an empty stake address"),
+		rewardsErr:   errors.New("node asked to resolve an empty stake address"),
+	}}
+	svc.account = acct
+
+	addrs, err := svc.Addresses(context.Background())
+	if err != nil {
+		t.Fatalf("Addresses: %v", err)
+	}
+	if len(addrs.Receive) != 1 || addrs.Receive[0] != scriptAddr {
+		t.Fatalf("Addresses receive = %v, want just the script address", addrs.Receive)
+	}
+	if addrs.NextUnused != scriptAddr {
+		t.Fatalf("NextUnused = %q, want the script address", addrs.NextUnused)
+	}
+
+	del, err := svc.Delegation(context.Background())
+	if err != nil {
+		t.Fatalf("Delegation: %v", err)
+	}
+	if del.Active || del.PoolID != nil || del.RewardsSum != "0" || del.Withdrawable != "0" {
+		t.Fatalf("Delegation = %+v, want an inactive zero summary", del)
+	}
+
+	rw, err := svc.Rewards(context.Background())
+	if err != nil {
+		t.Fatalf("Rewards: %v", err)
+	}
+	if len(rw.Rewards) != 0 {
+		t.Fatalf("Rewards = %+v, want an empty history", rw.Rewards)
+	}
+}

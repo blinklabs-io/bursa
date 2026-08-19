@@ -125,6 +125,19 @@ var (
 // For hardware wallets (Type==WalletTypeHardware) no seed blob exists at all: the device
 // holds the private key. Only the account xpub and the derived addresses are
 // stored, so read-only views (balances, history) work without any secret.
+// ScriptMeta is the native-script material for a multi-signature wallet: the
+// policy it was composed from, the script itself, and the address that script
+// funds. A script wallet has no seed, no account xpub and no CIP-1852 accounts,
+// so this is what identifies and funds it instead.
+//
+// Policy is kept opaque (raw JSON) deliberately: the vault is the lowest layer
+// here and must not depend on the multisig package that owns the policy shape.
+type ScriptMeta struct {
+	Policy        json.RawMessage `json:"policy"`
+	ScriptCBOR    string          `json:"script_cbor"`
+	ScriptAddress string          `json:"script_address"`
+}
+
 type WalletMeta struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -146,6 +159,16 @@ type WalletMeta struct {
 	// selection can update without the vault password. It is stamped onto the
 	// metas the vault hands out so the API/UI can render the active account.
 	ActiveAccountIndex uint32 `json:"-"`
+	// Script is set only on a multi-signature wallet, and is what makes it
+	// spendable: there is no seed to derive from. Nil for every other type.
+	Script *ScriptMeta `json:"script,omitempty"`
+}
+
+// IsScript reports whether this wallet spends from a native script rather than
+// from a derived key. Such a wallet has no seed and no stake key, so the flows
+// needing either are unavailable to it.
+func (w WalletMeta) IsScript() bool {
+	return w.Type == WalletTypeMultiSignature && w.Script != nil
 }
 
 // AccountList returns every derived account for the wallet, ordered by CIP-1852
@@ -795,6 +818,119 @@ func (v *Vault) ActiveAccountIndexFor(id string) uint32 {
 	return v.activeAccounts[id]
 }
 
+// AddScriptWallet stores a native-script multi-signature account as a wallet.
+//
+// Like a hardware wallet it is seedless, so no seed blob is added; unlike one it
+// has no account xpub either, and its "addresses" are the single script address
+// the policy funds. Account is synthesized from that address so every caller
+// that reads a wallet's addresses keeps working without special-casing.
+//
+// Deduplicated on the script address: the same policy composed twice is the same
+// account, and re-running a migration must not add it again.
+//
+// id is normally empty and one is generated. Migration passes the account's
+// existing id so links and requests that already reference it keep resolving —
+// a migration that silently renames what it moves is a migration that breaks
+// every reference to it.
+func (v *Vault) AddScriptWallet(id, name, network string, script ScriptMeta, vaultPassword string) (WalletMeta, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.idx == nil {
+		return WalletMeta{}, ErrLocked
+	}
+	if script.ScriptAddress == "" {
+		return WalletMeta{}, errors.New("script wallet: empty script address")
+	}
+
+	env, vek, idx, err := v.authenticatedEnvelopeLocked(vaultPassword)
+	if err != nil {
+		return WalletMeta{}, err
+	}
+	defer keystore.Zero(vek)
+
+	for _, w := range idx.Wallets {
+		if w.Script != nil && w.Script.ScriptAddress == script.ScriptAddress {
+			return WalletMeta{}, fmt.Errorf("%w: %q", ErrDuplicateWallet, w.Name)
+		}
+	}
+
+	// A script account has no stake key and no derivation path. The synthesized
+	// account carries the script address as its sole receive address so address
+	// and balance reads resolve without a special case; StakeAddress stays empty
+	// because there is genuinely no stake credential to report.
+	acct := &wallet.Account{
+		Network:          network,
+		AccountIndex:     0,
+		ReceiveAddresses: []string{script.ScriptAddress},
+	}
+
+	if id == "" {
+		id = newID()
+	}
+	meta := WalletMeta{
+		ID:       id,
+		Name:     name,
+		Network:  network,
+		Account:  acct,
+		Accounts: []*wallet.Account{acct},
+		Type:     WalletTypeMultiSignature,
+		Script:   cloneScript(&script),
+	}
+
+	seeds := env.Seeds
+	if seeds == nil {
+		seeds = map[string]keystore.Container{}
+	}
+	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
+	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
+		return WalletMeta{}, err
+	}
+	v.idx = newIdx
+	// Adopt the new wallet as active only when nothing else is, matching the
+	// seeded and hardware paths. Migration must NOT steal the selection: it runs
+	// on unlock, and moving the user to a script wallet they did not choose
+	// would be a surprising side effect of housekeeping.
+	if v.activeID == "" {
+		v.activeID = meta.ID
+	}
+	return meta, nil
+}
+
+// cloneScript deep-copies script material, including the policy bytes.
+//
+// Wallets/Active hand out defensive copies so a caller cannot reach back into
+// the sealed index. A shared *ScriptMeta (or a shared Policy slice) would defeat
+// that: a caller could mutate vault state in memory without persisting it, and
+// race the readers while doing so.
+func cloneScript(s *ScriptMeta) *ScriptMeta {
+	if s == nil {
+		return nil
+	}
+	out := *s
+	if s.Policy != nil {
+		out.Policy = append(json.RawMessage(nil), s.Policy...)
+	}
+	return &out
+}
+
+// ScriptAddresses returns the script address of every multi-signature wallet in
+// the index. Used to make the migration from the standalone multisig store
+// idempotent without re-adding what is already here.
+func (v *Vault) ScriptAddresses() ([]string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.idx == nil {
+		return nil, ErrLocked
+	}
+	var addrs []string
+	for _, w := range v.idx.Wallets {
+		if w.Script != nil && w.Script.ScriptAddress != "" {
+			addrs = append(addrs, w.Script.ScriptAddress)
+		}
+	}
+	return addrs, nil
+}
+
 // AddAccount derives a new CIP-1852 account (m/1852'/1815'/<accountIndex>') for
 // the wallet with id and records it in the wallet's Accounts list. It needs the
 // seed (via spendPassword, to derive the hardened account key) AND the vault
@@ -1336,6 +1472,7 @@ func cloneWallets(in []WalletMeta) []WalletMeta {
 func cloneWallet(w *WalletMeta) *WalletMeta {
 	c := *w
 	c.Account = cloneAccountPtr(w.Account)
+	c.Script = cloneScript(w.Script)
 	if w.Accounts != nil {
 		c.Accounts = make([]*wallet.Account, 0, len(w.Accounts))
 		for _, a := range w.Accounts {
