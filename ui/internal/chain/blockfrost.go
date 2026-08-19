@@ -21,7 +21,6 @@ import (
 	"time"
 
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
-	"github.com/btcsuite/btcd/btcutil/bech32"
 	_ "github.com/glebarez/go-sqlite"
 )
 
@@ -651,28 +650,18 @@ func (c *Client) DRep(ctx context.Context, drepID string) (DRepInfo, error) {
 	return out, err
 }
 
-// CIP-129 DRep credential headers. The high nibble is the CIP-129 "voter type"
-// and the low nibble is the credential type. Dingo's own DRep-id parser
-// (api/blockfrost parseCIP129DRepScriptFlag) accepts voter type 2 with a
-// key-hash nibble (0x22) and voter type 3 with a script-hash nibble (0x33), and
-// the wallet's client-side decoder (spend.decodeDRepID) keys only off the low
-// nibble (2 = key, 3 = script). Emitting these two headers therefore yields a
-// bech32 drep1… id that both the node's DRep lookup and the delegation builder
-// accept, so an id copied from the directory pastes straight into Staking.
-const (
-	cip129DRepKeyHashHeader    = 0x22
-	cip129DRepScriptHashHeader = 0x33
-)
-
 // DReps returns the delegated representatives the embedded node has indexed, for
 // the read-only DRep-directory browser — the governance analogue of Pools. The
-// node's Blockfrost-compatible API exposes only a single-DRep lookup
-// (/governance/dreps/{id}), so the full list is read directly from Dingo's local
-// metadata DB (the same node-local source AccountDRepID uses), never an external
-// service. Voting power is enriched best-effort from the same DB; if that
-// aggregate (which reads internal account/utxo tables) fails, the directory
-// still lists every DRep with empty amounts rather than failing outright. When
-// no Dingo data dir is configured the directory is empty.
+// list is read directly from Dingo's local metadata DB (the same node-local
+// source AccountDRepID uses), never an external service. Dingo also serves a
+// paginated GET /api/v0/governance/dreps list whose entries carry
+// retired/expired status and resolved CIP-119 anchor metadata this local read
+// cannot derive; moving to it is tracked separately, since it changes the
+// directory's rows and status semantics. Voting power is enriched best-effort
+// from the same DB; if that aggregate (which reads internal account/utxo
+// tables) fails, the directory still lists every DRep with empty amounts rather
+// than failing outright. When no Dingo data dir is configured the directory is
+// empty.
 func (c *Client) DReps(ctx context.Context) ([]DRepInfo, error) {
 	if c.dingoDataDir == "" {
 		return nil, nil
@@ -795,26 +784,25 @@ func drepPowerKey(tag uint8, hexCred string) string {
 	return strconv.Itoa(int(tag)) + ":" + hexCred
 }
 
-// drepBech32 encodes a DRep credential (tag + 28-byte hash) as a CIP-129
-// bech32 drep1… identifier that both the node and the wallet accept.
+// drepBech32 encodes a DRep credential (Dingo's credential_tag plus the 28-byte
+// hash) as a CIP-129 bech32 drep1… identifier. The header byte is produced by
+// gouroboros' Drep.String — the same encoder the delegation builder's
+// lcommon.Drep values use — rather than a local constant, so the directory
+// cannot disagree with the identifiers the wallet builds and the node parses.
+// CIP-129 fixes the high nibble at 0x2 for a DRep and puts the credential type
+// in the low nibble (0x2 key hash, 0x3 script hash), i.e. 0x22 and 0x23; Dingo
+// rejects any other high nibble outright ("invalid DRep voter type").
 func drepBech32(tag uint8, hash []byte) (string, error) {
-	var header byte
+	drep := lcommon.Drep{Credential: hash}
 	switch tag {
 	case dingoAccountCredentialKeyHash:
-		header = cip129DRepKeyHashHeader
+		drep.Type = lcommon.DrepTypeAddrKeyHash
 	case dingoAccountCredentialScript:
-		header = cip129DRepScriptHashHeader
+		drep.Type = lcommon.DrepTypeScriptHash
 	default:
 		return "", fmt.Errorf("drep credential: unknown tag %d", tag)
 	}
-	payload := make([]byte, 0, len(hash)+1)
-	payload = append(payload, header)
-	payload = append(payload, hash...)
-	conv, err := bech32.ConvertBits(payload, 8, 5, true)
-	if err != nil {
-		return "", fmt.Errorf("drep bech32 convert: %w", err)
-	}
-	return bech32.Encode("drep", conv)
+	return drep.String(), nil
 }
 
 // Genesis fetches the network's genesis parameters from the embedded node.

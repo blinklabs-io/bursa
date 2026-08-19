@@ -15,7 +15,6 @@ import (
 	"testing"
 
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
-	"github.com/btcsuite/btcd/btcutil/bech32"
 )
 
 const blockfrostNotFoundJSON = `{"status_code":404,"error":"Not Found","message":"The requested component has not been found."}`
@@ -631,13 +630,24 @@ func TestDRepsFromDingoMetadata(t *testing.T) {
 	if a.AnchorURL != "https://example.com/drep.json" {
 		t.Fatalf("DRep A anchor = %q, want the inserted url", a.AnchorURL)
 	}
-	// The bech32 id must round-trip back to DRep A's credential hash.
-	if _, data5, derr := bech32.DecodeNoLimit(a.DRepID); derr != nil {
-		t.Fatalf("decode drep id: %v", derr)
-	} else if raw, cerr := bech32.ConvertBits(data5, 5, 8, false); cerr != nil {
-		t.Fatalf("convert drep id: %v", cerr)
-	} else if len(raw) != lcommon.AddressHashSize+1 || !strings.EqualFold(hex.EncodeToString(raw[1:]), a.Hex) {
-		t.Fatalf("drep id %q does not encode credential %x", a.DRepID, credA)
+	// Pinned literal CIP-129 identifiers, not a round-trip: a round-trip
+	// through this package's own encoder agrees with itself even when the
+	// header byte names the wrong entity. CIP-129 fixes a DRep's high nibble at
+	// 0x2 and puts the credential type in the low nibble (0x2 key hash, 0x3
+	// script hash), so a key DRep's header is 0x22 and a script DRep's is 0x23.
+	// Both strings below are bech32("drep", header || credential) computed from
+	// the CIP-129 header table with a reference bech32 implementation checked
+	// against the CIP's own published vector
+	// (0x22 || 28 zero bytes = drep1ygqqqq…7vlc9n). Dingo rejects any other
+	// high nibble outright ("invalid DRep voter type"), so an id emitted with,
+	// say, 0x33 still decodes as bech32 but fails the node's DRep lookup and
+	// the delegation the directory tells users to paste it into.
+	const (
+		wantDRepAID = "drep1y2s6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgg68q7a8"
+		wantDRepBID = "drep1ywet9v4jk2et9v4jk2et9v4jk2et9v4jk2et9v4jk2et9vsjgaa4a"
+	)
+	if a.DRepID != wantDRepAID {
+		t.Fatalf("DRep A (key hash) id = %q, want %q (CIP-129 header 0x22)", a.DRepID, wantDRepAID)
 	}
 
 	b, ok := byHex[hex.EncodeToString(credB)]
@@ -646,6 +656,9 @@ func TestDRepsFromDingoMetadata(t *testing.T) {
 	}
 	if !b.HasScript || b.Amount != "0" {
 		t.Fatalf("DRep B = %+v, want script-hash with zero voting power", b)
+	}
+	if b.DRepID != wantDRepBID {
+		t.Fatalf("DRep B (script hash) id = %q, want %q (CIP-129 header 0x23, not 0x33)", b.DRepID, wantDRepBID)
 	}
 }
 
