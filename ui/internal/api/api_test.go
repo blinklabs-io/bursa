@@ -1599,8 +1599,8 @@ type fakeSpender struct {
 	hwSignReqErr error
 	gotHWSignID  string
 
-	hwSignDataReq    spend.HardwareSignDataRequest
-	hwSignDataReqErr error
+	hwSignDataReq     spend.HardwareSignDataRequest
+	hwSignDataReqErr  error
 	gotHWSignDataAddr string
 
 	// import-tx (decode-tx/cosign-tx/submit-tx vkey path); methods defined in
