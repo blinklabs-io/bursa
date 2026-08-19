@@ -165,7 +165,21 @@ describe("connectKeystoneQR", () => {
       governance: false,
       multisig: false,
       poolReg: false,
+      signMessage: false,
     });
+  });
+
+  test("signMessage rejects — CIP-8 over QR is not implemented yet", async () => {
+    const session = await connectKeystoneQR({ transport: "qr", bridge: makeBridge() });
+    await expect(
+      session.signMessage({
+        messageHex: "48656c6c6f",
+        signingPath: "1852'/1815'/0'/0/0",
+        stakePath: "1852'/1815'/0'/2/0",
+        networkId: 0,
+        protocolMagic: 2,
+      }),
+    ).rejects.toThrow(/not supported on Keystone/i);
   });
 
   test("signTx refuses to build a request with a missing fingerprint (no zero fp)", async () => {
@@ -451,6 +465,7 @@ describe("connectKeystoneUSB", () => {
       governance: false,
       multisig: false,
       poolReg: false,
+      signMessage: false,
     });
     await session.close();
     expect(mockClose).toHaveBeenCalledOnce();

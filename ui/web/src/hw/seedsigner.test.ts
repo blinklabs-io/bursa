@@ -284,6 +284,7 @@ describe("connectSeedSigner", () => {
       governance: true,
       multisig: true,
       poolReg: false,
+      signMessage: false,
     });
   });
 
@@ -358,9 +359,17 @@ describe("connectSeedSigner", () => {
     await expect(session.signTx(NEUTRAL_REQ)).resolves.toBeTypeOf("string");
   });
 
-  test("session has no signMessage method (CIP-8 lands with a later interface change)", async () => {
+  test("signMessage rejects (CIP-8 over the air-gapped QR transport is not implemented yet)", async () => {
     const session = await connectSeedSigner({ bridge: makeBridge() });
-    expect((session as unknown as { signMessage?: unknown }).signMessage).toBeUndefined();
+    await expect(
+      session.signMessage({
+        messageHex: "00",
+        signingPath: "1852'/1815'/0'/0/0",
+        stakePath: "1852'/1815'/0'/2/0",
+        networkId: 0,
+        protocolMagic: 2,
+      }),
+    ).rejects.toThrow(/not supported on SeedSigner/i);
   });
 });
 

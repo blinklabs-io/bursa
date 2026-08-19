@@ -6,6 +6,7 @@ import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
 import { addWallet, addHardwareWallet, generateMnemonic, ApiError } from "../api/client";
 import { connectHardware } from "../hw";
+import { ComposeMultiSig } from "./MultiSig";
 import type { HardwareKind, HardwareSigner } from "../hw";
 import { setDeviceKind, setKeystoneXfp } from "../hw/deviceKind";
 import { setWalletXfp } from "../hw/qr/xfp";
@@ -43,6 +44,9 @@ function NetworkDisplay({ network }: { network: string }) {
 
 interface AddWalletProps {
   network: string;
+  // Whether this vault has a seed-backed wallet that can reveal its own
+  // CIP-1854 participant key, so the user can add themselves to a policy.
+  canSign?: boolean;
   // When the vault password is already known (e.g. just created during the
   // first-run flow), it is passed in and the field is hidden. Otherwise the
   // user re-enters it so the index can be re-sealed.
@@ -54,7 +58,7 @@ interface AddWalletProps {
 }
 
 // Mode within the Add Wallet flow.
-type Mode = "choose" | "create" | "create-confirm" | "restore" | "hardware";
+type Mode = "choose" | "create" | "create-confirm" | "restore" | "hardware" | "multisig";
 
 // Selectable hardware devices.
 const DEVICE_OPTIONS: { kind: HardwareKind; label: string; disabled?: boolean }[] = [
@@ -74,6 +78,7 @@ const DEVICE_LABELS: Record<HardwareKind, string> = {
 export function AddWallet({
   network,
   knownVaultPassword,
+  canSign = false,
   onAdded,
   onCancel,
   title = "Add Wallet",
@@ -310,6 +315,17 @@ export function AddWallet({
     }
   }
 
+  if (mode === "multisig") {
+    return (
+      <ComposeMultiSig
+        canSign={canSign}
+        knownVaultPassword={knownVaultPassword}
+        onCancel={() => { setError(null); setMode("choose"); }}
+        onCreated={onAdded}
+      />
+    );
+  }
+
   // --- Mode: choose -------------------------------------------------------
 
   if (mode === "choose") {
@@ -317,8 +333,9 @@ export function AddWallet({
       <Card title={title}>
         <p className="helper-text" style={{ marginBottom: "var(--space-3)" }}>
           Create a brand-new wallet with a freshly generated recovery phrase,
-          restore an existing one from a phrase you already have, or connect a
-          hardware wallet (Ledger or Trezor).
+          restore an existing one from a phrase you already have, connect a
+          hardware wallet, or compose a multi-signature
+          wallet that several people sign for together.
         </p>
         <div className="preview-actions" style={{ flexDirection: "column" }}>
           <Button onClick={handleGenerate} disabled={generating}>
@@ -329,6 +346,9 @@ export function AddWallet({
           </Button>
           <Button variant="ghost" onClick={() => { setError(null); setMode("hardware"); }} disabled={generating}>
             Connect hardware wallet
+          </Button>
+          <Button variant="ghost" onClick={() => { setError(null); setMode("multisig"); }} disabled={generating}>
+            Compose multi-signature wallet
           </Button>
           {onCancel && (
             <Button type="button" variant="ghost" onClick={onCancel}>
