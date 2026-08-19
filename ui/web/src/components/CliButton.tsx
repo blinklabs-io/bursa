@@ -36,9 +36,15 @@ interface CliButtonProps {
   // Lets the two layouts size and place the same control differently without a
   // second component.
   className?: string;
+  // True while another surface owns the screen — the mobile drawer, which covers
+  // the top bar rather than unmounting it. Being covered is only a visual and
+  // pointer fact: without this the control keeps its place in the accessibility
+  // tree and the tab order, and a screen reader still offers it, ahead of the
+  // drawer, because the top bar comes first in the DOM.
+  inactive?: boolean;
 }
 
-export function CliButton({ onOpen, className }: CliButtonProps) {
+export function CliButton({ onOpen, className, inactive }: CliButtonProps) {
   return (
     <button
       type="button"
@@ -47,6 +53,8 @@ export function CliButton({ onOpen, className }: CliButtonProps) {
       aria-haspopup="dialog"
       aria-label="Open the command line"
       title="Command line — search and run anything"
+      aria-hidden={inactive}
+      tabIndex={inactive ? -1 : undefined}
     >
       <PromptGlyph />
     </button>

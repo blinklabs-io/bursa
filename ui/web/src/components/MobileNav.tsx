@@ -195,6 +195,7 @@ export function MobileNav({
           <CliButton
             onOpen={onOpenPalette}
             className="cli-button-mobile"
+            inactive={open}
           />
         )}
 

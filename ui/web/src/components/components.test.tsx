@@ -120,6 +120,22 @@ test("the mobile command line does not require opening the drawer first", () => 
   expect(onOpenPalette).toHaveBeenCalledTimes(1);
 });
 
+// The drawer overlay covers the top bar and the Tab trap keeps keyboard focus
+// inside the drawer, but the overlay is itself aria-hidden — so without the same
+// treatment the hamburger beside it gets, a screen reader still announces this
+// control as available, and before the drawer, since the top bar comes first.
+test("the mobile command line leaves the accessibility tree while the drawer is open", () => {
+  renderMobileNav({ onOpenPalette: vi.fn() });
+
+  const cli = screen.getByRole("button", { name: /open the command line/i });
+
+  fireEvent.click(screen.getByRole("button", { name: /open menu/i }));
+
+  expect(cli).toHaveAttribute("aria-hidden", "true");
+  expect(cli).toHaveAttribute("tabindex", "-1");
+  expect(screen.queryByRole("button", { name: /open the command line/i })).toBeNull();
+});
+
 test("SyncBanner shows error detail ahead of retained bootstrap diagnostics", () => {
   render(
     <SyncBanner
