@@ -38,6 +38,7 @@ import { Operate } from "./screens/Operate";
 import { ImportTransaction } from "./screens/ImportTransaction";
 import { Settings } from "./screens/Settings";
 import { ConnectorApproval } from "./screens/ConnectorApproval";
+import { CliButton } from "./components/CliButton";
 
 // A Map (not a plain object) so a crafted hash like "#/constructor" or
 // "#/toString" can't resolve to an inherited Object.prototype member and get
@@ -623,7 +624,10 @@ export function App() {
         {/* Desktop sidebar. Hidden on mobile via CSS. */}
         <nav className="sidebar">
           <div className="brand">
-            <span className="brand-mark">BVRSA</span>
+            <div className="brand-row">
+              <span className="brand-mark">BVRSA</span>
+              <CliButton onOpen={() => setPaletteOpen(true)} />
+            </div>
             <span className="brand-motto">nodvs tvvs · claves tvæ</span>
           </div>
           <WalletSwitcher
