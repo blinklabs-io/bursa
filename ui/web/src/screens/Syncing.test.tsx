@@ -168,10 +168,13 @@ test("the escape hatch does not promise a sync that will finish", () => {
   render(<Syncing status={errorStatus} onLoadAnyway={noop} />);
 
   expect(screen.queryByText(/until syncing finishes/i)).not.toBeInTheDocument();
-  expect(screen.getByText(/need it running/i)).toBeInTheDocument();
   // Addresses are read through the node as well (the next-unused lookup hits the
   // chain), so the copy must not offer them as something still available here.
-  expect(screen.queryByText(/see its addresses/i)).not.toBeInTheDocument();
+  // Asserted positively and in one phrase: rejecting the old wording alone would
+  // pass again the moment new copy offered addresses in different words.
+  expect(
+    screen.getByText(/addresses are all read through the node and need it running/i),
+  ).toBeInTheDocument();
 });
 
 // A dead end with no next step is the thing that made this screen feel broken.

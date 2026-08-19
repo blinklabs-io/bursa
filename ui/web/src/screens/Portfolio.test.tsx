@@ -332,3 +332,23 @@ test("an enabled Send explains nothing", () => {
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
   expect(screen.queryByText(/send is unavailable/i)).not.toBeInTheDocument();
 });
+
+// A multi-signature wallet whose stored policy will not decode already gets an
+// alert saying it cannot spend. Repeating "Send is unavailable — this wallet
+// cannot spend" underneath the buttons says the same thing twice, more vaguely.
+test("an explicit multi-signature error is not restated as the generic reason", () => {
+  mockBalance("5000000", []);
+  mockDelegation();
+  mockAssetMetadata({});
+
+  render(
+    <Portfolio
+      canSend={false}
+      sendDisabledReason="This wallet cannot spend"
+      multiSigError="This wallet's multi-signature policy could not be read, so it cannot spend."
+    />,
+  );
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/policy could not be read/i);
+  expect(screen.queryByText(/send is unavailable/i)).not.toBeInTheDocument();
+});

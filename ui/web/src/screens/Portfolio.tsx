@@ -141,7 +141,10 @@ export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }
             Receive
           </Button>
         </div>
-        {!canSend && sendDisabledReason && (
+        {/* Suppressed when multiSigError is already on screen: that alert names the
+            actual reason this wallet cannot spend, and the generic line under the
+            buttons would only restate it in weaker words. */}
+        {!canSend && !multiSigError && sendDisabledReason && (
           <p className="helper-text">Send is unavailable — {sendDisabledReason.toLowerCase()}.</p>
         )}
       </Card>
