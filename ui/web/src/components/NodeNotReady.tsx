@@ -28,9 +28,15 @@ export function NodeNotReady({
   const bootstrap = status.data?.bootstrap;
   const statusError = status.data?.error || status.error?.message;
 
+  // Retry the query that hit the 503, on the same terms useAsync polls on: no
+  // requests into a dead network or a backgrounded tab. Without this the card
+  // would keep firing every two seconds for as long as it stays mounted.
   useEffect(() => {
     if (!refresh) return;
-    const id = setInterval(refresh, 2000);
+    const id = setInterval(() => {
+      if (!navigator.onLine || document.hidden) return;
+      refresh();
+    }, 2000);
     return () => clearInterval(id);
   }, [refresh]);
 

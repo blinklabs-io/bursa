@@ -378,3 +378,24 @@ test("a supervisor error is shown instead of a reassuring wait state", () => {
   expect(screen.getByRole("alert")).toHaveTextContent(/node failed to start/i);
   expect(screen.queryByText(/nothing is wrong/i)).not.toBeInTheDocument();
 });
+
+// The card retries every two seconds, and useAsync shows the spinner for a
+// refresh — so a loading check ahead of the 503 branch would blank the
+// explanation on every retry. The card owns the screen until the node answers.
+test("the not-ready card stays put while its retry is in flight", () => {
+  vi.spyOn(hooks, "useBalance").mockReturnValue({
+    data: null, error: new ApiError(503, "node not ready"), loading: true, refresh: vi.fn(),
+  } as never);
+  mockDelegation();
+  mockAssetMetadata({});
+  vi.spyOn(hooks, "useStatus").mockReturnValue({
+    data: { state: "bootstrapping", tip: 0, caughtUp: false, network: "preview",
+            bootstrap: { phase: "bootstrap", percent: 58.7 } },
+    error: null, loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Portfolio canSend={false} />);
+
+  expect(screen.getByText(/waiting for the node/i)).toBeInTheDocument();
+  expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+});

@@ -264,12 +264,15 @@ export function Activity({ network = "preview" }: ActivityProps = {}) {
     });
   }, [list, search, directionFilter]);
 
-  if (txs.loading) {
-    return <p>Loading…</p>;
-  }
-
+  // Ahead of the loading branch on purpose: each retry from the card re-enters
+  // loading, and checking loading first would flash "Loading…" over the labeled
+  // explanation every two seconds.
   if (txs.error instanceof ApiError && txs.error.status === 503) {
     return <NodeNotReady what="Your transaction history" refresh={txs.refresh} />;
+  }
+
+  if (txs.loading) {
+    return <p>Loading…</p>;
   }
 
   if (txs.error) {

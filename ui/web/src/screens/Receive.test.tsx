@@ -163,3 +163,20 @@ test("a real fault is still reported as an error", () => {
   expect(screen.getByRole("alert")).toHaveTextContent(/addresses blew up/i);
   expect(screen.queryByText(/waiting for the node/i)).not.toBeInTheDocument();
 });
+
+// Same as Portfolio: the retry re-enters loading, and the card must not blink
+// out of existence every two seconds while it waits.
+test("the not-ready card stays put while its retry is in flight", () => {
+  vi.spyOn(hooks, "useAddresses").mockReturnValue({
+    data: null, error: new ApiError(503, "node not ready"), loading: true, refresh: vi.fn(),
+  } as never);
+  vi.spyOn(hooks, "useStatus").mockReturnValue({
+    data: { state: "bootstrapping", tip: 0, caughtUp: false, network: "preview" },
+    error: null, loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Receive network="preview" />);
+
+  expect(screen.getByText(/waiting for the node/i)).toBeInTheDocument();
+  expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+});
