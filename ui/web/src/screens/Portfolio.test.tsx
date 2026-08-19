@@ -379,9 +379,12 @@ test("a supervisor error is shown instead of a reassuring wait state", () => {
   expect(screen.queryByText(/nothing is wrong/i)).not.toBeInTheDocument();
 });
 
-// The card retries every two seconds, and useAsync shows the spinner for a
-// refresh — so a loading check ahead of the 503 branch would blank the
-// explanation on every retry. The card owns the screen until the node answers.
+// useAsync shows its spinner only on the initial fetch, not on the two-second
+// retries (polls update data in place, see hooks.ts: `if (isInitial)
+// setLoading(true)`). This test still pins the defensive ordering in
+// Portfolio.tsx: even if a fetch reported loading alongside the 503, the
+// not-ready branch must come before any loading check so the explanation is
+// never blanked. The card owns the screen until the node answers.
 test("the not-ready card stays put while its retry is in flight", () => {
   vi.spyOn(hooks, "useBalance").mockReturnValue({
     data: null, error: new ApiError(503, "node not ready"), loading: true, refresh: vi.fn(),
