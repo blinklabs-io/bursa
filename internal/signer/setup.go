@@ -88,8 +88,10 @@ var sopsDecrypt = sops.Decrypt
 
 // BuildBackends constructs configured backends. Software backends load only
 // *.skey files from their configured directory; other files (.vkey, README,
-// etc.) are skipped silently. All three backend types (software, sops, vault)
-// are fully wired.
+// etc.) are skipped silently. All backend types (software, sops, vault, pkcs11)
+// are wired here; the pkcs11 driver is CGO-only and requires the pkcs11 build
+// tag (the default build wires a stub that returns a clear not-compiled-in
+// error).
 func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]backend.Backend, error) {
 	// Non-nil slice so callers (and nilaway) can rely on a non-nil result on the
 	// success path; an empty config yields an empty, not nil, slice.
@@ -165,6 +167,12 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 			b, err := buildVaultBackend(ctx, c)
 			if err != nil {
 				return nil, fmt.Errorf("vault backend %q: %w", c.Name, err)
+			}
+			backends = append(backends, b)
+		case "pkcs11":
+			b, err := buildPKCS11Backend(c)
+			if err != nil {
+				return nil, fmt.Errorf("pkcs11 backend %q: %w", c.Name, err)
 			}
 			backends = append(backends, b)
 		default:

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useBalance, useDelegation, useAssetMetadata, useNfts, useNftMedia } from "../api/hooks";
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
@@ -9,6 +9,8 @@ import { formatAda, formatTokenQuantity } from "../format";
 import { extractAssetMeta, assetDisplayName, assetMatchesQuery } from "../tokenMeta";
 import { nftImageUrl } from "../api/client";
 import { navigate } from "../router";
+import { NodeNotReady } from "../components/NodeNotReady";
+import { ApiError } from "../api/client";
 
 function NftList() {
   const nfts = useNfts();
@@ -62,12 +64,16 @@ function NftGallery() {
 }
 
 interface PortfolioProps {
+  // Set when this wallet's stored multi-signature policy could not be read. It
+  // still receives and reports a balance; it just cannot spend, and saying so
+  // beats a Send button that leads nowhere.
+  multiSigError?: string;
   // Whether this wallet on this node can build a spend. Receive needs nothing,
   // so it is always offered.
   canSend?: boolean;
 }
 
-export function Portfolio({ canSend = false }: PortfolioProps = {}) {
+export function Portfolio({ canSend = false, multiSigError }: PortfolioProps = {}) {
   const balance = useBalance();
   const delegation = useDelegation();
   const [query, setQuery] = useState("");
@@ -76,20 +82,42 @@ export function Portfolio({ canSend = false }: PortfolioProps = {}) {
   // tokenMeta.ts) and applied on a best-effort basis below — a missing or
   // failed lookup for one asset never blocks the rest of the portfolio.
   const units = useMemo(() => (balance.data?.assets ?? []).map((a) => a.unit), [balance.data]);
+  // Stable identity: NodeNotReady keys its retry interval on this callback, and a
+  // fresh closure every render would clear and restart the interval each time,
+  // so the retry could be starved by unrelated re-renders.
+  const refreshBalance = balance.refresh;
+  const refreshDelegation = delegation.refresh;
+  const retryNodeQueries = useCallback(() => {
+    refreshBalance();
+    refreshDelegation();
+  }, [refreshBalance, refreshDelegation]);
   const metadataByUnit = useAssetMetadata(units);
   const assets = balance.data?.assets ?? [];
+
+  // A node that cannot answer yet is an expected, self-resolving state, not a
+  // fault: say so instead of dropping a bare server error into a blank screen.
+  // Real faults still surface as errors.
+  const notReady = (e: Error | null) => e instanceof ApiError && e.status === 503;
+  const balanceNotReady = notReady(balance.error);
+  const delegationNotReady = notReady(delegation.error);
+  if (balance.error && !balanceNotReady) {
+    return <p role="alert" className="error-text">{balance.error.message}</p>;
+  }
+  if (delegation.error && !delegationNotReady) {
+    return <p role="alert" className="error-text">{delegation.error.message}</p>;
+  }
+  // Ahead of the loading branch on purpose. Each retry from the card re-enters
+  // loading (useAsync shows the spinner for a refresh), so checking loading
+  // first would replace the labeled explanation with "Loading…" every two
+  // seconds. The 503 is still set while the retry is in flight, so the card
+  // stays put until the node actually answers.
+  if (balanceNotReady || delegationNotReady) {
+    return <NodeNotReady what="Your balance and delegation" verb="come" refresh={retryNodeQueries} />;
+  }
 
   // Show a single loading state if either hook is still loading.
   if (balance.loading || delegation.loading) {
     return <p>Loading…</p>;
-  }
-
-  // Show the first error encountered (balance errors take priority).
-  if (balance.error) {
-    return <p role="alert" className="error-text">{balance.error.message}</p>;
-  }
-  if (delegation.error) {
-    return <p role="alert" className="error-text">{delegation.error.message}</p>;
   }
 
   const del = delegation.data;
@@ -120,6 +148,11 @@ export function Portfolio({ canSend = false }: PortfolioProps = {}) {
         {/* Send and Receive are actions, not places. They sit on the balance
             they act on — where you already are when you decide to move funds —
             rather than costing two entries in a nav you have to scan. */}
+        {multiSigError && (
+          <p role="alert" className="error-text">
+            {multiSigError}
+          </p>
+        )}
         <div className="portfolio-actions">
           <Button onClick={() => navigate("send")} disabled={!canSend}>
             Send

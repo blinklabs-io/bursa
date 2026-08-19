@@ -22,6 +22,7 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -33,6 +34,7 @@ import (
 	"time"
 
 	"github.com/Salvionied/apollo/v2/backend/utxorpc"
+	"github.com/blinklabs-io/bursa/ui/internal/activity"
 	"github.com/blinklabs-io/bursa/ui/internal/api"
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
@@ -57,6 +59,75 @@ import (
 // Unlock decrypts the ACTIVE wallet's seed under the supplied spending password;
 // Create is unsupported (wallets are added via the vault) and Exists is true
 // whenever a wallet is active.
+// scriptVault adapts the vault to the narrow surface the multi-signature
+// migration needs. The dependency runs this way round on purpose: the vault
+// must not learn what a multi-signature policy is, so it stores the policy
+// opaquely and this bridges the two types.
+type scriptVault struct{ v *vault.Vault }
+
+func (s scriptVault) AddScriptWallet(id, name, network string, w multisig.ScriptWallet, vaultPassword string) error {
+	_, err := s.v.AddScriptWallet(id, name, network, vault.ScriptMeta{
+		Policy:        w.Policy,
+		ScriptCBOR:    w.ScriptCBOR,
+		ScriptAddress: w.ScriptAddress,
+	}, vaultPassword)
+	return err
+}
+
+func (s scriptVault) ScriptAddresses() ([]string, error) { return s.v.ScriptAddresses() }
+
+// scriptAccounts reads saved multi-signature accounts back out of the vault for
+// the multisig service, which spends from them but no longer stores them. The
+// wallet ID is the account ID, so links and requests survive the move.
+type scriptAccounts struct{ v *vault.Vault }
+
+func (s scriptAccounts) List() ([]multisig.Account, error) {
+	metas, err := s.v.Wallets()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]multisig.Account, 0, len(metas))
+	for _, m := range metas {
+		if !m.IsScript() {
+			continue
+		}
+		acct, err := scriptAccountFromMeta(m)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, acct)
+	}
+	return out, nil
+}
+
+func (s scriptAccounts) Get(id string) (multisig.Account, error) {
+	metas, err := s.v.Wallets()
+	if err != nil {
+		return multisig.Account{}, err
+	}
+	for _, m := range metas {
+		if m.ID == id && m.IsScript() {
+			return scriptAccountFromMeta(m)
+		}
+	}
+	return multisig.Account{}, multisig.ErrUnknownAccount
+}
+
+func scriptAccountFromMeta(m vault.WalletMeta) (multisig.Account, error) {
+	var policy multisig.Policy
+	if err := json.Unmarshal(m.Script.Policy, &policy); err != nil {
+		return multisig.Account{}, fmt.Errorf("wallet %q: decode multi-signature policy: %w", m.Name, err)
+	}
+	return multisig.Account{
+		ID:            m.ID,
+		Label:         m.Name,
+		Network:       m.Network,
+		Policy:        policy,
+		ScriptCBOR:    m.Script.ScriptCBOR,
+		ScriptAddress: m.Script.ScriptAddress,
+	}, nil
+}
+
 type vaultKeystore struct{ v *vault.Vault }
 
 func (k vaultKeystore) Exists() bool { return k.v.ActiveID() != "" }
@@ -232,6 +303,12 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	chainClient := chain.NewClient(blockfrostPort, chain.WithDingoDataDir(nodeDataDir))
 	walletSvc := wallet.NewService(chainClient)
 
+	// Node-local wallet-activity detector: diffs the active wallet's confirmed
+	// incoming transactions and stake-reward epochs on each SPA poll to surface
+	// desktop/browser notifications. It reads only walletSvc's node-local views,
+	// so it makes no external calls.
+	activitySvc := activity.New(walletSvc)
+
 	// The vault is the encrypted multi-wallet store: a single file under the data
 	// dir holding the wallet index (encrypted under the vault password) and each
 	// wallet's seed (encrypted under its own spending password). It replaces the
@@ -265,7 +342,27 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 
 	// Native multi-sig accounts are persisted under the data dir; signing uses
 	// the active wallet's CIP-1854 key, decrypted from the vault on demand.
-	multisigSvc := multisig.NewService(chainCtx, vaultKeystore{v: vlt}, filepath.Join(cfg.DataDir, "multisig.json"))
+	multisigStorePath := filepath.Join(cfg.DataDir, "multisig.json")
+	multisigSvc := multisig.NewService(chainCtx, vaultKeystore{v: vlt}, scriptAccounts{v: vlt})
+
+	// Multi-signature accounts predate the vault and were kept in a plain file
+	// beside it. Move them in on unlock, so they are behind the vault password
+	// and appear as wallets. The migration verifies the vault holds them before
+	// removing the file; a failure leaves it alone and is retried next unlock,
+	// which is why this reports a count and logs its own trouble rather than
+	// propagating an error that would block entry to the wallet.
+	migrateScripts := func(vaultPassword string) int {
+		n, err := multisig.MigrateStoreToVault(multisigStorePath, scriptVault{v: vlt}, vaultPassword)
+		if err != nil {
+			logger.Warn(
+				"multi-signature accounts not migrated into the vault; the store is intact and this will retry",
+				"error", err,
+			)
+		} else if n > 0 {
+			logger.Info("migrated multi-signature accounts into the vault", "count", n)
+		}
+		return n
+	}
 
 	var connectorSvc *connector.Service
 	if cfg.ConnectorEnabled {
@@ -359,6 +456,8 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	handlerOpts := []api.HandlerOption{
 		api.WithLegacyKeystore(legacyKeyStore),
 		api.WithDiagnostics(diagSvc),
+		api.WithScriptMigration(migrateScripts),
+		api.WithActivity(activitySvc),
 	}
 	if connectorSvc != nil {
 		handlerOpts = append(handlerOpts, api.WithConnector(connectorSvc))
@@ -512,6 +611,15 @@ func (c *settingsController) AutoLockMinutes() int { return c.store.AutoLockMinu
 
 func (c *settingsController) SetAutoLockMinutes(minutes int) error {
 	return c.store.SetAutoLockMinutes(minutes)
+}
+
+// Notifications and SetNotifications pass straight through to the persisted
+// settings store: like auto-lock, the wallet-activity notification preference
+// is a pure client-side/UI setting with no node-construction dependency.
+func (c *settingsController) Notifications() bool { return c.store.Notifications() }
+
+func (c *settingsController) SetNotifications(enabled bool) error {
+	return c.store.SetNotifications(enabled)
 }
 
 // diagChain adapts the loopback Blockfrost chain client to the diagnostics

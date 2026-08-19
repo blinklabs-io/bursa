@@ -438,6 +438,29 @@ export interface NftMediaSetting {
   enabled: boolean;
 }
 
+// App setting: whether node-local wallet-activity notifications (incoming funds
+// / stake rewards) are enabled. Default off until the user opts in. Takes effect
+// immediately client-side.
+export interface NotificationsSetting {
+  enabled: boolean;
+}
+
+// One node-local wallet-activity occurrence, as returned by GET /wallet/activity.
+// kind is "received" (a newly confirmed incoming transaction) or "reward" (a new
+// per-epoch stake reward). lovelace is the decimal amount received / rewarded.
+// id is a stable dedup key ("tx:<hash>" or "reward:<epoch>").
+export interface ActivityEvent {
+  id: string;
+  kind: "received" | "reward";
+  lovelace: string;
+  tx_hash?: string;
+  epoch?: number;
+}
+
+export interface ActivityResponse {
+  events: ActivityEvent[];
+}
+
 // A wallet as listed by the vault: read-only fields plus whether it's active.
 // The encrypted seed is never exposed.
 export type WalletType = "full" | "read_only" | "multi_signature" | "hardware";
@@ -469,6 +492,13 @@ export interface WalletView {
   // WalletView fixtures/mocks remain valid, and the UI reads them defensively.
   accounts?: AccountSummary[];
   active_account_index?: number;
+  // Set only on a multi-signature wallet: the policy and script address needed
+  // to build a spend, which collects co-signer witnesses rather than signing
+  // with a local seed.
+  multisig?: MultiSigAccount;
+  // Set instead of multisig when the stored policy will not decode. The wallet
+  // still lists and receives; it just cannot spend.
+  multisig_error?: string;
 }
 
 // GET /wallet/accounts response: the active wallet's accounts (with best-effort
@@ -582,6 +612,19 @@ export interface HardwareSignResponse {
   required_signers: string[];
   unsigned_tx_cbor: string;
   unsupported?: string; // non-empty = this tx type cannot be signed on hardware yet
+}
+
+// CIP-8 hardware message signing: the seedless signing metadata a hardware
+// device needs to sign a message for one of the wallet's own receive addresses.
+// Returned by GET /wallet/sign-data/hardware-request; the message payload is
+// carried to the device separately by the SPA.
+export interface HardwareSignDataRequest {
+  address_bech32: string;
+  address_hex: string;
+  signing_path: string; // CIP-1852 payment-key path, e.g. "1852'/1815'/0'/0/0"
+  stake_path: string; // CIP-1852 stake-key path, e.g. "1852'/1815'/0'/2/0"
+  network_id: number; // 1 = mainnet, 0 = testnets
+  protocol_magic: number; // mainnet 764824073, preprod 1, preview 2
 }
 
 export interface CreateVaultRequest {
@@ -712,6 +755,9 @@ export interface CreateMultiSigRequest {
   label: string;
   network?: string;
   policy: MultiSigPolicy;
+  // A multi-signature account is a vault wallet now, so composing one is a
+  // vault write and needs the vault password like any other add-wallet call.
+  vault_password: string;
 }
 
 // The wallet's own CIP-1854 participant identity, to share with co-signers.

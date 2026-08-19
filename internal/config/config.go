@@ -23,15 +23,54 @@ import (
 )
 
 type Config struct {
-	Google   GoogleConfig  `yaml:"google"`
-	Logging  LoggingConfig `yaml:"logging"`
-	Mnemonic string        `yaml:"mnemonic"        envconfig:"MNEMONIC"`
-	Network  string        `yaml:"cardano_network" envconfig:"CARDANO_NETWORK"`
-	Api      ApiConfig     `yaml:"api"`
-	Metrics  MetricsConfig `yaml:"metrics"`
-	Debug    DebugConfig   `yaml:"debug"`
-	Storage  StorageConfig `yaml:"storage"`
-	Signer   SignerConfig  `yaml:"signer"`
+	Google   GoogleConfig   `yaml:"google"`
+	Logging  LoggingConfig  `yaml:"logging"`
+	Mnemonic string         `yaml:"mnemonic"        envconfig:"MNEMONIC"`
+	Network  string         `yaml:"cardano_network" envconfig:"CARDANO_NETWORK"`
+	Api      ApiConfig      `yaml:"api"`
+	Metrics  MetricsConfig  `yaml:"metrics"`
+	Debug    DebugConfig    `yaml:"debug"`
+	Storage  StorageConfig  `yaml:"storage"`
+	Signer   SignerConfig   `yaml:"signer"`
+	KESAgent KESAgentConfig `yaml:"kes_agent"`
+}
+
+// KESAgentConfig holds configuration for the bursa KES agent daemon.
+type KESAgentConfig struct {
+	// Mode is "serve-key" (push the KES signing key to the producer) or "sign"
+	// (sign block headers on the producer's behalf; key never leaves the agent).
+	Mode string `yaml:"mode" envconfig:"KESAGENT_MODE"`
+	// ServiceSocket is the Unix socket the producer connects to.
+	ServiceSocket string `yaml:"service_socket" envconfig:"KESAGENT_SERVICE_SOCKET"`
+	// ControlSocket is the Unix socket for gen/install/drop/info commands.
+	ControlSocket string `yaml:"control_socket" envconfig:"KESAGENT_CONTROL_SOCKET"`
+	// ServiceSocketMode is the octal file mode for the service socket, which
+	// the block producer connects to (default 0600). It may be widened (e.g.
+	// "0660" with the producer added to the agent's group) to let a
+	// different-UID producer reach it.
+	ServiceSocketMode string `yaml:"service_socket_mode" envconfig:"KESAGENT_SERVICE_SOCKET_MODE"`
+	// ControlSocketMode is the octal file mode for the control socket, which
+	// handles gen-staged-key/install-key/drop-key/info (default 0600). It must
+	// never be widened to group/other access: those commands can drop or
+	// install KES keys.
+	ControlSocketMode string `yaml:"control_socket_mode" envconfig:"KESAGENT_CONTROL_SOCKET_MODE"`
+	// ColdVKeyFile is a path to the pool cold verification key (cardano-cli
+	// text envelope or raw/hex). The agent only ever holds the cold vkey.
+	ColdVKeyFile string `yaml:"cold_vkey_file" envconfig:"KESAGENT_COLD_VKEY_FILE"`
+	// ColdVKeyHex is the cold verification key as hex (alternative to the file).
+	ColdVKeyHex string `yaml:"cold_vkey_hex" envconfig:"KESAGENT_COLD_VKEY_HEX"`
+	// SystemStart is the Shelley genesis system start (RFC3339).
+	SystemStart string `yaml:"system_start" envconfig:"KESAGENT_SYSTEM_START"`
+	// SlotLength is the wall-clock length of one slot in seconds (default 1).
+	SlotLength float64 `yaml:"slot_length" envconfig:"KESAGENT_SLOT_LENGTH"`
+	// SlotsPerKESPeriod is the number of slots per KES period (e.g. 129600).
+	SlotsPerKESPeriod uint64 `yaml:"slots_per_kes_period" envconfig:"KESAGENT_SLOTS_PER_KES_PERIOD"`
+	// MaxKESEvolutions is the max opcert evolutions (mainnet 62).
+	MaxKESEvolutions uint64 `yaml:"max_kes_evolutions" envconfig:"KESAGENT_MAX_KES_EVOLUTIONS"`
+	// EvolveInterval is the scheduler tick as a Go duration string (default 1m).
+	EvolveInterval string `yaml:"evolve_interval" envconfig:"KESAGENT_EVOLVE_INTERVAL"`
+	// GuardFile is the durable monotonic-period store path.
+	GuardFile string `yaml:"guard_file" envconfig:"KESAGENT_GUARD_FILE"`
 }
 
 // SignerConfig holds configuration for the bursa signer daemon.
@@ -84,17 +123,22 @@ type SignerWatermarkConfig struct {
 // SignerBackendConfig configures a key-custody backend.
 type SignerBackendConfig struct {
 	Name          string                   `yaml:"name"`
-	Type          string                   `yaml:"type"`           // "software" | "sops" | "vault"
+	Type          string                   `yaml:"type"`           // "software" | "sops" | "vault" | "pkcs11"
 	Path          string                   `yaml:"path"`           // software: key dir
 	PassphraseEnv string                   `yaml:"passphrase_env"` // software: env var holding the key-file passphrase
 	SecretPrefix  string                   `yaml:"secret_prefix"`  // sops: secret short-name prefix within google.project
 	Address       string                   `yaml:"address"`        // vault
 	TransitMount  string                   `yaml:"transit_mount"`  // vault
 	TokenEnv      string                   `yaml:"token_env"`      // vault: env var holding the token (default VAULT_TOKEN)
-	Keys          []SignerBackendKeyConfig `yaml:"keys"`           // vault: explicit transit key list
+	Module        string                   `yaml:"module"`         // pkcs11: path to the PKCS#11 module (.so)
+	TokenLabel    string                   `yaml:"token_label"`    // pkcs11: token label used to select the slot
+	Slot          *uint                    `yaml:"slot"`           // pkcs11: explicit slot id (alternative to token_label)
+	PINEnv        string                   `yaml:"pin_env"`        // pkcs11: env var holding the user PIN (never stored in config)
+	Keys          []SignerBackendKeyConfig `yaml:"keys"`           // vault: explicit transit key list; pkcs11: optional CKA_LABEL filter + key type
 }
 
-// SignerBackendKeyConfig names a remote key and its Cardano key type.
+// SignerBackendKeyConfig names a remote key and its Cardano key type. For vault
+// Name is the transit key name; for pkcs11 Name is the object's CKA_LABEL.
 type SignerBackendKeyConfig struct {
 	Name string `yaml:"name"`
 	Type string `yaml:"type"` // payment|stake|drep|cc-hot|cc-cold|pool|policy
@@ -176,6 +220,13 @@ func defaultConfig() Config {
 				Type: "mem",
 				Mode: "enforce",
 			},
+		},
+		KESAgent: KESAgentConfig{
+			SlotLength:        1,
+			MaxKESEvolutions:  62,
+			ServiceSocketMode: "0600",
+			ControlSocketMode: "0600",
+			EvolveInterval:    "1m",
 		},
 	}
 }
