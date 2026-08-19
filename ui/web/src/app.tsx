@@ -96,7 +96,6 @@ const NAV: { key: string; label: string }[] = [
   { key: "portfolio", label: "Portfolio" },
   { key: "activity", label: "Activity" },
   { key: "stake", label: "Stake" },
-  { key: "dreps", label: "DReps" },
   { key: "swap", label: "Swap" },
   { key: "settings", label: "Settings" },
 ];
@@ -576,6 +575,8 @@ export function App() {
     { id: "verify", label: "Verify a signature", group: "Tools", keywords: "cip-8 check message", run: () => navigate("verify") },
     { id: "diagnostics", label: "Node diagnostics", group: "Tools", keywords: "peers sync logs health", run: () => navigate("diagnostics") },
 
+    { id: "dreps", label: "DReps directory", group: "Governance", keywords: "drep delegate voting representative directory", run: () => navigate("dreps"), disabled: !canQueryNode, disabledReason: "Needs a synced node" },
+
     { id: "operate", label: "Stake pool operations", group: "Operate", keywords: "spo pool cold vrf kes opcert registration", run: () => navigate("operate"), disabled: !canSign, disabledReason: "Needs this wallet's seed" },
 
     { id: "add-wallet", label: "Add a wallet", group: "Wallet", keywords: "create restore hardware multisig new", run: () => setAddingWallet(true) },
@@ -591,7 +592,6 @@ export function App() {
       activeWallet === null ||
       addingWallet ||
       (key === "swap" && !canSwap) ||
-      (key === "dreps" && !canQueryNode) ||
       (key === "offline" && !canSign) ||
       (key === "operate" && !canSign) ||
       (key === "import" && !canSign);
