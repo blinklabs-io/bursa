@@ -73,6 +73,7 @@ type data struct {
 	Version         int   `json:"version"`
 	HistoryExpiry   *bool `json:"history_expiry,omitempty"`
 	AutoLockMinutes *int  `json:"auto_lock_minutes,omitempty"`
+	Notifications   *bool `json:"notifications,omitempty"`
 }
 
 // Store is a settings file at Path. It is safe for concurrent use: every method
@@ -184,6 +185,33 @@ func (s *Store) SetAutoLockMinutes(minutes int) error {
 	old := s.d
 	v := minutes
 	s.d.AutoLockMinutes = &v
+	if committed, err := s.writeLocked(); err != nil {
+		if !committed {
+			s.d = old
+		}
+		return err
+	}
+	return nil
+}
+
+// Notifications reports whether node-local wallet activity notifications
+// (incoming funds / stake rewards) are enabled, defaulting to false until the
+// user opts in. Off by default because raising a desktop/browser notification
+// is user-facing behaviour the wallet should not start on its own.
+func (s *Store) Notifications() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.d.Notifications != nil && *s.d.Notifications
+}
+
+// SetNotifications persists the wallet-activity notification preference and
+// atomically writes the file.
+func (s *Store) SetNotifications(enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.d
+	v := enabled
+	s.d.Notifications = &v
 	if committed, err := s.writeLocked(); err != nil {
 		if !committed {
 			s.d = old

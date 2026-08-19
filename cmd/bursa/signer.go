@@ -19,13 +19,10 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -141,6 +138,19 @@ key.`,
 				logger.Warn("no signer.callers configured; any valid token may use any configured key")
 			}
 
+			// Insecure-file-backend guardrail: the software/file backend loads
+			// plaintext key material in-process. Refuse to start when exposed on
+			// a non-loopback address unless explicitly opted in; warn loudly
+			// otherwise. Run this BEFORE BuildBackends so a refused, unsafe
+			// configuration is rejected before any key material is read off
+			// disk or decrypted into process memory.
+			if warn, gerr := signer.CheckFileBackendGuard(cfg.Signer.Backends, cfg.Signer.ListenAddress, cfg.Signer.AllowInsecureFileBackend); gerr != nil {
+				logger.Error("insecure file backend refused", "error", gerr)
+				os.Exit(1)
+			} else if warn != "" {
+				logger.Warn(warn)
+			}
+
 			// Signal-cancellable root context for graceful shutdown.
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -242,7 +252,7 @@ key.`,
 				logger.Error("signer.client_ca_cert requires server TLS (signer.tls_cert_file and signer.tls_key_file)")
 				os.Exit(1)
 			}
-			if !tlsConfigured && !isLocalListenAddress(cfg.Signer.ListenAddress) {
+			if !tlsConfigured && !signer.IsLoopbackListenAddress(cfg.Signer.ListenAddress) {
 				logger.Error("refusing plaintext signer listener on non-loopback address",
 					"listen_address", cfg.Signer.ListenAddress,
 					"hint", "configure signer.tls_cert_file and signer.tls_key_file or bind signer.listen_address to localhost/127.0.0.1",
@@ -307,22 +317,4 @@ key.`,
 		"path to YAML config file (env: BURSA_CONFIG)",
 	)
 	return cmd
-}
-
-func isLocalListenAddress(addr string) bool {
-	host := strings.TrimSpace(addr)
-	if host == "" {
-		return false
-	}
-	if splitHost, _, err := net.SplitHostPort(host); err == nil {
-		host = splitHost
-	}
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
-	}
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	parsed, err := netip.ParseAddr(host)
-	return err == nil && parsed.IsLoopback()
 }

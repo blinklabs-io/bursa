@@ -14,7 +14,11 @@
 
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/blinklabs-io/bursa/internal/signer"
+)
 
 func TestIsLocalListenAddress(t *testing.T) {
 	tests := []struct {
@@ -40,8 +44,8 @@ func TestIsLocalListenAddress(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isLocalListenAddress(tt.addr); got != tt.want {
-				t.Fatalf("isLocalListenAddress(%q) = %v, want %v", tt.addr, got, tt.want)
+			if got := signer.IsLoopbackListenAddress(tt.addr); got != tt.want {
+				t.Fatalf("IsLoopbackListenAddress(%q) = %v, want %v", tt.addr, got, tt.want)
 			}
 		})
 	}

@@ -16,7 +16,13 @@
  */
 
 import type { HardwareSignResponse } from "../api/types";
-import type { ExternalConnectOptions, HardwareCapabilities, HardwareSigner } from "./types";
+import type {
+  ExternalConnectOptions,
+  HardwareCapabilities,
+  HardwareSignMessageRequest,
+  HardwareSignMessageResult,
+  HardwareSigner,
+} from "./types";
 import { encodeXpub } from "./xpub";
 import { encodeWitnessArray } from "./witness";
 
@@ -75,14 +81,16 @@ let activeSignerCount = 0;
 
 // ── Capabilities ──────────────────────────────────────────────────────────────
 
-// Trezor currently signs send (ordinary) transactions on-device; the other
-// flows are declared unsupported until their neutral→Trezor mappings land.
+// Trezor signs send (ordinary) transactions and CIP-8 messages on-device; the
+// other tx flows are declared unsupported until their neutral→Trezor mappings
+// land.
 const TREZOR_CAPABILITIES: HardwareCapabilities = {
   send: true,
   staking: false,
   governance: false,
   multisig: false,
   poolReg: false,
+  signMessage: true,
 };
 
 // ── Neutral → Trezor token-bundle mapping ─────────────────────────────────────
@@ -236,6 +244,40 @@ export async function connectTrezor(opts: ExternalConnectOptions): Promise<Hardw
         sigHex: w.signature,
       }));
       return encodeWitnessArray(resolved);
+    },
+
+    async signMessage(req: HardwareSignMessageRequest): Promise<HardwareSignMessageResult> {
+      // Trezor assembles the full CIP-8 COSE structures on-device and returns
+      // them as coseSignature (COSE_Sign1) + coseKey (COSE_Key), so — unlike the
+      // Ledger path — no client-side COSE assembly is needed. The address is
+      // described by path so the device recognises it as its own and puts it in
+      // the protected header. Trezor decides payload-hashing itself (it hashes
+      // over-long messages); the returned COSE carries the "hashed" flag, which
+      // the backend verifier honours.
+      //
+      // protocolMagic + networkId pin the Cardano network the message is signed
+      // for (mainnet 764824073, preprod 1, preview 2); without protocolMagic the
+      // device would derive/render the signing address in the wrong (undefined)
+      // network context.
+      const res = await TrezorConnect.cardanoSignMessage({
+        path: parseBip32Path(req.signingPath),
+        payload: req.messageHex,
+        preferHexDisplay: false,
+        networkId: req.networkId,
+        protocolMagic: req.protocolMagic,
+        addressParameters: {
+          addressType: PROTO.CardanoAddressType.BASE,
+          path: parseBip32Path(req.signingPath),
+          stakingPath: parseBip32Path(req.stakePath),
+        },
+      });
+      if (!res.success) {
+        throw new Error(res.payload.error);
+      }
+      return {
+        signature: res.payload.coseSignature,
+        key: res.payload.coseKey,
+      };
     },
 
     async close(): Promise<void> {

@@ -24,6 +24,8 @@ export type {
   HardwareKind,
   HardwareCapabilities,
   HardwareSigner,
+  HardwareSignMessageRequest,
+  HardwareSignMessageResult,
   ConnectOptions,
   ConnectOptionsByKind,
   LocalConnectOptions,

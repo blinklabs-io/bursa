@@ -61,21 +61,22 @@ func (f fakeStatuser) Status() supervisor.Status { return f.s }
 // memory: Unlock/Lock toggle locked; AddWallet appends and activates; the active
 // wallet drives reads/spends.
 type fakeVault struct {
-	exists     bool
-	locked     bool
-	wallets    []vault.WalletMeta
-	activeID   string
-	createErr  error
-	unlockErr  error
-	addErr     error
-	addCalled  bool
-	importErr  error
-	imported   bool
-	gotName    string
-	gotNetwork string
-	gotSpend   string
-	gotVault   string
-	gotSeed    []byte
+	exists       bool
+	locked       bool
+	wallets      []vault.WalletMeta
+	activeID     string
+	setActiveErr error
+	createErr    error
+	unlockErr    error
+	addErr       error
+	addCalled    bool
+	importErr    error
+	imported     bool
+	gotName      string
+	gotNetwork   string
+	gotSpend     string
+	gotVault     string
+	gotSeed      []byte
 
 	// TPM fakes
 	tpmStatus          vault.TPMStatusInfo
@@ -90,6 +91,9 @@ type fakeVault struct {
 	// hardware wallet
 	hwErr           error
 	hwCalled        bool
+	scriptCalled    bool
+	scriptErr       error
+	gotScript       vault.ScriptMeta
 	gotXpub         string
 	gotAccountIndex uint32
 
@@ -338,6 +342,9 @@ func (f *fakeVault) RemoveWallet(id, _ string) error {
 }
 
 func (f *fakeVault) SetActive(id string) (vault.WalletMeta, error) {
+	if f.setActiveErr != nil {
+		return vault.WalletMeta{}, f.setActiveErr
+	}
 	for _, w := range f.wallets {
 		if w.ID == id {
 			f.activeID = id
@@ -411,6 +418,11 @@ type fakeSettings struct {
 	setAutoLockErr        error
 	setAutoLockCalled     bool
 	setAutoLockCalledWith int
+
+	notifications          bool
+	setNotificationsErr    error
+	setNotificationsCalled bool
+	setNotificationsWith   bool
 }
 
 func (f *fakeSettings) HistoryExpiry() bool { return f.enabled }
@@ -436,6 +448,18 @@ func (f *fakeSettings) SetAutoLockMinutes(minutes int) error {
 		return f.setAutoLockErr
 	}
 	f.autoLockMinutes = minutes
+	return nil
+}
+
+func (f *fakeSettings) Notifications() bool { return f.notifications }
+
+func (f *fakeSettings) SetNotifications(enabled bool) error {
+	f.setNotificationsCalled = true
+	f.setNotificationsWith = enabled
+	if f.setNotificationsErr != nil {
+		return f.setNotificationsErr
+	}
+	f.notifications = enabled
 	return nil
 }
 
@@ -652,6 +676,30 @@ func TestGetPoolDirectoryNilLookup(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /wallet/pools with nil lookup = %d, want 503", rec.Code)
 	}
+}
+
+func (f *fakeVault) AddScriptWallet(id, name, network string, script vault.ScriptMeta, vaultPw string) (vault.WalletMeta, error) {
+	if f.scriptErr != nil {
+		return vault.WalletMeta{}, f.scriptErr
+	}
+	f.scriptCalled = true
+	f.gotName = name
+	f.gotVault = vaultPw
+	f.gotScript = script
+	if id == "" {
+		id = "ms1"
+	}
+	meta := vault.WalletMeta{
+		ID:      id,
+		Name:    name,
+		Network: network,
+		Type:    vault.WalletTypeMultiSignature,
+		Script:  &script,
+		Account: &wallet.Account{Network: network, ReceiveAddresses: []string{script.ScriptAddress}},
+	}
+	f.wallets = append(f.wallets, meta)
+	f.activeID = meta.ID
+	return meta, nil
 }
 
 func (f *fakeVault) AddHardwareWallet(name, accountXpubBech32, network, vaultPw string, accountIndex uint32, _ int) (vault.WalletMeta, error) {
@@ -1422,6 +1470,10 @@ type fakeSpender struct {
 	hwSignReqErr error
 	gotHWSignID  string
 
+	hwSignDataReq    spend.HardwareSignDataRequest
+	hwSignDataReqErr error
+	gotHWSignDataAddr string
+
 	// import-tx (decode-tx/cosign-tx/submit-tx vkey path); methods defined in
 	// importtx_test.go alongside the tests that exercise them.
 	decodeResult     spend.TxSummary
@@ -1511,6 +1563,14 @@ func (f *fakeSpender) HardwareSignRequest(pendingID string) (spend.HardwareSignR
 		return spend.HardwareSignRequest{}, f.hwSignReqErr
 	}
 	return f.hwSignReq, nil
+}
+
+func (f *fakeSpender) SignDataHardwareRequest(addr string) (spend.HardwareSignDataRequest, error) {
+	f.gotHWSignDataAddr = addr
+	if f.hwSignDataReqErr != nil {
+		return spend.HardwareSignDataRequest{}, f.hwSignDataReqErr
+	}
+	return f.hwSignDataReq, nil
 }
 
 func (f *fakeSpender) BuildDelegation(_ context.Context, _ spend.DelegationRequest) (spend.DelegationPreview, error) {
@@ -1689,7 +1749,6 @@ type fakeMultiSig struct {
 	listErr    error
 	getErr     error
 	createErr  error
-	deleteErr  error
 	myKeyErr   error
 	balanceErr error
 	buildErr   error
@@ -1698,7 +1757,6 @@ type fakeMultiSig struct {
 
 	gotGetID         string
 	gotCreate        multisig.CreateRequest
-	gotDeleteID      string
 	gotMyKeyPass     string
 	gotBalanceID     string
 	gotBuildID       string
@@ -1732,14 +1790,9 @@ func (f *fakeMultiSig) Get(id string) (multisig.Account, error) {
 	return f.account, f.getErr
 }
 
-func (f *fakeMultiSig) Create(req multisig.CreateRequest) (multisig.Account, error) {
+func (f *fakeMultiSig) Compose(req multisig.CreateRequest) (multisig.Account, error) {
 	f.gotCreate = req
 	return f.account, f.createErr
-}
-
-func (f *fakeMultiSig) Delete(id string) error {
-	f.gotDeleteID = id
-	return f.deleteErr
 }
 
 func (f *fakeMultiSig) MyKey(password string) (multisig.MyKey, error) {
@@ -1797,7 +1850,8 @@ func TestMultiSigRoutesUngatedWhileNodeNotReady(t *testing.T) {
 		myKey:    multisig.MyKey{KeyHashHex: strings.Repeat("b", 56), VKeyHex: strings.Repeat("c", 64)},
 		witness:  multisig.Witness{WitnessCBOR: "81825820"},
 	}
-	h := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
+	fv := &fakeVault{}
+	h := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/multisig", nil))
@@ -1806,13 +1860,22 @@ func TestMultiSigRoutesUngatedWhileNodeNotReady(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	createBody := `{"label":"Treasury","policy":{"threshold":1,"participants":[{"key_hash_hex":"` + strings.Repeat("a", 56) + `"}]}}`
+	// A multi-signature account is a wallet now, so creating one is a vault
+	// write and carries the vault password like any other add-wallet call.
+	createBody := `{"label":"Treasury","vault_password":"vault-password-xyz","policy":{"threshold":1,"participants":[{"key_hash_hex":"` + strings.Repeat("a", 56) + `"}]}}`
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/multisig", bytes.NewBufferString(createBody)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /wallet/multisig = %d body %s, want 200", rec.Code, rec.Body.String())
 	}
 	if ms.gotCreate.Label != "Treasury" || ms.gotCreate.Network != "preview" || ms.gotCreate.Policy.Threshold != 1 {
-		t.Fatalf("create args = %+v, want label/network/policy", ms.gotCreate)
+		t.Fatalf("compose args = %+v, want label/network/policy", ms.gotCreate)
+	}
+	// The composed script must actually land in the vault, not just be returned.
+	if !fv.scriptCalled {
+		t.Fatal("composing an account must store it as a vault wallet")
+	}
+	if fv.gotScript.ScriptAddress == "" || fv.gotVault != "vault-password-xyz" {
+		t.Fatalf("vault got script=%+v password=%q", fv.gotScript, fv.gotVault)
 	}
 
 	rec = httptest.NewRecorder()
@@ -3683,6 +3746,57 @@ func TestHardwareSignRequestRoute(t *testing.T) {
 	}
 }
 
+func TestSignDataHardwareRequestRoute(t *testing.T) {
+	sp := &fakeSpender{hwSignDataReq: spend.HardwareSignDataRequest{
+		AddressBech32: "addr_test1recv",
+		AddressHex:    "60aabb",
+		SigningPath:   "1852'/1815'/0'/0/0",
+		StakePath:     "1852'/1815'/0'/2/0",
+		NetworkID:     0,
+		ProtocolMagic: 2,
+	}}
+	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	t.Run("resolves paths for an owned address", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/sign-data/hardware-request?address=addr_test1recv", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /sign-data/hardware-request = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		var got spend.HardwareSignDataRequest
+		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if sp.gotHWSignDataAddr != "addr_test1recv" {
+			t.Fatalf("gotHWSignDataAddr = %q, want addr_test1recv", sp.gotHWSignDataAddr)
+		}
+		if got.SigningPath != "1852'/1815'/0'/0/0" || got.StakePath != "1852'/1815'/0'/2/0" {
+			t.Fatalf("paths wrong: %+v", got)
+		}
+		if got.NetworkID != 0 || got.ProtocolMagic != 2 {
+			t.Fatalf("network fields wrong: %+v", got)
+		}
+	})
+
+	t.Run("missing address is 400", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/sign-data/hardware-request", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("missing address = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("foreign address surfaces 400", func(t *testing.T) {
+		spErr := &fakeSpender{hwSignDataReqErr: fmt.Errorf("%w: not owned", spend.ErrInvalidRequest)}
+		hErr := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, spErr, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		hErr.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/sign-data/hardware-request?address=addr_test1foreign", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("foreign address = %d, want 400", rec.Code)
+		}
+	})
+}
+
 func TestSubmitHardwareRoute(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{
@@ -3789,5 +3903,58 @@ func TestSameOriginGuardSkipsConnector(t *testing.T) {
 	}
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("POST /connector/pair (initiate) = %d, want 202 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMultiSigCreateReportsActivationFailure covers the case where the script
+// wallet is persisted but selecting it fails. The wallet exists, so the request
+// did not fail — but the response must not claim it is active, because reads
+// and sends still answer for the previous wallet. The client reconciles from
+// that flag and can activate the wallet by id.
+func TestMultiSigCreateReportsActivationFailure(t *testing.T) {
+	acct := multisig.Account{
+		ID:            "ms-1",
+		Label:         "Treasury",
+		Network:       "preview",
+		ScriptCBOR:    "8200",
+		ScriptAddress: "addr_test1wq" + strings.Repeat("q", 20),
+		Policy:        multisig.Policy{Threshold: 1},
+	}
+	ms := &fakeMultiSig{accounts: []multisig.Account{acct}, account: acct}
+	fv := &fakeVault{setActiveErr: errors.New("selection storage unavailable")}
+	h := NewHandler(
+		fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}},
+		fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{},
+		nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler(),
+	)
+
+	createBody := `{"label":"Treasury","vault_password":"vault-password-xyz",` +
+		`"policy":{"threshold":1,"participants":[{"key_hash_hex":"` +
+		strings.Repeat("a", 56) + `"}]}}`
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/multisig", bytes.NewBufferString(createBody)))
+
+	// The wallet was created, so this is not a failed request: a 5xx would
+	// misdescribe it, and a client retrying hits the duplicate-script check.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /wallet/multisig = %d, want 200 (the wallet was created): %s",
+			rec.Code, rec.Body.String())
+	}
+	// Decoded rather than substring-matched: the nested account carries its own
+	// "active" field.
+	var got struct {
+		ID     string `json:"id"`
+		Active bool   `json:"active"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v (body %s)", err, rec.Body.String())
+	}
+	if got.Active {
+		t.Fatalf("response claims the wallet is active despite the failed selection: %s",
+			rec.Body.String())
+	}
+	if got.ID == "" {
+		t.Fatalf("response carries no wallet id, so the created wallet is unreachable: %s",
+			rec.Body.String())
 	}
 }

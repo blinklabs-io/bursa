@@ -11,11 +11,19 @@ const FIXED_XPUB =
 const { mockSession, mockConnectDevice } = vi.hoisted(() => {
   const mockSession = {
     kind: "ledger" as const,
-    capabilities: { send: true, staking: false, governance: false, multisig: false, poolReg: false },
+    capabilities: {
+      send: true,
+      staking: false,
+      governance: false,
+      multisig: false,
+      poolReg: false,
+      signMessage: true,
+    },
     getAccountXpub: vi.fn().mockResolvedValue(
       "root_xvk1qpxlt6hkndkymk3lgchrcgpjnkrxkutp6c4p0nwegwuhlhqmlkzjhxm7qhz8c7dw8qvpgm4y8ayjzce7hqjm0p7g4uh6ypmfmzrk4sv4k39n",
     ),
     signTx: vi.fn(),
+    signMessage: vi.fn(),
     close: vi.fn().mockResolvedValue(undefined),
   };
   const mockConnectDevice = vi.fn().mockResolvedValue(mockSession);
