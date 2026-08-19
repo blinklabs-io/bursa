@@ -136,6 +136,43 @@ test("the mobile command line leaves the accessibility tree while the drawer is 
   expect(screen.queryByRole("button", { name: /open the command line/i })).toBeNull();
 });
 
+// The banner rides along on every screen for the whole bootstrap, so it is where
+// a phase name is read most. dingo's keys are internal identifiers, and the long
+// phases are the ones a user actually sits through.
+test("SyncBanner names the bootstrap phase in words, not dingo's phase key", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "immutable_copy", percent: 6.4 },
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/copy chain history 6\.4%/i)).toBeInTheDocument();
+  expect(screen.queryByText(/immutable_copy/)).not.toBeInTheDocument();
+});
+
+// A phase dingo adds later must still read as words rather than leaking a key.
+test("SyncBanner de-underscores a phase it does not know", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "some_future_phase", percent: 1 },
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/some future phase 1\.0%/i)).toBeInTheDocument();
+});
+
 test("SyncBanner shows error detail ahead of retained bootstrap diagnostics", () => {
   render(
     <SyncBanner
