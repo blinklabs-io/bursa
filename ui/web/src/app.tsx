@@ -32,6 +32,7 @@ import { Send } from "./screens/Send";
 import { MultiSigSpend } from "./screens/MultiSig";
 import { Swap } from "./screens/Swap";
 import { Stake } from "./screens/Stake";
+import { DRepDirectory } from "./screens/DRepDirectory";
 import { Offline } from "./screens/Offline";
 import { Operate } from "./screens/Operate";
 import { ImportTransaction } from "./screens/ImportTransaction";
@@ -370,6 +371,7 @@ export function App() {
     // disagreed with what is rendered would point at Portfolio while Stake is
     // on screen — and mislabel the error boundary with it.
     else if (STAKE_ROUTES.has(route)) activeRoute = "stake";
+    else if (route === "dreps" && canQueryNode) activeRoute = "dreps";
     else if (route === "offline" && canSign) activeRoute = "offline";
     else if (route === "operate" && canSign) activeRoute = "operate";
     else if (route === "import" && canSign) activeRoute = "import";
@@ -469,6 +471,17 @@ export function App() {
         initialTab={STAKE_ROUTES.get(route)}
       />
     );
+  } else if (route === "dreps") {
+    // Read-only DRep directory: browse/search DReps the node has indexed, to
+    // inform vote-delegation. Needs only a queryable node (not a full sync, no
+    // spending), so it works for any active wallet — including read-only ones.
+    // Falls back to Portfolio while the node cannot serve queries.
+    if (!canQueryNode) screenLabel = "portfolio";
+    content = canQueryNode ? (
+      <DRepDirectory network={activeWallet.network} canDelegate={canStake} />
+    ) : (
+      <Portfolio canSend={canSend} />
+    );
   } else if (route === "offline") {
     // Air-gap signing needs the active wallet's seed (to sign) but no node for
     // the sign step; falls back to Portfolio without an active wallet.
@@ -561,6 +574,8 @@ export function App() {
     { id: "sign", label: "Sign a message", group: "Tools", keywords: "cip-8 cip-30 prove ownership", run: () => navigate("sign"), disabled: !canSign, disabledReason: "Needs this wallet's seed" },
     { id: "verify", label: "Verify a signature", group: "Tools", keywords: "cip-8 check message", run: () => navigate("verify") },
     { id: "diagnostics", label: "Node diagnostics", group: "Tools", keywords: "peers sync logs health", run: () => navigate("diagnostics") },
+
+    { id: "dreps", label: "DReps directory", group: "Governance", keywords: "drep delegate voting representative directory", run: () => navigate("dreps"), disabled: !canQueryNode, disabledReason: "Needs a synced node" },
 
     { id: "operate", label: "Stake pool operations", group: "Operate", keywords: "spo pool cold vrf kes opcert registration", run: () => navigate("operate"), disabled: !canSign, disabledReason: "Needs this wallet's seed" },
 
