@@ -1,22 +1,11 @@
 import type { Status, BootstrapProgress } from "../api/types";
+import { BOOTSTRAP_PHASES, bootstrapPhaseLabel } from "../bootstrapPhases";
 
 interface SyncingProps {
   status: Status;
   onLoadAnyway: () => void;
 }
 
-// The Mithril bootstrap pipeline, in the order dingo emits it, with operator-
-// facing labels. "complete" isn't shown — by the time it fires the node has
-// moved on to chain sync (or ready), so it never needs a step of its own.
-const PHASES: { key: string; label: string }[] = [
-  { key: "bootstrap", label: "Download snapshot" },
-  { key: "ledger_import", label: "Import ledger state" },
-  { key: "immutable_copy", label: "Copy chain history" },
-  { key: "gap_blocks", label: "Fetch gap blocks" },
-  { key: "post_ledger_state", label: "Rebuild ledger state" },
-  { key: "backfill", label: "Backfill blocks" },
-  { key: "index_rebuild", label: "Rebuild indexes" },
-];
 
 function fmtBytes(n?: number): string {
   if (!n || n <= 0) return "0 B";
@@ -89,10 +78,10 @@ function Bar({ percent, indeterminate }: { percent?: number; indeterminate?: boo
 }
 
 function PhaseSteps({ active }: { active: string }) {
-  const idx = PHASES.findIndex((p) => p.key === active);
+  const idx = BOOTSTRAP_PHASES.findIndex((p) => p.key === active);
   return (
     <ol className="sync-steps">
-      {PHASES.map((p, i) => {
+      {BOOTSTRAP_PHASES.map((p, i) => {
         const state =
           idx < 0 ? "pending" : i < idx ? "done" : i === idx ? "active" : "pending";
         return (
@@ -111,7 +100,7 @@ function PhaseSteps({ active }: { active: string }) {
 // download, count/slot for the block-replay phases).
 function BootstrapDetail({ bp }: { bp: BootstrapProgress }) {
   const phaseLabel =
-    PHASES.find((p) => p.key === bp.phase)?.label ?? bp.phase.replace(/_/g, " ");
+    bootstrapPhaseLabel(bp.phase);
 
   const readouts: string[] = [];
   if (bp.total_bytes && bp.total_bytes > 0) {
