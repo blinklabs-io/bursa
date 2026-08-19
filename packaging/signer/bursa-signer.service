@@ -1,0 +1,59 @@
+[Unit]
+Description=Bursa remote signing service
+Documentation=https://github.com/blinklabs-io/bursa/tree/main/docs/signer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Dedicated, unprivileged service account. Create it once:
+#   groupadd --system bursa-signer
+#   useradd --system --no-create-home --shell /usr/sbin/nologin -g bursa-signer bursa-signer
+User=bursa-signer
+Group=bursa-signer
+
+# Config is read from --config; secrets come from the EnvironmentFile.
+EnvironmentFile=-/etc/bursa/signer/signer.env
+ExecStart=/usr/bin/bursa signer --config /etc/bursa/signer/signer.yaml
+
+Restart=on-failure
+RestartSec=5s
+# Graceful drain: the signer stops on SIGTERM with a 10s internal timeout.
+TimeoutStopSec=20s
+
+# --- Sandboxing / hardening ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# HTTP API + TLS + JWKS fetch + Vault: IP sockets only.
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+# A crash must not persist key material to disk in a core dump.
+LimitCORE=0
+
+# Writable state for the durable (file/SQLite) watermark:
+#   signer.watermark.path: /var/lib/bursa/signer/watermark.sqlite
+StateDirectory=bursa/signer
+StateDirectoryMode=0700
+# TLS key, config, and any key files should be readable only by bursa-signer:
+#   chown -R bursa-signer:bursa-signer /etc/bursa/signer && chmod -R go-rwx /etc/bursa/signer
+
+[Install]
+WantedBy=multi-user.target

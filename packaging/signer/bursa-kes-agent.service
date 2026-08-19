@@ -1,0 +1,68 @@
+[Unit]
+Description=Bursa KES agent for a Cardano block producer
+Documentation=https://github.com/blinklabs-io/bursa/tree/main/docs/signer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Dedicated, unprivileged service account. Create it once:
+#   groupadd --system bursa-kes-agent
+#   useradd --system --no-create-home --shell /usr/sbin/nologin -g bursa-kes-agent bursa-kes-agent
+User=bursa-kes-agent
+Group=bursa-kes-agent
+
+EnvironmentFile=-/etc/bursa/kes-agent/kes-agent.env
+ExecStart=/usr/bin/bursa kes-agent --config /etc/bursa/kes-agent/kes-agent.yaml
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+
+# Unix sockets live here, owned by bursa-kes-agent, with independent modes:
+#   service_socket: /run/bursa/kes-agent/service.sock (kes_agent.service_socket_mode, default 0600)
+#   control_socket: /run/bursa/kes-agent/control.sock (kes_agent.control_socket_mode, default 0600)
+# Grant the block producer access to the SERVICE socket only by adding its
+# user to the bursa-kes-agent group and setting
+# kes_agent.service_socket_mode: "0660". Never widen control_socket_mode the
+# same way - it can drop/install keys and must stay owner-only (0600).
+RuntimeDirectory=bursa/kes-agent
+RuntimeDirectoryMode=0710
+# Durable KES period guard file: /var/lib/bursa/kes-agent/guard.json
+StateDirectory=bursa/kes-agent
+StateDirectoryMode=0700
+
+# The KES signing key is held in mlock'd memory; raise the memlock limit so the
+# lock succeeds. 64 MiB is ample for the agent's small locked buffers.
+LimitMEMLOCK=67108864
+
+# --- Sandboxing / hardening ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# Unix sockets for the producer/control; AF_INET(6) only for the optional
+# Prometheus metrics endpoint.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+# A crash must not persist key material to disk in a core dump.
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

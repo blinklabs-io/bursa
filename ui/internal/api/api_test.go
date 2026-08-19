@@ -541,6 +541,8 @@ type fakeLookup struct {
 	poolsErr error
 	drep     chain.DRepInfo
 	drepErr  error
+	dreps    []chain.DRepInfo
+	drepsErr error
 
 	asset    chain.AssetInfo
 	assetErr error
@@ -557,6 +559,10 @@ func (f *fakeLookup) Pools(_ context.Context) ([]chain.PoolInfo, error) {
 
 func (f *fakeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, error) {
 	return f.drep, f.drepErr
+}
+
+func (f *fakeLookup) DReps(_ context.Context) ([]chain.DRepInfo, error) {
+	return f.dreps, f.drepsErr
 }
 
 func (f *fakeLookup) AssetAddresses(_ context.Context, _ string) ([]chain.AssetAddress, error) {
@@ -675,6 +681,129 @@ func TestGetPoolDirectoryNilLookup(t *testing.T) {
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pools", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /wallet/pools with nil lookup = %d, want 503", rec.Code)
+	}
+}
+
+// drepDirectoryResult mirrors the GET /wallet/dreps JSON response for tests.
+type drepDirectoryResult struct {
+	DReps []chain.DRepInfo `json:"dreps"`
+	Total int              `json:"total"`
+	Page  int              `json:"page"`
+	Count int              `json:"count"`
+}
+
+func decodeDRepDirectory(t *testing.T, rec *httptest.ResponseRecorder) drepDirectoryResult {
+	t.Helper()
+	var got drepDirectoryResult
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return got
+}
+
+func drepDirHandler(lookup NodeLookup) http.Handler {
+	return NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+}
+
+func TestGetDRepDirectory(t *testing.T) {
+	lookup := &fakeLookup{dreps: []chain.DRepInfo{
+		{DRepID: "drep1aaa", Hex: "aa", Amount: "1500000", Active: true, Registered: true, AnchorURL: "https://a.example/d.json"},
+		{DRepID: "drep1bbb", Hex: "bb", Amount: "0", HasScript: true},
+	}}
+	h := drepDirHandler(lookup)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/dreps = %d, want 200", rec.Code)
+	}
+	got := decodeDRepDirectory(t, rec)
+	if got.Total != 2 || len(got.DReps) != 2 || got.Page != 1 {
+		t.Fatalf("directory = %+v, want 2 dreps on page 1", got)
+	}
+	if got.DReps[0].DRepID != "drep1aaa" || got.DReps[0].Amount != "1500000" || !got.DReps[0].Active {
+		t.Fatalf("drep[0] = %+v, want drep1aaa with 1500000 voting power, active", got.DReps[0])
+	}
+}
+
+func TestGetDRepDirectorySearchFilter(t *testing.T) {
+	lookup := &fakeLookup{dreps: []chain.DRepInfo{
+		{DRepID: "drep1aaa", Hex: "aa"},
+		{DRepID: "drep1bbb", Hex: "bb"},
+	}}
+	h := drepDirHandler(lookup)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps?q=BBB", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/dreps?q=BBB = %d, want 200", rec.Code)
+	}
+	got := decodeDRepDirectory(t, rec)
+	if got.Total != 1 || len(got.DReps) != 1 || got.DReps[0].DRepID != "drep1bbb" {
+		t.Fatalf("filtered directory = %+v, want only drep1bbb", got)
+	}
+}
+
+func TestGetDRepDirectoryEmpty(t *testing.T) {
+	h := drepDirHandler(&fakeLookup{dreps: nil})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/dreps = %d, want 200", rec.Code)
+	}
+	got := decodeDRepDirectory(t, rec)
+	if got.Total != 0 || len(got.DReps) != 0 {
+		t.Fatalf("empty directory = %+v, want 0 dreps", got)
+	}
+}
+
+func TestGetDRepDirectoryPageOverflow(t *testing.T) {
+	lookup := &fakeLookup{dreps: []chain.DRepInfo{
+		{DRepID: "drep1aaa", Hex: "aa"},
+		{DRepID: "drep1bbb", Hex: "bb"},
+	}}
+	h := drepDirHandler(lookup)
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		// (page-1)*count overflows int64 to a negative start; must not panic.
+		{"overflow", "/wallet/dreps?page=9223372036854775807&count=50"},
+		// One page past the end: a valid but empty page.
+		{"just-past-end", "/wallet/dreps?page=2&count=50"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, tc.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want 200", tc.path, rec.Code)
+			}
+			got := decodeDRepDirectory(t, rec)
+			if got.Total != 2 || len(got.DReps) != 0 {
+				t.Fatalf("overflow page = %+v, want total 2 with an empty page", got)
+			}
+		})
+	}
+}
+
+func TestGetDRepDirectoryNilLookup(t *testing.T) {
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /wallet/dreps with nil lookup = %d, want 503", rec.Code)
+	}
+}
+
+func TestGetDRepDirectoryLookupError(t *testing.T) {
+	h := drepDirHandler(&fakeLookup{drepsErr: chain.ErrNotFound})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /wallet/dreps with lookup error = %d, want 404 (serveLookup's not-found mapping)", rec.Code)
 	}
 }
 
@@ -1470,8 +1599,8 @@ type fakeSpender struct {
 	hwSignReqErr error
 	gotHWSignID  string
 
-	hwSignDataReq    spend.HardwareSignDataRequest
-	hwSignDataReqErr error
+	hwSignDataReq     spend.HardwareSignDataRequest
+	hwSignDataReqErr  error
 	gotHWSignDataAddr string
 
 	// import-tx (decode-tx/cosign-tx/submit-tx vkey path); methods defined in
@@ -3327,6 +3456,10 @@ func (f *fakeNodeLookup) Pools(_ context.Context) ([]chain.PoolInfo, error) {
 
 func (f *fakeNodeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, error) {
 	return f.drep, f.drepErr
+}
+
+func (f *fakeNodeLookup) DReps(_ context.Context) ([]chain.DRepInfo, error) {
+	return nil, chain.ErrNotFound
 }
 
 func (f *fakeNodeLookup) AssetAddresses(_ context.Context, asset string) ([]chain.AssetAddress, error) {

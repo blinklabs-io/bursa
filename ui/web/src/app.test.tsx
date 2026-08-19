@@ -747,13 +747,18 @@ test("[Fix 1] changing the auto-lock timeout in Settings propagates to the idle 
 
 // Unlocks with the given wallet and returns the desktop sidebar, so nav
 // assertions are not confused by the mobile drawer rendering the same labels.
-async function unlockAndGetSidebar(wallet: WalletView): Promise<HTMLElement> {
-  stubStatus("ready");
+async function unlockAndGetSidebar(wallet: WalletView, nodeState = "ready"): Promise<HTMLElement> {
+  stubStatus(nodeState);
   stubVault({ exists: true, locked: true, wallet_count: 1 });
   quietPortfolio();
   vi.spyOn(client, "unlockVault").mockResolvedValue([{ ...wallet, active: true }]);
 
   render(<App />);
+  // A node that is not ready puts the Syncing view in front of the vault; the
+  // escape hatch is how a user reaches a read-only wallet while it catches up.
+  if (nodeState !== "ready") {
+    fireEvent.click(screen.getByRole("button", { name: /load wallet anyway/i }));
+  }
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
   fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
 
@@ -808,6 +813,7 @@ test("the palette lists every destination the nav no longer carries", async () =
     "portfolio", "activity", "stake", "swap", "settings",
     "send", "receive", "import", "offline",
     "contacts", "sign", "verify", "diagnostics",
+    "dreps",
     "operate", "add-wallet", "lock",
   ]);
 });
@@ -859,6 +865,20 @@ test("the palette and the balance agree on why Send is off", async () => {
   const send = within(palette).getByRole("option", { name: /^Send/ });
   expect(send).toBeDisabled();
   expect(send).toHaveTextContent(/needs a synced node/i);
+});
+
+// The nav carries five destinations; everything else lives in the palette, so
+// the palette needs a permanent affordance in the chrome rather than only a
+// keyboard shortcut. Drive it: click the glyph, get the dialog.
+test("the command line has a permanent affordance in the chrome", async () => {
+  const sidebar = await unlockAndGetSidebar(walletA);
+
+  const cli = within(sidebar).getByRole("button", { name: /open the command line/i });
+  expect(cli).toBeEnabled();
+
+  fireEvent.click(cli);
+
+  expect(await screen.findByRole("dialog", { name: /command palette/i })).toBeInTheDocument();
 });
 
 test("Send and Receive are offered on the balance they act on", async () => {
@@ -957,6 +977,23 @@ test("a fault in Receive is reported as Receive, not as Portfolio", async () => 
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent(/the receive screen could not be displayed/i);
   expect(alert).not.toHaveTextContent(/portfolio/i);
+});
+
+test("a DRep directory that falls back to Portfolio is reported as Portfolio", async () => {
+  // The directory declines the request when the node cannot serve queries and
+  // renders Portfolio instead. Every branch that declines has to correct the
+  // boundary label to what it actually rendered, or a crash here points the
+  // reader at a screen that never appeared.
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(hooks, "useAssetMetadata").mockImplementation(() => {
+    throw new Error("metadata blew up");
+  });
+  window.location.hash = "#/dreps";
+  await unlockAndGetSidebar(walletA, "starting"); // neither ready nor syncing
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(/the portfolio screen could not be displayed/i);
+  expect(alert).not.toHaveTextContent(/drep/i);
 });
 
 test("a route that falls back to Portfolio is reported as Portfolio", async () => {

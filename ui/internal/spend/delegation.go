@@ -913,11 +913,11 @@ func hexDecode32(s string) ([]byte, error) {
 // decodeDRepID decodes a bech32 drep1… identifier into apollo's Drep type tag
 // (key-hash vs script-hash) and the 28-byte credential hash. It accepts both the
 // legacy CIP-0105 form (28-byte payload, key hash) and the CIP-0129 form (a
-// 1-byte header followed by the 28-byte hash, where the header's low nibble is
-// 2 for a key hash or 3 for a script hash). This is purely client-side bech32
-// validation + decoding — no node call — so it works even if the node cannot
-// resolve the DRep; the node's separate existence check (DRep()) provides the
-// "not found by your node" signal.
+// 1-byte header followed by the 28-byte hash, where the header is 0x22 for a
+// key hash or 0x23 for a script hash — CIP-0129 fixes a DRep's high nibble at
+// 0x2). This is purely client-side bech32 validation + decoding — no node call
+// — so it works even if the node cannot resolve the DRep; the node's separate
+// existence check (DRep()) provides the "not found by your node" signal.
 func decodeDRepID(drepID string) (typ int, hash []byte, err error) {
 	hrp, data5, derr := bech32.DecodeNoLimit(drepID)
 	if derr != nil {
@@ -935,7 +935,17 @@ func decodeDRepID(drepID string) (typ int, hash []byte, err error) {
 		// Legacy CIP-0105: bare 28-byte key hash.
 		return lcommon.DrepTypeAddrKeyHash, raw, nil
 	case 29:
-		// CIP-0129: 1-byte header + 28-byte hash. Low nibble: 2 = key, 3 = script.
+		// CIP-0129: 1-byte header + 28-byte hash. The high nibble is the
+		// governance credential kind and is fixed at 0x2 for a DRep; the low
+		// nibble is the credential type (2 = key, 3 = script). Both nibbles are
+		// checked: an id whose high nibble is not 0x2 names a committee
+		// credential or nothing at all, and accepting it on the low nibble alone
+		// would delegate this wallet's voting power to a different entity than
+		// the identifier denotes. The node rejects such an id too ("invalid DRep
+		// voter type"), so this only moves the rejection client-side.
+		if raw[0]>>4 != 0x02 {
+			return 0, nil, fmt.Errorf("%w: drep id %q has voter type 0x%x, want 0x2 (header 0x%02x)", ErrInvalidRequest, drepID, raw[0]>>4, raw[0])
+		}
 		switch raw[0] & 0x0f {
 		case 0x02:
 			return lcommon.DrepTypeAddrKeyHash, raw[1:], nil
