@@ -15,6 +15,13 @@ info:
     of key hashes. The `/healthz`, `/readyz` and `/metrics` endpoints are
     unauthenticated.
 
+    **Implementation status.** Only `bearerAuth` is implemented in `main`. The
+    `mtlsAuth` and `requestSigningAuth` schemes below - their headers, canonical
+    signing string and precedence - are implemented by PR #673 (branch
+    `feat/signer-mtls`); a client coded against them will get 401 from a signer
+    built from `main`. Custody backend availability likewise varies: `pkcs11`
+    requires a `-tags pkcs11` CGO build (merged in #668).
+
     Error responses use `{"error": "<message>"}`. 5xx bodies are masked; the
     real cause is logged server-side under the response `audit_id`.
   version: "1.0.0"
@@ -30,7 +37,8 @@ tags:
   - name: keys
   - name: ops
 # Any ONE of the configured schemes authenticates a request (server precedence
-# is mTLS > request signing > JWT).
+# is mTLS > request signing > JWT). mtlsAuth and requestSigningAuth are not yet
+# implemented in main; see the implementation-status note in info.description.
 security:
   - mtlsAuth: []
   - requestSigningAuth: []
@@ -218,10 +226,16 @@ paths:
     get:
       tags: [ops]
       summary: Readiness probe
+      description: |
+        Currently a static 200, identical to /healthz: the handler checks no
+        dependency, so a replica with an unreachable watermark store still
+        reports ready. A dependency-checking variant (watermark-store ping,
+        3s timeout, 503 when unreachable) is implemented by PR #674 (branch
+        feat/signer-ha-store).
       security: []
       responses:
         '200':
-          description: Process is ready to serve.
+          description: Process is listening. Not a dependency check.
   /metrics:
     get:
       tags: [ops]
@@ -239,6 +253,11 @@ components:
     mtlsAuth:
       type: mutualTLS
       description: |
+        NOT YET IMPLEMENTED IN MAIN - provided by PR #673 (branch
+        feat/signer-mtls). `signer.client_ca_cert` and
+        `signer.require_client_cert` are absent from config.SignerConfig until
+        it merges.
+
         TLS client-certificate authentication (`signer.client_ca_cert`). The
         client certificate is verified against the configured CA during the TLS
         handshake; the caller identity is the first URI SAN, else the first DNS
@@ -250,6 +269,11 @@ components:
       in: header
       name: X-Bursa-Signature
       description: |
+        NOT YET IMPLEMENTED IN MAIN - provided by PR #673 (branch
+        feat/signer-mtls). `signer.authorized_keys` and
+        `signer.request_sign_skew_seconds` are absent from config.SignerConfig
+        until it merges.
+
         Authorized-keys request signing (`signer.authorized_keys`). The caller
         signs the canonical string
         `METHOD|PATH|HEX(SHA-256(body))|TIMESTAMP|NONCE` with its Ed25519

@@ -36,6 +36,15 @@ Boot performs eager validation and exits non-zero on any of:
 
 ## 3. Authentication
 
+> **Implementation status.** JWT bearer is the only auth mode in `main` today
+> (`internal/signer/api/auth.go`). The mTLS client-certificate and
+> authorized-keys request-signing modes described below, and the precedence
+> chain between them, are implemented by PR #673 (branch `feat/signer-mtls`).
+> Their config keys (`client_ca_cert`, `require_client_cert`,
+> `authorized_keys`, `request_sign_skew_seconds`) are absent from
+> `config.SignerConfig` until that PR merges and are not read by the current
+> build.
+
 At least one auth mode must be configured. The modes are composable and all
 resolve to a single caller identity fed to the caller ACL. When more than one is
 enabled, they are tried in a fixed precedence: **mTLS client cert >
@@ -56,7 +65,7 @@ Configure **at most one** validator:
 unset only if you intend to accept any issuer/audience (a warning is logged).
 The caller identity is the token `sub` claim.
 
-### mTLS client certificate
+### mTLS client certificate (PR #673)
 
 Set `signer.client_ca_cert` to a PEM bundle of CA certificate(s) used to verify
 TLS client certificates. This requires server TLS (below) - the client cert is
@@ -75,7 +84,7 @@ The caller identity is derived from the verified leaf certificate: first URI
 SAN, else first DNS SAN, else the Subject CommonName. Set the matching value as
 a `signer.callers[].subject` to scope keys per client identity.
 
-### Authorized-keys request signing
+### Authorized-keys request signing (PR #673)
 
 `signer.authorized_keys` registers Ed25519 public keys allowed to authenticate
 by signing each request. Each entry is `{caller, ed25519_pubkey_hex}` (the
@@ -102,11 +111,12 @@ identity is `X-Bursa-Key`.
 
 ### Caller ACL
 
-`signer.callers` maps a caller identity (JWT `sub`, mTLS cert identity, or
-authorized-key `caller`) to a list of key hashes. When any callers are
-configured, unlisted subjects are denied every key, and each subject is limited
-to its listed keys. Without a caller ACL, any valid token may use any configured
-key (a warning is logged at boot). Sign-path ACL denials return HTTP 403; key
+`signer.callers` maps a caller identity to a list of key hashes. Today that
+identity is the JWT `sub`; the mTLS cert identity and authorized-key `caller`
+join it when PR #673 merges. When any callers are configured, unlisted subjects
+are denied every key, and each subject is limited to its listed keys. Without a
+caller ACL, any valid token may use any configured key (a warning is logged at
+boot). Sign-path ACL denials return HTTP 403; key
 list/detail filtering hides unauthorized keys (detail returns 404 to prevent
 existence probing).
 
@@ -117,10 +127,10 @@ are set (TLS 1.2 minimum). A non-loopback listen address without TLS is refused
 at boot. Loopback listeners may run plaintext (for local development or when a
 co-located proxy terminates TLS).
 
-Mutual TLS is supported natively: set `signer.client_ca_cert` to enable client-
-certificate verification during the handshake (see the mTLS subsection under
-[Authentication](#3-authentication)). You may still terminate mTLS at a reverse
-proxy that forwards a JWT if you prefer, but it is no longer required.
+Mutual TLS is not yet supported natively: `signer.client_ca_cert` and the
+handshake-time client-certificate verification described in the mTLS subsection
+under [Authentication](#3-authentication) are implemented by PR #673. Until it
+merges, terminate mTLS at a reverse proxy that forwards a JWT.
 
 ## 5. Custody backends
 
@@ -148,7 +158,7 @@ into process memory. Passphrase-encrypted files require `passphrase_env`. This
 backend is gated by `allow_insecure_file_backend` on non-loopback addresses;
 see [security.md](security.md).
 
-### pkcs11 (HSM; requires `-tags pkcs11`)
+### pkcs11 (HSM; requires `-tags pkcs11`; merged in #668)
 
 Hardware-custody backend that signs with an Ed25519 key held in a PKCS#11 token
 (HSM). The private key never leaves the token: the signer sends the message and
@@ -188,37 +198,51 @@ regressions.
 
 - `type: mem` - in-memory, non-durable (lost on restart). Default.
 - `type: file` - SQLite file at `path`, durable across restarts (single process).
-- `type: postgres` - durable store shared by every replica; the HA-safe option.
-  Set the connection string via `dsn_env` (an env var name, keeps credentials
-  out of the config file) in preference to the plaintext `dsn` fallback.
+- `type: postgres` - **not yet in main**; implemented by PR #674 (branch
+  `feat/signer-ha-store`). A durable store shared by every replica; the HA-safe
+  option. The connection string is set via `dsn_env` (an env var name, keeps
+  credentials out of the config file) in preference to the plaintext `dsn`
+  fallback. `BuildWatermark` in the current build accepts only `mem` and `file`
+  and fails boot with `unknown watermark type "postgres"`.
 - `mode: off | warn | enforce` - `enforce` (default) rejects a conflicting sign
   with HTTP 409; `warn` logs and allows; `off` disables the check.
 
 ### High availability
 
-For a single active instance, a durable `file` (SQLite) watermark is sufficient.
+For a single active instance, a durable `file` (SQLite) watermark is sufficient,
+and that is the only supported posture in `main` today.
 
-To run **multiple signer replicas** for the same keys, they **must share one
-`postgres` watermark store** - all replicas point at the same database. The
-Postgres store enforces the anti-double-sign guards atomically: the monotonic
-issue-counter guard is a single advance-if-greater SQL statement, so two
-replicas that concurrently try to advance the same key to the same counter
-cannot both succeed. Do **not** run multiple active signers against independent
-`mem` or per-instance `file` stores for the same keys - the guard would not be
-shared and double-signing becomes possible.
+**Multi-replica HA requires PR #674 (branch `feat/signer-ha-store`) and is not
+available in the current build.** With that PR, multiple signer replicas for the
+same keys **must share one `postgres` watermark store** - all replicas point at
+the same database. The Postgres store enforces the anti-double-sign guards
+atomically: the monotonic issue-counter guard is a single advance-if-greater SQL
+statement, so two replicas that concurrently try to advance the same key to the
+same counter cannot both succeed.
+
+Do **not** run multiple active signers against independent `mem` or
+per-instance `file` stores for the same keys - the guard would not be shared and
+double-signing becomes possible. Until #674 merges, run exactly one active
+signer per key set.
 
 ## 8. Health, readiness, metrics
 
 Unauthenticated endpoints on the signer's listener:
 
 - `GET /healthz` - liveness (always 200 while the process runs).
-- `GET /readyz` - readiness. Verifies runtime dependencies: backends were built
-  at boot, and the watermark store is reachable (the `file` and `postgres`
-  stores are pinged, bounded by a 3s timeout). Returns 200 when ready, 503 when
-  the store is unreachable. This makes `/readyz` meaningful for an HA deployment
-  behind a load balancer - a replica whose shared Postgres store is down is
-  taken out of rotation.
+- `GET /readyz` - **currently a static 200**, identical to `/healthz`: the
+  handler in `internal/signer/api/server.go` writes `200` unconditionally and
+  checks no dependency. It confirms the process is listening and nothing more.
+  Do **not** use it as a load-balancer readiness gate expecting dependency
+  awareness - a replica whose watermark store is dead still returns 200 and
+  would stay in rotation.
 - `GET /metrics` - Prometheus exposition.
+
+A dependency-checking `/readyz` - backends built at boot plus a ping of the
+watermark store, bounded by a 3s timeout, returning 503 when the store is
+unreachable - is implemented by PR #674 (branch `feat/signer-ha-store`)
+alongside the shared Postgres store it exists to guard. Wire `/readyz` into an
+HA load balancer only after that PR merges.
 
 Metrics exported:
 

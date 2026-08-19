@@ -29,14 +29,18 @@ Systemd units, an `EnvironmentFile` example, and a Dockerfile live in
 
 ## Capability summary
 
+Rows marked **not yet in main** describe a capability that is specified here but
+served by an open pull request; the caveat names it. Everything else is in the
+current `main`.
+
 | Capability | Support |
 |------------|---------|
-| Auth | JWT bearer (HS256 shared secret dev, or JWKS RS256/ES256/EdDSA prod), mTLS client certificate, and authorized-keys Ed25519 request signing; precedence mTLS > request-signing > JWT; optional per-subject caller ACL |
-| Transport | Server-side TLS (TLS 1.2+), optional mutual TLS; loopback may run plaintext |
-| Custody backends | `vault` (Transit, remote signing), `pkcs11` (HSM, keys never leave the token; CGO, `-tags pkcs11`), `sops` (GCP Secret Manager + SOPS), `software`/`file` (in-process plaintext, dev-only) |
+| Auth | JWT bearer (HS256 shared secret dev, or JWKS RS256/ES256/EdDSA prod); optional per-subject caller ACL. mTLS client certificate and authorized-keys Ed25519 request signing (precedence mTLS > request-signing > JWT) are **not yet in main** - implemented by PR #673 |
+| Transport | Server-side TLS (TLS 1.2+); loopback may run plaintext. Optional mutual TLS is **not yet in main** - implemented by PR #673 |
+| Custody backends | `vault` (Transit, remote signing), `pkcs11` (HSM, keys never leave the token; CGO, `-tags pkcs11`; merged in #668), `sops` (GCP Secret Manager + SOPS), `software`/`file` (in-process plaintext, dev-only) |
 | Operations | `tx`, `cip8`, `opcert` signing; key list/detail with effective policy |
-| Anti-double-sign | Watermark store: `mem` (non-durable), `file` (SQLite), or `postgres` (shared, HA-safe); modes off/warn/enforce |
-| Observability | `/healthz`, `/readyz` (pings the watermark store), Prometheus `/metrics` |
+| Anti-double-sign | Watermark store: `mem` (non-durable) or `file` (SQLite); modes off/warn/enforce. A shared, HA-safe `postgres` store is **not yet in main** - implemented by PR #674 |
+| Observability | `/healthz`, `/readyz` (both static 200 today), Prometheus `/metrics`. A `/readyz` that pings the watermark store is **not yet in main** - implemented by PR #674 |
 
 ## Quick start (development)
 

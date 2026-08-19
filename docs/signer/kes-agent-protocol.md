@@ -139,20 +139,22 @@ Unknown commands return `{ "ok": false, "error": "unknown command \"...\"" }`.
 
 ### AgentInfo (`info` field)
 
-| Field               | Meaning                                                        |
-|---------------------|----------------------------------------------------------------|
-| `version`           | Agent version string.                                          |
-| `mode`              | `serve-key` or `sign`.                                         |
-| `has_active_key`    | Whether an active key is installed.                            |
-| `active_period`     | Current absolute KES period of the active key.                 |
-| `active_start`      | Absolute KES period the opcert was issued for.                 |
-| `active_end`        | Last absolute KES period the key can serve.                    |
-| `active_kes_vkey`   | 32-byte active KES vkey (base64; null if none).                |
-| `staged_kes_vkey`   | 32-byte staged KES vkey (base64; null if none).                |
-| `exhausted`         | Active key has run out of evolutions.                          |
-| `current_period`    | Agent's computed current KES period.                           |
-| `monotonic_floor`   | Period-guard floor (lowest period the agent will serve/sign).  |
-| `floor_initialized` | Whether the guard floor is set.                                |
+| Field                 | Meaning                                                       |
+|-----------------------|---------------------------------------------------------------|
+| `version`             | Agent version string.                                         |
+| `mode`                | `serve-key` or `sign`.                                        |
+| `has_active_key`      | Whether an active key is installed.                           |
+| `active_period`       | Current absolute KES period of the active key.                |
+| `active_start`        | Absolute KES period the opcert was issued for.                |
+| `active_end`          | Last absolute KES period the key can serve.                   |
+| `active_kes_vkey`     | 32-byte active KES vkey (base64; null if none).               |
+| `active_issue_number` | Opcert issue counter the agent is serving.                    |
+| `active_opcert`       | Installed opcert CBOR (base64; omitted when absent).          |
+| `staged_kes_vkey`     | 32-byte staged KES vkey (base64; null if none).               |
+| `exhausted`           | Active key has run out of evolutions.                         |
+| `current_period`      | Agent's computed current KES period.                          |
+| `monotonic_floor`     | Period-guard floor (lowest period the agent will serve/sign). |
+| `floor_initialized`   | Whether the guard floor is set.                               |
 
 ## Operational certificate CBOR
 
