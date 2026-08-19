@@ -128,6 +128,11 @@ build_binary() {
         ( cd "${UI_DIR}/web" && npm ci && npm run build )
     fi
 
+    # Vite builds into ui/web/dist (gitignored); copy it into the //go:embed
+    # dist target so the Go build embeds the real SPA rather than the placeholder.
+    log "Embedding web bundle into ui/internal/webui/dist"
+    make -C "${REPO_ROOT}" webui-embed
+
     # Mirror the Makefile's UI version-ldflags pattern.
     local ldflags="-s -w \
 -X '${UI_GOMODULE}/internal/version.Version=${VERSION}' \

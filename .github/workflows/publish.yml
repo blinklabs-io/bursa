@@ -394,6 +394,10 @@ jobs:
             $env:CXX = "$msys2Loc\clangarm64\bin\clang++.exe"
           }
           & $env:CC --version
+          # Vite builds into ui\web\dist (gitignored); copy it into the
+          # //go:embed dist target so the exe embeds the real SPA, not the placeholder.
+          Remove-Item -Recurse -Force ui\internal\webui\dist\assets -ErrorAction SilentlyContinue
+          Copy-Item -Recurse -Force ui\web\dist\* ui\internal\webui\dist\
           Push-Location ui
           go build -tags webview -ldflags "-s -w -H=windowsgui" -o "$env:GITHUB_WORKSPACE\bursa-wallet.exe" ./cmd/bursa-wallet
           if ($LASTEXITCODE -ne 0) { Write-Error "webview exe build failed"; exit 1 }

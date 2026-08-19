@@ -35,10 +35,24 @@ UI_WEBVIEW_LDFLAGS=-ldflags "$(UI_LDFLAGS_CONTENT)$(if $(filter windows,$(GOOS))
 # exist, which is the case on every target that needs no shim.
 WEBVIEW_PKG_CONFIG_DIR=$(ROOT_DIR)/.pkgconfig
 
-.PHONY: build wallet wallet-binary wallet-webview wallet-binary-webview webkit-shim bundle-macos pkg-macos pkg-macos-adhoc mod-tidy clean test
+.PHONY: build wallet wallet-binary wallet-webview wallet-binary-webview webui-embed webkit-shim bundle-macos pkg-macos pkg-macos-adhoc mod-tidy clean test
 
 # Alias for building program binary
 build: $(BINARIES)
+
+# Copy the built SPA (ui/web/dist, gitignored) into the //go:embed dist target
+# so the wallet binaries embed the real UI. Vite builds into ui/web/dist, so
+# `npm run build` never overwrites the tracked ui/internal/webui/dist/index.html
+# placeholder; the real bundle lands in the embed dir only here, at binary-build
+# time. No-ops (keeping the placeholder) when the web bundle has not been built.
+webui-embed:
+	@if [ -f ui/web/dist/index.html ]; then \
+		rm -rf ui/internal/webui/dist/assets; \
+		cp -R ui/web/dist/. ui/internal/webui/dist/; \
+		echo "webui-embed: copied ui/web/dist -> ui/internal/webui/dist"; \
+	else \
+		echo "webui-embed: ui/web/dist not built; keeping placeholder"; \
+	fi
 
 # Build the embedded-SPA wallet binary from the nested ui/ module. The web
 # bundle is built first so the //go:embed dist target is populated, then the
@@ -51,7 +65,7 @@ wallet:
 # been built into the //go:embed dist target. Honors GOOS/GOARCH for the
 # release cross-build matrix; the default build is pure Go and cross-compiles
 # without CGO. The webview variant is intentionally NOT built here.
-wallet-binary:
+wallet-binary: webui-embed
 	cd ui && go build \
 		$(UI_GO_LDFLAGS) \
 		-o bursa-wallet \
@@ -67,7 +81,7 @@ wallet-webview:
 
 # Compile only the webview bursa-wallet binary, assuming the web bundle has
 # already been built into the //go:embed dist target. Honors GOOS/GOARCH.
-wallet-binary-webview: webkit-shim
+wallet-binary-webview: webkit-shim webui-embed
 	cd ui && CGO_ENABLED=1 \
 		PKG_CONFIG_PATH="$(WEBVIEW_PKG_CONFIG_DIR)$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH),)" \
 		go build \
