@@ -67,6 +67,39 @@ a:hover {
 .brand {
   padding: var(--space-2) var(--space-2) var(--space-4);
 }
+.brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* The command line's permanent affordance. Sized to sit quietly beside the
+   wordmark; the wide "Search…" pill below it still teaches the shortcut. */
+.cli-button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--inset);
+  color: var(--muted);
+  cursor: pointer;
+}
+.cli-button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.cli-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .brand-mark {
   display: block;
   font-size: 1.35rem;
@@ -2159,6 +2192,17 @@ a:hover {
   }
 
   /* Hamburger: at least 44 × 44 px tap target. */
+  /* Matches the hamburger beside it: a 44px touch target, chromeless. */
+  .cli-button-mobile {
+    width: 44px;
+    height: 44px;
+    border: none;
+    background: transparent;
+  }
+  .cli-button-mobile:hover {
+    background: var(--inset);
+  }
+
   .mobile-hamburger {
     appearance: none;
     -webkit-appearance: none;

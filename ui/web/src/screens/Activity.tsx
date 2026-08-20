@@ -12,6 +12,8 @@ import { ExplorerLink } from "../components/ExplorerLink";
 import { formatAda, formatAdaPlain } from "../format";
 import { toCsv } from "../csv";
 import { errorMessage } from "../errorMessage";
+import { NodeNotReady } from "../components/NodeNotReady";
+import { ApiError } from "../api/client";
 
 interface ActivityProps {
   // Optional so existing no-prop callers/tests keep working; the app always
@@ -261,6 +263,13 @@ export function Activity({ network = "preview" }: ActivityProps = {}) {
       return true;
     });
   }, [list, search, directionFilter]);
+
+  // Ahead of the loading branch on purpose: each retry from the card re-enters
+  // loading, and checking loading first would flash "Loading…" over the labeled
+  // explanation every two seconds.
+  if (txs.error instanceof ApiError && txs.error.status === 503) {
+    return <NodeNotReady what="Your transaction history" refresh={txs.refresh} />;
+  }
 
   if (txs.loading) {
     return <p>Loading…</p>;

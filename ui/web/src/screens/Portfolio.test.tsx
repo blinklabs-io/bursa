@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Portfolio } from "./Portfolio";
 import * as hooks from "../api/hooks";
+import { ApiError } from "../api/client";
 import type { AssetInfo } from "../api/types";
 
 function mockBalance(lovelace: string, assets: { unit: string; quantity: string }[]) {
@@ -307,4 +308,139 @@ test("NFT image load failure renders the empty thumbnail", () => {
 
   expect(screen.queryByRole("img", { name: "Token" })).not.toBeInTheDocument();
   expect(container.querySelector(".nft-thumb-empty")).toBeInTheDocument();
+});
+
+// A greyed Send with no reason leaves someone guessing whether the wallet is
+// broken or just waiting. The palette has always said why; the button now does.
+test("a disabled Send says why it is disabled", () => {
+  mockBalance("5000000", []);
+  mockDelegation();
+  mockAssetMetadata({});
+
+  render(<Portfolio canSend={false} sendDisabledReason="Needs a synced node" />);
+
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  expect(screen.getByText(/send is unavailable — needs a synced node/i)).toBeInTheDocument();
+});
+
+test("an enabled Send explains nothing", () => {
+  mockBalance("5000000", []);
+  mockDelegation();
+  mockAssetMetadata({});
+
+  render(<Portfolio canSend sendDisabledReason="Needs a synced node" />);
+
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  expect(screen.queryByText(/send is unavailable/i)).not.toBeInTheDocument();
+});
+
+// A multi-signature wallet whose stored policy will not decode already gets an
+// alert saying it cannot spend. Repeating "Send is unavailable — this wallet
+// cannot spend" underneath the buttons says the same thing twice, more vaguely.
+test("an explicit multi-signature error is not restated as the generic reason", () => {
+  mockBalance("5000000", []);
+  mockDelegation();
+  mockAssetMetadata({});
+
+  render(
+    <Portfolio
+      canSend={false}
+      sendDisabledReason="This wallet cannot spend"
+      multiSigError="This wallet's multi-signature policy could not be read, so it cannot spend."
+    />,
+  );
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/policy could not be read/i);
+  expect(screen.queryByText(/send is unavailable/i)).not.toBeInTheDocument();
+});
+
+// The read-only escape hatch lets people in before the node can answer, so this
+// is the first screen a new user sees on a fresh install. A bare "node not
+// ready" in an empty page reads as a broken wallet; the node is simply starting.
+test("a node that cannot answer yet is explained, not dumped as an error", () => {
+  vi.spyOn(hooks, "useBalance").mockReturnValue({
+    data: null, error: new ApiError(503, "node not ready"), loading: false, refresh: vi.fn(),
+  } as never);
+  mockDelegation();
+  mockAssetMetadata({});
+  vi.spyOn(hooks, "useStatus").mockReturnValue({
+    data: { state: "bootstrapping", tip: 0, caughtUp: false, network: "preview",
+            bootstrap: { phase: "bootstrap", percent: 58.7 } },
+    error: null, loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Portfolio canSend={false} />);
+
+  expect(screen.getByText(/waiting for the node/i)).toBeInTheDocument();
+  // The progress the app already knows about, rather than a dead end.
+  expect(screen.getByText(/download snapshot · 58\.7%/i)).toBeInTheDocument();
+  expect(screen.queryByText(/^node not ready$/i)).not.toBeInTheDocument();
+});
+
+// The corollary: swallowing genuine faults into a reassuring "still starting"
+// message would hide real breakage, so anything that is not the node's own
+// not-ready gate must still surface as an error.
+test("a real fault is still reported as an error", () => {
+  vi.spyOn(hooks, "useBalance").mockReturnValue({
+    data: null, error: new ApiError(500, "balance blew up"), loading: false, refresh: vi.fn(),
+  } as never);
+  mockDelegation();
+  mockAssetMetadata({});
+
+  render(<Portfolio canSend={false} />);
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/balance blew up/i);
+  expect(screen.queryByText(/waiting for the node/i)).not.toBeInTheDocument();
+});
+
+test("a real delegation fault is not masked by a not-ready balance", () => {
+  vi.spyOn(hooks, "useBalance").mockReturnValue({
+    data: null, error: new ApiError(503, "node not ready"), loading: false, refresh: vi.fn(),
+  } as never);
+  vi.spyOn(hooks, "useDelegation").mockReturnValue({
+    data: null, error: new ApiError(500, "delegation blew up"), loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Portfolio canSend={false} />);
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/delegation blew up/i);
+  expect(screen.queryByText(/waiting for the node/i)).not.toBeInTheDocument();
+});
+
+test("a supervisor error is shown instead of a reassuring wait state", () => {
+  mockBalance("0", []);
+  mockDelegation();
+  vi.spyOn(hooks, "useBalance").mockReturnValue({
+    data: null, error: new ApiError(503, "node not ready"), loading: false, refresh: vi.fn(),
+  } as never);
+  vi.spyOn(hooks, "useStatus").mockReturnValue({
+    data: { state: "error", error: "node failed to start", tip: 0, caughtUp: false, network: "preview" },
+    error: null, loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Portfolio canSend={false} />);
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/node failed to start/i);
+  expect(screen.queryByText(/nothing is wrong/i)).not.toBeInTheDocument();
+});
+
+// The card retries every two seconds, and useAsync shows the spinner for a
+// refresh — so a loading check ahead of the 503 branch would blank the
+// explanation on every retry. The card owns the screen until the node answers.
+test("the not-ready card stays put while its retry is in flight", () => {
+  vi.spyOn(hooks, "useBalance").mockReturnValue({
+    data: null, error: new ApiError(503, "node not ready"), loading: true, refresh: vi.fn(),
+  } as never);
+  mockDelegation();
+  mockAssetMetadata({});
+  vi.spyOn(hooks, "useStatus").mockReturnValue({
+    data: { state: "bootstrapping", tip: 0, caughtUp: false, network: "preview",
+            bootstrap: { phase: "bootstrap", percent: 58.7 } },
+    error: null, loading: false, refresh: vi.fn(),
+  } as never);
+
+  render(<Portfolio canSend={false} />);
+
+  expect(screen.getByText(/waiting for the node/i)).toBeInTheDocument();
+  expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
 });

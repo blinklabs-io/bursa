@@ -2410,129 +2410,6 @@ func decodeKESSKey(skeyBytes []byte) ([]byte, []byte, error) {
 	return keyBytes, pubKey, nil
 }
 
-// decodeOpCert decodes an operational certificate from CBOR.
-// OpCert CBOR format: [[kes_vkey, issue_number, kes_period, signature], cold_vkey]
-// The outer array has 2 elements:
-//   - Inner 4-element array with the certificate data
-//   - Cold verification key (32 bytes)
-//
-// Returns: kesVkey, issueNumber, kesPeriod, signature, coldVkey, error
-func decodeOpCert(
-	certBytes []byte,
-) ([]byte, uint64, uint64, []byte, []byte, error) {
-	var outerData []any
-	if _, err := cbor.Decode(certBytes, &outerData); err != nil {
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"failed to unmarshal OpCert CBOR: %w",
-			err,
-		)
-	}
-	if len(outerData) != 2 {
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: expected 2-element outer array, got %d",
-			len(outerData),
-		)
-	}
-
-	// Extract inner certificate array
-	certData, ok := outerData[0].([]any)
-	if !ok {
-		return nil, 0, 0, nil, nil, errors.New(
-			"invalid OpCert: first element is not an array",
-		)
-	}
-	if len(certData) != 4 {
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: expected 4-element cert array, got %d",
-			len(certData),
-		)
-	}
-
-	// Extract cold vkey
-	coldVkey, ok := outerData[1].([]byte)
-	if !ok {
-		return nil, 0, 0, nil, nil, errors.New(
-			"invalid OpCert: cold_vkey is not bytes",
-		)
-	}
-	if len(coldVkey) != 32 {
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: cold_vkey expected 32 bytes, got %d",
-			len(coldVkey),
-		)
-	}
-
-	// Extract KES vkey from inner array
-	kesVkey, ok := certData[0].([]byte)
-	if !ok {
-		return nil, 0, 0, nil, nil, errors.New(
-			"invalid OpCert: kes_vkey is not bytes",
-		)
-	}
-	if len(kesVkey) != 32 {
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: kes_vkey expected 32 bytes, got %d",
-			len(kesVkey),
-		)
-	}
-
-	// Extract issue number (can be uint64 or int64 depending on CBOR encoding)
-	var issueNumber uint64
-	switch v := certData[1].(type) {
-	case uint64:
-		issueNumber = v
-	case int64:
-		if v < 0 {
-			return nil, 0, 0, nil, nil, fmt.Errorf(
-				"invalid OpCert: issue_number cannot be negative, got %d",
-				v,
-			)
-		}
-		issueNumber = uint64(v) // #nosec G115
-	default:
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: issue_number has unexpected type %T",
-			certData[1],
-		)
-	}
-
-	// Extract KES period
-	var kesPeriod uint64
-	switch v := certData[2].(type) {
-	case uint64:
-		kesPeriod = v
-	case int64:
-		if v < 0 {
-			return nil, 0, 0, nil, nil, fmt.Errorf(
-				"invalid OpCert: kes_period cannot be negative, got %d",
-				v,
-			)
-		}
-		kesPeriod = uint64(v) // #nosec G115
-	default:
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: kes_period has unexpected type %T",
-			certData[2],
-		)
-	}
-
-	// Extract cold signature
-	signature, ok := certData[3].([]byte)
-	if !ok {
-		return nil, 0, 0, nil, nil, errors.New(
-			"invalid OpCert: cold_signature is not bytes",
-		)
-	}
-	if len(signature) != 64 {
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: cold_signature expected 64 bytes, got %d",
-			len(signature),
-		)
-	}
-
-	return kesVkey, issueNumber, kesPeriod, signature, coldVkey, nil
-}
-
 func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 	var env KeyFile
 	if err := json.Unmarshal(fileBytes, &env); err != nil {
@@ -2635,17 +2512,15 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		return lk, nil
 	// Operational Certificate
 	case "NodeOperationalCertificate":
-		kesVkey, issueNumber, kesPeriod, signature, coldVkey, err := decodeOpCert(
-			cborData,
-		)
+		dec, err := DecodeOpCert(cborData)
 		if err != nil {
 			return nil, err
 		}
-		lk.VKey = kesVkey
-		lk.OpCertIssueNumber = issueNumber
-		lk.OpCertKesPeriod = kesPeriod
-		lk.OpCertSignature = signature
-		lk.OpCertColdVKey = coldVkey
+		lk.VKey = dec.KESVKey
+		lk.OpCertIssueNumber = dec.IssueNumber
+		lk.OpCertKesPeriod = dec.KESPeriod
+		lk.OpCertSignature = dec.ColdSig
+		lk.OpCertColdVKey = dec.ColdVKey
 		return lk, nil
 	default:
 		return nil, fmt.Errorf("unknown key type: %s", env.Type)
@@ -2842,8 +2717,8 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 			continue
 		}
 		n := e.Name()
-		if !(strings.HasSuffix(n, ".vkey")) &&
-			!(strings.HasSuffix(n, ".skey")) {
+		if !strings.HasSuffix(n, ".vkey") &&
+			!strings.HasSuffix(n, ".skey") {
 			continue
 		}
 		p := filepath.Join(dir, n)

@@ -294,7 +294,9 @@ export interface GovernanceActionsResponse {
   count: number;
 }
 
-// DRepInfo mirrors GET /wallet/drep/{id}: confirms a DRep exists on chain.
+// DRepInfo mirrors GET /wallet/drep/{id}: a node-verified readout of a single
+// DRep, used to confirm a pasted id before delegating. amount / live_stake are
+// the DRep's voting power as decimal lovelace strings.
 export interface DRepInfo {
   drep_id: string;
   hex: string;
@@ -303,6 +305,46 @@ export interface DRepInfo {
   amount: string;
   active: boolean;
   live_stake: string;
+}
+
+// DRepMetadata is the DRep's resolved CIP-119 anchor document as reported by
+// the node. Only its identity is carried: the directory displays the URL (it
+// never fetches it) and the hash names the document.
+export interface DRepMetadata {
+  url: string;
+  hash: string;
+}
+
+// DRepListItem is one entry of the GET /wallet/dreps directory, which the
+// wallet reads from the node's own paginated DRep list. It is NOT DRepInfo:
+// there is no single "active" flag here. CIP-1694 status is two independent
+// facts — retired (deregistered) and expired (registered, but silent past the
+// node's DRep inactivity period) — plus the epoch the DRep last acted in.
+//
+// hex is the CIP-129 payload: a 1-byte header (0x22 key hash / 0x23 script
+// hash) followed by the 28-byte credential, so a bare credential is its
+// suffix. The predefined targets ("drep_always_abstain",
+// "drep_always_no_confidence") appear with an empty hex and no metadata.
+export interface DRepListItem {
+  drep_id: string;
+  hex: string;
+  amount: string;
+  has_script: boolean;
+  retired: boolean;
+  expired: boolean;
+  last_active_epoch: number | null;
+  metadata: DRepMetadata | null;
+}
+
+// DRepDirectoryResponse mirrors GET /wallet/dreps: one page of the node's DRep
+// directory (read node-locally from the embedded node's list endpoint) plus the
+// total number of DReps matching the search, for the read-only browse/search
+// screen.
+export interface DRepDirectoryResponse {
+  dreps: DRepListItem[];
+  total: number;
+  page: number;
+  count: number;
 }
 
 // AssetInfo mirrors GET /wallet/assets/{unit}: a native asset's on-chain

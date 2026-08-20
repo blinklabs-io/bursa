@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/kesagent/securemem"
 	"github.com/blinklabs-io/gouroboros/kes"
 	"github.com/blinklabs-io/gouroboros/ledger"
@@ -240,7 +241,7 @@ func (a *Agent) GenStagedKey() ([]byte, error) {
 // evolves it to the current period, and (serve-key mode) pushes it. It returns
 // the resulting agent info.
 func (a *Agent) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
-	dec, err := decodeOpCert(opcertBytes)
+	dec, err := bursa.DecodeOpCert(opcertBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -252,30 +253,30 @@ func (a *Agent) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
 		return nil, ErrNoStagedKey
 	}
 	// The agent holds only the cold vkey; the opcert must carry the same one.
-	if !bytes.Equal(dec.coldVkey, a.cfg.ColdVKey) {
+	if !bytes.Equal(dec.ColdVKey, a.cfg.ColdVKey) {
 		return nil, ErrOpCertColdVK
 	}
 	// Verify the cold-key signature over the OCertSignable representation.
-	if err := ledger.VerifyOpCertSignature(dec.ledgerOpCert(), a.cfg.ColdVKey); err != nil {
+	if err := ledger.VerifyOpCertSignature(dec.LedgerOpCert(), a.cfg.ColdVKey); err != nil {
 		return nil, fmt.Errorf("kesagent: opcert signature invalid: %w", err)
 	}
 	// The opcert must commit to the staged KES vkey.
-	if !bytes.Equal(dec.kesVkey, a.staged.vkey) {
+	if !bytes.Equal(dec.KESVKey, a.staged.vkey) {
 		return nil, ErrOpCertKESVK
 	}
 	// Period sanity: not from the future, and not already expired.
 	cur := a.currentKESPeriod()
-	if dec.kesPeriod > cur {
+	if dec.KESPeriod > cur {
 		return nil, fmt.Errorf(
 			"kesagent: opcert KES period %d is in the future (current %d)",
-			dec.kesPeriod, cur,
+			dec.KESPeriod, cur,
 		)
 	}
 	maxEvol := a.maxEvolutions()
-	if cur-dec.kesPeriod >= maxEvol {
+	if cur-dec.KESPeriod >= maxEvol {
 		return nil, fmt.Errorf(
 			"kesagent: opcert expired: %d evolutions since period %d >= max %d",
-			cur-dec.kesPeriod, dec.kesPeriod, maxEvol,
+			cur-dec.KESPeriod, dec.KESPeriod, maxEvol,
 		)
 	}
 
@@ -285,10 +286,10 @@ func (a *Agent) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
 	oldActive := a.active
 	ks := a.staged
 	a.staged = nil
-	ks.startPeriod = dec.kesPeriod
+	ks.startPeriod = dec.KESPeriod
 	ks.maxEvol = maxEvol
 	ks.opcert = append([]byte(nil), opcertBytes...)
-	ks.issueNumber = dec.issueNumber
+	ks.issueNumber = dec.IssueNumber
 	ks.exhausted = false
 	a.active = ks
 

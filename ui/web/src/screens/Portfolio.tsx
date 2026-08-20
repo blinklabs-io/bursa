@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useBalance, useDelegation, useAssetMetadata, useNfts, useNftMedia } from "../api/hooks";
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
@@ -9,6 +9,8 @@ import { formatAda, formatTokenQuantity } from "../format";
 import { extractAssetMeta, assetDisplayName, assetMatchesQuery } from "../tokenMeta";
 import { nftImageUrl } from "../api/client";
 import { navigate } from "../router";
+import { NodeNotReady } from "../components/NodeNotReady";
+import { ApiError } from "../api/client";
 
 function NftList() {
   const nfts = useNfts();
@@ -69,9 +71,13 @@ interface PortfolioProps {
   // Whether this wallet on this node can build a spend. Receive needs nothing,
   // so it is always offered.
   canSend?: boolean;
+  // Why Send is off, when it is. A greyed button with no reason leaves someone
+  // guessing whether the wallet is broken or just waiting; the command palette
+  // has always said why, and this is the same string.
+  sendDisabledReason?: string;
 }
 
-export function Portfolio({ canSend = false, multiSigError }: PortfolioProps = {}) {
+export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }: PortfolioProps = {}) {
   const balance = useBalance();
   const delegation = useDelegation();
   const [query, setQuery] = useState("");
@@ -80,20 +86,42 @@ export function Portfolio({ canSend = false, multiSigError }: PortfolioProps = {
   // tokenMeta.ts) and applied on a best-effort basis below — a missing or
   // failed lookup for one asset never blocks the rest of the portfolio.
   const units = useMemo(() => (balance.data?.assets ?? []).map((a) => a.unit), [balance.data]);
+  // Stable identity: NodeNotReady keys its retry interval on this callback, and a
+  // fresh closure every render would clear and restart the interval each time,
+  // so the retry could be starved by unrelated re-renders.
+  const refreshBalance = balance.refresh;
+  const refreshDelegation = delegation.refresh;
+  const retryNodeQueries = useCallback(() => {
+    refreshBalance();
+    refreshDelegation();
+  }, [refreshBalance, refreshDelegation]);
   const metadataByUnit = useAssetMetadata(units);
   const assets = balance.data?.assets ?? [];
+
+  // A node that cannot answer yet is an expected, self-resolving state, not a
+  // fault: say so instead of dropping a bare server error into a blank screen.
+  // Real faults still surface as errors.
+  const notReady = (e: Error | null) => e instanceof ApiError && e.status === 503;
+  const balanceNotReady = notReady(balance.error);
+  const delegationNotReady = notReady(delegation.error);
+  if (balance.error && !balanceNotReady) {
+    return <p role="alert" className="error-text">{balance.error.message}</p>;
+  }
+  if (delegation.error && !delegationNotReady) {
+    return <p role="alert" className="error-text">{delegation.error.message}</p>;
+  }
+  // Ahead of the loading branch on purpose. Each retry from the card re-enters
+  // loading (useAsync shows the spinner for a refresh), so checking loading
+  // first would replace the labeled explanation with "Loading…" every two
+  // seconds. The 503 is still set while the retry is in flight, so the card
+  // stays put until the node actually answers.
+  if (balanceNotReady || delegationNotReady) {
+    return <NodeNotReady what="Your balance and delegation" verb="come" refresh={retryNodeQueries} />;
+  }
 
   // Show a single loading state if either hook is still loading.
   if (balance.loading || delegation.loading) {
     return <p>Loading…</p>;
-  }
-
-  // Show the first error encountered (balance errors take priority).
-  if (balance.error) {
-    return <p role="alert" className="error-text">{balance.error.message}</p>;
-  }
-  if (delegation.error) {
-    return <p role="alert" className="error-text">{delegation.error.message}</p>;
   }
 
   const del = delegation.data;
@@ -137,6 +165,12 @@ export function Portfolio({ canSend = false, multiSigError }: PortfolioProps = {
             Receive
           </Button>
         </div>
+        {/* Suppressed when multiSigError is already on screen: that alert names the
+            actual reason this wallet cannot spend, and the generic line under the
+            buttons would only restate it in weaker words. */}
+        {!canSend && !multiSigError && sendDisabledReason && (
+          <p className="helper-text">Send is unavailable — {sendDisabledReason.toLowerCase()}.</p>
+        )}
       </Card>
 
       <Card title="Native Tokens">

@@ -417,3 +417,42 @@ func TestHS256Validator_IssuerAudience(t *testing.T) {
 		t.Fatal("token missing issuer/audience accepted")
 	}
 }
+
+// TestAuthChallengeMatchesConfiguredSchemes covers the 401 challenge: a
+// deployment that does not enable JWT must not advertise Bearer, because a
+// client that retries with a token will be refused again. mTLS is negotiated at
+// the TLS layer and request signing has no registered HTTP scheme, so neither
+// contributes a challenge.
+func TestAuthChallengeMatchesConfiguredSchemes(t *testing.T) {
+	jwt := JWTAuthenticator(func(string) (string, error) { return "caller", nil })
+	mtls := NewMTLSAuthenticator()
+	reqsign := NewRequestSigningAuthenticator(nil, 0)
+
+	for _, tc := range []struct {
+		name  string
+		chain []Authenticator
+		want  string
+	}{
+		{"jwt only", []Authenticator{jwt}, "Bearer"},
+		{"mtls only", []Authenticator{mtls}, ""},
+		{"request signing only", []Authenticator{reqsign}, ""},
+		{"mtls and request signing", []Authenticator{mtls, reqsign}, ""},
+		{"jwt and mtls", []Authenticator{jwt, mtls}, "Bearer"},
+		{"empty chain", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			handler := AuthMiddleware(tc.chain, http.HandlerFunc(
+				func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) },
+			))
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401 for an unauthenticated request", rec.Code)
+			}
+			if got := rec.Header().Get("WWW-Authenticate"); got != tc.want {
+				t.Fatalf("WWW-Authenticate = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

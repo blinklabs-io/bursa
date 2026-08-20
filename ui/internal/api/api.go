@@ -114,6 +114,9 @@ type NodeLookup interface {
 	// GovernanceActions returns the Conway governance actions (proposals) the
 	// node has recorded, for the read-only governance-action browser.
 	GovernanceActions(ctx context.Context) ([]chain.GovernanceAction, error)
+	// DReps returns the node's full DRep directory (its paginated
+	// /governance/dreps list) for the read-only browse/search screen.
+	DReps(ctx context.Context) ([]chain.DRepListItem, error)
 	AssetAddresses(ctx context.Context, asset string) ([]chain.AssetAddress, error)
 	// Asset returns on-chain identity/metadata for a native asset (unit =
 	// policy ID + hex asset name). Most assets have no indexed on-chain
@@ -1519,6 +1522,27 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		))
 	}))
 
+	// Read-only DRep directory: browse/search the delegated representatives the
+	// node has indexed, to inform vote-delegation. Node-local (the embedded
+	// node's own list endpoint over loopback, nothing leaves 127.0.0.1) — so,
+	// like the pool directory, there is deliberately NO external-consent gate. Search (q) and pagination
+	// (page/count) are applied server-side over the node's list.
+	mux.HandleFunc("GET /wallet/dreps", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if lookup == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drep directory unavailable"})
+			return
+		}
+		dreps, err := lookup.DReps(r.Context())
+		if err != nil {
+			serveLookup(w, drepDirectoryResponse{}, err)
+			return
+		}
+		q := r.URL.Query()
+		writeJSON(w, http.StatusOK, filterAndPageDReps(
+			dreps, q.Get("q"), q.Get("page"), q.Get("count"),
+		))
+	}))
+
 	// Staking & governance. Pool/DRep lookups verify a pasted ID through the node
 	// (gated like reads — they only need the node serving queries). Building a
 	// delegation tx and confirming it are gated like sends (a fully synced node),
@@ -1765,36 +1789,34 @@ const (
 	poolDirMaxCount     = 200
 )
 
-// filterAndPagePools applies the read-only directory's server-side search and
-// pagination over the node's full pool list. The search (q) is a
-// case-insensitive substring match against the pool's bech32 ID and hex ID —
-// the identity fields the node's /pools/extended list exposes. page is 1-based;
-// count is clamped to [1, poolDirMaxCount]. Invalid/absent page or count fall
-// back to their defaults rather than erroring.
-func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poolDirectoryResponse {
+// filterAndPage applies a read-only directory's server-side search and
+// pagination over a full item list. matches decides whether an item satisfies
+// the (already lower-cased, trimmed) search needle. page is 1-based; count is
+// clamped to [1, poolDirMaxCount]. Invalid/absent page or count fall back to
+// their defaults rather than erroring. start/end are clamped on both sides so
+// a very large page can't overflow the slice bounds and panic.
+func filterAndPage[T any](items []T, q, pageStr, countStr string, matches func(T, string) bool) (pageItems []T, total, page, count int) {
 	needle := strings.ToLower(strings.TrimSpace(q))
-	matched := make([]chain.PoolInfo, 0, len(pools))
-	for _, p := range pools {
-		if needle == "" ||
-			strings.Contains(strings.ToLower(p.PoolID), needle) ||
-			strings.Contains(strings.ToLower(p.Hex), needle) {
-			matched = append(matched, p)
+	matched := make([]T, 0, len(items))
+	for _, item := range items {
+		if needle == "" || matches(item, needle) {
+			matched = append(matched, item)
 		}
 	}
 
-	count := poolDirDefaultCount
+	count = poolDirDefaultCount
 	if n, err := strconv.Atoi(countStr); err == nil && n > 0 {
 		count = n
 	}
 	if count > poolDirMaxCount {
 		count = poolDirMaxCount
 	}
-	page := 1
+	page = 1
 	if n, err := strconv.Atoi(pageStr); err == nil && n > 1 {
 		page = n
 	}
 
-	total := len(matched)
+	total = len(matched)
 	// (page-1)*count can overflow to a negative int for a very large page, so
 	// clamp start on both sides before slicing to avoid an out-of-range panic.
 	start := (page - 1) * count
@@ -1805,10 +1827,22 @@ func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poo
 	if end < start || end > total {
 		end = total
 	}
-	pageItems := matched[start:end]
+	pageItems = matched[start:end]
 	if pageItems == nil {
-		pageItems = []chain.PoolInfo{}
+		pageItems = []T{}
 	}
+	return pageItems, total, page, count
+}
+
+// filterAndPagePools applies the read-only directory's server-side search and
+// pagination over the node's full pool list. The search (q) is a
+// case-insensitive substring match against the pool's bech32 ID and hex ID —
+// the identity fields the node's /pools/extended list exposes.
+func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poolDirectoryResponse {
+	pageItems, total, page, count := filterAndPage(pools, q, pageStr, countStr, func(p chain.PoolInfo, needle string) bool {
+		return strings.Contains(strings.ToLower(p.PoolID), needle) ||
+			strings.Contains(strings.ToLower(p.Hex), needle)
+	})
 	return poolDirectoryResponse{Pools: pageItems, Total: total, Page: page, Count: count}
 }
 
@@ -1867,6 +1901,35 @@ func filterAndPageGovernanceActions(actions []chain.GovernanceAction, q, pageStr
 		pageItems = []chain.GovernanceAction{}
 	}
 	return governanceActionsResponse{Actions: pageItems, Total: total, Page: page, Count: count}
+}
+
+// drepDirectoryResponse is the GET /wallet/dreps response: one page of the
+// node's DRep directory plus the total number of DReps that matched the search,
+// so the client can page through them.
+type drepDirectoryResponse struct {
+	DReps []chain.DRepListItem `json:"dreps"`
+	Total int                  `json:"total"`
+	Page  int                  `json:"page"`
+	Count int                  `json:"count"`
+}
+
+// filterAndPageDReps applies the read-only directory's server-side search and
+// pagination over the node's full DRep list. The search (q) is a
+// case-insensitive substring match against the DRep's bech32 id, CIP-129 hex
+// payload, and metadata anchor URL. Matching hex as a substring is what lets a
+// bare 28-byte credential — which is only the tail of the 29-byte CIP-129
+// payload the node reports — still find its DRep.
+func filterAndPageDReps(dreps []chain.DRepListItem, q, pageStr, countStr string) drepDirectoryResponse {
+	pageItems, total, page, count := filterAndPage(dreps, q, pageStr, countStr, func(d chain.DRepListItem, needle string) bool {
+		anchorURL := ""
+		if d.Metadata != nil {
+			anchorURL = d.Metadata.URL
+		}
+		return strings.Contains(strings.ToLower(d.DRepID), needle) ||
+			strings.Contains(strings.ToLower(d.Hex), needle) ||
+			strings.Contains(strings.ToLower(anchorURL), needle)
+	})
+	return drepDirectoryResponse{DReps: pageItems, Total: total, Page: page, Count: count}
 }
 
 // registerPoolRoutes wires the Stake Pool Operations (SPO) endpoints under

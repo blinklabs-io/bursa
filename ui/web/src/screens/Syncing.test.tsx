@@ -122,7 +122,7 @@ test("(g) retained bootstrap diagnostics do not override an error state", () => 
       onLoadAnyway={noop}
     />,
   );
-  expect(screen.getByRole("heading", { name: "Sync interrupted" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Your node stopped" })).toBeInTheDocument();
   expect(screen.getByRole("alert")).toHaveTextContent("mithril bootstrap: download failed");
   expect(screen.queryByText("40.0%")).not.toBeInTheDocument();
 });
@@ -134,4 +134,60 @@ test("(h) the escape hatch invokes onLoadAnyway", () => {
   );
   fireEvent.click(screen.getByRole("button", { name: /load wallet anyway/i }));
   expect(onLoadAnyway).toHaveBeenCalled();
+});
+
+const errorStatus = {
+  state: "error" as const,
+  tip: 0,
+  caughtUp: false,
+  network: "preview",
+  error: "failed to open listening socket: bind: invalid argument",
+};
+
+// The subtitle used to be the raw error, which the panel below already shows —
+// so the same sentence appeared twice on one screen.
+test("the raw error is shown once, not repeated as the subtitle", () => {
+  render(<Syncing status={errorStatus} onLoadAnyway={noop} />);
+
+  const occurrences = screen.queryAllByText(errorStatus.error);
+  expect(occurrences).toHaveLength(1);
+});
+
+// "Sync interrupted" implied it would resume. This state does not resume on its
+// own, and a title that says otherwise leaves someone waiting on nothing.
+test("the error state does not describe itself as a resumable interruption", () => {
+  render(<Syncing status={errorStatus} onLoadAnyway={noop} />);
+
+  expect(screen.getByRole("heading", { name: /your node stopped/i })).toBeInTheDocument();
+  expect(screen.queryByText(/interrupted/i)).not.toBeInTheDocument();
+});
+
+// The escape hatch promised "until syncing finishes" in every state. In the
+// error state syncing is not going to finish, so it must not say so.
+test("the escape hatch does not promise a sync that will finish", () => {
+  render(<Syncing status={errorStatus} onLoadAnyway={noop} />);
+
+  expect(screen.queryByText(/until syncing finishes/i)).not.toBeInTheDocument();
+  // Addresses are read through the node as well (the next-unused lookup hits the
+  // chain), so the copy must not offer them as something still available here.
+  // Asserted positively and in one phrase: rejecting the old wording alone would
+  // pass again the moment new copy offered addresses in different words.
+  expect(
+    screen.getByText(/addresses are all read through the node and need it running/i),
+  ).toBeInTheDocument();
+});
+
+// A dead end with no next step is the thing that made this screen feel broken.
+test("the error state says what to do next", () => {
+  render(<Syncing status={errorStatus} onLoadAnyway={noop} />);
+
+  expect(screen.getByText(/restarting the wallet will try again/i)).toBeInTheDocument();
+  expect(screen.getByText(/keys are in the vault/i)).toBeInTheDocument();
+});
+
+// The syncing state keeps its original promise, which is accurate there.
+test("a syncing node still says balances fill in when the sync finishes", () => {
+  render(<Syncing status={{ state: "syncing", tip: 5, caughtUp: false, network: "preview" }} onLoadAnyway={noop} />);
+
+  expect(screen.getByText(/until syncing finishes/i)).toBeInTheDocument();
 });

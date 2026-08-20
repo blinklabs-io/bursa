@@ -193,6 +193,39 @@ type DRepInfo struct {
 	LiveStake  string `json:"live_stake"`
 }
 
+// DRepListItem is one entry of GET /api/v0/governance/dreps, the node's
+// paginated DRep directory. It is deliberately a separate type from DRepInfo:
+// the list reports CIP-1694 lifecycle status (retired/expired plus the epoch
+// the DRep was last active in) and a resolved CIP-119 anchor document, and it
+// has no registered/active/live_stake fields for DRepInfo to borrow.
+type DRepListItem struct {
+	// DRepID is the CIP-129 bech32 drep1… identifier, encoded by the node. The
+	// predefined targets appear as the literal strings "drep_always_abstain"
+	// and "drep_always_no_confidence", with an empty Hex.
+	DRepID string `json:"drep_id"`
+	// Hex is the CIP-129 payload — the 1-byte header (0x22 key hash, 0x23
+	// script hash) followed by the 28-byte credential — so a pasted bare
+	// credential is a suffix of it, not the whole string.
+	Hex             string        `json:"hex"`
+	Amount          string        `json:"amount"`
+	HasScript       bool          `json:"has_script"`
+	Retired         bool          `json:"retired"`
+	Expired         bool          `json:"expired"`
+	LastActiveEpoch *uint64       `json:"last_active_epoch"`
+	Metadata        *DRepMetadata `json:"metadata"`
+}
+
+// DRepMetadata is the DRep's resolved CIP-119 anchor document as reported by
+// the node's list. Only the anchor's identity is decoded: the directory
+// displays the URL (it never fetches it, so browsing stays node-local) and the
+// hash identifies the document it belongs to. The document body the node also
+// serves (json_metadata/bytes) is deliberately dropped here rather than
+// carried through the wallet's own API for a screen that does not render it.
+type DRepMetadata struct {
+	URL  string `json:"url"`
+	Hash string `json:"hash"`
+}
+
 // Genesis mirrors GET /api/v0/genesis: the network's immutable genesis
 // parameters. SlotsPerKESPeriod and EpochLength drive the SPO KES-period and
 // epoch math; both are served by the embedded node, never an external service.
@@ -892,6 +925,17 @@ func govActionID(txHash []byte, index uint32) string {
 		return id.String()
 	}
 	return fmt.Sprintf("%s#%d", hex.EncodeToString(txHash), index)
+}
+
+// DReps returns the delegated representatives the node has indexed, for the
+// read-only DRep-directory browser — the governance analogue of Pools. It reads
+// the node's paginated GET /api/v0/governance/dreps list over loopback, the
+// same stable HTTP contract the rest of this client uses, rather than Dingo's
+// private metadata schema. The list is the only source that reports CIP-1694
+// retired/expired status and resolved CIP-119 anchor metadata, so the directory
+// can tell a deregistered DRep from one that merely stopped voting.
+func (c *Client) DReps(ctx context.Context) ([]DRepListItem, error) {
+	return getAllPages[DRepListItem](ctx, c, "/api/v0/governance/dreps")
 }
 
 // Genesis fetches the network's genesis parameters from the embedded node.

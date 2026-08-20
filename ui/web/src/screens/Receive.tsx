@@ -5,6 +5,8 @@ import { Card } from "../components/Card";
 import { Table } from "../components/Table";
 import { CopyButton } from "../components/CopyButton";
 import { ExplorerLink } from "../components/ExplorerLink";
+import { NodeNotReady } from "../components/NodeNotReady";
+import { ApiError } from "../api/client";
 
 interface ReceiveProps {
   // Optional so existing no-prop callers/tests keep working; the app always
@@ -40,10 +42,16 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
   const addresses = useAddresses();
   const [expandedQr, setExpandedQr] = useState<string | null>(null);
 
+  // Ahead of the loading branch on purpose: each retry from the card re-enters
+  // loading, and checking loading first would flash "Loading…" over the labeled
+  // explanation every two seconds.
+  if (addresses.error instanceof ApiError && addresses.error.status === 503) {
+    return <NodeNotReady what="Your receive address" refresh={addresses.refresh} />;
+  }
+
   if (addresses.loading) {
     return <p>Loading…</p>;
   }
-
   if (addresses.error) {
     return (
       <p role="alert" className="error-text">

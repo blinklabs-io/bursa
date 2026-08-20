@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/blinklabs-io/gouroboros/ledger"
 )
@@ -99,13 +100,13 @@ func makeOpCert(t *testing.T, kesVkey []byte, issue, period uint64, cold coldKey
 // then no longer matches, so VerifyOpCertSignature fails.
 func tamperOpCertKESVkey(t *testing.T, opcert, newVkey []byte) []byte {
 	t.Helper()
-	dec, err := decodeOpCert(opcert)
+	dec, err := bursa.DecodeOpCert(opcert)
 	if err != nil {
 		t.Fatalf("decode for tamper: %v", err)
 	}
 	env := []any{
-		[]any{newVkey, dec.issueNumber, dec.kesPeriod, dec.coldSig},
-		dec.coldVkey,
+		[]any{newVkey, dec.IssueNumber, dec.KESPeriod, dec.ColdSig},
+		dec.ColdVKey,
 	}
 	b, err := cbor.Encode(env)
 	if err != nil {

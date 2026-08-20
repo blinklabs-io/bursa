@@ -256,6 +256,34 @@ func TestBuildCallerACL(t *testing.T) {
 	}
 }
 
+func TestBuildAuthorizedKeys(t *testing.T) {
+	pubHex := strings.Repeat("cd", 32) // 32 bytes
+	m, err := BuildAuthorizedKeys([]config.SignerAuthorizedKeyConfig{{Caller: "alice", Ed25519PubkeyHex: pubHex}})
+	if err != nil {
+		t.Fatalf("BuildAuthorizedKeys: %v", err)
+	}
+	if len(m["alice"]) != 32 {
+		t.Fatalf("expected 32-byte key for alice, got %d", len(m["alice"]))
+	}
+	if _, err := BuildAuthorizedKeys([]config.SignerAuthorizedKeyConfig{{Caller: "", Ed25519PubkeyHex: pubHex}}); err == nil {
+		t.Fatal("expected error for empty caller")
+	}
+	if _, err := BuildAuthorizedKeys([]config.SignerAuthorizedKeyConfig{
+		{Caller: "a", Ed25519PubkeyHex: pubHex}, {Caller: "a", Ed25519PubkeyHex: pubHex},
+	}); err == nil {
+		t.Fatal("expected error for duplicate caller")
+	}
+	if _, err := BuildAuthorizedKeys([]config.SignerAuthorizedKeyConfig{{Caller: "a", Ed25519PubkeyHex: "zz"}}); err == nil {
+		t.Fatal("expected error for bad hex")
+	}
+	if _, err := BuildAuthorizedKeys([]config.SignerAuthorizedKeyConfig{{Caller: "a", Ed25519PubkeyHex: strings.Repeat("ab", 16)}}); err == nil {
+		t.Fatal("expected error for wrong-length key")
+	}
+	if m, _ := BuildAuthorizedKeys(nil); m != nil {
+		t.Fatal("expected nil map for no authorized keys")
+	}
+}
+
 func TestBuildBackends_SopsNoSecrets(t *testing.T) {
 	orig := newSopsSecretSource
 	defer func() { newSopsSecretSource = orig }()

@@ -1,22 +1,11 @@
 import type { Status, BootstrapProgress } from "../api/types";
+import { BOOTSTRAP_PHASES, bootstrapPhaseLabel } from "../bootstrapPhases";
 
 interface SyncingProps {
   status: Status;
   onLoadAnyway: () => void;
 }
 
-// The Mithril bootstrap pipeline, in the order dingo emits it, with operator-
-// facing labels. "complete" isn't shown — by the time it fires the node has
-// moved on to chain sync (or ready), so it never needs a step of its own.
-const PHASES: { key: string; label: string }[] = [
-  { key: "bootstrap", label: "Download snapshot" },
-  { key: "ledger_import", label: "Import ledger state" },
-  { key: "immutable_copy", label: "Copy chain history" },
-  { key: "gap_blocks", label: "Fetch gap blocks" },
-  { key: "post_ledger_state", label: "Rebuild ledger state" },
-  { key: "backfill", label: "Backfill blocks" },
-  { key: "index_rebuild", label: "Rebuild indexes" },
-];
 
 function fmtBytes(n?: number): string {
   if (!n || n <= 0) return "0 B";
@@ -89,10 +78,10 @@ function Bar({ percent, indeterminate }: { percent?: number; indeterminate?: boo
 }
 
 function PhaseSteps({ active }: { active: string }) {
-  const idx = PHASES.findIndex((p) => p.key === active);
+  const idx = BOOTSTRAP_PHASES.findIndex((p) => p.key === active);
   return (
     <ol className="sync-steps">
-      {PHASES.map((p, i) => {
+      {BOOTSTRAP_PHASES.map((p, i) => {
         const state =
           idx < 0 ? "pending" : i < idx ? "done" : i === idx ? "active" : "pending";
         return (
@@ -111,7 +100,7 @@ function PhaseSteps({ active }: { active: string }) {
 // download, count/slot for the block-replay phases).
 function BootstrapDetail({ bp }: { bp: BootstrapProgress }) {
   const phaseLabel =
-    PHASES.find((p) => p.key === bp.phase)?.label ?? bp.phase.replace(/_/g, " ");
+    bootstrapPhaseLabel(bp.phase);
 
   const readouts: string[] = [];
   if (bp.total_bytes && bp.total_bytes > 0) {
@@ -198,8 +187,14 @@ export function Syncing({ status, onLoadAnyway }: SyncingProps) {
       subtitle = "Bringing the embedded Cardano node online.";
       break;
     case "error":
-      title = "Sync interrupted";
-      subtitle = status.error || "The node reported an error.";
+      // Not "interrupted": this state does not resume on its own, and a title
+      // that implies it will leaves someone waiting on nothing. The raw error
+      // belongs in the panel below, once — repeating it as the subtitle said
+      // the same sentence twice on one screen.
+      title = "Your node stopped";
+      subtitle =
+        "The embedded Cardano node reported an error and is not running, so " +
+        "balances, history and sending are unavailable until it starts again.";
       break;
     default:
       title = "Preparing";
@@ -216,6 +211,12 @@ export function Syncing({ status, onLoadAnyway }: SyncingProps) {
       <div className="sync-panel">
         <p className="error-text" role="alert">
           {status.error || "The node reported an error."}
+        </p>
+        <p className="helper-text">
+          Restarting the wallet will try again from where it left off — a
+          bootstrap already downloaded is not thrown away. If it keeps failing,
+          the node&rsquo;s own log is the next place to look; your keys are in
+          the vault either way and are not affected by this.
         </p>
       </div>
     );
@@ -242,8 +243,9 @@ export function Syncing({ status, onLoadAnyway }: SyncingProps) {
           Load wallet anyway (read-only)
         </button>
         <p className="helper-text">
-          You can open a wallet now, but balances and history stay incomplete
-          until syncing finishes.
+          {status.state === "error"
+            ? "You can still open your wallet and reach its settings, but balances, history and addresses are all read through the node and need it running."
+            : "You can open a wallet now, but balances and history stay incomplete until syncing finishes."}
         </p>
       </footer>
     </div>

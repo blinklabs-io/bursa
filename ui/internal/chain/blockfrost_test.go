@@ -530,6 +530,127 @@ func TestDRepNotFound(t *testing.T) {
 	}
 }
 
+func TestDRepsFromNodeList(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q", r.Method)
+		}
+		if r.URL.Path != "/api/v0/governance/dreps" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("count"); got != fmt.Sprintf("%d", pageSize) {
+			t.Errorf("count = %q, want %d", got, pageSize)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// Shape of dingo's GET /api/v0/governance/dreps list: CIP-129
+		// drep_id, 29-byte hex payload, epoch-based retired/expired status
+		// and a resolved CIP-119 anchor document. Note there is no "active"
+		// or "registered" field — status is derived from retired/expired.
+		_, _ = w.Write([]byte(`[
+			{"drep_id":"drep1aaa","hex":"22aaaa","amount":"1500000","has_script":false,"retired":false,"expired":false,"last_active_epoch":42,"metadata":{"url":"https://example.com/drep.json","hash":"cafe","json_metadata":{"body":{"givenName":"A"}},"bytes":"00"}},
+			{"drep_id":"drep1bbb","hex":"23bbbb","amount":"0","has_script":true,"retired":true,"expired":false,"last_active_epoch":null,"metadata":null},
+			{"drep_id":"drep_always_abstain","hex":"","amount":"7000000","has_script":false,"retired":false,"expired":false,"last_active_epoch":null,"metadata":null}
+		]`))
+	})
+	got, err := c.DReps(context.Background())
+	if err != nil {
+		t.Fatalf("DReps: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("DReps returned %d dreps, want 3", len(got))
+	}
+
+	a := got[0]
+	if a.DRepID != "drep1aaa" || a.Hex != "22aaaa" || a.HasScript {
+		t.Fatalf("drep[0] = %+v, want the key-hash drep1aaa entry", a)
+	}
+	if a.Amount != "1500000" {
+		t.Fatalf("drep[0] voting power = %q, want 1500000", a.Amount)
+	}
+	if a.Retired || a.Expired {
+		t.Fatalf("drep[0] = %+v, want neither retired nor expired", a)
+	}
+	if a.LastActiveEpoch == nil || *a.LastActiveEpoch != 42 {
+		t.Fatalf("drep[0] last active epoch = %v, want 42", a.LastActiveEpoch)
+	}
+	if a.Metadata == nil || a.Metadata.URL != "https://example.com/drep.json" {
+		t.Fatalf("drep[0] metadata = %+v, want the anchor url", a.Metadata)
+	}
+	if a.Metadata.Hash != "cafe" {
+		t.Fatalf("drep[0] metadata hash = %q, want cafe", a.Metadata.Hash)
+	}
+
+	b := got[1]
+	if !b.Retired || !b.HasScript {
+		t.Fatalf("drep[1] = %+v, want a retired script-hash drep", b)
+	}
+	if b.LastActiveEpoch != nil {
+		t.Fatalf("drep[1] last active epoch = %v, want nil", b.LastActiveEpoch)
+	}
+	if b.Metadata != nil {
+		t.Fatalf("drep[1] metadata = %+v, want nil for a drep with no anchor", b.Metadata)
+	}
+
+	// The predefined targets are part of the node's list (interleaved at the
+	// position of their first delegation) and carry real voting power. The
+	// client passes them through; the directory screen decides how to render
+	// them.
+	p := got[2]
+	if p.DRepID != "drep_always_abstain" || p.Hex != "" || p.Amount != "7000000" {
+		t.Fatalf("drep[2] = %+v, want the predefined abstain entry with its voting power", p)
+	}
+}
+
+func TestDRepsPagesThroughNodeList(t *testing.T) {
+	pages := 0
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		if r.URL.Path != "/api/v0/governance/dreps" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		rows := []DRepListItem{{DRepID: "drep1last"}}
+		if r.URL.Query().Get("page") == "1" {
+			rows = make([]DRepListItem, pageSize)
+			for i := range rows {
+				rows[i] = DRepListItem{DRepID: fmt.Sprintf("drep1%03d", i)}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(rows); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+	})
+	got, err := c.DReps(context.Background())
+	if err != nil {
+		t.Fatalf("DReps: %v", err)
+	}
+	if len(got) != pageSize+1 {
+		t.Fatalf("DReps returned %d dreps, want %d across both pages", len(got), pageSize+1)
+	}
+	if got[pageSize].DRepID != "drep1last" {
+		t.Fatalf("last drep = %q, want the page-2 entry", got[pageSize].DRepID)
+	}
+	if pages != 2 {
+		t.Fatalf("requests = %d, want 2", pages)
+	}
+}
+
+// The directory reads the node's HTTP list, so it must work with no Dingo data
+// directory configured — it no longer opens Dingo's private metadata schema.
+func TestDRepsWithoutDingoDataDir(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"drep_id":"drep1aaa","hex":"22aaaa","amount":"1","metadata":null}]`))
+	})
+	got, err := c.DReps(context.Background())
+	if err != nil {
+		t.Fatalf("DReps: %v", err)
+	}
+	if len(got) != 1 || got[0].DRepID != "drep1aaa" {
+		t.Fatalf("DReps = %+v, want the node's single entry without a data dir", got)
+	}
+}
+
 func TestAsset(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

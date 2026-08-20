@@ -32,6 +32,7 @@ import type {
   PoolDirectoryResponse,
   GovernanceActionsResponse,
   DRepInfo,
+  DRepDirectoryResponse,
   AssetInfo,
   DelegationRequest,
   DelegationPreview,
@@ -246,17 +247,28 @@ export const resolveHandle = (name: string) =>
 export const getPool = (id: string) => apiGet<PoolInfo>(`/wallet/pool/${encodeURIComponent(id)}`);
 export const getDRep = (id: string) => apiGet<DRepInfo>(`/wallet/drep/${encodeURIComponent(id)}`);
 
-// Read-only stake-pool directory (node-local; distinct from the DEX AMM pools).
-// Browse/search the pools the node has indexed, for delegation. Search (q) and
-// pagination (page/count) are applied server-side over the node's list.
-export const getPoolDirectory = (params?: { q?: string; page?: number; count?: number }) => {
+// Shared query-string builder for the read-only pool/DRep directories: both
+// serialize the same search (q) and pagination (page/count) params the same
+// way, so this keeps their semantics from drifting apart.
+function directoryQuery(params?: { q?: string; page?: number; count?: number }): string {
   const qs = new URLSearchParams();
   if (params?.q) qs.set("q", params.q);
   if (params?.page && params.page > 1) qs.set("page", String(params.page));
   if (params?.count) qs.set("count", String(params.count));
-  const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return apiGet<PoolDirectoryResponse>(`/wallet/pools${suffix}`);
-};
+  return qs.toString() ? `?${qs.toString()}` : "";
+}
+
+// Read-only stake-pool directory (node-local; distinct from the DEX AMM pools).
+// Browse/search the pools the node has indexed, for delegation. Search (q) and
+// pagination (page/count) are applied server-side over the node's list.
+export const getPoolDirectory = (params?: { q?: string; page?: number; count?: number }) =>
+  apiGet<PoolDirectoryResponse>(`/wallet/pools${directoryQuery(params)}`);
+
+// Read-only DRep directory (node-local): browse/search the delegated
+// representatives the node has indexed, to inform vote-delegation. Search (q)
+// and pagination (page/count) are applied server-side over the node's list.
+export const getDReps = (params?: { q?: string; page?: number; count?: number }) =>
+  apiGet<DRepDirectoryResponse>(`/wallet/dreps${directoryQuery(params)}`);
 
 // Read-only governance-action (Conway proposal) browser (node-local; read from
 // the node's metadata DB). Browse/search the governance actions the node has

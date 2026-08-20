@@ -1,5 +1,6 @@
 import type { Tone } from "./StatusPill";
 import type { Status, NodeState } from "../api/types";
+import { bootstrapPhaseLabel } from "../bootstrapPhases";
 
 interface SyncBannerProps {
   status: Status;
@@ -26,7 +27,7 @@ export function SyncBanner({ status }: SyncBannerProps) {
 
   let detail = "";
   if (status.state === "bootstrapping" && status.bootstrap) {
-    detail = `${status.bootstrap.phase} ${status.bootstrap.percent.toFixed(1)}%`;
+    detail = `${bootstrapPhaseLabel(status.bootstrap.phase)} ${status.bootstrap.percent.toFixed(1)}%`;
   } else if (status.state === "ready") {
     detail = `tip ${status.tip} · ${status.caughtUp ? "caught up" : "catching up"}`;
   } else if (status.error) {

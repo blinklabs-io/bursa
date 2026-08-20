@@ -87,6 +87,92 @@ test("CopyButton copies its value and shows feedback on success", async () => {
   expect(status.closest("button")).toBeNull();
 });
 
+// On a touch layout there is no Cmd/Ctrl-K and the sidebar's "Search…" pill is
+// hidden, so this button is the palette's only one-tap route in. Asserting it
+// renders is not enough — it has to actually fire.
+test("the mobile top bar opens the command line in one tap", () => {
+  const onOpenPalette = vi.fn();
+  renderMobileNav({ onOpenPalette });
+
+  const cli = screen.getByRole("button", { name: /open the command line/i });
+  expect(cli).toBeEnabled();
+
+  fireEvent.click(cli);
+
+  expect(onOpenPalette).toHaveBeenCalledTimes(1);
+});
+
+// The drawer does not have to be open for it to work: needing two taps to reach
+// the surface that carries most destinations is the thing this fixes.
+test("the mobile command line does not require opening the drawer first", () => {
+  const onOpenPalette = vi.fn();
+  renderMobileNav({ onOpenPalette });
+
+  // The drawer panel is always in the DOM (it slides in via a class), so assert
+  // the state a user would perceive: the menu is still shut.
+  expect(screen.getByRole("button", { name: /open menu/i })).toHaveAttribute("aria-expanded", "false");
+  expect(document.querySelector(".mobile-drawer-open")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: /open the command line/i }));
+
+  expect(document.querySelector(".mobile-drawer-open")).toBeNull();
+
+  expect(onOpenPalette).toHaveBeenCalledTimes(1);
+});
+
+// The drawer overlay covers the top bar and the Tab trap keeps keyboard focus
+// inside the drawer, but the overlay is itself aria-hidden — so without the same
+// treatment the hamburger beside it gets, a screen reader still announces this
+// control as available, and before the drawer, since the top bar comes first.
+test("the mobile command line leaves the accessibility tree while the drawer is open", () => {
+  renderMobileNav({ onOpenPalette: vi.fn() });
+
+  const cli = screen.getByRole("button", { name: /open the command line/i });
+
+  fireEvent.click(screen.getByRole("button", { name: /open menu/i }));
+
+  expect(cli).toHaveAttribute("aria-hidden", "true");
+  expect(cli).toHaveAttribute("tabindex", "-1");
+  expect(screen.queryByRole("button", { name: /open the command line/i })).toBeNull();
+});
+
+// The banner rides along on every screen for the whole bootstrap, so it is where
+// a phase name is read most. dingo's keys are internal identifiers, and the long
+// phases are the ones a user actually sits through.
+test("SyncBanner names the bootstrap phase in words, not dingo's phase key", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "immutable_copy", percent: 6.4 },
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/copy chain history 6\.4%/i)).toBeInTheDocument();
+  expect(screen.queryByText(/immutable_copy/)).not.toBeInTheDocument();
+});
+
+// A phase dingo adds later must still read as words rather than leaking a key.
+test("SyncBanner de-underscores a phase it does not know", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "some_future_phase", percent: 1 },
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/some future phase 1\.0%/i)).toBeInTheDocument();
+});
+
 test("SyncBanner shows error detail ahead of retained bootstrap diagnostics", () => {
   render(
     <SyncBanner

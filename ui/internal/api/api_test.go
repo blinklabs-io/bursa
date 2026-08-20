@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -541,6 +542,8 @@ type fakeLookup struct {
 	poolsErr error
 	drep     chain.DRepInfo
 	drepErr  error
+	dreps    []chain.DRepListItem
+	drepsErr error
 
 	govActions    []chain.GovernanceAction
 	govActionsErr error
@@ -564,6 +567,10 @@ func (f *fakeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, error) {
 
 func (f *fakeLookup) GovernanceActions(_ context.Context) ([]chain.GovernanceAction, error) {
 	return f.govActions, f.govActionsErr
+}
+
+func (f *fakeLookup) DReps(_ context.Context) ([]chain.DRepListItem, error) {
+	return f.dreps, f.drepsErr
 }
 
 func (f *fakeLookup) AssetAddresses(_ context.Context, _ string) ([]chain.AssetAddress, error) {
@@ -682,6 +689,182 @@ func TestGetPoolDirectoryNilLookup(t *testing.T) {
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pools", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /wallet/pools with nil lookup = %d, want 503", rec.Code)
+	}
+}
+
+// drepDirectoryResult mirrors the GET /wallet/dreps JSON response for tests.
+type drepDirectoryResult struct {
+	DReps []chain.DRepListItem `json:"dreps"`
+	Total int                  `json:"total"`
+	Page  int                  `json:"page"`
+	Count int                  `json:"count"`
+}
+
+func decodeDRepDirectory(t *testing.T, rec *httptest.ResponseRecorder) drepDirectoryResult {
+	t.Helper()
+	var got drepDirectoryResult
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return got
+}
+
+func drepDirHandler(lookup NodeLookup) http.Handler {
+	return NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+}
+
+func TestGetDRepDirectory(t *testing.T) {
+	lookup := &fakeLookup{dreps: []chain.DRepListItem{
+		{
+			DRepID:   "drep1aaa",
+			Hex:      "22aa",
+			Amount:   "1500000",
+			Metadata: &chain.DRepMetadata{URL: "https://a.example/d.json"},
+		},
+		{DRepID: "drep1bbb", Hex: "23bb", Amount: "0", HasScript: true, Retired: true},
+	}}
+	h := drepDirHandler(lookup)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/dreps = %d, want 200", rec.Code)
+	}
+	got := decodeDRepDirectory(t, rec)
+	if got.Total != 2 || len(got.DReps) != 2 || got.Page != 1 {
+		t.Fatalf("directory = %+v, want 2 dreps on page 1", got)
+	}
+	if got.DReps[0].DRepID != "drep1aaa" || got.DReps[0].Amount != "1500000" || got.DReps[0].Retired {
+		t.Fatalf("drep[0] = %+v, want drep1aaa with 1500000 voting power, not retired", got.DReps[0])
+	}
+	if got.DReps[0].Metadata == nil || got.DReps[0].Metadata.URL != "https://a.example/d.json" {
+		t.Fatalf("drep[0] metadata = %+v, want the anchor url", got.DReps[0].Metadata)
+	}
+	if !got.DReps[1].Retired {
+		t.Fatalf("drep[1] = %+v, want the retired entry", got.DReps[1])
+	}
+}
+
+func TestGetDRepDirectorySearchFilter(t *testing.T) {
+	lookup := &fakeLookup{dreps: []chain.DRepListItem{
+		{DRepID: "drep1aaa", Hex: "22aa"},
+		{DRepID: "drep1bbb", Hex: "23bb"},
+	}}
+	h := drepDirHandler(lookup)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps?q=BBB", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/dreps?q=BBB = %d, want 200", rec.Code)
+	}
+	got := decodeDRepDirectory(t, rec)
+	if got.Total != 1 || len(got.DReps) != 1 || got.DReps[0].DRepID != "drep1bbb" {
+		t.Fatalf("filtered directory = %+v, want only drep1bbb", got)
+	}
+}
+
+// The node's list reports hex as the 29-byte CIP-129 payload (1-byte header +
+// 28-byte credential), so a credential pasted from a tool that prints the bare
+// hash is a suffix of it rather than the whole field. Search must still find
+// both that and a pasted bech32 id.
+func TestGetDRepDirectorySearchMatchesPastedIDs(t *testing.T) {
+	const (
+		credential = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+		drepID     = "drep1y2s6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgg68q7a8"
+	)
+	lookup := &fakeLookup{dreps: []chain.DRepListItem{
+		{
+			DRepID:   drepID,
+			Hex:      "22" + credential,
+			Metadata: &chain.DRepMetadata{URL: "https://a.example/drep.json"},
+		},
+		{DRepID: "drep1bbb", Hex: "23bb"},
+	}}
+	h := drepDirHandler(lookup)
+
+	for _, tc := range []struct {
+		name string
+		q    string
+	}{
+		{"bech32 id", drepID},
+		{"bare 28-byte credential hex", credential},
+		{"full cip-129 hex", "22" + credential},
+		{"metadata anchor url", "a.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps?q="+url.QueryEscape(tc.q), nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET /wallet/dreps?q=%s = %d, want 200", tc.q, rec.Code)
+			}
+			got := decodeDRepDirectory(t, rec)
+			if got.Total != 1 || len(got.DReps) != 1 || got.DReps[0].DRepID != drepID {
+				t.Fatalf("search %q = %+v, want the single matching drep", tc.q, got)
+			}
+		})
+	}
+}
+
+func TestGetDRepDirectoryEmpty(t *testing.T) {
+	h := drepDirHandler(&fakeLookup{dreps: nil})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/dreps = %d, want 200", rec.Code)
+	}
+	got := decodeDRepDirectory(t, rec)
+	if got.Total != 0 || len(got.DReps) != 0 {
+		t.Fatalf("empty directory = %+v, want 0 dreps", got)
+	}
+}
+
+func TestGetDRepDirectoryPageOverflow(t *testing.T) {
+	lookup := &fakeLookup{dreps: []chain.DRepListItem{
+		{DRepID: "drep1aaa", Hex: "22aa"},
+		{DRepID: "drep1bbb", Hex: "23bb"},
+	}}
+	h := drepDirHandler(lookup)
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		// (page-1)*count overflows int64 to a negative start; must not panic.
+		{"overflow", "/wallet/dreps?page=9223372036854775807&count=50"},
+		// One page past the end: a valid but empty page.
+		{"just-past-end", "/wallet/dreps?page=2&count=50"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, tc.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want 200", tc.path, rec.Code)
+			}
+			got := decodeDRepDirectory(t, rec)
+			if got.Total != 2 || len(got.DReps) != 0 {
+				t.Fatalf("overflow page = %+v, want total 2 with an empty page", got)
+			}
+		})
+	}
+}
+
+func TestGetDRepDirectoryNilLookup(t *testing.T) {
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /wallet/dreps with nil lookup = %d, want 503", rec.Code)
+	}
+}
+
+func TestGetDRepDirectoryLookupError(t *testing.T) {
+	h := drepDirHandler(&fakeLookup{drepsErr: chain.ErrNotFound})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /wallet/dreps with lookup error = %d, want 404 (serveLookup's not-found mapping)", rec.Code)
 	}
 }
 
@@ -3447,6 +3630,10 @@ func (f *fakeNodeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, erro
 
 func (f *fakeNodeLookup) GovernanceActions(_ context.Context) ([]chain.GovernanceAction, error) {
 	return nil, nil
+}
+
+func (f *fakeNodeLookup) DReps(_ context.Context) ([]chain.DRepListItem, error) {
+	return nil, chain.ErrNotFound
 }
 
 func (f *fakeNodeLookup) AssetAddresses(_ context.Context, asset string) ([]chain.AssetAddress, error) {
