@@ -837,6 +837,36 @@ test.each([
   await waitFor(() => expect(document.querySelector(".palette")).toBeNull());
 });
 
+// The palette and the button on the balance both explain why Send is off. They
+// read from one string on purpose; asserting both here is what stops them
+// drifting into two different explanations of the same block.
+test("the palette and the balance agree on why Send is off", async () => {
+  // A syncing (not ready) node: the wallet can read, but not spend. Set up
+  // inline rather than through the helper, which always stubs a ready node.
+  stubStatus("syncing");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([{ ...walletA, active: true }]);
+
+  render(<App />);
+  // A node that is not ready puts the Syncing view in front of the vault.
+  fireEvent.click(screen.getByRole("button", { name: /load wallet anyway/i }));
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+  await waitFor(() => expect(document.querySelector(".sidebar")).not.toBeNull());
+  const sidebar = document.querySelector(".sidebar") as HTMLElement;
+
+  const main = document.querySelector("main") as HTMLElement;
+  expect(await within(main).findByRole("button", { name: "Send" })).toBeDisabled();
+  expect(within(main).getByText(/send is unavailable — needs a synced node/i)).toBeInTheDocument();
+
+  fireEvent.click(within(sidebar).getByRole("button", { name: /search/i }));
+  const palette = await screen.findByRole("dialog", { name: /command palette/i });
+  const send = within(palette).getByRole("option", { name: /^Send/ });
+  expect(send).toBeDisabled();
+  expect(send).toHaveTextContent(/needs a synced node/i);
+});
+
 // The nav carries five destinations; everything else lives in the palette, so
 // the palette needs a permanent affordance in the chrome rather than only a
 // keyboard shortcut. Drive it: click the glyph, get the dialog.

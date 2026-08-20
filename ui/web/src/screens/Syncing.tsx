@@ -187,8 +187,14 @@ export function Syncing({ status, onLoadAnyway }: SyncingProps) {
       subtitle = "Bringing the embedded Cardano node online.";
       break;
     case "error":
-      title = "Sync interrupted";
-      subtitle = status.error || "The node reported an error.";
+      // Not "interrupted": this state does not resume on its own, and a title
+      // that implies it will leaves someone waiting on nothing. The raw error
+      // belongs in the panel below, once — repeating it as the subtitle said
+      // the same sentence twice on one screen.
+      title = "Your node stopped";
+      subtitle =
+        "The embedded Cardano node reported an error and is not running, so " +
+        "balances, history and sending are unavailable until it starts again.";
       break;
     default:
       title = "Preparing";
@@ -205,6 +211,12 @@ export function Syncing({ status, onLoadAnyway }: SyncingProps) {
       <div className="sync-panel">
         <p className="error-text" role="alert">
           {status.error || "The node reported an error."}
+        </p>
+        <p className="helper-text">
+          Restarting the wallet will try again from where it left off — a
+          bootstrap already downloaded is not thrown away. If it keeps failing,
+          the node&rsquo;s own log is the next place to look; your keys are in
+          the vault either way and are not affected by this.
         </p>
       </div>
     );
@@ -231,8 +243,9 @@ export function Syncing({ status, onLoadAnyway }: SyncingProps) {
           Load wallet anyway (read-only)
         </button>
         <p className="helper-text">
-          You can open a wallet now, but balances and history stay incomplete
-          until syncing finishes.
+          {status.state === "error"
+            ? "You can still open your wallet and reach its settings, but balances, history and addresses are all read through the node and need it running."
+            : "You can open a wallet now, but balances and history stay incomplete until syncing finishes."}
         </p>
       </footer>
     </div>

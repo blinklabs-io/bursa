@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -856,5 +857,19 @@ func TestScriptAccountViewsSkipStakeLookups(t *testing.T) {
 	}
 	if len(rw.Rewards) != 0 {
 		t.Fatalf("Rewards = %+v, want an empty history", rw.Rewards)
+	}
+}
+
+// The note is shown verbatim beside the user's own rewards figure, so it must
+// not carry upstream tracker references. Naming dingo or an issue number tells
+// the reader nothing they can act on, and it leaked into the wallet UI once.
+func TestProvisionalRewardsNoteIsUserFacing(t *testing.T) {
+	for _, banned := range []string{"dingo", "#2373", "#2374", "#2375", "#2376", "open issues"} {
+		if strings.Contains(strings.ToLower(provisionalRewardsNote), strings.ToLower(banned)) {
+			t.Errorf("provisional rewards note leaks %q to the user: %q", banned, provisionalRewardsNote)
+		}
+	}
+	if provisionalRewardsNote == "" {
+		t.Fatal("provisional rewards note must still say something")
 	}
 }

@@ -309,6 +309,51 @@ test("NFT image load failure renders the empty thumbnail", () => {
   expect(screen.queryByRole("img", { name: "Token" })).not.toBeInTheDocument();
   expect(container.querySelector(".nft-thumb-empty")).toBeInTheDocument();
 });
+
+// A greyed Send with no reason leaves someone guessing whether the wallet is
+// broken or just waiting. The palette has always said why; the button now does.
+test("a disabled Send says why it is disabled", () => {
+  mockBalance("5000000", []);
+  mockDelegation();
+  mockAssetMetadata({});
+
+  render(<Portfolio canSend={false} sendDisabledReason="Needs a synced node" />);
+
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  expect(screen.getByText(/send is unavailable — needs a synced node/i)).toBeInTheDocument();
+});
+
+test("an enabled Send explains nothing", () => {
+  mockBalance("5000000", []);
+  mockDelegation();
+  mockAssetMetadata({});
+
+  render(<Portfolio canSend sendDisabledReason="Needs a synced node" />);
+
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  expect(screen.queryByText(/send is unavailable/i)).not.toBeInTheDocument();
+});
+
+// A multi-signature wallet whose stored policy will not decode already gets an
+// alert saying it cannot spend. Repeating "Send is unavailable — this wallet
+// cannot spend" underneath the buttons says the same thing twice, more vaguely.
+test("an explicit multi-signature error is not restated as the generic reason", () => {
+  mockBalance("5000000", []);
+  mockDelegation();
+  mockAssetMetadata({});
+
+  render(
+    <Portfolio
+      canSend={false}
+      sendDisabledReason="This wallet cannot spend"
+      multiSigError="This wallet's multi-signature policy could not be read, so it cannot spend."
+    />,
+  );
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/policy could not be read/i);
+  expect(screen.queryByText(/send is unavailable/i)).not.toBeInTheDocument();
+});
+
 // The read-only escape hatch lets people in before the node can answer, so this
 // is the first screen a new user sees on a fresh install. A bare "node not
 // ready" in an empty page reads as a broken wallet; the node is simply starting.
