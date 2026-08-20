@@ -83,17 +83,30 @@ type SignerConfig struct {
 	JWTAudience   string `yaml:"jwt_audience"   envconfig:"SIGNER_JWT_AUDIENCE"`
 	TLSCertFile   string `yaml:"tls_cert_file"  envconfig:"SIGNER_TLS_CERT_FILE"`
 	TLSKeyFile    string `yaml:"tls_key_file"   envconfig:"SIGNER_TLS_KEY_FILE"`
+	// ClientCACert is a PEM file of CA certificate(s) used to verify TLS client
+	// certificates (mTLS). When set, TLS client-cert auth is enabled and the
+	// caller identity is derived from the verified client certificate.
+	ClientCACert string `yaml:"client_ca_cert" envconfig:"SIGNER_CLIENT_CA_CERT"`
+	// RequireClientCert makes a verified client certificate mandatory on every
+	// connection (tls.RequireAndVerifyClientCert). When false and ClientCACert
+	// is set, a client cert is optional (tls.VerifyClientCertIfGiven) and other
+	// auth modes remain available on connections without one.
+	RequireClientCert bool `yaml:"require_client_cert" envconfig:"SIGNER_REQUIRE_CLIENT_CERT"`
+	// RequestSignSkewSeconds is the ± timestamp window (seconds) accepted for
+	// authorized-keys request signatures. Zero uses the 60s default.
+	RequestSignSkewSeconds int `yaml:"request_sign_skew_seconds" envconfig:"SIGNER_REQUEST_SIGN_SKEW_SECONDS"`
 	// AllowInsecureFileBackend opts in to running the plaintext software/file
 	// key backend while bound to a non-loopback address. The software backend
 	// loads private key material into process memory and is intended for
 	// development only; production deployments should use a Vault or SOPS
 	// backend. Defaults to false: boot fails if a software/file backend is
 	// configured on a non-loopback listen address without this flag.
-	AllowInsecureFileBackend bool                  `yaml:"allow_insecure_file_backend" envconfig:"SIGNER_ALLOW_INSECURE_FILE_BACKEND"`
-	Watermark                SignerWatermarkConfig `yaml:"watermark"`
-	Backends                 []SignerBackendConfig `yaml:"backends"`
-	Keys                     []SignerKeyConfig     `yaml:"keys"`
-	Callers                  []SignerCallerConfig  `yaml:"callers"`
+	AllowInsecureFileBackend bool                        `yaml:"allow_insecure_file_backend" envconfig:"SIGNER_ALLOW_INSECURE_FILE_BACKEND"`
+	Watermark                SignerWatermarkConfig       `yaml:"watermark"`
+	Backends                 []SignerBackendConfig       `yaml:"backends"`
+	Keys                     []SignerKeyConfig           `yaml:"keys"`
+	Callers                  []SignerCallerConfig        `yaml:"callers"`
+	AuthorizedKeys           []SignerAuthorizedKeyConfig `yaml:"authorized_keys"`
 	// CallerPolicies optionally narrows a caller's authority for specific keys.
 	// Shape: caller subject -> key hash (hex) -> tx-policy overrides (mapped to
 	// policy.CallerTxOverride at setup). An override can only further restrict
@@ -104,6 +117,15 @@ type SignerConfig struct {
 	// on an allow response (fail closed). Off by default.
 	PolicyHookURL       string `yaml:"policy_hook_url"        envconfig:"SIGNER_POLICY_HOOK_URL"`
 	PolicyHookTimeoutMs uint   `yaml:"policy_hook_timeout_ms" envconfig:"SIGNER_POLICY_HOOK_TIMEOUT_MS"`
+}
+
+// SignerAuthorizedKeyConfig registers an Ed25519 public key that may
+// authenticate via the authorized-keys request-signing scheme. Caller is the
+// identity fed to the CallerACL; Ed25519PubkeyHex is the hex-encoded 32-byte
+// public key that must verify the request signature.
+type SignerAuthorizedKeyConfig struct {
+	Caller           string `yaml:"caller"`
+	Ed25519PubkeyHex string `yaml:"ed25519_pubkey_hex"`
 }
 
 // SignerCallerConfig grants a JWT subject access to specific keys.
