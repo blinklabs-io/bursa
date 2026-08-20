@@ -111,9 +111,9 @@ type NodeLookup interface {
 	// /pools/extended) for the read-only browse/search screen.
 	Pools(ctx context.Context) ([]chain.PoolInfo, error)
 	DRep(ctx context.Context, drepID string) (chain.DRepInfo, error)
-	// DReps returns the node's full DRep directory (read node-locally from
-	// Dingo's metadata DB) for the read-only browse/search screen.
-	DReps(ctx context.Context) ([]chain.DRepInfo, error)
+	// DReps returns the node's full DRep directory (its paginated
+	// /governance/dreps list) for the read-only browse/search screen.
+	DReps(ctx context.Context) ([]chain.DRepListItem, error)
 	AssetAddresses(ctx context.Context, asset string) ([]chain.AssetAddress, error)
 	// Asset returns on-chain identity/metadata for a native asset (unit =
 	// policy ID + hex asset name). Most assets have no indexed on-chain
@@ -1497,9 +1497,9 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	}))
 
 	// Read-only DRep directory: browse/search the delegated representatives the
-	// node has indexed, to inform vote-delegation. Node-local (read from Dingo's
-	// metadata DB, nothing leaves 127.0.0.1) — so, like the pool directory,
-	// there is deliberately NO external-consent gate. Search (q) and pagination
+	// node has indexed, to inform vote-delegation. Node-local (the embedded
+	// node's own list endpoint over loopback, nothing leaves 127.0.0.1) — so,
+	// like the pool directory, there is deliberately NO external-consent gate. Search (q) and pagination
 	// (page/count) are applied server-side over the node's list.
 	mux.HandleFunc("GET /wallet/dreps", gated(st, func(w http.ResponseWriter, r *http.Request) {
 		if lookup == nil {
@@ -1824,21 +1824,27 @@ func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poo
 // node's DRep directory plus the total number of DReps that matched the search,
 // so the client can page through them.
 type drepDirectoryResponse struct {
-	DReps []chain.DRepInfo `json:"dreps"`
-	Total int              `json:"total"`
-	Page  int              `json:"page"`
-	Count int              `json:"count"`
+	DReps []chain.DRepListItem `json:"dreps"`
+	Total int                  `json:"total"`
+	Page  int                  `json:"page"`
+	Count int                  `json:"count"`
 }
 
 // filterAndPageDReps applies the read-only directory's server-side search and
 // pagination over the node's full DRep list. The search (q) is a
-// case-insensitive substring match against the DRep's bech32 id, hex
-// credential, and metadata anchor URL.
-func filterAndPageDReps(dreps []chain.DRepInfo, q, pageStr, countStr string) drepDirectoryResponse {
-	pageItems, total, page, count := filterAndPage(dreps, q, pageStr, countStr, func(d chain.DRepInfo, needle string) bool {
+// case-insensitive substring match against the DRep's bech32 id, CIP-129 hex
+// payload, and metadata anchor URL. Matching hex as a substring is what lets a
+// bare 28-byte credential — which is only the tail of the 29-byte CIP-129
+// payload the node reports — still find its DRep.
+func filterAndPageDReps(dreps []chain.DRepListItem, q, pageStr, countStr string) drepDirectoryResponse {
+	pageItems, total, page, count := filterAndPage(dreps, q, pageStr, countStr, func(d chain.DRepListItem, needle string) bool {
+		anchorURL := ""
+		if d.Metadata != nil {
+			anchorURL = d.Metadata.URL
+		}
 		return strings.Contains(strings.ToLower(d.DRepID), needle) ||
 			strings.Contains(strings.ToLower(d.Hex), needle) ||
-			strings.Contains(strings.ToLower(d.AnchorURL), needle)
+			strings.Contains(strings.ToLower(anchorURL), needle)
 	})
 	return drepDirectoryResponse{DReps: pageItems, Total: total, Page: page, Count: count}
 }

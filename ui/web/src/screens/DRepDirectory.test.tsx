@@ -1,30 +1,58 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { DRepDirectory } from "./DRepDirectory";
 import * as client from "../api/client";
-import type { DRepInfo, DRepDirectoryResponse } from "../api/types";
+import type { DRepListItem, DRepDirectoryResponse } from "../api/types";
 
-const DREP_A: DRepInfo = {
+const DREP_A: DRepListItem = {
   drep_id: "drep1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0001",
-  hex: "aa",
+  hex: "22aa",
   has_script: false,
-  registered: true,
   amount: "1500000000",
-  active: true,
-  live_stake: "1500000000",
-  anchor_url: "https://example.com/drep-a.json",
+  retired: false,
+  expired: false,
+  last_active_epoch: 512,
+  metadata: { url: "https://example.com/drep-a.json", hash: "cafe" },
 };
 
-const DREP_B: DRepInfo = {
+const DREP_B: DRepListItem = {
   drep_id: "drep1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0002",
-  hex: "bb",
+  hex: "23bb",
   has_script: true,
-  registered: false,
   amount: "0",
-  active: false,
-  live_stake: "0",
+  retired: true,
+  expired: false,
+  last_active_epoch: null,
+  metadata: null,
 };
 
-function directory(dreps: DRepInfo[], overrides?: Partial<DRepDirectoryResponse>): DRepDirectoryResponse {
+// Registered, but past the node's DRep inactivity period without voting: the
+// row the old `active` column rendered as "Active".
+const DREP_EXPIRED: DRepListItem = {
+  drep_id: "drep1cccccccccccccccccccccccccccccccccccccccccccccccccc0003",
+  hex: "22cc",
+  has_script: false,
+  amount: "9000000",
+  retired: false,
+  expired: true,
+  last_active_epoch: 480,
+  metadata: null,
+};
+
+// One of the two predefined targets the node interleaves into its list. It has
+// no bech32 id and no credential hex, and is chosen in Staking rather than by
+// pasting an id.
+const DREP_ABSTAIN: DRepListItem = {
+  drep_id: "drep_always_abstain",
+  hex: "",
+  has_script: false,
+  amount: "7000000000",
+  retired: false,
+  expired: false,
+  last_active_epoch: null,
+  metadata: null,
+};
+
+function directory(dreps: DRepListItem[], overrides?: Partial<DRepDirectoryResponse>): DRepDirectoryResponse {
   return { dreps, total: dreps.length, page: 1, count: 50, ...overrides };
 }
 
@@ -37,14 +65,63 @@ test("lists DReps read from the node with formatted voting power and status", as
 
   render(<DRepDirectory network="preview" />);
 
-  // 1500000000 lovelace → 1,500 ADA (grouped); active/inactive statuses shown.
+  // 1500000000 lovelace → 1,500 ADA (grouped).
   expect(await screen.findByText("1,500")).toBeInTheDocument();
-  expect(screen.getByText("Active")).toBeInTheDocument();
-  expect(screen.getByText("Inactive")).toBeInTheDocument();
+  expect(screen.getByText("Registered")).toBeInTheDocument();
+  expect(screen.getByText("Retired")).toBeInTheDocument();
   // Copy affordance carries the full (untruncated) drep id.
   expect(
     screen.getByRole("button", { name: `Copy drep id ${DREP_A.drep_id}` }),
   ).toBeInTheDocument();
+});
+
+test("distinguishes registered, retired and expired DReps", async () => {
+  // The node's list has no single "active" flag: a DRep that registered and
+  // then stopped voting is still registered but expired under CIP-1694, and
+  // must not read the same as one that deregistered.
+  vi.spyOn(client, "getDReps").mockResolvedValue(
+    directory([DREP_A, DREP_B, DREP_EXPIRED]),
+  );
+
+  render(<DRepDirectory network="preview" />);
+
+  expect(await screen.findByText("Registered")).toBeInTheDocument();
+  expect(screen.getByText("Retired")).toBeInTheDocument();
+  const expired = screen.getByText("Expired");
+  expect(expired).toBeInTheDocument();
+  // The epoch it was last active in is what tells an operator how stale it is.
+  expect(expired).toHaveAttribute("title", expect.stringContaining("480"));
+});
+
+test("shows the metadata anchor the node resolved, without fetching it", async () => {
+  vi.spyOn(client, "getDReps").mockResolvedValue(directory([DREP_A, DREP_B]));
+
+  render(<DRepDirectory network="preview" />);
+
+  const anchor = await screen.findByTitle("https://example.com/drep-a.json");
+  expect(anchor).toBeInTheDocument();
+  // It is display-only text, never a link the user can follow from here.
+  expect(anchor.closest("a")).toBeNull();
+  // A DRep with no anchor renders a placeholder rather than an empty cell.
+  expect(screen.getByText("—")).toBeInTheDocument();
+});
+
+test("renders the predefined DReps as targets chosen in Staking", async () => {
+  vi.spyOn(client, "getDReps").mockResolvedValue(directory([DREP_ABSTAIN]));
+
+  render(<DRepDirectory network="preview" />);
+
+  // Listed deliberately: they carry real delegated voting power (7,000 ADA
+  // here), so hiding them would understate what the node indexed.
+  expect(await screen.findByText("drep_always_abstain")).toBeInTheDocument();
+  expect(screen.getByText("7,000")).toBeInTheDocument();
+  expect(screen.getByText("Predefined")).toBeInTheDocument();
+  // They have no on-chain registration to look up and no id worth pasting —
+  // Staking offers them as their own options — so neither affordance is shown.
+  expect(
+    screen.queryByRole("button", { name: /copy drep id/i }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
 });
 
 test("search box queries the node server-side with the typed term", async () => {
@@ -53,7 +130,7 @@ test("search box queries the node server-side with the typed term", async () => 
     .mockResolvedValue(directory([DREP_A]));
 
   render(<DRepDirectory network="preview" />);
-  await screen.findByText("Active");
+  await screen.findByText("Registered");
 
   getDReps.mockResolvedValue(directory([DREP_B]));
   fireEvent.change(screen.getByLabelText(/search by drep id/i), {
@@ -111,7 +188,7 @@ test("mentions the Delegate shortcut in the intro copy when it is available", as
   vi.spyOn(client, "getDReps").mockResolvedValue(directory([DREP_A]));
 
   const { container } = render(<DRepDirectory network="preview" />);
-  await screen.findByText("Active");
+  await screen.findByText("Registered");
 
   const helperText = container.querySelector(".helper-text")?.textContent ?? "";
   expect(helperText).toMatch(/or use Delegate\.$/);

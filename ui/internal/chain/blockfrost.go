@@ -16,7 +16,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
@@ -189,12 +188,39 @@ type DRepInfo struct {
 	Amount     string `json:"amount"`
 	Active     bool   `json:"active"`
 	LiveStake  string `json:"live_stake"`
-	// AnchorURL is the DRep's on-chain metadata anchor (a pointer to an
-	// off-chain document), when the node has one indexed. It is populated by
-	// the DReps directory listing (read from Dingo's local metadata DB); the
-	// single-DRep HTTP lookup leaves it empty. The wallet never fetches the
-	// URL — it is displayed as-is, so browsing stays node-local.
-	AnchorURL string `json:"anchor_url,omitempty"`
+}
+
+// DRepListItem is one entry of GET /api/v0/governance/dreps, the node's
+// paginated DRep directory. It is deliberately a separate type from DRepInfo:
+// the list reports CIP-1694 lifecycle status (retired/expired plus the epoch
+// the DRep was last active in) and a resolved CIP-119 anchor document, and it
+// has no registered/active/live_stake fields for DRepInfo to borrow.
+type DRepListItem struct {
+	// DRepID is the CIP-129 bech32 drep1… identifier, encoded by the node. The
+	// predefined targets appear as the literal strings "drep_always_abstain"
+	// and "drep_always_no_confidence", with an empty Hex.
+	DRepID string `json:"drep_id"`
+	// Hex is the CIP-129 payload — the 1-byte header (0x22 key hash, 0x23
+	// script hash) followed by the 28-byte credential — so a pasted bare
+	// credential is a suffix of it, not the whole string.
+	Hex             string        `json:"hex"`
+	Amount          string        `json:"amount"`
+	HasScript       bool          `json:"has_script"`
+	Retired         bool          `json:"retired"`
+	Expired         bool          `json:"expired"`
+	LastActiveEpoch *uint64       `json:"last_active_epoch"`
+	Metadata        *DRepMetadata `json:"metadata"`
+}
+
+// DRepMetadata is the DRep's resolved CIP-119 anchor document as reported by
+// the node's list. Only the anchor's identity is decoded: the directory
+// displays the URL (it never fetches it, so browsing stays node-local) and the
+// hash identifies the document it belongs to. The document body the node also
+// serves (json_metadata/bytes) is deliberately dropped here rather than
+// carried through the wallet's own API for a screen that does not render it.
+type DRepMetadata struct {
+	URL  string `json:"url"`
+	Hash string `json:"hash"`
 }
 
 // Genesis mirrors GET /api/v0/genesis: the network's immutable genesis
@@ -650,159 +676,15 @@ func (c *Client) DRep(ctx context.Context, drepID string) (DRepInfo, error) {
 	return out, err
 }
 
-// DReps returns the delegated representatives the embedded node has indexed, for
-// the read-only DRep-directory browser — the governance analogue of Pools. The
-// list is read directly from Dingo's local metadata DB (the same node-local
-// source AccountDRepID uses), never an external service. Dingo also serves a
-// paginated GET /api/v0/governance/dreps list whose entries carry
-// retired/expired status and resolved CIP-119 anchor metadata this local read
-// cannot derive; moving to it is tracked separately, since it changes the
-// directory's rows and status semantics. Voting power is enriched best-effort
-// from the same DB; if that aggregate (which reads internal account/utxo
-// tables) fails, the directory still lists every DRep with empty amounts rather
-// than failing outright. When no Dingo data dir is configured the directory is
-// empty.
-func (c *Client) DReps(ctx context.Context) ([]DRepInfo, error) {
-	if c.dingoDataDir == "" {
-		return nil, nil
-	}
-	metadataPath := filepath.Join(c.dingoDataDir, "metadata.sqlite")
-	if _, err := os.Stat(metadataPath); errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	} else if err != nil {
-		return nil, fmt.Errorf("drep directory: %w", err)
-	}
-	db, err := sql.Open("sqlite", sqliteReadOnlyDSN(metadataPath))
-	if err != nil {
-		return nil, fmt.Errorf("open drep directory metadata: %w", err)
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-
-	// ORDER BY gives a stable row order so the directory's server-side paging
-	// (which slices this list by position) doesn't shift results between
-	// successive page requests.
-	rows, err := db.QueryContext(
-		ctx,
-		`SELECT credential_tag, credential, anchor_url, active FROM drep ORDER BY credential_tag, credential`,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query drep directory: %w", err)
-	}
-	defer rows.Close()
-
-	var (
-		dreps []DRepInfo
-		keys  []string // power-map key per entry, in lockstep with dreps
-	)
-	for rows.Next() {
-		var (
-			tag    uint8
-			cred   []byte
-			anchor sql.NullString
-			active bool
-		)
-		if err := rows.Scan(&tag, &cred, &anchor, &active); err != nil {
-			return nil, fmt.Errorf("scan drep row: %w", err)
-		}
-		if len(cred) != lcommon.AddressHashSize {
-			continue // skip predefined/malformed credentials
-		}
-		id, err := drepBech32(tag, cred)
-		if err != nil {
-			continue
-		}
-		hexCred := hex.EncodeToString(cred)
-		dreps = append(dreps, DRepInfo{
-			DRepID:     id,
-			Hex:        hexCred,
-			HasScript:  tag == dingoAccountCredentialScript,
-			Registered: active,
-			Active:     active,
-			AnchorURL:  anchor.String,
-		})
-		keys = append(keys, drepPowerKey(tag, hexCred))
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate drep rows: %w", err)
-	}
-
-	// Enrich with voting power (best-effort — see method doc).
-	if powers, perr := drepVotingPowers(ctx, db); perr == nil {
-		for i := range dreps {
-			amount := powers[keys[i]] // absent → "" → "0" below
-			if amount == "" {
-				amount = "0"
-			}
-			dreps[i].Amount = amount
-			dreps[i].LiveStake = amount
-		}
-	}
-	return dreps, nil
-}
-
-// drepVotingPowers sums each DRep's delegated voting power (delegators' UTxO
-// lovelace + rewards) from Dingo's local metadata DB, keyed by drepPowerKey. It
-// mirrors Dingo's own GetDRepVotingPower aggregate but batches every DRep in one
-// pass. Only credential-based DReps (drep_type 0 key / 1 script) have power;
-// the predefined abstain/no-confidence targets are excluded.
-func drepVotingPowers(ctx context.Context, db *sql.DB) (map[string]string, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT a.drep_type AS tag, a.drep AS cred,
-		       COALESCE(SUM(COALESCE(u.utxo_sum, 0) + COALESCE(CAST(a.reward AS INTEGER), 0)), 0) AS power
-		FROM account a
-		LEFT JOIN (
-			SELECT credential_tag, staking_key,
-			       COALESCE(SUM(CAST(amount AS INTEGER)), 0) AS utxo_sum
-			FROM utxo
-			WHERE deleted_slot = 0
-			GROUP BY credential_tag, staking_key
-		) u ON u.credential_tag = a.credential_tag AND u.staking_key = a.staking_key
-		WHERE a.active = 1 AND a.drep IS NOT NULL AND a.drep_type IN (0, 1)
-		GROUP BY a.drep, a.drep_type`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make(map[string]string)
-	for rows.Next() {
-		var (
-			tag   uint8
-			cred  []byte
-			power uint64
-		)
-		if err := rows.Scan(&tag, &cred, &power); err != nil {
-			return nil, err
-		}
-		out[drepPowerKey(tag, hex.EncodeToString(cred))] = strconv.FormatUint(power, 10)
-	}
-	return out, rows.Err()
-}
-
-func drepPowerKey(tag uint8, hexCred string) string {
-	return strconv.Itoa(int(tag)) + ":" + hexCred
-}
-
-// drepBech32 encodes a DRep credential (Dingo's credential_tag plus the 28-byte
-// hash) as a CIP-129 bech32 drep1… identifier. The header byte is produced by
-// gouroboros' Drep.String — the same encoder the delegation builder's
-// lcommon.Drep values use — rather than a local constant, so the directory
-// cannot disagree with the identifiers the wallet builds and the node parses.
-// CIP-129 fixes the high nibble at 0x2 for a DRep and puts the credential type
-// in the low nibble (0x2 key hash, 0x3 script hash), i.e. 0x22 and 0x23; Dingo
-// rejects any other high nibble outright ("invalid DRep voter type").
-func drepBech32(tag uint8, hash []byte) (string, error) {
-	drep := lcommon.Drep{Credential: hash}
-	switch tag {
-	case dingoAccountCredentialKeyHash:
-		drep.Type = lcommon.DrepTypeAddrKeyHash
-	case dingoAccountCredentialScript:
-		drep.Type = lcommon.DrepTypeScriptHash
-	default:
-		return "", fmt.Errorf("drep credential: unknown tag %d", tag)
-	}
-	return drep.String(), nil
+// DReps returns the delegated representatives the node has indexed, for the
+// read-only DRep-directory browser — the governance analogue of Pools. It reads
+// the node's paginated GET /api/v0/governance/dreps list over loopback, the
+// same stable HTTP contract the rest of this client uses, rather than Dingo's
+// private metadata schema. The list is the only source that reports CIP-1694
+// retired/expired status and resolved CIP-119 anchor metadata, so the directory
+// can tell a deregistered DRep from one that merely stopped voting.
+func (c *Client) DReps(ctx context.Context) ([]DRepListItem, error) {
+	return getAllPages[DRepListItem](ctx, c, "/api/v0/governance/dreps")
 }
 
 // Genesis fetches the network's genesis parameters from the embedded node.

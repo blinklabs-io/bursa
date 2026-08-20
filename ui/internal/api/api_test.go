@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -541,7 +542,7 @@ type fakeLookup struct {
 	poolsErr error
 	drep     chain.DRepInfo
 	drepErr  error
-	dreps    []chain.DRepInfo
+	dreps    []chain.DRepListItem
 	drepsErr error
 
 	asset    chain.AssetInfo
@@ -561,7 +562,7 @@ func (f *fakeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, error) {
 	return f.drep, f.drepErr
 }
 
-func (f *fakeLookup) DReps(_ context.Context) ([]chain.DRepInfo, error) {
+func (f *fakeLookup) DReps(_ context.Context) ([]chain.DRepListItem, error) {
 	return f.dreps, f.drepsErr
 }
 
@@ -686,10 +687,10 @@ func TestGetPoolDirectoryNilLookup(t *testing.T) {
 
 // drepDirectoryResult mirrors the GET /wallet/dreps JSON response for tests.
 type drepDirectoryResult struct {
-	DReps []chain.DRepInfo `json:"dreps"`
-	Total int              `json:"total"`
-	Page  int              `json:"page"`
-	Count int              `json:"count"`
+	DReps []chain.DRepListItem `json:"dreps"`
+	Total int                  `json:"total"`
+	Page  int                  `json:"page"`
+	Count int                  `json:"count"`
 }
 
 func decodeDRepDirectory(t *testing.T, rec *httptest.ResponseRecorder) drepDirectoryResult {
@@ -706,9 +707,14 @@ func drepDirHandler(lookup NodeLookup) http.Handler {
 }
 
 func TestGetDRepDirectory(t *testing.T) {
-	lookup := &fakeLookup{dreps: []chain.DRepInfo{
-		{DRepID: "drep1aaa", Hex: "aa", Amount: "1500000", Active: true, Registered: true, AnchorURL: "https://a.example/d.json"},
-		{DRepID: "drep1bbb", Hex: "bb", Amount: "0", HasScript: true},
+	lookup := &fakeLookup{dreps: []chain.DRepListItem{
+		{
+			DRepID:   "drep1aaa",
+			Hex:      "22aa",
+			Amount:   "1500000",
+			Metadata: &chain.DRepMetadata{URL: "https://a.example/d.json"},
+		},
+		{DRepID: "drep1bbb", Hex: "23bb", Amount: "0", HasScript: true, Retired: true},
 	}}
 	h := drepDirHandler(lookup)
 
@@ -721,15 +727,21 @@ func TestGetDRepDirectory(t *testing.T) {
 	if got.Total != 2 || len(got.DReps) != 2 || got.Page != 1 {
 		t.Fatalf("directory = %+v, want 2 dreps on page 1", got)
 	}
-	if got.DReps[0].DRepID != "drep1aaa" || got.DReps[0].Amount != "1500000" || !got.DReps[0].Active {
-		t.Fatalf("drep[0] = %+v, want drep1aaa with 1500000 voting power, active", got.DReps[0])
+	if got.DReps[0].DRepID != "drep1aaa" || got.DReps[0].Amount != "1500000" || got.DReps[0].Retired {
+		t.Fatalf("drep[0] = %+v, want drep1aaa with 1500000 voting power, not retired", got.DReps[0])
+	}
+	if got.DReps[0].Metadata == nil || got.DReps[0].Metadata.URL != "https://a.example/d.json" {
+		t.Fatalf("drep[0] metadata = %+v, want the anchor url", got.DReps[0].Metadata)
+	}
+	if !got.DReps[1].Retired {
+		t.Fatalf("drep[1] = %+v, want the retired entry", got.DReps[1])
 	}
 }
 
 func TestGetDRepDirectorySearchFilter(t *testing.T) {
-	lookup := &fakeLookup{dreps: []chain.DRepInfo{
-		{DRepID: "drep1aaa", Hex: "aa"},
-		{DRepID: "drep1bbb", Hex: "bb"},
+	lookup := &fakeLookup{dreps: []chain.DRepListItem{
+		{DRepID: "drep1aaa", Hex: "22aa"},
+		{DRepID: "drep1bbb", Hex: "23bb"},
 	}}
 	h := drepDirHandler(lookup)
 
@@ -741,6 +753,48 @@ func TestGetDRepDirectorySearchFilter(t *testing.T) {
 	got := decodeDRepDirectory(t, rec)
 	if got.Total != 1 || len(got.DReps) != 1 || got.DReps[0].DRepID != "drep1bbb" {
 		t.Fatalf("filtered directory = %+v, want only drep1bbb", got)
+	}
+}
+
+// The node's list reports hex as the 29-byte CIP-129 payload (1-byte header +
+// 28-byte credential), so a credential pasted from a tool that prints the bare
+// hash is a suffix of it rather than the whole field. Search must still find
+// both that and a pasted bech32 id.
+func TestGetDRepDirectorySearchMatchesPastedIDs(t *testing.T) {
+	const (
+		credential = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+		drepID     = "drep1y2s6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgg68q7a8"
+	)
+	lookup := &fakeLookup{dreps: []chain.DRepListItem{
+		{
+			DRepID:   drepID,
+			Hex:      "22" + credential,
+			Metadata: &chain.DRepMetadata{URL: "https://a.example/drep.json"},
+		},
+		{DRepID: "drep1bbb", Hex: "23bb"},
+	}}
+	h := drepDirHandler(lookup)
+
+	for _, tc := range []struct {
+		name string
+		q    string
+	}{
+		{"bech32 id", drepID},
+		{"bare 28-byte credential hex", credential},
+		{"full cip-129 hex", "22" + credential},
+		{"metadata anchor url", "a.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps?q="+url.QueryEscape(tc.q), nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET /wallet/dreps?q=%s = %d, want 200", tc.q, rec.Code)
+			}
+			got := decodeDRepDirectory(t, rec)
+			if got.Total != 1 || len(got.DReps) != 1 || got.DReps[0].DRepID != drepID {
+				t.Fatalf("search %q = %+v, want the single matching drep", tc.q, got)
+			}
+		})
 	}
 }
 
@@ -759,9 +813,9 @@ func TestGetDRepDirectoryEmpty(t *testing.T) {
 }
 
 func TestGetDRepDirectoryPageOverflow(t *testing.T) {
-	lookup := &fakeLookup{dreps: []chain.DRepInfo{
-		{DRepID: "drep1aaa", Hex: "aa"},
-		{DRepID: "drep1bbb", Hex: "bb"},
+	lookup := &fakeLookup{dreps: []chain.DRepListItem{
+		{DRepID: "drep1aaa", Hex: "22aa"},
+		{DRepID: "drep1bbb", Hex: "23bb"},
 	}}
 	h := drepDirHandler(lookup)
 
@@ -3458,7 +3512,7 @@ func (f *fakeNodeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, erro
 	return f.drep, f.drepErr
 }
 
-func (f *fakeNodeLookup) DReps(_ context.Context) ([]chain.DRepInfo, error) {
+func (f *fakeNodeLookup) DReps(_ context.Context) ([]chain.DRepListItem, error) {
 	return nil, chain.ErrNotFound
 }
 
