@@ -8,7 +8,13 @@ export default defineConfig({
   // SDK load its WebAssembly serialization lib. They only affect that async
   // chunk; the initial bundle is unaffected.
   plugins: [react(), wasm(), topLevelAwait()],
-  build: { outDir: "../internal/webui/dist", emptyOutDir: true },
+  // Build into ui/web/dist (gitignored) rather than straight into the embedded
+  // ui/internal/webui/dist. That keeps `npm run build` from overwriting the
+  // tracked dist/index.html placeholder (whose per-build hashed asset refs
+  // otherwise get committed and conflict across UI PRs). The Makefile's
+  // webui-embed step copies this output into the //go:embed dist target only at
+  // binary-build time.
+  build: { outDir: "dist", emptyOutDir: true },
   server: {
     proxy: {
       "/status": "http://127.0.0.1:8090",
