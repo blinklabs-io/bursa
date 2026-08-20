@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { DRepDirectoryResponse } from "../api/types";
+import type { DRepDirectoryResponse, DRepListItem } from "../api/types";
 import { getDReps } from "../api/client";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
@@ -24,6 +24,42 @@ function shortId(id: string): string {
 function power(amount: string): string {
   if (!amount) return "—";
   return formatAda(amount);
+}
+
+// The two predefined voting targets. The node interleaves them into its DRep
+// list at the position of their first delegation, with an empty hex and no
+// metadata. They are real delegation targets carrying real voting power, so
+// the directory lists them — but they have no on-chain registration to look up
+// and no id worth pasting: Staking offers them as their own options.
+const PREDEFINED_DREP_IDS = new Set([
+  "drep_always_abstain",
+  "drep_always_no_confidence",
+]);
+
+// CIP-1694 status. The node reports two independent facts rather than one
+// "active" flag: retired means the DRep deregistered, expired means it is
+// still registered but has not acted within the node's DRep inactivity period.
+// Retired is the terminal one, so it wins when both are set.
+function status(d: DRepListItem): { label: string; title?: string } {
+  if (PREDEFINED_DREP_IDS.has(d.drep_id)) {
+    return {
+      label: "Predefined",
+      title: "A predefined voting target — choose it directly in Staking.",
+    };
+  }
+  if (d.retired) {
+    return { label: "Retired", title: "Deregistered on chain." };
+  }
+  if (d.expired) {
+    return {
+      label: "Expired",
+      title:
+        d.last_active_epoch === null
+          ? "Registered, but inactive past the node's DRep inactivity period."
+          : `Registered, but inactive since epoch ${d.last_active_epoch}.`,
+    };
+  }
+  return { label: "Registered" };
 }
 
 const DREP_COLUMNS = [
@@ -91,33 +127,45 @@ export function DRepDirectory({ network, canDelegate = true }: DRepDirectoryProp
   const hasPrev = page > 1;
   const hasNext = page < pageCount;
 
-  const rows = dreps.map((d) => ({
-    drep: (
-      <span className="pool-id-cell">
-        <code>{shortId(d.drep_id)}</code>
-        <ExplorerLink network={network} kind="drep" id={d.drep_id} />
-      </span>
-    ),
-    power: power(d.amount),
-    status: d.active ? "Active" : "Inactive",
-    metadata: d.anchor_url ? (
-      <span className="muted" title={d.anchor_url}>
-        {shortId(d.anchor_url)}
-      </span>
-    ) : (
-      "—"
-    ),
-    actions: (
-      <span className="pool-id-cell">
-        <CopyButton value={d.drep_id} aria-label={`Copy drep id ${d.drep_id}`} />
-        {canDelegate && (
-          <Button variant="ghost" onClick={() => navigate("staking")}>
-            Delegate
-          </Button>
-        )}
-      </span>
-    ),
-  }));
+  const rows = dreps.map((d) => {
+    const predefined = PREDEFINED_DREP_IDS.has(d.drep_id);
+    const { label, title } = status(d);
+    const anchorURL = d.metadata?.url ?? "";
+    return {
+      drep: (
+        <span className="pool-id-cell">
+          <code>{shortId(d.drep_id)}</code>
+          {/* A predefined target has no on-chain credential, so there is
+              nothing for an explorer to resolve. */}
+          {!predefined && <ExplorerLink network={network} kind="drep" id={d.drep_id} />}
+        </span>
+      ),
+      power: power(d.amount),
+      status: <span title={title}>{label}</span>,
+      metadata: anchorURL ? (
+        <span className="muted" title={anchorURL}>
+          {shortId(anchorURL)}
+        </span>
+      ) : (
+        "—"
+      ),
+      actions: (
+        <span className="pool-id-cell">
+          {/* "drep_always_abstain" is not an id Staking accepts in its DRep
+              field — it is a separate option there — so copying it would hand
+              the user a value that cannot be pasted anywhere. */}
+          {!predefined && (
+            <CopyButton value={d.drep_id} aria-label={`Copy drep id ${d.drep_id}`} />
+          )}
+          {canDelegate && (
+            <Button variant="ghost" onClick={() => navigate("staking")}>
+              Delegate
+            </Button>
+          )}
+        </span>
+      ),
+    };
+  });
 
   return (
     <div className="send-form">
