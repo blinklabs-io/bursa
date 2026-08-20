@@ -396,8 +396,20 @@ jobs:
           & $env:CC --version
           # Vite builds into ui\web\dist (gitignored); copy it into the
           # //go:embed dist target so the exe embeds the real SPA, not the placeholder.
-          Remove-Item -Recurse -Force ui\internal\webui\dist\assets -ErrorAction SilentlyContinue
-          Copy-Item -Recurse -Force ui\web\dist\* ui\internal\webui\dist\
+          # Every step is terminating: PowerShell continues past a failed
+          # Copy-Item by default, which would embed the tracked placeholder in a
+          # release exe and report success. Checking that the destination
+          # index.html merely exists is not enough, because the placeholder is
+          # already there -- so verify the copied bundle is not the placeholder.
+          if (-not (Test-Path ui\web\dist\index.html)) {
+            Write-Error "web bundle missing: ui\web\dist\index.html"; exit 1
+          }
+          Remove-Item -Recurse -Force ui\internal\webui\dist\* -ErrorAction Stop
+          Copy-Item -Recurse -Force ui\web\dist\* ui\internal\webui\dist\ -ErrorAction Stop
+          if (Select-String -Path ui\internal\webui\dist\index.html `
+                -Pattern 'Pre-build placeholder' -Quiet) {
+            Write-Error "embed dir still holds the placeholder after copy"; exit 1
+          }
           Push-Location ui
           go build -tags webview -ldflags "-s -w -H=windowsgui" -o "$env:GITHUB_WORKSPACE\bursa-wallet.exe" ./cmd/bursa-wallet
           if ($LASTEXITCODE -ne 0) { Write-Error "webview exe build failed"; exit 1 }

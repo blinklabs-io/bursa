@@ -13,8 +13,10 @@
       in git (the hashed JS/CSS bundles are .gitignore'd build output). It exists
       so `//go:embed dist` compiles from a clean checkout, and it is served as-is
       if the binary is run before the web UI has been built — hence the message
-      below. `npm run build` (vite, emptyOutDir) overwrites this with the real
-      compiled index.html and its assets; do not commit that build output.
+      below. `npm run build` (vite) no longer touches this file: it builds into
+      ui/web/dist, and `make webui-embed` copies that over this directory only
+      at binary-build time, restoring this placeholder afterwards. Do not commit
+      that build output.
 
       No inline CSS/JS on purpose: the server sends Content-Security-Policy
       `default-src 'self'`, which blocks inline styles and scripts, so this page

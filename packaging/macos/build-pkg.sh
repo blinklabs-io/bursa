@@ -99,9 +99,11 @@ UNSIGNED_PKG="${BUILD_DIR}/bursa-unsigned.pkg"
 # Icon source (already present in the repo).
 ICON_SRC="${ICON_SRC:-${REPO_ROOT}/.github/assets/Bursa.icns}"
 
-# Set SKIP_WEB_BUILD=1 to reuse an already-built web bundle
-# (ui/internal/webui/dist) instead of re-running the npm build. CI builds the
-# bundle once in an earlier step.
+# Set SKIP_WEB_BUILD=1 to reuse an already-built web bundle (ui/web/dist, the
+# Vite outDir) instead of re-running the npm build. CI builds the bundle once in
+# an earlier step. Note this is the Vite output directory, not the //go:embed
+# target ui/internal/webui/dist that webui-embed copies it into: a bundle left
+# only in the embed dir is not a reusable build, and webui-embed would no-op.
 SKIP_WEB_BUILD="${SKIP_WEB_BUILD:-0}"
 
 # ---------------------------------------------------------------------------
@@ -122,6 +124,13 @@ build_binary() {
     # Build the web bundle first so the //go:embed dist target
     # (ui/internal/webui/dist) is populated before the Go build.
     if [ "${SKIP_WEB_BUILD}" = "1" ] || [ "${SKIP_WEB_BUILD}" = "true" ]; then
+        # Fail loudly rather than let webui-embed no-op and ship a pkg whose
+        # binary serves the placeholder page.
+        if [ ! -f "${UI_DIR}/web/dist/index.html" ]; then
+            echo "SKIP_WEB_BUILD set but ${UI_DIR}/web/dist/index.html is" \
+                "missing; build the web bundle or unset SKIP_WEB_BUILD" >&2
+            exit 1
+        fi
         log "SKIP_WEB_BUILD set - reusing existing web bundle"
     else
         log "Building web bundle (npm ci && npm run build)"
@@ -132,6 +141,14 @@ build_binary() {
     # dist target so the Go build embeds the real SPA rather than the placeholder.
     log "Embedding web bundle into ui/internal/webui/dist"
     make -C "${REPO_ROOT}" webui-embed
+    # webui-embed keeps the placeholder when the bundle is absent, and exits
+    # zero doing so. A release pkg must never carry that, so check rather than
+    # assume.
+    if grep -q "Pre-build placeholder" \
+        "${UI_DIR}/internal/webui/dist/index.html"; then
+        echo "embed dir still holds the placeholder; refusing to package" >&2
+        exit 1
+    fi
 
     # Mirror the Makefile's UI version-ldflags pattern.
     local ldflags="-s -w \

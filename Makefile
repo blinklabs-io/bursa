@@ -35,7 +35,7 @@ UI_WEBVIEW_LDFLAGS=-ldflags "$(UI_LDFLAGS_CONTENT)$(if $(filter windows,$(GOOS))
 # exist, which is the case on every target that needs no shim.
 WEBVIEW_PKG_CONFIG_DIR=$(ROOT_DIR)/.pkgconfig
 
-.PHONY: build wallet wallet-binary wallet-webview wallet-binary-webview webui-embed webkit-shim bundle-macos pkg-macos pkg-macos-adhoc mod-tidy clean test
+.PHONY: build wallet wallet-binary wallet-webview wallet-binary-webview webui-embed webui-embed-restore webkit-shim bundle-macos pkg-macos pkg-macos-adhoc mod-tidy clean test
 
 # Alias for building program binary
 build: $(BINARIES)
@@ -47,11 +47,26 @@ build: $(BINARIES)
 # time. No-ops (keeping the placeholder) when the web bundle has not been built.
 webui-embed:
 	@if [ -f ui/web/dist/index.html ]; then \
-		rm -rf ui/internal/webui/dist/assets; \
-		cp -R ui/web/dist/. ui/internal/webui/dist/; \
-		echo "webui-embed: copied ui/web/dist -> ui/internal/webui/dist"; \
+		rm -rf ui/internal/webui/dist/* \
+		&& cp -R ui/web/dist/. ui/internal/webui/dist/ \
+		&& [ -f ui/internal/webui/dist/index.html ] \
+		&& echo "webui-embed: copied ui/web/dist -> ui/internal/webui/dist" \
+		|| { echo "webui-embed: FAILED to embed ui/web/dist" >&2; exit 1; }; \
 	else \
 		echo "webui-embed: ui/web/dist not built; keeping placeholder"; \
+	fi
+
+# Put the tracked placeholder back and drop the generated bundle, so building a
+# binary does not leave ui/internal/webui/dist/index.html modified in the work
+# tree. Restored from git because the placeholder has no other pristine copy;
+# outside a work tree (a release tarball) there is nothing to restore and
+# nothing that needs it, so this is a no-op rather than an error.
+webui-embed-restore:
+	@if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+		rm -rf ui/internal/webui/dist/* \
+		&& git checkout -- ui/internal/webui/dist/index.html \
+		|| { echo "webui-embed-restore: FAILED to restore placeholder" >&2; \
+			exit 1; }; \
 	fi
 
 # Build the embedded-SPA wallet binary from the nested ui/ module. The web
@@ -66,10 +81,13 @@ wallet:
 # release cross-build matrix; the default build is pure Go and cross-compiles
 # without CGO. The webview variant is intentionally NOT built here.
 wallet-binary: webui-embed
-	cd ui && go build \
+	@cd ui && go build \
 		$(UI_GO_LDFLAGS) \
 		-o bursa-wallet \
-		./cmd/bursa-wallet
+		./cmd/bursa-wallet; \
+	status=$$?; \
+	$(MAKE) -C .. webui-embed-restore; \
+	exit $$status
 
 # Build the webview desktop wallet: the web bundle first, then the CGO +
 # `-tags webview` variant (native system webview: WKWebView/mac, WebView2/win,
@@ -82,13 +100,16 @@ wallet-webview:
 # Compile only the webview bursa-wallet binary, assuming the web bundle has
 # already been built into the //go:embed dist target. Honors GOOS/GOARCH.
 wallet-binary-webview: webkit-shim webui-embed
-	cd ui && CGO_ENABLED=1 \
+	@cd ui && CGO_ENABLED=1 \
 		PKG_CONFIG_PATH="$(WEBVIEW_PKG_CONFIG_DIR)$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH),)" \
 		go build \
 		$(UI_WEBVIEW_LDFLAGS) \
 		-tags webview \
 		-o bursa-wallet$(if $(filter windows,$(GOOS)),.exe,) \
-		./cmd/bursa-wallet
+		./cmd/bursa-wallet; \
+	status=$$?; \
+	$(MAKE) -C .. webui-embed-restore; \
+	exit $$status
 
 # github.com/webview/webview_go hardcodes `pkg-config: gtk+-3.0 webkit2gtk-4.0`
 # and offers no 4.1 build tag; the pinned commit is also upstream's latest, so
