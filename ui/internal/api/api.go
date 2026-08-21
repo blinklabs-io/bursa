@@ -1862,44 +1862,11 @@ type governanceActionsResponse struct {
 // type label. page is 1-based; count is clamped to [1, poolDirMaxCount].
 // Invalid/absent page or count fall back to their defaults rather than erroring.
 func filterAndPageGovernanceActions(actions []chain.GovernanceAction, q, pageStr, countStr string) governanceActionsResponse {
-	needle := strings.ToLower(strings.TrimSpace(q))
-	matched := make([]chain.GovernanceAction, 0, len(actions))
-	for _, a := range actions {
-		if needle == "" ||
-			strings.Contains(strings.ToLower(a.ActionID), needle) ||
+	pageItems, total, page, count := filterAndPage(actions, q, pageStr, countStr, func(a chain.GovernanceAction, needle string) bool {
+		return strings.Contains(strings.ToLower(a.ActionID), needle) ||
 			strings.Contains(strings.ToLower(a.TxHash), needle) ||
-			strings.Contains(strings.ToLower(a.Type), needle) {
-			matched = append(matched, a)
-		}
-	}
-
-	count := poolDirDefaultCount
-	if n, err := strconv.Atoi(countStr); err == nil && n > 0 {
-		count = n
-	}
-	if count > poolDirMaxCount {
-		count = poolDirMaxCount
-	}
-	page := 1
-	if n, err := strconv.Atoi(pageStr); err == nil && n > 1 {
-		page = n
-	}
-
-	total := len(matched)
-	// (page-1)*count can overflow to a negative int for a very large page, so
-	// clamp start on both sides before slicing to avoid an out-of-range panic.
-	start := (page - 1) * count
-	if start < 0 || start > total {
-		start = total
-	}
-	end := start + count
-	if end < start || end > total {
-		end = total
-	}
-	pageItems := matched[start:end]
-	if pageItems == nil {
-		pageItems = []chain.GovernanceAction{}
-	}
+			strings.Contains(strings.ToLower(a.Type), needle)
+	})
 	return governanceActionsResponse{Actions: pageItems, Total: total, Page: page, Count: count}
 }
 
