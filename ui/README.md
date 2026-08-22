@@ -26,7 +26,7 @@ named `bursa-wallet-<version>-<os>-<arch>.<ext>`:
 
 | Platform | Asset | Notes |
 | --- | --- | --- |
-| macOS — arm64, amd64 | `.pkg` | Signed and notarized; installs `Bursa.app` |
+| macOS — arm64 (Apple Silicon) | `.pkg` | Signed and notarized; installs `Bursa.app` |
 | Windows — amd64, arm64 | `.msi` | Signed |
 | Linux — amd64, arm64 | `.tar.gz` | Native window |
 | FreeBSD — amd64, arm64 | `.tar.gz` | Headless; serve the interface to a browser |
