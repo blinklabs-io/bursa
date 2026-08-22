@@ -30,6 +30,7 @@ import type {
   SubmitSignedRequest,
   PoolInfo,
   PoolDirectoryResponse,
+  GovernanceActionsResponse,
   DRepInfo,
   DRepDirectoryResponse,
   AssetInfo,
@@ -268,6 +269,19 @@ export const getPoolDirectory = (params?: { q?: string; page?: number; count?: n
 // and pagination (page/count) are applied server-side over the node's list.
 export const getDReps = (params?: { q?: string; page?: number; count?: number }) =>
   apiGet<DRepDirectoryResponse>(`/wallet/dreps${directoryQuery(params)}`);
+
+// Read-only governance-action (Conway proposal) browser (node-local; read from
+// the node's metadata DB). Browse/search the governance actions the node has
+// recorded, with type, status, and vote tallies. Search (q) and pagination
+// (page/count) are applied server-side over the node's list.
+export const getGovernanceActions = (params?: { q?: string; page?: number; count?: number }) => {
+  const qs = new URLSearchParams();
+  if (params?.q) qs.set("q", params.q);
+  if (params?.page && params.page > 1) qs.set("page", String(params.page));
+  if (params?.count) qs.set("count", String(params.count));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiGet<GovernanceActionsResponse>(`/wallet/governance-actions${suffix}`);
+};
 
 // Native-asset on-chain metadata (node-only; see ../tokenMeta.ts for how the
 // Portfolio screen interprets it, with a fallback when it's absent).
