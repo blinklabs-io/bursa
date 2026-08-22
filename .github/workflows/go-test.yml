@@ -26,3 +26,37 @@ jobs:
           go-version: ${{ matrix.go-version }}
       - name: go-test
         run: go test ./...
+
+  # Cross-compile every platform the release builds. `go test` above runs on
+  # ubuntu only, so before this job the first thing that ever tried a non-linux
+  # target was the publish workflow — after the merge had already landed. Builds
+  # ./cmd/bursa, the same package `make build` produces in the release job, so
+  # this fails exactly when a release would.
+  cross-build:
+    name: cross-build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: darwin
+            arch: arm64
+          - os: freebsd
+            arch: amd64
+          - os: freebsd
+            arch: arm64
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: windows
+            arch: amd64
+          - os: windows
+            arch: arm64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
+        with:
+          go-version: 1.26.x
+      - name: cross-build
+        run: GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build -o /dev/null ./cmd/bursa

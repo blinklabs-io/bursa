@@ -16,7 +16,12 @@
 
 package securemem
 
-import "syscall"
+// golang.org/x/sys/unix rather than syscall: the stdlib only defines
+// Mlock/Munlock on linux and darwin, so building this file for the BSDs in the
+// constraint above failed to compile at all (it broke every release build on
+// freebsd). x/sys/unix defines them for all six, and is pure Go, so the root
+// module stays CGO-free.
+import "golang.org/x/sys/unix"
 
-func lockMemory(b []byte) error   { return syscall.Mlock(b) }
-func unlockMemory(b []byte) error { return syscall.Munlock(b) }
+func lockMemory(b []byte) error   { return unix.Mlock(b) }
+func unlockMemory(b []byte) error { return unix.Munlock(b) }
