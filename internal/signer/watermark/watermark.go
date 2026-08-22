@@ -59,8 +59,8 @@ type Watermark interface {
 // CounterWatermark guards a strictly-increasing per-(key, scope) counter, such
 // as an operational-certificate issue counter. It is a distinct guard from the
 // divergent-payload Watermark: here the invariant is monotonicity (each recorded
-// value must exceed the previous), not payload equality. The Sqlite and Mem
-// stores implement both interfaces on the same backing store.
+// value must exceed the previous), not payload equality. The Mem, Sqlite and
+// Postgres stores implement both interfaces on the same backing store.
 type CounterWatermark interface {
 	// CounterFor returns the highest counter recorded for (key, scope) and
 	// whether any record exists. It performs no mutation.
@@ -74,14 +74,42 @@ type CounterWatermark interface {
 	CheckAndCommitCounter(ctx context.Context, key backend.KeyHash, scope string, counter uint64) error
 }
 
+// Pinger is an optional interface a Watermark store implements when it has a
+// remote or file dependency whose reachability the readiness probe can verify.
+// Stores without an external dependency (e.g. MemWatermark) need not implement
+// it; the readiness probe treats their absence as always-ready.
+type Pinger interface {
+	// Ping verifies the store's backing dependency is reachable.
+	Ping(ctx context.Context) error
+}
+
 // counterEncode renders a uint64 as a fixed-width, big-endian hex string so that
-// lexicographic string comparison (used by the sqlite store) matches numeric
-// comparison, and no lossy uint64->int64 conversion is needed.
+// lexicographic string comparison (used by the sqlite and postgres stores)
+// matches numeric comparison, and no lossy uint64->int64 conversion is needed.
 func counterEncode(counter uint64) string {
 	var b [8]byte
 	binary.BigEndian.PutUint64(b[:], counter)
 	return hex.EncodeToString(b[:])
 }
+
+// counterDecode reverses counterEncode, rejecting any value that is not exactly
+// 8 hex-encoded bytes.
+func counterDecode(s string) (uint64, error) {
+	raw, err := hex.DecodeString(s)
+	if err != nil || len(raw) != 8 {
+		return 0, errors.New("corrupt stored counter")
+	}
+	return binary.BigEndian.Uint64(raw), nil
+}
+
+// Compile-time proof the in-process and sqlite stores satisfy both guards.
+var (
+	_ Watermark        = (*MemWatermark)(nil)
+	_ CounterWatermark = (*MemWatermark)(nil)
+	_ Watermark        = (*SqliteWatermark)(nil)
+	_ CounterWatermark = (*SqliteWatermark)(nil)
+	_ Pinger           = (*SqliteWatermark)(nil)
+)
 
 func recordKey(key backend.KeyHash, scope string) string { return key.String() + "|" + scope }
 

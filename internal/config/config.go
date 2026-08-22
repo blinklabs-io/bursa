@@ -137,9 +137,17 @@ type SignerCallerConfig struct {
 
 // SignerWatermarkConfig configures the anti-double-sign watermark store.
 type SignerWatermarkConfig struct {
-	Type string `yaml:"type"` // "mem" | "file"
-	Path string `yaml:"path"`
+	Type string `yaml:"type"` // "mem" | "file" | "postgres"
+	Path string `yaml:"path"` // file: sqlite path
 	Mode string `yaml:"mode"` // "off" | "warn" | "enforce"
+	// DSN is the Postgres connection string (type "postgres"). Prefer DSNEnv so
+	// credentials are not written to the config file; DSN is a plaintext
+	// fallback for non-secret local/dev connection strings.
+	DSN string `yaml:"dsn" envconfig:"SIGNER_WATERMARK_DSN"`
+	// DSNEnv names an environment variable holding the Postgres connection
+	// string. When set it takes precedence over DSN so credentials stay out of
+	// the config file.
+	DSNEnv string `yaml:"dsn_env"`
 }
 
 // SignerBackendConfig configures a key-custody backend.

@@ -15,11 +15,13 @@
 package api
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/blinklabs-io/bursa/internal/logging"
 	"github.com/blinklabs-io/bursa/internal/signer"
@@ -489,10 +491,33 @@ func (s *Server) Handler() http.Handler {
 	})
 }
 
-// HealthHandler returns the unauthenticated health/metrics mux.
-func HealthHandler() http.Handler {
+// readinessTimeout bounds a single /readyz dependency check so a hung backend
+// cannot hang the probe.
+const readinessTimeout = 3 * time.Second
+
+// HealthHandler returns the unauthenticated health/readiness mux.
+//
+// /healthz is a static liveness endpoint: it returns 200 as long as the process
+// is running. /readyz is a real readiness probe: it invokes ready (typically a
+// ping of the watermark store plus a check that backends were built) and returns
+// 503 when the dependency is unreachable, 200 otherwise. A nil ready means no
+// dependency to check and /readyz always returns 200.
+func HealthHandler(ready func(context.Context) error) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if ready == nil {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), readinessTimeout)
+		defer cancel()
+		if err := ready(ctx); err != nil {
+			logging.GetLogger().Warn("readiness check failed", "error", err)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
 	return mux
 }

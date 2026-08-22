@@ -17,7 +17,6 @@ package watermark
 import (
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -65,6 +64,9 @@ func NewSqliteWatermark(path string) (*SqliteWatermark, error) {
 
 // Close closes the underlying database.
 func (s *SqliteWatermark) Close() error { return s.db.Close() }
+
+// Ping verifies the sqlite database is reachable.
+func (s *SqliteWatermark) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 func (s *SqliteWatermark) Check(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error {
 	d := digest(payload)
@@ -128,11 +130,11 @@ func (s *SqliteWatermark) CounterFor(ctx context.Context, key backend.KeyHash, s
 	if err != nil {
 		return 0, false, fmt.Errorf("counter watermark lookup: %w", err)
 	}
-	raw, err := hex.DecodeString(have)
-	if err != nil || len(raw) != 8 {
+	v, err := counterDecode(have)
+	if err != nil {
 		return 0, false, fmt.Errorf("counter watermark: corrupt stored counter %q", have)
 	}
-	return binary.BigEndian.Uint64(raw), true, nil
+	return v, true, nil
 }
 
 func (s *SqliteWatermark) CheckAndCommitCounter(ctx context.Context, key backend.KeyHash, scope string, counter uint64) error {
