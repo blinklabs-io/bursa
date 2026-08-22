@@ -24,8 +24,9 @@
 # signed + notarized pkg in CI.
 #
 # NOTE: the webview build needs CGO + the system WebKit (WKWebView) and CANNOT
-# be cross-compiled, so this must run on a NATIVE macOS runner of the target
-# arch (arm64 on macos-15, amd64 on macos-15-intel).
+# be cross-compiled, so this must run on a NATIVE macOS host of the target
+# arch. Releases ship arm64 only, built on macos-15; ARCH=amd64 still works for
+# a local build on an Intel Mac but is not part of the release matrix.
 
 set -euo pipefail
 
