@@ -182,6 +182,22 @@ func TestAPIListenAddressDefaultsToLoopback(t *testing.T) {
 
 func TestAPIListenAddressOverrides(t *testing.T) {
 	t.Run("config file", func(t *testing.T) {
+		oldAddress, hadAddress := os.LookupEnv("API_LISTEN_ADDRESS")
+		if err := os.Unsetenv("API_LISTEN_ADDRESS"); err != nil {
+			t.Fatalf("unset API_LISTEN_ADDRESS: %v", err)
+		}
+		t.Cleanup(func() {
+			var err error
+			if hadAddress {
+				err = os.Setenv("API_LISTEN_ADDRESS", oldAddress)
+			} else {
+				err = os.Unsetenv("API_LISTEN_ADDRESS")
+			}
+			if err != nil {
+				t.Errorf("restore API_LISTEN_ADDRESS: %v", err)
+			}
+		})
+
 		dir := t.TempDir()
 		configFile := filepath.Join(dir, "bursa.yml")
 		if err := os.WriteFile(
