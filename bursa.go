@@ -229,7 +229,11 @@ type WalletConfig struct {
 	CommitteeColdID uint32 // Committee cold key derivation index (CIP-105)
 	CommitteeHotID  uint32 // Committee hot key derivation index (CIP-105)
 	PoolColdID      uint32 // Pool cold key derivation index (CIP-1853)
-	AddressID       uint32 // Address derivation index
+	// AddressID is a compatibility alias for PaymentID and StakeID.
+	// Deprecated: configure PaymentID and StakeID independently instead.
+	AddressID    uint32
+	paymentIDSet bool
+	stakeIDSet   bool
 }
 
 // WalletOption is a functional option for configuring wallet creation
@@ -268,6 +272,7 @@ func WithAccountID(id uint32) WalletOption {
 func WithPaymentID(id uint32) WalletOption {
 	return func(c *WalletConfig) {
 		c.PaymentID = id
+		c.paymentIDSet = true
 	}
 }
 
@@ -277,6 +282,7 @@ func WithPaymentID(id uint32) WalletOption {
 func WithStakeID(id uint32) WalletOption {
 	return func(c *WalletConfig) {
 		c.StakeID = id
+		c.stakeIDSet = true
 	}
 }
 
@@ -316,12 +322,20 @@ func WithPoolColdID(id uint32) WalletOption {
 	}
 }
 
-// WithAddressID sets the address derivation index.
+// WithAddressID sets the payment and stake derivation indices when their
+// dedicated options have not been provided.
 // Must be less than 2^31 for BIP32 compatibility.
 // Default: 0
+// New code should use WithPaymentID and WithStakeID instead.
 func WithAddressID(id uint32) WalletOption {
 	return func(c *WalletConfig) {
 		c.AddressID = id
+		if !c.paymentIDSet {
+			c.PaymentID = id
+		}
+		if !c.stakeIDSet {
+			c.StakeID = id
+		}
 	}
 }
 
@@ -433,7 +447,11 @@ func NewWallet(mnemonic string, opts ...WalletOption) (*Wallet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pool cold key: %w", err)
 	}
-	addr, err := GetAddress(accountKey, cfg.Network, cfg.AddressID)
+	network, ok := ouroboros.NetworkByName(cfg.Network)
+	if !ok {
+		return nil, fmt.Errorf("unable to get address: %w", ErrInvalidNetwork)
+	}
+	addr, err := newAddressFromKeys(paymentKey, stakeKey, network.Id)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get address: %w", err)
 	}
@@ -2207,15 +2225,23 @@ func GetAddress(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get payment key: %w", err)
 	}
-	paymentKeyPublicHash := paymentKey.Public().PublicKey().Hash()
 	stakeKey, err := GetStakeKey(accountKey, num)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stake key: %w", err)
 	}
+	return newAddressFromKeys(paymentKey, stakeKey, network.Id)
+}
+
+func newAddressFromKeys(
+	paymentKey bip32.XPrv,
+	stakeKey bip32.XPrv,
+	networkID uint8,
+) (*lcommon.Address, error) {
+	paymentKeyPublicHash := paymentKey.Public().PublicKey().Hash()
 	stakeKeyPublicHash := stakeKey.Public().PublicKey().Hash()
 	addr, err := lcommon.NewAddressFromParts(
 		lcommon.AddressTypeKeyKey,
-		network.Id,
+		networkID,
 		paymentKeyPublicHash[:],
 		stakeKeyPublicHash[:],
 	)
