@@ -2321,6 +2321,29 @@ func TestCIP1853KeyFileGeneration(t *testing.T) {
 	assert.Equal(t, "Stake Pool Cold Signing Key", skey.Description)
 	assert.NotEmpty(t, skey.CborHex)
 
+	// The exported cold vkey must match the standard Ed25519 key used to
+	// sign operational certificates from the pool cold signing key seed.
+	coldSeed := decodeCborBytes(t, skey.CborHex)
+	expectedColdVKey := ed25519.NewKeyFromSeed(coldSeed).
+		Public().(ed25519.PublicKey)
+	actualColdVKey := decodeCborBytes(t, vkey.CborHex)
+	assert.Equal(t, []byte(expectedColdVKey), actualColdVKey)
+
+	kesVkey := make([]byte, 32)
+	opCert, err := CreateOperationalCertificate(
+		kesVkey,
+		0,
+		100,
+		coldSeed,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, opCert.ColdVkey, actualColdVKey)
+	require.True(t, ed25519.Verify(
+		actualColdVKey,
+		lcommon.OpCertSignableBytes(kesVkey, 0, 100),
+		opCert.ColdSignature,
+	))
+
 	// Test extended signing key generation
 	extendedSkey, err := GetPoolColdExtendedSKey(poolColdKey)
 	assert.NoError(t, err)

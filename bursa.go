@@ -1085,8 +1085,12 @@ func GetPoolColdKey(
 
 // GetPoolColdVKey creates a stake pool cold verification key file
 func GetPoolColdVKey(poolColdKey bip32.XPrv) (KeyFile, error) {
-	// Encode just the raw public key bytes (cardano-cli compatible format)
-	keyCbor, err := cbor.Encode(poolColdKey.Public().PublicKey())
+	// Pool cold signing uses standard Ed25519 seeded from k_L, rather than the
+	// BIP32 extended public key derived from k_L. Export the matching public key
+	// so pool registration and operational certificates use the same key.
+	seed := poolColdKey.PrivateKey()[:ed25519.SeedSize]
+	vkey := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	keyCbor, err := cbor.Encode(vkey)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode pool cold verification key CBOR: %w",
