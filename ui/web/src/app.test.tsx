@@ -813,6 +813,7 @@ test("the palette lists every destination the nav no longer carries", async () =
     "portfolio", "activity", "stake", "swap", "settings",
     "send", "receive", "import", "offline",
     "contacts", "sign", "verify", "diagnostics",
+    "governance",
     "dreps",
     "operate", "add-wallet", "lock",
   ]);

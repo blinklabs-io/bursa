@@ -12,7 +12,7 @@
 // Cardano network (mainnet / preprod / preview) with an identical path
 // structure across all three, so the mapping below is a simple lookup.
 
-export type ExplorerKind = "tx" | "address" | "pool" | "drep";
+export type ExplorerKind = "tx" | "address" | "pool" | "drep" | "govaction";
 
 const HOSTS: Record<string, string> = {
   mainnet: "cardanoscan.io",
@@ -25,6 +25,7 @@ const PATHS: Record<ExplorerKind, string> = {
   address: "address",
   pool: "pool",
   drep: "drep",
+  govaction: "govAction",
 };
 
 /**

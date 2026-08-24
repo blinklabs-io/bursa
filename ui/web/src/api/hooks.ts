@@ -16,6 +16,7 @@ import type {
   AssetInfo,
   NFT,
   Diagnostics,
+  GovernanceActionsResponse,
 } from "./types";
 import {
   getStatus,
@@ -39,6 +40,7 @@ import {
   setNotifications,
   getActivity,
   getDiagnostics,
+  getGovernanceActions,
 } from "./client";
 import {
   notificationPermission,
@@ -229,6 +231,62 @@ export function useNftMedia(): NftMediaState {
 // error, etc.) must not prevent the others from displaying — the Portfolio
 // screen falls back to the raw unit/quantity for any unit missing from the
 // returned map.
+export interface GovernanceActionsState {
+  data: GovernanceActionsResponse | null;
+  error: Error | null;
+  loading: boolean;
+}
+
+// Debounce for the governance-action search box so each keystroke doesn't fire
+// a request.
+const GOV_ACTIONS_DEBOUNCE_MS = 250;
+
+// useGovernanceActions fetches one page of the node's recorded governance
+// actions for the read-only browser, re-running (debounced) whenever the search
+// query or page changes. Node-local read; no polling, since governance actions
+// change on the order of epochs, and the screen offers a manual refresh via
+// navigation.
+export function useGovernanceActions(params: { q: string; page: number }): GovernanceActionsState {
+  const { q, page } = params;
+  const [data, setData] = useState<GovernanceActionsResponse | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const query = q.trim();
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const timer = setTimeout(() => {
+      getGovernanceActions({ q: query, page })
+        .then((d) => {
+          if (!cancelled) {
+            setData(d);
+            setError(null);
+          }
+        })
+        .catch((e: Error) => {
+          if (!cancelled) {
+            setError(e);
+            // Drop the previous query/page's rows: the pager and search box
+            // already show the new request, so leaving them would present
+            // stale results as the answer to it, alongside the error.
+            setData(null);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, GOV_ACTIONS_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [q, page]);
+
+  return { data, error, loading };
+}
+
 export function useAssetMetadata(units: string[]): Record<string, AssetInfo | undefined> {
   const [metadata, setMetadata] = useState<Record<string, AssetInfo | undefined>>({});
   // Units are hex (policy id + asset name), so \0 can't collide with real

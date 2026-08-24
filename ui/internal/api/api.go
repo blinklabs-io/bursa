@@ -111,6 +111,9 @@ type NodeLookup interface {
 	// /pools/extended) for the read-only browse/search screen.
 	Pools(ctx context.Context) ([]chain.PoolInfo, error)
 	DRep(ctx context.Context, drepID string) (chain.DRepInfo, error)
+	// GovernanceActions returns the Conway governance actions (proposals) the
+	// node has recorded, for the read-only governance-action browser.
+	GovernanceActions(ctx context.Context) ([]chain.GovernanceAction, error)
 	// DReps returns the node's full DRep directory (its paginated
 	// /governance/dreps list) for the read-only browse/search screen.
 	DReps(ctx context.Context) ([]chain.DRepListItem, error)
@@ -1496,6 +1499,29 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		))
 	}))
 
+	// Read-only governance-action (Conway proposal) browser: browse/search the
+	// governance actions the node has recorded, with their type, lifecycle
+	// status, and vote tallies. Node-local like the pool directory — the data is
+	// read from the embedded node's local metadata DB, nothing leaves 127.0.0.1 —
+	// so there is deliberately NO external-consent gate; it is gated like other
+	// reads (a queryable node). Search (q) and pagination (page/count) are
+	// applied server-side over the node's list.
+	mux.HandleFunc("GET /wallet/governance-actions", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if lookup == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "governance actions unavailable"})
+			return
+		}
+		actions, err := lookup.GovernanceActions(r.Context())
+		if err != nil {
+			serveLookup(w, governanceActionsResponse{}, err)
+			return
+		}
+		q := r.URL.Query()
+		writeJSON(w, http.StatusOK, filterAndPageGovernanceActions(
+			actions, q.Get("q"), q.Get("page"), q.Get("count"),
+		))
+	}))
+
 	// Read-only DRep directory: browse/search the delegated representatives the
 	// node has indexed, to inform vote-delegation. Node-local (the embedded
 	// node's own list endpoint over loopback, nothing leaves 127.0.0.1) — so,
@@ -1818,6 +1844,30 @@ func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poo
 			strings.Contains(strings.ToLower(p.Hex), needle)
 	})
 	return poolDirectoryResponse{Pools: pageItems, Total: total, Page: page, Count: count}
+}
+
+// governanceActionsResponse is the GET /wallet/governance-actions response: one
+// page of the node's recorded governance actions plus the total number that
+// matched the search, so the client can page through them.
+type governanceActionsResponse struct {
+	Actions []chain.GovernanceAction `json:"actions"`
+	Total   int                      `json:"total"`
+	Page    int                      `json:"page"`
+	Count   int                      `json:"count"`
+}
+
+// filterAndPageGovernanceActions applies the read-only browser's server-side
+// search and pagination over the node's full governance-action list. The search
+// (q) is a case-insensitive substring match against the action ID, tx hash, and
+// type label. page is 1-based; count is clamped to [1, poolDirMaxCount].
+// Invalid/absent page or count fall back to their defaults rather than erroring.
+func filterAndPageGovernanceActions(actions []chain.GovernanceAction, q, pageStr, countStr string) governanceActionsResponse {
+	pageItems, total, page, count := filterAndPage(actions, q, pageStr, countStr, func(a chain.GovernanceAction, needle string) bool {
+		return strings.Contains(strings.ToLower(a.ActionID), needle) ||
+			strings.Contains(strings.ToLower(a.TxHash), needle) ||
+			strings.Contains(strings.ToLower(a.Type), needle)
+	})
+	return governanceActionsResponse{Actions: pageItems, Total: total, Page: page, Count: count}
 }
 
 // drepDirectoryResponse is the GET /wallet/dreps response: one page of the

@@ -117,6 +117,19 @@ export function parseAda(ada: string): string {
 }
 
 /**
+ * Truncate a long bech32/hex id in the middle so table rows stay scannable.
+ * Ids of 24 chars or fewer are returned unchanged.
+ *
+ * Examples:
+ *   shortId("abcdefghijklmnopqrstuvwxyz0123456789") → "abcdefghijklmn…456789"
+ *   shortId("short") → "short"
+ */
+export function shortId(id: string): string {
+  if (id.length <= 24) return id;
+  return `${id.slice(0, 14)}…${id.slice(-6)}`;
+}
+
+/**
  * Convert a raw native-token quantity (decimal string, base units) to a
  * display string using `decimals` fractional digits — the general form of
  * formatAda (ADA/lovelace is simply the fixed 6-decimal case).
