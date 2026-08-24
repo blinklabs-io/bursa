@@ -413,6 +413,57 @@ func TestNewWalletInvalidIndices(t *testing.T) {
 	assert.Contains(t, err.Error(), "derivation indices must be less than 2^31")
 }
 
+func TestNewWalletAddressMatchesExportedCredentials(t *testing.T) {
+	const mnemonic = "abandon abandon abandon abandon abandon abandon " +
+		"abandon abandon abandon abandon abandon about"
+	const (
+		paymentID = uint32(1)
+		stakeID   = uint32(2)
+		addressID = uint32(3)
+	)
+
+	wallet, err := NewWallet(
+		mnemonic,
+		WithPaymentID(paymentID),
+		WithStakeID(stakeID),
+		WithAddressID(addressID),
+	)
+	require.NoError(t, err)
+
+	address, err := lcommon.NewAddress(wallet.PaymentAddress)
+	require.NoError(t, err)
+	paymentVKey := decodeCborBytes(t, wallet.PaymentVKey.CborHex)
+	stakeVKey := decodeCborBytes(t, wallet.StakeVKey.CborHex)
+	assert.Equal(
+		t,
+		lcommon.Blake2b224Hash(paymentVKey),
+		address.PaymentKeyHash(),
+	)
+	assert.Equal(t, lcommon.Blake2b224Hash(stakeVKey), address.StakeKeyHash())
+
+	rootKey, err := GetRootKeyFromMnemonic(mnemonic, "")
+	require.NoError(t, err)
+	accountKey, err := GetAccountKey(rootKey, 0)
+	require.NoError(t, err)
+	paymentKey, err := GetPaymentKey(accountKey, paymentID)
+	require.NoError(t, err)
+	stakeKey, err := GetStakeKey(accountKey, stakeID)
+	require.NoError(t, err)
+	assert.Equal(t, []byte(paymentKey.Public().PublicKey()), paymentVKey)
+	assert.Equal(t, []byte(stakeKey.Public().PublicKey()), stakeVKey)
+}
+
+func TestWithAddressIDSetsCredentialFallbacks(t *testing.T) {
+	const addressID = uint32(3)
+	cfg := defaultWalletConfig()
+
+	WithAddressID(addressID)(cfg)
+
+	assert.Equal(t, addressID, cfg.AddressID)
+	assert.Equal(t, addressID, cfg.PaymentID)
+	assert.Equal(t, addressID, cfg.StakeID)
+}
+
 func TestGenerateMnemonic(t *testing.T) {
 	mnemonic, err := GenerateMnemonic()
 	assert.NoError(t, err)
