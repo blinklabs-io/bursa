@@ -46,6 +46,10 @@ go run ./cmd/bursa api
 
 Access API Swagger documentation: [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html)
 
+The API listens on `127.0.0.1` by default. Set `API_LISTEN_ADDRESS` to an
+explicit address such as `0.0.0.0` only when remote access is intended and
+protected by appropriate network controls.
+
 For more information about Bursa CLI
 
 ```bash

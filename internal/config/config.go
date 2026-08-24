@@ -213,7 +213,7 @@ type MetricsConfig struct {
 func defaultConfig() Config {
 	return Config{
 		Api: ApiConfig{
-			ListenAddress: "",
+			ListenAddress: "127.0.0.1",
 			ListenPort:    8080,
 		},
 		Google: GoogleConfig{

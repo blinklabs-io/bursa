@@ -170,6 +170,56 @@ func TestLoadConfigFile_EmptyPath(t *testing.T) {
 	}
 }
 
+func TestAPIListenAddressDefaultsToLoopback(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.Api.ListenAddress != "127.0.0.1" {
+		t.Fatalf(
+			"default API listen address: got %q, want 127.0.0.1",
+			cfg.Api.ListenAddress,
+		)
+	}
+}
+
+func TestAPIListenAddressOverrides(t *testing.T) {
+	t.Run("config file", func(t *testing.T) {
+		dir := t.TempDir()
+		configFile := filepath.Join(dir, "bursa.yml")
+		if err := os.WriteFile(
+			configFile,
+			[]byte("api:\n  address: 0.0.0.0\n"),
+			0o600,
+		); err != nil {
+			t.Fatalf("write config file: %v", err)
+		}
+		globalConfig = defaultConfig()
+		cfg, err := LoadConfigFile(configFile)
+		if err != nil {
+			t.Fatalf("LoadConfigFile: %v", err)
+		}
+		if cfg.Api.ListenAddress != "0.0.0.0" {
+			t.Fatalf(
+				"config API listen address: got %q, want 0.0.0.0",
+				cfg.Api.ListenAddress,
+			)
+		}
+	})
+
+	t.Run("environment", func(t *testing.T) {
+		t.Setenv("API_LISTEN_ADDRESS", "192.0.2.1")
+		globalConfig = defaultConfig()
+		cfg, err := LoadConfigFile("")
+		if err != nil {
+			t.Fatalf("LoadConfigFile with environment override: %v", err)
+		}
+		if cfg.Api.ListenAddress != "192.0.2.1" {
+			t.Fatalf(
+				"environment API listen address: got %q, want 192.0.2.1",
+				cfg.Api.ListenAddress,
+			)
+		}
+	})
+}
+
 func TestKESAgentConfig_SocketModeDefaults(t *testing.T) {
 	globalConfig = defaultConfig()
 	cfg, err := LoadConfigFile("")
