@@ -168,6 +168,10 @@ jobs:
               zip -r ${_filename} bursa
             fi
           fi
+          # Export the shipped asset path so the attest step below can target
+          # the ACTUAL uploaded artifact (mirrors the wallet job's TARBALL_PATH
+          # pattern); attesting the raw binary would hash a file we do not ship.
+          echo "ASSET_PATH=${_filename}" >> "$GITHUB_ENV"
           curl \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/octet-stream" \
@@ -175,9 +179,14 @@ jobs:
             https://uploads.github.com/repos/${{ github.repository_owner }}/bursa/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}
 
       - name: Attest binary
+        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2 https://github.com/actions/attest/releases/tag/v4.2.2
         with:
-          subject-path: 'bursa'
+          # Attest the uploaded asset, not the raw binary, so the attested
+          # digest matches what `gh attestation verify` sees for the download.
+          # ASSET_PATH is exported by the upload step, which is tags-only, so
+          # this step carries the same guard.
+          subject-path: ${{ env.ASSET_PATH }}
 
   # Build + package the Bursa desktop wallet (ui/cmd/bursa-wallet).
   #
