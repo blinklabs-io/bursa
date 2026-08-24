@@ -23,11 +23,11 @@ func Test_openapi_DefaultAPIService(t *testing.T) {
 	configuration := openapiclient.NewConfiguration()
 	apiClient := openapiclient.NewAPIClient(configuration)
 
-	t.Run("Test DefaultAPIService ApiWalletCreateGet", func(t *testing.T) {
+	t.Run("Test DefaultAPIService ApiWalletCreatePost", func(t *testing.T) {
 
 		t.Skip("skip test") // remove to run test
 
-		resp, httpRes, err := apiClient.DefaultAPI.ApiWalletCreateGet(context.Background()).
+		resp, httpRes, err := apiClient.DefaultAPI.ApiWalletCreatePost(context.Background()).
 			Execute()
 
 		require.Nil(t, err)

@@ -64,6 +64,11 @@
         },
         "/api/address/enumerate": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Derives consecutive base addresses from a mnemonic for the given account and network",
                 "consumes": [
                     "application/json"
@@ -276,6 +281,11 @@
         },
         "/api/sign/data": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Sign a payload using a signing key, producing a COSE_Sign1 structure",
                 "consumes": [
                     "application/json"
@@ -473,6 +483,11 @@
         },
         "/api/tx/sign": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Add vkey witnesses for the provided signing keys (body preserved)",
                 "consumes": [
                     "application/json"
@@ -516,6 +531,11 @@
         },
         "/api/tx/witness": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Produce a detached vkey witness for a transaction body",
                 "consumes": [
                     "application/json"
@@ -558,7 +578,12 @@
             }
         },
         "/api/wallet/create": {
-            "get": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Create a wallet and return details",
                 "produces": [
                     "application/json"
@@ -576,6 +601,11 @@
         },
         "/api/wallet/delete": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Deletes a wallet from persistent storage and optional password.",
                 "consumes": [
                     "application/json"
@@ -619,6 +649,11 @@
         },
         "/api/wallet/get": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Gets a wallet from persistent storage and optional password and returns wallet details.",
                 "consumes": [
                     "application/json"
@@ -662,6 +697,11 @@
         },
         "/api/wallet/list": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "List all wallets stored in secret storage matching our prefix",
                 "produces": [
                     "application/json"
@@ -682,6 +722,11 @@
         },
         "/api/wallet/restore": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details.",
                 "consumes": [
                     "application/json"
@@ -725,6 +770,11 @@
         },
         "/api/wallet/update": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Updates a wallet from persistent storage and optional password and returns wallet details.",
                 "consumes": [
                     "application/json"
@@ -1402,6 +1452,9 @@
                 "has_mint": {
                     "type": "boolean"
                 },
+                "has_treasury_donation": {
+                    "type": "boolean"
+                },
                 "inputs": {
                     "type": "array",
                     "items": {
@@ -1419,6 +1472,9 @@
                     "items": {
                         "$ref": "#/definitions/bursa.TxOutput"
                     }
+                },
+                "proposal_procedure_count": {
+                    "type": "integer"
                 },
                 "required_signers": {
                     "type": "integer"
@@ -1438,6 +1494,10 @@
                 "vkey_witnesses": {
                     "type": "integer"
                 },
+                "voting_procedure_count": {
+                    "description": "Conway governance and treasury components. These authorize\nhigh-impact actions (casting DRep/committee votes, submitting\ngovernance proposals, donating to the treasury) that are independent\nof outputs/certificates/withdrawals, so the policy engine must inspect\nand gate them explicitly.",
+                    "type": "integer"
+                },
                 "withdrawal_count": {
                     "type": "integer"
                 }
@@ -1448,6 +1508,10 @@
             "properties": {
                 "address": {
                     "type": "string"
+                },
+                "has_assets": {
+                    "description": "HasAssets is true when the output carries native (multi-)assets in\naddition to lovelace. The policy engine treats native-asset movement as\na distinct, deny-by-default operation because lovelace limits do not\nbound token quantities.",
+                    "type": "boolean"
                 },
                 "lovelace": {
                     "type": "string"
@@ -1524,6 +1588,13 @@
                     "$ref": "#/definitions/bursa.KeyFile"
                 }
             }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
         }
     }
 }

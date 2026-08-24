@@ -7,7 +7,7 @@ Method | HTTP request | Description
 [**ApiScriptAddressPost**](DefaultAPI.md#ApiScriptAddressPost) | **Post** /api/script/address | Generate script address
 [**ApiScriptCreatePost**](DefaultAPI.md#ApiScriptCreatePost) | **Post** /api/script/create | Create a multi-signature script
 [**ApiScriptValidatePost**](DefaultAPI.md#ApiScriptValidatePost) | **Post** /api/script/validate | Validate a script
-[**ApiWalletCreateGet**](DefaultAPI.md#ApiWalletCreateGet) | **Get** /api/wallet/create | Create a wallet
+[**ApiWalletCreatePost**](DefaultAPI.md#ApiWalletCreatePost) | **Post** /api/wallet/create | Create a wallet
 [**ApiWalletDeletePost**](DefaultAPI.md#ApiWalletDeletePost) | **Post** /api/wallet/delete | Delete wallet from persistent storage
 [**ApiWalletGetPost**](DefaultAPI.md#ApiWalletGetPost) | **Post** /api/wallet/get | Get wallet from persistent storage
 [**ApiWalletListGet**](DefaultAPI.md#ApiWalletListGet) | **Get** /api/wallet/list | Lists wallets
@@ -214,9 +214,9 @@ No authorization required
 [[Back to README]](../README.md)
 
 
-## ApiWalletCreateGet
+## ApiWalletCreatePost
 
-> BursaWallet ApiWalletCreateGet(ctx).Execute()
+> BursaWallet ApiWalletCreatePost(ctx).Execute()
 
 Create a wallet
 
@@ -238,13 +238,13 @@ func main() {
 
 	configuration := openapiclient.NewConfiguration()
 	apiClient := openapiclient.NewAPIClient(configuration)
-	resp, r, err := apiClient.DefaultAPI.ApiWalletCreateGet(context.Background()).Execute()
+	resp, r, err := apiClient.DefaultAPI.ApiWalletCreatePost(context.Background()).Execute()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error when calling `DefaultAPI.ApiWalletCreateGet``: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error when calling `DefaultAPI.ApiWalletCreatePost``: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Full HTTP response: %v\n", r)
 	}
-	// response from `ApiWalletCreateGet`: BursaWallet
-	fmt.Fprintf(os.Stdout, "Response from `DefaultAPI.ApiWalletCreateGet`: %v\n", resp)
+	// response from `ApiWalletCreatePost`: BursaWallet
+	fmt.Fprintf(os.Stdout, "Response from `DefaultAPI.ApiWalletCreatePost`: %v\n", resp)
 }
 ```
 
@@ -254,7 +254,7 @@ This endpoint does not need any parameter.
 
 ### Other Parameters
 
-Other parameters are passed through a pointer to a apiApiWalletCreateGetRequest struct via the builder pattern
+Other parameters are passed through a pointer to a apiApiWalletCreatePostRequest struct via the builder pattern
 
 
 ### Return type
@@ -263,7 +263,7 @@ Other parameters are passed through a pointer to a apiApiWalletCreateGetRequest 
 
 ### Authorization
 
-No authorization required
+Bearer JWT required when API authentication is configured
 
 ### HTTP request headers
 
@@ -329,7 +329,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-No authorization required
+Bearer JWT required when API authentication is configured
 
 ### HTTP request headers
 
@@ -395,7 +395,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-No authorization required
+Bearer JWT required when API authentication is configured
 
 ### HTTP request headers
 
@@ -456,7 +456,7 @@ Other parameters are passed through a pointer to a apiApiWalletListGetRequest st
 
 ### Authorization
 
-No authorization required
+Bearer JWT required when API authentication is configured
 
 ### HTTP request headers
 
@@ -522,7 +522,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-No authorization required
+Bearer JWT required when API authentication is configured
 
 ### HTTP request headers
 
@@ -588,7 +588,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-No authorization required
+Bearer JWT required when API authentication is configured
 
 ### HTTP request headers
 
@@ -598,4 +598,3 @@ No authorization required
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints)
 [[Back to Model list]](../README.md#documentation-for-models)
 [[Back to README]](../README.md)
-

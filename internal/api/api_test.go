@@ -34,8 +34,10 @@ import (
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
+	signerapi "github.com/blinklabs-io/bursa/internal/signer/api"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/go-playground/validator/v10"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 )
@@ -150,6 +152,125 @@ func TestDecodeAndValidateCapsRequestBody(t *testing.T) {
 	assert.False(t, gotOK)
 	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 	assert.JSONEq(t, `{"error":"request body too large"}`, w.Body.String())
+}
+
+func TestBuildAPIAuthValidatesTrustSource(t *testing.T) {
+	ctx := context.Background()
+
+	auth, err := buildAPIAuth(ctx, &config.Config{})
+	assert.NoError(t, err)
+	assert.Nil(t, auth)
+
+	_, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
+		JWTSecret: "too-short",
+	}})
+	assert.ErrorContains(t, err, "at least 32 bytes")
+
+	_, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
+		JWTSecret: strings.Repeat("s", 32),
+		JWKSURL:   "https://issuer.example/jwks.json",
+	}})
+	assert.ErrorContains(t, err, "mutually exclusive")
+
+	auth, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
+		JWTSecret: strings.Repeat("s", 32),
+	}})
+	assert.NoError(t, err)
+	assert.NotNil(t, auth)
+}
+
+func TestValidateAPIExposureRejectsUnauthenticatedNonLoopback(t *testing.T) {
+	cfg := &config.Config{Api: config.ApiConfig{ListenAddress: "0.0.0.0"}}
+	err := validateAPIExposure(cfg, nil)
+	assert.ErrorContains(t, err, "not loopback")
+	assert.ErrorContains(t, err, "authentication")
+
+	assert.NoError(t, validateAPIExposure(&config.Config{Api: config.ApiConfig{
+		ListenAddress: "127.0.0.1",
+	}}, nil))
+	assert.NoError(t, validateAPIExposure(cfg, signerapi.HS256Validator(
+		[]byte("01234567890123456789012345678901"), "", "",
+	)))
+}
+
+func TestStartRejectsUnauthenticatedNonLoopbackAPI(t *testing.T) {
+	cfg := &config.Config{Api: config.ApiConfig{ListenAddress: "0.0.0.0"}}
+
+	err := Start(context.Background(), cfg, nil, nil)
+
+	assert.ErrorContains(t, err, "not loopback")
+	assert.ErrorContains(t, err, "authentication")
+}
+
+func TestProtectedAPIHandlerRequiresBearerToken(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	auth := signerapi.HS256Validator([]byte(secret), "", "")
+	handler := protectAPIHandler(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodPost, "/sensitive", nil))
+	assert.Equal(t, http.StatusUnauthorized, unauthenticated.Code)
+
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "test-caller",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	assert.NoError(t, err)
+	authorized := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/sensitive", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	handler.ServeHTTP(authorized, req)
+	assert.Equal(t, http.StatusNoContent, authorized.Code)
+}
+
+func TestRegisterAPIHandlersProtectsSensitiveRoutes(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	cfg := &config.Config{
+		Google: config.GoogleConfig{Project: "test", ResourceId: "test"},
+	}
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, cfg, signerapi.HS256Validator([]byte(secret), "", ""))
+
+	sensitiveRoutes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/wallet/create"},
+		{http.MethodPost, "/api/wallet/restore"},
+		{http.MethodGet, "/api/wallet/list"},
+		{http.MethodPost, "/api/wallet/get"},
+		{http.MethodPost, "/api/wallet/update"},
+		{http.MethodPost, "/api/wallet/delete"},
+		{http.MethodPost, "/api/address/enumerate"},
+		{http.MethodPost, "/api/tx/sign"},
+		{http.MethodPost, "/api/tx/witness"},
+		{http.MethodPost, "/api/sign/data"},
+	}
+	for _, route := range sensitiveRoutes {
+		t.Run(route.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest(route.method, route.path, nil))
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
+			assert.Equal(t, "Bearer", w.Header().Get("WWW-Authenticate"))
+		})
+	}
+
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "test-caller",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	assert.NoError(t, err)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/wallet/restore", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	mux.ServeHTTP(w, req)
+	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+
+	public := httptest.NewRecorder()
+	mux.ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/healthcheck", nil))
+	assert.Equal(t, http.StatusOK, public.Code)
 }
 
 func TestDecodeAndValidateSanitizesValidationErrors(t *testing.T) {
@@ -408,8 +529,10 @@ func TestWalletCreateIncrementsCounter(t *testing.T) {
 		"Expected `bursa_wallets_created_count` to be registered initially")
 
 	// Call /api/wallet/create to create a wallet
-	createWalletResp, err := http.Get(
+	createWalletResp, err := http.Post(
 		fmt.Sprintf("%s/api/wallet/create", apiBaseURL),
+		"application/json",
+		nil,
 	)
 	assert.NotEqual(t, createWalletResp, nil)
 	assert.NoError(t, err, "failed to call /api/wallet/create endpoint")
@@ -461,7 +584,7 @@ func TestCreateWalletReturnsMnemonic(t *testing.T) {
 	apiBaseURL, _, cleanup := startAPI(t)
 	defer cleanup()
 
-	resp, err := http.Get(fmt.Sprintf("%s/api/wallet/create", apiBaseURL))
+	resp, err := http.Post(fmt.Sprintf("%s/api/wallet/create", apiBaseURL), "application/json", nil)
 	assert.NotEqual(t, resp, nil)
 	assert.NoError(t, err, "failed to call wallet create endpoint")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -493,11 +616,9 @@ func TestWalletCreateMethodNotAllowed(t *testing.T) {
 	apiBaseURL, _, cleanup := startAPI(t)
 	defer cleanup()
 
-	// Test POST method (should fail)
-	resp, err := http.Post(
+	// Test GET method (should fail)
+	resp, err := http.Get(
 		fmt.Sprintf("%s/api/wallet/create", apiBaseURL),
-		"application/json",
-		nil,
 	)
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1468,7 +1589,7 @@ func TestHandleWalletRestore_WithDerivationIndices(t *testing.T) {
 
 func TestHandleWalletCreate_MethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(
-		http.MethodPost,
+		http.MethodGet,
 		"/api/wallet/create",
 		nil,
 	)
@@ -1483,7 +1604,7 @@ func TestHandleWalletCreate_MethodNotAllowed(t *testing.T) {
 
 func TestHandleWalletCreate_Success(t *testing.T) {
 	req := httptest.NewRequest(
-		http.MethodGet,
+		http.MethodPost,
 		"/api/wallet/create",
 		nil,
 	)
@@ -1503,6 +1624,17 @@ func TestHandleWalletCreate_Success(t *testing.T) {
 	assert.NotEmpty(t, wallet["mnemonic"])
 	assert.NotEmpty(t, wallet["payment_address"])
 	assert.NotEmpty(t, wallet["stake_address"])
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	assert.Equal(t, "no-cache", resp.Header.Get("Pragma"))
+}
+
+func TestHandleWalletCreateCapsRequestBody(t *testing.T) {
+	body := strings.NewReader(`{"request":"` + strings.Repeat("a", maxRequestBodyBytes) + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/wallet/create", body)
+	w := httptest.NewRecorder()
+	handleWalletCreate(w, req)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+	assert.JSONEq(t, `{"error":"request body too large"}`, w.Body.String())
 }
 
 func TestHandleScriptCreate_InvalidJSON(t *testing.T) {

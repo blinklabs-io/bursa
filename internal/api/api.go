@@ -34,6 +34,8 @@ import (
 	"github.com/blinklabs-io/bursa/gcp"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	"github.com/blinklabs-io/bursa/internal/signer"
+	signerapi "github.com/blinklabs-io/bursa/internal/signer/api"
 	ouroboros "github.com/blinklabs-io/gouroboros"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/btcsuite/btcd/btcutil/bech32"
@@ -79,6 +81,34 @@ func writeJSON(w http.ResponseWriter, v any) {
 		return
 	}
 	_, _ = w.Write(resp)
+}
+
+// setSecretResponseHeaders prevents browsers, proxies, and intermediary
+// caches from retaining wallet mnemonics or private-key envelopes.
+func setSecretResponseHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+}
+
+// consumeRequestBodyWithinLimit drains a body for endpoints whose request has
+// no fields. Draining through MaxBytesReader makes the size limit effective
+// even when the handler does not otherwise decode a request body.
+func consumeRequestBodyWithinLimit(w http.ResponseWriter, r *http.Request) bool {
+	if r.Body == nil {
+		return true
+	}
+	_, err := io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		writeError(w, http.StatusRequestEntityTooLarge, errors.New("request body too large"))
+		return false
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, errors.New("invalid request body"))
+		return false
+	}
+	return true
 }
 
 // writeError writes a JSON error response with the given status code
@@ -499,11 +529,15 @@ type TxWitnessResponse struct {
 	Witness string `json:"witness"`
 }
 
-//	@title			bursa
-//	@version		v0
-//	@description	Programmable Cardano Wallet API
-//	@Schemes		http
-//	@BasePath		/
+//	@title						bursa
+//	@version					v0
+//	@description				Programmable Cardano Wallet API
+//	@Schemes					http
+//	@BasePath					/
+//
+//	@securityDefinitions.apikey	BearerAuth
+//	@in							header
+//	@name						Authorization
 
 //	@contact.name	Blink Labs
 //	@contact.url	https://blinklabs.io
@@ -553,6 +587,97 @@ func init() {
 	prometheus.MustRegister(walletsUpdatedCounter)
 }
 
+// buildAPIAuth constructs the same strict JWT validators used by the signer
+// API. The legacy API intentionally supports bearer JWTs only: mTLS and
+// request-signing are signer-specific protocols and cannot be safely inferred
+// from a plain HTTP listener. A configured API secret must be at least 32
+// bytes, and a JWKS URL must be the sole selected JWT trust source.
+func buildAPIAuth(ctx context.Context, cfg *config.Config) (signerapi.Validator, error) {
+	if cfg == nil {
+		return nil, errors.New("API configuration is required")
+	}
+	hasSecret := cfg.Api.JWTSecret != ""
+	hasJWKS := cfg.Api.JWKSURL != ""
+	if hasSecret && hasJWKS {
+		return nil, errors.New("api.jwt_secret and api.jwks_url are mutually exclusive")
+	}
+	if hasSecret {
+		if len(cfg.Api.JWTSecret) < 32 {
+			return nil, errors.New("api.jwt_secret must be at least 32 bytes")
+		}
+		return signerapi.HS256Validator(
+			[]byte(cfg.Api.JWTSecret),
+			cfg.Api.JWTIssuer,
+			cfg.Api.JWTAudience,
+		), nil
+	}
+	if hasJWKS {
+		return signerapi.JWKSValidator(ctx, cfg.Api.JWKSURL, cfg.Api.JWTIssuer, cfg.Api.JWTAudience)
+	}
+	return nil, nil
+}
+
+func protectAPIHandler(auth signerapi.Validator, next http.Handler) http.Handler {
+	if auth == nil {
+		return next
+	}
+	return signerapi.AuthMiddleware(
+		[]signerapi.Authenticator{signerapi.JWTAuthenticator(auth)},
+		next,
+	)
+}
+
+func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
+	if !signer.IsLoopbackListenAddress(cfg.Api.ListenAddress) && auth == nil {
+		return fmt.Errorf(
+			"refusing to start: API listen address %q is not loopback and no API JWT/JWKS authentication is configured",
+			cfg.Api.ListenAddress,
+		)
+	}
+	return nil
+}
+
+func registerAPIHandlers(
+	mux *http.ServeMux,
+	cfg *config.Config,
+	auth signerapi.Validator,
+) {
+	// Health and documentation routes do not expose wallet material.
+	mux.HandleFunc("/healthcheck", handleHealthcheck)
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/swagger/", httpSwagger.WrapHandler)
+
+	protected := func(next http.Handler) http.Handler {
+		return protectAPIHandler(auth, next)
+	}
+	mux.Handle("/api/wallet/create", protected(http.HandlerFunc(handleWalletCreate)))
+	mux.Handle("/api/wallet/restore", protected(http.HandlerFunc(handleWalletRestore)))
+
+	mux.HandleFunc("/api/script/create", handleScriptCreate)
+	mux.HandleFunc("/api/script/validate", handleScriptValidate)
+	mux.HandleFunc("/api/script/address", handleScriptAddress)
+
+	mux.HandleFunc("/api/address/parse", handleAddressParse)
+	mux.HandleFunc("/api/address/build", handleAddressBuild)
+	mux.Handle("/api/address/enumerate", protected(http.HandlerFunc(handleAddressEnumerate)))
+
+	mux.Handle("/api/tx/sign", protected(http.HandlerFunc(handleTxSign)))
+	mux.Handle("/api/tx/witness", protected(http.HandlerFunc(handleTxWitness)))
+	mux.HandleFunc("/api/tx/assemble", handleTxAssemble)
+	mux.HandleFunc("/api/tx/decode", handleTxDecode)
+	mux.HandleFunc("/api/tx/id", handleTxID)
+
+	mux.Handle("/api/sign/data", protected(http.HandlerFunc(handleSignData)))
+	mux.HandleFunc("/api/sign/verify", handleVerifyData)
+
+	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+		mux.Handle("/api/wallet/list", protected(http.HandlerFunc(handleWalletList)))
+		mux.Handle("/api/wallet/get", protected(http.HandlerFunc(handleWalletGet)))
+		mux.Handle("/api/wallet/update", protected(http.HandlerFunc(handleWalletUpdate)))
+		mux.Handle("/api/wallet/delete", protected(http.HandlerFunc(handleWalletDelete)))
+	}
+}
+
 // Start initializes and starts the HTTP servers for the API and metrics
 // Listeners can be passed in for testing purposes to provide ephermeral ports
 func Start(
@@ -564,53 +689,19 @@ func Start(
 	accessLogger := logging.GetAccessLogger()
 
 	logger.Info("initializing API server")
+	apiAuth, err := buildAPIAuth(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if err := validateAPIExposure(cfg, apiAuth); err != nil {
+		return err
+	}
 
 	//
 	// Main HTTP server for API endpoints
 	//
 	mainMux := http.NewServeMux()
-
-	// Healthcheck
-	mainMux.HandleFunc("/healthcheck", handleHealthcheck)
-
-	// Prometheus endpoint
-	mainMux.Handle("/metrics", promhttp.Handler())
-
-	// Swagger endpoint
-	mainMux.HandleFunc("/swagger/", httpSwagger.WrapHandler)
-
-	// API routes
-	mainMux.HandleFunc("/api/wallet/create", handleWalletCreate)
-	mainMux.HandleFunc("/api/wallet/restore", handleWalletRestore)
-
-	// Script routes
-	mainMux.HandleFunc("/api/script/create", handleScriptCreate)
-	mainMux.HandleFunc("/api/script/validate", handleScriptValidate)
-	mainMux.HandleFunc("/api/script/address", handleScriptAddress)
-
-	// Address routes
-	mainMux.HandleFunc("/api/address/parse", handleAddressParse)
-	mainMux.HandleFunc("/api/address/build", handleAddressBuild)
-	mainMux.HandleFunc("/api/address/enumerate", handleAddressEnumerate)
-
-	// Transaction routes
-	mainMux.HandleFunc("/api/tx/sign", handleTxSign)
-	mainMux.HandleFunc("/api/tx/witness", handleTxWitness)
-	mainMux.HandleFunc("/api/tx/assemble", handleTxAssemble)
-	mainMux.HandleFunc("/api/tx/decode", handleTxDecode)
-	mainMux.HandleFunc("/api/tx/id", handleTxID)
-
-	// Sign routes
-	mainMux.HandleFunc("/api/sign/data", handleSignData)
-	mainMux.HandleFunc("/api/sign/verify", handleVerifyData)
-
-	// GCP routes
-	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
-		mainMux.HandleFunc("/api/wallet/list", handleWalletList)
-		mainMux.HandleFunc("/api/wallet/get", handleWalletGet)
-		mainMux.HandleFunc("/api/wallet/update", handleWalletUpdate)
-		mainMux.HandleFunc("/api/wallet/delete", handleWalletDelete)
-	}
+	registerAPIHandlers(mainMux, cfg, apiAuth)
 
 	// Wrap the mainMux with an access-logging middleware
 	mainHandler := logMiddleware(mainMux, accessLogger)
@@ -656,7 +747,6 @@ func Start(
 		"address", cfg.Api.ListenAddress,
 		"port", cfg.Api.ListenPort,
 	)
-	var err error
 	if apiListener == nil {
 		server := &http.Server{
 			Addr: fmt.Sprintf(
@@ -729,10 +819,16 @@ func handleHealthcheck(w http.ResponseWriter, r *http.Request) {
 //	@Description	Create a wallet and return details
 //	@Produce		json
 //	@Success		200	{object}	bursa.Wallet	"Ok"
-//	@Router			/api/wallet/create [get]
+//	@Security		BearerAuth
+//	@Router			/api/wallet/create [post]
 func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	setSecretResponseHeaders(w)
+	if !consumeRequestBodyWithinLimit(w, r) {
+		walletsFailCounter.Inc()
 		return
 	}
 
@@ -811,12 +907,14 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 //	@Success		200		{object}	bursa.Wallet			"Wallet successfully restored"
 //	@Failure		400		{object}	ErrorResponse			"Invalid request"
 //	@Failure		500		{object}	ErrorResponse			"Internal server error"
+//	@Security		BearerAuth
 //	@Router			/api/wallet/restore [post]
 func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	setSecretResponseHeaders(w)
 
 	var req WalletRestoreRequest
 	if !decodeAndValidate(w, r, &req) {
@@ -906,6 +1004,7 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 //	@Description	List all wallets stored in secret storage matching our prefix
 //	@Produce		json
 //	@Success		200	{object}	[]string	"Ok"
+//	@Security		BearerAuth
 //	@Router			/api/wallet/list [get]
 func handleWalletList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -949,12 +1048,14 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 //	@Success		200		{object}	bursa.Wallet		"Wallet successfully loaded"
 //	@Failure		400		{object}	ErrorResponse		"Invalid request"
 //	@Failure		500		{object}	ErrorResponse		"Internal server error"
+//	@Security		BearerAuth
 //	@Router			/api/wallet/get [post]
 func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	setSecretResponseHeaders(w)
 
 	var req WalletGetRequest
 	if !decodeAndValidate(w, r, &req) {
@@ -1025,6 +1126,7 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 //	@Success		200		{object}	string				"Wallet successfully deleted"
 //	@Failure		400		{object}	ErrorResponse		"Invalid request"
 //	@Failure		500		{object}	ErrorResponse		"Internal server error"
+//	@Security		BearerAuth
 //	@Router			/api/wallet/delete [post]
 func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1080,6 +1182,7 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 //	@Success		200		{object}	string				"Wallet successfully updated"
 //	@Failure		400		{string}	string				"Invalid request"
 //	@Failure		500		{string}	string				"Internal server error"
+//	@Security		BearerAuth
 //	@Router			/api/wallet/update [post]
 func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1593,6 +1696,7 @@ func handleAddressBuild(w http.ResponseWriter, r *http.Request) {
 //	@Success		200		{object}	TxCborResponse	"Signed transaction"
 //	@Failure		400		{object}	ErrorResponse
 //	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
 //	@Router			/api/tx/sign [post]
 func handleTxSign(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1641,6 +1745,7 @@ func handleTxSign(w http.ResponseWriter, r *http.Request) {
 //	@Success		200		{object}	TxWitnessResponse	"Detached witness"
 //	@Failure		400		{object}	ErrorResponse
 //	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
 //	@Router			/api/tx/witness [post]
 func handleTxWitness(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1801,6 +1906,7 @@ func handleTxID(w http.ResponseWriter, r *http.Request) {
 //	@Success		200		{object}	SignDataResponse	"COSE_Sign1 signature and COSE_Key"
 //	@Failure		400		{object}	ErrorResponse
 //	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
 //	@Router			/api/sign/data [post]
 func handleSignData(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1875,6 +1981,7 @@ func handleVerifyData(w http.ResponseWriter, r *http.Request) {
 //	@Param			request	body		AddressEnumerateRequest		true	"Address Enumerate Request"
 //	@Success		200		{object}	[]bursa.EnumeratedAddress	"Enumerated addresses"
 //	@Failure		400		{object}	ErrorResponse				"Invalid request"
+//	@Security		BearerAuth
 //	@Router			/api/address/enumerate [post]
 func handleAddressEnumerate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
