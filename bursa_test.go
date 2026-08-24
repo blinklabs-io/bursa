@@ -2310,14 +2310,14 @@ func TestCIP1853KeyFileGeneration(t *testing.T) {
 	// Test verification key generation
 	vkey, err := GetPoolColdVKey(poolColdKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "StakePoolVerificationKeyShelley_ed25519", vkey.Type)
+	assert.Equal(t, "StakePoolVerificationKey_ed25519", vkey.Type)
 	assert.Equal(t, "Stake Pool Cold Verification Key", vkey.Description)
 	assert.NotEmpty(t, vkey.CborHex)
 
 	// Test signing key generation
 	skey, err := GetPoolColdSKey(poolColdKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "StakePoolSigningKeyShelley_ed25519", skey.Type)
+	assert.Equal(t, "StakePoolSigningKey_ed25519", skey.Type)
 	assert.Equal(t, "Stake Pool Cold Signing Key", skey.Description)
 	assert.NotEmpty(t, skey.CborHex)
 
@@ -2373,6 +2373,71 @@ func TestCIP1853KeyFileGeneration(t *testing.T) {
 	assert.NotEmpty(t, extendedSkeyCbor)
 }
 
+func TestPoolColdKeyEnvelopeCompatibility(t *testing.T) {
+	rootKey, err := GetRootKeyFromMnemonic(
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+		"",
+	)
+	require.NoError(t, err)
+	poolColdKey, err := GetPoolColdKey(rootKey, 0, 0)
+	require.NoError(t, err)
+	vkey, err := GetPoolColdVKey(poolColdKey)
+	require.NoError(t, err)
+	skey, err := GetPoolColdSKey(poolColdKey)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name  string
+		key   KeyFile
+		type_ string
+		want  int
+	}{
+		{
+			name:  "canonical verification key",
+			key:   vkey,
+			type_: "StakePoolVerificationKey_ed25519",
+			want:  ed25519.PublicKeySize,
+		},
+		{
+			name:  "legacy verification key",
+			key:   vkey,
+			type_: "StakePoolVerificationKeyShelley_ed25519",
+			want:  ed25519.PublicKeySize,
+		},
+		{
+			name:  "canonical signing key",
+			key:   skey,
+			type_: "StakePoolSigningKey_ed25519",
+			want:  ed25519.PrivateKeySize,
+		},
+		{
+			name:  "legacy signing key",
+			key:   skey,
+			type_: "StakePoolSigningKeyShelley_ed25519",
+			want:  ed25519.PrivateKeySize,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			envelope := KeyFile{
+				Type:    tc.type_,
+				CborHex: tc.key.CborHex,
+			}
+			data, err := json.Marshal(envelope)
+			require.NoError(t, err)
+			loaded, err := LoadKeyFromBytes(data)
+			require.NoError(t, err)
+			assert.Equal(t, tc.type_, loaded.Type)
+			if strings.Contains(tc.type_, "Verification") {
+				assert.Len(t, loaded.VKey, tc.want)
+			} else {
+				assert.Len(t, loaded.SKey, tc.want)
+			}
+		})
+	}
+}
+
 // TestCIP1853WalletIntegration validates pool cold key integration in Wallet struct
 func TestCIP1853WalletIntegration(t *testing.T) {
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
@@ -2401,12 +2466,12 @@ func TestCIP1853WalletIntegration(t *testing.T) {
 	// Verify key types
 	assert.Equal(
 		t,
-		"StakePoolVerificationKeyShelley_ed25519",
+		"StakePoolVerificationKey_ed25519",
 		wallet.PoolColdVKey.Type,
 	)
 	assert.Equal(
 		t,
-		"StakePoolSigningKeyShelley_ed25519",
+		"StakePoolSigningKey_ed25519",
 		wallet.PoolColdSKey.Type,
 	)
 	assert.Equal(

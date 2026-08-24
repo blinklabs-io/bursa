@@ -147,9 +147,11 @@ func (kf KeyFile) String() string {
 		prefix = "cc_hot_sk"
 	case "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32":
 		prefix = "cc_hot_xsk"
-	case "StakePoolVerificationKeyShelley_ed25519":
+	case "StakePoolVerificationKey_ed25519",
+		"StakePoolVerificationKeyShelley_ed25519":
 		prefix = "pool_vk"
-	case "StakePoolSigningKeyShelley_ed25519":
+	case "StakePoolSigningKey_ed25519",
+		"StakePoolSigningKeyShelley_ed25519":
 		prefix = "pool_sk"
 	case "StakePoolExtendedSigningKeyShelley_ed25519_bip32":
 		prefix = "pool_xsk"
@@ -1098,7 +1100,7 @@ func GetPoolColdVKey(poolColdKey bip32.XPrv) (KeyFile, error) {
 		)
 	}
 	kf := KeyFile{
-		Type:        "StakePoolVerificationKeyShelley_ed25519",
+		Type:        "StakePoolVerificationKey_ed25519",
 		Description: "Stake Pool Cold Verification Key",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
@@ -1110,7 +1112,7 @@ func GetPoolColdVKey(poolColdKey bip32.XPrv) (KeyFile, error) {
 func GetPoolColdSKey(poolColdKey bip32.XPrv) (KeyFile, error) {
 	return getSigningKeyFile(
 		poolColdKey,
-		"StakePoolSigningKeyShelley_ed25519",
+		"StakePoolSigningKey_ed25519",
 		"Stake Pool Cold Signing Key",
 	)
 }
@@ -2440,6 +2442,7 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"DRepVerificationKeyShelley_ed25519",
 		"CommitteeColdVerificationKeyShelley_ed25519",
 		"CommitteeHotVerificationKeyShelley_ed25519",
+		"StakePoolVerificationKey_ed25519",
 		"StakePoolVerificationKeyShelley_ed25519",
 		"PolicyVerificationKeyShelley_ed25519":
 		vk, err := decodeVerificationKey(cborData)
@@ -2453,6 +2456,7 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"DRepSigningKeyShelley_ed25519",
 		"CommitteeColdSigningKeyShelley_ed25519",
 		"CommitteeHotSigningKeyShelley_ed25519",
+		"StakePoolSigningKey_ed25519",
 		"StakePoolSigningKeyShelley_ed25519",
 		"PolicySigningKeyShelley_ed25519":
 		sk, vk, err := decodeNonExtendedCborKey(cborData)

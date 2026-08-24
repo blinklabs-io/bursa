@@ -41,6 +41,7 @@ func TestKeyTypeFromEnvelope(t *testing.T) {
 		{"StakeSigningKeyShelley_ed25519", backend.KeyTypeStake},
 		// StakePool signing key (was previously shadowed by the Stake case)
 		{"StakePoolSigningKeyShelley_ed25519", backend.KeyTypePool},
+		{"StakePoolSigningKey_ed25519", backend.KeyTypePool},
 		// Governance / committee keys
 		{"DRepSigningKeyShelley_ed25519", backend.KeyTypeDRep},
 		{"CommitteeHotSigningKeyShelley_ed25519", backend.KeyTypeCCHot},

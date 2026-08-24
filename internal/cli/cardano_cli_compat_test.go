@@ -16,6 +16,11 @@ package cli
 
 import (
 	"encoding/hex"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
@@ -24,6 +29,55 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPoolColdKeyFilesAcceptedByCardanoCLI(t *testing.T) {
+	cardanoCLI, err := exec.LookPath("cardano-cli")
+	if err != nil {
+		t.Skip("cardano-cli is not installed")
+	}
+
+	wallet, err := bursa.NewWallet(testMnemonic)
+	require.NoError(t, err)
+	tmpDir := t.TempDir()
+	vkeyFile := filepath.Join(tmpDir, "pool-cold.vkey")
+	skeyFile := filepath.Join(tmpDir, "pool-cold.skey")
+	derivedVKeyFile := filepath.Join(tmpDir, "derived.vkey")
+
+	for path, key := range map[string]bursa.KeyFile{
+		vkeyFile: wallet.PoolColdVKey,
+		skeyFile: wallet.PoolColdSKey,
+	} {
+		data, err := json.Marshal(key)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, data, 0o600))
+	}
+
+	cmd := exec.Command(
+		cardanoCLI,
+		"conway", "stake-pool", "id",
+		"--cold-verification-key-file", vkeyFile,
+		"--output-hex",
+	)
+	output, err := cmd.CombinedOutput()
+	require.NoErrorf(t, err, "cardano-cli stake-pool id failed: %s", output)
+	poolID, err := hex.DecodeString(strings.TrimSpace(string(output)))
+	require.NoError(t, err)
+	assert.Len(t, poolID, 28)
+
+	cmd = exec.Command(
+		cardanoCLI,
+		"key", "verification-key",
+		"--signing-key-file", skeyFile,
+		"--verification-key-file", derivedVKeyFile,
+	)
+	output, err = cmd.CombinedOutput()
+	require.NoErrorf(t, err, "cardano-cli key verification-key failed: %s", output)
+	derived, err := os.ReadFile(derivedVKeyFile)
+	require.NoError(t, err)
+	var derivedEnvelope bursa.KeyFile
+	require.NoError(t, json.Unmarshal(derived, &derivedEnvelope))
+	assert.Equal(t, "StakePoolVerificationKey_ed25519", derivedEnvelope.Type)
+}
 
 // Test mnemonic - CIP-1852 test vector (DO NOT USE FOR REAL FUNDS)
 const testMnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
