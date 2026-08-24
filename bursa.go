@@ -1907,14 +1907,8 @@ func GetScriptHash(script Script) ([]byte, error) {
 	if script == nil {
 		return nil, errors.New("script cannot be nil")
 	}
-	scriptCBOR := script.RawScriptBytes()
-	hasher, err := blake2b.New(28, nil)
-	if err != nil {
-		// This should never happen with valid parameters
-		return nil, fmt.Errorf("failed to create blake2b hasher: %w", err)
-	}
-	hasher.Write(scriptCBOR)
-	return hasher.Sum(nil), nil
+	scriptHash := script.Hash()
+	return scriptHash.Bytes(), nil
 }
 
 // GetScriptAddress creates an address from a script
