@@ -12,13 +12,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/blinklabs-io/dingo/database/models"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	_ "github.com/glebarez/go-sqlite"
 )
@@ -188,6 +191,39 @@ type DRepInfo struct {
 	Amount     string `json:"amount"`
 	Active     bool   `json:"active"`
 	LiveStake  string `json:"live_stake"`
+}
+
+// DRepListItem is one entry of GET /api/v0/governance/dreps, the node's
+// paginated DRep directory. It is deliberately a separate type from DRepInfo:
+// the list reports CIP-1694 lifecycle status (retired/expired plus the epoch
+// the DRep was last active in) and a resolved CIP-119 anchor document, and it
+// has no registered/active/live_stake fields for DRepInfo to borrow.
+type DRepListItem struct {
+	// DRepID is the CIP-129 bech32 drep1… identifier, encoded by the node. The
+	// predefined targets appear as the literal strings "drep_always_abstain"
+	// and "drep_always_no_confidence", with an empty Hex.
+	DRepID string `json:"drep_id"`
+	// Hex is the CIP-129 payload — the 1-byte header (0x22 key hash, 0x23
+	// script hash) followed by the 28-byte credential — so a pasted bare
+	// credential is a suffix of it, not the whole string.
+	Hex             string        `json:"hex"`
+	Amount          string        `json:"amount"`
+	HasScript       bool          `json:"has_script"`
+	Retired         bool          `json:"retired"`
+	Expired         bool          `json:"expired"`
+	LastActiveEpoch *uint64       `json:"last_active_epoch"`
+	Metadata        *DRepMetadata `json:"metadata"`
+}
+
+// DRepMetadata is the DRep's resolved CIP-119 anchor document as reported by
+// the node's list. Only the anchor's identity is decoded: the directory
+// displays the URL (it never fetches it, so browsing stays node-local) and the
+// hash identifies the document it belongs to. The document body the node also
+// serves (json_metadata/bytes) is deliberately dropped here rather than
+// carried through the wallet's own API for a screen that does not render it.
+type DRepMetadata struct {
+	URL  string `json:"url"`
+	Hash string `json:"hash"`
 }
 
 // Genesis mirrors GET /api/v0/genesis: the network's immutable genesis
@@ -641,6 +677,265 @@ func (c *Client) DRep(ctx context.Context, drepID string) (DRepInfo, error) {
 	var out DRepInfo
 	err := c.get(ctx, "/api/v0/governance/dreps/"+url.PathEscape(drepID), &out)
 	return out, err
+}
+
+// GovernanceAction is one on-chain Conway governance action (proposal) recorded
+// in Dingo's local metadata DB, with the per-proposal vote tallies the node has
+// counted. It backs the read-only governance-action browser.
+type GovernanceAction struct {
+	ActionID      string `json:"action_id"`
+	TxHash        string `json:"tx_hash"`
+	ActionIndex   uint32 `json:"action_index"`
+	Type          string `json:"type"`
+	ProposedEpoch uint64 `json:"proposed_epoch"`
+	ExpiresEpoch  uint64 `json:"expires_epoch"`
+	Status        string `json:"status"`
+	AnchorURL     string `json:"anchor_url"`
+	Deposit       string `json:"deposit"`
+	YesVotes      int    `json:"yes_votes"`
+	NoVotes       int    `json:"no_votes"`
+	AbstainVotes  int    `json:"abstain_votes"`
+}
+
+// govActionTypeNames maps Dingo's stored action_type (the gouroboros
+// GovActionType* enum) to the browser's short type labels.
+var govActionTypeNames = map[uint8]string{
+	uint8(lcommon.GovActionTypeParameterChange):    "param-change",
+	uint8(lcommon.GovActionTypeHardForkInitiation): "hard-fork",
+	uint8(lcommon.GovActionTypeTreasuryWithdrawal): "treasury-withdrawal",
+	uint8(lcommon.GovActionTypeNoConfidence):       "no-confidence",
+	uint8(lcommon.GovActionTypeUpdateCommittee):    "new-committee",
+	uint8(lcommon.GovActionTypeNewConstitution):    "update-constitution",
+	uint8(lcommon.GovActionTypeInfo):               "info",
+}
+
+// Governance vote choices as stored by Dingo (models.GovernanceVote.Vote).
+// Taken from Dingo's own constants rather than redeclared, so a renumbering
+// upstream is a compile error here instead of a silently mis-attributed tally.
+const (
+	dingoGovVoteNo      = models.VoteNo
+	dingoGovVoteYes     = models.VoteYes
+	dingoGovVoteAbstain = models.VoteAbstain
+)
+
+// GovernanceActions lists the Conway governance actions (proposals) the embedded
+// node has recorded, newest first, with per-proposal Yes/No/Abstain tallies.
+// Dingo v0.66 exposes no Blockfrost-compatible route for governance proposals,
+// so this reads Dingo's local metadata DB directly (read-only) — the same
+// node-local source AccountDRepID uses — never an external service. An absent
+// data dir, missing metadata file, or a metadata DB without the governance
+// tables yields an empty list rather than an error.
+func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, error) {
+	if c.dingoDataDir == "" {
+		return nil, nil
+	}
+	metadataPath := filepath.Join(c.dingoDataDir, "metadata.sqlite")
+	if _, err := os.Stat(metadataPath); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("governance actions metadata: %w", err)
+	}
+
+	db, err := sql.Open("sqlite", sqliteReadOnlyDSN(metadataPath))
+	if err != nil {
+		return nil, fmt.Errorf("open governance actions metadata: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	hasTable, err := sqliteHasTable(ctx, db, "governance_proposal")
+	if err != nil {
+		return nil, err
+	}
+	if !hasTable {
+		return nil, nil
+	}
+
+	tallies, err := governanceVoteTallies(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, tx_hash, action_index, action_type, proposed_epoch,
+		       expires_epoch, enacted_epoch, ratified_epoch, expired_epoch,
+		       anchor_url, deposit
+		FROM governance_proposal
+		WHERE deleted_slot IS NULL
+		ORDER BY proposed_epoch DESC, id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("query governance proposals: %w", err)
+	}
+	defer rows.Close()
+
+	actions := []GovernanceAction{}
+	for rows.Next() {
+		var (
+			id            uint64
+			txHash        nullableBytes
+			actionIndex   uint32
+			actionType    uint8
+			proposedEpoch uint64
+			expiresEpoch  uint64
+			enactedEpoch  sql.NullInt64
+			ratifiedEpoch sql.NullInt64
+			expiredEpoch  sql.NullInt64
+			anchorURL     sql.NullString
+			deposit       uint64
+		)
+		if err := rows.Scan(
+			&id, &txHash, &actionIndex, &actionType, &proposedEpoch,
+			&expiresEpoch, &enactedEpoch, &ratifiedEpoch, &expiredEpoch,
+			&anchorURL, &deposit,
+		); err != nil {
+			return nil, fmt.Errorf("scan governance proposal: %w", err)
+		}
+		tally := tallies[id]
+		actions = append(actions, GovernanceAction{
+			ActionID:      govActionID(txHash.Bytes, actionIndex),
+			TxHash:        hex.EncodeToString(txHash.Bytes),
+			ActionIndex:   actionIndex,
+			Type:          govActionTypeName(actionType),
+			ProposedEpoch: proposedEpoch,
+			ExpiresEpoch:  expiresEpoch,
+			Status:        govActionStatus(enactedEpoch, ratifiedEpoch, expiredEpoch),
+			AnchorURL:     anchorURL.String,
+			Deposit:       strconv.FormatUint(deposit, 10),
+			YesVotes:      tally.yes,
+			NoVotes:       tally.no,
+			AbstainVotes:  tally.abstain,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate governance proposals: %w", err)
+	}
+	return actions, nil
+}
+
+type govVoteTally struct{ yes, no, abstain int }
+
+// governanceVoteTallies aggregates each proposal's live (non-rolled-back) votes
+// into Yes/No/Abstain counts, keyed by governance_proposal.id. A metadata DB
+// without the vote table (partially backfilled) yields empty tallies, not an
+// error.
+func governanceVoteTallies(ctx context.Context, db *sql.DB) (map[uint64]govVoteTally, error) {
+	tallies := map[uint64]govVoteTally{}
+	hasTable, err := sqliteHasTable(ctx, db, "governance_vote")
+	if err != nil {
+		return nil, err
+	}
+	if !hasTable {
+		return tallies, nil
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT proposal_id, vote, COUNT(*)
+		FROM governance_vote
+		WHERE deleted_slot IS NULL
+		GROUP BY proposal_id, vote`)
+	if err != nil {
+		return nil, fmt.Errorf("query governance votes: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			proposalID uint64
+			vote       uint8
+			count      int
+		)
+		if err := rows.Scan(&proposalID, &vote, &count); err != nil {
+			return nil, fmt.Errorf("scan governance vote tally: %w", err)
+		}
+		t := tallies[proposalID]
+		switch vote {
+		case dingoGovVoteYes:
+			t.yes += count
+		case dingoGovVoteNo:
+			t.no += count
+		case dingoGovVoteAbstain:
+			t.abstain += count
+		default:
+			// A vote choice this build does not know about — a Dingo that has
+			// added one. Skip it rather than failing the query: this is a
+			// read-only browser over node-local data, and erroring here turns
+			// one unrecognized vote into a 503 that blanks the whole
+			// governance screen. The tally under-reports that vote, which is
+			// what every older client does with a newer chain, so it is logged
+			// rather than hidden.
+			slog.Warn(
+				"skipping governance vote of an unknown kind",
+				"vote", vote,
+				"proposal_id", proposalID,
+				"count", count,
+			)
+			continue
+		}
+		tallies[proposalID] = t
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate governance votes: %w", err)
+	}
+	return tallies, nil
+}
+
+// sqliteHasTable reports whether a table exists, so a partially backfilled
+// metadata DB (no governance tables yet) reads as empty rather than erroring.
+func sqliteHasTable(ctx context.Context, db *sql.DB, name string) (bool, error) {
+	var exists int
+	if err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?
+		)`, name,
+	).Scan(&exists); err != nil {
+		return false, fmt.Errorf("inspect %s table: %w", name, err)
+	}
+	return exists != 0, nil
+}
+
+func govActionTypeName(t uint8) string {
+	if name, ok := govActionTypeNames[t]; ok {
+		return name
+	}
+	return "unknown"
+}
+
+// govActionStatus derives the proposal's lifecycle status from the enacted/
+// ratified/expired epoch columns, preferring the most advanced state.
+func govActionStatus(enacted, ratified, expired sql.NullInt64) string {
+	switch {
+	case enacted.Valid:
+		return "enacted"
+	case expired.Valid:
+		return "expired"
+	case ratified.Valid:
+		return "ratified"
+	default:
+		return "active"
+	}
+}
+
+// govActionID renders the CIP-129 bech32 governance action identifier
+// (gov_action1…) that explorers key on. It falls back to the txhash#index form
+// when the identifier can't be encoded — a non-32-byte tx hash or an index
+// beyond CIP-129's one-byte range.
+func govActionID(txHash []byte, index uint32) string {
+	if len(txHash) == 32 && index <= 255 {
+		id := lcommon.GovActionId{GovActionIdx: index}
+		copy(id.TransactionId[:], txHash)
+		return id.String()
+	}
+	return fmt.Sprintf("%s#%d", hex.EncodeToString(txHash), index)
+}
+
+// DReps returns the delegated representatives the node has indexed, for the
+// read-only DRep-directory browser — the governance analogue of Pools. It reads
+// the node's paginated GET /api/v0/governance/dreps list over loopback, the
+// same stable HTTP contract the rest of this client uses, rather than Dingo's
+// private metadata schema. The list is the only source that reports CIP-1694
+// retired/expired status and resolved CIP-119 anchor metadata, so the directory
+// can tell a deregistered DRep from one that merely stopped voting.
+func (c *Client) DReps(ctx context.Context) ([]DRepListItem, error) {
+	return getAllPages[DRepListItem](ctx, c, "/api/v0/governance/dreps")
 }
 
 // Genesis fetches the network's genesis parameters from the embedded node.

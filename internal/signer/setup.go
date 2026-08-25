@@ -17,12 +17,15 @@ package signer
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -87,8 +90,10 @@ var sopsDecrypt = sops.Decrypt
 
 // BuildBackends constructs configured backends. Software backends load only
 // *.skey files from their configured directory; other files (.vkey, README,
-// etc.) are skipped silently. All three backend types (software, sops, vault)
-// are fully wired.
+// etc.) are skipped silently. All backend types (software, sops, vault, pkcs11)
+// are wired here; the pkcs11 driver is CGO-only and requires the pkcs11 build
+// tag (the default build wires a stub that returns a clear not-compiled-in
+// error).
 func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]backend.Backend, error) {
 	// Non-nil slice so callers (and nilaway) can rely on a non-nil result on the
 	// success path; an empty config yields an empty, not nil, slice.
@@ -114,7 +119,7 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 					continue
 				}
 				path := filepath.Join(c.Path, e.Name())
-				data, err := os.ReadFile(path)
+				data, err := bursa.ReadSecretKeyFile(path)
 				if err != nil {
 					return nil, fmt.Errorf("read key %q: %w", e.Name(), err)
 				}
@@ -166,6 +171,12 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 				return nil, fmt.Errorf("vault backend %q: %w", c.Name, err)
 			}
 			backends = append(backends, b)
+		case "pkcs11":
+			b, err := buildPKCS11Backend(c)
+			if err != nil {
+				return nil, fmt.Errorf("pkcs11 backend %q: %w", c.Name, err)
+			}
+			backends = append(backends, b)
 		default:
 			return nil, fmt.Errorf("unknown backend type %q", c.Type)
 		}
@@ -198,6 +209,84 @@ func BuildCallerACL(callers []config.SignerCallerConfig) (map[string][]backend.K
 		out[c.Subject] = hashes
 	}
 	return out, nil
+}
+
+// BuildAuthorizedKeys parses the configured authorized-keys request-signing
+// registrations into caller -> Ed25519 public key. Returns nil when none are
+// configured. Each entry must have a non-empty caller (unique) and a hex
+// 32-byte Ed25519 public key.
+func BuildAuthorizedKeys(keys []config.SignerAuthorizedKeyConfig) (map[string]ed25519.PublicKey, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]ed25519.PublicKey, len(keys))
+	for _, k := range keys {
+		if k.Caller == "" {
+			return nil, errors.New("signer.authorized_keys entry missing caller")
+		}
+		if _, dup := out[k.Caller]; dup {
+			return nil, fmt.Errorf("duplicate signer.authorized_keys caller %q", k.Caller)
+		}
+		raw, err := hex.DecodeString(k.Ed25519PubkeyHex)
+		if err != nil {
+			return nil, fmt.Errorf("authorized key %q: invalid ed25519_pubkey_hex: %w", k.Caller, err)
+		}
+		if len(raw) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("authorized key %q: ed25519_pubkey_hex must be %d bytes, got %d", k.Caller, ed25519.PublicKeySize, len(raw))
+		}
+		out[k.Caller] = ed25519.PublicKey(raw)
+	}
+	return out, nil
+}
+
+// BuildCallerPolicies maps the configured caller_policies (caller -> key hash
+// hex -> raw tx-override map) into typed per-caller overrides for the policy
+// engine. Returns nil when none are configured. Each override is validated by a
+// JSON round-trip (unknown keys rejected) so a typo fails at boot.
+func BuildCallerPolicies(cfg map[string]map[string]map[string]any) (map[string]map[backend.KeyHash]*policy.CallerTxOverride, error) {
+	if len(cfg) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]map[backend.KeyHash]*policy.CallerTxOverride, len(cfg))
+	for caller, byKey := range cfg {
+		if caller == "" {
+			return nil, errors.New("signer.caller_policies entry has empty caller subject")
+		}
+		if len(byKey) == 0 {
+			continue
+		}
+		m := make(map[backend.KeyHash]*policy.CallerTxOverride, len(byKey))
+		for hashHex, raw := range byKey {
+			h, err := backend.ParseKeyHash(hashHex)
+			if err != nil {
+				return nil, fmt.Errorf("caller %q key %q: %w", caller, hashHex, err)
+			}
+			var ov policy.CallerTxOverride
+			if err := remap(raw, &ov); err != nil {
+				return nil, fmt.Errorf("caller %q key %q override: %w", caller, hashHex, err)
+			}
+			m[h] = &ov
+		}
+		out[caller] = m
+	}
+	return out, nil
+}
+
+// BuildPolicyHook constructs the optional external policy hook from config.
+// Returns nil when signer.policy_hook_url is unset (hook disabled).
+func BuildPolicyHook(cfg config.SignerConfig) PolicyHook {
+	if cfg.PolicyHookURL == "" {
+		return nil
+	}
+	// Bound the configured timeout before the signed conversion so a large
+	// value cannot overflow time.Duration (~292 years is far beyond any sane
+	// hook timeout).
+	timeoutMs := cfg.PolicyHookTimeoutMs
+	const maxTimeoutMs = uint(24 * 60 * 60 * 1000) // 1 day
+	if timeoutMs > maxTimeoutMs {
+		timeoutMs = maxTimeoutMs
+	}
+	return NewHTTPPolicyHook(cfg.PolicyHookURL, time.Duration(timeoutMs)*time.Millisecond)
 }
 
 // BuildWatermark constructs the configured watermark store and mode.

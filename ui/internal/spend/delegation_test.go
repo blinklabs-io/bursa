@@ -1,6 +1,7 @@
 package spend
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -690,6 +691,42 @@ func TestDecodeDRepID(t *testing.T) {
 	}
 	if _, _, err := decodeDRepID(validPoolID); err == nil {
 		t.Fatal("a non-drep prefix should error")
+	}
+}
+
+// TestDecodeDRepIDChecksCIP129VoterType pins both nibbles of the CIP-129 header.
+// CIP-129 fixes a DRep's high nibble at 0x2 and encodes the credential type in
+// the low nibble, so 0x22 is a key DRep and 0x23 a script DRep. An identifier
+// built with any other high nibble (0x33 here, the low nibble of a script hash
+// under a committee voter type) is still valid bech32 and still 29 bytes, so
+// keying off the low nibble alone accepts it and delegates the wallet's voting
+// power to an entity the identifier does not denote. The node rejects the same
+// id with "invalid DRep voter type", so this only moves the rejection
+// client-side. Literal ids below are bech32("drep", header || 0xb2 * 28)
+// computed with a reference bech32 implementation checked against CIP-129's own
+// published vector.
+func TestDecodeDRepIDChecksCIP129VoterType(t *testing.T) {
+	const (
+		keyHashID    = "drep1y2s6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgg68q7a8" // 0x22 || 0xa1 * 28
+		scriptHashID = "drep1ywet9v4jk2et9v4jk2et9v4jk2et9v4jk2et9v4jk2et9vsjgaa4a" // 0x23 || 0xb2 * 28
+		wrongVoterID = "drep1xwet9v4jk2et9v4jk2et9v4jk2et9v4jk2et9v4jk2et9vsmqpaza" // 0x33 || 0xb2 * 28
+	)
+	typ, hash, err := decodeDRepID(keyHashID)
+	if err != nil {
+		t.Fatalf("decodeDRepID(0x22 key-hash id): %v", err)
+	}
+	if typ != lcommon.DrepTypeAddrKeyHash || !bytes.Equal(hash, bytes.Repeat([]byte{0xa1}, 28)) {
+		t.Fatalf("0x22 id = type %d hash %x, want key hash of 0xa1 * 28", typ, hash)
+	}
+	typ, hash, err = decodeDRepID(scriptHashID)
+	if err != nil {
+		t.Fatalf("decodeDRepID(0x23 script-hash id): %v", err)
+	}
+	if typ != lcommon.DrepTypeScriptHash || !bytes.Equal(hash, bytes.Repeat([]byte{0xb2}, 28)) {
+		t.Fatalf("0x23 id = type %d hash %x, want script hash of 0xb2 * 28", typ, hash)
+	}
+	if _, _, err := decodeDRepID(wrongVoterID); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("0x33 header must be rejected as an invalid DRep voter type, got err %v", err)
 	}
 }
 

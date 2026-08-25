@@ -13,6 +13,8 @@ import type {
   SignDataResult,
   VaultStatus,
   WalletView,
+  AccountsResponse,
+  AddAccountRequest,
   CreateVaultRequest,
   UnlockVaultRequest,
   AddWalletRequest,
@@ -28,7 +30,9 @@ import type {
   SubmitSignedRequest,
   PoolInfo,
   PoolDirectoryResponse,
+  GovernanceActionsResponse,
   DRepInfo,
+  DRepDirectoryResponse,
   AssetInfo,
   DelegationRequest,
   DelegationPreview,
@@ -59,10 +63,13 @@ import type {
   MultiSigSignRequest,
   MultiSigSubmitRequest,
   HardwareSignResponse,
+  HardwareSignDataRequest,
   TxSummary,
   CosignResult,
   NFT,
   NftMediaSetting,
+  NotificationsSetting,
+  ActivityResponse,
   Diagnostics,
 } from "./types";
 
@@ -176,6 +183,13 @@ export const addHardwareWallet = (
   } satisfies AddHardwareWalletRequest);
 export const activateWallet = (id: string) =>
   apiPost<WalletView>(`/wallet/${encodeURIComponent(id)}/activate`);
+
+// Multi-account (BIP44 account switching) for the active wallet.
+export const getAccounts = () => apiGet<AccountsResponse>("/wallet/accounts");
+export const selectAccount = (accountIndex: number) =>
+  apiPost<WalletView>("/wallet/account/select", { account_index: accountIndex });
+export const addAccount = (req: AddAccountRequest) =>
+  apiPost<WalletView>("/wallet/accounts", req);
 export const removeWallet = (id: string, vaultPassword: string) =>
   apiDelete<{ removed: boolean }>(`/wallet/${encodeURIComponent(id)}`, { vault_password: vaultPassword });
 
@@ -210,6 +224,14 @@ export const submitSigned = (req: SubmitSignedRequest) =>
 // witness against the same pending send.
 export const getHardwareSignRequest = (id: string) =>
   apiGet<HardwareSignResponse>(`/wallet/send/${encodeURIComponent(id)}/hardware-sign-request`);
+
+// CIP-8 hardware message signing: resolve the seedless signing metadata (paths +
+// network) a hardware device needs to sign a message for one of the wallet's own
+// receive addresses. The device then produces the COSE_Sign1 / COSE_Key.
+export const getHardwareSignDataRequest = (address: string) =>
+  apiGet<HardwareSignDataRequest>(
+    `/wallet/sign-data/hardware-request?address=${encodeURIComponent(address)}`,
+  );
 export const submitHardware = (id: string, witnessCbor: string) =>
   apiPost<TxResult>(`/wallet/send/${encodeURIComponent(id)}/submit-hardware`, { witness_cbor: witnessCbor });
 
@@ -225,16 +247,40 @@ export const resolveHandle = (name: string) =>
 export const getPool = (id: string) => apiGet<PoolInfo>(`/wallet/pool/${encodeURIComponent(id)}`);
 export const getDRep = (id: string) => apiGet<DRepInfo>(`/wallet/drep/${encodeURIComponent(id)}`);
 
+// Shared query-string builder for the read-only pool/DRep directories: both
+// serialize the same search (q) and pagination (page/count) params the same
+// way, so this keeps their semantics from drifting apart.
+function directoryQuery(params?: { q?: string; page?: number; count?: number }): string {
+  const qs = new URLSearchParams();
+  if (params?.q) qs.set("q", params.q);
+  if (params?.page && params.page > 1) qs.set("page", String(params.page));
+  if (params?.count) qs.set("count", String(params.count));
+  return qs.toString() ? `?${qs.toString()}` : "";
+}
+
 // Read-only stake-pool directory (node-local; distinct from the DEX AMM pools).
 // Browse/search the pools the node has indexed, for delegation. Search (q) and
 // pagination (page/count) are applied server-side over the node's list.
-export const getPoolDirectory = (params?: { q?: string; page?: number; count?: number }) => {
+export const getPoolDirectory = (params?: { q?: string; page?: number; count?: number }) =>
+  apiGet<PoolDirectoryResponse>(`/wallet/pools${directoryQuery(params)}`);
+
+// Read-only DRep directory (node-local): browse/search the delegated
+// representatives the node has indexed, to inform vote-delegation. Search (q)
+// and pagination (page/count) are applied server-side over the node's list.
+export const getDReps = (params?: { q?: string; page?: number; count?: number }) =>
+  apiGet<DRepDirectoryResponse>(`/wallet/dreps${directoryQuery(params)}`);
+
+// Read-only governance-action (Conway proposal) browser (node-local; read from
+// the node's metadata DB). Browse/search the governance actions the node has
+// recorded, with type, status, and vote tallies. Search (q) and pagination
+// (page/count) are applied server-side over the node's list.
+export const getGovernanceActions = (params?: { q?: string; page?: number; count?: number }) => {
   const qs = new URLSearchParams();
   if (params?.q) qs.set("q", params.q);
   if (params?.page && params.page > 1) qs.set("page", String(params.page));
   if (params?.count) qs.set("count", String(params.count));
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return apiGet<PoolDirectoryResponse>(`/wallet/pools${suffix}`);
+  return apiGet<GovernanceActionsResponse>(`/wallet/governance-actions${suffix}`);
 };
 
 // Native-asset on-chain metadata (node-only; see ../tokenMeta.ts for how the
@@ -316,12 +362,12 @@ export const computeDexQuote = (req: DexQuoteRequest) =>
 
 // Native multi-signature accounts.
 export const listMultiSig = () => apiGet<MultiSigAccount[]>("/wallet/multisig");
+// Composes the policy into a script and stores it as a vault wallet, so the
+// response is the new wallet rather than a standalone account record.
 export const createMultiSig = (req: CreateMultiSigRequest) =>
-  apiPost<MultiSigAccount>("/wallet/multisig", req);
+  apiPost<WalletView>("/wallet/multisig", req);
 export const getMultiSig = (id: string) =>
   apiGet<MultiSigAccount>(`/wallet/multisig/${encodeURIComponent(id)}`);
-export const deleteMultiSig = (id: string) =>
-  request<{ status: string }>("DELETE", `/wallet/multisig/${encodeURIComponent(id)}`);
 export const multiSigMyKey = (password: string) =>
   apiPost<MultiSigMyKey>("/wallet/multisig/my-key", { password });
 export const multiSigBalance = (id: string) =>
@@ -347,6 +393,14 @@ export const getNfts = () => apiGet<NFT[]>("/wallet/nft");
 export const getNftMedia = () => apiGet<NftMediaSetting>("/wallet/settings/nft-media");
 export const setNftMedia = (enabled: boolean) =>
   apiPut<NftMediaSetting>("/wallet/settings/nft-media", { enabled });
+
+// Wallet-activity notifications: the persisted on/off preference and the
+// node-local activity poll the SPA drives to raise desktop/browser notifications.
+export const getNotifications = () =>
+  apiGet<NotificationsSetting>("/wallet/settings/notifications");
+export const setNotifications = (enabled: boolean) =>
+  apiPut<NotificationsSetting>("/wallet/settings/notifications", { enabled });
+export const getActivity = () => apiGet<ActivityResponse>("/wallet/activity");
 export const nftImageUrl = (unit: string) => `/wallet/nft/${encodeURIComponent(unit)}/image`;
 
 // Node diagnostics (node-local; no external calls). getDiagnostics polls the

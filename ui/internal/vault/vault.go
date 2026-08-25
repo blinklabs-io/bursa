@@ -63,6 +63,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"unicode/utf8"
 
@@ -104,6 +105,15 @@ var (
 	// ErrTPMUnavailable: EnableTPM was asked to bind the vault to a TPM, but no
 	// usable TPM is present (unsupported platform, no device, or no permission).
 	ErrTPMUnavailable = errors.New("TPM unavailable")
+	// ErrUnknownAccount: the requested account index has not been derived for the
+	// wallet (Select/derive it first).
+	ErrUnknownAccount = errors.New("unknown account")
+	// ErrDuplicateAccount: AddAccount was asked to derive an account index the
+	// wallet already has.
+	ErrDuplicateAccount = errors.New("account already exists")
+	// ErrNoSeed: an operation that needs the seed (e.g. deriving a new account)
+	// was attempted on a seedless wallet (hardware / read-only).
+	ErrNoSeed = errors.New("wallet has no seed")
 )
 
 // WalletMeta is the read-only record kept for one wallet inside the index. It
@@ -115,13 +125,97 @@ var (
 // For hardware wallets (Type==WalletTypeHardware) no seed blob exists at all: the device
 // holds the private key. Only the account xpub and the derived addresses are
 // stored, so read-only views (balances, history) work without any secret.
+// ScriptMeta is the native-script material for a multi-signature wallet: the
+// policy it was composed from, the script itself, and the address that script
+// funds. A script wallet has no seed, no account xpub and no CIP-1852 accounts,
+// so this is what identifies and funds it instead.
+//
+// Policy is kept opaque (raw JSON) deliberately: the vault is the lowest layer
+// here and must not depend on the multisig package that owns the policy shape.
+type ScriptMeta struct {
+	Policy        json.RawMessage `json:"policy"`
+	ScriptCBOR    string          `json:"script_cbor"`
+	ScriptAddress string          `json:"script_address"`
+}
+
 type WalletMeta struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	Network     string          `json:"network"`
-	AccountXpub string          `json:"account_xpub"`
-	Account     *wallet.Account `json:"account"`
-	Type        WalletType      `json:"type"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Network     string `json:"network"`
+	AccountXpub string `json:"account_xpub"`
+	// Account is the wallet's canonical account (CIP-1852 index 0). It is the
+	// stable identity used for de-duplication and the account xpub; it never
+	// changes when the user switches the active account.
+	Account *wallet.Account `json:"account"`
+	Type    WalletType      `json:"type"`
+	// Accounts holds every derived account for this wallet (index 0 included).
+	// Multi-account wallets add entries via AddAccount; legacy records persisted
+	// before multi-account support carry a nil slice, in which case AccountList
+	// synthesizes a single-element list from Account. Additive/back-compatible.
+	Accounts []*wallet.Account `json:"accounts,omitempty"`
+	// ActiveAccountIndex is the currently selected CIP-1852 account index for
+	// this wallet. It is NOT persisted inside the (re-sealed) index — the
+	// authoritative store is the cleartext envelope.ActiveAccounts map, which a
+	// selection can update without the vault password. It is stamped onto the
+	// metas the vault hands out so the API/UI can render the active account.
+	ActiveAccountIndex uint32 `json:"-"`
+	// Script is set only on a multi-signature wallet, and is what makes it
+	// spendable: there is no seed to derive from. Nil for every other type.
+	Script *ScriptMeta `json:"script,omitempty"`
+}
+
+// IsScript reports whether this wallet spends from a native script rather than
+// from a derived key. Such a wallet has no seed and no stake key, so the flows
+// needing either are unavailable to it.
+func (w WalletMeta) IsScript() bool {
+	return w.Type == WalletTypeMultiSignature && w.Script != nil
+}
+
+// AccountList returns every derived account for the wallet, ordered by CIP-1852
+// account index. For legacy records (Accounts nil) it synthesizes a
+// single-element list from Account, so callers can treat every wallet
+// uniformly. The index order is guaranteed regardless of derivation/append
+// order, so API/UI listings stay stable (Account #0 before Account #5).
+func (w WalletMeta) AccountList() []*wallet.Account {
+	var accts []*wallet.Account
+	switch {
+	case len(w.Accounts) > 0:
+		accts = make([]*wallet.Account, len(w.Accounts))
+		copy(accts, w.Accounts)
+	case w.Account != nil:
+		accts = []*wallet.Account{w.Account}
+	default:
+		return nil
+	}
+	sort.SliceStable(accts, func(i, j int) bool {
+		a, b := accts[i], accts[j]
+		if a == nil || b == nil {
+			return b == nil && a != nil // non-nil entries sort before nil ones
+		}
+		return a.AccountIndex < b.AccountIndex
+	})
+	return accts
+}
+
+// AccountByIndex returns the derived account with the given CIP-1852 index, or
+// nil if the wallet has no such derived account.
+func (w WalletMeta) AccountByIndex(index uint32) *wallet.Account {
+	for _, a := range w.AccountList() {
+		if a != nil && a.AccountIndex == index {
+			return a
+		}
+	}
+	return nil
+}
+
+// ActiveAccount returns the account the wallet is currently bound to (the one at
+// ActiveAccountIndex), falling back to the canonical Account when that index has
+// not been derived (defensive: keeps a stale selection from unbinding reads).
+func (w WalletMeta) ActiveAccount() *wallet.Account {
+	if a := w.AccountByIndex(w.ActiveAccountIndex); a != nil {
+		return a
+	}
+	return w.Account
 }
 
 type WalletType string
@@ -163,6 +257,12 @@ type envelope struct {
 	Index       keystore.Container            `json:"index"`
 	WalletCount int                           `json:"wallet_count,omitempty"`
 	Seeds       map[string]keystore.Container `json:"seeds"`
+	// ActiveAccounts records the selected CIP-1852 account index per wallet id.
+	// It is cleartext, non-secret metadata (which account is being viewed), kept
+	// out of the encrypted index so SelectAccount can persist a switch WITHOUT
+	// the vault password (no re-seal). Absent/legacy → every wallet defaults to
+	// account 0. Omitempty keeps single-account vaults byte-identical.
+	ActiveAccounts map[string]uint32 `json:"active_accounts,omitempty"`
 }
 
 // Vault is a thread-safe handle to the on-disk vault file. When unlocked it
@@ -191,6 +291,10 @@ type Vault struct {
 	mu       sync.RWMutex
 	idx      *index // non-nil only while unlocked
 	activeID string // id of the active wallet (empty if none)
+	// activeAccounts mirrors envelope.ActiveAccounts while unlocked: the selected
+	// account index per wallet id (absent → 0). It is the in-memory source of
+	// truth for account selection and is written on every persist.
+	activeAccounts map[string]uint32
 }
 
 // New returns a Vault backed by the file at path. It does not touch the file
@@ -292,7 +396,8 @@ func (v *Vault) Create(vaultPassword string) error {
 	}
 	defer keystore.Zero(vek)
 	idx := &index{Wallets: []WalletMeta{}}
-	if err := v.persistLocked(idx, map[string]keystore.Container{}, vek, vaultPassword, nil); err != nil {
+	v.activeAccounts = map[string]uint32{}
+	if err := v.persistLocked(idx, map[string]keystore.Container{}, vek, vaultPassword, nil, v.activeAccounts); err != nil {
 		return err
 	}
 	v.idx = idx
@@ -315,11 +420,15 @@ func (v *Vault) Unlock(vaultPassword string) ([]WalletMeta, error) {
 		return nil, err
 	}
 	defer keystore.Zero(vek)
+	// Load the persisted per-wallet account selection (cleartext, non-secret).
+	// Absent/legacy → empty (every wallet defaults to account 0). This must be set
+	// before any persistLocked below so the selection is carried through.
+	v.activeAccounts = cloneActiveAccounts(env.ActiveAccounts)
 	// Format-1 vaults must be transparently re-keyed to format 2 before they are
 	// considered unlocked. This migration is security-critical, so a failed
 	// persist must abort the unlock.
 	if env.Format == legacyFormatVersion {
-		if err := v.persistLocked(idx, env.Seeds, vek, vaultPassword, tpmOf(env)); err != nil {
+		if err := v.persistLocked(idx, env.Seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
 			return nil, fmt.Errorf("vault: persist metadata failed: %w", err)
 		}
 	}
@@ -331,7 +440,7 @@ func (v *Vault) Unlock(vaultPassword string) ([]WalletMeta, error) {
 	if len(idx.Wallets) == 1 {
 		v.activeID = idx.Wallets[0].ID
 	}
-	return cloneWallets(idx.Wallets), nil
+	return v.stampActiveLocked(cloneWallets(idx.Wallets)), nil
 }
 
 // Lock drops the decrypted index from memory. Subsequent read-only operations
@@ -340,6 +449,7 @@ func (v *Vault) Lock() {
 	v.mu.Lock()
 	v.idx = nil
 	v.activeID = ""
+	v.activeAccounts = nil
 	v.mu.Unlock()
 }
 
@@ -406,7 +516,7 @@ func (v *Vault) EnableTPM(vaultPassword string, pcrBound bool) error {
 	// Re-persist with the SAME VEK + the existing seeds, adding the TPM section
 	// and keeping the password protector. O(1): only the small key section is
 	// re-wrapped; index/seed blobs are untouched.
-	return v.persistLocked(idx, env.Seeds, vek, vaultPassword, &sec)
+	return v.persistLocked(idx, env.Seeds, vek, vaultPassword, &sec, v.activeAccounts)
 }
 
 // DisableTPM drops the TPM protector and re-persists with the password protector
@@ -424,7 +534,7 @@ func (v *Vault) DisableTPM(vaultPassword string) error {
 	if env.Key == nil || env.Key.Tpm == nil {
 		return nil // already password-only
 	}
-	return v.persistLocked(idx, env.Seeds, vek, vaultPassword, nil)
+	return v.persistLocked(idx, env.Seeds, vek, vaultPassword, nil, v.activeAccounts)
 }
 
 // Wallets returns the wallet list (read-only metadata). The vault must be
@@ -435,7 +545,7 @@ func (v *Vault) Wallets() ([]WalletMeta, error) {
 	if v.idx == nil {
 		return nil, ErrLocked
 	}
-	return cloneWallets(v.idx.Wallets), nil
+	return v.stampActiveLocked(cloneWallets(v.idx.Wallets)), nil
 }
 
 // AddWallet derives the account for mnemonic/network, encrypts the seed under
@@ -480,7 +590,7 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 	}
 	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
 	seeds[meta.ID] = seed
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env)); err != nil {
+	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
@@ -520,6 +630,7 @@ func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPasswor
 		Network:     network,
 		AccountXpub: accountXpubBech32,
 		Account:     acct,
+		Accounts:    []*wallet.Account{acct},
 		Type:        WalletTypeHardware,
 	}
 
@@ -537,11 +648,29 @@ func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPasswor
 		seeds = map[string]keystore.Container{}
 	}
 	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env)); err != nil {
+	// A hardware wallet imported at a nonzero account index has no account 0 in
+	// its Accounts list, so it must be stamped active at accountIndex too —
+	// otherwise Wallets/SetActive/Active report index 0 (the map default) for a
+	// wallet that has no such account, while ActiveAccount() falls back to the
+	// imported one. Build the candidate selection map and only commit it to
+	// v.activeAccounts after the persist below succeeds.
+	nextActive := v.activeAccounts
+	if accountIndex != 0 {
+		nextActive = cloneActiveAccounts(v.activeAccounts)
+		if nextActive == nil {
+			nextActive = map[string]uint32{}
+		}
+		nextActive[meta.ID] = accountIndex
+	}
+	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive); err != nil {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
 	v.activeID = meta.ID
+	if accountIndex != 0 {
+		v.activeAccounts = nextActive
+		meta.ActiveAccountIndex = accountIndex
+	}
 	return meta, nil
 }
 
@@ -578,7 +707,7 @@ func (v *Vault) importWallet(name string, mnemonic []byte, network, vaultPasswor
 	defer keystore.Zero(vek)
 	idx := &index{Wallets: []WalletMeta{meta}}
 	seeds := map[string]keystore.Container{meta.ID: seed}
-	if err := v.persistLocked(idx, seeds, vek, vaultPassword, nil); err != nil {
+	if err := v.persistLocked(idx, seeds, vek, vaultPassword, nil, v.activeAccounts); err != nil {
 		return WalletMeta{}, err
 	}
 	v.idx = idx
@@ -615,10 +744,17 @@ func (v *Vault) RemoveWallet(id, vaultPassword string) error {
 	if len(newIdx.Wallets) == len(idx.Wallets) {
 		return fmt.Errorf("%w: %q", ErrUnknownWallet, id)
 	}
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env)); err != nil {
+	// Drop the removed wallet's account selection from a candidate copy and
+	// persist that copy; only commit it to v.activeAccounts once the persist
+	// below succeeds, so a failed write never leaves the in-memory selection
+	// diverged from what is durably on disk.
+	nextActive := cloneActiveAccounts(v.activeAccounts)
+	delete(nextActive, id)
+	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive); err != nil {
 		return err
 	}
 	v.idx = newIdx
+	v.activeAccounts = nextActive
 	if v.activeID == id {
 		v.activeID = ""
 	}
@@ -626,24 +762,28 @@ func (v *Vault) RemoveWallet(id, vaultPassword string) error {
 }
 
 // SetActive marks the wallet with id as active. The vault must be unlocked and
-// the id must exist.
+// the id must exist. The returned meta carries the wallet's selected account
+// index.
 func (v *Vault) SetActive(id string) (WalletMeta, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.idx == nil {
 		return WalletMeta{}, ErrLocked
 	}
-	for _, w := range v.idx.Wallets {
-		if w.ID == id {
+	for i := range v.idx.Wallets {
+		if v.idx.Wallets[i].ID == id {
 			v.activeID = id
-			return *cloneWallet(&w), nil
+			meta := *cloneWallet(&v.idx.Wallets[i])
+			meta.ActiveAccountIndex = v.activeAccounts[id]
+			return meta, nil
 		}
 	}
 	return WalletMeta{}, fmt.Errorf("%w: %q", ErrUnknownWallet, id)
 }
 
 // Active returns the active wallet's metadata, or ErrNoActiveWallet if none is
-// set. The vault must be unlocked.
+// set. The vault must be unlocked. The returned meta carries the wallet's
+// selected account index.
 func (v *Vault) Active() (WalletMeta, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
@@ -653,9 +793,11 @@ func (v *Vault) Active() (WalletMeta, error) {
 	if v.activeID == "" {
 		return WalletMeta{}, ErrNoActiveWallet
 	}
-	for _, w := range v.idx.Wallets {
-		if w.ID == v.activeID {
-			return *cloneWallet(&w), nil
+	for i := range v.idx.Wallets {
+		if v.idx.Wallets[i].ID == v.activeID {
+			meta := *cloneWallet(&v.idx.Wallets[i])
+			meta.ActiveAccountIndex = v.activeAccounts[v.activeID]
+			return meta, nil
 		}
 	}
 	return WalletMeta{}, ErrNoActiveWallet
@@ -666,6 +808,282 @@ func (v *Vault) ActiveID() string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	return v.activeID
+}
+
+// ActiveAccountIndexFor returns the selected CIP-1852 account index for the
+// wallet with id (0 when none is selected or the wallet is unknown).
+func (v *Vault) ActiveAccountIndexFor(id string) uint32 {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.activeAccounts[id]
+}
+
+// AddScriptWallet stores a native-script multi-signature account as a wallet.
+//
+// Like a hardware wallet it is seedless, so no seed blob is added; unlike one it
+// has no account xpub either, and its "addresses" are the single script address
+// the policy funds. Account is synthesized from that address so every caller
+// that reads a wallet's addresses keeps working without special-casing.
+//
+// Deduplicated on the script address: the same policy composed twice is the same
+// account, and re-running a migration must not add it again.
+//
+// id is normally empty and one is generated. Migration passes the account's
+// existing id so links and requests that already reference it keep resolving —
+// a migration that silently renames what it moves is a migration that breaks
+// every reference to it.
+func (v *Vault) AddScriptWallet(id, name, network string, script ScriptMeta, vaultPassword string) (WalletMeta, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.idx == nil {
+		return WalletMeta{}, ErrLocked
+	}
+	if script.ScriptAddress == "" {
+		return WalletMeta{}, errors.New("script wallet: empty script address")
+	}
+
+	env, vek, idx, err := v.authenticatedEnvelopeLocked(vaultPassword)
+	if err != nil {
+		return WalletMeta{}, err
+	}
+	defer keystore.Zero(vek)
+
+	for _, w := range idx.Wallets {
+		if w.Script != nil && w.Script.ScriptAddress == script.ScriptAddress {
+			return WalletMeta{}, fmt.Errorf("%w: %q", ErrDuplicateWallet, w.Name)
+		}
+	}
+
+	// A script account has no stake key and no derivation path. The synthesized
+	// account carries the script address as its sole receive address so address
+	// and balance reads resolve without a special case; StakeAddress stays empty
+	// because there is genuinely no stake credential to report.
+	acct := &wallet.Account{
+		Network:          network,
+		AccountIndex:     0,
+		ReceiveAddresses: []string{script.ScriptAddress},
+	}
+
+	if id == "" {
+		id = newID()
+	}
+	meta := WalletMeta{
+		ID:       id,
+		Name:     name,
+		Network:  network,
+		Account:  acct,
+		Accounts: []*wallet.Account{acct},
+		Type:     WalletTypeMultiSignature,
+		Script:   cloneScript(&script),
+	}
+
+	seeds := env.Seeds
+	if seeds == nil {
+		seeds = map[string]keystore.Container{}
+	}
+	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
+	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
+		return WalletMeta{}, err
+	}
+	v.idx = newIdx
+	// Adopt the new wallet as active only when nothing else is, matching the
+	// seeded and hardware paths. Migration must NOT steal the selection: it runs
+	// on unlock, and moving the user to a script wallet they did not choose
+	// would be a surprising side effect of housekeeping.
+	if v.activeID == "" {
+		v.activeID = meta.ID
+	}
+	return meta, nil
+}
+
+// cloneScript deep-copies script material, including the policy bytes.
+//
+// Wallets/Active hand out defensive copies so a caller cannot reach back into
+// the sealed index. A shared *ScriptMeta (or a shared Policy slice) would defeat
+// that: a caller could mutate vault state in memory without persisting it, and
+// race the readers while doing so.
+func cloneScript(s *ScriptMeta) *ScriptMeta {
+	if s == nil {
+		return nil
+	}
+	out := *s
+	if s.Policy != nil {
+		out.Policy = append(json.RawMessage(nil), s.Policy...)
+	}
+	return &out
+}
+
+// ScriptAddresses returns the script address of every multi-signature wallet in
+// the index. Used to make the migration from the standalone multisig store
+// idempotent without re-adding what is already here.
+func (v *Vault) ScriptAddresses() ([]string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.idx == nil {
+		return nil, ErrLocked
+	}
+	var addrs []string
+	for _, w := range v.idx.Wallets {
+		if w.Script != nil && w.Script.ScriptAddress != "" {
+			addrs = append(addrs, w.Script.ScriptAddress)
+		}
+	}
+	return addrs, nil
+}
+
+// AddAccount derives a new CIP-1852 account (m/1852'/1815'/<accountIndex>') for
+// the wallet with id and records it in the wallet's Accounts list. It needs the
+// seed (via spendPassword, to derive the hardened account key) AND the vault
+// password (to re-seal the index with the new account's read-only material, so
+// later reads work without the seed). The vault must be unlocked. Hardware /
+// seedless wallets are rejected (ErrNoSeed); an already-derived index is
+// rejected (ErrDuplicateAccount). The returned meta carries the wallet's current
+// active account index (unchanged — selection is a separate step).
+func (v *Vault) AddAccount(id, vaultPassword, spendPassword string, accountIndex uint32, windowN int) (WalletMeta, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.idx == nil {
+		return WalletMeta{}, ErrLocked
+	}
+	// Locate the target wallet in the cached index.
+	pos := -1
+	for i := range v.idx.Wallets {
+		if v.idx.Wallets[i].ID == id {
+			pos = i
+			break
+		}
+	}
+	if pos < 0 {
+		return WalletMeta{}, fmt.Errorf("%w: %q", ErrUnknownWallet, id)
+	}
+	target := v.idx.Wallets[pos]
+	if target.Type == WalletTypeHardware || target.Type == WalletTypeReadOnly {
+		return WalletMeta{}, fmt.Errorf("%w: %q", ErrNoSeed, target.Name)
+	}
+	if target.AccountByIndex(accountIndex) != nil {
+		return WalletMeta{}, fmt.Errorf("%w: index %d", ErrDuplicateAccount, accountIndex)
+	}
+
+	env, vek, idx, err := v.authenticatedEnvelopeLocked(vaultPassword)
+	if err != nil {
+		return WalletMeta{}, err
+	}
+	defer keystore.Zero(vek)
+
+	// Decrypt the wallet's seed (spend password) to derive the hardened account.
+	mnemonic, err := v.decodeSeedLocked(env, id, spendPassword)
+	if err != nil {
+		return WalletMeta{}, err
+	}
+	defer keystore.Zero(mnemonic)
+
+	acct, err := wallet.DeriveAccountFromMnemonicBytes(mnemonic, target.Network, accountIndex, windowN)
+	if err != nil {
+		return WalletMeta{}, fmt.Errorf("derive account %d: %w", accountIndex, err)
+	}
+
+	// Merge the new account into a fresh index (defensive copy of the wallet list).
+	newWallets := cloneWallets(idx.Wallets)
+	for i := range newWallets {
+		if newWallets[i].ID == id {
+			newWallets[i].Accounts = append(newWallets[i].AccountList(), acct)
+			break
+		}
+	}
+	newIdx := &index{Wallets: newWallets}
+	if err := v.persistLocked(newIdx, env.Seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
+		return WalletMeta{}, err
+	}
+	v.idx = newIdx
+	for i := range newIdx.Wallets {
+		if newIdx.Wallets[i].ID == id {
+			meta := *cloneWallet(&newIdx.Wallets[i])
+			meta.ActiveAccountIndex = v.activeAccounts[id]
+			return meta, nil
+		}
+	}
+	return WalletMeta{}, fmt.Errorf("%w: %q", ErrUnknownWallet, id)
+}
+
+// SelectAccount sets the active CIP-1852 account index for the wallet with id.
+// It is intentionally cheap: the selection lives in the cleartext
+// envelope.ActiveAccounts map, so it persists WITHOUT the vault password (no
+// index re-seal). The account must already be derived (AddAccount first). The
+// vault must be unlocked. The returned meta carries the new active index.
+func (v *Vault) SelectAccount(id string, accountIndex uint32) (WalletMeta, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.idx == nil {
+		return WalletMeta{}, ErrLocked
+	}
+	pos := -1
+	for i := range v.idx.Wallets {
+		if v.idx.Wallets[i].ID == id {
+			pos = i
+			break
+		}
+	}
+	if pos < 0 {
+		return WalletMeta{}, fmt.Errorf("%w: %q", ErrUnknownWallet, id)
+	}
+	if v.idx.Wallets[pos].AccountByIndex(accountIndex) == nil {
+		return WalletMeta{}, fmt.Errorf("%w: index %d", ErrUnknownAccount, accountIndex)
+	}
+
+	// Persist the selection by rewriting the envelope's cleartext map only; the
+	// encrypted index/seed blobs are carried through unchanged. A missing vault
+	// file (never persisted) is impossible here since we are unlocked.
+	env, err := v.readEnvelope()
+	if err != nil {
+		return WalletMeta{}, err
+	}
+	// Build the candidate selection on a copy and only commit it to
+	// v.activeAccounts once the write below succeeds — otherwise a failed
+	// marshal/write would leave the in-memory selection ahead of the on-disk
+	// state, binding later reads (or signing) to an undurable choice.
+	next := cloneActiveAccounts(v.activeAccounts)
+	if next == nil {
+		next = map[string]uint32{}
+	}
+	if accountIndex == 0 {
+		delete(next, id)
+	} else {
+		next[id] = accountIndex
+	}
+	env.ActiveAccounts = cloneActiveAccounts(next)
+	out, err := json.Marshal(env)
+	if err != nil {
+		return WalletMeta{}, err
+	}
+	if err := writeFileAtomic(v.path, out, 0o600); err != nil {
+		return WalletMeta{}, err
+	}
+	v.activeAccounts = next
+
+	meta := *cloneWallet(&v.idx.Wallets[pos])
+	meta.ActiveAccountIndex = accountIndex
+	return meta, nil
+}
+
+// decodeSeedLocked decrypts the seed for wallet id from env under spendPassword.
+// The caller MUST zero the returned bytes. Callers hold v.mu.
+func (v *Vault) decodeSeedLocked(env envelope, id, spendPassword string) ([]byte, error) {
+	seed, ok := env.Seeds[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrNoSeed, id)
+	}
+	blob, err := json.Marshal(seed)
+	if err != nil {
+		return nil, err
+	}
+	mnemonic, err := v.open(blob, []byte(spendPassword))
+	if err != nil {
+		if errors.Is(err, keystore.ErrDecryptFailed) {
+			return nil, fmt.Errorf("%w: %w", ErrWrongPassword, err)
+		}
+		return nil, err
+	}
+	return mnemonic, nil
 }
 
 // UnlockSeed decrypts the active wallet's seed (the mnemonic) with its spending
@@ -832,7 +1250,14 @@ func (v *Vault) recoverVEKLocked(env envelope, vaultPassword string) ([]byte, er
 // re-persist (AddWallet, RemoveWallet, ...) never drops a TPM protector. The
 // password protector is ALWAYS written (the never-brick fallback). Callers hold
 // v.mu and own zeroing vek.
-func (v *Vault) persistLocked(idx *index, seeds map[string]keystore.Container, vek []byte, vaultPassword string, tpm *tpmSection) error {
+//
+// activeAccounts is the per-wallet active-selection map to persist. Callers
+// pass v.activeAccounts unchanged unless they are themselves changing the
+// selection (SelectAccount, RemoveWallet, AddHardwareWallet with a nonzero
+// imported index), in which case they must pass a candidate map and only
+// assign it to v.activeAccounts AFTER this call succeeds — so a failed persist
+// never leaves the in-memory selection diverged from what is durably on disk.
+func (v *Vault) persistLocked(idx *index, seeds map[string]keystore.Container, vek []byte, vaultPassword string, tpm *tpmSection, activeAccounts map[string]uint32) error {
 	idxContainer, err := v.sealIndex(idx, vek)
 	if err != nil {
 		return err
@@ -842,17 +1267,40 @@ func (v *Vault) persistLocked(idx *index, seeds map[string]keystore.Container, v
 		return err
 	}
 	env := envelope{
-		Format:      formatVersion,
-		Key:         &keySection{Password: wrapped, Tpm: tpm},
-		Index:       idxContainer,
-		WalletCount: len(idx.Wallets),
-		Seeds:       seeds,
+		Format:         formatVersion,
+		Key:            &keySection{Password: wrapped, Tpm: tpm},
+		Index:          idxContainer,
+		WalletCount:    len(idx.Wallets),
+		Seeds:          seeds,
+		ActiveAccounts: cloneActiveAccounts(activeAccounts),
 	}
 	out, err := json.Marshal(env)
 	if err != nil {
 		return err
 	}
 	return writeFileAtomic(v.path, out, 0o600)
+}
+
+// cloneActiveAccounts returns a defensive copy (nil stays nil so omitempty
+// keeps single-account vaults byte-identical).
+func cloneActiveAccounts(in map[string]uint32) map[string]uint32 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]uint32, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+// stampActiveLocked sets ActiveAccountIndex on each meta from the in-memory
+// selection map (absent → 0). Callers hold v.mu.
+func (v *Vault) stampActiveLocked(metas []WalletMeta) []WalletMeta {
+	for i := range metas {
+		metas[i].ActiveAccountIndex = v.activeAccounts[metas[i].ID]
+	}
+	return metas
 }
 
 // sealIndex encrypts the plaintext index under the VEK (the VEK drives the
@@ -959,6 +1407,7 @@ func (v *Vault) prepareWalletBytes(name string, mnemonic []byte, network, spendP
 		Network:     network,
 		AccountXpub: xpub,
 		Account:     acct,
+		Accounts:    []*wallet.Account{acct},
 		Type:        WalletTypeFull,
 	}
 	return meta, seed, nil
@@ -1022,11 +1471,23 @@ func cloneWallets(in []WalletMeta) []WalletMeta {
 
 func cloneWallet(w *WalletMeta) *WalletMeta {
 	c := *w
-	if w.Account != nil {
-		acct := *w.Account
-		acct.ReceiveAddresses = append([]string(nil), w.Account.ReceiveAddresses...)
-		acct.ChangeAddresses = append([]string(nil), w.Account.ChangeAddresses...)
-		c.Account = &acct
+	c.Account = cloneAccountPtr(w.Account)
+	c.Script = cloneScript(w.Script)
+	if w.Accounts != nil {
+		c.Accounts = make([]*wallet.Account, 0, len(w.Accounts))
+		for _, a := range w.Accounts {
+			c.Accounts = append(c.Accounts, cloneAccountPtr(a))
+		}
 	}
 	return &c
+}
+
+func cloneAccountPtr(a *wallet.Account) *wallet.Account {
+	if a == nil {
+		return nil
+	}
+	acct := *a
+	acct.ReceiveAddresses = append([]string(nil), a.ReceiveAddresses...)
+	acct.ChangeAddresses = append([]string(nil), a.ChangeAddresses...)
+	return &acct
 }

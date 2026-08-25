@@ -7,6 +7,7 @@ import type {
   DelegationView,
   RewardHistory,
   VaultStatus,
+  AccountsResponse,
   HistoryExpirySetting,
   AutoLockSetting,
   TPMStatus,
@@ -15,10 +16,12 @@ import type {
   AssetInfo,
   NFT,
   Diagnostics,
+  GovernanceActionsResponse,
 } from "./types";
 import {
   getStatus,
   getVaultStatus,
+  getAccounts,
   getBalance,
   getAddresses,
   getTransactions,
@@ -33,8 +36,18 @@ import {
   getNfts,
   getNftMedia,
   setNftMedia,
+  getNotifications,
+  setNotifications,
+  getActivity,
   getDiagnostics,
+  getGovernanceActions,
 } from "./client";
+import {
+  notificationPermission,
+  requestNotificationPermission,
+  notificationsSupported,
+  raiseActivityNotification,
+} from "../notifications";
 
 export interface AsyncState<T> {
   data: T | null;
@@ -153,6 +166,11 @@ export const useHistoryExpiry = (): AsyncState<HistoryExpirySetting> => useAsync
 export const useAutoLock = (): AsyncState<AutoLockSetting> => useAsync(getAutoLock);
 export const useTPMStatus = (): AsyncState<TPMStatus> => useAsync(getTPMStatus);
 export const useContacts = (): AsyncState<Contact[]> => useAsync(getContacts);
+// useAccounts lists the active wallet's BIP44 accounts (with node-local balance
+// summaries). It is enabled only once a wallet is active; the caller refreshes
+// it after an account is added or the active wallet changes.
+export const useAccounts = (enabled: boolean): AsyncState<AccountsResponse> =>
+  useAsync(getAccounts, { enabled });
 export const useDexPools = (): AsyncState<DexPoolsResponse> =>
   useAsync(getDexPools, { pollMs: 15000 });
 export const useNfts = (): AsyncState<NFT[]> => useAsync(getNfts);
@@ -213,6 +231,62 @@ export function useNftMedia(): NftMediaState {
 // error, etc.) must not prevent the others from displaying — the Portfolio
 // screen falls back to the raw unit/quantity for any unit missing from the
 // returned map.
+export interface GovernanceActionsState {
+  data: GovernanceActionsResponse | null;
+  error: Error | null;
+  loading: boolean;
+}
+
+// Debounce for the governance-action search box so each keystroke doesn't fire
+// a request.
+const GOV_ACTIONS_DEBOUNCE_MS = 250;
+
+// useGovernanceActions fetches one page of the node's recorded governance
+// actions for the read-only browser, re-running (debounced) whenever the search
+// query or page changes. Node-local read; no polling, since governance actions
+// change on the order of epochs, and the screen offers a manual refresh via
+// navigation.
+export function useGovernanceActions(params: { q: string; page: number }): GovernanceActionsState {
+  const { q, page } = params;
+  const [data, setData] = useState<GovernanceActionsResponse | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const query = q.trim();
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const timer = setTimeout(() => {
+      getGovernanceActions({ q: query, page })
+        .then((d) => {
+          if (!cancelled) {
+            setData(d);
+            setError(null);
+          }
+        })
+        .catch((e: Error) => {
+          if (!cancelled) {
+            setError(e);
+            // Drop the previous query/page's rows: the pager and search box
+            // already show the new request, so leaving them would present
+            // stale results as the answer to it, alongside the error.
+            setData(null);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, GOV_ACTIONS_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [q, page]);
+
+  return { data, error, loading };
+}
+
 export function useAssetMetadata(units: string[]): Record<string, AssetInfo | undefined> {
   const [metadata, setMetadata] = useState<Record<string, AssetInfo | undefined>>({});
   // Units are hex (policy id + asset name), so \0 can't collide with real
@@ -253,4 +327,150 @@ export function useAssetMetadata(units: string[]): Record<string, AssetInfo | un
   }, [key]);
 
   return metadata;
+}
+
+// NotificationsState backs the Settings toggle for node-local wallet-activity
+// notifications. `enabled` is the persisted preference (default off);
+// `permission` is the browser Notification permission ("unsupported" when the
+// API is absent, e.g. an OS-bridge-only desktop build). setEnabled(true)
+// requests the browser permission first (only ever in response to the user
+// opting in) and then persists the preference to the backend.
+export interface NotificationsState {
+  enabled: boolean;
+  permission: NotificationPermission | "unsupported";
+  supported: boolean;
+  loading: boolean;
+  saving: boolean;
+  error: Error | null;
+  setEnabled: (next: boolean) => Promise<void>;
+}
+
+export function useNotifications(): NotificationsState {
+  const [enabled, setEnabledState] = useState(false);
+  const [permission, setPermission] = useState<NotificationPermission | "unsupported">(
+    () => notificationPermission(),
+  );
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getNotifications()
+      .then((setting) => {
+        if (!cancelled) setEnabledState(setting.enabled);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const set = useCallback(async (next: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      // Ask for the OS/browser permission only when turning notifications ON,
+      // and only here — i.e. as a direct result of the user opting in.
+      if (next) {
+        setPermission(await requestNotificationPermission());
+      }
+      const setting = await setNotifications(next);
+      setEnabledState(setting.enabled);
+    } catch (err) {
+      setError(err as Error);
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  return {
+    enabled,
+    permission,
+    supported: notificationsSupported(),
+    loading,
+    saving,
+    error,
+    setEnabled: set,
+  };
+}
+
+// How often the activity poller asks the node for new wallet activity. Kept well
+// above the status poll (2s) so it stays cheap — notifications are not
+// latency-critical, and each poll runs the wallet's tx-history enrichment.
+const ACTIVITY_POLL_MS = 30000;
+
+// useActivityNotifications polls GET /wallet/activity while `active` and raises a
+// desktop/browser notification for each new event the backend reports. The
+// backend dedups server-side (its first poll after a wallet binds primes a
+// baseline and returns nothing, so history never notifies); a client-side seen
+// set guards against a re-render or overlapping poll double-raising within a
+// session. Pass active=false (wallet locked, notifications disabled, or no way
+// to notify) to stop polling entirely.
+//
+// walletId restarts the poller (and its seen set) whenever the active wallet
+// changes: the backend's dedup baseline is per-wallet, so a client-side seen
+// set that outlived a wallet switch could suppress a reward/tx notification
+// for the newly active wallet just because the same id was already seen for
+// the previous one (e.g. reward ids are only "reward:<epoch>").
+export function useActivityNotifications(active: boolean, walletId: string | null): void {
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    let inFlight = false;
+    const seen = new Set<string>();
+
+    const run = () => {
+      // Match useAsync: don't poll into a dead network or a backgrounded tab,
+      // and never overlap requests.
+      if (!navigator.onLine || document.hidden || inFlight) return;
+      inFlight = true;
+      getActivity()
+        .then(async (res) => {
+          if (cancelled) return;
+          for (const event of res.events) {
+            if (seen.has(event.id)) continue;
+            // Re-check cancellation before every raise, not just once above:
+            // raiseActivityNotification is async, so each iteration's await
+            // can yield past a wallet switch/lock that tore this effect down
+            // mid-loop. Without this, a still-in-flight iteration would go on
+            // to notify for a wallet that is no longer active.
+            if (cancelled) return;
+            // Delivery here is best-effort/fire-and-forget: the server-side
+            // activity detector (ui/internal/activity) already removes each
+            // event from what it will ever report again the moment it is
+            // included in a poll response, regardless of what happens to it
+            // client-side. So a failed raise (constructor/bridge failure, or
+            // on the desktop bridge a failed OS notifier start) is NOT
+            // retried on a later poll — there is no redelivery. Gating on the
+            // result still avoids adding a failed event to this session's
+            // local dedup set for no reason, but it is not a retry mechanism.
+            if (await raiseActivityNotification(event, walletId ?? "")) {
+              seen.add(event.id);
+            }
+          }
+        })
+        .catch(() => {
+          // Best-effort: a failed poll (node busy, transient error) must not
+          // break the loop or surface an error — the next tick retries.
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+
+    // Prime immediately so the backend establishes its baseline right away, then
+    // poll on the interval.
+    run();
+    const id = setInterval(run, ACTIVITY_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [active, walletId]);
 }

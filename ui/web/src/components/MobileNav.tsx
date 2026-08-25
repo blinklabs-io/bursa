@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Status, WalletView } from "../api/types";
 import type { Tone } from "./StatusPill";
 import { WalletSwitcher } from "./WalletSwitcher";
+import { CliButton } from "./CliButton";
 
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -46,6 +47,10 @@ interface MobileNavProps {
   onAddWallet: () => void;
   onLock: () => void;
   onNavigate: (key: string) => void;
+  onAccountChanged?: (wallet: WalletView) => void;
+  // Opens the command palette. The sidebar trigger and Cmd/Ctrl-K are both
+  // unavailable on touch layouts, so without this the palette has no route in.
+  onOpenPalette?: () => void;
 }
 
 // MobileNav renders on viewports narrower than 768 px. It replaces the fixed
@@ -66,6 +71,8 @@ export function MobileNav({
   onAddWallet,
   onLock,
   onNavigate,
+  onAccountChanged,
+  onOpenPalette,
 }: MobileNavProps) {
   const [open, setOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -184,6 +191,14 @@ export function MobileNav({
           {stateChip}
         </div>
 
+        {onOpenPalette && (
+          <CliButton
+            onOpen={onOpenPalette}
+            className="cli-button-mobile"
+            inactive={open}
+          />
+        )}
+
         <button
           ref={hamburgerRef}
           className="mobile-hamburger"
@@ -226,6 +241,19 @@ export function MobileNav({
             </button>
           </div>
 
+          {onOpenPalette && (
+            <button
+              type="button"
+              className="mobile-drawer-search"
+              onClick={() => {
+                setOpen(false);
+                onOpenPalette();
+              }}
+            >
+              Search…
+            </button>
+          )}
+
           {/* Wallet switcher block */}
           <WalletSwitcher
             wallets={wallets}
@@ -233,6 +261,7 @@ export function MobileNav({
             onActivated={(w) => { onActivated(w); setOpen(false); }}
             onAddWallet={() => { onAddWallet(); setOpen(false); }}
             onLock={onLock}
+            onAccountChanged={onAccountChanged}
           />
 
           {lockError && (

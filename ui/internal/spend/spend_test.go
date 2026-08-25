@@ -1158,6 +1158,69 @@ func TestSignDataRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSignDataHardwareRequest(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t) // preview network, account index 0
+	addr0 := acct.ReceiveAddresses[0]
+	s := NewService(newFakeChain(0, addr0), fakeKeystore{mnemonic: testMnemonic}, acct)
+
+	req, err := s.SignDataHardwareRequest(addr0)
+	if err != nil {
+		t.Fatalf("SignDataHardwareRequest: %v", err)
+	}
+	if req.SigningPath != "1852'/1815'/0'/0/0" {
+		t.Fatalf("SigningPath = %q, want 1852'/1815'/0'/0/0", req.SigningPath)
+	}
+	if req.StakePath != "1852'/1815'/0'/2/0" {
+		t.Fatalf("StakePath = %q, want 1852'/1815'/0'/2/0", req.StakePath)
+	}
+	if req.NetworkID != 0 || req.ProtocolMagic != 2 { // preview
+		t.Fatalf("network = (id %d, magic %d), want (0, 2)", req.NetworkID, req.ProtocolMagic)
+	}
+	if req.AddressBech32 != addr0 {
+		t.Fatalf("AddressBech32 = %q, want %q", req.AddressBech32, addr0)
+	}
+	// AddressHex must decode to the same raw address bytes.
+	addr, err := lcommon.NewAddress(addr0)
+	if err != nil {
+		t.Fatalf("NewAddress: %v", err)
+	}
+	b, err := addr.Bytes()
+	if err != nil {
+		t.Fatalf("addr.Bytes: %v", err)
+	}
+	if req.AddressHex != hex.EncodeToString(b) {
+		t.Fatalf("AddressHex = %q, want %q", req.AddressHex, hex.EncodeToString(b))
+	}
+
+	// A later receive address resolves to its window index in the payment path.
+	req3, err := s.SignDataHardwareRequest(acct.ReceiveAddresses[3])
+	if err != nil {
+		t.Fatalf("SignDataHardwareRequest[3]: %v", err)
+	}
+	if req3.SigningPath != "1852'/1815'/0'/0/3" {
+		t.Fatalf("SigningPath[3] = %q, want 1852'/1815'/0'/0/3", req3.SigningPath)
+	}
+}
+
+func TestSignDataHardwareRequestRejectsForeignAddress(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	s := NewService(newFakeChain(0, acct.ReceiveAddresses[0]), fakeKeystore{mnemonic: testMnemonic}, acct)
+	foreign, err := wallet.Derive(differentMnemonic, "preview", 5)
+	if err != nil {
+		t.Fatalf("derive foreign: %v", err)
+	}
+	if _, err := s.SignDataHardwareRequest(foreign.ReceiveAddresses[0]); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest for a foreign address, got %v", err)
+	}
+}
+
+func TestSignDataHardwareRequestNoWallet(t *testing.T) {
+	s := NewService(newFakeChain(0, ""), fakeKeystore{}, nil)
+	if _, err := s.SignDataHardwareRequest("addr_test1xyz"); !errors.Is(err, ErrNoWallet) {
+		t.Fatalf("expected ErrNoWallet with no bound account, got %v", err)
+	}
+}
+
 func TestVerifyDataRoundTrip(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	addr0 := acct.ReceiveAddresses[0]

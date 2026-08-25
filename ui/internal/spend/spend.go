@@ -733,7 +733,7 @@ func (s *Service) SignData(addrStr string, message []byte, password string) (sig
 	if err != nil {
 		return "", "", fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return "", "", fmt.Errorf("account key: %w", err)
 	}
@@ -748,6 +748,83 @@ func (s *Service) SignData(addrStr string, message []byte, password string) (sig
 	// signerForKey accepts a 96-byte bip32 XPrv as SKey.
 	lk := &bursa.LoadedKey{SKey: []byte(signKey)}
 	return bursa.SignData(addrBytes, message, lk)
+}
+
+// HardwareSignDataRequest is the neutral, seedless request the SPA hands to a
+// hardware device so it can sign a CIP-8 / CIP-30 message for one of the wallet's
+// own receive addresses. Unlike SignData it requires no password: it derives only
+// public path metadata (the CIP-1852 payment + stake paths and the network) from
+// the active account, so it works for a watch-only hardware wallet. The message
+// payload is carried to the device separately by the SPA; the device assembles
+// (or returns the pieces of) the COSE_Sign1 / COSE_Key itself.
+type HardwareSignDataRequest struct {
+	AddressBech32 string `json:"address_bech32"`
+	AddressHex    string `json:"address_hex"`
+	// SigningPath is the CIP-1852 payment-key path of the chosen address
+	// ("1852'/1815'/<account>'/0/<index>").
+	SigningPath string `json:"signing_path"`
+	// StakePath is the account's CIP-1852 stake-key path
+	// ("1852'/1815'/<account>'/2/0"). The device needs it to recognise the base
+	// address as its own when it builds the COSE address header on-device.
+	StakePath string `json:"stake_path"`
+	// NetworkID is 1 for mainnet, 0 for the testnets.
+	NetworkID int `json:"network_id"`
+	// ProtocolMagic disambiguates the testnets (preprod=1, preview=2); the device
+	// uses it together with NetworkID when it renders the address.
+	ProtocolMagic uint32 `json:"protocol_magic"`
+}
+
+// SignDataHardwareRequest resolves the seedless signing metadata a hardware
+// device needs to sign a CIP-8 message for one of the wallet's own receive
+// addresses. It returns ErrInvalidRequest if addrStr is not a derived receive
+// address of the active wallet, and ErrNoWallet if no wallet is bound. No seed or
+// password is required — only public path metadata is derived from the account.
+func (s *Service) SignDataHardwareRequest(addrStr string) (HardwareSignDataRequest, error) {
+	_, acct, _ := s.currentBinding()
+	if acct == nil {
+		return HardwareSignDataRequest{}, ErrNoWallet
+	}
+	idx := -1
+	for i, a := range acct.ReceiveAddresses {
+		if a == addrStr {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return HardwareSignDataRequest{}, fmt.Errorf(
+			"%w: address %q is not a receive address this wallet owns",
+			ErrInvalidRequest, addrStr,
+		)
+	}
+	addr, err := lcommon.NewAddress(addrStr)
+	if err != nil {
+		return HardwareSignDataRequest{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+	}
+	addrBytes, err := addr.Bytes()
+	if err != nil {
+		return HardwareSignDataRequest{}, fmt.Errorf("%w: address bytes: %w", ErrInvalidRequest, err)
+	}
+	networkID := 0
+	var protocolMagic uint32
+	switch acct.Network {
+	case "mainnet":
+		networkID = 1
+		protocolMagic = 764824073
+	case "preprod":
+		protocolMagic = 1
+	default: // preview; the account network is validated when it is derived.
+		protocolMagic = 2
+	}
+	accountNum := acct.AccountIndex
+	return HardwareSignDataRequest{
+		AddressBech32: addrStr,
+		AddressHex:    hex.EncodeToString(addrBytes),
+		SigningPath:   fmt.Sprintf("1852'/%d'/%d'/0/%d", 1815, accountNum, idx),
+		StakePath:     fmt.Sprintf("1852'/%d'/%d'/2/0", 1815, accountNum),
+		NetworkID:     networkID,
+		ProtocolMagic: protocolMagic,
+	}, nil
 }
 
 // PubDRepKey unlocks the keystore with the given password, derives the DRep key
@@ -791,7 +868,7 @@ func (s *Service) PubDRepKey(password string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return nil, fmt.Errorf("account key: %w", err)
 	}
@@ -847,7 +924,7 @@ func (s *Service) PubStakeKey(password string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return nil, fmt.Errorf("account key: %w", err)
 	}
@@ -1155,21 +1232,21 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 		}
 	}()
 
-	// --- step 3: derive account key ---
+	// --- step 3: derive account key (at the pending send's account index) ---
+	acct := p.account
+	if acct == nil {
+		return TxResult{}, ErrNoWallet
+	}
 	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
 	if err != nil {
 		return TxResult{}, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return TxResult{}, fmt.Errorf("account key: %w", err)
 	}
 
 	// --- step 4: build address → derivation-index lookup ---
-	acct := p.account
-	if acct == nil {
-		return TxResult{}, ErrNoWallet
-	}
 	idxOf := make(map[string]uint32, len(acct.ReceiveAddresses))
 	for i, addrStr := range acct.ReceiveAddresses {
 		idxOf[addrStr] = uint32(i) //nolint:gosec // bounded by window size
@@ -1467,7 +1544,7 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 	if err != nil {
 		return Witness{}, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return Witness{}, fmt.Errorf("account key: %w", err)
 	}
@@ -1931,7 +2008,7 @@ func (s *Service) CosignTx(
 	if err != nil {
 		return CosignResult{}, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return CosignResult{}, fmt.Errorf("account key: %w", err)
 	}
@@ -2247,7 +2324,7 @@ func (s *Service) WitnessTx(
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}
-	acctKey, err = bursa.GetAccountKey(rootKey, 0)
+	acctKey, err = bursa.GetAccountKey(rootKey, acct.AccountIndex)
 	if err != nil {
 		return nil, fmt.Errorf("account key: %w", err)
 	}

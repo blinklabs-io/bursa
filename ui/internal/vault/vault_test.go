@@ -693,3 +693,186 @@ func TestAddHardwareWallet(t *testing.T) {
 		t.Fatal("hardware wallet seed blob appeared after reload")
 	}
 }
+
+// TestAddHardwareWalletNonzeroAccountIndexIsActive covers importing a hardware
+// wallet at a nonzero CIP-1852 account index (e.g. a device exposing account
+// #1 rather than #0). Such a wallet's Accounts list has no index-0 entry, so
+// the active selection must be stamped to accountIndex — otherwise
+// Wallets/SetActive/Active would report an active index (0) that does not
+// exist for this wallet, even though ActiveAccount() falls back correctly.
+func TestAddHardwareWalletNonzeroAccountIndexIsActive(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	xpub, err := wallet.AccountXpubForIndexFromMnemonicBytes([]byte(mnemonicA), 1)
+	if err != nil {
+		t.Fatalf("AccountXpubForIndexFromMnemonicBytes: %v", err)
+	}
+
+	meta, err := v.AddHardwareWallet("My Ledger", xpub, "preview", vaultPw, 1, window)
+	if err != nil {
+		t.Fatalf("AddHardwareWallet: %v", err)
+	}
+	if meta.ActiveAccountIndex != 1 {
+		t.Fatalf("returned meta ActiveAccountIndex = %d, want 1", meta.ActiveAccountIndex)
+	}
+
+	wallets, err := v.Wallets()
+	if err != nil {
+		t.Fatalf("Wallets: %v", err)
+	}
+	if len(wallets) != 1 || wallets[0].ActiveAccountIndex != 1 {
+		t.Fatalf("Wallets()[0].ActiveAccountIndex = %+v, want 1", wallets)
+	}
+
+	active, err := v.Active()
+	if err != nil {
+		t.Fatalf("Active: %v", err)
+	}
+	if active.ActiveAccountIndex != 1 {
+		t.Fatalf("Active().ActiveAccountIndex = %d, want 1", active.ActiveAccountIndex)
+	}
+
+	// Survives a lock/unlock cycle via a fresh handle (the selection is
+	// persisted in the cleartext envelope, independent of the vault password).
+	v2 := New(v.path)
+	seal, open := keystore.CheapTestSealer()
+	v2.SetCipher(seal, open)
+	reloaded, err := v2.Unlock(vaultPw)
+	if err != nil {
+		t.Fatalf("Unlock on fresh handle: %v", err)
+	}
+	if len(reloaded) != 1 || reloaded[0].ActiveAccountIndex != 1 {
+		t.Fatalf("reloaded ActiveAccountIndex = %+v, want 1", reloaded)
+	}
+}
+
+func testScript(addr string) ScriptMeta {
+	return ScriptMeta{
+		Policy:        json.RawMessage(`{"threshold":2,"participants":[{"key_hash_hex":"aa"}]}`),
+		ScriptCBOR:    "8201828200581c",
+		ScriptAddress: addr,
+	}
+}
+
+func TestAddScriptWallet(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	meta, err := v.AddScriptWallet("", "Treasury 2-of-3", "preview", testScript("addr_test1wscript"), vaultPw)
+	if err != nil {
+		t.Fatalf("AddScriptWallet: %v", err)
+	}
+
+	if meta.Type != WalletTypeMultiSignature {
+		t.Fatalf("Type = %q, want %q", meta.Type, WalletTypeMultiSignature)
+	}
+	if !meta.IsScript() {
+		t.Fatal("IsScript() should be true for a script wallet")
+	}
+	// The script address must be reachable as an ordinary receive address, so
+	// address and balance reads need no special case.
+	if got := meta.Account.ReceiveAddresses; len(got) != 1 || got[0] != "addr_test1wscript" {
+		t.Fatalf("ReceiveAddresses = %v, want [addr_test1wscript]", got)
+	}
+	// There is genuinely no stake credential; reporting one would be a lie.
+	if meta.Account.StakeAddress != "" {
+		t.Fatalf("StakeAddress = %q, want empty", meta.Account.StakeAddress)
+	}
+	if meta.AccountXpub != "" {
+		t.Fatalf("AccountXpub = %q, want empty — a script wallet has no seed", meta.AccountXpub)
+	}
+}
+
+func TestAddScriptWalletSurvivesLockUnlock(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wscript"), vaultPw); err != nil {
+		t.Fatalf("AddScriptWallet: %v", err)
+	}
+
+	v.Lock()
+	metas, err := v.Unlock(vaultPw)
+	if err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+
+	var found *WalletMeta
+	for i := range metas {
+		if metas[i].IsScript() {
+			found = &metas[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("script wallet did not survive the seal/unseal round trip")
+	}
+	if found.Script.ScriptCBOR != "8201828200581c" {
+		t.Fatalf("ScriptCBOR = %q, want it preserved", found.Script.ScriptCBOR)
+	}
+	// The policy is stored opaquely but must still parse on the way out.
+	var policy struct {
+		Threshold int `json:"threshold"`
+	}
+	if err := json.Unmarshal(found.Script.Policy, &policy); err != nil {
+		t.Fatalf("policy did not round-trip: %v", err)
+	}
+	if policy.Threshold != 2 {
+		t.Fatalf("threshold = %d, want 2", policy.Threshold)
+	}
+}
+
+func TestAddScriptWalletRejectsDuplicateScriptAddress(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wsame"), vaultPw); err != nil {
+		t.Fatalf("first add: %v", err)
+	}
+
+	// Same policy composed twice is the same account. This is also what makes
+	// re-running the migration safe.
+	_, err := v.AddScriptWallet("", "Treasury copy", "preview", testScript("addr_test1wsame"), vaultPw)
+	if !errors.Is(err, ErrDuplicateWallet) {
+		t.Fatalf("err = %v, want ErrDuplicateWallet", err)
+	}
+}
+
+func TestScriptAddressesListsOnlyScriptWallets(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := v.AddWallet("Seeded", mnemonicA, "preview", vaultPw, spendPwA, window); err != nil {
+		t.Fatalf("AddWallet: %v", err)
+	}
+	if _, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wscript"), vaultPw); err != nil {
+		t.Fatalf("AddScriptWallet: %v", err)
+	}
+
+	addrs, err := v.ScriptAddresses()
+	if err != nil {
+		t.Fatalf("ScriptAddresses: %v", err)
+	}
+	if len(addrs) != 1 || addrs[0] != "addr_test1wscript" {
+		t.Fatalf("ScriptAddresses = %v, want just the script wallet", addrs)
+	}
+}
+
+func TestAddScriptWalletRequiresUnlock(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	v.Lock()
+
+	if _, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wscript"), vaultPw); !errors.Is(err, ErrLocked) {
+		t.Fatalf("err = %v, want ErrLocked", err)
+	}
+}

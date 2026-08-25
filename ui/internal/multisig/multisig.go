@@ -149,19 +149,28 @@ const vkeyWitnessCBORBytes = 1 + (2 + 32) + (2 + 64)
 // spend is exported as CBOR and coordinated off-band, so build returns the
 // unsigned tx directly (like the air-gap export) rather than holding it.
 type Service struct {
-	chain backend.ChainContext
-	keys  Keystore // may be nil; then my-key and signing are unavailable
-	store *store
-	mkID  func() string
+	chain    backend.ChainContext
+	keys     Keystore // may be nil; then my-key and signing are unavailable
+	accounts AccountSource
+	mkID     func() string
 }
 
-// NewService constructs a Service backed by the JSON store at storePath.
-func NewService(cc backend.ChainContext, ks Keystore, storePath string) *Service {
+// AccountSource is where saved multi-signature accounts are read from. Since
+// they moved into the vault, this is how the service reaches them without
+// depending on the vault package or holding a vault password: reads only, with
+// creation and removal going through the vault's own wallet flows.
+type AccountSource interface {
+	List() ([]Account, error)
+	Get(id string) (Account, error)
+}
+
+// NewService constructs a Service reading its accounts from src.
+func NewService(cc backend.ChainContext, ks Keystore, src AccountSource) *Service {
 	return &Service{
-		chain: cc,
-		keys:  ks,
-		store: newStore(storePath),
-		mkID:  randID,
+		chain:    cc,
+		keys:     ks,
+		accounts: src,
+		mkID:     randID,
 	}
 }
 
@@ -352,7 +361,7 @@ func scriptAddress(script *bursa.NativeScript, network string) (string, error) {
 
 // List returns the saved multi-sig accounts.
 func (s *Service) List() ([]Account, error) {
-	accts, err := s.store.list()
+	accts, err := s.accounts.List()
 	if err != nil {
 		return nil, err
 	}
@@ -364,12 +373,7 @@ func (s *Service) List() ([]Account, error) {
 
 // Get returns one saved account by id.
 func (s *Service) Get(id string) (Account, error) {
-	return s.store.get(id)
-}
-
-// Delete removes a saved account by id.
-func (s *Service) Delete(id string) error {
-	return s.store.remove(id)
+	return s.accounts.Get(id)
 }
 
 // FindByScriptHash searches the saved accounts for one whose native script
@@ -378,7 +382,7 @@ func (s *Service) Delete(id string) error {
 // ScriptCBOR fails to decode is skipped rather than aborting the search —
 // one corrupt record must not hide every other account.
 func (s *Service) FindByScriptHash(scriptHashHex string) (Account, bool, error) {
-	accts, err := s.store.list()
+	accts, err := s.accounts.List()
 	if err != nil {
 		return Account{}, false, err
 	}
@@ -404,7 +408,14 @@ type CreateRequest struct {
 
 // Create composes the script for the policy, derives its address, persists the
 // account, and returns it. The network must be a supported Cardano network.
-func (s *Service) Create(req CreateRequest) (Account, error) {
+// Compose validates a policy and derives the native script and its address,
+// WITHOUT persisting anything.
+//
+// Persistence moved to the vault, which needs the vault password to re-seal its
+// index — a password this service has no business holding. So composition (pure
+// computation from a policy) and storage (a vault write) are separate concerns
+// now, and the caller that has the password does the second.
+func (s *Service) Compose(req CreateRequest) (Account, error) {
 	label := strings.TrimSpace(req.Label)
 	if label == "" {
 		return Account{}, fmt.Errorf("%w: label is required", ErrInvalidRequest)
@@ -427,9 +438,6 @@ func (s *Service) Create(req CreateRequest) (Account, error) {
 		Policy:        req.Policy,
 		ScriptCBOR:    hex.EncodeToString(script.Cbor()),
 		ScriptAddress: addr,
-	}
-	if err := s.store.add(acct); err != nil {
-		return Account{}, err
 	}
 	return acct, nil
 }
@@ -489,7 +497,7 @@ func (s *Service) MyKey(password string) (MyKey, error) {
 // Balance returns the lovelace held at the account's script address as a decimal
 // string (uint64-safe, matching the read-side balance API).
 func (s *Service) Balance(ctx context.Context, id string) (string, error) {
-	acct, err := s.store.get(id)
+	acct, err := s.accounts.Get(id)
 	if err != nil {
 		return "", err
 	}
@@ -553,7 +561,7 @@ func (s *Service) multisigFeePadding(ctx context.Context, participantCount int) 
 // Unlike the send path there is no in-memory pending entry: the unsigned tx is
 // the durable artifact, carried/collected off-band and handed back to Submit.
 func (s *Service) Build(ctx context.Context, id string, req BuildRequest) (UnsignedTx, error) {
-	acct, err := s.store.get(id)
+	acct, err := s.accounts.Get(id)
 	if err != nil {
 		return UnsignedTx{}, err
 	}
@@ -902,7 +910,7 @@ func (s *Service) Sign(unsignedTxCBOR, password string) (Witness, error) {
 // witnessCBORs is the list of per-co-signer witness blobs (each a hex CBOR array
 // of common.VkeyWitness) collected during the multi-party flow.
 func (s *Service) Submit(ctx context.Context, id, unsignedTxCBOR string, witnessCBORs []string) (TxResult, error) {
-	acct, err := s.store.get(id)
+	acct, err := s.accounts.Get(id)
 	if err != nil {
 		return TxResult{}, err
 	}

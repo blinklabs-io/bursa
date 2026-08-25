@@ -36,6 +36,13 @@ type AddressView struct {
 	NextUnused string   `json:"next_unused"`
 }
 
+// provisionalRewardsNote is shown to the user beside a provisional rewards
+// figure. It deliberately does not name dingo or its issue numbers: the person
+// reading it is looking at their own wallet, and an upstream tracker reference
+// tells them nothing they can act on. The cause stays recorded on
+// DelegationView below, where the people who can act on it will read it.
+const provisionalRewardsNote = "Rewards are provisional and may not match on-chain totals exactly."
+
 // DelegationView is the delegation/rewards summary. Rewards are provisional —
 // dingo has open reward-accounting bugs (#2373–#2376).
 type DelegationView struct {
@@ -85,6 +92,7 @@ func cloneAccount(acct *Account) *Account {
 	}
 	return &Account{
 		Network:          acct.Network,
+		AccountIndex:     acct.AccountIndex,
 		StakeAddress:     acct.StakeAddress,
 		ReceiveAddresses: cloneStringSlice(acct.ReceiveAddresses),
 		DRepKeyHash:      acct.DRepKeyHash,
@@ -145,6 +153,23 @@ func (s *Service) currentAccount() (*Account, error) {
 // account-reported set still matters once registered: it surfaces used/change
 // addresses outside the derived receive window.
 func (s *Service) scanAddresses(ctx context.Context, acct *Account) ([]string, error) {
+	// A script (multi-signature) account has no stake credential, so there is
+	// no account to discover addresses under — its addresses are exactly the
+	// script address it was created with. Asking the node to resolve an empty
+	// stake address is not a not-found, it is a malformed request.
+	if acct.StakeAddress == "" {
+		out := make([]string, 0, len(acct.ReceiveAddresses))
+		seen := make(map[string]bool, len(acct.ReceiveAddresses))
+		for _, a := range acct.ReceiveAddresses {
+			if a == "" || seen[a] {
+				continue
+			}
+			seen[a] = true
+			out = append(out, a)
+		}
+		return out, nil
+	}
+
 	discovered, err := s.chain.AccountAddresses(ctx, acct.StakeAddress)
 	if err != nil && !errors.Is(err, chain.ErrNotFound) {
 		return nil, err
@@ -161,12 +186,23 @@ func (s *Service) scanAddresses(ctx context.Context, acct *Account) ([]string, e
 	return out, nil
 }
 
-// Balance aggregates the UTxO set across the account's addresses (chain-seen and
-// derived; see scanAddresses).
+// Balance aggregates the UTxO set across the active account's addresses
+// (chain-seen and derived; see scanAddresses).
 func (s *Service) Balance(ctx context.Context) (Balance, error) {
 	acct, err := s.currentAccount()
 	if err != nil {
 		return Balance{}, err
+	}
+	return s.BalanceForAccount(ctx, acct)
+}
+
+// BalanceForAccount aggregates the UTxO set for an explicitly supplied account,
+// independent of the currently bound one. It backs the multi-account listing,
+// which shows a per-account balance summary without rebinding the service. A nil
+// account is treated as "no wallet".
+func (s *Service) BalanceForAccount(ctx context.Context, acct *Account) (Balance, error) {
+	if acct == nil {
+		return Balance{}, ErrNoWallet
 	}
 	addrs, err := s.scanAddresses(ctx, acct)
 	if err != nil {
@@ -192,6 +228,18 @@ func (s *Service) Addresses(ctx context.Context) (AddressView, error) {
 	acct, err := s.currentAccount()
 	if err != nil {
 		return AddressView{}, err
+	}
+	// Same reason as scanAddresses: a script (multi-signature) account has no
+	// stake credential, so there is nothing to look up and an empty stake
+	// address is a malformed request rather than a not-found. Its receive
+	// window is exactly the script address it was created with.
+	if acct.StakeAddress == "" {
+		receive := cloneStringSlice(acct.ReceiveAddresses)
+		next := ""
+		if len(receive) > 0 {
+			next = receive[0]
+		}
+		return AddressView{Receive: receive, NextUnused: next}, nil
 	}
 	used, err := s.chain.AccountAddresses(ctx, acct.StakeAddress)
 	if err != nil && !errors.Is(err, chain.ErrNotFound) {
@@ -474,6 +522,16 @@ func (s *Service) Delegation(ctx context.Context) (DelegationView, error) {
 	if err != nil {
 		return DelegationView{}, err
 	}
+	// A script account has no stake credential, so it can never be delegating;
+	// asking the node about an empty stake address is a malformed request.
+	if acct.StakeAddress == "" {
+		return DelegationView{
+			RewardsSum:   "0",
+			Withdrawable: "0",
+			Provisional:  true,
+			Note:         provisionalRewardsNote,
+		}, nil
+	}
 	info, err := s.chain.Account(ctx, acct.StakeAddress)
 	if err != nil && !errors.Is(err, chain.ErrNotFound) {
 		return DelegationView{}, err
@@ -489,7 +547,7 @@ func (s *Service) Delegation(ctx context.Context) (DelegationView, error) {
 		RewardsSum:   info.RewardsSum,
 		Withdrawable: info.WithdrawableAmount,
 		Provisional:  true,
-		Note:         "rewards are provisional; dingo reward accounting has open issues (#2373-#2376)",
+		Note:         provisionalRewardsNote,
 	}, nil
 }
 
@@ -500,6 +558,15 @@ func (s *Service) Rewards(ctx context.Context) (RewardHistory, error) {
 	acct, err := s.currentAccount()
 	if err != nil {
 		return RewardHistory{}, err
+	}
+	// No stake credential, so there is no reward history to read and an empty
+	// stake address would be a malformed request.
+	if acct.StakeAddress == "" {
+		return RewardHistory{
+			Rewards:     []RewardEntry{},
+			Provisional: true,
+			Note:        provisionalRewardsNote,
+		}, nil
 	}
 	rewards, err := s.chain.AccountRewards(ctx, acct.StakeAddress)
 	if err != nil && !errors.Is(err, chain.ErrNotFound) {
@@ -518,6 +585,6 @@ func (s *Service) Rewards(ctx context.Context) (RewardHistory, error) {
 	return RewardHistory{
 		Rewards:     entries,
 		Provisional: true,
-		Note:        "rewards are provisional; dingo reward accounting has open issues (#2373-#2376)",
+		Note:        provisionalRewardsNote,
 	}, nil
 }

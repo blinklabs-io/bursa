@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -61,21 +62,22 @@ func (f fakeStatuser) Status() supervisor.Status { return f.s }
 // memory: Unlock/Lock toggle locked; AddWallet appends and activates; the active
 // wallet drives reads/spends.
 type fakeVault struct {
-	exists     bool
-	locked     bool
-	wallets    []vault.WalletMeta
-	activeID   string
-	createErr  error
-	unlockErr  error
-	addErr     error
-	addCalled  bool
-	importErr  error
-	imported   bool
-	gotName    string
-	gotNetwork string
-	gotSpend   string
-	gotVault   string
-	gotSeed    []byte
+	exists       bool
+	locked       bool
+	wallets      []vault.WalletMeta
+	activeID     string
+	setActiveErr error
+	createErr    error
+	unlockErr    error
+	addErr       error
+	addCalled    bool
+	importErr    error
+	imported     bool
+	gotName      string
+	gotNetwork   string
+	gotSpend     string
+	gotVault     string
+	gotSeed      []byte
 
 	// TPM fakes
 	tpmStatus          vault.TPMStatusInfo
@@ -90,8 +92,16 @@ type fakeVault struct {
 	// hardware wallet
 	hwErr           error
 	hwCalled        bool
+	scriptCalled    bool
+	scriptErr       error
+	gotScript       vault.ScriptMeta
 	gotXpub         string
 	gotAccountIndex uint32
+
+	// multi-account
+	addAccountErr    error
+	selectAccountErr error
+	activeAccounts   map[string]uint32
 }
 
 type fakeNFTs struct {
@@ -333,6 +343,9 @@ func (f *fakeVault) RemoveWallet(id, _ string) error {
 }
 
 func (f *fakeVault) SetActive(id string) (vault.WalletMeta, error) {
+	if f.setActiveErr != nil {
+		return vault.WalletMeta{}, f.setActiveErr
+	}
 	for _, w := range f.wallets {
 		if w.ID == id {
 			f.activeID = id
@@ -348,10 +361,50 @@ func (f *fakeVault) Active() (vault.WalletMeta, error) {
 	}
 	for _, w := range f.wallets {
 		if w.ID == f.activeID {
+			w.ActiveAccountIndex = f.activeAccounts[w.ID]
 			return w, nil
 		}
 	}
 	return vault.WalletMeta{}, vault.ErrNoActiveWallet
+}
+
+func (f *fakeVault) AddAccount(id, vaultPw, spendPw string, accountIndex uint32, _ int) (vault.WalletMeta, error) {
+	if f.addAccountErr != nil {
+		return vault.WalletMeta{}, f.addAccountErr
+	}
+	f.gotVault = vaultPw
+	f.gotSpend = spendPw
+	for i := range f.wallets {
+		if f.wallets[i].ID == id {
+			acct := sampleAccount(f.wallets[i].Network)
+			acct.AccountIndex = accountIndex
+			acct.StakeAddress = fmt.Sprintf("stake_test1acct%d", accountIndex)
+			f.wallets[i].Accounts = append(f.wallets[i].AccountList(), acct)
+			return f.wallets[i], nil
+		}
+	}
+	return vault.WalletMeta{}, fmt.Errorf("%w: %q", vault.ErrUnknownWallet, id)
+}
+
+func (f *fakeVault) SelectAccount(id string, accountIndex uint32) (vault.WalletMeta, error) {
+	if f.selectAccountErr != nil {
+		return vault.WalletMeta{}, f.selectAccountErr
+	}
+	for i := range f.wallets {
+		if f.wallets[i].ID == id {
+			if f.wallets[i].AccountByIndex(accountIndex) == nil {
+				return vault.WalletMeta{}, fmt.Errorf("%w: index %d", vault.ErrUnknownAccount, accountIndex)
+			}
+			if f.activeAccounts == nil {
+				f.activeAccounts = map[string]uint32{}
+			}
+			f.activeAccounts[id] = accountIndex
+			w := f.wallets[i]
+			w.ActiveAccountIndex = accountIndex
+			return w, nil
+		}
+	}
+	return vault.WalletMeta{}, fmt.Errorf("%w: %q", vault.ErrUnknownWallet, id)
 }
 
 // fakeSettings is an in-memory SettingsController for handler tests.
@@ -366,6 +419,11 @@ type fakeSettings struct {
 	setAutoLockErr        error
 	setAutoLockCalled     bool
 	setAutoLockCalledWith int
+
+	notifications          bool
+	setNotificationsErr    error
+	setNotificationsCalled bool
+	setNotificationsWith   bool
 }
 
 func (f *fakeSettings) HistoryExpiry() bool { return f.enabled }
@@ -391,6 +449,18 @@ func (f *fakeSettings) SetAutoLockMinutes(minutes int) error {
 		return f.setAutoLockErr
 	}
 	f.autoLockMinutes = minutes
+	return nil
+}
+
+func (f *fakeSettings) Notifications() bool { return f.notifications }
+
+func (f *fakeSettings) SetNotifications(enabled bool) error {
+	f.setNotificationsCalled = true
+	f.setNotificationsWith = enabled
+	if f.setNotificationsErr != nil {
+		return f.setNotificationsErr
+	}
+	f.notifications = enabled
 	return nil
 }
 
@@ -472,6 +542,11 @@ type fakeLookup struct {
 	poolsErr error
 	drep     chain.DRepInfo
 	drepErr  error
+	dreps    []chain.DRepListItem
+	drepsErr error
+
+	govActions    []chain.GovernanceAction
+	govActionsErr error
 
 	asset    chain.AssetInfo
 	assetErr error
@@ -488,6 +563,14 @@ func (f *fakeLookup) Pools(_ context.Context) ([]chain.PoolInfo, error) {
 
 func (f *fakeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, error) {
 	return f.drep, f.drepErr
+}
+
+func (f *fakeLookup) GovernanceActions(_ context.Context) ([]chain.GovernanceAction, error) {
+	return f.govActions, f.govActionsErr
+}
+
+func (f *fakeLookup) DReps(_ context.Context) ([]chain.DRepListItem, error) {
+	return f.dreps, f.drepsErr
 }
 
 func (f *fakeLookup) AssetAddresses(_ context.Context, _ string) ([]chain.AssetAddress, error) {
@@ -609,6 +692,315 @@ func TestGetPoolDirectoryNilLookup(t *testing.T) {
 	}
 }
 
+// drepDirectoryResult mirrors the GET /wallet/dreps JSON response for tests.
+type drepDirectoryResult struct {
+	DReps []chain.DRepListItem `json:"dreps"`
+	Total int                  `json:"total"`
+	Page  int                  `json:"page"`
+	Count int                  `json:"count"`
+}
+
+func decodeDRepDirectory(t *testing.T, rec *httptest.ResponseRecorder) drepDirectoryResult {
+	t.Helper()
+	var got drepDirectoryResult
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return got
+}
+
+func drepDirHandler(lookup NodeLookup) http.Handler {
+	return NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+}
+
+func TestGetDRepDirectory(t *testing.T) {
+	lookup := &fakeLookup{dreps: []chain.DRepListItem{
+		{
+			DRepID:   "drep1aaa",
+			Hex:      "22aa",
+			Amount:   "1500000",
+			Metadata: &chain.DRepMetadata{URL: "https://a.example/d.json"},
+		},
+		{DRepID: "drep1bbb", Hex: "23bb", Amount: "0", HasScript: true, Retired: true},
+	}}
+	h := drepDirHandler(lookup)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/dreps = %d, want 200", rec.Code)
+	}
+	got := decodeDRepDirectory(t, rec)
+	if got.Total != 2 || len(got.DReps) != 2 || got.Page != 1 {
+		t.Fatalf("directory = %+v, want 2 dreps on page 1", got)
+	}
+	if got.DReps[0].DRepID != "drep1aaa" || got.DReps[0].Amount != "1500000" || got.DReps[0].Retired {
+		t.Fatalf("drep[0] = %+v, want drep1aaa with 1500000 voting power, not retired", got.DReps[0])
+	}
+	if got.DReps[0].Metadata == nil || got.DReps[0].Metadata.URL != "https://a.example/d.json" {
+		t.Fatalf("drep[0] metadata = %+v, want the anchor url", got.DReps[0].Metadata)
+	}
+	if !got.DReps[1].Retired {
+		t.Fatalf("drep[1] = %+v, want the retired entry", got.DReps[1])
+	}
+}
+
+func TestGetDRepDirectorySearchFilter(t *testing.T) {
+	lookup := &fakeLookup{dreps: []chain.DRepListItem{
+		{DRepID: "drep1aaa", Hex: "22aa"},
+		{DRepID: "drep1bbb", Hex: "23bb"},
+	}}
+	h := drepDirHandler(lookup)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps?q=BBB", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/dreps?q=BBB = %d, want 200", rec.Code)
+	}
+	got := decodeDRepDirectory(t, rec)
+	if got.Total != 1 || len(got.DReps) != 1 || got.DReps[0].DRepID != "drep1bbb" {
+		t.Fatalf("filtered directory = %+v, want only drep1bbb", got)
+	}
+}
+
+// The node's list reports hex as the 29-byte CIP-129 payload (1-byte header +
+// 28-byte credential), so a credential pasted from a tool that prints the bare
+// hash is a suffix of it rather than the whole field. Search must still find
+// both that and a pasted bech32 id.
+func TestGetDRepDirectorySearchMatchesPastedIDs(t *testing.T) {
+	const (
+		credential = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+		drepID     = "drep1y2s6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgg68q7a8"
+	)
+	lookup := &fakeLookup{dreps: []chain.DRepListItem{
+		{
+			DRepID:   drepID,
+			Hex:      "22" + credential,
+			Metadata: &chain.DRepMetadata{URL: "https://a.example/drep.json"},
+		},
+		{DRepID: "drep1bbb", Hex: "23bb"},
+	}}
+	h := drepDirHandler(lookup)
+
+	for _, tc := range []struct {
+		name string
+		q    string
+	}{
+		{"bech32 id", drepID},
+		{"bare 28-byte credential hex", credential},
+		{"full cip-129 hex", "22" + credential},
+		{"metadata anchor url", "a.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps?q="+url.QueryEscape(tc.q), nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET /wallet/dreps?q=%s = %d, want 200", tc.q, rec.Code)
+			}
+			got := decodeDRepDirectory(t, rec)
+			if got.Total != 1 || len(got.DReps) != 1 || got.DReps[0].DRepID != drepID {
+				t.Fatalf("search %q = %+v, want the single matching drep", tc.q, got)
+			}
+		})
+	}
+}
+
+func TestGetDRepDirectoryEmpty(t *testing.T) {
+	h := drepDirHandler(&fakeLookup{dreps: nil})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/dreps = %d, want 200", rec.Code)
+	}
+	got := decodeDRepDirectory(t, rec)
+	if got.Total != 0 || len(got.DReps) != 0 {
+		t.Fatalf("empty directory = %+v, want 0 dreps", got)
+	}
+}
+
+func TestGetDRepDirectoryPageOverflow(t *testing.T) {
+	lookup := &fakeLookup{dreps: []chain.DRepListItem{
+		{DRepID: "drep1aaa", Hex: "22aa"},
+		{DRepID: "drep1bbb", Hex: "23bb"},
+	}}
+	h := drepDirHandler(lookup)
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		// (page-1)*count overflows int64 to a negative start; must not panic.
+		{"overflow", "/wallet/dreps?page=9223372036854775807&count=50"},
+		// One page past the end: a valid but empty page.
+		{"just-past-end", "/wallet/dreps?page=2&count=50"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, tc.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want 200", tc.path, rec.Code)
+			}
+			got := decodeDRepDirectory(t, rec)
+			if got.Total != 2 || len(got.DReps) != 0 {
+				t.Fatalf("overflow page = %+v, want total 2 with an empty page", got)
+			}
+		})
+	}
+}
+
+func TestGetDRepDirectoryNilLookup(t *testing.T) {
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /wallet/dreps with nil lookup = %d, want 503", rec.Code)
+	}
+}
+
+func TestGetDRepDirectoryLookupError(t *testing.T) {
+	h := drepDirHandler(&fakeLookup{drepsErr: chain.ErrNotFound})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /wallet/dreps with lookup error = %d, want 404 (serveLookup's not-found mapping)", rec.Code)
+	}
+}
+
+func (f *fakeVault) AddScriptWallet(id, name, network string, script vault.ScriptMeta, vaultPw string) (vault.WalletMeta, error) {
+	if f.scriptErr != nil {
+		return vault.WalletMeta{}, f.scriptErr
+	}
+	f.scriptCalled = true
+	f.gotName = name
+	f.gotVault = vaultPw
+	f.gotScript = script
+	if id == "" {
+		id = "ms1"
+	}
+	meta := vault.WalletMeta{
+		ID:      id,
+		Name:    name,
+		Network: network,
+		Type:    vault.WalletTypeMultiSignature,
+		Script:  &script,
+		Account: &wallet.Account{Network: network, ReceiveAddresses: []string{script.ScriptAddress}},
+	}
+	f.wallets = append(f.wallets, meta)
+	f.activeID = meta.ID
+	return meta, nil
+}
+
+// governanceActionsResult mirrors the GET /wallet/governance-actions JSON
+// response for tests.
+type governanceActionsResult struct {
+	Actions []chain.GovernanceAction `json:"actions"`
+	Total   int                      `json:"total"`
+	Page    int                      `json:"page"`
+	Count   int                      `json:"count"`
+}
+
+func decodeGovernanceActions(t *testing.T, rec *httptest.ResponseRecorder) governanceActionsResult {
+	t.Helper()
+	var got governanceActionsResult
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return got
+}
+
+func sampleGovActions() []chain.GovernanceAction {
+	return []chain.GovernanceAction{
+		{ActionID: "gov_action1aaa", TxHash: "aa", ActionIndex: 0, Type: "info", Status: "active", ProposedEpoch: 100, YesVotes: 2, NoVotes: 1, AbstainVotes: 0, Deposit: "100000000000"},
+		{ActionID: "gov_action1bbb", TxHash: "bb", ActionIndex: 1, Type: "treasury-withdrawal", Status: "enacted", ProposedEpoch: 90, Deposit: "100000000000"},
+	}
+}
+
+func TestGetGovernanceActions(t *testing.T) {
+	lookup := &fakeLookup{govActions: sampleGovActions()}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/governance-actions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/governance-actions = %d, want 200", rec.Code)
+	}
+	got := decodeGovernanceActions(t, rec)
+	if got.Total != 2 || len(got.Actions) != 2 || got.Page != 1 {
+		t.Fatalf("actions = %+v, want 2 actions on page 1", got)
+	}
+	if got.Actions[0].Type != "info" || got.Actions[0].YesVotes != 2 {
+		t.Fatalf("action[0] = %+v, want info with 2 yes votes", got.Actions[0])
+	}
+}
+
+func TestGetGovernanceActionsSearchFilter(t *testing.T) {
+	lookup := &fakeLookup{govActions: sampleGovActions()}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/governance-actions?q=treasury", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/governance-actions?q=treasury = %d, want 200", rec.Code)
+	}
+	got := decodeGovernanceActions(t, rec)
+	if got.Total != 1 || len(got.Actions) != 1 || got.Actions[0].Type != "treasury-withdrawal" {
+		t.Fatalf("filtered = %+v, want only the treasury-withdrawal action", got)
+	}
+}
+
+func TestGetGovernanceActionsEmpty(t *testing.T) {
+	lookup := &fakeLookup{govActions: nil}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/governance-actions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/governance-actions = %d, want 200", rec.Code)
+	}
+	got := decodeGovernanceActions(t, rec)
+	if got.Total != 0 || len(got.Actions) != 0 {
+		t.Fatalf("empty = %+v, want 0 actions", got)
+	}
+}
+
+func TestGetGovernanceActionsPageOverflow(t *testing.T) {
+	lookup := &fakeLookup{govActions: sampleGovActions()}
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		// (page-1)*count overflows int64 to a negative start; must not panic.
+		{"overflow", "/wallet/governance-actions?page=9223372036854775807&count=50"},
+		// One page past the end: a valid but empty page.
+		{"just-past-end", "/wallet/governance-actions?page=2&count=50"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, tc.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want 200", tc.path, rec.Code)
+			}
+			got := decodeGovernanceActions(t, rec)
+			if got.Total != 2 || len(got.Actions) != 0 {
+				t.Fatalf("overflow page = %+v, want total 2 with an empty page", got)
+			}
+		})
+	}
+}
+
+func TestGetGovernanceActionsNilLookup(t *testing.T) {
+	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/governance-actions", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /wallet/governance-actions with nil lookup = %d, want 503", rec.Code)
+	}
+}
+
 func (f *fakeVault) AddHardwareWallet(name, accountXpubBech32, network, vaultPw string, accountIndex uint32, _ int) (vault.WalletMeta, error) {
 	if f.hwErr != nil {
 		return vault.WalletMeta{}, f.hwErr
@@ -665,9 +1057,15 @@ type fakeWallet struct {
 	set              bool
 	setAccountCalled bool
 	gotNetwork       string
+	gotAccountIndex  uint32
 	txDetail         wallet.TxDetail
 	txDetailErr      error
 	rewards          wallet.RewardHistory
+	// balances, when non-nil, gives BalanceForAccount a distinct balance per
+	// account index (keyed by wallet.Account.AccountIndex) — lets tests verify
+	// per-account balance attribution instead of every account echoing the same
+	// fixed `balance`.
+	balances map[uint32]wallet.Balance
 }
 
 func (f *fakeWallet) SetAccount(acct *wallet.Account) error {
@@ -680,12 +1078,25 @@ func (f *fakeWallet) SetAccount(acct *wallet.Account) error {
 	f.set = true
 	f.setAccountCalled = true
 	f.gotNetwork = acct.Network
+	f.gotAccountIndex = acct.AccountIndex
 	return nil
 }
 
 func (f *fakeWallet) Balance(_ context.Context) (wallet.Balance, error) {
 	if !f.set {
 		return wallet.Balance{}, wallet.ErrNoWallet
+	}
+	return f.balance, nil
+}
+
+func (f *fakeWallet) BalanceForAccount(_ context.Context, acct *wallet.Account) (wallet.Balance, error) {
+	if acct == nil {
+		return wallet.Balance{}, wallet.ErrNoWallet
+	}
+	if f.balances != nil {
+		if b, ok := f.balances[acct.AccountIndex]; ok {
+			return b, nil
+		}
 	}
 	return f.balance, nil
 }
@@ -1358,6 +1769,10 @@ type fakeSpender struct {
 	hwSignReqErr error
 	gotHWSignID  string
 
+	hwSignDataReq     spend.HardwareSignDataRequest
+	hwSignDataReqErr  error
+	gotHWSignDataAddr string
+
 	// import-tx (decode-tx/cosign-tx/submit-tx vkey path); methods defined in
 	// importtx_test.go alongside the tests that exercise them.
 	decodeResult     spend.TxSummary
@@ -1447,6 +1862,14 @@ func (f *fakeSpender) HardwareSignRequest(pendingID string) (spend.HardwareSignR
 		return spend.HardwareSignRequest{}, f.hwSignReqErr
 	}
 	return f.hwSignReq, nil
+}
+
+func (f *fakeSpender) SignDataHardwareRequest(addr string) (spend.HardwareSignDataRequest, error) {
+	f.gotHWSignDataAddr = addr
+	if f.hwSignDataReqErr != nil {
+		return spend.HardwareSignDataRequest{}, f.hwSignDataReqErr
+	}
+	return f.hwSignDataReq, nil
 }
 
 func (f *fakeSpender) BuildDelegation(_ context.Context, _ spend.DelegationRequest) (spend.DelegationPreview, error) {
@@ -1625,7 +2048,6 @@ type fakeMultiSig struct {
 	listErr    error
 	getErr     error
 	createErr  error
-	deleteErr  error
 	myKeyErr   error
 	balanceErr error
 	buildErr   error
@@ -1634,7 +2056,6 @@ type fakeMultiSig struct {
 
 	gotGetID         string
 	gotCreate        multisig.CreateRequest
-	gotDeleteID      string
 	gotMyKeyPass     string
 	gotBalanceID     string
 	gotBuildID       string
@@ -1668,14 +2089,9 @@ func (f *fakeMultiSig) Get(id string) (multisig.Account, error) {
 	return f.account, f.getErr
 }
 
-func (f *fakeMultiSig) Create(req multisig.CreateRequest) (multisig.Account, error) {
+func (f *fakeMultiSig) Compose(req multisig.CreateRequest) (multisig.Account, error) {
 	f.gotCreate = req
 	return f.account, f.createErr
-}
-
-func (f *fakeMultiSig) Delete(id string) error {
-	f.gotDeleteID = id
-	return f.deleteErr
 }
 
 func (f *fakeMultiSig) MyKey(password string) (multisig.MyKey, error) {
@@ -1733,7 +2149,8 @@ func TestMultiSigRoutesUngatedWhileNodeNotReady(t *testing.T) {
 		myKey:    multisig.MyKey{KeyHashHex: strings.Repeat("b", 56), VKeyHex: strings.Repeat("c", 64)},
 		witness:  multisig.Witness{WitnessCBOR: "81825820"},
 	}
-	h := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
+	fv := &fakeVault{}
+	h := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/multisig", nil))
@@ -1742,13 +2159,22 @@ func TestMultiSigRoutesUngatedWhileNodeNotReady(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	createBody := `{"label":"Treasury","policy":{"threshold":1,"participants":[{"key_hash_hex":"` + strings.Repeat("a", 56) + `"}]}}`
+	// A multi-signature account is a wallet now, so creating one is a vault
+	// write and carries the vault password like any other add-wallet call.
+	createBody := `{"label":"Treasury","vault_password":"vault-password-xyz","policy":{"threshold":1,"participants":[{"key_hash_hex":"` + strings.Repeat("a", 56) + `"}]}}`
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/multisig", bytes.NewBufferString(createBody)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /wallet/multisig = %d body %s, want 200", rec.Code, rec.Body.String())
 	}
 	if ms.gotCreate.Label != "Treasury" || ms.gotCreate.Network != "preview" || ms.gotCreate.Policy.Threshold != 1 {
-		t.Fatalf("create args = %+v, want label/network/policy", ms.gotCreate)
+		t.Fatalf("compose args = %+v, want label/network/policy", ms.gotCreate)
+	}
+	// The composed script must actually land in the vault, not just be returned.
+	if !fv.scriptCalled {
+		t.Fatal("composing an account must store it as a vault wallet")
+	}
+	if fv.gotScript.ScriptAddress == "" || fv.gotVault != "vault-password-xyz" {
+		t.Fatalf("vault got script=%+v password=%q", fv.gotScript, fv.gotVault)
 	}
 
 	rec = httptest.NewRecorder()
@@ -3202,6 +3628,14 @@ func (f *fakeNodeLookup) DRep(_ context.Context, _ string) (chain.DRepInfo, erro
 	return f.drep, f.drepErr
 }
 
+func (f *fakeNodeLookup) GovernanceActions(_ context.Context) ([]chain.GovernanceAction, error) {
+	return nil, nil
+}
+
+func (f *fakeNodeLookup) DReps(_ context.Context) ([]chain.DRepListItem, error) {
+	return nil, chain.ErrNotFound
+}
+
 func (f *fakeNodeLookup) AssetAddresses(_ context.Context, asset string) ([]chain.AssetAddress, error) {
 	f.gotAssetUnits = append(f.gotAssetUnits, asset)
 	return f.assetAddrs, f.assetErr
@@ -3619,6 +4053,57 @@ func TestHardwareSignRequestRoute(t *testing.T) {
 	}
 }
 
+func TestSignDataHardwareRequestRoute(t *testing.T) {
+	sp := &fakeSpender{hwSignDataReq: spend.HardwareSignDataRequest{
+		AddressBech32: "addr_test1recv",
+		AddressHex:    "60aabb",
+		SigningPath:   "1852'/1815'/0'/0/0",
+		StakePath:     "1852'/1815'/0'/2/0",
+		NetworkID:     0,
+		ProtocolMagic: 2,
+	}}
+	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	t.Run("resolves paths for an owned address", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/sign-data/hardware-request?address=addr_test1recv", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /sign-data/hardware-request = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		var got spend.HardwareSignDataRequest
+		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if sp.gotHWSignDataAddr != "addr_test1recv" {
+			t.Fatalf("gotHWSignDataAddr = %q, want addr_test1recv", sp.gotHWSignDataAddr)
+		}
+		if got.SigningPath != "1852'/1815'/0'/0/0" || got.StakePath != "1852'/1815'/0'/2/0" {
+			t.Fatalf("paths wrong: %+v", got)
+		}
+		if got.NetworkID != 0 || got.ProtocolMagic != 2 {
+			t.Fatalf("network fields wrong: %+v", got)
+		}
+	})
+
+	t.Run("missing address is 400", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/sign-data/hardware-request", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("missing address = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("foreign address surfaces 400", func(t *testing.T) {
+		spErr := &fakeSpender{hwSignDataReqErr: fmt.Errorf("%w: not owned", spend.ErrInvalidRequest)}
+		hErr := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, spErr, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		hErr.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/sign-data/hardware-request?address=addr_test1foreign", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("foreign address = %d, want 400", rec.Code)
+		}
+	})
+}
+
 func TestSubmitHardwareRoute(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{
@@ -3725,5 +4210,58 @@ func TestSameOriginGuardSkipsConnector(t *testing.T) {
 	}
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("POST /connector/pair (initiate) = %d, want 202 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMultiSigCreateReportsActivationFailure covers the case where the script
+// wallet is persisted but selecting it fails. The wallet exists, so the request
+// did not fail — but the response must not claim it is active, because reads
+// and sends still answer for the previous wallet. The client reconciles from
+// that flag and can activate the wallet by id.
+func TestMultiSigCreateReportsActivationFailure(t *testing.T) {
+	acct := multisig.Account{
+		ID:            "ms-1",
+		Label:         "Treasury",
+		Network:       "preview",
+		ScriptCBOR:    "8200",
+		ScriptAddress: "addr_test1wq" + strings.Repeat("q", 20),
+		Policy:        multisig.Policy{Threshold: 1},
+	}
+	ms := &fakeMultiSig{accounts: []multisig.Account{acct}, account: acct}
+	fv := &fakeVault{setActiveErr: errors.New("selection storage unavailable")}
+	h := NewHandler(
+		fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}},
+		fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{},
+		nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler(),
+	)
+
+	createBody := `{"label":"Treasury","vault_password":"vault-password-xyz",` +
+		`"policy":{"threshold":1,"participants":[{"key_hash_hex":"` +
+		strings.Repeat("a", 56) + `"}]}}`
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/multisig", bytes.NewBufferString(createBody)))
+
+	// The wallet was created, so this is not a failed request: a 5xx would
+	// misdescribe it, and a client retrying hits the duplicate-script check.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /wallet/multisig = %d, want 200 (the wallet was created): %s",
+			rec.Code, rec.Body.String())
+	}
+	// Decoded rather than substring-matched: the nested account carries its own
+	// "active" field.
+	var got struct {
+		ID     string `json:"id"`
+		Active bool   `json:"active"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v (body %s)", err, rec.Body.String())
+	}
+	if got.Active {
+		t.Fatalf("response claims the wallet is active despite the failed selection: %s",
+			rec.Body.String())
+	}
+	if got.ID == "" {
+		t.Fatalf("response carries no wallet id, so the created wallet is unreachable: %s",
+			rec.Body.String())
 	}
 }

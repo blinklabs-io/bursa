@@ -17,11 +17,13 @@ package bursa
 import (
 	"bytes"
 	"crypto/ed25519"
+	crand "crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -145,9 +147,11 @@ func (kf KeyFile) String() string {
 		prefix = "cc_hot_sk"
 	case "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32":
 		prefix = "cc_hot_xsk"
-	case "StakePoolVerificationKeyShelley_ed25519":
+	case "StakePoolVerificationKey_ed25519",
+		"StakePoolVerificationKeyShelley_ed25519":
 		prefix = "pool_vk"
-	case "StakePoolSigningKeyShelley_ed25519":
+	case "StakePoolSigningKey_ed25519",
+		"StakePoolSigningKeyShelley_ed25519":
 		prefix = "pool_sk"
 	case "StakePoolExtendedSigningKeyShelley_ed25519_bip32":
 		prefix = "pool_xsk"
@@ -227,7 +231,11 @@ type WalletConfig struct {
 	CommitteeColdID uint32 // Committee cold key derivation index (CIP-105)
 	CommitteeHotID  uint32 // Committee hot key derivation index (CIP-105)
 	PoolColdID      uint32 // Pool cold key derivation index (CIP-1853)
-	AddressID       uint32 // Address derivation index
+	// AddressID is a compatibility alias for PaymentID and StakeID.
+	// Deprecated: configure PaymentID and StakeID independently instead.
+	AddressID    uint32
+	paymentIDSet bool
+	stakeIDSet   bool
 }
 
 // WalletOption is a functional option for configuring wallet creation
@@ -266,6 +274,7 @@ func WithAccountID(id uint32) WalletOption {
 func WithPaymentID(id uint32) WalletOption {
 	return func(c *WalletConfig) {
 		c.PaymentID = id
+		c.paymentIDSet = true
 	}
 }
 
@@ -275,6 +284,7 @@ func WithPaymentID(id uint32) WalletOption {
 func WithStakeID(id uint32) WalletOption {
 	return func(c *WalletConfig) {
 		c.StakeID = id
+		c.stakeIDSet = true
 	}
 }
 
@@ -314,12 +324,20 @@ func WithPoolColdID(id uint32) WalletOption {
 	}
 }
 
-// WithAddressID sets the address derivation index.
+// WithAddressID sets the payment and stake derivation indices when their
+// dedicated options have not been provided.
 // Must be less than 2^31 for BIP32 compatibility.
 // Default: 0
+// New code should use WithPaymentID and WithStakeID instead.
 func WithAddressID(id uint32) WalletOption {
 	return func(c *WalletConfig) {
 		c.AddressID = id
+		if !c.paymentIDSet {
+			c.PaymentID = id
+		}
+		if !c.stakeIDSet {
+			c.StakeID = id
+		}
 	}
 }
 
@@ -431,7 +449,11 @@ func NewWallet(mnemonic string, opts ...WalletOption) (*Wallet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pool cold key: %w", err)
 	}
-	addr, err := GetAddress(accountKey, cfg.Network, cfg.AddressID)
+	network, ok := ouroboros.NetworkByName(cfg.Network)
+	if !ok {
+		return nil, fmt.Errorf("unable to get address: %w", ErrInvalidNetwork)
+	}
+	addr, err := newAddressFromKeys(paymentKey, stakeKey, network.Id)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get address: %w", err)
 	}
@@ -1083,8 +1105,12 @@ func GetPoolColdKey(
 
 // GetPoolColdVKey creates a stake pool cold verification key file
 func GetPoolColdVKey(poolColdKey bip32.XPrv) (KeyFile, error) {
-	// Encode just the raw public key bytes (cardano-cli compatible format)
-	keyCbor, err := cbor.Encode(poolColdKey.Public().PublicKey())
+	// Pool cold signing uses standard Ed25519 seeded from k_L, rather than the
+	// BIP32 extended public key derived from k_L. Export the matching public key
+	// so pool registration and operational certificates use the same key.
+	seed := poolColdKey.PrivateKey()[:ed25519.SeedSize]
+	vkey := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	keyCbor, err := cbor.Encode(vkey)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
 			"failed to encode pool cold verification key CBOR: %w",
@@ -1092,7 +1118,7 @@ func GetPoolColdVKey(poolColdKey bip32.XPrv) (KeyFile, error) {
 		)
 	}
 	kf := KeyFile{
-		Type:        "StakePoolVerificationKeyShelley_ed25519",
+		Type:        "StakePoolVerificationKey_ed25519",
 		Description: "Stake Pool Cold Verification Key",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
@@ -1104,7 +1130,7 @@ func GetPoolColdVKey(poolColdKey bip32.XPrv) (KeyFile, error) {
 func GetPoolColdSKey(poolColdKey bip32.XPrv) (KeyFile, error) {
 	return getSigningKeyFile(
 		poolColdKey,
-		"StakePoolSigningKeyShelley_ed25519",
+		"StakePoolSigningKey_ed25519",
 		"Stake Pool Cold Signing Key",
 	)
 }
@@ -1905,14 +1931,8 @@ func GetScriptHash(script Script) ([]byte, error) {
 	if script == nil {
 		return nil, errors.New("script cannot be nil")
 	}
-	scriptCBOR := script.RawScriptBytes()
-	hasher, err := blake2b.New(28, nil)
-	if err != nil {
-		// This should never happen with valid parameters
-		return nil, fmt.Errorf("failed to create blake2b hasher: %w", err)
-	}
-	hasher.Write(scriptCBOR)
-	return hasher.Sum(nil), nil
+	scriptHash := script.Hash()
+	return scriptHash.Bytes(), nil
 }
 
 // GetScriptAddress creates an address from a script
@@ -2211,15 +2231,23 @@ func GetAddress(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get payment key: %w", err)
 	}
-	paymentKeyPublicHash := paymentKey.Public().PublicKey().Hash()
 	stakeKey, err := GetStakeKey(accountKey, num)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stake key: %w", err)
 	}
+	return newAddressFromKeys(paymentKey, stakeKey, network.Id)
+}
+
+func newAddressFromKeys(
+	paymentKey bip32.XPrv,
+	stakeKey bip32.XPrv,
+	networkID uint8,
+) (*lcommon.Address, error) {
+	paymentKeyPublicHash := paymentKey.Public().PublicKey().Hash()
 	stakeKeyPublicHash := stakeKey.Public().PublicKey().Hash()
 	addr, err := lcommon.NewAddressFromParts(
 		lcommon.AddressTypeKeyKey,
-		network.Id,
+		networkID,
 		paymentKeyPublicHash[:],
 		stakeKeyPublicHash[:],
 	)
@@ -2408,129 +2436,6 @@ func decodeKESSKey(skeyBytes []byte) ([]byte, []byte, error) {
 	return keyBytes, pubKey, nil
 }
 
-// decodeOpCert decodes an operational certificate from CBOR.
-// OpCert CBOR format: [[kes_vkey, issue_number, kes_period, signature], cold_vkey]
-// The outer array has 2 elements:
-//   - Inner 4-element array with the certificate data
-//   - Cold verification key (32 bytes)
-//
-// Returns: kesVkey, issueNumber, kesPeriod, signature, coldVkey, error
-func decodeOpCert(
-	certBytes []byte,
-) ([]byte, uint64, uint64, []byte, []byte, error) {
-	var outerData []any
-	if _, err := cbor.Decode(certBytes, &outerData); err != nil {
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"failed to unmarshal OpCert CBOR: %w",
-			err,
-		)
-	}
-	if len(outerData) != 2 {
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: expected 2-element outer array, got %d",
-			len(outerData),
-		)
-	}
-
-	// Extract inner certificate array
-	certData, ok := outerData[0].([]any)
-	if !ok {
-		return nil, 0, 0, nil, nil, errors.New(
-			"invalid OpCert: first element is not an array",
-		)
-	}
-	if len(certData) != 4 {
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: expected 4-element cert array, got %d",
-			len(certData),
-		)
-	}
-
-	// Extract cold vkey
-	coldVkey, ok := outerData[1].([]byte)
-	if !ok {
-		return nil, 0, 0, nil, nil, errors.New(
-			"invalid OpCert: cold_vkey is not bytes",
-		)
-	}
-	if len(coldVkey) != 32 {
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: cold_vkey expected 32 bytes, got %d",
-			len(coldVkey),
-		)
-	}
-
-	// Extract KES vkey from inner array
-	kesVkey, ok := certData[0].([]byte)
-	if !ok {
-		return nil, 0, 0, nil, nil, errors.New(
-			"invalid OpCert: kes_vkey is not bytes",
-		)
-	}
-	if len(kesVkey) != 32 {
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: kes_vkey expected 32 bytes, got %d",
-			len(kesVkey),
-		)
-	}
-
-	// Extract issue number (can be uint64 or int64 depending on CBOR encoding)
-	var issueNumber uint64
-	switch v := certData[1].(type) {
-	case uint64:
-		issueNumber = v
-	case int64:
-		if v < 0 {
-			return nil, 0, 0, nil, nil, fmt.Errorf(
-				"invalid OpCert: issue_number cannot be negative, got %d",
-				v,
-			)
-		}
-		issueNumber = uint64(v) // #nosec G115
-	default:
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: issue_number has unexpected type %T",
-			certData[1],
-		)
-	}
-
-	// Extract KES period
-	var kesPeriod uint64
-	switch v := certData[2].(type) {
-	case uint64:
-		kesPeriod = v
-	case int64:
-		if v < 0 {
-			return nil, 0, 0, nil, nil, fmt.Errorf(
-				"invalid OpCert: kes_period cannot be negative, got %d",
-				v,
-			)
-		}
-		kesPeriod = uint64(v) // #nosec G115
-	default:
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: kes_period has unexpected type %T",
-			certData[2],
-		)
-	}
-
-	// Extract cold signature
-	signature, ok := certData[3].([]byte)
-	if !ok {
-		return nil, 0, 0, nil, nil, errors.New(
-			"invalid OpCert: cold_signature is not bytes",
-		)
-	}
-	if len(signature) != 64 {
-		return nil, 0, 0, nil, nil, fmt.Errorf(
-			"invalid OpCert: cold_signature expected 64 bytes, got %d",
-			len(signature),
-		)
-	}
-
-	return kesVkey, issueNumber, kesPeriod, signature, coldVkey, nil
-}
-
 func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 	var env KeyFile
 	if err := json.Unmarshal(fileBytes, &env); err != nil {
@@ -2563,6 +2468,7 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"DRepVerificationKeyShelley_ed25519",
 		"CommitteeColdVerificationKeyShelley_ed25519",
 		"CommitteeHotVerificationKeyShelley_ed25519",
+		"StakePoolVerificationKey_ed25519",
 		"StakePoolVerificationKeyShelley_ed25519",
 		"PolicyVerificationKeyShelley_ed25519":
 		vk, err := decodeVerificationKey(cborData)
@@ -2576,6 +2482,7 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"DRepSigningKeyShelley_ed25519",
 		"CommitteeColdSigningKeyShelley_ed25519",
 		"CommitteeHotSigningKeyShelley_ed25519",
+		"StakePoolSigningKey_ed25519",
 		"StakePoolSigningKeyShelley_ed25519",
 		"PolicySigningKeyShelley_ed25519":
 		sk, vk, err := decodeNonExtendedCborKey(cborData)
@@ -2633,17 +2540,15 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		return lk, nil
 	// Operational Certificate
 	case "NodeOperationalCertificate":
-		kesVkey, issueNumber, kesPeriod, signature, coldVkey, err := decodeOpCert(
-			cborData,
-		)
+		dec, err := DecodeOpCert(cborData)
 		if err != nil {
 			return nil, err
 		}
-		lk.VKey = kesVkey
-		lk.OpCertIssueNumber = issueNumber
-		lk.OpCertKesPeriod = kesPeriod
-		lk.OpCertSignature = signature
-		lk.OpCertColdVKey = coldVkey
+		lk.VKey = dec.KESVKey
+		lk.OpCertIssueNumber = dec.IssueNumber
+		lk.OpCertKesPeriod = dec.KESPeriod
+		lk.OpCertSignature = dec.ColdSig
+		lk.OpCertColdVKey = dec.ColdVKey
 		return lk, nil
 	default:
 		return nil, fmt.Errorf("unknown key type: %s", env.Type)
@@ -2671,6 +2576,151 @@ func LoadKeyFromFile(path string) (*LoadedKey, error) {
 	return key, nil
 }
 
+const maxSecretKeyFileSize = 1 << 20
+
+// ReadSecretKeyFile reads a secret-key file after checking the permissions of
+// the open file handle. It preserves the raw formats accepted by callers that
+// parse key bytes themselves.
+func ReadSecretKeyFile(path string) ([]byte, error) {
+	file, err := openSecretKeyFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open secret key file %q: %w", path, err)
+	}
+	defer file.Close() //nolint:errcheck // read-only handle
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat secret key file %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf(
+			"secret key file %q is not a regular file (mode %s)",
+			path, info.Mode(),
+		)
+	}
+	if err := checkOpenFilePermissions(file); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxSecretKeyFileSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read secret key file %q: %w", path, err)
+	}
+	if len(data) > maxSecretKeyFileSize {
+		return nil, fmt.Errorf(
+			"secret key file %q exceeds maximum size of %d bytes",
+			path, maxSecretKeyFileSize,
+		)
+	}
+	return data, nil
+}
+
+// WriteSecretKeyFile atomically replaces a secret-key file with owner-only
+// contents. The destination is left untouched until the secured temporary file
+// has been written and synced.
+func WriteSecretKeyFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	file, err := CreateSecretKeyTempFile(
+		dir,
+		"."+filepath.Base(path)+".tmp-",
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create temporary secret key file: %w", err)
+	}
+	tmpName := file.Name()
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = file.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := file.Write(data); err != nil {
+		return fmt.Errorf("failed to write temporary secret key file: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("failed to sync temporary secret key file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary secret key file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("failed to replace secret key file %q: %w", path, err)
+	}
+	if err := syncSecretKeyDirectory(dir); err != nil {
+		return fmt.Errorf("failed to sync secret key directory: %w", err)
+	}
+	removeTmp = false
+	return nil
+}
+
+// CreateSecretKeyFile exclusively creates an owner-only secret-key file.
+func CreateSecretKeyFile(path string) (*os.File, error) {
+	file, err := createSecretKeyFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := restrictSecretKeyFilePermissions(file); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return nil, err
+	}
+	return file, nil
+}
+
+// CreateSecretKeyTempFile creates a uniquely named owner-only temporary file
+// without closing and reopening the handle, preserving exclusive creation.
+func CreateSecretKeyTempFile(dir, pattern string) (*os.File, error) {
+	var suffix [8]byte
+	for range 100 {
+		if _, err := crand.Read(suffix[:]); err != nil {
+			return nil, err
+		}
+		path := filepath.Join(dir, pattern+hex.EncodeToString(suffix[:]))
+		file, err := createSecretKeyFileExclusive(path)
+		if err == nil {
+			if err := restrictSecretKeyFilePermissions(file); err != nil {
+				_ = file.Close()
+				_ = os.Remove(path)
+				return nil, err
+			}
+			return file, nil
+		}
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		return nil, err
+	}
+	return nil, fmt.Errorf("failed to create unique secret key file in %q", dir)
+}
+
+// RestrictSecretKeyFilePermissions applies the platform-specific owner-only
+// permissions to an already-open secret file. Callers can use this for an
+// atomic temporary-file workflow before renaming the file into place.
+func RestrictSecretKeyFilePermissions(file *os.File) error {
+	return restrictSecretKeyFilePermissions(file)
+}
+
+// LoadSecretKeyFromFile loads a secret key from a file after checking the
+// permissions of the open file handle. Use this for secret key files that must
+// not be readable by group or other users. LoadKeyFromFile remains available
+// for public artifacts such as operational certificates.
+func LoadSecretKeyFromFile(path string) (*LoadedKey, error) {
+	data, err := ReadSecretKeyFile(path)
+	if err != nil {
+		return nil, err
+	}
+	key, err := LoadKeyFromBytes(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse secret key file %q: %w", path, err)
+	}
+	if len(key.SKey) == 0 {
+		return nil, fmt.Errorf("key file %q does not contain a secret key", path)
+	}
+	key.File = filepath.Base(path)
+	return key, nil
+}
+
 func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 	if dir == "" {
 		return nil, errors.New("directory path cannot be empty")
@@ -2684,30 +2734,45 @@ func LoadWalletDir(dir string, showSecrets bool) ([]*LoadedKey, error) {
 	// Most wallets have around 6 key files
 	out := make([]*LoadedKey, 0, 8)
 
+	// firstInsecure records the first secret key rejected for insecure
+	// permissions, so that a directory whose only key files are all
+	// permission-rejected surfaces that reason instead of the misleading
+	// fs.ErrNotExist returned for an empty result.
+	var firstInsecure error
+
 	for _, e := range files {
 		if e.IsDir() {
 			continue
 		}
 		n := e.Name()
-		if !(strings.HasSuffix(n, ".vkey")) &&
-			!(strings.HasSuffix(n, ".skey")) {
+		if !strings.HasSuffix(n, ".vkey") &&
+			!strings.HasSuffix(n, ".skey") {
 			continue
 		}
 		p := filepath.Join(dir, n)
-		b, err := os.ReadFile(p)
-		if err != nil {
-			// Skip files that can't be read
-			continue
+		var loadedKeyFile *LoadedKey
+		if strings.HasSuffix(n, ".skey") {
+			loadedKeyFile, err = LoadSecretKeyFromFile(p)
+		} else {
+			loadedKeyFile, err = LoadKeyFromFile(p)
 		}
-		loadedKeyFile, err := parseKeyEnvelope(b)
-		if err != nil {
-			// Skip files that can't be parsed
+		if err != nil || loadedKeyFile == nil {
+			// Skip files that can't be parsed, but remember an insecure-mode
+			// rejection so it can be surfaced if nothing else loads.
+			if firstInsecure == nil && errors.Is(err, ErrInsecureFileMode) {
+				firstInsecure = fmt.Errorf(
+					"secret key file %q has insecure permissions: %w", p, err,
+				)
+			}
 			continue
 		}
 		loadedKeyFile.File = n
 		out = append(out, loadedKeyFile)
 	}
 	if len(out) == 0 {
+		if firstInsecure != nil {
+			return nil, firstInsecure
+		}
 		return nil, fs.ErrNotExist
 	}
 

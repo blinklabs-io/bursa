@@ -29,6 +29,7 @@ import (
 
 	"github.com/blinklabs-io/bursa/bip32"
 	bip39 "github.com/blinklabs-io/go-bip39"
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -410,6 +411,57 @@ func TestNewWalletInvalidIndices(t *testing.T) {
 	_, err := NewWallet(mnemonic, WithAccountID(0x80000000))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "derivation indices must be less than 2^31")
+}
+
+func TestNewWalletAddressMatchesExportedCredentials(t *testing.T) {
+	const mnemonic = "abandon abandon abandon abandon abandon abandon " +
+		"abandon abandon abandon abandon abandon about"
+	const (
+		paymentID = uint32(1)
+		stakeID   = uint32(2)
+		addressID = uint32(3)
+	)
+
+	wallet, err := NewWallet(
+		mnemonic,
+		WithPaymentID(paymentID),
+		WithStakeID(stakeID),
+		WithAddressID(addressID),
+	)
+	require.NoError(t, err)
+
+	address, err := lcommon.NewAddress(wallet.PaymentAddress)
+	require.NoError(t, err)
+	paymentVKey := decodeCborBytes(t, wallet.PaymentVKey.CborHex)
+	stakeVKey := decodeCborBytes(t, wallet.StakeVKey.CborHex)
+	assert.Equal(
+		t,
+		lcommon.Blake2b224Hash(paymentVKey),
+		address.PaymentKeyHash(),
+	)
+	assert.Equal(t, lcommon.Blake2b224Hash(stakeVKey), address.StakeKeyHash())
+
+	rootKey, err := GetRootKeyFromMnemonic(mnemonic, "")
+	require.NoError(t, err)
+	accountKey, err := GetAccountKey(rootKey, 0)
+	require.NoError(t, err)
+	paymentKey, err := GetPaymentKey(accountKey, paymentID)
+	require.NoError(t, err)
+	stakeKey, err := GetStakeKey(accountKey, stakeID)
+	require.NoError(t, err)
+	assert.Equal(t, []byte(paymentKey.Public().PublicKey()), paymentVKey)
+	assert.Equal(t, []byte(stakeKey.Public().PublicKey()), stakeVKey)
+}
+
+func TestWithAddressIDSetsCredentialFallbacks(t *testing.T) {
+	const addressID = uint32(3)
+	cfg := defaultWalletConfig()
+
+	WithAddressID(addressID)(cfg)
+
+	assert.Equal(t, addressID, cfg.AddressID)
+	assert.Equal(t, addressID, cfg.PaymentID)
+	assert.Equal(t, addressID, cfg.StakeID)
 }
 
 func TestGenerateMnemonic(t *testing.T) {
@@ -1142,15 +1194,84 @@ func TestScriptTypes(t *testing.T) {
 	assert.NotEmpty(t, cbor)
 }
 
-func TestGetScriptHash(t *testing.T) {
-	// Use proper 28-byte key hash (Blake2b-224)
-	keyHash := testKeyHash()
-	script, err := NewScriptSig(keyHash)
-	assert.NoError(t, err)
-	assert.NotNil(t, script)
-	hash, err := GetScriptHash(script)
-	assert.NoError(t, err)
-	assert.Len(t, hash, 28)
+func TestGetScriptHashAndAddressVectors(t *testing.T) {
+	// These fixed outputs were generated with cardano-cli 10.14.0.0. Using
+	// the same script bytes for each Plutus language verifies that the language
+	// tag is part of the credential.
+	nativeScriptBytes, err := hex.DecodeString(
+		"830302838200581c32000809732f4d5b9a53e2eec996e7c79a249630" +
+			"68ffbf3565318e9a8200581caaaaaaaa111122223333444455556666" +
+			"77778888999900001111aaaa8200581cbbbbbbbb1111222233334444" +
+			"5555666677778888999900001111bbbb",
+	)
+	require.NoError(t, err)
+	var nativeScript NativeScript
+	require.NoError(t, nativeScript.UnmarshalCBOR(nativeScriptBytes))
+
+	plutusScriptBytes, err := hex.DecodeString(
+		"587f01010032323232323225333002323232323253330073370e900118" +
+			"041baa0011323232533300a3370e900018059baa00513232533300f301" +
+			"100214a22c6eb8c03c004c030dd50028b18069807001180600098049b" +
+			"aa00116300a300b0023009001300900230070013004375400229309b2" +
+			"b2b9a5573aaae7955cfaba157441",
+	)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name                   string
+		script                 Script
+		expectedHash           string
+		expectedMainnetAddress string
+		expectedTestnetAddress string
+	}{
+		{
+			name:                   "native",
+			script:                 &nativeScript,
+			expectedHash:           "97e609874ba758c9cfaf7b03d0223402d4d91405e9b7fe503a9977fa",
+			expectedMainnetAddress: "addr1wxt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s9fhjmu",
+			expectedTestnetAddress: "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e",
+		},
+		{
+			name:                   "Plutus V1",
+			script:                 lcommon.PlutusV1Script(plutusScriptBytes),
+			expectedHash:           "29faed158eeb221d7c5b3804cb00f590e38dc9846259a5c0128d6c42",
+			expectedMainnetAddress: "addr1wy5l4mg43m4jy8tutvuqfjcq7kgw8rwfs339nfwqz2xkcssxage2k",
+			expectedTestnetAddress: "addr_test1wq5l4mg43m4jy8tutvuqfjcq7kgw8rwfs339nfwqz2xkcssa4u99n",
+		},
+		{
+			name:                   "Plutus V2",
+			script:                 lcommon.PlutusV2Script(plutusScriptBytes),
+			expectedHash:           "372f2611534456c5f249429d87d088ba64c97205c2ce1cf779eab108",
+			expectedMainnetAddress: "addr1wymj7fs32dz9d30jf9pfmp7s3zaxfjtjqhpvu88h084tzzqyjkg4u",
+			expectedTestnetAddress: "addr_test1wqmj7fs32dz9d30jf9pfmp7s3zaxfjtjqhpvu88h084tzzql6z56e",
+		},
+		{
+			name:                   "Plutus V3",
+			script:                 lcommon.PlutusV3Script(plutusScriptBytes),
+			expectedHash:           "2909c3d0441e76cd6ae1fc09664bb209868902e191c2b8c30b82d331",
+			expectedMainnetAddress: "addr1wy5sns7sgs08dnt2u87qjejtkgycdzgzuxgu9wxrpwpdxvgv04xjl",
+			expectedTestnetAddress: "addr_test1wq5sns7sgs08dnt2u87qjejtkgycdzgzuxgu9wxrpwpdxvgh8p6a6",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			hash, err := GetScriptHash(test.script)
+			require.NoError(t, err)
+			assert.Equal(t, test.expectedHash, hex.EncodeToString(hash))
+
+			for network, expectedAddress := range map[string]string{
+				"mainnet": test.expectedMainnetAddress,
+				"preview": test.expectedTestnetAddress,
+			} {
+				t.Run(network, func(t *testing.T) {
+					address, err := GetScriptAddress(test.script, network)
+					require.NoError(t, err)
+					assert.Equal(t, expectedAddress, address)
+				})
+			}
+		})
+	}
 }
 
 func TestGetScriptAddress(t *testing.T) {
@@ -2240,16 +2361,39 @@ func TestCIP1853KeyFileGeneration(t *testing.T) {
 	// Test verification key generation
 	vkey, err := GetPoolColdVKey(poolColdKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "StakePoolVerificationKeyShelley_ed25519", vkey.Type)
+	assert.Equal(t, "StakePoolVerificationKey_ed25519", vkey.Type)
 	assert.Equal(t, "Stake Pool Cold Verification Key", vkey.Description)
 	assert.NotEmpty(t, vkey.CborHex)
 
 	// Test signing key generation
 	skey, err := GetPoolColdSKey(poolColdKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "StakePoolSigningKeyShelley_ed25519", skey.Type)
+	assert.Equal(t, "StakePoolSigningKey_ed25519", skey.Type)
 	assert.Equal(t, "Stake Pool Cold Signing Key", skey.Description)
 	assert.NotEmpty(t, skey.CborHex)
+
+	// The exported cold vkey must match the standard Ed25519 key used to
+	// sign operational certificates from the pool cold signing key seed.
+	coldSeed := decodeCborBytes(t, skey.CborHex)
+	expectedColdVKey := ed25519.NewKeyFromSeed(coldSeed).
+		Public().(ed25519.PublicKey)
+	actualColdVKey := decodeCborBytes(t, vkey.CborHex)
+	assert.Equal(t, []byte(expectedColdVKey), actualColdVKey)
+
+	kesVkey := make([]byte, 32)
+	opCert, err := CreateOperationalCertificate(
+		kesVkey,
+		0,
+		100,
+		coldSeed,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, opCert.ColdVkey, actualColdVKey)
+	require.True(t, ed25519.Verify(
+		actualColdVKey,
+		lcommon.OpCertSignableBytes(kesVkey, 0, 100),
+		opCert.ColdSignature,
+	))
 
 	// Test extended signing key generation
 	extendedSkey, err := GetPoolColdExtendedSKey(poolColdKey)
@@ -2280,6 +2424,71 @@ func TestCIP1853KeyFileGeneration(t *testing.T) {
 	assert.NotEmpty(t, extendedSkeyCbor)
 }
 
+func TestPoolColdKeyEnvelopeCompatibility(t *testing.T) {
+	rootKey, err := GetRootKeyFromMnemonic(
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+		"",
+	)
+	require.NoError(t, err)
+	poolColdKey, err := GetPoolColdKey(rootKey, 0, 0)
+	require.NoError(t, err)
+	vkey, err := GetPoolColdVKey(poolColdKey)
+	require.NoError(t, err)
+	skey, err := GetPoolColdSKey(poolColdKey)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name  string
+		key   KeyFile
+		type_ string
+		want  int
+	}{
+		{
+			name:  "canonical verification key",
+			key:   vkey,
+			type_: "StakePoolVerificationKey_ed25519",
+			want:  ed25519.PublicKeySize,
+		},
+		{
+			name:  "legacy verification key",
+			key:   vkey,
+			type_: "StakePoolVerificationKeyShelley_ed25519",
+			want:  ed25519.PublicKeySize,
+		},
+		{
+			name:  "canonical signing key",
+			key:   skey,
+			type_: "StakePoolSigningKey_ed25519",
+			want:  ed25519.PrivateKeySize,
+		},
+		{
+			name:  "legacy signing key",
+			key:   skey,
+			type_: "StakePoolSigningKeyShelley_ed25519",
+			want:  ed25519.PrivateKeySize,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			envelope := KeyFile{
+				Type:    tc.type_,
+				CborHex: tc.key.CborHex,
+			}
+			data, err := json.Marshal(envelope)
+			require.NoError(t, err)
+			loaded, err := LoadKeyFromBytes(data)
+			require.NoError(t, err)
+			assert.Equal(t, tc.type_, loaded.Type)
+			if strings.Contains(tc.type_, "Verification") {
+				assert.Len(t, loaded.VKey, tc.want)
+			} else {
+				assert.Len(t, loaded.SKey, tc.want)
+			}
+		})
+	}
+}
+
 // TestCIP1853WalletIntegration validates pool cold key integration in Wallet struct
 func TestCIP1853WalletIntegration(t *testing.T) {
 	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
@@ -2308,12 +2517,12 @@ func TestCIP1853WalletIntegration(t *testing.T) {
 	// Verify key types
 	assert.Equal(
 		t,
-		"StakePoolVerificationKeyShelley_ed25519",
+		"StakePoolVerificationKey_ed25519",
 		wallet.PoolColdVKey.Type,
 	)
 	assert.Equal(
 		t,
-		"StakePoolSigningKeyShelley_ed25519",
+		"StakePoolSigningKey_ed25519",
 		wallet.PoolColdSKey.Type,
 	)
 	assert.Equal(

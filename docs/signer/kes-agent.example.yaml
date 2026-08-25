@@ -1,0 +1,67 @@
+# Annotated example configuration for `bursa kes-agent` (introduced in #675).
+# Pass with --config or the BURSA_CONFIG environment variable.
+#
+# Requires a bursa build that includes the `kes-agent` command. Every key below
+# is read by that daemon and by nothing else: a build without it ignores this
+# file entirely, so the socket paths and modes documented here take effect only
+# once #675 has landed in the binary you are running. Check with
+# `bursa kes-agent --help` before relying on these permissions.
+
+kes_agent:
+  # Mode:
+  #   serve-key  push the current KES signing key (with its opcert) to the producer.
+  #   sign       sign block headers on the producer's behalf; the key never leaves.
+  mode: "serve-key"                # env: KESAGENT_MODE
+
+  # Unix sockets. service_socket is where the block producer connects;
+  # control_socket handles gen-staged-key / install-key / drop-key / info.
+  service_socket: "/run/bursa/kes-agent/service.sock"   # env: KESAGENT_SERVICE_SOCKET
+  control_socket: "/run/bursa/kes-agent/control.sock"   # env: KESAGENT_CONTROL_SOCKET
+
+  # Independent octal file modes - deliberately NOT a single shared setting.
+  # Widening service_socket_mode to "0660" (plus adding the producer's user to
+  # the agent's group) lets the block producer reach the service socket
+  # without also exposing the control socket, which can drop/install keys and
+  # should stay owner-only. Do not widen control_socket_mode to grant the
+  # producer's group access.
+  service_socket_mode: "0600"      # env: KESAGENT_SERVICE_SOCKET_MODE
+  control_socket_mode: "0600"      # env: KESAGENT_CONTROL_SOCKET_MODE
+  # The kes-agent daemon validates control_socket_mode at startup and refuses
+  # to run if it grants group/other write access - the control socket can
+  # install and drop keys, so it must stay owner-only.
+
+  # Pool COLD VERIFICATION key. The agent only ever holds the cold vkey; the
+  # cold signing key never touches the agent. Provide one of:
+  cold_vkey_file: "/etc/bursa/kes-agent/cold.vkey"  # env: KESAGENT_COLD_VKEY_FILE
+  # cold_vkey_hex: "0f0e0d...aabb"                  # env: KESAGENT_COLD_VKEY_HEX
+
+  # Shelley genesis system start (RFC3339). Used to derive absolute KES
+  # periods; MUST match the target network's genesis (mainnet shown below -
+  # use each network's own systemStart/slotsPerKESPeriod from its shelley
+  # genesis file, e.g. Preprod: 2022-06-01T00:00:00Z, same slot/evolution
+  # values).
+  system_start: "2017-09-23T21:44:51Z"   # env: KESAGENT_SYSTEM_START
+
+  # Slot schedule. slot_length is wall-clock seconds per slot (default 1);
+  # slots_per_kes_period is protocol-defined (129600 on mainnet and Preprod).
+  slot_length: 1                   # env: KESAGENT_SLOT_LENGTH
+  slots_per_kes_period: 129600     # env: KESAGENT_SLOTS_PER_KES_PERIOD
+
+  # Max opcert evolutions (62 on mainnet and Preprod).
+  max_kes_evolutions: 62           # env: KESAGENT_MAX_KES_EVOLUTIONS
+
+  # Scheduler tick (Go duration string). Default 1m.
+  evolve_interval: "1m"            # env: KESAGENT_EVOLVE_INTERVAL
+
+  # Durable monotonic-period guard store (atomic JSON file). Prevents serving a
+  # KES period below the highest already served, across restarts/clock jumps.
+  guard_file: "/var/lib/bursa/kes-agent/guard.json"  # env: KESAGENT_GUARD_FILE
+
+# Optional Prometheus metrics endpoint. When port is non-zero the agent serves
+# /metrics here.
+metrics:
+  address: ""                      # env: METRICS_LISTEN_ADDRESS
+  port: 8082                       # env: METRICS_LISTEN_PORT
+
+logging:
+  level: "info"                    # env: LOGGING_LEVEL

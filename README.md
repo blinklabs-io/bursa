@@ -6,6 +6,17 @@
 
 Programmatic Cardano Wallet
 
+Bursa is two things that share one set of keys:
+
+- **A Cardano wallet library and CLI** — BIP39 seeds, CIP-1852 derivation,
+  addresses, certificates and native scripts, usable as a Go package or from the
+  `bursa` command. That is what the rest of this README covers.
+- **A full-node desktop wallet** — a single binary that embeds and supervises a
+  [Dingo](https://github.com/blinklabs-io/dingo) node and serves a wallet
+  interface over loopback, with hardware-wallet support, staking, Conway
+  governance and stake-pool operations. It lives in [`ui/`](./ui) and has
+  [its own README](./ui/README.md).
+
 ## Supported CIPs
 
 Bursa implements the following Cardano Improvement Proposals:
@@ -72,6 +83,10 @@ SQLite stores. Do not cut an active signer over to an empty PostgreSQL database:
 preserve or import both the payload and counter watermark rows during a
 controlled outage, or enable PostgreSQL before the affected keys sign for the
 first time.
+
+The API listens on `127.0.0.1` by default. Set `API_LISTEN_ADDRESS` to an
+explicit address such as `0.0.0.0` only when remote access is intended and
+protected by appropriate network controls.
 
 For more information about Bursa CLI
 

@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	bursa "github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/ui/internal/activity"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
@@ -53,6 +54,10 @@ type Wallet interface {
 	// SetAccount(nil) clears the active account binding.
 	SetAccount(acct *wallet.Account) error
 	Balance(ctx context.Context) (wallet.Balance, error)
+	// BalanceForAccount aggregates the balance of an explicitly supplied account
+	// (not necessarily the bound one) — used to summarize each account in the
+	// multi-account listing without rebinding.
+	BalanceForAccount(ctx context.Context, acct *wallet.Account) (wallet.Balance, error)
 	Addresses(ctx context.Context) (wallet.AddressView, error)
 	Transactions(ctx context.Context) ([]wallet.Tx, error)
 	// TransactionDetail returns the drill-down view (inputs/outputs, every
@@ -84,6 +89,10 @@ type Spender interface {
 	SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR string) (spend.TxResult, error)
 	BuildDelegation(ctx context.Context, req spend.DelegationRequest) (spend.DelegationPreview, error)
 	HardwareSignRequest(pendingID string) (spend.HardwareSignRequest, error)
+	// SignDataHardwareRequest resolves the seedless CIP-1852 paths + network a
+	// hardware device needs to sign a CIP-8 message for one of the wallet's own
+	// receive addresses.
+	SignDataHardwareRequest(addr string) (spend.HardwareSignDataRequest, error)
 	// DecodeTx, CosignTx, and SubmitTxCbor back the "import transaction" flow:
 	// a user pastes a full tx CBOR built elsewhere (e.g. by a DApp or another
 	// wallet) to inspect it, add this wallet's witness(es), and broadcast it.
@@ -102,6 +111,12 @@ type NodeLookup interface {
 	// /pools/extended) for the read-only browse/search screen.
 	Pools(ctx context.Context) ([]chain.PoolInfo, error)
 	DRep(ctx context.Context, drepID string) (chain.DRepInfo, error)
+	// GovernanceActions returns the Conway governance actions (proposals) the
+	// node has recorded, for the read-only governance-action browser.
+	GovernanceActions(ctx context.Context) ([]chain.GovernanceAction, error)
+	// DReps returns the node's full DRep directory (its paginated
+	// /governance/dreps list) for the read-only browse/search screen.
+	DReps(ctx context.Context) ([]chain.DRepListItem, error)
 	AssetAddresses(ctx context.Context, asset string) ([]chain.AssetAddress, error)
 	// Asset returns on-chain identity/metadata for a native asset (unit =
 	// policy ID + hex asset name). Most assets have no indexed on-chain
@@ -125,9 +140,13 @@ type Vault interface {
 	ImportWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
 	ImportWalletMnemonicBytes(name string, mnemonic []byte, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
 	AddHardwareWallet(name, accountXpubBech32, network, vaultPassword string, accountIndex uint32, windowN int) (vault.WalletMeta, error)
+	AddScriptWallet(id, name, network string, script vault.ScriptMeta, vaultPassword string) (vault.WalletMeta, error)
 	RemoveWallet(id, vaultPassword string) error
 	SetActive(id string) (vault.WalletMeta, error)
 	Active() (vault.WalletMeta, error)
+	// Multi-account (BIP44 account switching) for the active/bound wallet.
+	AddAccount(id, vaultPassword, spendPassword string, accountIndex uint32, windowN int) (vault.WalletMeta, error)
+	SelectAccount(id string, accountIndex uint32) (vault.WalletMeta, error)
 	// TPM feature: machine-binding of the at-rest vault.
 	TPMStatus() vault.TPMStatusInfo
 	EnableTPM(vaultPassword string, pcrBound bool) error
@@ -171,12 +190,36 @@ type Diagnostics interface {
 	WriteLogsZip(w io.Writer) error
 }
 
-type handlerOptions struct {
-	legacy      LegacyKeystore
-	connector   *connector.Service
-	nfts        NFTs
-	diagnostics Diagnostics
+// Activity is the node-local wallet-activity detector the API polls: each call
+// returns only the events (incoming funds / stake rewards) that appeared since
+// the previous call for the active wallet. SetActive rebinds it to the active
+// wallet (pushed by the same bind/clear points as the read services) so its
+// dedup baseline follows the wallet in view. May be nil, in which case the
+// /wallet/activity route is not registered.
+type Activity interface {
+	SetActive(walletID string)
+	Poll(ctx context.Context) ([]activity.Event, error)
 }
+
+type handlerOptions struct {
+	legacy         LegacyKeystore
+	connector      *connector.Service
+	nfts           NFTs
+	diagnostics    Diagnostics
+	migrateScripts ScriptMigrator
+	activity       Activity
+}
+
+// ScriptMigrator moves saved multi-signature accounts out of the standalone
+// store and into the vault, returning how many it moved.
+//
+// It runs on unlock, the only point where the vault password is in hand. It
+// reports a count rather than an error on purpose: a migration that cannot run
+// must never fail the unlock — the store is left intact and the accounts are
+// still there to move next time, which beats refusing entry to a wallet over a
+// housekeeping step. Reporting the failure is the migrator's own job, since it
+// is constructed where a logger exists and this package has none.
+type ScriptMigrator func(vaultPassword string) int
 
 type HandlerOption func(*handlerOptions)
 
@@ -204,6 +247,19 @@ func WithDiagnostics(d Diagnostics) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.diagnostics = d }
 }
 
+// WithScriptMigration runs the multi-signature store migration on unlock. The
+// caller supplies the closure because only it knows both the vault and the
+// store path.
+func WithScriptMigration(m ScriptMigrator) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.migrateScripts = m }
+}
+
+// WithActivity enables the node-local wallet-activity polling endpoint
+// (GET /wallet/activity) and keeps the detector bound to the active wallet.
+func WithActivity(a Activity) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.activity = a }
+}
+
 // SettingsController is the user-facing app-settings surface. It exposes the
 // persisted lean-node (history-expiry) profile and whether a node restart is
 // still needed for the persisted value to take effect (history expiry is a
@@ -225,6 +281,12 @@ type SettingsController interface {
 	// SetAutoLockMinutes persists the idle auto-lock timeout. It rejects any
 	// value outside the offered set (see settings.AutoLockOptions).
 	SetAutoLockMinutes(minutes int) error
+	// Notifications reports whether node-local wallet-activity notifications are
+	// enabled (default off until the user opts in). Like auto-lock it is a pure
+	// client-side/UI preference — no node behaviour depends on it.
+	Notifications() bool
+	// SetNotifications persists the wallet-activity notification preference.
+	SetNotifications(enabled bool) error
 }
 
 // autoLockOptions are the only accepted auto-lock timeouts (minutes; 0 = Off).
@@ -279,15 +341,18 @@ type DexQuoter interface {
 	Quote(ctx context.Context, assetIn, assetOut string, amountIn uint64) (dex.Quote, error)
 }
 
-// MultiSig is the native multi-signature surface the API exposes: managing saved
-// multi-sig accounts (list/create/get/delete), sharing the wallet's own CIP-1854
-// participant key, and the spend flow (balance/build/sign/submit) against a saved
-// account's script address.
+// MultiSig is the native multi-signature surface the API exposes: reading saved
+// multi-sig accounts, composing a policy into a script, sharing the wallet's own
+// CIP-1854 participant key, and the spend flow (balance/build/sign/submit)
+// against an account's script address.
+//
+// Creating and removing accounts are NOT here: those accounts are vault wallets
+// now, so they are added and removed through the vault's own wallet flows,
+// which is also where the vault password legitimately lives.
 type MultiSig interface {
 	List() ([]multisig.Account, error)
 	Get(id string) (multisig.Account, error)
-	Create(req multisig.CreateRequest) (multisig.Account, error)
-	Delete(id string) error
+	Compose(req multisig.CreateRequest) (multisig.Account, error)
 	MyKey(password string) (multisig.MyKey, error)
 	Balance(ctx context.Context, id string) (string, error)
 	Build(ctx context.Context, id string, req multisig.BuildRequest) (multisig.UnsignedTx, error)
@@ -413,6 +478,49 @@ type walletView struct {
 	Addresses    []string         `json:"addresses"`
 	Active       bool             `json:"active"`
 	Type         vault.WalletType `json:"type"`
+	// Accounts lists every derived BIP44 account of this wallet (index-ordered).
+	// ActiveAccountIndex marks which one the read/spend endpoints are bound to.
+	// StakeAddress/Addresses above reflect that active account.
+	Accounts           []accountSummary `json:"accounts"`
+	ActiveAccountIndex uint32           `json:"active_account_index"`
+	// MultiSig is set only on a multi-signature wallet. The SPA needs the policy
+	// and script address to build a spend from it, since that flow collects
+	// co-signer witnesses rather than signing with a local seed.
+	MultiSig *multisig.Account `json:"multisig,omitempty"`
+	// Set instead of MultiSig when the stored policy will not decode, so the SPA
+	// can state the record is corrupt rather than infer a spend flow that does
+	// not exist.
+	MultiSigError string `json:"multisig_error,omitempty"`
+}
+
+// accountSummary is the per-account entry in a wallet view / accounts listing:
+// the CIP-1852 index, a display label, the account's stake address and first
+// receive address, whether it is the active account, and (only in the balances
+// listing) a balance summary.
+type accountSummary struct {
+	Index        uint32          `json:"index"`
+	Label        string          `json:"label"`
+	StakeAddress string          `json:"stake_address"`
+	FirstAddress string          `json:"first_address"`
+	Active       bool            `json:"active"`
+	Balance      *wallet.Balance `json:"balance,omitempty"`
+}
+
+func accountLabel(index uint32) string {
+	return fmt.Sprintf("Account #%d", index)
+}
+
+func toAccountSummary(acct *wallet.Account, activeIndex uint32) accountSummary {
+	s := accountSummary{
+		Index:        acct.AccountIndex,
+		Label:        accountLabel(acct.AccountIndex),
+		StakeAddress: acct.StakeAddress,
+		Active:       acct.AccountIndex == activeIndex,
+	}
+	if len(acct.ReceiveAddresses) > 0 {
+		s.FirstAddress = acct.ReceiveAddresses[0]
+	}
+	return s
 }
 
 func toWalletView(w vault.WalletMeta, activeID string) walletView {
@@ -426,15 +534,45 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 		walletType = vault.WalletTypeFull
 	}
 	v := walletView{
-		ID:      w.ID,
-		Name:    w.Name,
-		Network: w.Network,
-		Active:  w.ID == activeID,
-		Type:    walletType,
+		ID:                 w.ID,
+		Name:               w.Name,
+		Network:            w.Network,
+		Active:             w.ID == activeID,
+		Type:               walletType,
+		ActiveAccountIndex: w.ActiveAccountIndex,
+		Accounts:           []accountSummary{},
 	}
-	if w.Account != nil {
-		v.StakeAddress = w.Account.StakeAddress
-		v.Addresses = w.Account.ReceiveAddresses
+	// StakeAddress/Addresses reflect the ACTIVE account (multi-account switching)
+	// so the SPA's address/stake views follow the selection.
+	if active := w.ActiveAccount(); active != nil {
+		v.StakeAddress = active.StakeAddress
+		v.Addresses = active.ReceiveAddresses
+	}
+	if w.IsScript() {
+		var policy multisig.Policy
+		// A policy that will not parse is a corrupt record rather than a fatal
+		// one: the wallet still lists and receives. But the SPA decides HOW to
+		// spend from this field, so leaving it silently nil on a wallet still
+		// typed multi_signature would send it down the seed-based flow. Say so
+		// instead.
+		if err := json.Unmarshal(w.Script.Policy, &policy); err != nil {
+			v.MultiSigError = "This account's signing policy could not be read, so it cannot spend. Its funds are safe."
+		} else {
+			v.MultiSig = &multisig.Account{
+				ID:            w.ID,
+				Label:         w.Name,
+				Network:       w.Network,
+				Policy:        policy,
+				ScriptCBOR:    w.Script.ScriptCBOR,
+				ScriptAddress: w.Script.ScriptAddress,
+			}
+		}
+	}
+	for _, acct := range w.AccountList() {
+		if acct == nil {
+			continue
+		}
+		v.Accounts = append(v.Accounts, toAccountSummary(acct, w.ActiveAccountIndex))
 	}
 	return v
 }
@@ -502,19 +640,27 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// spend services so existing endpoints operate on it. Called after unlock,
 	// activate, and add.
 	bindActive := func(w vault.WalletMeta) {
-		if w.Account == nil {
+		// Bind the wallet's ACTIVE account (multi-account selection), not merely
+		// the canonical index-0 account, so reads/spends follow the switch.
+		acct := w.ActiveAccount()
+		if acct == nil {
 			return
 		}
-		_ = wl.SetAccount(w.Account)
-		sp.SetAccount(w.ID, w.Account)
+		_ = wl.SetAccount(acct)
+		sp.SetAccount(w.ID, acct)
 		// Pool operations run on the same active wallet; attach both the wallet
 		// ID and its account so the SPO toolkit always derives credentials from
 		// the wallet whose account data is current.
 		if po != nil {
-			po.SetAccount(w.ID, w.Account)
+			po.SetAccount(w.ID, acct)
 		}
 		if cfg.connector != nil {
-			cfg.connector.SetActiveAccount(w.ID, w.Account)
+			cfg.connector.SetActiveAccount(w.ID, acct)
+		}
+		// Rebind the activity detector so its dedup baseline follows the wallet
+		// currently in view (a wallet switch re-primes against the new history).
+		if cfg.activity != nil {
+			cfg.activity.SetActive(w.ID)
 		}
 	}
 	clearActive := func() {
@@ -525,6 +671,9 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		}
 		if cfg.connector != nil {
 			cfg.connector.SetActiveAccount("", nil)
+		}
+		if cfg.activity != nil {
+			cfg.activity.SetActive("")
 		}
 	}
 	legacyAvailable := func() bool {
@@ -573,6 +722,15 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		if err != nil {
 			serve(w, struct{}{}, err)
 			return
+		}
+		// Unlock is the only moment the vault password is available, so it is
+		// where saved multi-signature accounts move out of their standalone
+		// store and into the vault. Re-read the wallet list when any moved, so
+		// the response already includes them.
+		if cfg.migrateScripts != nil && cfg.migrateScripts(req.Password) > 0 {
+			if refreshed, rErr := vlt.Wallets(); rErr == nil {
+				wallets = refreshed
+			}
 		}
 		// Unlock auto-activates a sole wallet; bind it so reads work immediately.
 		if active, err := vlt.Active(); err == nil {
@@ -798,6 +956,103 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
 	})
 
+	// --- Multi-account (BIP44 account switching) -----------------------------
+
+	// GET /wallet/accounts lists the active wallet's derived BIP44 accounts, each
+	// with its index, label, stake/first address, active flag, and a best-effort
+	// balance summary (node-local). It is not gated: switching accounts must work
+	// even before the node is synced, so a balance that cannot be computed yet is
+	// simply omitted rather than failing the listing.
+	mux.HandleFunc("GET /wallet/accounts", func(w http.ResponseWriter, r *http.Request) {
+		active, err := vlt.Active()
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		out := struct {
+			Accounts           []accountSummary `json:"accounts"`
+			ActiveAccountIndex uint32           `json:"active_account_index"`
+		}{Accounts: []accountSummary{}, ActiveAccountIndex: active.ActiveAccountIndex}
+		nodeReady := st.Status().State == supervisor.StateReady
+		for _, acct := range active.AccountList() {
+			if acct == nil {
+				continue
+			}
+			summary := toAccountSummary(acct, active.ActiveAccountIndex)
+			if nodeReady {
+				if bal, err := wl.BalanceForAccount(r.Context(), acct); err == nil {
+					b := bal
+					summary.Balance = &b
+				}
+			}
+			out.Accounts = append(out.Accounts, summary)
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
+
+	// POST /wallet/account/select sets the active BIP44 account index for the
+	// active wallet and rebinds the read/spend/pool services to it. The selection
+	// is persisted (cleartext, non-secret) so no password is required — like
+	// switching the active wallet. The account must already be derived.
+	mux.HandleFunc("POST /wallet/account/select", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AccountIndex uint32 `json:"account_index"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		active, err := vlt.Active()
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		meta, err := vlt.SelectAccount(active.ID, req.AccountIndex)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		bindActive(meta)
+		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
+	})
+
+	// POST /wallet/accounts derives and adds a new BIP44 account to the active
+	// wallet. Deriving a hardened account needs the seed (spend_password); storing
+	// its read-only material needs the vault_password (index re-seal). The new
+	// account is not auto-selected — the client selects it afterward.
+	mux.HandleFunc("POST /wallet/accounts", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AccountIndex  uint32 `json:"account_index"`
+			VaultPassword string `json:"vault_password"`
+			SpendPassword string `json:"spend_password"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if req.AccountIndex >= 1<<31 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_index must be less than 2147483648"})
+			return
+		}
+		if req.VaultPassword == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vault_password is required"})
+			return
+		}
+		if req.SpendPassword == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "spend_password is required"})
+			return
+		}
+		active, err := vlt.Active()
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		meta, err := vlt.AddAccount(active.ID, req.VaultPassword, req.SpendPassword, req.AccountIndex, defaultWindow)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
+	})
+
 	mux.HandleFunc("DELETE /wallet/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			VaultPassword string `json:"vault_password"`
@@ -854,6 +1109,27 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		v, err := wl.Rewards(r.Context())
 		serve(w, v, err)
 	}))
+
+	// Node-local wallet activity: the events (newly confirmed incoming funds,
+	// new stake-reward epochs) that appeared since the SPA's previous poll for
+	// the active wallet, used to raise desktop/browser notifications. It reads
+	// only node-local wallet state (the same Transactions/Rewards paths as the
+	// reads above), so there is no external-consent gate; gated like other reads
+	// on a queryable node. Registered only when an Activity detector is supplied.
+	if cfg.activity != nil {
+		act := cfg.activity
+		mux.HandleFunc("GET /wallet/activity", gated(st, func(w http.ResponseWriter, r *http.Request) {
+			events, err := act.Poll(r.Context())
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			if events == nil {
+				events = []activity.Event{}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"events": events})
+		}))
+	}
 
 	// DEX swap quotes. These read ONLY from the embedded node (pool UTxOs at the
 	// DEX script addresses), so there is deliberately NO external-consent gate —
@@ -927,6 +1203,20 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		serve(w, map[string]string{"signature": sig, "key": key}, err)
 	})
 
+	// CIP-8 hardware message signing: resolve the seedless signing metadata
+	// (CIP-1852 paths + network) a hardware device needs to sign a message for one
+	// of the wallet's own receive addresses. Ungated like sign-data — pure
+	// derivation over the active account, no node and no keystore unlock.
+	mux.HandleFunc("GET /wallet/sign-data/hardware-request", func(w http.ResponseWriter, r *http.Request) {
+		addr := r.URL.Query().Get("address")
+		if addr == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "address is required"})
+			return
+		}
+		req, err := sp.SignDataHardwareRequest(addr)
+		serve(w, req, err)
+	})
+
 	// App settings: the lean-node (history-expiry) profile. Ungated — it is a
 	// config setting, not a node query, so it is readable/settable regardless of
 	// sync state. History expiry is a node-construction option, so a change only
@@ -987,6 +1277,32 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]int{"minutes": settings.AutoLockMinutes()})
+	})
+
+	// App settings: the wallet-activity notification preference. Ungated for the
+	// same reason as auto-lock — it is a local UI preference, not a node query,
+	// and takes effect immediately (the frontend's activity poller reads it
+	// directly). Default off until the user opts in.
+	mux.HandleFunc("GET /wallet/settings/notifications", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.Notifications()})
+	})
+	mux.HandleFunc("PUT /wallet/settings/notifications", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if req.Enabled == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "enabled is required"})
+			return
+		}
+		if err := settings.SetNotifications(*req.Enabled); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.Notifications()})
 	})
 
 	// --- Address book (local-only, no network) -------------------------------
@@ -1183,6 +1499,50 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		))
 	}))
 
+	// Read-only governance-action (Conway proposal) browser: browse/search the
+	// governance actions the node has recorded, with their type, lifecycle
+	// status, and vote tallies. Node-local like the pool directory — the data is
+	// read from the embedded node's local metadata DB, nothing leaves 127.0.0.1 —
+	// so there is deliberately NO external-consent gate; it is gated like other
+	// reads (a queryable node). Search (q) and pagination (page/count) are
+	// applied server-side over the node's list.
+	mux.HandleFunc("GET /wallet/governance-actions", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if lookup == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "governance actions unavailable"})
+			return
+		}
+		actions, err := lookup.GovernanceActions(r.Context())
+		if err != nil {
+			serveLookup(w, governanceActionsResponse{}, err)
+			return
+		}
+		q := r.URL.Query()
+		writeJSON(w, http.StatusOK, filterAndPageGovernanceActions(
+			actions, q.Get("q"), q.Get("page"), q.Get("count"),
+		))
+	}))
+
+	// Read-only DRep directory: browse/search the delegated representatives the
+	// node has indexed, to inform vote-delegation. Node-local (the embedded
+	// node's own list endpoint over loopback, nothing leaves 127.0.0.1) — so,
+	// like the pool directory, there is deliberately NO external-consent gate. Search (q) and pagination
+	// (page/count) are applied server-side over the node's list.
+	mux.HandleFunc("GET /wallet/dreps", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if lookup == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drep directory unavailable"})
+			return
+		}
+		dreps, err := lookup.DReps(r.Context())
+		if err != nil {
+			serveLookup(w, drepDirectoryResponse{}, err)
+			return
+		}
+		q := r.URL.Query()
+		writeJSON(w, http.StatusOK, filterAndPageDReps(
+			dreps, q.Get("q"), q.Get("page"), q.Get("count"),
+		))
+	}))
+
 	// Staking & governance. Pool/DRep lookups verify a pasted ID through the node
 	// (gated like reads — they only need the node serving queries). Building a
 	// delegation tx and confirming it are gated like sends (a fully synced node),
@@ -1286,7 +1646,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	}
 
 	if ms != nil {
-		registerMultiSigRoutes(mux, st, ms, network)
+		registerMultiSigRoutes(mux, st, vlt, ms, network, bindActive)
 	}
 
 	if cfg.connector != nil {
@@ -1429,36 +1789,34 @@ const (
 	poolDirMaxCount     = 200
 )
 
-// filterAndPagePools applies the read-only directory's server-side search and
-// pagination over the node's full pool list. The search (q) is a
-// case-insensitive substring match against the pool's bech32 ID and hex ID —
-// the identity fields the node's /pools/extended list exposes. page is 1-based;
-// count is clamped to [1, poolDirMaxCount]. Invalid/absent page or count fall
-// back to their defaults rather than erroring.
-func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poolDirectoryResponse {
+// filterAndPage applies a read-only directory's server-side search and
+// pagination over a full item list. matches decides whether an item satisfies
+// the (already lower-cased, trimmed) search needle. page is 1-based; count is
+// clamped to [1, poolDirMaxCount]. Invalid/absent page or count fall back to
+// their defaults rather than erroring. start/end are clamped on both sides so
+// a very large page can't overflow the slice bounds and panic.
+func filterAndPage[T any](items []T, q, pageStr, countStr string, matches func(T, string) bool) (pageItems []T, total, page, count int) {
 	needle := strings.ToLower(strings.TrimSpace(q))
-	matched := make([]chain.PoolInfo, 0, len(pools))
-	for _, p := range pools {
-		if needle == "" ||
-			strings.Contains(strings.ToLower(p.PoolID), needle) ||
-			strings.Contains(strings.ToLower(p.Hex), needle) {
-			matched = append(matched, p)
+	matched := make([]T, 0, len(items))
+	for _, item := range items {
+		if needle == "" || matches(item, needle) {
+			matched = append(matched, item)
 		}
 	}
 
-	count := poolDirDefaultCount
+	count = poolDirDefaultCount
 	if n, err := strconv.Atoi(countStr); err == nil && n > 0 {
 		count = n
 	}
 	if count > poolDirMaxCount {
 		count = poolDirMaxCount
 	}
-	page := 1
+	page = 1
 	if n, err := strconv.Atoi(pageStr); err == nil && n > 1 {
 		page = n
 	}
 
-	total := len(matched)
+	total = len(matched)
 	// (page-1)*count can overflow to a negative int for a very large page, so
 	// clamp start on both sides before slicing to avoid an out-of-range panic.
 	start := (page - 1) * count
@@ -1469,11 +1827,76 @@ func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poo
 	if end < start || end > total {
 		end = total
 	}
-	pageItems := matched[start:end]
+	pageItems = matched[start:end]
 	if pageItems == nil {
-		pageItems = []chain.PoolInfo{}
+		pageItems = []T{}
 	}
+	return pageItems, total, page, count
+}
+
+// filterAndPagePools applies the read-only directory's server-side search and
+// pagination over the node's full pool list. The search (q) is a
+// case-insensitive substring match against the pool's bech32 ID and hex ID —
+// the identity fields the node's /pools/extended list exposes.
+func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poolDirectoryResponse {
+	pageItems, total, page, count := filterAndPage(pools, q, pageStr, countStr, func(p chain.PoolInfo, needle string) bool {
+		return strings.Contains(strings.ToLower(p.PoolID), needle) ||
+			strings.Contains(strings.ToLower(p.Hex), needle)
+	})
 	return poolDirectoryResponse{Pools: pageItems, Total: total, Page: page, Count: count}
+}
+
+// governanceActionsResponse is the GET /wallet/governance-actions response: one
+// page of the node's recorded governance actions plus the total number that
+// matched the search, so the client can page through them.
+type governanceActionsResponse struct {
+	Actions []chain.GovernanceAction `json:"actions"`
+	Total   int                      `json:"total"`
+	Page    int                      `json:"page"`
+	Count   int                      `json:"count"`
+}
+
+// filterAndPageGovernanceActions applies the read-only browser's server-side
+// search and pagination over the node's full governance-action list. The search
+// (q) is a case-insensitive substring match against the action ID, tx hash, and
+// type label. page is 1-based; count is clamped to [1, poolDirMaxCount].
+// Invalid/absent page or count fall back to their defaults rather than erroring.
+func filterAndPageGovernanceActions(actions []chain.GovernanceAction, q, pageStr, countStr string) governanceActionsResponse {
+	pageItems, total, page, count := filterAndPage(actions, q, pageStr, countStr, func(a chain.GovernanceAction, needle string) bool {
+		return strings.Contains(strings.ToLower(a.ActionID), needle) ||
+			strings.Contains(strings.ToLower(a.TxHash), needle) ||
+			strings.Contains(strings.ToLower(a.Type), needle)
+	})
+	return governanceActionsResponse{Actions: pageItems, Total: total, Page: page, Count: count}
+}
+
+// drepDirectoryResponse is the GET /wallet/dreps response: one page of the
+// node's DRep directory plus the total number of DReps that matched the search,
+// so the client can page through them.
+type drepDirectoryResponse struct {
+	DReps []chain.DRepListItem `json:"dreps"`
+	Total int                  `json:"total"`
+	Page  int                  `json:"page"`
+	Count int                  `json:"count"`
+}
+
+// filterAndPageDReps applies the read-only directory's server-side search and
+// pagination over the node's full DRep list. The search (q) is a
+// case-insensitive substring match against the DRep's bech32 id, CIP-129 hex
+// payload, and metadata anchor URL. Matching hex as a substring is what lets a
+// bare 28-byte credential — which is only the tail of the 29-byte CIP-129
+// payload the node reports — still find its DRep.
+func filterAndPageDReps(dreps []chain.DRepListItem, q, pageStr, countStr string) drepDirectoryResponse {
+	pageItems, total, page, count := filterAndPage(dreps, q, pageStr, countStr, func(d chain.DRepListItem, needle string) bool {
+		anchorURL := ""
+		if d.Metadata != nil {
+			anchorURL = d.Metadata.URL
+		}
+		return strings.Contains(strings.ToLower(d.DRepID), needle) ||
+			strings.Contains(strings.ToLower(d.Hex), needle) ||
+			strings.Contains(strings.ToLower(anchorURL), needle)
+	})
+	return drepDirectoryResponse{DReps: pageItems, Total: total, Page: page, Count: count}
 }
 
 // registerPoolRoutes wires the Stake Pool Operations (SPO) endpoints under
@@ -1639,16 +2062,28 @@ func registerPoolRoutes(mux *http.ServeMux, st Statuser, po PoolOps) {
 // wallet's own participant key are local/offline; balance is a node read
 // (gated); build and submit need a synced node (readyGate); sign is pure crypto
 // over the keystore (ungated).
-func registerMultiSigRoutes(mux *http.ServeMux, st Statuser, ms MultiSig, network string) {
+func registerMultiSigRoutes(
+	mux *http.ServeMux,
+	st Statuser,
+	vlt Vault,
+	ms MultiSig,
+	network string,
+	bindActive func(vault.WalletMeta),
+) {
 	// List saved multi-sig accounts.
 	mux.HandleFunc("GET /wallet/multisig", func(w http.ResponseWriter, _ *http.Request) {
 		v, err := ms.List()
 		serve(w, v, err)
 	})
 
-	// Create a saved multi-sig account from a policy.
+	// Create a multi-signature account. It is a wallet now, so it is composed
+	// from the policy and then stored in the vault, which is why this needs the
+	// vault password like any other add-wallet call.
 	mux.HandleFunc("POST /wallet/multisig", func(w http.ResponseWriter, r *http.Request) {
-		var req multisig.CreateRequest
+		var req struct {
+			multisig.CreateRequest
+			VaultPassword string `json:"vault_password"`
+		}
 		if !decodeBody(w, r, &req) {
 			return
 		}
@@ -1657,8 +2092,47 @@ func registerMultiSigRoutes(mux *http.ServeMux, st Statuser, ms MultiSig, networ
 			return
 		}
 		req.Network = net
-		v, err := ms.Create(req)
-		serve(w, v, err)
+		if !requirePassword(w, req.VaultPassword) {
+			return
+		}
+		// Compose first: an invalid policy should be rejected before the vault is
+		// touched at all.
+		acct, err := ms.Compose(req.CreateRequest)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		policy, err := json.Marshal(acct.Policy)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		// Empty id: this is a new account, so the vault assigns one. Migration is
+		// the only caller that supplies an existing id.
+		meta, err := vlt.AddScriptWallet("", acct.Label, acct.Network, vault.ScriptMeta{
+			Policy:        policy,
+			ScriptCBOR:    acct.ScriptCBOR,
+			ScriptAddress: acct.ScriptAddress,
+		}, req.VaultPassword)
+		if err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		// Adding a wallet selects it, as the other add-wallet paths do. Without
+		// this the response would claim the new wallet is active while balance
+		// and send requests kept answering for the previous one.
+		// When the selection fails the wallet is still created, so the response
+		// says so with a truthful active flag rather than a failure status: a 5xx
+		// would misdescribe a request that did create the resource, and a client
+		// retrying it hits the duplicate-script check. The client reconciles from
+		// `active` (see applyAdded) and can activate the wallet by id.
+		activeID := ""
+		if active, aErr := vlt.SetActive(meta.ID); aErr == nil {
+			bindActive(active)
+			meta = active
+			activeID = meta.ID
+		}
+		serve(w, toWalletView(meta, activeID), nil)
 	})
 
 	// The active wallet's own CIP-1854 multi-sig participant key, to share. Needs
@@ -1678,12 +2152,6 @@ func registerMultiSigRoutes(mux *http.ServeMux, st Statuser, ms MultiSig, networ
 	mux.HandleFunc("GET /wallet/multisig/{id}", func(w http.ResponseWriter, r *http.Request) {
 		v, err := ms.Get(r.PathValue("id"))
 		serve(w, v, err)
-	})
-
-	// Delete a saved account.
-	mux.HandleFunc("DELETE /wallet/multisig/{id}", func(w http.ResponseWriter, r *http.Request) {
-		err := ms.Delete(r.PathValue("id"))
-		serve(w, map[string]string{"status": "deleted"}, err)
 	})
 
 	// Balance held at the account's script address.
@@ -1858,10 +2326,12 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404: no vault yet
 	case errors.Is(err, vault.ErrVaultExists):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: vault already exists
-	case errors.Is(err, vault.ErrUnknownWallet):
+	case errors.Is(err, vault.ErrUnknownWallet), errors.Is(err, vault.ErrUnknownAccount):
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
-	case errors.Is(err, vault.ErrDuplicateWallet):
+	case errors.Is(err, vault.ErrDuplicateWallet), errors.Is(err, vault.ErrDuplicateAccount):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409
+	case errors.Is(err, vault.ErrNoSeed):
+		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400: cannot derive an account without a seed
 	case errors.Is(err, vault.ErrLocked), errors.Is(err, vault.ErrNoActiveWallet),
 		errors.Is(err, wallet.ErrNoWallet), errors.Is(err, spend.ErrNoWallet),
 		errors.Is(err, poolops.ErrNoWallet), errors.Is(err, multisig.ErrNoKeystore):

@@ -267,6 +267,12 @@ jobs:
       - name: Install Linux webview dependencies
         if: matrix.os == 'linux'
         run: |
+          # Bound apt's per-connection network wait and enable retries so a
+          # stalled mirror fails fast and retries instead of hanging the job for
+          # hours (apt has no default fetch timeout here, which periodically left
+          # this step stuck in `apt-get update` until the 6h max-runtime kill).
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99network-timeouts >/dev/null
           sudo apt-get update
           sudo apt-get install -y gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
 
@@ -388,6 +394,22 @@ jobs:
             $env:CXX = "$msys2Loc\clangarm64\bin\clang++.exe"
           }
           & $env:CC --version
+          # Vite builds into ui\web\dist (gitignored); copy it into the
+          # //go:embed dist target so the exe embeds the real SPA, not the placeholder.
+          # Every step is terminating: PowerShell continues past a failed
+          # Copy-Item by default, which would embed the tracked placeholder in a
+          # release exe and report success. Checking that the destination
+          # index.html merely exists is not enough, because the placeholder is
+          # already there -- so verify the copied bundle is not the placeholder.
+          if (-not (Test-Path ui\web\dist\index.html)) {
+            Write-Error "web bundle missing: ui\web\dist\index.html"; exit 1
+          }
+          Remove-Item -Recurse -Force ui\internal\webui\dist\* -ErrorAction Stop
+          Copy-Item -Recurse -Force ui\web\dist\* ui\internal\webui\dist\ -ErrorAction Stop
+          if (Select-String -Path ui\internal\webui\dist\index.html `
+                -Pattern 'Pre-build placeholder' -Quiet) {
+            Write-Error "embed dir still holds the placeholder after copy"; exit 1
+          }
           Push-Location ui
           go build -tags webview -ldflags "-s -w -H=windowsgui" -o "$env:GITHUB_WORKSPACE\bursa-wallet.exe" ./cmd/bursa-wallet
           if ($LASTEXITCODE -ne 0) { Write-Error "webview exe build failed"; exit 1 }

@@ -1,0 +1,150 @@
+# Annotated example configuration for `bursa signer`.
+# Pass with --config or the BURSA_CONFIG environment variable. Every field can
+# also be overridden by the environment variable shown in its comment.
+
+signer:
+  # Listen address and port for the HTTP API.
+  #   - Loopback (127.0.0.1 / ::1 / localhost): plaintext is permitted; use for
+  #     development or when fronted by a local TLS-terminating proxy.
+  #   - Any non-loopback / all-interfaces ("") address REQUIRES TLS below.
+  listen_address: "127.0.0.1"   # env: SIGNER_LISTEN_ADDRESS
+  listen_port: 8090             # env: SIGNER_LISTEN_PORT
+
+  # --- Authentication (configure exactly ONE of jwt_secret or jwks_url) ---
+
+  # HS256 shared secret (development / simple). Minimum 32 bytes.
+  jwt_secret: ""                # env: SIGNER_JWT_SECRET
+
+  # JWKS URL for RS256/ES256/EdDSA verification (production).
+  jwks_url: "https://idp.example.com/.well-known/jwks.json"  # env: SIGNER_JWKS_URL
+
+  # Enforced when set. Leave empty to accept any issuer/audience (a warning is
+  # logged). Production deployments SHOULD set both.
+  jwt_issuer: "https://idp.example.com/"   # env: SIGNER_JWT_ISSUER
+  jwt_audience: "bursa-signer"             # env: SIGNER_JWT_AUDIENCE
+
+  # --- TLS (server-side). Both files required together. ---
+  tls_cert_file: "/etc/bursa/signer/tls/server.crt"  # env: SIGNER_TLS_CERT_FILE
+  tls_key_file: "/etc/bursa/signer/tls/server.key"   # env: SIGNER_TLS_KEY_FILE
+
+  # --- mTLS client-certificate auth ---
+  # NOT YET IN MAIN: implemented by PR #673 (branch feat/signer-mtls). The keys
+  # below are not read by the current build; JWT bearer is the only auth scheme
+  # main implements today.
+  # When client_ca_cert is set, TLS client certificates are verified against
+  # this CA bundle and the caller identity is derived from the verified cert
+  # (first URI SAN, else first DNS SAN, else CN). Requires server TLS above.
+  # mTLS takes precedence over request-signing and JWT.
+  # client_ca_cert: "/etc/bursa/signer/tls/client-ca.crt"   # env: SIGNER_CLIENT_CA_CERT
+  # require_client_cert: false   # env: SIGNER_REQUIRE_CLIENT_CERT
+  #   true  -> every connection MUST present a verified client cert.
+  #   false -> client cert optional; connections without one fall through to
+  #            the next configured auth mode.
+
+  # --- Authorized-keys request signing ---
+  # NOT YET IN MAIN: implemented by PR #673 (branch feat/signer-mtls). The keys
+  # below are not read by the current build.
+  # Each caller signs the canonical string
+  #   METHOD|PATH|sha256(body)|timestamp|nonce
+  # with its Ed25519 key and sends X-Bursa-{Signature,Timestamp,Nonce,Key}.
+  # request_sign_skew_seconds bounds the accepted ± timestamp window (default 60);
+  # reused (key,nonce) pairs are rejected by a replay cache.
+  # request_sign_skew_seconds: 60   # env: SIGNER_REQUEST_SIGN_SKEW_SECONDS
+  # authorized_keys:
+  #   - caller: "spo-ops@example.com"
+  #     ed25519_pubkey_hex: "0000000000000000000000000000000000000000000000000000000000000000"  # 32 bytes hex
+
+  # Opt-in to running the plaintext software/file key backend while bound to a
+  # non-loopback address. The software backend loads private key material into
+  # process memory and is intended for DEVELOPMENT ONLY. Default false: boot
+  # fails if a software/file backend is configured on a non-loopback listen
+  # address without this flag. A loud warning is logged whenever a software/file
+  # backend is in use, even on loopback.
+  allow_insecure_file_backend: false   # env: SIGNER_ALLOW_INSECURE_FILE_BACKEND
+
+  # --- Anti-double-sign watermark ---
+  # type: "mem" (default, non-durable), "file" (SQLite; requires path), or
+  #       "postgres" (shared store for HA; requires dsn or dsn_env).
+  # mode: "off" | "warn" | "enforce" (default enforce).
+  watermark:
+    type: "file"
+    path: "/var/lib/bursa/signer/watermark.sqlite"
+    mode: "enforce"
+    # For a multi-replica (HA) deployment, use a shared Postgres store instead
+    # of file/mem. ALL replicas for the same keys MUST point at the same
+    # authoritative database. Prefer dsn_env so credentials stay out of the
+    # config file.
+    #   type: "postgres"
+    #   dsn_env: "SIGNER_WATERMARK_DSN"   # env var holding the Postgres DSN/URL
+    #   # dsn: "postgres://user:pass@host:5432/bursa"  # plaintext fallback (env: SIGNER_WATERMARK_DSN)
+    #   mode: "enforce"
+
+  # --- Key-custody backends (one or more) ---
+  backends:
+    # Vault Transit: keys never leave Vault; the signer sends digests to sign.
+    - name: "vault-prod"
+      type: "vault"
+      address: "https://vault.example.internal:8200"
+      transit_mount: "transit"
+      token_env: "VAULT_TOKEN"        # env var holding the Vault token
+      keys:
+        - name: "payment-hot"
+          type: "payment"             # payment|stake|drep|cc-hot|cc-cold|pool|policy
+        - name: "pool-cold"
+          type: "pool"
+
+    # PKCS#11 / HSM: keys never leave the token; the HSM performs the Ed25519
+    # signature. CGO-only, requires the `pkcs11` build tag
+    # (CGO_ENABLED=1 go build -tags pkcs11 ...); the default pure-Go build
+    # refuses to boot if this backend is configured. Merged in #668. Does not
+    # serve cip8 (no in-process key).
+    # - name: "hsm"
+    #   type: "pkcs11"
+    #   module: "/usr/lib/softhsm/libsofthsm2.so"   # path to the PKCS#11 .so
+    #   token_label: "bursa-signer"                  # select the token by label...
+    #   # slot: 0                                    # ...or by explicit slot id
+    #   pin_env: "BURSA_PKCS11_PIN"                  # env var holding the user PIN
+    #   keys:                                        # optional CKA_LABEL allowlist
+    #     - name: "pool-cold"                        # object CKA_LABEL
+    #       type: "pool"                             # payment|stake|drep|cc-hot|cc-cold|pool|policy
+    #   # When keys is omitted, every Ed25519 signing key on the token loads as payment.
+
+    # SOPS-encrypted secrets pulled from GCP Secret Manager and decrypted
+    # in-process at boot. Requires the top-level `google.project`.
+    - name: "sops-secrets"
+      type: "sops"
+      secret_prefix: "signer-key-"
+
+    # Software/file backend: plaintext (or passphrase-encrypted) *.skey files
+    # loaded into process memory. DEVELOPMENT ONLY (see allow_insecure_file_backend).
+    # - name: "local-dev"
+    #   type: "software"
+    #   path: "/etc/bursa/signer/keys"
+    #   passphrase_env: "BURSA_KEY_PASSPHRASE"   # for passphrase-encrypted .skey files
+
+  # --- Per-key policy (deny-by-default; a key with no entry can sign nothing) ---
+  keys:
+    - hash: "0000000000000000000000000000000000000000000000000000000000"  # 56 hex chars
+      backend: "vault-prod"
+      allowed_requests: ["tx", "cip8"]
+      # tx_policy: { ... }     # optional typed transaction policy
+      # cip8_policy: { ... }   # optional typed CIP-8 policy
+
+  # --- Caller ACL (optional). When present, unlisted subjects are denied all
+  # keys; each subject is restricted to the listed key hashes. ---
+  callers:
+    - subject: "spo-ops@example.com"    # JWT `sub`
+      keys:
+        - "0000000000000000000000000000000000000000000000000000000000"
+
+# The SOPS backend uses this project for GCP Secret Manager access.
+google:
+  project: "my-gcp-project"     # env: GOOGLE_PROJECT
+
+# Optional Prometheus metrics endpoint (also served on the signer's /metrics).
+metrics:
+  address: ""                   # env: METRICS_LISTEN_ADDRESS
+  port: 8081                    # env: METRICS_LISTEN_PORT
+
+logging:
+  level: "info"                 # env: LOGGING_LEVEL

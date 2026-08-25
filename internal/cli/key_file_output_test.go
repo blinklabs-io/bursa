@@ -36,8 +36,8 @@ func TestKeyFileOutput(t *testing.T) {
 		{
 			name:             "pool cold key",
 			runFunc:          func(skey, vkey string) error { return RunKeyPoolCold(testMnemonic, "", "", skey, vkey, 0) },
-			expectedVKeyType: "StakePoolVerificationKeyShelley_ed25519",
-			expectedSKeyType: "StakePoolSigningKeyShelley_ed25519",
+			expectedVKeyType: "StakePoolVerificationKey_ed25519",
+			expectedSKeyType: "StakePoolSigningKey_ed25519",
 		},
 		{
 			name:             "policy key",

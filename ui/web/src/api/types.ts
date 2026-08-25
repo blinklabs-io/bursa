@@ -263,7 +263,40 @@ export interface PoolDirectoryResponse {
   count: number;
 }
 
-// DRepInfo mirrors GET /wallet/drep/{id}: confirms a DRep exists on chain.
+// GovernanceAction mirrors one entry in GET /wallet/governance-actions: a Conway
+// governance action (proposal) the embedded node has recorded, with its
+// lifecycle status and Yes/No/Abstain vote tallies. Read from the node's local
+// metadata DB — no external service is contacted. action_id is the CIP-129
+// bech32 gov_action1… identifier (falling back to txhash#index if it can't be
+// encoded). deposit is lovelace as a decimal string.
+export interface GovernanceAction {
+  action_id: string;
+  tx_hash: string;
+  action_index: number;
+  type: string;
+  proposed_epoch: number;
+  expires_epoch: number;
+  status: string;
+  anchor_url: string;
+  deposit: string;
+  yes_votes: number;
+  no_votes: number;
+  abstain_votes: number;
+}
+
+// GovernanceActionsResponse mirrors GET /wallet/governance-actions: one page of
+// the node's recorded governance actions plus the total matching the search,
+// for the read-only browse/search screen.
+export interface GovernanceActionsResponse {
+  actions: GovernanceAction[];
+  total: number;
+  page: number;
+  count: number;
+}
+
+// DRepInfo mirrors GET /wallet/drep/{id}: a node-verified readout of a single
+// DRep, used to confirm a pasted id before delegating. amount / live_stake are
+// the DRep's voting power as decimal lovelace strings.
 export interface DRepInfo {
   drep_id: string;
   hex: string;
@@ -272,6 +305,46 @@ export interface DRepInfo {
   amount: string;
   active: boolean;
   live_stake: string;
+}
+
+// DRepMetadata is the DRep's resolved CIP-119 anchor document as reported by
+// the node. Only its identity is carried: the directory displays the URL (it
+// never fetches it) and the hash names the document.
+export interface DRepMetadata {
+  url: string;
+  hash: string;
+}
+
+// DRepListItem is one entry of the GET /wallet/dreps directory, which the
+// wallet reads from the node's own paginated DRep list. It is NOT DRepInfo:
+// there is no single "active" flag here. CIP-1694 status is two independent
+// facts — retired (deregistered) and expired (registered, but silent past the
+// node's DRep inactivity period) — plus the epoch the DRep last acted in.
+//
+// hex is the CIP-129 payload: a 1-byte header (0x22 key hash / 0x23 script
+// hash) followed by the 28-byte credential, so a bare credential is its
+// suffix. The predefined targets ("drep_always_abstain",
+// "drep_always_no_confidence") appear with an empty hex and no metadata.
+export interface DRepListItem {
+  drep_id: string;
+  hex: string;
+  amount: string;
+  has_script: boolean;
+  retired: boolean;
+  expired: boolean;
+  last_active_epoch: number | null;
+  metadata: DRepMetadata | null;
+}
+
+// DRepDirectoryResponse mirrors GET /wallet/dreps: one page of the node's DRep
+// directory (read node-locally from the embedded node's list endpoint) plus the
+// total number of DReps matching the search, for the read-only browse/search
+// screen.
+export interface DRepDirectoryResponse {
+  dreps: DRepListItem[];
+  total: number;
+  page: number;
+  count: number;
 }
 
 // AssetInfo mirrors GET /wallet/assets/{unit}: a native asset's on-chain
@@ -438,18 +511,82 @@ export interface NftMediaSetting {
   enabled: boolean;
 }
 
+// App setting: whether node-local wallet-activity notifications (incoming funds
+// / stake rewards) are enabled. Default off until the user opts in. Takes effect
+// immediately client-side.
+export interface NotificationsSetting {
+  enabled: boolean;
+}
+
+// One node-local wallet-activity occurrence, as returned by GET /wallet/activity.
+// kind is "received" (a newly confirmed incoming transaction) or "reward" (a new
+// per-epoch stake reward). lovelace is the decimal amount received / rewarded.
+// id is a stable dedup key ("tx:<hash>" or "reward:<epoch>").
+export interface ActivityEvent {
+  id: string;
+  kind: "received" | "reward";
+  lovelace: string;
+  tx_hash?: string;
+  epoch?: number;
+}
+
+export interface ActivityResponse {
+  events: ActivityEvent[];
+}
+
 // A wallet as listed by the vault: read-only fields plus whether it's active.
 // The encrypted seed is never exposed.
 export type WalletType = "full" | "read_only" | "multi_signature" | "hardware";
+
+// AccountSummary is one BIP44 account of a wallet: its CIP-1852 index, a display
+// label ("Account #N"), the account's stake address and first receive address,
+// whether it is the wallet's active account, and (only in the GET
+// /wallet/accounts listing, when the node is ready) a node-local balance summary.
+export interface AccountSummary {
+  index: number;
+  label: string;
+  stake_address: string;
+  first_address: string;
+  active: boolean;
+  balance?: Balance;
+}
 
 export interface WalletView {
   id: string;
   name: string;
   network: string;
+  // stake_address / addresses reflect the ACTIVE account (multi-account switch).
   stake_address: string;
   addresses: string[];
   active: boolean;
   type: WalletType;
+  // Every derived BIP44 account of this wallet, and which one is active. The
+  // server always populates both; they are optional here only so pre-existing
+  // WalletView fixtures/mocks remain valid, and the UI reads them defensively.
+  accounts?: AccountSummary[];
+  active_account_index?: number;
+  // Set only on a multi-signature wallet: the policy and script address needed
+  // to build a spend, which collects co-signer witnesses rather than signing
+  // with a local seed.
+  multisig?: MultiSigAccount;
+  // Set instead of multisig when the stored policy will not decode. The wallet
+  // still lists and receives; it just cannot spend.
+  multisig_error?: string;
+}
+
+// GET /wallet/accounts response: the active wallet's accounts (with best-effort
+// balances) plus the selected index.
+export interface AccountsResponse {
+  accounts: AccountSummary[];
+  active_account_index: number;
+}
+
+// Deriving a new BIP44 account: needs the seed (spend password) to derive the
+// hardened account, and the vault password to store its read-only material.
+export interface AddAccountRequest {
+  account_index: number;
+  vault_password: string;
+  spend_password: string;
 }
 
 // Hardware signing request — structured tx fields for the Ledger device.
@@ -548,6 +685,19 @@ export interface HardwareSignResponse {
   required_signers: string[];
   unsigned_tx_cbor: string;
   unsupported?: string; // non-empty = this tx type cannot be signed on hardware yet
+}
+
+// CIP-8 hardware message signing: the seedless signing metadata a hardware
+// device needs to sign a message for one of the wallet's own receive addresses.
+// Returned by GET /wallet/sign-data/hardware-request; the message payload is
+// carried to the device separately by the SPA.
+export interface HardwareSignDataRequest {
+  address_bech32: string;
+  address_hex: string;
+  signing_path: string; // CIP-1852 payment-key path, e.g. "1852'/1815'/0'/0/0"
+  stake_path: string; // CIP-1852 stake-key path, e.g. "1852'/1815'/0'/2/0"
+  network_id: number; // 1 = mainnet, 0 = testnets
+  protocol_magic: number; // mainnet 764824073, preprod 1, preview 2
 }
 
 export interface CreateVaultRequest {
@@ -678,6 +828,9 @@ export interface CreateMultiSigRequest {
   label: string;
   network?: string;
   policy: MultiSigPolicy;
+  // A multi-signature account is a vault wallet now, so composing one is a
+  // vault write and needs the vault password like any other add-wallet call.
+  vault_password: string;
 }
 
 // The wallet's own CIP-1854 participant identity, to share with co-signers.
