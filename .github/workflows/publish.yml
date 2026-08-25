@@ -44,7 +44,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: macos-latest
+          - runner: macos-15
             os: darwin
             arch: arm64
           - runner: ubuntu-latest
@@ -152,18 +152,26 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           _filename=bursa-${{ env.RELEASE_TAG }}-${{ matrix.os }}-${{ matrix.arch }}
-          if [[ ${{ matrix.os }} == windows ]]; then
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
             _filename=${_filename}.exe
-          fi
-          if [[ "${{ matrix.os }}" == "windows" || "${{ matrix.os }}" == "linux" || "${{ matrix.os }}" == "freebsd" ]]; then
             cp bursa ${_filename}
           fi
+          if [[ "${{ matrix.os }}" == "linux" || "${{ matrix.os }}" == "freebsd" ]]; then
+            _filename=${_filename}.tar.gz
+            tar czf ${_filename} bursa
+          fi
           if [[ "${{ matrix.os }}" == "darwin" ]]; then
-            _filename=bursa-${{ env.RELEASE_TAG }}-${{ matrix.os }}-${{ matrix.arch }}.zip
+            # macOS stays a .zip: notarization above is submitted for the
+            # zipped binary, so re-use that exact archive as the asset.
+            _filename=${_filename}.zip
             if [[ ! -e ${_filename} ]]; then
               zip -r ${_filename} bursa
             fi
           fi
+          # Export the shipped asset path so the attest step below can target
+          # the ACTUAL uploaded artifact (mirrors the wallet job's TARBALL_PATH
+          # pattern); attesting the raw binary would hash a file we do not ship.
+          echo "ASSET_PATH=${_filename}" >> "$GITHUB_ENV"
           curl \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/octet-stream" \
@@ -171,16 +179,21 @@ jobs:
             https://uploads.github.com/repos/${{ github.repository_owner }}/bursa/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}
 
       - name: Attest binary
+        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2 https://github.com/actions/attest/releases/tag/v4.2.2
         with:
-          subject-path: 'bursa'
+          # Attest the uploaded asset, not the raw binary, so the attested
+          # digest matches what `gh attestation verify` sees for the download.
+          # ASSET_PATH is exported by the upload step, which is tags-only, so
+          # this step carries the same guard.
+          subject-path: ${{ env.ASSET_PATH }}
 
   # Build + package the Bursa desktop wallet (ui/cmd/bursa-wallet).
   #
   # The desktop app is the `-tags webview` variant (CGO + a system webview:
   # WKWebView on macOS, WebView2 on Windows, webkit2gtk on Linux) and CANNOT be
   # cross-compiled, so each installer is built on a NATIVE per-arch runner:
-  #   * macOS  -> signed + notarized .pkg (build-pkg.sh) on macos-15 / macos-15-intel
+  #   * macOS  -> signed + notarized arm64 .pkg (build-pkg.sh) on macos-15
   #   * Windows-> signed .msi (build-msi.ps1) on windows-latest / windows-11-arm
   #   * Linux  -> a native webview binary (webkit2gtk), shipped as a tarball
   #   * FreeBSD-> the pure-Go headless cross-build (no system webview), tarball
@@ -194,9 +207,6 @@ jobs:
           - runner: macos-15
             os: darwin
             arch: arm64
-          - runner: macos-15-intel
-            os: darwin
-            arch: amd64
           - runner: windows-latest
             os: windows
             arch: amd64
