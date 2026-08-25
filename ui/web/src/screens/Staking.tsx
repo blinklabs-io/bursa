@@ -337,7 +337,7 @@ function Compose(props: ComposeProps) {
                     {drep && (
                       <p className="verified-readout">
                         <span className="verified-tick">✓ Verified by your node</span>
-                        {drep.registered ? " · registered" : " · not registered"}
+                        {!drep.retired ? " · registered" : " · not registered"}
                         <ExplorerLink network={network} kind="drep" id={drep.drep_id} />
                       </p>
                     )}

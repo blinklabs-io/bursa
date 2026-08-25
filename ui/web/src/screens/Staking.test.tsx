@@ -34,10 +34,9 @@ const MOCK_DREP: DRepInfo = {
   drep_id: "drep1abc",
   hex: "abc",
   has_script: false,
-  registered: true,
   amount: "500000000",
   active: true,
-  live_stake: "4200000000",
+  retired: false,
 };
 
 const MOCK_PREVIEW: DelegationPreview = {
