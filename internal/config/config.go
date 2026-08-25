@@ -186,6 +186,8 @@ type StorageConfig struct {
 type ApiConfig struct {
 	ListenAddress string `yaml:"address"     envconfig:"API_LISTEN_ADDRESS"`
 	ListenPort    uint   `yaml:"port"        envconfig:"API_LISTEN_PORT"`
+	TLSCertFile   string `yaml:"tls_cert_file" envconfig:"API_TLS_CERT_FILE"`
+	TLSKeyFile    string `yaml:"tls_key_file"  envconfig:"API_TLS_KEY_FILE"`
 	// JWTSecret enables HS256 bearer authentication for sensitive legacy API
 	// routes. Keep it in an environment variable or an external secret store;
 	// do not commit it to a config file.

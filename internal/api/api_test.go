@@ -17,8 +17,11 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -40,6 +43,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Mock JSON data for successful wallet restoration
@@ -188,9 +192,29 @@ func TestValidateAPIExposureRejectsUnauthenticatedNonLoopback(t *testing.T) {
 	assert.NoError(t, validateAPIExposure(&config.Config{Api: config.ApiConfig{
 		ListenAddress: "127.0.0.1",
 	}}, nil))
+	err = validateAPIExposure(cfg, signerapi.HS256Validator(
+		[]byte("01234567890123456789012345678901"), "", "",
+	))
+	assert.ErrorContains(t, err, "TLS")
+
+	cfg.Api.TLSCertFile = "/run/secrets/api-cert.pem"
+	cfg.Api.TLSKeyFile = "/run/secrets/api-key.pem"
 	assert.NoError(t, validateAPIExposure(cfg, signerapi.HS256Validator(
 		[]byte("01234567890123456789012345678901"), "", "",
 	)))
+}
+
+func TestValidateAPIExposureRejectsIncompleteTLSConfiguration(t *testing.T) {
+	auth := signerapi.HS256Validator(
+		[]byte("01234567890123456789012345678901"), "", "",
+	)
+
+	for _, cfg := range []*config.Config{
+		{Api: config.ApiConfig{ListenAddress: "127.0.0.1", TLSCertFile: "cert.pem"}},
+		{Api: config.ApiConfig{ListenAddress: "127.0.0.1", TLSKeyFile: "key.pem"}},
+	} {
+		assert.ErrorContains(t, validateAPIExposure(cfg, auth), "both")
+	}
 }
 
 func TestStartRejectsUnauthenticatedNonLoopbackAPI(t *testing.T) {
@@ -200,6 +224,94 @@ func TestStartRejectsUnauthenticatedNonLoopbackAPI(t *testing.T) {
 
 	assert.ErrorContains(t, err, "not loopback")
 	assert.ErrorContains(t, err, "authentication")
+}
+
+func writeTestTLSCertificate(t *testing.T) (string, string, *tls.Config) {
+	t.Helper()
+
+	fixtureServer := httptest.NewTLSServer(http.NotFoundHandler())
+	defer fixtureServer.Close()
+	certificate := fixtureServer.Certificate()
+	privateKeyDER, err := x509.MarshalPKCS8PrivateKey(
+		fixtureServer.TLS.Certificates[0].PrivateKey,
+	)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "server-cert.pem")
+	keyFile := filepath.Join(dir, "server-key.pem")
+	require.NoError(t, os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certificate.Raw,
+	}), 0o600))
+	require.NoError(t, os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: privateKeyDER,
+	}), 0o600))
+
+	rootCAs := x509.NewCertPool()
+	rootCAs.AddCert(certificate)
+	serverName := "127.0.0.1"
+	if len(certificate.DNSNames) > 0 {
+		serverName = certificate.DNSNames[0]
+	}
+	return certFile, keyFile, &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    rootCAs,
+		ServerName: serverName,
+	}
+}
+
+func TestStartServesTLSForAuthenticatedNonLoopbackAPI(t *testing.T) {
+	certFile, keyFile, clientTLS := writeTestTLSCertificate(t)
+	apiListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	metricsListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer metricsListener.Close()
+
+	cfg := &config.Config{
+		Api: config.ApiConfig{
+			ListenAddress: "0.0.0.0",
+			JWTSecret:     "01234567890123456789012345678901",
+			TLSCertFile:   certFile,
+			TLSKeyFile:    keyFile,
+		},
+	}
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- Start(context.Background(), cfg, apiListener, metricsListener)
+	}()
+	t.Cleanup(func() {
+		_ = apiListener.Close()
+		select {
+		case <-serveErr:
+		case <-time.After(time.Second):
+			t.Error("API server did not stop after its listener closed")
+		}
+	})
+
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLS}}
+	baseURL := "https://" + apiListener.Addr().String()
+	resp, err := client.Get(baseURL + "/api/wallet/create")
+	assert.NoError(t, err)
+	if assert.NotNil(t, resp) {
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		require.NotNil(t, resp.TLS)
+		assert.GreaterOrEqual(t, resp.TLS.Version, uint16(tls.VersionTLS12))
+	}
+
+	swaggerResp, err := client.Get(baseURL + "/swagger/doc.json")
+	assert.NoError(t, err)
+	if assert.NotNil(t, swaggerResp) {
+		defer swaggerResp.Body.Close()
+		var swaggerDoc struct {
+			Schemes []string `json:"schemes"`
+		}
+		assert.NoError(t, json.NewDecoder(swaggerResp.Body).Decode(&swaggerDoc))
+		assert.Equal(t, []string{"https"}, swaggerDoc.Schemes)
+	}
 }
 
 func TestProtectedAPIHandlerRequiresBearerToken(t *testing.T) {

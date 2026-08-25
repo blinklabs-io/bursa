@@ -1608,7 +1608,7 @@ var SwaggerInfo = &swag.Spec{
 	Version:          "v0",
 	Host:             "",
 	BasePath:         "/",
-	Schemes:          []string{"http"},
+	Schemes:          []string{"http", "https"},
 	Title:            "bursa",
 	Description:      "Programmable Cardano Wallet API",
 	InfoInstanceName: "swagger",

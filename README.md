@@ -44,13 +44,15 @@ cd bursa
 go run ./cmd/bursa api 
 ```
 
-Access API Swagger documentation: [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html)
+Access API Swagger documentation on the default loopback listener:
+[http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html).
 
 The API listens on `127.0.0.1` by default. Set `API_LISTEN_ADDRESS` to an
 explicit address such as `0.0.0.0` only when remote access is intended and
-protected by JWT authentication and appropriate network controls. A
-non-loopback listener refuses to start unless exactly one of these API trust
-sources is configured:
+protected by TLS and JWT authentication. A non-loopback listener refuses to
+start unless `API_TLS_CERT_FILE` / `api.tls_cert_file` and
+`API_TLS_KEY_FILE` / `api.tls_key_file` identify a server certificate and
+private key, and exactly one of these API trust sources is configured:
 
 - `API_JWT_SECRET` / `api.jwt_secret`: an HS256 secret of at least 32 bytes;
   keep it in a deployment secret, not a committed config file.
@@ -62,7 +64,20 @@ sources is configured:
 signing, and mnemonic/address-derivation endpoints require an
 `Authorization: Bearer <JWT>` header whenever API authentication is configured.
 Wallet creation is `POST /api/wallet/create`; wallet responses are marked
-`Cache-Control: no-store`.
+`Cache-Control: no-store`. A remote Swagger URL uses the same HTTPS listener,
+for example `https://wallet.example.com:8080/swagger/index.html`. Plain HTTP
+remains available only for loopback development when no TLS files are set.
+
+```yaml
+api:
+  address: 0.0.0.0
+  port: 8080
+  tls_cert_file: /run/secrets/bursa-api-cert.pem
+  tls_key_file: /run/secrets/bursa-api-key.pem
+  jwks_url: https://identity.example.com/.well-known/jwks.json
+  jwt_issuer: https://identity.example.com
+  jwt_audience: bursa-api
+```
 
 For more information about Bursa CLI
 
