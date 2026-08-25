@@ -36,6 +36,30 @@ func TestSignerConfig_Env(t *testing.T) {
 	}
 }
 
+func TestAPIAuthConfig_Env(t *testing.T) {
+	t.Setenv("API_LISTEN_ADDRESS", "0.0.0.0")
+	t.Setenv("API_TLS_CERT_FILE", "/run/secrets/api-cert.pem")
+	t.Setenv("API_TLS_KEY_FILE", "/run/secrets/api-key.pem")
+	t.Setenv("API_JWT_SECRET", "01234567890123456789012345678901")
+	t.Setenv("API_JWT_ISSUER", "https://issuer.example")
+	t.Setenv("API_JWT_AUDIENCE", "bursa-api")
+	globalConfig = defaultConfig()
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Api.ListenAddress != "0.0.0.0" || cfg.Api.JWTSecret != "01234567890123456789012345678901" {
+		t.Fatalf("API listen/auth env not loaded: %+v", cfg.Api)
+	}
+	if cfg.Api.TLSCertFile != "/run/secrets/api-cert.pem" ||
+		cfg.Api.TLSKeyFile != "/run/secrets/api-key.pem" {
+		t.Fatalf("API TLS env not loaded: %+v", cfg.Api)
+	}
+	if cfg.Api.JWTIssuer != "https://issuer.example" || cfg.Api.JWTAudience != "bursa-api" {
+		t.Fatalf("API JWT claim constraints not loaded: %+v", cfg.Api)
+	}
+}
+
 func TestLoadConfigFile_SignerSection(t *testing.T) {
 	yaml := `
 signer:
@@ -202,7 +226,14 @@ func TestAPIListenAddressOverrides(t *testing.T) {
 		configFile := filepath.Join(dir, "bursa.yml")
 		if err := os.WriteFile(
 			configFile,
-			[]byte("api:\n  address: 0.0.0.0\n"),
+			[]byte(`api:
+  address: 0.0.0.0
+  tls_cert_file: /run/secrets/api-cert.pem
+  tls_key_file: /run/secrets/api-key.pem
+  jwt_secret: 01234567890123456789012345678901
+  jwt_issuer: https://issuer.example
+  jwt_audience: bursa-api
+`),
 			0o600,
 		); err != nil {
 			t.Fatalf("write config file: %v", err)
@@ -217,6 +248,15 @@ func TestAPIListenAddressOverrides(t *testing.T) {
 				"config API listen address: got %q, want 0.0.0.0",
 				cfg.Api.ListenAddress,
 			)
+		}
+		if cfg.Api.JWTSecret != "01234567890123456789012345678901" ||
+			cfg.Api.JWTIssuer != "https://issuer.example" ||
+			cfg.Api.JWTAudience != "bursa-api" {
+			t.Fatalf("config API auth not loaded: %+v", cfg.Api)
+		}
+		if cfg.Api.TLSCertFile != "/run/secrets/api-cert.pem" ||
+			cfg.Api.TLSKeyFile != "/run/secrets/api-key.pem" {
+			t.Fatalf("config API TLS not loaded: %+v", cfg.Api)
 		}
 	})
 

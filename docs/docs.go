@@ -68,6 +68,11 @@ const docTemplate = `{
         },
         "/api/address/enumerate": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Derives consecutive base addresses from a mnemonic for the given account and network",
                 "consumes": [
                     "application/json"
@@ -280,6 +285,11 @@ const docTemplate = `{
         },
         "/api/sign/data": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Sign a payload using a signing key, producing a COSE_Sign1 structure",
                 "consumes": [
                     "application/json"
@@ -477,6 +487,11 @@ const docTemplate = `{
         },
         "/api/tx/sign": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Add vkey witnesses for the provided signing keys (body preserved)",
                 "consumes": [
                     "application/json"
@@ -520,6 +535,11 @@ const docTemplate = `{
         },
         "/api/tx/witness": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Produce a detached vkey witness for a transaction body",
                 "consumes": [
                     "application/json"
@@ -562,7 +582,12 @@ const docTemplate = `{
             }
         },
         "/api/wallet/create": {
-            "get": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Create a wallet and return details",
                 "produces": [
                     "application/json"
@@ -580,6 +605,11 @@ const docTemplate = `{
         },
         "/api/wallet/delete": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Deletes a wallet from persistent storage and optional password.",
                 "consumes": [
                     "application/json"
@@ -623,6 +653,11 @@ const docTemplate = `{
         },
         "/api/wallet/get": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Gets a wallet from persistent storage and optional password and returns wallet details.",
                 "consumes": [
                     "application/json"
@@ -666,6 +701,11 @@ const docTemplate = `{
         },
         "/api/wallet/list": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "List all wallets stored in secret storage matching our prefix",
                 "produces": [
                     "application/json"
@@ -686,6 +726,11 @@ const docTemplate = `{
         },
         "/api/wallet/restore": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details.",
                 "consumes": [
                     "application/json"
@@ -729,6 +774,11 @@ const docTemplate = `{
         },
         "/api/wallet/update": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Updates a wallet from persistent storage and optional password and returns wallet details.",
                 "consumes": [
                     "application/json"
@@ -1406,6 +1456,9 @@ const docTemplate = `{
                 "has_mint": {
                     "type": "boolean"
                 },
+                "has_treasury_donation": {
+                    "type": "boolean"
+                },
                 "inputs": {
                     "type": "array",
                     "items": {
@@ -1423,6 +1476,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/bursa.TxOutput"
                     }
+                },
+                "proposal_procedure_count": {
+                    "type": "integer"
                 },
                 "required_signers": {
                     "type": "integer"
@@ -1442,6 +1498,10 @@ const docTemplate = `{
                 "vkey_witnesses": {
                     "type": "integer"
                 },
+                "voting_procedure_count": {
+                    "description": "Conway governance and treasury components. These authorize\nhigh-impact actions (casting DRep/committee votes, submitting\ngovernance proposals, donating to the treasury) that are independent\nof outputs/certificates/withdrawals, so the policy engine must inspect\nand gate them explicitly.",
+                    "type": "integer"
+                },
                 "withdrawal_count": {
                     "type": "integer"
                 }
@@ -1452,6 +1512,10 @@ const docTemplate = `{
             "properties": {
                 "address": {
                     "type": "string"
+                },
+                "has_assets": {
+                    "description": "HasAssets is true when the output carries native (multi-)assets in\naddition to lovelace. The policy engine treats native-asset movement as\na distinct, deny-by-default operation because lovelace limits do not\nbound token quantities.",
+                    "type": "boolean"
                 },
                 "lovelace": {
                     "type": "string"
@@ -1529,6 +1593,13 @@ const docTemplate = `{
                 }
             }
         }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
     }
 }`
 
@@ -1537,7 +1608,7 @@ var SwaggerInfo = &swag.Spec{
 	Version:          "v0",
 	Host:             "",
 	BasePath:         "/",
-	Schemes:          []string{"http"},
+	Schemes:          []string{"https"},
 	Title:            "bursa",
 	Description:      "Programmable Cardano Wallet API",
 	InfoInstanceName: "swagger",

@@ -138,8 +138,10 @@ paths:
       summary: Build Cardano address
       x-codegen-request-body-name: request
   /api/wallet/create:
-    get:
+    post:
       description: Create a wallet and return details
+      security:
+      - BearerAuth: []
       responses:
         "200":
           content:
@@ -151,6 +153,8 @@ paths:
   /api/wallet/delete:
     post:
       description: Deletes a wallet from persistent storage and optional password.
+      security:
+      - BearerAuth: []
       requestBody:
         content:
           application/json:
@@ -183,6 +187,8 @@ paths:
     post:
       description: Gets a wallet from persistent storage and optional password and
         returns wallet details.
+      security:
+      - BearerAuth: []
       requestBody:
         content:
           application/json:
@@ -214,6 +220,8 @@ paths:
   /api/wallet/list:
     get:
       description: List all wallets stored in secret storage matching our prefix
+      security:
+      - BearerAuth: []
       responses:
         "200":
           content:
@@ -228,6 +236,8 @@ paths:
     post:
       description: Restores a wallet using the provided mnemonic seed phrase and optional
         password and returns wallet details.
+      security:
+      - BearerAuth: []
       requestBody:
         content:
           application/json:
@@ -260,6 +270,8 @@ paths:
     post:
       description: Updates a wallet from persistent storage and optional password
         and returns wallet details.
+      security:
+      - BearerAuth: []
       requestBody:
         content:
           application/json:
@@ -289,6 +301,11 @@ paths:
       summary: Update a wallet in persistent storage
       x-codegen-request-body-name: request
 components:
+  securitySchemes:
+    BearerAuth:
+      bearerFormat: JWT
+      scheme: bearer
+      type: http
   schemas:
     api.ErrorResponse:
       example:

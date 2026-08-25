@@ -82,7 +82,7 @@ Class | Method | HTTP request | Description
 *DefaultAPI* | [**ApiScriptAddressPost**](docs/DefaultAPI.md#apiscriptaddresspost) | **Post** /api/script/address | Generate script address
 *DefaultAPI* | [**ApiScriptCreatePost**](docs/DefaultAPI.md#apiscriptcreatepost) | **Post** /api/script/create | Create a multi-signature script
 *DefaultAPI* | [**ApiScriptValidatePost**](docs/DefaultAPI.md#apiscriptvalidatepost) | **Post** /api/script/validate | Validate a script
-*DefaultAPI* | [**ApiWalletCreateGet**](docs/DefaultAPI.md#apiwalletcreateget) | **Get** /api/wallet/create | Create a wallet
+*DefaultAPI* | [**ApiWalletCreatePost**](docs/DefaultAPI.md#apiwalletcreatepost) | **Post** /api/wallet/create | Create a wallet
 *DefaultAPI* | [**ApiWalletDeletePost**](docs/DefaultAPI.md#apiwalletdeletepost) | **Post** /api/wallet/delete | Delete wallet from persistent storage
 *DefaultAPI* | [**ApiWalletGetPost**](docs/DefaultAPI.md#apiwalletgetpost) | **Post** /api/wallet/get | Get wallet from persistent storage
 *DefaultAPI* | [**ApiWalletListGet**](docs/DefaultAPI.md#apiwalletlistget) | **Get** /api/wallet/list | Lists wallets
@@ -109,7 +109,16 @@ Class | Method | HTTP request | Description
 
 ## Documentation For Authorization
 
-Endpoints do not require authorization.
+Wallet, signing, and mnemonic/address-derivation operations require a bearer
+JWT when API authentication is configured. Set the generated client's default
+header before calling them:
+
+```go
+configuration := openapi.NewConfiguration()
+configuration.AddDefaultHeader("Authorization", "Bearer "+token)
+```
+
+The server accepts the JWT/JWKS contract documented in the repository README.
 
 
 ## Documentation for Utility Methods
@@ -131,4 +140,3 @@ Each of these functions takes a value of the given basic type and returns a poin
 ## Author
 
 support@blinklabs.io
-

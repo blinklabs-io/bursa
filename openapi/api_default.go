@@ -76,19 +76,19 @@ type DefaultAPI interface {
 	) (*ApiScriptValidateResponse, *http.Response, error)
 
 	/*
-		ApiWalletCreateGet Create a wallet
+		ApiWalletCreatePost Create a wallet
 
 		Create a wallet and return details
 
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
-		@return DefaultAPIApiWalletCreateGetRequest
+		@return DefaultAPIApiWalletCreatePostRequest
 	*/
-	ApiWalletCreateGet(ctx context.Context) DefaultAPIApiWalletCreateGetRequest
+	ApiWalletCreatePost(ctx context.Context) DefaultAPIApiWalletCreatePostRequest
 
-	// ApiWalletCreateGetExecute executes the request
+	// ApiWalletCreatePostExecute executes the request
 	//	@return	BursaWallet
-	ApiWalletCreateGetExecute(
-		r DefaultAPIApiWalletCreateGetRequest,
+	ApiWalletCreatePostExecute(
+		r DefaultAPIApiWalletCreatePostRequest,
 	) (*BursaWallet, *http.Response, error)
 
 	/*
@@ -682,27 +682,27 @@ func (a *DefaultAPIService) ApiScriptValidatePostExecute(
 	return localVarReturnValue, localVarHTTPResponse, nil
 }
 
-type DefaultAPIApiWalletCreateGetRequest struct {
+type DefaultAPIApiWalletCreatePostRequest struct {
 	ctx        context.Context
 	ApiService DefaultAPI
 }
 
-func (r DefaultAPIApiWalletCreateGetRequest) Execute() (*BursaWallet, *http.Response, error) {
-	return r.ApiService.ApiWalletCreateGetExecute(r)
+func (r DefaultAPIApiWalletCreatePostRequest) Execute() (*BursaWallet, *http.Response, error) {
+	return r.ApiService.ApiWalletCreatePostExecute(r)
 }
 
 /*
-ApiWalletCreateGet Create a wallet
+ApiWalletCreatePost Create a wallet
 
 # Create a wallet and return details
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
-	@return DefaultAPIApiWalletCreateGetRequest
+	@return DefaultAPIApiWalletCreatePostRequest
 */
-func (a *DefaultAPIService) ApiWalletCreateGet(
+func (a *DefaultAPIService) ApiWalletCreatePost(
 	ctx context.Context,
-) DefaultAPIApiWalletCreateGetRequest {
-	return DefaultAPIApiWalletCreateGetRequest{
+) DefaultAPIApiWalletCreatePostRequest {
+	return DefaultAPIApiWalletCreatePostRequest{
 		ApiService: a,
 		ctx:        ctx,
 	}
@@ -711,11 +711,11 @@ func (a *DefaultAPIService) ApiWalletCreateGet(
 // Execute executes the request
 //
 //	@return	BursaWallet
-func (a *DefaultAPIService) ApiWalletCreateGetExecute(
-	r DefaultAPIApiWalletCreateGetRequest,
+func (a *DefaultAPIService) ApiWalletCreatePostExecute(
+	r DefaultAPIApiWalletCreatePostRequest,
 ) (*BursaWallet, *http.Response, error) {
 	var (
-		localVarHTTPMethod  = http.MethodGet
+		localVarHTTPMethod  = http.MethodPost
 		localVarPostBody    interface{}
 		formFiles           []formFile
 		localVarReturnValue *BursaWallet
@@ -723,7 +723,7 @@ func (a *DefaultAPIService) ApiWalletCreateGetExecute(
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(
 		r.ctx,
-		"DefaultAPIService.ApiWalletCreateGet",
+		"DefaultAPIService.ApiWalletCreatePost",
 	)
 	if err != nil {
 		return localVarReturnValue, nil, &GenericOpenAPIError{

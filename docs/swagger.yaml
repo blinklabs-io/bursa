@@ -437,6 +437,8 @@ definitions:
         type: boolean
       has_mint:
         type: boolean
+      has_treasury_donation:
+        type: boolean
       inputs:
         items:
           $ref: '#/definitions/bursa.TxInput'
@@ -449,6 +451,8 @@ definitions:
         items:
           $ref: '#/definitions/bursa.TxOutput'
         type: array
+      proposal_procedure_count:
+        type: integer
       required_signers:
         type: integer
       size_bytes:
@@ -461,6 +465,14 @@ definitions:
         type: integer
       vkey_witnesses:
         type: integer
+      voting_procedure_count:
+        description: |-
+          Conway governance and treasury components. These authorize
+          high-impact actions (casting DRep/committee votes, submitting
+          governance proposals, donating to the treasury) that are independent
+          of outputs/certificates/withdrawals, so the policy engine must inspect
+          and gate them explicitly.
+        type: integer
       withdrawal_count:
         type: integer
     type: object
@@ -468,6 +480,13 @@ definitions:
     properties:
       address:
         type: string
+      has_assets:
+        description: |-
+          HasAssets is true when the output carries native (multi-)assets in
+          addition to lovelace. The policy engine treats native-asset movement as
+          a distinct, deny-by-default operation because lovelace limits do not
+          bound token quantities.
+        type: boolean
       lovelace:
         type: string
     type: object
@@ -586,6 +605,8 @@ paths:
           description: Invalid request
           schema:
             $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Enumerate derived addresses for a wallet
   /api/address/parse:
     post:
@@ -726,6 +747,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Sign a message (CIP-8/CIP-30 signData)
   /api/sign/verify:
     post:
@@ -854,6 +877,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Sign a transaction
   /api/tx/witness:
     post:
@@ -882,9 +907,11 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Produce a transaction witness
   /api/wallet/create:
-    get:
+    post:
       description: Create a wallet and return details
       produces:
       - application/json
@@ -893,6 +920,8 @@ paths:
           description: Ok
           schema:
             $ref: '#/definitions/bursa.Wallet'
+      security:
+      - BearerAuth: []
       summary: Create a wallet
   /api/wallet/delete:
     post:
@@ -921,6 +950,8 @@ paths:
           description: Internal server error
           schema:
             $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Delete wallet from persistent storage
   /api/wallet/get:
     post:
@@ -950,6 +981,8 @@ paths:
           description: Internal server error
           schema:
             $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Get wallet from persistent storage
   /api/wallet/list:
     get:
@@ -963,6 +996,8 @@ paths:
             items:
               type: string
             type: array
+      security:
+      - BearerAuth: []
       summary: Lists wallets
   /api/wallet/restore:
     post:
@@ -992,6 +1027,8 @@ paths:
           description: Internal server error
           schema:
             $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Restore a wallet using a mnemonic seed phrase
   /api/wallet/update:
     post:
@@ -1021,7 +1058,14 @@ paths:
           description: Internal server error
           schema:
             type: string
+      security:
+      - BearerAuth: []
       summary: Update a wallet in persistent storage
 schemes:
-- http
+- https
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"
