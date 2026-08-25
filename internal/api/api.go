@@ -533,7 +533,7 @@ type TxWitnessResponse struct {
 //	@title						bursa
 //	@version					v0
 //	@description				Programmable Cardano Wallet API
-//	@Schemes					http https
+//	@Schemes					https
 //	@BasePath					/
 //
 //	@securityDefinitions.apikey	BearerAuth

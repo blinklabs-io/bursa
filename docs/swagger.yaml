@@ -1062,7 +1062,6 @@ paths:
       - BearerAuth: []
       summary: Update a wallet in persistent storage
 schemes:
-- http
 - https
 securityDefinitions:
   BearerAuth:
