@@ -35,6 +35,44 @@ go run ./cmd/bursa api
 
 Access API Swagger documentation: [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html)
 
+## Highly Available Signer Watermarks
+
+Signer replicas must share one PostgreSQL watermark database to preserve the
+payload and operational-certificate counter guards across replicas. Configure
+every replica with the same database and keep `mode: enforce`:
+
+```yaml
+signer:
+  watermark:
+    type: postgres
+    mode: enforce
+    dsn_env: BURSA_SIGNER_WATERMARK_POSTGRES_DSN
+```
+
+Set the named environment variable to a pgx/libpq connection string. Remote
+connections should require server identity verification, for example:
+
+```text
+postgres://bursa@postgres.example/bursa?sslmode=verify-full&sslrootcert=/etc/bursa/postgres-ca.pem
+```
+
+Supply the password through the process environment or another pgx-supported
+credential mechanism; do not store credentials in the YAML file. The database
+role needs permission to create the two watermark tables on first startup and
+to read and write them thereafter.
+
+PostgreSQL replication and failover are external to Bursa. A failover endpoint
+must preserve all committed rows and continue to present one authoritative
+database; routing replicas to independent databases defeats the HA signing
+guards. Bursa reports the signer unready while the database is unavailable and
+signing in `enforce` mode fails closed.
+
+Bursa does not automatically import watermark history from the in-memory or
+SQLite stores. Do not cut an active signer over to an empty PostgreSQL database:
+preserve or import both the payload and counter watermark rows during a
+controlled outage, or enable PostgreSQL before the affected keys sign for the
+first time.
+
 For more information about Bursa CLI
 
 ```bash
