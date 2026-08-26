@@ -16,6 +16,7 @@ type fakeChain struct {
 	accountErr   error
 	addresses    []string
 	addressesErr error
+	addressCalls int
 	utxos        map[string][]chain.UTxO
 	utxoErrs     map[string]error
 	txs          map[string][]chain.AddressTx
@@ -38,6 +39,7 @@ func (f *fakeChain) Account(_ context.Context, _ string) (chain.AccountInfo, err
 }
 
 func (f *fakeChain) AccountAddresses(_ context.Context, _ string) ([]string, error) {
+	f.addressCalls++
 	return f.addresses, f.addressesErr
 }
 
@@ -190,6 +192,41 @@ func TestServiceEmptyAccount(t *testing.T) {
 	}
 	if dv.PoolID != nil || dv.Active || dv.RewardsSum != "0" || dv.Withdrawable != "0" {
 		t.Fatalf("delegation on empty account = %+v, want not active / no pool / zero amounts", dv)
+	}
+}
+
+func TestServiceLocalAddressesDoNotQueryChain(t *testing.T) {
+	fc := &fakeChain{addressesErr: errors.New("node unavailable")}
+	s := NewService(fc)
+	acct, err := s.SetWallet(testMnemonic, "preview", 3)
+	if err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	got, err := s.LocalAddresses()
+	if err != nil {
+		t.Fatalf("LocalAddresses: %v", err)
+	}
+	if fc.addressCalls != 0 {
+		t.Fatalf("AccountAddresses calls = %d, want 0", fc.addressCalls)
+	}
+	if len(got.Receive) != 3 || got.NextUnused != acct.ReceiveAddresses[0] {
+		t.Fatalf("local addresses = %+v, want three derived addresses with receive[0] next", got)
+	}
+	if len(got.Used) != 0 {
+		t.Fatalf("local used addresses = %v, want empty", got.Used)
+	}
+	got.Receive[0] = "addr_test1mutated"
+	again, err := s.LocalAddresses()
+	if err != nil {
+		t.Fatalf("LocalAddresses after caller mutation: %v", err)
+	}
+	if again.Receive[0] != acct.ReceiveAddresses[0] {
+		t.Fatalf("receive[0] after caller mutation = %q, want %q", again.Receive[0], acct.ReceiveAddresses[0])
+	}
+
+	empty := NewService(fc)
+	if _, err := empty.LocalAddresses(); !errors.Is(err, ErrNoWallet) {
+		t.Fatalf("LocalAddresses without wallet: err = %v, want ErrNoWallet", err)
 	}
 }
 

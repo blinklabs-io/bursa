@@ -1053,14 +1053,17 @@ func TestStatusReturnsSnapshot(t *testing.T) {
 // fakeWallet is stateful like the real service: queries return wallet.ErrNoWallet
 // until SetAccount has been called (the vault pushes the active account).
 type fakeWallet struct {
-	balance          wallet.Balance
-	set              bool
-	setAccountCalled bool
-	gotNetwork       string
-	gotAccountIndex  uint32
-	txDetail         wallet.TxDetail
-	txDetailErr      error
-	rewards          wallet.RewardHistory
+	balance              wallet.Balance
+	addresses            wallet.AddressView
+	set                  bool
+	setAccountCalled     bool
+	addressesCalled      int
+	localAddressesCalled int
+	gotNetwork           string
+	gotAccountIndex      uint32
+	txDetail             wallet.TxDetail
+	txDetailErr          error
+	rewards              wallet.RewardHistory
 	// balances, when non-nil, gives BalanceForAccount a distinct balance per
 	// account index (keyed by wallet.Account.AccountIndex) — lets tests verify
 	// per-account balance attribution instead of every account echoing the same
@@ -1105,7 +1108,16 @@ func (f *fakeWallet) Addresses(_ context.Context) (wallet.AddressView, error) {
 	if !f.set {
 		return wallet.AddressView{}, wallet.ErrNoWallet
 	}
-	return wallet.AddressView{}, nil
+	f.addressesCalled++
+	return f.addresses, nil
+}
+
+func (f *fakeWallet) LocalAddresses() (wallet.AddressView, error) {
+	if !f.set {
+		return wallet.AddressView{}, wallet.ErrNoWallet
+	}
+	f.localAddressesCalled++
+	return f.addresses, nil
 }
 
 func (f *fakeWallet) Transactions(_ context.Context) ([]wallet.Tx, error) {
@@ -1659,6 +1671,84 @@ func TestWalletGatedWhileBootstrapping(t *testing.T) {
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/balance", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /wallet/balance while bootstrapping = %d, want 503", rec.Code)
+	}
+}
+
+func TestWalletAddressesAvailableWithoutQueryableNode(t *testing.T) {
+	for _, state := range []supervisor.NodeState{
+		supervisor.StateStopped,
+		supervisor.StateStarting,
+		supervisor.StateBootstrapping,
+		supervisor.StateError,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			st := fakeStatuser{s: supervisor.Status{State: state}}
+			fw := &fakeWallet{
+				set: true,
+				addresses: wallet.AddressView{
+					Receive:    []string{"addr_test1derived"},
+					NextUnused: "addr_test1derived",
+				},
+			}
+			h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET /wallet/addresses while %s = %d, want 200", state, rec.Code)
+			}
+			var got wallet.AddressView
+			if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+				t.Fatalf("decode addresses: %v", err)
+			}
+			if len(got.Receive) != 1 || got.Receive[0] != "addr_test1derived" || got.NextUnused != "addr_test1derived" {
+				t.Fatalf("addresses while %s = %+v, want locally derived address", state, got)
+			}
+			if fw.localAddressesCalled != 1 || fw.addressesCalled != 0 {
+				t.Fatalf("address calls while %s = local %d, chain %d; want local 1, chain 0", state, fw.localAddressesCalled, fw.addressesCalled)
+			}
+		})
+	}
+}
+
+func TestWalletAddressesIncludeChainUsageWhenQueryable(t *testing.T) {
+	for _, state := range []supervisor.NodeState{supervisor.StateSyncing, supervisor.StateReady} {
+		t.Run(string(state), func(t *testing.T) {
+			st := fakeStatuser{s: supervisor.Status{State: state}}
+			fw := &fakeWallet{
+				set: true,
+				addresses: wallet.AddressView{
+					Receive:    []string{"addr_test1used", "addr_test1unused"},
+					Used:       []string{"addr_test1used"},
+					NextUnused: "addr_test1unused",
+				},
+			}
+			h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET /wallet/addresses while %s = %d, want 200", state, rec.Code)
+			}
+			var got wallet.AddressView
+			if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+				t.Fatalf("decode addresses: %v", err)
+			}
+			if len(got.Used) != 1 || got.Used[0] != "addr_test1used" || got.NextUnused != "addr_test1unused" {
+				t.Fatalf("addresses while %s = %+v, want chain usage", state, got)
+			}
+			if fw.addressesCalled != 1 || fw.localAddressesCalled != 0 {
+				t.Fatalf("address calls while %s = chain %d, local %d; want chain 1, local 0", state, fw.addressesCalled, fw.localAddressesCalled)
+			}
+		})
+	}
+}
+
+func TestWalletAddressesWithoutNodeStillRequireActiveWallet(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateBootstrapping}}
+	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("GET /wallet/addresses without wallet while bootstrapping = %d, want 409", rec.Code)
 	}
 }
 

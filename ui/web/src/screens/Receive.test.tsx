@@ -132,10 +132,9 @@ test("(h) each address gets an external explorer link, scoped to the wallet's ne
   );
   expect(rowLink).toBeDefined();
 });
-// Receive is gated on the node too (the next-unused-address lookup reads the
-// chain), so a user who came in through the read-only escape hatch hits this
-// before anything else. It must explain, not dump a server error.
-test("a node that cannot answer yet is explained, not dumped as an error", () => {
+// Keep the friendly fallback for a transient 503. Ordinary startup and
+// bootstrap requests use locally derived addresses and do not take this path.
+test("a transient 503 is explained, not dumped as an error", () => {
   vi.spyOn(hooks, "useAddresses").mockReturnValue({
     data: null, error: new ApiError(503, "node not ready"), loading: false, refresh: vi.fn(),
   } as never);

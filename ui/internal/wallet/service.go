@@ -144,6 +144,37 @@ func (s *Service) currentAccount() (*Account, error) {
 	return cloneAccount(s.account), nil
 }
 
+func addressView(acct *Account, used []string) AddressView {
+	usedSet := make(map[string]bool, len(used))
+	for _, a := range used {
+		usedSet[a] = true
+	}
+	receive := cloneStringSlice(acct.ReceiveAddresses)
+	next := ""
+	for _, a := range receive {
+		if !usedSet[a] {
+			next = a
+			break
+		}
+	}
+	return AddressView{
+		Receive:    receive,
+		Used:       cloneStringSlice(used),
+		NextUnused: next,
+	}
+}
+
+// LocalAddresses reports the locally derived receive window without querying
+// the node. It is available during startup and bootstrap, before the node can
+// report which addresses have already appeared on chain.
+func (s *Service) LocalAddresses() (AddressView, error) {
+	acct, err := s.currentAccount()
+	if err != nil {
+		return AddressView{}, err
+	}
+	return addressView(acct, nil), nil
+}
+
 // scanAddresses returns the addresses to query for funds and history: the
 // node-reported account addresses (used/change addresses, available once the
 // stake key is registered on chain) unioned with the wallet's derived receive
@@ -234,31 +265,14 @@ func (s *Service) Addresses(ctx context.Context) (AddressView, error) {
 	// address is a malformed request rather than a not-found. Its receive
 	// window is exactly the script address it was created with.
 	if acct.StakeAddress == "" {
-		receive := cloneStringSlice(acct.ReceiveAddresses)
-		next := ""
-		if len(receive) > 0 {
-			next = receive[0]
-		}
-		return AddressView{Receive: receive, NextUnused: next}, nil
+		return addressView(acct, nil), nil
 	}
 	used, err := s.chain.AccountAddresses(ctx, acct.StakeAddress)
 	if err != nil && !errors.Is(err, chain.ErrNotFound) {
 		return AddressView{}, err
 	}
 	// ErrNotFound: no chain-seen addresses yet → used stays empty; NextUnused is receive[0].
-	usedSet := map[string]bool{}
-	for _, a := range used {
-		usedSet[a] = true
-	}
-	receive := cloneStringSlice(acct.ReceiveAddresses)
-	next := ""
-	for _, a := range receive {
-		if !usedSet[a] {
-			next = a
-			break
-		}
-	}
-	return AddressView{Receive: receive, Used: cloneStringSlice(used), NextUnused: next}, nil
+	return addressView(acct, used), nil
 }
 
 // Transactions returns the merged, newest-first history across the account's
