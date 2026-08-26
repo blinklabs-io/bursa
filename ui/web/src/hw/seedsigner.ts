@@ -49,6 +49,7 @@ import { hexToBytes } from "./hex";
 import { decodeCbor, encodeCbor, type CborValue, type CborWritable } from "./qr/cbor";
 import { encodeUR } from "./qr/ur";
 import { isValidXfp } from "./qr/xfp";
+import { newRequestId, assertStringRequestIdMatches } from "./requestId";
 
 // ── UR type discriminators (SeedSigner's bespoke dialect) ─────────────────────
 
@@ -113,14 +114,6 @@ function normalizePath(path: string): string {
   return path.replace(/^m\//, "").trim();
 }
 
-// A random-enough request id; the device echoes it back on the reply so a stale
-// scan can be detected. crypto.randomUUID is available in every target
-// (secure-context browsers); fall back to a fixed nil UUID if it is missing.
-function newRequestId(): string {
-  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  return c?.randomUUID ? c.randomUUID() : "00000000-0000-0000-0000-000000000000";
-}
-
 // ── cardano-account-req (display) ─────────────────────────────────────────────
 
 export interface AccountRequestOptions {
@@ -171,6 +164,10 @@ function decodeAccountMap(scanned: ScannedUR): Map<number, CborValue> {
   return value;
 }
 
+function assertAccountResponseMatches(map: Map<number, CborValue>, expectedRequestId: string): void {
+  assertStringRequestIdMatches(expectedRequestId, map.get(1), "SeedSigner account reply");
+}
+
 function xfpFromAccountMap(map: Map<number, CborValue>): string {
   const raw = map.get(2);
   if (!(raw instanceof Uint8Array)) {
@@ -187,9 +184,15 @@ function xfpFromAccountMap(map: Map<number, CborValue>): string {
  * Read ONLY the master fingerprint (xfp) from a scanned `cardano-account` UR.
  * Account-independent — used by the Send recovery flow to re-learn the xfp of an
  * already-added wallet whose local hint was lost, without re-deriving its xpub.
+ *
+ * `expectedRequestId` must match the reply's echoed identifier (key 1) — the id
+ * of the `cardano-account-req` this scan is answering — so a stale or unrelated
+ * scan is rejected rather than silently accepted.
  */
-export function parseAccountXfp(scanned: ScannedUR): string {
-  return xfpFromAccountMap(decodeAccountMap(scanned));
+export function parseAccountXfp(scanned: ScannedUR, expectedRequestId: string): string {
+  const map = decodeAccountMap(scanned);
+  assertAccountResponseMatches(map, expectedRequestId);
+  return xfpFromAccountMap(map);
 }
 
 /**
@@ -198,9 +201,17 @@ export function parseAccountXfp(scanned: ScannedUR): string {
  * ({1:idx, 2:xpub64, 3:path}); we pick the one matching `account`, split its
  * 64-byte xpub (pubkey || chaincode) and re-encode it through the shared
  * hw/xpub.ts helper so it matches every other device byte-for-byte.
+ *
+ * `expectedRequestId` must match the reply's echoed identifier (key 1) — see
+ * {@link parseAccountXfp}.
  */
-export function parseAccountResponse(scanned: ScannedUR, account: number): SeedSignerAccount {
+export function parseAccountResponse(
+  scanned: ScannedUR,
+  account: number,
+  expectedRequestId: string,
+): SeedSignerAccount {
   const map = decodeAccountMap(scanned);
+  assertAccountResponseMatches(map, expectedRequestId);
   const xfp = xfpFromAccountMap(map);
 
   const records = map.get(3);
@@ -361,8 +372,12 @@ function witnessPairsFromValue(value: CborValue): { pubKeyHex: string; sigHex: s
  * Parse a scanned `cardano-tx-sig-res` UR into the standard vkey-witness-array
  * CBOR hex the backend's submit endpoint expects — byte-identical to every other
  * device's output (via the shared hw/witness.ts encoder).
+ *
+ * `expectedRequestId` must match the reply's echoed identifier (key 1) — the id
+ * of the `cardano-tx-sig-req` this scan is answering — so a stale or unrelated
+ * scan is rejected rather than silently signed and submitted.
  */
-export function parseTxSigResponse(scanned: ScannedUR): string {
+export function parseTxSigResponse(scanned: ScannedUR, expectedRequestId: string): string {
   if (scanned.type !== UR_TX_SIG_RES) {
     throw new Error(
       `Expected a SeedSigner signature QR (${UR_TX_SIG_RES}), got "${scanned.type}".`,
@@ -372,6 +387,7 @@ export function parseTxSigResponse(scanned: ScannedUR): string {
   if (!(value instanceof Map)) {
     throw new Error("SeedSigner signature payload is not a CBOR map");
   }
+  assertStringRequestIdMatches(expectedRequestId, value.get(1), "SeedSigner signature reply");
   const witnessSet = value.get(2);
   if (witnessSet === undefined) {
     throw new Error("SeedSigner signature payload has no witness set (key 2)");
@@ -381,10 +397,14 @@ export function parseTxSigResponse(scanned: ScannedUR): string {
 
 // ── Account import (display request → scan response) ──────────────────────────
 
-async function displayAccountRequest(bridge: AirGapQRBridge, account: number): Promise<void> {
-  const cbor = encodeAccountRequest({ accounts: [account] }, newRequestId());
+// Returns the request id it stamped on the display, so the caller can check
+// the scanned reply actually answers THIS request rather than a stale one.
+async function displayAccountRequest(bridge: AirGapQRBridge, account: number): Promise<string> {
+  const requestId = newRequestId();
+  const cbor = encodeAccountRequest({ accounts: [account] }, requestId);
   const fragments = await encodeUR(UR_ACCOUNT_REQ, cbor, UR_MAX_FRAGMENT_LEN);
   bridge.displayRequest(fragments);
+  return requestId;
 }
 
 /**
@@ -397,10 +417,10 @@ export async function importSeedSignerAccount(
   bridge: AirGapQRBridge,
   account: number,
 ): Promise<SeedSignerAccount> {
-  await displayAccountRequest(bridge, account);
+  const requestId = await displayAccountRequest(bridge, account);
   try {
     const scanned = await bridge.scanResponse();
-    return parseAccountResponse(scanned, account);
+    return parseAccountResponse(scanned, account, requestId);
   } finally {
     bridge.close();
   }
@@ -412,10 +432,10 @@ export async function importSeedSignerAccount(
  * Send's recovery flow to re-learn a lost xfp without re-deriving the xpub.
  */
 export async function recoverSeedSignerXfp(bridge: AirGapQRBridge, account = 0): Promise<string> {
-  await displayAccountRequest(bridge, account);
+  const requestId = await displayAccountRequest(bridge, account);
   try {
     const scanned = await bridge.scanResponse();
-    return parseAccountXfp(scanned);
+    return parseAccountXfp(scanned, requestId);
   } finally {
     bridge.close();
   }
@@ -465,12 +485,13 @@ export async function connectSeedSigner(
         );
       }
 
-      const cbor = encodeTxSigRequest(req, { xfp, requestId: newRequestId() });
+      const requestId = newRequestId();
+      const cbor = encodeTxSigRequest(req, { xfp, requestId });
       const fragments = await encodeUR(UR_TX_SIG_REQ, cbor, UR_MAX_FRAGMENT_LEN);
       bridge.displayRequest(fragments);
       try {
         const scanned = await bridge.scanResponse();
-        return parseTxSigResponse(scanned);
+        return parseTxSigResponse(scanned, requestId);
       } finally {
         bridge.close();
       }
