@@ -530,6 +530,66 @@ type TxWitnessResponse struct {
 	Witness string `json:"witness"`
 }
 
+type legacyWalletStore interface {
+	List(context.Context) ([]string, error)
+	Get(context.Context, string) (*bursa.Wallet, error)
+	Update(context.Context, string, string) error
+	Delete(context.Context, string) error
+}
+
+type gcpLegacyWalletStore struct{}
+
+func (gcpLegacyWalletStore) List(ctx context.Context) ([]string, error) {
+	return gcp.ListGoogleWallets(ctx, nil)
+}
+
+func (gcpLegacyWalletStore) Get(ctx context.Context, name string) (*bursa.Wallet, error) {
+	wallet := bursa.Wallet{}
+	stored := gcp.NewGoogleWallet(name)
+	if err := stored.Load(ctx); err != nil {
+		return nil, err
+	}
+	if err := stored.PopulateTo(&wallet); err != nil {
+		return nil, err
+	}
+	return &wallet, nil
+}
+
+func (gcpLegacyWalletStore) Update(ctx context.Context, name, description string) error {
+	stored := gcp.NewGoogleWallet(name)
+	if err := stored.Load(ctx); err != nil {
+		return err
+	}
+	if stored.Description() == description {
+		return nil
+	}
+	stored.SetDescription(description)
+	return stored.Save(ctx)
+}
+
+func (gcpLegacyWalletStore) Delete(ctx context.Context, name string) error {
+	return gcp.NewGoogleWallet(name).Delete(ctx)
+}
+
+type legacyWalletStoreContextKey struct{}
+
+func legacyStore(r *http.Request) legacyWalletStore {
+	if store, ok := r.Context().Value(legacyWalletStoreContextKey{}).(legacyWalletStore); ok {
+		return store
+	}
+	return gcpLegacyWalletStore{}
+}
+
+func withLegacyStore(store legacyWalletStore, next http.Handler) http.Handler {
+	if store == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), legacyWalletStoreContextKey{}, store)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 //	@title						bursa
 //	@version					v0
 //	@description				Programmable Cardano Wallet API
@@ -628,6 +688,29 @@ func protectAPIHandler(auth signerapi.Validator, next http.Handler) http.Handler
 	)
 }
 
+func protectWalletStorageHandler(
+	auth signerapi.Validator,
+	adminSubjects []string,
+	next http.Handler,
+) http.Handler {
+	if auth == nil {
+		return next
+	}
+	admins := make(map[string]struct{}, len(adminSubjects))
+	for _, subject := range adminSubjects {
+		if subject != "" {
+			admins[subject] = struct{}{}
+		}
+	}
+	return protectAPIHandler(auth, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := admins[signerapi.CallerFromContext(r.Context())]; !ok {
+			writeError(w, http.StatusForbidden, errors.New("wallet storage administrator access required"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
 func apiTLSConfigured(cfg *config.Config) (bool, error) {
 	if cfg == nil {
 		return false, errors.New("API configuration is required")
@@ -657,6 +740,9 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 			cfg.Api.ListenAddress,
 		)
 	}
+	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" && auth != nil && len(cfg.Api.JWTAdminSubjects) == 0 {
+		return errors.New("api.jwt_admin_subjects must identify at least one administrator when authenticated GCP wallet storage is enabled")
+	}
 	return nil
 }
 
@@ -672,7 +758,12 @@ func registerAPIHandlers(
 	mux *http.ServeMux,
 	cfg *config.Config,
 	auth signerapi.Validator,
+	stores ...legacyWalletStore,
 ) {
+	var store legacyWalletStore
+	if len(stores) > 0 {
+		store = stores[0]
+	}
 	// Health and documentation routes do not expose wallet material.
 	mux.HandleFunc("/healthcheck", handleHealthcheck)
 	mux.Handle("/metrics", promhttp.Handler())
@@ -702,10 +793,13 @@ func registerAPIHandlers(
 	mux.HandleFunc("/api/sign/verify", handleVerifyData)
 
 	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
-		mux.Handle("/api/wallet/list", protected(http.HandlerFunc(handleWalletList)))
-		mux.Handle("/api/wallet/get", protected(http.HandlerFunc(handleWalletGet)))
-		mux.Handle("/api/wallet/update", protected(http.HandlerFunc(handleWalletUpdate)))
-		mux.Handle("/api/wallet/delete", protected(http.HandlerFunc(handleWalletDelete)))
+		walletStorage := func(next http.Handler) http.Handler {
+			return withLegacyStore(store, protectWalletStorageHandler(auth, cfg.Api.JWTAdminSubjects, next))
+		}
+		mux.Handle("/api/wallet/list", walletStorage(http.HandlerFunc(handleWalletList)))
+		mux.Handle("/api/wallet/get", walletStorage(http.HandlerFunc(handleWalletGet)))
+		mux.Handle("/api/wallet/update", walletStorage(http.HandlerFunc(handleWalletUpdate)))
+		mux.Handle("/api/wallet/delete", walletStorage(http.HandlerFunc(handleWalletDelete)))
 	}
 }
 
@@ -737,7 +831,7 @@ func Start(
 	// Main HTTP server for API endpoints
 	//
 	mainMux := http.NewServeMux()
-	registerAPIHandlers(mainMux, cfg, apiAuth)
+	registerAPIHandlers(mainMux, cfg, apiAuth, gcpLegacyWalletStore{})
 
 	// Wrap the mainMux with an access-logging middleware
 	mainHandler := logMiddleware(mainMux, accessLogger)
@@ -1065,7 +1159,7 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 
 	logger := logging.GetLogger()
 
-	wallets, err := gcp.ListGoogleWallets(r.Context(), nil)
+	wallets, err := legacyStore(r).List(r.Context())
 	if err != nil {
 		logger.Error("failed to load google wallets", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1117,8 +1211,8 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 	logger := logging.GetLogger()
 
 	// Load wallet from Google
-	g := gcp.NewGoogleWallet(req.Name)
-	if err := g.Load(r.Context()); err != nil {
+	wallet, err := legacyStore(r).Get(r.Context(), req.Name)
+	if err != nil {
 		logger.Error(
 			"failed to load google wallet",
 			"error",
@@ -1136,19 +1230,6 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
 		}
-		walletsFailCounter.Inc()
-		return
-	}
-
-	// Populate bursa wallet
-	wallet := &bursa.Wallet{}
-	err := g.PopulateTo(wallet)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		logger.Error("failed to convert google wallet", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = fmt.Fprintf(w,
-			"failed to convert google wallet: %s", err)
 		walletsFailCounter.Inc()
 		return
 	}
@@ -1194,8 +1275,7 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 	logger := logging.GetLogger()
 
 	// Load wallet from Google
-	g := gcp.NewGoogleWallet(req.Name)
-	if err := g.Delete(r.Context()); err != nil {
+	if err := legacyStore(r).Delete(r.Context(), req.Name); err != nil {
 		logger.Error(
 			"failed to delete google wallet",
 			"error",
@@ -1250,8 +1330,7 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 	logger := logging.GetLogger()
 
 	// Load wallet from Google
-	g := gcp.NewGoogleWallet(req.Name)
-	if err := g.Load(r.Context()); err != nil {
+	if err := legacyStore(r).Update(r.Context(), req.Name, req.Description); err != nil {
 		logger.Error(
 			"failed to load google wallet",
 			"error",
@@ -1273,20 +1352,7 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if g.Description() != req.Description {
-		g.SetDescription(req.Description)
-		if err := g.Save(r.Context()); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			logger.Error("failed to save google wallet", "error", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprintf(w,
-				"failed to save google wallet: %s", err)
-			walletsFailCounter.Inc()
-			return
-		}
-		// Increment update counter
-		walletsUpdatedCounter.Inc()
-	}
+	walletsUpdatedCounter.Inc()
 
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte("\"OK\""))

@@ -65,8 +65,11 @@ signing, and mnemonic/address-derivation endpoints require an
 `Authorization: Bearer <JWT>` header whenever API authentication is configured.
 When Google Secret Manager persistence is enabled, the wallet
 `list`, `get`, `update`, and `delete` endpoints use the same authentication
-requirement. Wallet creation is `POST /api/wallet/create`; wallet responses are
-marked `Cache-Control: no-store`. A remote Swagger URL uses the same HTTPS listener,
+requirement and additionally require a subject listed in
+`API_JWT_ADMIN_SUBJECTS` / `api.jwt_admin_subjects`. This is an explicit
+global-administrator model; wallet names are not caller ownership boundaries.
+Wallet creation is `POST /api/wallet/create`; wallet responses are marked
+`Cache-Control: no-store`. A remote Swagger URL uses the same HTTPS listener,
 for example `https://wallet.example.com:8080/swagger/index.html`. Plain HTTP
 remains available only for loopback development when no TLS files are set.
 
@@ -79,7 +82,22 @@ api:
   jwks_url: https://identity.example.com/.well-known/jwks.json
   jwt_issuer: https://identity.example.com
   jwt_audience: bursa-api
+  jwt_admin_subjects:
+    - wallet-service-admin
 ```
+
+### Kubernetes and Helm deployment contract
+
+The Bursa container listens on loopback by default. A Kubernetes Service must
+set `API_LISTEN_ADDRESS` to the pod address (normally `0.0.0.0`) and preserve
+the API and metrics container/Service ports of `8080` and `8081`. When Google
+Secret Manager persistence is enabled, the deployment must inject
+`GOOGLE_PROJECT`, `GCP_KMS_RESOURCE_ID`, and `GCP_SECRET_PREFIX`, provide
+`API_JWT_SECRET` or `API_JWKS_URL`, provide at least one
+`API_JWT_ADMIN_SUBJECTS` value, and mount the matching TLS certificate and key
+as `API_TLS_CERT_FILE` and `API_TLS_KEY_FILE`. The API refuses a non-loopback
+listener without both TLS files and authentication. These values belong in
+the chart's secret/config wiring; do not place credentials in chart defaults.
 
 For more information about Bursa CLI
 
