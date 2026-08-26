@@ -11,12 +11,24 @@
  */
 
 /**
- * A fresh RFC-4122 UUID string. crypto.randomUUID is available in every target
- * (secure-context browsers); fall back to a fixed nil UUID if it is missing.
+ * A fresh RFC-4122 UUID string. This id is the whole security control against a
+ * stale/replayed reply, so it MUST be unpredictable — never fall back to a fixed
+ * value (e.g. a nil UUID) when crypto.randomUUID is unavailable: every request
+ * would then carry the same id, and a captured old reply would pass the match
+ * check. Fail closed instead.
+ *
+ * @throws Error — crypto.randomUUID is missing (non-secure context or an
+ *   unsupported browser).
  */
 export function newRequestId(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  return c?.randomUUID ? c.randomUUID() : "00000000-0000-0000-0000-000000000000";
+  if (!c?.randomUUID) {
+    throw new Error(
+      "This browser has no crypto.randomUUID (requires a secure context) — cannot generate " +
+        "an unpredictable request identifier for the air-gapped QR round-trip.",
+    );
+  }
+  return c.randomUUID();
 }
 
 /**

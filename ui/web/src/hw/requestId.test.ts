@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, afterEach, vi } from "vitest";
 import {
   newRequestId,
   assertStringRequestIdMatches,
@@ -6,6 +6,10 @@ import {
 } from "./requestId";
 
 describe("newRequestId", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   test("returns a well-formed RFC-4122 UUID string", () => {
     const id = newRequestId();
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
@@ -13,6 +17,14 @@ describe("newRequestId", () => {
 
   test("returns a fresh id on each call", () => {
     expect(newRequestId()).not.toBe(newRequestId());
+  });
+
+  test("fails closed (throws) rather than falling back to a predictable id when crypto.randomUUID is unavailable", () => {
+    // A fixed fallback (e.g. a nil UUID) would defeat the whole point of this
+    // id: every request would carry the same value, so a captured old reply
+    // would pass the active-request match check.
+    vi.stubGlobal("crypto", {});
+    expect(() => newRequestId()).toThrow(/crypto\.randomUUID/i);
   });
 });
 
