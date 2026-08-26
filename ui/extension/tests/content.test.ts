@@ -5,7 +5,6 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 const sendMessageCallbacks: ((response: unknown) => void)[] = [];
 const chromeMock = {
   runtime: {
-    getURL: vi.fn((path: string) => `chrome-extension://fake-id/${path}`),
     sendMessage: vi.fn((_message: unknown, callback: (response: unknown) => void) => {
       sendMessageCallbacks.push(callback);
     }),
@@ -19,16 +18,27 @@ const jsdomEnv = globalThis as typeof globalThis & {
 };
 
 describe('content script', () => {
-  // Capture injection details before beforeEach clears mocks
-  let injectedSrc: string | undefined;
+  let providerRegistrationFailure: unknown;
 
   beforeAll(async () => {
+    vi.useFakeTimers();
+    const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
     // Dynamic import so the module runs AFTER chrome mock is installed
     await import('../src/content');
-    // Capture which src was passed to getURL at injection time
-    if (chromeMock.runtime.getURL.mock.calls.length > 0) {
-      injectedSrc = chromeMock.runtime.getURL.mock.calls[0][0] as string;
-    }
+    await vi.advanceTimersByTimeAsync(2_000);
+    providerRegistrationFailure = postMessageSpy.mock.calls
+      .map(([message]) => message)
+      .find(
+        (message) =>
+          typeof message === 'object' &&
+          message !== null &&
+          'source' in message &&
+          message.source === 'bursa-cip30-provider-status' &&
+          'status' in message &&
+          message.status === 'error',
+      );
+    vi.useRealTimers();
   });
 
   beforeEach(() => {
@@ -38,15 +48,12 @@ describe('content script', () => {
     sendMessageCallbacks.length = 0;
   });
 
-  it('injects a script tag with injected.js src', () => {
-    // In jsdom, onload does not fire so the script tag remains in the DOM
-    const scripts = document.querySelectorAll('script');
-    const injectedScript = Array.from(scripts).find((s) =>
-      s.src.includes('injected.js')
-    );
-    expect(injectedScript).toBeDefined();
-    // Also verify getURL was called with 'injected.js' (captured before mock clear)
-    expect(injectedSrc).toBe('injected.js');
+  it('reports when the provider does not register in the page main world', () => {
+    expect(providerRegistrationFailure).toEqual({
+      source: 'bursa-cip30-provider-status',
+      status: 'error',
+      error: 'Bursa provider failed to register in the page main world',
+    });
   });
 
   it('relays bursa-cip30 messages to chrome.runtime.sendMessage', () => {

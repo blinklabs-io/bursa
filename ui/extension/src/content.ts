@@ -10,12 +10,48 @@ function normalizeExactOrigin(origin: string): string | null {
   }
 }
 
-// Inject the provider script into the page's main world
-const script = document.createElement('script');
-script.src = chrome.runtime.getURL('injected.js');
-script.type = 'module';
-(document.head || document.documentElement).appendChild(script);
-script.onload = () => script.remove();
+const PROVIDER_STATUS_SOURCE = 'bursa-cip30-provider-status';
+const PROVIDER_REGISTRATION_TIMEOUT_MS = 1_000;
+
+function pageTargetOrigin(): string | null {
+  if (window.location.protocol === 'file:' || window.location.origin === 'null') {
+    return '*';
+  }
+  return normalizeExactOrigin(window.location.origin);
+}
+
+function monitorProviderRegistration(): void {
+  const handleProviderStatus = (event: MessageEvent) => {
+    if (event.source !== window) return;
+    if (event.data?.source !== PROVIDER_STATUS_SOURCE) return;
+    if (event.data?.status !== 'ready') return;
+
+    clearTimeout(timeout);
+    window.removeEventListener('message', handleProviderStatus);
+  };
+
+  const timeout = window.setTimeout(() => {
+    window.removeEventListener('message', handleProviderStatus);
+    const error = 'Bursa provider failed to register in the page main world';
+    console.error(error);
+    const targetOrigin = pageTargetOrigin();
+    if (!targetOrigin) return;
+    window.postMessage(
+      {
+        source: PROVIDER_STATUS_SOURCE,
+        status: 'error',
+        error,
+      },
+      targetOrigin,
+    );
+  }, PROVIDER_REGISTRATION_TIMEOUT_MS);
+
+  window.addEventListener('message', handleProviderStatus);
+}
+
+// The manifest runs this isolated-world relay before the MAIN-world provider.
+// The ready handshake makes a missing or failed provider injection observable.
+monitorProviderRegistration();
 
 // Relay page → background
 window.addEventListener('message', (event) => {

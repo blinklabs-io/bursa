@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Bursa Connector",
   "version": "0.1.0",
-  "minimum_chrome_version": "92",
+  "minimum_chrome_version": "111",
   "description": "CIP-30 browser wallet connector for Bursa",
   "icons": {
     "16": "icons/icon16.png",
@@ -23,13 +23,14 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "run_at": "document_start"
-    }
-  ],
-  "web_accessible_resources": [
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    },
     {
-      "resources": ["injected.js"],
-      "matches": ["<all_urls>"]
+      "matches": ["<all_urls>"],
+      "js": ["injected.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ],
   "action": {
