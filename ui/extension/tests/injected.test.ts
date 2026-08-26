@@ -9,6 +9,24 @@ const jsdomEnv = globalThis as typeof globalThis & {
   };
 };
 
+interface TestExtension {
+  cip: number;
+}
+
+interface TestCIP30API {
+  getExtensions(): Promise<TestExtension[]>;
+  getNetworkId(): Promise<number>;
+  cip95?: {
+    getPubDRepKey(): Promise<string>;
+  };
+}
+
+interface TestProvider {
+  apiVersion: string;
+  supportedExtensions: TestExtension[];
+  enable(options?: { extensions?: TestExtension[] }): Promise<TestCIP30API>;
+}
+
 describe('injected provider', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -19,6 +37,66 @@ describe('injected provider', () => {
     expect(window.cardano?.bursa).toBeDefined();
     const provider = window.cardano?.bursa as { name: string };
     expect(provider.name).toBe('Bursa');
+  });
+
+  it('publishes the CIP-30 v1 provider metadata', () => {
+    const provider = window.cardano?.bursa as TestProvider;
+
+    expect(provider.apiVersion).toBe('1');
+    expect(provider.supportedExtensions).toEqual([{ cip: 95 }]);
+  });
+
+  it('negotiates requested extensions and exposes their API surface', async () => {
+    const postMessageSpy = vi.spyOn(window, 'postMessage');
+    const provider = window.cardano?.bursa as TestProvider;
+    const requestedExtensions = [{ cip: 95 }, { cip: 142 }, { cip: 95 }];
+
+    const enablePromise = provider.enable({ extensions: requestedExtensions });
+    const enableCall = postMessageSpy.mock.calls[0][0] as {
+      id: string;
+      method: string;
+      params: unknown;
+    };
+    expect(enableCall.method).toBe('enable');
+    expect(enableCall.params).toEqual({ extensions: requestedExtensions });
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'bursa-cip30-reply', id: enableCall.id, result: true },
+        source: window,
+      })
+    );
+
+    const api = await enablePromise;
+    await expect(api.getExtensions()).resolves.toEqual([{ cip: 95 }]);
+    expect(api.cip95?.getPubDRepKey).toBeTypeOf('function');
+
+    const returnedExtensions = await api.getExtensions();
+    returnedExtensions.push({ cip: 142 });
+    await expect(api.getExtensions()).resolves.toEqual([{ cip: 95 }]);
+  });
+
+  it('returns the base API when no extensions are requested', async () => {
+    const postMessageSpy = vi.spyOn(window, 'postMessage');
+    const provider = window.cardano?.bursa as TestProvider;
+
+    const enablePromise = provider.enable();
+    const enableCall = postMessageSpy.mock.calls[0][0] as {
+      id: string;
+      params: unknown;
+    };
+    expect(enableCall.params).toBeUndefined();
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'bursa-cip30-reply', id: enableCall.id, result: true },
+        source: window,
+      })
+    );
+
+    const api = await enablePromise;
+    await expect(api.getExtensions()).resolves.toEqual([]);
+    expect(api.cip95).toBeUndefined();
   });
 
   it('postMessage shape: getNetworkId posts correct message', async () => {

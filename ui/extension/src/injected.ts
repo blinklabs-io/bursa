@@ -5,8 +5,16 @@ export {};
 
 declare global {
   interface Window {
-    cardano?: Record<string, unknown>;
+    cardano?: Record<string, unknown> & { bursa?: CIP30Provider };
   }
+}
+
+interface Extension {
+  cip: number;
+}
+
+interface EnableOptions {
+  extensions?: Extension[];
 }
 
 interface Paginate {
@@ -19,7 +27,14 @@ interface CIP30Error {
   info: string;
 }
 
+interface CIP95API {
+  getPubDRepKey(): Promise<string>;
+  getRegisteredPubStakeKeys(): Promise<string[]>;
+  getUnregisteredPubStakeKeys(): Promise<string[]>;
+}
+
 interface CIP30API {
+  getExtensions(): Promise<Extension[]>;
   getNetworkId(): Promise<number>;
   getUtxos(amount?: string, paginate?: Paginate): Promise<string[] | null>;
   getBalance(): Promise<string>;
@@ -31,12 +46,19 @@ interface CIP30API {
   signTx(tx: string, partialSign?: boolean): Promise<string>;
   signData(addr: string, payload: string): Promise<{ signature: string; key: string }>;
   submitTx(tx: string): Promise<string>;
-  cip95: {
-    getPubDRepKey(): Promise<string>;
-    getRegisteredPubStakeKeys(): Promise<string[]>;
-    getUnregisteredPubStakeKeys(): Promise<string[]>;
-  };
+  cip95?: CIP95API;
 }
+
+interface CIP30Provider {
+  apiVersion: string;
+  name: string;
+  icon: string;
+  supportedExtensions: Extension[];
+  isEnabled(): Promise<boolean>;
+  enable(options?: EnableOptions): Promise<CIP30API>;
+}
+
+const SUPPORTED_EXTENSIONS: readonly Extension[] = [{ cip: 95 }];
 
 // Slightly longer than the background's 125s fetch timeout so a real (slow)
 // reply is preferred over our local timeout when both are in flight.
@@ -111,8 +133,36 @@ async function safeRequest(method: string, params?: unknown): Promise<unknown> {
   }
 }
 
-function buildCIP30API(): CIP30API {
+function copyExtensions(extensions: readonly Extension[]): Extension[] {
+  return extensions.map(({ cip }) => ({ cip }));
+}
+
+function negotiateExtensions(requestedExtensions: readonly Extension[]): Extension[] {
+  const requestedCIPs = new Set(requestedExtensions.map(({ cip }) => cip));
+  return copyExtensions(
+    SUPPORTED_EXTENSIONS.filter(({ cip }) => requestedCIPs.has(cip))
+  );
+}
+
+function buildCIP95API(): CIP95API {
   return {
+    async getPubDRepKey(): Promise<string> {
+      return safeRequest('cip95.getPubDRepKey') as Promise<string>;
+    },
+    async getRegisteredPubStakeKeys(): Promise<string[]> {
+      return safeRequest('cip95.getRegisteredPubStakeKeys') as Promise<string[]>;
+    },
+    async getUnregisteredPubStakeKeys(): Promise<string[]> {
+      return safeRequest('cip95.getUnregisteredPubStakeKeys') as Promise<string[]>;
+    },
+  };
+}
+
+function buildCIP30API(enabledExtensions: readonly Extension[]): CIP30API {
+  const api: CIP30API = {
+    async getExtensions(): Promise<Extension[]> {
+      return copyExtensions(enabledExtensions);
+    },
     async getNetworkId(): Promise<number> {
       return safeRequest('getNetworkId') as Promise<number>;
     },
@@ -146,25 +196,19 @@ function buildCIP30API(): CIP30API {
     async submitTx(tx: string): Promise<string> {
       return safeRequest('submitTx', { tx }) as Promise<string>;
     },
-    cip95: {
-      async getPubDRepKey(): Promise<string> {
-        return safeRequest('cip95.getPubDRepKey') as Promise<string>;
-      },
-      async getRegisteredPubStakeKeys(): Promise<string[]> {
-        return safeRequest('cip95.getRegisteredPubStakeKeys') as Promise<string[]>;
-      },
-      async getUnregisteredPubStakeKeys(): Promise<string[]> {
-        return safeRequest('cip95.getUnregisteredPubStakeKeys') as Promise<string[]>;
-      },
-    },
   };
+
+  if (enabledExtensions.some(({ cip }) => cip === 95)) {
+    api.cip95 = buildCIP95API();
+  }
+  return api;
 }
 
-const bursaProvider = {
-  apiVersion: '0.1.0',
+const bursaProvider: CIP30Provider = {
+  apiVersion: '1',
   name: 'Bursa',
   icon: 'data:image/svg+xml,%3Csvg xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22 width%3D%221%22 height%3D%221%22%2F%3E',
-  supportedExtensions: [{ cip: 95 }],
+  supportedExtensions: copyExtensions(SUPPORTED_EXTENSIONS),
 
   async isEnabled(): Promise<boolean> {
     // Use safeRequest for parity with enable(): rejections become CIP-30
@@ -174,12 +218,19 @@ const bursaProvider = {
     return safeRequest('isEnabled') as Promise<boolean>;
   },
 
-  async enable(): Promise<CIP30API> {
+  async enable({ extensions = [] }: EnableOptions = {}): Promise<CIP30API> {
     try {
+      const requestedExtensions = copyExtensions(extensions);
+      const enabledExtensions = negotiateExtensions(requestedExtensions);
       // See isEnabled: the origin is derived from the sender by the background
       // worker, so we deliberately do not pass a page-controlled origin.
-      await sendRequest('enable');
-      return buildCIP30API();
+      await sendRequest(
+        'enable',
+        requestedExtensions.length > 0
+          ? { extensions: requestedExtensions }
+          : undefined
+      );
+      return buildCIP30API(enabledExtensions);
     } catch (err) {
       throw wrapError(err);
     }
