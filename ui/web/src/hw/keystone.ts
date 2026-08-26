@@ -520,9 +520,9 @@ export async function connectKeystoneUSB(): Promise<HardwareSigner> {
           hashHex,
         })),
         includeNetworkId: resp.include_network_id || null,
-        tagCborSets: resp.body_set_tag_policy === "tagged",
       },
       signingMode: TransactionSigningMode.ORDINARY_TRANSACTION,
+      tagCborSets: resp.body_set_tag_policy === "tagged",
     };
   }
 
