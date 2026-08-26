@@ -295,16 +295,15 @@ export interface GovernanceActionsResponse {
 }
 
 // DRepInfo mirrors GET /wallet/drep/{id}: a node-verified readout of a single
-// DRep, used to confirm a pasted id before delegating. amount / live_stake are
-// the DRep's voting power as decimal lovelace strings.
+// DRep, used to confirm a pasted id before delegating. amount is the DRep's
+// voting power as a decimal lovelace string.
 export interface DRepInfo {
   drep_id: string;
   hex: string;
   has_script: boolean;
-  registered: boolean;
   amount: string;
   active: boolean;
-  live_stake: string;
+  retired: boolean;
 }
 
 // DRepMetadata is the DRep's resolved CIP-119 anchor document as reported by

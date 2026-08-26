@@ -181,23 +181,25 @@ type ProtocolParams struct {
 
 // DRepInfo describes a delegated representative as returned by
 // GET /api/v0/governance/dreps/{drep_id}. It confirms the DRep exists on chain
-// (the node 404s an unknown DRep, surfaced as ErrNotFound) and reports whether
-// it is currently registered/active.
+// (the node 404s an unknown DRep, surfaced as ErrNotFound). There is no
+// "registered" field on the wire; callers derive registration as !Retired,
+// same as DRepListItem below.
 type DRepInfo struct {
-	DRepID     string `json:"drep_id"`
-	Hex        string `json:"hex"`
-	HasScript  bool   `json:"has_script"`
-	Registered bool   `json:"registered"`
-	Amount     string `json:"amount"`
-	Active     bool   `json:"active"`
-	LiveStake  string `json:"live_stake"`
+	DRepID          string  `json:"drep_id"`
+	Hex             string  `json:"hex"`
+	HasScript       bool    `json:"has_script"`
+	Amount          string  `json:"amount"`
+	Active          bool    `json:"active"`
+	ActiveEpoch     *uint64 `json:"active_epoch"`
+	Retired         bool    `json:"retired"`
+	Expired         bool    `json:"expired"`
+	LastActiveEpoch *uint64 `json:"last_active_epoch"`
 }
 
 // DRepListItem is one entry of GET /api/v0/governance/dreps, the node's
 // paginated DRep directory. It is deliberately a separate type from DRepInfo:
-// the list reports CIP-1694 lifecycle status (retired/expired plus the epoch
-// the DRep was last active in) and a resolved CIP-119 anchor document, and it
-// has no registered/active/live_stake fields for DRepInfo to borrow.
+// the list also resolves a CIP-119 anchor document, which the single-DRep
+// lookup does not.
 type DRepListItem struct {
 	// DRepID is the CIP-129 bech32 drep1… identifier, encoded by the node. The
 	// predefined targets appear as the literal strings "drep_always_abstain"

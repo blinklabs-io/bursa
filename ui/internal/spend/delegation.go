@@ -521,7 +521,7 @@ func (s *Service) ownDRepRegistered(ctx context.Context, q chainQuerier, own lco
 			}
 			continue
 		}
-		return info.Registered, nil
+		return !info.Retired, nil
 	}
 	if firstErr != nil {
 		return false, fmt.Errorf("verify own DRep: %w", firstErr)

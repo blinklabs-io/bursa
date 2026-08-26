@@ -337,7 +337,7 @@ func newFakeQuerier() *fakeQuerier {
 	return &fakeQuerier{
 		account: chain.AccountInfo{Active: false, WithdrawableAmount: "0"},
 		pool:    chain.PoolInfo{PoolID: "pool1abc"},
-		drep:    chain.DRepInfo{DRepID: "drep1abc", Registered: true},
+		drep:    chain.DRepInfo{DRepID: "drep1abc", Retired: false},
 		params:  chain.ProtocolParams{KeyDeposit: "2000000", PoolDeposit: "500000000", DRepDeposit: &dd},
 	}
 }
@@ -483,7 +483,7 @@ func TestBuildDelegationRegisterSelfNoChange(t *testing.T) {
 	q := newFakeQuerier()
 	q.account = chain.AccountInfo{Registered: true, Active: true, WithdrawableAmount: "0"}
 	q.accountDRepID = strptr(own.String())
-	q.drep = chain.DRepInfo{DRepID: own.String(), Registered: true}
+	q.drep = chain.DRepInfo{DRepID: own.String(), Retired: false}
 	s.SetChainQuerier(q)
 
 	_, err = s.BuildDelegation(context.Background(), DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf}})
@@ -506,7 +506,7 @@ func TestBuildDelegationRegisterSelfAlreadyRegisteredVoteOnly(t *testing.T) {
 	q := newFakeQuerier()
 	q.account = chain.AccountInfo{Registered: true, Active: true, WithdrawableAmount: "0"}
 	q.accountDRepID = strptr("drep_abstain")
-	q.drep = chain.DRepInfo{DRepID: own.String(), Registered: true}
+	q.drep = chain.DRepInfo{DRepID: own.String(), Retired: false}
 	s.SetChainQuerier(q)
 
 	pv, err := s.BuildDelegation(context.Background(), DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf}})

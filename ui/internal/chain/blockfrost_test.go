@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	dingoblockfrost "github.com/blinklabs-io/dingo/api/blockfrost"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
@@ -495,24 +496,61 @@ func TestPoolsReturnsFullList(t *testing.T) {
 	}
 }
 
+// TestDRep marshals dingo's own DRepResponse type as the fixture (rather than
+// hand-writing the JSON body) so a future wire-shape change fails this test
+// instead of silently decoding to zero values, as it did in #720.
 func TestDRep(t *testing.T) {
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("method = %q", r.Method)
-		}
-		if r.URL.Path != "/api/v0/governance/dreps/drep1abc" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
+	drepResp := func(w http.ResponseWriter, resp dingoblockfrost.DRepResponse) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"drep_id":"drep1abc","hex":"abc","has_script":false,"registered":true,"amount":"123","active":true,"live_stake":"123"}`))
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Fatalf("encode fixture: %v", err)
+		}
+	}
+
+	t.Run("active, not retired", func(t *testing.T) {
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				t.Errorf("method = %q", r.Method)
+			}
+			if r.URL.Path != "/api/v0/governance/dreps/drep1abc" {
+				t.Errorf("path = %q", r.URL.Path)
+			}
+			drepResp(w, dingoblockfrost.DRepResponse{
+				DRepID:    "drep1abc",
+				Hex:       "abc",
+				HasScript: false,
+				Amount:    "123",
+				Active:    true,
+				Retired:   false,
+			})
+		})
+		got, err := c.DRep(context.Background(), "drep1abc")
+		if err != nil {
+			t.Fatalf("DRep: %v", err)
+		}
+		if got.DRepID != "drep1abc" || got.Retired || !got.Active {
+			t.Fatalf("unexpected drep: %+v", got)
+		}
 	})
-	got, err := c.DRep(context.Background(), "drep1abc")
-	if err != nil {
-		t.Fatalf("DRep: %v", err)
-	}
-	if got.DRepID != "drep1abc" || !got.Registered || !got.Active {
-		t.Fatalf("unexpected drep: %+v", got)
-	}
+
+	t.Run("retired drep decodes Retired", func(t *testing.T) {
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			drepResp(w, dingoblockfrost.DRepResponse{
+				DRepID:  "drep1retired",
+				Hex:     "def",
+				Amount:  "0",
+				Active:  false,
+				Retired: true,
+			})
+		})
+		got, err := c.DRep(context.Background(), "drep1retired")
+		if err != nil {
+			t.Fatalf("DRep: %v", err)
+		}
+		if !got.Retired {
+			t.Fatalf("expected Retired to decode true: %+v", got)
+		}
+	})
 }
 
 func TestDRepNotFound(t *testing.T) {
