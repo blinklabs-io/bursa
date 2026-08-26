@@ -17,6 +17,14 @@ import { bytesToHex, hexToBytes } from "./hex";
 import type { SeedSignerQRBridge, SeedSignerScannedUR } from "./types";
 import type { HardwareSignResponse } from "../api/types";
 
+// connectSeedSigner generates its own request id internally (not observable from
+// outside); pin it to "id" so it matches the fixed request id ("id") every
+// fixture below stamps on its reply, without reaching into crypto.randomUUID.
+vi.mock("./requestId", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./requestId")>();
+  return { ...actual, newRequestId: () => "id" };
+});
+
 // Shared parity vector — identical key material to the Ledger/Trezor/Keystone
 // canonical vectors, so SeedSigner MUST produce the same bech32 xpub and, for the
 // same pubkey/sig, the same witness-array CBOR.
@@ -52,20 +60,32 @@ const NEUTRAL_REQ: HardwareSignResponse = {
 
 const ht = (s: string): string => bytesToHex([...new TextEncoder().encode(s)]);
 
+// CBOR text-string encoding for a short (<24-byte) string: a single-byte
+// major-type-3 header (0x60 + length) followed by the UTF-8 bytes.
+function cborTextHex(s: string): string {
+  const len = new TextEncoder().encode(s).length;
+  if (len >= 24) throw new Error("cborTextHex: string too long for a single-byte header");
+  return (0x60 + len).toString(16).padStart(2, "0") + ht(s);
+}
+
 // A `cardano-account` reply carrying one account record + the master fingerprint.
+// `requestId` defaults to "id" — the fixed id every connectSeedSigner call in
+// this file sends (newRequestId is mocked above) — so callers only need to
+// override it to build a stale/mismatched-id fixture.
 function accountCborHex(
   account: number,
   pubHex: string,
   ccHex: string,
   xfpHex: string,
   label = "SeedSigner",
+  requestId = "id",
 ): string {
   const rec = new Map<number, unknown>();
   rec.set(1, account);
   rec.set(2, hexToBytes(pubHex + ccHex));
   rec.set(3, `1852'/1815'/${account}'`);
   const m = new Map<number, unknown>();
-  m.set(1, "id");
+  m.set(1, requestId);
   m.set(2, hexToBytes(xfpHex));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   m.set(3, [rec] as any);
@@ -76,9 +96,10 @@ function accountCborHex(
 
 // A `cardano-tx-sig-res` reply: {1:request_id, 2: tag258([[pub,sig]])}. The set
 // tag (d90102) is written by hand since the shared encoder emits no tags.
-function txSigResCborHex(pubHex: string, sigHex: string): string {
+// `requestId` defaults to "id" for the same reason as accountCborHex above.
+function txSigResCborHex(pubHex: string, sigHex: string, requestId = "id"): string {
   const witnessSet = "d90102" + "81" + "82" + "5820" + pubHex + "5840" + sigHex;
-  return "a2" + "01" + "62" + ht("id") + "02" + witnessSet;
+  return "a2" + "01" + cborTextHex(requestId) + "02" + witnessSet;
 }
 
 function makeBridge(): SeedSignerQRBridge & {
@@ -202,7 +223,7 @@ describe("parseAccountResponse", () => {
       type: "cardano-account",
       cborHex: accountCborHex(0, TEST_PUB_KEY_HEX, TEST_CHAIN_CODE_HEX, TEST_XFP),
     };
-    const acct = parseAccountResponse(scanned, 0);
+    const acct = parseAccountResponse(scanned, 0, "id");
     expect(acct.xpub).toBe(TEST_XPUB_BECH32);
     expect(acct.xfp).toBe(TEST_XFP);
     expect(acct.account).toBe(0);
@@ -210,7 +231,7 @@ describe("parseAccountResponse", () => {
 
   test("rejects a non-account UR", () => {
     expect(() =>
-      parseAccountResponse({ type: "cardano-tx-sig-res", cborHex: "a0" }, 0),
+      parseAccountResponse({ type: "cardano-tx-sig-res", cborHex: "a0" }, 0, "id"),
     ).toThrow(/cardano-account/i);
   });
 
@@ -219,7 +240,7 @@ describe("parseAccountResponse", () => {
       type: "cardano-account",
       cborHex: accountCborHex(0, TEST_PUB_KEY_HEX, TEST_CHAIN_CODE_HEX, TEST_XFP),
     };
-    expect(() => parseAccountResponse(scanned, 5)).toThrow(/does not contain account 5/i);
+    expect(() => parseAccountResponse(scanned, 5, "id")).toThrow(/does not contain account 5/i);
   });
 
   test("rejects a malformed (non-8-hex) fingerprint", () => {
@@ -228,7 +249,43 @@ describe("parseAccountResponse", () => {
       type: "cardano-account",
       cborHex: accountCborHex(0, TEST_PUB_KEY_HEX, TEST_CHAIN_CODE_HEX, "aabbcc"),
     };
-    expect(() => parseAccountResponse(scanned, 0)).toThrow(/malformed master fingerprint/i);
+    expect(() => parseAccountResponse(scanned, 0, "id")).toThrow(/malformed master fingerprint/i);
+  });
+
+  // ── request-identifier matching (issue: reject a reply that doesn't answer
+  // the active request — a stale scan, or one with no/garbled identifier) ──────
+
+  test("rejects a reply whose request id does not match the active request (stale scan)", () => {
+    const scanned: SeedSignerScannedUR = {
+      type: "cardano-account",
+      cborHex: accountCborHex(0, TEST_PUB_KEY_HEX, TEST_CHAIN_CODE_HEX, TEST_XFP, "SeedSigner", "earlier-request"),
+    };
+    expect(() => parseAccountResponse(scanned, 0, "id")).toThrow(/does not match the active request/i);
+  });
+
+  test("rejects a reply with no request id", () => {
+    const m = new Map<number, unknown>();
+    m.set(2, hexToBytes(TEST_XFP));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    m.set(3, [] as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cborHex = bytesToHex([...encodeCbor(m as any)]);
+    expect(() => parseAccountResponse({ type: "cardano-account", cborHex }, 0, "id")).toThrow(
+      /no request identifier/i,
+    );
+  });
+
+  test("rejects a reply whose request id is not a text string (malformed)", () => {
+    const m = new Map<number, unknown>();
+    m.set(1, 42); // request id must be a string, not an integer
+    m.set(2, hexToBytes(TEST_XFP));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    m.set(3, [] as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cborHex = bytesToHex([...encodeCbor(m as any)]);
+    expect(() => parseAccountResponse({ type: "cardano-account", cborHex }, 0, "id")).toThrow(
+      /malformed request identifier/i,
+    );
   });
 });
 
@@ -238,7 +295,15 @@ describe("parseAccountXfp", () => {
       type: "cardano-account",
       cborHex: accountCborHex(3, TEST_PUB_KEY_HEX, TEST_CHAIN_CODE_HEX, TEST_XFP),
     };
-    expect(parseAccountXfp(scanned)).toBe(TEST_XFP);
+    expect(parseAccountXfp(scanned, "id")).toBe(TEST_XFP);
+  });
+
+  test("rejects a reply whose request id does not match the active request", () => {
+    const scanned: SeedSignerScannedUR = {
+      type: "cardano-account",
+      cborHex: accountCborHex(3, TEST_PUB_KEY_HEX, TEST_CHAIN_CODE_HEX, TEST_XFP, "SeedSigner", "other-request"),
+    };
+    expect(() => parseAccountXfp(scanned, "id")).toThrow(/does not match the active request/i);
   });
 });
 
@@ -250,7 +315,7 @@ describe("parseTxSigResponse", () => {
       type: "cardano-tx-sig-res",
       cborHex: txSigResCborHex(TEST_PUB_KEY_HEX, TEST_SIG_HEX),
     };
-    const result = parseTxSigResponse(scanned);
+    const result = parseTxSigResponse(scanned, "id");
     expect(result).toBe(encodeWitnessArray([{ pubKeyHex: TEST_PUB_KEY_HEX, sigHex: TEST_SIG_HEX }]));
     expect(result.startsWith("8182")).toBe(true);
     expect(result).toContain(TEST_PUB_KEY_HEX);
@@ -258,17 +323,43 @@ describe("parseTxSigResponse", () => {
   });
 
   test("rejects a non-signature UR", () => {
-    expect(() => parseTxSigResponse({ type: "cardano-account", cborHex: "a0" })).toThrow(
-      /cardano-tx-sig-res/i,
-    );
+    expect(() =>
+      parseTxSigResponse({ type: "cardano-account", cborHex: "a0" }, "id"),
+    ).toThrow(/cardano-tx-sig-res/i);
   });
 
   test("trims an extended (pubkey||chaincode) vkey to the 32-byte public key", () => {
     const extended = TEST_PUB_KEY_HEX + TEST_CHAIN_CODE_HEX;
     const witnessSet = "d90102" + "81" + "82" + "5840" + extended + "5840" + TEST_SIG_HEX;
     const cborHex = "a2" + "01" + "62" + ht("id") + "02" + witnessSet;
-    const result = parseTxSigResponse({ type: "cardano-tx-sig-res", cborHex });
+    const result = parseTxSigResponse({ type: "cardano-tx-sig-res", cborHex }, "id");
     expect(result).toBe(encodeWitnessArray([{ pubKeyHex: TEST_PUB_KEY_HEX, sigHex: TEST_SIG_HEX }]));
+  });
+
+  // ── request-identifier matching ───────────────────────────────────────────
+
+  test("rejects a reply whose request id does not match the active request (stale scan)", () => {
+    const scanned: SeedSignerScannedUR = {
+      type: "cardano-tx-sig-res",
+      cborHex: txSigResCborHex(TEST_PUB_KEY_HEX, TEST_SIG_HEX, "earlier-request"),
+    };
+    expect(() => parseTxSigResponse(scanned, "id")).toThrow(/does not match the active request/i);
+  });
+
+  test("rejects a reply with no request id", () => {
+    const witnessSet = "d90102" + "81" + "82" + "5820" + TEST_PUB_KEY_HEX + "5840" + TEST_SIG_HEX;
+    const cborHex = "a1" + "02" + witnessSet; // map with only key 2 (witness set)
+    expect(() =>
+      parseTxSigResponse({ type: "cardano-tx-sig-res", cborHex }, "id"),
+    ).toThrow(/no request identifier/i);
+  });
+
+  test("rejects a reply whose request id is not a text string (malformed)", () => {
+    const witnessSet = "d90102" + "81" + "82" + "5820" + TEST_PUB_KEY_HEX + "5840" + TEST_SIG_HEX;
+    const cborHex = "a2" + "01" + "182a" + "02" + witnessSet; // key 1 = uint(42), not a string
+    expect(() =>
+      parseTxSigResponse({ type: "cardano-tx-sig-res", cborHex }, "id"),
+    ).toThrow(/malformed request identifier/i);
   });
 });
 
@@ -318,6 +409,20 @@ describe("connectSeedSigner", () => {
     expect(fragments[0].toLowerCase()).toMatch(/^ur:cardano-tx-sig-req\//);
 
     expect(result).toBe(encodeWitnessArray([{ pubKeyHex: TEST_PUB_KEY_HEX, sigHex: TEST_SIG_HEX }]));
+    expect(bridge.close).toHaveBeenCalled();
+  });
+
+  test("signTx rejects a reply carrying a different (stale) request id", async () => {
+    // A response left over from an EARLIER sign request — e.g. still showing on
+    // the device or re-scanned from a screenshot — must not be attached to the
+    // current operation just because it happens to be a well-formed signature.
+    const bridge = makeBridge();
+    bridge.scanResponse.mockResolvedValue({
+      type: "cardano-tx-sig-res",
+      cborHex: txSigResCborHex(TEST_PUB_KEY_HEX, TEST_SIG_HEX, "earlier-request"),
+    });
+    const session = await connectSeedSigner({ bridge, xfp: TEST_XFP });
+    await expect(session.signTx(NEUTRAL_REQ)).rejects.toThrow(/does not match the active request/i);
     expect(bridge.close).toHaveBeenCalled();
   });
 
