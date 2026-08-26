@@ -385,6 +385,60 @@ func TestRegisterAPIHandlersProtectsSensitiveRoutes(t *testing.T) {
 	assert.Equal(t, http.StatusOK, public.Code)
 }
 
+func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	cfg := &config.Config{
+		Google: config.GoogleConfig{Project: "test", ResourceId: "test"},
+	}
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, cfg, signerapi.HS256Validator([]byte(secret), "", ""))
+
+	routes := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/wallet/list", ""},
+		{http.MethodPost, "/api/wallet/get", `{}`},
+		{http.MethodPost, "/api/wallet/update", `{}`},
+		{http.MethodPost, "/api/wallet/delete", `{}`},
+	}
+
+	t.Run("unauthenticated requests are denied", func(t *testing.T) {
+		for _, route := range routes {
+			t.Run(route.path, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				r := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+				mux.ServeHTTP(w, r)
+
+				assert.Equal(t, http.StatusUnauthorized, w.Code)
+				assert.Equal(t, "Bearer", w.Header().Get("WWW-Authenticate"))
+			})
+		}
+	})
+
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "test-caller",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	require.NoError(t, err)
+
+	t.Run("authorized requests reach the wallet handlers", func(t *testing.T) {
+		for _, route := range routes[1:] {
+			t.Run(route.path, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				r := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+				r.Header.Set("Authorization", "Bearer "+token)
+				mux.ServeHTTP(w, r)
+
+				// These requests pass authentication and reach the GCP handler;
+				// the test does not require live Google credentials.
+				assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+			})
+		}
+	})
+}
+
 func TestDecodeAndValidateSanitizesValidationErrors(t *testing.T) {
 	type request struct {
 		TxCbor string `json:"tx_cbor" validate:"required"`

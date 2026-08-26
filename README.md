@@ -63,8 +63,10 @@ private key, and exactly one of these API trust sources is configured:
 `api.jwt_audience` optionally constrain accepted bearer tokens. The secret,
 signing, and mnemonic/address-derivation endpoints require an
 `Authorization: Bearer <JWT>` header whenever API authentication is configured.
-Wallet creation is `POST /api/wallet/create`; wallet responses are marked
-`Cache-Control: no-store`. A remote Swagger URL uses the same HTTPS listener,
+When Google Secret Manager persistence is enabled, the wallet
+`list`, `get`, `update`, and `delete` endpoints use the same authentication
+requirement. Wallet creation is `POST /api/wallet/create`; wallet responses are
+marked `Cache-Control: no-store`. A remote Swagger URL uses the same HTTPS listener,
 for example `https://wallet.example.com:8080/swagger/index.html`. Plain HTTP
 remains available only for loopback development when no TLS files are set.
 
