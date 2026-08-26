@@ -4,13 +4,13 @@ go 1.26.0
 
 require (
 	fyne.io/systray v1.12.1
-	github.com/Salvionied/apollo/v2 v2.0.0-20260729192515-7fa2cfd06025
+	github.com/Salvionied/apollo/v2 v2.0.0
 	github.com/blinklabs-io/bursa v0.16.1-0.20260822162654-819d49daca4c
 	github.com/blinklabs-io/dingo v0.69.1-0.20260822162716-759843061f20
 	github.com/blinklabs-io/go-bip39 v0.2.0
 	github.com/blinklabs-io/gouroboros v0.194.0
 	github.com/blinklabs-io/plutigo v0.3.0
-	github.com/blinklabs-io/shai v0.0.0-20260802142328-c23aaf4bf701
+	github.com/blinklabs-io/shai v0.0.0-20260824194445-61b0d4e854ad
 	github.com/btcsuite/btcd/btcutil v1.2.0
 	github.com/glebarez/go-sqlite v1.23.0
 	github.com/google/go-tpm v0.9.8
@@ -101,7 +101,7 @@ require (
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
-	github.com/dgraph-io/badger/v4 v4.9.5 // indirect
+	github.com/dgraph-io/badger/v4 v4.9.6 // indirect
 	github.com/dgraph-io/ristretto/v2 v2.2.0 // indirect
 	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
@@ -250,7 +250,7 @@ require (
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7 // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/urfave/cli v1.22.17 // indirect
-	github.com/utxorpc/go-sdk v0.0.4 // indirect
+	github.com/utxorpc/go-sdk v0.1.0 // indirect
 	github.com/whyrusleeping/chunker v0.0.0-20181014151217-fe64bd25879f // indirect
 	github.com/whyrusleeping/go-keyspace v0.0.0-20160322163242-5b898ac5add1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
@@ -274,7 +274,7 @@ require (
 	go.uber.org/mock v0.5.2 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b // indirect
 	golang.org/x/mobile v0.0.0-20260611195102-4dd8f1dbf5d2 // indirect
 	golang.org/x/mod v0.38.0 // indirect
