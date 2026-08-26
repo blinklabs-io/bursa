@@ -381,9 +381,8 @@ func handleConnectorPendingPairings(svc *connector.Service, authorizeCode func(p
 // handleConnectorEvents handles GET /connector/events.
 //
 // This is a Server-Sent Events (SSE) stream consumed by the Bursa SPA. It is
-// guarded by strictSameOrigin() and does NOT
-// require the extension bearer token — that is scoped to extension-facing
-// routes only.
+// guarded by sameOrigin() and does NOT require the extension bearer token —
+// that is scoped to extension-facing routes only.
 //
 // On connect:
 //  1. Emits the current pending queue as one authoritative snapshot event.
@@ -393,10 +392,10 @@ func handleConnectorPendingPairings(svc *connector.Service, authorizeCode func(p
 //  4. Returns when the client disconnects (r.Context().Done()).
 func handleConnectorEvents(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// SPA-facing: require a browser same-origin request before opening the
-		// stream. Without this guard local non-browser clients could observe
-		// pending dApp request metadata, including request IDs.
-		if !strictSameOrigin(r) {
+		// EventSource can omit Origin for same-origin GETs. Accept that browser
+		// request shape only over a loopback Host; sameOrigin still rejects an
+		// explicit cross-origin request or a DNS-rebound public Host.
+		if !sameOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
 			return
 		}

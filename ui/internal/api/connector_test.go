@@ -569,7 +569,8 @@ func TestConnectorEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	req.Header.Set("Origin", srv.URL)
+	// Browser EventSource can send this same-origin GET without an Origin header.
+	// The loopback Host is the request's same-origin and DNS-rebinding boundary.
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
@@ -645,6 +646,44 @@ func TestConnectorEvents(t *testing.T) {
 		t.Error("did not receive authoritative empty snapshot after decision")
 	}
 	// cancel() (deferred above) ends the SSE stream.
+}
+
+func TestConnectorEventsRejectsCrossOrigin(t *testing.T) {
+	svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+	handler := handleConnectorEvents(svc)
+
+	tests := []struct {
+		name   string
+		host   string
+		origin string
+	}{
+		{
+			name:   "cross-origin header",
+			host:   "127.0.0.1:8090",
+			origin: "https://evil.example",
+		},
+		{
+			name: "DNS-rebound Host without Origin",
+			host: "evil.example:8090",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/connector/events", nil)
+			req.Host = test.host
+			if test.origin != "" {
+				req.Header.Set("Origin", test.origin)
+			}
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403; body: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
 }
 
 type writeDeadlineRecorder struct {
