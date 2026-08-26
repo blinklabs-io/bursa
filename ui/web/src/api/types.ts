@@ -226,6 +226,7 @@ export interface SignTxRequest {
   unsigned_tx_cbor: string;
   password: string;
   required_signers: string[];
+  body_set_tag_policy?: "untagged" | "tagged";
 }
 
 export interface SubmitSignedRequest {

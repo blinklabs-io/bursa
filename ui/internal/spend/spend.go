@@ -475,7 +475,8 @@ func (s *Service) completeSend(
 		next := apollo.New(s.chain).
 			SetWallet(apollo.NewExternalWallet(changeAddr)).
 			SetChangeAddress(changeAddr).
-			SetFeePadding(feePaddingLovelace)
+			SetFeePadding(feePaddingLovelace).
+			SetTransactionBodySetTagPolicy(apollo.TransactionBodySetTagPolicyUntagged)
 		if forceInputs {
 			for _, u := range loaded {
 				next = next.AddInput(u)
@@ -2665,6 +2666,9 @@ type HardwareSignRequest struct {
 	// Ledger request must include the identical set or it will sign a different
 	// body from UnsignedTxCBOR.
 	RequiredSigners []string `json:"required_signers"`
+	// BodySetTagPolicy is the uniform CBOR set policy used for body keys 0, 13,
+	// 14, and 18. Structured hardware signers must use the same policy.
+	BodySetTagPolicy string `json:"body_set_tag_policy"`
 	// IncludeNetworkID preserves body key 15 when it was present in the pending
 	// transaction, so Ledger reconstructs and signs the identical body.
 	IncludeNetworkID bool `json:"include_network_id,omitempty"`
@@ -2840,6 +2844,7 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 		NetworkID:        networkID,
 		ProtocolMagic:    protocolMagic,
 		RequiredSigners:  keyHashesHex(tx.Body.RequiredSigners()),
+		BodySetTagPolicy: "untagged",
 		UnsignedTxCBOR:   unsignedTxCBOR,
 		IncludeNetworkID: tx.Body.TxNetworkId != nil,
 	}

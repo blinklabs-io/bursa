@@ -6,7 +6,7 @@ toolchain go1.26.7
 
 require (
 	fyne.io/systray v1.12.1
-	github.com/Salvionied/apollo/v2 v2.0.0-20260729192515-7fa2cfd06025
+	github.com/Salvionied/apollo/v2 v2.1.1
 	github.com/blinklabs-io/bursa v0.16.1-0.20260822162654-819d49daca4c
 	github.com/blinklabs-io/dingo v0.70.1
 	github.com/blinklabs-io/go-bip39 v0.2.0
@@ -252,7 +252,7 @@ require (
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7 // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/urfave/cli v1.22.17 // indirect
-	github.com/utxorpc/go-sdk v0.0.4 // indirect
+	github.com/utxorpc/go-sdk v0.1.0 // indirect
 	github.com/whyrusleeping/chunker v0.0.0-20181014151217-fe64bd25879f // indirect
 	github.com/whyrusleeping/go-keyspace v0.0.0-20160322163242-5b898ac5add1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect

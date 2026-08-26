@@ -2256,6 +2256,9 @@ func TestHardwareSignRequest(t *testing.T) {
 	if req.ProtocolMagic != 2 {
 		t.Fatalf("ProtocolMagic = %d, want 2", req.ProtocolMagic)
 	}
+	if req.BodySetTagPolicy != "untagged" {
+		t.Fatalf("BodySetTagPolicy = %q, want untagged", req.BodySetTagPolicy)
+	}
 	if !req.IncludeNetworkID {
 		t.Fatal("IncludeNetworkID must preserve the network-id field from the payment body")
 	}

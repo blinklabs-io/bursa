@@ -596,7 +596,8 @@ func (s *Service) Build(ctx context.Context, id string, req BuildRequest) (Unsig
 	a := apollo.New(s.chain).
 		SetWallet(apollo.NewExternalWallet(scriptAddr)).
 		SetChangeAddress(scriptAddr).
-		SetFeePadding(padding)
+		SetFeePadding(padding).
+		SetTransactionBodySetTagPolicy(apollo.TransactionBodySetTagPolicyUntagged)
 
 	utxos, err := backend.UtxosContext(ctx, s.chain, scriptAddr)
 	if err != nil {
