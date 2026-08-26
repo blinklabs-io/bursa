@@ -2212,6 +2212,8 @@ func validateScriptInvalidBefore(
 	return slot >= script.Slot
 }
 
+// GetAddress derives a base address using payment key index num and the
+// account's default stake key at index 0.
 func GetAddress(
 	accountKey bip32.XPrv,
 	networkName string,
@@ -2231,7 +2233,7 @@ func GetAddress(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get payment key: %w", err)
 	}
-	stakeKey, err := GetStakeKey(accountKey, num)
+	stakeKey, err := GetStakeKey(accountKey, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stake key: %w", err)
 	}

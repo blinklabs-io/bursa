@@ -490,6 +490,25 @@ func TestGetAddressBech32(t *testing.T) {
 	assert.NotEqual(t, mainnet.String(), testnet.String())
 }
 
+func TestGetAddressUsesAccountStakeKey(t *testing.T) {
+	accountKey := capabilityAccountKey(t)
+	stakeKey, err := GetStakeKey(accountKey, 0)
+	require.NoError(t, err)
+	wantStakeHash := stakeKey.Public().PublicKey().Hash()
+
+	address0, err := GetAddress(accountKey, "mainnet", 0)
+	require.NoError(t, err)
+	address1, err := GetAddress(accountKey, "mainnet", 1)
+	require.NoError(t, err)
+
+	require.NotEqual(t, address0.PaymentKeyHash(), address1.PaymentKeyHash(),
+		"different address indexes must use different payment keys")
+	require.Equal(t, lcommon.Blake2b224(wantStakeHash), address0.StakeKeyHash(),
+		"address index 0 must use the account stake key at index 0")
+	require.Equal(t, lcommon.Blake2b224(wantStakeHash), address1.StakeKeyHash(),
+		"address index 1 must use the account stake key at index 0")
+}
+
 func TestGetRewardAddressBech32(t *testing.T) {
 	accountKey := capabilityAccountKey(t)
 	stakeKey, err := GetStakeKey(accountKey, 0)
