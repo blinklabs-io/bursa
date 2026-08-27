@@ -1093,11 +1093,14 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		// authoritatively classify an address as unused. Query usage only after the
 		// node reaches the current chain tip; local derivation remains available in
 		// every earlier lifecycle state.
-		if st.Status().State == supervisor.StateReady {
+		before := st.Status()
+		if before.State == supervisor.StateReady {
 			v, err = wl.Addresses(r.Context())
 			// Do not publish a classification obtained across a Ready -> syncing
 			// transition. The query result may reflect only the new partial view.
-			if err == nil && st.Status().State != supervisor.StateReady {
+			after := st.Status()
+			if err == nil && (after.State != supervisor.StateReady ||
+				after.ReadinessGeneration != before.ReadinessGeneration) {
 				v.Used = []string{}
 				v.UsageKnown = false
 				v.NextUnused = ""

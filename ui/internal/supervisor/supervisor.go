@@ -427,7 +427,7 @@ func (s *Supervisor) stop() <-chan struct{} {
 	// can't race between the unlock and the state write.
 	s.cancel = nil
 	s.runDone = nil
-	s.status.State = StateStopped
+	s.setStateLocked(StateStopped)
 	s.status.Bootstrap = nil // a clean shutdown is not a diagnostic failure
 	s.mu.Unlock()
 	if cancel != nil {
@@ -462,10 +462,17 @@ func (s *Supervisor) setStateForRun(runID uint64, st NodeState) {
 	if !s.activeRunLocked(runID) {
 		return
 	}
-	s.status.State = st
+	s.setStateLocked(st)
 	if st != StateBootstrapping {
 		s.status.Bootstrap = nil
 	}
+}
+
+func (s *Supervisor) setStateLocked(st NodeState) {
+	if s.status.State == StateReady && st != StateReady {
+		s.status.ReadinessGeneration++
+	}
+	s.status.State = st
 }
 
 // Only called from test code; nolint:unused because lint runs with tests:false.
@@ -484,7 +491,7 @@ func (s *Supervisor) setErrorForRun(runID uint64, err error) {
 	cancel := s.cancel
 	s.cancel = nil
 	s.runDone = nil
-	s.status.State = StateError
+	s.setStateLocked(StateError)
 	// Status.Bootstrap is intentionally retained on error so /status shows how
 	// far a bootstrap got before failing (diagnostics).
 	s.status.Err = err.Error()
@@ -524,7 +531,7 @@ func (s *Supervisor) pollLoop(ctx context.Context, runID uint64) {
 			// Don't move off a terminal/stopped state; once Stop sets
 			// StateStopped, a late poll must not revert it to syncing/ready.
 			if s.activeRunLocked(runID) && s.status.State != StateError && s.status.State != StateStopped {
-				s.status.State = deriveState(ok, isCaughtUp)
+				s.setStateLocked(deriveState(ok, isCaughtUp))
 				// CaughtUp must reflect every poll, not just successful ones: a
 				// failed poll yields isCaughtUp=false, so updating it here keeps
 				// the snapshot consistent instead of reporting caughtUp=true

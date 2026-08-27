@@ -55,7 +55,7 @@ type WalletBackend struct {
 	// usageAuthoritative reports whether the node has a complete chain view.
 	// It is optional at construction for compatibility with non-supervised
 	// callers; production supplies the embedded node's readiness predicate.
-	usageAuthoritative func() bool
+	usageReadiness func() ReadinessSnapshot
 
 	// mu guards walletID/acct, which are rebound whenever the active wallet
 	// changes (unlock/activate/add). dApp request handlers read them
@@ -64,6 +64,14 @@ type WalletBackend struct {
 	mu       sync.RWMutex
 	walletID string
 	acct     *wallet.Account
+}
+
+// ReadinessSnapshot identifies the ready interval in which a chain query ran.
+// The generation prevents a Ready -> Syncing -> Ready transition from being
+// mistaken for an uninterrupted authoritative interval.
+type ReadinessSnapshot struct {
+	Ready      bool
+	Generation uint64
 }
 
 // NewWalletBackend constructs a WalletBackend.
@@ -82,13 +90,43 @@ func NewWalletBackend(
 	if len(usageAuthoritative) > 0 && usageAuthoritative[0] != nil {
 		usageReady = usageAuthoritative[0]
 	}
+	return newWalletBackend(wl, sp, acct, network, cf, func() ReadinessSnapshot {
+		return ReadinessSnapshot{Ready: usageReady()}
+	})
+}
+
+// NewWalletBackendWithReadiness constructs a backend using a stable readiness
+// generation supplied by the supervisor. Existing callers may continue using
+// NewWalletBackend with a boolean predicate.
+func NewWalletBackendWithReadiness(
+	wl *wallet.Service,
+	sp *spend.Service,
+	acct *wallet.Account,
+	network string,
+	cf chainFetcher,
+	readiness func() ReadinessSnapshot,
+) *WalletBackend {
+	if readiness == nil {
+		readiness = func() ReadinessSnapshot { return ReadinessSnapshot{Ready: true} }
+	}
+	return newWalletBackend(wl, sp, acct, network, cf, readiness)
+}
+
+func newWalletBackend(
+	wl *wallet.Service,
+	sp *spend.Service,
+	acct *wallet.Account,
+	network string,
+	cf chainFetcher,
+	readiness func() ReadinessSnapshot,
+) *WalletBackend {
 	return &WalletBackend{
-		wl:                 wl,
-		sp:                 sp,
-		acct:               acct,
-		chain:              cf,
-		network:            network,
-		usageAuthoritative: usageReady,
+		wl:             wl,
+		sp:             sp,
+		acct:           acct,
+		chain:          cf,
+		network:        network,
+		usageReadiness: readiness,
 	}
 }
 
@@ -141,9 +179,11 @@ func (b *WalletBackend) knownAddressView(ctx context.Context) (wallet.AddressVie
 		av  wallet.AddressView
 		err error
 	)
-	if b.usageAuthoritative() {
+	before := b.usageReadiness()
+	if before.Ready {
 		av, err = b.wl.Addresses(ctx)
-		if err == nil && !b.usageAuthoritative() {
+		after := b.usageReadiness()
+		if err == nil && (!after.Ready || after.Generation != before.Generation) {
 			return wallet.AddressView{}, ErrAddressUsageUnknown
 		}
 	} else {

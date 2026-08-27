@@ -59,8 +59,9 @@ type fakeStatuser struct{ s supervisor.Status }
 func (f fakeStatuser) Status() supervisor.Status { return f.s }
 
 type sequenceStatuser struct {
-	states []supervisor.NodeState
-	calls  int
+	states      []supervisor.NodeState
+	generations []uint64
+	calls       int
 }
 
 func (s *sequenceStatuser) Status() supervisor.Status {
@@ -69,7 +70,11 @@ func (s *sequenceStatuser) Status() supervisor.Status {
 		idx = len(s.states) - 1
 	}
 	s.calls++
-	return supervisor.Status{State: s.states[idx]}
+	var generation uint64
+	if idx < len(s.generations) {
+		generation = s.generations[idx]
+	}
+	return supervisor.Status{State: s.states[idx], ReadinessGeneration: generation}
 }
 
 // fakeVault implements the api.Vault interface. It models the layered model in
@@ -1800,6 +1805,35 @@ func TestWalletAddressesDiscardUsageIfNodeLeavesReadyDuringQuery(t *testing.T) {
 	}
 	if fw.addressesCalled != 1 {
 		t.Fatalf("chain address calls = %d, want 1", fw.addressesCalled)
+	}
+}
+
+func TestWalletAddressesDiscardUsageAcrossReadyGeneration(t *testing.T) {
+	st := &sequenceStatuser{
+		states:      []supervisor.NodeState{supervisor.StateReady, supervisor.StateReady},
+		generations: []uint64{4, 5},
+	}
+	fw := &fakeWallet{
+		set: true,
+		addresses: wallet.AddressView{
+			Receive:    []string{"addr_test1used", "addr_test1unused"},
+			Used:       []string{"addr_test1used"},
+			UsageKnown: true,
+			NextUnused: "addr_test1unused",
+		},
+	}
+	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/addresses across readiness generation = %d, want 200", rec.Code)
+	}
+	var got wallet.AddressView
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode addresses: %v", err)
+	}
+	if got.UsageKnown || len(got.Used) != 0 || got.NextUnused != "" {
+		t.Fatalf("addresses across readiness generation = %+v, want unknown usage", got)
 	}
 }
 

@@ -445,6 +445,25 @@ func TestWalletBackendAddressUsageUnknownIfNodeLeavesReadyDuringQuery(t *testing
 	}
 }
 
+func TestWalletBackendAddressUsageUnknownAcrossReadyGeneration(t *testing.T) {
+	acct, _ := mustDeriveBackendAccount(t)
+	fc := &fakeConnectorChain{addresses: []string{acct.ReceiveAddresses[0]}}
+	wl := wallet.NewService(&walletChainBridge{f: fc})
+	if _, err := wl.SetWallet(backendTestMnemonic, "preview", 3); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	checks := 0
+	be := NewWalletBackendWithReadiness(wl, nil, acct, "preview", fc, func() ReadinessSnapshot {
+		checks++
+		return ReadinessSnapshot{Ready: true, Generation: uint64(checks)}
+	})
+
+	assertAddressUsageUnknown(t, be)
+	if fc.addressCalls != 3 {
+		t.Fatalf("AccountAddresses calls = %d, want one per address method", fc.addressCalls)
+	}
+}
+
 func TestWalletBackendAddressUsageUnknownForUnregisteredAccount(t *testing.T) {
 	acct, _ := mustDeriveBackendAccount(t)
 	fc := &fakeConnectorChain{addressErr: chain.ErrNotFound}

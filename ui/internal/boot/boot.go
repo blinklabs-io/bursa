@@ -366,13 +366,19 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 
 	var connectorSvc *connector.Service
 	if cfg.ConnectorEnabled {
-		connectorBackend := connector.NewWalletBackend(
+		connectorBackend := connector.NewWalletBackendWithReadiness(
 			walletSvc,
 			spendSvc,
 			nil,
 			cfg.Network,
 			chainClient,
-			func() bool { return sup.Status().State == supervisor.StateReady },
+			func() connector.ReadinessSnapshot {
+				status := sup.Status()
+				return connector.ReadinessSnapshot{
+					Ready:      status.State == supervisor.StateReady,
+					Generation: status.ReadinessGeneration,
+				}
+			},
 		)
 		connectorSvc = connector.NewService(cfg.DataDir, connectorBackend, nil)
 	}
