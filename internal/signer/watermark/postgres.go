@@ -113,14 +113,14 @@ func (s *PostgresWatermark) Ping(ctx context.Context) error {
 		return fmt.Errorf("begin watermark readiness transaction: %w", err)
 	}
 	rolledBack := false
-	defer func() {
+	defer func(rollbackBase context.Context) {
 		if rolledBack {
 			return
 		}
-		rollbackCtx, cancel := context.WithTimeout(ctx, time.Second)
+		rollbackCtx, cancel := context.WithTimeout(rollbackBase, time.Second)
 		defer cancel()
 		_ = tx.Rollback(rollbackCtx)
-	}()
+	}(context.Background())
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO signer_watermark (record_key, payload_hash)
