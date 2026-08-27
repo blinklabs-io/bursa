@@ -120,7 +120,7 @@ func (s *PostgresWatermark) Ping(ctx context.Context) error {
 		rollbackCtx, cancel := context.WithTimeout(rollbackBase, time.Second)
 		defer cancel()
 		_ = tx.Rollback(rollbackCtx)
-	}(context.Background())
+	}(context.WithoutCancel(ctx))
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO signer_watermark (record_key, payload_hash)
