@@ -405,6 +405,21 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 		if err != nil {
 			return Preview{}, err
 		}
+	} else {
+		// Apollo v2.1.1 absorbs a dust change into the fee instead of returning
+		// its former non-convergence error. Treat that absorbed remainder like the
+		// legacy dead-zone so an available second input can preserve the user's
+		// funds rather than silently becoming fee.
+		dust, dustErr := s.isDustChange(ctx, a)
+		if dustErr != nil {
+			return Preview{}, dustErr
+		}
+		if dust {
+			a, err = s.completeForcingPrefix(ctx, changeAddr, recvAddr, lovelace, units, loaded, utxoAddr, addrCount)
+			if err != nil {
+				return Preview{}, err
+			}
+		}
 	}
 
 	// Reject locally if signing this would exceed the chain's MaxTxSize, turning a
@@ -565,6 +580,13 @@ func (s *Service) completeForcingPrefix(
 			}
 			return nil, mapCompleteErr(err)
 		}
+		dust, dustErr := s.isDustChange(ctx, a)
+		if dustErr != nil {
+			return nil, dustErr
+		}
+		if dust {
+			continue
+		}
 		// Converged on the minimal forced set. The MaxTxSize check lives in Build
 		// so it covers the coin-selected path too; growing the prefix further
 		// would only add inputs, so there is nothing to gain by checking here.
@@ -664,6 +686,35 @@ func mapCompleteErr(err error) error {
 func isNonConvergenceError(err error) bool {
 	return err != nil &&
 		strings.Contains(err.Error(), "evaluation transaction did not converge")
+}
+
+// isDustChange reports whether Apollo completed a payment by absorbing a
+// non-emittable change remainder into the fee. Apollo v2.1.1 now converges on
+// that shape instead of returning its historical non-convergence error, but a
+// wallet with additional UTxOs should still retry so the remainder is not
+// silently charged as a fee.
+func (s *Service) isDustChange(ctx context.Context, a *apollo.Apollo) (bool, error) {
+	tx := a.GetTx()
+	if tx == nil || len(tx.Body.Outputs()) != 1 {
+		return false, nil
+	}
+	txCbor, err := a.GetTxCbor()
+	if err != nil {
+		return false, fmt.Errorf("encode completed tx: %w", err)
+	}
+	pp, err := backend.ProtocolParamsContext(ctx, s.chain)
+	if err != nil {
+		return false, fmt.Errorf("protocol params for dust-change check: %w", err)
+	}
+	if pp.MinFeeCoefficient <= 0 || pp.MinFeeConstant <= 0 {
+		return false, nil
+	}
+	// The serialized transaction includes the empty witness set; allow for one
+	// real vkey witness and the configured fee padding before classifying the
+	// fee as dust absorption rather than an ordinary exact-balance payment.
+	minFee := uint64(len(txCbor))*uint64(pp.MinFeeCoefficient) + uint64(pp.MinFeeConstant)
+	margin := uint64(vkeyWitnessSizeEstimate)*uint64(pp.MinFeeCoefficient) + feePaddingLovelace
+	return tx.Body.TxFee > minFee+margin, nil
 }
 
 // SignData signs an arbitrary message with the wallet key for one of the
