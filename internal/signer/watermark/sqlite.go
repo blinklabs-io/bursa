@@ -65,8 +65,38 @@ func NewSqliteWatermark(path string) (*SqliteWatermark, error) {
 // Close closes the underlying database.
 func (s *SqliteWatermark) Close() error { return s.db.Close() }
 
-// Ping verifies the sqlite database is reachable.
-func (s *SqliteWatermark) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+// Ping verifies the sqlite database can write both watermark tables. The
+// readiness writes run in a transaction that is always rolled back.
+func (s *SqliteWatermark) Ping(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin watermark readiness transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO watermark (record_key, payload_hash)
+		VALUES (?, ?)
+		ON CONFLICT(record_key) DO UPDATE
+		SET payload_hash = watermark.payload_hash
+	`, readinessProbeRecordKey, readinessProbePayloadHash); err != nil {
+		return fmt.Errorf("write payload watermark readiness probe: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO counter_watermark (record_key, counter)
+		VALUES (?, ?)
+		ON CONFLICT(record_key) DO UPDATE
+		SET counter = counter_watermark.counter
+	`, readinessProbeRecordKey, readinessProbeCounter); err != nil {
+		return fmt.Errorf("write counter watermark readiness probe: %w", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		return fmt.Errorf("rollback watermark readiness transaction: %w", err)
+	}
+	return nil
+}
 
 func (s *SqliteWatermark) Check(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error {
 	d := digest(payload)

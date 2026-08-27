@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/jackc/pgx/v5"
@@ -104,8 +105,45 @@ func (s *PostgresWatermark) initSchema(ctx context.Context) error {
 // Close releases the underlying connection pool.
 func (s *PostgresWatermark) Close() { s.pool.Close() }
 
-// Ping verifies the Postgres backend is reachable. It backs the readiness probe.
-func (s *PostgresWatermark) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+// Ping verifies the Postgres backend can write both watermark tables. The
+// readiness writes run in a transaction that is always rolled back.
+func (s *PostgresWatermark) Ping(ctx context.Context) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin watermark readiness transaction: %w", err)
+	}
+	rolledBack := false
+	defer func() {
+		if rolledBack {
+			return
+		}
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = tx.Rollback(rollbackCtx)
+	}()
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO signer_watermark (record_key, payload_hash)
+		VALUES ($1, $2)
+		ON CONFLICT (record_key) DO UPDATE
+		SET payload_hash = signer_watermark.payload_hash
+	`, readinessProbeRecordKey, readinessProbePayloadHash); err != nil {
+		return fmt.Errorf("write payload watermark readiness probe: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO signer_counter_watermark (record_key, counter)
+		VALUES ($1, $2)
+		ON CONFLICT (record_key) DO UPDATE
+		SET counter = signer_counter_watermark.counter
+	`, readinessProbeRecordKey, readinessProbeCounter); err != nil {
+		return fmt.Errorf("write counter watermark readiness probe: %w", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		return fmt.Errorf("rollback watermark readiness transaction: %w", err)
+	}
+	rolledBack = true
+	return nil
+}
 
 func (s *PostgresWatermark) Check(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error {
 	d := digest(payload)

@@ -18,11 +18,15 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // pgDSNEnv is the environment variable holding the Postgres connection string
@@ -236,5 +240,158 @@ func TestPostgres_ConcurrentAdvanceExactlyOneWins(t *testing.T) {
 		if v, _, _ := replicaA.CounterFor(ctx, key, scope); v != target {
 			t.Fatalf("target %d: stored counter %d, want %d", target, v, target)
 		}
+	}
+}
+
+func TestPostgres_PingWritableDoesNotPersistProbe(t *testing.T) {
+	dsn := testPGDSN(t)
+	wm := newTestPG(t, dsn)
+	ctx := context.Background()
+
+	if err := wm.Ping(ctx); err != nil {
+		t.Fatalf("Ping writable database: %v", err)
+	}
+
+	var payloadRows, counterRows int
+	if err := wm.pool.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM signer_watermark WHERE record_key = $1),
+			(SELECT count(*) FROM signer_counter_watermark WHERE record_key = $1)
+	`, readinessProbeRecordKey).Scan(&payloadRows, &counterRows); err != nil {
+		t.Fatalf("count readiness probe rows: %v", err)
+	}
+	if payloadRows != 0 || counterRows != 0 {
+		t.Fatalf(
+			"readiness probe persisted rows: payload=%d counter=%d",
+			payloadRows,
+			counterRows,
+		)
+	}
+}
+
+func TestPostgres_PingRejectsReachableReadOnlyDatabase(t *testing.T) {
+	dsn := testPGDSN(t)
+	ctx := context.Background()
+
+	writable := newTestPG(t, dsn)
+	if err := writable.Ping(ctx); err != nil {
+		t.Fatalf("Ping writable database: %v", err)
+	}
+
+	poolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse Postgres DSN: %v", err)
+	}
+	poolConfig.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, `SET default_transaction_read_only = on`)
+		return err
+	}
+	readOnlyPool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		t.Fatalf("create read-only Postgres pool: %v", err)
+	}
+	defer readOnlyPool.Close()
+
+	if err := readOnlyPool.Ping(ctx); err != nil {
+		t.Fatalf("read-only database should remain reachable: %v", err)
+	}
+	store := &PostgresWatermark{pool: readOnlyPool}
+	if err := store.Ping(ctx); err == nil {
+		t.Fatal("Ping succeeded for a reachable read-only database")
+	}
+}
+
+func TestPostgres_PingRejectsMissingWritePermission(t *testing.T) {
+	dsn := testPGDSN(t)
+	ctx := context.Background()
+	writable := newTestPG(t, dsn)
+	key := randKey(t)
+	roleName := fmt.Sprintf("bursa_readiness_%x", key[:8])
+	quotedRole := pgx.Identifier{roleName}.Sanitize()
+
+	if _, err := writable.pool.Exec(ctx, "CREATE ROLE "+quotedRole); err != nil {
+		t.Fatalf("create restricted Postgres role: %v", err)
+	}
+	if _, err := writable.pool.Exec(ctx, "GRANT USAGE ON SCHEMA public TO "+quotedRole); err != nil {
+		t.Fatalf("grant schema usage: %v", err)
+	}
+	if _, err := writable.pool.Exec(ctx, "GRANT SELECT ON signer_watermark TO "+quotedRole); err != nil {
+		t.Fatalf("grant payload watermark read: %v", err)
+	}
+	if _, err := writable.pool.Exec(ctx, "GRANT SELECT ON signer_counter_watermark TO "+quotedRole); err != nil {
+		t.Fatalf("grant counter watermark read: %v", err)
+	}
+
+	poolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse Postgres DSN: %v", err)
+	}
+	poolConfig.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, "SET ROLE "+quotedRole)
+		return err
+	}
+	restrictedPool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		t.Fatalf("create restricted Postgres pool: %v", err)
+	}
+	defer func() {
+		restrictedPool.Close()
+		if _, err := writable.pool.Exec(
+			context.Background(),
+			"DROP OWNED BY "+quotedRole,
+		); err != nil {
+			t.Errorf("drop restricted Postgres role privileges: %v", err)
+		}
+		if _, err := writable.pool.Exec(
+			context.Background(),
+			"DROP ROLE "+quotedRole,
+		); err != nil {
+			t.Errorf("drop restricted Postgres role: %v", err)
+		}
+	}()
+
+	if err := restrictedPool.Ping(ctx); err != nil {
+		t.Fatalf("restricted database should remain reachable: %v", err)
+	}
+	store := &PostgresWatermark{pool: restrictedPool}
+	if err := store.Ping(ctx); err == nil {
+		t.Fatal("Ping succeeded without watermark write permission")
+	}
+}
+
+func TestPostgres_PingRejectsUnreachableDatabase(t *testing.T) {
+	dsn := testPGDSN(t)
+	poolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse Postgres DSN: %v", err)
+	}
+	poolConfig.ConnConfig.Host = "127.0.0.1"
+	poolConfig.ConnConfig.Port = 1
+	poolConfig.ConnConfig.ConnectTimeout = 500 * time.Millisecond
+
+	ctx := context.Background()
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		t.Fatalf("create unreachable Postgres pool: %v", err)
+	}
+	defer pool.Close()
+
+	store := &PostgresWatermark{pool: pool}
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := store.Ping(pingCtx); err == nil {
+		t.Fatal("Ping succeeded for an unreachable database")
+	}
+}
+
+func TestPostgres_PingHonorsCancellation(t *testing.T) {
+	dsn := testPGDSN(t)
+	wm := newTestPG(t, dsn)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := wm.Ping(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Ping canceled context: want context.Canceled, got %v", err)
 	}
 }

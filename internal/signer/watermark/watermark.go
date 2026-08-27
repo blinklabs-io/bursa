@@ -33,6 +33,12 @@ var ErrConflict = errors.New("watermark conflict: divergent payload for the same
 // guard for operational-certificate issue counters.
 var ErrCounterRegression = errors.New("watermark conflict: counter is not strictly greater than the highest already signed")
 
+const (
+	readinessProbeRecordKey   = "__bursa_readiness_probe__"
+	readinessProbePayloadHash = "0000000000000000000000000000000000000000000000000000000000000000"
+	readinessProbeCounter     = "0000000000000000"
+)
+
 // Mode controls how the coordinator applies the watermark.
 type Mode string
 
@@ -75,11 +81,11 @@ type CounterWatermark interface {
 }
 
 // Pinger is an optional interface a Watermark store implements when it has a
-// remote or file dependency whose reachability the readiness probe can verify.
+// remote or file dependency whose writeability the readiness probe can verify.
 // Stores without an external dependency (e.g. MemWatermark) need not implement
 // it; the readiness probe treats their absence as always-ready.
 type Pinger interface {
-	// Ping verifies the store's backing dependency is reachable.
+	// Ping verifies the store's backing dependency accepts required writes.
 	Ping(ctx context.Context) error
 }
 
