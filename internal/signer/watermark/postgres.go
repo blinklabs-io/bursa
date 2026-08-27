@@ -117,7 +117,7 @@ func (s *PostgresWatermark) Ping(ctx context.Context) error {
 		if rolledBack {
 			return
 		}
-		rollbackCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		rollbackCtx, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
 		_ = tx.Rollback(rollbackCtx)
 	}()
