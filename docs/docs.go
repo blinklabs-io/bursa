@@ -610,7 +610,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Deletes a wallet from persistent storage and optional password.",
+                "description": "Deletes a wallet from persistent storage and optional password. Requires an authenticated wallet storage administrator.",
                 "consumes": [
                     "application/json"
                 ],
@@ -642,6 +642,18 @@ const docTemplate = `{
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
+                    "401": {
+                        "description": "Authentication required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Wallet storage administrator access required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
@@ -658,7 +670,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Gets a wallet from persistent storage and optional password and returns wallet details.",
+                "description": "Gets a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.",
                 "consumes": [
                     "application/json"
                 ],
@@ -690,6 +702,18 @@ const docTemplate = `{
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
+                    "401": {
+                        "description": "Authentication required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Wallet storage administrator access required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
@@ -706,7 +730,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "List all wallets stored in secret storage matching our prefix",
+                "description": "List all wallets stored in secret storage matching our prefix. Requires an authenticated wallet storage administrator.",
                 "produces": [
                     "application/json"
                 ],
@@ -719,6 +743,18 @@ const docTemplate = `{
                             "items": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Wallet storage administrator access required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     }
                 }
@@ -779,7 +815,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates a wallet from persistent storage and optional password and returns wallet details.",
+                "description": "Updates a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.",
                 "consumes": [
                     "application/json"
                 ],
@@ -809,6 +845,18 @@ const docTemplate = `{
                         "description": "Invalid request",
                         "schema": {
                             "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Wallet storage administrator access required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
                     "500": {

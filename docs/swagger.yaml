@@ -928,6 +928,7 @@ paths:
       consumes:
       - application/json
       description: Deletes a wallet from persistent storage and optional password.
+        Requires an authenticated wallet storage administrator.
       parameters:
       - description: Wallet Delete Request
         in: body
@@ -946,6 +947,14 @@ paths:
           description: Invalid request
           schema:
             $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Authentication required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Wallet storage administrator access required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:
@@ -958,7 +967,7 @@ paths:
       consumes:
       - application/json
       description: Gets a wallet from persistent storage and optional password and
-        returns wallet details.
+        returns wallet details. Requires an authenticated wallet storage administrator.
       parameters:
       - description: Wallet Restore Request
         in: body
@@ -977,6 +986,14 @@ paths:
           description: Invalid request
           schema:
             $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Authentication required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Wallet storage administrator access required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:
@@ -986,7 +1003,8 @@ paths:
       summary: Get wallet from persistent storage
   /api/wallet/list:
     get:
-      description: List all wallets stored in secret storage matching our prefix
+      description: List all wallets stored in secret storage matching our prefix.
+        Requires an authenticated wallet storage administrator.
       produces:
       - application/json
       responses:
@@ -996,6 +1014,14 @@ paths:
             items:
               type: string
             type: array
+        "401":
+          description: Authentication required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Wallet storage administrator access required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Lists wallets
@@ -1035,7 +1061,7 @@ paths:
       consumes:
       - application/json
       description: Updates a wallet from persistent storage and optional password
-        and returns wallet details.
+        and returns wallet details. Requires an authenticated wallet storage administrator.
       parameters:
       - description: Wallet Update Request
         in: body
@@ -1054,6 +1080,14 @@ paths:
           description: Invalid request
           schema:
             type: string
+        "401":
+          description: Authentication required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Wallet storage administrator access required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:

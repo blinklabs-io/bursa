@@ -42,6 +42,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -96,13 +97,20 @@ func (f *fakeLegacyWalletStore) Get(_ context.Context, name string) (*bursa.Wall
 	return wallet, nil
 }
 
-func (f *fakeLegacyWalletStore) Update(_ context.Context, name, description string) error {
+func (f *fakeLegacyWalletStore) Update(
+	_ context.Context,
+	name,
+	description string,
+) (bool, error) {
 	if _, ok := f.wallets[name]; !ok {
-		return fmt.Errorf("wallet %q not found", name)
+		return false, fmt.Errorf("wallet %q not found", name)
+	}
+	if f.descriptions[name] == description {
+		return false, nil
 	}
 	f.descriptions[name] = description
 	f.updatedWallet = name
-	return nil
+	return true, nil
 }
 
 func (f *fakeLegacyWalletStore) Delete(_ context.Context, name string) error {
@@ -539,10 +547,20 @@ func TestGCPWalletRoutesAuthorizedOperations(t *testing.T) {
 	mux.ServeHTTP(nonAdmin, nonAdminRequest)
 	assert.Equal(t, http.StatusForbidden, nonAdmin.Code)
 
+	updatesBefore := testutil.ToFloat64(walletsUpdatedCounter)
+	unchanged := request(
+		http.MethodPost,
+		"/api/wallet/update",
+		`{"name":"wallet-1","description":""}`,
+	)
+	assert.Equal(t, http.StatusOK, unchanged.Code)
+	assert.Equal(t, updatesBefore, testutil.ToFloat64(walletsUpdatedCounter))
+
 	update := request(http.MethodPost, "/api/wallet/update", `{"name":"wallet-1","description":"updated"}`)
 	assert.Equal(t, http.StatusOK, update.Code)
 	assert.Equal(t, walletName, store.updatedWallet)
 	assert.Equal(t, "updated", store.descriptions[walletName])
+	assert.Equal(t, updatesBefore+1, testutil.ToFloat64(walletsUpdatedCounter))
 
 	deleted := request(http.MethodPost, "/api/wallet/delete", `{"name":"wallet-1"}`)
 	assert.Equal(t, http.StatusOK, deleted.Code)
