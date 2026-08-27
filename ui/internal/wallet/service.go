@@ -282,7 +282,12 @@ func (s *Service) Addresses(ctx context.Context) (AddressView, error) {
 	if err != nil && !errors.Is(err, chain.ErrNotFound) {
 		return AddressView{}, err
 	}
-	// ErrNotFound: no chain-seen addresses yet → used stays empty; NextUnused is receive[0].
+	if errors.Is(err, chain.ErrNotFound) {
+		// The account endpoint returns 404 for an unregistered stake credential,
+		// even when one of its derived payment addresses already holds funds. That
+		// response cannot establish that the receive window is unused.
+		return addressView(acct, nil, false), nil
+	}
 	return addressView(acct, used, true), nil
 }
 

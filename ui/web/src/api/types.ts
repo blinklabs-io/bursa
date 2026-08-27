@@ -47,7 +47,7 @@ export interface Balance {
 export interface AddressView {
   receive: string[];
   used: string[];
-  usage_known: boolean;
+  usage_known?: boolean;
   next_unused: string;
 }
 

@@ -372,6 +372,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			nil,
 			cfg.Network,
 			chainClient,
+			func() bool { return sup.Status().State == supervisor.StateReady },
 		)
 		connectorSvc = connector.NewService(cfg.DataDir, connectorBackend, nil)
 	}

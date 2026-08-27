@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"errors"
 	"math/big"
 	"testing"
 
@@ -31,13 +32,15 @@ const backendTestMnemonic = "abandon abandon abandon abandon abandon abandon aba
 
 // fakeConnectorChain satisfies chainFetcher using a canned map of address UTxOs.
 type fakeConnectorChain struct {
-	addresses  []string // returned by AccountAddresses
-	addressErr error    // error from AccountAddresses (nil = success)
-	utxos      map[string][]chain.UTxO
-	utxoErr    map[string]error
+	addresses    []string // returned by AccountAddresses
+	addressErr   error    // error from AccountAddresses (nil = success)
+	addressCalls int
+	utxos        map[string][]chain.UTxO
+	utxoErr      map[string]error
 }
 
 func (f *fakeConnectorChain) AccountAddresses(_ context.Context, _ string) ([]string, error) {
+	f.addressCalls++
 	if f.addressErr != nil {
 		return nil, f.addressErr
 	}
@@ -368,6 +371,140 @@ func TestWalletBackendAddressesHex(t *testing.T) {
 	wantChange, _ := addrStringToHex(acct.ReceiveAddresses[1])
 	if changeHex != wantChange {
 		t.Errorf("change address = %q, want %q", changeHex, wantChange)
+	}
+}
+
+func assertAddressUsageUnknown(t *testing.T, be *WalletBackend) {
+	t.Helper()
+	methods := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "UsedAddresses",
+			call: func() error {
+				_, err := be.UsedAddresses(context.Background(), nil)
+				return err
+			},
+		},
+		{
+			name: "UnusedAddresses",
+			call: func() error {
+				_, err := be.UnusedAddresses(context.Background())
+				return err
+			},
+		},
+		{
+			name: "ChangeAddress",
+			call: func() error {
+				_, err := be.ChangeAddress(context.Background())
+				return err
+			},
+		},
+	}
+	for _, method := range methods {
+		t.Run(method.name, func(t *testing.T) {
+			if err := method.call(); !errors.Is(err, ErrAddressUsageUnknown) {
+				t.Fatalf("error = %v, want ErrAddressUsageUnknown", err)
+			}
+		})
+	}
+}
+
+func TestWalletBackendAddressUsageUnknownWhileSyncing(t *testing.T) {
+	acct, _ := mustDeriveBackendAccount(t)
+	fc := &fakeConnectorChain{addresses: []string{acct.ReceiveAddresses[0]}}
+	wl := wallet.NewService(&walletChainBridge{f: fc})
+	if _, err := wl.SetWallet(backendTestMnemonic, "preview", 3); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	be := NewWalletBackend(wl, nil, acct, "preview", fc, func() bool { return false })
+
+	assertAddressUsageUnknown(t, be)
+	if fc.addressCalls != 0 {
+		t.Fatalf("AccountAddresses calls = %d, want 0 while syncing", fc.addressCalls)
+	}
+}
+
+func TestWalletBackendAddressUsageUnknownIfNodeLeavesReadyDuringQuery(t *testing.T) {
+	acct, _ := mustDeriveBackendAccount(t)
+	fc := &fakeConnectorChain{addresses: []string{acct.ReceiveAddresses[0]}}
+	wl := wallet.NewService(&walletChainBridge{f: fc})
+	if _, err := wl.SetWallet(backendTestMnemonic, "preview", 3); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	checks := 0
+	be := NewWalletBackend(wl, nil, acct, "preview", fc, func() bool {
+		checks++
+		return checks == 1
+	})
+
+	assertAddressUsageUnknown(t, be)
+	if fc.addressCalls != 1 {
+		t.Fatalf("AccountAddresses calls = %d, want only the in-flight query", fc.addressCalls)
+	}
+}
+
+func TestWalletBackendAddressUsageUnknownForUnregisteredAccount(t *testing.T) {
+	acct, _ := mustDeriveBackendAccount(t)
+	fc := &fakeConnectorChain{addressErr: chain.ErrNotFound}
+	wl := wallet.NewService(&walletChainBridge{f: fc})
+	if _, err := wl.SetWallet(backendTestMnemonic, "preview", 3); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	be := NewWalletBackend(wl, nil, acct, "preview", fc)
+
+	assertAddressUsageUnknown(t, be)
+}
+
+func TestWalletBackendAddressUsageUnknownForScriptAccount(t *testing.T) {
+	fc := &fakeConnectorChain{}
+	wl := wallet.NewService(&walletChainBridge{f: fc})
+	acct := &wallet.Account{ReceiveAddresses: []string{"addr_test1script"}}
+	if err := wl.SetAccount(acct); err != nil {
+		t.Fatalf("SetAccount: %v", err)
+	}
+	be := NewWalletBackend(wl, nil, acct, "preview", fc)
+
+	assertAddressUsageUnknown(t, be)
+	if fc.addressCalls != 0 {
+		t.Fatalf("AccountAddresses calls = %d, want 0 for script account", fc.addressCalls)
+	}
+}
+
+func TestWalletBackendSuccessfulEmptyUsageRemainsAuthoritative(t *testing.T) {
+	acct, _ := mustDeriveBackendAccount(t)
+	fc := &fakeConnectorChain{addresses: []string{}}
+	wl := wallet.NewService(&walletChainBridge{f: fc})
+	if _, err := wl.SetWallet(backendTestMnemonic, "preview", 3); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	be := NewWalletBackend(wl, nil, acct, "preview", fc)
+
+	used, err := be.UsedAddresses(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("UsedAddresses: %v", err)
+	}
+	if used == nil || len(used) != 0 {
+		t.Fatalf("UsedAddresses = %#v, want authoritative empty array", used)
+	}
+	unused, err := be.UnusedAddresses(context.Background())
+	if err != nil {
+		t.Fatalf("UnusedAddresses: %v", err)
+	}
+	if len(unused) != len(acct.ReceiveAddresses) {
+		t.Fatalf("UnusedAddresses count = %d, want %d", len(unused), len(acct.ReceiveAddresses))
+	}
+	change, err := be.ChangeAddress(context.Background())
+	if err != nil {
+		t.Fatalf("ChangeAddress: %v", err)
+	}
+	wantChange, err := addrStringToHex(acct.ReceiveAddresses[0])
+	if err != nil {
+		t.Fatalf("addrStringToHex: %v", err)
+	}
+	if change != wantChange {
+		t.Fatalf("ChangeAddress = %q, want first derived address %q", change, wantChange)
 	}
 }
 

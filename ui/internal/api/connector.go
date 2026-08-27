@@ -470,6 +470,8 @@ func connectorErrorCode(method string, err error) (httpStatus int, code int, inf
 		return http.StatusBadRequest, -1, err.Error()
 	case errors.Is(err, connector.ErrNotGranted), errors.Is(err, connector.ErrRefused):
 		return http.StatusForbidden, -3, err.Error()
+	case errors.Is(err, connector.ErrAddressUsageUnknown):
+		return http.StatusServiceUnavailable, -3, err.Error()
 	case errors.Is(err, connector.ErrTimeout):
 		return http.StatusRequestTimeout, -3, "request timed out"
 	case errors.Is(err, connector.ErrQueueFull):

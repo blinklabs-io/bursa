@@ -79,7 +79,7 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
     const isExpanded = expandedQr === addr;
     return {
       address: truncateAddr(addr),
-      status: usageKnown ? (usedSet.has(addr) ? "Used" : "Unused") : "Not checked",
+      status: usageKnown ? (usedSet.has(addr) ? "Used" : "Unused") : "Unknown",
       qr: (
         <div className="receive-qr-cell">
           <button
@@ -130,7 +130,7 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
       <Card title="Receive Addresses">
         {!usageKnown && receive.length > 0 && (
           <p className="muted" role="status">
-            On-chain use has not been checked yet. You can receive at an address below, but Bursa cannot identify the next unused address until the node is available.
+            On-chain usage is unavailable for this account. You can still receive at an address below, but Bursa cannot identify an unused address.
           </p>
         )}
         {receive.length === 0 ? (

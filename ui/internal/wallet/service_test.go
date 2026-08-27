@@ -162,8 +162,8 @@ func TestServiceBalanceAndAddresses(t *testing.T) {
 
 func TestServiceEmptyAccount(t *testing.T) {
 	// A fresh/unknown stake credential: the node returns 404 (chain.ErrNotFound)
-	// for the account and its addresses. Read-only views must treat this as an
-	// empty wallet, not a hard error.
+	// for the account and its addresses. Read-only views must remain available,
+	// but a 404 cannot prove that the derived payment addresses are unused.
 	fc := &fakeChain{accountErr: chain.ErrNotFound, addressesErr: chain.ErrNotFound}
 	s := NewService(fc)
 	if _, err := s.SetWallet(testMnemonic, "preview", 3); err != nil {
@@ -183,11 +183,11 @@ func TestServiceEmptyAccount(t *testing.T) {
 	if len(av.Used) != 0 {
 		t.Fatalf("used = %v, want empty", av.Used)
 	}
-	if !av.UsageKnown {
-		t.Fatal("UsageKnown false after definitive chain not-found")
+	if av.UsageKnown {
+		t.Fatal("UsageKnown true after account-addresses not-found")
 	}
-	if av.NextUnused != av.Receive[0] {
-		t.Fatalf("NextUnused = %q, want receive[0] %q", av.NextUnused, av.Receive[0])
+	if av.NextUnused != "" {
+		t.Fatalf("NextUnused = %q, want empty while usage is unknown", av.NextUnused)
 	}
 	if _, err := s.Transactions(context.Background()); err != nil {
 		t.Fatalf("Transactions on empty account: %v", err)
@@ -198,6 +198,56 @@ func TestServiceEmptyAccount(t *testing.T) {
 	}
 	if dv.PoolID != nil || dv.Active || dv.RewardsSum != "0" || dv.Withdrawable != "0" {
 		t.Fatalf("delegation on empty account = %+v, want not active / no pool / zero amounts", dv)
+	}
+}
+
+func TestServiceUnregisteredFundedAccountHasUnknownUsage(t *testing.T) {
+	fc := &fakeChain{addressesErr: chain.ErrNotFound}
+	s := NewService(fc)
+	acct, err := s.SetWallet(testMnemonic, "preview", 3)
+	if err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	funded := acct.ReceiveAddresses[0]
+	fc.utxos = map[string][]chain.UTxO{
+		funded: {{Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}}},
+	}
+
+	bal, err := s.Balance(context.Background())
+	if err != nil {
+		t.Fatalf("Balance: %v", err)
+	}
+	if bal.Lovelace != "3000000" {
+		t.Fatalf("Balance lovelace = %q, want funded derived address balance", bal.Lovelace)
+	}
+
+	av, err := s.Addresses(context.Background())
+	if err != nil {
+		t.Fatalf("Addresses: %v", err)
+	}
+	if av.UsageKnown {
+		t.Fatal("UsageKnown true for funded account whose stake credential is unregistered")
+	}
+	if len(av.Used) != 0 || av.NextUnused != "" {
+		t.Fatalf("Addresses = %+v, want no used/unused classification", av)
+	}
+}
+
+func TestServiceSuccessfulEmptyAddressQueryIsKnown(t *testing.T) {
+	s := NewService(&fakeChain{addresses: []string{}})
+	if _, err := s.SetWallet(testMnemonic, "preview", 3); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+
+	av, err := s.Addresses(context.Background())
+	if err != nil {
+		t.Fatalf("Addresses: %v", err)
+	}
+	if !av.UsageKnown {
+		t.Fatal("UsageKnown false after a successful empty chain query")
+	}
+	if len(av.Used) != 0 || av.NextUnused != av.Receive[0] {
+		t.Fatalf("Addresses = %+v, want receive[0] classified as unused", av)
 	}
 }
 

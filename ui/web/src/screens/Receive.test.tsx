@@ -95,8 +95,39 @@ test("unknown chain usage neither labels addresses unused nor promotes a next-un
 
   expect(screen.queryByRole("heading", { name: /next unused address/i })).not.toBeInTheDocument();
   expect(screen.queryByText("Unused")).not.toBeInTheDocument();
-  expect(screen.getAllByText("Not checked")).toHaveLength(2);
+  expect(screen.getAllByText("Unknown")).toHaveLength(2);
+  expect(screen.getByRole("status")).toHaveTextContent(/on-chain usage is unavailable for this account/i);
+  expect(screen.getByRole("status")).not.toHaveTextContent(/node/i);
   expect(screen.getAllByRole("button", { name: "Copy this receive address" })).toHaveLength(2);
+});
+
+test("a missing usage flag from an older backend is treated as unknown", () => {
+  vi.spyOn(hooks, "useAddresses").mockReturnValue({
+    data: {
+      receive: [ADDR_A],
+      used: [],
+      next_unused: ADDR_A,
+    },
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+
+  render(<Receive />);
+
+  expect(screen.queryByRole("heading", { name: /next unused address/i })).not.toBeInTheDocument();
+  expect(screen.queryByText("Unused")).not.toBeInTheDocument();
+  expect(screen.getByText("Unknown")).toBeInTheDocument();
+});
+
+test("script-account copy does not promise usage after node readiness", () => {
+  mockAddresses({ receive: [ADDR_A], used: [], usage_known: false, next_unused: "" });
+  render(<Receive />);
+
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "On-chain usage is unavailable for this account. You can still receive at an address below, but Bursa cannot identify an unused address.",
+  );
+  expect(screen.getByRole("status")).not.toHaveTextContent(/until|node|ready/i);
 });
 
 test("(e) loading state renders a loading indicator", () => {

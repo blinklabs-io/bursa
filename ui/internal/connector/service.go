@@ -18,13 +18,14 @@ import (
 
 // Sentinel errors returned by Service.
 var (
-	ErrRefused          = errors.New("connector: refused")
-	ErrUserDeclined     = errors.New("connector: user declined")
-	ErrNotGranted       = errors.New("connector: origin not granted")
-	ErrPairCodeMismatch = errors.New("connector: pair code mismatch")
-	ErrInvalidParams    = errors.New("connector: invalid request params")
-	ErrInvalidOrigin    = errors.New("connector: invalid origin")
-	ErrTooManyPairings  = errors.New("connector: too many pending pairings")
+	ErrRefused             = errors.New("connector: refused")
+	ErrUserDeclined        = errors.New("connector: user declined")
+	ErrNotGranted          = errors.New("connector: origin not granted")
+	ErrPairCodeMismatch    = errors.New("connector: pair code mismatch")
+	ErrInvalidParams       = errors.New("connector: invalid request params")
+	ErrInvalidOrigin       = errors.New("connector: invalid origin")
+	ErrTooManyPairings     = errors.New("connector: too many pending pairings")
+	ErrAddressUsageUnknown = errors.New("connector: address usage is unavailable")
 	// ErrInvalidExtensionID is defined in token.go.
 )
 

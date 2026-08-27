@@ -58,6 +58,20 @@ type fakeStatuser struct{ s supervisor.Status }
 
 func (f fakeStatuser) Status() supervisor.Status { return f.s }
 
+type sequenceStatuser struct {
+	states []supervisor.NodeState
+	calls  int
+}
+
+func (s *sequenceStatuser) Status() supervisor.Status {
+	idx := s.calls
+	if idx >= len(s.states) {
+		idx = len(s.states) - 1
+	}
+	s.calls++
+	return supervisor.Status{State: s.states[idx]}
+}
+
 // fakeVault implements the api.Vault interface. It models the layered model in
 // memory: Unlock/Lock toggle locked; AddWallet appends and activates; the active
 // wallet drives reads/spends.
@@ -1674,11 +1688,12 @@ func TestWalletGatedWhileBootstrapping(t *testing.T) {
 	}
 }
 
-func TestWalletAddressesAvailableWithoutQueryableNode(t *testing.T) {
+func TestWalletAddressesUseLocalUsageUntilNodeReady(t *testing.T) {
 	for _, state := range []supervisor.NodeState{
 		supervisor.StateStopped,
 		supervisor.StateStarting,
 		supervisor.StateBootstrapping,
+		supervisor.StateSyncing,
 		supervisor.StateError,
 	} {
 		t.Run(string(state), func(t *testing.T) {
@@ -1717,8 +1732,8 @@ func TestWalletAddressesAvailableWithoutQueryableNode(t *testing.T) {
 	}
 }
 
-func TestWalletAddressesIncludeChainUsageWhenQueryable(t *testing.T) {
-	for _, state := range []supervisor.NodeState{supervisor.StateSyncing, supervisor.StateReady} {
+func TestWalletAddressesIncludeChainUsageWhenReady(t *testing.T) {
+	for _, state := range []supervisor.NodeState{supervisor.StateReady} {
 		t.Run(string(state), func(t *testing.T) {
 			st := fakeStatuser{s: supervisor.Status{State: state}}
 			fw := &fakeWallet{
@@ -1750,6 +1765,41 @@ func TestWalletAddressesIncludeChainUsageWhenQueryable(t *testing.T) {
 				t.Fatalf("address calls while %s = chain %d, local %d; want chain 1, local 0", state, fw.addressesCalled, fw.localAddressesCalled)
 			}
 		})
+	}
+}
+
+func TestWalletAddressesDiscardUsageIfNodeLeavesReadyDuringQuery(t *testing.T) {
+	st := &sequenceStatuser{states: []supervisor.NodeState{
+		supervisor.StateReady,
+		supervisor.StateSyncing,
+	}}
+	fw := &fakeWallet{
+		set: true,
+		addresses: wallet.AddressView{
+			Receive:    []string{"addr_test1used", "addr_test1unused"},
+			Used:       []string{"addr_test1used"},
+			UsageKnown: true,
+			NextUnused: "addr_test1unused",
+		},
+	}
+	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/addresses across Ready transition = %d, want 200", rec.Code)
+	}
+	var got wallet.AddressView
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode addresses: %v", err)
+	}
+	if got.UsageKnown || len(got.Used) != 0 || got.NextUnused != "" {
+		t.Fatalf("addresses across Ready transition = %+v, want unknown usage", got)
+	}
+	if len(got.Receive) != 2 {
+		t.Fatalf("receive addresses = %#v, want locally derived addresses preserved", got.Receive)
+	}
+	if fw.addressesCalled != 1 {
+		t.Fatalf("chain address calls = %d, want 1", fw.addressesCalled)
 	}
 }
 
