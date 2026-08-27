@@ -228,6 +228,7 @@ describe("connectLedger", () => {
 
       // ORDINARY signing with the network + required-signer fields carried over.
       expect(request.signingMode).toBe("ordinary_transaction");
+      expect(request.options).toEqual({ tagCborSets: false });
       expect(request.tx.network).toEqual({ protocolMagic: 764824073, networkId: 1 });
       expect(request.tx.includeNetworkId).toBe(true);
       expect(request.tx.requiredSigners).toEqual([
@@ -253,6 +254,16 @@ describe("connectLedger", () => {
       expect(request.tx.outputs.every((o: { tokenBundle: unknown[] }) => Array.isArray(o.tokenBundle))).toBe(
         true,
       );
+      await session.close();
+    });
+
+    test("passes tagged body set policy through the SDK options", async () => {
+      const session = await connectLedger();
+
+      await session.signTx({ ...NEUTRAL_REQ, body_set_tag_policy: "tagged" });
+
+      const request = mockSignTransaction.mock.calls[0][0];
+      expect(request.options).toEqual({ tagCborSets: true });
       await session.close();
     });
 
