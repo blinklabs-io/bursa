@@ -18,6 +18,7 @@ import (
 	"crypto/ed25519"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -57,7 +58,7 @@ func testAgent(t *testing.T, mode string, cold coldKeyPair, depth uint64, clockA
 		MaxKESEvolutions:  62,
 		ColdVKey:          cold.pub,
 		EvolveInterval:    time.Hour,
-		GuardPath:         "", // in-memory guard
+		GuardPath:         filepath.Join(t.TempDir(), "guard.json"),
 		Version:           "test",
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

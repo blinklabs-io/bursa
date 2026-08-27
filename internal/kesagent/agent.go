@@ -164,6 +164,9 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 	if cfg.EvolveInterval <= 0 {
 		cfg.EvolveInterval = time.Minute
 	}
+	if cfg.GuardPath == "" {
+		return nil, errors.New("kesagent: guard_path is required")
+	}
 	guard, err := NewPeriodGuard(cfg.GuardPath)
 	if err != nil {
 		return nil, err

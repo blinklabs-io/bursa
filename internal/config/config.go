@@ -69,7 +69,7 @@ type KESAgentConfig struct {
 	MaxKESEvolutions uint64 `yaml:"max_kes_evolutions" envconfig:"KESAGENT_MAX_KES_EVOLUTIONS"`
 	// EvolveInterval is the scheduler tick as a Go duration string (default 1m).
 	EvolveInterval string `yaml:"evolve_interval" envconfig:"KESAGENT_EVOLVE_INTERVAL"`
-	// GuardFile is the durable monotonic-period store path.
+	// GuardFile is the required durable monotonic-period store path.
 	GuardFile string `yaml:"guard_file" envconfig:"KESAGENT_GUARD_FILE"`
 }
 
