@@ -11,7 +11,7 @@ Name | Type | Description | Notes
 
 ### NewApiTxSignRequest
 
-`func NewApiTxSignRequest(signingKeys []string, txCbor string, ) *ApiTxSignRequest`
+`func NewApiTxSignRequest(signingKeys []string, txCbor string) *ApiTxSignRequest`
 
 NewApiTxSignRequest instantiates a new ApiTxSignRequest object
 This constructor will assign default values to properties that have it defined,
@@ -34,7 +34,7 @@ GetSigningKeys returns the SigningKeys field if non-nil, zero value otherwise.
 
 ### GetSigningKeysOk
 
-`func (o *ApiTxSignRequest) GetSigningKeysOk() (*[]string, bool)`
+`func (o *ApiTxSignRequest) GetSigningKeysOk() ([]string, bool)`
 
 GetSigningKeysOk returns a tuple with the SigningKeys field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.
