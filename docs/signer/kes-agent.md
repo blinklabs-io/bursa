@@ -76,6 +76,7 @@ clock jump, restart, or stale key re-install - a belt-and-suspenders complement
 to KES forward security. A period strictly below the floor is refused; a period
 equal to the floor is allowed (a producer signs many headers within one period).
 The floor is persisted to `guard_file` via an atomic temp-file + rename write.
+`guard_file` is required; the daemon refuses to start without a durable path.
 
 ## Locked memory
 

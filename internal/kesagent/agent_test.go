@@ -111,6 +111,67 @@ func TestSignPastPeriodRejected(t *testing.T) {
 	}
 }
 
+func TestNewRequiresDurableGuardPath(t *testing.T) {
+	cold := newColdKey(t)
+	a, err := New(Config{
+		Mode:              ModeSign,
+		Depth:             kes.CardanoKesDepth,
+		SystemStart:       epoch,
+		SlotLength:        time.Second,
+		SlotsPerKESPeriod: 10,
+		MaxKESEvolutions:  62,
+		ColdVKey:          cold.pub,
+		EvolveInterval:    time.Hour,
+	}, nil, nil)
+	if err == nil {
+		a.Close()
+		t.Fatal("New accepted an empty guard path")
+	}
+}
+
+func TestAgentGuardFloorSurvivesRestart(t *testing.T) {
+	cold := newColdKey(t)
+	guardPath := filepath.Join(t.TempDir(), "guard.json")
+	cfg := Config{
+		Mode:              ModeSign,
+		Depth:             kes.CardanoKesDepth,
+		SystemStart:       epoch,
+		SlotLength:        time.Second,
+		SlotsPerKESPeriod: 10,
+		MaxKESEvolutions:  62,
+		ColdVKey:          cold.pub,
+		EvolveInterval:    time.Hour,
+		GuardPath:         guardPath,
+		Version:           "test",
+	}
+	newAgent := func(period uint64) *Agent {
+		a, err := New(cfg, nil, nil)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		a.now = func() time.Time { return atPeriod(period) }
+		return a
+	}
+
+	a := newAgent(5)
+	vkey, _ := a.GenStagedKey()
+	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 3, cold)); err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+	a.Close()
+
+	restarted := newAgent(4)
+	t.Cleanup(restarted.Close)
+	info := restarted.Info()
+	if !info.FloorInitialized || info.MonotonicFloor != 5 {
+		t.Fatalf("restarted guard floor = (%d, %v), want (5, true)", info.MonotonicFloor, info.FloorInitialized)
+	}
+	restartedVKey, _ := restarted.GenStagedKey()
+	if _, err := restarted.InstallKey(makeOpCert(t, restartedVKey, 2, 4, cold)); !errors.Is(err, ErrPeriodRollback) {
+		t.Fatalf("InstallKey below restarted floor: want ErrPeriodRollback, got %v", err)
+	}
+}
+
 func TestSignForwardEvolves(t *testing.T) {
 	cold := newColdKey(t)
 	a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(3))

@@ -95,6 +95,7 @@ persistent state and point the relevant config field at a path inside it: the
 KES agent's `kes_agent.guard_file` (env `KESAGENT_GUARD_FILE`), and the
 signer's watermark database when using the `file` (SQLite) watermark type
 (`signer.watermark.path`, no env override - set it in the mounted config).
+The KES agent refuses to start when `guard_file` is empty.
 Without a mounted volume, that state lives only in the container's writable
 layer and is lost when the container is removed - equivalent to the
 `StateDirectory` the systemd units provision on bare metal.
