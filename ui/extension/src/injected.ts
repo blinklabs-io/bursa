@@ -190,3 +190,15 @@ if (!window.cardano) {
   window.cardano = {};
 }
 window.cardano.bursa = bursaProvider;
+
+const providerStatusTargetOrigin =
+  window.location.protocol === 'file:' || window.location.origin === 'null'
+    ? '*'
+    : window.location.origin;
+window.postMessage(
+  {
+    source: 'bursa-cip30-provider-status',
+    status: 'ready',
+  },
+  providerStatusTargetOrigin,
+);
