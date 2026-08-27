@@ -112,6 +112,7 @@ const NEUTRAL_REQ: HardwareSignResponse = {
   ],
   fee: "200000",
   required_signers: [],
+  body_set_tag_policy: "untagged",
   unsigned_tx_cbor: "84a4008182",
 };
 

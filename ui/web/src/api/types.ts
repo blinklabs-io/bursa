@@ -682,7 +682,7 @@ export interface HardwareSignResponse {
   fee: string;
   ttl?: string;
   required_signers: string[];
-  body_set_tag_policy?: "untagged" | "tagged";
+  body_set_tag_policy: "untagged" | "tagged";
   unsigned_tx_cbor: string;
   unsupported?: string; // non-empty = this tx type cannot be signed on hardware yet
 }
