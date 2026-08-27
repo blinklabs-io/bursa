@@ -359,6 +359,26 @@ func TestBuildDustChangeDeadZoneNoExtraInputs(t *testing.T) {
 	}
 }
 
+// TestBuildExactBalanceNoChange does not leave a remainder to emit or absorb.
+// It must remain a valid one-input transfer rather than being mistaken for a
+// dust-change transaction by the fee-shape detector.
+func TestBuildExactBalanceNoChange(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	recvAddr := acct.ReceiveAddresses[1]
+
+	fc := newFakeChain(5_000_000, addr0)
+	s := NewService(fc, nil, acct)
+
+	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4827823"})
+	if err != nil {
+		t.Fatalf("exact-balance send should succeed, got: %v", err)
+	}
+	if pv.Change != "0" {
+		t.Fatalf("exact-balance send change = %q, want 0", pv.Change)
+	}
+}
+
 // fillDeadZoneUTxOs adds n 5-ADA UTxOs at addr with distinct tx hashes. A 4-ADA
 // send funded by a single one leaves ~0.83 ADA change — inside the dust-change
 // dead-zone — so Build must force additional inputs to clear the min-UTxO floor.

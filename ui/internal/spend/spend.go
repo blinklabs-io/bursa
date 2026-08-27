@@ -698,10 +698,6 @@ func (s *Service) isDustChange(ctx context.Context, a *apollo.Apollo) (bool, err
 	if tx == nil || len(tx.Body.Outputs()) != 1 {
 		return false, nil
 	}
-	txCbor, err := a.GetTxCbor()
-	if err != nil {
-		return false, fmt.Errorf("encode completed tx: %w", err)
-	}
 	pp, err := backend.ProtocolParamsContext(ctx, s.chain)
 	if err != nil {
 		return false, fmt.Errorf("protocol params for dust-change check: %w", err)
@@ -709,12 +705,37 @@ func (s *Service) isDustChange(ctx context.Context, a *apollo.Apollo) (bool, err
 	if pp.MinFeeCoefficient <= 0 || pp.MinFeeConstant <= 0 {
 		return false, nil
 	}
-	// The serialized transaction includes the empty witness set; allow for one
-	// real vkey witness and the configured fee padding before classifying the
-	// fee as dust absorption rather than an ordinary exact-balance payment.
-	minFee := uint64(len(txCbor))*uint64(pp.MinFeeCoefficient) + uint64(pp.MinFeeConstant)
-	margin := uint64(vkeyWitnessSizeEstimate)*uint64(pp.MinFeeCoefficient) + feePaddingLovelace
-	return tx.Body.TxFee > minFee+margin, nil
+	// Match Apollo's estimator: it encodes the completed body with a placeholder
+	// maximum fee and prices one baseline witness plus each required signer.
+	maxFee, feeErr := backend.MaxTxFeeContext(ctx, s.chain)
+	if feeErr != nil || maxFee == 0 {
+		maxFee = 2_000_000
+	}
+	witnessCount := 1 + len(tx.Body.RequiredSigners())
+	fakeWitnesses := make([]lcommon.VkeyWitness, witnessCount)
+	for i := range fakeWitnesses {
+		fakeWitnesses[i] = lcommon.VkeyWitness{
+			Vkey:      make([]byte, 32),
+			Signature: make([]byte, 64),
+		}
+	}
+	probe := conway.ConwayTransaction{
+		Body:       tx.Body,
+		WitnessSet: tx.WitnessSet,
+		TxIsValid:  tx.TxIsValid,
+		TxMetadata: tx.TxMetadata,
+	}
+	probe.Body.TxFee = maxFee
+	probe.WitnessSet.VkeyWitnesses = cbor.NewSetType(fakeWitnesses, true)
+	encoded, encodeErr := cbor.Encode(&probe)
+	if encodeErr != nil {
+		return false, fmt.Errorf("encode fee estimate: %w", encodeErr)
+	}
+	if pp.MinFeeCoefficient < 0 || pp.MinFeeConstant < 0 {
+		return false, nil
+	}
+	expectedFee := uint64(len(encoded))*uint64(pp.MinFeeCoefficient) + uint64(pp.MinFeeConstant) + feePaddingLovelace
+	return tx.Body.TxFee > expectedFee, nil
 }
 
 // SignData signs an arbitrary message with the wallet key for one of the
