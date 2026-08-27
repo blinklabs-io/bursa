@@ -522,6 +522,9 @@ export async function connectKeystoneUSB(): Promise<HardwareSigner> {
         includeNetworkId: resp.include_network_id || null,
       },
       signingMode: TransactionSigningMode.ORDINARY_TRANSACTION,
+      options: {
+        tagCborSets: resp.body_set_tag_policy === "tagged",
+      },
     };
   }
 
@@ -535,8 +538,7 @@ export async function connectKeystoneUSB(): Promise<HardwareSigner> {
     },
 
     async signTx(req: HardwareSignResponse): Promise<string> {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const request = mapToSignRequest(req) as any;
+      const request = mapToSignRequest(req);
       const { witnesses } = await cardano.signTransaction(request);
       const resolved = await Promise.all(
         witnesses.map(async (w) => {

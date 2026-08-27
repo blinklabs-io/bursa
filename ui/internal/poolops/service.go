@@ -700,7 +700,8 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 	a := apollo.New(s.chain).
 		SetWallet(apollo.NewExternalWallet(changeAddr)).
 		SetChangeAddress(changeAddr).
-		SetFeePadding(retirementFeePaddingLovelace)
+		SetFeePadding(retirementFeePaddingLovelace).
+		SetTransactionBodySetTagPolicy(apollo.TransactionBodySetTagPolicyUntagged)
 
 	fundingAddrs, err := retirementFundingAddresses(acct, acctKey)
 	if err != nil {

@@ -81,8 +81,8 @@ github.com/Nvveen/Gotty v0.0.0-20120604004816-cd527374f1e5 h1:TngWCqHvy9oXAN6lEV
 github.com/Nvveen/Gotty v0.0.0-20120604004816-cd527374f1e5/go.mod h1:lmUJ/7eu/Q8D7ML55dXQrVaamCz2vxCfdQBasLZfHKk=
 github.com/ProtonMail/go-crypto v1.4.1 h1:9RfcZHqEQUvP8RzecWEUafnZVtEvrBVL9BiF67IQOfM=
 github.com/ProtonMail/go-crypto v1.4.1/go.mod h1:e1OaTyu5SYVrO9gKOEhTc+5UcXtTUa+P3uLudwcgPqo=
-github.com/Salvionied/apollo/v2 v2.0.0 h1:YUKsWkVgbNCT74iNPyXssQlLHFG+vQRFToNZgH2KF6c=
-github.com/Salvionied/apollo/v2 v2.0.0/go.mod h1:Cz6yBeKreXGDZT/H6QFTCOuROzb7euYoSlUd1OynhUw=
+github.com/Salvionied/apollo/v2 v2.1.1 h1:t4uMIdTb5o00QKoSUabhBJrcgshxRr4EWZk3NeIPKU0=
+github.com/Salvionied/apollo/v2 v2.1.1/go.mod h1:mWb19Hq6QxbtQKcd19U57c+6qugM9s5sKdIcpMkcRdw=
 github.com/XSAM/otelsql v0.43.0 h1:ZIhXqRoMhILXQwBQoq/Dl6Taap/KEFQXZrWjYV1L8X8=
 github.com/XSAM/otelsql v0.43.0/go.mod h1:DJBGBvbtwf1OCBYRTjpRFxOqi6ONpdfb+htr4ncRWuw=
 github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b h1:mimo19zliBX/vSQ6PWWSL9lK8qwHozUj03+zLoEB8O0=
