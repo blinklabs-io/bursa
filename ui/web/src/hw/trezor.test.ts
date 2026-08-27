@@ -181,6 +181,7 @@ describe("connectTrezor session", () => {
     expect(params.networkId).toBe(1);
     expect(params.includeNetworkId).toBe(true);
     expect(params.fee).toBe("200000");
+    expect(params.requiredSigners).toEqual(["aabbccdd"]);
 
     expect(params.inputs).toEqual([
       { path: [0x8000073c, 0x80000717, 0x80000000, 0, 0], prev_hash: "deadbeef", prev_index: 0 },

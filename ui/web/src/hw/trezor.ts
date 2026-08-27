@@ -231,6 +231,7 @@ export async function connectTrezor(opts: ExternalConnectOptions): Promise<Hardw
         ...(req.ttl ? { ttl: req.ttl } : {}),
         protocolMagic: req.protocol_magic,
         networkId: req.network_id,
+        requiredSigners: req.required_signers,
         ...(req.include_network_id ? { includeNetworkId: true } : {}),
         tagCborSets: req.body_set_tag_policy === "tagged",
       });
