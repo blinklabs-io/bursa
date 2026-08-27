@@ -22,6 +22,11 @@
 
 import type { HardwareSignResponse } from "../api/types";
 import type {
+  RequiredSigner,
+  SignTransactionRequest,
+  TxOutput,
+} from "@keystonehq/hw-app-ada";
+import type {
   HardwareCapabilities,
   HardwareSignMessageResult,
   HardwareSigner,
@@ -476,7 +481,7 @@ export async function connectKeystoneUSB(): Promise<HardwareSigner> {
     return Array.from(byPolicy, ([policyIdHex, tokens]) => ({ policyIdHex, tokens }));
   }
 
-  function mapToSignRequest(resp: HardwareSignResponse) {
+  function mapToSignRequest(resp: HardwareSignResponse): SignTransactionRequest {
     const inputs = resp.inputs.map((inp) => ({
       txHashHex: inp.tx_hash_hex,
       outputIndex: inp.output_index,
@@ -501,8 +506,8 @@ export async function connectKeystoneUSB(): Promise<HardwareSigner> {
               params: { addressHex: out.address_hex },
             };
       return {
-        format: TxOutputFormat.ARRAY_LEGACY,
-        destination,
+        format: TxOutputFormat.ARRAY_LEGACY as TxOutput["format"],
+        destination: destination as TxOutput["destination"],
         amount: BigInt(out.lovelace),
         tokenBundle: out.assets && out.assets.length > 0 ? mapTokenBundle(out.assets) : [],
       };
@@ -515,10 +520,12 @@ export async function connectKeystoneUSB(): Promise<HardwareSigner> {
         outputs,
         fee: BigInt(resp.fee),
         ttl: resp.ttl ? BigInt(resp.ttl) : null,
-        requiredSigners: resp.required_signers.map((hashHex) => ({
-          type: TxRequiredSignerType.HASH,
-          hashHex,
-        })),
+        requiredSigners: resp.required_signers.map(
+          (hashHex): RequiredSigner => ({
+            type: TxRequiredSignerType.HASH as RequiredSigner["type"],
+            hashHex,
+          } as RequiredSigner),
+        ),
         includeNetworkId: resp.include_network_id || null,
       },
       signingMode: TransactionSigningMode.ORDINARY_TRANSACTION,
@@ -538,7 +545,7 @@ export async function connectKeystoneUSB(): Promise<HardwareSigner> {
     },
 
     async signTx(req: HardwareSignResponse): Promise<string> {
-      const request = mapToSignRequest(req);
+      const request: SignTransactionRequest = mapToSignRequest(req);
       const { witnesses } = await cardano.signTransaction(request);
       const resolved = await Promise.all(
         witnesses.map(async (w) => {
