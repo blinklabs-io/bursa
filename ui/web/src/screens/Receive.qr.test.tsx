@@ -22,6 +22,7 @@ function mockAddresses() {
     data: {
       receive: [ADDR_A, ADDR_B],
       used: [ADDR_A],
+      usage_known: true,
       next_unused: ADDR_B,
     },
     error: null,
@@ -77,7 +78,7 @@ test("QR regenerates when the next-unused address changes", () => {
   expect(qrCodes[0]).toHaveAttribute("data-qr-value", ADDR_B);
 
   vi.spyOn(hooks, "useAddresses").mockReturnValue({
-    data: { receive: [ADDR_A, ADDR_B], used: [ADDR_A, ADDR_B], next_unused: ADDR_A },
+    data: { receive: [ADDR_A, ADDR_B], used: [ADDR_A, ADDR_B], usage_known: true, next_unused: ADDR_A },
     error: null,
     loading: false,
     refresh: vi.fn(),

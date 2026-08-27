@@ -51,12 +51,17 @@ type BootstrapProgress struct {
 
 // Status is a point-in-time snapshot of the embedded node, serialised by the API.
 type Status struct {
-	State           NodeState          `json:"state"`
-	Tip             uint64             `json:"tip"` // latest block slot known to the node
-	LatestBlockTime *time.Time         `json:"latestBlockTime,omitempty"`
-	CaughtUp        bool               `json:"caughtUp"`
-	Bootstrap       *BootstrapProgress `json:"bootstrap,omitempty"`
-	Err             string             `json:"error,omitempty"`
+	State NodeState `json:"state"`
+	// ReadinessGeneration changes whenever a ready node loses readiness. It is
+	// intentionally internal to the process: consumers use it to reject a
+	// query that crossed a transient syncing interval, even if the node is
+	// ready again by the time the query completes.
+	ReadinessGeneration uint64             `json:"-"`
+	Tip                 uint64             `json:"tip"` // latest block slot known to the node
+	LatestBlockTime     *time.Time         `json:"latestBlockTime,omitempty"`
+	CaughtUp            bool               `json:"caughtUp"`
+	Bootstrap           *BootstrapProgress `json:"bootstrap,omitempty"`
+	Err                 string             `json:"error,omitempty"`
 }
 
 // caughtUp reports whether the latest block is recent enough to consider the

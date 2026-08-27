@@ -58,6 +58,25 @@ type fakeStatuser struct{ s supervisor.Status }
 
 func (f fakeStatuser) Status() supervisor.Status { return f.s }
 
+type sequenceStatuser struct {
+	states      []supervisor.NodeState
+	generations []uint64
+	calls       int
+}
+
+func (s *sequenceStatuser) Status() supervisor.Status {
+	idx := s.calls
+	if idx >= len(s.states) {
+		idx = len(s.states) - 1
+	}
+	s.calls++
+	var generation uint64
+	if idx < len(s.generations) {
+		generation = s.generations[idx]
+	}
+	return supervisor.Status{State: s.states[idx], ReadinessGeneration: generation}
+}
+
 // fakeVault implements the api.Vault interface. It models the layered model in
 // memory: Unlock/Lock toggle locked; AddWallet appends and activates; the active
 // wallet drives reads/spends.
@@ -1053,14 +1072,17 @@ func TestStatusReturnsSnapshot(t *testing.T) {
 // fakeWallet is stateful like the real service: queries return wallet.ErrNoWallet
 // until SetAccount has been called (the vault pushes the active account).
 type fakeWallet struct {
-	balance          wallet.Balance
-	set              bool
-	setAccountCalled bool
-	gotNetwork       string
-	gotAccountIndex  uint32
-	txDetail         wallet.TxDetail
-	txDetailErr      error
-	rewards          wallet.RewardHistory
+	balance              wallet.Balance
+	addresses            wallet.AddressView
+	set                  bool
+	setAccountCalled     bool
+	addressesCalled      int
+	localAddressesCalled int
+	gotNetwork           string
+	gotAccountIndex      uint32
+	txDetail             wallet.TxDetail
+	txDetailErr          error
+	rewards              wallet.RewardHistory
 	// balances, when non-nil, gives BalanceForAccount a distinct balance per
 	// account index (keyed by wallet.Account.AccountIndex) — lets tests verify
 	// per-account balance attribution instead of every account echoing the same
@@ -1105,7 +1127,16 @@ func (f *fakeWallet) Addresses(_ context.Context) (wallet.AddressView, error) {
 	if !f.set {
 		return wallet.AddressView{}, wallet.ErrNoWallet
 	}
-	return wallet.AddressView{}, nil
+	f.addressesCalled++
+	return f.addresses, nil
+}
+
+func (f *fakeWallet) LocalAddresses() (wallet.AddressView, error) {
+	if !f.set {
+		return wallet.AddressView{}, wallet.ErrNoWallet
+	}
+	f.localAddressesCalled++
+	return f.addresses, nil
 }
 
 func (f *fakeWallet) Transactions(_ context.Context) ([]wallet.Tx, error) {
@@ -1659,6 +1690,160 @@ func TestWalletGatedWhileBootstrapping(t *testing.T) {
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/balance", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /wallet/balance while bootstrapping = %d, want 503", rec.Code)
+	}
+}
+
+func TestWalletAddressesUseLocalUsageUntilNodeReady(t *testing.T) {
+	for _, state := range []supervisor.NodeState{
+		supervisor.StateStopped,
+		supervisor.StateStarting,
+		supervisor.StateBootstrapping,
+		supervisor.StateSyncing,
+		supervisor.StateError,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			st := fakeStatuser{s: supervisor.Status{State: state}}
+			fw := &fakeWallet{
+				set: true,
+				addresses: wallet.AddressView{
+					Receive: []string{"addr_test1derived"},
+				},
+			}
+			h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET /wallet/addresses while %s = %d, want 200", state, rec.Code)
+			}
+			var got map[string]any
+			if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+				t.Fatalf("decode addresses: %v", err)
+			}
+			receive, ok := got["receive"].([]any)
+			if !ok || len(receive) != 1 || receive[0] != "addr_test1derived" {
+				t.Fatalf("receive addresses while %s = %#v, want locally derived address", state, got["receive"])
+			}
+			usageKnown, ok := got["usage_known"].(bool)
+			if !ok || usageKnown {
+				t.Fatalf("usage_known while %s = %#v, want explicit false", state, got["usage_known"])
+			}
+			if next, ok := got["next_unused"].(string); !ok || next != "" {
+				t.Fatalf("next_unused while %s = %#v, want empty while usage is unknown", state, got["next_unused"])
+			}
+			if fw.localAddressesCalled != 1 || fw.addressesCalled != 0 {
+				t.Fatalf("address calls while %s = local %d, chain %d; want local 1, chain 0", state, fw.localAddressesCalled, fw.addressesCalled)
+			}
+		})
+	}
+}
+
+func TestWalletAddressesIncludeChainUsageWhenReady(t *testing.T) {
+	for _, state := range []supervisor.NodeState{supervisor.StateReady} {
+		t.Run(string(state), func(t *testing.T) {
+			st := fakeStatuser{s: supervisor.Status{State: state}}
+			fw := &fakeWallet{
+				set: true,
+				addresses: wallet.AddressView{
+					Receive:    []string{"addr_test1used", "addr_test1unused"},
+					Used:       []string{"addr_test1used"},
+					UsageKnown: true,
+					NextUnused: "addr_test1unused",
+				},
+			}
+			h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET /wallet/addresses while %s = %d, want 200", state, rec.Code)
+			}
+			var got wallet.AddressView
+			if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+				t.Fatalf("decode addresses: %v", err)
+			}
+			if len(got.Used) != 1 || got.Used[0] != "addr_test1used" || got.NextUnused != "addr_test1unused" {
+				t.Fatalf("addresses while %s = %+v, want chain usage", state, got)
+			}
+			if !got.UsageKnown {
+				t.Fatalf("addresses while %s report unknown usage after a chain query", state)
+			}
+			if fw.addressesCalled != 1 || fw.localAddressesCalled != 0 {
+				t.Fatalf("address calls while %s = chain %d, local %d; want chain 1, local 0", state, fw.addressesCalled, fw.localAddressesCalled)
+			}
+		})
+	}
+}
+
+func TestWalletAddressesDiscardUsageIfNodeLeavesReadyDuringQuery(t *testing.T) {
+	st := &sequenceStatuser{states: []supervisor.NodeState{
+		supervisor.StateReady,
+		supervisor.StateSyncing,
+	}}
+	fw := &fakeWallet{
+		set: true,
+		addresses: wallet.AddressView{
+			Receive:    []string{"addr_test1used", "addr_test1unused"},
+			Used:       []string{"addr_test1used"},
+			UsageKnown: true,
+			NextUnused: "addr_test1unused",
+		},
+	}
+	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/addresses across Ready transition = %d, want 200", rec.Code)
+	}
+	var got wallet.AddressView
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode addresses: %v", err)
+	}
+	if got.UsageKnown || len(got.Used) != 0 || got.NextUnused != "" {
+		t.Fatalf("addresses across Ready transition = %+v, want unknown usage", got)
+	}
+	if len(got.Receive) != 2 {
+		t.Fatalf("receive addresses = %#v, want locally derived addresses preserved", got.Receive)
+	}
+	if fw.addressesCalled != 1 {
+		t.Fatalf("chain address calls = %d, want 1", fw.addressesCalled)
+	}
+}
+
+func TestWalletAddressesDiscardUsageAcrossReadyGeneration(t *testing.T) {
+	st := &sequenceStatuser{
+		states:      []supervisor.NodeState{supervisor.StateReady, supervisor.StateReady},
+		generations: []uint64{4, 5},
+	}
+	fw := &fakeWallet{
+		set: true,
+		addresses: wallet.AddressView{
+			Receive:    []string{"addr_test1used", "addr_test1unused"},
+			Used:       []string{"addr_test1used"},
+			UsageKnown: true,
+			NextUnused: "addr_test1unused",
+		},
+	}
+	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /wallet/addresses across readiness generation = %d, want 200", rec.Code)
+	}
+	var got wallet.AddressView
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode addresses: %v", err)
+	}
+	if got.UsageKnown || len(got.Used) != 0 || got.NextUnused != "" {
+		t.Fatalf("addresses across readiness generation = %+v, want unknown usage", got)
+	}
+}
+
+func TestWalletAddressesWithoutNodeStillRequireActiveWallet(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateBootstrapping}}
+	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("GET /wallet/addresses without wallet while bootstrapping = %d, want 409", rec.Code)
 	}
 }
 

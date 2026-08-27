@@ -58,6 +58,9 @@ type Wallet interface {
 	// (not necessarily the bound one) — used to summarize each account in the
 	// multi-account listing without rebinding.
 	BalanceForAccount(ctx context.Context, acct *wallet.Account) (wallet.Balance, error)
+	// LocalAddresses returns the derived receive window without consulting the
+	// node, so Receive remains available during startup and bootstrap.
+	LocalAddresses() (wallet.AddressView, error)
 	Addresses(ctx context.Context) (wallet.AddressView, error)
 	Transactions(ctx context.Context) ([]wallet.Tx, error)
 	// TransactionDetail returns the drill-down view (inputs/outputs, every
@@ -1083,10 +1086,30 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		v, err := wl.Balance(r.Context())
 		serve(w, v, err)
 	}))
-	mux.HandleFunc("GET /wallet/addresses", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		v, err := wl.Addresses(r.Context())
+	mux.HandleFunc("GET /wallet/addresses", func(w http.ResponseWriter, r *http.Request) {
+		var v wallet.AddressView
+		var err error
+		// A syncing node can answer reads, but its partial ledger view cannot
+		// authoritatively classify an address as unused. Query usage only after the
+		// node reaches the current chain tip; local derivation remains available in
+		// every earlier lifecycle state.
+		before := st.Status()
+		if before.State == supervisor.StateReady {
+			v, err = wl.Addresses(r.Context())
+			// Do not publish a classification obtained across a Ready -> syncing
+			// transition. The query result may reflect only the new partial view.
+			after := st.Status()
+			if err == nil && (after.State != supervisor.StateReady ||
+				after.ReadinessGeneration != before.ReadinessGeneration) {
+				v.Used = []string{}
+				v.UsageKnown = false
+				v.NextUnused = ""
+			}
+		} else {
+			v, err = wl.LocalAddresses()
+		}
 		serve(w, v, err)
-	}))
+	})
 	mux.HandleFunc("GET /wallet/transactions", gated(st, func(w http.ResponseWriter, r *http.Request) {
 		v, err := wl.Transactions(r.Context())
 		serve(w, v, err)
@@ -2287,7 +2310,7 @@ func resolveNetwork(w http.ResponseWriter, reqNet, nodeNet string) (string, bool
 func gated(st Statuser, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		state := st.Status().State
-		if state != supervisor.StateReady && state != supervisor.StateSyncing {
+		if !nodeQueryable(state) {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 				"error": "node not ready", "state": state,
 			})
@@ -2295,6 +2318,10 @@ func gated(st Statuser, next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+func nodeQueryable(state supervisor.NodeState) bool {
+	return state == supervisor.StateReady || state == supervisor.StateSyncing
 }
 
 // readyGate blocks spending until the node is fully synced (StateReady). It is

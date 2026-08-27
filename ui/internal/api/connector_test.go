@@ -235,6 +235,8 @@ func TestConnectorErrorCode(t *testing.T) {
 		{"ErrNotGranted/getBalance", "getBalance", connector.ErrNotGranted, 403, -3, "connector: origin not granted"},
 		// ErrRefused → 403, -3
 		{"ErrRefused/unknown", "unknown", connector.ErrRefused, 403, -3, "connector: refused"},
+		// Unknown address usage is temporarily unavailable but remains a CIP-30 Refused error.
+		{"ErrAddressUsageUnknown", "getUsedAddresses", connector.ErrAddressUsageUnknown, 503, -3, "connector: address usage is unavailable"},
 		// ErrTimeout → 408, -3
 		{"ErrTimeout", "signTx", connector.ErrTimeout, 408, -3, "request timed out"},
 		// ErrQueueFull → 429, -3
