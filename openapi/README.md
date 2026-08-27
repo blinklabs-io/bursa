@@ -152,6 +152,7 @@ Authentication schemes defined for the API:
 - **Location**: HTTP header
 
 Note, each API key must be added to a map of `map[string]APIKey` where the key is: BearerAuth and passed in as the auth context for each request.
+Set `Prefix` to `Bearer` so the client sends the JWT using the required `Authorization: Bearer <JWT>` header.
 
 Example
 
@@ -160,7 +161,7 @@ auth := context.WithValue(
 		context.Background(),
 		openapi.ContextAPIKeys,
 		map[string]openapi.APIKey{
-			"BearerAuth": {Key: "API_KEY_STRING"},
+			"BearerAuth": {Key: "JWT_STRING", Prefix: "Bearer"},
 		},
 	)
 r, err := client.Service.Operation(auth, args)
