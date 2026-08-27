@@ -21,8 +21,8 @@ FROM eclipse-temurin:17-jdk-noble
 
 # --- Versions (override at build time with --build-arg) -----------------------
 # Pin everything so the image — and therefore the artifact — is reproducible.
-ARG GO_VERSION=1.26.0
-ARG GO_LINUX_AMD64_SHA256=aac1b08a0fb0c4e0a7c1555beb7b59180b05dfc5a3d62e40e9de90cd42f88235
+ARG GO_VERSION=1.26.7
+ARG GO_LINUX_AMD64_SHA256=ffb5f8de10c62550dfddab66b36b57030721e0a44a3218e9e1181d7b59f121ca
 ARG NODE_VERSION=22.21.1
 ARG ANDROID_CMDLINE_TOOLS_VERSION=11076708
 ARG ANDROID_CMDLINE_TOOLS_SHA256=2d2d50857e4eb553af5a6dc3ad507a17adf43d115264b1afc116f95c92e5e258

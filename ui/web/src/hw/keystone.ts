@@ -34,6 +34,7 @@ import { encodeWitnessArray } from "./witness";
 import { decodeCbor, type CborValue } from "./qr/cbor";
 import { ensureBuffer, encodeUR } from "./qr/ur";
 import { isValidXfp } from "./qr/xfp";
+import { newRequestId, assertUuidRequestIdMatches } from "./requestId";
 
 // signMessage is not yet implemented for Keystone: CIP-8 over the air-gapped QR
 // transport needs the shared QR modal that lands with the SeedSigner work. The
@@ -304,14 +305,6 @@ export function buildKeystoneUtxos(req: HardwareSignResponse, xfp: string): Keys
   return utxos;
 }
 
-// A random-enough request id; the device echoes it back on the signature so a
-// stale scan can be detected. crypto.randomUUID is available in every target
-// (secure-context browsers); fall back to a fixed nil UUID if it is missing.
-function newRequestId(): string {
-  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  return c?.randomUUID ? c.randomUUID() : "00000000-0000-0000-0000-000000000000";
-}
-
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -377,11 +370,15 @@ export async function connectKeystoneQR(
       const signData = B.from(req.unsigned_tx_cbor, "hex") as unknown as Buffer;
       const utxos = buildKeystoneUtxos(req, xfp);
 
+      // Retained so the reply's echoed identifier can be checked against THIS
+      // request below — a stale scan (an earlier reply still on-screen) must
+      // not be accepted as the answer to it.
+      const requestId = newRequestId();
       const signRequest = CardanoSignRequest.constructCardanoSignRequest(
         signData,
         utxos,
         [],
-        newRequestId(),
+        requestId,
         "bursa-wallet",
       );
 
@@ -404,6 +401,12 @@ export async function connectKeystoneQR(
         }
         const signature = CardanoSignature.fromCBOR(
           B.from(scanned.cborHex, "hex") as unknown as Buffer,
+        );
+        const receivedId = signature.getRequestId();
+        assertUuidRequestIdMatches(
+          requestId,
+          receivedId ? new Uint8Array(receivedId) : undefined,
+          "Keystone signature reply",
         );
         const witnessSet = new Uint8Array(signature.getWitnessSet());
         return encodeWitnessArray(witnessSetToPairs(witnessSet));

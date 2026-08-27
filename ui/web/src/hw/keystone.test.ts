@@ -15,6 +15,19 @@ import {
 // keystone.ts's ensureBuffer() does in the browser, where no global exists.
 (globalThis as unknown as { Buffer: unknown }).Buffer = URBuffer;
 
+// connectKeystoneQR generates its own request id internally (not observable
+// from outside); pin it to a fixed, valid UUID so it matches the request id
+// every fixture below stamps on its reply, without reaching into
+// crypto.randomUUID.
+const { MOCK_REQUEST_ID } = vi.hoisted(() => ({
+  MOCK_REQUEST_ID: "11111111-1111-4111-8111-111111111111",
+}));
+
+vi.mock("./requestId", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./requestId")>();
+  return { ...actual, newRequestId: () => MOCK_REQUEST_ID };
+});
+
 // ── USB transport + app mocks (no real WebUSB in CI) ──────────────────────────
 const { mockRequestPermission, mockConnect, mockClose, mockGetAppConfig, mockGetXpubs, mockSignTx } =
   vi.hoisted(() => ({
@@ -132,9 +145,22 @@ function witnessSetHex(pubHex: string, sigHex: string): string {
   return "a10081" + "82" + "5820" + pubHex + "5840" + sigHex;
 }
 
-// A cardano-signature UR wrapping the witness set.
-function signatureCborHex(pubHex: string, sigHex: string): string {
-  const sig = new CardanoSignature(buf(witnessSetHex(pubHex, sigHex)));
+function uuidToBuffer(uuidStr: string): Buffer {
+  return URBuffer.from(uuidStr.replace(/-/g, ""), "hex") as unknown as Buffer;
+}
+
+// A cardano-signature UR wrapping the witness set. `requestId` defaults to the
+// mocked id every connectKeystoneQR call in this file sends (MOCK_REQUEST_ID);
+// pass `null` to omit it, or a different UUID to build a stale-scan fixture.
+function signatureCborHex(
+  pubHex: string,
+  sigHex: string,
+  requestId: string | null = MOCK_REQUEST_ID,
+): string {
+  const sig = new CardanoSignature(
+    buf(witnessSetHex(pubHex, sigHex)),
+    requestId ? uuidToBuffer(requestId) : undefined,
+  );
   return Buffer.from(sig.toUR().cbor).toString("hex");
 }
 
@@ -258,6 +284,52 @@ describe("connectKeystoneQR", () => {
     });
     const session = await connectKeystoneQR({ transport: "qr", bridge, xfp: "52744703" });
     await expect(session.signTx(NEUTRAL_REQ)).rejects.toThrow(/cardano-signature/i);
+    expect(bridge.close).toHaveBeenCalled();
+  });
+
+  // ── request-identifier matching (issue: reject a reply that doesn't answer
+  // the active request — a stale scan, or one with no/garbled identifier) ──────
+
+  test("signTx rejects a reply carrying a different (stale) request id", async () => {
+    // A signature left over from an EARLIER sign request must not be attached
+    // to the current operation just because it is otherwise well-formed.
+    const bridge = makeBridge();
+    bridge.scanResponse.mockResolvedValue({
+      type: "cardano-signature",
+      cborHex: signatureCborHex(
+        TEST_PUB_KEY_HEX,
+        TEST_SIG_HEX,
+        "22222222-2222-4222-8222-222222222222",
+      ),
+    });
+    const session = await connectKeystoneQR({ transport: "qr", bridge, xfp: "52744703" });
+    await expect(session.signTx(NEUTRAL_REQ)).rejects.toThrow(/does not match the active request/i);
+    expect(bridge.close).toHaveBeenCalled();
+  });
+
+  test("signTx rejects a reply with no request id", async () => {
+    const bridge = makeBridge();
+    bridge.scanResponse.mockResolvedValue({
+      type: "cardano-signature",
+      cborHex: signatureCborHex(TEST_PUB_KEY_HEX, TEST_SIG_HEX, null),
+    });
+    const session = await connectKeystoneQR({ transport: "qr", bridge, xfp: "52744703" });
+    await expect(session.signTx(NEUTRAL_REQ)).rejects.toThrow(/no request identifier/i);
+    expect(bridge.close).toHaveBeenCalled();
+  });
+
+  test("signTx rejects a reply whose request id is a malformed length", async () => {
+    const bridge = makeBridge();
+    const sig = new CardanoSignature(
+      buf(witnessSetHex(TEST_PUB_KEY_HEX, TEST_SIG_HEX)),
+      URBuffer.from("aabbccdd", "hex") as unknown as Buffer, // 4 bytes, not a 16-byte UUID
+    );
+    bridge.scanResponse.mockResolvedValue({
+      type: "cardano-signature",
+      cborHex: Buffer.from(sig.toUR().cbor).toString("hex"),
+    });
+    const session = await connectKeystoneQR({ transport: "qr", bridge, xfp: "52744703" });
+    await expect(session.signTx(NEUTRAL_REQ)).rejects.toThrow(/malformed request identifier/i);
     expect(bridge.close).toHaveBeenCalled();
   });
 
