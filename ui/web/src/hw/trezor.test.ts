@@ -58,6 +58,7 @@ const NEUTRAL_REQ: HardwareSignResponse = {
   ],
   fee: "200000",
   required_signers: ["aabbccdd"],
+  body_set_tag_policy: "untagged",
   unsigned_tx_cbor: "84a4deadbeef",
 };
 
@@ -180,6 +181,7 @@ describe("connectTrezor session", () => {
     expect(params.networkId).toBe(1);
     expect(params.includeNetworkId).toBe(true);
     expect(params.fee).toBe("200000");
+    expect(params.requiredSigners).toEqual([{ keyHash: "aabbccdd" }]);
 
     expect(params.inputs).toEqual([
       { path: [0x8000073c, 0x80000717, 0x80000000, 0, 0], prev_hash: "deadbeef", prev_index: 0 },
