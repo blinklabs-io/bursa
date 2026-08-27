@@ -6,11 +6,12 @@ import { ApiError } from "../api/client";
 const ADDR_A = "addr_test1qpfqpgxzsq8d6l5n5qxkdqqvxqqtd2syvxsw0mkzmq2dzn7y2y5a3uqquasklznf6xvxn0tmxy2cjaslt9yq5ygz4dqsv9r4pk";
 const ADDR_B = "addr_test1qqy2j78ks2htj6x5p2xztqpvqxqqtd2syvxsw0mkzmq2dzny0cjaslt9yq5ygz4dqsv9r4pkzuqquasklznf6xvxn0tmxwtest2";
 
-function mockAddresses(overrides?: Partial<{ receive: string[]; used: string[]; next_unused: string }>) {
+function mockAddresses(overrides?: Partial<{ receive: string[]; used: string[]; usage_known: boolean; next_unused: string }>) {
   vi.spyOn(hooks, "useAddresses").mockReturnValue({
     data: {
       receive: [ADDR_A, ADDR_B],
       used: [ADDR_A],
+      usage_known: true,
       next_unused: ADDR_B,
       ...overrides,
     },
@@ -75,6 +76,27 @@ test("(d) unused addresses show an 'Unused' or empty status in the table", () =>
 
   // ADDR_B is not used — there should be an 'Unused' cell in the table.
   expect(screen.getAllByText("Unused").length).toBeGreaterThanOrEqual(1);
+});
+
+test("unknown chain usage neither labels addresses unused nor promotes a next-unused address", () => {
+  vi.spyOn(hooks, "useAddresses").mockReturnValue({
+    data: {
+      receive: [ADDR_A, ADDR_B],
+      used: [],
+      next_unused: ADDR_B,
+      usage_known: false,
+    },
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+
+  render(<Receive />);
+
+  expect(screen.queryByRole("heading", { name: /next unused address/i })).not.toBeInTheDocument();
+  expect(screen.queryByText("Unused")).not.toBeInTheDocument();
+  expect(screen.getAllByText("Not checked")).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: "Copy this receive address" })).toHaveLength(2);
 });
 
 test("(e) loading state renders a loading indicator", () => {

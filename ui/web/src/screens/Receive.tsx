@@ -61,7 +61,10 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
   }
 
   const data = addresses.data;
-  const nextUnused = data?.next_unused ?? "";
+  // Missing is treated as unknown too, so a newer UI paired with an older
+  // backend fails closed instead of labelling every address unused.
+  const usageKnown = data?.usage_known === true;
+  const nextUnused = usageKnown ? (data?.next_unused ?? "") : "";
   const receive = data?.receive ?? [];
   const usedSet = new Set(data?.used ?? []);
 
@@ -76,7 +79,7 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
     const isExpanded = expandedQr === addr;
     return {
       address: truncateAddr(addr),
-      status: usedSet.has(addr) ? "Used" : "Unused",
+      status: usageKnown ? (usedSet.has(addr) ? "Used" : "Unused") : "Not checked",
       qr: (
         <div className="receive-qr-cell">
           <button
@@ -109,20 +112,27 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
 
   return (
     <div className="receive">
-      <Card title="Next Unused Address">
-        <div className="receive-next">
-          {nextUnused && (
-            <AddressQR address={nextUnused} size={QR_SIZE_HERO} title={`QR code for ${nextUnused}`} />
-          )}
-          <div className="receive-next-details">
-            <p className="mono address-full">{nextUnused}</p>
-            <CopyButton value={nextUnused} ariaLabel="Copy next unused address" />
-            {nextUnused && <ExplorerLink network={network} kind="address" id={nextUnused} />}
+      {usageKnown && (
+        <Card title="Next Unused Address">
+          <div className="receive-next">
+            {nextUnused && (
+              <AddressQR address={nextUnused} size={QR_SIZE_HERO} title={`QR code for ${nextUnused}`} />
+            )}
+            <div className="receive-next-details">
+              <p className="mono address-full">{nextUnused}</p>
+              <CopyButton value={nextUnused} ariaLabel="Copy next unused address" />
+              {nextUnused && <ExplorerLink network={network} kind="address" id={nextUnused} />}
+            </div>
           </div>
-        </div>
-      </Card>
+        </Card>
+      )}
 
       <Card title="Receive Addresses">
+        {!usageKnown && receive.length > 0 && (
+          <p className="muted" role="status">
+            On-chain use has not been checked yet. You can receive at an address below, but Bursa cannot identify the next unused address until the node is available.
+          </p>
+        )}
         {receive.length === 0 ? (
           <p className="muted">No addresses available</p>
         ) : (

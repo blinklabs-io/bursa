@@ -124,6 +124,9 @@ func TestServiceBalanceAndAddresses(t *testing.T) {
 	if len(av.Used) != 1 || av.Used[0] != "addr_test1a" {
 		t.Fatalf("used = %v, want [addr_test1a]", av.Used)
 	}
+	if !av.UsageKnown {
+		t.Fatal("UsageKnown false after successful chain query")
+	}
 	if av.NextUnused == "" {
 		t.Fatal("NextUnused empty, want a derived address")
 	}
@@ -180,6 +183,9 @@ func TestServiceEmptyAccount(t *testing.T) {
 	if len(av.Used) != 0 {
 		t.Fatalf("used = %v, want empty", av.Used)
 	}
+	if !av.UsageKnown {
+		t.Fatal("UsageKnown false after definitive chain not-found")
+	}
 	if av.NextUnused != av.Receive[0] {
 		t.Fatalf("NextUnused = %q, want receive[0] %q", av.NextUnused, av.Receive[0])
 	}
@@ -209,11 +215,17 @@ func TestServiceLocalAddressesDoNotQueryChain(t *testing.T) {
 	if fc.addressCalls != 0 {
 		t.Fatalf("AccountAddresses calls = %d, want 0", fc.addressCalls)
 	}
-	if len(got.Receive) != 3 || got.NextUnused != acct.ReceiveAddresses[0] {
-		t.Fatalf("local addresses = %+v, want three derived addresses with receive[0] next", got)
+	if len(got.Receive) != 3 {
+		t.Fatalf("local receive addresses = %v, want three derived addresses", got.Receive)
+	}
+	if got.NextUnused != "" {
+		t.Fatalf("local NextUnused = %q, want empty while chain usage is unknown", got.NextUnused)
 	}
 	if len(got.Used) != 0 {
 		t.Fatalf("local used addresses = %v, want empty", got.Used)
+	}
+	if got.UsageKnown {
+		t.Fatal("local UsageKnown true without a chain query")
 	}
 	got.Receive[0] = "addr_test1mutated"
 	again, err := s.LocalAddresses()
@@ -876,8 +888,11 @@ func TestScriptAccountViewsSkipStakeLookups(t *testing.T) {
 	if len(addrs.Receive) != 1 || addrs.Receive[0] != scriptAddr {
 		t.Fatalf("Addresses receive = %v, want just the script address", addrs.Receive)
 	}
-	if addrs.NextUnused != scriptAddr {
-		t.Fatalf("NextUnused = %q, want the script address", addrs.NextUnused)
+	if addrs.UsageKnown {
+		t.Fatal("UsageKnown true for script account without a chain query")
+	}
+	if addrs.NextUnused != "" {
+		t.Fatalf("NextUnused = %q, want empty while script-address usage is unknown", addrs.NextUnused)
 	}
 
 	del, err := svc.Delegation(context.Background())

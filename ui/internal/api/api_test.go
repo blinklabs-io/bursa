@@ -1686,8 +1686,7 @@ func TestWalletAddressesAvailableWithoutQueryableNode(t *testing.T) {
 			fw := &fakeWallet{
 				set: true,
 				addresses: wallet.AddressView{
-					Receive:    []string{"addr_test1derived"},
-					NextUnused: "addr_test1derived",
+					Receive: []string{"addr_test1derived"},
 				},
 			}
 			h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
@@ -1696,12 +1695,20 @@ func TestWalletAddressesAvailableWithoutQueryableNode(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("GET /wallet/addresses while %s = %d, want 200", state, rec.Code)
 			}
-			var got wallet.AddressView
+			var got map[string]any
 			if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 				t.Fatalf("decode addresses: %v", err)
 			}
-			if len(got.Receive) != 1 || got.Receive[0] != "addr_test1derived" || got.NextUnused != "addr_test1derived" {
-				t.Fatalf("addresses while %s = %+v, want locally derived address", state, got)
+			receive, ok := got["receive"].([]any)
+			if !ok || len(receive) != 1 || receive[0] != "addr_test1derived" {
+				t.Fatalf("receive addresses while %s = %#v, want locally derived address", state, got["receive"])
+			}
+			usageKnown, ok := got["usage_known"].(bool)
+			if !ok || usageKnown {
+				t.Fatalf("usage_known while %s = %#v, want explicit false", state, got["usage_known"])
+			}
+			if next, ok := got["next_unused"].(string); !ok || next != "" {
+				t.Fatalf("next_unused while %s = %#v, want empty while usage is unknown", state, got["next_unused"])
 			}
 			if fw.localAddressesCalled != 1 || fw.addressesCalled != 0 {
 				t.Fatalf("address calls while %s = local %d, chain %d; want local 1, chain 0", state, fw.localAddressesCalled, fw.addressesCalled)
@@ -1719,6 +1726,7 @@ func TestWalletAddressesIncludeChainUsageWhenQueryable(t *testing.T) {
 				addresses: wallet.AddressView{
 					Receive:    []string{"addr_test1used", "addr_test1unused"},
 					Used:       []string{"addr_test1used"},
+					UsageKnown: true,
 					NextUnused: "addr_test1unused",
 				},
 			}
@@ -1734,6 +1742,9 @@ func TestWalletAddressesIncludeChainUsageWhenQueryable(t *testing.T) {
 			}
 			if len(got.Used) != 1 || got.Used[0] != "addr_test1used" || got.NextUnused != "addr_test1unused" {
 				t.Fatalf("addresses while %s = %+v, want chain usage", state, got)
+			}
+			if !got.UsageKnown {
+				t.Fatalf("addresses while %s report unknown usage after a chain query", state)
 			}
 			if fw.addressesCalled != 1 || fw.localAddressesCalled != 0 {
 				t.Fatalf("address calls while %s = chain %d, local %d; want chain 1, local 0", state, fw.addressesCalled, fw.localAddressesCalled)

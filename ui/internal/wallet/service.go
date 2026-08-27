@@ -27,12 +27,15 @@ type chainQuerier interface {
 }
 
 // AddressView is the receive-address view: the derived window, the chain-seen
-// (used) addresses, and the next unused derived address. NextUnused is empty
-// when every address in the derived window is already used on chain (dynamic
-// gap-limit expansion is deferred to a later phase).
+// (used) addresses, and the next unused derived address. UsageKnown is false
+// when the node was not queried; in that state Used and NextUnused must not be
+// interpreted as evidence that an address is unused. When usage is known,
+// NextUnused is empty only if every address in the derived window is already
+// used on chain (dynamic gap-limit expansion is deferred to a later phase).
 type AddressView struct {
 	Receive    []string `json:"receive"`
 	Used       []string `json:"used"`
+	UsageKnown bool     `json:"usage_known"`
 	NextUnused string   `json:"next_unused"`
 }
 
@@ -144,24 +147,31 @@ func (s *Service) currentAccount() (*Account, error) {
 	return cloneAccount(s.account), nil
 }
 
-func addressView(acct *Account, used []string) AddressView {
+func addressView(acct *Account, used []string, usageKnown bool) AddressView {
+	receive := cloneStringSlice(acct.ReceiveAddresses)
+	used = cloneStringSlice(used)
+	if used == nil {
+		used = []string{}
+	}
+	view := AddressView{
+		Receive:    receive,
+		Used:       used,
+		UsageKnown: usageKnown,
+	}
+	if !usageKnown {
+		return view
+	}
 	usedSet := make(map[string]bool, len(used))
 	for _, a := range used {
 		usedSet[a] = true
 	}
-	receive := cloneStringSlice(acct.ReceiveAddresses)
-	next := ""
 	for _, a := range receive {
 		if !usedSet[a] {
-			next = a
+			view.NextUnused = a
 			break
 		}
 	}
-	return AddressView{
-		Receive:    receive,
-		Used:       cloneStringSlice(used),
-		NextUnused: next,
-	}
+	return view
 }
 
 // LocalAddresses reports the locally derived receive window without querying
@@ -172,7 +182,7 @@ func (s *Service) LocalAddresses() (AddressView, error) {
 	if err != nil {
 		return AddressView{}, err
 	}
-	return addressView(acct, nil), nil
+	return addressView(acct, nil, false), nil
 }
 
 // scanAddresses returns the addresses to query for funds and history: the
@@ -262,17 +272,18 @@ func (s *Service) Addresses(ctx context.Context) (AddressView, error) {
 	}
 	// Same reason as scanAddresses: a script (multi-signature) account has no
 	// stake credential, so there is nothing to look up and an empty stake
-	// address is a malformed request rather than a not-found. Its receive
-	// window is exactly the script address it was created with.
+	// address is a malformed request rather than a not-found. Its receive window
+	// is exactly the script address it was created with, but its on-chain usage
+	// remains unknown because this path deliberately makes no chain query.
 	if acct.StakeAddress == "" {
-		return addressView(acct, nil), nil
+		return addressView(acct, nil, false), nil
 	}
 	used, err := s.chain.AccountAddresses(ctx, acct.StakeAddress)
 	if err != nil && !errors.Is(err, chain.ErrNotFound) {
 		return AddressView{}, err
 	}
 	// ErrNotFound: no chain-seen addresses yet → used stays empty; NextUnused is receive[0].
-	return addressView(acct, used), nil
+	return addressView(acct, used, true), nil
 }
 
 // Transactions returns the merged, newest-first history across the account's
