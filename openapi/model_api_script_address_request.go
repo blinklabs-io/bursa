@@ -32,10 +32,7 @@ type _ApiScriptAddressRequest ApiScriptAddressRequest
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewApiScriptAddressRequest(
-	network string,
-	script map[string]map[string]interface{},
-) *ApiScriptAddressRequest {
+func NewApiScriptAddressRequest(network string, script map[string]map[string]interface{}) *ApiScriptAddressRequest {
 	this := ApiScriptAddressRequest{}
 	this.Network = network
 	this.Script = script
@@ -94,9 +91,7 @@ func (o *ApiScriptAddressRequest) GetScriptOk() (map[string]map[string]interface
 }
 
 // SetScript sets field value
-func (o *ApiScriptAddressRequest) SetScript(
-	v map[string]map[string]interface{},
-) {
+func (o *ApiScriptAddressRequest) SetScript(v map[string]map[string]interface{}) {
 	o.Script = v
 }
 
@@ -134,10 +129,7 @@ func (o *ApiScriptAddressRequest) UnmarshalJSON(data []byte) (err error) {
 
 	for _, requiredProperty := range requiredProperties {
 		if _, exists := allProperties[requiredProperty]; !exists {
-			return fmt.Errorf(
-				"no value given for required property %v",
-				requiredProperty,
-			)
+			return fmt.Errorf("no value given for required property %v", requiredProperty)
 		}
 	}
 
@@ -179,9 +171,7 @@ func (v *NullableApiScriptAddressRequest) Unset() {
 	v.isSet = false
 }
 
-func NewNullableApiScriptAddressRequest(
-	val *ApiScriptAddressRequest,
-) *NullableApiScriptAddressRequest {
+func NewNullableApiScriptAddressRequest(val *ApiScriptAddressRequest) *NullableApiScriptAddressRequest {
 	return &NullableApiScriptAddressRequest{value: val, isSet: true}
 }
 

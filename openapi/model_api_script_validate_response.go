@@ -205,9 +205,7 @@ func (v NullableApiScriptValidateResponse) Get() *ApiScriptValidateResponse {
 	return v.value
 }
 
-func (v *NullableApiScriptValidateResponse) Set(
-	val *ApiScriptValidateResponse,
-) {
+func (v *NullableApiScriptValidateResponse) Set(val *ApiScriptValidateResponse) {
 	v.value = val
 	v.isSet = true
 }
@@ -221,9 +219,7 @@ func (v *NullableApiScriptValidateResponse) Unset() {
 	v.isSet = false
 }
 
-func NewNullableApiScriptValidateResponse(
-	val *ApiScriptValidateResponse,
-) *NullableApiScriptValidateResponse {
+func NewNullableApiScriptValidateResponse(val *ApiScriptValidateResponse) *NullableApiScriptValidateResponse {
 	return &NullableApiScriptValidateResponse{value: val, isSet: true}
 }
 

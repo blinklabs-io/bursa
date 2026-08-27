@@ -29,6 +29,9 @@ func (c contextKey) String() string {
 }
 
 var (
+	// ContextAPIKeys takes a string apikey as authentication for the request
+	ContextAPIKeys = contextKey("apiKeys")
+
 	// ContextServerIndex uses a server configuration from the index.
 	ContextServerIndex = contextKey("serverIndex")
 
@@ -106,10 +109,7 @@ func (c *Configuration) AddDefaultHeader(key string, value string) {
 }
 
 // URL formats template on a index using given variables
-func (sc ServerConfigurations) URL(
-	index int,
-	variables map[string]string,
-) (string, error) {
+func (sc ServerConfigurations) URL(index int, variables map[string]string) (string, error) {
 	if index < 0 || len(sc) <= index {
 		return "", fmt.Errorf("index %v out of range %v", index, len(sc)-1)
 	}
@@ -126,12 +126,7 @@ func (sc ServerConfigurations) URL(
 				}
 			}
 			if !found {
-				return "", fmt.Errorf(
-					"the variable %s in the server URL has invalid value %v. Must be %v",
-					name,
-					value,
-					variable.EnumValues,
-				)
+				return "", fmt.Errorf("the variable %s in the server URL has invalid value %v. Must be %v", name, value, variable.EnumValues)
 			}
 			url = strings.Replace(url, "{"+name+"}", value, -1)
 		} else {
@@ -142,10 +137,7 @@ func (sc ServerConfigurations) URL(
 }
 
 // ServerURL returns URL based on server settings
-func (c *Configuration) ServerURL(
-	index int,
-	variables map[string]string,
-) (string, error) {
+func (c *Configuration) ServerURL(index int, variables map[string]string) (string, error) {
 	return c.Servers.URL(index, variables)
 }
 
@@ -160,17 +152,11 @@ func getServerIndex(ctx context.Context) (int, error) {
 	return 0, nil
 }
 
-func getServerOperationIndex(
-	ctx context.Context,
-	endpoint string,
-) (int, error) {
+func getServerOperationIndex(ctx context.Context, endpoint string) (int, error) {
 	osi := ctx.Value(ContextOperationServerIndices)
 	if osi != nil {
 		if operationIndices, ok := osi.(map[string]int); !ok {
-			return 0, reportError(
-				"Invalid type %T should be map[string]int",
-				osi,
-			)
+			return 0, reportError("Invalid type %T should be map[string]int", osi)
 		} else {
 			index, ok := operationIndices[endpoint]
 			if ok {
@@ -187,25 +173,16 @@ func getServerVariables(ctx context.Context) (map[string]string, error) {
 		if variables, ok := sv.(map[string]string); ok {
 			return variables, nil
 		}
-		return nil, reportError(
-			"ctx value of ContextServerVariables has invalid type %T should be map[string]string",
-			sv,
-		)
+		return nil, reportError("ctx value of ContextServerVariables has invalid type %T should be map[string]string", sv)
 	}
 	return nil, nil
 }
 
-func getServerOperationVariables(
-	ctx context.Context,
-	endpoint string,
-) (map[string]string, error) {
+func getServerOperationVariables(ctx context.Context, endpoint string) (map[string]string, error) {
 	osv := ctx.Value(ContextOperationServerVariables)
 	if osv != nil {
 		if operationVariables, ok := osv.(map[string]map[string]string); !ok {
-			return nil, reportError(
-				"ctx value of ContextOperationServerVariables has invalid type %T should be map[string]map[string]string",
-				osv,
-			)
+			return nil, reportError("ctx value of ContextOperationServerVariables has invalid type %T should be map[string]map[string]string", osv)
 		} else {
 			variables, ok := operationVariables[endpoint]
 			if ok {
@@ -217,10 +194,7 @@ func getServerOperationVariables(
 }
 
 // ServerURLWithContext returns a new server URL given an endpoint
-func (c *Configuration) ServerURLWithContext(
-	ctx context.Context,
-	endpoint string,
-) (string, error) {
+func (c *Configuration) ServerURLWithContext(ctx context.Context, endpoint string) (string, error) {
 	sc, ok := c.OperationServers[endpoint]
 	if !ok {
 		sc = c.Servers

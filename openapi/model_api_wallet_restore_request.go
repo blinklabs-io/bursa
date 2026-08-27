@@ -30,6 +30,7 @@ type ApiWalletRestoreRequest struct {
 	Mnemonic        string  `json:"mnemonic"`
 	Password        *string `json:"password,omitempty"`
 	PaymentId       *int32  `json:"payment_id,omitempty"`
+	PoolColdId      *int32  `json:"pool_cold_id,omitempty"`
 	StakeId         *int32  `json:"stake_id,omitempty"`
 }
 
@@ -301,6 +302,38 @@ func (o *ApiWalletRestoreRequest) SetPaymentId(v int32) {
 	o.PaymentId = &v
 }
 
+// GetPoolColdId returns the PoolColdId field value if set, zero value otherwise.
+func (o *ApiWalletRestoreRequest) GetPoolColdId() int32 {
+	if o == nil || IsNil(o.PoolColdId) {
+		var ret int32
+		return ret
+	}
+	return *o.PoolColdId
+}
+
+// GetPoolColdIdOk returns a tuple with the PoolColdId field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ApiWalletRestoreRequest) GetPoolColdIdOk() (*int32, bool) {
+	if o == nil || IsNil(o.PoolColdId) {
+		return nil, false
+	}
+	return o.PoolColdId, true
+}
+
+// HasPoolColdId returns a boolean if a field has been set.
+func (o *ApiWalletRestoreRequest) HasPoolColdId() bool {
+	if o != nil && !IsNil(o.PoolColdId) {
+		return true
+	}
+
+	return false
+}
+
+// SetPoolColdId gets a reference to the given int32 and assigns it to the PoolColdId field.
+func (o *ApiWalletRestoreRequest) SetPoolColdId(v int32) {
+	o.PoolColdId = &v
+}
+
 // GetStakeId returns the StakeId field value if set, zero value otherwise.
 func (o *ApiWalletRestoreRequest) GetStakeId() int32 {
 	if o == nil || IsNil(o.StakeId) {
@@ -365,6 +398,9 @@ func (o ApiWalletRestoreRequest) ToMap() (map[string]interface{}, error) {
 	if !IsNil(o.PaymentId) {
 		toSerialize["payment_id"] = o.PaymentId
 	}
+	if !IsNil(o.PoolColdId) {
+		toSerialize["pool_cold_id"] = o.PoolColdId
+	}
 	if !IsNil(o.StakeId) {
 		toSerialize["stake_id"] = o.StakeId
 	}
@@ -389,10 +425,7 @@ func (o *ApiWalletRestoreRequest) UnmarshalJSON(data []byte) (err error) {
 
 	for _, requiredProperty := range requiredProperties {
 		if _, exists := allProperties[requiredProperty]; !exists {
-			return fmt.Errorf(
-				"no value given for required property %v",
-				requiredProperty,
-			)
+			return fmt.Errorf("no value given for required property %v", requiredProperty)
 		}
 	}
 
@@ -434,9 +467,7 @@ func (v *NullableApiWalletRestoreRequest) Unset() {
 	v.isSet = false
 }
 
-func NewNullableApiWalletRestoreRequest(
-	val *ApiWalletRestoreRequest,
-) *NullableApiWalletRestoreRequest {
+func NewNullableApiWalletRestoreRequest(val *ApiWalletRestoreRequest) *NullableApiWalletRestoreRequest {
 	return &NullableApiWalletRestoreRequest{value: val, isSet: true}
 }
 

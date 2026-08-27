@@ -22,6 +22,48 @@ import (
 type DefaultAPI interface {
 
 	/*
+		ApiAddressBuildPost Build Cardano address
+
+		Builds a Cardano address from verification keys
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiAddressBuildPostRequest
+	*/
+	ApiAddressBuildPost(ctx context.Context) DefaultAPIApiAddressBuildPostRequest
+
+	// ApiAddressBuildPostExecute executes the request
+	//  @return ApiAddressBuildResponse
+	ApiAddressBuildPostExecute(r DefaultAPIApiAddressBuildPostRequest) (*ApiAddressBuildResponse, *http.Response, error)
+
+	/*
+		ApiAddressEnumeratePost Enumerate derived addresses for a wallet
+
+		Derives consecutive base addresses from a mnemonic for the given account and network
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiAddressEnumeratePostRequest
+	*/
+	ApiAddressEnumeratePost(ctx context.Context) DefaultAPIApiAddressEnumeratePostRequest
+
+	// ApiAddressEnumeratePostExecute executes the request
+	//  @return []BursaEnumeratedAddress
+	ApiAddressEnumeratePostExecute(r DefaultAPIApiAddressEnumeratePostRequest) ([]BursaEnumeratedAddress, *http.Response, error)
+
+	/*
+		ApiAddressParsePost Parse Cardano address
+
+		Parses a Cardano address and returns its components and metadata
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiAddressParsePostRequest
+	*/
+	ApiAddressParsePost(ctx context.Context) DefaultAPIApiAddressParsePostRequest
+
+	// ApiAddressParsePostExecute executes the request
+	//  @return ApiAddressParseResponse
+	ApiAddressParsePostExecute(r DefaultAPIApiAddressParsePostRequest) (*ApiAddressParseResponse, *http.Response, error)
+
+	/*
 		ApiScriptAddressPost Generate script address
 
 		Generate an address for a script on the specified network
@@ -29,15 +71,11 @@ type DefaultAPI interface {
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiScriptAddressPostRequest
 	*/
-	ApiScriptAddressPost(
-		ctx context.Context,
-	) DefaultAPIApiScriptAddressPostRequest
+	ApiScriptAddressPost(ctx context.Context) DefaultAPIApiScriptAddressPostRequest
 
 	// ApiScriptAddressPostExecute executes the request
-	//	@return	ApiScriptAddressResponse
-	ApiScriptAddressPostExecute(
-		r DefaultAPIApiScriptAddressPostRequest,
-	) (*ApiScriptAddressResponse, *http.Response, error)
+	//  @return ApiScriptAddressResponse
+	ApiScriptAddressPostExecute(r DefaultAPIApiScriptAddressPostRequest) (*ApiScriptAddressResponse, *http.Response, error)
 
 	/*
 		ApiScriptCreatePost Create a multi-signature script
@@ -47,15 +85,11 @@ type DefaultAPI interface {
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiScriptCreatePostRequest
 	*/
-	ApiScriptCreatePost(
-		ctx context.Context,
-	) DefaultAPIApiScriptCreatePostRequest
+	ApiScriptCreatePost(ctx context.Context) DefaultAPIApiScriptCreatePostRequest
 
 	// ApiScriptCreatePostExecute executes the request
-	//	@return	ApiScriptResponse
-	ApiScriptCreatePostExecute(
-		r DefaultAPIApiScriptCreatePostRequest,
-	) (*ApiScriptResponse, *http.Response, error)
+	//  @return ApiScriptResponse
+	ApiScriptCreatePostExecute(r DefaultAPIApiScriptCreatePostRequest) (*ApiScriptResponse, *http.Response, error)
 
 	/*
 		ApiScriptValidatePost Validate a script
@@ -65,15 +99,109 @@ type DefaultAPI interface {
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiScriptValidatePostRequest
 	*/
-	ApiScriptValidatePost(
-		ctx context.Context,
-	) DefaultAPIApiScriptValidatePostRequest
+	ApiScriptValidatePost(ctx context.Context) DefaultAPIApiScriptValidatePostRequest
 
 	// ApiScriptValidatePostExecute executes the request
-	//	@return	ApiScriptValidateResponse
-	ApiScriptValidatePostExecute(
-		r DefaultAPIApiScriptValidatePostRequest,
-	) (*ApiScriptValidateResponse, *http.Response, error)
+	//  @return ApiScriptValidateResponse
+	ApiScriptValidatePostExecute(r DefaultAPIApiScriptValidatePostRequest) (*ApiScriptValidateResponse, *http.Response, error)
+
+	/*
+		ApiSignDataPost Sign a message (CIP-8/CIP-30 signData)
+
+		Sign a payload using a signing key, producing a COSE_Sign1 structure
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiSignDataPostRequest
+	*/
+	ApiSignDataPost(ctx context.Context) DefaultAPIApiSignDataPostRequest
+
+	// ApiSignDataPostExecute executes the request
+	//  @return ApiSignDataResponse
+	ApiSignDataPostExecute(r DefaultAPIApiSignDataPostRequest) (*ApiSignDataResponse, *http.Response, error)
+
+	/*
+		ApiSignVerifyPost Verify a CIP-8/CIP-30 signData signature
+
+		Verify a COSE_Sign1 signature against a COSE_Key and expected payload
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiSignVerifyPostRequest
+	*/
+	ApiSignVerifyPost(ctx context.Context) DefaultAPIApiSignVerifyPostRequest
+
+	// ApiSignVerifyPostExecute executes the request
+	//  @return ApiVerifyDataResponse
+	ApiSignVerifyPostExecute(r DefaultAPIApiSignVerifyPostRequest) (*ApiVerifyDataResponse, *http.Response, error)
+
+	/*
+		ApiTxAssemblePost Assemble a signed transaction
+
+		Merge detached witnesses into a transaction
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiTxAssemblePostRequest
+	*/
+	ApiTxAssemblePost(ctx context.Context) DefaultAPIApiTxAssemblePostRequest
+
+	// ApiTxAssemblePostExecute executes the request
+	//  @return ApiTxCborResponse
+	ApiTxAssemblePostExecute(r DefaultAPIApiTxAssemblePostRequest) (*ApiTxCborResponse, *http.Response, error)
+
+	/*
+		ApiTxDecodePost Decode a transaction
+
+		Decode and inspect a transaction
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiTxDecodePostRequest
+	*/
+	ApiTxDecodePost(ctx context.Context) DefaultAPIApiTxDecodePostRequest
+
+	// ApiTxDecodePostExecute executes the request
+	//  @return BursaTxInspection
+	ApiTxDecodePostExecute(r DefaultAPIApiTxDecodePostRequest) (*BursaTxInspection, *http.Response, error)
+
+	/*
+		ApiTxIdPost Get a transaction id
+
+		Calculate the transaction id from a transaction body
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiTxIdPostRequest
+	*/
+	ApiTxIdPost(ctx context.Context) DefaultAPIApiTxIdPostRequest
+
+	// ApiTxIdPostExecute executes the request
+	//  @return ApiTxIDResponse
+	ApiTxIdPostExecute(r DefaultAPIApiTxIdPostRequest) (*ApiTxIDResponse, *http.Response, error)
+
+	/*
+		ApiTxSignPost Sign a transaction
+
+		Add vkey witnesses for the provided signing keys (body preserved)
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiTxSignPostRequest
+	*/
+	ApiTxSignPost(ctx context.Context) DefaultAPIApiTxSignPostRequest
+
+	// ApiTxSignPostExecute executes the request
+	//  @return ApiTxCborResponse
+	ApiTxSignPostExecute(r DefaultAPIApiTxSignPostRequest) (*ApiTxCborResponse, *http.Response, error)
+
+	/*
+		ApiTxWitnessPost Produce a transaction witness
+
+		Produce a detached vkey witness for a transaction body
+
+		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+		@return DefaultAPIApiTxWitnessPostRequest
+	*/
+	ApiTxWitnessPost(ctx context.Context) DefaultAPIApiTxWitnessPostRequest
+
+	// ApiTxWitnessPostExecute executes the request
+	//  @return ApiTxWitnessResponse
+	ApiTxWitnessPostExecute(r DefaultAPIApiTxWitnessPostRequest) (*ApiTxWitnessResponse, *http.Response, error)
 
 	/*
 		ApiWalletCreatePost Create a wallet
@@ -86,33 +214,27 @@ type DefaultAPI interface {
 	ApiWalletCreatePost(ctx context.Context) DefaultAPIApiWalletCreatePostRequest
 
 	// ApiWalletCreatePostExecute executes the request
-	//	@return	BursaWallet
-	ApiWalletCreatePostExecute(
-		r DefaultAPIApiWalletCreatePostRequest,
-	) (*BursaWallet, *http.Response, error)
+	//  @return BursaWallet
+	ApiWalletCreatePostExecute(r DefaultAPIApiWalletCreatePostRequest) (*BursaWallet, *http.Response, error)
 
 	/*
 		ApiWalletDeletePost Delete wallet from persistent storage
 
-		Deletes a wallet from persistent storage and optional password.
+		Deletes a wallet from persistent storage and optional password. Requires an authenticated wallet storage administrator.
 
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiWalletDeletePostRequest
 	*/
-	ApiWalletDeletePost(
-		ctx context.Context,
-	) DefaultAPIApiWalletDeletePostRequest
+	ApiWalletDeletePost(ctx context.Context) DefaultAPIApiWalletDeletePostRequest
 
 	// ApiWalletDeletePostExecute executes the request
-	//	@return	string
-	ApiWalletDeletePostExecute(
-		r DefaultAPIApiWalletDeletePostRequest,
-	) (string, *http.Response, error)
+	//  @return string
+	ApiWalletDeletePostExecute(r DefaultAPIApiWalletDeletePostRequest) (string, *http.Response, error)
 
 	/*
 		ApiWalletGetPost Get wallet from persistent storage
 
-		Gets a wallet from persistent storage and optional password and returns wallet details.
+		Gets a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.
 
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiWalletGetPostRequest
@@ -120,15 +242,13 @@ type DefaultAPI interface {
 	ApiWalletGetPost(ctx context.Context) DefaultAPIApiWalletGetPostRequest
 
 	// ApiWalletGetPostExecute executes the request
-	//	@return	BursaWallet
-	ApiWalletGetPostExecute(
-		r DefaultAPIApiWalletGetPostRequest,
-	) (*BursaWallet, *http.Response, error)
+	//  @return BursaWallet
+	ApiWalletGetPostExecute(r DefaultAPIApiWalletGetPostRequest) (*BursaWallet, *http.Response, error)
 
 	/*
 		ApiWalletListGet Lists wallets
 
-		List all wallets stored in secret storage matching our prefix
+		List all wallets stored in secret storage matching our prefix. Requires an authenticated wallet storage administrator.
 
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiWalletListGetRequest
@@ -136,10 +256,8 @@ type DefaultAPI interface {
 	ApiWalletListGet(ctx context.Context) DefaultAPIApiWalletListGetRequest
 
 	// ApiWalletListGetExecute executes the request
-	//	@return	[]string
-	ApiWalletListGetExecute(
-		r DefaultAPIApiWalletListGetRequest,
-	) ([]string, *http.Response, error)
+	//  @return []string
+	ApiWalletListGetExecute(r DefaultAPIApiWalletListGetRequest) ([]string, *http.Response, error)
 
 	/*
 		ApiWalletRestorePost Restore a wallet using a mnemonic seed phrase
@@ -149,68 +267,56 @@ type DefaultAPI interface {
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiWalletRestorePostRequest
 	*/
-	ApiWalletRestorePost(
-		ctx context.Context,
-	) DefaultAPIApiWalletRestorePostRequest
+	ApiWalletRestorePost(ctx context.Context) DefaultAPIApiWalletRestorePostRequest
 
 	// ApiWalletRestorePostExecute executes the request
-	//	@return	BursaWallet
-	ApiWalletRestorePostExecute(
-		r DefaultAPIApiWalletRestorePostRequest,
-	) (*BursaWallet, *http.Response, error)
+	//  @return BursaWallet
+	ApiWalletRestorePostExecute(r DefaultAPIApiWalletRestorePostRequest) (*BursaWallet, *http.Response, error)
 
 	/*
 		ApiWalletUpdatePost Update a wallet in persistent storage
 
-		Updates a wallet from persistent storage and optional password and returns wallet details.
+		Updates a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.
 
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiWalletUpdatePostRequest
 	*/
-	ApiWalletUpdatePost(
-		ctx context.Context,
-	) DefaultAPIApiWalletUpdatePostRequest
+	ApiWalletUpdatePost(ctx context.Context) DefaultAPIApiWalletUpdatePostRequest
 
 	// ApiWalletUpdatePostExecute executes the request
-	//	@return	string
-	ApiWalletUpdatePostExecute(
-		r DefaultAPIApiWalletUpdatePostRequest,
-	) (string, *http.Response, error)
+	//  @return string
+	ApiWalletUpdatePostExecute(r DefaultAPIApiWalletUpdatePostRequest) (string, *http.Response, error)
 }
 
 // DefaultAPIService DefaultAPI service
 type DefaultAPIService service
 
-type DefaultAPIApiScriptAddressPostRequest struct {
+type DefaultAPIApiAddressBuildPostRequest struct {
 	ctx        context.Context
 	ApiService DefaultAPI
-	request    *ApiScriptAddressRequest
+	request    *ApiAddressBuildRequest
 }
 
-// Script Address Request
-func (r DefaultAPIApiScriptAddressPostRequest) Request(
-	request ApiScriptAddressRequest,
-) DefaultAPIApiScriptAddressPostRequest {
+// Address Build Request
+func (r DefaultAPIApiAddressBuildPostRequest) Request(request ApiAddressBuildRequest) DefaultAPIApiAddressBuildPostRequest {
 	r.request = &request
 	return r
 }
 
-func (r DefaultAPIApiScriptAddressPostRequest) Execute() (*ApiScriptAddressResponse, *http.Response, error) {
-	return r.ApiService.ApiScriptAddressPostExecute(r)
+func (r DefaultAPIApiAddressBuildPostRequest) Execute() (*ApiAddressBuildResponse, *http.Response, error) {
+	return r.ApiService.ApiAddressBuildPostExecute(r)
 }
 
 /*
-ApiScriptAddressPost Generate script address
+ApiAddressBuildPost Build Cardano address
 
-# Generate an address for a script on the specified network
+Builds a Cardano address from verification keys
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
-	@return DefaultAPIApiScriptAddressPostRequest
+	@return DefaultAPIApiAddressBuildPostRequest
 */
-func (a *DefaultAPIService) ApiScriptAddressPost(
-	ctx context.Context,
-) DefaultAPIApiScriptAddressPostRequest {
-	return DefaultAPIApiScriptAddressPostRequest{
+func (a *DefaultAPIService) ApiAddressBuildPost(ctx context.Context) DefaultAPIApiAddressBuildPostRequest {
+	return DefaultAPIApiAddressBuildPostRequest{
 		ApiService: a,
 		ctx:        ctx,
 	}
@@ -218,36 +324,27 @@ func (a *DefaultAPIService) ApiScriptAddressPost(
 
 // Execute executes the request
 //
-//	@return	ApiScriptAddressResponse
-func (a *DefaultAPIService) ApiScriptAddressPostExecute(
-	r DefaultAPIApiScriptAddressPostRequest,
-) (*ApiScriptAddressResponse, *http.Response, error) {
+//	@return ApiAddressBuildResponse
+func (a *DefaultAPIService) ApiAddressBuildPostExecute(r DefaultAPIApiAddressBuildPostRequest) (*ApiAddressBuildResponse, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodPost
 		localVarPostBody    interface{}
 		formFiles           []formFile
-		localVarReturnValue *ApiScriptAddressResponse
+		localVarReturnValue *ApiAddressBuildResponse
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(
-		r.ctx,
-		"DefaultAPIService.ApiScriptAddressPost",
-	)
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiAddressBuildPost")
 	if err != nil {
-		return localVarReturnValue, nil, &GenericOpenAPIError{
-			error: err.Error(),
-		}
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
-	localVarPath := localBasePath + "/api/script/address"
+	localVarPath := localBasePath + "/api/address/build"
 
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 	if r.request == nil {
-		return localVarReturnValue, nil, reportError(
-			"request is required and must be specified",
-		)
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
 	}
 
 	// to determine the Content-Type header
@@ -269,16 +366,7 @@ func (a *DefaultAPIService) ApiScriptAddressPostExecute(
 	}
 	// body params
 	localVarPostBody = r.request
-	req, err := a.client.prepareRequest(
-		r.ctx,
-		localVarPath,
-		localVarHTTPMethod,
-		localVarPostBody,
-		localVarHeaderParams,
-		localVarQueryParams,
-		localVarFormParams,
-		formFiles,
-	)
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
 	}
@@ -302,11 +390,7 @@ func (a *DefaultAPIService) ApiScriptAddressPostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 400 {
 			var v ApiErrorResponse
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -317,11 +401,7 @@ func (a *DefaultAPIService) ApiScriptAddressPostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 500 {
 			var v ApiErrorResponse
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -332,11 +412,409 @@ func (a *DefaultAPIService) ApiScriptAddressPostExecute(
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}
 
-	err = a.client.decode(
-		&localVarReturnValue,
-		localVarBody,
-		localVarHTTPResponse.Header.Get("Content-Type"),
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type DefaultAPIApiAddressEnumeratePostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiAddressEnumerateRequest
+}
+
+// Address Enumerate Request
+func (r DefaultAPIApiAddressEnumeratePostRequest) Request(request ApiAddressEnumerateRequest) DefaultAPIApiAddressEnumeratePostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiAddressEnumeratePostRequest) Execute() ([]BursaEnumeratedAddress, *http.Response, error) {
+	return r.ApiService.ApiAddressEnumeratePostExecute(r)
+}
+
+/*
+ApiAddressEnumeratePost Enumerate derived addresses for a wallet
+
+Derives consecutive base addresses from a mnemonic for the given account and network
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiAddressEnumeratePostRequest
+*/
+func (a *DefaultAPIService) ApiAddressEnumeratePost(ctx context.Context) DefaultAPIApiAddressEnumeratePostRequest {
+	return DefaultAPIApiAddressEnumeratePostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return []BursaEnumeratedAddress
+func (a *DefaultAPIService) ApiAddressEnumeratePostExecute(r DefaultAPIApiAddressEnumeratePostRequest) ([]BursaEnumeratedAddress, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue []BursaEnumeratedAddress
 	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiAddressEnumeratePost")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/api/address/enumerate"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	if r.ctx != nil {
+		// API Key Authentication
+		if auth, ok := r.ctx.Value(ContextAPIKeys).(map[string]APIKey); ok {
+			if apiKey, ok := auth["BearerAuth"]; ok {
+				var key string
+				if apiKey.Prefix != "" {
+					key = apiKey.Prefix + " " + apiKey.Key
+				} else {
+					key = apiKey.Key
+				}
+				localVarHeaderParams["Authorization"] = key
+			}
+		}
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type DefaultAPIApiAddressParsePostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiAddressParseRequest
+}
+
+// Address Parse Request
+func (r DefaultAPIApiAddressParsePostRequest) Request(request ApiAddressParseRequest) DefaultAPIApiAddressParsePostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiAddressParsePostRequest) Execute() (*ApiAddressParseResponse, *http.Response, error) {
+	return r.ApiService.ApiAddressParsePostExecute(r)
+}
+
+/*
+ApiAddressParsePost Parse Cardano address
+
+Parses a Cardano address and returns its components and metadata
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiAddressParsePostRequest
+*/
+func (a *DefaultAPIService) ApiAddressParsePost(ctx context.Context) DefaultAPIApiAddressParsePostRequest {
+	return DefaultAPIApiAddressParsePostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return ApiAddressParseResponse
+func (a *DefaultAPIService) ApiAddressParsePostExecute(r DefaultAPIApiAddressParsePostRequest) (*ApiAddressParseResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *ApiAddressParseResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiAddressParsePost")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/api/address/parse"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 500 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type DefaultAPIApiScriptAddressPostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiScriptAddressRequest
+}
+
+// Script Address Request
+func (r DefaultAPIApiScriptAddressPostRequest) Request(request ApiScriptAddressRequest) DefaultAPIApiScriptAddressPostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiScriptAddressPostRequest) Execute() (*ApiScriptAddressResponse, *http.Response, error) {
+	return r.ApiService.ApiScriptAddressPostExecute(r)
+}
+
+/*
+ApiScriptAddressPost Generate script address
+
+Generate an address for a script on the specified network
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiScriptAddressPostRequest
+*/
+func (a *DefaultAPIService) ApiScriptAddressPost(ctx context.Context) DefaultAPIApiScriptAddressPostRequest {
+	return DefaultAPIApiScriptAddressPostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return ApiScriptAddressResponse
+func (a *DefaultAPIService) ApiScriptAddressPostExecute(r DefaultAPIApiScriptAddressPostRequest) (*ApiScriptAddressResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *ApiScriptAddressResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiScriptAddressPost")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/api/script/address"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 500 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 	if err != nil {
 		newErr := &GenericOpenAPIError{
 			body:  localVarBody,
@@ -355,9 +833,7 @@ type DefaultAPIApiScriptCreatePostRequest struct {
 }
 
 // Script Create Request
-func (r DefaultAPIApiScriptCreatePostRequest) Request(
-	request ApiScriptCreateRequest,
-) DefaultAPIApiScriptCreatePostRequest {
+func (r DefaultAPIApiScriptCreatePostRequest) Request(request ApiScriptCreateRequest) DefaultAPIApiScriptCreatePostRequest {
 	r.request = &request
 	return r
 }
@@ -369,14 +845,12 @@ func (r DefaultAPIApiScriptCreatePostRequest) Execute() (*ApiScriptResponse, *ht
 /*
 ApiScriptCreatePost Create a multi-signature script
 
-# Create a new multi-signature script with the specified parameters
+Create a new multi-signature script with the specified parameters
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiScriptCreatePostRequest
 */
-func (a *DefaultAPIService) ApiScriptCreatePost(
-	ctx context.Context,
-) DefaultAPIApiScriptCreatePostRequest {
+func (a *DefaultAPIService) ApiScriptCreatePost(ctx context.Context) DefaultAPIApiScriptCreatePostRequest {
 	return DefaultAPIApiScriptCreatePostRequest{
 		ApiService: a,
 		ctx:        ctx,
@@ -385,10 +859,8 @@ func (a *DefaultAPIService) ApiScriptCreatePost(
 
 // Execute executes the request
 //
-//	@return	ApiScriptResponse
-func (a *DefaultAPIService) ApiScriptCreatePostExecute(
-	r DefaultAPIApiScriptCreatePostRequest,
-) (*ApiScriptResponse, *http.Response, error) {
+//	@return ApiScriptResponse
+func (a *DefaultAPIService) ApiScriptCreatePostExecute(r DefaultAPIApiScriptCreatePostRequest) (*ApiScriptResponse, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodPost
 		localVarPostBody    interface{}
@@ -396,14 +868,9 @@ func (a *DefaultAPIService) ApiScriptCreatePostExecute(
 		localVarReturnValue *ApiScriptResponse
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(
-		r.ctx,
-		"DefaultAPIService.ApiScriptCreatePost",
-	)
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiScriptCreatePost")
 	if err != nil {
-		return localVarReturnValue, nil, &GenericOpenAPIError{
-			error: err.Error(),
-		}
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
 	localVarPath := localBasePath + "/api/script/create"
@@ -412,9 +879,7 @@ func (a *DefaultAPIService) ApiScriptCreatePostExecute(
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 	if r.request == nil {
-		return localVarReturnValue, nil, reportError(
-			"request is required and must be specified",
-		)
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
 	}
 
 	// to determine the Content-Type header
@@ -436,16 +901,7 @@ func (a *DefaultAPIService) ApiScriptCreatePostExecute(
 	}
 	// body params
 	localVarPostBody = r.request
-	req, err := a.client.prepareRequest(
-		r.ctx,
-		localVarPath,
-		localVarHTTPMethod,
-		localVarPostBody,
-		localVarHeaderParams,
-		localVarQueryParams,
-		localVarFormParams,
-		formFiles,
-	)
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
 	}
@@ -469,11 +925,7 @@ func (a *DefaultAPIService) ApiScriptCreatePostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 400 {
 			var v ApiErrorResponse
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -484,11 +936,7 @@ func (a *DefaultAPIService) ApiScriptCreatePostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 500 {
 			var v ApiErrorResponse
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -499,11 +947,7 @@ func (a *DefaultAPIService) ApiScriptCreatePostExecute(
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}
 
-	err = a.client.decode(
-		&localVarReturnValue,
-		localVarBody,
-		localVarHTTPResponse.Header.Get("Content-Type"),
-	)
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 	if err != nil {
 		newErr := &GenericOpenAPIError{
 			body:  localVarBody,
@@ -522,9 +966,7 @@ type DefaultAPIApiScriptValidatePostRequest struct {
 }
 
 // Script Validate Request
-func (r DefaultAPIApiScriptValidatePostRequest) Request(
-	request ApiScriptValidateRequest,
-) DefaultAPIApiScriptValidatePostRequest {
+func (r DefaultAPIApiScriptValidatePostRequest) Request(request ApiScriptValidateRequest) DefaultAPIApiScriptValidatePostRequest {
 	r.request = &request
 	return r
 }
@@ -536,14 +978,12 @@ func (r DefaultAPIApiScriptValidatePostRequest) Execute() (*ApiScriptValidateRes
 /*
 ApiScriptValidatePost Validate a script
 
-# Validate a script's structure and requirements
+Validate a script's structure and requirements
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiScriptValidatePostRequest
 */
-func (a *DefaultAPIService) ApiScriptValidatePost(
-	ctx context.Context,
-) DefaultAPIApiScriptValidatePostRequest {
+func (a *DefaultAPIService) ApiScriptValidatePost(ctx context.Context) DefaultAPIApiScriptValidatePostRequest {
 	return DefaultAPIApiScriptValidatePostRequest{
 		ApiService: a,
 		ctx:        ctx,
@@ -552,10 +992,8 @@ func (a *DefaultAPIService) ApiScriptValidatePost(
 
 // Execute executes the request
 //
-//	@return	ApiScriptValidateResponse
-func (a *DefaultAPIService) ApiScriptValidatePostExecute(
-	r DefaultAPIApiScriptValidatePostRequest,
-) (*ApiScriptValidateResponse, *http.Response, error) {
+//	@return ApiScriptValidateResponse
+func (a *DefaultAPIService) ApiScriptValidatePostExecute(r DefaultAPIApiScriptValidatePostRequest) (*ApiScriptValidateResponse, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodPost
 		localVarPostBody    interface{}
@@ -563,14 +1001,9 @@ func (a *DefaultAPIService) ApiScriptValidatePostExecute(
 		localVarReturnValue *ApiScriptValidateResponse
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(
-		r.ctx,
-		"DefaultAPIService.ApiScriptValidatePost",
-	)
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiScriptValidatePost")
 	if err != nil {
-		return localVarReturnValue, nil, &GenericOpenAPIError{
-			error: err.Error(),
-		}
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
 	localVarPath := localBasePath + "/api/script/validate"
@@ -579,9 +1012,7 @@ func (a *DefaultAPIService) ApiScriptValidatePostExecute(
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 	if r.request == nil {
-		return localVarReturnValue, nil, reportError(
-			"request is required and must be specified",
-		)
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
 	}
 
 	// to determine the Content-Type header
@@ -603,16 +1034,7 @@ func (a *DefaultAPIService) ApiScriptValidatePostExecute(
 	}
 	// body params
 	localVarPostBody = r.request
-	req, err := a.client.prepareRequest(
-		r.ctx,
-		localVarPath,
-		localVarHTTPMethod,
-		localVarPostBody,
-		localVarHeaderParams,
-		localVarQueryParams,
-		localVarFormParams,
-		formFiles,
-	)
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
 	}
@@ -636,11 +1058,7 @@ func (a *DefaultAPIService) ApiScriptValidatePostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 400 {
 			var v ApiErrorResponse
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -651,11 +1069,7 @@ func (a *DefaultAPIService) ApiScriptValidatePostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 500 {
 			var v ApiErrorResponse
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -666,11 +1080,947 @@ func (a *DefaultAPIService) ApiScriptValidatePostExecute(
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}
 
-	err = a.client.decode(
-		&localVarReturnValue,
-		localVarBody,
-		localVarHTTPResponse.Header.Get("Content-Type"),
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type DefaultAPIApiSignDataPostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiSignDataRequest
+}
+
+// Sign Data Request
+func (r DefaultAPIApiSignDataPostRequest) Request(request ApiSignDataRequest) DefaultAPIApiSignDataPostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiSignDataPostRequest) Execute() (*ApiSignDataResponse, *http.Response, error) {
+	return r.ApiService.ApiSignDataPostExecute(r)
+}
+
+/*
+ApiSignDataPost Sign a message (CIP-8/CIP-30 signData)
+
+Sign a payload using a signing key, producing a COSE_Sign1 structure
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiSignDataPostRequest
+*/
+func (a *DefaultAPIService) ApiSignDataPost(ctx context.Context) DefaultAPIApiSignDataPostRequest {
+	return DefaultAPIApiSignDataPostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return ApiSignDataResponse
+func (a *DefaultAPIService) ApiSignDataPostExecute(r DefaultAPIApiSignDataPostRequest) (*ApiSignDataResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *ApiSignDataResponse
 	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiSignDataPost")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/api/sign/data"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	if r.ctx != nil {
+		// API Key Authentication
+		if auth, ok := r.ctx.Value(ContextAPIKeys).(map[string]APIKey); ok {
+			if apiKey, ok := auth["BearerAuth"]; ok {
+				var key string
+				if apiKey.Prefix != "" {
+					key = apiKey.Prefix + " " + apiKey.Key
+				} else {
+					key = apiKey.Key
+				}
+				localVarHeaderParams["Authorization"] = key
+			}
+		}
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 500 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type DefaultAPIApiSignVerifyPostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiVerifyDataRequest
+}
+
+// Verify Data Request
+func (r DefaultAPIApiSignVerifyPostRequest) Request(request ApiVerifyDataRequest) DefaultAPIApiSignVerifyPostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiSignVerifyPostRequest) Execute() (*ApiVerifyDataResponse, *http.Response, error) {
+	return r.ApiService.ApiSignVerifyPostExecute(r)
+}
+
+/*
+ApiSignVerifyPost Verify a CIP-8/CIP-30 signData signature
+
+Verify a COSE_Sign1 signature against a COSE_Key and expected payload
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiSignVerifyPostRequest
+*/
+func (a *DefaultAPIService) ApiSignVerifyPost(ctx context.Context) DefaultAPIApiSignVerifyPostRequest {
+	return DefaultAPIApiSignVerifyPostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return ApiVerifyDataResponse
+func (a *DefaultAPIService) ApiSignVerifyPostExecute(r DefaultAPIApiSignVerifyPostRequest) (*ApiVerifyDataResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *ApiVerifyDataResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiSignVerifyPost")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/api/sign/verify"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type DefaultAPIApiTxAssemblePostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiTxAssembleRequest
+}
+
+// Transaction + witnesses
+func (r DefaultAPIApiTxAssemblePostRequest) Request(request ApiTxAssembleRequest) DefaultAPIApiTxAssemblePostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiTxAssemblePostRequest) Execute() (*ApiTxCborResponse, *http.Response, error) {
+	return r.ApiService.ApiTxAssemblePostExecute(r)
+}
+
+/*
+ApiTxAssemblePost Assemble a signed transaction
+
+Merge detached witnesses into a transaction
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiTxAssemblePostRequest
+*/
+func (a *DefaultAPIService) ApiTxAssemblePost(ctx context.Context) DefaultAPIApiTxAssemblePostRequest {
+	return DefaultAPIApiTxAssemblePostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return ApiTxCborResponse
+func (a *DefaultAPIService) ApiTxAssemblePostExecute(r DefaultAPIApiTxAssemblePostRequest) (*ApiTxCborResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *ApiTxCborResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiTxAssemblePost")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/api/tx/assemble"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 500 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type DefaultAPIApiTxDecodePostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiTxDecodeRequest
+}
+
+// Transaction
+func (r DefaultAPIApiTxDecodePostRequest) Request(request ApiTxDecodeRequest) DefaultAPIApiTxDecodePostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiTxDecodePostRequest) Execute() (*BursaTxInspection, *http.Response, error) {
+	return r.ApiService.ApiTxDecodePostExecute(r)
+}
+
+/*
+ApiTxDecodePost Decode a transaction
+
+Decode and inspect a transaction
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiTxDecodePostRequest
+*/
+func (a *DefaultAPIService) ApiTxDecodePost(ctx context.Context) DefaultAPIApiTxDecodePostRequest {
+	return DefaultAPIApiTxDecodePostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return BursaTxInspection
+func (a *DefaultAPIService) ApiTxDecodePostExecute(r DefaultAPIApiTxDecodePostRequest) (*BursaTxInspection, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *BursaTxInspection
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiTxDecodePost")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/api/tx/decode"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type DefaultAPIApiTxIdPostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiTxIDRequest
+}
+
+// Transaction
+func (r DefaultAPIApiTxIdPostRequest) Request(request ApiTxIDRequest) DefaultAPIApiTxIdPostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiTxIdPostRequest) Execute() (*ApiTxIDResponse, *http.Response, error) {
+	return r.ApiService.ApiTxIdPostExecute(r)
+}
+
+/*
+ApiTxIdPost Get a transaction id
+
+Calculate the transaction id from a transaction body
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiTxIdPostRequest
+*/
+func (a *DefaultAPIService) ApiTxIdPost(ctx context.Context) DefaultAPIApiTxIdPostRequest {
+	return DefaultAPIApiTxIdPostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return ApiTxIDResponse
+func (a *DefaultAPIService) ApiTxIdPostExecute(r DefaultAPIApiTxIdPostRequest) (*ApiTxIDResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *ApiTxIDResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiTxIdPost")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/api/tx/id"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type DefaultAPIApiTxSignPostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiTxSignRequest
+}
+
+// Transaction + signing keys
+func (r DefaultAPIApiTxSignPostRequest) Request(request ApiTxSignRequest) DefaultAPIApiTxSignPostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiTxSignPostRequest) Execute() (*ApiTxCborResponse, *http.Response, error) {
+	return r.ApiService.ApiTxSignPostExecute(r)
+}
+
+/*
+ApiTxSignPost Sign a transaction
+
+Add vkey witnesses for the provided signing keys (body preserved)
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiTxSignPostRequest
+*/
+func (a *DefaultAPIService) ApiTxSignPost(ctx context.Context) DefaultAPIApiTxSignPostRequest {
+	return DefaultAPIApiTxSignPostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return ApiTxCborResponse
+func (a *DefaultAPIService) ApiTxSignPostExecute(r DefaultAPIApiTxSignPostRequest) (*ApiTxCborResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *ApiTxCborResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiTxSignPost")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/api/tx/sign"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	if r.ctx != nil {
+		// API Key Authentication
+		if auth, ok := r.ctx.Value(ContextAPIKeys).(map[string]APIKey); ok {
+			if apiKey, ok := auth["BearerAuth"]; ok {
+				var key string
+				if apiKey.Prefix != "" {
+					key = apiKey.Prefix + " " + apiKey.Key
+				} else {
+					key = apiKey.Key
+				}
+				localVarHeaderParams["Authorization"] = key
+			}
+		}
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 500 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type DefaultAPIApiTxWitnessPostRequest struct {
+	ctx        context.Context
+	ApiService DefaultAPI
+	request    *ApiTxWitnessRequest
+}
+
+// Transaction + signing key
+func (r DefaultAPIApiTxWitnessPostRequest) Request(request ApiTxWitnessRequest) DefaultAPIApiTxWitnessPostRequest {
+	r.request = &request
+	return r
+}
+
+func (r DefaultAPIApiTxWitnessPostRequest) Execute() (*ApiTxWitnessResponse, *http.Response, error) {
+	return r.ApiService.ApiTxWitnessPostExecute(r)
+}
+
+/*
+ApiTxWitnessPost Produce a transaction witness
+
+Produce a detached vkey witness for a transaction body
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return DefaultAPIApiTxWitnessPostRequest
+*/
+func (a *DefaultAPIService) ApiTxWitnessPost(ctx context.Context) DefaultAPIApiTxWitnessPostRequest {
+	return DefaultAPIApiTxWitnessPostRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return ApiTxWitnessResponse
+func (a *DefaultAPIService) ApiTxWitnessPostExecute(r DefaultAPIApiTxWitnessPostRequest) (*ApiTxWitnessResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *ApiTxWitnessResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiTxWitnessPost")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/api/tx/witness"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.request == nil {
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.request
+	if r.ctx != nil {
+		// API Key Authentication
+		if auth, ok := r.ctx.Value(ContextAPIKeys).(map[string]APIKey); ok {
+			if apiKey, ok := auth["BearerAuth"]; ok {
+				var key string
+				if apiKey.Prefix != "" {
+					key = apiKey.Prefix + " " + apiKey.Key
+				} else {
+					key = apiKey.Key
+				}
+				localVarHeaderParams["Authorization"] = key
+			}
+		}
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 500 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 	if err != nil {
 		newErr := &GenericOpenAPIError{
 			body:  localVarBody,
@@ -694,14 +2044,12 @@ func (r DefaultAPIApiWalletCreatePostRequest) Execute() (*BursaWallet, *http.Res
 /*
 ApiWalletCreatePost Create a wallet
 
-# Create a wallet and return details
+Create a wallet and return details
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiWalletCreatePostRequest
 */
-func (a *DefaultAPIService) ApiWalletCreatePost(
-	ctx context.Context,
-) DefaultAPIApiWalletCreatePostRequest {
+func (a *DefaultAPIService) ApiWalletCreatePost(ctx context.Context) DefaultAPIApiWalletCreatePostRequest {
 	return DefaultAPIApiWalletCreatePostRequest{
 		ApiService: a,
 		ctx:        ctx,
@@ -710,10 +2058,8 @@ func (a *DefaultAPIService) ApiWalletCreatePost(
 
 // Execute executes the request
 //
-//	@return	BursaWallet
-func (a *DefaultAPIService) ApiWalletCreatePostExecute(
-	r DefaultAPIApiWalletCreatePostRequest,
-) (*BursaWallet, *http.Response, error) {
+//	@return BursaWallet
+func (a *DefaultAPIService) ApiWalletCreatePostExecute(r DefaultAPIApiWalletCreatePostRequest) (*BursaWallet, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodPost
 		localVarPostBody    interface{}
@@ -721,14 +2067,9 @@ func (a *DefaultAPIService) ApiWalletCreatePostExecute(
 		localVarReturnValue *BursaWallet
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(
-		r.ctx,
-		"DefaultAPIService.ApiWalletCreatePost",
-	)
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiWalletCreatePost")
 	if err != nil {
-		return localVarReturnValue, nil, &GenericOpenAPIError{
-			error: err.Error(),
-		}
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
 	localVarPath := localBasePath + "/api/wallet/create"
@@ -754,16 +2095,21 @@ func (a *DefaultAPIService) ApiWalletCreatePostExecute(
 	if localVarHTTPHeaderAccept != "" {
 		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
 	}
-	req, err := a.client.prepareRequest(
-		r.ctx,
-		localVarPath,
-		localVarHTTPMethod,
-		localVarPostBody,
-		localVarHeaderParams,
-		localVarQueryParams,
-		localVarFormParams,
-		formFiles,
-	)
+	if r.ctx != nil {
+		// API Key Authentication
+		if auth, ok := r.ctx.Value(ContextAPIKeys).(map[string]APIKey); ok {
+			if apiKey, ok := auth["BearerAuth"]; ok {
+				var key string
+				if apiKey.Prefix != "" {
+					key = apiKey.Prefix + " " + apiKey.Key
+				} else {
+					key = apiKey.Key
+				}
+				localVarHeaderParams["Authorization"] = key
+			}
+		}
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
 	}
@@ -788,11 +2134,7 @@ func (a *DefaultAPIService) ApiWalletCreatePostExecute(
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}
 
-	err = a.client.decode(
-		&localVarReturnValue,
-		localVarBody,
-		localVarHTTPResponse.Header.Get("Content-Type"),
-	)
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 	if err != nil {
 		newErr := &GenericOpenAPIError{
 			body:  localVarBody,
@@ -811,9 +2153,7 @@ type DefaultAPIApiWalletDeletePostRequest struct {
 }
 
 // Wallet Delete Request
-func (r DefaultAPIApiWalletDeletePostRequest) Request(
-	request ApiWalletDeleteRequest,
-) DefaultAPIApiWalletDeletePostRequest {
+func (r DefaultAPIApiWalletDeletePostRequest) Request(request ApiWalletDeleteRequest) DefaultAPIApiWalletDeletePostRequest {
 	r.request = &request
 	return r
 }
@@ -825,14 +2165,12 @@ func (r DefaultAPIApiWalletDeletePostRequest) Execute() (string, *http.Response,
 /*
 ApiWalletDeletePost Delete wallet from persistent storage
 
-Deletes a wallet from persistent storage and optional password.
+Deletes a wallet from persistent storage and optional password. Requires an authenticated wallet storage administrator.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiWalletDeletePostRequest
 */
-func (a *DefaultAPIService) ApiWalletDeletePost(
-	ctx context.Context,
-) DefaultAPIApiWalletDeletePostRequest {
+func (a *DefaultAPIService) ApiWalletDeletePost(ctx context.Context) DefaultAPIApiWalletDeletePostRequest {
 	return DefaultAPIApiWalletDeletePostRequest{
 		ApiService: a,
 		ctx:        ctx,
@@ -841,10 +2179,8 @@ func (a *DefaultAPIService) ApiWalletDeletePost(
 
 // Execute executes the request
 //
-//	@return	string
-func (a *DefaultAPIService) ApiWalletDeletePostExecute(
-	r DefaultAPIApiWalletDeletePostRequest,
-) (string, *http.Response, error) {
+//	@return string
+func (a *DefaultAPIService) ApiWalletDeletePostExecute(r DefaultAPIApiWalletDeletePostRequest) (string, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodPost
 		localVarPostBody    interface{}
@@ -852,14 +2188,9 @@ func (a *DefaultAPIService) ApiWalletDeletePostExecute(
 		localVarReturnValue string
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(
-		r.ctx,
-		"DefaultAPIService.ApiWalletDeletePost",
-	)
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiWalletDeletePost")
 	if err != nil {
-		return localVarReturnValue, nil, &GenericOpenAPIError{
-			error: err.Error(),
-		}
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
 	localVarPath := localBasePath + "/api/wallet/delete"
@@ -868,9 +2199,7 @@ func (a *DefaultAPIService) ApiWalletDeletePostExecute(
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 	if r.request == nil {
-		return localVarReturnValue, nil, reportError(
-			"request is required and must be specified",
-		)
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
 	}
 
 	// to determine the Content-Type header
@@ -892,16 +2221,21 @@ func (a *DefaultAPIService) ApiWalletDeletePostExecute(
 	}
 	// body params
 	localVarPostBody = r.request
-	req, err := a.client.prepareRequest(
-		r.ctx,
-		localVarPath,
-		localVarHTTPMethod,
-		localVarPostBody,
-		localVarHeaderParams,
-		localVarQueryParams,
-		localVarFormParams,
-		formFiles,
-	)
+	if r.ctx != nil {
+		// API Key Authentication
+		if auth, ok := r.ctx.Value(ContextAPIKeys).(map[string]APIKey); ok {
+			if apiKey, ok := auth["BearerAuth"]; ok {
+				var key string
+				if apiKey.Prefix != "" {
+					key = apiKey.Prefix + " " + apiKey.Key
+				} else {
+					key = apiKey.Key
+				}
+				localVarHeaderParams["Authorization"] = key
+			}
+		}
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
 	}
@@ -925,11 +2259,29 @@ func (a *DefaultAPIService) ApiWalletDeletePostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 400 {
 			var v ApiErrorResponse
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 401 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 403 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -940,11 +2292,7 @@ func (a *DefaultAPIService) ApiWalletDeletePostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 500 {
 			var v ApiErrorResponse
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -955,11 +2303,7 @@ func (a *DefaultAPIService) ApiWalletDeletePostExecute(
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}
 
-	err = a.client.decode(
-		&localVarReturnValue,
-		localVarBody,
-		localVarHTTPResponse.Header.Get("Content-Type"),
-	)
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 	if err != nil {
 		newErr := &GenericOpenAPIError{
 			body:  localVarBody,
@@ -978,9 +2322,7 @@ type DefaultAPIApiWalletGetPostRequest struct {
 }
 
 // Wallet Restore Request
-func (r DefaultAPIApiWalletGetPostRequest) Request(
-	request ApiWalletGetRequest,
-) DefaultAPIApiWalletGetPostRequest {
+func (r DefaultAPIApiWalletGetPostRequest) Request(request ApiWalletGetRequest) DefaultAPIApiWalletGetPostRequest {
 	r.request = &request
 	return r
 }
@@ -992,14 +2334,12 @@ func (r DefaultAPIApiWalletGetPostRequest) Execute() (*BursaWallet, *http.Respon
 /*
 ApiWalletGetPost Get wallet from persistent storage
 
-Gets a wallet from persistent storage and optional password and returns wallet details.
+Gets a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiWalletGetPostRequest
 */
-func (a *DefaultAPIService) ApiWalletGetPost(
-	ctx context.Context,
-) DefaultAPIApiWalletGetPostRequest {
+func (a *DefaultAPIService) ApiWalletGetPost(ctx context.Context) DefaultAPIApiWalletGetPostRequest {
 	return DefaultAPIApiWalletGetPostRequest{
 		ApiService: a,
 		ctx:        ctx,
@@ -1008,10 +2348,8 @@ func (a *DefaultAPIService) ApiWalletGetPost(
 
 // Execute executes the request
 //
-//	@return	BursaWallet
-func (a *DefaultAPIService) ApiWalletGetPostExecute(
-	r DefaultAPIApiWalletGetPostRequest,
-) (*BursaWallet, *http.Response, error) {
+//	@return BursaWallet
+func (a *DefaultAPIService) ApiWalletGetPostExecute(r DefaultAPIApiWalletGetPostRequest) (*BursaWallet, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodPost
 		localVarPostBody    interface{}
@@ -1019,14 +2357,9 @@ func (a *DefaultAPIService) ApiWalletGetPostExecute(
 		localVarReturnValue *BursaWallet
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(
-		r.ctx,
-		"DefaultAPIService.ApiWalletGetPost",
-	)
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiWalletGetPost")
 	if err != nil {
-		return localVarReturnValue, nil, &GenericOpenAPIError{
-			error: err.Error(),
-		}
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
 	localVarPath := localBasePath + "/api/wallet/get"
@@ -1035,9 +2368,7 @@ func (a *DefaultAPIService) ApiWalletGetPostExecute(
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 	if r.request == nil {
-		return localVarReturnValue, nil, reportError(
-			"request is required and must be specified",
-		)
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
 	}
 
 	// to determine the Content-Type header
@@ -1059,16 +2390,21 @@ func (a *DefaultAPIService) ApiWalletGetPostExecute(
 	}
 	// body params
 	localVarPostBody = r.request
-	req, err := a.client.prepareRequest(
-		r.ctx,
-		localVarPath,
-		localVarHTTPMethod,
-		localVarPostBody,
-		localVarHeaderParams,
-		localVarQueryParams,
-		localVarFormParams,
-		formFiles,
-	)
+	if r.ctx != nil {
+		// API Key Authentication
+		if auth, ok := r.ctx.Value(ContextAPIKeys).(map[string]APIKey); ok {
+			if apiKey, ok := auth["BearerAuth"]; ok {
+				var key string
+				if apiKey.Prefix != "" {
+					key = apiKey.Prefix + " " + apiKey.Key
+				} else {
+					key = apiKey.Key
+				}
+				localVarHeaderParams["Authorization"] = key
+			}
+		}
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
 	}
@@ -1092,11 +2428,29 @@ func (a *DefaultAPIService) ApiWalletGetPostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 400 {
 			var v ApiErrorResponse
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 401 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 403 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -1107,11 +2461,7 @@ func (a *DefaultAPIService) ApiWalletGetPostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 500 {
 			var v ApiErrorResponse
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -1122,11 +2472,7 @@ func (a *DefaultAPIService) ApiWalletGetPostExecute(
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}
 
-	err = a.client.decode(
-		&localVarReturnValue,
-		localVarBody,
-		localVarHTTPResponse.Header.Get("Content-Type"),
-	)
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 	if err != nil {
 		newErr := &GenericOpenAPIError{
 			body:  localVarBody,
@@ -1150,14 +2496,12 @@ func (r DefaultAPIApiWalletListGetRequest) Execute() ([]string, *http.Response, 
 /*
 ApiWalletListGet Lists wallets
 
-# List all wallets stored in secret storage matching our prefix
+List all wallets stored in secret storage matching our prefix. Requires an authenticated wallet storage administrator.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiWalletListGetRequest
 */
-func (a *DefaultAPIService) ApiWalletListGet(
-	ctx context.Context,
-) DefaultAPIApiWalletListGetRequest {
+func (a *DefaultAPIService) ApiWalletListGet(ctx context.Context) DefaultAPIApiWalletListGetRequest {
 	return DefaultAPIApiWalletListGetRequest{
 		ApiService: a,
 		ctx:        ctx,
@@ -1166,10 +2510,8 @@ func (a *DefaultAPIService) ApiWalletListGet(
 
 // Execute executes the request
 //
-//	@return	[]string
-func (a *DefaultAPIService) ApiWalletListGetExecute(
-	r DefaultAPIApiWalletListGetRequest,
-) ([]string, *http.Response, error) {
+//	@return []string
+func (a *DefaultAPIService) ApiWalletListGetExecute(r DefaultAPIApiWalletListGetRequest) ([]string, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodGet
 		localVarPostBody    interface{}
@@ -1177,14 +2519,9 @@ func (a *DefaultAPIService) ApiWalletListGetExecute(
 		localVarReturnValue []string
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(
-		r.ctx,
-		"DefaultAPIService.ApiWalletListGet",
-	)
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiWalletListGet")
 	if err != nil {
-		return localVarReturnValue, nil, &GenericOpenAPIError{
-			error: err.Error(),
-		}
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
 	localVarPath := localBasePath + "/api/wallet/list"
@@ -1210,16 +2547,21 @@ func (a *DefaultAPIService) ApiWalletListGetExecute(
 	if localVarHTTPHeaderAccept != "" {
 		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
 	}
-	req, err := a.client.prepareRequest(
-		r.ctx,
-		localVarPath,
-		localVarHTTPMethod,
-		localVarPostBody,
-		localVarHeaderParams,
-		localVarQueryParams,
-		localVarFormParams,
-		formFiles,
-	)
+	if r.ctx != nil {
+		// API Key Authentication
+		if auth, ok := r.ctx.Value(ContextAPIKeys).(map[string]APIKey); ok {
+			if apiKey, ok := auth["BearerAuth"]; ok {
+				var key string
+				if apiKey.Prefix != "" {
+					key = apiKey.Prefix + " " + apiKey.Key
+				} else {
+					key = apiKey.Key
+				}
+				localVarHeaderParams["Authorization"] = key
+			}
+		}
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
 	}
@@ -1241,14 +2583,31 @@ func (a *DefaultAPIService) ApiWalletListGetExecute(
 			body:  localVarBody,
 			error: localVarHTTPResponse.Status,
 		}
+		if localVarHTTPResponse.StatusCode == 401 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 403 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+		}
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}
 
-	err = a.client.decode(
-		&localVarReturnValue,
-		localVarBody,
-		localVarHTTPResponse.Header.Get("Content-Type"),
-	)
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 	if err != nil {
 		newErr := &GenericOpenAPIError{
 			body:  localVarBody,
@@ -1267,9 +2626,7 @@ type DefaultAPIApiWalletRestorePostRequest struct {
 }
 
 // Wallet Restore Request
-func (r DefaultAPIApiWalletRestorePostRequest) Request(
-	request ApiWalletRestoreRequest,
-) DefaultAPIApiWalletRestorePostRequest {
+func (r DefaultAPIApiWalletRestorePostRequest) Request(request ApiWalletRestoreRequest) DefaultAPIApiWalletRestorePostRequest {
 	r.request = &request
 	return r
 }
@@ -1286,9 +2643,7 @@ Restores a wallet using the provided mnemonic seed phrase and optional password 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiWalletRestorePostRequest
 */
-func (a *DefaultAPIService) ApiWalletRestorePost(
-	ctx context.Context,
-) DefaultAPIApiWalletRestorePostRequest {
+func (a *DefaultAPIService) ApiWalletRestorePost(ctx context.Context) DefaultAPIApiWalletRestorePostRequest {
 	return DefaultAPIApiWalletRestorePostRequest{
 		ApiService: a,
 		ctx:        ctx,
@@ -1297,10 +2652,8 @@ func (a *DefaultAPIService) ApiWalletRestorePost(
 
 // Execute executes the request
 //
-//	@return	BursaWallet
-func (a *DefaultAPIService) ApiWalletRestorePostExecute(
-	r DefaultAPIApiWalletRestorePostRequest,
-) (*BursaWallet, *http.Response, error) {
+//	@return BursaWallet
+func (a *DefaultAPIService) ApiWalletRestorePostExecute(r DefaultAPIApiWalletRestorePostRequest) (*BursaWallet, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodPost
 		localVarPostBody    interface{}
@@ -1308,14 +2661,9 @@ func (a *DefaultAPIService) ApiWalletRestorePostExecute(
 		localVarReturnValue *BursaWallet
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(
-		r.ctx,
-		"DefaultAPIService.ApiWalletRestorePost",
-	)
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiWalletRestorePost")
 	if err != nil {
-		return localVarReturnValue, nil, &GenericOpenAPIError{
-			error: err.Error(),
-		}
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
 	localVarPath := localBasePath + "/api/wallet/restore"
@@ -1324,9 +2672,7 @@ func (a *DefaultAPIService) ApiWalletRestorePostExecute(
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 	if r.request == nil {
-		return localVarReturnValue, nil, reportError(
-			"request is required and must be specified",
-		)
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
 	}
 
 	// to determine the Content-Type header
@@ -1348,16 +2694,21 @@ func (a *DefaultAPIService) ApiWalletRestorePostExecute(
 	}
 	// body params
 	localVarPostBody = r.request
-	req, err := a.client.prepareRequest(
-		r.ctx,
-		localVarPath,
-		localVarHTTPMethod,
-		localVarPostBody,
-		localVarHeaderParams,
-		localVarQueryParams,
-		localVarFormParams,
-		formFiles,
-	)
+	if r.ctx != nil {
+		// API Key Authentication
+		if auth, ok := r.ctx.Value(ContextAPIKeys).(map[string]APIKey); ok {
+			if apiKey, ok := auth["BearerAuth"]; ok {
+				var key string
+				if apiKey.Prefix != "" {
+					key = apiKey.Prefix + " " + apiKey.Key
+				} else {
+					key = apiKey.Key
+				}
+				localVarHeaderParams["Authorization"] = key
+			}
+		}
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
 	}
@@ -1381,11 +2732,7 @@ func (a *DefaultAPIService) ApiWalletRestorePostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 400 {
 			var v ApiErrorResponse
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -1396,11 +2743,7 @@ func (a *DefaultAPIService) ApiWalletRestorePostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 500 {
 			var v ApiErrorResponse
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -1411,11 +2754,7 @@ func (a *DefaultAPIService) ApiWalletRestorePostExecute(
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}
 
-	err = a.client.decode(
-		&localVarReturnValue,
-		localVarBody,
-		localVarHTTPResponse.Header.Get("Content-Type"),
-	)
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 	if err != nil {
 		newErr := &GenericOpenAPIError{
 			body:  localVarBody,
@@ -1434,9 +2773,7 @@ type DefaultAPIApiWalletUpdatePostRequest struct {
 }
 
 // Wallet Update Request
-func (r DefaultAPIApiWalletUpdatePostRequest) Request(
-	request ApiWalletUpdateRequest,
-) DefaultAPIApiWalletUpdatePostRequest {
+func (r DefaultAPIApiWalletUpdatePostRequest) Request(request ApiWalletUpdateRequest) DefaultAPIApiWalletUpdatePostRequest {
 	r.request = &request
 	return r
 }
@@ -1448,14 +2785,12 @@ func (r DefaultAPIApiWalletUpdatePostRequest) Execute() (string, *http.Response,
 /*
 ApiWalletUpdatePost Update a wallet in persistent storage
 
-Updates a wallet from persistent storage and optional password and returns wallet details.
+Updates a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiWalletUpdatePostRequest
 */
-func (a *DefaultAPIService) ApiWalletUpdatePost(
-	ctx context.Context,
-) DefaultAPIApiWalletUpdatePostRequest {
+func (a *DefaultAPIService) ApiWalletUpdatePost(ctx context.Context) DefaultAPIApiWalletUpdatePostRequest {
 	return DefaultAPIApiWalletUpdatePostRequest{
 		ApiService: a,
 		ctx:        ctx,
@@ -1464,10 +2799,8 @@ func (a *DefaultAPIService) ApiWalletUpdatePost(
 
 // Execute executes the request
 //
-//	@return	string
-func (a *DefaultAPIService) ApiWalletUpdatePostExecute(
-	r DefaultAPIApiWalletUpdatePostRequest,
-) (string, *http.Response, error) {
+//	@return string
+func (a *DefaultAPIService) ApiWalletUpdatePostExecute(r DefaultAPIApiWalletUpdatePostRequest) (string, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodPost
 		localVarPostBody    interface{}
@@ -1475,14 +2808,9 @@ func (a *DefaultAPIService) ApiWalletUpdatePostExecute(
 		localVarReturnValue string
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(
-		r.ctx,
-		"DefaultAPIService.ApiWalletUpdatePost",
-	)
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DefaultAPIService.ApiWalletUpdatePost")
 	if err != nil {
-		return localVarReturnValue, nil, &GenericOpenAPIError{
-			error: err.Error(),
-		}
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
 	localVarPath := localBasePath + "/api/wallet/update"
@@ -1491,9 +2819,7 @@ func (a *DefaultAPIService) ApiWalletUpdatePostExecute(
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 	if r.request == nil {
-		return localVarReturnValue, nil, reportError(
-			"request is required and must be specified",
-		)
+		return localVarReturnValue, nil, reportError("request is required and must be specified")
 	}
 
 	// to determine the Content-Type header
@@ -1515,16 +2841,21 @@ func (a *DefaultAPIService) ApiWalletUpdatePostExecute(
 	}
 	// body params
 	localVarPostBody = r.request
-	req, err := a.client.prepareRequest(
-		r.ctx,
-		localVarPath,
-		localVarHTTPMethod,
-		localVarPostBody,
-		localVarHeaderParams,
-		localVarQueryParams,
-		localVarFormParams,
-		formFiles,
-	)
+	if r.ctx != nil {
+		// API Key Authentication
+		if auth, ok := r.ctx.Value(ContextAPIKeys).(map[string]APIKey); ok {
+			if apiKey, ok := auth["BearerAuth"]; ok {
+				var key string
+				if apiKey.Prefix != "" {
+					key = apiKey.Prefix + " " + apiKey.Key
+				} else {
+					key = apiKey.Key
+				}
+				localVarHeaderParams["Authorization"] = key
+			}
+		}
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
 	}
@@ -1548,11 +2879,29 @@ func (a *DefaultAPIService) ApiWalletUpdatePostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 400 {
 			var v string
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 401 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 403 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -1563,11 +2912,7 @@ func (a *DefaultAPIService) ApiWalletUpdatePostExecute(
 		}
 		if localVarHTTPResponse.StatusCode == 500 {
 			var v string
-			err = a.client.decode(
-				&v,
-				localVarBody,
-				localVarHTTPResponse.Header.Get("Content-Type"),
-			)
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
@@ -1578,11 +2923,7 @@ func (a *DefaultAPIService) ApiWalletUpdatePostExecute(
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}
 
-	err = a.client.decode(
-		&localVarReturnValue,
-		localVarBody,
-		localVarHTTPResponse.Header.Get("Content-Type"),
-	)
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 	if err != nil {
 		newErr := &GenericOpenAPIError{
 			body:  localVarBody,

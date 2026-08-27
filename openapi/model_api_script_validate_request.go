@@ -34,9 +34,7 @@ type _ApiScriptValidateRequest ApiScriptValidateRequest
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewApiScriptValidateRequest(
-	script map[string]map[string]interface{},
-) *ApiScriptValidateRequest {
+func NewApiScriptValidateRequest(script map[string]map[string]interface{}) *ApiScriptValidateRequest {
 	this := ApiScriptValidateRequest{}
 	this.Script = script
 	return &this
@@ -102,9 +100,7 @@ func (o *ApiScriptValidateRequest) GetScriptOk() (map[string]map[string]interfac
 }
 
 // SetScript sets field value
-func (o *ApiScriptValidateRequest) SetScript(
-	v map[string]map[string]interface{},
-) {
+func (o *ApiScriptValidateRequest) SetScript(v map[string]map[string]interface{}) {
 	o.Script = v
 }
 
@@ -213,10 +209,7 @@ func (o *ApiScriptValidateRequest) UnmarshalJSON(data []byte) (err error) {
 
 	for _, requiredProperty := range requiredProperties {
 		if _, exists := allProperties[requiredProperty]; !exists {
-			return fmt.Errorf(
-				"no value given for required property %v",
-				requiredProperty,
-			)
+			return fmt.Errorf("no value given for required property %v", requiredProperty)
 		}
 	}
 
@@ -258,9 +251,7 @@ func (v *NullableApiScriptValidateRequest) Unset() {
 	v.isSet = false
 }
 
-func NewNullableApiScriptValidateRequest(
-	val *ApiScriptValidateRequest,
-) *NullableApiScriptValidateRequest {
+func NewNullableApiScriptValidateRequest(val *ApiScriptValidateRequest) *NullableApiScriptValidateRequest {
 	return &NullableApiScriptValidateRequest{value: val, isSet: true}
 }
 

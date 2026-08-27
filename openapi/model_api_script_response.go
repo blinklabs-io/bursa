@@ -219,9 +219,7 @@ func (v *NullableApiScriptResponse) Unset() {
 	v.isSet = false
 }
 
-func NewNullableApiScriptResponse(
-	val *ApiScriptResponse,
-) *NullableApiScriptResponse {
+func NewNullableApiScriptResponse(val *ApiScriptResponse) *NullableApiScriptResponse {
 	return &NullableApiScriptResponse{value: val, isSet: true}
 }
 

@@ -173,10 +173,7 @@ func (o *ApiWalletUpdateRequest) UnmarshalJSON(data []byte) (err error) {
 
 	for _, requiredProperty := range requiredProperties {
 		if _, exists := allProperties[requiredProperty]; !exists {
-			return fmt.Errorf(
-				"no value given for required property %v",
-				requiredProperty,
-			)
+			return fmt.Errorf("no value given for required property %v", requiredProperty)
 		}
 	}
 
@@ -218,9 +215,7 @@ func (v *NullableApiWalletUpdateRequest) Unset() {
 	v.isSet = false
 }
 
-func NewNullableApiWalletUpdateRequest(
-	val *ApiWalletUpdateRequest,
-) *NullableApiWalletUpdateRequest {
+func NewNullableApiWalletUpdateRequest(val *ApiWalletUpdateRequest) *NullableApiWalletUpdateRequest {
 	return &NullableApiWalletUpdateRequest{value: val, isSet: true}
 }
 

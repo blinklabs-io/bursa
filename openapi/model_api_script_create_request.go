@@ -36,11 +36,7 @@ type _ApiScriptCreateRequest ApiScriptCreateRequest
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewApiScriptCreateRequest(
-	keyHashes []string,
-	network string,
-	type_ string,
-) *ApiScriptCreateRequest {
+func NewApiScriptCreateRequest(keyHashes []string, network string, type_ string) *ApiScriptCreateRequest {
 	this := ApiScriptCreateRequest{}
 	this.KeyHashes = keyHashes
 	this.Network = network
@@ -269,10 +265,7 @@ func (o *ApiScriptCreateRequest) UnmarshalJSON(data []byte) (err error) {
 
 	for _, requiredProperty := range requiredProperties {
 		if _, exists := allProperties[requiredProperty]; !exists {
-			return fmt.Errorf(
-				"no value given for required property %v",
-				requiredProperty,
-			)
+			return fmt.Errorf("no value given for required property %v", requiredProperty)
 		}
 	}
 
@@ -314,9 +307,7 @@ func (v *NullableApiScriptCreateRequest) Unset() {
 	v.isSet = false
 }
 
-func NewNullableApiScriptCreateRequest(
-	val *ApiScriptCreateRequest,
-) *NullableApiScriptCreateRequest {
+func NewNullableApiScriptCreateRequest(val *ApiScriptCreateRequest) *NullableApiScriptCreateRequest {
 	return &NullableApiScriptCreateRequest{value: val, isSet: true}
 }
 

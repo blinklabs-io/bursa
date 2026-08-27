@@ -35,12 +35,8 @@ import (
 )
 
 var (
-	JsonCheck = regexp.MustCompile(
-		`(?i:(?:application|text)/(?:[^;]+\+)?json)`,
-	)
-	XmlCheck = regexp.MustCompile(
-		`(?i:(?:application|text)/(?:[^;]+\+)?xml)`,
-	)
+	JsonCheck       = regexp.MustCompile(`(?i:(?:application|text)/(?:[^;]+\+)?json)`)
+	XmlCheck        = regexp.MustCompile(`(?i:(?:application|text)/(?:[^;]+\+)?xml)`)
 	queryParamSplit = regexp.MustCompile(`(^|&)([^&]+)`)
 	queryDescape    = strings.NewReplacer("%5B", "[", "%5D", "]")
 )
@@ -124,12 +120,7 @@ func typeCheckParameter(obj interface{}, expected string, name string) error {
 
 	// Check the type is as expected.
 	if reflect.TypeOf(obj).String() != expected {
-		return fmt.Errorf(
-			"expected %s to be of type %s but received %s",
-			name,
-			expected,
-			reflect.TypeOf(obj).String(),
-		)
+		return fmt.Errorf("expected %s to be of type %s but received %s", name, expected, reflect.TypeOf(obj).String())
 	}
 	return nil
 }
@@ -155,13 +146,7 @@ func parameterValueToString(obj interface{}, key string) string {
 
 // parameterAddToHeaderOrQuery adds the provided object to the request header or url query
 // supporting deep object syntax
-func parameterAddToHeaderOrQuery(
-	headerOrQueryParams interface{},
-	keyPrefix string,
-	obj interface{},
-	style string,
-	collectionType string,
-) {
+func parameterAddToHeaderOrQuery(headerOrQueryParams interface{}, keyPrefix string, obj interface{}, style string, collectionType string) {
 	var v = reflect.ValueOf(obj)
 	var value = ""
 	if v == reflect.ValueOf(nil) {
@@ -323,13 +308,9 @@ func (c *APIClient) prepareRequest(
 	}
 
 	// add form parameters and file if available.
-	if strings.HasPrefix(headerParams["Content-Type"], "multipart/form-data") &&
-		len(formParams) > 0 ||
-		(len(formFiles) > 0) {
+	if strings.HasPrefix(headerParams["Content-Type"], "multipart/form-data") && len(formParams) > 0 || (len(formFiles) > 0) {
 		if body != nil {
-			return nil, errors.New(
-				"Cannot specify postBody and multipart form at the same time.",
-			)
+			return nil, errors.New("Cannot specify postBody and multipart form at the same time.")
 		}
 		body = &bytes.Buffer{}
 		w := multipart.NewWriter(body)
@@ -349,10 +330,7 @@ func (c *APIClient) prepareRequest(
 		for _, formFile := range formFiles {
 			if len(formFile.fileBytes) > 0 && formFile.fileName != "" {
 				w.Boundary()
-				part, err := w.CreateFormFile(
-					formFile.formFileName,
-					filepath.Base(formFile.fileName),
-				)
+				part, err := w.CreateFormFile(formFile.formFileName, filepath.Base(formFile.fileName))
 				if err != nil {
 					return nil, err
 				}
@@ -371,15 +349,9 @@ func (c *APIClient) prepareRequest(
 		w.Close()
 	}
 
-	if strings.HasPrefix(
-		headerParams["Content-Type"],
-		"application/x-www-form-urlencoded",
-	) &&
-		len(formParams) > 0 {
+	if strings.HasPrefix(headerParams["Content-Type"], "application/x-www-form-urlencoded") && len(formParams) > 0 {
 		if body != nil {
-			return nil, errors.New(
-				"Cannot specify postBody and x-www-form-urlencoded form at the same time.",
-			)
+			return nil, errors.New("Cannot specify postBody and x-www-form-urlencoded form at the same time.")
 		}
 		body = &bytes.Buffer{}
 		body.WriteString(formParams.Encode())
@@ -412,14 +384,11 @@ func (c *APIClient) prepareRequest(
 	}
 
 	// Encode the parameters.
-	url.RawQuery = queryParamSplit.ReplaceAllStringFunc(
-		query.Encode(),
-		func(s string) string {
-			pieces := strings.Split(s, "=")
-			pieces[0] = queryDescape.Replace(pieces[0])
-			return strings.Join(pieces, "=")
-		},
-	)
+	url.RawQuery = queryParamSplit.ReplaceAllStringFunc(query.Encode(), func(s string) string {
+		pieces := strings.Split(s, "=")
+		pieces[0] = queryDescape.Replace(pieces[0])
+		return strings.Join(pieces, "=")
+	})
 
 	// Generate a new request
 	if body != nil {
@@ -457,11 +426,7 @@ func (c *APIClient) prepareRequest(
 	return localVarRequest, nil
 }
 
-func (c *APIClient) decode(
-	v interface{},
-	b []byte,
-	contentType string,
-) (err error) {
+func (c *APIClient) decode(v interface{}, b []byte, contentType string) (err error) {
 	if len(b) == 0 {
 		return nil
 	}
@@ -537,10 +502,7 @@ func addFile(w *multipart.Writer, fieldName, path string) error {
 }
 
 // Set request body from an interface{}
-func setBody(
-	body interface{},
-	contentType string,
-) (bodyBuf *bytes.Buffer, err error) {
+func setBody(body interface{}, contentType string) (bodyBuf *bytes.Buffer, err error) {
 	if bodyBuf == nil {
 		bodyBuf = &bytes.Buffer{}
 	}

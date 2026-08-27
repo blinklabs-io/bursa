@@ -147,9 +147,7 @@ func (v *NullableApiErrorResponse) Unset() {
 	v.isSet = false
 }
 
-func NewNullableApiErrorResponse(
-	val *ApiErrorResponse,
-) *NullableApiErrorResponse {
+func NewNullableApiErrorResponse(val *ApiErrorResponse) *NullableApiErrorResponse {
 	return &NullableApiErrorResponse{value: val, isSet: true}
 }
 
