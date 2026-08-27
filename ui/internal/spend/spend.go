@@ -405,6 +405,21 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 		if err != nil {
 			return Preview{}, err
 		}
+	} else {
+		// Apollo v2.1.1 absorbs a dust change into the fee instead of returning
+		// its former non-convergence error. Treat that absorbed remainder like the
+		// legacy dead-zone so an available second input can preserve the user's
+		// funds rather than silently becoming fee.
+		dust, dustErr := s.isDustChange(ctx, a)
+		if dustErr != nil {
+			return Preview{}, dustErr
+		}
+		if dust {
+			a, err = s.completeForcingPrefix(ctx, changeAddr, recvAddr, lovelace, units, loaded, utxoAddr, addrCount)
+			if err != nil {
+				return Preview{}, err
+			}
+		}
 	}
 
 	// Reject locally if signing this would exceed the chain's MaxTxSize, turning a
@@ -565,6 +580,13 @@ func (s *Service) completeForcingPrefix(
 			}
 			return nil, mapCompleteErr(err)
 		}
+		dust, dustErr := s.isDustChange(ctx, a)
+		if dustErr != nil {
+			return nil, dustErr
+		}
+		if dust {
+			continue
+		}
 		// Converged on the minimal forced set. The MaxTxSize check lives in Build
 		// so it covers the coin-selected path too; growing the prefix further
 		// would only add inputs, so there is nothing to gain by checking here.
@@ -664,6 +686,56 @@ func mapCompleteErr(err error) error {
 func isNonConvergenceError(err error) bool {
 	return err != nil &&
 		strings.Contains(err.Error(), "evaluation transaction did not converge")
+}
+
+// isDustChange reports whether Apollo completed a payment by absorbing a
+// non-emittable change remainder into the fee. Apollo v2.1.1 now converges on
+// that shape instead of returning its historical non-convergence error, but a
+// wallet with additional UTxOs should still retry so the remainder is not
+// silently charged as a fee.
+func (s *Service) isDustChange(ctx context.Context, a *apollo.Apollo) (bool, error) {
+	tx := a.GetTx()
+	if tx == nil || len(tx.Body.Outputs()) != 1 {
+		return false, nil
+	}
+	pp, err := backend.ProtocolParamsContext(ctx, s.chain)
+	if err != nil {
+		return false, fmt.Errorf("protocol params for dust-change check: %w", err)
+	}
+	if pp.MinFeeCoefficient <= 0 || pp.MinFeeConstant <= 0 {
+		return false, nil
+	}
+	// Match Apollo's estimator: it encodes the completed body with a placeholder
+	// maximum fee and prices one baseline witness plus each required signer.
+	maxFee, feeErr := backend.MaxTxFeeContext(ctx, s.chain)
+	if feeErr != nil || maxFee == 0 {
+		maxFee = 2_000_000
+	}
+	witnessCount := 1 + len(tx.Body.RequiredSigners())
+	fakeWitnesses := make([]lcommon.VkeyWitness, witnessCount)
+	for i := range fakeWitnesses {
+		fakeWitnesses[i] = lcommon.VkeyWitness{
+			Vkey:      make([]byte, 32),
+			Signature: make([]byte, 64),
+		}
+	}
+	probe := conway.ConwayTransaction{
+		Body:       tx.Body,
+		WitnessSet: tx.WitnessSet,
+		TxIsValid:  tx.TxIsValid,
+		TxMetadata: tx.TxMetadata,
+	}
+	probe.Body.TxFee = maxFee
+	probe.WitnessSet.VkeyWitnesses = cbor.NewSetType(fakeWitnesses, true)
+	encoded, encodeErr := cbor.Encode(&probe)
+	if encodeErr != nil {
+		return false, fmt.Errorf("encode fee estimate: %w", encodeErr)
+	}
+	if pp.MinFeeCoefficient < 0 || pp.MinFeeConstant < 0 {
+		return false, nil
+	}
+	expectedFee := uint64(len(encoded))*uint64(pp.MinFeeCoefficient) + uint64(pp.MinFeeConstant) + feePaddingLovelace
+	return tx.Body.TxFee > expectedFee, nil
 }
 
 // SignData signs an arbitrary message with the wallet key for one of the

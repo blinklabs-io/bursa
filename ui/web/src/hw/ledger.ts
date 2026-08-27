@@ -176,10 +176,10 @@ function mapToSignRequest(resp: HardwareSignResponse): SignTransactionRequest {
       includeNetworkId: resp.include_network_id || null,
     },
     signingMode: TransactionSigningMode.ORDINARY_TRANSACTION,
-    // The SDK option is present at runtime but missing from its TypeScript
-    // declaration; keep the compatibility shim at this boundary.
-    tagCborSets: resp.body_set_tag_policy === "tagged",
-  } as SignTransactionRequest & { tagCborSets: boolean };
+    options: {
+      tagCborSets: resp.body_set_tag_policy === "tagged",
+    },
+  };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
