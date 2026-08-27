@@ -10,7 +10,7 @@ require (
 	github.com/blinklabs-io/bursa v0.16.1-0.20260822162654-819d49daca4c
 	github.com/blinklabs-io/dingo v0.70.1
 	github.com/blinklabs-io/go-bip39 v0.2.0
-	github.com/blinklabs-io/gouroboros v0.196.0
+	github.com/blinklabs-io/gouroboros v0.197.0
 	github.com/blinklabs-io/plutigo v0.3.0
 	github.com/blinklabs-io/shai v0.0.0-20260824194445-61b0d4e854ad
 	github.com/btcsuite/btcd/btcutil v1.2.0

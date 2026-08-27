@@ -125,6 +125,8 @@ github.com/blinklabs-io/go-bip39 v0.2.0 h1:rHYih+JzqaFVuP+UfvByKTAdJPeYtlvZu49yU
 github.com/blinklabs-io/go-bip39 v0.2.0/go.mod h1:9Bp7a+XDc/KTPOqNnS7T/v1vH2lDXpmjM0GArwvOQL4=
 github.com/blinklabs-io/gouroboros v0.193.3 h1:ao2dhsulyZP/Da/a4TgyDkZ/EXMVD3UAgEikKYYYBBs=
 github.com/blinklabs-io/gouroboros v0.193.3/go.mod h1:wCrv86t7VsYhW36JliNeaoqypbxU/WsB1Cq/9OMg0NA=
+github.com/blinklabs-io/gouroboros v0.197.0 h1:BgwT8MPrY5m4oxLnWyVnWn8T0+9eUKjPJjakGLNUV5k=
+github.com/blinklabs-io/gouroboros v0.197.0/go.mod h1:V06nVPcN4gjGdX4tKbbH2oDDg74DdNAOuCjryEkLa+E=
 github.com/blinklabs-io/ouroboros-mock v0.16.0 h1:uAPoFE+WOXX9hct1Kb725gYS/8SKzATrwCF7XKOZ0Xs=
 github.com/blinklabs-io/ouroboros-mock v0.16.0/go.mod h1:ysGU8dMjG8ShMQco/aarR1xIRH7GPCIdhrnkM+J4IVA=
 github.com/blinklabs-io/plutigo v0.3.0 h1:lUl7q96a+XSxpd7iEh0AxvnyMNp9s1wZITv/3RuCfkA=
@@ -604,6 +606,8 @@ google.golang.org/protobuf v1.21.0/go.mod h1:47Nbq4nVaFHyn7ilMalzfO3qCViNmqZ2kzi
 google.golang.org/protobuf v1.23.0/go.mod h1:EGpADcykh3NcUnDUJcl1+ZksZNG86OlYog2l/sGQquU=
 google.golang.org/protobuf v1.36.11 h1:fV6ZwhNocDyBLK0dj+fg8ektcVegBBuEolpbTQyBNVE=
 google.golang.org/protobuf v1.36.11/go.mod h1:HTf+CrKn2C3g5S8VImy6tdcUvCska2kB7j23XfzDpco=
+google.golang.org/protobuf v1.36.12 h1:pJOKDDOyeXErUroCihFAd5LQuwXBSpVnKGrj5o/fwxc=
+google.golang.org/protobuf v1.36.12/go.mod h1:HTf+CrKn2C3g5S8VImy6tdcUvCska2kB7j23XfzDpco=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/check.v1 v1.0.0-20200227125254-8fa46927fb4f/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
