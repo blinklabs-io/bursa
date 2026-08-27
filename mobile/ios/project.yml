@@ -29,6 +29,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.blinklabs.bursa
         PRODUCT_NAME: Bursa
+        PRODUCT_MODULE_NAME: BursaApp
         GENERATE_INFOPLIST_FILE: NO
         # Allow building without a signing identity in CI (simulator/unsigned).
         CODE_SIGNING_ALLOWED: NO
