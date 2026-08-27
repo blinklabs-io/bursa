@@ -102,7 +102,8 @@ Work through the buttons top-to-bottom:
 | Button | Expected behaviour |
 |--------|--------------------|
 | `isEnabled()` | Returns `false` (not yet approved) |
-| `enable()` | Bursa shows an **Approve Connection** prompt; accept it. Returns the CIP-30 API object. |
+| `enable()` | Requests CIP-95. Bursa shows an **Approve Connection** prompt; accept it. Returns the CIP-30 API object. |
+| `getExtensions()` | Returns `[{ "cip": 95 }]` |
 | `getNetworkId()` | Returns `0` (testnet) or `1` (mainnet) |
 | `getBalance()` | Returns a CBOR-hex encoded `Value` |
 | `getUsedAddresses()` | Returns an array of bech32 addresses (may be empty) |
