@@ -384,17 +384,49 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 	// Complete with the selected input payment key hashes embedded as Conway
 	// required signers (the first pass discovers selected inputs; later passes
 	// rebuild the tx with that signer set so fee estimation covers the bound body).
-	// Apollo absorbs sub-minimum pure-ADA change into the fee, so coin selection
-	// can keep the smallest covering input set without a Bursa-side retry.
+	//
+	// A send that would leave change just below the min-UTxO floor puts Apollo in
+	// the "dust-change dead-zone": adding a change output raises the fee estimate,
+	// which drops the change below the floor, which removes the output, which
+	// lowers the fee — Apollo's evaluation loop oscillates and Complete() reports
+	// "evaluation transaction did not converge". When that happens, retry forcing
+	// a growing, largest-first prefix of the loaded UTxOs in as explicit inputs
+	// until the combined change clears the floor (see completeForcingPrefix). This
+	// pulls in only the minimum extra inputs needed — usually one, matching the
+	// legacy builder's "silently pull in another input" behaviour — rather than
+	// forcing the whole wallet, which would blow past MaxTxSize on large wallets.
 	addrCount := len(acct.ReceiveAddresses)
-	a, err := s.completeSend(ctx, changeAddr, recvAddr, lovelace, units, loaded, utxoAddr, addrCount)
+	a, err := s.completeSend(ctx, changeAddr, recvAddr, lovelace, units, loaded, utxoAddr, addrCount, false)
 	if err != nil {
-		return Preview{}, mapCompleteErr(err)
+		if !isNonConvergenceError(err) {
+			return Preview{}, mapCompleteErr(err)
+		}
+		a, err = s.completeForcingPrefix(ctx, changeAddr, recvAddr, lovelace, units, loaded, utxoAddr, addrCount)
+		if err != nil {
+			return Preview{}, err
+		}
+	} else {
+		// Apollo v2.1.1 absorbs a dust change into the fee instead of returning
+		// its former non-convergence error. Treat that absorbed remainder like the
+		// legacy dead-zone so an available second input can preserve the user's
+		// funds rather than silently becoming fee.
+		dust, dustErr := s.isDustChange(ctx, a)
+		if dustErr != nil {
+			return Preview{}, dustErr
+		}
+		if dust {
+			a, err = s.completeForcingPrefix(ctx, changeAddr, recvAddr, lovelace, units, loaded, utxoAddr, addrCount)
+			if err != nil {
+				return Preview{}, err
+			}
+		}
 	}
 
 	// Reject locally if signing this would exceed the chain's MaxTxSize, turning a
-	// would-be submit-time rejection into a clear, pre-approval error. An ordinary
-	// coin-selected send can consume enough inputs to cross the limit.
+	// would-be submit-time rejection into a clear, pre-approval error. This covers
+	// BOTH paths: the forced-prefix retry can consume extra inputs, but an
+	// ordinary coin-selected send of a large amount can select enough inputs to
+	// cross the limit on its own without ever entering the dead-zone.
 	if err := s.guardTxSize(ctx, a, utxoAddr); err != nil {
 		return Preview{}, err
 	}
@@ -423,6 +455,12 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 // completeSend runs Apollo coin selection + fee estimation for a single payment,
 // iterating until the Conway required-signer set (derived from the selected
 // inputs) is stable so fee estimation covers the fully-bound body.
+//
+// When forceInputs is false, Apollo selects inputs from the loaded pool. When it
+// is true, every UTxO in loaded is added as an explicit input and no coin
+// selection runs — the caller (completeForcingPrefix) passes a bounded,
+// largest-first prefix of the wallet's UTxOs to escape the min-UTxO dust-change
+// dead-zone so the combined change clears the min-UTxO floor.
 func (s *Service) completeSend(
 	ctx context.Context,
 	changeAddr, recvAddr lcommon.Address,
@@ -431,6 +469,7 @@ func (s *Service) completeSend(
 	loaded []lcommon.Utxo,
 	utxoAddr map[string]string,
 	addrCount int,
+	forceInputs bool,
 ) (*apollo.Apollo, error) {
 	var required []lcommon.Blake2b224
 	// The loop reruns Complete() until the Conway required-signer set stops
@@ -452,7 +491,14 @@ func (s *Service) completeSend(
 			SetWallet(apollo.NewExternalWallet(changeAddr)).
 			SetChangeAddress(changeAddr).
 			SetFeePadding(feePaddingLovelace).
-			AddLoadedUTxOs(loaded...)
+			SetTransactionBodySetTagPolicy(apollo.TransactionBodySetTagPolicyUntagged)
+		if forceInputs {
+			for _, u := range loaded {
+				next = next.AddInput(u)
+			}
+		} else {
+			next = next.AddLoadedUTxOs(loaded...)
+		}
 		for _, kh := range required {
 			next = next.AddRequiredSigner(kh)
 		}
@@ -493,6 +539,65 @@ const vkeyWitnessSizeEstimate = 102
 // when the signed form would just exceed it. 8 bytes is conservative — enough to
 // cover a multi-byte array-length header for large witness counts.
 const witnessSetOverhead = 8
+
+// completeForcingPrefix escapes the min-UTxO dust-change dead-zone by forcing a
+// growing, largest-first prefix of the wallet's UTxOs as explicit inputs,
+// stopping at the SMALLEST prefix that converges. Going largest-first means the
+// converging prefix is usually just one extra input, so inputs, fee, tx size,
+// and address linkage all stay bounded to the minimum needed instead of forcing
+// the whole wallet (which crosses MaxTxSize on large wallets).
+//
+// It sorts a COPY of loaded so the caller's slice — and the utxoAddr/utxoValue
+// maps keyed off the same UTxO references — are left untouched.
+func (s *Service) completeForcingPrefix(
+	ctx context.Context,
+	changeAddr, recvAddr lcommon.Address,
+	lovelace uint64,
+	units []apollo.Unit,
+	loaded []lcommon.Utxo,
+	utxoAddr map[string]string,
+	addrCount int,
+) (*apollo.Apollo, error) {
+	sorted := make([]lcommon.Utxo, len(loaded))
+	copy(sorted, loaded)
+	// Order by lovelace descending. Output.Amount() is lovelace only (native
+	// assets live in Assets()), so for a token send the prefix grows by lovelace
+	// until it reaches the UTxO holding the asset — bounded by the
+	// asset-underflow arm of isInsufficientFundsError and by guardTxSize, not a
+	// correctness issue, just larger prefixes for token sends than ADA sends.
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sorted[i].Output.Amount().Uint64() > sorted[j].Output.Amount().Uint64()
+	})
+
+	for k := 1; k <= len(sorted); k++ {
+		a, err := s.completeSend(ctx, changeAddr, recvAddr, lovelace, units, sorted[:k], utxoAddr, addrCount, true)
+		if err != nil {
+			// Insufficient funds: the forced prefix does not yet cover payment+fee.
+			// Non-convergence: still inside the dust-change dead-zone. Either way,
+			// grow the prefix by one more (larger-first) UTxO and retry.
+			if isInsufficientFundsError(err) || isNonConvergenceError(err) {
+				continue
+			}
+			return nil, mapCompleteErr(err)
+		}
+		dust, dustErr := s.isDustChange(ctx, a)
+		if dustErr != nil {
+			return nil, dustErr
+		}
+		if dust {
+			continue
+		}
+		// Converged on the minimal forced set. The MaxTxSize check lives in Build
+		// so it covers the coin-selected path too; growing the prefix further
+		// would only add inputs, so there is nothing to gain by checking here.
+		return a, nil
+	}
+
+	return nil, fmt.Errorf(
+		"%w: the amount leaves change below the minimum UTxO and no additional inputs are available to cover it",
+		ErrInsufficientFunds,
+	)
+}
 
 // guardTxSize rejects a completed tx whose projected SIGNED size exceeds the
 // chain's MaxTxSize protocol parameter. Complete() produces a body with an empty
@@ -554,14 +659,83 @@ func (s *Service) guardTxSize(ctx context.Context, a *apollo.Apollo, utxoAddr ma
 	return nil
 }
 
-// mapCompleteErr maps a completeSend error to the caller-facing Build error: an
+// mapCompleteErr maps a completeSend error to the caller-facing Build error for
+// the arms shared between the first attempt and the forced-prefix retry: an
 // Apollo insufficient-funds error becomes ErrInsufficientFunds; anything else is
-// wrapped as "complete transaction".
+// wrapped as "complete transaction". Non-convergence is handled separately by
+// the caller (it drives the forced-input retry) and is never passed here.
 func mapCompleteErr(err error) error {
 	if isInsufficientFundsError(err) {
 		return fmt.Errorf("%w: %w", ErrInsufficientFunds, err)
 	}
 	return fmt.Errorf("complete transaction: %w", err)
+}
+
+// isNonConvergenceError reports whether err is Apollo's fee/evaluation
+// non-convergence error. It surfaces in the min-UTxO dust-change dead-zone,
+// where leaving change just under the min-UTxO floor makes Apollo's fee estimate
+// oscillate across the boundary.
+//
+// The exact phrase "evaluation transaction did not converge" was verified
+// against apollo v2.0.0-20260729192515-7fa2cfd06025 (see ui/go.mod); recheck it
+// on every apollo bump, as this is a string-coupled match. It MUST keep the full
+// phrase and never be shortened to "did not converge": completeSend's own
+// "required signer set did not converge" error also contains that substring, so
+// a shortened matcher would misread bursa's signer-convergence failure as the
+// Apollo dust dead-zone and trigger a spurious forced-input retry.
+func isNonConvergenceError(err error) bool {
+	return err != nil &&
+		strings.Contains(err.Error(), "evaluation transaction did not converge")
+}
+
+// isDustChange reports whether Apollo completed a payment by absorbing a
+// non-emittable change remainder into the fee. Apollo v2.1.1 now converges on
+// that shape instead of returning its historical non-convergence error, but a
+// wallet with additional UTxOs should still retry so the remainder is not
+// silently charged as a fee.
+func (s *Service) isDustChange(ctx context.Context, a *apollo.Apollo) (bool, error) {
+	tx := a.GetTx()
+	if tx == nil || len(tx.Body.Outputs()) != 1 {
+		return false, nil
+	}
+	pp, err := backend.ProtocolParamsContext(ctx, s.chain)
+	if err != nil {
+		return false, fmt.Errorf("protocol params for dust-change check: %w", err)
+	}
+	if pp.MinFeeCoefficient <= 0 || pp.MinFeeConstant <= 0 {
+		return false, nil
+	}
+	// Match Apollo's estimator: it encodes the completed body with a placeholder
+	// maximum fee and prices one baseline witness plus each required signer.
+	maxFee, feeErr := backend.MaxTxFeeContext(ctx, s.chain)
+	if feeErr != nil || maxFee == 0 {
+		maxFee = 2_000_000
+	}
+	witnessCount := 1 + len(tx.Body.RequiredSigners())
+	fakeWitnesses := make([]lcommon.VkeyWitness, witnessCount)
+	for i := range fakeWitnesses {
+		fakeWitnesses[i] = lcommon.VkeyWitness{
+			Vkey:      make([]byte, 32),
+			Signature: make([]byte, 64),
+		}
+	}
+	probe := conway.ConwayTransaction{
+		Body:       tx.Body,
+		WitnessSet: tx.WitnessSet,
+		TxIsValid:  tx.TxIsValid,
+		TxMetadata: tx.TxMetadata,
+	}
+	probe.Body.TxFee = maxFee
+	probe.WitnessSet.VkeyWitnesses = cbor.NewSetType(fakeWitnesses, true)
+	encoded, encodeErr := cbor.Encode(&probe)
+	if encodeErr != nil {
+		return false, fmt.Errorf("encode fee estimate: %w", encodeErr)
+	}
+	if pp.MinFeeCoefficient < 0 || pp.MinFeeConstant < 0 {
+		return false, nil
+	}
+	expectedFee := uint64(len(encoded))*uint64(pp.MinFeeCoefficient) + uint64(pp.MinFeeConstant) + feePaddingLovelace
+	return tx.Body.TxFee > expectedFee, nil
 }
 
 // SignData signs an arbitrary message with the wallet key for one of the
@@ -2564,6 +2738,9 @@ type HardwareSignRequest struct {
 	// Ledger request must include the identical set or it will sign a different
 	// body from UnsignedTxCBOR.
 	RequiredSigners []string `json:"required_signers"`
+	// BodySetTagPolicy is the uniform CBOR set policy used for body keys 0, 13,
+	// 14, and 18. Structured hardware signers must use the same policy.
+	BodySetTagPolicy string `json:"body_set_tag_policy"`
 	// IncludeNetworkID preserves body key 15 when it was present in the pending
 	// transaction, so Ledger reconstructs and signs the identical body.
 	IncludeNetworkID bool `json:"include_network_id,omitempty"`
@@ -2739,6 +2916,7 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 		NetworkID:        networkID,
 		ProtocolMagic:    protocolMagic,
 		RequiredSigners:  keyHashesHex(tx.Body.RequiredSigners()),
+		BodySetTagPolicy: "untagged",
 		UnsignedTxCBOR:   unsignedTxCBOR,
 		IncludeNetworkID: tx.Body.TxNetworkId != nil,
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -284,17 +285,19 @@ func TestBuildInsufficientFunds(t *testing.T) {
 	t.Logf("got expected error: %v", err)
 }
 
-// TestBuildAbsorbsDustChangeWithoutExtraInputs covers a send whose change is
-// below the min-UTxO floor. Apollo absorbs that pure-ADA change into the fee, so
-// Bursa must keep the smallest covering input set rather than consume another
-// UTxO solely to create a change output.
-func TestBuildAbsorbsDustChangeWithoutExtraInputs(t *testing.T) {
+// TestBuildRetriesDustChangeDeadZone reproduces the min-UTxO dust-change
+// dead-zone: two ~5-ADA UTxOs with a ~4-ADA send would leave change just below
+// the min-UTxO floor if only one input is selected, which makes Apollo's fee
+// estimate oscillate and Complete() report "evaluation transaction did not
+// converge". Build must detect that, retry forcing the other input in, and
+// return a valid, signable transaction whose change clears the floor.
+func TestBuildRetriesDustChangeDeadZone(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	addr0 := acct.ReceiveAddresses[0]
 	recvAddr := acct.ReceiveAddresses[2]
 
 	// Two 5-ADA UTxOs at the same funding address. Selecting one to fund a 4-ADA
-	// send leaves sub-minimum pure-ADA change.
+	// send leaves ~0.83 ADA change — inside the dead-zone.
 	fc := newFakeChain(5_000_000, addr0)
 	fc.addUTxO(5_000_000, addr0, "1111111111111111111111111111111111111111111111111111111111111111", 0)
 	ks := fakeKeystore{mnemonic: testMnemonic}
@@ -303,22 +306,25 @@ func TestBuildAbsorbsDustChangeWithoutExtraInputs(t *testing.T) {
 	ctx := context.Background()
 	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: "4000000"})
 	if err != nil {
-		t.Fatalf("Build with sub-minimum change: %v", err)
+		t.Fatalf("Build in dust-change dead-zone should now succeed, got: %v", err)
 	}
-	if len(pv.Inputs) != 1 {
-		t.Fatalf("expected one covering input, got %d: %v", len(pv.Inputs), pv.Inputs)
+	// The retry forces the other UTxO in, so both inputs are consumed and the
+	// combined change clears the min-UTxO floor.
+	if len(pv.Inputs) != 2 {
+		t.Fatalf("expected retry to include both inputs, got %d: %v", len(pv.Inputs), pv.Inputs)
 	}
 	if pv.Fee == "" || pv.Fee == "0" {
 		t.Fatalf("expected non-zero Fee, got %q", pv.Fee)
 	}
-	if pv.Change != "0" {
-		t.Fatalf("expected sub-minimum change to be absorbed into the fee, got %q", pv.Change)
+	change, err := strconv.ParseUint(pv.Change, 10, 64)
+	if err != nil || change == 0 {
+		t.Fatalf("expected non-zero change above the min-UTxO floor, got %q (err %v)", pv.Change, err)
 	}
 
 	// The built tx must be signable and submittable, proving it is valid.
 	res, err := s.Confirm(ctx, pv.PendingID, "pw")
 	if err != nil {
-		t.Fatalf("Confirm of dust-absorbing tx: %v", err)
+		t.Fatalf("Confirm of dead-zone tx: %v", err)
 	}
 	if res.TxHash == "" {
 		t.Fatal("expected non-empty TxHash")
@@ -328,32 +334,55 @@ func TestBuildAbsorbsDustChangeWithoutExtraInputs(t *testing.T) {
 	}
 }
 
-// TestBuildAbsorbsDustChangeWithNoAlternativeInput proves the same behavior
-// works when the wallet has no second UTxO available.
-func TestBuildAbsorbsDustChangeWithNoAlternativeInput(t *testing.T) {
+// TestBuildDustChangeDeadZoneNoExtraInputs covers the genuinely-unresolvable
+// dead-zone: a single UTxO whose only possible change is dust and there is no
+// other input to pull in. Build must surface a clear, actionable error rather
+// than Apollo's raw non-convergence message.
+func TestBuildDustChangeDeadZoneNoExtraInputs(t *testing.T) {
 	acct := mustDeriveTestAccount(t)
 	addr0 := acct.ReceiveAddresses[0]
 	recvAddr := acct.ReceiveAddresses[1]
 
-	// Single 5-ADA UTxO, 4-ADA send: change is below the min-UTxO floor.
+	// Single 5-ADA UTxO, 4-ADA send: change is dust and no extra input exists.
 	fc := newFakeChain(5_000_000, addr0)
 	s := NewService(fc, nil, acct)
 
-	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4000000"})
-	if err != nil {
-		t.Fatalf("Build with one dust-producing input: %v", err)
+	_, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4000000"})
+	if !errors.Is(err, ErrInsufficientFunds) {
+		t.Fatalf("expected ErrInsufficientFunds, got %v", err)
 	}
-	if len(pv.Inputs) != 1 {
-		t.Fatalf("expected the only available input, got %d: %v", len(pv.Inputs), pv.Inputs)
+	if strings.Contains(err.Error(), "did not converge") {
+		t.Fatalf("clear error should not leak Apollo's raw non-convergence message: %v", err)
 	}
-	if pv.Change != "0" {
-		t.Fatalf("expected sub-minimum change to be absorbed into the fee, got %q", pv.Change)
+	if !strings.Contains(err.Error(), "no additional inputs are available") {
+		t.Fatalf("expected an actionable dust-change message, got: %v", err)
 	}
 }
 
-// fillDustChangeUTxOs adds n 5-ADA UTxOs at addr with distinct tx hashes. A
-// 4-ADA send funded by one leaves sub-minimum pure-ADA change.
-func fillDustChangeUTxOs(fc *fakeChain, n int, addr string) {
+// TestBuildExactBalanceNoChange does not leave a remainder to emit or absorb.
+// It must remain a valid one-input transfer rather than being mistaken for a
+// dust-change transaction by the fee-shape detector.
+func TestBuildExactBalanceNoChange(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	recvAddr := acct.ReceiveAddresses[1]
+
+	fc := newFakeChain(5_000_000, addr0)
+	s := NewService(fc, nil, acct)
+
+	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4827823"})
+	if err != nil {
+		t.Fatalf("exact-balance send should succeed, got: %v", err)
+	}
+	if pv.Change != "0" {
+		t.Fatalf("exact-balance send change = %q, want 0", pv.Change)
+	}
+}
+
+// fillDeadZoneUTxOs adds n 5-ADA UTxOs at addr with distinct tx hashes. A 4-ADA
+// send funded by a single one leaves ~0.83 ADA change — inside the dust-change
+// dead-zone — so Build must force additional inputs to clear the min-UTxO floor.
+func fillDeadZoneUTxOs(fc *fakeChain, n int, addr string) {
 	for i := 0; i < n; i++ {
 		// Distinct 32-byte tx hash per UTxO: "0000..<i>" as 64 hex chars.
 		h := fmt.Sprintf("%064x", i+1)
@@ -361,16 +390,19 @@ func fillDustChangeUTxOs(fc *fakeChain, n int, addr string) {
 	}
 }
 
-// TestBuildDustChangeUsesOneInput proves a 50-UTxO wallet does not consume extra
-// inputs merely to turn sub-minimum pure-ADA change into a change output.
-func TestBuildDustChangeUsesOneInput(t *testing.T) {
+// TestBuildDeadZoneForcesBoundedInputs proves the dust-change retry forces only
+// the minimum extra inputs (largest-first), not the whole wallet: a 50-UTxO
+// wallet whose 4-ADA send lands in the dead-zone must build with a small,
+// bounded input set well under the wallet size, produce a tx under MaxTxSize,
+// and still sign + submit.
+func TestBuildDeadZoneForcesBoundedInputs(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	addr0 := acct.ReceiveAddresses[0]
 	recvAddr := acct.ReceiveAddresses[2]
 
 	const walletUTxOs = 50
 	fc := newFakeChain(5_000_000, addr0)
-	fillDustChangeUTxOs(fc, walletUTxOs-1, addr0) // newFakeChain already seeded one
+	fillDeadZoneUTxOs(fc, walletUTxOs-1, addr0) // newFakeChain already seeded one
 
 	ks := fakeKeystore{mnemonic: testMnemonic}
 	s := NewService(fc, ks, acct)
@@ -378,20 +410,21 @@ func TestBuildDustChangeUsesOneInput(t *testing.T) {
 	ctx := context.Background()
 	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: "4000000"})
 	if err != nil {
-		t.Fatalf("Build in 50-UTxO wallet: %v", err)
+		t.Fatalf("Build in 50-UTxO dead-zone should succeed, got: %v", err)
 	}
 
-	if len(pv.Inputs) != 1 {
-		t.Fatalf("expected one covering input, got %d of %d wallet UTxOs", len(pv.Inputs), walletUTxOs)
+	// The retry must pull in only a handful of inputs, never the whole wallet.
+	if len(pv.Inputs) == 0 || len(pv.Inputs) >= walletUTxOs {
+		t.Fatalf("expected a small bounded input set, got %d of %d wallet UTxOs", len(pv.Inputs), walletUTxOs)
 	}
-	if pv.Change != "0" {
-		t.Fatalf("expected sub-minimum change to be absorbed into the fee, got %q", pv.Change)
+	if len(pv.Inputs) > 5 {
+		t.Fatalf("input set is not bounded to the minimum needed: got %d inputs", len(pv.Inputs))
 	}
 
-	// It must still sign and submit — proving the dust-absorbing tx is valid.
+	// It must still sign and submit — proving the bounded forced set is valid.
 	res, err := s.Confirm(ctx, pv.PendingID, "pw")
 	if err != nil {
-		t.Fatalf("Confirm of dust-absorbing tx: %v", err)
+		t.Fatalf("Confirm of bounded dead-zone tx: %v", err)
 	}
 	if res.TxHash == "" {
 		t.Fatal("expected non-empty TxHash")
@@ -412,16 +445,20 @@ func TestBuildDustChangeUsesOneInput(t *testing.T) {
 	}
 }
 
-// TestBuildDustChangePrefersSingleSufficientInput covers coin selection with one
-// large UTxO among many smaller dust-producing alternatives.
-func TestBuildDustChangePrefersSingleSufficientInput(t *testing.T) {
+// TestBuildDeadZoneForcesLargestFirst proves the retry orders forced inputs by
+// lovelace descending: with one large UTxO among many small ones, it converges
+// on that single large input (k=1) rather than walking the small ones. Deleting
+// the sort in completeForcingPrefix makes this fail (the small UTxOs would be
+// forced first); an all-equal-value wallet can't distinguish the two.
+func TestBuildDeadZoneForcesLargestFirst(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	addr0 := acct.ReceiveAddresses[0]
 	recvAddr := acct.ReceiveAddresses[2]
 
-	// Thirty 5-ADA UTxOs plus one 100-ADA UTxO added last.
+	// Thirty 5-ADA UTxOs (the dead-zone shape) plus one 100-ADA UTxO added last,
+	// so it is only reachable first if the retry sorts largest-first.
 	fc := newFakeChain(5_000_000, addr0)
-	fillDustChangeUTxOs(fc, 29, addr0) // 30 x 5-ADA total
+	fillDeadZoneUTxOs(fc, 29, addr0) // 30 x 5-ADA total
 	fc.addUTxO(100_000_000, addr0, fmt.Sprintf("%064x", 0x1000), 0)
 
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
@@ -429,28 +466,29 @@ func TestBuildDustChangePrefersSingleSufficientInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build should succeed: %v", err)
 	}
-	// The selected input covers the send on its own.
+	// The lone 100-ADA input covers the send with change well clear of the floor,
+	// so convergence is at exactly one input.
 	if len(pv.Inputs) != 1 {
-		t.Fatalf("expected coin selection to use 1 input, got %d: %v", len(pv.Inputs), pv.Inputs)
+		t.Fatalf("expected largest-first to converge at 1 input, got %d: %v", len(pv.Inputs), pv.Inputs)
 	}
 }
 
-// TestBuildDustChangeRejectsOversizeTx proves guardTxSize turns a would-be
+// TestBuildDeadZoneRejectsOversizeTx proves guardTxSize turns a would-be
 // oversized transaction into a clear pre-approval error instead of letting it
 // reach SubmitTx. The threshold is pinned to the branch's actual completed body
 // (measured with the guard disabled) plus one witness, minus a byte — so it
 // stays valid regardless of how witnesses are counted, rather than relying on
 // the counting method.
-func TestBuildDustChangeRejectsOversizeTx(t *testing.T) {
+func TestBuildDeadZoneRejectsOversizeTx(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	addr0 := acct.ReceiveAddresses[0]
 	recvAddr := acct.ReceiveAddresses[2]
 	req := SendRequest{To: recvAddr, Lovelace: "4000000"}
 
-	// Measure the real completed dust-change tx with the guard disabled. All UTxOs
+	// Measure the real completed dead-zone tx with the guard disabled. All UTxOs
 	// share addr0, so the signed tx carries exactly one vkey witness.
 	measure := newFakeChain(5_000_000, addr0)
-	fillDustChangeUTxOs(measure, 9, addr0)
+	fillDeadZoneUTxOs(measure, 9, addr0)
 	measure.pp.MaxTxSize = 0
 	ms := NewService(measure, fakeKeystore{mnemonic: testMnemonic}, acct)
 	mpv, err := ms.Build(context.Background(), req)
@@ -474,7 +512,7 @@ func TestBuildDustChangeRejectsOversizeTx(t *testing.T) {
 	// Same scenario, but MaxTxSize one byte under the true projection: the guard
 	// must reject and nothing may reach SubmitTx.
 	fc := newFakeChain(5_000_000, addr0)
-	fillDustChangeUTxOs(fc, 9, addr0) // 10 UTxOs total on addr0
+	fillDeadZoneUTxOs(fc, 9, addr0) // 10 UTxOs total on addr0
 	fc.pp.MaxTxSize = projected - 1
 
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
@@ -491,15 +529,15 @@ func TestBuildDustChangeRejectsOversizeTx(t *testing.T) {
 	}
 }
 
-// TestBuildDustChangeSizeGuardDisabled pins the documented behaviour that a
-// MaxTxSize of 0 disables the guard.
-func TestBuildDustChangeSizeGuardDisabled(t *testing.T) {
+// TestBuildDeadZoneSizeGuardDisabled pins the documented behaviour that a
+// MaxTxSize of 0 disables the guard: the dead-zone retry still succeeds.
+func TestBuildDeadZoneSizeGuardDisabled(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	addr0 := acct.ReceiveAddresses[0]
 	recvAddr := acct.ReceiveAddresses[2]
 
 	fc := newFakeChain(5_000_000, addr0)
-	fillDustChangeUTxOs(fc, 9, addr0)
+	fillDeadZoneUTxOs(fc, 9, addr0)
 	fc.pp.MaxTxSize = 0 // guard disabled
 
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
@@ -513,15 +551,19 @@ func TestBuildDustChangeSizeGuardDisabled(t *testing.T) {
 	}
 }
 
-// TestBuildRejectsOversizeTxOnPlainPath proves a large coin-selected send can
-// consume enough inputs to exceed MaxTxSize and is rejected before approval.
+// TestBuildRejectsOversizeTxOnPlainPath proves the size guard covers the
+// ordinary coin-selected build, not only the dust-change retry. A large send
+// that never enters the dead-zone can still select enough inputs to exceed
+// MaxTxSize; guarding only the retry path would let that reach SubmitTx and be
+// rejected by the node after the user had already approved it.
 func TestBuildRejectsOversizeTxOnPlainPath(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	addr0 := acct.ReceiveAddresses[0]
 	recvAddr := acct.ReceiveAddresses[2]
 
-	// 40 x 10 ADA. A 200-ADA send needs ~21 inputs and leaves change far clear
-	// of the min-UTxO floor.
+	// 40 x 10 ADA. A 200-ADA send needs ~21 inputs and leaves ~200 ADA change,
+	// far clear of the min-UTxO floor, so the first Complete() converges and the
+	// dead-zone retry never runs — this exercises the plain path only.
 	const utxoValue, walletUTxOs = 10_000_000, 40
 	req := SendRequest{To: recvAddr, Lovelace: "200000000"}
 
@@ -2233,6 +2275,9 @@ func TestHardwareSignRequest(t *testing.T) {
 	}
 	if req.ProtocolMagic != 2 {
 		t.Fatalf("ProtocolMagic = %d, want 2", req.ProtocolMagic)
+	}
+	if req.BodySetTagPolicy != "untagged" {
+		t.Fatalf("BodySetTagPolicy = %q, want untagged", req.BodySetTagPolicy)
 	}
 	if !req.IncludeNetworkID {
 		t.Fatal("IncludeNetworkID must preserve the network-id field from the payment body")

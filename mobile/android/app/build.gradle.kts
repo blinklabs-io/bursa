@@ -9,6 +9,7 @@ plugins {
 android {
     namespace = "io.blinklabs.bursa"
     compileSdk = 35
+    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "io.blinklabs.bursa"

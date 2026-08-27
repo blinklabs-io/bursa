@@ -295,6 +295,22 @@ func TestServiceSignMode(t *testing.T) {
 		t.Fatal("signature from sign-mode socket failed to verify")
 	}
 
+	// A future period must be rejected before the active key or durable guard
+	// advances, so an authorized service peer cannot destroy the signing state.
+	if err := writeFrame(conn, SignRequest{Type: "sign_request", Period: 6, Message: msg}); err != nil {
+		t.Fatalf("write future-period request: %v", err)
+	}
+	var futureResp SignResponse
+	if err := readFrame(conn, &futureResp); err != nil {
+		t.Fatalf("read future-period response: %v", err)
+	}
+	if futureResp.Error == "" {
+		t.Fatal("expected error for future-period sign request")
+	}
+	if got := a.Info().ActivePeriod; got != 5 {
+		t.Fatalf("active period = %d after rejected request, want 5", got)
+	}
+
 	// A past period must be rejected with an error in the response.
 	if err := writeFrame(conn, SignRequest{Type: "sign_request", Period: 4, Message: msg}); err != nil {
 		t.Fatalf("write past-period request: %v", err)
