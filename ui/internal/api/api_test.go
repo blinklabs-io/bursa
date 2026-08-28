@@ -26,6 +26,7 @@ import (
 	"strings"
 	"testing"
 
+	bursa "github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
@@ -1569,6 +1570,24 @@ func TestAddWalletDuplicateConflict(t *testing.T) {
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet", bytes.NewBufferString(body)))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("POST /wallet duplicate = %d, want 409", rec.Code)
+	}
+}
+
+func TestAddWalletInvalidMnemonicBadRequest(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+	fv := &fakeVault{
+		exists: true,
+		addErr: fmt.Errorf(
+			"root key from mnemonic: %w",
+			bursa.ErrInvalidMnemonic,
+		),
+	}
+	h := NewHandler(st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := `{"name":"main","mnemonic":"not a valid mnemonic","network":"preview","vault_password":"valid-vault-password","spend_password":"valid-spend-password"}`
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet", bytes.NewBufferString(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /wallet invalid mnemonic = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
 }
 

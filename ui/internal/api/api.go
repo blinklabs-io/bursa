@@ -2357,8 +2357,8 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
 	case errors.Is(err, vault.ErrDuplicateWallet), errors.Is(err, vault.ErrDuplicateAccount):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409
-	case errors.Is(err, vault.ErrNoSeed):
-		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400: cannot derive an account without a seed
+	case errors.Is(err, vault.ErrNoSeed), errors.Is(err, bursa.ErrInvalidMnemonic):
+		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400: cannot derive an account without a valid seed
 	case errors.Is(err, vault.ErrLocked), errors.Is(err, vault.ErrNoActiveWallet),
 		errors.Is(err, wallet.ErrNoWallet), errors.Is(err, spend.ErrNoWallet),
 		errors.Is(err, poolops.ErrNoWallet), errors.Is(err, multisig.ErrNoKeystore):
