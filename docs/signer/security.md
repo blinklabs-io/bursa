@@ -96,11 +96,11 @@ anything that can read the process memory or the key directory.
 - Configure a caller ACL so each subject reaches only the keys it needs.
 - Prefer the `pkcs11` (HSM) or `vault` backend so keys never enter the process;
   reserve `software`/`file` for development.
-- Run the watermark in `enforce` mode with a durable `file` (SQLite) store.
-  Multiple replicas for the same keys require a shared store, which is not yet
-  in main - the `postgres` store is implemented by PR #674 (branch
-  `feat/signer-ha-store`). Until then, run a single active signer per key set;
-  never point multiple active signers at independent per-instance stores.
+- Run the watermark in `enforce` mode with a durable `file` (SQLite) store for
+  one active signer. Multiple replicas for the same keys require one shared
+  `postgres` store; never point active replicas at independent databases or
+  per-instance stores. Require verified TLS for remote database connections and
+  configure failover so every acknowledged watermark row survives promotion.
 - Restrict the config file, TLS key, and any key files to the service user.
 - Scrape `/metrics`; alert on `bursa_signer_watermark_conflicts_total` and
   `bursa_signer_backend_errors_total`.

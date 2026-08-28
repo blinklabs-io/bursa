@@ -27,12 +27,15 @@ type chainQuerier interface {
 }
 
 // AddressView is the receive-address view: the derived window, the chain-seen
-// (used) addresses, and the next unused derived address. NextUnused is empty
-// when every address in the derived window is already used on chain (dynamic
-// gap-limit expansion is deferred to a later phase).
+// (used) addresses, and the next unused derived address. UsageKnown is false
+// when the node was not queried; in that state Used and NextUnused must not be
+// interpreted as evidence that an address is unused. When usage is known,
+// NextUnused is empty only if every address in the derived window is already
+// used on chain (dynamic gap-limit expansion is deferred to a later phase).
 type AddressView struct {
 	Receive    []string `json:"receive"`
 	Used       []string `json:"used"`
+	UsageKnown bool     `json:"usage_known"`
 	NextUnused string   `json:"next_unused"`
 }
 
@@ -144,6 +147,44 @@ func (s *Service) currentAccount() (*Account, error) {
 	return cloneAccount(s.account), nil
 }
 
+func addressView(acct *Account, used []string, usageKnown bool) AddressView {
+	receive := cloneStringSlice(acct.ReceiveAddresses)
+	used = cloneStringSlice(used)
+	if used == nil {
+		used = []string{}
+	}
+	view := AddressView{
+		Receive:    receive,
+		Used:       used,
+		UsageKnown: usageKnown,
+	}
+	if !usageKnown {
+		return view
+	}
+	usedSet := make(map[string]bool, len(used))
+	for _, a := range used {
+		usedSet[a] = true
+	}
+	for _, a := range receive {
+		if !usedSet[a] {
+			view.NextUnused = a
+			break
+		}
+	}
+	return view
+}
+
+// LocalAddresses reports the locally derived receive window without querying
+// the node. It is available during startup and bootstrap, before the node can
+// report which addresses have already appeared on chain.
+func (s *Service) LocalAddresses() (AddressView, error) {
+	acct, err := s.currentAccount()
+	if err != nil {
+		return AddressView{}, err
+	}
+	return addressView(acct, nil, false), nil
+}
+
 // scanAddresses returns the addresses to query for funds and history: the
 // node-reported account addresses (used/change addresses, available once the
 // stake key is registered on chain) unioned with the wallet's derived receive
@@ -231,34 +272,23 @@ func (s *Service) Addresses(ctx context.Context) (AddressView, error) {
 	}
 	// Same reason as scanAddresses: a script (multi-signature) account has no
 	// stake credential, so there is nothing to look up and an empty stake
-	// address is a malformed request rather than a not-found. Its receive
-	// window is exactly the script address it was created with.
+	// address is a malformed request rather than a not-found. Its receive window
+	// is exactly the script address it was created with, but its on-chain usage
+	// remains unknown because this path deliberately makes no chain query.
 	if acct.StakeAddress == "" {
-		receive := cloneStringSlice(acct.ReceiveAddresses)
-		next := ""
-		if len(receive) > 0 {
-			next = receive[0]
-		}
-		return AddressView{Receive: receive, NextUnused: next}, nil
+		return addressView(acct, nil, false), nil
 	}
 	used, err := s.chain.AccountAddresses(ctx, acct.StakeAddress)
 	if err != nil && !errors.Is(err, chain.ErrNotFound) {
 		return AddressView{}, err
 	}
-	// ErrNotFound: no chain-seen addresses yet → used stays empty; NextUnused is receive[0].
-	usedSet := map[string]bool{}
-	for _, a := range used {
-		usedSet[a] = true
+	if errors.Is(err, chain.ErrNotFound) {
+		// The account endpoint returns 404 for an unregistered stake credential,
+		// even when one of its derived payment addresses already holds funds. That
+		// response cannot establish that the receive window is unused.
+		return addressView(acct, nil, false), nil
 	}
-	receive := cloneStringSlice(acct.ReceiveAddresses)
-	next := ""
-	for _, a := range receive {
-		if !usedSet[a] {
-			next = a
-			break
-		}
-	}
-	return AddressView{Receive: receive, Used: cloneStringSlice(used), NextUnused: next}, nil
+	return addressView(acct, used, true), nil
 }
 
 // Transactions returns the merged, newest-first history across the account's

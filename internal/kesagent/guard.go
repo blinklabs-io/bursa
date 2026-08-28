@@ -62,8 +62,9 @@ type guardState struct {
 	Vkey  string `json:"kes_vkey,omitempty"`
 }
 
-// NewPeriodGuard opens (or creates) a guard backed by the file at path. An
-// empty path yields a non-durable in-memory guard (tests / ephemeral use).
+// NewPeriodGuard opens (or creates) a guard backed by the file at path. Direct
+// guard tests may use an empty path for an in-memory instance; Agent.New
+// requires a durable path.
 func NewPeriodGuard(path string) (*PeriodGuard, error) {
 	// durable starts true: an in-memory guard has nothing to persist, an absent
 	// or empty file has no floor to lose, and a floor read back from the file was

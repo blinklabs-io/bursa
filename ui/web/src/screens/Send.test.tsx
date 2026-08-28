@@ -393,6 +393,7 @@ const MOCK_HW_SIGN_RESP: HardwareSignResponse = {
   ],
   fee: "170000",
   required_signers: ["aabbccdd"],
+  body_set_tag_policy: "untagged",
   unsigned_tx_cbor: "84a4deadbeef",
 };
 

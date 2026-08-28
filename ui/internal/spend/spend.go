@@ -405,6 +405,21 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 		if err != nil {
 			return Preview{}, err
 		}
+	} else {
+		// Apollo v2.1.1 absorbs a dust change into the fee instead of returning
+		// its former non-convergence error. Treat that absorbed remainder like the
+		// legacy dead-zone so an available second input can preserve the user's
+		// funds rather than silently becoming fee.
+		dust, dustErr := s.isDustChange(ctx, a)
+		if dustErr != nil {
+			return Preview{}, dustErr
+		}
+		if dust {
+			a, err = s.completeForcingPrefix(ctx, changeAddr, recvAddr, lovelace, units, loaded, utxoAddr, addrCount)
+			if err != nil {
+				return Preview{}, err
+			}
+		}
 	}
 
 	// Reject locally if signing this would exceed the chain's MaxTxSize, turning a
@@ -475,7 +490,8 @@ func (s *Service) completeSend(
 		next := apollo.New(s.chain).
 			SetWallet(apollo.NewExternalWallet(changeAddr)).
 			SetChangeAddress(changeAddr).
-			SetFeePadding(feePaddingLovelace)
+			SetFeePadding(feePaddingLovelace).
+			SetTransactionBodySetTagPolicy(apollo.TransactionBodySetTagPolicyUntagged)
 		if forceInputs {
 			for _, u := range loaded {
 				next = next.AddInput(u)
@@ -563,6 +579,13 @@ func (s *Service) completeForcingPrefix(
 				continue
 			}
 			return nil, mapCompleteErr(err)
+		}
+		dust, dustErr := s.isDustChange(ctx, a)
+		if dustErr != nil {
+			return nil, dustErr
+		}
+		if dust {
+			continue
 		}
 		// Converged on the minimal forced set. The MaxTxSize check lives in Build
 		// so it covers the coin-selected path too; growing the prefix further
@@ -663,6 +686,56 @@ func mapCompleteErr(err error) error {
 func isNonConvergenceError(err error) bool {
 	return err != nil &&
 		strings.Contains(err.Error(), "evaluation transaction did not converge")
+}
+
+// isDustChange reports whether Apollo completed a payment by absorbing a
+// non-emittable change remainder into the fee. Apollo v2.1.1 now converges on
+// that shape instead of returning its historical non-convergence error, but a
+// wallet with additional UTxOs should still retry so the remainder is not
+// silently charged as a fee.
+func (s *Service) isDustChange(ctx context.Context, a *apollo.Apollo) (bool, error) {
+	tx := a.GetTx()
+	if tx == nil || len(tx.Body.Outputs()) != 1 {
+		return false, nil
+	}
+	pp, err := backend.ProtocolParamsContext(ctx, s.chain)
+	if err != nil {
+		return false, fmt.Errorf("protocol params for dust-change check: %w", err)
+	}
+	if pp.MinFeeCoefficient <= 0 || pp.MinFeeConstant <= 0 {
+		return false, nil
+	}
+	// Match Apollo's estimator: it encodes the completed body with a placeholder
+	// maximum fee and prices one baseline witness plus each required signer.
+	maxFee, feeErr := backend.MaxTxFeeContext(ctx, s.chain)
+	if feeErr != nil || maxFee == 0 {
+		maxFee = 2_000_000
+	}
+	witnessCount := 1 + len(tx.Body.RequiredSigners())
+	fakeWitnesses := make([]lcommon.VkeyWitness, witnessCount)
+	for i := range fakeWitnesses {
+		fakeWitnesses[i] = lcommon.VkeyWitness{
+			Vkey:      make([]byte, 32),
+			Signature: make([]byte, 64),
+		}
+	}
+	probe := conway.ConwayTransaction{
+		Body:       tx.Body,
+		WitnessSet: tx.WitnessSet,
+		TxIsValid:  tx.TxIsValid,
+		TxMetadata: tx.TxMetadata,
+	}
+	probe.Body.TxFee = maxFee
+	probe.WitnessSet.VkeyWitnesses = cbor.NewSetType(fakeWitnesses, true)
+	encoded, encodeErr := cbor.Encode(&probe)
+	if encodeErr != nil {
+		return false, fmt.Errorf("encode fee estimate: %w", encodeErr)
+	}
+	if pp.MinFeeCoefficient < 0 || pp.MinFeeConstant < 0 {
+		return false, nil
+	}
+	expectedFee := uint64(len(encoded))*uint64(pp.MinFeeCoefficient) + uint64(pp.MinFeeConstant) + feePaddingLovelace
+	return tx.Body.TxFee > expectedFee, nil
 }
 
 // SignData signs an arbitrary message with the wallet key for one of the
@@ -1478,7 +1551,19 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 		return Witness{}, ErrNoWallet
 	}
 
-	// Load the unsigned tx and hash its body — this is what each witness signs.
+	// Preserve the exact body bytes from the supplied transaction. Apollo may
+	// decode and re-encode the body using canonical CBOR, which can change the
+	// signing hash for valid non-canonical input.
+	txBytes, err := hex.DecodeString(strings.TrimSpace(unsignedTxCBOR))
+	if err != nil {
+		return Witness{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
+	}
+	bodyCbor, err := extractTxBodyCbor(txBytes)
+	if err != nil {
+		return Witness{}, err
+	}
+
+	// Load the unsigned tx for semantic validation and signer derivation.
 	loader, err := apollo.New(s.chain).LoadTxCbor(unsignedTxCBOR)
 	if err != nil {
 		return Witness{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
@@ -1486,15 +1571,6 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 	tx := loader.GetTx()
 	if tx == nil {
 		return Witness{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
-	}
-	// Witnesses sign the hash of the body bytes exactly as carried by the
-	// unsigned transaction. Re-encoding can drift while preserving semantics.
-	bodyCbor := tx.Body.Cbor()
-	if bodyCbor == nil {
-		bodyCbor, err = cbor.Encode(&tx.Body)
-		if err != nil {
-			return Witness{}, fmt.Errorf("encode tx body: %w", err)
-		}
 	}
 	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
 
@@ -2665,6 +2741,9 @@ type HardwareSignRequest struct {
 	// Ledger request must include the identical set or it will sign a different
 	// body from UnsignedTxCBOR.
 	RequiredSigners []string `json:"required_signers"`
+	// BodySetTagPolicy is the uniform CBOR set policy used for body keys 0, 13,
+	// 14, and 18. Structured hardware signers must use the same policy.
+	BodySetTagPolicy string `json:"body_set_tag_policy"`
 	// IncludeNetworkID preserves body key 15 when it was present in the pending
 	// transaction, so Ledger reconstructs and signs the identical body.
 	IncludeNetworkID bool `json:"include_network_id,omitempty"`
@@ -2840,6 +2919,7 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 		NetworkID:        networkID,
 		ProtocolMagic:    protocolMagic,
 		RequiredSigners:  keyHashesHex(tx.Body.RequiredSigners()),
+		BodySetTagPolicy: "untagged",
 		UnsignedTxCBOR:   unsignedTxCBOR,
 		IncludeNetworkID: tx.Body.TxNetworkId != nil,
 	}

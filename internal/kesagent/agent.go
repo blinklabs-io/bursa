@@ -39,6 +39,7 @@ var (
 	ErrNoStagedKey  = errors.New("kesagent: no staged KES key")
 	ErrExhausted    = errors.New("kesagent: active KES key has exhausted its evolutions")
 	ErrPastPeriod   = errors.New("kesagent: requested KES period is in the past for the active key")
+	ErrFuturePeriod = errors.New("kesagent: requested KES period is in the future")
 	ErrOpCertColdVK = errors.New("kesagent: opcert cold vkey does not match configured cold vkey")
 	ErrOpCertKESVK  = errors.New("kesagent: opcert KES vkey does not match the staged key")
 	ErrColdVKey     = errors.New("kesagent: configured cold verification key must be 32 bytes")
@@ -162,6 +163,9 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 	}
 	if cfg.EvolveInterval <= 0 {
 		cfg.EvolveInterval = time.Minute
+	}
+	if cfg.GuardPath == "" {
+		return nil, errors.New("kesagent: guard_path is required")
 	}
 	guard, err := NewPeriodGuard(cfg.GuardPath)
 	if err != nil {
@@ -364,14 +368,21 @@ func (a *Agent) DropKey(target string) error {
 }
 
 // Sign produces a KES signature over msg at the given absolute KES period. The
-// key is evolved forward as needed; it never signs a period below the monotonic
-// floor or below the active key's current period.
+// key is evolved forward as needed, but never beyond the wall-clock period
+// derived from the configured genesis schedule. It never signs a period below
+// the monotonic floor or below the active key's current period.
 func (a *Agent) Sign(period uint64, msg []byte) ([]byte, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.active == nil {
 		a.metrics.incSign("error")
 		return nil, ErrNoActiveKey
+	}
+	currentPeriod := a.currentKESPeriod()
+	if period > currentPeriod {
+		a.metrics.incSign("error")
+		return nil, fmt.Errorf("%w: requested %d, current %d",
+			ErrFuturePeriod, period, currentPeriod)
 	}
 	if period < a.active.absPeriod() {
 		a.metrics.incSign("error")

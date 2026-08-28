@@ -1,15 +1,28 @@
-# CIP-30 Extension — Manual E2E Test Harness
+# CIP-30 Extension E2E Tests
 
-This directory contains a static sample dApp (`sample-dapp.html`) for manually
-verifying the end-to-end flow of the Bursa browser extension.  There are no
-automated tests here — the purpose is to confirm that real browser
-extension ↔ Bursa daemon ↔ dApp communication works as expected.
+The automated test loads the unpacked extension in Chromium and opens a page
+whose Content Security Policy blocks all page scripts and requires Trusted
+Types for script sinks. It verifies that the MAIN-world provider is available
+and reports its registration to the isolated-world relay.
+
+```sh
+cd ui/extension
+npm ci
+npm exec playwright install --with-deps --no-shell chromium
+npm run test:e2e
+```
+
+Set `CHROMIUM_PATH` to use an existing Chromium executable instead of the
+Playwright-managed browser.
+
+The static sample dApp (`sample-dapp.html`) remains available for manually
+verifying the complete extension ↔ Bursa daemon ↔ dApp flow.
 
 ---
 
 ## Prerequisites
 
-- Google Chrome (or a Chromium-based browser that supports MV3 extensions)
+- Google Chrome 111 or later (or a compatible Chromium-based browser)
 - Node.js 22 (for building the extension)
 - A running Bursa daemon with the CIP-30 connector enabled
 
@@ -89,7 +102,8 @@ Work through the buttons top-to-bottom:
 | Button | Expected behaviour |
 |--------|--------------------|
 | `isEnabled()` | Returns `false` (not yet approved) |
-| `enable()` | Bursa shows an **Approve Connection** prompt; accept it. Returns the CIP-30 API object. |
+| `enable()` | Requests CIP-95. Bursa shows an **Approve Connection** prompt; accept it. Returns the CIP-30 API object. |
+| `getExtensions()` | Returns `[{ "cip": 95 }]` |
 | `getNetworkId()` | Returns `0` (testnet) or `1` (mainnet) |
 | `getBalance()` | Returns a CBOR-hex encoded `Value` |
 | `getUsedAddresses()` | Returns an array of bech32 addresses (may be empty) |

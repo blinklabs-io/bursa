@@ -6,11 +6,12 @@ import { ApiError } from "../api/client";
 const ADDR_A = "addr_test1qpfqpgxzsq8d6l5n5qxkdqqvxqqtd2syvxsw0mkzmq2dzn7y2y5a3uqquasklznf6xvxn0tmxy2cjaslt9yq5ygz4dqsv9r4pk";
 const ADDR_B = "addr_test1qqy2j78ks2htj6x5p2xztqpvqxqqtd2syvxsw0mkzmq2dzny0cjaslt9yq5ygz4dqsv9r4pkzuqquasklznf6xvxn0tmxwtest2";
 
-function mockAddresses(overrides?: Partial<{ receive: string[]; used: string[]; next_unused: string }>) {
+function mockAddresses(overrides?: Partial<{ receive: string[]; used: string[]; usage_known: boolean; next_unused: string }>) {
   vi.spyOn(hooks, "useAddresses").mockReturnValue({
     data: {
       receive: [ADDR_A, ADDR_B],
       used: [ADDR_A],
+      usage_known: true,
       next_unused: ADDR_B,
       ...overrides,
     },
@@ -77,6 +78,58 @@ test("(d) unused addresses show an 'Unused' or empty status in the table", () =>
   expect(screen.getAllByText("Unused").length).toBeGreaterThanOrEqual(1);
 });
 
+test("unknown chain usage neither labels addresses unused nor promotes a next-unused address", () => {
+  vi.spyOn(hooks, "useAddresses").mockReturnValue({
+    data: {
+      receive: [ADDR_A, ADDR_B],
+      used: [],
+      next_unused: ADDR_B,
+      usage_known: false,
+    },
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+
+  render(<Receive />);
+
+  expect(screen.queryByRole("heading", { name: /next unused address/i })).not.toBeInTheDocument();
+  expect(screen.queryByText("Unused")).not.toBeInTheDocument();
+  expect(screen.getAllByText("Unknown")).toHaveLength(2);
+  expect(screen.getByRole("status")).toHaveTextContent(/on-chain usage is unavailable for this account/i);
+  expect(screen.getByRole("status")).not.toHaveTextContent(/node/i);
+  expect(screen.getAllByRole("button", { name: "Copy this receive address" })).toHaveLength(2);
+});
+
+test("a missing usage flag from an older backend is treated as unknown", () => {
+  vi.spyOn(hooks, "useAddresses").mockReturnValue({
+    data: {
+      receive: [ADDR_A],
+      used: [],
+      next_unused: ADDR_A,
+    },
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+  } as never);
+
+  render(<Receive />);
+
+  expect(screen.queryByRole("heading", { name: /next unused address/i })).not.toBeInTheDocument();
+  expect(screen.queryByText("Unused")).not.toBeInTheDocument();
+  expect(screen.getByText("Unknown")).toBeInTheDocument();
+});
+
+test("script-account copy does not promise usage after node readiness", () => {
+  mockAddresses({ receive: [ADDR_A], used: [], usage_known: false, next_unused: "" });
+  render(<Receive />);
+
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "On-chain usage is unavailable for this account. You can still receive at an address below, but Bursa cannot identify an unused address.",
+  );
+  expect(screen.getByRole("status")).not.toHaveTextContent(/until|node|ready/i);
+});
+
 test("(e) loading state renders a loading indicator", () => {
   vi.spyOn(hooks, "useAddresses").mockReturnValue({
     data: null,
@@ -132,10 +185,9 @@ test("(h) each address gets an external explorer link, scoped to the wallet's ne
   );
   expect(rowLink).toBeDefined();
 });
-// Receive is gated on the node too (the next-unused-address lookup reads the
-// chain), so a user who came in through the read-only escape hatch hits this
-// before anything else. It must explain, not dump a server error.
-test("a node that cannot answer yet is explained, not dumped as an error", () => {
+// Keep the friendly fallback for a transient 503. Ordinary startup and
+// bootstrap requests use locally derived addresses and do not take this path.
+test("a transient 503 is explained, not dumped as an error", () => {
   vi.spyOn(hooks, "useAddresses").mockReturnValue({
     data: null, error: new ApiError(503, "node not ready"), loading: false, refresh: vi.fn(),
   } as never);

@@ -613,6 +613,7 @@ func (s *Service) buildDelegationTx(
 			SetWallet(apollo.NewExternalWallet(changeAddr)).
 			SetChangeAddress(changeAddr).
 			SetFeePadding(feePaddingLovelace).
+			SetTransactionBodySetTagPolicy(apollo.TransactionBodySetTagPolicyUntagged).
 			AddLoadedUTxOs(loaded...)
 		for _, kh := range appendKeyHashes(nil, certSigners, paymentSigners) {
 			next = next.AddRequiredSigner(kh)

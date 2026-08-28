@@ -67,6 +67,7 @@
 
   <h2>CIP-30 API</h2>
   <div class="btn-group">
+    <button id="btn-extensions" disabled>getExtensions()</button>
     <button id="btn-network-id" disabled>getNetworkId()</button>
     <button id="btn-balance" disabled>getBalance()</button>
     <button id="btn-used-addrs" disabled>getUsedAddresses()</button>
@@ -186,10 +187,10 @@
     // ---------------------------------------------------------------------------
 
     document.getElementById('btn-enable').onclick = async () => {
-      section('enable()');
+      section('enable({ extensions: [{ cip: 95 }] })');
       try {
         const bursa = getBursa();
-        api = await bursa.enable();
+        api = await bursa.enable({ extensions: [{ cip: 95 }] });
         setEnabled(true);
         ok('API object obtained');
       } catch (e) { err(e); }
@@ -201,6 +202,11 @@
         const result = await getBursa().isEnabled();
         ok(result);
       } catch (e) { err(e); }
+    };
+
+    document.getElementById('btn-extensions').onclick = async () => {
+      section('getExtensions()');
+      try { ok(await api.getExtensions()); } catch (e) { err(e); }
     };
 
     document.getElementById('btn-network-id').onclick = async () => {

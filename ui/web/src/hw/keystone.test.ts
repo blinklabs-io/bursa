@@ -112,6 +112,7 @@ const NEUTRAL_REQ: HardwareSignResponse = {
   ],
   fee: "200000",
   required_signers: [],
+  body_set_tag_policy: "untagged",
   unsigned_tx_cbor: "84a4008182",
 };
 
@@ -563,10 +564,19 @@ describe("connectKeystoneUSB", () => {
     const session = await connectKeystoneUSB();
     const result = await session.signTx(NEUTRAL_REQ);
     expect(mockSignTx).toHaveBeenCalledOnce();
+    expect(mockSignTx.mock.calls[0][0].options).toEqual({ tagCborSets: false });
     expect(result).toBe(
       encodeWitnessArray([{ pubKeyHex: TEST_PUB_KEY_HEX, sigHex: TEST_SIG_HEX }]),
     );
     expect(result.startsWith("8182")).toBe(true);
+  });
+
+  test("passes tagged body set policy through the SDK options", async () => {
+    const session = await connectKeystoneUSB();
+
+    await session.signTx({ ...NEUTRAL_REQ, body_set_tag_policy: "tagged" });
+
+    expect(mockSignTx.mock.calls[0][0].options).toEqual({ tagCborSets: true });
   });
 });
 

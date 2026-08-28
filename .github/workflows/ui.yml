@@ -53,8 +53,10 @@ jobs:
         run: npm run type-check
       - name: test
         run: npm run test
-      - name: build
-        run: npm run build
+      - name: Install Chromium
+        run: npm exec playwright install --with-deps --no-shell chromium
+      - name: restrictive-CSP browser test
+        run: npm run test:e2e
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 https://github.com/actions/upload-artifact/releases/tag/v7.0.1
         with:
           name: bursa-connector-dist

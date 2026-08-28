@@ -876,7 +876,8 @@
                     "type": "string",
                     "enum": [
                         "mainnet",
-                        "testnet"
+                        "preprod",
+                        "preview"
                     ]
                 },
                 "paymentKey": {
@@ -1055,7 +1056,8 @@
                     "type": "string",
                     "enum": [
                         "mainnet",
-                        "testnet"
+                        "preprod",
+                        "preview"
                     ]
                 },
                 "script": {
@@ -1097,7 +1099,8 @@
                     "type": "string",
                     "enum": [
                         "mainnet",
-                        "testnet"
+                        "preprod",
+                        "preview"
                     ]
                 },
                 "required": {

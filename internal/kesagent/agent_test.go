@@ -111,21 +111,131 @@ func TestSignPastPeriodRejected(t *testing.T) {
 	}
 }
 
-func TestSignForwardEvolves(t *testing.T) {
+func TestNewRequiresDurableGuardPath(t *testing.T) {
+	cold := newColdKey(t)
+	a, err := New(Config{
+		Mode:              ModeSign,
+		Depth:             kes.CardanoKesDepth,
+		SystemStart:       epoch,
+		SlotLength:        time.Second,
+		SlotsPerKESPeriod: 10,
+		MaxKESEvolutions:  62,
+		ColdVKey:          cold.pub,
+		EvolveInterval:    time.Hour,
+	}, nil, nil)
+	if err == nil {
+		a.Close()
+		t.Fatal("New accepted an empty guard path")
+	}
+}
+
+func TestAgentGuardFloorSurvivesRestart(t *testing.T) {
+	cold := newColdKey(t)
+	guardPath := filepath.Join(t.TempDir(), "guard.json")
+	cfg := Config{
+		Mode:              ModeSign,
+		Depth:             kes.CardanoKesDepth,
+		SystemStart:       epoch,
+		SlotLength:        time.Second,
+		SlotsPerKESPeriod: 10,
+		MaxKESEvolutions:  62,
+		ColdVKey:          cold.pub,
+		EvolveInterval:    time.Hour,
+		GuardPath:         guardPath,
+		Version:           "test",
+	}
+	newAgent := func(period uint64) *Agent {
+		a, err := New(cfg, nil, nil)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		a.now = func() time.Time { return atPeriod(period) }
+		return a
+	}
+
+	a := newAgent(5)
+	vkey, _ := a.GenStagedKey()
+	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 3, cold)); err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+	a.Close()
+
+	restarted := newAgent(4)
+	t.Cleanup(restarted.Close)
+	info := restarted.Info()
+	if !info.FloorInitialized || info.MonotonicFloor != 5 {
+		t.Fatalf("restarted guard floor = (%d, %v), want (5, true)", info.MonotonicFloor, info.FloorInitialized)
+	}
+	restartedVKey, _ := restarted.GenStagedKey()
+	if _, err := restarted.InstallKey(makeOpCert(t, restartedVKey, 2, 4, cold)); !errors.Is(err, ErrPeriodRollback) {
+		t.Fatalf("InstallKey below restarted floor: want ErrPeriodRollback, got %v", err)
+	}
+}
+
+func TestSignFuturePeriodRejectedWithoutStateChange(t *testing.T) {
 	cold := newColdKey(t)
 	a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(3))
 	vkey, _ := a.GenStagedKey()
 	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 3, cold)); err != nil {
 		t.Fatalf("InstallKey: %v", err)
 	}
-	// Sign at a future period: the key must evolve forward to reach it.
-	msg := []byte("future")
-	sig, err := a.Sign(7, msg)
-	if err != nil {
-		t.Fatalf("Sign future: %v", err)
+	if _, err := a.Sign(7, []byte("future")); !errors.Is(err, ErrFuturePeriod) {
+		t.Fatalf("Sign future period: want ErrFuturePeriod, got %v", err)
 	}
-	if !kes.VerifySignedKES(vkey, 7-3, msg, sig) {
-		t.Fatal("forward-evolved signature failed to verify")
+	info := a.Info()
+	if info.ActivePeriod != 3 {
+		t.Fatalf("active period = %d after rejected request, want 3", info.ActivePeriod)
+	}
+	if info.MonotonicFloor != 3 {
+		t.Fatalf("guard floor = %d after rejected request, want 3", info.MonotonicFloor)
+	}
+	if info.Exhausted {
+		t.Fatal("rejected future request marked the active key exhausted")
+	}
+}
+
+func TestSignFuturePeriodDoesNotPoisonRestart(t *testing.T) {
+	cold := newColdKey(t)
+	guardPath := filepath.Join(t.TempDir(), "guard.json")
+	cfg := Config{
+		Mode:              ModeSign,
+		Depth:             kes.CardanoKesDepth,
+		SystemStart:       epoch,
+		SlotLength:        time.Second,
+		SlotsPerKESPeriod: 10,
+		MaxKESEvolutions:  62,
+		ColdVKey:          cold.pub,
+		EvolveInterval:    time.Hour,
+		GuardPath:         guardPath,
+		Version:           "test",
+	}
+	newAgent := func() *Agent {
+		a, err := New(cfg, nil, nil)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		a.now = func() time.Time { return atPeriod(3) }
+		return a
+	}
+
+	a := newAgent()
+	vkey, _ := a.GenStagedKey()
+	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 3, cold)); err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+	if _, err := a.Sign(4, []byte("future")); !errors.Is(err, ErrFuturePeriod) {
+		t.Fatalf("Sign future period: want ErrFuturePeriod, got %v", err)
+	}
+	a.Close()
+
+	restarted := newAgent()
+	t.Cleanup(restarted.Close)
+	restartedVKey, _ := restarted.GenStagedKey()
+	if _, err := restarted.InstallKey(makeOpCert(t, restartedVKey, 2, 3, cold)); err != nil {
+		t.Fatalf("InstallKey after restart: %v", err)
+	}
+	if got := restarted.Info().MonotonicFloor; got != 3 {
+		t.Fatalf("guard floor after restart = %d, want 3", got)
 	}
 }
 

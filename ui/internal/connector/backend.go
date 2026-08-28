@@ -52,6 +52,10 @@ type WalletBackend struct {
 	sp      *spend.Service // reserved for Tasks 12-13
 	chain   chainFetcher
 	network string
+	// usageAuthoritative reports whether the node has a complete chain view.
+	// It is optional at construction for compatibility with non-supervised
+	// callers; production supplies the embedded node's readiness predicate.
+	usageReadiness func() ReadinessSnapshot
 
 	// mu guards walletID/acct, which are rebound whenever the active wallet
 	// changes (unlock/activate/add). dApp request handlers read them
@@ -60,6 +64,14 @@ type WalletBackend struct {
 	mu       sync.RWMutex
 	walletID string
 	acct     *wallet.Account
+}
+
+// ReadinessSnapshot identifies the ready interval in which a chain query ran.
+// The generation prevents a Ready -> Syncing -> Ready transition from being
+// mistaken for an uninterrupted authoritative interval.
+type ReadinessSnapshot struct {
+	Ready      bool
+	Generation uint64
 }
 
 // NewWalletBackend constructs a WalletBackend.
@@ -72,13 +84,49 @@ func NewWalletBackend(
 	acct *wallet.Account,
 	network string,
 	cf chainFetcher,
+	usageAuthoritative ...func() bool,
+) *WalletBackend {
+	usageReady := func() bool { return true }
+	if len(usageAuthoritative) > 0 && usageAuthoritative[0] != nil {
+		usageReady = usageAuthoritative[0]
+	}
+	return newWalletBackend(wl, sp, acct, network, cf, func() ReadinessSnapshot {
+		return ReadinessSnapshot{Ready: usageReady()}
+	})
+}
+
+// NewWalletBackendWithReadiness constructs a backend using a stable readiness
+// generation supplied by the supervisor. Existing callers may continue using
+// NewWalletBackend with a boolean predicate.
+func NewWalletBackendWithReadiness(
+	wl *wallet.Service,
+	sp *spend.Service,
+	acct *wallet.Account,
+	network string,
+	cf chainFetcher,
+	readiness func() ReadinessSnapshot,
+) *WalletBackend {
+	if readiness == nil {
+		readiness = func() ReadinessSnapshot { return ReadinessSnapshot{Ready: true} }
+	}
+	return newWalletBackend(wl, sp, acct, network, cf, readiness)
+}
+
+func newWalletBackend(
+	wl *wallet.Service,
+	sp *spend.Service,
+	acct *wallet.Account,
+	network string,
+	cf chainFetcher,
+	readiness func() ReadinessSnapshot,
 ) *WalletBackend {
 	return &WalletBackend{
-		wl:      wl,
-		sp:      sp,
-		acct:    acct,
-		chain:   cf,
-		network: network,
+		wl:             wl,
+		sp:             sp,
+		acct:           acct,
+		chain:          cf,
+		network:        network,
+		usageReadiness: readiness,
 	}
 }
 
@@ -122,9 +170,37 @@ func (b *WalletBackend) NetworkID() int {
 	return 0
 }
 
+// knownAddressView returns an address view only when its used/unused
+// classification is authoritative. The explicit unavailable error is shared by
+// every CIP-30 address method so an empty Used slice is never mistaken for a
+// definitive answer.
+func (b *WalletBackend) knownAddressView(ctx context.Context) (wallet.AddressView, error) {
+	var (
+		av  wallet.AddressView
+		err error
+	)
+	before := b.usageReadiness()
+	if before.Ready {
+		av, err = b.wl.Addresses(ctx)
+		after := b.usageReadiness()
+		if err == nil && (!after.Ready || after.Generation != before.Generation) {
+			return wallet.AddressView{}, ErrAddressUsageUnknown
+		}
+	} else {
+		av, err = b.wl.LocalAddresses()
+	}
+	if err != nil {
+		return wallet.AddressView{}, err
+	}
+	if !av.UsageKnown {
+		return wallet.AddressView{}, ErrAddressUsageUnknown
+	}
+	return av, nil
+}
+
 // UsedAddresses returns hex-encoded raw address bytes for each chain-seen address.
 func (b *WalletBackend) UsedAddresses(ctx context.Context, paginate *Paginate) ([]string, error) {
-	av, err := b.wl.Addresses(ctx)
+	av, err := b.knownAddressView(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +209,7 @@ func (b *WalletBackend) UsedAddresses(ctx context.Context, paginate *Paginate) (
 
 // UnusedAddresses returns hex-encoded raw bytes for derived addresses not yet on chain.
 func (b *WalletBackend) UnusedAddresses(ctx context.Context) ([]string, error) {
-	av, err := b.wl.Addresses(ctx)
+	av, err := b.knownAddressView(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +231,7 @@ func (b *WalletBackend) UnusedAddresses(ctx context.Context) ([]string, error) {
 // ChangeAddress returns the hex-encoded raw bytes of the first unused receive
 // address (or receive[0] when all are used).
 func (b *WalletBackend) ChangeAddress(ctx context.Context) (string, error) {
-	av, err := b.wl.Addresses(ctx)
+	av, err := b.knownAddressView(ctx)
 	if err != nil {
 		return "", err
 	}

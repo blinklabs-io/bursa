@@ -222,7 +222,7 @@ var jsonBufferPool = sync.Pool{
 // WalletConfig holds configuration options for wallet creation.
 // All index fields default to 0 and must be less than 2^31.
 type WalletConfig struct {
-	Network         string // Network name: "mainnet" or "testnet"
+	Network         string // Canonical network registry name
 	Password        string //nolint:gosec // G117: password field is intentional for key derivation
 	AccountID       uint32 // Account derivation index
 	PaymentID       uint32 // Payment key derivation index
@@ -242,7 +242,8 @@ type WalletConfig struct {
 type WalletOption func(*WalletConfig)
 
 // WithNetwork sets the network for the wallet.
-// Valid values are "mainnet" and "testnet".
+// Use a canonical network registry name, such as "mainnet", "preprod", or
+// "preview".
 // Default: "mainnet"
 func WithNetwork(network string) WalletOption {
 	return func(c *WalletConfig) {

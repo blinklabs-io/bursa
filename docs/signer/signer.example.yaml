@@ -63,20 +63,17 @@ signer:
   allow_insecure_file_backend: false   # env: SIGNER_ALLOW_INSECURE_FILE_BACKEND
 
   # --- Anti-double-sign watermark ---
-  # type: "mem" (default, non-durable) or "file" (SQLite; requires path).
-  #       "postgres" (shared store for HA; requires dsn or dsn_env) is NOT YET
-  #       IN MAIN: implemented by PR #674 (branch feat/signer-ha-store). The
-  #       current build rejects any other type at boot ("unknown watermark
-  #       type").
+  # type: "mem" (default, non-durable), "file" (SQLite; requires path), or
+  #       "postgres" (shared store for HA; requires dsn or dsn_env).
   # mode: "off" | "warn" | "enforce" (default enforce).
   watermark:
     type: "file"
     path: "/var/lib/bursa/signer/watermark.sqlite"
     mode: "enforce"
     # For a multi-replica (HA) deployment, use a shared Postgres store instead
-    # of file/mem. NOT YET IN MAIN: implemented by PR #674 (branch
-    # feat/signer-ha-store). ALL replicas for the same keys MUST point at the
-    # same database. Prefer dsn_env so credentials stay out of the config file.
+    # of file/mem. ALL replicas for the same keys MUST point at the same
+    # authoritative database. Prefer dsn_env so credentials stay out of the
+    # config file.
     #   type: "postgres"
     #   dsn_env: "SIGNER_WATERMARK_DSN"   # env var holding the Postgres DSN/URL
     #   # dsn: "postgres://user:pass@host:5432/bursa"  # plaintext fallback (env: SIGNER_WATERMARK_DSN)

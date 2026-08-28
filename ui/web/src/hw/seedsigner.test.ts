@@ -53,6 +53,7 @@ const NEUTRAL_REQ: HardwareSignResponse = {
   change_outputs: [{ index: 1, path: "1852'/1815'/0'/1/0" }],
   fee: "200000",
   required_signers: [],
+  body_set_tag_policy: "untagged",
   unsigned_tx_cbor: "84a4008182",
 };
 
@@ -151,6 +152,7 @@ describe("encodeTxSigRequest — byte-exact cardano-tx-sig-req", () => {
       change_outputs: [{ index: 0, path: "1852'/1815'/0'/1/0" }],
       fee: "0",
       required_signers: [],
+      body_set_tag_policy: "untagged",
       unsigned_tx_cbor: "a0",
     };
     const bytes = encodeTxSigRequest(req, { xfp: "aabbccdd", requestId: "id", origin: "x" });

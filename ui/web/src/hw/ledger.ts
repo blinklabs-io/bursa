@@ -176,6 +176,9 @@ function mapToSignRequest(resp: HardwareSignResponse): SignTransactionRequest {
       includeNetworkId: resp.include_network_id || null,
     },
     signingMode: TransactionSigningMode.ORDINARY_TRANSACTION,
+    options: {
+      tagCborSets: resp.body_set_tag_policy === "tagged",
+    },
   };
 }
 

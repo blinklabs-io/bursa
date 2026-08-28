@@ -948,7 +948,7 @@ test("the routes the absorbed screens used to own still resolve", async () => {
 test("#/receive opens Receive while the nav still points at Portfolio", async () => {
   // Send and Receive are Portfolio actions, so the highlight is deliberate.
   vi.spyOn(hooks, "useAddresses").mockReturnValue({
-    data: { receive: ["addr_test1abc"], used: [], next_unused: "addr_test1abc" },
+    data: { receive: ["addr_test1abc"], used: [], usage_known: true, next_unused: "addr_test1abc" },
     error: null,
     loading: false,
     refresh: vi.fn(),

@@ -227,15 +227,16 @@ paths:
       tags: [ops]
       summary: Readiness probe
       description: |
-        Currently a static 200, identical to /healthz: the handler checks no
-        dependency, so a replica with an unreachable watermark store still
-        reports ready. A dependency-checking variant (watermark-store ping,
-        3s timeout, 503 when unreachable) is implemented by PR #674 (branch
-        feat/signer-ha-store).
+        Pings the configured SQLite or PostgreSQL watermark store with a
+        three-second timeout. Returns 503 while that dependency is unreachable.
+        The in-memory store has no external dependency and is always ready after
+        startup.
       security: []
       responses:
         '200':
-          description: Process is listening. Not a dependency check.
+          description: Watermark dependency is healthy or has no external store.
+        '503':
+          description: Watermark dependency is unavailable.
   /metrics:
     get:
       tags: [ops]

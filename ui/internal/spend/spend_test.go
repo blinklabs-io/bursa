@@ -359,6 +359,26 @@ func TestBuildDustChangeDeadZoneNoExtraInputs(t *testing.T) {
 	}
 }
 
+// TestBuildExactBalanceNoChange does not leave a remainder to emit or absorb.
+// It must remain a valid one-input transfer rather than being mistaken for a
+// dust-change transaction by the fee-shape detector.
+func TestBuildExactBalanceNoChange(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	addr0 := acct.ReceiveAddresses[0]
+	recvAddr := acct.ReceiveAddresses[1]
+
+	fc := newFakeChain(5_000_000, addr0)
+	s := NewService(fc, nil, acct)
+
+	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4827823"})
+	if err != nil {
+		t.Fatalf("exact-balance send should succeed, got: %v", err)
+	}
+	if pv.Change != "0" {
+		t.Fatalf("exact-balance send change = %q, want 0", pv.Change)
+	}
+}
+
 // fillDeadZoneUTxOs adds n 5-ADA UTxOs at addr with distinct tx hashes. A 4-ADA
 // send funded by a single one leaves ~0.83 ADA change — inside the dust-change
 // dead-zone — so Build must force additional inputs to clear the min-UTxO floor.
@@ -937,9 +957,13 @@ func unsignedWithIndefiniteBodyMap(t *testing.T, unsignedTxCBOR string) string {
 	driftedBody = append(driftedBody, body[1:]...)
 	driftedBody = append(driftedBody, 0xff)
 	arr[0] = cbor.RawMessage(driftedBody)
-	encoded, err := cbor.Encode(arr)
-	if err != nil {
-		t.Fatalf("encode drifted unsigned tx: %v", err)
+	// Preserve the raw indefinite-map body. Encoding []RawMessage through the
+	// newer CBOR package canonicalizes RawMessage values and defeats this
+	// fixture's purpose.
+	encoded := []byte{0x84} // four-element transaction array
+	encoded = append(encoded, driftedBody...)
+	for _, element := range arr[1:] {
+		encoded = append(encoded, element...)
 	}
 	return hex.EncodeToString(encoded)
 }
@@ -1468,7 +1492,12 @@ func TestSignTxHashesOriginalBodyCbor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode drifted tx: %v", err)
 	}
-	originalBodyHash := lcommon.Blake2b256Hash(tx.Body.Cbor())
+	originalBodyCbor, err := extractTxBodyCbor(txBytes)
+	if err != nil {
+		t.Fatalf("extract original body CBOR: %v", err)
+	}
+	originalBodyHash := lcommon.Blake2b256Hash(originalBodyCbor)
+	tx.Body.SetCbor(nil)
 	reencodedBody, err := cbor.Encode(&tx.Body)
 	if err != nil {
 		t.Fatalf("re-encode drifted body: %v", err)
@@ -2255,6 +2284,9 @@ func TestHardwareSignRequest(t *testing.T) {
 	}
 	if req.ProtocolMagic != 2 {
 		t.Fatalf("ProtocolMagic = %d, want 2", req.ProtocolMagic)
+	}
+	if req.BodySetTagPolicy != "untagged" {
+		t.Fatalf("BodySetTagPolicy = %q, want untagged", req.BodySetTagPolicy)
 	}
 	if !req.IncludeNetworkID {
 		t.Fatal("IncludeNetworkID must preserve the network-id field from the payment body")

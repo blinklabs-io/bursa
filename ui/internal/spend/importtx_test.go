@@ -175,8 +175,8 @@ func TestDecodeTx_WithdrawalsSortedByAddress(t *testing.T) {
 		t.Fatal("tx array has no body element")
 	}
 
-	var body conway.ConwayTransactionBody
-	if _, err := cbor.Decode(outer[0], &body); err != nil {
+	body, err := conway.NewConwayTransactionBodyFromCbor(outer[0])
+	if err != nil {
 		t.Fatalf("decode tx body: %v", err)
 	}
 
@@ -196,8 +196,9 @@ func TestDecodeTx_WithdrawalsSortedByAddress(t *testing.T) {
 		&addrHi: 3_000_000,
 		&addrLo: 1_500_000,
 	}
+	body.SetCbor(nil)
 
-	newBodyBytes, err := cbor.Encode(&body)
+	newBodyBytes, err := cbor.Encode(body)
 	if err != nil {
 		t.Fatalf("encode modified tx body: %v", err)
 	}
