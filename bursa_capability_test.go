@@ -17,6 +17,7 @@ package bursa
 import (
 	"bytes"
 	"encoding/hex"
+	"net"
 	"strings"
 	"testing"
 
@@ -380,6 +381,123 @@ func TestCreatePoolRegistrationCertificate(t *testing.T) {
 	_, err = cbor.Decode(decoded[4], &cost)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(340_000_000), cost)
+}
+
+func TestCreatePoolRegistrationCertificateWithRelays(t *testing.T) {
+	port := uint32(3001)
+	ipv4 := net.IPv4(10, 0, 0, 1).To4()
+	ipv6 := net.ParseIP("2001:db8::1")
+	singleHost := "relay.example"
+	multiHost := "_relays.example"
+
+	tests := []struct {
+		name  string
+		relay lcommon.PoolRelay
+	}{
+		{
+			name: "single host ipv4",
+			relay: lcommon.PoolRelay{
+				Type: lcommon.PoolRelayTypeSingleHostAddress,
+				Port: &port,
+				Ipv4: &ipv4,
+			},
+		},
+		{
+			name: "single host ipv6",
+			relay: lcommon.PoolRelay{
+				Type: lcommon.PoolRelayTypeSingleHostAddress,
+				Port: &port,
+				Ipv6: &ipv6,
+			},
+		},
+		{
+			name: "single host name",
+			relay: lcommon.PoolRelay{
+				Type:     lcommon.PoolRelayTypeSingleHostName,
+				Port:     &port,
+				Hostname: &singleHost,
+			},
+		},
+		{
+			name: "multi host name",
+			relay: lcommon.PoolRelay{
+				Type:     lcommon.PoolRelayTypeMultiHostName,
+				Hostname: &multiHost,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cert := &PoolRegistrationCertificate{
+				MarginDenom:   1,
+				RewardAccount: make([]byte, 29),
+				Relays:        []lcommon.PoolRelay{test.relay},
+			}
+
+			encoded, err := CreatePoolRegistrationCertificate(cert)
+			require.NoError(t, err)
+
+			var fields []cbor.RawMessage
+			_, err = cbor.Decode(encoded, &fields)
+			require.NoError(t, err)
+			require.Len(t, fields, 10)
+
+			var relays []lcommon.PoolRelay
+			_, err = cbor.Decode(fields[8], &relays)
+			require.NoError(t, err)
+			require.Len(t, relays, 1)
+			assert.Equal(t, test.relay, relays[0])
+		})
+	}
+}
+
+func TestCreatePoolRegistrationCertificateRejectsInvalidRelays(t *testing.T) {
+	port := uint32(65536)
+	overHostname := strings.Repeat("a", 129)
+	badIPv4 := net.IP([]byte{1, 2, 3})
+	tests := []struct {
+		name  string
+		relay lcommon.PoolRelay
+		want  string
+	}{
+		{
+			name: "port over maximum",
+			relay: lcommon.PoolRelay{
+				Type: lcommon.PoolRelayTypeSingleHostAddress,
+				Port: &port,
+			},
+			want: "pool relay port must not exceed 65535",
+		},
+		{
+			name: "hostname over maximum",
+			relay: lcommon.PoolRelay{
+				Type:     lcommon.PoolRelayTypeMultiHostName,
+				Hostname: &overHostname,
+			},
+			want: "pool relay hostname must not exceed 128 bytes",
+		},
+		{
+			name: "invalid ipv4",
+			relay: lcommon.PoolRelay{
+				Type: lcommon.PoolRelayTypeSingleHostAddress,
+				Ipv4: &badIPv4,
+			},
+			want: "invalid IPv4 relay address",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cert := &PoolRegistrationCertificate{
+				MarginDenom:   1,
+				RewardAccount: make([]byte, 29),
+				Relays:        []lcommon.PoolRelay{test.relay},
+			}
+			_, err := CreatePoolRegistrationCertificate(cert)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
 }
 
 func TestCreatePoolRegistrationCertificateWithMetadata(t *testing.T) {
