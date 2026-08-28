@@ -5,7 +5,8 @@ definitions:
       network:
         enum:
         - mainnet
-        - testnet
+        - preprod
+        - preview
         type: string
       paymentKey:
         description: bech32-encoded verification key (required for base and enterprise
@@ -131,7 +132,8 @@ definitions:
       network:
         enum:
         - mainnet
-        - testnet
+        - preprod
+        - preview
         type: string
       script:
         additionalProperties: {}
@@ -159,7 +161,8 @@ definitions:
       network:
         enum:
         - mainnet
-        - testnet
+        - preprod
+        - preview
         type: string
       required:
         minimum: 1

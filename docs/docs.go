@@ -832,7 +832,8 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "mainnet",
-                        "testnet"
+                        "preprod",
+                        "preview"
                     ]
                 },
                 "paymentKey": {
@@ -1011,7 +1012,8 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "mainnet",
-                        "testnet"
+                        "preprod",
+                        "preview"
                     ]
                 },
                 "script": {
@@ -1053,7 +1055,8 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "mainnet",
-                        "testnet"
+                        "preprod",
+                        "preview"
                     ]
                 },
                 "required": {

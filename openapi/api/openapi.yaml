@@ -325,7 +325,8 @@ components:
         network:
           enum:
           - mainnet
-          - testnet
+          - preprod
+          - preview
           type: string
         script:
           additionalProperties:
@@ -358,7 +359,8 @@ components:
         network:
           enum:
           - mainnet
-          - testnet
+          - preprod
+          - preview
           type: string
         required:
           minimum: 1
@@ -450,7 +452,8 @@ components:
         network:
           enum:
           - mainnet
-          - testnet
+          - preprod
+          - preview
           type: string
         paymentKey:
           description: bech32-encoded verification key
@@ -473,7 +476,8 @@ components:
         network:
           enum:
           - mainnet
-          - testnet
+          - preprod
+          - preview
           type: string
         paymentKey:
           description: bech32-encoded verification key
@@ -493,7 +497,8 @@ components:
         network:
           enum:
           - mainnet
-          - testnet
+          - preprod
+          - preview
           type: string
         stakeKey:
           description: bech32-encoded verification key

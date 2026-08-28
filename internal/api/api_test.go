@@ -1935,11 +1935,44 @@ func TestHandleScriptCreate_BothTimelocks(t *testing.T) {
 	assert.Contains(t, string(body), "cannot specify both")
 }
 
-func TestHandleScriptCreate_TestnetNetworkError(t *testing.T) {
-	// "testnet" passes validation but fails in
-	// bursa.MarshalScript because gouroboros does not
-	// recognize "testnet" as a network name. This covers
-	// the MarshalScript error path.
+func TestHandleScriptCreate_CanonicalNetworks(t *testing.T) {
+	for _, network := range []string{"mainnet", "preprod", "preview"} {
+		t.Run(network, func(t *testing.T) {
+			reqBody := fmt.Sprintf(`{
+				"type": "nOf",
+				"required": 1,
+				"key_hashes": [
+					"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"
+				],
+				"network": %q
+			}`, network)
+
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/script/create",
+				strings.NewReader(reqBody),
+			)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			handleScriptCreate(w, req)
+
+			resp := w.Result()
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			assert.NoError(t, err)
+			assert.Equal(
+				t,
+				http.StatusOK,
+				resp.StatusCode,
+				"response body: %s",
+				body,
+			)
+		})
+	}
+}
+
+func TestHandleScriptCreate_LegacyTestnetRejected(t *testing.T) {
 	reqBody := `{
 		"type": "nOf",
 		"required": 1,
@@ -1961,10 +1994,10 @@ func TestHandleScriptCreate_TestnetNetworkError(t *testing.T) {
 
 	resp := w.Result()
 	defer resp.Body.Close()
-	// MarshalScript fails because testnet is not valid
-	assert.Equal(
-		t, http.StatusInternalServerError, resp.StatusCode,
-	)
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, string(body), "Validation failed")
 }
 
 func TestHandleScriptValidate_MethodNotAllowed(t *testing.T) {
@@ -2153,36 +2186,47 @@ func TestHandleScriptAddress_InvalidScript(t *testing.T) {
 	assert.Contains(t, string(body), "Invalid script format")
 }
 
-func TestHandleScriptAddress_TestnetError(t *testing.T) {
-	// "testnet" is not recognized by gouroboros
-	// GetScriptAddress. This exercises the error path.
-	reqBody := `{
-		"script": {
-			"type": "all",
-			"scripts": [
-				{"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"}
-			]
-		},
-		"network": "testnet"
-	}`
+func TestHandleScriptAddress_CanonicalNetworks(t *testing.T) {
+	for _, network := range []string{"mainnet", "preprod", "preview"} {
+		t.Run(network, func(t *testing.T) {
+			reqBody := fmt.Sprintf(`{
+				"script": {
+					"type": "all",
+					"scripts": [
+						{"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"}
+					]
+				},
+				"network": %q
+			}`, network)
 
-	req := httptest.NewRequest(
-		http.MethodPost,
-		"/api/script/address",
-		strings.NewReader(reqBody),
-	)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/script/address",
+				strings.NewReader(reqBody),
+			)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
 
-	handleScriptAddress(w, req)
+			handleScriptAddress(w, req)
 
-	resp := w.Result()
-	defer resp.Body.Close()
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			resp := w.Result()
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			assert.NoError(t, err)
+			assert.Equal(
+				t,
+				http.StatusOK,
+				resp.StatusCode,
+				"response body: %s",
+				body,
+			)
 
-	body, err := io.ReadAll(resp.Body)
-	assert.NoError(t, err)
-	assert.Contains(t, string(body), "Invalid network")
+			var response ScriptAddressResponse
+			err = json.Unmarshal(body, &response)
+			assert.NoError(t, err)
+			assert.Equal(t, network, response.Network)
+		})
+	}
 }
 
 func TestHandleAddressParse_MethodNotAllowed(t *testing.T) {
@@ -2416,32 +2460,43 @@ func TestHandleAddressBuild_RewardMissingStakeKey(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
-func TestHandleAddressBuild_TestnetReturnsError(t *testing.T) {
-	// Note: buildAddressFromKeys uses ouroboros.NetworkByName
-	// which does not recognize "testnet" (only mainnet,
-	// preprod, preview, sanchonet). Validation accepts
-	// "testnet" but the build step fails. This tests the
-	// error path.
-	reqBody := `{
-		"paymentKey": "addr_vk18nqps65rh0azud77qruff3dctszahutmrhkxg87mlfny0addcles83lnyc",
-		"stakeKey": "stake_vk1swf4qsf28mzdn2kexqumas5fj43psj674xathpv45mcj04y2lv5scvw4uv",
-		"network": "testnet"
-	}`
+func TestHandleAddressBuild_CanonicalNetworks(t *testing.T) {
+	for _, network := range []string{"mainnet", "preprod", "preview"} {
+		t.Run(network, func(t *testing.T) {
+			reqBody := fmt.Sprintf(`{
+				"paymentKey": "addr_vk18nqps65rh0azud77qruff3dctszahutmrhkxg87mlfny0addcles83lnyc",
+				"stakeKey": "stake_vk1swf4qsf28mzdn2kexqumas5fj43psj674xathpv45mcj04y2lv5scvw4uv",
+				"network": %q
+			}`, network)
 
-	req := httptest.NewRequest(
-		http.MethodPost,
-		"/api/address/build",
-		strings.NewReader(reqBody),
-	)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/address/build",
+				strings.NewReader(reqBody),
+			)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
 
-	handleAddressBuild(w, req)
+			handleAddressBuild(w, req)
 
-	resp := w.Result()
-	defer resp.Body.Close()
-	// testnet is not recognized by gouroboros NetworkByName
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			resp := w.Result()
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			assert.NoError(t, err)
+			assert.Equal(
+				t,
+				http.StatusOK,
+				resp.StatusCode,
+				"response body: %s",
+				body,
+			)
+
+			var response AddressBuildResponse
+			err = json.Unmarshal(body, &response)
+			assert.NoError(t, err)
+			assert.Equal(t, network, response.Network)
+		})
+	}
 }
 
 func TestHandleAddressBuild_DefaultType(t *testing.T) {
