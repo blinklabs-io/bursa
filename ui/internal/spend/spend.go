@@ -1551,7 +1551,19 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 		return Witness{}, ErrNoWallet
 	}
 
-	// Load the unsigned tx and hash its body — this is what each witness signs.
+	// Preserve the exact body bytes from the supplied transaction. Apollo may
+	// decode and re-encode the body using canonical CBOR, which can change the
+	// signing hash for valid non-canonical input.
+	txBytes, err := hex.DecodeString(strings.TrimSpace(unsignedTxCBOR))
+	if err != nil {
+		return Witness{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
+	}
+	bodyCbor, err := extractTxBodyCbor(txBytes)
+	if err != nil {
+		return Witness{}, err
+	}
+
+	// Load the unsigned tx for semantic validation and signer derivation.
 	loader, err := apollo.New(s.chain).LoadTxCbor(unsignedTxCBOR)
 	if err != nil {
 		return Witness{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
@@ -1559,15 +1571,6 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 	tx := loader.GetTx()
 	if tx == nil {
 		return Witness{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
-	}
-	// Witnesses sign the hash of the body bytes exactly as carried by the
-	// unsigned transaction. Re-encoding can drift while preserving semantics.
-	bodyCbor := tx.Body.Cbor()
-	if bodyCbor == nil {
-		bodyCbor, err = cbor.Encode(&tx.Body)
-		if err != nil {
-			return Witness{}, fmt.Errorf("encode tx body: %w", err)
-		}
 	}
 	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
 

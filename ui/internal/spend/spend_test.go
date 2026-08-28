@@ -957,9 +957,13 @@ func unsignedWithIndefiniteBodyMap(t *testing.T, unsignedTxCBOR string) string {
 	driftedBody = append(driftedBody, body[1:]...)
 	driftedBody = append(driftedBody, 0xff)
 	arr[0] = cbor.RawMessage(driftedBody)
-	encoded, err := cbor.Encode(arr)
-	if err != nil {
-		t.Fatalf("encode drifted unsigned tx: %v", err)
+	// Preserve the raw indefinite-map body. Encoding []RawMessage through the
+	// newer CBOR package canonicalizes RawMessage values and defeats this
+	// fixture's purpose.
+	encoded := []byte{0x84} // four-element transaction array
+	encoded = append(encoded, driftedBody...)
+	for _, element := range arr[1:] {
+		encoded = append(encoded, element...)
 	}
 	return hex.EncodeToString(encoded)
 }
@@ -1488,7 +1492,12 @@ func TestSignTxHashesOriginalBodyCbor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode drifted tx: %v", err)
 	}
-	originalBodyHash := lcommon.Blake2b256Hash(tx.Body.Cbor())
+	originalBodyCbor, err := extractTxBodyCbor(txBytes)
+	if err != nil {
+		t.Fatalf("extract original body CBOR: %v", err)
+	}
+	originalBodyHash := lcommon.Blake2b256Hash(originalBodyCbor)
+	tx.Body.SetCbor(nil)
 	reencodedBody, err := cbor.Encode(&tx.Body)
 	if err != nil {
 		t.Fatalf("re-encode drifted body: %v", err)
