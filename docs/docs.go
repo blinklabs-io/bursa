@@ -40,7 +40,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.AddressBuildRequest"
+                            "$ref": "#/definitions/_.AddressBuildRequest"
                         }
                     }
                 ],
@@ -48,19 +48,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Address built successfully",
                         "schema": {
-                            "$ref": "#/definitions/api.AddressBuildResponse"
+                            "$ref": "#/definitions/_.AddressBuildResponse"
                         }
                     },
                     "400": {
                         "description": "Invalid request or keys",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -88,7 +88,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.AddressEnumerateRequest"
+                            "$ref": "#/definitions/_.AddressEnumerateRequest"
                         }
                     }
                 ],
@@ -105,7 +105,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -128,7 +128,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.AddressParseRequest"
+                            "$ref": "#/definitions/_.AddressParseRequest"
                         }
                     }
                 ],
@@ -136,19 +136,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Address parsed successfully",
                         "schema": {
-                            "$ref": "#/definitions/api.AddressParseResponse"
+                            "$ref": "#/definitions/_.AddressParseResponse"
                         }
                     },
                     "400": {
                         "description": "Invalid request or address",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -171,7 +171,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.ScriptAddressRequest"
+                            "$ref": "#/definitions/_.ScriptAddressRequest"
                         }
                     }
                 ],
@@ -179,19 +179,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Script address generated",
                         "schema": {
-                            "$ref": "#/definitions/api.ScriptAddressResponse"
+                            "$ref": "#/definitions/_.ScriptAddressResponse"
                         }
                     },
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -214,7 +214,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.ScriptCreateRequest"
+                            "$ref": "#/definitions/_.ScriptCreateRequest"
                         }
                     }
                 ],
@@ -222,19 +222,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Script successfully created",
                         "schema": {
-                            "$ref": "#/definitions/api.ScriptResponse"
+                            "$ref": "#/definitions/_.ScriptResponse"
                         }
                     },
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -257,7 +257,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.ScriptValidateRequest"
+                            "$ref": "#/definitions/_.ScriptValidateRequest"
                         }
                     }
                 ],
@@ -265,19 +265,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Script validation result",
                         "schema": {
-                            "$ref": "#/definitions/api.ScriptValidateResponse"
+                            "$ref": "#/definitions/_.ScriptValidateResponse"
                         }
                     },
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -305,7 +305,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.SignDataRequest"
+                            "$ref": "#/definitions/_.SignDataRequest"
                         }
                     }
                 ],
@@ -313,19 +313,19 @@ const docTemplate = `{
                     "200": {
                         "description": "COSE_Sign1 signature and COSE_Key",
                         "schema": {
-                            "$ref": "#/definitions/api.SignDataResponse"
+                            "$ref": "#/definitions/_.SignDataResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -348,7 +348,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.VerifyDataRequest"
+                            "$ref": "#/definitions/_.VerifyDataRequest"
                         }
                     }
                 ],
@@ -356,13 +356,13 @@ const docTemplate = `{
                     "200": {
                         "description": "Verification result",
                         "schema": {
-                            "$ref": "#/definitions/api.VerifyDataResponse"
+                            "$ref": "#/definitions/_.VerifyDataResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -385,7 +385,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.TxAssembleRequest"
+                            "$ref": "#/definitions/_.TxAssembleRequest"
                         }
                     }
                 ],
@@ -393,19 +393,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Assembled signed transaction",
                         "schema": {
-                            "$ref": "#/definitions/api.TxCborResponse"
+                            "$ref": "#/definitions/_.TxCborResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -428,7 +428,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.TxDecodeRequest"
+                            "$ref": "#/definitions/_.TxDecodeRequest"
                         }
                     }
                 ],
@@ -442,7 +442,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -465,7 +465,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.TxIDRequest"
+                            "$ref": "#/definitions/_.TxIDRequest"
                         }
                     }
                 ],
@@ -473,13 +473,13 @@ const docTemplate = `{
                     "200": {
                         "description": "Transaction id",
                         "schema": {
-                            "$ref": "#/definitions/api.TxIDResponse"
+                            "$ref": "#/definitions/_.TxIDResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -507,7 +507,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.TxSignRequest"
+                            "$ref": "#/definitions/_.TxSignRequest"
                         }
                     }
                 ],
@@ -515,19 +515,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Signed transaction",
                         "schema": {
-                            "$ref": "#/definitions/api.TxCborResponse"
+                            "$ref": "#/definitions/_.TxCborResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -555,7 +555,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.TxWitnessRequest"
+                            "$ref": "#/definitions/_.TxWitnessRequest"
                         }
                     }
                 ],
@@ -563,19 +563,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Detached witness",
                         "schema": {
-                            "$ref": "#/definitions/api.TxWitnessResponse"
+                            "$ref": "#/definitions/_.TxWitnessResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -625,7 +625,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.WalletDeleteRequest"
+                            "$ref": "#/definitions/_.WalletDeleteRequest"
                         }
                     }
                 ],
@@ -639,13 +639,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -673,7 +673,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.WalletGetRequest"
+                            "$ref": "#/definitions/_.WalletGetRequest"
                         }
                     }
                 ],
@@ -687,13 +687,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -746,7 +746,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.WalletRestoreRequest"
+                            "$ref": "#/definitions/_.WalletRestoreRequest"
                         }
                     }
                 ],
@@ -760,13 +760,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/_.ErrorResponse"
                         }
                     }
                 }
@@ -794,7 +794,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.WalletUpdateRequest"
+                            "$ref": "#/definitions/_.WalletUpdateRequest"
                         }
                     }
                 ],
@@ -822,7 +822,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "api.AddressBuildRequest": {
+        "_.AddressBuildRequest": {
             "type": "object",
             "required": [
                 "network"
@@ -832,7 +832,8 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "mainnet",
-                        "testnet"
+                        "preprod",
+                        "preview"
                     ]
                 },
                 "paymentKey": {
@@ -854,7 +855,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.AddressBuildResponse": {
+        "_.AddressBuildResponse": {
             "type": "object",
             "properties": {
                 "address": {
@@ -868,7 +869,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.AddressEnumerateRequest": {
+        "_.AddressEnumerateRequest": {
             "type": "object",
             "required": [
                 "count",
@@ -905,7 +906,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.AddressParseRequest": {
+        "_.AddressParseRequest": {
             "type": "object",
             "required": [
                 "address"
@@ -916,26 +917,26 @@ const docTemplate = `{
                 }
             }
         },
-        "api.AddressParseResponse": {
+        "_.AddressParseResponse": {
             "type": "object",
             "properties": {
                 "address": {
                     "type": "string"
                 },
                 "byron": {
-                    "$ref": "#/definitions/api.ByronAddressInfo"
+                    "$ref": "#/definitions/_.ByronAddressInfo"
                 },
                 "network": {
                     "type": "string"
                 },
                 "payment": {
-                    "$ref": "#/definitions/api.CredentialInfo"
+                    "$ref": "#/definitions/_.CredentialInfo"
                 },
                 "pointer": {
-                    "$ref": "#/definitions/api.PointerInfo"
+                    "$ref": "#/definitions/_.PointerInfo"
                 },
                 "stake": {
-                    "$ref": "#/definitions/api.CredentialInfo"
+                    "$ref": "#/definitions/_.CredentialInfo"
                 },
                 "type": {
                     "type": "string"
@@ -945,7 +946,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.ByronAddressInfo": {
+        "_.ByronAddressInfo": {
             "type": "object",
             "properties": {
                 "type": {
@@ -954,7 +955,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.CredentialInfo": {
+        "_.CredentialInfo": {
             "type": "object",
             "properties": {
                 "bech32": {
@@ -971,7 +972,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.ErrorResponse": {
+        "_.ErrorResponse": {
             "type": "object",
             "properties": {
                 "error": {
@@ -985,7 +986,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.PointerInfo": {
+        "_.PointerInfo": {
             "type": "object",
             "properties": {
                 "certIndex": {
@@ -1000,7 +1001,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.ScriptAddressRequest": {
+        "_.ScriptAddressRequest": {
             "type": "object",
             "required": [
                 "network",
@@ -1011,7 +1012,8 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "mainnet",
-                        "testnet"
+                        "preprod",
+                        "preview"
                     ]
                 },
                 "script": {
@@ -1020,7 +1022,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.ScriptAddressResponse": {
+        "_.ScriptAddressResponse": {
             "type": "object",
             "properties": {
                 "address": {
@@ -1034,7 +1036,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.ScriptCreateRequest": {
+        "_.ScriptCreateRequest": {
             "type": "object",
             "required": [
                 "key_hashes",
@@ -1053,7 +1055,8 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "mainnet",
-                        "testnet"
+                        "preprod",
+                        "preview"
                     ]
                 },
                 "required": {
@@ -1078,7 +1081,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.ScriptResponse": {
+        "_.ScriptResponse": {
             "type": "object",
             "properties": {
                 "address": {
@@ -1096,7 +1099,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.ScriptValidateRequest": {
+        "_.ScriptValidateRequest": {
             "type": "object",
             "required": [
                 "script"
@@ -1121,7 +1124,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.ScriptValidateResponse": {
+        "_.ScriptValidateResponse": {
             "type": "object",
             "properties": {
                 "scriptHash": {
@@ -1139,7 +1142,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.SignDataRequest": {
+        "_.SignDataRequest": {
             "type": "object",
             "required": [
                 "address",
@@ -1158,7 +1161,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.SignDataResponse": {
+        "_.SignDataResponse": {
             "type": "object",
             "properties": {
                 "key": {
@@ -1169,7 +1172,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.TxAssembleRequest": {
+        "_.TxAssembleRequest": {
             "type": "object",
             "required": [
                 "tx_cbor",
@@ -1189,7 +1192,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.TxCborResponse": {
+        "_.TxCborResponse": {
             "type": "object",
             "properties": {
                 "tx_cbor": {
@@ -1200,7 +1203,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.TxDecodeRequest": {
+        "_.TxDecodeRequest": {
             "type": "object",
             "required": [
                 "tx_cbor"
@@ -1212,7 +1215,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.TxIDRequest": {
+        "_.TxIDRequest": {
             "type": "object",
             "required": [
                 "tx_cbor"
@@ -1224,7 +1227,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.TxIDResponse": {
+        "_.TxIDResponse": {
             "type": "object",
             "properties": {
                 "tx_id": {
@@ -1232,7 +1235,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.TxSignRequest": {
+        "_.TxSignRequest": {
             "type": "object",
             "required": [
                 "signing_keys",
@@ -1252,7 +1255,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.TxWitnessRequest": {
+        "_.TxWitnessRequest": {
             "type": "object",
             "required": [
                 "signing_key",
@@ -1268,7 +1271,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.TxWitnessResponse": {
+        "_.TxWitnessResponse": {
             "type": "object",
             "properties": {
                 "witness": {
@@ -1276,7 +1279,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.VerifyDataRequest": {
+        "_.VerifyDataRequest": {
             "type": "object",
             "required": [
                 "key",
@@ -1295,7 +1298,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.VerifyDataResponse": {
+        "_.VerifyDataResponse": {
             "type": "object",
             "properties": {
                 "valid": {
@@ -1303,7 +1306,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.WalletDeleteRequest": {
+        "_.WalletDeleteRequest": {
             "type": "object",
             "required": [
                 "name"
@@ -1319,7 +1322,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.WalletGetRequest": {
+        "_.WalletGetRequest": {
             "type": "object",
             "required": [
                 "name"
@@ -1335,7 +1338,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.WalletRestoreRequest": {
+        "_.WalletRestoreRequest": {
             "type": "object",
             "required": [
                 "mnemonic"
@@ -1382,7 +1385,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.WalletUpdateRequest": {
+        "_.WalletUpdateRequest": {
             "type": "object",
             "required": [
                 "name"
@@ -1590,6 +1593,589 @@ const docTemplate = `{
                 },
                 "stake_vkey": {
                     "$ref": "#/definitions/bursa.KeyFile"
+                }
+            }
+        },
+        "internal_api.AddressBuildRequest": {
+            "type": "object",
+            "required": [
+                "network"
+            ],
+            "properties": {
+                "network": {
+                    "type": "string",
+                    "enum": [
+                        "mainnet",
+                        "preprod",
+                        "preview"
+                    ]
+                },
+                "paymentKey": {
+                    "description": "bech32-encoded verification key (required for base and enterprise address types)",
+                    "type": "string"
+                },
+                "stakeKey": {
+                    "description": "bech32-encoded verification key (required for base and reward address types)",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "defaults to \"base\" - determines which keys are required: base requires both paymentKey and stakeKey, enterprise requires paymentKey only, reward requires stakeKey only",
+                    "type": "string",
+                    "enum": [
+                        "base",
+                        "enterprise",
+                        "reward"
+                    ]
+                }
+            }
+        },
+        "internal_api.AddressBuildResponse": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.AddressEnumerateRequest": {
+            "type": "object",
+            "required": [
+                "count",
+                "mnemonic",
+                "network"
+            ],
+            "properties": {
+                "account": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
+                "count": {
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
+                },
+                "mnemonic": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string",
+                    "enum": [
+                        "mainnet",
+                        "preprod",
+                        "preview"
+                    ]
+                },
+                "password": {
+                    "type": "string"
+                },
+                "start": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                }
+            }
+        },
+        "internal_api.AddressParseRequest": {
+            "type": "object",
+            "required": [
+                "address"
+            ],
+            "properties": {
+                "address": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.AddressParseResponse": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "byron": {
+                    "$ref": "#/definitions/internal_api.ByronAddressInfo"
+                },
+                "network": {
+                    "type": "string"
+                },
+                "payment": {
+                    "$ref": "#/definitions/internal_api.CredentialInfo"
+                },
+                "pointer": {
+                    "$ref": "#/definitions/internal_api.PointerInfo"
+                },
+                "stake": {
+                    "$ref": "#/definitions/internal_api.CredentialInfo"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "typeDescription": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.ByronAddressInfo": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "description": "\"pubkey\", \"script\", or \"redeem\"",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.CredentialInfo": {
+            "type": "object",
+            "properties": {
+                "bech32": {
+                    "description": "bech32-encoded credential",
+                    "type": "string"
+                },
+                "hex": {
+                    "description": "hex-encoded credential",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"key\" or \"script\"",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "fields": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_api.PointerInfo": {
+            "type": "object",
+            "properties": {
+                "certIndex": {
+                    "type": "integer"
+                },
+                "slot": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "txIndex": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_api.ScriptAddressRequest": {
+            "type": "object",
+            "required": [
+                "network",
+                "script"
+            ],
+            "properties": {
+                "network": {
+                    "type": "string",
+                    "enum": [
+                        "mainnet",
+                        "preprod",
+                        "preview"
+                    ]
+                },
+                "script": {
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
+        "internal_api.ScriptAddressResponse": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string"
+                },
+                "scriptHash": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.ScriptCreateRequest": {
+            "type": "object",
+            "required": [
+                "key_hashes",
+                "network",
+                "type"
+            ],
+            "properties": {
+                "key_hashes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "network": {
+                    "type": "string",
+                    "enum": [
+                        "mainnet",
+                        "preprod",
+                        "preview"
+                    ]
+                },
+                "required": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "timelock_after": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "timelock_before": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "nOf",
+                        "all",
+                        "any"
+                    ]
+                }
+            }
+        },
+        "internal_api.ScriptResponse": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "script": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "scriptHash": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.ScriptValidateRequest": {
+            "type": "object",
+            "required": [
+                "script"
+            ],
+            "properties": {
+                "require_signatures": {
+                    "type": "boolean"
+                },
+                "script": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "signatures": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "slot": {
+                    "type": "integer",
+                    "format": "int64"
+                }
+            }
+        },
+        "internal_api.ScriptValidateResponse": {
+            "type": "object",
+            "properties": {
+                "scriptHash": {
+                    "type": "string"
+                },
+                "signatures": {
+                    "type": "integer"
+                },
+                "slot": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "valid": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.SignDataRequest": {
+            "type": "object",
+            "required": [
+                "address",
+                "payload",
+                "signing_key"
+            ],
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "payload": {
+                    "type": "string"
+                },
+                "signing_key": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.SignDataResponse": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "signature": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.TxAssembleRequest": {
+            "type": "object",
+            "required": [
+                "tx_cbor",
+                "witnesses"
+            ],
+            "properties": {
+                "tx_cbor": {
+                    "description": "raw hex CBOR or JSON text envelope",
+                    "type": "string"
+                },
+                "witnesses": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_api.TxCborResponse": {
+            "type": "object",
+            "properties": {
+                "tx_cbor": {
+                    "type": "string"
+                },
+                "tx_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.TxDecodeRequest": {
+            "type": "object",
+            "required": [
+                "tx_cbor"
+            ],
+            "properties": {
+                "tx_cbor": {
+                    "description": "raw hex CBOR or JSON text envelope",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.TxIDRequest": {
+            "type": "object",
+            "required": [
+                "tx_cbor"
+            ],
+            "properties": {
+                "tx_cbor": {
+                    "description": "raw hex CBOR or JSON text envelope",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.TxIDResponse": {
+            "type": "object",
+            "properties": {
+                "tx_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.TxSignRequest": {
+            "type": "object",
+            "required": [
+                "signing_keys",
+                "tx_cbor"
+            ],
+            "properties": {
+                "signing_keys": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tx_cbor": {
+                    "description": "raw hex CBOR or JSON text envelope",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.TxWitnessRequest": {
+            "type": "object",
+            "required": [
+                "signing_key",
+                "tx_cbor"
+            ],
+            "properties": {
+                "signing_key": {
+                    "type": "string"
+                },
+                "tx_cbor": {
+                    "description": "raw hex CBOR or JSON text envelope",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.TxWitnessResponse": {
+            "type": "object",
+            "properties": {
+                "witness": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.VerifyDataRequest": {
+            "type": "object",
+            "required": [
+                "key",
+                "payload",
+                "signature"
+            ],
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "payload": {
+                    "type": "string"
+                },
+                "signature": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.VerifyDataResponse": {
+            "type": "object",
+            "properties": {
+                "valid": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.WalletDeleteRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.WalletGetRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.WalletRestoreRequest": {
+            "type": "object",
+            "required": [
+                "mnemonic"
+            ],
+            "properties": {
+                "account_id": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
+                "address_id": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
+                "committee_cold_id": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
+                "committee_hot_id": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
+                "drep_id": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
+                "mnemonic": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "password": {
+                    "type": "string"
+                },
+                "payment_id": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
+                "pool_cold_id": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                },
+                "stake_id": {
+                    "type": "integer",
+                    "maximum": 2147483647
+                }
+            }
+        },
+        "internal_api.WalletUpdateRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
+                },
+                "password": {
+                    "type": "string"
                 }
             }
         }
