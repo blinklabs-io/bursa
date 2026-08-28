@@ -1,6 +1,6 @@
 basePath: /
 definitions:
-  _.AddressBuildRequest:
+  api.AddressBuildRequest:
     properties:
       network:
         enum:
@@ -28,7 +28,7 @@ definitions:
     required:
     - network
     type: object
-  _.AddressBuildResponse:
+  api.AddressBuildResponse:
     properties:
       address:
         type: string
@@ -37,7 +37,7 @@ definitions:
       type:
         type: string
     type: object
-  _.AddressEnumerateRequest:
+  api.AddressEnumerateRequest:
     properties:
       account:
         maximum: 2147483647
@@ -64,39 +64,39 @@ definitions:
     - mnemonic
     - network
     type: object
-  _.AddressParseRequest:
+  api.AddressParseRequest:
     properties:
       address:
         type: string
     required:
     - address
     type: object
-  _.AddressParseResponse:
+  api.AddressParseResponse:
     properties:
       address:
         type: string
       byron:
-        $ref: '#/definitions/_.ByronAddressInfo'
+        $ref: '#/definitions/api.ByronAddressInfo'
       network:
         type: string
       payment:
-        $ref: '#/definitions/_.CredentialInfo'
+        $ref: '#/definitions/api.CredentialInfo'
       pointer:
-        $ref: '#/definitions/_.PointerInfo'
+        $ref: '#/definitions/api.PointerInfo'
       stake:
-        $ref: '#/definitions/_.CredentialInfo'
+        $ref: '#/definitions/api.CredentialInfo'
       type:
         type: string
       typeDescription:
         type: string
     type: object
-  _.ByronAddressInfo:
+  api.ByronAddressInfo:
     properties:
       type:
         description: '"pubkey", "script", or "redeem"'
         type: string
     type: object
-  _.CredentialInfo:
+  api.CredentialInfo:
     properties:
       bech32:
         description: bech32-encoded credential
@@ -108,7 +108,7 @@ definitions:
         description: '"key" or "script"'
         type: string
     type: object
-  _.ErrorResponse:
+  api.ErrorResponse:
     properties:
       error:
         type: string
@@ -117,7 +117,7 @@ definitions:
           type: string
         type: object
     type: object
-  _.PointerInfo:
+  api.PointerInfo:
     properties:
       certIndex:
         type: integer
@@ -127,7 +127,7 @@ definitions:
       txIndex:
         type: integer
     type: object
-  _.ScriptAddressRequest:
+  api.ScriptAddressRequest:
     properties:
       network:
         enum:
@@ -142,7 +142,7 @@ definitions:
     - network
     - script
     type: object
-  _.ScriptAddressResponse:
+  api.ScriptAddressResponse:
     properties:
       address:
         type: string
@@ -151,7 +151,7 @@ definitions:
       scriptHash:
         type: string
     type: object
-  _.ScriptCreateRequest:
+  api.ScriptCreateRequest:
     properties:
       key_hashes:
         items:
@@ -184,7 +184,7 @@ definitions:
     - network
     - type
     type: object
-  _.ScriptResponse:
+  api.ScriptResponse:
     properties:
       address:
         type: string
@@ -196,7 +196,7 @@ definitions:
       type:
         type: string
     type: object
-  _.ScriptValidateRequest:
+  api.ScriptValidateRequest:
     properties:
       require_signatures:
         type: boolean
@@ -213,7 +213,7 @@ definitions:
     required:
     - script
     type: object
-  _.ScriptValidateResponse:
+  api.ScriptValidateResponse:
     properties:
       scriptHash:
         type: string
@@ -225,7 +225,7 @@ definitions:
       valid:
         type: boolean
     type: object
-  _.SignDataRequest:
+  api.SignDataRequest:
     properties:
       address:
         type: string
@@ -238,14 +238,14 @@ definitions:
     - payload
     - signing_key
     type: object
-  _.SignDataResponse:
+  api.SignDataResponse:
     properties:
       key:
         type: string
       signature:
         type: string
     type: object
-  _.TxAssembleRequest:
+  api.TxAssembleRequest:
     properties:
       tx_cbor:
         description: raw hex CBOR or JSON text envelope
@@ -259,14 +259,14 @@ definitions:
     - tx_cbor
     - witnesses
     type: object
-  _.TxCborResponse:
+  api.TxCborResponse:
     properties:
       tx_cbor:
         type: string
       tx_id:
         type: string
     type: object
-  _.TxDecodeRequest:
+  api.TxDecodeRequest:
     properties:
       tx_cbor:
         description: raw hex CBOR or JSON text envelope
@@ -274,7 +274,7 @@ definitions:
     required:
     - tx_cbor
     type: object
-  _.TxIDRequest:
+  api.TxIDRequest:
     properties:
       tx_cbor:
         description: raw hex CBOR or JSON text envelope
@@ -282,12 +282,12 @@ definitions:
     required:
     - tx_cbor
     type: object
-  _.TxIDResponse:
+  api.TxIDResponse:
     properties:
       tx_id:
         type: string
     type: object
-  _.TxSignRequest:
+  api.TxSignRequest:
     properties:
       signing_keys:
         items:
@@ -301,7 +301,7 @@ definitions:
     - signing_keys
     - tx_cbor
     type: object
-  _.TxWitnessRequest:
+  api.TxWitnessRequest:
     properties:
       signing_key:
         type: string
@@ -312,12 +312,12 @@ definitions:
     - signing_key
     - tx_cbor
     type: object
-  _.TxWitnessResponse:
+  api.TxWitnessResponse:
     properties:
       witness:
         type: string
     type: object
-  _.VerifyDataRequest:
+  api.VerifyDataRequest:
     properties:
       key:
         type: string
@@ -330,12 +330,12 @@ definitions:
     - payload
     - signature
     type: object
-  _.VerifyDataResponse:
+  api.VerifyDataResponse:
     properties:
       valid:
         type: boolean
     type: object
-  _.WalletDeleteRequest:
+  api.WalletDeleteRequest:
     properties:
       name:
         maxLength: 100
@@ -346,7 +346,7 @@ definitions:
     required:
     - name
     type: object
-  _.WalletGetRequest:
+  api.WalletGetRequest:
     properties:
       name:
         maxLength: 100
@@ -357,7 +357,7 @@ definitions:
     required:
     - name
     type: object
-  _.WalletRestoreRequest:
+  api.WalletRestoreRequest:
     properties:
       account_id:
         maximum: 2147483647
@@ -391,7 +391,7 @@ definitions:
     required:
     - mnemonic
     type: object
-  _.WalletUpdateRequest:
+  api.WalletUpdateRequest:
     properties:
       description:
         maxLength: 500
@@ -542,411 +542,6 @@ definitions:
       stake_vkey:
         $ref: '#/definitions/bursa.KeyFile'
     type: object
-  internal_api.AddressBuildRequest:
-    properties:
-      network:
-        enum:
-        - mainnet
-        - preprod
-        - preview
-        type: string
-      paymentKey:
-        description: bech32-encoded verification key (required for base and enterprise
-          address types)
-        type: string
-      stakeKey:
-        description: bech32-encoded verification key (required for base and reward
-          address types)
-        type: string
-      type:
-        description: 'defaults to "base" - determines which keys are required: base
-          requires both paymentKey and stakeKey, enterprise requires paymentKey only,
-          reward requires stakeKey only'
-        enum:
-        - base
-        - enterprise
-        - reward
-        type: string
-    required:
-    - network
-    type: object
-  internal_api.AddressBuildResponse:
-    properties:
-      address:
-        type: string
-      network:
-        type: string
-      type:
-        type: string
-    type: object
-  internal_api.AddressEnumerateRequest:
-    properties:
-      account:
-        maximum: 2147483647
-        type: integer
-      count:
-        maximum: 1000
-        minimum: 1
-        type: integer
-      mnemonic:
-        type: string
-      network:
-        enum:
-        - mainnet
-        - preprod
-        - preview
-        type: string
-      password:
-        type: string
-      start:
-        maximum: 2147483647
-        type: integer
-    required:
-    - count
-    - mnemonic
-    - network
-    type: object
-  internal_api.AddressParseRequest:
-    properties:
-      address:
-        type: string
-    required:
-    - address
-    type: object
-  internal_api.AddressParseResponse:
-    properties:
-      address:
-        type: string
-      byron:
-        $ref: '#/definitions/internal_api.ByronAddressInfo'
-      network:
-        type: string
-      payment:
-        $ref: '#/definitions/internal_api.CredentialInfo'
-      pointer:
-        $ref: '#/definitions/internal_api.PointerInfo'
-      stake:
-        $ref: '#/definitions/internal_api.CredentialInfo'
-      type:
-        type: string
-      typeDescription:
-        type: string
-    type: object
-  internal_api.ByronAddressInfo:
-    properties:
-      type:
-        description: '"pubkey", "script", or "redeem"'
-        type: string
-    type: object
-  internal_api.CredentialInfo:
-    properties:
-      bech32:
-        description: bech32-encoded credential
-        type: string
-      hex:
-        description: hex-encoded credential
-        type: string
-      type:
-        description: '"key" or "script"'
-        type: string
-    type: object
-  internal_api.ErrorResponse:
-    properties:
-      error:
-        type: string
-      fields:
-        additionalProperties:
-          type: string
-        type: object
-    type: object
-  internal_api.PointerInfo:
-    properties:
-      certIndex:
-        type: integer
-      slot:
-        format: int64
-        type: integer
-      txIndex:
-        type: integer
-    type: object
-  internal_api.ScriptAddressRequest:
-    properties:
-      network:
-        enum:
-        - mainnet
-        - preprod
-        - preview
-        type: string
-      script:
-        additionalProperties: {}
-        type: object
-    required:
-    - network
-    - script
-    type: object
-  internal_api.ScriptAddressResponse:
-    properties:
-      address:
-        type: string
-      network:
-        type: string
-      scriptHash:
-        type: string
-    type: object
-  internal_api.ScriptCreateRequest:
-    properties:
-      key_hashes:
-        items:
-          type: string
-        minItems: 1
-        type: array
-      network:
-        enum:
-        - mainnet
-        - preprod
-        - preview
-        type: string
-      required:
-        minimum: 1
-        type: integer
-      timelock_after:
-        format: int64
-        type: integer
-      timelock_before:
-        format: int64
-        type: integer
-      type:
-        enum:
-        - nOf
-        - all
-        - any
-        type: string
-    required:
-    - key_hashes
-    - network
-    - type
-    type: object
-  internal_api.ScriptResponse:
-    properties:
-      address:
-        type: string
-      script:
-        additionalProperties: {}
-        type: object
-      scriptHash:
-        type: string
-      type:
-        type: string
-    type: object
-  internal_api.ScriptValidateRequest:
-    properties:
-      require_signatures:
-        type: boolean
-      script:
-        additionalProperties: {}
-        type: object
-      signatures:
-        items:
-          type: string
-        type: array
-      slot:
-        format: int64
-        type: integer
-    required:
-    - script
-    type: object
-  internal_api.ScriptValidateResponse:
-    properties:
-      scriptHash:
-        type: string
-      signatures:
-        type: integer
-      slot:
-        format: int64
-        type: integer
-      valid:
-        type: boolean
-    type: object
-  internal_api.SignDataRequest:
-    properties:
-      address:
-        type: string
-      payload:
-        type: string
-      signing_key:
-        type: string
-    required:
-    - address
-    - payload
-    - signing_key
-    type: object
-  internal_api.SignDataResponse:
-    properties:
-      key:
-        type: string
-      signature:
-        type: string
-    type: object
-  internal_api.TxAssembleRequest:
-    properties:
-      tx_cbor:
-        description: raw hex CBOR or JSON text envelope
-        type: string
-      witnesses:
-        items:
-          type: string
-        minItems: 1
-        type: array
-    required:
-    - tx_cbor
-    - witnesses
-    type: object
-  internal_api.TxCborResponse:
-    properties:
-      tx_cbor:
-        type: string
-      tx_id:
-        type: string
-    type: object
-  internal_api.TxDecodeRequest:
-    properties:
-      tx_cbor:
-        description: raw hex CBOR or JSON text envelope
-        type: string
-    required:
-    - tx_cbor
-    type: object
-  internal_api.TxIDRequest:
-    properties:
-      tx_cbor:
-        description: raw hex CBOR or JSON text envelope
-        type: string
-    required:
-    - tx_cbor
-    type: object
-  internal_api.TxIDResponse:
-    properties:
-      tx_id:
-        type: string
-    type: object
-  internal_api.TxSignRequest:
-    properties:
-      signing_keys:
-        items:
-          type: string
-        minItems: 1
-        type: array
-      tx_cbor:
-        description: raw hex CBOR or JSON text envelope
-        type: string
-    required:
-    - signing_keys
-    - tx_cbor
-    type: object
-  internal_api.TxWitnessRequest:
-    properties:
-      signing_key:
-        type: string
-      tx_cbor:
-        description: raw hex CBOR or JSON text envelope
-        type: string
-    required:
-    - signing_key
-    - tx_cbor
-    type: object
-  internal_api.TxWitnessResponse:
-    properties:
-      witness:
-        type: string
-    type: object
-  internal_api.VerifyDataRequest:
-    properties:
-      key:
-        type: string
-      payload:
-        type: string
-      signature:
-        type: string
-    required:
-    - key
-    - payload
-    - signature
-    type: object
-  internal_api.VerifyDataResponse:
-    properties:
-      valid:
-        type: boolean
-    type: object
-  internal_api.WalletDeleteRequest:
-    properties:
-      name:
-        maxLength: 100
-        minLength: 1
-        type: string
-      password:
-        type: string
-    required:
-    - name
-    type: object
-  internal_api.WalletGetRequest:
-    properties:
-      name:
-        maxLength: 100
-        minLength: 1
-        type: string
-      password:
-        type: string
-    required:
-    - name
-    type: object
-  internal_api.WalletRestoreRequest:
-    properties:
-      account_id:
-        maximum: 2147483647
-        type: integer
-      address_id:
-        maximum: 2147483647
-        type: integer
-      committee_cold_id:
-        maximum: 2147483647
-        type: integer
-      committee_hot_id:
-        maximum: 2147483647
-        type: integer
-      drep_id:
-        maximum: 2147483647
-        type: integer
-      mnemonic:
-        minLength: 1
-        type: string
-      password:
-        type: string
-      payment_id:
-        maximum: 2147483647
-        type: integer
-      pool_cold_id:
-        maximum: 2147483647
-        type: integer
-      stake_id:
-        maximum: 2147483647
-        type: integer
-    required:
-    - mnemonic
-    type: object
-  internal_api.WalletUpdateRequest:
-    properties:
-      description:
-        maxLength: 500
-        type: string
-      name:
-        maxLength: 100
-        minLength: 1
-        type: string
-      password:
-        type: string
-    required:
-    - name
-    type: object
 info:
   contact:
     email: support@blinklabs.io
@@ -970,22 +565,22 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.AddressBuildRequest'
+          $ref: '#/definitions/api.AddressBuildRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Address built successfully
           schema:
-            $ref: '#/definitions/_.AddressBuildResponse'
+            $ref: '#/definitions/api.AddressBuildResponse'
         "400":
           description: Invalid request or keys
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       summary: Build Cardano address
   /api/address/enumerate:
     post:
@@ -999,7 +594,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.AddressEnumerateRequest'
+          $ref: '#/definitions/api.AddressEnumerateRequest'
       produces:
       - application/json
       responses:
@@ -1012,7 +607,7 @@ paths:
         "400":
           description: Invalid request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Enumerate derived addresses for a wallet
@@ -1027,22 +622,22 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.AddressParseRequest'
+          $ref: '#/definitions/api.AddressParseRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Address parsed successfully
           schema:
-            $ref: '#/definitions/_.AddressParseResponse'
+            $ref: '#/definitions/api.AddressParseResponse'
         "400":
           description: Invalid request or address
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       summary: Parse Cardano address
   /api/script/address:
     post:
@@ -1055,22 +650,22 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.ScriptAddressRequest'
+          $ref: '#/definitions/api.ScriptAddressRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Script address generated
           schema:
-            $ref: '#/definitions/_.ScriptAddressResponse'
+            $ref: '#/definitions/api.ScriptAddressResponse'
         "400":
           description: Invalid request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       summary: Generate script address
   /api/script/create:
     post:
@@ -1083,22 +678,22 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.ScriptCreateRequest'
+          $ref: '#/definitions/api.ScriptCreateRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Script successfully created
           schema:
-            $ref: '#/definitions/_.ScriptResponse'
+            $ref: '#/definitions/api.ScriptResponse'
         "400":
           description: Invalid request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       summary: Create a multi-signature script
   /api/script/validate:
     post:
@@ -1111,22 +706,22 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.ScriptValidateRequest'
+          $ref: '#/definitions/api.ScriptValidateRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Script validation result
           schema:
-            $ref: '#/definitions/_.ScriptValidateResponse'
+            $ref: '#/definitions/api.ScriptValidateResponse'
         "400":
           description: Invalid request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       summary: Validate a script
   /api/sign/data:
     post:
@@ -1139,22 +734,22 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.SignDataRequest'
+          $ref: '#/definitions/api.SignDataRequest'
       produces:
       - application/json
       responses:
         "200":
           description: COSE_Sign1 signature and COSE_Key
           schema:
-            $ref: '#/definitions/_.SignDataResponse'
+            $ref: '#/definitions/api.SignDataResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Sign a message (CIP-8/CIP-30 signData)
@@ -1169,18 +764,18 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.VerifyDataRequest'
+          $ref: '#/definitions/api.VerifyDataRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Verification result
           schema:
-            $ref: '#/definitions/_.VerifyDataResponse'
+            $ref: '#/definitions/api.VerifyDataResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       summary: Verify a CIP-8/CIP-30 signData signature
   /api/tx/assemble:
     post:
@@ -1193,22 +788,22 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.TxAssembleRequest'
+          $ref: '#/definitions/api.TxAssembleRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Assembled signed transaction
           schema:
-            $ref: '#/definitions/_.TxCborResponse'
+            $ref: '#/definitions/api.TxCborResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       summary: Assemble a signed transaction
   /api/tx/decode:
     post:
@@ -1221,7 +816,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.TxDecodeRequest'
+          $ref: '#/definitions/api.TxDecodeRequest'
       produces:
       - application/json
       responses:
@@ -1232,7 +827,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       summary: Decode a transaction
   /api/tx/id:
     post:
@@ -1245,18 +840,18 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.TxIDRequest'
+          $ref: '#/definitions/api.TxIDRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Transaction id
           schema:
-            $ref: '#/definitions/_.TxIDResponse'
+            $ref: '#/definitions/api.TxIDResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       summary: Get a transaction id
   /api/tx/sign:
     post:
@@ -1269,22 +864,22 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.TxSignRequest'
+          $ref: '#/definitions/api.TxSignRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Signed transaction
           schema:
-            $ref: '#/definitions/_.TxCborResponse'
+            $ref: '#/definitions/api.TxCborResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Sign a transaction
@@ -1299,22 +894,22 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.TxWitnessRequest'
+          $ref: '#/definitions/api.TxWitnessRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Detached witness
           schema:
-            $ref: '#/definitions/_.TxWitnessResponse'
+            $ref: '#/definitions/api.TxWitnessResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Produce a transaction witness
@@ -1342,7 +937,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.WalletDeleteRequest'
+          $ref: '#/definitions/api.WalletDeleteRequest'
       produces:
       - application/json
       responses:
@@ -1353,11 +948,11 @@ paths:
         "400":
           description: Invalid request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Delete wallet from persistent storage
@@ -1373,7 +968,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.WalletGetRequest'
+          $ref: '#/definitions/api.WalletGetRequest'
       produces:
       - application/json
       responses:
@@ -1384,11 +979,11 @@ paths:
         "400":
           description: Invalid request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Get wallet from persistent storage
@@ -1419,7 +1014,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.WalletRestoreRequest'
+          $ref: '#/definitions/api.WalletRestoreRequest'
       produces:
       - application/json
       responses:
@@ -1430,11 +1025,11 @@ paths:
         "400":
           description: Invalid request
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/_.ErrorResponse'
+            $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Restore a wallet using a mnemonic seed phrase
@@ -1450,7 +1045,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/_.WalletUpdateRequest'
+          $ref: '#/definitions/api.WalletUpdateRequest'
       produces:
       - application/json
       responses:
