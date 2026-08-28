@@ -16,6 +16,7 @@ package watermark
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -90,5 +91,80 @@ func TestSqliteWatermark_PersistsAcrossReopen(t *testing.T) {
 	// Different payload -> ErrConflict.
 	if err := wm2.Check(ctx, key, "tx:persist", []byte("block-2")); !errors.Is(err, ErrConflict) {
 		t.Fatalf("expected ErrConflict for different payload after reopen, got %v", err)
+	}
+}
+
+func TestSqliteWatermark_PingWritableDoesNotPersistProbe(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "wm.db")
+	wm, err := NewSqliteWatermark(dbPath)
+	if err != nil {
+		t.Fatalf("NewSqliteWatermark: %v", err)
+	}
+	defer wm.Close()
+	ctx := context.Background()
+
+	if err := wm.Ping(ctx); err != nil {
+		t.Fatalf("Ping writable database: %v", err)
+	}
+
+	var payloadRows, counterRows int
+	if err := wm.db.QueryRowContext(ctx, `
+		SELECT
+			(SELECT count(*) FROM watermark WHERE record_key = ?),
+			(SELECT count(*) FROM counter_watermark WHERE record_key = ?)
+	`, readinessProbeRecordKey, readinessProbeRecordKey).Scan(
+		&payloadRows,
+		&counterRows,
+	); err != nil {
+		t.Fatalf("count readiness probe rows: %v", err)
+	}
+	if payloadRows != 0 || counterRows != 0 {
+		t.Fatalf(
+			"readiness probe persisted rows: payload=%d counter=%d",
+			payloadRows,
+			counterRows,
+		)
+	}
+}
+
+func TestSqliteWatermark_PingRejectsReachableReadOnlyDatabase(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "wm.db")
+	writable, err := NewSqliteWatermark(dbPath)
+	if err != nil {
+		t.Fatalf("NewSqliteWatermark: %v", err)
+	}
+	if err := writable.Close(); err != nil {
+		t.Fatalf("close writable database: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		t.Fatalf("open read-only database: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	ctx := context.Background()
+	if err := db.PingContext(ctx); err != nil {
+		t.Fatalf("read-only database should remain reachable: %v", err)
+	}
+
+	store := &SqliteWatermark{db: db}
+	if err := store.Ping(ctx); err == nil {
+		t.Fatal("Ping succeeded for a reachable read-only database")
+	}
+}
+
+func TestSqliteWatermark_PingHonorsCancellation(t *testing.T) {
+	wm, err := NewSqliteWatermark(filepath.Join(t.TempDir(), "wm.db"))
+	if err != nil {
+		t.Fatalf("NewSqliteWatermark: %v", err)
+	}
+	defer wm.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = wm.Ping(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Ping canceled context: want context.Canceled, got %v", err)
 	}
 }

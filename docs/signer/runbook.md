@@ -198,51 +198,50 @@ regressions.
 
 - `type: mem` - in-memory, non-durable (lost on restart). Default.
 - `type: file` - SQLite file at `path`, durable across restarts (single process).
-- `type: postgres` - **not yet in main**; implemented by PR #674 (branch
-  `feat/signer-ha-store`). A durable store shared by every replica; the HA-safe
-  option. The connection string is set via `dsn_env` (an env var name, keeps
+- `type: postgres` - durable store shared by every replica; the HA-safe option.
+  The connection string is set via `dsn_env` (an env var name, keeping
   credentials out of the config file) in preference to the plaintext `dsn`
-  fallback. `BuildWatermark` in the current build accepts only `mem` and `file`
-  and fails boot with `unknown watermark type "postgres"`.
+  fallback. Remote connections should use `sslmode=verify-full` with a trusted
+  CA. The database role needs permission to create the two watermark tables on
+  first startup and to read and write them thereafter.
 - `mode: off | warn | enforce` - `enforce` (default) rejects a conflicting sign
   with HTTP 409; `warn` logs and allows; `off` disables the check.
 
 ### High availability
 
-For a single active instance, a durable `file` (SQLite) watermark is sufficient,
-and that is the only supported posture in `main` today.
-
-**Multi-replica HA requires PR #674 (branch `feat/signer-ha-store`) and is not
-available in the current build.** With that PR, multiple signer replicas for the
-same keys **must share one `postgres` watermark store** - all replicas point at
-the same database. The Postgres store enforces the anti-double-sign guards
+For a single active instance, a durable `file` (SQLite) watermark is sufficient.
+Multiple signer replicas for the same keys **must share one `postgres`
+watermark store** - all replicas point at the same authoritative database. The
+Postgres store enforces the anti-double-sign guards
 atomically: the monotonic issue-counter guard is a single advance-if-greater SQL
 statement, so two replicas that concurrently try to advance the same key to the
 same counter cannot both succeed.
 
 Do **not** run multiple active signers against independent `mem` or
 per-instance `file` stores for the same keys - the guard would not be shared and
-double-signing becomes possible. Until #674 merges, run exactly one active
-signer per key set.
+double-signing becomes possible. PostgreSQL replication and failover are
+external to Bursa: the failover endpoint must preserve all committed rows and
+must not route replicas to independent databases.
+
+Bursa does not import watermark history from `mem` or `file` automatically.
+Move both payload and counter watermark rows during a controlled outage before
+cutting an active signer over to PostgreSQL, or enable PostgreSQL before the
+affected keys sign for the first time.
 
 ## 8. Health, readiness, metrics
 
 Unauthenticated endpoints on the signer's listener:
 
 - `GET /healthz` - liveness (always 200 while the process runs).
-- `GET /readyz` - **currently a static 200**, identical to `/healthz`: the
-  handler in `internal/signer/api/server.go` writes `200` unconditionally and
-  checks no dependency. It confirms the process is listening and nothing more.
-  Do **not** use it as a load-balancer readiness gate expecting dependency
-  awareness - a replica whose watermark store is dead still returns 200 and
-  would stay in rotation.
+- `GET /readyz` - pings the configured SQLite or PostgreSQL watermark store
+  with a three-second timeout. It returns 503 while that dependency is
+  unreachable and 200 for a healthy store. The in-memory store has no external
+  dependency and is always ready after startup.
 - `GET /metrics` - Prometheus exposition.
 
-A dependency-checking `/readyz` - backends built at boot plus a ping of the
-watermark store, bounded by a 3s timeout, returning 503 when the store is
-unreachable - is implemented by PR #674 (branch `feat/signer-ha-store`)
-alongside the shared Postgres store it exists to guard. Wire `/readyz` into an
-HA load balancer only after that PR merges.
+Use `/readyz` as the HA load-balancer readiness gate so a replica whose shared
+watermark store is unavailable is removed from rotation. Custody backends are
+validated at startup but are not rechecked by `/readyz`.
 
 Metrics exported:
 

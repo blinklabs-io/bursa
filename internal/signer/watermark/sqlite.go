@@ -17,7 +17,6 @@ package watermark
 import (
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -65,6 +64,39 @@ func NewSqliteWatermark(path string) (*SqliteWatermark, error) {
 
 // Close closes the underlying database.
 func (s *SqliteWatermark) Close() error { return s.db.Close() }
+
+// Ping verifies the sqlite database can write both watermark tables. The
+// readiness writes run in a transaction that is always rolled back.
+func (s *SqliteWatermark) Ping(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin watermark readiness transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO watermark (record_key, payload_hash)
+		VALUES (?, ?)
+		ON CONFLICT(record_key) DO UPDATE
+		SET payload_hash = watermark.payload_hash
+	`, readinessProbeRecordKey, readinessProbePayloadHash); err != nil {
+		return fmt.Errorf("write payload watermark readiness probe: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO counter_watermark (record_key, counter)
+		VALUES (?, ?)
+		ON CONFLICT(record_key) DO UPDATE
+		SET counter = counter_watermark.counter
+	`, readinessProbeRecordKey, readinessProbeCounter); err != nil {
+		return fmt.Errorf("write counter watermark readiness probe: %w", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		return fmt.Errorf("rollback watermark readiness transaction: %w", err)
+	}
+	return nil
+}
 
 func (s *SqliteWatermark) Check(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error {
 	d := digest(payload)
@@ -128,11 +160,11 @@ func (s *SqliteWatermark) CounterFor(ctx context.Context, key backend.KeyHash, s
 	if err != nil {
 		return 0, false, fmt.Errorf("counter watermark lookup: %w", err)
 	}
-	raw, err := hex.DecodeString(have)
-	if err != nil || len(raw) != 8 {
+	v, err := counterDecode(have)
+	if err != nil {
 		return 0, false, fmt.Errorf("counter watermark: corrupt stored counter %q", have)
 	}
-	return binary.BigEndian.Uint64(raw), true, nil
+	return v, true, nil
 }
 
 func (s *SqliteWatermark) CheckAndCommitCounter(ctx context.Context, key backend.KeyHash, scope string, counter uint64) error {
