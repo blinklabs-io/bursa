@@ -276,6 +276,34 @@ func TestValidateAPIExposureRejectsIncompleteTLSConfiguration(t *testing.T) {
 	}
 }
 
+func TestValidateAPIExposureRequiresGCPWalletAuthentication(t *testing.T) {
+	cfg := &config.Config{
+		Google: config.GoogleConfig{Project: "project", ResourceId: "resource"},
+		Api:    config.ApiConfig{ListenAddress: "127.0.0.1"},
+	}
+
+	assert.ErrorContains(
+		t,
+		validateAPIExposure(cfg, nil),
+		"authentication is required",
+	)
+
+	auth := signerapi.HS256Validator(
+		[]byte("01234567890123456789012345678901"), "", "",
+	)
+	assert.ErrorContains(
+		t,
+		validateAPIExposure(cfg, auth),
+		"jwt_admin_subjects",
+	)
+	cfg.Api.JWTAdminSubjects = []string{""}
+	assert.ErrorContains(
+		t,
+		validateAPIExposure(cfg, auth),
+		"jwt_admin_subjects",
+	)
+}
+
 func TestStartRejectsUnauthenticatedNonLoopbackAPI(t *testing.T) {
 	cfg := &config.Config{Api: config.ApiConfig{ListenAddress: "0.0.0.0"}}
 
@@ -497,6 +525,32 @@ func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestGCPWalletRoutesFailClosedWithoutAuth(t *testing.T) {
+	cfg := &config.Config{
+		Google: config.GoogleConfig{Project: "project", ResourceId: "resource"},
+	}
+	store := &fakeLegacyWalletStore{
+		wallets: map[string]*bursa.Wallet{
+			"secret": {Mnemonic: "sensitive mnemonic"},
+		},
+		descriptions: make(map[string]string),
+	}
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, cfg, nil, store)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/wallet/get",
+		strings.NewReader(`{"name":"secret"}`),
+	)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Equal(t, "Bearer", rec.Header().Get("WWW-Authenticate"))
+	assert.NotContains(t, rec.Body.String(), "sensitive mnemonic")
 }
 
 func TestGCPWalletRoutesAuthorizedOperations(t *testing.T) {

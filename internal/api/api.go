@@ -701,7 +701,10 @@ func protectWalletStorageHandler(
 	next http.Handler,
 ) http.Handler {
 	if auth == nil {
-		return next
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeError(w, http.StatusUnauthorized, errors.New("wallet storage authentication required"))
+		})
 	}
 	admins := make(map[string]struct{}, len(adminSubjects))
 	for _, subject := range adminSubjects {
@@ -747,8 +750,20 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 			cfg.Api.ListenAddress,
 		)
 	}
-	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" && auth != nil && len(cfg.Api.JWTAdminSubjects) == 0 {
-		return errors.New("api.jwt_admin_subjects must identify at least one administrator when authenticated GCP wallet storage is enabled")
+	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+		if auth == nil {
+			return errors.New("API JWT/JWKS authentication is required when GCP wallet storage is enabled")
+		}
+		hasAdmin := false
+		for _, subject := range cfg.Api.JWTAdminSubjects {
+			if subject != "" {
+				hasAdmin = true
+				break
+			}
+		}
+		if !hasAdmin {
+			return errors.New("api.jwt_admin_subjects must identify at least one administrator when authenticated GCP wallet storage is enabled")
+		}
 	}
 	return nil
 }
