@@ -4,9 +4,9 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Address** | **string** |  |
-**Payload** | **string** |  |
-**SigningKey** | **string** |  |
+**Address** | **string** | Address is a hex-encoded address. |
+**Payload** | **string** | Payload is a hex-encoded message payload. |
+**SigningKey** | **string** | SigningKey identifies the signing key. |
 
 ## Methods
 

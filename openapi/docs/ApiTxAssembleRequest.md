@@ -5,7 +5,7 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **TxCbor** | **string** | raw hex CBOR or JSON text envelope |
-**Witnesses** | **[]string** |  |
+**Witnesses** | **[]string** | Witnesses are hex-encoded transaction witnesses. |
 
 ## Methods
 

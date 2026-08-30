@@ -9,7 +9,7 @@ Name | Type | Description | Notes
 **CommitteeColdId** | Pointer to **int32** |  | [optional]
 **CommitteeHotId** | Pointer to **int32** |  | [optional]
 **DrepId** | Pointer to **int32** |  | [optional]
-**Mnemonic** | **string** |  |
+**Mnemonic** | **string** | Mnemonic is a BIP39 mnemonic phrase. |
 **Password** | Pointer to **string** |  | [optional]
 **PaymentId** | Pointer to **int32** |  | [optional]
 **PoolColdId** | Pointer to **int32** |  | [optional]

@@ -334,6 +334,7 @@ type WalletGetRequest struct {
 
 // WalletRestoreRequest defines the request payload for wallet restoration
 type WalletRestoreRequest struct {
+	// Mnemonic is a BIP39 mnemonic phrase.
 	Mnemonic        string `json:"mnemonic"          validate:"required,min=1"`
 	Password        string `json:"password"` //nolint:gosec // G117: password field is intentional
 	AccountId       uint32 `json:"account_id"        validate:"max=2147483647"`
@@ -466,6 +467,7 @@ type TxWitnessRequest struct {
 // TxAssembleRequest defines the request payload for transaction assembly
 type TxAssembleRequest struct {
 	TxCbor    string   `json:"tx_cbor"   validate:"required"` // raw hex CBOR or JSON text envelope
+	// Witnesses are hex-encoded transaction witnesses.
 	Witnesses []string `json:"witnesses" validate:"required,min=1,dive,required,hexadecimal"`
 }
 
@@ -491,8 +493,11 @@ type AddressEnumerateRequest struct {
 
 // SignDataRequest defines the request payload for CIP-8/CIP-30 message signing
 type SignDataRequest struct {
+	// Address is a hex-encoded address.
 	Address    string `json:"address"     validate:"required,hexadecimal"`
+	// Payload is a hex-encoded message payload.
 	Payload    string `json:"payload"     validate:"required,hexadecimal"`
+	// SigningKey identifies the signing key.
 	SigningKey string `json:"signing_key" validate:"required"`
 }
 

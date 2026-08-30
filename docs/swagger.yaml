@@ -228,10 +228,13 @@ definitions:
   api.SignDataRequest:
     properties:
       address:
+        description: Address is a hex-encoded address.
         type: string
       payload:
+        description: Payload is a hex-encoded message payload.
         type: string
       signing_key:
+        description: SigningKey identifies the signing key.
         type: string
     required:
     - address
@@ -251,6 +254,7 @@ definitions:
         description: raw hex CBOR or JSON text envelope
         type: string
       witnesses:
+        description: Witnesses are hex-encoded transaction witnesses.
         items:
           type: string
         minItems: 1
@@ -375,6 +379,7 @@ definitions:
         maximum: 2147483647
         type: integer
       mnemonic:
+        description: Mnemonic is a BIP39 mnemonic phrase.
         minLength: 1
         type: string
       password:
