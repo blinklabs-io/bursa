@@ -334,6 +334,7 @@ type WalletGetRequest struct {
 
 // WalletRestoreRequest defines the request payload for wallet restoration
 type WalletRestoreRequest struct {
+	// Mnemonic is a BIP39 mnemonic phrase.
 	Mnemonic        string `json:"mnemonic"          validate:"required,min=1"`
 	Password        string `json:"password"` //nolint:gosec // G117: password field is intentional
 	AccountId       uint32 `json:"account_id"        validate:"max=2147483647"`
@@ -465,7 +466,8 @@ type TxWitnessRequest struct {
 
 // TxAssembleRequest defines the request payload for transaction assembly
 type TxAssembleRequest struct {
-	TxCbor    string   `json:"tx_cbor"   validate:"required"` // raw hex CBOR or JSON text envelope
+	TxCbor string `json:"tx_cbor"   validate:"required"` // raw hex CBOR or JSON text envelope
+	// Witnesses are hex-encoded transaction witnesses.
 	Witnesses []string `json:"witnesses" validate:"required,min=1,dive,required,hexadecimal"`
 }
 
@@ -491,8 +493,11 @@ type AddressEnumerateRequest struct {
 
 // SignDataRequest defines the request payload for CIP-8/CIP-30 message signing
 type SignDataRequest struct {
-	Address    string `json:"address"     validate:"required,hexadecimal"`
-	Payload    string `json:"payload"     validate:"required,hexadecimal"`
+	// Address is a hex-encoded address.
+	Address string `json:"address"     validate:"required,hexadecimal"`
+	// Payload is a hex-encoded message payload.
+	Payload string `json:"payload"     validate:"required,hexadecimal"`
+	// SigningKey identifies the signing key.
 	SigningKey string `json:"signing_key" validate:"required"`
 }
 
@@ -528,6 +533,73 @@ type TxIDResponse struct {
 // TxWitnessResponse defines the response payload for witness generation
 type TxWitnessResponse struct {
 	Witness string `json:"witness"`
+}
+
+type legacyWalletStore interface {
+	List(context.Context) ([]string, error)
+	Get(context.Context, string) (*bursa.Wallet, error)
+	Update(context.Context, string, string) (bool, error)
+	Delete(context.Context, string) error
+}
+
+type gcpLegacyWalletStore struct{}
+
+func (gcpLegacyWalletStore) List(ctx context.Context) ([]string, error) {
+	return gcp.ListGoogleWallets(ctx, nil)
+}
+
+func (gcpLegacyWalletStore) Get(ctx context.Context, name string) (*bursa.Wallet, error) {
+	wallet := bursa.Wallet{}
+	stored := gcp.NewGoogleWallet(name)
+	if err := stored.Load(ctx); err != nil {
+		return nil, err
+	}
+	if err := stored.PopulateTo(&wallet); err != nil {
+		return nil, err
+	}
+	return &wallet, nil
+}
+
+func (gcpLegacyWalletStore) Update(
+	ctx context.Context,
+	name,
+	description string,
+) (bool, error) {
+	stored := gcp.NewGoogleWallet(name)
+	if err := stored.Load(ctx); err != nil {
+		return false, err
+	}
+	if stored.Description() == description {
+		return false, nil
+	}
+	stored.SetDescription(description)
+	if err := stored.Save(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (gcpLegacyWalletStore) Delete(ctx context.Context, name string) error {
+	return gcp.NewGoogleWallet(name).Delete(ctx)
+}
+
+type legacyWalletStoreContextKey struct{}
+
+func legacyStore(r *http.Request) legacyWalletStore {
+	if store, ok := r.Context().Value(legacyWalletStoreContextKey{}).(legacyWalletStore); ok {
+		return store
+	}
+	return gcpLegacyWalletStore{}
+}
+
+func withLegacyStore(store legacyWalletStore, next http.Handler) http.Handler {
+	if store == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), legacyWalletStoreContextKey{}, store)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 //	@title						bursa
@@ -628,6 +700,32 @@ func protectAPIHandler(auth signerapi.Validator, next http.Handler) http.Handler
 	)
 }
 
+func protectWalletStorageHandler(
+	auth signerapi.Validator,
+	adminSubjects []string,
+	next http.Handler,
+) http.Handler {
+	if auth == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeError(w, http.StatusUnauthorized, errors.New("wallet storage authentication required"))
+		})
+	}
+	admins := make(map[string]struct{}, len(adminSubjects))
+	for _, subject := range adminSubjects {
+		if subject != "" {
+			admins[subject] = struct{}{}
+		}
+	}
+	return protectAPIHandler(auth, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := admins[signerapi.CallerFromContext(r.Context())]; !ok {
+			writeError(w, http.StatusForbidden, errors.New("wallet storage administrator access required"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
 func apiTLSConfigured(cfg *config.Config) (bool, error) {
 	if cfg == nil {
 		return false, errors.New("API configuration is required")
@@ -657,6 +755,21 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 			cfg.Api.ListenAddress,
 		)
 	}
+	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+		if auth == nil {
+			return errors.New("API JWT/JWKS authentication is required when GCP wallet storage is enabled")
+		}
+		hasAdmin := false
+		for _, subject := range cfg.Api.JWTAdminSubjects {
+			if subject != "" {
+				hasAdmin = true
+				break
+			}
+		}
+		if !hasAdmin {
+			return errors.New("api.jwt_admin_subjects must identify at least one administrator when authenticated GCP wallet storage is enabled")
+		}
+	}
 	return nil
 }
 
@@ -672,7 +785,12 @@ func registerAPIHandlers(
 	mux *http.ServeMux,
 	cfg *config.Config,
 	auth signerapi.Validator,
+	stores ...legacyWalletStore,
 ) {
+	var store legacyWalletStore
+	if len(stores) > 0 {
+		store = stores[0]
+	}
 	// Health and documentation routes do not expose wallet material.
 	mux.HandleFunc("/healthcheck", handleHealthcheck)
 	mux.Handle("/metrics", promhttp.Handler())
@@ -702,10 +820,13 @@ func registerAPIHandlers(
 	mux.HandleFunc("/api/sign/verify", handleVerifyData)
 
 	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
-		mux.Handle("/api/wallet/list", protected(http.HandlerFunc(handleWalletList)))
-		mux.Handle("/api/wallet/get", protected(http.HandlerFunc(handleWalletGet)))
-		mux.Handle("/api/wallet/update", protected(http.HandlerFunc(handleWalletUpdate)))
-		mux.Handle("/api/wallet/delete", protected(http.HandlerFunc(handleWalletDelete)))
+		walletStorage := func(next http.Handler) http.Handler {
+			return withLegacyStore(store, protectWalletStorageHandler(auth, cfg.Api.JWTAdminSubjects, next))
+		}
+		mux.Handle("/api/wallet/list", walletStorage(http.HandlerFunc(handleWalletList)))
+		mux.Handle("/api/wallet/get", walletStorage(http.HandlerFunc(handleWalletGet)))
+		mux.Handle("/api/wallet/update", walletStorage(http.HandlerFunc(handleWalletUpdate)))
+		mux.Handle("/api/wallet/delete", walletStorage(http.HandlerFunc(handleWalletDelete)))
 	}
 }
 
@@ -737,7 +858,7 @@ func Start(
 	// Main HTTP server for API endpoints
 	//
 	mainMux := http.NewServeMux()
-	registerAPIHandlers(mainMux, cfg, apiAuth)
+	registerAPIHandlers(mainMux, cfg, apiAuth, gcpLegacyWalletStore{})
 
 	// Wrap the mainMux with an access-logging middleware
 	mainHandler := logMiddleware(mainMux, accessLogger)
@@ -1052,9 +1173,11 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 // handleWalletList godoc
 //
 //	@Summary		Lists wallets
-//	@Description	List all wallets stored in secret storage matching our prefix
+//	@Description	List all wallets stored in secret storage matching our prefix. Requires an authenticated wallet storage administrator.
 //	@Produce		json
-//	@Success		200	{object}	[]string	"Ok"
+//	@Success		200	{object}	[]string		"Ok"
+//	@Failure		401	{object}	ErrorResponse	"Authentication required"
+//	@Failure		403	{object}	ErrorResponse	"Wallet storage administrator access required"
 //	@Security		BearerAuth
 //	@Router			/api/wallet/list [get]
 func handleWalletList(w http.ResponseWriter, r *http.Request) {
@@ -1065,7 +1188,7 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 
 	logger := logging.GetLogger()
 
-	wallets, err := gcp.ListGoogleWallets(r.Context(), nil)
+	wallets, err := legacyStore(r).List(r.Context())
 	if err != nil {
 		logger.Error("failed to load google wallets", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1092,12 +1215,14 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 // handleWalletGet handles the wallet get request.
 //
 //	@Summary		Get wallet from persistent storage
-//	@Description	Gets a wallet from persistent storage and optional password and returns wallet details.
+//	@Description	Gets a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WalletGetRequest	true	"Wallet Restore Request"
 //	@Success		200		{object}	bursa.Wallet		"Wallet successfully loaded"
 //	@Failure		400		{object}	ErrorResponse		"Invalid request"
+//	@Failure		401		{object}	ErrorResponse		"Authentication required"
+//	@Failure		403		{object}	ErrorResponse		"Wallet storage administrator access required"
 //	@Failure		500		{object}	ErrorResponse		"Internal server error"
 //	@Security		BearerAuth
 //	@Router			/api/wallet/get [post]
@@ -1117,8 +1242,8 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 	logger := logging.GetLogger()
 
 	// Load wallet from Google
-	g := gcp.NewGoogleWallet(req.Name)
-	if err := g.Load(r.Context()); err != nil {
+	wallet, err := legacyStore(r).Get(r.Context(), req.Name)
+	if err != nil {
 		logger.Error(
 			"failed to load google wallet",
 			"error",
@@ -1140,19 +1265,6 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Populate bursa wallet
-	wallet := &bursa.Wallet{}
-	err := g.PopulateTo(wallet)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		logger.Error("failed to convert google wallet", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = fmt.Fprintf(w,
-			"failed to convert google wallet: %s", err)
-		walletsFailCounter.Inc()
-		return
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	resp, err := json.Marshal(wallet)
 	if err != nil {
@@ -1170,12 +1282,14 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 // handleWalletDelete handles the wallet delete request.
 //
 //	@Summary		Delete wallet from persistent storage
-//	@Description	Deletes a wallet from persistent storage and optional password.
+//	@Description	Deletes a wallet from persistent storage and optional password. Requires an authenticated wallet storage administrator.
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WalletDeleteRequest	true	"Wallet Delete Request"
 //	@Success		200		{object}	string				"Wallet successfully deleted"
 //	@Failure		400		{object}	ErrorResponse		"Invalid request"
+//	@Failure		401		{object}	ErrorResponse		"Authentication required"
+//	@Failure		403		{object}	ErrorResponse		"Wallet storage administrator access required"
 //	@Failure		500		{object}	ErrorResponse		"Internal server error"
 //	@Security		BearerAuth
 //	@Router			/api/wallet/delete [post]
@@ -1194,8 +1308,7 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 	logger := logging.GetLogger()
 
 	// Load wallet from Google
-	g := gcp.NewGoogleWallet(req.Name)
-	if err := g.Delete(r.Context()); err != nil {
+	if err := legacyStore(r).Delete(r.Context(), req.Name); err != nil {
 		logger.Error(
 			"failed to delete google wallet",
 			"error",
@@ -1226,12 +1339,14 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 // handleWalletUpdate handles the wallet update request.
 //
 //	@Summary		Update a wallet in persistent storage
-//	@Description	Updates a wallet from persistent storage and optional password and returns wallet details.
+//	@Description	Updates a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WalletUpdateRequest	true	"Wallet Update Request"
 //	@Success		200		{object}	string				"Wallet successfully updated"
 //	@Failure		400		{string}	string				"Invalid request"
+//	@Failure		401		{object}	ErrorResponse		"Authentication required"
+//	@Failure		403		{object}	ErrorResponse		"Wallet storage administrator access required"
 //	@Failure		500		{string}	string				"Internal server error"
 //	@Security		BearerAuth
 //	@Router			/api/wallet/update [post]
@@ -1250,8 +1365,12 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 	logger := logging.GetLogger()
 
 	// Load wallet from Google
-	g := gcp.NewGoogleWallet(req.Name)
-	if err := g.Load(r.Context()); err != nil {
+	updated, err := legacyStore(r).Update(
+		r.Context(),
+		req.Name,
+		req.Description,
+	)
+	if err != nil {
 		logger.Error(
 			"failed to load google wallet",
 			"error",
@@ -1273,18 +1392,7 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if g.Description() != req.Description {
-		g.SetDescription(req.Description)
-		if err := g.Save(r.Context()); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			logger.Error("failed to save google wallet", "error", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprintf(w,
-				"failed to save google wallet: %s", err)
-			walletsFailCounter.Inc()
-			return
-		}
-		// Increment update counter
+	if updated {
 		walletsUpdatedCounter.Inc()
 	}
 

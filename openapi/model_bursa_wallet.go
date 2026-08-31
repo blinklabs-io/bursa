@@ -34,6 +34,9 @@ type BursaWallet struct {
 	PaymentExtendedSkey       *BursaKeyFile `json:"payment_extended_skey,omitempty"`
 	PaymentSkey               *BursaKeyFile `json:"payment_skey,omitempty"`
 	PaymentVkey               *BursaKeyFile `json:"payment_vkey,omitempty"`
+	PoolColdExtendedSkey      *BursaKeyFile `json:"pool_cold_extended_skey,omitempty"`
+	PoolColdSkey              *BursaKeyFile `json:"pool_cold_skey,omitempty"`
+	PoolColdVkey              *BursaKeyFile `json:"pool_cold_vkey,omitempty"`
 	StakeAddress              *string       `json:"stake_address,omitempty"`
 	StakeExtendedSkey         *BursaKeyFile `json:"stake_extended_skey,omitempty"`
 	StakeSkey                 *BursaKeyFile `json:"stake_skey,omitempty"`
@@ -505,6 +508,102 @@ func (o *BursaWallet) SetPaymentVkey(v BursaKeyFile) {
 	o.PaymentVkey = &v
 }
 
+// GetPoolColdExtendedSkey returns the PoolColdExtendedSkey field value if set, zero value otherwise.
+func (o *BursaWallet) GetPoolColdExtendedSkey() BursaKeyFile {
+	if o == nil || IsNil(o.PoolColdExtendedSkey) {
+		var ret BursaKeyFile
+		return ret
+	}
+	return *o.PoolColdExtendedSkey
+}
+
+// GetPoolColdExtendedSkeyOk returns a tuple with the PoolColdExtendedSkey field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaWallet) GetPoolColdExtendedSkeyOk() (*BursaKeyFile, bool) {
+	if o == nil || IsNil(o.PoolColdExtendedSkey) {
+		return nil, false
+	}
+	return o.PoolColdExtendedSkey, true
+}
+
+// HasPoolColdExtendedSkey returns a boolean if a field has been set.
+func (o *BursaWallet) HasPoolColdExtendedSkey() bool {
+	if o != nil && !IsNil(o.PoolColdExtendedSkey) {
+		return true
+	}
+
+	return false
+}
+
+// SetPoolColdExtendedSkey gets a reference to the given BursaKeyFile and assigns it to the PoolColdExtendedSkey field.
+func (o *BursaWallet) SetPoolColdExtendedSkey(v BursaKeyFile) {
+	o.PoolColdExtendedSkey = &v
+}
+
+// GetPoolColdSkey returns the PoolColdSkey field value if set, zero value otherwise.
+func (o *BursaWallet) GetPoolColdSkey() BursaKeyFile {
+	if o == nil || IsNil(o.PoolColdSkey) {
+		var ret BursaKeyFile
+		return ret
+	}
+	return *o.PoolColdSkey
+}
+
+// GetPoolColdSkeyOk returns a tuple with the PoolColdSkey field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaWallet) GetPoolColdSkeyOk() (*BursaKeyFile, bool) {
+	if o == nil || IsNil(o.PoolColdSkey) {
+		return nil, false
+	}
+	return o.PoolColdSkey, true
+}
+
+// HasPoolColdSkey returns a boolean if a field has been set.
+func (o *BursaWallet) HasPoolColdSkey() bool {
+	if o != nil && !IsNil(o.PoolColdSkey) {
+		return true
+	}
+
+	return false
+}
+
+// SetPoolColdSkey gets a reference to the given BursaKeyFile and assigns it to the PoolColdSkey field.
+func (o *BursaWallet) SetPoolColdSkey(v BursaKeyFile) {
+	o.PoolColdSkey = &v
+}
+
+// GetPoolColdVkey returns the PoolColdVkey field value if set, zero value otherwise.
+func (o *BursaWallet) GetPoolColdVkey() BursaKeyFile {
+	if o == nil || IsNil(o.PoolColdVkey) {
+		var ret BursaKeyFile
+		return ret
+	}
+	return *o.PoolColdVkey
+}
+
+// GetPoolColdVkeyOk returns a tuple with the PoolColdVkey field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaWallet) GetPoolColdVkeyOk() (*BursaKeyFile, bool) {
+	if o == nil || IsNil(o.PoolColdVkey) {
+		return nil, false
+	}
+	return o.PoolColdVkey, true
+}
+
+// HasPoolColdVkey returns a boolean if a field has been set.
+func (o *BursaWallet) HasPoolColdVkey() bool {
+	if o != nil && !IsNil(o.PoolColdVkey) {
+		return true
+	}
+
+	return false
+}
+
+// SetPoolColdVkey gets a reference to the given BursaKeyFile and assigns it to the PoolColdVkey field.
+func (o *BursaWallet) SetPoolColdVkey(v BursaKeyFile) {
+	o.PoolColdVkey = &v
+}
+
 // GetStakeAddress returns the StakeAddress field value if set, zero value otherwise.
 func (o *BursaWallet) GetStakeAddress() string {
 	if o == nil || IsNil(o.StakeAddress) {
@@ -684,6 +783,15 @@ func (o BursaWallet) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.PaymentVkey) {
 		toSerialize["payment_vkey"] = o.PaymentVkey
+	}
+	if !IsNil(o.PoolColdExtendedSkey) {
+		toSerialize["pool_cold_extended_skey"] = o.PoolColdExtendedSkey
+	}
+	if !IsNil(o.PoolColdSkey) {
+		toSerialize["pool_cold_skey"] = o.PoolColdSkey
+	}
+	if !IsNil(o.PoolColdVkey) {
+		toSerialize["pool_cold_vkey"] = o.PoolColdVkey
 	}
 	if !IsNil(o.StakeAddress) {
 		toSerialize["stake_address"] = o.StakeAddress

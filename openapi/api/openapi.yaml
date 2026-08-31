@@ -13,6 +13,98 @@ info:
 servers:
 - url: /
 paths:
+  /api/address/build:
+    post:
+      description: Builds a Cardano address from verification keys
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.AddressBuildRequest"
+        description: Address Build Request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.AddressBuildResponse"
+          description: Address built successfully
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Invalid request or keys
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Internal server error
+      summary: Build Cardano address
+      x-codegen-request-body-name: request
+  /api/address/enumerate:
+    post:
+      description: Derives consecutive base addresses from a mnemonic for the given
+        account and network
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.AddressEnumerateRequest"
+        description: Address Enumerate Request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/bursa.EnumeratedAddress"
+                type: array
+          description: Enumerated addresses
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Invalid request
+      security:
+      - BearerAuth: []
+      summary: Enumerate derived addresses for a wallet
+      x-codegen-request-body-name: request
+  /api/address/parse:
+    post:
+      description: Parses a Cardano address and returns its components and metadata
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.AddressParseRequest"
+        description: Address Parse Request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.AddressParseResponse"
+          description: Address parsed successfully
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Invalid request or address
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Internal server error
+      summary: Parse Cardano address
+      x-codegen-request-body-name: request
   /api/script/address:
     post:
       description: Generate an address for a script on the specified network
@@ -106,42 +198,214 @@ paths:
           description: Internal server error
       summary: Validate a script
       x-codegen-request-body-name: request
-  /api/address/build:
+  /api/sign/data:
     post:
-      description: Build a Cardano address from verification keys
+      description: "Sign a payload using a signing key, producing a COSE_Sign1 structure"
       requestBody:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/api.AddressBuildRequest"
-        description: Address Build Request
+              $ref: "#/components/schemas/api.SignDataRequest"
+        description: Sign Data Request
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/api.AddressBuildResponse"
-          description: Address built successfully
+                $ref: "#/components/schemas/api.SignDataResponse"
+          description: COSE_Sign1 signature and COSE_Key
         "400":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/api.ErrorResponse"
-          description: Invalid request or keys
+          description: Bad Request
         "500":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/api.ErrorResponse"
-          description: Internal server error
-      summary: Build Cardano address
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Sign a message (CIP-8/CIP-30 signData)
+      x-codegen-request-body-name: request
+  /api/sign/verify:
+    post:
+      description: Verify a COSE_Sign1 signature against a COSE_Key and expected payload
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.VerifyDataRequest"
+        description: Verify Data Request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.VerifyDataResponse"
+          description: Verification result
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Bad Request
+      summary: Verify a CIP-8/CIP-30 signData signature
+      x-codegen-request-body-name: request
+  /api/tx/assemble:
+    post:
+      description: Merge detached witnesses into a transaction
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.TxAssembleRequest"
+        description: Transaction + witnesses
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.TxCborResponse"
+          description: Assembled signed transaction
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Internal Server Error
+      summary: Assemble a signed transaction
+      x-codegen-request-body-name: request
+  /api/tx/decode:
+    post:
+      description: Decode and inspect a transaction
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.TxDecodeRequest"
+        description: Transaction
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/bursa.TxInspection"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Bad Request
+      summary: Decode a transaction
+      x-codegen-request-body-name: request
+  /api/tx/id:
+    post:
+      description: Calculate the transaction id from a transaction body
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.TxIDRequest"
+        description: Transaction
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.TxIDResponse"
+          description: Transaction id
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Bad Request
+      summary: Get a transaction id
+      x-codegen-request-body-name: request
+  /api/tx/sign:
+    post:
+      description: Add vkey witnesses for the provided signing keys (body preserved)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.TxSignRequest"
+        description: Transaction + signing keys
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.TxCborResponse"
+          description: Signed transaction
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Sign a transaction
+      x-codegen-request-body-name: request
+  /api/tx/witness:
+    post:
+      description: Produce a detached vkey witness for a transaction body
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/api.TxWitnessRequest"
+        description: Transaction + signing key
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.TxWitnessResponse"
+          description: Detached witness
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Produce a transaction witness
       x-codegen-request-body-name: request
   /api/wallet/create:
     post:
       description: Create a wallet and return details
-      security:
-      - BearerAuth: []
       responses:
         "200":
           content:
@@ -149,12 +413,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/bursa.Wallet"
           description: Ok
+      security:
+      - BearerAuth: []
       summary: Create a wallet
   /api/wallet/delete:
     post:
       description: Deletes a wallet from persistent storage and optional password.
-      security:
-      - BearerAuth: []
+        Requires an authenticated wallet storage administrator.
       requestBody:
         content:
           application/json:
@@ -175,20 +440,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/api.ErrorResponse"
           description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Authentication required
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Wallet storage administrator access required
         "500":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/api.ErrorResponse"
           description: Internal server error
+      security:
+      - BearerAuth: []
       summary: Delete wallet from persistent storage
       x-codegen-request-body-name: request
   /api/wallet/get:
     post:
       description: Gets a wallet from persistent storage and optional password and
-        returns wallet details.
-      security:
-      - BearerAuth: []
+        returns wallet details. Requires an authenticated wallet storage administrator.
       requestBody:
         content:
           application/json:
@@ -209,19 +486,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/api.ErrorResponse"
           description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Authentication required
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Wallet storage administrator access required
         "500":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/api.ErrorResponse"
           description: Internal server error
+      security:
+      - BearerAuth: []
       summary: Get wallet from persistent storage
       x-codegen-request-body-name: request
   /api/wallet/list:
     get:
-      description: List all wallets stored in secret storage matching our prefix
-      security:
-      - BearerAuth: []
+      description: List all wallets stored in secret storage matching our prefix.
+        Requires an authenticated wallet storage administrator.
       responses:
         "200":
           content:
@@ -231,13 +521,25 @@ paths:
                   type: string
                 type: array
           description: Ok
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Authentication required
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Wallet storage administrator access required
+      security:
+      - BearerAuth: []
       summary: Lists wallets
   /api/wallet/restore:
     post:
       description: Restores a wallet using the provided mnemonic seed phrase and optional
         password and returns wallet details.
-      security:
-      - BearerAuth: []
       requestBody:
         content:
           application/json:
@@ -264,14 +566,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/api.ErrorResponse"
           description: Internal server error
+      security:
+      - BearerAuth: []
       summary: Restore a wallet using a mnemonic seed phrase
       x-codegen-request-body-name: request
   /api/wallet/update:
     post:
       description: Updates a wallet from persistent storage and optional password
-        and returns wallet details.
-      security:
-      - BearerAuth: []
+        and returns wallet details. Requires an authenticated wallet storage administrator.
       requestBody:
         content:
           application/json:
@@ -292,21 +594,166 @@ paths:
               schema:
                 type: string
           description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Authentication required
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Wallet storage administrator access required
         "500":
           content:
             application/json:
               schema:
                 type: string
           description: Internal server error
+      security:
+      - BearerAuth: []
       summary: Update a wallet in persistent storage
       x-codegen-request-body-name: request
 components:
-  securitySchemes:
-    BearerAuth:
-      bearerFormat: JWT
-      scheme: bearer
-      type: http
   schemas:
+    api.AddressBuildRequest:
+      properties:
+        network:
+          enum:
+          - mainnet
+          - testnet
+          type: string
+        paymentKey:
+          description: bech32-encoded verification key (required for base and enterprise
+            address types)
+          type: string
+        stakeKey:
+          description: bech32-encoded verification key (required for base and reward
+            address types)
+          type: string
+        type:
+          description: "defaults to \"base\" - determines which keys are required:\
+            \ base requires both paymentKey and stakeKey, enterprise requires paymentKey\
+            \ only, reward requires stakeKey only"
+          enum:
+          - base
+          - enterprise
+          - reward
+          type: string
+      required:
+      - network
+      type: object
+    api.AddressBuildResponse:
+      example:
+        address: address
+        type: type
+        network: network
+      properties:
+        address:
+          type: string
+        network:
+          type: string
+        type:
+          type: string
+      type: object
+    api.AddressEnumerateRequest:
+      properties:
+        account:
+          maximum: 2147483647
+          type: integer
+        count:
+          maximum: 1000
+          minimum: 1
+          type: integer
+        mnemonic:
+          type: string
+        network:
+          enum:
+          - mainnet
+          - preprod
+          - preview
+          type: string
+        password:
+          type: string
+        start:
+          maximum: 2147483647
+          type: integer
+      required:
+      - count
+      - mnemonic
+      - network
+      type: object
+    api.AddressParseRequest:
+      properties:
+        address:
+          type: string
+      required:
+      - address
+      type: object
+    api.AddressParseResponse:
+      example:
+        stake:
+          hex: hex
+          type: type
+          bech32: bech32
+        pointer:
+          certIndex: 0
+          slot: 6
+          txIndex: 1
+        address: address
+        byron:
+          type: type
+        payment:
+          hex: hex
+          type: type
+          bech32: bech32
+        typeDescription: typeDescription
+        type: type
+        network: network
+      properties:
+        address:
+          type: string
+        byron:
+          $ref: "#/components/schemas/api.ByronAddressInfo"
+        network:
+          type: string
+        payment:
+          $ref: "#/components/schemas/api.CredentialInfo"
+        pointer:
+          $ref: "#/components/schemas/api.PointerInfo"
+        stake:
+          $ref: "#/components/schemas/api.CredentialInfo"
+        type:
+          type: string
+        typeDescription:
+          type: string
+      type: object
+    api.ByronAddressInfo:
+      example:
+        type: type
+      properties:
+        type:
+          description: "\"pubkey\", \"script\", or \"redeem\""
+          type: string
+      type: object
+    api.CredentialInfo:
+      example:
+        hex: hex
+        type: type
+        bech32: bech32
+      properties:
+        bech32:
+          description: bech32-encoded credential
+          type: string
+        hex:
+          description: hex-encoded credential
+          type: string
+        type:
+          description: '"key" or "script"'
+          type: string
+      type: object
     api.ErrorResponse:
       example:
         error: error
@@ -320,13 +767,26 @@ components:
             type: string
           type: object
       type: object
+    api.PointerInfo:
+      example:
+        certIndex: 0
+        slot: 6
+        txIndex: 1
+      properties:
+        certIndex:
+          type: integer
+        slot:
+          format: int64
+          type: integer
+        txIndex:
+          type: integer
+      type: object
     api.ScriptAddressRequest:
       properties:
         network:
           enum:
           - mainnet
-          - preprod
-          - preview
+          - testnet
           type: string
         script:
           additionalProperties:
@@ -359,8 +819,7 @@ components:
         network:
           enum:
           - mainnet
-          - preprod
-          - preview
+          - testnet
           type: string
         required:
           minimum: 1
@@ -436,91 +895,127 @@ components:
         valid:
           type: boolean
       type: object
-    api.AddressBuildRequest:
-      oneOf:
-      - $ref: "#/components/schemas/api.AddressBuildRequestBase"
-      - $ref: "#/components/schemas/api.AddressBuildRequestEnterprise"
-      - $ref: "#/components/schemas/api.AddressBuildRequestReward"
-      discriminator:
-        propertyName: type
-        mapping:
-          base: "#/components/schemas/api.AddressBuildRequestBase"
-          enterprise: "#/components/schemas/api.AddressBuildRequestEnterprise"
-          reward: "#/components/schemas/api.AddressBuildRequestReward"
-    api.AddressBuildRequestBase:
-      properties:
-        network:
-          enum:
-          - mainnet
-          - preprod
-          - preview
-          type: string
-        paymentKey:
-          description: bech32-encoded verification key
-          type: string
-        stakeKey:
-          description: bech32-encoded verification key
-          type: string
-        type:
-          description: Address type (defaults to "base")
-          enum:
-          - base
-          type: string
-      required:
-      - network
-      - paymentKey
-      - stakeKey
-      type: object
-    api.AddressBuildRequestEnterprise:
-      properties:
-        network:
-          enum:
-          - mainnet
-          - preprod
-          - preview
-          type: string
-        paymentKey:
-          description: bech32-encoded verification key
-          type: string
-        type:
-          description: Address type
-          enum:
-          - enterprise
-          type: string
-      required:
-      - network
-      - paymentKey
-      - type
-      type: object
-    api.AddressBuildRequestReward:
-      properties:
-        network:
-          enum:
-          - mainnet
-          - preprod
-          - preview
-          type: string
-        stakeKey:
-          description: bech32-encoded verification key
-          type: string
-        type:
-          description: Address type
-          enum:
-          - reward
-          type: string
-      required:
-      - network
-      - stakeKey
-      - type
-      type: object
-    api.AddressBuildResponse:
+    api.SignDataRequest:
       properties:
         address:
           type: string
-        network:
+        payload:
           type: string
-        type:
+        signing_key:
           type: string
+      required:
+      - address
+      - payload
+      - signing_key
+      type: object
+    api.SignDataResponse:
+      example:
+        signature: signature
+        key: key
+      properties:
+        key:
+          type: string
+        signature:
+          type: string
+      type: object
+    api.TxAssembleRequest:
+      properties:
+        tx_cbor:
+          description: raw hex CBOR or JSON text envelope
+          type: string
+        witnesses:
+          items:
+            type: string
+          minItems: 1
+          type: array
+      required:
+      - tx_cbor
+      - witnesses
+      type: object
+    api.TxCborResponse:
+      example:
+        tx_cbor: tx_cbor
+        tx_id: tx_id
+      properties:
+        tx_cbor:
+          type: string
+        tx_id:
+          type: string
+      type: object
+    api.TxDecodeRequest:
+      properties:
+        tx_cbor:
+          description: raw hex CBOR or JSON text envelope
+          type: string
+      required:
+      - tx_cbor
+      type: object
+    api.TxIDRequest:
+      properties:
+        tx_cbor:
+          description: raw hex CBOR or JSON text envelope
+          type: string
+      required:
+      - tx_cbor
+      type: object
+    api.TxIDResponse:
+      example:
+        tx_id: tx_id
+      properties:
+        tx_id:
+          type: string
+      type: object
+    api.TxSignRequest:
+      properties:
+        signing_keys:
+          items:
+            type: string
+          minItems: 1
+          type: array
+        tx_cbor:
+          description: raw hex CBOR or JSON text envelope
+          type: string
+      required:
+      - signing_keys
+      - tx_cbor
+      type: object
+    api.TxWitnessRequest:
+      properties:
+        signing_key:
+          type: string
+        tx_cbor:
+          description: raw hex CBOR or JSON text envelope
+          type: string
+      required:
+      - signing_key
+      - tx_cbor
+      type: object
+    api.TxWitnessResponse:
+      example:
+        witness: witness
+      properties:
+        witness:
+          type: string
+      type: object
+    api.VerifyDataRequest:
+      properties:
+        key:
+          type: string
+        payload:
+          type: string
+        signature:
+          type: string
+      required:
+      - key
+      - payload
+      - signature
+      type: object
+    api.VerifyDataResponse:
+      example:
+        valid: true
+      properties:
+        valid:
+          type: boolean
       type: object
     api.WalletDeleteRequest:
       properties:
@@ -548,23 +1043,18 @@ components:
       properties:
         account_id:
           maximum: 2147483647
-          minimum: 0
           type: integer
         address_id:
           maximum: 2147483647
-          minimum: 0
           type: integer
         committee_cold_id:
           maximum: 2147483647
-          minimum: 0
           type: integer
         committee_hot_id:
           maximum: 2147483647
-          minimum: 0
           type: integer
         drep_id:
           maximum: 2147483647
-          minimum: 0
           type: integer
         mnemonic:
           minLength: 1
@@ -573,11 +1063,12 @@ components:
           type: string
         payment_id:
           maximum: 2147483647
-          minimum: 0
+          type: integer
+        pool_cold_id:
+          maximum: 2147483647
           type: integer
         stake_id:
           maximum: 2147483647
-          minimum: 0
           type: integer
       required:
       - mnemonic
@@ -596,6 +1087,16 @@ components:
       required:
       - name
       type: object
+    bursa.EnumeratedAddress:
+      example:
+        address: address
+        index: 0
+      properties:
+        address:
+          type: string
+        index:
+          type: integer
+      type: object
     bursa.KeyFile:
       example:
         description: description
@@ -609,9 +1110,122 @@ components:
         type:
           type: string
       type: object
+    bursa.TxInput:
+      example:
+        index: 6
+        tx_id: tx_id
+      properties:
+        index:
+          type: integer
+        tx_id:
+          type: string
+      type: object
+    bursa.TxInspection:
+      example:
+        outputs:
+        - address: address
+          has_assets: true
+          lovelace: lovelace
+        - address: address
+          has_assets: true
+          lovelace: lovelace
+        size_bytes: 2
+        has_mint: true
+        inputs:
+        - index: 6
+          tx_id: tx_id
+        - index: 6
+          tx_id: tx_id
+        fee: fee
+        voting_procedure_count: 2
+        tx_id: tx_id
+        ttl: 7
+        era: era
+        required_signers: 5
+        validity_interval_start: 9
+        has_metadata: true
+        is_valid: true
+        vkey_witnesses: 3
+        withdrawal_count: 4
+        certificate_count: 0
+        has_treasury_donation: true
+        native_scripts: 1
+        proposal_procedure_count: 5
+      properties:
+        certificate_count:
+          type: integer
+        era:
+          type: string
+        fee:
+          type: string
+        has_metadata:
+          type: boolean
+        has_mint:
+          type: boolean
+        has_treasury_donation:
+          type: boolean
+        inputs:
+          items:
+            $ref: "#/components/schemas/bursa.TxInput"
+          type: array
+        is_valid:
+          type: boolean
+        native_scripts:
+          type: integer
+        outputs:
+          items:
+            $ref: "#/components/schemas/bursa.TxOutput"
+          type: array
+        proposal_procedure_count:
+          type: integer
+        required_signers:
+          type: integer
+        size_bytes:
+          type: integer
+        ttl:
+          type: integer
+        tx_id:
+          type: string
+        validity_interval_start:
+          type: integer
+        vkey_witnesses:
+          type: integer
+        voting_procedure_count:
+          description: |-
+            Conway governance and treasury components. These authorize
+            high-impact actions (casting DRep/committee votes, submitting
+            governance proposals, donating to the treasury) that are independent
+            of outputs/certificates/withdrawals, so the policy engine must inspect
+            and gate them explicitly.
+          type: integer
+        withdrawal_count:
+          type: integer
+      type: object
+    bursa.TxOutput:
+      example:
+        address: address
+        has_assets: true
+        lovelace: lovelace
+      properties:
+        address:
+          type: string
+        has_assets:
+          description: |-
+            HasAssets is true when the output carries native (multi-)assets in
+            addition to lovelace. The policy engine treats native-asset movement as
+            a distinct, deny-by-default operation because lovelace limits do not
+            bound token quantities.
+          type: boolean
+        lovelace:
+          type: string
+      type: object
     bursa.Wallet:
       example:
         payment_vkey:
+          description: description
+          type: type
+          cborHex: cborHex
+        pool_cold_extended_skey:
           description: description
           type: type
           cborHex: cborHex
@@ -632,6 +1246,14 @@ components:
           type: type
           cborHex: cborHex
         drep_vkey:
+          description: description
+          type: type
+          cborHex: cborHex
+        pool_cold_vkey:
+          description: description
+          type: type
+          cborHex: cborHex
+        pool_cold_skey:
           description: description
           type: type
           cborHex: cborHex
@@ -707,6 +1329,12 @@ components:
           $ref: "#/components/schemas/bursa.KeyFile"
         payment_vkey:
           $ref: "#/components/schemas/bursa.KeyFile"
+        pool_cold_extended_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        pool_cold_skey:
+          $ref: "#/components/schemas/bursa.KeyFile"
+        pool_cold_vkey:
+          $ref: "#/components/schemas/bursa.KeyFile"
         stake_address:
           example: stake1uy9ggsc9qls4pu9qvyyacwnmr9tt0gzcdt5s0zj4au8qkqc65ge8t
           type: string
@@ -717,4 +1345,9 @@ components:
         stake_vkey:
           $ref: "#/components/schemas/bursa.KeyFile"
       type: object
+  securitySchemes:
+    BearerAuth:
+      in: header
+      name: Authorization
+      type: apiKey
 x-original-swagger-version: "2.0"

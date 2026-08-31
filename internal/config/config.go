@@ -205,6 +205,10 @@ type ApiConfig struct {
 	JWKSURL     string `yaml:"jwks_url" envconfig:"API_JWKS_URL"`
 	JWTIssuer   string `yaml:"jwt_issuer" envconfig:"API_JWT_ISSUER"`
 	JWTAudience string `yaml:"jwt_audience" envconfig:"API_JWT_AUDIENCE"`
+	// JWTAdminSubjects identifies the authenticated principals allowed to list,
+	// retrieve, update, or delete persisted wallets. An empty list denies those
+	// operations whenever API authentication is enabled.
+	JWTAdminSubjects []string `yaml:"jwt_admin_subjects" envconfig:"API_JWT_ADMIN_SUBJECTS"`
 }
 
 type DebugConfig struct {

@@ -183,9 +183,7 @@ func (v *NullableApiScriptAddressResponse) Unset() {
 	v.isSet = false
 }
 
-func NewNullableApiScriptAddressResponse(
-	val *ApiScriptAddressResponse,
-) *NullableApiScriptAddressResponse {
+func NewNullableApiScriptAddressResponse(val *ApiScriptAddressResponse) *NullableApiScriptAddressResponse {
 	return &NullableApiScriptAddressResponse{value: val, isSet: true}
 }
 

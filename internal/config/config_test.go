@@ -43,6 +43,7 @@ func TestAPIAuthConfig_Env(t *testing.T) {
 	t.Setenv("API_JWT_SECRET", "01234567890123456789012345678901")
 	t.Setenv("API_JWT_ISSUER", "https://issuer.example")
 	t.Setenv("API_JWT_AUDIENCE", "bursa-api")
+	t.Setenv("API_JWT_ADMIN_SUBJECTS", "wallet-admin,backup-admin")
 	globalConfig = defaultConfig()
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -57,6 +58,9 @@ func TestAPIAuthConfig_Env(t *testing.T) {
 	}
 	if cfg.Api.JWTIssuer != "https://issuer.example" || cfg.Api.JWTAudience != "bursa-api" {
 		t.Fatalf("API JWT claim constraints not loaded: %+v", cfg.Api)
+	}
+	if len(cfg.Api.JWTAdminSubjects) != 2 || cfg.Api.JWTAdminSubjects[0] != "wallet-admin" || cfg.Api.JWTAdminSubjects[1] != "backup-admin" {
+		t.Fatalf("API JWT admin subjects not loaded: %+v", cfg.Api.JWTAdminSubjects)
 	}
 }
 

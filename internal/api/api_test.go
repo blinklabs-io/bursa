@@ -42,6 +42,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,6 +73,53 @@ var mockWalletResponseJSON = `{
       "cborHex": "5880b0a9a8bcddc391c2cc79dbbac792e21f21fa8a3572e8591235bdc802c9aa6c4210eee620765fb6f569ab6b2916001cdd6d289067b022847d62ea19160463bcf72a786a251854a5f459a856e7ae8f9289be9a3a7a1bf421e35bfaab815868e0fd258df1a6eb6b51f6769afcdf4634594b13dba6433ec3670ea9ea742a09e8711e"
   }
 }`
+
+type fakeLegacyWalletStore struct {
+	wallets       map[string]*bursa.Wallet
+	descriptions  map[string]string
+	updatedWallet string
+	deletedWallet string
+}
+
+func (f *fakeLegacyWalletStore) List(context.Context) ([]string, error) {
+	names := make([]string, 0, len(f.wallets))
+	for name := range f.wallets {
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+func (f *fakeLegacyWalletStore) Get(_ context.Context, name string) (*bursa.Wallet, error) {
+	wallet, ok := f.wallets[name]
+	if !ok {
+		return nil, fmt.Errorf("wallet %q not found", name)
+	}
+	return wallet, nil
+}
+
+func (f *fakeLegacyWalletStore) Update(
+	_ context.Context,
+	name,
+	description string,
+) (bool, error) {
+	if _, ok := f.wallets[name]; !ok {
+		return false, fmt.Errorf("wallet %q not found", name)
+	}
+	if f.descriptions[name] == description {
+		return false, nil
+	}
+	f.descriptions[name] = description
+	f.updatedWallet = name
+	return true, nil
+}
+
+func (f *fakeLegacyWalletStore) Delete(_ context.Context, name string) error {
+	if _, ok := f.wallets[name]; !ok {
+		return fmt.Errorf("wallet %q not found", name)
+	}
+	f.deletedWallet = name
+	return nil
+}
 
 func TestWriteErrorSanitizesServerErrors(t *testing.T) {
 	t.Run("server error", func(t *testing.T) {
@@ -202,6 +250,17 @@ func TestValidateAPIExposureRejectsUnauthenticatedNonLoopback(t *testing.T) {
 	assert.NoError(t, validateAPIExposure(cfg, signerapi.HS256Validator(
 		[]byte("01234567890123456789012345678901"), "", "",
 	)))
+
+	assert.ErrorContains(t, validateAPIExposure(&config.Config{
+		Google: config.GoogleConfig{Project: "test", ResourceId: "test"},
+		Api: config.ApiConfig{
+			ListenAddress: "0.0.0.0",
+			TLSCertFile:   "cert.pem",
+			TLSKeyFile:    "key.pem",
+		},
+	}, signerapi.HS256Validator(
+		[]byte("01234567890123456789012345678901"), "", "",
+	)), "jwt_admin_subjects")
 }
 
 func TestValidateAPIExposureRejectsIncompleteTLSConfiguration(t *testing.T) {
@@ -215,6 +274,34 @@ func TestValidateAPIExposureRejectsIncompleteTLSConfiguration(t *testing.T) {
 	} {
 		assert.ErrorContains(t, validateAPIExposure(cfg, auth), "both")
 	}
+}
+
+func TestValidateAPIExposureRequiresGCPWalletAuthentication(t *testing.T) {
+	cfg := &config.Config{
+		Google: config.GoogleConfig{Project: "project", ResourceId: "resource"},
+		Api:    config.ApiConfig{ListenAddress: "127.0.0.1"},
+	}
+
+	assert.ErrorContains(
+		t,
+		validateAPIExposure(cfg, nil),
+		"authentication is required",
+	)
+
+	auth := signerapi.HS256Validator(
+		[]byte("01234567890123456789012345678901"), "", "",
+	)
+	assert.ErrorContains(
+		t,
+		validateAPIExposure(cfg, auth),
+		"jwt_admin_subjects",
+	)
+	cfg.Api.JWTAdminSubjects = []string{""}
+	assert.ErrorContains(
+		t,
+		validateAPIExposure(cfg, auth),
+		"jwt_admin_subjects",
+	)
 }
 
 func TestStartRejectsUnauthenticatedNonLoopbackAPI(t *testing.T) {
@@ -383,6 +470,155 @@ func TestRegisterAPIHandlersProtectsSensitiveRoutes(t *testing.T) {
 	public := httptest.NewRecorder()
 	mux.ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/healthcheck", nil))
 	assert.Equal(t, http.StatusOK, public.Code)
+}
+
+func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	cfg := &config.Config{
+		Google: config.GoogleConfig{Project: "test", ResourceId: "test"},
+		Api:    config.ApiConfig{JWTAdminSubjects: []string{"test-caller"}},
+	}
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, cfg, signerapi.HS256Validator([]byte(secret), "", ""))
+
+	routes := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/wallet/list", ""},
+		{http.MethodPost, "/api/wallet/get", `{}`},
+		{http.MethodPost, "/api/wallet/update", `{}`},
+		{http.MethodPost, "/api/wallet/delete", `{}`},
+	}
+
+	t.Run("unauthenticated requests are denied", func(t *testing.T) {
+		for _, route := range routes {
+			t.Run(route.path, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				r := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+				mux.ServeHTTP(w, r)
+
+				assert.Equal(t, http.StatusUnauthorized, w.Code)
+				assert.Equal(t, "Bearer", w.Header().Get("WWW-Authenticate"))
+			})
+		}
+	})
+
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "test-caller",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	require.NoError(t, err)
+
+	t.Run("authorized requests reach the wallet handlers", func(t *testing.T) {
+		for _, route := range routes[1:] {
+			t.Run(route.path, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				r := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+				r.Header.Set("Authorization", "Bearer "+token)
+				mux.ServeHTTP(w, r)
+
+				// These requests pass authentication and reach the GCP handler;
+				// the test does not require live Google credentials.
+				assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+			})
+		}
+	})
+}
+
+func TestGCPWalletRoutesFailClosedWithoutAuth(t *testing.T) {
+	cfg := &config.Config{
+		Google: config.GoogleConfig{Project: "project", ResourceId: "resource"},
+	}
+	store := &fakeLegacyWalletStore{
+		wallets: map[string]*bursa.Wallet{
+			"secret": {Mnemonic: "sensitive mnemonic"},
+		},
+		descriptions: make(map[string]string),
+	}
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, cfg, nil, store)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/wallet/get",
+		strings.NewReader(`{"name":"secret"}`),
+	)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Equal(t, "Bearer", rec.Header().Get("WWW-Authenticate"))
+	assert.NotContains(t, rec.Body.String(), "sensitive mnemonic")
+}
+
+func TestGCPWalletRoutesAuthorizedOperations(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	const walletName = "wallet-1"
+	store := &fakeLegacyWalletStore{
+		wallets: map[string]*bursa.Wallet{
+			walletName: {Mnemonic: "test mnemonic"},
+		},
+		descriptions: make(map[string]string),
+	}
+	cfg := &config.Config{
+		Google: config.GoogleConfig{Project: "test", ResourceId: "test"},
+		Api:    config.ApiConfig{JWTAdminSubjects: []string{"wallet-admin"}},
+	}
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, cfg, signerapi.HS256Validator([]byte(secret), "", ""), store)
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "wallet-admin",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	require.NoError(t, err)
+
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+token)
+		mux.ServeHTTP(w, r)
+		return w
+	}
+
+	list := request(http.MethodGet, "/api/wallet/list", "")
+	assert.Equal(t, http.StatusOK, list.Code)
+	assert.JSONEq(t, `["wallet-1"]`, list.Body.String())
+
+	get := request(http.MethodPost, "/api/wallet/get", `{"name":"wallet-1"}`)
+	assert.Equal(t, http.StatusOK, get.Code)
+	assert.Contains(t, get.Body.String(), "test mnemonic")
+
+	nonAdminToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "wallet-reader",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	require.NoError(t, err)
+	nonAdmin := httptest.NewRecorder()
+	nonAdminRequest := httptest.NewRequest(http.MethodPost, "/api/wallet/get", strings.NewReader(`{"name":"wallet-1"}`))
+	nonAdminRequest.Header.Set("Authorization", "Bearer "+nonAdminToken)
+	mux.ServeHTTP(nonAdmin, nonAdminRequest)
+	assert.Equal(t, http.StatusForbidden, nonAdmin.Code)
+
+	updatesBefore := testutil.ToFloat64(walletsUpdatedCounter)
+	unchanged := request(
+		http.MethodPost,
+		"/api/wallet/update",
+		`{"name":"wallet-1","description":""}`,
+	)
+	assert.Equal(t, http.StatusOK, unchanged.Code)
+	assert.Equal(t, updatesBefore, testutil.ToFloat64(walletsUpdatedCounter))
+
+	update := request(http.MethodPost, "/api/wallet/update", `{"name":"wallet-1","description":"updated"}`)
+	assert.Equal(t, http.StatusOK, update.Code)
+	assert.Equal(t, walletName, store.updatedWallet)
+	assert.Equal(t, "updated", store.descriptions[walletName])
+	assert.Equal(t, updatesBefore+1, testutil.ToFloat64(walletsUpdatedCounter))
+
+	deleted := request(http.MethodPost, "/api/wallet/delete", `{"name":"wallet-1"}`)
+	assert.Equal(t, http.StatusOK, deleted.Code)
+	assert.Equal(t, walletName, store.deletedWallet)
 }
 
 func TestDecodeAndValidateSanitizesValidationErrors(t *testing.T) {
