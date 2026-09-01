@@ -161,6 +161,12 @@ assert_contains "$publish_contents" 'PRIMARY_VERSION: ${{ steps.meta.outputs.ver
   'the publish workflow passes the primary version to the script'
 assert_contains "$publish_contents" 'latest=false' \
   'the per-architecture build publishes no floating tag of its own'
+# The script composes "<tag>-amd64"/"<tag>-arm64"; if the matrix stopped
+# suffixing its tags those inputs would not exist, and this test would still
+# pass while the release failed. Assert the other half of the wiring too.
+# shellcheck disable=SC2016 # literal workflow text, not a shell expansion
+assert_contains "$publish_contents" 'suffix=-${{ matrix.arch }}' \
+  'the per-architecture build suffixes its tags with the architecture'
 
 ci_contents="$(<"$ci_workflow")"
 assert_contains "$ci_contents" 'bash .github/scripts/test-image-manifests.sh' \
