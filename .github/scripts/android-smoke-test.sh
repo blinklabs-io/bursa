@@ -43,18 +43,22 @@ ready=""
 while [ "$(date +%s)" -lt "${deadline}" ]; do
     log="$(adb logcat -d 2>/dev/null || true)"
 
-    if printf '%s' "${log}" | grep -q 'wallet boot failed:'; then
+    # Match with here-strings, never `... | grep -q`: grep -q exits on the first
+    # match and the writer then dies of SIGPIPE, which under `set -o pipefail`
+    # makes the whole pipeline non-zero. A match in a large logcat dump would be
+    # read as "no match", and the test would time out instead of passing.
+    if grep -q 'wallet boot failed:' <<< "${log}"; then
         echo "!! The embedded wallet failed to boot:" >&2
-        printf '%s\n' "${log}" | grep 'wallet boot failed:' >&2
+        grep 'wallet boot failed:' <<< "${log}" >&2
         exit 1
     fi
-    if printf '%s' "${log}" | grep -qE 'FATAL EXCEPTION|Force finishing activity '"${PACKAGE}"; then
+    if grep -qE 'FATAL EXCEPTION|Force finishing activity '"${PACKAGE}" <<< "${log}"; then
         echo "!! The app crashed on launch:" >&2
-        printf '%s\n' "${log}" | grep -A 20 'FATAL EXCEPTION' >&2
+        grep -A 20 'FATAL EXCEPTION' <<< "${log}" >&2
         exit 1
     fi
-    if printf '%s' "${log}" | grep -qE 'wallet ready on 127\.0\.0\.1:[0-9]+'; then
-        ready="$(printf '%s' "${log}" | grep -oE 'wallet ready on 127\.0\.0\.1:[0-9]+' | tail -n1)"
+    if grep -qE 'wallet ready on 127\.0\.0\.1:[0-9]+' <<< "${log}"; then
+        ready="$(grep -oE 'wallet ready on 127\.0\.0\.1:[0-9]+' <<< "${log}" | tail -n1)"
         break
     fi
 
@@ -77,9 +81,10 @@ echo "==> ${ready}"
 # The wallet runs in a foreground service; if it is not there, the node is not
 # surviving past the Activity and the app is not in its intended state.
 echo "==> Checking the wallet foreground service is running"
-if ! adb shell dumpsys activity services "${PACKAGE}" | grep -q 'WalletService'; then
+services="$(adb shell dumpsys activity services "${PACKAGE}" 2>&1 || true)"
+if ! grep -q 'WalletService' <<< "${services}"; then
     echo "!! WalletService is not running" >&2
-    adb shell dumpsys activity services "${PACKAGE}" >&2
+    printf '%s\n' "${services}" >&2
     exit 1
 fi
 

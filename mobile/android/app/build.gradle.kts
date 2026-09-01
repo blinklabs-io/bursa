@@ -21,10 +21,12 @@ android {
         versionName = System.getenv("BURSA_VERSION_NAME") ?: "0.1.0"
     }
 
-    // Release signing is configured only when the keystore material is present.
-    // Leaving the config absent (rather than defining one with empty values)
-    // makes an unsigned release build fail loudly at the signing step instead of
-    // producing an APK that looks releasable but cannot be installed.
+    // Release signing is configured only when the keystore material is present,
+    // so a debug build and an IDE sync still work without it. Absent signing
+    // material does not make AGP fail, though: it would emit
+    // app-release-unsigned.apk. The task-graph check below turns that into a
+    // hard failure, so a release build can never quietly produce an APK that
+    // looks releasable but cannot be installed.
     val keystorePath = System.getenv("BURSA_KEYSTORE_PATH")
     val hasKeystore = !keystorePath.isNullOrBlank() && file(keystorePath).exists()
 
@@ -72,6 +74,24 @@ android {
     //       -o ../mobile/android/app/libs/bursa.aar ./mobile
     // It already bundles the per-ABI native .so libraries, so no extra ABI/NDK
     // config is needed in this module.
+}
+
+// Refuse to run a release task without signing material rather than letting
+// AGP emit an unsigned APK. Checked on the resolved task graph so it fires for
+// assembleRelease/bundleRelease only, leaving debug builds and IDE sync alone.
+gradle.taskGraph.whenReady {
+    val keystorePath = System.getenv("BURSA_KEYSTORE_PATH")
+    val hasKeystore = !keystorePath.isNullOrBlank() && File(keystorePath).exists()
+    val releaseRequested = allTasks.any {
+        it.project == project && it.name.endsWith("Release")
+    }
+    if (releaseRequested && !hasKeystore) {
+        throw GradleException(
+            "A release build requires signing material: set BURSA_KEYSTORE_PATH " +
+                "(plus BURSA_KEYSTORE_PASSWORD, BURSA_KEY_ALIAS, BURSA_KEY_PASSWORD) " +
+                "to an existing keystore. Refusing to produce an unsigned release APK.",
+        )
+    }
 }
 
 dependencies {

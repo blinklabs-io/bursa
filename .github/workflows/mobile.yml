@@ -31,7 +31,11 @@ jobs:
     name: android
     runs-on: ubuntu-latest
     permissions:
+      # attestations + id-token are what actions/attest needs; contents:write
+      # is for attaching the artifacts to the draft release.
+      attestations: write
       contents: write
+      id-token: write
     outputs:
       build-type: ${{ steps.variant.outputs.build-type }}
     steps:
