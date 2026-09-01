@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	crand "crypto/rand"
+	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -177,8 +178,7 @@ func (kf KeyFile) String() string {
 		return kf.CborHex
 	}
 	// cardano-cli format: CBOR-encoded raw bytes
-	var keyBytes []byte
-	_, err = cbor.Decode(cborData, &keyBytes)
+	keyBytes, err := decodeKeyEnvelopeBytes(cborData, "key")
 	if err != nil {
 		return kf.CborHex
 	}
@@ -2278,13 +2278,9 @@ func GetRewardAddress(
 		return nil, fmt.Errorf("failed to decode stake vkey CBOR: %w", err)
 	}
 	// cardano-cli format: CBOR-encoded raw 32-byte public key
-	var stakePubKeyBytes []byte
-	_, err = cbor.Decode(cborData, &stakePubKeyBytes)
+	stakePubKeyBytes, err := decodeVerificationKey(cborData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode stake vkey: %w", err)
-	}
-	if len(stakePubKeyBytes) != 32 {
-		return nil, errors.New("invalid stake public key: expected 32 bytes")
 	}
 
 	// Create stake public key and hash it
@@ -2333,11 +2329,32 @@ func GetKeyFile(keyFile KeyFile) (string, error) {
 	return result, nil
 }
 
+// decodeKeyEnvelopeBytes decodes the single CBOR byte string carried by a
+// cardano-cli key envelope. An envelope holds exactly one CBOR value, so any
+// bytes left after it are rejected rather than ignored: a decoder that stops at
+// the first value would otherwise accept a file whose visible key is followed
+// by a second, unread payload.
+func decodeKeyEnvelopeBytes(cborData []byte, what string) ([]byte, error) {
+	var keyBytes []byte
+	read, err := cbor.Decode(cborData, &keyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal %s CBOR: %w", what, err)
+	}
+	if read != len(cborData) {
+		return nil, fmt.Errorf(
+			"invalid %s: %d trailing byte(s) after CBOR value",
+			what,
+			len(cborData)-read,
+		)
+	}
+	return keyBytes, nil
+}
+
 func decodeNonExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
 	// cardano-cli format: CBOR-encoded raw 32-byte seed
-	var keyBytes []byte
-	if _, err := cbor.Decode(skeyBytes, &keyBytes); err != nil {
-		return nil, nil, fmt.Errorf("failed to unmarshal skey CBOR: %w", err)
+	keyBytes, err := decodeKeyEnvelopeBytes(skeyBytes, "skey")
+	if err != nil {
+		return nil, nil, err
 	}
 	if len(keyBytes) != 32 {
 		return nil, nil, errors.New("invalid skey bytes: expected 32 bytes")
@@ -2349,32 +2366,35 @@ func decodeNonExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
 func decodeExtendedCborKey(skeyBytes []byte) ([]byte, []byte, error) {
 	// cardano-cli format: CBOR-encoded 128-byte blob
 	// privKey (64) || pubKey (32) || chainCode (32)
-	var keyBytes []byte
-	if _, err := cbor.Decode(skeyBytes, &keyBytes); err != nil {
-		return nil, nil, fmt.Errorf(
-			"failed to unmarshal extended skey CBOR: %w",
-			err,
-		)
+	keyBytes, err := decodeKeyEnvelopeBytes(skeyBytes, "extended skey")
+	if err != nil {
+		return nil, nil, err
 	}
 	if len(keyBytes) != 128 {
 		return nil, nil, errors.New("invalid extended skey: expected 128 bytes")
 	}
-	// Extract components: privKey (64) | pubKey (32) | chainCode (32)
-	// Important: make copies to avoid slice aliasing issues with append
-	pubBytes := make([]byte, 32)
-	copy(pubBytes, keyBytes[64:96])
 	// Create XPrv: privKey (64) || chainCode (32)
 	xprv := make([]byte, 96)
 	copy(xprv[0:64], keyBytes[0:64])
 	copy(xprv[64:96], keyBytes[96:128])
-	return xprv, pubBytes, nil
+	// The embedded public key is just another field of an untrusted file, so it
+	// is not the key's identity until it has been checked. Derive the identity
+	// from the private half and accept the envelope only when the two agree, so
+	// a caller can never sign with one key while presenting another.
+	derived := bip32.XPrv(xprv).PublicKey()
+	if subtle.ConstantTimeCompare(derived, keyBytes[64:96]) != 1 {
+		return nil, nil, errors.New(
+			"invalid extended skey: embedded public key does not match the key derived from the private key",
+		)
+	}
+	return xprv, derived, nil
 }
 
 func decodeVerificationKey(vkeyBytes []byte) ([]byte, error) {
 	// cardano-cli format: CBOR-encoded raw 32-byte public key
-	var keyBytes []byte
-	if _, err := cbor.Decode(vkeyBytes, &keyBytes); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal vkey CBOR: %w", err)
+	keyBytes, err := decodeKeyEnvelopeBytes(vkeyBytes, "vkey")
+	if err != nil {
+		return nil, err
 	}
 	if len(keyBytes) != 32 {
 		return nil, errors.New("invalid vkey bytes: expected 32 bytes")
@@ -2387,9 +2407,9 @@ func decodeVerificationKey(vkeyBytes []byte) ([]byte, error) {
 // - 32 bytes: just the seed (bursa format)
 // - 64 bytes: seed (32) + public key (32) (cardano-cli format)
 func decodeVRFSKey(skeyBytes []byte) ([]byte, []byte, error) {
-	var keyBytes []byte
-	if _, err := cbor.Decode(skeyBytes, &keyBytes); err != nil {
-		return nil, nil, fmt.Errorf("failed to unmarshal VRF skey CBOR: %w", err)
+	keyBytes, err := decodeKeyEnvelopeBytes(skeyBytes, "VRF skey")
+	if err != nil {
+		return nil, nil, err
 	}
 
 	switch len(keyBytes) {
@@ -2397,14 +2417,31 @@ func decodeVRFSKey(skeyBytes []byte) ([]byte, []byte, error) {
 		// Just the seed - generate public key
 		pubKey, _, err := vrf.KeyGen(keyBytes)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to derive VRF public key: %w", err)
+			return nil, nil, fmt.Errorf(
+				"failed to derive VRF public key: %w",
+				err,
+			)
 		}
 		return keyBytes, pubKey, nil
 	case vrf.SeedSize + vrf.PublicKeySize:
-		// Seed + public key (cardano-cli format)
-		seed := keyBytes[:vrf.SeedSize]
-		pubKey := keyBytes[vrf.SeedSize:]
-		return seed, pubKey, nil
+		// Seed + public key (cardano-cli format). Same rule as the extended
+		// Ed25519 case: the stored public key is checked against one derived
+		// from the seed instead of being taken on trust.
+		seed := make([]byte, vrf.SeedSize)
+		copy(seed, keyBytes[:vrf.SeedSize])
+		derived, _, err := vrf.KeyGen(seed)
+		if err != nil {
+			return nil, nil, fmt.Errorf(
+				"failed to derive VRF public key: %w",
+				err,
+			)
+		}
+		if subtle.ConstantTimeCompare(derived, keyBytes[vrf.SeedSize:]) != 1 {
+			return nil, nil, errors.New(
+				"invalid VRF skey: embedded public key does not match the key derived from the seed",
+			)
+		}
+		return seed, derived, nil
 	default:
 		return nil, nil, fmt.Errorf(
 			"invalid VRF skey bytes: expected %d or %d, got %d",
@@ -2418,9 +2455,9 @@ func decodeVRFSKey(skeyBytes []byte) ([]byte, []byte, error) {
 // decodeKESSKey decodes a KES signing key from CBOR.
 // KES signing keys for depth 6 (Cardano) are 608 bytes.
 func decodeKESSKey(skeyBytes []byte) ([]byte, []byte, error) {
-	var keyBytes []byte
-	if _, err := cbor.Decode(skeyBytes, &keyBytes); err != nil {
-		return nil, nil, fmt.Errorf("failed to unmarshal KES skey CBOR: %w", err)
+	keyBytes, err := decodeKeyEnvelopeBytes(skeyBytes, "KES skey")
+	if err != nil {
+		return nil, nil, err
 	}
 	if len(keyBytes) != kes.CardanoKesSecretKeySize {
 		return nil, nil, fmt.Errorf(
@@ -2587,13 +2624,21 @@ const maxSecretKeyFileSize = 1 << 20
 func ReadSecretKeyFile(path string) ([]byte, error) {
 	file, err := openSecretKeyFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open secret key file %q: %w", path, err)
+		return nil, fmt.Errorf(
+			"failed to open secret key file %q: %w",
+			path,
+			err,
+		)
 	}
 	defer file.Close() //nolint:errcheck // read-only handle
 
 	info, err := file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("failed to stat secret key file %q: %w", path, err)
+		return nil, fmt.Errorf(
+			"failed to stat secret key file %q: %w",
+			path,
+			err,
+		)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf(
@@ -2606,7 +2651,11 @@ func ReadSecretKeyFile(path string) ([]byte, error) {
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maxSecretKeyFileSize+1))
 	if err != nil {
-		return nil, fmt.Errorf("failed to read secret key file %q: %w", path, err)
+		return nil, fmt.Errorf(
+			"failed to read secret key file %q: %w",
+			path,
+			err,
+		)
 	}
 	if len(data) > maxSecretKeyFileSize {
 		return nil, fmt.Errorf(
@@ -2715,10 +2764,17 @@ func LoadSecretKeyFromFile(path string) (*LoadedKey, error) {
 	}
 	key, err := LoadKeyFromBytes(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse secret key file %q: %w", path, err)
+		return nil, fmt.Errorf(
+			"failed to parse secret key file %q: %w",
+			path,
+			err,
+		)
 	}
 	if len(key.SKey) == 0 {
-		return nil, fmt.Errorf("key file %q does not contain a secret key", path)
+		return nil, fmt.Errorf(
+			"key file %q does not contain a secret key",
+			path,
+		)
 	}
 	key.File = filepath.Base(path)
 	return key, nil
