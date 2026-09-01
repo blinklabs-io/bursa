@@ -5,6 +5,16 @@ on:
     branches: ['main']
     tags:
       - 'v*.*.*'
+  # A tag is the only trigger that exercises Developer ID signing and
+  # notarization, so a defect there is only ever found during a release. This
+  # input runs that same path on demand: it signs, notarizes and verifies the
+  # .pkg, and uploads it as a workflow artifact without touching a release.
+  workflow_dispatch:
+    inputs:
+      exercise_macos_signing:
+        description: 'Build, sign, notarize and verify the macOS .pkg without cutting a tag'
+        type: boolean
+        default: false
 
 concurrency: ${{ github.ref }}
 
@@ -297,6 +307,9 @@ jobs:
         if: matrix.os == 'darwin'
         env:
           IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
+          # A tag always signs; a manual run signs when asked to. Everything
+          # else builds the pkg unsigned to keep exercising the packaging path.
+          IS_SIGNED_RUN: ${{ startsWith(github.ref, 'refs/tags/') || inputs.exercise_macos_signing }}
           MATRIX_ARCH: ${{ matrix.arch }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -311,7 +324,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${IS_RELEASE}" = "true" ] && [ -n "${APPLE_CERTIFICATE}" ]; then
+          if [ "${IS_SIGNED_RUN}" = "true" ] && [ -n "${APPLE_CERTIFICATE}" ]; then
             echo "::group::Import Apple Developer ID certificate(s)"
             echo -n "${APPLE_CERTIFICATE}" | base64 --decode -o apple_app.p12
 
@@ -350,7 +363,12 @@ jobs:
 
             export TEAM_ID="${APPLE_TEAM_ID}"
             export NOTARY_PROFILE="bursa-notary"
-            export VERSION="${RELEASE_TAG#v}"
+            # A manual exercise run has no tag; let build-pkg.sh derive the
+            # version from git describe rather than naming the pkg after an
+            # empty string.
+            if [ "${IS_RELEASE}" = "true" ]; then
+              export VERSION="${RELEASE_TAG#v}"
+            fi
           fi
 
           export ARCH="${MATRIX_ARCH}"
@@ -368,15 +386,31 @@ jobs:
             exit 1
           fi
 
+          # Resolve the built pkg by globbing rather than reconstructing its
+          # name: build-pkg.sh derives the version itself when VERSION is unset,
+          # so a reconstructed path would miss the file on a non-tag run.
+          PKG_PATH=$(find dist -maxdepth 1 -name '*.pkg' | head -n1)
+          if [ -z "${PKG_PATH}" ]; then
+            echo "::error::build-pkg.sh produced no .pkg under dist/"
+            exit 1
+          fi
+          echo "PKG_PATH=${PKG_PATH}" >> "$GITHUB_ENV"
+
           if [ -n "${INSTALLER_IDENTITY:-}" ]; then
-            echo "::group::Verify pkg with spctl (must be accepted + Notarized Developer ID)"
-            PKG_PATH="dist/bursa-wallet-${VERSION}-darwin-${MATRIX_ARCH}.pkg"
-            spctl_out=$(spctl -a -vv --type install "${PKG_PATH}" 2>&1)
-            echo "${spctl_out}"
-            echo "${spctl_out}" | grep -q 'accepted'
-            echo "${spctl_out}" | grep -q 'Notarized Developer ID'
+            echo "::group::Verify pkg signature, notarization and installation"
+            ./packaging/macos/verify-pkg.sh "${PKG_PATH}"
             echo "::endgroup::"
           fi
+
+      # A manual exercise run publishes nothing to a release, so surface the
+      # verified pkg as a workflow artifact for inspection.
+      - name: Upload exercised macOS .pkg
+        if: matrix.os == 'darwin' && github.event_name == 'workflow_dispatch' && inputs.exercise_macos_signing
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 https://github.com/actions/upload-artifact/releases/tag/v7.0.1
+        with:
+          name: bursa-wallet-macos-pkg-${{ matrix.arch }}
+          path: dist/*.pkg
+          if-no-files-found: error
 
       # ---- Windows: build the webview .exe (validates the CGO build) -------
       - name: Build web bundle (Windows)
