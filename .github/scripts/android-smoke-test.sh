@@ -16,6 +16,7 @@ APK="${1:?usage: android-smoke-test.sh <apk>}"
 PACKAGE="${BURSA_PACKAGE:-io.blinklabs.bursa}"
 ACTIVITY="${BURSA_ACTIVITY:-.MainActivity}"
 TIMEOUT_SECONDS="${BURSA_SMOKE_TIMEOUT:-180}"
+BOOT_TIMEOUT_SECONDS="${BURSA_BOOT_TIMEOUT:-300}"
 
 if [ ! -f "${APK}" ]; then
     echo "!! APK not found: ${APK}" >&2
@@ -24,7 +25,14 @@ fi
 
 echo "==> Waiting for the emulator to finish booting"
 adb wait-for-device
+# Bounded: a wedged emulator would otherwise spin here until the job timeout,
+# holding a scarce arm64 runner for hours instead of failing in minutes.
+boot_deadline=$(( $(date +%s) + BOOT_TIMEOUT_SECONDS ))
 until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
+    if [ "$(date +%s)" -ge "${boot_deadline}" ]; then
+        echo "!! The emulator did not report sys.boot_completed within ${BOOT_TIMEOUT_SECONDS}s" >&2
+        exit 1
+    fi
     sleep 2
 done
 
