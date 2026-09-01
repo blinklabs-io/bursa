@@ -67,30 +67,38 @@ jobs:
             # silently given a colliding code.
             core="${version%%-*}"
             pre="${version#"${core}"}"
-            # Leading zeros are rejected before any arithmetic: semver forbids
-            # them, and bash would read 08/09 as invalid octal and abort mid-step.
-            if [[ ! "${core}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-              echo "::error::tag ${GITHUB_REF#refs/tags/} is not vMAJOR.MINOR.PATCH[-PRERELEASE] with no leading zeros"
+            # The regex bounds digit LENGTH, not just shape, so no component
+            # ever reaches bash arithmetic large enough to wrap: a 20-digit
+            # major would exceed 2^64 and reduce to a small number that passes
+            # a numeric range check and yields a colliding versionCode.
+            # Leading zeros are rejected too: semver forbids them, and bash
+            # reads 08/09 as invalid octal and aborts mid-step.
+            if [[ ! "${core}" =~ ^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)$ ]]; then
+              echo "::error::tag ${GITHUB_REF#refs/tags/} is not vMAJOR.MINOR.PATCH[-PRERELEASE]: components must have no leading zeros, major at most 4 digits, minor and patch at most 2"
               exit 1
             fi
             IFS=. read -r major minor patch <<< "${core}"
-            # Bound each component before multiplying so the arithmetic cannot
-            # overflow past the maximum check below.
-            if (( major > 20000 || minor > 99 || patch > 99 )); then
-              echo "::error::version ${core} is out of range for the versionCode encoding (major<=20000, minor<=99, patch<=99)"
+            # Semantic bound on top of the length bound above.
+            # 2099.99.99 encodes to 2099999999; 2100.0.0 would exceed the
+            # Android maximum, so that is the real ceiling.
+            if (( major > 2099 )); then
+              echo "::error::major version ${major} is out of range for the versionCode encoding (max 2099)"
               exit 1
             fi
             if [[ -z "${pre}" ]]; then
               rank=99
             else
-              if [[ "${pre}" =~ ^-(alpha|beta|rc)\.?(0|[1-9][0-9]*)$ ]]; then
+              # The dot is required, so -alpha1 and -alpha.1 cannot both map to
+              # the same rank, and N is length-bounded for the same
+              # wrap-around reason as the components above.
+              if [[ "${pre}" =~ ^-(alpha|beta|rc)\.([1-9][0-9]?)$ ]]; then
                 stage="${BASH_REMATCH[1]}"
                 number=$((10#${BASH_REMATCH[2]}))
               else
-                echo "::error::prerelease '${pre#-}' is not supported; use -alpha.N, -beta.N or -rc.N"
+                echo "::error::prerelease '${pre#-}' is not supported; use -alpha.N, -beta.N or -rc.N with N between 1 and 29"
                 exit 1
               fi
-              if (( number < 1 || number > 29 )); then
+              if (( number > 29 )); then
                 echo "::error::prerelease number ${number} must be between 1 and 29"
                 exit 1
               fi
