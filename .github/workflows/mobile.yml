@@ -22,14 +22,38 @@ jobs:
   # it carries the full toolchain (Go + gomobile + Android SDK/NDK + JDK + Gradle)
   # so the AAR + APK build identically here and on a developer's machine, with no
   # Android SDK installed on the runner. The build script (build-in-docker.sh)
-  # runs `gomobile bind` then `./gradlew assembleDebug` and emits the APK to /out.
+  # runs `gomobile bind` then Gradle, and emits the artifacts to /out.
+  #
+  # A tag build produces the distributable pair — a signed release APK and a
+  # signed AAB — and attaches them to the draft release. Any other trigger
+  # produces the unsigned debug APK, which needs no signing material.
   android:
     name: android
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      build-type: ${{ steps.variant.outputs.build-type }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           persist-credentials: false
+      - name: Select build variant
+        id: variant
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "build-type=release" >> "$GITHUB_OUTPUT"
+            version="${GITHUB_REF#refs/tags/v}"
+            echo "BURSA_VERSION_NAME=${version}" >> "$GITHUB_ENV"
+            # versionCode must increase monotonically for every uploaded build;
+            # derive it from the semantic version so a tag maps to exactly one.
+            IFS=. read -r major minor patch <<< "${version%%-*}"
+            echo "BURSA_VERSION_CODE=$(( major * 1000000 + minor * 1000 + patch ))" >> "$GITHUB_ENV"
+            echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+          else
+            echo "build-type=debug" >> "$GITHUB_OUTPUT"
+          fi
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0 https://github.com/docker/setup-buildx-action/releases/tag/v4.3.0
       - name: Build Android toolchain image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0 https://github.com/docker/build-push-action/releases/tag/v7.3.0
@@ -42,19 +66,134 @@ jobs:
             BUILDER_GID=1001
           push: false
           load: true
-      - name: Build AAR + APK (in container)
+      - name: Decode release keystore
+        if: steps.variant.outputs.build-type == 'release'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
+          set -euo pipefail
+          if [[ -z "${KEYSTORE_BASE64}" ]]; then
+            echo "ANDROID_KEYSTORE_BASE64 is not set; a tag build cannot produce a signed artifact" >&2
+            exit 1
+          fi
+          # Keep the keystore out of the mounted repo so it cannot reach an
+          # artifact or the working tree.
+          mkdir -p "${RUNNER_TEMP}/signing"
+          chmod 700 "${RUNNER_TEMP}/signing"
+          printf '%s' "${KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/signing/release.jks"
+          chmod 600 "${RUNNER_TEMP}/signing/release.jks"
+      - name: Build AAR + debug APK (in container)
+        if: steps.variant.outputs.build-type == 'debug'
+        run: |
+          set -euo pipefail
           mkdir -p out
           docker run --rm \
+            -e BURSA_BUILD_TYPE=debug \
             -v "${{ github.workspace }}":/code \
             -v "${{ github.workspace }}/out":/out \
             bursa-android-build:ci
-      - name: Upload APK
+      - name: Build AAR + signed release APK/AAB (in container)
+        if: steps.variant.outputs.build-type == 'release'
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          docker run --rm \
+            -e BURSA_BUILD_TYPE=release \
+            -e BURSA_VERSION_NAME \
+            -e BURSA_VERSION_CODE \
+            -e BURSA_KEYSTORE_PATH=/signing/release.jks \
+            -e BURSA_KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD}" \
+            -e BURSA_KEY_ALIAS="${KEY_ALIAS}" \
+            -e BURSA_KEY_PASSWORD="${KEY_PASSWORD}" \
+            -v "${{ github.workspace }}":/code \
+            -v "${{ github.workspace }}/out":/out \
+            -v "${RUNNER_TEMP}/signing":/signing:ro \
+            bursa-android-build:ci
+      - name: Name the release artifacts
+        if: steps.variant.outputs.build-type == 'release'
+        run: |
+          set -euo pipefail
+          apk=$(find out -name '*.apk' ! -name '*-unsigned.apk' | head -n1)
+          aab=$(find out -name '*.aab' | head -n1)
+          mv "${apk}" "out/bursa-${BURSA_VERSION_NAME}-android-arm64.apk"
+          mv "${aab}" "out/bursa-${BURSA_VERSION_NAME}-android.aab"
+      - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 https://github.com/actions/upload-artifact/releases/tag/v7.0.1
         with:
-          name: bursa-android-apk
-          path: out/*.apk
+          name: bursa-android-${{ steps.variant.outputs.build-type }}
+          path: |
+            out/*.apk
+            out/*.aab
           if-no-files-found: error
+      - name: Attest release artifacts
+        if: steps.variant.outputs.build-type == 'release'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2 https://github.com/actions/attest/releases/tag/v4.2.2
+        with:
+          subject-path: |
+            out/*.apk
+            out/*.aab
+      - name: Upload release assets
+        if: steps.variant.outputs.build-type == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The publish workflow creates the draft release for the same tag
+          # concurrently, so wait for it rather than racing it.
+          for _ in $(seq 1 60); do
+            if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 10
+          done
+          if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "release ${RELEASE_TAG} was not created within 10 minutes" >&2
+            exit 1
+          fi
+          gh release upload "${RELEASE_TAG}" \
+            "out/bursa-${BURSA_VERSION_NAME}-android-arm64.apk" \
+            "out/bursa-${BURSA_VERSION_NAME}-android.aab" \
+            --clobber
+
+  # Launch the built APK on an emulator and assert the embedded wallet booted.
+  # The AAR is arm64-only (the 32-bit ABIs overflow in the apollo/dingo deps), so
+  # this needs an arm64 runner: an arm64-v8a image on an x86_64 host would fall
+  # back to full CPU emulation and time out.
+  android-smoke-test:
+    name: android-smoke-test
+    runs-on: ubuntu-24.04-arm
+    needs: [android]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0 https://github.com/actions/download-artifact/releases/tag/v7.0.0
+        with:
+          name: bursa-android-${{ needs.android.outputs.build-type }}
+          path: out
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0 https://github.com/actions/setup-java/releases/tag/v6.0.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"'             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the launch smoke test
+        uses: reactivecircus/android-emulator-runner@62dbb605bba737720e10b196cb4220d374026a6d # v2.33.0 https://github.com/ReactiveCircus/android-emulator-runner/releases/tag/v2.33.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: arm64-v8a
+          disable-animations: true
+          script: |
+            apk=$(find out -name '*.apk' ! -name '*-unsigned.apk' | head -n1)
+            bash .github/scripts/android-smoke-test.sh "$apk"
 
   # iOS MUST be built on macOS: Xcode cannot run in a Linux container, so Docker
   # does not apply here. gomobile builds the xcframework natively, then xcodegen
