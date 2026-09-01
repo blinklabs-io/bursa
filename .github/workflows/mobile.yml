@@ -50,11 +50,47 @@ jobs:
             echo "build-type=release" >> "$GITHUB_OUTPUT"
             version="${GITHUB_REF#refs/tags/v}"
             echo "BURSA_VERSION_NAME=${version}" >> "$GITHUB_ENV"
-            # versionCode must increase monotonically for every uploaded build;
-            # derive it from the semantic version so a tag maps to exactly one.
-            IFS=. read -r major minor patch <<< "${version%%-*}"
-            echo "BURSA_VERSION_CODE=$(( major * 1000000 + minor * 1000 + patch ))" >> "$GITHUB_ENV"
             echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+
+            # versionCode must increase strictly for every uploaded build, so a
+            # prerelease has to sort below the release it precedes: without
+            # that, v1.2.3-rc.1 and v1.2.3 collide and the store rejects the
+            # second upload. Encode the version as
+            #   (major*10000 + minor*100 + patch) * 100 + rank
+            # where rank is the prerelease's trailing number, or 99 for a final
+            # release, which is above every prerelease of the same version.
+            core="${version%%-*}"
+            pre="${version#"${core}"}"
+            if [[ ! "${core}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::tag ${GITHUB_REF#refs/tags/} is not vMAJOR.MINOR.PATCH[-PRERELEASE]"
+              exit 1
+            fi
+            IFS=. read -r major minor patch <<< "${core}"
+            if (( minor > 99 || patch > 99 )); then
+              echo "::error::minor and patch must each be below 100 to fit the versionCode encoding (got ${core})"
+              exit 1
+            fi
+            if [[ -z "${pre}" ]]; then
+              rank=99
+            else
+              # Take the last run of digits, e.g. -rc.1 -> 1, -beta2 -> 2.
+              rank="$(grep -oE '[0-9]+$' <<< "${pre}" || true)"
+              if [[ -z "${rank}" ]]; then
+                echo "::error::prerelease '${pre}' has no trailing number to order it by; tag it as e.g. -rc.1"
+                exit 1
+              fi
+              rank=$((10#${rank}))
+              if (( rank < 1 || rank > 98 )); then
+                echo "::error::prerelease number ${rank} must be between 1 and 98"
+                exit 1
+              fi
+            fi
+            code=$(( (major * 10000 + minor * 100 + patch) * 100 + rank ))
+            if (( code > 2100000000 )); then
+              echo "::error::versionCode ${code} exceeds the Android maximum of 2100000000"
+              exit 1
+            fi
+            echo "BURSA_VERSION_CODE=${code}" >> "$GITHUB_ENV"
           else
             echo "build-type=debug" >> "$GITHUB_OUTPUT"
           fi
