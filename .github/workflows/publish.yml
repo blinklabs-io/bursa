@@ -28,24 +28,29 @@ jobs:
     steps:
       # Every job here depends on this one, so this guard gates the workflow.
       #
-      # A manual run against a tag would take the tag-only branches all the way
-      # through: a second draft release, duplicate asset uploads, and duplicate
-      # attestations. And a signed run hands Developer ID and notarization
-      # credentials to whatever code the chosen ref contains, so it is confined
-      # to the default branch rather than any branch a writer can push.
+      # A manual run is confined to the default branch, whether or not it signs.
+      # The macOS packaging step carries the Apple credentials in its step
+      # environment on every run and executes build-pkg.sh and the web build
+      # from the checked-out ref, so a dispatch from an arbitrary branch would
+      # let that branch's code read them. Restricting the ref keeps the
+      # credentials reachable only from reviewed code, as they were when a tag
+      # was the sole trigger.
+      #
+      # A tag ref is rejected outright: a manual run there would take the
+      # tag-only branches all the way through, creating a second draft release
+      # with duplicate uploads and attestations.
       - name: Validate manual dispatch
         if: github.event_name == 'workflow_dispatch'
         env:
-          EXERCISE_MACOS_SIGNING: ${{ inputs.exercise_macos_signing }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             echo "::error::Do not dispatch this workflow against a tag; push the tag instead. A manual run on a tag would create a second draft release and re-upload its assets."
             exit 1
           fi
-          if [[ "${EXERCISE_MACOS_SIGNING}" == "true" \
-                && "${GITHUB_REF}" != "refs/heads/${{ github.event.repository.default_branch }}" ]]; then
-            echo "::error::exercise_macos_signing is limited to the ${{ github.event.repository.default_branch }} branch: it exposes the Apple signing and notarization credentials to the code on the selected ref."
+          if [[ "${GITHUB_REF}" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
+            echo "::error::This workflow may only be dispatched from ${DEFAULT_BRANCH}. Its macOS job holds the Apple signing and notarization credentials and runs the packaging scripts from the selected ref."
             exit 1
           fi
       - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
