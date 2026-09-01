@@ -6,6 +6,17 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// The one place BURSA_KEYSTORE_PATH is resolved. Both the signing config and
+// the release guard below read this, so they can never disagree about whether
+// signing material is present: project.file() resolves a relative path against
+// the project directory, where java.io.File would use the daemon's working
+// directory and could answer differently for the same value.
+val bursaKeystoreFile: File? =
+    System.getenv("BURSA_KEYSTORE_PATH")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { project.file(it) }
+        ?.takeIf { it.exists() }
+
 android {
     namespace = "io.blinklabs.bursa"
     compileSdk = 35
@@ -27,13 +38,13 @@ android {
     // app-release-unsigned.apk. The task-graph check below turns that into a
     // hard failure, so a release build can never quietly produce an APK that
     // looks releasable but cannot be installed.
-    val keystorePath = System.getenv("BURSA_KEYSTORE_PATH")
-    val hasKeystore = !keystorePath.isNullOrBlank() && file(keystorePath).exists()
+    val keystorePath = bursaKeystoreFile
+    val hasKeystore = keystorePath != null
 
     signingConfigs {
         if (hasKeystore) {
             create("release") {
-                storeFile = file(keystorePath!!)
+                storeFile = keystorePath!!
                 storePassword = System.getenv("BURSA_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("BURSA_KEY_ALIAS")
                 keyPassword = System.getenv("BURSA_KEY_PASSWORD")
@@ -76,16 +87,21 @@ android {
     // config is needed in this module.
 }
 
-// Refuse to run a release task without signing material rather than letting
-// AGP emit an unsigned APK. Checked on the resolved task graph so it fires for
-// assembleRelease/bundleRelease only, leaving debug builds and IDE sync alone.
+// Refuse to build a release artifact without signing material rather than
+// letting AGP emit an unsigned APK. Checked on the resolved task graph, and
+// only for the tasks that actually package something: lintRelease and the
+// release unit tests need no keystore, and debug builds and IDE sync are
+// untouched.
+val bursaReleasePackagingTasks = setOf(
+    "assembleRelease",
+    "bundleRelease",
+    "packageRelease",
+)
 gradle.taskGraph.whenReady {
-    val keystorePath = System.getenv("BURSA_KEYSTORE_PATH")
-    val hasKeystore = !keystorePath.isNullOrBlank() && File(keystorePath).exists()
     val releaseRequested = allTasks.any {
-        it.project == project && it.name.endsWith("Release")
+        it.project == project && it.name in bursaReleasePackagingTasks
     }
-    if (releaseRequested && !hasKeystore) {
+    if (releaseRequested && bursaKeystoreFile == null) {
         throw GradleException(
             "A release build requires signing material: set BURSA_KEYSTORE_PATH " +
                 "(plus BURSA_KEYSTORE_PASSWORD, BURSA_KEY_ALIAS, BURSA_KEY_PASSWORD) " +
