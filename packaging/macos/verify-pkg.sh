@@ -44,7 +44,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # for a bundle nothing produces.
 # shellcheck source=packaging/macos/identity.sh
 . "${SCRIPT_DIR}/identity.sh"
-APP_PATH="${BURSA_APP_PATH:-/Applications/${APP_NAME}.app}"
+# Not overridable: `installer -pkg -target /` always writes to /Applications,
+# so a path override would verify and clean up somewhere the package never
+# installed, leaving the real install behind. Tests point this elsewhere by
+# editing a copy of the script, not by a knob that ships.
+APP_PATH="/Applications/${APP_NAME}.app"
 VERIFY_INSTALL="${BURSA_VERIFY_INSTALL:-1}"
 REPLACE_INSTALLED="${BURSA_REPLACE_INSTALLED:-0}"
 EXPECTED_ARCH="${BURSA_EXPECTED_ARCH:-}"
