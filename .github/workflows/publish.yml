@@ -28,13 +28,14 @@ jobs:
     steps:
       # Every job here depends on this one, so this guard gates the workflow.
       #
-      # A manual run is confined to the default branch, whether or not it signs.
-      # The macOS packaging step carries the Apple credentials in its step
-      # environment on every run and executes build-pkg.sh and the web build
-      # from the checked-out ref, so a dispatch from an arbitrary branch would
-      # let that branch's code read them. Restricting the ref keeps the
-      # credentials reachable only from reviewed code, as they were when a tag
-      # was the sole trigger.
+      # Keeps a maintainer from dispatching this workflow from the wrong ref.
+      #
+      # This is a convenience guard, NOT a security control: a workflow_dispatch
+      # run executes the workflow file from the dispatched ref, so anyone with
+      # write access could push a branch with this step deleted and dispatch
+      # that. Confining the Apple credentials to reviewed code requires a
+      # GitHub Environment with a deployment-branch policy, which GitHub
+      # enforces outside the workflow file.
       #
       # A tag ref is rejected outright: a manual run there would take the
       # tag-only branches all the way through, creating a second draft release
@@ -78,6 +79,9 @@ jobs:
             }
 
   build-binaries:
+    # A manual run exists to exercise the macOS packaging path. This job
+    # publishes or finalises release output, so it stays on the push triggers.
+    if: github.event_name != 'workflow_dispatch'
     strategy:
       matrix:
         include:
@@ -423,13 +427,13 @@ jobs:
             echo "::error::build-pkg.sh produced no .pkg under dist/"
             exit 1
           fi
-          echo "PKG_PATH=${PKG_PATH}" >> "$GITHUB_ENV"
 
           if [ -n "${INSTALLER_IDENTITY:-}" ]; then
             echo "::group::Verify pkg signature, notarization and installation"
             # The runner is ephemeral, so replacing anything already at
             # /Applications/Bursa.app is safe here.
-            BURSA_REPLACE_INSTALLED=1 ./packaging/macos/verify-pkg.sh "${PKG_PATH}"
+            BURSA_REPLACE_INSTALLED=1 BURSA_EXPECTED_ARCH="${MATRIX_ARCH}" \
+              ./packaging/macos/verify-pkg.sh "${PKG_PATH}"
             echo "::endgroup::"
           fi
 
@@ -717,6 +721,9 @@ jobs:
           subject-path: ${{ env.TARBALL_PATH }}
 
   build-images:
+    # A manual run exists to exercise the macOS packaging path. This job
+    # publishes or finalises release output, so it stays on the push triggers.
+    if: github.event_name != 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -790,6 +797,9 @@ jobs:
           push-to-registry: true
 
   build-image-manifest:
+    # A manual run exists to exercise the macOS packaging path. This job
+    # publishes or finalises release output, so it stays on the push triggers.
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     needs: [build-images]
     permissions:
@@ -867,6 +877,9 @@ jobs:
           short-description: "Bursa is a programmatic Cardano wallet and CLI tool"
 
   finalize-release:
+    # A manual run exists to exercise the macOS packaging path. This job
+    # publishes or finalises release output, so it stays on the push triggers.
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
