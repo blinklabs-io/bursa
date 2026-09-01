@@ -416,7 +416,9 @@ jobs:
           # Resolve the built pkg by globbing rather than reconstructing its
           # name: build-pkg.sh derives the version itself when VERSION is unset,
           # so a reconstructed path would miss the file on a non-tag run.
-          PKG_PATH=$(find dist -maxdepth 1 -name '*.pkg' | head -n1)
+          # -print -quit rather than `| head -n1`: under pipefail, head exiting
+          # first kills find with SIGPIPE and the assignment returns 141.
+          PKG_PATH=$(find dist -maxdepth 1 -name '*.pkg' -print -quit || true)
           if [ -z "${PKG_PATH}" ]; then
             echo "::error::build-pkg.sh produced no .pkg under dist/"
             exit 1
