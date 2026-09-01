@@ -11,7 +11,7 @@ plugins {
 // signing material is present: project.file() resolves a relative path against
 // the project directory, where java.io.File would use the daemon's working
 // directory and could answer differently for the same value.
-val bursaKeystoreFile: File? =
+val bursaKeystoreFile =
     System.getenv("BURSA_KEYSTORE_PATH")
         ?.takeIf { it.isNotBlank() }
         ?.let { project.file(it) }
@@ -28,15 +28,19 @@ android {
         targetSdk = 35
         // A tag build stamps the released version through the environment; a
         // local build keeps the placeholder so it stays buildable without one.
-        versionCode = (System.getenv("BURSA_VERSION_CODE") ?: "1").toInt()
+        // toIntOrNull so a malformed value names itself instead of surfacing as
+        // a bare NumberFormatException from deep in configuration.
+        versionCode = System.getenv("BURSA_VERSION_CODE")?.let { raw ->
+            raw.toIntOrNull() ?: error("BURSA_VERSION_CODE is not an integer: '$raw'")
+        } ?: 1
         versionName = System.getenv("BURSA_VERSION_NAME") ?: "0.1.0"
     }
 
     // Release signing is configured only when the keystore material is present,
     // so a debug build and an IDE sync still work without it. Absent signing
     // material does not make AGP fail, though: it would emit
-    // app-release-unsigned.apk. The task-graph check below turns that into a
-    // hard failure, so a release build can never quietly produce an APK that
+    // app-release-unsigned.apk. The requested-task check below turns that into
+    // a hard failure, so a release build can never quietly produce an APK that
     // looks releasable but cannot be installed.
     val keystorePath = bursaKeystoreFile
     val hasKeystore = keystorePath != null
@@ -88,26 +92,37 @@ android {
 }
 
 // Refuse to build a release artifact without signing material rather than
-// letting AGP emit an unsigned APK. Checked on the resolved task graph, and
-// only for the tasks that actually package something: lintRelease and the
-// release unit tests need no keystore, and debug builds and IDE sync are
-// untouched.
-val bursaReleasePackagingTasks = setOf(
+// letting AGP emit an unsigned APK.
+//
+// Checked against the requested task names at configuration time. That is a
+// plain List<String>, unlike a taskGraph.whenReady callback whose lambda may
+// bind the graph as a receiver or as `it` depending on the Kotlin DSL version:
+// getting that wrong fails configuration for every build, debug included, and
+// it cannot be compile-checked without a full Android toolchain.
+//
+// This sees only explicitly requested tasks, which covers `gradlew
+// assembleRelease bundleRelease` as CI and a developer invoke it. It is the
+// last of several layers: build-in-docker.sh requires the keystore before
+// Gradle starts, refuses to select a *-unsigned.apk, and runs apksigner
+// verify on the result.
+val bursaReleasePackagingTasks = listOf(
     "assembleRelease",
     "bundleRelease",
     "packageRelease",
 )
-gradle.taskGraph.whenReady {
-    val releaseRequested = allTasks.any {
-        it.project == project && it.name in bursaReleasePackagingTasks
+val bursaReleaseRequested = gradle.startParameter.taskNames.any { requested ->
+    bursaReleasePackagingTasks.any { task ->
+        requested == task || requested.endsWith(":" + task)
     }
-    if (releaseRequested && bursaKeystoreFile == null) {
-        throw GradleException(
-            "A release build requires signing material: set BURSA_KEYSTORE_PATH " +
-                "(plus BURSA_KEYSTORE_PASSWORD, BURSA_KEY_ALIAS, BURSA_KEY_PASSWORD) " +
-                "to an existing keystore. Refusing to produce an unsigned release APK.",
-        )
-    }
+}
+if (bursaReleaseRequested && bursaKeystoreFile == null) {
+    // error() is Kotlin stdlib; GradleException would be one more import
+    // assumption that cannot be checked here.
+    error(
+        "A release build requires signing material: set BURSA_KEYSTORE_PATH " +
+            "(plus BURSA_KEYSTORE_PASSWORD, BURSA_KEY_ALIAS, BURSA_KEY_PASSWORD) " +
+            "to an existing keystore. Refusing to produce an unsigned release APK.",
+    )
 }
 
 dependencies {
