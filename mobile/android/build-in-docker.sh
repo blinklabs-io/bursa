@@ -82,7 +82,7 @@ if [ "${BUILD_TYPE}" = debug ]; then
     echo "==> ./gradlew assembleDebug"
     ./gradlew --no-daemon assembleDebug
 
-    APK=$(find "${REPO}/mobile/android/app/build/outputs/apk/debug" -name '*.apk' | head -n1 || true)
+    APK=$(find "${REPO}/mobile/android/app/build/outputs/apk/debug" -name '*.apk' -print -quit || true)
     if [ -z "${APK}" ]; then
         echo "!! No APK produced" >&2
         exit 1
@@ -95,9 +95,9 @@ else
     # Gradle writes an unsigned variant to *-unsigned.apk; a signed build must
     # not leave one behind, so select the signed APK explicitly.
     APK=$(find "${REPO}/mobile/android/app/build/outputs/apk/release" \
-        -name '*.apk' ! -name '*-unsigned.apk' | head -n1 || true)
+        -name '*.apk' ! -name '*-unsigned.apk' -print -quit || true)
     AAB=$(find "${REPO}/mobile/android/app/build/outputs/bundle/release" \
-        -name '*.aab' | head -n1 || true)
+        -name '*.aab' -print -quit || true)
     if [ -z "${APK}" ]; then
         echo "!! No signed release APK produced" >&2
         exit 1
