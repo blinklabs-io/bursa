@@ -30,6 +30,11 @@
 #
 # Set BURSA_VERIFY_INSTALL=0 to check only signature + notarization (for a host
 # where installing to /Applications is not acceptable).
+#
+# The install check refuses to run when a Bursa.app is already present, because
+# installing over it and uninstalling afterwards would destroy it. Set
+# BURSA_REPLACE_INSTALLED=1 to accept that on a throwaway host such as a CI
+# runner.
 
 set -euo pipefail
 
@@ -38,6 +43,7 @@ APP_PATH="/Applications/Bursa.app"
 BUNDLE_ID="com.blinklabssoftware.bursa"
 BIN_NAME="bursa-wallet"
 VERIFY_INSTALL="${BURSA_VERIFY_INSTALL:-1}"
+REPLACE_INSTALLED="${BURSA_REPLACE_INSTALLED:-0}"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -85,9 +91,23 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Installation
 # ---------------------------------------------------------------------------
-# Start from a clean slate so a pre-existing app cannot make the check pass.
+# A pre-existing app would let the check pass without proving anything, and
+# this script cannot put one back after it installs over it. Refuse rather than
+# destroy it; a throwaway host can opt in.
+if [ -d "${APP_PATH}" ] && [ "${REPLACE_INSTALLED}" != "1" ]; then
+    die "${APP_PATH} already exists. Verifying the install would overwrite and then remove it. Set BURSA_REPLACE_INSTALLED=1 to allow that (throwaway hosts only), or BURSA_VERIFY_INSTALL=0 to check signature and notarization only."
+fi
+
+# From here on the app is this script's to clean up, however it exits: an early
+# failure must not leave a half-verified build installed on the host.
+cleanup_install() {
+    sudo rm -rf "${APP_PATH}"
+    sudo pkgutil --forget "${BUNDLE_ID}" >/dev/null 2>&1 || true
+}
+trap cleanup_install EXIT
+
 if [ -d "${APP_PATH}" ]; then
-    log "Removing a pre-existing ${APP_PATH} so the install is really tested"
+    log "Removing the pre-existing ${APP_PATH} (BURSA_REPLACE_INSTALLED=1)"
     sudo rm -rf "${APP_PATH}"
 fi
 sudo pkgutil --forget "${BUNDLE_ID}" >/dev/null 2>&1 || true
@@ -121,10 +141,8 @@ printf '%s' "${app_spctl}" | grep -q 'Notarized Developer ID' \
 log "Confirming the installed binary's architecture"
 lipo -archs "${APP_PATH}/Contents/MacOS/${BIN_NAME}"
 
-# Leave the runner as it was found: a later step attesting or uploading should
-# not see an installed copy, and a self-hosted host must not accumulate them.
+# The EXIT trap uninstalls, so a later step attesting or uploading never sees an
+# installed copy and a long-lived host does not accumulate them.
 log "Uninstalling"
-sudo rm -rf "${APP_PATH}"
-sudo pkgutil --forget "${BUNDLE_ID}" >/dev/null 2>&1 || true
 
 log "Signature, notarization and installation verified: ${PKG}"
