@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,9 +50,9 @@ func buildEnvelopeCorpus(t *testing.T) []envelopeCase {
 
 	paymentVKey, err := GetPaymentVKey(paymentKey)
 	require.NoError(t, err)
-	paymentSKey, err := GetPaymentSKey(paymentKey)
-	require.NoError(t, err)
 	paymentExtSKey, err := GetPaymentExtendedSKey(paymentKey)
+	require.NoError(t, err)
+	nonExtendedSeedCbor, err := cbor.Encode(make([]byte, 32))
 	require.NoError(t, err)
 
 	vrfSeed, err := GetVRFSeed(rootKey, 0)
@@ -76,7 +77,7 @@ func buildEnvelopeCorpus(t *testing.T) []envelopeCase {
 		kesPub,
 		1,
 		0,
-		paymentSKeySeed(t, paymentSKey),
+		paymentSKeySeed(t, paymentKey),
 	)
 	require.NoError(t, err)
 	opCertCbor, err := cbor.Encode(
@@ -101,7 +102,7 @@ func buildEnvelopeCorpus(t *testing.T) []envelopeCase {
 		{
 			"ed25519 skey",
 			"PaymentSigningKeyShelley_ed25519",
-			paymentSKey.CborHex,
+			hex.EncodeToString(nonExtendedSeedCbor),
 		},
 		{
 			"extended skey",
@@ -122,15 +123,9 @@ func buildEnvelopeCorpus(t *testing.T) []envelopeCase {
 
 // paymentSKeySeed pulls the raw 32-byte seed back out of a non-extended signing
 // key envelope, which is the form CreateOperationalCertificate expects.
-func paymentSKeySeed(t *testing.T, skey KeyFile) []byte {
+func paymentSKeySeed(t *testing.T, key bip32.XPrv) []byte {
 	t.Helper()
-	raw, err := hex.DecodeString(skey.CborHex)
-	require.NoError(t, err)
-	var seed []byte
-	_, err = cbor.Decode(raw, &seed)
-	require.NoError(t, err)
-	require.Len(t, seed, 32)
-	return seed
+	return append([]byte(nil), key.PrivateKey()[:32]...)
 }
 
 func envelopeJSON(t *testing.T, keyType, cborHex string) []byte {
