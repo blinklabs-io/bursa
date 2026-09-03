@@ -8,10 +8,10 @@ require (
 	fyne.io/systray v1.12.1
 	github.com/Salvionied/apollo/v2 v2.1.1
 	github.com/blinklabs-io/bursa v0.16.1-0.20260903124119-a42b8a742759
-	github.com/blinklabs-io/dingo v0.70.2
+	github.com/blinklabs-io/dingo v0.70.5
 	github.com/blinklabs-io/go-bip39 v0.2.0
-	github.com/blinklabs-io/gouroboros v0.202.2
-	github.com/blinklabs-io/plutigo v0.4.0
+	github.com/blinklabs-io/gouroboros v0.202.5
+	github.com/blinklabs-io/plutigo v0.5.0
 	github.com/blinklabs-io/shai v0.1.0
 	github.com/btcsuite/btcd/btcutil v1.2.0
 	github.com/glebarez/go-sqlite v1.23.0
@@ -63,26 +63,26 @@ require (
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/XSAM/otelsql v0.43.0 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
-	github.com/aws/aws-sdk-go-v2 v1.43.7 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.45.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.18 // indirect
-	github.com/aws/aws-sdk-go-v2/config v1.32.37 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.37 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.38 // indirect
+	github.com/aws/aws-sdk-go-v2/config v1.33.0 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.0 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.19.0 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.34 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.38 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.38 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.39 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.17 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.0 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.0 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.19 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.31 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.38 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.39 // indirect
 	github.com/aws/aws-sdk-go-v2/service/kms v1.54.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/signin v1.5.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.33.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.45.7 // indirect
-	github.com/aws/smithy-go v1.27.8 // indirect
+	github.com/aws/aws-sdk-go-v2/service/signin v1.7.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.35.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.40.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.47.0 // indirect
+	github.com/aws/smithy-go v1.28.1 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.6 // indirect
@@ -138,7 +138,7 @@ require (
 	github.com/googleapis/gax-go/v2 v2.24.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/goware/prefixer v0.0.0-20160118172347-395022866408 // indirect
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
@@ -260,16 +260,16 @@ require (
 	go.mongodb.org/mongo-driver v1.17.9 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.44.0 // indirect
-	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.69.0 // indirect
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect
-	go.opentelemetry.io/otel v1.45.0 // indirect
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0 // indirect
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.45.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.70.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0 // indirect
+	go.opentelemetry.io/otel v1.46.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0 // indirect
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.45.0 // indirect
-	go.opentelemetry.io/otel/metric v1.45.0 // indirect
-	go.opentelemetry.io/otel/sdk v1.45.0 // indirect
-	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
-	go.opentelemetry.io/otel/trace v1.45.0 // indirect
+	go.opentelemetry.io/otel/metric v1.46.0 // indirect
+	go.opentelemetry.io/otel/sdk v1.46.0 // indirect
+	go.opentelemetry.io/otel/sdk/metric v1.46.0 // indirect
+	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.uber.org/dig v1.19.0 // indirect
 	go.uber.org/fx v1.24.0 // indirect
@@ -291,7 +291,7 @@ require (
 	gonum.org/v1/gonum v0.17.0 // indirect
 	google.golang.org/api v0.295.0 // indirect
 	google.golang.org/genproto v0.0.0-20260720171339-e059f2f05d78 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
