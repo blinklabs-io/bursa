@@ -121,8 +121,8 @@ func buildEnvelopeCorpus(t *testing.T) []envelopeCase {
 	}
 }
 
-// paymentSKeySeed pulls the raw 32-byte seed back out of a non-extended signing
-// key envelope, which is the form CreateOperationalCertificate expects.
+// paymentSKeySeed derives the raw 32-byte seed from an extended private key,
+// which is the form CreateOperationalCertificate expects.
 func paymentSKeySeed(t *testing.T, key bip32.XPrv) []byte {
 	t.Helper()
 	return append([]byte(nil), key.PrivateKey()[:32]...)
