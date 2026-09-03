@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	crand "crypto/rand"
+	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
@@ -118,6 +119,10 @@ func GetScriptType(script Script) (int, error) {
 func (kf KeyFile) String() string {
 	var prefix string
 	switch kf.Type {
+	case "RootExtendedSigningKeyShelley_ed25519_bip32":
+		prefix = "root_xsk"
+	case "AccountExtendedSigningKeyShelley_ed25519_bip32":
+		prefix = "acct_xsk"
 	case "PaymentVerificationKeyShelley_ed25519":
 		prefix = "addr_vk"
 	case "PaymentSigningKeyShelley_ed25519":
@@ -662,10 +667,10 @@ func GetRootKey(entropy []byte, password []byte) bip32.XPrv {
 }
 
 func GetRootSKey(rootKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
+	return getExtendedSigningKeyFile(
 		rootKey,
-		"SigningKeyShelley_ed25519",
-		"Root Signing Key",
+		"RootExtendedSigningKeyShelley_ed25519_bip32",
+		"Root Extended Signing Key (BIP32)",
 	)
 }
 
@@ -700,10 +705,10 @@ func GetAccountVKey(accountKey bip32.XPrv) (KeyFile, error) {
 }
 
 func GetAccountSKey(accountKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
+	return getExtendedSigningKeyFile(
 		accountKey,
-		"AccountSigningKeyShelley_ed25519",
-		"Account Signing Key",
+		"AccountExtendedSigningKeyShelley_ed25519_bip32",
+		"Account Extended Signing Key (BIP32)",
 	)
 }
 
@@ -732,12 +737,13 @@ func GetPaymentVKey(paymentKey bip32.XPrv) (KeyFile, error) {
 	return kf, nil
 }
 
-func getSigningKeyFile(
+func getNonExtendedSigningKeyFile(
 	key bip32.XPrv,
 	keyType, description string,
 ) (KeyFile, error) {
-	// Encode just the raw private key bytes (cardano-cli compatible format)
-	// Use first 32 bytes (k_L) of the 64-byte extended private key
+	// A non-extended Ed25519 signing envelope contains a 32-byte seed. Consumers
+	// expand that seed before deriving its verification key, so this form is only
+	// valid when the paired verification identity uses standard Ed25519.
 	keyCbor, err := cbor.Encode(key.PrivateKey()[:32])
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
@@ -755,35 +761,67 @@ func getSigningKeyFile(
 	return kf, nil
 }
 
-func GetPaymentSKey(paymentKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
-		paymentKey,
-		"PaymentSigningKeyShelley_ed25519",
-		"Payment Signing Key",
-	)
-}
-
-func GetPaymentExtendedSKey(paymentKey bip32.XPrv) (KeyFile, error) {
-	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
-	extKeyBytes := make([]byte, 128)
-	copy(extKeyBytes[0:64], paymentKey.PrivateKey())
-	copy(extKeyBytes[64:96], paymentKey.Public().PublicKey())
-	copy(extKeyBytes[96:128], paymentKey.ChainCode())
-
-	keyCbor, err := cbor.Encode(extKeyBytes)
+func createExtendedSigningKeyFile(
+	privateKey, publicKey, chainCode []byte,
+	keyType, description string,
+) (KeyFile, error) {
+	if len(privateKey) != 64 || len(publicKey) != 32 || len(chainCode) != 32 {
+		return KeyFile{}, fmt.Errorf(
+			"invalid extended signing key components for %s: private=%d public=%d chain-code=%d",
+			description,
+			len(privateKey),
+			len(publicKey),
+			len(chainCode),
+		)
+	}
+	extendedKey := make([]byte, 128)
+	copy(extendedKey[0:64], privateKey)
+	copy(extendedKey[64:96], publicKey)
+	copy(extendedKey[96:128], chainCode)
+	keyCbor, err := cbor.Encode(extendedKey)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
-			"failed to encode payment extended signing key CBOR: %w",
+			"failed to encode %s CBOR: %w",
+			description,
 			err,
 		)
 	}
 	kf := KeyFile{
-		Type:        "PaymentExtendedSigningKeyShelley_ed25519_bip32",
-		Description: "Payment Extended Signing Key (BIP32)",
+		Type:        keyType,
+		Description: description,
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
 	kf.SetCbor(keyCbor)
 	return kf, nil
+}
+
+func getExtendedSigningKeyFile(
+	key bip32.XPrv,
+	keyType, description string,
+) (KeyFile, error) {
+	return createExtendedSigningKeyFile(
+		key.PrivateKey(),
+		key.PublicKey(),
+		key.ChainCode(),
+		keyType,
+		description,
+	)
+}
+
+func GetPaymentSKey(paymentKey bip32.XPrv) (KeyFile, error) {
+	return getExtendedSigningKeyFile(
+		paymentKey,
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
+		"Payment Extended Signing Key (BIP32)",
+	)
+}
+
+func GetPaymentExtendedSKey(paymentKey bip32.XPrv) (KeyFile, error) {
+	return getExtendedSigningKeyFile(
+		paymentKey,
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
+		"Payment Extended Signing Key (BIP32)",
+	)
 }
 
 // GetCalidusKey derives a Calidus key (CIP-88/CIP-151) for SPO on-chain
@@ -823,10 +861,10 @@ func GetCalidusVKey(calidusKey bip32.XPrv) (KeyFile, error) {
 
 // GetCalidusSKey creates a Calidus signing key file
 func GetCalidusSKey(calidusKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
+	return getExtendedSigningKeyFile(
 		calidusKey,
-		"CalidusSigningKeyShelley_ed25519",
-		"Calidus Signing Key",
+		"CalidusExtendedSigningKeyShelley_ed25519_bip32",
+		"Calidus Extended Signing Key (BIP32)",
 	)
 }
 
@@ -834,26 +872,11 @@ func GetCalidusSKey(calidusKey bip32.XPrv) (KeyFile, error) {
 func GetCalidusExtendedSKey(
 	calidusKey bip32.XPrv,
 ) (KeyFile, error) {
-	extKeyBytes := make([]byte, 128)
-	copy(extKeyBytes[0:64], calidusKey.PrivateKey())
-	copy(extKeyBytes[64:96], calidusKey.Public().PublicKey())
-	copy(extKeyBytes[96:128], calidusKey.ChainCode())
-
-	keyCbor, err := cbor.Encode(extKeyBytes)
-	if err != nil {
-		return KeyFile{}, fmt.Errorf(
-			"failed to encode Calidus extended signing key CBOR: %w",
-			err,
-		)
-	}
-	kf := KeyFile{
-		Type: "CalidusExtendedSigningKeyShelley" +
-			"_ed25519_bip32",
-		Description: "Calidus Extended Signing Key (BIP32)",
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
-	kf.SetCbor(keyCbor)
-	return kf, nil
+	return getExtendedSigningKeyFile(
+		calidusKey,
+		"CalidusExtendedSigningKeyShelley_ed25519_bip32",
+		"Calidus Extended Signing Key (BIP32)",
+	)
 }
 
 func GetStakeKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
@@ -882,34 +905,19 @@ func GetStakeVKey(stakeKey bip32.XPrv) (KeyFile, error) {
 }
 
 func GetStakeSKey(stakeKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
+	return getExtendedSigningKeyFile(
 		stakeKey,
-		"StakeSigningKeyShelley_ed25519",
-		"Stake Signing Key",
+		"StakeExtendedSigningKeyShelley_ed25519_bip32",
+		"Stake Extended Signing Key (BIP32)",
 	)
 }
 
 func GetStakeExtendedSKey(stakeKey bip32.XPrv) (KeyFile, error) {
-	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
-	extKeyBytes := make([]byte, 128)
-	copy(extKeyBytes[0:64], stakeKey.PrivateKey())
-	copy(extKeyBytes[64:96], stakeKey.Public().PublicKey())
-	copy(extKeyBytes[96:128], stakeKey.ChainCode())
-
-	keyCbor, err := cbor.Encode(extKeyBytes)
-	if err != nil {
-		return KeyFile{}, fmt.Errorf(
-			"failed to encode stake extended signing key CBOR: %w",
-			err,
-		)
-	}
-	kf := KeyFile{
-		Type:        "StakeExtendedSigningKeyShelley_ed25519_bip32",
-		Description: "Stake Extended Signing Key (BIP32)",
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
-	kf.SetCbor(keyCbor)
-	return kf, nil
+	return getExtendedSigningKeyFile(
+		stakeKey,
+		"StakeExtendedSigningKeyShelley_ed25519_bip32",
+		"Stake Extended Signing Key (BIP32)",
+	)
 }
 
 func GetDRepKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
@@ -938,34 +946,19 @@ func GetDRepVKey(drepKey bip32.XPrv) (KeyFile, error) {
 }
 
 func GetDRepSKey(drepKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
+	return getExtendedSigningKeyFile(
 		drepKey,
-		"DRepSigningKeyShelley_ed25519",
-		"DRep Signing Key",
+		"DRepExtendedSigningKeyShelley_ed25519_bip32",
+		"DRep Extended Signing Key (BIP32)",
 	)
 }
 
 func GetDRepExtendedSKey(drepKey bip32.XPrv) (KeyFile, error) {
-	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
-	extKeyBytes := make([]byte, 128)
-	copy(extKeyBytes[0:64], drepKey.PrivateKey())
-	copy(extKeyBytes[64:96], drepKey.Public().PublicKey())
-	copy(extKeyBytes[96:128], drepKey.ChainCode())
-
-	keyCbor, err := cbor.Encode(extKeyBytes)
-	if err != nil {
-		return KeyFile{}, fmt.Errorf(
-			"failed to encode DRep extended signing key CBOR: %w",
-			err,
-		)
-	}
-	kf := KeyFile{
-		Type:        "DRepExtendedSigningKeyShelley_ed25519_bip32",
-		Description: "DRep Extended Signing Key (BIP32)",
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
-	kf.SetCbor(keyCbor)
-	return kf, nil
+	return getExtendedSigningKeyFile(
+		drepKey,
+		"DRepExtendedSigningKeyShelley_ed25519_bip32",
+		"DRep Extended Signing Key (BIP32)",
+	)
 }
 
 func GetCommitteeColdKey(
@@ -997,34 +990,19 @@ func GetCommitteeColdVKey(committeeKey bip32.XPrv) (KeyFile, error) {
 }
 
 func GetCommitteeColdSKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
+	return getExtendedSigningKeyFile(
 		committeeKey,
-		"CommitteeColdSigningKeyShelley_ed25519",
-		"Committee Cold Signing Key",
+		"CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
+		"Committee Cold Extended Signing Key (BIP32)",
 	)
 }
 
 func GetCommitteeColdExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
-	extKeyBytes := make([]byte, 128)
-	copy(extKeyBytes[0:64], committeeKey.PrivateKey())
-	copy(extKeyBytes[64:96], committeeKey.Public().PublicKey())
-	copy(extKeyBytes[96:128], committeeKey.ChainCode())
-
-	keyCbor, err := cbor.Encode(extKeyBytes)
-	if err != nil {
-		return KeyFile{}, fmt.Errorf(
-			"failed to encode Committee Cold extended signing key CBOR: %w",
-			err,
-		)
-	}
-	kf := KeyFile{
-		Type:        "CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
-		Description: "Committee Cold Extended Signing Key (BIP32)",
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
-	kf.SetCbor(keyCbor)
-	return kf, nil
+	return getExtendedSigningKeyFile(
+		committeeKey,
+		"CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
+		"Committee Cold Extended Signing Key (BIP32)",
+	)
 }
 
 func GetCommitteeHotKey(accountKey bip32.XPrv, num uint32) (bip32.XPrv, error) {
@@ -1053,34 +1031,19 @@ func GetCommitteeHotVKey(committeeKey bip32.XPrv) (KeyFile, error) {
 }
 
 func GetCommitteeHotSKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
+	return getExtendedSigningKeyFile(
 		committeeKey,
-		"CommitteeHotSigningKeyShelley_ed25519",
-		"Committee Hot Signing Key",
+		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
+		"Committee Hot Extended Signing Key (BIP32)",
 	)
 }
 
 func GetCommitteeHotExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
-	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
-	extKeyBytes := make([]byte, 128)
-	copy(extKeyBytes[0:64], committeeKey.PrivateKey())
-	copy(extKeyBytes[64:96], committeeKey.Public().PublicKey())
-	copy(extKeyBytes[96:128], committeeKey.ChainCode())
-
-	keyCbor, err := cbor.Encode(extKeyBytes)
-	if err != nil {
-		return KeyFile{}, fmt.Errorf(
-			"failed to encode Committee Hot extended signing key CBOR: %w",
-			err,
-		)
-	}
-	kf := KeyFile{
-		Type:        "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
-		Description: "Committee Hot Extended Signing Key (BIP32)",
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
-	kf.SetCbor(keyCbor)
-	return kf, nil
+	return getExtendedSigningKeyFile(
+		committeeKey,
+		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
+		"Committee Hot Extended Signing Key (BIP32)",
+	)
 }
 
 // GetPoolColdKey derives a stake pool cold key using CIP-1853 path: m/1853'/1815'/usecase'/index'
@@ -1129,7 +1092,7 @@ func GetPoolColdVKey(poolColdKey bip32.XPrv) (KeyFile, error) {
 
 // GetPoolColdSKey creates a stake pool cold signing key file
 func GetPoolColdSKey(poolColdKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
+	return getNonExtendedSigningKeyFile(
 		poolColdKey,
 		"StakePoolSigningKey_ed25519",
 		"Stake Pool Cold Signing Key",
@@ -1138,25 +1101,22 @@ func GetPoolColdSKey(poolColdKey bip32.XPrv) (KeyFile, error) {
 
 // GetPoolColdExtendedSKey creates a stake pool cold extended signing key file (BIP32)
 func GetPoolColdExtendedSKey(poolColdKey bip32.XPrv) (KeyFile, error) {
-	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
-	extKeyBytes := make([]byte, 128)
-	copy(extKeyBytes[0:64], poolColdKey.PrivateKey())
-	copy(extKeyBytes[64:96], poolColdKey.Public().PublicKey())
-	copy(extKeyBytes[96:128], poolColdKey.ChainCode())
-	keyCbor, err := cbor.Encode(extKeyBytes)
-	if err != nil {
-		return KeyFile{}, fmt.Errorf(
-			"failed to encode pool cold extended signing key CBOR: %w",
-			err,
-		)
-	}
-	kf := KeyFile{
-		Type:        "StakePoolExtendedSigningKeyShelley_ed25519_bip32",
-		Description: "Stake Pool Cold Extended Signing Key (BIP32)",
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
-	kf.SetCbor(keyCbor)
-	return kf, nil
+	// Pool-cold's canonical identity is the standard Ed25519 key derived from
+	// k_L as a seed. Expand that same seed into the scalar/prefix form expected
+	// by an extended envelope so both pool signing exports imply one pool ID.
+	seed := poolColdKey.PrivateKey()[:ed25519.SeedSize]
+	expanded := sha512.Sum512(seed)
+	expanded[0] &= 248
+	expanded[31] &= 63
+	expanded[31] |= 64
+	publicKey := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	return createExtendedSigningKeyFile(
+		expanded[:],
+		publicKey,
+		poolColdKey.ChainCode(),
+		"StakePoolExtendedSigningKeyShelley_ed25519_bip32",
+		"Stake Pool Cold Extended Signing Key (BIP32)",
+	)
 }
 
 // GetPolicyKey derives a forging policy key using CIP-1855 path: m/1855'/1815'/policy_ix'
@@ -1196,34 +1156,20 @@ func GetPolicyVKey(policyKey bip32.XPrv) (KeyFile, error) {
 
 // GetPolicySKey creates a policy signing key file
 func GetPolicySKey(policyKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
+	return getExtendedSigningKeyFile(
 		policyKey,
-		"PolicySigningKeyShelley_ed25519",
-		"Policy Signing Key",
+		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		"Policy Extended Signing Key (BIP32)",
 	)
 }
 
 // GetPolicyExtendedSKey creates a policy extended signing key file (BIP32)
 func GetPolicyExtendedSKey(policyKey bip32.XPrv) (KeyFile, error) {
-	// cardano-cli extended key format: privKey (64) || pubKey (32) || chainCode (32) = 128 bytes
-	extKeyBytes := make([]byte, 128)
-	copy(extKeyBytes[0:64], policyKey.PrivateKey())
-	copy(extKeyBytes[64:96], policyKey.Public().PublicKey())
-	copy(extKeyBytes[96:128], policyKey.ChainCode())
-	keyCbor, err := cbor.Encode(extKeyBytes)
-	if err != nil {
-		return KeyFile{}, fmt.Errorf(
-			"failed to encode policy extended signing key CBOR: %w",
-			err,
-		)
-	}
-	kf := KeyFile{
-		Type:        "PolicyExtendedSigningKeyShelley_ed25519_bip32",
-		Description: "Policy Extended Signing Key (BIP32)",
-		CborHex:     hex.EncodeToString(keyCbor),
-	}
-	kf.SetCbor(keyCbor)
-	return kf, nil
+	return getExtendedSigningKeyFile(
+		policyKey,
+		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		"Policy Extended Signing Key (BIP32)",
+	)
 }
 
 // GetPolicyKeyHash returns the blake2b_224 hash of the policy verification key
@@ -1632,10 +1578,10 @@ func GetMultiSigPaymentVKey(paymentKey bip32.XPrv) (KeyFile, error) {
 
 // GetMultiSigPaymentSKey creates a signing key file for multi-sig payment key
 func GetMultiSigPaymentSKey(paymentKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
+	return getExtendedSigningKeyFile(
 		paymentKey,
-		"PaymentSigningKeyShelley_ed25519",
-		"Multi-Sig Payment Signing Key",
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
+		"Multi-Sig Payment Extended Signing Key (BIP32)",
 	)
 }
 
@@ -1661,10 +1607,10 @@ func GetMultiSigStakeVKey(stakeKey bip32.XPrv) (KeyFile, error) {
 
 // GetMultiSigStakeSKey creates a signing key file for multi-sig stake key
 func GetMultiSigStakeSKey(stakeKey bip32.XPrv) (KeyFile, error) {
-	return getSigningKeyFile(
+	return getExtendedSigningKeyFile(
 		stakeKey,
-		"StakeSigningKeyShelley_ed25519",
-		"Multi-Sig Stake Signing Key",
+		"StakeExtendedSigningKeyShelley_ed25519_bip32",
+		"Multi-Sig Stake Extended Signing Key (BIP32)",
 	)
 }
 
@@ -2503,41 +2449,49 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 	}
 	// Decode cbor encoded key bytes
 	switch env.Type {
-	case "PaymentVerificationKeyShelley_ed25519",
+	case "AccountVerificationKeyShelley_ed25519",
+		"PaymentVerificationKeyShelley_ed25519",
 		"StakeVerificationKeyShelley_ed25519",
 		"DRepVerificationKeyShelley_ed25519",
 		"CommitteeColdVerificationKeyShelley_ed25519",
 		"CommitteeHotVerificationKeyShelley_ed25519",
 		"StakePoolVerificationKey_ed25519",
 		"StakePoolVerificationKeyShelley_ed25519",
-		"PolicyVerificationKeyShelley_ed25519":
+		"PolicyVerificationKeyShelley_ed25519",
+		"CalidusVerificationKeyShelley_ed25519":
 		vk, err := decodeVerificationKey(cborData)
 		if err != nil {
 			return nil, err
 		}
 		lk.VKey = vk
 		return lk, nil
-	case "PaymentSigningKeyShelley_ed25519",
+	case "SigningKeyShelley_ed25519",
+		"AccountSigningKeyShelley_ed25519",
+		"PaymentSigningKeyShelley_ed25519",
 		"StakeSigningKeyShelley_ed25519",
 		"DRepSigningKeyShelley_ed25519",
 		"CommitteeColdSigningKeyShelley_ed25519",
 		"CommitteeHotSigningKeyShelley_ed25519",
 		"StakePoolSigningKey_ed25519",
 		"StakePoolSigningKeyShelley_ed25519",
-		"PolicySigningKeyShelley_ed25519":
+		"PolicySigningKeyShelley_ed25519",
+		"CalidusSigningKeyShelley_ed25519":
 		sk, vk, err := decodeNonExtendedCborKey(cborData)
 		if err != nil {
 			return nil, err
 		}
 		lk.SKey, lk.VKey = sk, vk
 		return lk, nil
-	case "PaymentExtendedSigningKeyShelley_ed25519_bip32",
+	case "RootExtendedSigningKeyShelley_ed25519_bip32",
+		"AccountExtendedSigningKeyShelley_ed25519_bip32",
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		"StakeExtendedSigningKeyShelley_ed25519_bip32",
 		"DRepExtendedSigningKeyShelley_ed25519_bip32",
 		"CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
 		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
 		"StakePoolExtendedSigningKeyShelley_ed25519_bip32",
-		"PolicyExtendedSigningKeyShelley_ed25519_bip32":
+		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		"CalidusExtendedSigningKeyShelley_ed25519_bip32":
 		sk, vk, err := decodeExtendedCborKey(cborData)
 		if err != nil {
 			return nil, err

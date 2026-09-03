@@ -238,8 +238,8 @@ func TestLoadWalletDir(t *testing.T) {
 	// Verify payment skey
 	pskey := keyMap["payment.skey"]
 	assert.NotNil(t, pskey)
-	assert.Equal(t, "PaymentSigningKeyShelley_ed25519", pskey.Type)
-	assert.Len(t, pskey.SKey, 64)
+	assert.Equal(t, "PaymentExtendedSigningKeyShelley_ed25519_bip32", pskey.Type)
+	assert.Len(t, pskey.SKey, 96)
 	assert.Len(t, pskey.VKey, 32)
 
 	// Verify extended skey
@@ -497,13 +497,21 @@ func TestCIP1852Compliance(t *testing.T) {
 		"PaymentVerificationKeyShelley_ed25519",
 		wallet.PaymentVKey.Type,
 	)
-	assert.Equal(t, "PaymentSigningKeyShelley_ed25519", wallet.PaymentSKey.Type)
+	assert.Equal(
+		t,
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
+		wallet.PaymentSKey.Type,
+	)
 	assert.Equal(
 		t,
 		"StakeVerificationKeyShelley_ed25519",
 		wallet.StakeVKey.Type,
 	)
-	assert.Equal(t, "StakeSigningKeyShelley_ed25519", wallet.StakeSKey.Type)
+	assert.Equal(
+		t,
+		"StakeExtendedSigningKeyShelley_ed25519_bip32",
+		wallet.StakeSKey.Type,
+	)
 
 	// Verify CBOR structure for verification keys
 	vkeyBytes, err := hex.DecodeString(wallet.PaymentVKey.CborHex)
@@ -512,16 +520,14 @@ func TestCIP1852Compliance(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 32, len(vk))
 
-	// Verify CBOR structure for signing keys
+	// Verify CBOR structure for extended signing keys
 	skeyBytes, err := hex.DecodeString(wallet.PaymentSKey.CborHex)
 	assert.NoError(t, err)
-	sk, vk2, err := decodeNonExtendedCborKey(skeyBytes)
+	sk, vk2, err := decodeExtendedCborKey(skeyBytes)
 	assert.NoError(t, err)
-	assert.Equal(t, 64, len(sk)) // 32-byte private + 32-byte public
+	assert.Equal(t, 96, len(sk)) // 64-byte private + 32-byte chain code
 	assert.Equal(t, 32, len(vk2))
-
-	// Note: The public keys may not match due to different key representations/formats
-	// The important thing is that CBOR encoding/decoding works correctly
+	assert.Equal(t, vk, vk2)
 }
 
 func TestCIP1852DerivationPaths(t *testing.T) {
@@ -823,7 +829,7 @@ func TestCIP0003KeyGeneration(t *testing.T) {
 		)
 		assert.Equal(
 			t,
-			"PaymentSigningKeyShelley_ed25519",
+			"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 			wallet.PaymentSKey.Type,
 		)
 		assert.Equal(
@@ -831,7 +837,11 @@ func TestCIP0003KeyGeneration(t *testing.T) {
 			"StakeVerificationKeyShelley_ed25519",
 			wallet.StakeVKey.Type,
 		)
-		assert.Equal(t, "StakeSigningKeyShelley_ed25519", wallet.StakeSKey.Type)
+		assert.Equal(
+			t,
+			"StakeExtendedSigningKeyShelley_ed25519_bip32",
+			wallet.StakeSKey.Type,
+		)
 	})
 }
 
@@ -1337,7 +1347,7 @@ func TestMultiSigKeyDerivation(t *testing.T) {
 
 	skey, err := GetMultiSigPaymentSKey(paymentKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "PaymentSigningKeyShelley_ed25519", skey.Type)
+	assert.Equal(t, "PaymentExtendedSigningKeyShelley_ed25519_bip32", skey.Type)
 
 	stakeKey, err := GetMultiSigStakeKey(accountKey, 0)
 	assert.NoError(t, err)
@@ -1348,7 +1358,7 @@ func TestMultiSigKeyDerivation(t *testing.T) {
 
 	stakeSKey, err := GetMultiSigStakeSKey(stakeKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "StakeSigningKeyShelley_ed25519", stakeSKey.Type)
+	assert.Equal(t, "StakeExtendedSigningKeyShelley_ed25519_bip32", stakeSKey.Type)
 }
 
 func TestValidateScript(t *testing.T) {
@@ -2705,8 +2715,8 @@ func TestCIP1855KeyFileGeneration(t *testing.T) {
 	// Test signing key generation
 	skey, err := GetPolicySKey(policyKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "PolicySigningKeyShelley_ed25519", skey.Type)
-	assert.Equal(t, "Policy Signing Key", skey.Description)
+	assert.Equal(t, "PolicyExtendedSigningKeyShelley_ed25519_bip32", skey.Type)
+	assert.Equal(t, "Policy Extended Signing Key (BIP32)", skey.Description)
 	assert.NotEmpty(t, skey.CborHex)
 
 	// Test extended signing key generation
@@ -2748,8 +2758,8 @@ func TestCIP1855KeyFileGeneration(t *testing.T) {
 	skeyBech32 := skey.String()
 	assert.True(
 		t,
-		strings.HasPrefix(skeyBech32, "policy_sk"),
-		"Signing key should have policy_sk prefix",
+		strings.HasPrefix(skeyBech32, "policy_xsk"),
+		"Signing key should have policy_xsk prefix",
 	)
 
 	extSkeyBech32 := extendedSkey.String()
@@ -2924,8 +2934,8 @@ func TestCIP1855PolicyKeyRoundTrip(t *testing.T) {
 	// Verify policy signing key
 	pskey := keyMap["policy.skey"]
 	assert.NotNil(t, pskey, "policy.skey should be loaded")
-	assert.Equal(t, "PolicySigningKeyShelley_ed25519", pskey.Type)
-	assert.Len(t, pskey.SKey, 64, "Signing key should be 64 bytes")
+	assert.Equal(t, "PolicyExtendedSigningKeyShelley_ed25519_bip32", pskey.Type)
+	assert.Len(t, pskey.SKey, 96, "Signing key should be 96 bytes")
 	assert.Len(t, pskey.VKey, 32, "Derived verification key should be 32 bytes")
 
 	// Verify policy extended signing key
