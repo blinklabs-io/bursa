@@ -7,12 +7,12 @@ toolchain go1.26.7
 require (
 	fyne.io/systray v1.12.1
 	github.com/Salvionied/apollo/v2 v2.1.1
-	github.com/blinklabs-io/bursa v0.16.1-0.20260822162654-819d49daca4c
+	github.com/blinklabs-io/bursa v0.16.1-0.20260903124119-a42b8a742759
 	github.com/blinklabs-io/dingo v0.70.2
 	github.com/blinklabs-io/go-bip39 v0.2.0
 	github.com/blinklabs-io/gouroboros v0.202.2
 	github.com/blinklabs-io/plutigo v0.4.0
-	github.com/blinklabs-io/shai v0.0.0-20260824194445-61b0d4e854ad
+	github.com/blinklabs-io/shai v0.1.0
 	github.com/btcsuite/btcd/btcutil v1.2.0
 	github.com/glebarez/go-sqlite v1.23.0
 	github.com/google/go-tpm v0.9.8
@@ -34,7 +34,7 @@ require (
 require (
 	cel.dev/expr v0.25.2 // indirect
 	cloud.google.com/go v0.123.0 // indirect
-	cloud.google.com/go/auth v0.23.0 // indirect
+	cloud.google.com/go/auth v0.23.2 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/iam v1.12.0 // indirect
@@ -135,7 +135,7 @@ require (
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.20 // indirect
-	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
+	github.com/googleapis/gax-go/v2 v2.24.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/goware/prefixer v0.0.0-20160118172347-395022866408 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
@@ -278,7 +278,6 @@ require (
 	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b // indirect
-	golang.org/x/mobile v0.0.0-20260611195102-4dd8f1dbf5d2 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
@@ -290,11 +289,11 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
-	google.golang.org/api v0.293.0 // indirect
+	google.golang.org/api v0.295.0 // indirect
 	google.golang.org/genproto v0.0.0-20260720171339-e059f2f05d78 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260807164820-c8921c73eeea // indirect
-	google.golang.org/grpc v1.83.1 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
+	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/ini.v1 v1.67.3 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
@@ -302,7 +301,5 @@ require (
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.56.0 // indirect
+	modernc.org/sqlite v1.57.0 // indirect
 )
-
-tool golang.org/x/mobile/cmd/gobind
