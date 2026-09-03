@@ -80,11 +80,9 @@ NOTARY_PROFILE="${NOTARY_PROFILE:-}"
 APPLE_ID="${APPLE_ID:-}"
 APPLE_APP_PASSWORD="${APPLE_APP_PASSWORD:-}"
 
-# Bundle identity constants.
-BUNDLE_ID="com.blinklabssoftware.bursa"
-APP_NAME="Bursa"
-# The single GUI executable's on-disk name (matches ui/cmd/bursa-wallet output).
-BIN_NAME="bursa-wallet"
+# Bundle identity constants, shared with verify-pkg.sh.
+# shellcheck source=packaging/macos/identity.sh
+. "${SCRIPT_DIR}/identity.sh"
 
 # Output / work locations.
 DIST_DIR="${DIST_DIR:-${REPO_ROOT}/dist}"
