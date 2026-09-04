@@ -785,7 +785,10 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 	// malformed references fail closed as an unsupported import.
 	spendScripts, err := s.paymentScriptHashes(&tx)
 	if err != nil {
-		return TxInfo{IsMultiSig: true, ScriptEmbedded: true}, nil
+		// Input lookup failures are intentionally classified as unsupported
+		// imports here; callers must not treat an unresolved input as a valid
+		// multisig authorization.
+		return TxInfo{IsMultiSig: true, ScriptEmbedded: true}, nil //nolint:nilerr // unresolved inputs are classified as unsupported imports
 	}
 	ns := candidates[0]
 	if !spendScripts[hex.EncodeToString(ns.Hash().Bytes())] {
@@ -862,7 +865,7 @@ func (s *Service) paymentScriptHashes(tx *conway.ConwayTransaction) (map[string]
 			return nil, fmt.Errorf("resolve input: %w", err)
 		}
 		if utxo == nil || utxo.Output == nil {
-			return nil, fmt.Errorf("resolve input: output not found")
+			return nil, errors.New("resolve input: output not found")
 		}
 		addr := utxo.Output.Address()
 		payload, ok := (&addr).PayloadPayload().(lcommon.AddressPayloadScriptHash)
