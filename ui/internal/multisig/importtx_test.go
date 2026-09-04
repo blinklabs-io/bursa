@@ -599,6 +599,31 @@ func TestInspectTx_NotMultiSig(t *testing.T) {
 	}
 }
 
+// TestInspectTx_RejectsUnboundEmbeddedScript ensures an attacker cannot make
+// an arbitrary witness-set script look like a payment policy.  The script is
+// not the credential of any resolved input, so the import remains unsupported.
+func TestInspectTx_RejectsUnboundEmbeddedScript(t *testing.T) {
+	fc := newFakeChain()
+	svc := NewService(fc, nil, &memAccounts{})
+	_, kh, _ := multiSigKeyHash(t, mnemonicA)
+	ns, err := composeScript(Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: kh}}})
+	if err != nil {
+		t.Fatalf("composeScript: %v", err)
+	}
+	tx := decodeConwayTx(t, ordinaryUnsignedTxHex(t, fc))
+	tx.WitnessSet.WsNativeScripts = gcbor.NewSetType([]lcommon.NativeScript{*ns}, true)
+	tx.SetCbor(nil)
+	tx.WitnessSet.SetCbor(nil)
+
+	info, err := svc.InspectTx(encodeConwayTx(t, &tx))
+	if err != nil {
+		t.Fatalf("InspectTx: %v", err)
+	}
+	if !info.IsMultiSig || info.Threshold != 0 {
+		t.Fatalf("unbound script classified as signable policy: %+v", info)
+	}
+}
+
 // TestInspectTx_MalformedHex covers the ErrInvalidTx wrapping requirement for
 // hex that doesn't even decode.
 func TestInspectTx_MalformedHex(t *testing.T) {

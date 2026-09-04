@@ -778,7 +778,19 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 		// than guess.
 		return TxInfo{IsMultiSig: true, ScriptEmbedded: true}, nil
 	}
+	// A non-mint script is only authorized for payment when an input actually
+	// spends an output locked by that script.  Witness-set membership alone is
+	// attacker-controlled and is not evidence that the wallet is authorizing
+	// this policy. Resolve every input before selecting the policy; unknown or
+	// malformed references fail closed as an unsupported import.
+	spendScripts, err := s.paymentScriptHashes(&tx)
+	if err != nil {
+		return TxInfo{IsMultiSig: true, ScriptEmbedded: true}, nil
+	}
 	ns := candidates[0]
+	if !spendScripts[hex.EncodeToString(ns.Hash().Bytes())] {
+		return TxInfo{IsMultiSig: true, ScriptEmbedded: true}, nil
+	}
 	scriptHash := hex.EncodeToString(ns.Hash().Bytes())
 
 	policy, err := PolicyFromScript(ns)
@@ -832,6 +844,32 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 		info.Participants = append(info.Participants, p)
 	}
 	return info, nil
+}
+
+// paymentScriptHashes resolves every transaction input and returns the native
+// script credentials of script-locked payment outputs.  Imported transactions
+// must be bound to these chain-owned outputs before a witness script is treated
+// as a payment authorization.  A missing output is an error: guessing would
+// recreate the decoy-script signing vulnerability this check prevents.
+func (s *Service) paymentScriptHashes(tx *conway.ConwayTransaction) (map[string]bool, error) {
+	if s.chain == nil {
+		return nil, errors.New("chain context unavailable")
+	}
+	out := make(map[string]bool)
+	for _, input := range tx.Body.Inputs().Items() {
+		utxo, err := s.chain.UtxoByRef(input.Id(), input.Index())
+		if err != nil {
+			return nil, fmt.Errorf("resolve input: %w", err)
+		}
+		if utxo == nil || utxo.Output == nil {
+			return nil, fmt.Errorf("resolve input: output not found")
+		}
+		payload, ok := utxo.Output.Address().PayloadPayload().(lcommon.AddressPayloadScriptHash)
+		if ok {
+			out[hex.EncodeToString(payload.Hash.Bytes())] = true
+		}
+	}
+	return out, nil
 }
 
 // Sign is a co-signer's step: it decrypts the seed, derives the wallet's CIP-1854
