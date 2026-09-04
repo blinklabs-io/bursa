@@ -856,7 +856,7 @@ func (s *Service) paymentScriptHashes(tx *conway.ConwayTransaction) (map[string]
 		return nil, errors.New("chain context unavailable")
 	}
 	out := make(map[string]bool)
-	for _, input := range tx.Body.Inputs().Items() {
+	for _, input := range tx.Body.Inputs() {
 		utxo, err := s.chain.UtxoByRef(input.Id(), input.Index())
 		if err != nil {
 			return nil, fmt.Errorf("resolve input: %w", err)
@@ -864,7 +864,8 @@ func (s *Service) paymentScriptHashes(tx *conway.ConwayTransaction) (map[string]
 		if utxo == nil || utxo.Output == nil {
 			return nil, fmt.Errorf("resolve input: output not found")
 		}
-		payload, ok := utxo.Output.Address().PayloadPayload().(lcommon.AddressPayloadScriptHash)
+		addr := utxo.Output.Address()
+		payload, ok := (&addr).PayloadPayload().(lcommon.AddressPayloadScriptHash)
 		if ok {
 			out[hex.EncodeToString(payload.Hash.Bytes())] = true
 		}
