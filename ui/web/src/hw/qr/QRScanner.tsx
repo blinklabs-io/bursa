@@ -108,7 +108,7 @@ export function QRScanner({ onResult, onError, deviceLabel = "device" }: QRScann
               ? `Camera access was denied. Allow camera access to scan the ${deviceLabel} reply.`
               : err.message
             : "Could not open the camera.";
-        onError?.(message);
+        fail(message);
       }
     })();
 

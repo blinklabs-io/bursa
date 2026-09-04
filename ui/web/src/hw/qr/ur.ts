@@ -124,6 +124,22 @@ function advertisedPartCount(part: string): number {
   return count;
 }
 
+function resolveLimits(requestedLimits: URLimits): Required<URLimits> {
+  const limits = {
+    maxPartBytes: requestedLimits.maxPartBytes ?? DEFAULT_UR_LIMITS.maxPartBytes,
+    maxTotalBytes: requestedLimits.maxTotalBytes ?? DEFAULT_UR_LIMITS.maxTotalBytes,
+    maxParts: requestedLimits.maxParts ?? DEFAULT_UR_LIMITS.maxParts,
+    maxFrames: requestedLimits.maxFrames ?? DEFAULT_UR_LIMITS.maxFrames,
+    maxDurationMs: requestedLimits.maxDurationMs ?? DEFAULT_UR_LIMITS.maxDurationMs,
+  };
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) {
+      throw new RangeError(`BC-UR limit ${name} must be a positive finite integer`);
+    }
+  }
+  return limits;
+}
+
 /**
  * Load the BC-UR2 decoder and return a fresh {@link URAssembler}. Dynamically
  * imports `@ngraveio/bc-ur` so it stays out of the initial bundle.
@@ -135,7 +151,7 @@ export async function createURAssembler(
   await ensureBuffer();
   const { URDecoder } = await import("@ngraveio/bc-ur");
   const decoder = new URDecoder();
-  const limits = { ...DEFAULT_UR_LIMITS, ...requestedLimits };
+  const limits = resolveLimits(requestedLimits);
   const startedAt = now();
   let frames = 0;
   let totalBytes = 0;
@@ -153,7 +169,12 @@ export async function createURAssembler(
       if (partBytes > limits.maxPartBytes) {
         rejectLimit("The scanned QR part is too large.");
       }
-      const count = advertisedPartCount(part);
+      let count: number;
+      try {
+        count = advertisedPartCount(part);
+      } catch (err) {
+        rejectLimit(err instanceof Error ? err.message : "BC-UR part has an invalid sequence");
+      }
       if (count > limits.maxParts) {
         rejectLimit("The scanned QR stream advertises too many parts.");
       }

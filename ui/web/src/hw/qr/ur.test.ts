@@ -81,6 +81,26 @@ describe("UR transport", () => {
     expect(assembler.isError()).toBe(true);
   });
 
+  test("records invalid sequence errors as terminal failures", async () => {
+    const assembler = await createURAssembler();
+
+    expect(() => assembler.receivePart("ur:test-payload/0-1/00")).toThrow(/invalid sequence/i);
+    expect(assembler.isError()).toBe(true);
+  });
+
+  test("uses defaults for undefined limits and rejects infinite limits", async () => {
+    const assembler = await createURAssembler({
+      maxPartBytes: undefined,
+      maxTotalBytes: undefined,
+      maxParts: undefined,
+      maxFrames: undefined,
+      maxDurationMs: undefined,
+    });
+    expect(() => assembler.receivePart(`ur:test-payload/${"x".repeat(4096)}`)).toThrow(/too large/i);
+
+    await expect(createURAssembler({ maxPartBytes: Infinity })).rejects.toThrow(/finite integer/i);
+  });
+
   test("rejects a stream after its cumulative byte limit", async () => {
     const part = (await encodeUR("test-payload", payload(8)))[0];
     const assembler = await createURAssembler({
