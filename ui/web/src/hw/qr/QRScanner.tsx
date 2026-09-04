@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ScannedUR } from "./types";
-import { createURAssembler } from "./ur";
+import { createURAssembler, DEFAULT_UR_LIMITS } from "./ur";
 
 interface QRScannerProps {
   /** Called once a complete Uniform Resource has been decoded from the camera. */
@@ -34,6 +34,15 @@ export function QRScanner({ onResult, onError, deviceLabel = "device" }: QRScann
     let controls: ScannerControls | null = null;
     let cancelled = false;
     let done = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    const fail = (message: string) => {
+      if (done) return;
+      done = true;
+      if (timeout !== null) clearTimeout(timeout);
+      controls?.stop();
+      onError?.(message);
+    };
 
     (async () => {
       try {
@@ -42,6 +51,10 @@ export function QRScanner({ onResult, onError, deviceLabel = "device" }: QRScann
           createURAssembler(),
         ]);
         if (cancelled) return;
+
+        timeout = setTimeout(() => {
+          fail("The scanned QR stream took too long to complete.");
+        }, DEFAULT_UR_LIMITS.maxDurationMs);
 
         const reader = new BrowserQRCodeReader();
 
@@ -55,6 +68,9 @@ export function QRScanner({ onResult, onError, deviceLabel = "device" }: QRScann
             try {
               assembler.receivePart(text);
             } catch {
+              if (assembler.isError()) {
+                fail(assembler.error() || "The scanned QR could not be decoded.");
+              }
               // A stray/foreign QR that isn't a valid UR part — ignore and keep
               // scanning rather than aborting the whole session.
               return;
@@ -65,28 +81,27 @@ export function QRScanner({ onResult, onError, deviceLabel = "device" }: QRScann
             // WITHOUT ever reaching isComplete(). Detect that and surface it, or
             // the UI would sit on "Scanning…" forever with no way to recover.
             if (assembler.isError()) {
-              done = true;
-              controls?.stop();
-              onError?.(
+              fail(
                 assembler.error() ||
                   "The scanned QR could not be decoded. Restart the exchange on the device and rescan.",
               );
               return;
             }
             if (assembler.isComplete()) {
-              done = true;
-              controls?.stop();
               if (!assembler.isSuccess()) {
-                onError?.(assembler.error() || "Failed to decode the scanned QR.");
+                fail(assembler.error() || "Failed to decode the scanned QR.");
                 return;
               }
+              done = true;
+              if (timeout !== null) clearTimeout(timeout);
+              controls?.stop();
               onResult(assembler.result());
             }
           },
         );
-        if (cancelled) controls?.stop();
+        if (cancelled || done) controls?.stop();
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || done) return;
         const message =
           err instanceof Error
             ? err.name === "NotAllowedError"
@@ -99,6 +114,7 @@ export function QRScanner({ onResult, onError, deviceLabel = "device" }: QRScann
 
     return () => {
       cancelled = true;
+      if (timeout !== null) clearTimeout(timeout);
       controls?.stop();
     };
     // onResult/onError/deviceLabel are stable for the modal's lifetime; run once.
