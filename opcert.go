@@ -47,8 +47,15 @@ type DecodedOpCert struct {
 // parser for opcerts across the module (both key loading and the KES agent).
 func DecodeOpCert(certBytes []byte) (*DecodedOpCert, error) {
 	var outer []any
-	if _, err := cbor.Decode(certBytes, &outer); err != nil {
+	read, err := cbor.Decode(certBytes, &outer)
+	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal OpCert CBOR: %w", err)
+	}
+	if read != len(certBytes) {
+		return nil, fmt.Errorf(
+			"invalid OpCert: %d trailing byte(s) after CBOR value",
+			len(certBytes)-read,
+		)
 	}
 	if len(outer) != 2 {
 		return nil, fmt.Errorf(

@@ -64,7 +64,7 @@ func TestRunKeyCalidus_KeyFiles(t *testing.T) {
 
 	skeyData, err := os.ReadFile(skey)
 	require.NoError(t, err)
-	assert.Contains(t, string(skeyData), "CalidusSigningKeyShelley_ed25519")
+	assert.Contains(t, string(skeyData), "CalidusExtendedSigningKeyShelley_ed25519_bip32")
 
 	vkeyData, err := os.ReadFile(vkey)
 	require.NoError(t, err)
