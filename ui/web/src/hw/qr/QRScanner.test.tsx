@@ -26,14 +26,23 @@ vi.mock("./ur", () => ({
 
 describe("QRScanner", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
   test("clears the timeout and reports initialization failure once", async () => {
     const onError = vi.fn();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
 
     render(<QRScanner onResult={vi.fn()} onError={onError} />);
     await waitFor(() => expect(onError).toHaveBeenCalledWith("camera initialization failed"));
+    const timeoutIndex = setTimeoutSpy.mock.calls.findIndex(
+      ([, delay]) => delay === DEFAULT_UR_LIMITS.maxDurationMs,
+    );
+    expect(timeoutIndex).toBeGreaterThanOrEqual(0);
+    const scannerTimeout = setTimeoutSpy.mock.results[timeoutIndex]?.value;
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(scannerTimeout);
     await new Promise((resolve) => setTimeout(resolve, DEFAULT_UR_LIMITS.maxDurationMs + 10));
 
     expect(onError).toHaveBeenCalledTimes(1);
