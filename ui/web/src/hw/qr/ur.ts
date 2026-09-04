@@ -14,6 +14,30 @@
 
 import type { ScannedUR } from "./types";
 
+/** Resource limits applied before untrusted camera data reaches bc-ur. */
+export const DEFAULT_UR_LIMITS = {
+  maxPartBytes: 4 * 1024,
+  maxTotalBytes: 1024 * 1024,
+  maxParts: 256,
+  maxFrames: 1024,
+  maxDurationMs: 60_000,
+} as const;
+
+export interface URLimits {
+  maxPartBytes?: number;
+  maxTotalBytes?: number;
+  maxParts?: number;
+  maxFrames?: number;
+  maxDurationMs?: number;
+}
+
+export class URDecodeLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "URDecodeLimitError";
+  }
+}
+
 /**
  * The @ngraveio/bc-ur CBOR/UR libraries read a global `Buffer`, which browsers do
  * not provide. Install one lazily — only when a QR flow actually runs — so the
@@ -86,16 +110,85 @@ export interface URAssembler {
   result(): ScannedUR;
 }
 
+function advertisedPartCount(part: string): number {
+  const match = /^ur:[^/]+\/(\d+)-(\d+)\//i.exec(part);
+  if (!match) return 1;
+  const sequence = Number(match[1]);
+  const count = Number(match[2]);
+  if (!Number.isSafeInteger(sequence) || sequence < 1 || !Number.isSafeInteger(count) || count < 1) {
+    throw new URDecodeLimitError("BC-UR part has an invalid sequence");
+  }
+  if (sequence > count) {
+    throw new URDecodeLimitError("BC-UR part sequence exceeds its advertised count");
+  }
+  return count;
+}
+
+function resolveLimits(requestedLimits: URLimits): Required<URLimits> {
+  const limits = {
+    maxPartBytes: requestedLimits.maxPartBytes ?? DEFAULT_UR_LIMITS.maxPartBytes,
+    maxTotalBytes: requestedLimits.maxTotalBytes ?? DEFAULT_UR_LIMITS.maxTotalBytes,
+    maxParts: requestedLimits.maxParts ?? DEFAULT_UR_LIMITS.maxParts,
+    maxFrames: requestedLimits.maxFrames ?? DEFAULT_UR_LIMITS.maxFrames,
+    maxDurationMs: requestedLimits.maxDurationMs ?? DEFAULT_UR_LIMITS.maxDurationMs,
+  };
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) {
+      throw new RangeError(`BC-UR limit ${name} must be a positive finite integer`);
+    }
+  }
+  return limits;
+}
+
 /**
  * Load the BC-UR2 decoder and return a fresh {@link URAssembler}. Dynamically
  * imports `@ngraveio/bc-ur` so it stays out of the initial bundle.
  */
-export async function createURAssembler(): Promise<URAssembler> {
+export async function createURAssembler(
+  requestedLimits: URLimits = {},
+  now: () => number = Date.now,
+): Promise<URAssembler> {
   await ensureBuffer();
   const { URDecoder } = await import("@ngraveio/bc-ur");
   const decoder = new URDecoder();
+  const limits = resolveLimits(requestedLimits);
+  const startedAt = now();
+  let frames = 0;
+  let totalBytes = 0;
+  let terminalError = "";
+
+  function rejectLimit(message: string): never {
+    terminalError = message;
+    throw new URDecodeLimitError(message);
+  }
+
   return {
     receivePart(part: string) {
+      if (terminalError) throw new URDecodeLimitError(terminalError);
+      const partBytes = new TextEncoder().encode(part).byteLength;
+      if (partBytes > limits.maxPartBytes) {
+        rejectLimit("The scanned QR part is too large.");
+      }
+      let count: number;
+      try {
+        count = advertisedPartCount(part);
+      } catch (err) {
+        rejectLimit(err instanceof Error ? err.message : "BC-UR part has an invalid sequence");
+      }
+      if (count > limits.maxParts) {
+        rejectLimit("The scanned QR stream advertises too many parts.");
+      }
+      if (now() - startedAt > limits.maxDurationMs) {
+        rejectLimit("The scanned QR stream took too long to complete.");
+      }
+      if (frames >= limits.maxFrames) {
+        rejectLimit("The scanned QR stream contains too many frames.");
+      }
+      if (totalBytes + partBytes > limits.maxTotalBytes) {
+        rejectLimit("The scanned QR stream is too large.");
+      }
+      frames++;
+      totalBytes += partBytes;
       decoder.receivePart(part);
     },
     progressPercent() {
@@ -104,10 +197,10 @@ export async function createURAssembler(): Promise<URAssembler> {
     },
     isError() {
       // bc-ur returns undefined before the first part; normalise to a boolean.
-      return decoder.isError() === true;
+      return terminalError !== "" || decoder.isError() === true;
     },
     error() {
-      return decoder.resultError() || "";
+      return terminalError || decoder.resultError() || "";
     },
     isComplete() {
       return decoder.isComplete() === true;
