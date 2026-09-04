@@ -729,6 +729,10 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 	// scripts can only be there to satisfy a spend, so those are the candidate
 	// payment-spend scripts.
 	stakeScriptHashes := stakeScriptCredentialHashes(&tx)
+	// Resolve spent payment scripts before filtering mint policies. A native
+	// script can legitimately be shared by a payment output and a mint policy;
+	// mint-policy membership alone must not hide the payment authorization.
+	spendScripts, spendErr := s.paymentScriptHashes(&tx)
 	var candidates []*lcommon.NativeScript
 	stakePurpose := false
 	for i := range scripts {
@@ -741,7 +745,7 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 			// reused as a mint policy still needs its stake/gov witness, so it
 			// must not be routed to the vkey path — the stake purpose dominates.
 			stakePurpose = true
-		case mintPolicies[hash]:
+		case mintPolicies[hash] && (spendErr != nil || !spendScripts[hash]):
 			// mint-only evidence — not a spend on this basis alone.
 		default:
 			candidates = append(candidates, &scripts[i])
@@ -783,8 +787,7 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 	// attacker-controlled and is not evidence that the wallet is authorizing
 	// this policy. Resolve every input before selecting the policy; unknown or
 	// malformed references fail closed as an unsupported import.
-	spendScripts, err := s.paymentScriptHashes(&tx)
-	if err != nil {
+	if spendErr != nil {
 		// Input lookup failures are intentionally classified as unsupported
 		// imports here; callers must not treat an unresolved input as a valid
 		// multisig authorization.

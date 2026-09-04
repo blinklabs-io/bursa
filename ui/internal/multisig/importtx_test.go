@@ -219,10 +219,9 @@ func TestInspectTx_MintOnlyIsNotMultiSig(t *testing.T) {
 	}
 }
 
-// TestInspectTx_MultiSigSpendPlusMint covers the mixed case: a real multisig
-// spend script alongside an unrelated mint policy script in the same witness
-// set. The spend script must still be selected (it doesn't match any mint
-// policy ID) and the tx must still classify as multisig.
+// TestInspectTx_MultiSigSpendPlusMint covers the mixed case: the same native
+// script is used by a multisig spend and a mint policy in the same transaction.
+// The spent payment output must keep the script eligible for cosigning.
 func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 	fc := newFakeChain()
 	svc := NewService(fc, nil, &memAccounts{})
@@ -247,21 +246,25 @@ func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	// Attach an unrelated mint policy script (different hash) on top of the
-	// already-built multisig spend tx.
-	mintScript, err := bursa.NewScriptSig(bytesRepeat(8, 28))
+	// Reuse the account's payment script as the mint policy. This is the case
+	// where filtering mint policies before resolving spent outputs loses the
+	// valid payment authorization.
+	mintScript, err := decodeScript(acct.ScriptCBOR)
 	if err != nil {
-		t.Fatalf("NewScriptSig: %v", err)
+		t.Fatalf("decodeScript: %v", err)
 	}
 	policyIDHex := hex.EncodeToString(mintScript.Hash().Bytes())
-	txHex := addMintToTx(t, built.UnsignedTxCBOR, mintScript, policyIDHex)
+	tx := decodeConwayTx(t, built.UnsignedTxCBOR)
+	// Keep the original spend witness once; its hash is also the mint policy.
+	injectMint(t, &tx, policyIDHex, tx.WitnessSet.NativeScripts())
+	txHex := encodeConwayTx(t, &tx)
 
 	info, err := svc.InspectTx(txHex)
 	if err != nil {
 		t.Fatalf("InspectTx: %v", err)
 	}
 	if !info.IsMultiSig {
-		t.Fatalf("multisig spend script must still classify as multisig even with an unrelated mint policy attached: %+v", info)
+		t.Fatalf("shared payment/mint script must classify as multisig: %+v", info)
 	}
 	if info.Threshold != 2 || len(info.Participants) != 2 {
 		t.Errorf("got %d-of-%d, want 2-of-2", info.Threshold, len(info.Participants))
