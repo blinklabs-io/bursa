@@ -22,6 +22,8 @@ var _ MappedNullable = &ApiScriptValidateRequest{}
 
 // ApiScriptValidateRequest struct for ApiScriptValidateRequest
 type ApiScriptValidateRequest struct {
+	Message           *string                           `json:"message,omitempty"`
+	PublicKeys        []string                          `json:"public_keys,omitempty"`
 	RequireSignatures *bool                             `json:"require_signatures,omitempty"`
 	Script            map[string]map[string]interface{} `json:"script"`
 	Signatures        []string                          `json:"signatures,omitempty"`
@@ -46,6 +48,70 @@ func NewApiScriptValidateRequest(script map[string]map[string]interface{}) *ApiS
 func NewApiScriptValidateRequestWithDefaults() *ApiScriptValidateRequest {
 	this := ApiScriptValidateRequest{}
 	return &this
+}
+
+// GetMessage returns the Message field value if set, zero value otherwise.
+func (o *ApiScriptValidateRequest) GetMessage() string {
+	if o == nil || IsNil(o.Message) {
+		var ret string
+		return ret
+	}
+	return *o.Message
+}
+
+// GetMessageOk returns a tuple with the Message field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ApiScriptValidateRequest) GetMessageOk() (*string, bool) {
+	if o == nil || IsNil(o.Message) {
+		return nil, false
+	}
+	return o.Message, true
+}
+
+// HasMessage returns a boolean if a field has been set.
+func (o *ApiScriptValidateRequest) HasMessage() bool {
+	if o != nil && !IsNil(o.Message) {
+		return true
+	}
+
+	return false
+}
+
+// SetMessage gets a reference to the given string and assigns it to the Message field.
+func (o *ApiScriptValidateRequest) SetMessage(v string) {
+	o.Message = &v
+}
+
+// GetPublicKeys returns the PublicKeys field value if set, zero value otherwise.
+func (o *ApiScriptValidateRequest) GetPublicKeys() []string {
+	if o == nil || IsNil(o.PublicKeys) {
+		var ret []string
+		return ret
+	}
+	return o.PublicKeys
+}
+
+// GetPublicKeysOk returns a tuple with the PublicKeys field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ApiScriptValidateRequest) GetPublicKeysOk() ([]string, bool) {
+	if o == nil || IsNil(o.PublicKeys) {
+		return nil, false
+	}
+	return o.PublicKeys, true
+}
+
+// HasPublicKeys returns a boolean if a field has been set.
+func (o *ApiScriptValidateRequest) HasPublicKeys() bool {
+	if o != nil && !IsNil(o.PublicKeys) {
+		return true
+	}
+
+	return false
+}
+
+// SetPublicKeys gets a reference to the given []string and assigns it to the PublicKeys field.
+func (o *ApiScriptValidateRequest) SetPublicKeys(v []string) {
+	o.PublicKeys = v
 }
 
 // GetRequireSignatures returns the RequireSignatures field value if set, zero value otherwise.
@@ -178,6 +244,12 @@ func (o ApiScriptValidateRequest) MarshalJSON() ([]byte, error) {
 
 func (o ApiScriptValidateRequest) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
+	if !IsNil(o.Message) {
+		toSerialize["message"] = o.Message
+	}
+	if !IsNil(o.PublicKeys) {
+		toSerialize["public_keys"] = o.PublicKeys
+	}
 	if !IsNil(o.RequireSignatures) {
 		toSerialize["require_signatures"] = o.RequireSignatures
 	}

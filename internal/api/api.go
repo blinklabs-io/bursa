@@ -365,8 +365,17 @@ type ScriptCreateRequest struct {
 }
 
 // ScriptValidateRequest defines the request payload for script validation
+//
+// PublicKeys and Signatures are parallel arrays: PublicKeys[i] is the
+// hex-encoded Ed25519 verification key whose signature over Message is
+// Signatures[i]. Message is the hex-encoded signed payload (e.g. a
+// transaction body hash) that each signature is verified against; it is
+// required whenever RequireSignatures is true and the script needs
+// signatures.
 type ScriptValidateRequest struct {
 	Script            map[string]any `json:"script"                       validate:"required"`
+	Message           string         `json:"message,omitempty"            validate:"omitempty,hexadecimal" format:"hex"`
+	PublicKeys        []string       `json:"public_keys,omitempty"        validate:"dive,hexadecimal,len=64" minLength:"64" maxLength:"64" format:"hex"`
 	Signatures        []string       `json:"signatures,omitempty"         validate:"dive,hexadecimal,len=128"`
 	Slot              uint64         `json:"slot,omitempty"                                                   swaggertype:"integer" format:"int64"`
 	RequireSignatures bool           `json:"require_signatures,omitempty"`
@@ -1576,33 +1585,62 @@ func handleScriptValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse signatures if provided
-	var signatures [][]byte
-	if len(req.Signatures) > 0 {
-		signatures = make([][]byte, len(req.Signatures))
-		for i, sigStr := range req.Signatures {
-			sig, err := hex.DecodeString(sigStr)
-			if err != nil {
-				logger.Error(
-					"invalid signature format",
-					"signature",
-					sigStr,
-					"error",
-					err,
-				)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(`{"error":"Invalid signature format"}`))
-				return
-			}
-			signatures[i] = sig
+	// Public keys and signatures are only relevant to cryptographic validation.
+	if req.RequireSignatures && len(req.PublicKeys) != len(req.Signatures) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write(
+			[]byte(`{"error":"public_keys and signatures must have the same length"}`),
+		)
+		return
+	}
+
+	witnesses := make([]bursa.ScriptWitness, 0, len(req.Signatures))
+	for i, sigStr := range req.Signatures {
+		if !req.RequireSignatures {
+			break
 		}
+		vkey, err := hex.DecodeString(req.PublicKeys[i])
+		if err != nil {
+			logger.Error("invalid public key format", "publicKey", req.PublicKeys[i], "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"Invalid public key format"}`))
+			return
+		}
+		sig, err := hex.DecodeString(sigStr)
+		if err != nil {
+			logger.Error("invalid signature format", "signature", sigStr, "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"Invalid signature format"}`))
+			return
+		}
+		witnesses = append(witnesses, bursa.ScriptWitness{Vkey: vkey, Signature: sig})
+	}
+
+	message, err := hex.DecodeString(req.Message)
+	if err != nil {
+		logger.Error("invalid message format", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"Invalid message format"}`))
+		return
+	}
+	if req.RequireSignatures && len(message) == 0 && len(witnesses) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write(
+			[]byte(`{"error":"message is required to verify signatures"}`),
+		)
+		return
 	}
 
 	// Validate the script
 	valid := bursa.ValidateScript(
 		script,
-		signatures,
+		message,
+		witnesses,
 		req.Slot,
 		req.RequireSignatures,
 	)
@@ -1617,7 +1655,7 @@ func handleScriptValidate(w http.ResponseWriter, r *http.Request) {
 
 	response := ScriptValidateResponse{
 		ScriptHash: hex.EncodeToString(hash),
-		Signatures: len(signatures),
+		Signatures: len(witnesses),
 		Slot:       req.Slot,
 		Valid:      valid,
 	}

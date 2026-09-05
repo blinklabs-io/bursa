@@ -4,6 +4,8 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
+**Message** | Pointer to **string** |  | [optional] 
+**PublicKeys** | Pointer to **[]string** |  | [optional] 
 **RequireSignatures** | Pointer to **bool** |  | [optional] 
 **Script** | **map[string]map[string]interface{}** |  | 
 **Signatures** | Pointer to **[]string** |  | [optional] 
@@ -27,6 +29,56 @@ will change when the set of required properties is changed
 NewApiScriptValidateRequestWithDefaults instantiates a new ApiScriptValidateRequest object
 This constructor will only assign default values to properties that have it defined,
 but it doesn't guarantee that properties required by API are set
+
+### GetMessage
+
+`func (o *ApiScriptValidateRequest) GetMessage() string`
+
+GetMessage returns the Message field if non-nil, zero value otherwise.
+
+### GetMessageOk
+
+`func (o *ApiScriptValidateRequest) GetMessageOk() (*string, bool)`
+
+GetMessageOk returns a tuple with the Message field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetMessage
+
+`func (o *ApiScriptValidateRequest) SetMessage(v string)`
+
+SetMessage sets Message field to given value.
+
+### HasMessage
+
+`func (o *ApiScriptValidateRequest) HasMessage() bool`
+
+HasMessage returns a boolean if a field has been set.
+
+### GetPublicKeys
+
+`func (o *ApiScriptValidateRequest) GetPublicKeys() []string`
+
+GetPublicKeys returns the PublicKeys field if non-nil, zero value otherwise.
+
+### GetPublicKeysOk
+
+`func (o *ApiScriptValidateRequest) GetPublicKeysOk() (*[]string, bool)`
+
+GetPublicKeysOk returns a tuple with the PublicKeys field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetPublicKeys
+
+`func (o *ApiScriptValidateRequest) SetPublicKeys(v []string)`
+
+SetPublicKeys sets PublicKeys field to given value.
+
+### HasPublicKeys
+
+`func (o *ApiScriptValidateRequest) HasPublicKeys() bool`
+
+HasPublicKeys returns a boolean if a field has been set.
 
 ### GetRequireSignatures
 

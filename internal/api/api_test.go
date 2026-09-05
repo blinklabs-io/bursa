@@ -17,6 +17,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -2945,6 +2947,100 @@ func TestHandleScriptValidate_WithSlot(t *testing.T) {
 	err = json.Unmarshal(body, &result)
 	assert.NoError(t, err)
 	assert.Equal(t, uint64(12345), result.Slot)
+}
+
+// TestHandleScriptValidate_CryptographicVerification exercises the fix for
+// issue #727: /api/script/validate must cryptographically verify each
+// Ed25519 signature against its public key and the script's key hash, not
+// merely check that the signature is 64 bytes.
+func TestHandleScriptValidate_CryptographicVerification(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	otherPub, otherPriv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+
+	keyHash := hex.EncodeToString(lcommon.Blake2b224Hash(pub).Bytes())
+	message := []byte("tx body hash placeholder")
+	messageHex := hex.EncodeToString(message)
+	validSig := hex.EncodeToString(ed25519.Sign(priv, message))
+
+	scriptJSON := fmt.Sprintf(`{"type":"sig","keyHash":"%s"}`, keyHash)
+
+	validate := func(t *testing.T, reqBody string) *ScriptValidateResponse {
+		t.Helper()
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/api/script/validate",
+			strings.NewReader(reqBody),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		handleScriptValidate(w, req)
+
+		resp := w.Result()
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+
+		var result ScriptValidateResponse
+		require.NoError(t, json.Unmarshal(body, &result))
+		return &result
+	}
+
+	t.Run("valid witness verifies", func(t *testing.T) {
+		reqBody := fmt.Sprintf(`{
+			"script": %s,
+			"message": "%s",
+			"public_keys": ["%s"],
+			"signatures": ["%s"],
+			"require_signatures": true
+		}`, scriptJSON, messageHex, hex.EncodeToString(pub), validSig)
+		result := validate(t, reqBody)
+		assert.True(t, result.Valid)
+	})
+
+	t.Run("random signature bytes are rejected", func(t *testing.T) {
+		randomSig := make([]byte, ed25519.SignatureSize)
+		_, err := rand.Read(randomSig)
+		require.NoError(t, err)
+		reqBody := fmt.Sprintf(`{
+			"script": %s,
+			"message": "%s",
+			"public_keys": ["%s"],
+			"signatures": ["%s"],
+			"require_signatures": true
+		}`, scriptJSON, messageHex, hex.EncodeToString(pub), hex.EncodeToString(randomSig))
+		result := validate(t, reqBody)
+		assert.False(t, result.Valid)
+	})
+
+	t.Run("signature from the wrong key is rejected", func(t *testing.T) {
+		wrongKeySig := ed25519.Sign(otherPriv, message)
+		reqBody := fmt.Sprintf(`{
+			"script": %s,
+			"message": "%s",
+			"public_keys": ["%s"],
+			"signatures": ["%s"],
+			"require_signatures": true
+		}`, scriptJSON, messageHex, hex.EncodeToString(otherPub), hex.EncodeToString(wrongKeySig))
+		result := validate(t, reqBody)
+		assert.False(t, result.Valid)
+	})
+
+	t.Run("signature over the wrong payload is rejected", func(t *testing.T) {
+		wrongPayloadSig := ed25519.Sign(priv, []byte("a different payload"))
+		reqBody := fmt.Sprintf(`{
+			"script": %s,
+			"message": "%s",
+			"public_keys": ["%s"],
+			"signatures": ["%s"],
+			"require_signatures": true
+		}`, scriptJSON, messageHex, hex.EncodeToString(pub), hex.EncodeToString(wrongPayloadSig))
+		result := validate(t, reqBody)
+		assert.False(t, result.Valid)
+	})
 }
 
 func TestHandleTxDecode(t *testing.T) {
