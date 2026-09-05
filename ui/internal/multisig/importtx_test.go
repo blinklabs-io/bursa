@@ -219,10 +219,8 @@ func TestInspectTx_MintOnlyIsNotMultiSig(t *testing.T) {
 	}
 }
 
-// TestInspectTx_MultiSigSpendPlusMint covers the mixed case: a real multisig
-// spend script alongside an unrelated mint policy script in the same witness
-// set. The spend script must still be selected (it doesn't match any mint
-// policy ID) and the tx must still classify as multisig.
+// TestInspectTx_MultiSigSpendPlusMint covers a real multisig spend alongside an
+// unrelated mint policy script.
 func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 	fc := newFakeChain()
 	svc := NewService(fc, nil, &memAccounts{})
@@ -247,8 +245,6 @@ func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	// Attach an unrelated mint policy script (different hash) on top of the
-	// already-built multisig spend tx.
 	mintScript, err := bursa.NewScriptSig(bytesRepeat(8, 28))
 	if err != nil {
 		t.Fatalf("NewScriptSig: %v", err)
@@ -261,10 +257,41 @@ func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 		t.Fatalf("InspectTx: %v", err)
 	}
 	if !info.IsMultiSig {
-		t.Fatalf("multisig spend script must still classify as multisig even with an unrelated mint policy attached: %+v", info)
+		t.Fatalf("shared payment/mint script must classify as multisig: %+v", info)
 	}
 	if info.Threshold != 2 || len(info.Participants) != 2 {
 		t.Errorf("got %d-of-%d, want 2-of-2", info.Threshold, len(info.Participants))
+	}
+}
+
+func TestInspectTx_SharedPaymentAndMintScript(t *testing.T) {
+	fc := newFakeChain()
+	svc := NewService(fc, nil, &memAccounts{})
+	_, khA, _ := multiSigKeyHash(t, mnemonicA)
+	_, khB, _ := multiSigKeyHash(t, mnemonicB)
+	acct, err := createForTest(svc, CreateRequest{Label: "treasury", Network: "preview", Policy: Policy{
+		Threshold: 2, Participants: []Participant{{KeyHashHex: khA}, {KeyHashHex: khB}},
+	}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fc.addUTxO(acct.ScriptAddress, strings.Repeat("77", 32), 0, 10_000_000)
+	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	mintScript, err := decodeScript(acct.ScriptCBOR)
+	if err != nil {
+		t.Fatalf("decodeScript: %v", err)
+	}
+	tx := decodeConwayTx(t, built.UnsignedTxCBOR)
+	injectMint(t, &tx, hex.EncodeToString(mintScript.Hash().Bytes()), tx.WitnessSet.NativeScripts())
+	info, err := svc.InspectTx(encodeConwayTx(t, &tx))
+	if err != nil {
+		t.Fatalf("InspectTx: %v", err)
+	}
+	if !info.IsMultiSig || info.Threshold != 2 || len(info.Participants) != 2 {
+		t.Fatalf("shared payment/mint script must classify as 2-of-2 multisig: %+v", info)
 	}
 }
 
@@ -596,6 +623,31 @@ func TestInspectTx_NotMultiSig(t *testing.T) {
 	}
 	if info.ScriptEmbedded {
 		t.Error("ordinary tx must not report an embedded script")
+	}
+}
+
+// TestInspectTx_RejectsUnboundEmbeddedScript ensures an attacker cannot make
+// an arbitrary witness-set script look like a payment policy.  The script is
+// not the credential of any resolved input, so the import remains unsupported.
+func TestInspectTx_RejectsUnboundEmbeddedScript(t *testing.T) {
+	fc := newFakeChain()
+	svc := NewService(fc, nil, &memAccounts{})
+	_, kh, _ := multiSigKeyHash(t, mnemonicA)
+	ns, err := composeScript(Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: kh}}})
+	if err != nil {
+		t.Fatalf("composeScript: %v", err)
+	}
+	tx := decodeConwayTx(t, ordinaryUnsignedTxHex(t, fc))
+	tx.WitnessSet.WsNativeScripts = gcbor.NewSetType([]lcommon.NativeScript{*ns}, true)
+	tx.SetCbor(nil)
+	tx.WitnessSet.SetCbor(nil)
+
+	info, err := svc.InspectTx(encodeConwayTx(t, &tx))
+	if err != nil {
+		t.Fatalf("InspectTx: %v", err)
+	}
+	if !info.IsMultiSig || info.Threshold != 0 {
+		t.Fatalf("unbound script classified as signable policy: %+v", info)
 	}
 }
 
