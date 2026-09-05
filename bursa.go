@@ -2070,15 +2070,6 @@ func validateScriptAllWithDepth(
 	requireSignatures bool,
 	depth int,
 ) bool {
-	if requireSignatures {
-		total := 0
-		for _, subScript := range script.Scripts {
-			total += minSignaturesRequired(&subScript)
-		}
-		if len(witnesses) < total {
-			return false
-		}
-	}
 	for _, subScript := range script.Scripts {
 		if !validateScriptWithDepth(
 			&subScript,
@@ -2130,22 +2121,6 @@ func validateScriptNOfWithDepth(
 	// Safety check: N should be reasonable for cryptographic purposes
 	if script.N > 255 {
 		return false
-	}
-	if requireSignatures {
-		// Lower bound on signatures needed for this node (accounts for 0-sig leaves like timelocks)
-		// Create a temporary NativeScript to call minSignaturesRequired
-		cborData, err := cbor.Encode(script)
-		if err != nil {
-			return false
-		}
-		var tempScript NativeScript
-		if _, err := cbor.Decode(cborData, &tempScript); err != nil {
-			return false
-		}
-		minReq := minSignaturesRequired(&tempScript)
-		if len(witnesses) < minReq {
-			return false
-		}
 	}
 	satisfied := 0
 	for _, subScript := range script.Scripts {

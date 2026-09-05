@@ -32,19 +32,7 @@ import (
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/blake2b"
 )
-
-// blake2b224 returns the Blake2b-224 hash of data, matching the key-hash
-// derivation used for NativeScriptPubkey.Hash.
-func blake2b224(data []byte) []byte {
-	hasher, err := blake2b.New(28, nil)
-	if err != nil {
-		panic(err)
-	}
-	hasher.Write(data)
-	return hasher.Sum(nil)
-}
 
 // testKeyHash returns a 28-byte test key hash for use in tests
 func testKeyHash() []byte {
@@ -1579,8 +1567,8 @@ func TestValidateScriptWithSignatures(t *testing.T) {
 	otherPub, otherPriv, err := ed25519.GenerateKey(rand.Reader)
 	assert.NoError(t, err)
 
-	keyHash1 := blake2b224(pub1)
-	keyHash2 := blake2b224(pub2)
+	keyHash1 := lcommon.Blake2b224Hash(pub1).Bytes()
+	keyHash2 := lcommon.Blake2b224Hash(pub2).Bytes()
 
 	message := []byte("tx body hash placeholder")
 	otherMessage := []byte("a different payload")
@@ -1677,12 +1665,20 @@ func TestValidateScriptWithSignatures(t *testing.T) {
 		),
 	) // Both signatures present and verify
 
+	// Reusing one witness across repeated signature leaves is valid.
+	repeatedAll, err := NewScriptAll(scriptAll1, scriptAll1)
+	assert.NoError(t, err)
+	assert.True(t, ValidateScript(repeatedAll, message, []ScriptWitness{{Vkey: pub1, Signature: sig1}}, 1000, true))
+	repeatedNOf, err := NewScriptNOf(2, scriptAll1, scriptAll1)
+	assert.NoError(t, err)
+	assert.True(t, ValidateScript(repeatedNOf, message, []ScriptWitness{{Vkey: pub1, Signature: sig1}}, 1000, true))
+
 	// Test ScriptNOf (2-of-3) with requireSignatures=true
 	scriptNOf1, err := NewScriptSig(keyHash1)
 	assert.NoError(t, err)
 	scriptNOf2, err := NewScriptSig(keyHash2)
 	assert.NoError(t, err)
-	scriptNOf3, err := NewScriptSig(blake2b224(otherPub))
+	scriptNOf3, err := NewScriptSig(lcommon.Blake2b224Hash(otherPub).Bytes())
 	assert.NoError(t, err)
 	scriptNOf, err := NewScriptNOf(
 		2,

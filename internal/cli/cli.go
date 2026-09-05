@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -1779,40 +1778,6 @@ func RunScriptCreate(
 	return nil
 }
 
-func scriptRequiresSignatures(script bursa.Script) bool {
-	nativeScript, ok := script.(*bursa.NativeScript)
-	if !ok {
-		return false
-	}
-	switch s := nativeScript.Item().(type) {
-	case *bursa.NativeScriptPubkey:
-		return true
-	case *bursa.NativeScriptAll:
-		return anyScriptRequiresSignatures(convertScripts(s.Scripts))
-	case *bursa.NativeScriptAny:
-		return anyScriptRequiresSignatures(convertScripts(s.Scripts))
-	case *bursa.NativeScriptNofK:
-		return anyScriptRequiresSignatures(convertScripts(s.Scripts))
-	case *bursa.NativeScriptInvalidBefore, *bursa.NativeScriptInvalidHereafter:
-		return false
-	}
-	return false
-}
-
-// convertScripts converts []lcommon.NativeScript to []bursa.Script
-func convertScripts(scripts []lcommon.NativeScript) []bursa.Script {
-	result := make([]bursa.Script, len(scripts))
-	for i, scr := range scripts {
-		result[i] = scr
-	}
-	return result
-}
-
-// anyScriptRequiresSignatures checks if any script in the slice requires signatures
-func anyScriptRequiresSignatures(scripts []bursa.Script) bool {
-	return slices.ContainsFunc(scripts, scriptRequiresSignatures)
-}
-
 // RunScriptValidate validates a script against a set of vkey witnesses and the
 // current slot. publicKeys and signatures are parallel arrays: publicKeys[i]
 // is the hex-encoded Ed25519 verification key whose signature over message is
@@ -1827,6 +1792,7 @@ func RunScriptValidate(
 	messageHex string,
 	slot uint64,
 	structuralOnly bool,
+	messageProvided bool,
 ) {
 	logger := logging.GetLogger()
 
@@ -1927,14 +1893,8 @@ func RunScriptValidate(
 	}
 
 	// Check if signatures are required
-	if !structuralOnly && len(witnesses) == 0 &&
-		scriptRequiresSignatures(script) {
-		logger.Error(
-			"signatures required for format validation of scripts with signature requirements (use --structural-only for basic structure checks)",
-		)
-		os.Exit(1)
-	}
-	if !structuralOnly && len(witnesses) > 0 && len(messageBytes) == 0 {
+	if !structuralOnly && len(witnesses) > 0 && len(messageBytes) == 0 &&
+		!messageProvided {
 		logger.Error(
 			"--message or --message-hex is required to verify signatures",
 		)

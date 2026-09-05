@@ -1154,11 +1154,16 @@ const docTemplate = `{
             ],
             "properties": {
                 "message": {
+                    "description": "Hex-encoded signed payload",
+                    "format": "hex",
                     "type": "string"
                 },
                 "public_keys": {
                     "type": "array",
                     "items": {
+                        "format": "hex",
+                        "maxLength": 64,
+                        "minLength": 64,
                         "type": "string"
                     }
                 },

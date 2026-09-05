@@ -374,8 +374,8 @@ type ScriptCreateRequest struct {
 // signatures.
 type ScriptValidateRequest struct {
 	Script            map[string]any `json:"script"                       validate:"required"`
-	Message           string         `json:"message,omitempty"            validate:"omitempty,hexadecimal"`
-	PublicKeys        []string       `json:"public_keys,omitempty"        validate:"dive,hexadecimal,len=64"`
+	Message           string         `json:"message,omitempty"            validate:"omitempty,hexadecimal" format:"hex"`
+	PublicKeys        []string       `json:"public_keys,omitempty"        validate:"dive,hexadecimal,len=64" minLength:"64" maxLength:"64" format:"hex"`
 	Signatures        []string       `json:"signatures,omitempty"         validate:"dive,hexadecimal,len=128"`
 	Slot              uint64         `json:"slot,omitempty"                                                   swaggertype:"integer" format:"int64"`
 	RequireSignatures bool           `json:"require_signatures,omitempty"`
@@ -1585,8 +1585,8 @@ func handleScriptValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Public keys and signatures are parallel arrays forming vkey witnesses.
-	if len(req.PublicKeys) != len(req.Signatures) {
+	// Public keys and signatures are only relevant to cryptographic validation.
+	if req.RequireSignatures && len(req.PublicKeys) != len(req.Signatures) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write(
@@ -1595,8 +1595,11 @@ func handleScriptValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	witnesses := make([]bursa.ScriptWitness, len(req.Signatures))
+	witnesses := make([]bursa.ScriptWitness, 0, len(req.Signatures))
 	for i, sigStr := range req.Signatures {
+		if !req.RequireSignatures {
+			break
+		}
 		vkey, err := hex.DecodeString(req.PublicKeys[i])
 		if err != nil {
 			logger.Error("invalid public key format", "publicKey", req.PublicKeys[i], "error", err)
@@ -1613,7 +1616,7 @@ func handleScriptValidate(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"error":"Invalid signature format"}`))
 			return
 		}
-		witnesses[i] = bursa.ScriptWitness{Vkey: vkey, Signature: sig}
+		witnesses = append(witnesses, bursa.ScriptWitness{Vkey: vkey, Signature: sig})
 	}
 
 	message, err := hex.DecodeString(req.Message)

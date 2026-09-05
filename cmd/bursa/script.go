@@ -145,6 +145,7 @@ Examples:
 				messageHex,
 				slot,
 				structuralOnly,
+				cmd.Flags().Changed("message") || cmd.Flags().Changed("message-hex"),
 			)
 		},
 	}
