@@ -219,9 +219,8 @@ func TestInspectTx_MintOnlyIsNotMultiSig(t *testing.T) {
 	}
 }
 
-// TestInspectTx_MultiSigSpendPlusMint covers the mixed case: the same native
-// script is used by a multisig spend and a mint policy in the same transaction.
-// The spent payment output must keep the script eligible for cosigning.
+// TestInspectTx_MultiSigSpendPlusMint covers a real multisig spend alongside an
+// unrelated mint policy script.
 func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 	fc := newFakeChain()
 	svc := NewService(fc, nil, &memAccounts{})
@@ -246,18 +245,12 @@ func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	// Reuse the account's payment script as the mint policy. This is the case
-	// where filtering mint policies before resolving spent outputs loses the
-	// valid payment authorization.
-	mintScript, err := decodeScript(acct.ScriptCBOR)
+	mintScript, err := bursa.NewScriptSig(bytesRepeat(8, 28))
 	if err != nil {
-		t.Fatalf("decodeScript: %v", err)
+		t.Fatalf("NewScriptSig: %v", err)
 	}
 	policyIDHex := hex.EncodeToString(mintScript.Hash().Bytes())
-	tx := decodeConwayTx(t, built.UnsignedTxCBOR)
-	// Keep the original spend witness once; its hash is also the mint policy.
-	injectMint(t, &tx, policyIDHex, tx.WitnessSet.NativeScripts())
-	txHex := encodeConwayTx(t, &tx)
+	txHex := addMintToTx(t, built.UnsignedTxCBOR, mintScript, policyIDHex)
 
 	info, err := svc.InspectTx(txHex)
 	if err != nil {
@@ -268,6 +261,37 @@ func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 	}
 	if info.Threshold != 2 || len(info.Participants) != 2 {
 		t.Errorf("got %d-of-%d, want 2-of-2", info.Threshold, len(info.Participants))
+	}
+}
+
+func TestInspectTx_SharedPaymentAndMintScript(t *testing.T) {
+	fc := newFakeChain()
+	svc := NewService(fc, nil, &memAccounts{})
+	_, khA, _ := multiSigKeyHash(t, mnemonicA)
+	_, khB, _ := multiSigKeyHash(t, mnemonicB)
+	acct, err := createForTest(svc, CreateRequest{Label: "treasury", Network: "preview", Policy: Policy{
+		Threshold: 2, Participants: []Participant{{KeyHashHex: khA}, {KeyHashHex: khB}},
+	}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fc.addUTxO(acct.ScriptAddress, strings.Repeat("77", 32), 0, 10_000_000)
+	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	mintScript, err := decodeScript(acct.ScriptCBOR)
+	if err != nil {
+		t.Fatalf("decodeScript: %v", err)
+	}
+	tx := decodeConwayTx(t, built.UnsignedTxCBOR)
+	injectMint(t, &tx, hex.EncodeToString(mintScript.Hash().Bytes()), tx.WitnessSet.NativeScripts())
+	info, err := svc.InspectTx(encodeConwayTx(t, &tx))
+	if err != nil {
+		t.Fatalf("InspectTx: %v", err)
+	}
+	if !info.IsMultiSig || info.Threshold != 2 || len(info.Participants) != 2 {
+		t.Fatalf("shared payment/mint script must classify as 2-of-2 multisig: %+v", info)
 	}
 }
 

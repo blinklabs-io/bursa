@@ -745,7 +745,7 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 			// reused as a mint policy still needs its stake/gov witness, so it
 			// must not be routed to the vkey path — the stake purpose dominates.
 			stakePurpose = true
-		case mintPolicies[hash] && (spendErr != nil || !spendScripts[hash]):
+		case mintPolicies[hash] && spendErr == nil && !spendScripts[hash]:
 			// mint-only evidence — not a spend on this basis alone.
 		default:
 			candidates = append(candidates, &scripts[i])
