@@ -198,6 +198,12 @@ definitions:
     type: object
   api.ScriptValidateRequest:
     properties:
+      message:
+        type: string
+      public_keys:
+        items:
+          type: string
+        type: array
       require_signatures:
         type: boolean
       script:

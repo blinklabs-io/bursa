@@ -106,22 +106,30 @@ Examples:
 func scriptValidateCommand() *cobra.Command {
 	var (
 		scriptFile     string
+		publicKeys     []string
 		signatures     []string
+		message        string
+		messageHex     string
 		slot           uint64
 		structuralOnly bool
 	)
 
 	scriptValidateCommand := &cobra.Command{
 		Use:   "validate",
-		Short: "Validates a script against signatures and slot",
-		Long: `Validates whether a script is satisfied given a set of signatures and current slot.
+		Short: "Validates a script against witnesses and slot",
+		Long: `Validates whether a script is satisfied given a set of vkey witnesses and current slot.
 
-By default, performs format validation requiring signatures for signature scripts.
-Use --structural-only for basic structure validation without signatures.
+By default, performs cryptographic validation requiring, for each signature
+script, a witness whose verification key hash matches the script and whose
+Ed25519 signature verifies against --message/--message-hex. Use
+--structural-only for basic structure validation without witnesses.
+
+--public-keys and --signatures are parallel, comma-separated lists: the Nth
+public key is paired with the Nth signature.
 
 Examples:
-  # Validate a script with signatures (hex-encoded signatures)
-  bursa script validate --script script.json --signatures 0123ab...,4567cd... --slot 123456789
+  # Validate a script against a witness (hex-encoded public key and signature)
+  bursa script validate --script script.json --public-keys abcd1234... --signatures 0123ab... --message-hex 74657874 --slot 123456789
 
   # Validate a timelocked script
   bursa script validate --script script.json --slot 123456789 --structural-only
@@ -129,22 +137,37 @@ Examples:
   # Perform structural validation only
   bursa script validate --script script.json --structural-only`,
 		Run: func(cmd *cobra.Command, args []string) {
-			cli.RunScriptValidate(scriptFile, signatures, slot, structuralOnly)
+			cli.RunScriptValidate(
+				scriptFile,
+				publicKeys,
+				signatures,
+				message,
+				messageHex,
+				slot,
+				structuralOnly,
+			)
 		},
 	}
 
 	scriptValidateCommand.Flags().
 		StringVar(&scriptFile, "script", "", "Path to script file (required)")
 	scriptValidateCommand.Flags().
-		StringSliceVar(&signatures, "signatures", nil, "Comma-separated list of signatures (hex encoded)")
+		StringSliceVar(&publicKeys, "public-keys", nil, "Comma-separated list of Ed25519 verification keys (hex encoded), paired by position with --signatures")
+	scriptValidateCommand.Flags().
+		StringSliceVar(&signatures, "signatures", nil, "Comma-separated list of signatures (hex encoded), paired by position with --public-keys")
+	scriptValidateCommand.Flags().
+		StringVar(&message, "message", "", "Signed payload as UTF-8 text (the data each signature covers)")
+	scriptValidateCommand.Flags().
+		StringVar(&messageHex, "message-hex", "", "Signed payload as hex")
 	scriptValidateCommand.Flags().
 		Uint64Var(&slot, "slot", 0, "Current slot number for timelock validation")
 	scriptValidateCommand.Flags().
-		BoolVar(&structuralOnly, "structural-only", false, "Perform structural validation only (no signature format checking)")
+		BoolVar(&structuralOnly, "structural-only", false, "Perform structural validation only (no witness verification)")
 
 	if err := scriptValidateCommand.MarkFlagRequired("script"); err != nil {
 		panic(err)
 	}
+	scriptValidateCommand.MarkFlagsMutuallyExclusive("message", "message-hex")
 	scriptValidateCommand.Args = cobra.NoArgs
 
 	return scriptValidateCommand

@@ -95,6 +95,13 @@ type (
 	NativeScriptInvalidHereafter = lcommon.NativeScriptInvalidHereafter
 )
 
+// ScriptWitness pairs an Ed25519 verification key with its signature over the
+// script validation payload, mirroring a transaction's vkey witness. Both
+// fields are required for cryptographic validation: the key hash (Blake2b-224
+// of Vkey) must match a NativeScriptPubkey's key hash, and Signature must
+// verify against Vkey and the supplied message.
+type ScriptWitness = lcommon.VkeyWitness
+
 // GetScriptType returns the script type identifier for a native script.
 // Only accepts *NativeScript types; returns an error for other script types.
 func GetScriptType(script Script) (int, error) {
@@ -1910,18 +1917,23 @@ func GetScriptAddress(script Script, networkName string) (string, error) {
 // Maximum recursion depth for script validation to prevent stack overflow
 const maxScriptDepth = 20
 
-// ValidateScript checks if a script is satisfied given signatures and current slot
-// If requireSignatures is true, requires signatures for ScriptSig scripts and validates format.
-// If false, allows empty signatures for structural validation only.
+// ValidateScript checks if a script is satisfied given witnesses and current slot.
+// message is the signed payload (e.g. a transaction body hash) that each
+// witness's signature is verified against. If requireSignatures is true,
+// ScriptSig scripts require a witness whose verification key hash matches the
+// script and whose signature verifies against message. If false, allows empty
+// witnesses for structural validation only.
 func ValidateScript(
 	script Script,
-	signatures [][]byte,
+	message []byte,
+	witnesses []ScriptWitness,
 	slot uint64,
 	requireSignatures bool,
 ) bool {
 	return validateScriptWithDepth(
 		script,
-		signatures,
+		message,
+		witnesses,
 		slot,
 		requireSignatures,
 		0,
@@ -1977,7 +1989,8 @@ func minSignaturesRequired(script *NativeScript) int {
 // validateScriptWithDepth is the internal recursive validator with depth tracking
 func validateScriptWithDepth(
 	script Script,
-	signatures [][]byte,
+	message []byte,
+	witnesses []ScriptWitness,
 	slot uint64,
 	requireSignatures bool,
 	depth int,
@@ -1994,13 +2007,13 @@ func validateScriptWithDepth(
 
 	switch s := nativeScript.Item().(type) {
 	case *NativeScriptPubkey:
-		return validateScriptSig(s, signatures, requireSignatures)
+		return validateScriptSig(s, message, witnesses, requireSignatures)
 	case *NativeScriptAll:
-		return validateScriptAllWithDepth(s, signatures, slot, requireSignatures, depth+1)
+		return validateScriptAllWithDepth(s, message, witnesses, slot, requireSignatures, depth+1)
 	case *NativeScriptAny:
-		return validateScriptAnyWithDepth(s, signatures, slot, requireSignatures, depth+1)
+		return validateScriptAnyWithDepth(s, message, witnesses, slot, requireSignatures, depth+1)
 	case *NativeScriptNofK:
-		return validateScriptNOfWithDepth(s, signatures, slot, requireSignatures, depth+1)
+		return validateScriptNOfWithDepth(s, message, witnesses, slot, requireSignatures, depth+1)
 	case *NativeScriptInvalidBefore:
 		return validateScriptInvalidBefore(s, slot)
 	case *NativeScriptInvalidHereafter:
@@ -2010,43 +2023,49 @@ func validateScriptWithDepth(
 	}
 }
 
-// validateScriptSig checks if a signature script is satisfied
+// validateScriptSig checks if a signature script is satisfied.
 //
-// SECURITY WARNING: This function currently allows empty signatures for structural validation.
-// In production spending validation, signatures MUST be provided and cryptographically verified.
-// This implementation is a placeholder for testing script logic and should not be used
-// for actual transaction validation without proper Ed25519 signature verification.
+// If requireSignatures is true, at least one witness must carry a
+// verification key whose Blake2b-224 hash matches the script's key hash and
+// whose Ed25519 signature verifies against message. Random bytes, a witness
+// for an unrelated key, or a signature over the wrong payload are all
+// rejected because the cryptographic check fails.
 //
-// TODO: Implement full Ed25519 signature verification against transaction hash and script.Hash
+// If requireSignatures is false, only the script's structure is considered
+// (structural-only validation); no witness is inspected.
 func validateScriptSig(
-	_ *NativeScriptPubkey,
-	signatures [][]byte,
+	script *NativeScriptPubkey,
+	message []byte,
+	witnesses []ScriptWitness,
 	requireSignatures bool,
 ) bool {
-	if requireSignatures {
-		// Require signatures for format validation
-		if len(signatures) == 0 {
-			return false
-		}
-		// TODO: Implement proper Ed25519 signature verification against script.Hash
-		// For now, check basic signature format (64 bytes for Ed25519)
-		for _, sig := range signatures {
-			if len(sig) != 64 {
-				return false // Invalid Ed25519 signature length
-			}
-		}
-		return len(signatures) >= 1
-	} else {
-		// For structural validation, ignore all signature checks
-		// Only validate the script structure itself
+	if !requireSignatures {
+		// Structural validation only: ignore witnesses entirely.
 		return true
 	}
+	if len(script.Hash) != 28 {
+		return false
+	}
+	for _, witness := range witnesses {
+		if len(witness.Vkey) != ed25519.PublicKeySize {
+			continue
+		}
+		keyHash := lcommon.Blake2b224Hash(witness.Vkey)
+		if !bytes.Equal(keyHash.Bytes(), script.Hash) {
+			continue
+		}
+		if lcommon.VerifyVKeySignature(witness.Vkey, witness.Signature, message) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // validateScriptAllWithDepth checks if all sub-scripts are satisfied
 func validateScriptAllWithDepth(
 	script *NativeScriptAll,
-	signatures [][]byte,
+	message []byte,
+	witnesses []ScriptWitness,
 	slot uint64,
 	requireSignatures bool,
 	depth int,
@@ -2056,14 +2075,15 @@ func validateScriptAllWithDepth(
 		for _, subScript := range script.Scripts {
 			total += minSignaturesRequired(&subScript)
 		}
-		if len(signatures) < total {
+		if len(witnesses) < total {
 			return false
 		}
 	}
 	for _, subScript := range script.Scripts {
 		if !validateScriptWithDepth(
 			&subScript,
-			signatures,
+			message,
+			witnesses,
 			slot,
 			requireSignatures,
 			depth,
@@ -2077,7 +2097,8 @@ func validateScriptAllWithDepth(
 // validateScriptAnyWithDepth checks if any sub-script is satisfied
 func validateScriptAnyWithDepth(
 	script *NativeScriptAny,
-	signatures [][]byte,
+	message []byte,
+	witnesses []ScriptWitness,
 	slot uint64,
 	requireSignatures bool,
 	depth int,
@@ -2085,7 +2106,8 @@ func validateScriptAnyWithDepth(
 	for _, subScript := range script.Scripts {
 		if validateScriptWithDepth(
 			&subScript,
-			signatures,
+			message,
+			witnesses,
 			slot,
 			requireSignatures,
 			depth,
@@ -2099,7 +2121,8 @@ func validateScriptAnyWithDepth(
 // validateScriptNOfWithDepth checks if at least N sub-scripts are satisfied
 func validateScriptNOfWithDepth(
 	script *NativeScriptNofK,
-	signatures [][]byte,
+	message []byte,
+	witnesses []ScriptWitness,
 	slot uint64,
 	requireSignatures bool,
 	depth int,
@@ -2120,7 +2143,7 @@ func validateScriptNOfWithDepth(
 			return false
 		}
 		minReq := minSignaturesRequired(&tempScript)
-		if len(signatures) < minReq {
+		if len(witnesses) < minReq {
 			return false
 		}
 	}
@@ -2128,7 +2151,8 @@ func validateScriptNOfWithDepth(
 	for _, subScript := range script.Scripts {
 		if validateScriptWithDepth(
 			&subScript,
-			signatures,
+			message,
+			witnesses,
 			slot,
 			requireSignatures,
 			depth,

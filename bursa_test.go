@@ -32,7 +32,19 @@ import (
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/blake2b"
 )
+
+// blake2b224 returns the Blake2b-224 hash of data, matching the key-hash
+// derivation used for NativeScriptPubkey.Hash.
+func blake2b224(data []byte) []byte {
+	hasher, err := blake2b.New(28, nil)
+	if err != nil {
+		panic(err)
+	}
+	hasher.Write(data)
+	return hasher.Sum(nil)
+}
 
 // testKeyHash returns a 28-byte test key hash for use in tests
 func testKeyHash() []byte {
@@ -1381,7 +1393,7 @@ func TestValidateScript(t *testing.T) {
 	// Test ScriptSig validation (allows empty signatures for basic validation)
 	scriptSig, err := NewScriptSig(keyHash1)
 	assert.NoError(t, err)
-	assert.True(t, ValidateScript(scriptSig, nil, 1000, false))
+	assert.True(t, ValidateScript(scriptSig, nil, nil, 1000, false))
 
 	// Test ScriptAll validation (requires all sub-scripts satisfied)
 	// Since ScriptSig allows empty signatures, ScriptAll should succeed
@@ -1394,7 +1406,7 @@ func TestValidateScript(t *testing.T) {
 		script2,
 	)
 	assert.NoError(t, err)
-	assert.True(t, ValidateScript(scriptAll, nil, 1000, false))
+	assert.True(t, ValidateScript(scriptAll, nil, nil, 1000, false))
 
 	// Test ScriptAny validation (requires any sub-script satisfied)
 	// Since ScriptSig allows empty signatures, ScriptAny should succeed
@@ -1407,7 +1419,7 @@ func TestValidateScript(t *testing.T) {
 		script4,
 	)
 	assert.NoError(t, err)
-	assert.True(t, ValidateScript(scriptAny, nil, 1000, false))
+	assert.True(t, ValidateScript(scriptAny, nil, nil, 1000, false))
 
 	// Test ScriptNOf validation (2-of-3)
 	// Since ScriptSig allows empty signatures, ScriptNOf should succeed
@@ -1423,18 +1435,18 @@ func TestValidateScript(t *testing.T) {
 		script7,
 	)
 	assert.NoError(t, err)
-	assert.True(t, ValidateScript(scriptNOf, nil, 1000, false))
+	assert.True(t, ValidateScript(scriptNOf, nil, nil, 1000, false))
 
 	// Test ScriptBefore validation
 	scriptBefore, err := NewScriptBefore(2000)
 	assert.NoError(t, err)
 	assert.True(
 		t,
-		ValidateScript(scriptBefore, nil, 1000, false),
+		ValidateScript(scriptBefore, nil, nil, 1000, false),
 	) // Slot 1000 < 2000
 	assert.False(
 		t,
-		ValidateScript(scriptBefore, nil, 3000, false),
+		ValidateScript(scriptBefore, nil, nil, 3000, false),
 	) // Slot 3000 > 2000
 
 	// Test ScriptAfter validation
@@ -1442,11 +1454,11 @@ func TestValidateScript(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(
 		t,
-		ValidateScript(scriptAfter, nil, 2000, false),
+		ValidateScript(scriptAfter, nil, nil, 2000, false),
 	) // Slot 2000 > 1000
 	assert.False(
 		t,
-		ValidateScript(scriptAfter, nil, 500, false),
+		ValidateScript(scriptAfter, nil, nil, 500, false),
 	) // Slot 500 < 1000
 }
 
@@ -1526,7 +1538,7 @@ func TestMultiSigScriptFromKeys(t *testing.T) {
 	assert.Len(t, nofScript.Scripts, 3)
 
 	// Verify the script can be validated
-	assert.True(t, ValidateScript(script, nil, 1000, false))
+	assert.True(t, ValidateScript(script, nil, nil, 1000, false))
 }
 
 func TestScriptGenerationEdgeCases(t *testing.T) {
@@ -1560,89 +1572,77 @@ func TestScriptGenerationEdgeCases(t *testing.T) {
 }
 
 func TestValidateScriptWithSignatures(t *testing.T) {
-	keyHash1 := []byte{
-		0x01,
-		0x02,
-		0x03,
-		0x04,
-		0x05,
-		0x06,
-		0x07,
-		0x08,
-		0x09,
-		0x0a,
-		0x0b,
-		0x0c,
-		0x0d,
-		0x0e,
-		0x0f,
-		0x10,
-		0x11,
-		0x12,
-		0x13,
-		0x14,
-		0x15,
-		0x16,
-		0x17,
-		0x18,
-		0x19,
-		0x1a,
-		0x1b,
-		0x1c,
-	}
-	keyHash2 := []byte{
-		0x02,
-		0x03,
-		0x04,
-		0x05,
-		0x06,
-		0x07,
-		0x08,
-		0x09,
-		0x0a,
-		0x0b,
-		0x0c,
-		0x0d,
-		0x0e,
-		0x0f,
-		0x10,
-		0x11,
-		0x12,
-		0x13,
-		0x14,
-		0x15,
-		0x16,
-		0x17,
-		0x18,
-		0x19,
-		0x1a,
-		0x1b,
-		0x1c,
-		0x1d,
-	}
+	pub1, priv1, err := ed25519.GenerateKey(rand.Reader)
+	assert.NoError(t, err)
+	pub2, priv2, err := ed25519.GenerateKey(rand.Reader)
+	assert.NoError(t, err)
+	otherPub, otherPriv, err := ed25519.GenerateKey(rand.Reader)
+	assert.NoError(t, err)
 
-	validSig := make(
-		[]byte,
-		64,
-	) // 64-byte signature placeholder (structural validation only)
+	keyHash1 := blake2b224(pub1)
+	keyHash2 := blake2b224(pub2)
 
-	// Test ScriptSig with requireSignatures=true (structural validation: enforce signature presence and shape constraints only)
+	message := []byte("tx body hash placeholder")
+	otherMessage := []byte("a different payload")
+
+	sig1 := ed25519.Sign(priv1, message)
+	sig2 := ed25519.Sign(priv2, message)
+
+	randomSig := make([]byte, ed25519.SignatureSize)
+	_, err = rand.Read(randomSig)
+	assert.NoError(t, err)
+
+	// Test ScriptSig with requireSignatures=true: real cryptographic verification
 	scriptSig, err := NewScriptSig(keyHash1)
 	assert.NoError(t, err)
 	assert.False(
 		t,
-		ValidateScript(scriptSig, nil, 1000, true),
-	) // No signatures provided
+		ValidateScript(scriptSig, message, nil, 1000, true),
+	) // No witnesses provided
 	assert.False(
 		t,
-		ValidateScript(scriptSig, [][]byte{make([]byte, 32)}, 1000, true),
-	) // Invalid signature length (not 64 bytes)
+		ValidateScript(
+			scriptSig,
+			message,
+			[]ScriptWitness{{Vkey: pub1, Signature: randomSig}},
+			1000,
+			true,
+		),
+	) // Random signature bytes do not verify (issue #727)
+	assert.False(
+		t,
+		ValidateScript(
+			scriptSig,
+			message,
+			[]ScriptWitness{
+				{Vkey: otherPub, Signature: ed25519.Sign(otherPriv, message)},
+			},
+			1000,
+			true,
+		),
+	) // Valid signature, but the key does not match the script's key hash
+	assert.False(
+		t,
+		ValidateScript(
+			scriptSig,
+			message,
+			[]ScriptWitness{{Vkey: pub1, Signature: ed25519.Sign(priv1, otherMessage)}},
+			1000,
+			true,
+		),
+	) // Correct key, but the signature covers a different payload
 	assert.True(
 		t,
-		ValidateScript(scriptSig, [][]byte{validSig}, 1000, true),
-	) // Valid signature count and length (structural check only, no cryptographic verification)
+		ValidateScript(
+			scriptSig,
+			message,
+			[]ScriptWitness{{Vkey: pub1, Signature: sig1}},
+			1000,
+			true,
+		),
+	) // Correct key and a signature that verifies over the actual payload
 
-	// Test ScriptAll with requireSignatures=true (structural validation: enforce signature presence and shape constraints only)
+	// Test ScriptAll with requireSignatures=true (every sub-script must verify)
 	scriptAll1, err := NewScriptSig(keyHash1)
 	assert.NoError(t, err)
 	scriptAll2, err := NewScriptSig(keyHash2)
@@ -1651,23 +1651,38 @@ func TestValidateScriptWithSignatures(t *testing.T) {
 	assert.NoError(t, err)
 	assert.False(
 		t,
-		ValidateScript(scriptAll, nil, 1000, true),
-	) // No signatures
+		ValidateScript(scriptAll, message, nil, 1000, true),
+	) // No witnesses
 	assert.False(
 		t,
-		ValidateScript(scriptAll, [][]byte{validSig}, 1000, true),
-	) // Insufficient signatures (needs 2)
+		ValidateScript(
+			scriptAll,
+			message,
+			[]ScriptWitness{{Vkey: pub1, Signature: sig1}},
+			1000,
+			true,
+		),
+	) // Only one of the two required signatures is present
 	assert.True(
 		t,
-		ValidateScript(scriptAll, [][]byte{validSig, validSig}, 1000, true),
-	) // Sufficient signatures (structural check only, no cryptographic verification)
+		ValidateScript(
+			scriptAll,
+			message,
+			[]ScriptWitness{
+				{Vkey: pub1, Signature: sig1},
+				{Vkey: pub2, Signature: sig2},
+			},
+			1000,
+			true,
+		),
+	) // Both signatures present and verify
 
-	// Test ScriptNOf with requireSignatures=true (structural validation: enforce signature presence and shape constraints only)
+	// Test ScriptNOf (2-of-3) with requireSignatures=true
 	scriptNOf1, err := NewScriptSig(keyHash1)
 	assert.NoError(t, err)
 	scriptNOf2, err := NewScriptSig(keyHash2)
 	assert.NoError(t, err)
-	scriptNOf3, err := NewScriptSig(keyHash2)
+	scriptNOf3, err := NewScriptSig(blake2b224(otherPub))
 	assert.NoError(t, err)
 	scriptNOf, err := NewScriptNOf(
 		2,
@@ -1678,16 +1693,31 @@ func TestValidateScriptWithSignatures(t *testing.T) {
 	assert.NoError(t, err)
 	assert.False(
 		t,
-		ValidateScript(scriptNOf, nil, 1000, true),
-	) // No signatures
+		ValidateScript(scriptNOf, message, nil, 1000, true),
+	) // No witnesses
 	assert.False(
 		t,
-		ValidateScript(scriptNOf, [][]byte{validSig}, 1000, true),
-	) // Insufficient signatures (needs 2)
+		ValidateScript(
+			scriptNOf,
+			message,
+			[]ScriptWitness{{Vkey: pub1, Signature: sig1}},
+			1000,
+			true,
+		),
+	) // Only one of the two required sub-scripts is satisfied
 	assert.True(
 		t,
-		ValidateScript(scriptNOf, [][]byte{validSig, validSig}, 1000, true),
-	) // Sufficient signatures (structural check only, no cryptographic verification)
+		ValidateScript(
+			scriptNOf,
+			message,
+			[]ScriptWitness{
+				{Vkey: pub1, Signature: sig1},
+				{Vkey: pub2, Signature: sig2},
+			},
+			1000,
+			true,
+		),
+	) // Two of three sub-scripts satisfied
 }
 
 func TestValidateScriptTimelockBoundaries(t *testing.T) {
@@ -1696,15 +1726,15 @@ func TestValidateScriptTimelockBoundaries(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(
 		t,
-		ValidateScript(scriptBefore, nil, 999, false),
+		ValidateScript(scriptBefore, nil, nil, 999, false),
 	) // Slot < before
 	assert.False(
 		t,
-		ValidateScript(scriptBefore, nil, 1000, false),
+		ValidateScript(scriptBefore, nil, nil, 1000, false),
 	) // Slot == before
 	assert.False(
 		t,
-		ValidateScript(scriptBefore, nil, 1001, false),
+		ValidateScript(scriptBefore, nil, nil, 1001, false),
 	) // Slot > before
 
 	// Test ScriptAfter boundary
@@ -1712,15 +1742,15 @@ func TestValidateScriptTimelockBoundaries(t *testing.T) {
 	assert.NoError(t, err)
 	assert.False(
 		t,
-		ValidateScript(scriptAfter, nil, 999, false),
+		ValidateScript(scriptAfter, nil, nil, 999, false),
 	) // Slot 999 < 1000 (false)
 	assert.True(
 		t,
-		ValidateScript(scriptAfter, nil, 1000, false),
+		ValidateScript(scriptAfter, nil, nil, 1000, false),
 	) // Slot == after (>=)
 	assert.True(
 		t,
-		ValidateScript(scriptAfter, nil, 1001, false),
+		ValidateScript(scriptAfter, nil, nil, 1001, false),
 	) // Slot 1001 >= 1000 (true)
 }
 

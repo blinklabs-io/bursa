@@ -1813,9 +1813,18 @@ func anyScriptRequiresSignatures(scripts []bursa.Script) bool {
 	return slices.ContainsFunc(scripts, scriptRequiresSignatures)
 }
 
+// RunScriptValidate validates a script against a set of vkey witnesses and the
+// current slot. publicKeys and signatures are parallel arrays: publicKeys[i]
+// is the hex-encoded Ed25519 verification key whose signature over message is
+// signatures[i]. message (or messageHex) is the signed payload, e.g. a
+// transaction body hash; it is required whenever the script needs signatures
+// and structuralOnly is false.
 func RunScriptValidate(
 	scriptFile string,
+	publicKeys []string,
 	signatures []string,
+	message string,
+	messageHex string,
 	slot uint64,
 	structuralOnly bool,
 ) {
@@ -1856,9 +1865,46 @@ func RunScriptValidate(
 	}
 	hashHex := hex.EncodeToString(hash)
 
-	// Parse signatures
-	sigBytes := make([][]byte, 0, len(signatures))
-	for _, sigStr := range signatures {
+	// Resolve the signed payload from --message or --message-hex
+	var messageBytes []byte
+	switch {
+	case message != "" && messageHex != "":
+		logger.Error("only one of --message or --message-hex may be specified")
+		os.Exit(1)
+	case messageHex != "":
+		messageBytes, err = hex.DecodeString(messageHex)
+		if err != nil {
+			logger.Error("invalid message-hex format", "error", err)
+			os.Exit(1)
+		}
+	case message != "":
+		messageBytes = []byte(message)
+	}
+
+	// Parse public keys and signatures into vkey witnesses (parallel arrays)
+	if len(publicKeys) != len(signatures) {
+		logger.Error(
+			"public-keys and signatures must be provided in matching pairs",
+			"publicKeys",
+			len(publicKeys),
+			"signatures",
+			len(signatures),
+		)
+		os.Exit(1)
+	}
+	witnesses := make([]bursa.ScriptWitness, 0, len(signatures))
+	for i, sigStr := range signatures {
+		vkey, err := hex.DecodeString(publicKeys[i])
+		if err != nil {
+			logger.Error(
+				"invalid public key format",
+				"publicKey",
+				publicKeys[i],
+				"error",
+				err,
+			)
+			os.Exit(1)
+		}
 		sig, err := hex.DecodeString(sigStr)
 		if err != nil {
 			logger.Error(
@@ -1874,26 +1920,41 @@ func RunScriptValidate(
 			logger.Error("decoded signature is empty", "signature", sigStr)
 			os.Exit(1)
 		}
-		sigBytes = append(sigBytes, sig)
+		witnesses = append(
+			witnesses,
+			bursa.ScriptWitness{Vkey: vkey, Signature: sig},
+		)
 	}
 
 	// Check if signatures are required
-	if !structuralOnly && len(sigBytes) == 0 &&
+	if !structuralOnly && len(witnesses) == 0 &&
 		scriptRequiresSignatures(script) {
 		logger.Error(
 			"signatures required for format validation of scripts with signature requirements (use --structural-only for basic structure checks)",
 		)
 		os.Exit(1)
 	}
+	if !structuralOnly && len(witnesses) > 0 && len(messageBytes) == 0 {
+		logger.Error(
+			"--message or --message-hex is required to verify signatures",
+		)
+		os.Exit(1)
+	}
 
 	// Validate script
-	valid := bursa.ValidateScript(script, sigBytes, slot, !structuralOnly)
+	valid := bursa.ValidateScript(
+		script,
+		messageBytes,
+		witnesses,
+		slot,
+		!structuralOnly,
+	)
 
 	// Output result
 	result := map[string]any{
 		"valid":          valid,
 		"slot":           slot,
-		"signatures":     len(signatures),
+		"signatures":     len(witnesses),
 		"scriptHash":     hashHex,
 		"structuralOnly": structuralOnly,
 	}
