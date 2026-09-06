@@ -1808,8 +1808,13 @@ func scriptRequiresSignatures(script bursa.Script) bool {
 // convertScripts converts []lcommon.NativeScript to []bursa.Script
 func convertScripts(scripts []lcommon.NativeScript) []bursa.Script {
 	result := make([]bursa.Script, len(scripts))
-	for i, scr := range scripts {
-		result[i] = scr
+	for i := range scripts {
+		// Take the address of each element rather than storing the value:
+		// scriptRequiresSignatures type-asserts on *bursa.NativeScript, and a
+		// value-typed NativeScript stored in the Script interface fails that
+		// assertion even though it satisfies the interface, silently
+		// reporting every nested script as not requiring signatures.
+		result[i] = &scripts[i]
 	}
 	return result
 }

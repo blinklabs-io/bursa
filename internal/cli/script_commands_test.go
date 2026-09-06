@@ -604,3 +604,37 @@ func TestParseBech32VerificationKey_WrongHRP(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key type")
 }
+
+// TestScriptRequiresSignatures_Nested guards against convertScripts losing
+// the pointer dynamic type when converting nested script nodes: if it
+// stores NativeScript values instead of *NativeScript, scriptRequiresSignatures'
+// type assertion silently fails for every nested script and RunScriptValidate's
+// witness-required diagnostic never fires for ordinary multisig scripts.
+func TestScriptRequiresSignatures_Nested(t *testing.T) {
+	keyHash1 := make([]byte, 28)
+	keyHash1[0] = 0x01
+	keyHash2 := make([]byte, 28)
+	keyHash2[0] = 0x02
+	keyHash3 := make([]byte, 28)
+	keyHash3[0] = 0x03
+
+	// A 2-of-3 multisig wraps its sig leaves in an NofK node: the common
+	// case RunScriptValidate needs this helper to see through.
+	multisig, err := bursa.NewMultiSigScript(2, keyHash1, keyHash2, keyHash3)
+	require.NoError(t, err)
+	assert.True(t, scriptRequiresSignatures(multisig))
+
+	// An "all" wrapping sig leaves must also be detected.
+	sig1, err := bursa.NewScriptSig(keyHash1)
+	require.NoError(t, err)
+	sig2, err := bursa.NewScriptSig(keyHash2)
+	require.NoError(t, err)
+	allScript, err := bursa.NewScriptAll(sig1, sig2)
+	require.NoError(t, err)
+	assert.True(t, scriptRequiresSignatures(allScript))
+
+	// A script with no signature leaf anywhere must not.
+	timelock, err := bursa.NewScriptBefore(999999999)
+	require.NoError(t, err)
+	assert.False(t, scriptRequiresSignatures(timelock))
+}
