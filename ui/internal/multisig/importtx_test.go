@@ -257,7 +257,7 @@ func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 		t.Fatalf("InspectTx: %v", err)
 	}
 	if !info.IsMultiSig {
-		t.Fatalf("shared payment/mint script must classify as multisig: %+v", info)
+		t.Fatalf("unrelated mint script must not suppress real spend classification: %+v", info)
 	}
 	if info.Threshold != 2 || len(info.Participants) != 2 {
 		t.Errorf("got %d-of-%d, want 2-of-2", info.Threshold, len(info.Participants))
