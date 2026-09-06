@@ -95,8 +95,8 @@ android {
 // letting AGP emit an unsigned APK.
 //
 // Checked against the requested task names at configuration time. That is a
-// plain List<String>, unlike a taskGraph.whenReady callback whose lambda may
-// bind the graph as a receiver or as `it` depending on the Kotlin DSL version:
+// plain String, unlike a taskGraph.whenReady callback whose lambda may bind
+// the graph as a receiver or as `it` depending on the Kotlin DSL version:
 // getting that wrong fails configuration for every build, debug included, and
 // it cannot be compile-checked without a full Android toolchain.
 //
@@ -105,15 +105,9 @@ android {
 // last of several layers: build-in-docker.sh requires the keystore before
 // Gradle starts, refuses to select a *-unsigned.apk, and runs apksigner
 // verify on the result.
-val bursaReleasePackagingTasks = listOf(
-    "assembleRelease",
-    "bundleRelease",
-    "packageRelease",
-)
+val bursaReleasePackagingTask = Regex("(?:assemble|bundle|package)(?:Release|Rel)?")
 val bursaReleaseRequested = gradle.startParameter.taskNames.any { requested ->
-    bursaReleasePackagingTasks.any { task ->
-        requested == task || requested.endsWith(":" + task)
-    }
+    requested.substringAfterLast(":").matches(bursaReleasePackagingTask)
 }
 if (bursaReleaseRequested && bursaKeystoreFile == null) {
     // error() is Kotlin stdlib; GradleException would be one more import
