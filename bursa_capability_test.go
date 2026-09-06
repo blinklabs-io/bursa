@@ -61,11 +61,11 @@ func TestGetRootSKey(t *testing.T) {
 
 	kf, err := GetRootSKey(rootKey)
 	require.NoError(t, err)
-	assert.Equal(t, "SigningKeyShelley_ed25519", kf.Type)
-	assert.Equal(t, "Root Signing Key", kf.Description)
-	// Signing key files carry the first 32 bytes (k_L) CBOR-wrapped.
+	assert.Equal(t, "RootExtendedSigningKeyShelley_ed25519_bip32", kf.Type)
+	assert.Equal(t, "Root Extended Signing Key (BIP32)", kf.Description)
+	// Extended signing key files carry 128 bytes CBOR-wrapped.
 	require.GreaterOrEqual(t, len(kf.CborHex), 4)
-	assert.Equal(t, "5820", kf.CborHex[:4])
+	assert.Equal(t, "5880", kf.CborHex[:4])
 
 	// Deterministic for the same mnemonic.
 	kf2, err := GetRootSKey(rootKey)
@@ -84,9 +84,9 @@ func TestGetAccountVKeyAndSKey(t *testing.T) {
 
 	skey, err := GetAccountSKey(accountKey)
 	require.NoError(t, err)
-	assert.Equal(t, "AccountSigningKeyShelley_ed25519", skey.Type)
-	assert.Equal(t, "Account Signing Key", skey.Description)
-	assert.Equal(t, "5820", skey.CborHex[:4])
+	assert.Equal(t, "AccountExtendedSigningKeyShelley_ed25519_bip32", skey.Type)
+	assert.Equal(t, "Account Extended Signing Key (BIP32)", skey.Description)
+	assert.Equal(t, "5880", skey.CborHex[:4])
 
 	// The account vkey CBOR must decode to the raw 32-byte public key.
 	raw := decodeCborBytes(t, vkey.CborHex)
@@ -127,8 +127,8 @@ func TestGetCalidusKeyMatchesPaymentPath(t *testing.T) {
 
 	skey, err := GetCalidusSKey(calidusKey)
 	require.NoError(t, err)
-	assert.Equal(t, "CalidusSigningKeyShelley_ed25519", skey.Type)
-	assert.Equal(t, "5820", skey.CborHex[:4])
+	assert.Equal(t, "CalidusExtendedSigningKeyShelley_ed25519_bip32", skey.Type)
+	assert.Equal(t, "5880", skey.CborHex[:4])
 
 	extSkey, err := GetCalidusExtendedSKey(calidusKey)
 	require.NoError(t, err)
@@ -168,8 +168,8 @@ func TestGetDRepKeyFiles(t *testing.T) {
 
 	skey, err := GetDRepSKey(drepKey)
 	require.NoError(t, err)
-	assert.Equal(t, "DRepSigningKeyShelley_ed25519", skey.Type)
-	assert.Equal(t, "5820", skey.CborHex[:4])
+	assert.Equal(t, "DRepExtendedSigningKeyShelley_ed25519_bip32", skey.Type)
+	assert.Equal(t, "5880", skey.CborHex[:4])
 
 	_, err = GetDRepKey(accountKey, 0x80000000)
 	assert.ErrorIs(t, err, ErrInvalidDerivationIndex)

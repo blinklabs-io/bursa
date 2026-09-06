@@ -130,12 +130,12 @@ func TestPaymentKeyFileFormat(t *testing.T) {
 	// Verify payment skey has correct type
 	assert.Equal(
 		t,
-		"PaymentSigningKeyShelley_ed25519",
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		wallet.PaymentSKey.Type,
 	)
 	assert.Equal(
 		t,
-		"Payment Signing Key",
+		"Payment Extended Signing Key (BIP32)",
 		wallet.PaymentSKey.Description,
 	)
 	assert.NotEmpty(t, wallet.PaymentSKey.CborHex)
@@ -161,12 +161,12 @@ func TestStakeKeyFileFormat(t *testing.T) {
 	// Verify stake skey has correct type
 	assert.Equal(
 		t,
-		"StakeSigningKeyShelley_ed25519",
+		"StakeExtendedSigningKeyShelley_ed25519_bip32",
 		wallet.StakeSKey.Type,
 	)
 	assert.Equal(
 		t,
-		"Stake Signing Key",
+		"Stake Extended Signing Key (BIP32)",
 		wallet.StakeSKey.Description,
 	)
 	assert.NotEmpty(t, wallet.StakeSKey.CborHex)
@@ -312,12 +312,13 @@ func TestCborHexPrefix(t *testing.T) {
 		"Stake vkey should have CBOR prefix 5820 (32-byte string)",
 	)
 
-	// Signing keys (non-extended) should also be 32 bytes
+	// Payment signing keys preserve the BIP32 identity and are therefore
+	// extended 128-byte envelopes.
 	assert.True(
 		t,
 		len(wallet.PaymentSKey.CborHex) >= 4 &&
-			wallet.PaymentSKey.CborHex[0:4] == "5820",
-		"Payment skey should have CBOR prefix 5820 (32-byte string)",
+			wallet.PaymentSKey.CborHex[0:4] == "5880",
+		"Payment skey should have CBOR prefix 5880 (128-byte string)",
 	)
 
 	// Extended signing keys should be 128 bytes (5880 prefix)

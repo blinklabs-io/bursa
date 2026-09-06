@@ -3,7 +3,7 @@ name: Docker CI
 on:
   pull_request:
     branches: ['main']
-    paths: ['Dockerfile','*.go','cmd/**','internal/**','go.*','.github/workflows/ci-docker.yml']
+    paths: ['Dockerfile','*.go','cmd/**','internal/**','go.*','.github/scripts/**','.github/workflows/ci-docker.yml','.github/workflows/publish.yml']
 
 env:
   GHCR_IMAGE_NAME: ghcr.io/blinklabs-io/bursa
@@ -12,6 +12,15 @@ permissions:
   contents: read
 
 jobs:
+  # The release manifest composition cannot be rehearsed on a pull request, so
+  # its source and destination tags are checked against a docker stub instead.
+  image-manifest-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
+      - name: test image manifest composition
+        run: bash .github/scripts/test-image-manifests.sh
+
   docker:
     strategy:
       fail-fast: false

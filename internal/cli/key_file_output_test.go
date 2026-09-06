@@ -25,13 +25,13 @@ func TestKeyFileOutput(t *testing.T) {
 			name:             "payment key",
 			runFunc:          func(skey, vkey string) error { return RunKeyPayment(testMnemonic, "", "", skey, vkey, 0, 0) },
 			expectedVKeyType: "PaymentVerificationKeyShelley_ed25519",
-			expectedSKeyType: "PaymentSigningKeyShelley_ed25519",
+			expectedSKeyType: "PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		},
 		{
 			name:             "stake key",
 			runFunc:          func(skey, vkey string) error { return RunKeyStake(testMnemonic, "", "", skey, vkey, 0, 0) },
 			expectedVKeyType: "StakeVerificationKeyShelley_ed25519",
-			expectedSKeyType: "StakeSigningKeyShelley_ed25519",
+			expectedSKeyType: "StakeExtendedSigningKeyShelley_ed25519_bip32",
 		},
 		{
 			name:             "pool cold key",
@@ -43,25 +43,25 @@ func TestKeyFileOutput(t *testing.T) {
 			name:             "policy key",
 			runFunc:          func(skey, vkey string) error { return RunKeyPolicy(testMnemonic, "", "", skey, vkey, 0) },
 			expectedVKeyType: "PolicyVerificationKeyShelley_ed25519",
-			expectedSKeyType: "PolicySigningKeyShelley_ed25519",
+			expectedSKeyType: "PolicyExtendedSigningKeyShelley_ed25519_bip32",
 		},
 		{
 			name:             "drep key",
 			runFunc:          func(skey, vkey string) error { return RunKeyDRep(testMnemonic, "", "", skey, vkey, 0, 0) },
 			expectedVKeyType: "DRepVerificationKeyShelley_ed25519",
-			expectedSKeyType: "DRepSigningKeyShelley_ed25519",
+			expectedSKeyType: "DRepExtendedSigningKeyShelley_ed25519_bip32",
 		},
 		{
 			name:             "committee cold key",
 			runFunc:          func(skey, vkey string) error { return RunKeyCommitteeCold(testMnemonic, "", "", skey, vkey, 0, 0) },
 			expectedVKeyType: "CommitteeColdVerificationKeyShelley_ed25519",
-			expectedSKeyType: "CommitteeColdSigningKeyShelley_ed25519",
+			expectedSKeyType: "CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
 		},
 		{
 			name:             "committee hot key",
 			runFunc:          func(skey, vkey string) error { return RunKeyCommitteeHot(testMnemonic, "", "", skey, vkey, 0, 0) },
 			expectedVKeyType: "CommitteeHotVerificationKeyShelley_ed25519",
-			expectedSKeyType: "CommitteeHotSigningKeyShelley_ed25519",
+			expectedSKeyType: "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
 		},
 		{
 			name:             "VRF key",
@@ -175,6 +175,6 @@ func TestKeyFilePermissionsEnforced(t *testing.T) {
 	// Verify the content is correct (not the old insecure content)
 	data, err := os.ReadFile(signingKeyFile)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "PaymentSigningKeyShelley_ed25519")
+	assert.Contains(t, string(data), "PaymentExtendedSigningKeyShelley_ed25519_bip32")
 	assert.NotContains(t, string(data), "test")
 }
