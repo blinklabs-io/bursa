@@ -198,6 +198,17 @@ definitions:
     type: object
   api.ScriptValidateRequest:
     properties:
+      message:
+        description: Hex-encoded signed payload
+        format: hex
+        type: string
+      public_keys:
+        items:
+          format: hex
+          maxLength: 64
+          minLength: 64
+          type: string
+        type: array
       require_signatures:
         type: boolean
       script:

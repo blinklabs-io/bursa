@@ -1779,6 +1779,12 @@ func RunScriptCreate(
 	return nil
 }
 
+// scriptRequiresSignatures reports whether script contains a signature leaf
+// anywhere in its tree. It says nothing about whether those signatures are
+// actually necessary for the script to validate (an "any" branch might make
+// them optional, a timelock might already be satisfied) -- callers must only
+// use it to choose a diagnostic message after the real evaluator has already
+// decided a script does not validate, never to decide validity itself.
 func scriptRequiresSignatures(script bursa.Script) bool {
 	nativeScript, ok := script.(*bursa.NativeScript)
 	if !ok {
@@ -1802,8 +1808,13 @@ func scriptRequiresSignatures(script bursa.Script) bool {
 // convertScripts converts []lcommon.NativeScript to []bursa.Script
 func convertScripts(scripts []lcommon.NativeScript) []bursa.Script {
 	result := make([]bursa.Script, len(scripts))
-	for i, scr := range scripts {
-		result[i] = scr
+	for i := range scripts {
+		// Take the address of each element rather than storing the value:
+		// scriptRequiresSignatures type-asserts on *bursa.NativeScript, and a
+		// value-typed NativeScript stored in the Script interface fails that
+		// assertion even though it satisfies the interface, silently
+		// reporting every nested script as not requiring signatures.
+		result[i] = &scripts[i]
 	}
 	return result
 }
@@ -1813,11 +1824,21 @@ func anyScriptRequiresSignatures(scripts []bursa.Script) bool {
 	return slices.ContainsFunc(scripts, scriptRequiresSignatures)
 }
 
+// RunScriptValidate validates a script against a set of vkey witnesses and the
+// current slot. publicKeys and signatures are parallel arrays: publicKeys[i]
+// is the hex-encoded Ed25519 verification key whose signature over message is
+// signatures[i]. message (or messageHex) is the signed payload, e.g. a
+// transaction body hash; it is required whenever the script needs signatures
+// and structuralOnly is false.
 func RunScriptValidate(
 	scriptFile string,
+	publicKeys []string,
 	signatures []string,
+	message string,
+	messageHex string,
 	slot uint64,
 	structuralOnly bool,
+	messageProvided bool,
 ) {
 	logger := logging.GetLogger()
 
@@ -1856,9 +1877,46 @@ func RunScriptValidate(
 	}
 	hashHex := hex.EncodeToString(hash)
 
-	// Parse signatures
-	sigBytes := make([][]byte, 0, len(signatures))
-	for _, sigStr := range signatures {
+	// Resolve the signed payload from --message or --message-hex
+	var messageBytes []byte
+	switch {
+	case message != "" && messageHex != "":
+		logger.Error("only one of --message or --message-hex may be specified")
+		os.Exit(1)
+	case messageHex != "":
+		messageBytes, err = hex.DecodeString(messageHex)
+		if err != nil {
+			logger.Error("invalid message-hex format", "error", err)
+			os.Exit(1)
+		}
+	case message != "":
+		messageBytes = []byte(message)
+	}
+
+	// Parse public keys and signatures into vkey witnesses (parallel arrays)
+	if len(publicKeys) != len(signatures) {
+		logger.Error(
+			"public-keys and signatures must be provided in matching pairs",
+			"publicKeys",
+			len(publicKeys),
+			"signatures",
+			len(signatures),
+		)
+		os.Exit(1)
+	}
+	witnesses := make([]bursa.ScriptWitness, 0, len(signatures))
+	for i, sigStr := range signatures {
+		vkey, err := hex.DecodeString(publicKeys[i])
+		if err != nil {
+			logger.Error(
+				"invalid public key format",
+				"publicKey",
+				publicKeys[i],
+				"error",
+				err,
+			)
+			os.Exit(1)
+		}
 		sig, err := hex.DecodeString(sigStr)
 		if err != nil {
 			logger.Error(
@@ -1874,11 +1932,40 @@ func RunScriptValidate(
 			logger.Error("decoded signature is empty", "signature", sigStr)
 			os.Exit(1)
 		}
-		sigBytes = append(sigBytes, sig)
+		witnesses = append(
+			witnesses,
+			bursa.ScriptWitness{Vkey: vkey, Signature: sig},
+		)
 	}
 
 	// Check if signatures are required
-	if !structuralOnly && len(sigBytes) == 0 &&
+	if !structuralOnly && len(witnesses) > 0 && len(messageBytes) == 0 &&
+		!messageProvided {
+		logger.Error(
+			"--message or --message-hex is required to verify signatures",
+		)
+		os.Exit(1)
+	}
+
+	// Validate script. This is the real, slot- and witness-aware evaluator,
+	// so it's the only thing allowed to decide satisfiability: a witness-free
+	// conditional script (e.g. an "any" branch whose timelock already holds)
+	// still validates true here even with no signatures supplied.
+	valid := bursa.ValidateScript(
+		script,
+		messageBytes,
+		witnesses,
+		slot,
+		!structuralOnly,
+	)
+
+	// A false result with no witnesses at all, for a script that actually
+	// has a signature leaf somewhere, means signatures were required and
+	// simply weren't provided -- surface that plainly instead of a bare
+	// "valid": false, matching the pre-witness-based CLI contract. This
+	// check runs only after ValidateScript has already decided false, so it
+	// can never override a script that validated via a witness-free branch.
+	if !valid && !structuralOnly && len(witnesses) == 0 &&
 		scriptRequiresSignatures(script) {
 		logger.Error(
 			"signatures required for format validation of scripts with signature requirements (use --structural-only for basic structure checks)",
@@ -1886,14 +1973,11 @@ func RunScriptValidate(
 		os.Exit(1)
 	}
 
-	// Validate script
-	valid := bursa.ValidateScript(script, sigBytes, slot, !structuralOnly)
-
 	// Output result
 	result := map[string]any{
 		"valid":          valid,
 		"slot":           slot,
-		"signatures":     len(signatures),
+		"signatures":     len(witnesses),
 		"scriptHash":     hashHex,
 		"structuralOnly": structuralOnly,
 	}

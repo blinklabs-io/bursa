@@ -1153,6 +1153,20 @@ const docTemplate = `{
                 "script"
             ],
             "properties": {
+                "message": {
+                    "description": "Hex-encoded signed payload",
+                    "format": "hex",
+                    "type": "string"
+                },
+                "public_keys": {
+                    "type": "array",
+                    "items": {
+                        "format": "hex",
+                        "maxLength": 64,
+                        "minLength": 64,
+                        "type": "string"
+                    }
+                },
                 "require_signatures": {
                     "type": "boolean"
                 },
@@ -1199,12 +1213,15 @@ const docTemplate = `{
             ],
             "properties": {
                 "address": {
+                    "description": "Address is a hex-encoded address.",
                     "type": "string"
                 },
                 "payload": {
+                    "description": "Payload is a hex-encoded message payload.",
                     "type": "string"
                 },
                 "signing_key": {
+                    "description": "SigningKey identifies the signing key.",
                     "type": "string"
                 }
             }
@@ -1232,6 +1249,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "witnesses": {
+                    "description": "Witnesses are hex-encoded transaction witnesses.",
                     "type": "array",
                     "minItems": 1,
                     "items": {
@@ -1413,6 +1431,7 @@ const docTemplate = `{
                     "maximum": 2147483647
                 },
                 "mnemonic": {
+                    "description": "Mnemonic is a BIP39 mnemonic phrase.",
                     "type": "string",
                     "minLength": 1
                 },
