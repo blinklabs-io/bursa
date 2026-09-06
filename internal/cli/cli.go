@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -1778,6 +1779,46 @@ func RunScriptCreate(
 	return nil
 }
 
+// scriptRequiresSignatures reports whether script contains a signature leaf
+// anywhere in its tree. It says nothing about whether those signatures are
+// actually necessary for the script to validate (an "any" branch might make
+// them optional, a timelock might already be satisfied) -- callers must only
+// use it to choose a diagnostic message after the real evaluator has already
+// decided a script does not validate, never to decide validity itself.
+func scriptRequiresSignatures(script bursa.Script) bool {
+	nativeScript, ok := script.(*bursa.NativeScript)
+	if !ok {
+		return false
+	}
+	switch s := nativeScript.Item().(type) {
+	case *bursa.NativeScriptPubkey:
+		return true
+	case *bursa.NativeScriptAll:
+		return anyScriptRequiresSignatures(convertScripts(s.Scripts))
+	case *bursa.NativeScriptAny:
+		return anyScriptRequiresSignatures(convertScripts(s.Scripts))
+	case *bursa.NativeScriptNofK:
+		return anyScriptRequiresSignatures(convertScripts(s.Scripts))
+	case *bursa.NativeScriptInvalidBefore, *bursa.NativeScriptInvalidHereafter:
+		return false
+	}
+	return false
+}
+
+// convertScripts converts []lcommon.NativeScript to []bursa.Script
+func convertScripts(scripts []lcommon.NativeScript) []bursa.Script {
+	result := make([]bursa.Script, len(scripts))
+	for i, scr := range scripts {
+		result[i] = scr
+	}
+	return result
+}
+
+// anyScriptRequiresSignatures checks if any script in the slice requires signatures
+func anyScriptRequiresSignatures(scripts []bursa.Script) bool {
+	return slices.ContainsFunc(scripts, scriptRequiresSignatures)
+}
+
 // RunScriptValidate validates a script against a set of vkey witnesses and the
 // current slot. publicKeys and signatures are parallel arrays: publicKeys[i]
 // is the hex-encoded Ed25519 verification key whose signature over message is
@@ -1901,7 +1942,10 @@ func RunScriptValidate(
 		os.Exit(1)
 	}
 
-	// Validate script
+	// Validate script. This is the real, slot- and witness-aware evaluator,
+	// so it's the only thing allowed to decide satisfiability: a witness-free
+	// conditional script (e.g. an "any" branch whose timelock already holds)
+	// still validates true here even with no signatures supplied.
 	valid := bursa.ValidateScript(
 		script,
 		messageBytes,
@@ -1909,6 +1953,20 @@ func RunScriptValidate(
 		slot,
 		!structuralOnly,
 	)
+
+	// A false result with no witnesses at all, for a script that actually
+	// has a signature leaf somewhere, means signatures were required and
+	// simply weren't provided -- surface that plainly instead of a bare
+	// "valid": false, matching the pre-witness-based CLI contract. This
+	// check runs only after ValidateScript has already decided false, so it
+	// can never override a script that validated via a witness-free branch.
+	if !valid && !structuralOnly && len(witnesses) == 0 &&
+		scriptRequiresSignatures(script) {
+		logger.Error(
+			"signatures required for format validation of scripts with signature requirements (use --structural-only for basic structure checks)",
+		)
+		os.Exit(1)
+	}
 
 	// Output result
 	result := map[string]any{
