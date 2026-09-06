@@ -2949,6 +2949,39 @@ func TestHandleScriptValidate_WithSlot(t *testing.T) {
 	assert.Equal(t, uint64(12345), result.Slot)
 }
 
+// TestHandleScriptValidate_StructuralOnlyIgnoresLegacySignatures ensures a
+// structural-only request (require_signatures: false) that still supplies
+// the legacy "signatures" field without a matching "public_keys" array is
+// not rejected by the public_keys/signatures pairing check: that pairing is
+// only meaningful when cryptographic verification is requested.
+func TestHandleScriptValidate_StructuralOnlyIgnoresLegacySignatures(t *testing.T) {
+	reqBody := `{
+		"script": {"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"},
+		"signatures": ["` + strings.Repeat("00", 64) + `"],
+		"require_signatures": false
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/script/validate",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleScriptValidate(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+
+	var result ScriptValidateResponse
+	require.NoError(t, json.Unmarshal(body, &result))
+	assert.True(t, result.Valid)
+}
+
 // TestHandleScriptValidate_CryptographicVerification exercises the fix for
 // issue #727: /api/script/validate must cryptographically verify each
 // Ed25519 signature against its public key and the script's key hash, not

@@ -29,7 +29,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 
@@ -1938,52 +1937,6 @@ func ValidateScript(
 		requireSignatures,
 		0,
 	)
-}
-
-// minSignaturesRequired returns the minimum number of signatures required to satisfy the script
-func minSignaturesRequired(script *NativeScript) int {
-	switch s := script.Item().(type) {
-	case *NativeScriptPubkey:
-		return 1
-	case *NativeScriptAll:
-		total := 0
-		for _, subScript := range s.Scripts {
-			total += minSignaturesRequired(&subScript)
-		}
-		return total
-	case *NativeScriptAny:
-		min := 0
-		for _, subScript := range s.Scripts {
-			subMin := minSignaturesRequired(&subScript)
-			if min == 0 || subMin < min {
-				min = subMin
-			}
-		}
-		return min
-	case *NativeScriptNofK:
-		// For NofK, we need to satisfy N out of K sub-scripts
-		// To minimize signatures, we choose the N sub-scripts with the smallest min sigs
-		// But since it's complex, for now, assume we need at least N signatures if any sub needs sigs
-		// Actually, properly: sort the min sigs of sub-scripts, sum the smallest N
-		subMins := make([]int, len(s.Scripts))
-		for i, subScript := range s.Scripts {
-			subMins[i] = minSignaturesRequired(&subScript)
-		}
-		// Sort ascending
-		sort.Ints(subMins)
-		total := 0
-		for i := range subMins {
-			if uint(i) >= s.N { //nolint:gosec
-				break
-			}
-			total += subMins[i]
-		}
-		return total
-	case *NativeScriptInvalidBefore, *NativeScriptInvalidHereafter:
-		return 0
-	default:
-		return 0
-	}
 }
 
 // validateScriptWithDepth is the internal recursive validator with depth tracking
