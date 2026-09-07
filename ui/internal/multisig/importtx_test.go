@@ -115,6 +115,39 @@ func TestPolicyFromScript_RejectsMultipleThresholdClauses(t *testing.T) {
 	}
 }
 
+func TestPolicyFromScript_RejectsInvalidThresholds(t *testing.T) {
+	keyHash := bytesRepeat(1, 28)
+	pubkey, err := bursa.NewScriptSig(keyHash)
+	if err != nil {
+		t.Fatalf("NewScriptSig: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		n    uint
+	}{
+		{name: "zero", n: 0},
+		{name: "greater than participants", n: 2},
+		{name: "integer overflow", n: ^uint(0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := gcbor.Encode(&lcommon.NativeScriptNofK{
+				Type: 3, N: tc.n, Scripts: []lcommon.NativeScript{*pubkey},
+			})
+			if err != nil {
+				t.Fatalf("encode script: %v", err)
+			}
+			ns := new(bursa.NativeScript)
+			if _, err := gcbor.Decode(raw, ns); err != nil {
+				t.Fatalf("decode script: %v", err)
+			}
+			if _, err := PolicyFromScript(ns); !errors.Is(err, ErrInvalidTx) {
+				t.Fatalf("PolicyFromScript threshold %d error = %v, want ErrInvalidTx", tc.n, err)
+			}
+		})
+	}
+}
+
 func bytesRepeat(b byte, n int) []byte {
 	s := make([]byte, n)
 	for i := range s {
