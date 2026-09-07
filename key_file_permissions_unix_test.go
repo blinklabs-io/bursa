@@ -67,6 +67,18 @@ func TestReadSecretKeyFileRejectsFIFO(t *testing.T) {
 	assert.Contains(t, err.Error(), "is not a regular file")
 }
 
+func TestLoadKeyFromFileRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.vkey")
+	link := filepath.Join(dir, "link.vkey")
+	require.NoError(t, os.WriteFile(target, []byte(testPublicKeyEnvelope), 0o644))
+	require.NoError(t, os.Symlink(target, link))
+
+	key, err := LoadKeyFromFile(link)
+	assert.Nil(t, key)
+	assert.Error(t, err)
+}
+
 func TestCreateSecretKeyFileUnixIsExclusiveAndRestrictive(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "secret.skey")

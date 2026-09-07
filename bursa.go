@@ -2564,13 +2564,37 @@ func LoadKeyFromBytes(data []byte) (*LoadedKey, error) {
 // LoadKeyFromFile loads a key from a file path (cardano-cli format).
 // Supports all key types including VRF, KES, and operational certificates.
 func LoadKeyFromFile(path string) (*LoadedKey, error) {
-	data, err := os.ReadFile(path)
+	file, err := openSecretKeyFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open key file %q: %w", path, err)
+	}
+	defer file.Close() //nolint:errcheck // read-only handle
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat key file %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("key file %q is not a regular file (mode %s)", path, info.Mode())
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxSecretKeyFileSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key file %q: %w", path, err)
+	}
+	if len(data) > maxSecretKeyFileSize {
+		return nil, fmt.Errorf(
+			"key file %q exceeds maximum size of %d bytes",
+			path,
+			maxSecretKeyFileSize,
+		)
 	}
 	key, err := parseKeyEnvelope(data)
 	if err != nil {
 		return nil, err
+	}
+	if len(key.SKey) > 0 {
+		if err := checkOpenFilePermissions(file); err != nil {
+			return nil, err
+		}
 	}
 	key.File = filepath.Base(path)
 	return key, nil
