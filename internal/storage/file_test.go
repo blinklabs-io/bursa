@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -158,6 +159,46 @@ func TestFileStore(t *testing.T) {
 		_, err := store.GetWallet(context.Background(), "nonexistent")
 		assert.Error(t, err)
 	})
+}
+
+func TestFileStoreListWalletsReleasesStoreLockBeforeLoading(t *testing.T) {
+	store := NewFileStore(t.TempDir())
+	wallet, err := store.CreateWallet("list-lock")
+	require.NoError(t, err)
+	require.NoError(t, wallet.Save(context.Background()))
+
+	loadStarted := make(chan struct{})
+	continueLoading := make(chan struct{})
+	writeLockAvailable := make(chan bool, 1)
+	store.listWalletLoadHook = func() {
+		acquired := store.mu.TryLock()
+		if acquired {
+			store.mu.Unlock()
+		}
+		writeLockAvailable <- acquired
+		close(loadStarted)
+		<-continueLoading
+	}
+
+	listDone := make(chan error, 1)
+	go func() {
+		_, err := store.ListWallets(context.Background())
+		listDone <- err
+	}()
+	<-loadStarted
+
+	// ListWallets must not retain a read lock while loading a wallet. A
+	// writer must be able to acquire the store lock at this handoff.
+	writeLockAcquired := <-writeLockAvailable
+	close(continueLoading)
+	require.True(t, writeLockAcquired, "ListWallets retained the store read lock")
+
+	select {
+	case err := <-listDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("ListWallets did not complete")
+	}
 }
 
 func TestFileStoreWalletOperations(t *testing.T) {

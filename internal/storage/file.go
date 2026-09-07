@@ -37,8 +37,9 @@ const maxWalletFileSize = 4 << 20
 // FileStore implements the Store interface using local file system.
 // It stores wallets as JSON files in a directory structure on disk.
 type FileStore struct {
-	baseDir string
-	mu      sync.RWMutex
+	baseDir            string
+	mu                 sync.RWMutex
+	listWalletLoadHook func()
 }
 
 // NewFileStore creates a new file-based storage backend.
@@ -173,9 +174,8 @@ func (s *FileStore) GetWallet(
 // It scans the base directory for wallet subdirectories.
 func (s *FileStore) ListWallets(ctx context.Context) ([]Wallet, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	entries, err := os.ReadDir(s.baseDir)
+	s.mu.RUnlock()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []Wallet{}, nil
@@ -187,6 +187,9 @@ func (s *FileStore) ListWallets(ctx context.Context) ([]Wallet, error) {
 	for _, entry := range entries {
 		if entry.IsDir() && strings.HasPrefix(entry.Name(), "wallet-") {
 			name := strings.TrimPrefix(entry.Name(), "wallet-")
+			if s.listWalletLoadHook != nil {
+				s.listWalletLoadHook()
+			}
 			wallet, err := s.GetWallet(ctx, name)
 			if err != nil {
 				logging.GetLogger().
