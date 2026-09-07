@@ -245,6 +245,24 @@ func TestDeriveFromAccountXpubMatchesMnemonic(t *testing.T) {
 	}
 }
 
+func TestDeriveFromAccountXpubRejectsMixedCase(t *testing.T) {
+	xpub, err := AccountXpubFromMnemonicBytes([]byte(testMnemonic))
+	if err != nil {
+		t.Fatalf("AccountXpubFromMnemonicBytes: %v", err)
+	}
+	mixed := []byte(xpub)
+	for i, ch := range mixed {
+		if ch >= 'a' && ch <= 'z' {
+			mixed[i] = ch - ('a' - 'A')
+			break
+		}
+	}
+
+	if _, err := DeriveFromAccountXpub(string(mixed), "preview", 0, 1); err == nil {
+		t.Fatal("DeriveFromAccountXpub accepted a mixed-case account xpub")
+	}
+}
+
 func TestDeriveFromAccountXpubRejectsHardenedAccountIndex(t *testing.T) {
 	xpub, err := AccountXpubFromMnemonicBytes([]byte(testMnemonic))
 	if err != nil {

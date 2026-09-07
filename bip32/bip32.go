@@ -33,7 +33,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"strings"
 
 	"filippo.io/edwards25519"
 	"github.com/btcsuite/btcd/btcutil/bech32"
@@ -307,97 +306,24 @@ func ParseEd25519Public(s string) ([]byte, error) {
 	return converted, nil
 }
 
-// LenientBech32Decode decodes bech32 without enforcing the 90-char limit from the dependency.
-// Returns hrp and the 5-bit data bytes as expected by ConvertBits.
-// Validates the Bech32 checksum using btcsuite when possible, or custom implementation for long strings.
+// LenientBech32Decode decodes bech32 without enforcing the 90-char limit from
+// the dependency. Returns hrp and the 5-bit data bytes as expected by
+// ConvertBits.
 func LenientBech32Decode(s string) (string, []byte, error) {
-	// First try btcsuite's decoder (which includes checksum validation)
+	// Keep the dependency's bounded decoder for the common path so its error
+	// behavior remains unchanged, and use its arbitrary-length implementation
+	// when the only failure is the 90-character limit. Both implementations
+	// enforce Bech32's all-lowercase or all-uppercase rule.
 	hrp, data, err := bech32.Decode(s)
 	if err == nil {
-		// btcsuite successfully decoded and validated the string
 		return hrp, data, nil
 	}
 
-	// If btcsuite failed, check if it's due to length limit
-	if strings.Contains(err.Error(), "invalid bech32 string length") {
-		// Length limit exceeded, fall back to custom lenient decoding
-		return lenientBech32DecodeNoValidation(s)
+	if _, ok := err.(bech32.ErrInvalidLength); ok {
+		return bech32.DecodeNoLimit(s)
 	}
 
-	// btcsuite failed for other reasons (invalid format, bad checksum, etc.)
 	return "", nil, err
-}
-
-// lenientBech32DecodeNoValidation decodes bech32 without length limit but with checksum validation.
-// Used as fallback for long strings where btcsuite fails.
-func lenientBech32DecodeNoValidation(s string) (string, []byte, error) {
-	// Convert to lowercase as Bech32 is case-insensitive
-	s = strings.ToLower(s)
-
-	idx := strings.LastIndex(s, "1")
-	if idx < 1 || idx+1 >= len(s) {
-		return "", nil, errors.New("invalid bech32 string")
-	}
-	hrp := s[:idx]
-	dataPart := s[idx+1:]
-
-	// Convert data part to 5-bit values
-	charset := "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
-	decoded := make([]byte, len(dataPart))
-	for i, ch := range dataPart {
-		pos := strings.IndexRune(charset, ch)
-		if pos < 0 {
-			return "", nil, errors.New("invalid bech32 character")
-		}
-		decoded[i] = byte(pos & 0xFF) //nolint:gosec // G115: pos is 0-31 from bech32 charset, fits in byte
-	}
-
-	// Validate checksum
-	if !validateBech32Checksum(hrp, decoded) {
-		return "", nil, errors.New("invalid bech32 checksum")
-	}
-
-	// Return HRP and data without the 6 checksum characters
-	return hrp, decoded[:len(decoded)-6], nil
-}
-
-// validateBech32Checksum validates the Bech32 checksum using the polymod algorithm.
-func validateBech32Checksum(hrp string, data []byte) bool {
-	expanded := expandHrp(hrp)
-	combined := append(expanded, data...)
-	return polymod(combined) == 1
-}
-
-// expandHrp expands the HRP for checksum calculation.
-func expandHrp(hrp string) []byte {
-	expanded := make([]byte, len(hrp)*2+1)
-	for i, r := range hrp {
-		expanded[i] = byte((r >> 5) & 0xFF) //nolint:gosec // G115: r is ASCII, r>>5 fits in byte
-		expanded[i+len(hrp)+1] = byte(r & 31)
-	}
-	return expanded
-}
-
-// polymod calculates the Bech32 checksum using the BCH code.
-func polymod(values []byte) uint32 {
-	generator := []uint32{
-		0x3b6a57b2,
-		0x26508e6d,
-		0x1ea119fa,
-		0x3d4233dd,
-		0x2a1462b3,
-	}
-	var chk uint32 = 1
-	for _, v := range values {
-		b := chk >> 25
-		chk = (chk&0x1ffffff)<<5 ^ uint32(v)
-		for i := range uint(5) {
-			if (b>>i)&1 == 1 {
-				chk ^= generator[i]
-			}
-		}
-	}
-	return chk
 }
 
 // FromBip39Entropy derives the root extended private key from BIP39 entropy and password.
