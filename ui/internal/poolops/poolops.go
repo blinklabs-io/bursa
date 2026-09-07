@@ -63,6 +63,8 @@ var (
 	ErrWrongPassword = errors.New("incorrect spending password")
 	// ErrSubmitRejected: the node rejected the signed transaction (→ 422).
 	ErrSubmitRejected = errors.New("transaction rejected by node")
+	// ErrSubmitUnknown: the broadcast did not complete before its deadline (→ 503).
+	ErrSubmitUnknown = errors.New("transaction submission outcome unknown")
 )
 
 // coldVKeyLen is the length of a raw Ed25519 verification key (cold/VRF/KES are
