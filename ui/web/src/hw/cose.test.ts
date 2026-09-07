@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { encodeCoseSign1, encodeCoseKey } from "./cose";
+import { cborUintHead, encodeCoseSign1, encodeCoseKey } from "./cose";
 
 // Ground-truth vectors produced INDEPENDENTLY by the `cbor` library's canonical
 // encoder for the same inputs — the hand-rolled encoder in cose.ts must match
@@ -60,6 +60,39 @@ describe("encodeCoseSign1", () => {
     expect(out).toContain(PAYLOAD_HEX);
     expect(out).toContain(SIGNATURE_HEX);
   });
+
+  test("encodes a payload at the uint32 boundary", () => {
+    const payloadHex = "ab".repeat(65536);
+    const out = encodeCoseSign1(ADDRESS_HEX, payloadHex, SIGNATURE_HEX);
+
+    expect(out).toContain("5a00010000" + payloadHex);
+  });
+});
+
+describe("cborUintHead", () => {
+  test.each([
+    [0, "00"],
+    [23, "17"],
+    [24, "1818"],
+    [255, "18ff"],
+    [256, "190100"],
+    [65535, "19ffff"],
+    [65536, "1a00010000"],
+    [0xffffffff, "1affffffff"],
+    [0x100000000, "1b0000000100000000"],
+    [Number.MAX_SAFE_INTEGER, "1b001fffffffffffff"],
+  ] as const)("encodes %s canonically", (value, expected) => {
+    expect(cborUintHead(value)).toEqual(
+      expected.match(/../g)!.map((byte) => parseInt(byte, 16)),
+    );
+  });
+
+  test.each([-1, Number.NaN, Number.POSITIVE_INFINITY, 1.5, 2 ** 53])(
+    "rejects unsafe or invalid value %s",
+    (value) => {
+      expect(() => cborUintHead(value)).toThrow(RangeError);
+    },
+  );
 });
 
 describe("encodeCoseKey", () => {
