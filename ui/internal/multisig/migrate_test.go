@@ -14,12 +14,14 @@ import (
 type fakeVault struct {
 	added      []ScriptWallet
 	addedIDs   []string
+	addedNames []string
+	addedNets  []string
 	addErr     error
 	listErr    error
 	swallowAdd bool // accept the add but do not record it, simulating a silent loss
 }
 
-func (f *fakeVault) AddScriptWallet(id, _, _ string, s ScriptWallet, _ string) error {
+func (f *fakeVault) AddScriptWallet(id, name, network string, s ScriptWallet, _ string) error {
 	if f.addErr != nil {
 		return f.addErr
 	}
@@ -33,19 +35,25 @@ func (f *fakeVault) AddScriptWallet(id, _, _ string, s ScriptWallet, _ string) e
 	if !f.swallowAdd {
 		f.added = append(f.added, s)
 		f.addedIDs = append(f.addedIDs, id)
+		f.addedNames = append(f.addedNames, name)
+		f.addedNets = append(f.addedNets, network)
 	}
 	return nil
 }
 
-func (f *fakeVault) ScriptAddresses() ([]string, error) {
+func (f *fakeVault) ScriptWallets() ([]ScriptWalletRecord, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	addrs := make([]string, 0, len(f.added))
-	for _, s := range f.added {
-		addrs = append(addrs, s.ScriptAddress)
+	wallets := make([]ScriptWalletRecord, 0, len(f.added))
+	for i, s := range f.added {
+		wallets = append(wallets, ScriptWalletRecord{
+			ID: f.addedIDs[i], Name: f.addedNames[i], Network: f.addedNets[i],
+			Policy: s.Policy, ScriptCBOR: s.ScriptCBOR,
+			ScriptAddress: s.ScriptAddress,
+		})
 	}
-	return addrs, nil
+	return wallets, nil
 }
 
 func writeStore(t *testing.T, accounts []Account) string {
@@ -216,24 +224,38 @@ func TestMigratePreservesTheAccountID(t *testing.T) {
 	}
 }
 
-func TestMigrateToleratesADuplicateInsideTheStore(t *testing.T) {
+func TestMigrateRejectsDistinctIDsSharingAnAddress(t *testing.T) {
 	accounts := twoAccounts()
-	// The same script address twice: the vault rejects the second, so without
-	// tracking what this run already wrote the migration would fail having
-	// actually succeeded.
+	// A shared address is not sufficient to establish identity. The two records
+	// must not be collapsed because callers may still hold either legacy ID.
 	dupe := accounts[0]
 	dupe.ID = "a-again"
 	path := writeStore(t, append(accounts, dupe))
 	v := &fakeVault{}
 
-	n, err := MigrateStoreToVault(path, v, "vault-pw")
-	if err != nil {
-		t.Fatalf("migrate with a duplicated entry: %v", err)
+	if _, err := MigrateStoreToVault(path, v, "vault-pw"); err == nil {
+		t.Fatal("migration must reject distinct IDs sharing a script address")
 	}
-	if n != 2 {
-		t.Fatalf("migrated = %d, want 2 (the duplicate skipped)", n)
+	if len(v.added) != 0 {
+		t.Fatalf("preflight must not partially write distinct identities: got %d", len(v.added))
 	}
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("a completed migration should still retire the file")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("legacy store must survive a conflicting migration: %v", err)
+	}
+}
+
+func TestMigrateRejectsVaultIdentityCollision(t *testing.T) {
+	accounts := twoAccounts()
+	path := writeStore(t, accounts)
+	v := &fakeVault{
+		added:    []ScriptWallet{{ScriptCBOR: accounts[0].ScriptCBOR, ScriptAddress: accounts[0].ScriptAddress}},
+		addedIDs: []string{"other-id"}, addedNames: []string{"Other"}, addedNets: []string{"mainnet"},
+	}
+
+	if _, err := MigrateStoreToVault(path, v, "vault-pw"); err == nil {
+		t.Fatal("migration must reject a vault identity collision")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("legacy store must survive a vault identity collision: %v", err)
 	}
 }
