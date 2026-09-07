@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -406,13 +407,24 @@ func (c *Client) AccountDRepID(ctx context.Context, stakeAddr string) (*string, 
 }
 
 func sqliteReadOnlyDSN(path string) string {
-	u := url.URL{Scheme: "file", Path: path}
+	u := url.URL{Scheme: "file", Path: sqliteURIPath(path)}
 	q := u.Query()
 	q.Set("mode", "ro")
 	q.Add("_pragma", "busy_timeout(30000)")
 	q.Add("_pragma", "foreign_keys(1)")
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// sqliteURIPath converts an OS path to the path form required by SQLite URI
+// filenames. In particular, Windows drive-letter paths need forward slashes
+// and a leading slash so that the drive is not interpreted as a URI host.
+func sqliteURIPath(path string) string {
+	path = strings.ReplaceAll(path, `\`, "/")
+	if len(path) >= 2 && path[1] == ':' && path[0] != '/' {
+		path = "/" + path
+	}
+	return path
 }
 
 func stakeCredential(stakeAddr string) (uint8, []byte, error) {
