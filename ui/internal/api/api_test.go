@@ -2805,6 +2805,39 @@ func TestSpendErrorStatusCodes(t *testing.T) {
 	}
 }
 
+func TestSubmitUnknownStatusCodes(t *testing.T) {
+	for name, err := range map[string]error{
+		"spend":    fmt.Errorf("%w: %w", spend.ErrSubmitUnknown, context.DeadlineExceeded),
+		"multisig": fmt.Errorf("%w: %w", multisig.ErrSubmitUnknown, context.Canceled),
+		"poolops":  fmt.Errorf("%w: %w", poolops.ErrSubmitUnknown, context.DeadlineExceeded),
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			serve(rec, struct{}{}, err)
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+			}
+		})
+	}
+	rec := httptest.NewRecorder()
+	serve(rec, struct{}{}, spend.ErrSubmitRejected)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("rejected status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+	for name, err := range map[string]error{
+		"multisig": multisig.ErrSubmitRejected,
+		"poolops":  poolops.ErrSubmitRejected,
+	} {
+		t.Run(name+" rejected", func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			serve(rec, struct{}{}, err)
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+			}
+		})
+	}
+}
+
 type historyExpiryResponse struct {
 	Enabled         bool
 	RestartRequired bool

@@ -2390,7 +2390,8 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 		// structured rejection reason (for submit), the funding shortfall, or the
 		// "already in the requested state" note rides along in the message.
 		writeJSON(w, http.StatusUnprocessableEntity, errBody(err))
-	case errors.Is(err, poolops.ErrSubmitUnknown):
+	case errors.Is(err, spend.ErrSubmitUnknown), errors.Is(err, multisig.ErrSubmitUnknown),
+		errors.Is(err, poolops.ErrSubmitUnknown):
 		writeJSON(w, http.StatusServiceUnavailable, errBody(err))
 	default:
 		writeJSON(w, http.StatusInternalServerError, errBody(err))

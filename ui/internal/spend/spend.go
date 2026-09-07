@@ -49,6 +49,8 @@ var (
 	// ErrSubmitRejected: the node rejected the signed transaction; the wrapped
 	// message carries its structured reason (→ 422).
 	ErrSubmitRejected = errors.New("transaction rejected by node")
+	// ErrSubmitUnknown: broadcast outcome was not known before its deadline (→ 503).
+	ErrSubmitUnknown = errors.New("transaction submission outcome unknown")
 	// ErrWalletChanged: the active wallet changed while a transaction was being
 	// built, so the preview is discarded instead of storing a stale pending send.
 	ErrWalletChanged = errors.New("wallet changed while building transaction")
@@ -59,6 +61,13 @@ var (
 	// witnesses match the transaction's required signers (→ 400).
 	ErrInvalidWitness = errors.New("invalid witness")
 )
+
+func wrapSubmitError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", ErrSubmitUnknown, err)
+	}
+	return fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+}
 
 // pendingTTL bounds how long a built-but-unconfirmed transaction is held. After
 // it elapses the preview's UTxOs/params may be stale, so Confirm rejects it.
@@ -1426,7 +1435,7 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+		return TxResult{}, wrapSubmitError(err)
 	}
 
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
@@ -1778,7 +1787,7 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+		return TxResult{}, wrapSubmitError(err)
 	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
 }
@@ -1810,7 +1819,7 @@ func (s *Service) Submit(ctx context.Context, txBytes []byte) (string, error) {
 	defer cancel()
 	txHash, err := backend.SubmitTxContext(submissionContext, s.chain, txBytes)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+		return "", wrapSubmitError(err)
 	}
 	return hex.EncodeToString(txHash.Bytes()), nil
 }

@@ -44,7 +44,16 @@ var (
 	ErrInvalidWitness = errors.New("invalid witness")
 	// ErrSubmitRejected: the node rejected the signed transaction (→ 422).
 	ErrSubmitRejected = errors.New("transaction rejected by node")
+	// ErrSubmitUnknown: broadcast outcome was not known before its deadline (→ 503).
+	ErrSubmitUnknown = errors.New("transaction submission outcome unknown")
 )
+
+func wrapSubmitError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", ErrSubmitUnknown, err)
+	}
+	return fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+}
 
 // Participant is one signer in a multi-sig policy. KeyHashHex (Blake2b-224 of the
 // CIP-1854 multi-sig vkey, 28 bytes / 56 hex chars) is the only field the script
@@ -1034,7 +1043,7 @@ func (s *Service) Submit(ctx context.Context, id, unsignedTxCBOR string, witness
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+		return TxResult{}, wrapSubmitError(err)
 	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
 }
@@ -1098,7 +1107,7 @@ func (s *Service) SubmitImported(ctx context.Context, txCbor string) (TxResult, 
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+		return TxResult{}, wrapSubmitError(err)
 	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
 }
