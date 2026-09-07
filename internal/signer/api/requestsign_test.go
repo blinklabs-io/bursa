@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -27,6 +28,32 @@ import (
 	"testing"
 	"time"
 )
+
+type blockingBody struct {
+	started     chan struct{}
+	release     chan struct{}
+	startedOnce sync.Once
+	releaseOnce sync.Once
+}
+
+func newBlockingBody() *blockingBody {
+	return &blockingBody{started: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (b *blockingBody) Read([]byte) (int, error) {
+	b.startedOnce.Do(func() { close(b.started) })
+	<-b.release
+	return 0, io.EOF
+}
+
+func (b *blockingBody) Close() error {
+	b.unblock()
+	return nil
+}
+
+func (b *blockingBody) unblock() {
+	b.releaseOnce.Do(func() { close(b.release) })
+}
 
 // signReq builds a request with authorized-keys signature headers for the given
 // signing key, body, timestamp, and nonce.
@@ -91,6 +118,44 @@ func TestRequestSigning_BadSignature(t *testing.T) {
 	if _, ok, err := a.Authenticate(req); !ok || err == nil {
 		t.Fatalf("bad signature should reject: ok=%v err=%v", ok, err)
 	}
+}
+
+// TestRequestSigning_InvalidSignatureDoesNotReadBody ensures malformed fixed-
+// width credentials are rejected before authentication consumes a body. The
+// old ordering blocked on the body reader before it checked signature length.
+func TestRequestSigning_InvalidSignatureDoesNotReadBody(t *testing.T) {
+	a, caller, priv := newAuth(t)
+	req := signReq(t, caller, priv, http.MethodPost, "/v1/sign", []byte("body"), time.Now(), "blocked")
+	req.Header.Set(HeaderSignature, "not-a-signature")
+	body := newBlockingBody()
+	req.Body = body
+
+	type result struct {
+		ok  bool
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		_, ok, err := a.Authenticate(req)
+		done <- result{ok: ok, err: err}
+	}()
+
+	select {
+	case got := <-done:
+		if !got.ok || got.err == nil {
+			t.Fatalf("malformed signature: ok=%v err=%v", got.ok, got.err)
+		}
+		select {
+		case <-body.started:
+			t.Fatal("malformed signature caused the request body to be read")
+		default:
+		}
+	case <-time.After(500 * time.Millisecond):
+		body.unblock()
+		<-done
+		t.Fatal("malformed signature blocked on request-body read")
+	}
+	body.unblock()
 }
 
 func TestRequestSigning_StaleTimestamp(t *testing.T) {
