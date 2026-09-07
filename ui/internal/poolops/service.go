@@ -29,6 +29,7 @@ import (
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/submissionctx"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
@@ -786,7 +787,9 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 	// Submit passes this context to backend.SubmitTxContext, so detach from the
 	// request context: the tx is fully signed and a client disconnect must not
 	// cancel the node broadcast and strand it.
-	txHash, err := a.WithContext(context.WithoutCancel(ctx)).Submit()
+	submissionContext, cancel := submissionctx.New(ctx)
+	defer cancel()
+	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
 		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}

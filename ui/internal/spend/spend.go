@@ -22,6 +22,7 @@ import (
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/submissionctx"
 	"github.com/blinklabs-io/bursa/ui/internal/txwitness"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	"github.com/blinklabs-io/gouroboros/cbor"
@@ -1421,7 +1422,9 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	// Detach from the request context: the pending entry has already been
 	// consumed and the tx signed, so a client disconnect here must not cancel the
 	// broadcast and strand a transaction that can no longer be replayed.
-	txHash, err := a.WithContext(context.WithoutCancel(ctx)).Submit()
+	submissionContext, cancel := submissionctx.New(ctx)
+	defer cancel()
+	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
 		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}
@@ -1771,7 +1774,9 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 
 	// Detach from the request context: once submitted the inputs are consumed, so
 	// a client disconnect must not strand a broadcast (mirrors Confirm).
-	txHash, err := a.WithContext(context.WithoutCancel(ctx)).Submit()
+	submissionContext, cancel := submissionctx.New(ctx)
+	defer cancel()
+	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
 		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}
@@ -1801,7 +1806,9 @@ func certKindsRequireWitnesses(kinds []CertKind) (needsStake, needsDRep bool) {
 func (s *Service) Submit(ctx context.Context, txBytes []byte) (string, error) {
 	// Detach from the request context: the tx is already signed, so a client
 	// disconnect must not cancel the node broadcast and strand it.
-	txHash, err := backend.SubmitTxContext(context.WithoutCancel(ctx), s.chain, txBytes)
+	submissionContext, cancel := submissionctx.New(ctx)
+	defer cancel()
+	txHash, err := backend.SubmitTxContext(submissionContext, s.chain, txBytes)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrSubmitRejected, err)
 	}
