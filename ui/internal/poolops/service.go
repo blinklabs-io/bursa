@@ -30,6 +30,7 @@ import (
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/submissionctx"
+	"github.com/blinklabs-io/bursa/ui/internal/submissionerror"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
@@ -791,10 +792,7 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitUnknown, err)
-		}
-		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
 	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
 }

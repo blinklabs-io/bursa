@@ -23,6 +23,7 @@ import (
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/submissionctx"
+	"github.com/blinklabs-io/bursa/ui/internal/submissionerror"
 	"github.com/blinklabs-io/bursa/ui/internal/txwitness"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	"github.com/blinklabs-io/gouroboros/cbor"
@@ -61,13 +62,6 @@ var (
 	// witnesses match the transaction's required signers (→ 400).
 	ErrInvalidWitness = errors.New("invalid witness")
 )
-
-func wrapSubmitError(err error) error {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("%w: %w", ErrSubmitUnknown, err)
-	}
-	return fmt.Errorf("%w: %w", ErrSubmitRejected, err)
-}
 
 // pendingTTL bounds how long a built-but-unconfirmed transaction is held. After
 // it elapses the preview's UTxOs/params may be stale, so Confirm rejects it.
@@ -1435,7 +1429,7 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, wrapSubmitError(err)
+		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
 	}
 
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
@@ -1787,7 +1781,7 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, wrapSubmitError(err)
+		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
 	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
 }
@@ -1819,7 +1813,7 @@ func (s *Service) Submit(ctx context.Context, txBytes []byte) (string, error) {
 	defer cancel()
 	txHash, err := backend.SubmitTxContext(submissionContext, s.chain, txBytes)
 	if err != nil {
-		return "", wrapSubmitError(err)
+		return "", submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
 	}
 	return hex.EncodeToString(txHash.Bytes()), nil
 }

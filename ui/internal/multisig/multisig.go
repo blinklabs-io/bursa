@@ -17,6 +17,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/submissionctx"
+	"github.com/blinklabs-io/bursa/ui/internal/submissionerror"
 	"github.com/blinklabs-io/bursa/ui/internal/txwitness"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	"github.com/blinklabs-io/gouroboros/cbor"
@@ -47,13 +48,6 @@ var (
 	// ErrSubmitUnknown: broadcast outcome was not known before its deadline (→ 503).
 	ErrSubmitUnknown = errors.New("transaction submission outcome unknown")
 )
-
-func wrapSubmitError(err error) error {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("%w: %w", ErrSubmitUnknown, err)
-	}
-	return fmt.Errorf("%w: %w", ErrSubmitRejected, err)
-}
 
 // Participant is one signer in a multi-sig policy. KeyHashHex (Blake2b-224 of the
 // CIP-1854 multi-sig vkey, 28 bytes / 56 hex chars) is the only field the script
@@ -1043,7 +1037,7 @@ func (s *Service) Submit(ctx context.Context, id, unsignedTxCBOR string, witness
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, wrapSubmitError(err)
+		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
 	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
 }
@@ -1107,7 +1101,7 @@ func (s *Service) SubmitImported(ctx context.Context, txCbor string) (TxResult, 
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, wrapSubmitError(err)
+		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
 	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
 }
