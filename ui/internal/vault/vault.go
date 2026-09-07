@@ -1416,6 +1416,9 @@ func (v *Vault) prepareWalletBytes(name string, mnemonic []byte, network, spendP
 // writeFileAtomic writes data to path via a temp file + rename, so a crash mid
 // write cannot leave a half-written (and thus unopenable) vault.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	if len(data) > maxVaultLen {
+		return fmt.Errorf("vault file exceeds %d bytes", maxVaultLen)
+	}
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".vault-*.tmp")
 	if err != nil {

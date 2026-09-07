@@ -160,6 +160,16 @@ func TestCreateRefusesOverwrite(t *testing.T) {
 	}
 }
 
+func TestWriteFileAtomicRejectsOversizedVaultBeforePublish(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vault.json")
+	if err := writeFileAtomic(path, make([]byte, maxVaultLen+1), 0o600); err == nil {
+		t.Fatal("writeFileAtomic should reject data larger than the vault read limit")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversized write published destination: stat error = %v", err)
+	}
+}
+
 func TestImportWalletCreatesSingleWalletVault(t *testing.T) {
 	v := newTestVault(t)
 	meta, err := v.ImportWallet("legacy", mnemonicA, "preview", vaultPw, spendPwA, window)
