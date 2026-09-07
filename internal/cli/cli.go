@@ -100,20 +100,7 @@ func RunCreate(cfg *config.Config, output string) {
 		for key, value := range keyFiles {
 			fileMap = append(fileMap, map[string]string{key: value})
 		}
-		var g errgroup.Group
-		for _, m := range fileMap {
-			for k, v := range m {
-				g.Go(func() error {
-					path := filepath.Join(output, k)
-					err = writeWalletOutput(path, []byte(v))
-					if err != nil {
-						return err
-					}
-					return err
-				})
-			}
-		}
-		err = g.Wait()
+		err = writeWalletOutputs(output, fileMap)
 		if err != nil {
 			logger.Error("error occurred", "error", err)
 			os.Exit(1)
@@ -224,20 +211,7 @@ func RunRestore(
 		for key, value := range keyFiles {
 			fileMap = append(fileMap, map[string]string{key: value})
 		}
-		var g errgroup.Group
-		for _, m := range fileMap {
-			for k, v := range m {
-				g.Go(func() error {
-					path := filepath.Join(output, k)
-					err = writeWalletOutput(path, []byte(v))
-					if err != nil {
-						return err
-					}
-					return err
-				})
-			}
-		}
-		err = g.Wait()
+		err = writeWalletOutputs(output, fileMap)
 		if err != nil {
 			logger.Error("error occurred", "error", err)
 			os.Exit(1)
@@ -2634,4 +2608,54 @@ func writeWalletOutput(path string, data []byte) error {
 		return bursa.WriteSecretKeyFile(path, data)
 	}
 	return os.WriteFile(path, data, 0o600)
+}
+
+type walletOutputFile struct {
+	name string
+	data []byte
+}
+
+type walletOutputWriter func(path string, data []byte) error
+
+func writeWalletOutputs(output string, fileMap []map[string]string) error {
+	return writeWalletOutputsWithWriter(output, fileMap, writeWalletOutput)
+}
+
+func writeWalletOutputsWithWriter(
+	output string,
+	fileMap []map[string]string,
+	writer walletOutputWriter,
+) error {
+	files := make([]walletOutputFile, 0)
+	for _, m := range fileMap {
+		for name, value := range m {
+			files = append(files, walletOutputFile{
+				name: name,
+				data: []byte(value),
+			})
+		}
+	}
+	slices.SortFunc(files, func(a, b walletOutputFile) int {
+		return strings.Compare(a.name, b.name)
+	})
+
+	workerErrors := make([]error, len(files))
+	var g errgroup.Group
+	for i, file := range files {
+		i, file := i, file
+		g.Go(func() error {
+			err := writer(filepath.Join(output, file.name), file.data)
+			if err != nil {
+				workerErrors[i] = fmt.Errorf(
+					"failed to write wallet output %s: %w",
+					file.name,
+					err,
+				)
+			}
+			return err
+		})
+	}
+	_ = g.Wait()
+
+	return errors.Join(workerErrors...)
 }
