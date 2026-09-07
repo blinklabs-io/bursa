@@ -134,6 +134,11 @@ key.`,
 				logger.Error("invalid signer.callers", "error", err)
 				os.Exit(1)
 			}
+			callerPolicies, err := signer.BuildCallerPolicies(cfg.Signer.CallerPolicies)
+			if err != nil {
+				logger.Error("invalid signer.caller_policies", "error", err)
+				os.Exit(1)
+			}
 			acl := api.NewCallerACL(aclMap)
 			if !acl.Restricted() {
 				logger.Warn("no signer.callers configured; any valid token may use any configured key")
@@ -183,11 +188,6 @@ key.`,
 			eng, err := policy.NewEngine(pols)
 			if err != nil {
 				logger.Error("invalid policy", "error", err)
-				os.Exit(1)
-			}
-			callerPolicies, err := signer.BuildCallerPolicies(cfg.Signer.CallerPolicies)
-			if err != nil {
-				logger.Error("invalid signer.caller_policies", "error", err)
 				os.Exit(1)
 			}
 			eng.SetCallerPolicies(callerPolicies)
