@@ -262,6 +262,40 @@ func TestSQLiteStoreWalletOperations(t *testing.T) {
 	})
 }
 
+func TestSQLiteWalletSaveDoesNotPublishIDBeforeCommit(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	wallet, err := store.CreateWallet("retry-test")
+	require.NoError(t, err)
+	wallet.PutItem("fault", "value")
+
+	_, err = store.db.Exec(`
+		CREATE TRIGGER fail_wallet_item_insert
+		BEFORE INSERT ON wallet_items
+		WHEN NEW.key = 'fault'
+		BEGIN
+			SELECT RAISE(ABORT, 'injected item failure');
+		END;
+	`)
+	require.NoError(t, err)
+
+	err = wallet.Save(context.Background())
+	require.Error(t, err)
+
+	sqliteWallet, ok := wallet.(*sqliteWallet)
+	require.True(t, ok)
+	assert.Zero(t, sqliteWallet.id)
+
+	_, err = store.db.Exec("DROP TRIGGER fail_wallet_item_insert")
+	require.NoError(t, err)
+	require.NoError(t, wallet.Save(context.Background()))
+
+	loaded, err := store.GetWallet(context.Background(), "retry-test")
+	require.NoError(t, err)
+	value, err := loaded.GetItem("fault")
+	require.NoError(t, err)
+	assert.Equal(t, "value", value)
+}
+
 func TestSQLiteStoreUpdateWallet(t *testing.T) {
 	store := newTestSQLiteStore(t)
 

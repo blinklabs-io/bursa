@@ -556,6 +556,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	walletID := w.id
 
 	tx, err := w.store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -565,7 +566,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	if w.id == 0 {
+	if walletID == 0 {
 		// Insert new wallet
 		result, err := tx.ExecContext(
 			ctx,
@@ -578,7 +579,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 				"failed to insert wallet: %w", err,
 			)
 		}
-		w.id, err = result.LastInsertId()
+		walletID, err = result.LastInsertId()
 		if err != nil {
 			return fmt.Errorf(
 				"failed to get wallet id: %w", err,
@@ -591,7 +592,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 			`UPDATE wallets
 			 SET description = ?, updated_at = ?
 			 WHERE id = ?`,
-			w.description, now, w.id,
+			w.description, now, walletID,
 		)
 		if err != nil {
 			return fmt.Errorf(
@@ -604,7 +605,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 	_, err = tx.ExecContext(
 		ctx,
 		"DELETE FROM wallet_items WHERE wallet_id = ?",
-		w.id,
+		walletID,
 	)
 	if err != nil {
 		return fmt.Errorf(
@@ -617,7 +618,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 			ctx,
 			`INSERT INTO wallet_items (wallet_id, key, value)
 			 VALUES (?, ?, ?)`,
-			w.id, key, value,
+			walletID, key, value,
 		)
 		if err != nil {
 			return fmt.Errorf(
@@ -631,6 +632,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 			"failed to commit transaction: %w", err,
 		)
 	}
+	w.id = walletID
 
 	return nil
 }
