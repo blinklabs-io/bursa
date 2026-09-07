@@ -50,7 +50,7 @@ type pkcs11Key struct {
 	typ         KeyType
 	backendName string
 	priv        pkcs11.ObjectHandle
-	sign        func(priv pkcs11.ObjectHandle, msg []byte) ([]byte, error)
+	sign        func(ctx context.Context, priv pkcs11.ObjectHandle, msg []byte) ([]byte, error)
 }
 
 func (k *pkcs11Key) Hash() KeyHash                { return k.hash }
@@ -63,8 +63,11 @@ func (k *pkcs11Key) Backend() string              { return k.backendName }
 // CKM_EDDSA with no parameter is PureEdDSA, so the token signs digest as the
 // message exactly like ed25519.Sign — byte-for-byte identical to the software
 // and Vault backends for the same key and message (Ed25519 is deterministic).
-func (k *pkcs11Key) Sign(_ context.Context, digest []byte) ([]byte, error) {
-	sig, err := k.sign(k.priv, digest)
+func (k *pkcs11Key) Sign(ctx context.Context, digest []byte) ([]byte, error) {
+	if ctx == nil {
+		return nil, errors.New("pkcs11 sign: nil context")
+	}
+	sig, err := k.sign(ctx, k.priv, digest)
 	if err != nil {
 		return nil, fmt.Errorf("pkcs11 sign: %w", err)
 	}
@@ -79,10 +82,31 @@ type PKCS11Backend struct {
 	name    string
 	ctx     *pkcs11.Ctx
 	session pkcs11.SessionHandle
-	// mu serializes token operations: a PKCS#11 session is single-threaded and
-	// SignInit/Sign form one non-reentrant operation.
-	mu   sync.Mutex
-	keys map[KeyHash]*pkcs11Key
+	// mu protects closed and the request-channel close. The signing worker is
+	// the sole owner of session and ctx during an operation.
+	mu         sync.Mutex
+	closed     bool
+	requests   chan pkcs11SignRequest
+	workerWG   sync.WaitGroup
+	closeOnce  sync.Once
+	closeDone  chan struct{}
+	closeErr   error
+	nativeSign func(priv pkcs11.ObjectHandle, msg []byte) ([]byte, error)
+	keys       map[KeyHash]*pkcs11Key
+}
+
+const maxQueuedPKCS11Signs = 1
+
+type pkcs11SignRequest struct {
+	ctx  context.Context
+	priv pkcs11.ObjectHandle
+	msg  []byte
+	resp chan pkcs11SignResult
+}
+
+type pkcs11SignResult struct {
+	sig []byte
+	err error
 }
 
 // NewPKCS11Backend loads the module, selects the token, logs in with the PIN,
@@ -136,13 +160,64 @@ func NewPKCS11Backend(cfg PKCS11Config) (Backend, error) {
 		_ = b.teardown(true, true)
 		return nil, fmt.Errorf("pkcs11 backend %q: no Ed25519 signing keys found on the token", cfg.Name)
 	}
+	b.requests = make(chan pkcs11SignRequest, maxQueuedPKCS11Signs)
+	b.closeDone = make(chan struct{})
+	b.workerWG.Add(1)
+	go b.signWorker()
 	return b, nil
 }
 
-// signWithSession runs one SignInit+Sign under the session mutex.
-func (b *PKCS11Backend) signWithSession(priv pkcs11.ObjectHandle, msg []byte) ([]byte, error) {
+// signWithSession queues one signing operation. The caller may stop waiting
+// when ctx is canceled; the worker still completes an already-started native
+// operation before it accepts another request or teardown runs.
+func (b *PKCS11Backend) signWithSession(ctx context.Context, priv pkcs11.ObjectHandle, msg []byte) ([]byte, error) {
+	if ctx == nil {
+		return nil, errors.New("pkcs11 sign: nil context")
+	}
+	req := pkcs11SignRequest{
+		ctx:  ctx,
+		priv: priv,
+		msg:  append([]byte(nil), msg...),
+		resp: make(chan pkcs11SignResult, 1),
+	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	if b.closed || b.requests == nil {
+		b.mu.Unlock()
+		return nil, errors.New("pkcs11 sign: backend is closed")
+	}
+	select {
+	case b.requests <- req:
+		b.mu.Unlock()
+	case <-ctx.Done():
+		b.mu.Unlock()
+		return nil, ctx.Err()
+	}
+	select {
+	case result := <-req.resp:
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return result.sig, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (b *PKCS11Backend) signWorker() {
+	defer b.workerWG.Done()
+	for req := range b.requests {
+		if err := req.ctx.Err(); err != nil {
+			req.resp <- pkcs11SignResult{err: err}
+			continue
+		}
+		sig, err := b.signOperation(req.priv, req.msg)
+		req.resp <- pkcs11SignResult{sig: sig, err: err}
+	}
+}
+
+// signNative is called only by signWorker. Keeping this operation in one
+// worker preserves the PKCS#11 session's non-reentrant SignInit+Sign pair.
+func (b *PKCS11Backend) signNative(priv pkcs11.ObjectHandle, msg []byte) ([]byte, error) {
 	mech := []*pkcs11.Mechanism{pkcs11.NewMechanism(ckmEDDSA, nil)}
 	if err := b.ctx.SignInit(b.session, mech, priv); err != nil {
 		return nil, fmt.Errorf("sign init: %w", err)
@@ -152,6 +227,13 @@ func (b *PKCS11Backend) signWithSession(priv pkcs11.ObjectHandle, msg []byte) ([
 		return nil, fmt.Errorf("sign: %w", err)
 	}
 	return sig, nil
+}
+
+func (b *PKCS11Backend) signOperation(priv pkcs11.ObjectHandle, msg []byte) ([]byte, error) {
+	if b.nativeSign != nil {
+		return b.nativeSign(priv, msg)
+	}
+	return b.signNative(priv, msg)
 }
 
 func (b *PKCS11Backend) loadKeys(cfg PKCS11Config) error {
@@ -354,14 +436,27 @@ func (b *PKCS11Backend) ListKeys(_ context.Context) ([]KeyRef, error) {
 
 // Close logs out and finalizes the module, releasing the session.
 func (b *PKCS11Backend) Close() error {
-	return b.teardown(true, true)
+	b.closeOnce.Do(func() {
+		b.mu.Lock()
+		b.closed = true
+		if b.closeDone == nil {
+			b.closeDone = make(chan struct{})
+		}
+		if b.requests != nil {
+			close(b.requests)
+		}
+		b.mu.Unlock()
+		b.workerWG.Wait()
+		b.closeErr = b.teardown(true, true)
+		close(b.closeDone)
+	})
+	<-b.closeDone
+	return b.closeErr
 }
 
 // teardown releases resources in reverse order of acquisition. loggedIn and
 // sessionOpen let partially-constructed backends clean up on the error path.
 func (b *PKCS11Backend) teardown(sessionOpen, loggedIn bool) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	if b.ctx == nil {
 		return nil
 	}
