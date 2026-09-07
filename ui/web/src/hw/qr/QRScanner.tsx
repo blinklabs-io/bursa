@@ -44,17 +44,17 @@ export function QRScanner({ onResult, onError, deviceLabel = "device" }: QRScann
       onError?.(message);
     };
 
+    timeout = setTimeout(() => {
+      fail("The scanned QR stream took too long to complete.");
+    }, DEFAULT_UR_LIMITS.maxDurationMs);
+
     (async () => {
       try {
         const [{ BrowserQRCodeReader }, assembler] = await Promise.all([
           import("@zxing/browser"),
           createURAssembler(),
         ]);
-        if (cancelled) return;
-
-        timeout = setTimeout(() => {
-          fail("The scanned QR stream took too long to complete.");
-        }, DEFAULT_UR_LIMITS.maxDurationMs);
+        if (cancelled || done) return;
 
         const reader = new BrowserQRCodeReader();
 
