@@ -319,7 +319,8 @@ func LenientBech32Decode(s string) (string, []byte, error) {
 		return hrp, data, nil
 	}
 
-	if _, ok := err.(bech32.ErrInvalidLength); ok {
+	var invalidLength bech32.ErrInvalidLength
+	if errors.As(err, &invalidLength) {
 		return bech32.DecodeNoLimit(s)
 	}
 
