@@ -1450,6 +1450,26 @@ func TestValidateScript(t *testing.T) {
 	) // Slot 500 < 1000
 }
 
+func TestUnmarshalScriptRejectsOverwideScripts(t *testing.T) {
+	scripts := make([]any, maxScriptWidth+1)
+	for i := range scripts {
+		scripts[i] = map[string]any{
+			"type":    "sig",
+			"keyHash": hex.EncodeToString(make([]byte, 28)),
+		}
+	}
+
+	_, err := UnmarshalScript(&ScriptData{
+		Type: "NativeScript",
+		Script: map[string]any{
+			"type":    "all",
+			"scripts": scripts,
+		},
+	})
+
+	assert.ErrorContains(t, err, "width limit")
+}
+
 func TestValidateScriptRejectsOverwideScripts(t *testing.T) {
 	keyHash := testKeyHash()
 	leaf, err := NewScriptSig(keyHash)

@@ -53,6 +53,10 @@ var validate *validator.Validate
 
 const maxRequestBodyBytes = 1 << 20
 
+const maxConcurrentScriptValidations = 4
+
+var scriptValidationSlots = make(chan struct{}, maxConcurrentScriptValidations)
+
 // writeJSONError writes a JSON error response safely
 // nolint:unparam // statusCode currently is always a bad request in some call sites but kept for future use
 func writeJSONError(
@@ -812,7 +816,7 @@ func registerAPIHandlers(
 	mux.Handle("/api/wallet/restore", protected(http.HandlerFunc(handleWalletRestore)))
 
 	mux.HandleFunc("/api/script/create", handleScriptCreate)
-	mux.HandleFunc("/api/script/validate", handleScriptValidate)
+	mux.Handle("/api/script/validate", boundedScriptValidation(http.HandlerFunc(handleScriptValidate)))
 	mux.HandleFunc("/api/script/address", handleScriptAddress)
 
 	mux.HandleFunc("/api/address/parse", handleAddressParse)
@@ -837,6 +841,21 @@ func registerAPIHandlers(
 		mux.Handle("/api/wallet/update", walletStorage(http.HandlerFunc(handleWalletUpdate)))
 		mux.Handle("/api/wallet/delete", walletStorage(http.HandlerFunc(handleWalletDelete)))
 	}
+}
+
+// boundedScriptValidation limits concurrent script parsing and validation. The
+// script route is intentionally public, so a body-size limit alone would still
+// allow an unbounded number of expensive requests to run at once.
+func boundedScriptValidation(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case scriptValidationSlots <- struct{}{}:
+			defer func() { <-scriptValidationSlots }()
+			next.ServeHTTP(w, r)
+		default:
+			writeError(w, http.StatusServiceUnavailable, errors.New("script validation busy"))
+		}
+	})
 }
 
 // Start initializes and starts the HTTP servers for the API and metrics

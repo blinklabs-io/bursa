@@ -2853,7 +2853,8 @@ func UnmarshalScript(data *ScriptData) (Script, error) {
 	if data.Type != "NativeScript" {
 		return nil, fmt.Errorf("unsupported script type: %s", data.Type)
 	}
-	return mapToScript(data.Script)
+	budget := &scriptConstructionBudget{}
+	return mapToScriptWithBudget(data.Script, 0, budget)
 }
 
 // scriptToMap converts a Script to a map for JSON serialization
@@ -2929,6 +2930,23 @@ func scriptToMap(script Script) (map[string]any, error) {
 
 // mapToScript converts a map back to a Script
 func mapToScript(m map[string]any) (Script, error) {
+	return mapToScriptWithBudget(m, 0, &scriptConstructionBudget{})
+}
+
+type scriptConstructionBudget struct {
+	nodes int
+}
+
+func mapToScriptWithBudget(
+	m map[string]any,
+	depth int,
+	budget *scriptConstructionBudget,
+) (Script, error) {
+	if depth > maxScriptDepth || budget.nodes >= maxScriptNodes {
+		return nil, errors.New("script exceeds validation limits")
+	}
+	budget.nodes++
+
 	scriptType, ok := m["type"].(string)
 	if !ok {
 		return nil, errors.New("missing or invalid script type")
@@ -2954,13 +2972,16 @@ func mapToScript(m map[string]any) (Script, error) {
 		if !ok {
 			return nil, errors.New("missing or invalid scripts for all script")
 		}
+		if len(scriptsInterface) > maxScriptWidth {
+			return nil, errors.New("all script exceeds width limit")
+		}
 		scripts := make([]Script, len(scriptsInterface))
 		for i, scriptInterface := range scriptsInterface {
 			scriptMap, ok := scriptInterface.(map[string]any)
 			if !ok {
 				return nil, fmt.Errorf("invalid script at index %d", i)
 			}
-			script, err := mapToScript(scriptMap)
+			script, err := mapToScriptWithBudget(scriptMap, depth+1, budget)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"failed to parse script at index %d: %w",
@@ -2976,13 +2997,16 @@ func mapToScript(m map[string]any) (Script, error) {
 		if !ok {
 			return nil, errors.New("missing or invalid scripts for any script")
 		}
+		if len(scriptsInterface) > maxScriptWidth {
+			return nil, errors.New("any script exceeds width limit")
+		}
 		scripts := make([]Script, len(scriptsInterface))
 		for i, scriptInterface := range scriptsInterface {
 			scriptMap, ok := scriptInterface.(map[string]any)
 			if !ok {
 				return nil, fmt.Errorf("invalid script at index %d", i)
 			}
-			script, err := mapToScript(scriptMap)
+			script, err := mapToScriptWithBudget(scriptMap, depth+1, budget)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"failed to parse script at index %d: %w",
@@ -3016,13 +3040,16 @@ func mapToScript(m map[string]any) (Script, error) {
 				len(scriptsInterface),
 			)
 		}
+		if len(scriptsInterface) > maxScriptWidth {
+			return nil, errors.New("nOf script exceeds width limit")
+		}
 		scripts := make([]Script, len(scriptsInterface))
 		for i, scriptInterface := range scriptsInterface {
 			scriptMap, ok := scriptInterface.(map[string]any)
 			if !ok {
 				return nil, fmt.Errorf("invalid script at index %d", i)
 			}
-			script, err := mapToScript(scriptMap)
+			script, err := mapToScriptWithBudget(scriptMap, depth+1, budget)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"failed to parse script at index %d: %w",
