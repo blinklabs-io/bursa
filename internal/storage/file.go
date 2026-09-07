@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -30,6 +31,8 @@ import (
 	"github.com/blinklabs-io/bursa/internal/logging"
 	"github.com/blinklabs-io/bursa/internal/sops"
 )
+
+const maxWalletFileSize = 4 << 20
 
 // FileStore implements the Store interface using local file system.
 // It stores wallets as JSON files in a directory structure on disk.
@@ -99,14 +102,47 @@ func (s *FileStore) GetWallet(
 		return nil, fmt.Errorf("invalid wallet name: %w", err)
 	}
 
-	walletPath := s.walletPath(name)
-	if _, err := os.Stat(walletPath); os.IsNotExist(err) {
+	walletDir := s.walletDir(name)
+	dirInfo, err := os.Lstat(walletDir)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("wallet %s not found", name)
 	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect wallet directory: %w", err)
+	}
+	if dirInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("wallet %s directory is a symlink", name)
+	}
+	if !dirInfo.IsDir() {
+		return nil, fmt.Errorf("wallet %s path is not a directory", name)
+	}
 
-	raw, err := os.ReadFile(walletPath)
+	walletPath := s.walletPath(name)
+	fileInfo, err := os.Lstat(walletPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("wallet %s not found", name)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect wallet file: %w", err)
+	}
+	if fileInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("wallet %s file is a symlink", name)
+	}
+	if !fileInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("wallet %s path is not a regular file", name)
+	}
+
+	file, err := os.Open(walletPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open wallet file: %w", err)
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, maxWalletFileSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read wallet file: %w", err)
+	}
+	if len(raw) > maxWalletFileSize {
+		return nil, fmt.Errorf("wallet file exceeds %d bytes", maxWalletFileSize)
 	}
 	encryptedAtRest := sops.IsEncrypted(raw)
 	if encryptedAtRest {
@@ -115,6 +151,9 @@ func (s *FileStore) GetWallet(
 			return nil, fmt.Errorf("failed to decrypt wallet at rest: %w", err)
 		}
 		raw = dec
+		if len(raw) > maxWalletFileSize {
+			return nil, fmt.Errorf("decrypted wallet data exceeds %d bytes", maxWalletFileSize)
+		}
 	}
 	var data fileWalletData
 	if err := json.Unmarshal(raw, &data); err != nil {
@@ -369,6 +408,9 @@ func (w *fileWallet) Save(ctx context.Context) error {
 			return fmt.Errorf("failed to encrypt wallet at rest: %w", err)
 		}
 		raw = enc
+	}
+	if len(raw) > maxWalletFileSize {
+		return fmt.Errorf("wallet file exceeds %d bytes", maxWalletFileSize)
 	}
 	if err := writeSecretFileAtomic(w.store.walletPath(w.name), raw, 0o600); err != nil {
 		return fmt.Errorf("failed to write wallet file: %w", err)

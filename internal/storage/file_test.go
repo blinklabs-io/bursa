@@ -239,6 +239,61 @@ func TestFileStoreRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFileStoreGetWalletRejectsSymlinkedWalletPath(t *testing.T) {
+	dir := t.TempDir()
+	store := NewFileStore(dir)
+
+	outside := filepath.Join(t.TempDir(), "wallet")
+	require.NoError(t, os.Mkdir(outside, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(outside, "wallet.json"),
+		[]byte(`{"items":{"secret":"value"}}`),
+		0o600,
+	))
+	require.NoError(t, os.Symlink(outside, store.walletDir("linked")))
+
+	_, err := store.GetWallet(context.Background(), "linked")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "directory is a symlink")
+}
+
+func TestFileStoreGetWalletRejectsSymlinkedWalletFile(t *testing.T) {
+	dir := t.TempDir()
+	store := NewFileStore(dir)
+	walletDir := store.walletDir("linked-file")
+	require.NoError(t, os.Mkdir(walletDir, 0o700))
+
+	target := filepath.Join(t.TempDir(), "wallet.json")
+	require.NoError(t, os.WriteFile(
+		target,
+		[]byte(`{"items":{"secret":"value"}}`),
+		0o600,
+	))
+	require.NoError(t, os.Symlink(target, filepath.Join(walletDir, "wallet.json")))
+
+	_, err := store.GetWallet(context.Background(), "linked-file")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "file is a symlink")
+}
+
+func TestFileStoreGetWalletRejectsOversizedWalletFile(t *testing.T) {
+	dir := t.TempDir()
+	store := NewFileStore(dir)
+	walletDir := store.walletDir("oversized")
+	require.NoError(t, os.Mkdir(walletDir, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(walletDir, "wallet.json"),
+		make([]byte, expectedMaxWalletFileSize+1),
+		0o600,
+	))
+
+	_, err := store.GetWallet(context.Background(), "oversized")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
+const expectedMaxWalletFileSize = 4 << 20
+
 func TestFileStoreSaveRefusesEncryptedWalletWithoutKMS(t *testing.T) {
 	cfg := config.GetConfig()
 	previousResourceID := cfg.Google.ResourceId
