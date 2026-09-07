@@ -322,14 +322,12 @@ type WalletCreateRequest struct {
 
 // WalletDeleteRequest defines the request payload for wallet deletion
 type WalletDeleteRequest struct {
-	Name     string `json:"name"     validate:"required,min=1,max=100"`
-	Password string `json:"password"` //nolint:gosec // G117: password field is intentional
+	Name string `json:"name" validate:"required,min=1,max=100"`
 }
 
 // WalletGetRequest defines the request payload for wallet loading
 type WalletGetRequest struct {
-	Name     string `json:"name"     validate:"required,min=1,max=100"`
-	Password string `json:"password"` //nolint:gosec // G117: password field is intentional
+	Name string `json:"name" validate:"required,min=1,max=100"`
 }
 
 // WalletRestoreRequest defines the request payload for wallet restoration
@@ -350,7 +348,6 @@ type WalletRestoreRequest struct {
 // WalletUpdateRequest defines the request payload for wallet update
 type WalletUpdateRequest struct {
 	Name        string `json:"name"        validate:"required,min=1,max=100"`
-	Password    string `json:"password"` //nolint:gosec // G117: password field is intentional
 	Description string `json:"description" validate:"max=500"`
 }
 
@@ -1224,7 +1221,7 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 // handleWalletGet handles the wallet get request.
 //
 //	@Summary		Get wallet from persistent storage
-//	@Description	Gets a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.
+//	@Description	Gets a wallet from persistent storage and returns wallet details. Requires an authenticated wallet storage administrator.
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WalletGetRequest	true	"Wallet Restore Request"
@@ -1291,7 +1288,7 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 // handleWalletDelete handles the wallet delete request.
 //
 //	@Summary		Delete wallet from persistent storage
-//	@Description	Deletes a wallet from persistent storage and optional password. Requires an authenticated wallet storage administrator.
+//	@Description	Deletes a wallet from persistent storage. Requires an authenticated wallet storage administrator.
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WalletDeleteRequest	true	"Wallet Delete Request"
@@ -1348,7 +1345,7 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 // handleWalletUpdate handles the wallet update request.
 //
 //	@Summary		Update a wallet in persistent storage
-//	@Description	Updates a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.
+//	@Description	Updates a wallet from persistent storage and returns wallet details. Requires an authenticated wallet storage administrator.
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WalletUpdateRequest	true	"Wallet Update Request"
