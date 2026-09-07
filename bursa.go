@@ -1484,11 +1484,17 @@ type PoolRegistrationCertificate struct {
 func CreatePoolRegistrationCertificate(
 	cert *PoolRegistrationCertificate,
 ) ([]byte, error) {
+	if cert == nil {
+		return nil, errors.New("pool registration certificate cannot be nil")
+	}
 	// Build the CBOR structure per Shelley spec:
 	// [3, operator, vrf_keyhash, pledge, cost, margin,
 	//  reward_account, pool_owners, relays, pool_metadata]
-	if cert.MarginDenom == 0 {
-		return nil, errors.New("margin denominator must not be zero")
+	if cert.MarginDenom <= 0 {
+		return nil, errors.New("margin denominator must be positive")
+	}
+	if cert.MarginNum < 0 || cert.MarginNum > cert.MarginDenom {
+		return nil, errors.New("margin numerator must be between zero and denominator")
 	}
 	margin := lcommon.NewGenesisRat(
 		cert.MarginNum,
@@ -1554,6 +1560,9 @@ type PoolRetirementCertificateParams struct {
 func CreatePoolRetirementCertificate(
 	params *PoolRetirementCertificateParams,
 ) ([]byte, error) {
+	if params == nil {
+		return nil, errors.New("pool retirement certificate parameters cannot be nil")
+	}
 	// CBOR structure: [4, pool_keyhash, epoch]
 	certData := []any{
 		uint(4), // cert type: pool retirement

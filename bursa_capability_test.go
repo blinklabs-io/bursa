@@ -575,6 +575,59 @@ func TestCreatePoolRegistrationCertificateZeroDenom(t *testing.T) {
 	assert.Contains(t, err.Error(), "denominator")
 }
 
+func TestCreatePoolRegistrationCertificateRejectsInvalidMargin(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		num  int64
+		den  int64
+	}{
+		{name: "negative numerator", num: -1, den: 100},
+		{name: "numerator exceeds denominator", num: 101, den: 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := CreatePoolRegistrationCertificate(&PoolRegistrationCertificate{
+				MarginNum:     tc.num,
+				MarginDenom:   tc.den,
+				RewardAccount: make([]byte, 29),
+			})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "margin")
+		})
+	}
+}
+
+func TestCreatePoolCertificatesRejectNil(t *testing.T) {
+	err, panicked := callPoolRegistration(nil)
+	assert.False(t, panicked, "registration builder must return an error, not panic")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "certificate")
+
+	err, panicked = callPoolRetirement(nil)
+	assert.False(t, panicked, "retirement builder must return an error, not panic")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parameters")
+}
+
+func callPoolRegistration(cert *PoolRegistrationCertificate) (err error, panicked bool) {
+	defer func() {
+		if recover() != nil {
+			panicked = true
+		}
+	}()
+	_, err = CreatePoolRegistrationCertificate(cert)
+	return err, false
+}
+
+func callPoolRetirement(params *PoolRetirementCertificateParams) (err error, panicked bool) {
+	defer func() {
+		if recover() != nil {
+			panicked = true
+		}
+	}()
+	_, err = CreatePoolRetirementCertificate(params)
+	return err, false
+}
+
 func TestCreatePoolRetirementCertificate(t *testing.T) {
 	var poolHash lcommon.PoolKeyHash
 	for i := range poolHash {
