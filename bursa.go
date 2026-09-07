@@ -1234,6 +1234,12 @@ func GetVRFKeyPair(seed []byte) ([]byte, []byte, error) {
 
 // GetVRFVKey creates a KeyFile for a VRF verification key
 func GetVRFVKey(vrfPubKey []byte) (KeyFile, error) {
+	if len(vrfPubKey) != vrf.PublicKeySize {
+		return KeyFile{}, fmt.Errorf(
+			"invalid VRF verification key size: got %d, expected %d",
+			len(vrfPubKey), vrf.PublicKeySize,
+		)
+	}
 	keyCbor, err := cbor.Encode(vrfPubKey)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
@@ -1252,6 +1258,27 @@ func GetVRFVKey(vrfPubKey []byte) (KeyFile, error) {
 
 // GetVRFSKey creates a KeyFile for a VRF signing key
 func GetVRFSKey(vrfSecKey []byte) (KeyFile, error) {
+	switch len(vrfSecKey) {
+	case vrf.SeedSize:
+		// Bursa's native form stores the seed; the loader derives its identity.
+	case vrf.SeedSize + vrf.PublicKeySize:
+		// Preserve cardano-cli's seed||public-key form, but do not emit an
+		// envelope whose embedded identity disagrees with the seed.
+		derived, _, err := vrf.KeyGen(vrfSecKey[:vrf.SeedSize])
+		if err != nil {
+			return KeyFile{}, fmt.Errorf("failed to derive VRF public key: %w", err)
+		}
+		if subtle.ConstantTimeCompare(derived, vrfSecKey[vrf.SeedSize:]) != 1 {
+			return KeyFile{}, errors.New(
+				"invalid VRF signing key: embedded public key does not match the seed",
+			)
+		}
+	default:
+		return KeyFile{}, fmt.Errorf(
+			"invalid VRF signing key size: got %d, expected %d or %d",
+			len(vrfSecKey), vrf.SeedSize, vrf.SeedSize+vrf.PublicKeySize,
+		)
+	}
 	keyCbor, err := cbor.Encode(vrfSecKey)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
@@ -1310,6 +1337,12 @@ func GetKESKeyPair(seed []byte) (*kes.SecretKey, []byte, error) {
 
 // GetKESVKey creates a KeyFile for a KES verification key
 func GetKESVKey(kesPubKey []byte) (KeyFile, error) {
+	if len(kesPubKey) != kes.PublicKeySize {
+		return KeyFile{}, fmt.Errorf(
+			"invalid KES verification key size: got %d, expected %d",
+			len(kesPubKey), kes.PublicKeySize,
+		)
+	}
 	keyCbor, err := cbor.Encode(kesPubKey)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
@@ -1330,6 +1363,18 @@ func GetKESVKey(kesPubKey []byte) (KeyFile, error) {
 func GetKESSKey(kesSecKey *kes.SecretKey) (KeyFile, error) {
 	if kesSecKey == nil {
 		return KeyFile{}, errors.New("KES secret key cannot be nil")
+	}
+	if kesSecKey.Depth != kes.CardanoKesDepth {
+		return KeyFile{}, fmt.Errorf(
+			"invalid KES secret key depth: got %d, expected %d",
+			kesSecKey.Depth, kes.CardanoKesDepth,
+		)
+	}
+	if len(kesSecKey.Data) != kes.CardanoKesSecretKeySize {
+		return KeyFile{}, fmt.Errorf(
+			"invalid KES secret key size: got %d, expected %d",
+			len(kesSecKey.Data), kes.CardanoKesSecretKeySize,
+		)
 	}
 
 	keyCbor, err := cbor.Encode(kesSecKey.Data)

@@ -93,6 +93,36 @@ func TestGetAccountVKeyAndSKey(t *testing.T) {
 	assert.Equal(t, []byte(accountKey.Public().PublicKey()), raw)
 }
 
+func TestKeyExportersRejectInvalidVRFAndKESMaterial(t *testing.T) {
+	if _, err := GetVRFVKey(make([]byte, vrf.PublicKeySize-1)); err == nil {
+		t.Fatal("GetVRFVKey accepted a truncated verification key")
+	}
+	if _, err := GetVRFSKey(make([]byte, vrf.SeedSize-1)); err == nil {
+		t.Fatal("GetVRFSKey accepted a truncated signing key")
+	}
+
+	seed := make([]byte, vrf.SeedSize)
+	pub, secret, err := GetVRFKeyPair(seed)
+	require.NoError(t, err)
+	material := append(append([]byte(nil), secret...), pub...)
+	material[len(secret)] ^= 1
+	if _, err := GetVRFSKey(material); err == nil {
+		t.Fatal("GetVRFSKey accepted a mismatched embedded verification key")
+	}
+
+	if _, err := GetKESVKey(make([]byte, kes.PublicKeySize-1)); err == nil {
+		t.Fatal("GetKESVKey accepted a truncated verification key")
+	}
+	validKES, _, err := GetKESKeyPair(make([]byte, kes.SeedSize))
+	require.NoError(t, err)
+	if _, err := GetKESSKey(&kes.SecretKey{Depth: kes.CardanoKesDepth, Data: make([]byte, kes.CardanoKesSecretKeySize-1)}); err == nil {
+		t.Fatal("GetKESSKey accepted a truncated secret key")
+	}
+	if _, err := GetKESSKey(&kes.SecretKey{Depth: kes.CardanoKesDepth - 1, Data: validKES.Data}); err == nil {
+		t.Fatal("GetKESSKey accepted a non-Cardano KES depth")
+	}
+}
+
 func TestGetExtendedPrivateKey(t *testing.T) {
 	accountKey := capabilityAccountKey(t)
 	paymentKey, err := GetPaymentKey(accountKey, 0)
