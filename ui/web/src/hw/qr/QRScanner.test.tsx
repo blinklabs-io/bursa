@@ -193,4 +193,38 @@ describe("QRScanner", () => {
     view.unmount();
     expect(stop).toHaveBeenCalledTimes(2);
   });
+
+  test("reports terminal receivePart errors once and stops the camera", async () => {
+    vi.useFakeTimers();
+    const stop = vi.fn();
+    cameraResult.current = Promise.resolve({ stop });
+    const onError = vi.fn();
+    vi.mocked(createURAssembler).mockReturnValueOnce(
+      Promise.resolve({
+        receivePart: () => {
+          throw new Error("The scanned QR stream contains too many frames.");
+        },
+        progressPercent: () => 0,
+        isError: () => true,
+        error: () => "The scanned QR stream contains too many frames.",
+        isComplete: () => false,
+        isSuccess: () => false,
+        result: () => ({ type: "", cborHex: "" }),
+      }),
+    );
+
+    const view = render(<QRScanner onResult={vi.fn()} onError={onError} />);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.runAllTicks();
+    await Promise.resolve();
+
+    await act(async () => {
+      cameraCallback.current?.({ getText: () => "ur:test/part" });
+    });
+
+    expect(onError).toHaveBeenCalledWith("The scanned QR stream contains too many frames.");
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
 });
