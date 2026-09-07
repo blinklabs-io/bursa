@@ -1450,6 +1450,22 @@ func TestValidateScript(t *testing.T) {
 	) // Slot 500 < 1000
 }
 
+func TestValidateScriptRejectsOverwideScripts(t *testing.T) {
+	keyHash := testKeyHash()
+	leaf, err := NewScriptSig(keyHash)
+	require.NoError(t, err)
+
+	leaves := make([]Script, maxScriptWidth+1)
+	for i := range leaves {
+		leaves[i] = leaf
+	}
+	wide, err := NewScriptAll(leaves...)
+	require.NoError(t, err)
+
+	assert.False(t, ValidateScript(wide, nil, nil, 0, false),
+		"validation must reject scripts wider than the work bound")
+}
+
 func TestMultiSigScriptGeneration(t *testing.T) {
 	// Use proper 28-byte key hashes
 	keyHash1 := make([]byte, 28)
