@@ -397,12 +397,13 @@ func (v *Vault) Create(vaultPassword string) error {
 	defer keystore.Zero(vek)
 	idx := &index{Wallets: []WalletMeta{}}
 	v.activeAccounts = map[string]uint32{}
-	if err := v.persistLocked(idx, map[string]keystore.Container{}, vek, vaultPassword, nil, v.activeAccounts); err != nil {
+	err = v.persistLocked(idx, map[string]keystore.Container{}, vek, vaultPassword, nil, v.activeAccounts)
+	if err != nil && !isCommittedWriteError(err) {
 		return err
 	}
 	v.idx = idx
 	v.activeID = ""
-	return nil
+	return err
 }
 
 // Unlock decrypts the index with the vault password and caches it, granting
@@ -1281,6 +1282,19 @@ func (v *Vault) persistLocked(idx *index, seeds map[string]keystore.Container, v
 	return writeFileAtomic(v.path, out, 0o600)
 }
 
+// committedWriteError reports that the target was replaced but a subsequent
+// durability step failed. Callers must publish the new in-memory state before
+// returning the error, because the old state no longer describes the file.
+type committedWriteError struct{ err error }
+
+func (e *committedWriteError) Error() string { return e.err.Error() }
+func (e *committedWriteError) Unwrap() error { return e.err }
+
+func isCommittedWriteError(err error) bool {
+	var committed *committedWriteError
+	return errors.As(err, &committed)
+}
+
 // cloneActiveAccounts returns a defensive copy (nil stays nil so omitempty
 // keeps single-account vaults byte-identical).
 func cloneActiveAccounts(in map[string]uint32) map[string]uint32 {
@@ -1449,15 +1463,21 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		cleanup()
 		return err
 	}
+	if err := syncVaultDir(dir); err != nil {
+		return &committedWriteError{err: err}
+	}
+	return nil
+}
+
+var syncVaultDir = syncDirFS
+
+func syncDirFS(dir string) error {
 	dirFile, err := os.Open(dir)
 	if err != nil {
 		return err
 	}
 	defer dirFile.Close()
-	if err := dirFile.Sync(); err != nil {
-		return err
-	}
-	return nil
+	return dirFile.Sync()
 }
 
 // ---------------------------------------------------------------------------
