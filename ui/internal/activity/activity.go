@@ -73,13 +73,20 @@ type Event struct {
 type Service struct {
 	reader Reader
 
-	mu        sync.Mutex
-	walletID  string          // active wallet the baseline belongs to ("" = none)
-	primed    bool            // baseline established for walletID
-	seenTx    map[string]bool // tx hashes already reported/baselined
-	lastEpoch int32           // highest reward epoch already reported/baselined
-	hasEpoch  bool            // lastEpoch is meaningful
+	mu          sync.Mutex
+	walletID    string          // active wallet the baseline belongs to ("" = none)
+	primed      bool            // baseline established for walletID
+	seenTx      map[string]bool // recent tx hashes already reported/baselined
+	seenTxOrder []string        // newest-first retention order for seenTx
+	lastEpoch   int32           // highest reward epoch already reported/baselined
+	hasEpoch    bool            // lastEpoch is meaningful
 }
+
+// maxTrackedTransactions bounds the transaction-hash retention used for
+// notification deduplication. Wallet history can be much larger than the
+// useful notification window; keeping only its newest entries prevents a
+// long-lived wallet session from growing memory with its entire history.
+const maxTrackedTransactions = 1024
 
 // New builds a detector over the given node-local reader.
 func New(r Reader) *Service {
@@ -100,6 +107,7 @@ func (s *Service) SetActive(walletID string) {
 	s.walletID = walletID
 	s.primed = false
 	s.seenTx = nil
+	s.seenTxOrder = nil
 	s.lastEpoch = 0
 	s.hasEpoch = false
 }
@@ -150,19 +158,19 @@ func (s *Service) Poll(ctx context.Context) ([]Event, error) {
 	if s.seenTx == nil {
 		s.seenTx = make(map[string]bool)
 	}
+	recentTxs := recentReceived(txs)
 
 	if !s.primed {
-		// Baseline: record every existing receipt without emitting anything.
+		// Baseline: record the recent existing receipts without emitting anything.
 		// This deliberately checks Direction only, NOT isIncoming's Pending
 		// exclusion: a transient tip-lookup failure degrades every tx to
 		// Pending=true (see wallet.Service.Transactions), and baselining with
 		// isIncoming would then drop an already-confirmed receipt from the
 		// baseline, causing it to be reported as newly "received" once the tip
 		// lookup recovers on a later poll.
-		for _, tx := range txs {
-			if tx.Direction == wallet.TxDirectionReceived {
-				s.seenTx[tx.TxHash] = true
-			}
+		for _, tx := range recentTxs {
+			s.seenTx[tx.TxHash] = true
+			s.seenTxOrder = append(s.seenTxOrder, tx.TxHash)
 		}
 		for _, r := range sortedRewards {
 			if !s.hasEpoch || r.Epoch > s.lastEpoch {
@@ -175,11 +183,11 @@ func (s *Service) Poll(ctx context.Context) ([]Event, error) {
 	}
 
 	var events []Event
-	for _, tx := range txs {
+	for _, tx := range recentTxs {
 		if !isIncoming(tx) || s.seenTx[tx.TxHash] {
 			continue
 		}
-		s.seenTx[tx.TxHash] = true
+		s.rememberTx(tx.TxHash)
 		events = append(events, Event{
 			ID:       "tx:" + tx.TxHash,
 			Kind:     KindReceived,
@@ -201,6 +209,67 @@ func (s *Service) Poll(ctx context.Context) ([]Event, error) {
 		})
 	}
 	return events, nil
+}
+
+// rememberTx adds a hash to the bounded deduplication window. Callers hold
+// s.mu. The transaction list is traversed newest-first, so the newest hash is
+// kept at the front and eviction from the end drops the oldest history.
+func (s *Service) rememberTx(hash string) {
+	if s.seenTx[hash] {
+		return
+	}
+	s.seenTx[hash] = true
+	s.seenTxOrder = append(s.seenTxOrder, "")
+	copy(s.seenTxOrder[1:], s.seenTxOrder[:len(s.seenTxOrder)-1])
+	s.seenTxOrder[0] = hash
+	if len(s.seenTxOrder) <= maxTrackedTransactions {
+		return
+	}
+	oldest := s.seenTxOrder[len(s.seenTxOrder)-1]
+	s.seenTxOrder = s.seenTxOrder[:len(s.seenTxOrder)-1]
+	delete(s.seenTx, oldest)
+}
+
+// recentReceived returns at most the newest received transactions. The wallet
+// service currently returns newest-first, but sort here as a contract guard for
+// other Reader implementations and tests. Pending received entries are kept in
+// the baseline window so a transient tip lookup failure cannot turn old history
+// into a notification after recovery.
+func recentReceived(txs []wallet.Tx) []wallet.Tx {
+	sorted := slices.Clone(txs)
+	slices.SortFunc(sorted, func(a, b wallet.Tx) int {
+		if a.BlockHeight != b.BlockHeight {
+			if a.BlockHeight > b.BlockHeight {
+				return -1
+			}
+			return 1
+		}
+		if a.TxIndex != b.TxIndex {
+			if a.TxIndex > b.TxIndex {
+				return -1
+			}
+			return 1
+		}
+		if a.TxHash > b.TxHash {
+			return -1
+		}
+		if a.TxHash < b.TxHash {
+			return 1
+		}
+		return 0
+	})
+
+	out := make([]wallet.Tx, 0, min(len(sorted), maxTrackedTransactions))
+	for _, tx := range sorted {
+		if tx.Direction != wallet.TxDirectionReceived {
+			continue
+		}
+		out = append(out, tx)
+		if len(out) == maxTrackedTransactions {
+			break
+		}
+	}
+	return out
 }
 
 // isIncoming reports whether tx is a confirmed transaction that paid the wallet
