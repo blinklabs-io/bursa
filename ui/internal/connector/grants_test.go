@@ -48,6 +48,9 @@ func TestGrantStoreRejectsInvalidOrigins(t *testing.T) {
 		" ",
 		"unknown",
 		"https://a.io/path",
+		"http://localhost:8080/sample-dapp.html",
+		"file:///tmp/sample-dapp.html",
+		"null",
 		"https://user@example.com",
 		"https://user:pass@example.com",
 		"chrome-extension://abc",
@@ -61,6 +64,21 @@ func TestGrantStoreRejectsInvalidOrigins(t *testing.T) {
 	}
 	if got := g.List(); len(got) != 0 {
 		t.Fatalf("invalid grants persisted in memory: %v", got)
+	}
+}
+
+func TestGrantStoreAcceptsExactHTTPOrigins(t *testing.T) {
+	g := NewGrantStore(filepath.Join(t.TempDir(), "grants.json"))
+	for _, origin := range []string{
+		"http://localhost:8080",
+		"https://dapp.example",
+	} {
+		if err := g.Grant(origin); err != nil {
+			t.Fatalf("Grant(%q) err = %v, want success", origin, err)
+		}
+		if !g.IsGranted(origin) {
+			t.Fatalf("origin %q was not granted", origin)
+		}
 	}
 }
 
