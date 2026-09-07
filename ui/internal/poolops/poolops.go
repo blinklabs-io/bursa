@@ -290,10 +290,10 @@ type MetadataResult struct {
 	HashHex string `json:"hash_hex"`
 }
 
-// buildMetadata canonicalizes the metadata to RFC 8785 (JCS) JSON and hashes it
-// with Blake2b-256, mirroring the parent bursa CLI's RunHashMetadata. Marshaling
-// the struct directly keeps the field set well-formed; JCS then fixes ordering
-// and formatting so the hash is reproducible.
+// buildMetadata canonicalizes the metadata to RFC 8785 (JCS) JSON and hashes
+// those exact output bytes with Blake2b-256. The parent bursa CLI hashes file
+// bytes as supplied; returning the canonical JSON here makes the bytes an
+// intentional, reproducible hosting contract.
 func buildMetadata(in MetadataInput) (MetadataResult, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.Ticker = strings.TrimSpace(in.Ticker)
