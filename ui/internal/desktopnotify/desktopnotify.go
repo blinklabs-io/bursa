@@ -30,14 +30,11 @@ import (
 )
 
 // notifyStartGrace bounds how long start waits to observe an immediate
-// notifier exit before assuming success. cmd.Start() only confirms the OS
-// could launch the process — a notifier binary that launches fine but
-// immediately errors out (e.g. no display/session, D-Bus unavailable) would
-// otherwise still be reported as delivered. Waiting this long for an early
-// exit catches that case while still returning well before a notifier that
-// stays running (to display a toast, or on Windows to hold the balloon tip
-// open) has a chance to finish — start must never block on the full process
-// lifetime.
+// notifier exit. cmd.Start() only confirms the OS could launch the process — a
+// notifier binary that launches fine but immediately errors out (e.g. no
+// display/session, D-Bus unavailable) would otherwise still be reported as
+// delivered. Waiting this long for an early exit catches that case while
+// allowing a notifier that needs a short amount of startup time to proceed.
 const notifyStartGrace = 200 * time.Millisecond
 
 // maxFieldLen caps a sanitized title/body. A real notification is a short line
@@ -99,10 +96,19 @@ func Notify(logger *slog.Logger, title, body string) bool {
 	return start(logger, cmd)
 }
 
-// start launches cmd and reports whether it was successfully started AND
-// did not fail within notifyStartGrace. Split out from Notify so the
-// start/failure outcome is unit-testable with an injected command,
-// independent of the OS-specific notifier selection above.
+// start launches cmd and reports whether it was successfully started AND did
+// not fail within notifyStartGrace. A notifier that is still running at the
+// end of the grace period is terminated and reaped before start returns. This
+// keeps the one Wait goroutine from surviving an unbounded child process and
+// gives every invocation a bounded lifetime.
+//
+// Process.Kill is provided by os/exec's supported Unix and Windows process
+// implementations. It terminates only this direct notifier process; the
+// commands used above do not intentionally create a child process whose
+// lifetime Bursa owns.
+//
+// Split out from Notify so the start/failure outcome is unit-testable with an
+// injected command, independent of the OS-specific notifier selection above.
 func start(logger *slog.Logger, cmd *exec.Cmd) bool {
 	if err := cmd.Start(); err != nil {
 		logger.Warn("failed to raise desktop notification", "error", err)
@@ -110,6 +116,8 @@ func start(logger *slog.Logger, cmd *exec.Cmd) bool {
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+	timer := time.NewTimer(notifyStartGrace)
+	defer timer.Stop()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -117,16 +125,16 @@ func start(logger *slog.Logger, cmd *exec.Cmd) bool {
 			return false
 		}
 		return true
-	case <-time.After(notifyStartGrace):
-		// Still running past the grace window: treat it as delivered rather
-		// than block the caller on the notifier's full lifetime. Any failure
-		// observed after this point is logged but can no longer change the
-		// already-reported result.
-		go func() {
-			if err := <-done; err != nil {
-				logger.Warn("desktop notifier process exited with error", "error", err)
-			}
-		}()
+	case <-timer.C:
+		// The process itself is the only owner of the Wait goroutine. Kill it
+		// after the grace period, then consume that same goroutine's result so
+		// the process and waiter are both released before returning. Kill can
+		// race with a natural exit; in that case Wait still supplies the final
+		// result and no error is needed for the intentional shutdown.
+		if err := cmd.Process.Kill(); err != nil {
+			logger.Debug("desktop notifier ended before shutdown", "error", err)
+		}
+		<-done
 		return true
 	}
 }
