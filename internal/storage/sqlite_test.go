@@ -26,6 +26,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSQLiteDatabasePath(t *testing.T) {
+	tests := []struct {
+		name     string
+		dsn      string
+		wantPath string
+		wantFile bool
+	}{
+		{
+			name:     "plain path",
+			dsn:      "/tmp/wallets.db",
+			wantPath: "/tmp/wallets.db",
+			wantFile: true,
+		},
+		{
+			name:     "plain path with query",
+			dsn:      "/tmp/wallets.db?_pragma=journal_mode(WAL)",
+			wantPath: "/tmp/wallets.db",
+			wantFile: true,
+		},
+		{
+			name:     "memory path with query",
+			dsn:      ":memory:?cache=shared",
+			wantFile: false,
+		},
+		{
+			name:     "memory URI",
+			dsn:      "file::memory:?cache=shared",
+			wantFile: false,
+		},
+		{
+			name:     "file URI",
+			dsn:      "file:/tmp/wallet%2Dstore.db?mode=rwc",
+			wantPath: "/tmp/wallet-store.db",
+			wantFile: true,
+		},
+		{
+			name:     "remote URI authority",
+			dsn:      "file://other-host/tmp/wallets.db",
+			wantFile: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path, fileBacked, err := sqliteDatabasePath(tt.dsn)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantPath, path)
+			assert.Equal(t, tt.wantFile, fileBacked)
+		})
+	}
+}
+
 func newTestSQLiteStore(t *testing.T) *SQLiteStore {
 	t.Helper()
 	tempDir, err := os.MkdirTemp("", "bursa-sqlite-test")
