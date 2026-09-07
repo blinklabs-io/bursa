@@ -134,6 +134,11 @@ key.`,
 				logger.Error("invalid signer.callers", "error", err)
 				os.Exit(1)
 			}
+			callerPolicies, err := signer.BuildCallerPolicies(cfg.Signer.CallerPolicies)
+			if err != nil {
+				logger.Error("invalid signer.caller_policies", "error", err)
+				os.Exit(1)
+			}
 			acl := api.NewCallerACL(aclMap)
 			if !acl.Restricted() {
 				logger.Warn("no signer.callers configured; any valid token may use any configured key")
@@ -185,6 +190,8 @@ key.`,
 				logger.Error("invalid policy", "error", err)
 				os.Exit(1)
 			}
+			eng.SetCallerPolicies(callerPolicies)
+			policyHook := signer.BuildPolicyHook(cfg.Signer)
 			wm, mode, err := signer.BuildWatermark(ctx, cfg.Signer.Watermark)
 			if err != nil {
 				logger.Error("failed to build watermark", "error", err)
@@ -195,13 +202,14 @@ key.`,
 			m.Register(prometheus.DefaultRegisterer)
 
 			coord := signer.New(signer.Deps{
-				Resolver:  resolver,
-				Policy:    eng,
-				Watermark: wm,
-				WMMode:    mode,
-				Cardano:   operation.BursaCardano{},
-				Logger:    logger,
-				Metrics:   m,
+				Resolver:   resolver,
+				Policy:     eng,
+				Watermark:  wm,
+				WMMode:     mode,
+				Cardano:    operation.BursaCardano{},
+				Logger:     logger,
+				Metrics:    m,
+				PolicyHook: policyHook,
 			})
 
 			var validate api.Validator
