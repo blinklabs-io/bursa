@@ -288,6 +288,16 @@ class WalletService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = binder
 
+    // Android 15 (API 35) calls this when a dataSync foreground service reaches
+    // the platform's execution limit. Stop the service promptly so the system
+    // does not report an application-not-responding condition. onDestroy()
+    // performs the existing wallet and callback cleanup. This callback is only
+    // dispatched by API 35+, while the class remains installable on minSdk 24.
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        android.util.Log.w(TAG, "wallet foreground-service timeout")
+        stopSelf(startId)
+    }
+
     override fun onDestroy() {
         shuttingDown = true
 

@@ -56,12 +56,20 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // Boot the wallet in-process. The Documents dir is the app's writable
-        // data dir; "preview" is the network; lean = true selects the
-        // history-expiry profile (small on-disk footprint) for a phone.
-        let dataDir = NSSearchPathForDirectoriesInDomains(
-            .documentDirectory, .userDomainMask, true
-        ).first ?? NSTemporaryDirectory()
+        // Boot the wallet in-process. Application Support is durable,
+        // app-private storage intended for databases and support files; keeping
+        // the node and wallet tree there avoids treating it as user documents.
+        // "preview" is the network; lean = true selects the history-expiry
+        // profile (small on-disk footprint) for a phone.
+        let fileManager = FileManager.default
+        let dataDirURL = fileManager.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first?.appendingPathComponent("Bursa", isDirectory: true)
+            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        try? fileManager.createDirectory(
+            at: dataDirURL, withIntermediateDirectories: true
+        )
+        let dataDir = dataDirURL.path
 
         startWallet(dataDir: dataDir)
     }
