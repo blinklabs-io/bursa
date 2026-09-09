@@ -237,7 +237,7 @@ func TestNonceCache_Full(t *testing.T) {
 // TestNonceCache_BoundsRetainedNonceBytes is a regression for BD3-F3. The cache
 // must not retain an arbitrarily large authenticated nonce.
 func TestNonceCache_BoundsRetainedNonceBytes(t *testing.T) {
-	c := newNonceCacheWithByteLimit(time.Minute, 2, 2*nonceCacheKeyBytes)
+	c := newNonceCacheWithByteLimit(time.Minute, 100, 2*nonceCacheKeyBytes)
 	largeNonce := strings.Repeat("n", 1024)
 	if err := c.checkAndStore("caller", largeNonce); err != nil {
 		t.Fatalf("large nonce should be admitted without retaining its bytes: %v", err)
