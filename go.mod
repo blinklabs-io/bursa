@@ -1,6 +1,6 @@
 module github.com/blinklabs-io/bursa
 
-go 1.25.8
+go 1.25.13
 
 require (
 	cloud.google.com/go/secretmanager v1.21.0
