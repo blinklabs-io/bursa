@@ -2928,11 +2928,6 @@ func scriptToMap(script Script) (map[string]any, error) {
 	}
 }
 
-// mapToScript converts a map back to a Script
-func mapToScript(m map[string]any) (Script, error) {
-	return mapToScriptWithBudget(m, 0, &scriptConstructionBudget{})
-}
-
 type scriptConstructionBudget struct {
 	nodes int
 }
