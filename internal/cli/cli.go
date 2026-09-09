@@ -2642,7 +2642,6 @@ func writeWalletOutputsWithWriter(
 	workerErrors := make([]error, len(files))
 	var g errgroup.Group
 	for i, file := range files {
-		i, file := i, file
 		g.Go(func() error {
 			err := writer(filepath.Join(output, file.name), file.data)
 			if err != nil {
