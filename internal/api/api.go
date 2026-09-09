@@ -958,8 +958,17 @@ func Start(
 			10*time.Second,
 		)
 		defer cancel()
-		_ = metricsServer.Shutdown(shutdownCtx)
-		_ = apiServer.Shutdown(shutdownCtx)
+		var shutdownServers sync.WaitGroup
+		shutdownServers.Add(2)
+		go func() {
+			defer shutdownServers.Done()
+			_ = metricsServer.Shutdown(shutdownCtx)
+		}()
+		go func() {
+			defer shutdownServers.Done()
+			_ = apiServer.Shutdown(shutdownCtx)
+		}()
+		shutdownServers.Wait()
 		_ = metricsServer.Close()
 		_ = apiServer.Close()
 	}
