@@ -35,7 +35,6 @@ import (
 	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/btcsuite/btcd/btcutil/bech32"
-	"github.com/gowebpki/jcs"
 	"golang.org/x/crypto/blake2b"
 	"golang.org/x/sync/errgroup"
 )
@@ -1109,11 +1108,9 @@ func RunCertPoolRegistration(
 	marginFloat float64,
 	metadataURL, metadataHash string,
 ) error {
-	// Validate margin is within [0, 1]
-	if marginFloat < 0 || marginFloat > 1 {
-		return errors.New(
-			"pool margin must be between 0.0 and 1.0",
-		)
+	marginNum, marginDenom, err := floatToRational(marginFloat)
+	if err != nil {
+		return err
 	}
 
 	// Validate metadata URL and hash are provided together
@@ -1171,9 +1168,6 @@ func RunCertPoolRegistration(
 			err,
 		)
 	}
-
-	// Convert margin float to rational number
-	marginNum, marginDenom := floatToRational(marginFloat)
 
 	// Build pool registration certificate
 	cert := &bursa.PoolRegistrationCertificate{
@@ -1397,14 +1391,20 @@ func parseVRFVerificationKey(data []byte) ([]byte, error) {
 
 // floatToRational converts a floating-point margin to a rational
 // number (numerator/denominator) with reasonable precision.
-func floatToRational(f float64) (int64, int64) {
+func floatToRational(f float64) (int64, int64, error) {
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > 1 {
+		return 0, 0, errors.New(
+			"pool margin must be a finite value between 0.0 and 1.0",
+		)
+	}
+
 	// Use 10000 as denominator for pool margins
 	// This gives 0.01% precision which is sufficient
 	const denom = 10000
 	num := int64(math.Round(f * denom))
 	// Simplify if possible
 	g := gcd(abs64(num), denom)
-	return num / g, denom / g
+	return num / g, denom / g, nil
 }
 
 func gcd(a, b int64) int64 {
@@ -2423,7 +2423,10 @@ func parseBech32VerificationKey(
 	return hash, nil
 }
 
-// RunHashMetadata generates a Blake2b-256 hash of metadata JSON file
+// RunHashMetadata generates a Blake2b-256 hash of the metadata file bytes.
+// Cardano commits to the exact bytes hosted at the metadata URL; callers that
+// want canonical JSON must write that canonical representation before calling
+// this function.
 func RunHashMetadata(filePath, metadataType string) error {
 	logger := logging.GetLogger()
 
@@ -2438,20 +2441,13 @@ func RunHashMetadata(filePath, metadataType string) error {
 		return errors.New("invalid JSON in metadata file")
 	}
 
-	// For Cardano metadata, we need to canonicalize the JSON using RFC 8785 (JCS)
-	// This ensures consistent ordering and formatting for reproducible hashing
-	canonicalJSON, err := jcs.Transform(data)
-	if err != nil {
-		return fmt.Errorf("failed to canonicalize JSON using RFC 8785: %w", err)
-	}
-
 	// Generate Blake2b-256 hash
 	hash, err := blake2b.New256(nil)
 	if err != nil {
 		return fmt.Errorf("failed to create Blake2b hasher: %w", err)
 	}
 
-	_, err = hash.Write(canonicalJSON)
+	_, err = hash.Write(data)
 	if err != nil {
 		return fmt.Errorf("failed to hash metadata: %w", err)
 	}
