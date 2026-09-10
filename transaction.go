@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/bits"
 
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/gouroboros/cbor"
@@ -435,11 +436,32 @@ func ParseProtocolParams(data []byte) (ProtocolParams, error) {
 // serialized size: fee = txFeePerByte * sizeBytes + txFeeFixed. This base
 // linear formula does not include Plutus execution units or reference-script
 // tiers; for script transactions the result is a lower bound.
-func MinFee(sizeBytes int, params ProtocolParams) uint64 {
+//
+// The fee is a Cardano Coin and must fit in uint64. An invalid size or a fee
+// that cannot be represented as a Coin is returned as an error instead of
+// wrapping around.
+func MinFee(sizeBytes int, params ProtocolParams) (uint64, error) {
 	if sizeBytes < 0 {
-		return params.TxFeeFixed
+		return 0, fmt.Errorf("min fee: negative transaction size %d", sizeBytes)
 	}
-	return params.TxFeePerByte*uint64(sizeBytes) + params.TxFeeFixed
+
+	productHigh, productLow := bits.Mul64(params.TxFeePerByte, uint64(sizeBytes))
+	if productHigh != 0 {
+		return 0, fmt.Errorf(
+			"min fee overflow: %d * %d exceeds uint64",
+			params.TxFeePerByte,
+			sizeBytes,
+		)
+	}
+	fee, carry := bits.Add64(productLow, params.TxFeeFixed, 0)
+	if carry != 0 {
+		return 0, fmt.Errorf(
+			"min fee overflow: %d + %d exceeds uint64",
+			productLow,
+			params.TxFeeFixed,
+		)
+	}
+	return fee, nil
 }
 
 // SignDigest signs an arbitrary message with the loaded key and returns the raw
