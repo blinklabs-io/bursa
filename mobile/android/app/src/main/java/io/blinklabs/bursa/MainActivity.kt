@@ -47,6 +47,11 @@ import androidx.core.content.ContextCompat
 // bound service-held App.
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        // Shared with WalletService so one logcat tag covers the whole wallet.
+        private const val TAG = "bursa"
+    }
+
     private lateinit var webView: WebView
 
     // Binder to the wallet service. Non-null only while bound.
@@ -196,6 +201,10 @@ class MainActivity : AppCompatActivity() {
         }
         webViewLoaded = true
         walletPort = port
+        // A launch smoke test needs to distinguish "the app started" from "the
+        // embedded wallet booted and is serving", and the loopback port is not
+        // observable from outside the app. Log it as the readiness signal.
+        android.util.Log.i(TAG, "wallet ready on 127.0.0.1:$port")
         webView.loadUrl("http://127.0.0.1:$port/")
     }
 
@@ -205,6 +214,7 @@ class MainActivity : AppCompatActivity() {
     // the terminal loaded state.
     private fun showBootError(message: String) {
         webViewLoaded = true
+        android.util.Log.e(TAG, "wallet boot failed: $message")
         val escaped = android.text.TextUtils.htmlEncode(message)
         val html = """
             <!doctype html>
