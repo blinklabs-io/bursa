@@ -127,6 +127,15 @@ func TestPKCS11Sign_CanceledQueuedRequestIsNotSentToToken(t *testing.T) {
 		_, err := key.Sign(ctx, []byte("queued"))
 		queuedDone <- err
 	}()
+	deadline := time.After(time.Second)
+	for len(b.requests) != 1 {
+		select {
+		case <-deadline:
+			t.Fatal("queued sign was not enqueued")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
 	cancel()
 	select {
 	case err := <-queuedDone:
