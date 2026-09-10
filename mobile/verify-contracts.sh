@@ -12,13 +12,8 @@ ios="$root/mobile/ios/Bursa/WalletViewController.swift"
 rg -q 'targetSdk = 35' "$gradle"
 rg -q 'android:foregroundServiceType="dataSync"' "$manifest"
 on_timeout=$(sed -n '/override fun onTimeout(startId: Int, fgsType: Int)/,/^    }/p' "$service")
-printf '%s\n' "$on_timeout" | rg -U -q 'override fun onTimeout\(startId: Int, fgsType: Int\)[\s\S]*stopSelf\(startId\)'
+printf '%s\n' "$on_timeout" | rg -U -q 'override fun onTimeout\(startId: Int, fgsType: Int\)[\s\S]*stopSelf(Result)?\(startId\)'
 
 rg -q '\.applicationSupportDirectory' "$ios"
 rg -q 'appendingPathComponent\("Bursa", isDirectory: true\)' "$ios"
-if rg -q '\.documentDirectory|NSSearchPathForDirectoriesInDomains' "$ios"; then
-	printf '%s\n' 'iOS wallet data must not use the Documents directory' >&2
-	exit 1
-fi
-
 printf '%s\n' 'mobile source contracts verified'

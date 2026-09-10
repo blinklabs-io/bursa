@@ -88,8 +88,8 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
                fileManager.contentsOfDirectory(atPath: documentsDir.path)?.isEmpty == false {
                 let existingData = fileManager.contentsOfDirectory(atPath: dataDir.path) ?? []
                 if !existingData.isEmpty {
-                    Self.logger.error("wallet data migration found both old and new data")
-                    return documentsDir
+                    Self.logger.error("wallet data migration already has an authoritative copy")
+                    return dataDir
                 }
                 let entries = try fileManager.contentsOfDirectory(
                     at: documentsDir,
@@ -109,15 +109,18 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
                 guard Set(migrated.map(\.lastPathComponent)) == Set(entries.map(\.lastPathComponent)) else {
                     throw NSError(domain: "BursaWalletMigration", code: 1)
                 }
-                for entry in entries {
-                    try fileManager.removeItem(at: entry)
+                do {
+                    for entry in entries {
+                        try fileManager.removeItem(at: entry)
+                    }
+                } catch {
+                    Self.logger.error("wallet legacy cleanup deferred: \(String(describing: error))")
+                    return dataDir
                 }
             }
             return dataDir
         } catch {
-            for entry in copiedEntries {
-                try? fileManager.removeItem(at: entry)
-            }
+            for entry in copiedEntries { try? fileManager.removeItem(at: entry) }
             Self.logger.error("wallet data migration failed: \(String(describing: error))")
             // Keep using the old directory if migration did not complete, so
             // an upgrade never starts against an empty wallet tree.
