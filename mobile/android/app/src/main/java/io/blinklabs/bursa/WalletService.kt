@@ -289,13 +289,30 @@ class WalletService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     // Android 15 (API 35) calls this when a dataSync foreground service reaches
-    // the platform's execution limit. Stop the service promptly so the system
-    // does not report an application-not-responding condition. onDestroy()
-    // performs the existing wallet and callback cleanup. This callback is only
-    // dispatched by API 35+, while the class remains installable on minSdk 24.
+    // the platform's execution limit. A bound client can keep the service alive
+    // after stopSelf(), so tear down the wallet and callback explicitly too.
     override fun onTimeout(startId: Int, fgsType: Int) {
         android.util.Log.w(TAG, "wallet foreground-service timeout")
-        stopSelf(startId)
+        debounceHandler.removeCallbacks(reconnectRunnable)
+        networkCallback?.let { cb ->
+            connectivityManager?.unregisterNetworkCallback(cb)
+        }
+        networkCallback = null
+        val instance = synchronized(walletLock) {
+            val current = app
+            app = null
+            started = false
+            reconnectInFlight = false
+            current
+        }
+        instance?.stop()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        stopSelfResult(startId)
     }
 
     override fun onDestroy() {
