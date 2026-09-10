@@ -15,7 +15,6 @@
 package bursa
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,17 +48,4 @@ func TestLoadKeyFromFileRejectsOversizedInput(t *testing.T) {
 	assert.Nil(t, key)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds maximum size")
-}
-
-func TestLoadKeyFromFileRejectsPermissiveSecret(t *testing.T) {
-	wallet, err := NewWallet(testSecretKeyMnemonic)
-	require.NoError(t, err)
-	data, err := json.Marshal(wallet.PaymentSKey)
-	require.NoError(t, err)
-	path := filepath.Join(t.TempDir(), "payment.skey")
-	require.NoError(t, os.WriteFile(path, data, 0o644))
-
-	key, err := LoadKeyFromFile(path)
-	assert.Nil(t, key)
-	assert.ErrorIs(t, err, ErrInsecureFileMode)
 }

@@ -50,6 +50,20 @@ func TestLoadSecretKeyFromFileRejectsPermissiveMode(t *testing.T) {
 	assert.Contains(t, err.Error(), "mode 0644")
 }
 
+func TestLoadKeyFromFileRejectsPermissiveSecret(t *testing.T) {
+	wallet, err := NewWallet(testSecretKeyMnemonic)
+	require.NoError(t, err)
+	data, err := json.Marshal(wallet.PaymentSKey)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "payment.skey")
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	require.NoError(t, os.Chmod(path, 0o644))
+
+	key, err := LoadKeyFromFile(path)
+	assert.Nil(t, key)
+	assert.ErrorIs(t, err, ErrInsecureFileMode)
+}
+
 func TestLoadSecretKeyFromFilePreservesFileName(t *testing.T) {
 	path := writeTestSecretKey(t)
 
