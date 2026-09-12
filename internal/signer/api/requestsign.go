@@ -76,6 +76,10 @@ const nonceCacheKeyBytes = sha256.Size
 // any size accepted by the HTTP server remain compatible.
 const defaultNonceCacheMaxBytes = int64(defaultNonceCacheMax) * nonceCacheKeyBytes
 
+// An Ed25519 signature is fixed-width and is represented as lower-case hex in
+// the request header. Check that width before touching the request body.
+const maxSignatureHexLength = ed25519.SignatureSize * 2
+
 // maxSignedBody caps how many body bytes the authenticator will buffer to hash.
 // It matches the handler's own 1 MiB request-body limit.
 const maxSignedBody = 1 << 20
@@ -145,6 +149,16 @@ func (a *RequestSigningAuthenticator) Authenticate(r *http.Request) (string, boo
 	if d := a.now().Sub(time.Unix(tsSec, 0)); d > a.skew || d < -a.skew {
 		return "", true, errStaleTimestamp
 	}
+	// Reject malformed credentials before reading a potentially slow body;
+	// valid requests still hash and verify the exact body before the replay cache
+	// is changed.
+	if len(sig) != maxSignatureHexLength {
+		return "", true, errInvalidSignature
+	}
+	sigBytes, err := hex.DecodeString(sig)
+	if err != nil {
+		return "", true, errInvalidSignature
+	}
 	// Buffer the body so the handler can still read it, then hash it.
 	body, err := a.readBody(r)
 	if err != nil {
@@ -158,10 +172,6 @@ func (a *RequestSigningAuthenticator) Authenticate(r *http.Request) (string, boo
 		tsStr,
 		nonce,
 	}, "|")
-	sigBytes, err := hex.DecodeString(sig)
-	if err != nil || len(sigBytes) != ed25519.SignatureSize {
-		return "", true, errInvalidSignature
-	}
 	if !ed25519.Verify(pub, []byte(canonical), sigBytes) {
 		return "", true, errInvalidSignature
 	}

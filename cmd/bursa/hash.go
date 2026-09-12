@@ -54,7 +54,8 @@ func hashMetadataCommand() *cobra.Command {
 		Long: `Generate a Blake2b-256 hash of a Cardano metadata JSON file.
 
 This is used for pool metadata and DRep metadata registration.
-The hash is calculated from the canonical JSON representation.
+The hash is calculated from the exact bytes in the file. If you need a
+canonical representation, write that representation to the hosted file first.
 
 Supported metadata types:
   - pool: Pool registration metadata

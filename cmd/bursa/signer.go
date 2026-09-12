@@ -39,6 +39,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const signerReadTimeout = 30 * time.Second
+
+func newSignerHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		// ReadTimeout covers the complete request, including the body. Without
+		// it, a client can keep an accepted body read open indefinitely after
+		// the headers have been received.
+		ReadTimeout: signerReadTimeout,
+	}
+}
+
 // maxRequestSignSkewSeconds bounds signer.request_sign_skew_seconds. It also
 // caps the nonce cache TTL (2x skew), so a very large skew is rejected at boot
 // rather than silently widening the replay window and shortening how long the
@@ -280,11 +294,7 @@ key.`,
 				)
 				os.Exit(1)
 			}
-			httpServer := &http.Server{
-				Addr:              addr,
-				Handler:           mux,
-				ReadHeaderTimeout: 10 * time.Second,
-			}
+			httpServer := newSignerHTTPServer(addr, mux)
 			if tlsConfigured {
 				tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 				if hasMTLS {

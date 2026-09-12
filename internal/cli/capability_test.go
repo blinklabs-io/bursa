@@ -16,6 +16,7 @@ package cli
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,6 +160,17 @@ func TestRunCertPoolRegistration_InvalidMargin(t *testing.T) {
 	assert.Contains(t, err.Error(), "margin")
 }
 
+func TestRunCertPoolRegistration_RejectsNonFiniteMargins(t *testing.T) {
+	for _, margin := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		err := RunCertPoolRegistration(
+			"cold.vkey", "vrf.vkey", goldenStakeAddr, "",
+			1, 1, margin, "", "",
+		)
+		require.Error(t, err, "margin %v", margin)
+		assert.Contains(t, err.Error(), "margin", "margin %v", margin)
+	}
+}
+
 func TestRunCertPoolRegistration_MetadataPairing(t *testing.T) {
 	err := RunCertPoolRegistration(
 		"cold.vkey", "vrf.vkey", goldenStakeAddr, "",
@@ -273,9 +285,23 @@ func TestFloatToRational(t *testing.T) {
 		{0.0001, 1, 10000},
 	}
 	for _, tc := range tests {
-		num, denom := floatToRational(tc.in)
+		num, denom, err := floatToRational(tc.in)
+		require.NoError(t, err)
 		assert.Equal(t, tc.wantNum, num, "num for %v", tc.in)
 		assert.Equal(t, tc.wantDenom, denom, "denom for %v", tc.in)
+	}
+}
+
+func TestFloatToRationalRejectsInvalidMargins(t *testing.T) {
+	for _, margin := range []float64{-0.01, 1.01, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		_, _, err := floatToRational(margin)
+		require.Error(t, err, "margin %v", margin)
+		assert.EqualError(
+			t,
+			err,
+			"pool margin must be a finite value between 0.0 and 1.0",
+			"margin %v",
+		)
 	}
 }
 

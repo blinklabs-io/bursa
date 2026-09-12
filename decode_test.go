@@ -14,7 +14,10 @@
 
 package bursa
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestTransactionID(t *testing.T) {
 	id, err := TransactionID(mustTestTx(t))
@@ -54,10 +57,57 @@ func TestInspectTransaction(t *testing.T) {
 func TestMinFee(t *testing.T) {
 	params := ProtocolParams{TxFeePerByte: 44, TxFeeFixed: 155381}
 	size := len(mustTestTx(t))
-	fee := MinFee(size, params)
+	fee, err := MinFee(size, params)
+	if err != nil {
+		t.Fatalf("MinFee: %v", err)
+	}
 	want := uint64(44)*uint64(size) + 155381
 	if fee != want {
 		t.Fatalf("MinFee = %d, want %d", fee, want)
+	}
+}
+
+func TestMinFeeRejectsInvalidAndOverflowingInputs(t *testing.T) {
+	tests := []struct {
+		name   string
+		size   int
+		params ProtocolParams
+	}{
+		{
+			name:   "negative size",
+			size:   -1,
+			params: ProtocolParams{TxFeeFixed: 7},
+		},
+		{
+			name:   "multiplication overflow",
+			size:   2,
+			params: ProtocolParams{TxFeePerByte: math.MaxUint64},
+		},
+		{
+			name:   "addition overflow",
+			size:   1,
+			params: ProtocolParams{TxFeePerByte: math.MaxUint64, TxFeeFixed: 1},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := MinFee(tt.size, tt.params); err == nil {
+				t.Fatal("MinFee accepted invalid input")
+			}
+		})
+	}
+}
+
+func TestMinFeeAcceptsProtocolCoinBoundaries(t *testing.T) {
+	fee, err := MinFee(0, ProtocolParams{
+		TxFeePerByte: math.MaxUint64,
+		TxFeeFixed:   math.MaxUint64,
+	})
+	if err != nil {
+		t.Fatalf("MinFee rejected valid zero-size boundary: %v", err)
+	}
+	if fee != math.MaxUint64 {
+		t.Fatalf("MinFee = %d, want %d", fee, uint64(math.MaxUint64))
 	}
 }
 
@@ -81,5 +131,30 @@ func TestParseProtocolParams_RequiresBothFeeFields(t *testing.T) {
 		if _, err := ParseProtocolParams([]byte(js)); err == nil {
 			t.Fatalf("expected error for params %s", js)
 		}
+	}
+}
+
+func TestParseProtocolParamsRejectsOutOfRangeJSON(t *testing.T) {
+	tests := []string{
+		`{"txFeePerByte":-1,"txFeeFixed":0}`,
+		`{"txFeePerByte":18446744073709551616,"txFeeFixed":0}`,
+		`{"txFeePerByte":0.5,"txFeeFixed":0}`,
+	}
+	for _, js := range tests {
+		t.Run(js, func(t *testing.T) {
+			if _, err := ParseProtocolParams([]byte(js)); err == nil {
+				t.Fatal("expected protocol parameter range error")
+			}
+		})
+	}
+}
+
+func TestParseProtocolParamsAcceptsProtocolCoinBoundaries(t *testing.T) {
+	p, err := ParseProtocolParams([]byte(`{"txFeePerByte":18446744073709551615,"txFeeFixed":18446744073709551615}`))
+	if err != nil {
+		t.Fatalf("parse protocol Coin boundaries: %v", err)
+	}
+	if p.TxFeePerByte != math.MaxUint64 || p.TxFeeFixed != math.MaxUint64 {
+		t.Fatalf("unexpected protocol params: %+v", p)
 	}
 }

@@ -16,8 +16,20 @@ interface TestExtension {
 interface TestCIP30API {
   getExtensions(): Promise<TestExtension[]>;
   getNetworkId(): Promise<number>;
+  getUtxos(amount?: string, paginate?: { page: number; limit: number }): Promise<string[] | null>;
+  getBalance(): Promise<string>;
+  getCollateral(params?: { amount: string }): Promise<string[] | null>;
+  getUsedAddresses(paginate?: { page: number; limit: number }): Promise<string[]>;
+  getUnusedAddresses(): Promise<string[]>;
+  getChangeAddress(): Promise<string>;
+  getRewardAddresses(): Promise<string[]>;
+  signTx(tx: string, partialSign?: boolean): Promise<string>;
+  signData(addr: string, payload: string): Promise<{ signature: string; key: string }>;
+  submitTx(tx: string): Promise<string>;
   cip95?: {
     getPubDRepKey(): Promise<string>;
+    getRegisteredPubStakeKeys(): Promise<string[]>;
+    getUnregisteredPubStakeKeys(): Promise<string[]>;
   };
 }
 
@@ -27,11 +39,89 @@ interface TestProvider {
   enable(options?: { extensions?: TestExtension[] }): Promise<TestCIP30API>;
 }
 
+type PostedRequest = {
+  id: string;
+  method: string;
+  params: unknown;
+};
+
+async function enableProvider(
+  postMessageSpy: ReturnType<typeof vi.spyOn>,
+  options?: { extensions?: TestExtension[] },
+): Promise<TestCIP30API> {
+  const provider = window.cardano?.bursa as TestProvider;
+  const enablePromise = provider.enable(options);
+  const enableCall = postMessageSpy.mock.calls.at(-1)?.[0] as PostedRequest;
+  window.dispatchEvent(
+    new MessageEvent('message', {
+      data: { source: 'bursa-cip30-reply', id: enableCall.id, result: true },
+      source: window,
+    }),
+  );
+  return enablePromise;
+}
+
+function replyToLatestRequest(
+  postMessageSpy: ReturnType<typeof vi.spyOn>,
+  result: unknown,
+): PostedRequest {
+  const call = postMessageSpy.mock.calls.at(-1)?.[0] as PostedRequest;
+  window.dispatchEvent(
+    new MessageEvent('message', {
+      data: { source: 'bursa-cip30-reply', id: call.id, result },
+      source: window,
+    }),
+  );
+  return call;
+}
+
 describe('injected provider', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     jsdomEnv.jsdom.reconfigure({ url: 'https://dapp.example/' });
   });
+
+  async function enableWithCIP95(
+    postMessageSpy: ReturnType<typeof vi.spyOn>,
+  ): Promise<TestCIP30API> {
+    const provider = window.cardano?.bursa as TestProvider;
+    const enablePromise = provider.enable({ extensions: [{ cip: 95 }] });
+    const enableCall = postMessageSpy.mock.calls[0][0] as { id: string };
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'bursa-cip30-reply', id: enableCall.id, result: true },
+        source: window,
+      }),
+    );
+    return enablePromise;
+  }
+
+  async function resolveProviderRequest<T>(
+    postMessageSpy: ReturnType<typeof vi.spyOn>,
+    request: () => Promise<T>,
+    method: string,
+    params: unknown,
+    result: T,
+  ): Promise<void> {
+    postMessageSpy.mockClear();
+    const responsePromise = request();
+    const call = postMessageSpy.mock.calls[0][0] as {
+      source: string;
+      id: string;
+      method: string;
+      params: unknown;
+    };
+    expect(call.source).toBe('bursa-cip30');
+    expect(call.method).toBe(method);
+    expect(call.params).toEqual(params);
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'bursa-cip30-reply', id: call.id, result },
+        source: window,
+      }),
+    );
+    await expect(responsePromise).resolves.toEqual(result);
+  }
 
   it('sets window.cardano.bursa with name === "Bursa"', () => {
     expect(window.cardano?.bursa).toBeDefined();
@@ -97,6 +187,99 @@ describe('injected provider', () => {
     const api = await enablePromise;
     await expect(api.getExtensions()).resolves.toEqual([]);
     expect(api.cip95).toBeUndefined();
+  });
+
+  it('forwards and resolves every CIP-30 and enabled CIP-95 method', async () => {
+    const postMessageSpy = vi.spyOn(window, 'postMessage');
+    const api = await enableWithCIP95(postMessageSpy);
+    const paginate = { page: 0, limit: 2 };
+
+    await resolveProviderRequest(postMessageSpy, api.getNetworkId, 'getNetworkId', undefined, 0);
+    await resolveProviderRequest(
+      postMessageSpy,
+      () => api.getUtxos('a1', paginate),
+      'getUtxos',
+      { amount: 'a1', paginate },
+      ['utxo-cbor'],
+    );
+    await resolveProviderRequest(postMessageSpy, api.getBalance, 'getBalance', undefined, 'balance-cbor');
+    await resolveProviderRequest(
+      postMessageSpy,
+      () => api.getCollateral({ amount: 'collateral-amount' }),
+      'getCollateral',
+      { amount: 'collateral-amount' },
+      null,
+    );
+    await resolveProviderRequest(
+      postMessageSpy,
+      () => api.getUsedAddresses(paginate),
+      'getUsedAddresses',
+      { paginate },
+      ['used-address'],
+    );
+    await resolveProviderRequest(
+      postMessageSpy,
+      api.getUnusedAddresses,
+      'getUnusedAddresses',
+      undefined,
+      ['unused-address'],
+    );
+    await resolveProviderRequest(
+      postMessageSpy,
+      api.getChangeAddress,
+      'getChangeAddress',
+      undefined,
+      'change-address',
+    );
+    await resolveProviderRequest(
+      postMessageSpy,
+      api.getRewardAddresses,
+      'getRewardAddresses',
+      undefined,
+      ['reward-address'],
+    );
+    await resolveProviderRequest(
+      postMessageSpy,
+      () => api.signTx('transaction-cbor', true),
+      'signTx',
+      { tx: 'transaction-cbor', partialSign: true },
+      'witness-set-cbor',
+    );
+    await resolveProviderRequest(
+      postMessageSpy,
+      () => api.signData('address-bytes', 'payload-bytes'),
+      'signData',
+      { addr: 'address-bytes', payload: 'payload-bytes' },
+      { signature: 'signature-cbor', key: 'key-cbor' },
+    );
+    await resolveProviderRequest(
+      postMessageSpy,
+      () => api.submitTx('signed-transaction-cbor'),
+      'submitTx',
+      { tx: 'signed-transaction-cbor' },
+      'transaction-id',
+    );
+    await resolveProviderRequest(
+      postMessageSpy,
+      api.cip95!.getPubDRepKey,
+      'cip95.getPubDRepKey',
+      undefined,
+      'drep-key',
+    );
+    await resolveProviderRequest(
+      postMessageSpy,
+      api.cip95!.getRegisteredPubStakeKeys,
+      'cip95.getRegisteredPubStakeKeys',
+      undefined,
+      ['registered-stake-key'],
+    );
+    await resolveProviderRequest(
+      postMessageSpy,
+      api.cip95!.getUnregisteredPubStakeKeys,
+      'cip95.getUnregisteredPubStakeKeys',
+      undefined,
+      ['unregistered-stake-key'],
+    );
   });
 
   it('postMessage shape: getNetworkId posts correct message', async () => {
@@ -312,5 +495,149 @@ describe('injected provider', () => {
     );
 
     await expect(isEnabledPromise).resolves.toBe(false);
+  });
+
+  it('forwards every CIP-30 method with its contract parameters', async () => {
+    const postMessageSpy = vi.spyOn(window, 'postMessage');
+    const api = await enableProvider(postMessageSpy);
+    postMessageSpy.mockClear();
+
+    const cases: Array<{
+      name: string;
+      invoke: () => Promise<unknown>;
+      method: string;
+      params: unknown;
+      result: unknown;
+    }> = [
+      {
+        name: 'getNetworkId',
+        invoke: () => api.getNetworkId(),
+        method: 'getNetworkId',
+        params: undefined,
+        result: 1,
+      },
+      {
+        name: 'getUtxos',
+        invoke: () => api.getUtxos('100', { page: 2, limit: 3 }),
+        method: 'getUtxos',
+        params: { amount: '100', paginate: { page: 2, limit: 3 } },
+        result: ['utxo'],
+      },
+      {
+        name: 'getBalance',
+        invoke: () => api.getBalance(),
+        method: 'getBalance',
+        params: undefined,
+        result: 'balance-cbor',
+      },
+      {
+        name: 'getCollateral',
+        invoke: () => api.getCollateral({ amount: '42' }),
+        method: 'getCollateral',
+        params: { amount: '42' },
+        result: ['collateral'],
+      },
+      {
+        name: 'getUsedAddresses',
+        invoke: () => api.getUsedAddresses({ page: 1, limit: 5 }),
+        method: 'getUsedAddresses',
+        params: { paginate: { page: 1, limit: 5 } },
+        result: ['used-address'],
+      },
+      {
+        name: 'getUnusedAddresses',
+        invoke: () => api.getUnusedAddresses(),
+        method: 'getUnusedAddresses',
+        params: undefined,
+        result: ['unused-address'],
+      },
+      {
+        name: 'getChangeAddress',
+        invoke: () => api.getChangeAddress(),
+        method: 'getChangeAddress',
+        params: undefined,
+        result: 'change-address',
+      },
+      {
+        name: 'getRewardAddresses',
+        invoke: () => api.getRewardAddresses(),
+        method: 'getRewardAddresses',
+        params: undefined,
+        result: ['reward-address'],
+      },
+      {
+        name: 'signTx',
+        invoke: () => api.signTx('tx-cbor', true),
+        method: 'signTx',
+        params: { tx: 'tx-cbor', partialSign: true },
+        result: 'witness-cbor',
+      },
+      {
+        name: 'signData',
+        invoke: () => api.signData('address', 'payload-cbor'),
+        method: 'signData',
+        params: { addr: 'address', payload: 'payload-cbor' },
+        result: { signature: 'signature', key: 'key' },
+      },
+      {
+        name: 'submitTx',
+        invoke: () => api.submitTx('tx-cbor'),
+        method: 'submitTx',
+        params: { tx: 'tx-cbor' },
+        result: 'tx-hash',
+      },
+    ];
+
+    for (const testCase of cases) {
+      const resultPromise = testCase.invoke();
+      const call = postMessageSpy.mock.calls.at(-1)?.[0] as PostedRequest;
+      expect(call, testCase.name).toMatchObject({
+        source: 'bursa-cip30',
+        method: testCase.method,
+      });
+      expect(call.params, testCase.name).toEqual(testCase.params);
+      replyToLatestRequest(postMessageSpy, testCase.result);
+      await expect(resultPromise, testCase.name).resolves.toEqual(testCase.result);
+    }
+  });
+
+  it('forwards every negotiated CIP-95 method and returns its result', async () => {
+    const postMessageSpy = vi.spyOn(window, 'postMessage');
+    const api = await enableProvider(postMessageSpy, { extensions: [{ cip: 95 }] });
+    postMessageSpy.mockClear();
+
+    const cases: Array<{
+      invoke: () => Promise<unknown>;
+      method: string;
+      result: unknown;
+    }> = [
+      {
+        invoke: () => api.cip95!.getPubDRepKey(),
+        method: 'cip95.getPubDRepKey',
+        result: 'drep-key',
+      },
+      {
+        invoke: () => api.cip95!.getRegisteredPubStakeKeys(),
+        method: 'cip95.getRegisteredPubStakeKeys',
+        result: ['registered-key'],
+      },
+      {
+        invoke: () => api.cip95!.getUnregisteredPubStakeKeys(),
+        method: 'cip95.getUnregisteredPubStakeKeys',
+        result: ['unregistered-key'],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const resultPromise = testCase.invoke();
+      const call = postMessageSpy.mock.calls.at(-1)?.[0] as PostedRequest;
+      expect(call).toMatchObject({
+        source: 'bursa-cip30',
+        method: testCase.method,
+        params: undefined,
+      });
+      replyToLatestRequest(postMessageSpy, testCase.result);
+      await expect(resultPromise).resolves.toEqual(testCase.result);
+    }
   });
 });
