@@ -168,7 +168,9 @@ func TestDesktopNotifyHelperProcess(t *testing.T) {
 	if os.Getenv("BURSA_DESKTOPNOTIFY_HELPER") != "1" {
 		return
 	}
-	select {}
+	for {
+		time.Sleep(time.Hour)
+	}
 }
 
 func TestNotifyReturnsFalseForEmptyInput(t *testing.T) {
