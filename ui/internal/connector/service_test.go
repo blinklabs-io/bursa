@@ -291,18 +291,45 @@ func TestServicePairCodeAttemptCap(t *testing.T) {
 // TestServiceBeginPairBounded verifies the pending map cannot grow past its cap.
 func TestServiceBeginPairBounded(t *testing.T) {
 	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	var originalCode string
 	for i := 0; i < maxPendingPairCodes; i++ {
 		id := fmt.Sprintf("chrome-extension://ext-%d", i)
-		if _, err := s.BeginPair(id); err != nil {
+		code, err := s.BeginPair(id)
+		if err != nil {
 			t.Fatalf("BeginPair(%s): %v", id, err)
+		}
+		if i == 0 {
+			originalCode = code
 		}
 	}
 	if _, err := s.BeginPair("chrome-extension://one-too-many"); !errors.Is(err, ErrTooManyPairings) {
 		t.Fatalf("want ErrTooManyPairings past cap, got %v", err)
 	}
-	// Re-initiating an existing extension ID must still succeed (overwrite, no growth).
-	if _, err := s.BeginPair("chrome-extension://ext-0"); err != nil {
+	// Re-initiating an existing extension ID must preserve the claimant's code
+	// so a competing initiation cannot invalidate an in-progress pairing.
+	code, err := s.BeginPair("chrome-extension://ext-0")
+	if err != nil {
 		t.Fatalf("re-pair existing id: %v", err)
+	}
+	pending := s.PendingPairings()
+	if len(pending) != maxPendingPairCodes {
+		t.Fatalf("re-pair changed pending count: got %d, want %d", len(pending), maxPendingPairCodes)
+	}
+	if code != originalCode {
+		t.Fatalf("re-pair replaced the existing code: original %q, returned %q", originalCode, code)
+	}
+	var found bool
+	for _, pairing := range pending {
+		if pairing.ExtensionID == "chrome-extension://ext-0" {
+			found = true
+			if pairing.Code != code {
+				t.Fatalf("re-pair returned code %q, pending code is %q", code, pairing.Code)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatal("re-pair removed the existing pending extension")
 	}
 }
 

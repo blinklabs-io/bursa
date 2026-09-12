@@ -19,7 +19,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,10 +38,25 @@ type SQLiteStore struct {
 	mu sync.RWMutex
 }
 
+const sqliteFileMode = 0o600
+
 // NewSQLiteStore creates a new SQLite-based storage backend.
 // The dsn specifies the database file path or connection string.
 // The schema is automatically created on first use.
 func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
+	dbPath, fileBacked, err := sqliteDatabasePath(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse sqlite database path: %w", err)
+	}
+	if fileBacked {
+		// Create the database with the intended mode before SQLite opens it. This
+		// avoids relying on the process umask for newly-created wallet stores and
+		// narrows the exposure window when opening an existing store.
+		if err := ensureSQLiteFilePermissions(dbPath); err != nil {
+			return nil, fmt.Errorf("failed to secure sqlite database: %w", err)
+		}
+	}
+
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -53,6 +72,12 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 			"failed to set WAL mode: %w",
 			err,
 		)
+	}
+	if fileBacked {
+		if err := secureSQLiteSidecars(dbPath); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to secure sqlite journal files: %w", err)
+		}
 	}
 
 	// Enable foreign keys
@@ -77,8 +102,88 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 			err,
 		)
 	}
+	if fileBacked {
+		if err := secureSQLiteSidecars(dbPath); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to secure sqlite journal files: %w", err)
+		}
+	}
 
 	return store, nil
+}
+
+// sqliteDatabasePath returns the filesystem path for a file-backed SQLite DSN.
+// Memory databases and non-local URI authorities have no path that this
+// package can safely permission. The driver accepts both plain paths and file:
+// URIs, including query parameters such as _pragma and mode.
+func sqliteDatabasePath(dsn string) (string, bool, error) {
+	if dsn == ":memory:" {
+		return "", false, nil
+	}
+
+	if !strings.HasPrefix(dsn, "file:") {
+		if pos := strings.IndexByte(dsn, '?'); pos >= 0 {
+			dsn = dsn[:pos]
+		}
+		if dsn == ":memory:" {
+			return "", false, nil
+		}
+		return dsn, dsn != "", nil
+	}
+
+	uri := dsn[len("file:"):]
+	query := ""
+	if pos := strings.IndexByte(uri, '?'); pos >= 0 {
+		query = uri[pos+1:]
+		uri = uri[:pos]
+	}
+	values, err := url.ParseQuery(query)
+	if err != nil {
+		return "", false, err
+	}
+	if strings.EqualFold(values.Get("mode"), "memory") ||
+		uri == "" || uri == ":memory:" {
+		return "", false, nil
+	}
+
+	if strings.HasPrefix(uri, "//") {
+		parsed, err := url.Parse(dsn)
+		if err != nil {
+			return "", false, err
+		}
+		if parsed.Host != "" && !strings.EqualFold(parsed.Host, "localhost") {
+			// SQLite URI authorities other than localhost are not local paths.
+			return "", false, nil
+		}
+		uri = parsed.Path
+	}
+	path, err := url.PathUnescape(uri)
+	if err != nil {
+		return "", false, err
+	}
+	return path, path != "", nil
+}
+
+func ensureSQLiteFilePermissions(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, sqliteFileMode)
+	if err != nil {
+		return err
+	}
+	if err := f.Chmod(sqliteFileMode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func secureSQLiteSidecars(path string) error {
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		if err := os.Chmod(path+suffix, sqliteFileMode); err != nil &&
+			!errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s: %w", suffix, err)
+		}
+	}
+	return nil
 }
 
 // migrate creates the database schema if it does not exist.
@@ -451,6 +556,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	walletID := w.id
 
 	tx, err := w.store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -460,7 +566,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	if w.id == 0 {
+	if walletID == 0 {
 		// Insert new wallet
 		result, err := tx.ExecContext(
 			ctx,
@@ -473,7 +579,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 				"failed to insert wallet: %w", err,
 			)
 		}
-		w.id, err = result.LastInsertId()
+		walletID, err = result.LastInsertId()
 		if err != nil {
 			return fmt.Errorf(
 				"failed to get wallet id: %w", err,
@@ -486,7 +592,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 			`UPDATE wallets
 			 SET description = ?, updated_at = ?
 			 WHERE id = ?`,
-			w.description, now, w.id,
+			w.description, now, walletID,
 		)
 		if err != nil {
 			return fmt.Errorf(
@@ -499,7 +605,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 	_, err = tx.ExecContext(
 		ctx,
 		"DELETE FROM wallet_items WHERE wallet_id = ?",
-		w.id,
+		walletID,
 	)
 	if err != nil {
 		return fmt.Errorf(
@@ -512,7 +618,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 			ctx,
 			`INSERT INTO wallet_items (wallet_id, key, value)
 			 VALUES (?, ?, ?)`,
-			w.id, key, value,
+			walletID, key, value,
 		)
 		if err != nil {
 			return fmt.Errorf(
@@ -526,6 +632,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 			"failed to commit transaction: %w", err,
 		)
 	}
+	w.id = walletID
 
 	return nil
 }

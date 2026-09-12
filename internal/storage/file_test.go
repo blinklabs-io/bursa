@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -160,6 +161,46 @@ func TestFileStore(t *testing.T) {
 	})
 }
 
+func TestFileStoreListWalletsReleasesStoreLockBeforeLoading(t *testing.T) {
+	store := NewFileStore(t.TempDir())
+	wallet, err := store.CreateWallet("list-lock")
+	require.NoError(t, err)
+	require.NoError(t, wallet.Save(context.Background()))
+
+	loadStarted := make(chan struct{})
+	continueLoading := make(chan struct{})
+	writeLockAvailable := make(chan bool, 1)
+	store.listWalletLoadHook = func() {
+		acquired := store.mu.TryLock()
+		if acquired {
+			store.mu.Unlock()
+		}
+		writeLockAvailable <- acquired
+		close(loadStarted)
+		<-continueLoading
+	}
+
+	listDone := make(chan error, 1)
+	go func() {
+		_, err := store.ListWallets(context.Background())
+		listDone <- err
+	}()
+	<-loadStarted
+
+	// ListWallets must not retain a read lock while loading a wallet. A
+	// writer must be able to acquire the store lock at this handoff.
+	writeLockAcquired := <-writeLockAvailable
+	close(continueLoading)
+	require.True(t, writeLockAcquired, "ListWallets retained the store read lock")
+
+	select {
+	case err := <-listDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("ListWallets did not complete")
+	}
+}
+
 func TestFileStoreWalletOperations(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "bursa-wallet-test")
 	require.NoError(t, err)
@@ -238,6 +279,61 @@ func TestFileStoreRoundTrip(t *testing.T) {
 		t.Fatalf("round trip mismatch: got %q", got)
 	}
 }
+
+func TestFileStoreGetWalletRejectsSymlinkedWalletPath(t *testing.T) {
+	dir := t.TempDir()
+	store := NewFileStore(dir)
+
+	outside := filepath.Join(t.TempDir(), "wallet")
+	require.NoError(t, os.Mkdir(outside, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(outside, "wallet.json"),
+		[]byte(`{"items":{"secret":"value"}}`),
+		0o600,
+	))
+	require.NoError(t, os.Symlink(outside, store.walletDir("linked")))
+
+	_, err := store.GetWallet(context.Background(), "linked")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "directory is a symlink")
+}
+
+func TestFileStoreGetWalletRejectsSymlinkedWalletFile(t *testing.T) {
+	dir := t.TempDir()
+	store := NewFileStore(dir)
+	walletDir := store.walletDir("linked-file")
+	require.NoError(t, os.Mkdir(walletDir, 0o700))
+
+	target := filepath.Join(t.TempDir(), "wallet.json")
+	require.NoError(t, os.WriteFile(
+		target,
+		[]byte(`{"items":{"secret":"value"}}`),
+		0o600,
+	))
+	require.NoError(t, os.Symlink(target, filepath.Join(walletDir, "wallet.json")))
+
+	_, err := store.GetWallet(context.Background(), "linked-file")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "file is a symlink")
+}
+
+func TestFileStoreGetWalletRejectsOversizedWalletFile(t *testing.T) {
+	dir := t.TempDir()
+	store := NewFileStore(dir)
+	walletDir := store.walletDir("oversized")
+	require.NoError(t, os.Mkdir(walletDir, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(walletDir, "wallet.json"),
+		make([]byte, expectedMaxWalletFileSize+1),
+		0o600,
+	))
+
+	_, err := store.GetWallet(context.Background(), "oversized")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
+const expectedMaxWalletFileSize = 4 << 20
 
 func TestFileStoreSaveRefusesEncryptedWalletWithoutKMS(t *testing.T) {
 	cfg := config.GetConfig()

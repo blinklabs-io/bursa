@@ -17,6 +17,7 @@ package activity
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
@@ -98,6 +99,47 @@ func TestNewIncomingTxEmitsOneEventThenDedups(t *testing.T) {
 	}
 	if len(events) != 0 {
 		t.Fatalf("duplicate tx must not re-emit, got %v", events)
+	}
+}
+
+func TestPollBoundsTransactionRetentionToRecentHistory(t *testing.T) {
+	r := &fakeReader{}
+	r.txs = make([]wallet.Tx, maxTrackedTransactions+1)
+	for i := range r.txs {
+		r.txs[i] = received("old-"+strconv.Itoa(i), "1000000")
+		r.txs[i].BlockHeight = uint64(i + 1)
+	}
+
+	svc := New(r)
+	svc.SetActive("w1")
+	if _, err := svc.Poll(context.Background()); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+	if got := len(svc.seenTx); got != maxTrackedTransactions {
+		t.Fatalf("seen transaction count = %d, want %d", got, maxTrackedTransactions)
+	}
+
+	// A new receipt at the head remains observable, while the oldest history is
+	// outside the bounded notification window and must not be re-emitted.
+	r.txs = append([]wallet.Tx{received("new", "2000000")}, r.txs...)
+	r.txs[0].BlockHeight = maxTrackedTransactions + 2
+	events, err := svc.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll new receipt: %v", err)
+	}
+	if len(events) != 1 || events[0].TxHash != "new" {
+		t.Fatalf("new receipt events = %v, want only new receipt", events)
+	}
+	if got := len(svc.seenTx); got != maxTrackedTransactions {
+		t.Fatalf("seen transaction count after eviction = %d, want %d", got, maxTrackedTransactions)
+	}
+
+	events, err = svc.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll stable history: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("stable recent history re-emitted events: %v", events)
 	}
 }
 

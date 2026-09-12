@@ -150,6 +150,27 @@ func TestVerifyPasswordZerosRecoveredVEK(t *testing.T) {
 	}
 }
 
+func TestCreatePublishesStateWhenDirectorySyncFailsAfterRename(t *testing.T) {
+	v := newTestVault(t)
+	oldSync := syncVaultDir
+	syncVaultDir = func(string) error { return errors.New("directory sync failed") }
+	t.Cleanup(func() { syncVaultDir = oldSync })
+
+	err := v.Create(vaultPw)
+	if err == nil {
+		t.Fatal("Create should report the durability error")
+	}
+	if v.Locked() {
+		t.Fatal("Create must publish the in-memory vault after the file is renamed")
+	}
+	if !v.Exists() {
+		t.Fatal("Create must leave the renamed vault available")
+	}
+	if got := v.WalletCount(); got != 0 {
+		t.Fatalf("WalletCount = %d, want 0", got)
+	}
+}
+
 func TestCreateRefusesOverwrite(t *testing.T) {
 	v := newTestVault(t)
 	if err := v.Create(vaultPw); err != nil {
@@ -157,6 +178,16 @@ func TestCreateRefusesOverwrite(t *testing.T) {
 	}
 	if err := v.Create(vaultPw); !errors.Is(err, ErrVaultExists) {
 		t.Fatalf("second Create = %v, want ErrVaultExists", err)
+	}
+}
+
+func TestWriteFileAtomicRejectsOversizedVaultBeforePublish(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vault.json")
+	if err := writeFileAtomic(path, make([]byte, maxVaultLen+1), 0o600); err == nil {
+		t.Fatal("writeFileAtomic should reject data larger than the vault read limit")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversized write published destination: stat error = %v", err)
 	}
 }
 

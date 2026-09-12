@@ -1418,6 +1418,38 @@ func TestHandleScriptValidate(t *testing.T) {
 	assert.Equal(t, true, result["valid"])
 }
 
+func TestBoundedScriptValidationRejectsAdmissionOverflow(t *testing.T) {
+	started := make(chan struct{}, maxConcurrentScriptValidations)
+	release := make(chan struct{})
+	firstDone := make(chan struct{}, maxConcurrentScriptValidations)
+
+	handler := boundedScriptValidation(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		started <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for range maxConcurrentScriptValidations {
+		go func() {
+			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/script/validate", nil))
+			firstDone <- struct{}{}
+		}()
+	}
+	for range maxConcurrentScriptValidations {
+		<-started
+	}
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/script/validate", nil))
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.JSONEq(t, `{"error":"Internal server error"}`, w.Body.String())
+
+	close(release)
+	for range maxConcurrentScriptValidations {
+		<-firstDone
+	}
+}
+
 func TestHandleScriptValidateErrors(t *testing.T) {
 	tests := []struct {
 		name           string

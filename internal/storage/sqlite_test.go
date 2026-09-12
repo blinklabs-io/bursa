@@ -26,6 +26,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSQLiteDatabasePath(t *testing.T) {
+	tests := []struct {
+		name     string
+		dsn      string
+		wantPath string
+		wantFile bool
+	}{
+		{
+			name:     "plain path",
+			dsn:      "/tmp/wallets.db",
+			wantPath: "/tmp/wallets.db",
+			wantFile: true,
+		},
+		{
+			name:     "plain path with query",
+			dsn:      "/tmp/wallets.db?_pragma=journal_mode(WAL)",
+			wantPath: "/tmp/wallets.db",
+			wantFile: true,
+		},
+		{
+			name:     "memory path with query",
+			dsn:      ":memory:?cache=shared",
+			wantFile: false,
+		},
+		{
+			name:     "memory URI",
+			dsn:      "file::memory:?cache=shared",
+			wantFile: false,
+		},
+		{
+			name:     "file URI",
+			dsn:      "file:/tmp/wallet%2Dstore.db?mode=rwc",
+			wantPath: "/tmp/wallet-store.db",
+			wantFile: true,
+		},
+		{
+			name:     "remote URI authority",
+			dsn:      "file://other-host/tmp/wallets.db",
+			wantFile: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path, fileBacked, err := sqliteDatabasePath(tt.dsn)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantPath, path)
+			assert.Equal(t, tt.wantFile, fileBacked)
+		})
+	}
+}
+
 func newTestSQLiteStore(t *testing.T) *SQLiteStore {
 	t.Helper()
 	tempDir, err := os.MkdirTemp("", "bursa-sqlite-test")
@@ -208,6 +260,40 @@ func TestSQLiteStoreWalletOperations(t *testing.T) {
 		_, err := wallet.GetItem("nonexistent")
 		assert.Error(t, err)
 	})
+}
+
+func TestSQLiteWalletSaveDoesNotPublishIDBeforeCommit(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	wallet, err := store.CreateWallet("retry-test")
+	require.NoError(t, err)
+	wallet.PutItem("fault", "value")
+
+	_, err = store.db.Exec(`
+		CREATE TRIGGER fail_wallet_item_insert
+		BEFORE INSERT ON wallet_items
+		WHEN NEW.key = 'fault'
+		BEGIN
+			SELECT RAISE(ABORT, 'injected item failure');
+		END;
+	`)
+	require.NoError(t, err)
+
+	err = wallet.Save(context.Background())
+	require.Error(t, err)
+
+	sqliteWallet, ok := wallet.(*sqliteWallet)
+	require.True(t, ok)
+	assert.Zero(t, sqliteWallet.id)
+
+	_, err = store.db.Exec("DROP TRIGGER fail_wallet_item_insert")
+	require.NoError(t, err)
+	require.NoError(t, wallet.Save(context.Background()))
+
+	loaded, err := store.GetWallet(context.Background(), "retry-test")
+	require.NoError(t, err)
+	value, err := loaded.GetItem("fault")
+	require.NoError(t, err)
+	assert.Equal(t, "value", value)
 }
 
 func TestSQLiteStoreUpdateWallet(t *testing.T) {

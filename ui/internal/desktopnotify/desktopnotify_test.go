@@ -17,9 +17,11 @@ package desktopnotify
 import (
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -138,6 +140,37 @@ func TestStartReportsFalseOnImmediateExitFailure(t *testing.T) {
 	failingFast := exec.Command("go", "bursa-desktopnotify-unknown-subcommand")
 	if got := start(logger, failingFast); got {
 		t.Fatalf("start() with a command that exits with an error = %v, want false", got)
+	}
+}
+
+func TestStartTerminatesAndReapsLongRunningProcess(t *testing.T) {
+	// The helper remains alive until the parent kills it. Before the bounded
+	// shutdown contract, start returned after notifyStartGrace while the
+	// ProcessState was still nil and the Wait goroutine remained blocked.
+	cmd := exec.Command(os.Args[0], "-test.run=TestDesktopNotifyHelperProcess")
+	cmd.Env = append(os.Environ(), "BURSA_DESKTOPNOTIFY_HELPER=1")
+	defer func() {
+		// Keep the regression failure itself from leaving a helper behind when
+		// run against an intentionally broken implementation.
+		if cmd.Process != nil && cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+		}
+	}()
+
+	if got := start(discardLogger(), cmd); !got {
+		t.Fatal("start() for a running notifier = false, want true")
+	}
+	if cmd.ProcessState == nil {
+		t.Fatalf("start() returned before reaping the notifier process: state=%v", cmd.ProcessState)
+	}
+}
+
+func TestDesktopNotifyHelperProcess(t *testing.T) {
+	if os.Getenv("BURSA_DESKTOPNOTIFY_HELPER") != "1" {
+		return
+	}
+	for {
+		time.Sleep(time.Hour)
 	}
 }
 

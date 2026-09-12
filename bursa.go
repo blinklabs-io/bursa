@@ -1913,8 +1913,22 @@ func GetScriptAddress(script Script, networkName string) (string, error) {
 	return addr.String(), nil
 }
 
-// Maximum recursion depth for script validation to prevent stack overflow
-const maxScriptDepth = 20
+// Native-script validation limits bound both recursive and broad scripts before
+// they can consume unbounded CPU or stack space on the API/CLI paths.
+const (
+	maxScriptDepth      = 20
+	maxScriptNodes      = 1024
+	maxScriptWidth      = 256
+	maxScriptSignatures = 256
+)
+
+type scriptValidationBudget struct {
+	nodes int
+	// witnessesByHash is built once at the public boundary. Signature leaves
+	// then inspect only witnesses for their key instead of rescanning the full
+	// witness list for every leaf.
+	witnessesByHash map[string][]ScriptWitness
+}
 
 // ValidateScript checks if a script is satisfied given witnesses and current slot.
 // message is the signed payload (e.g. a transaction body hash) that each
@@ -1929,13 +1943,28 @@ func ValidateScript(
 	slot uint64,
 	requireSignatures bool,
 ) bool {
+	if len(witnesses) > maxScriptSignatures {
+		return false
+	}
+	witnessesByHash := make(map[string][]ScriptWitness, len(witnesses))
+	if requireSignatures {
+		for _, witness := range witnesses {
+			if len(witness.Vkey) != ed25519.PublicKeySize {
+				continue
+			}
+			keyHash := lcommon.Blake2b224Hash(witness.Vkey)
+			key := string(keyHash.Bytes())
+			witnessesByHash[key] = append(witnessesByHash[key], witness)
+		}
+	}
+	budget := &scriptValidationBudget{witnessesByHash: witnessesByHash}
 	return validateScriptWithDepth(
 		script,
 		message,
-		witnesses,
 		slot,
 		requireSignatures,
 		0,
+		budget,
 	)
 }
 
@@ -1943,15 +1972,15 @@ func ValidateScript(
 func validateScriptWithDepth(
 	script Script,
 	message []byte,
-	witnesses []ScriptWitness,
 	slot uint64,
 	requireSignatures bool,
 	depth int,
+	budget *scriptValidationBudget,
 ) bool {
-	// Prevent stack overflow from deeply nested scripts
-	if depth > maxScriptDepth {
+	if depth > maxScriptDepth || budget.nodes >= maxScriptNodes {
 		return false
 	}
+	budget.nodes++
 
 	nativeScript, ok := script.(*NativeScript)
 	if !ok {
@@ -1960,13 +1989,22 @@ func validateScriptWithDepth(
 
 	switch s := nativeScript.Item().(type) {
 	case *NativeScriptPubkey:
-		return validateScriptSig(s, message, witnesses, requireSignatures)
+		return validateScriptSig(s, message, budget.witnessesByHash, requireSignatures)
 	case *NativeScriptAll:
-		return validateScriptAllWithDepth(s, message, witnesses, slot, requireSignatures, depth+1)
+		if len(s.Scripts) > maxScriptWidth {
+			return false
+		}
+		return validateScriptAllWithDepth(s, message, slot, requireSignatures, depth+1, budget)
 	case *NativeScriptAny:
-		return validateScriptAnyWithDepth(s, message, witnesses, slot, requireSignatures, depth+1)
+		if len(s.Scripts) > maxScriptWidth {
+			return false
+		}
+		return validateScriptAnyWithDepth(s, message, slot, requireSignatures, depth+1, budget)
 	case *NativeScriptNofK:
-		return validateScriptNOfWithDepth(s, message, witnesses, slot, requireSignatures, depth+1)
+		if len(s.Scripts) > maxScriptWidth {
+			return false
+		}
+		return validateScriptNOfWithDepth(s, message, slot, requireSignatures, depth+1, budget)
 	case *NativeScriptInvalidBefore:
 		return validateScriptInvalidBefore(s, slot)
 	case *NativeScriptInvalidHereafter:
@@ -1989,7 +2027,7 @@ func validateScriptWithDepth(
 func validateScriptSig(
 	script *NativeScriptPubkey,
 	message []byte,
-	witnesses []ScriptWitness,
+	witnessesByHash map[string][]ScriptWitness,
 	requireSignatures bool,
 ) bool {
 	if !requireSignatures {
@@ -1999,14 +2037,7 @@ func validateScriptSig(
 	if len(script.Hash) != 28 {
 		return false
 	}
-	for _, witness := range witnesses {
-		if len(witness.Vkey) != ed25519.PublicKeySize {
-			continue
-		}
-		keyHash := lcommon.Blake2b224Hash(witness.Vkey)
-		if !bytes.Equal(keyHash.Bytes(), script.Hash) {
-			continue
-		}
+	for _, witness := range witnessesByHash[string(script.Hash)] {
 		if lcommon.VerifyVKeySignature(witness.Vkey, witness.Signature, message) == nil {
 			return true
 		}
@@ -2018,19 +2049,19 @@ func validateScriptSig(
 func validateScriptAllWithDepth(
 	script *NativeScriptAll,
 	message []byte,
-	witnesses []ScriptWitness,
 	slot uint64,
 	requireSignatures bool,
 	depth int,
+	budget *scriptValidationBudget,
 ) bool {
 	for _, subScript := range script.Scripts {
 		if !validateScriptWithDepth(
 			&subScript,
 			message,
-			witnesses,
 			slot,
 			requireSignatures,
 			depth,
+			budget,
 		) {
 			return false
 		}
@@ -2042,19 +2073,19 @@ func validateScriptAllWithDepth(
 func validateScriptAnyWithDepth(
 	script *NativeScriptAny,
 	message []byte,
-	witnesses []ScriptWitness,
 	slot uint64,
 	requireSignatures bool,
 	depth int,
+	budget *scriptValidationBudget,
 ) bool {
 	for _, subScript := range script.Scripts {
 		if validateScriptWithDepth(
 			&subScript,
 			message,
-			witnesses,
 			slot,
 			requireSignatures,
 			depth,
+			budget,
 		) {
 			return true
 		}
@@ -2066,10 +2097,10 @@ func validateScriptAnyWithDepth(
 func validateScriptNOfWithDepth(
 	script *NativeScriptNofK,
 	message []byte,
-	witnesses []ScriptWitness,
 	slot uint64,
 	requireSignatures bool,
 	depth int,
+	budget *scriptValidationBudget,
 ) bool {
 	// Safety check: N should be reasonable for cryptographic purposes
 	if script.N > 255 {
@@ -2080,10 +2111,10 @@ func validateScriptNOfWithDepth(
 		if validateScriptWithDepth(
 			&subScript,
 			message,
-			witnesses,
 			slot,
 			requireSignatures,
 			depth,
+			budget,
 		) {
 			satisfied++
 		}
@@ -2822,7 +2853,8 @@ func UnmarshalScript(data *ScriptData) (Script, error) {
 	if data.Type != "NativeScript" {
 		return nil, fmt.Errorf("unsupported script type: %s", data.Type)
 	}
-	return mapToScript(data.Script)
+	budget := &scriptConstructionBudget{}
+	return mapToScriptWithBudget(data.Script, 0, budget)
 }
 
 // scriptToMap converts a Script to a map for JSON serialization
@@ -2896,8 +2928,20 @@ func scriptToMap(script Script) (map[string]any, error) {
 	}
 }
 
-// mapToScript converts a map back to a Script
-func mapToScript(m map[string]any) (Script, error) {
+type scriptConstructionBudget struct {
+	nodes int
+}
+
+func mapToScriptWithBudget(
+	m map[string]any,
+	depth int,
+	budget *scriptConstructionBudget,
+) (Script, error) {
+	if depth > maxScriptDepth || budget.nodes >= maxScriptNodes {
+		return nil, errors.New("script exceeds validation limits")
+	}
+	budget.nodes++
+
 	scriptType, ok := m["type"].(string)
 	if !ok {
 		return nil, errors.New("missing or invalid script type")
@@ -2923,13 +2967,16 @@ func mapToScript(m map[string]any) (Script, error) {
 		if !ok {
 			return nil, errors.New("missing or invalid scripts for all script")
 		}
+		if len(scriptsInterface) > maxScriptWidth {
+			return nil, errors.New("all script exceeds width limit")
+		}
 		scripts := make([]Script, len(scriptsInterface))
 		for i, scriptInterface := range scriptsInterface {
 			scriptMap, ok := scriptInterface.(map[string]any)
 			if !ok {
 				return nil, fmt.Errorf("invalid script at index %d", i)
 			}
-			script, err := mapToScript(scriptMap)
+			script, err := mapToScriptWithBudget(scriptMap, depth+1, budget)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"failed to parse script at index %d: %w",
@@ -2945,13 +2992,16 @@ func mapToScript(m map[string]any) (Script, error) {
 		if !ok {
 			return nil, errors.New("missing or invalid scripts for any script")
 		}
+		if len(scriptsInterface) > maxScriptWidth {
+			return nil, errors.New("any script exceeds width limit")
+		}
 		scripts := make([]Script, len(scriptsInterface))
 		for i, scriptInterface := range scriptsInterface {
 			scriptMap, ok := scriptInterface.(map[string]any)
 			if !ok {
 				return nil, fmt.Errorf("invalid script at index %d", i)
 			}
-			script, err := mapToScript(scriptMap)
+			script, err := mapToScriptWithBudget(scriptMap, depth+1, budget)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"failed to parse script at index %d: %w",
@@ -2985,13 +3035,16 @@ func mapToScript(m map[string]any) (Script, error) {
 				len(scriptsInterface),
 			)
 		}
+		if len(scriptsInterface) > maxScriptWidth {
+			return nil, errors.New("nOf script exceeds width limit")
+		}
 		scripts := make([]Script, len(scriptsInterface))
 		for i, scriptInterface := range scriptsInterface {
 			scriptMap, ok := scriptInterface.(map[string]any)
 			if !ok {
 				return nil, fmt.Errorf("invalid script at index %d", i)
 			}
-			script, err := mapToScript(scriptMap)
+			script, err := mapToScriptWithBudget(scriptMap, depth+1, budget)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"failed to parse script at index %d: %w",

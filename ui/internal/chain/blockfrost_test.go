@@ -91,6 +91,20 @@ func TestAccountDRepIDFromDingoMetadata(t *testing.T) {
 	}
 }
 
+func TestSQLiteURIPath(t *testing.T) {
+	tests := map[string]string{
+		"/var/lib/dingo/metadata.sqlite": "/var/lib/dingo/metadata.sqlite",
+		`C:\Users\dingo\metadata.sqlite`: "/C:/Users/dingo/metadata.sqlite",
+	}
+	for input, want := range tests {
+		t.Run(input, func(t *testing.T) {
+			if got := sqliteURIPath(input); got != want {
+				t.Fatalf("sqliteURIPath(%q) = %q, want %q", input, got, want)
+			}
+		})
+	}
+}
+
 func TestDingoDRepID(t *testing.T) {
 	hash := make([]byte, lcommon.AddressHashSize)
 	for i := range hash {
