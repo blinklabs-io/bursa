@@ -150,6 +150,18 @@ func TestRequestSigning_ReplayNonce(t *testing.T) {
 	}
 }
 
+func TestRequestSigning_LargeNonceUsesBoundedReplayStorage(t *testing.T) {
+	a, caller, priv := newAuth(t)
+	nonce := strings.Repeat("n", 64*1024)
+	req := signReq(t, caller, priv, http.MethodPost, "/v1/sign", []byte("body"), time.Now(), nonce)
+	if _, ok, err := a.Authenticate(req); !ok || err != nil {
+		t.Fatalf("large nonce should remain protocol-compatible: ok=%v err=%v", ok, err)
+	}
+	if a.cache.bytes != nonceCacheKeyBytes {
+		t.Fatalf("retained key bytes = %d, want %d", a.cache.bytes, nonceCacheKeyBytes)
+	}
+}
+
 func TestRequestSigning_UnknownKey(t *testing.T) {
 	a, _, priv := newAuth(t)
 	req := signReq(t, "mallory", priv, http.MethodPost, "/v1/sign", []byte("x"), time.Now(), "n1")
@@ -200,7 +212,7 @@ func TestRequestSigning_ThroughMiddleware(t *testing.T) {
 // TestNonceCache_Concurrent exercises the cache under concurrent access: for a
 // single (key,nonce) exactly one caller must win, the rest must see errReplay.
 func TestNonceCache_Concurrent(t *testing.T) {
-	c := newNonceCache(time.Minute, 1024)
+	c := newNonceCacheWithByteLimit(time.Minute, 1024, int64(1024)*nonceCacheKeyBytes)
 	const n = 50
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -209,7 +221,7 @@ func TestNonceCache_Concurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := c.checkAndStore("k\x00same-nonce"); err == nil {
+			if err := c.checkAndStore("k", "same-nonce"); err == nil {
 				mu.Lock()
 				wins++
 				mu.Unlock()
@@ -224,33 +236,66 @@ func TestNonceCache_Concurrent(t *testing.T) {
 
 // TestNonceCache_Expiry confirms an expired nonce is purged and reusable.
 func TestNonceCache_Expiry(t *testing.T) {
-	c := newNonceCache(time.Minute, 1024)
+	c := newNonceCacheWithByteLimit(time.Minute, 1024, int64(1024)*nonceCacheKeyBytes)
 	base := time.Now()
 	c.now = func() time.Time { return base }
-	if err := c.checkAndStore("id"); err != nil {
+	if err := c.checkAndStore("", "id"); err != nil {
 		t.Fatalf("first store: %v", err)
 	}
 	// Still within TTL -> replay.
-	if err := c.checkAndStore("id"); err != errReplay {
+	if err := c.checkAndStore("", "id"); err != errReplay {
 		t.Fatalf("expected errReplay, got %v", err)
 	}
 	// Advance past TTL -> entry purged, reusable.
 	c.now = func() time.Time { return base.Add(2 * time.Minute) }
-	if err := c.checkAndStore("id"); err != nil {
+	if err := c.checkAndStore("", "id"); err != nil {
 		t.Fatalf("after expiry: %v", err)
 	}
 }
 
 // TestNonceCache_Full fails closed at capacity.
 func TestNonceCache_Full(t *testing.T) {
-	c := newNonceCache(time.Minute, 2)
-	if err := c.checkAndStore("a"); err != nil {
+	c := newNonceCacheWithByteLimit(time.Minute, 2, int64(2)*nonceCacheKeyBytes)
+	if err := c.checkAndStore("", "a"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.checkAndStore("b"); err != nil {
+	if err := c.checkAndStore("", "b"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.checkAndStore("c"); err != errNonceCacheFull {
+	if err := c.checkAndStore("", "c"); err != errNonceCacheFull {
 		t.Fatalf("expected errNonceCacheFull, got %v", err)
+	}
+}
+
+// TestNonceCache_BoundsRetainedNonceBytes is a regression for BD3-F3. The cache
+// must not retain an arbitrarily large authenticated nonce.
+func TestNonceCache_BoundsRetainedNonceBytes(t *testing.T) {
+	c := newNonceCacheWithByteLimit(time.Minute, 100, 2*nonceCacheKeyBytes)
+	largeNonce := strings.Repeat("n", 1024)
+	if err := c.checkAndStore("caller", largeNonce); err != nil {
+		t.Fatalf("large nonce should be admitted without retaining its bytes: %v", err)
+	}
+	if c.bytes != nonceCacheKeyBytes {
+		t.Fatalf("retained key bytes = %d, want %d", c.bytes, nonceCacheKeyBytes)
+	}
+	if err := c.checkAndStore("caller", largeNonce+"2"); err != nil {
+		t.Fatalf("second large nonce should fit the byte budget: %v", err)
+	}
+	if c.bytes > 2*nonceCacheKeyBytes {
+		t.Fatalf("retained key bytes = %d, exceeds budget %d", c.bytes, 2*nonceCacheKeyBytes)
+	}
+	if err := c.checkAndStore("caller", largeNonce+"3"); err != errNonceCacheFull {
+		t.Fatalf("third large nonce should hit the byte budget, got %v", err)
+	}
+	for key := range c.entries {
+		if len(key) != nonceCacheKeyBytes {
+			t.Fatalf("cache retained key width %d, want %d", len(key), nonceCacheKeyBytes)
+		}
+	}
+}
+
+func TestNonceCacheKey_DelimitsCallerAndNonce(t *testing.T) {
+	if nonceCacheKey("a", "bc") == nonceCacheKey("ab", "c") {
+		t.Fatal("caller and nonce fields must remain distinct")
 	}
 }
