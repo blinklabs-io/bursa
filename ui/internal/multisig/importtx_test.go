@@ -949,6 +949,53 @@ func TestSubmitImported_ThresholdMetBroadcasts(t *testing.T) {
 	}
 }
 
+func TestSubmitImportedClassifiesBackendTimeout(t *testing.T) {
+	fc := newFakeChain()
+	ks := newTestKeystore(t, mnemonicA)
+	svc := NewService(fc, ks, &memAccounts{})
+	mk, err := svc.MyKey("test-password-123")
+	if err != nil {
+		t.Fatalf("MyKey: %v", err)
+	}
+	acct, err := createForTest(svc, CreateRequest{
+		Label: "1of1", Network: "preview",
+		Policy: Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: mk.KeyHashHex}}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fc.addUTxO(acct.ScriptAddress, strings.Repeat("77", 32), 0, 10_000_000)
+	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	signed, err := svc.CosignImported(built.UnsignedTxCBOR, "test-password-123")
+	if err != nil {
+		t.Fatalf("CosignImported: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		backendErr error
+		unknown    bool
+	}{
+		"timeout":  {backendErr: context.DeadlineExceeded, unknown: true},
+		"rejected": {backendErr: errors.New("ledger rejected")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fc.submitErr = tc.backendErr
+			_, err := svc.SubmitImported(context.Background(), signed.TxCBOR)
+			if err == nil {
+				t.Fatal("SubmitImported returned nil error")
+			}
+			if got := errors.Is(err, ErrSubmitUnknown); got != tc.unknown {
+				t.Fatalf("ErrSubmitUnknown = %t, want %t: %v", got, tc.unknown, err)
+			}
+			if got := errors.Is(err, ErrSubmitRejected); got == tc.unknown {
+				t.Fatalf("ErrSubmitRejected = %t for unknown=%t: %v", got, tc.unknown, err)
+			}
+		})
+	}
+}
+
 // ordinaryUnsignedTxHex builds a plain (non-script) unsigned spend directly
 // through apollo — no AttachScript call — so the resulting Conway tx's
 // witness set carries zero native scripts. It exercises the same

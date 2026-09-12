@@ -51,6 +51,7 @@ type fakeChain struct {
 	pp          backend.ProtocolParameters
 	maxTxFeeErr error
 	submitHash  lcommon.Blake2b256 // canned hash returned by SubmitTx
+	submitErr   error
 	submitCalls int                // count of SubmitTx invocations
 	submitCbor  []byte
 	submitMu    sync.Mutex
@@ -213,6 +214,9 @@ func (fc *fakeChain) SubmitTx(tx []byte) (lcommon.Blake2b256, error) {
 	if fc.releaseSubmit != nil {
 		<-fc.releaseSubmit
 	}
+	if fc.submitErr != nil {
+		return lcommon.Blake2b256{}, fc.submitErr
+	}
 	return fc.submitHash, nil
 }
 
@@ -244,6 +248,31 @@ func (fc *fakeChain) ScriptCbor(_ lcommon.Blake2b224) ([]byte, error) {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+func TestSubmitClassifiesBackendOutcome(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	for name, want := range map[string]struct {
+		backendErr error
+		unknown    bool
+	}{
+		"deadline": {backendErr: context.DeadlineExceeded, unknown: true},
+		"rejected": {backendErr: errors.New("ledger rejected")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			service := NewService(&fakeChain{submitErr: want.backendErr}, nil, acct)
+			_, err := service.Submit(context.Background(), []byte("signed-tx"))
+			if err == nil {
+				t.Fatal("Submit returned nil error")
+			}
+			if got := errors.Is(err, ErrSubmitUnknown); got != want.unknown {
+				t.Fatalf("ErrSubmitUnknown = %t, want %t: %v", got, want.unknown, err)
+			}
+			if got := errors.Is(err, ErrSubmitRejected); got == want.unknown {
+				t.Fatalf("ErrSubmitRejected = %t for unknown=%t: %v", got, want.unknown, err)
+			}
+		})
+	}
+}
 
 func TestBuildProducesPreview(t *testing.T) {
 	acct := mustDeriveTestAccount(t)
