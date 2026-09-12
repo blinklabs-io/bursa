@@ -11,7 +11,41 @@ import (
 )
 
 func openSecretKeyFile(path string) (*os.File, error) {
-	return os.Open(path)
+	handle, err := windows.CreateFile(
+		windows.StringToUTF16Ptr(path),
+		windows.GENERIC_READ|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	if err != nil {
+		return nil, err
+	}
+	var tagInfo struct {
+		FileAttributes uint32
+		ReparseTag     uint32
+	}
+	if err := windows.GetFileInformationByHandleEx(
+		handle,
+		windows.FileAttributeTagInfo,
+		(*byte)(unsafe.Pointer(&tagInfo)),
+		uint32(unsafe.Sizeof(tagInfo)),
+	); err != nil {
+		_ = windows.CloseHandle(handle)
+		return nil, err
+	}
+	if tagInfo.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		_ = windows.CloseHandle(handle)
+		return nil, errors.New("secret key file is a reparse point")
+	}
+	file := os.NewFile(uintptr(handle), path)
+	if file == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, errors.New("failed to open file handle")
+	}
+	return file, nil
 }
 
 func createSecretKeyFile(path string) (*os.File, error) {

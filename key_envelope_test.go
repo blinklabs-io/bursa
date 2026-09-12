@@ -201,6 +201,8 @@ func TestExtendedEnvelopeRejectsMismatchedPublicKey(t *testing.T) {
 	tamperedHex := hex.EncodeToString(tamperedCbor)
 
 	extendedTypes := []string{
+		"RootExtendedSigningKeyShelley_ed25519_bip32",
+		"AccountExtendedSigningKeyShelley_ed25519_bip32",
 		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		"StakeExtendedSigningKeyShelley_ed25519_bip32",
 		"DRepExtendedSigningKeyShelley_ed25519_bip32",
@@ -208,6 +210,7 @@ func TestExtendedEnvelopeRejectsMismatchedPublicKey(t *testing.T) {
 		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
 		"StakePoolExtendedSigningKeyShelley_ed25519_bip32",
 		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		"CalidusExtendedSigningKeyShelley_ed25519_bip32",
 	}
 	for _, keyType := range extendedTypes {
 		t.Run(keyType, func(t *testing.T) {

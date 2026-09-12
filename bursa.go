@@ -1234,6 +1234,12 @@ func GetVRFKeyPair(seed []byte) ([]byte, []byte, error) {
 
 // GetVRFVKey creates a KeyFile for a VRF verification key
 func GetVRFVKey(vrfPubKey []byte) (KeyFile, error) {
+	if len(vrfPubKey) != vrf.PublicKeySize {
+		return KeyFile{}, fmt.Errorf(
+			"invalid VRF verification key size: got %d, expected %d",
+			len(vrfPubKey), vrf.PublicKeySize,
+		)
+	}
 	keyCbor, err := cbor.Encode(vrfPubKey)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
@@ -1252,6 +1258,27 @@ func GetVRFVKey(vrfPubKey []byte) (KeyFile, error) {
 
 // GetVRFSKey creates a KeyFile for a VRF signing key
 func GetVRFSKey(vrfSecKey []byte) (KeyFile, error) {
+	switch len(vrfSecKey) {
+	case vrf.SeedSize:
+		// Bursa's native form stores the seed; the loader derives its identity.
+	case vrf.SeedSize + vrf.PublicKeySize:
+		// Preserve cardano-cli's seed||public-key form, but do not emit an
+		// envelope whose embedded identity disagrees with the seed.
+		derived, _, err := vrf.KeyGen(vrfSecKey[:vrf.SeedSize])
+		if err != nil {
+			return KeyFile{}, fmt.Errorf("failed to derive VRF public key: %w", err)
+		}
+		if subtle.ConstantTimeCompare(derived, vrfSecKey[vrf.SeedSize:]) != 1 {
+			return KeyFile{}, errors.New(
+				"invalid VRF signing key: embedded public key does not match the seed",
+			)
+		}
+	default:
+		return KeyFile{}, fmt.Errorf(
+			"invalid VRF signing key size: got %d, expected %d or %d",
+			len(vrfSecKey), vrf.SeedSize, vrf.SeedSize+vrf.PublicKeySize,
+		)
+	}
 	keyCbor, err := cbor.Encode(vrfSecKey)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
@@ -1310,6 +1337,12 @@ func GetKESKeyPair(seed []byte) (*kes.SecretKey, []byte, error) {
 
 // GetKESVKey creates a KeyFile for a KES verification key
 func GetKESVKey(kesPubKey []byte) (KeyFile, error) {
+	if len(kesPubKey) != kes.PublicKeySize {
+		return KeyFile{}, fmt.Errorf(
+			"invalid KES verification key size: got %d, expected %d",
+			len(kesPubKey), kes.PublicKeySize,
+		)
+	}
 	keyCbor, err := cbor.Encode(kesPubKey)
 	if err != nil {
 		return KeyFile{}, fmt.Errorf(
@@ -1330,6 +1363,18 @@ func GetKESVKey(kesPubKey []byte) (KeyFile, error) {
 func GetKESSKey(kesSecKey *kes.SecretKey) (KeyFile, error) {
 	if kesSecKey == nil {
 		return KeyFile{}, errors.New("KES secret key cannot be nil")
+	}
+	if kesSecKey.Depth != kes.CardanoKesDepth {
+		return KeyFile{}, fmt.Errorf(
+			"invalid KES secret key depth: got %d, expected %d",
+			kesSecKey.Depth, kes.CardanoKesDepth,
+		)
+	}
+	if len(kesSecKey.Data) != kes.CardanoKesSecretKeySize {
+		return KeyFile{}, fmt.Errorf(
+			"invalid KES secret key size: got %d, expected %d",
+			len(kesSecKey.Data), kes.CardanoKesSecretKeySize,
+		)
 	}
 
 	keyCbor, err := cbor.Encode(kesSecKey.Data)
@@ -1439,11 +1484,17 @@ type PoolRegistrationCertificate struct {
 func CreatePoolRegistrationCertificate(
 	cert *PoolRegistrationCertificate,
 ) ([]byte, error) {
+	if cert == nil {
+		return nil, errors.New("pool registration certificate cannot be nil")
+	}
 	// Build the CBOR structure per Shelley spec:
 	// [3, operator, vrf_keyhash, pledge, cost, margin,
 	//  reward_account, pool_owners, relays, pool_metadata]
-	if cert.MarginDenom == 0 {
-		return nil, errors.New("margin denominator must not be zero")
+	if cert.MarginDenom <= 0 {
+		return nil, errors.New("margin denominator must be positive")
+	}
+	if cert.MarginNum < 0 || cert.MarginNum > cert.MarginDenom {
+		return nil, errors.New("margin numerator must be between zero and denominator")
 	}
 	margin := lcommon.NewGenesisRat(
 		cert.MarginNum,
@@ -1509,6 +1560,9 @@ type PoolRetirementCertificateParams struct {
 func CreatePoolRetirementCertificate(
 	params *PoolRetirementCertificateParams,
 ) ([]byte, error) {
+	if params == nil {
+		return nil, errors.New("pool retirement certificate parameters cannot be nil")
+	}
 	// CBOR structure: [4, pool_keyhash, epoch]
 	certData := []any{
 		uint(4), // cert type: pool retirement
@@ -2510,13 +2564,37 @@ func LoadKeyFromBytes(data []byte) (*LoadedKey, error) {
 // LoadKeyFromFile loads a key from a file path (cardano-cli format).
 // Supports all key types including VRF, KES, and operational certificates.
 func LoadKeyFromFile(path string) (*LoadedKey, error) {
-	data, err := os.ReadFile(path)
+	file, err := openSecretKeyFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open key file %q: %w", path, err)
+	}
+	defer file.Close() //nolint:errcheck // read-only handle
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat key file %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("key file %q is not a regular file (mode %s)", path, info.Mode())
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxSecretKeyFileSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key file %q: %w", path, err)
+	}
+	if len(data) > maxSecretKeyFileSize {
+		return nil, fmt.Errorf(
+			"key file %q exceeds maximum size of %d bytes",
+			path,
+			maxSecretKeyFileSize,
+		)
 	}
 	key, err := parseKeyEnvelope(data)
 	if err != nil {
 		return nil, err
+	}
+	if len(key.SKey) > 0 {
+		if err := checkOpenFilePermissions(file); err != nil {
+			return nil, err
+		}
 	}
 	key.File = filepath.Base(path)
 	return key, nil

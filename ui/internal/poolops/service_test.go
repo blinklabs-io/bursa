@@ -20,6 +20,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
+	"math"
 	"math/big"
 	"strings"
 	"testing"
@@ -398,6 +399,21 @@ func TestServiceRotateKES(t *testing.T) {
 	}
 	if rotated.KesVKeyHex == idx0.KesVKeyHex {
 		t.Fatal("rotated KES vkey equals index-0 vkey; rotation did not change keys")
+	}
+}
+
+func TestServiceRotateKESRejectsIssueNumberOverflow(t *testing.T) {
+	s, _ := newSeedService(t)
+
+	_, err := s.RotateKES("spend-password", 1, math.MaxUint64, 5)
+	if err == nil {
+		t.Fatal("RotateKES accepted an issue number that would overflow")
+	}
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("RotateKES error = %v, want ErrInvalidRequest", err)
+	}
+	if !strings.Contains(err.Error(), "issue number overflow") {
+		t.Fatalf("RotateKES error = %q, want issue number overflow", err)
 	}
 }
 

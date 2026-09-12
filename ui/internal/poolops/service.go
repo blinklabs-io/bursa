@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -290,6 +291,9 @@ func (s *Service) IssueOpCert(password string, kesIndex uint32, issueNumber, kes
 // counter incremented. The current issue number is supplied by the caller (read
 // from the previous opcert / counter file); the new cert uses prevIssue+1.
 func (s *Service) RotateKES(password string, newKESIndex uint32, prevIssueNumber, kesPeriod uint64) (OpCert, error) {
+	if prevIssueNumber == math.MaxUint64 {
+		return OpCert{}, fmt.Errorf("%w: KES issue number overflow", ErrInvalidRequest)
+	}
 	return s.IssueOpCert(password, newKESIndex, prevIssueNumber+1, kesPeriod)
 }
 
