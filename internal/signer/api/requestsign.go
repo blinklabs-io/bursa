@@ -214,10 +214,6 @@ type nonceCache struct {
 	now      func() time.Time
 }
 
-func newNonceCache(ttl time.Duration, max int) *nonceCache {
-	return newNonceCacheWithByteLimit(ttl, max, int64(max)*nonceCacheKeyBytes)
-}
-
 func newNonceCacheWithByteLimit(ttl time.Duration, max int, maxBytes int64) *nonceCache {
 	return &nonceCache{
 		entries:  make(map[[nonceCacheKeyBytes]byte]int64),

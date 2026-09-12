@@ -212,7 +212,7 @@ func TestRequestSigning_ThroughMiddleware(t *testing.T) {
 // TestNonceCache_Concurrent exercises the cache under concurrent access: for a
 // single (key,nonce) exactly one caller must win, the rest must see errReplay.
 func TestNonceCache_Concurrent(t *testing.T) {
-	c := newNonceCache(time.Minute, 1024)
+	c := newNonceCacheWithByteLimit(time.Minute, 1024, int64(1024)*nonceCacheKeyBytes)
 	const n = 50
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -236,7 +236,7 @@ func TestNonceCache_Concurrent(t *testing.T) {
 
 // TestNonceCache_Expiry confirms an expired nonce is purged and reusable.
 func TestNonceCache_Expiry(t *testing.T) {
-	c := newNonceCache(time.Minute, 1024)
+	c := newNonceCacheWithByteLimit(time.Minute, 1024, int64(1024)*nonceCacheKeyBytes)
 	base := time.Now()
 	c.now = func() time.Time { return base }
 	if err := c.checkAndStore("", "id"); err != nil {
@@ -255,7 +255,7 @@ func TestNonceCache_Expiry(t *testing.T) {
 
 // TestNonceCache_Full fails closed at capacity.
 func TestNonceCache_Full(t *testing.T) {
-	c := newNonceCache(time.Minute, 2)
+	c := newNonceCacheWithByteLimit(time.Minute, 2, int64(2)*nonceCacheKeyBytes)
 	if err := c.checkAndStore("", "a"); err != nil {
 		t.Fatal(err)
 	}
