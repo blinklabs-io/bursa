@@ -27,7 +27,7 @@ import type { ActivityEvent } from "./api/types";
 class MockNotification {
   static instances: MockNotification[] = [];
   static permission: NotificationPermission = "default";
-  static requestPermission = vi.fn(async () => {
+  static requestPermission: () => Promise<NotificationPermission> = vi.fn(async () => {
     MockNotification.permission = "granted";
     return MockNotification.permission;
   });
@@ -45,7 +45,7 @@ class MockNotification {
 function installMockNotification(permission: NotificationPermission = "granted") {
   MockNotification.instances = [];
   MockNotification.permission = permission;
-  MockNotification.requestPermission = vi.fn(async () => {
+  MockNotification.requestPermission = vi.fn(async (): Promise<NotificationPermission> => {
     MockNotification.permission = "granted";
     return MockNotification.permission;
   });
