@@ -32,11 +32,13 @@ const {
     addressFieldHex: "0011",
   });
 
-  const mockAdaConstructor = vi.fn().mockImplementation(() => ({
-    getExtendedPublicKey: mockGetExtendedPublicKey,
-    signTransaction: mockSignTransaction,
-    signMessage: mockSignMessage,
-  }));
+  const mockAdaConstructor = vi.fn(function MockAda() {
+    return {
+      getExtendedPublicKey: mockGetExtendedPublicKey,
+      signTransaction: mockSignTransaction,
+      signMessage: mockSignMessage,
+    };
+  });
 
   return {
     mockTransport,
@@ -144,11 +146,13 @@ describe("connectLedger", () => {
       addressFieldHex: "0011",
     });
     mockTransport.close.mockResolvedValue(undefined);
-    mockAdaConstructor.mockImplementation(() => ({
-      getExtendedPublicKey: mockGetExtendedPublicKey,
-      signTransaction: mockSignTransaction,
-      signMessage: mockSignMessage,
-    }));
+    mockAdaConstructor.mockImplementation(function MockAda() {
+      return {
+        getExtendedPublicKey: mockGetExtendedPublicKey,
+        signTransaction: mockSignTransaction,
+        signMessage: mockSignMessage,
+      };
+    });
     setWebHID(true);
   });
 
