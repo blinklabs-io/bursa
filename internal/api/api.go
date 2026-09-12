@@ -952,9 +952,9 @@ func Start(
 	// Start API server.
 	go serve(apiServer, apiListener, tlsConfigured)
 
-	shutdown := func() {
+	shutdown := func(ctx context.Context) {
 		shutdownCtx, cancel := context.WithTimeout(
-			context.Background(),
+			context.WithoutCancel(ctx),
 			10*time.Second,
 		)
 		defer cancel()
@@ -975,11 +975,11 @@ func Start(
 
 	select {
 	case err := <-serveErrs:
-		shutdown()
+		shutdown(ctx)
 		servers.Wait()
 		return err
 	case <-ctx.Done():
-		shutdown()
+		shutdown(ctx)
 		servers.Wait()
 		return nil
 	}
