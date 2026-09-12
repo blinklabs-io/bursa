@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
+import type { Mock } from "vitest";
 import {
   CardanoSignature,
   CryptoMultiAccounts,
@@ -49,11 +50,11 @@ vi.mock("@keystonehq/hw-transport-webusb", () => ({
 vi.mock("@keystonehq/hw-app-ada", () => ({
   // The neutral→SDK mapping references these enums; concrete values are
   // irrelevant to the witness parity we assert, so stand-ins suffice.
-  default: vi.fn().mockImplementation(() => ({
-    getAppConfig: mockGetAppConfig,
-    getExtendedPublicKeys: mockGetXpubs,
-    signTransaction: mockSignTx,
-  })),
+  default: class MockAda {
+    getAppConfig = mockGetAppConfig;
+    getExtendedPublicKeys = mockGetXpubs;
+    signTransaction = mockSignTx;
+  },
   AddressType: { BASE_PAYMENT_KEY_STAKE_KEY: 0 },
   TransactionSigningMode: { ORDINARY_TRANSACTION: "ordinary_transaction" },
   TxOutputDestinationType: { DEVICE_OWNED: "device_owned", THIRD_PARTY: "third_party" },
@@ -165,10 +166,10 @@ function signatureCborHex(
   return Buffer.from(sig.toUR().cbor).toString("hex");
 }
 
-function makeBridge(): KeystoneQRBridge & {
-  displayRequest: ReturnType<typeof vi.fn>;
-  scanResponse: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn>;
+function makeBridge(): Omit<KeystoneQRBridge, "displayRequest" | "scanResponse" | "close"> & {
+  displayRequest: Mock<KeystoneQRBridge["displayRequest"]>;
+  scanResponse: Mock<KeystoneQRBridge["scanResponse"]>;
+  close: Mock<KeystoneQRBridge["close"]>;
 } {
   return {
     displayRequest: vi.fn(),
