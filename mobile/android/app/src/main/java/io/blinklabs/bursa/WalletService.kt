@@ -117,6 +117,13 @@ class WalletService : Service() {
         }
 
         fun onResume() {
+            synchronized(walletLock) {
+                if (shuttingDown) return
+                if (app == null && bootError == null) {
+                    enqueueWalletStart()
+                    return
+                }
+            }
             enqueueWalletKick("onResume") { it.onResume() }
         }
     }
@@ -212,6 +219,14 @@ class WalletService : Service() {
         registerNetworkCallback()
     }
 
+    private fun enqueueWalletStart() {
+        try {
+            walletExecutor.execute { startWalletIfNeeded() }
+        } catch (e: RejectedExecutionException) {
+            android.util.Log.w(TAG, "wallet restart rejected", e)
+        }
+    }
+
     // registerNetworkCallback subscribes to connectivity events. Lives in the
     // service (moved out of the Activity in F2) so re-dial works while
     // backgrounded. ACCESS_NETWORK_STATE is a normal/install-time permission.
@@ -287,6 +302,43 @@ class WalletService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
+
+    // Android 15 (API 35) calls this when a dataSync foreground service reaches
+    // the platform's execution limit. A bound client can keep the service alive
+    // after stopSelf(), so tear down the wallet and callback explicitly too.
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        android.util.Log.w(TAG, "wallet foreground-service timeout")
+        debounceHandler.removeCallbacks(reconnectRunnable)
+        val callback = networkCallback
+        networkCallback = null
+        val instance = synchronized(walletLock) {
+            val current = app
+            app = null
+            started = false
+            reconnectInFlight = false
+            current
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        stopSelfResult(startId)
+        // Return from the platform timeout callback promptly; a native stop
+        // can block while draining an in-flight operation. Queue cleanup before
+        // any resume-triggered restart on the same executor.
+        try {
+            walletExecutor.execute {
+                callback?.let { cb ->
+                    connectivityManager?.unregisterNetworkCallback(cb)
+                }
+                instance?.stop()
+            }
+        } catch (e: RejectedExecutionException) {
+            android.util.Log.w(TAG, "wallet timeout cleanup rejected", e)
+        }
+    }
 
     override fun onDestroy() {
         shuttingDown = true

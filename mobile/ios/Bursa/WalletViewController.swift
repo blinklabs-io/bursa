@@ -56,14 +56,76 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // Boot the wallet in-process. The Documents dir is the app's writable
-        // data dir; "preview" is the network; lean = true selects the
-        // history-expiry profile (small on-disk footprint) for a phone.
-        let dataDir = NSSearchPathForDirectoriesInDomains(
-            .documentDirectory, .userDomainMask, true
-        ).first ?? NSTemporaryDirectory()
+        // Boot the wallet in-process. Application Support is durable,
+        // app-private storage intended for databases and support files; keeping
+        // the node and wallet tree there avoids treating it as user documents.
+        // "preview" is the network; lean = true selects the history-expiry
+        // profile (small on-disk footprint) for a phone.
+        let dataDir = walletDataDirectory().path
 
         startWallet(dataDir: dataDir)
+    }
+
+    private func walletDataDirectory() -> URL {
+        let fileManager = FileManager.default
+        guard let applicationSupport = fileManager.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first else {
+            return URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        }
+        let dataDir = applicationSupport.appendingPathComponent("Bursa", isDirectory: true)
+        let documentsDir = fileManager.urls(
+            for: .documentDirectory, in: .userDomainMask
+        ).first
+
+        var copiedEntries: [URL] = []
+        do {
+            try fileManager.createDirectory(
+                at: dataDir, withIntermediateDirectories: true
+            )
+            if let documentsDir,
+               fileManager.fileExists(atPath: documentsDir.path),
+               fileManager.contentsOfDirectory(atPath: documentsDir.path)?.isEmpty == false {
+                let existingData = fileManager.contentsOfDirectory(atPath: dataDir.path) ?? []
+                if !existingData.isEmpty {
+                    Self.logger.error("wallet data migration already has an authoritative copy")
+                    return dataDir
+                }
+                let entries = try fileManager.contentsOfDirectory(
+                    at: documentsDir,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                )
+                for entry in entries {
+                    let destination = dataDir.appendingPathComponent(entry.lastPathComponent)
+                    try fileManager.copyItem(at: entry, to: destination)
+                    copiedEntries.append(destination)
+                }
+                let migrated = try fileManager.contentsOfDirectory(
+                    at: dataDir,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                )
+                guard Set(migrated.map(\.lastPathComponent)) == Set(entries.map(\.lastPathComponent)) else {
+                    throw NSError(domain: "BursaWalletMigration", code: 1)
+                }
+                do {
+                    for entry in entries {
+                        try fileManager.removeItem(at: entry)
+                    }
+                } catch {
+                    Self.logger.error("wallet legacy cleanup deferred: \(String(describing: error))")
+                    return dataDir
+                }
+            }
+            return dataDir
+        } catch {
+            for entry in copiedEntries { try? fileManager.removeItem(at: entry) }
+            Self.logger.error("wallet data migration failed: \(String(describing: error))")
+            // Keep using the old directory if migration did not complete, so
+            // an upgrade never starts against an empty wallet tree.
+            return documentsDir ?? dataDir
+        }
     }
 
     private func startWallet(dataDir: String) {
