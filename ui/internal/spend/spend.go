@@ -22,6 +22,8 @@ import (
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/submissionctx"
+	"github.com/blinklabs-io/bursa/ui/internal/submissionerror"
 	"github.com/blinklabs-io/bursa/ui/internal/txwitness"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	"github.com/blinklabs-io/gouroboros/cbor"
@@ -48,6 +50,8 @@ var (
 	// ErrSubmitRejected: the node rejected the signed transaction; the wrapped
 	// message carries its structured reason (→ 422).
 	ErrSubmitRejected = errors.New("transaction rejected by node")
+	// ErrSubmitUnknown: broadcast outcome was not known before its deadline (→ 503).
+	ErrSubmitUnknown = errors.New("transaction submission outcome unknown")
 	// ErrWalletChanged: the active wallet changed while a transaction was being
 	// built, so the preview is discarded instead of storing a stale pending send.
 	ErrWalletChanged = errors.New("wallet changed while building transaction")
@@ -1266,8 +1270,9 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	// --- step 1: look up and consume the pending entry (reject unknown / TTL-expired) ---
 	s.mu.Lock()
 	p, ok := s.pending[pendingID]
-	expired := ok && s.now().Sub(p.created) > pendingTTL
+	var expired bool
 	if ok {
+		expired = s.now().Sub(p.created) > pendingTTL
 		delete(s.pending, pendingID)
 	}
 	s.mu.Unlock()
@@ -1421,9 +1426,11 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	// Detach from the request context: the pending entry has already been
 	// consumed and the tx signed, so a client disconnect here must not cancel the
 	// broadcast and strand a transaction that can no longer be replayed.
-	txHash, err := a.WithContext(context.WithoutCancel(ctx)).Submit()
+	submissionContext, cancel := submissionctx.New(ctx)
+	defer cancel()
+	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
 	}
 
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
@@ -1492,11 +1499,10 @@ func (s *Service) ExportUnsigned(pendingID string) (UnsignedTx, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.pending[pendingID]
-	expired := ok && s.now().Sub(p.created) > pendingTTL
 	if !ok {
 		return UnsignedTx{}, fmt.Errorf("%w: %q", ErrUnknownPending, pendingID)
 	}
-	if expired {
+	if expired := s.now().Sub(p.created) > pendingTTL; expired {
 		return UnsignedTx{}, fmt.Errorf("%w: %q", ErrExpiredPending, pendingID)
 	}
 
@@ -1771,9 +1777,11 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 
 	// Detach from the request context: once submitted the inputs are consumed, so
 	// a client disconnect must not strand a broadcast (mirrors Confirm).
-	txHash, err := a.WithContext(context.WithoutCancel(ctx)).Submit()
+	submissionContext, cancel := submissionctx.New(ctx)
+	defer cancel()
+	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
 	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
 }
@@ -1801,9 +1809,11 @@ func certKindsRequireWitnesses(kinds []CertKind) (needsStake, needsDRep bool) {
 func (s *Service) Submit(ctx context.Context, txBytes []byte) (string, error) {
 	// Detach from the request context: the tx is already signed, so a client
 	// disconnect must not cancel the node broadcast and strand it.
-	txHash, err := backend.SubmitTxContext(context.WithoutCancel(ctx), s.chain, txBytes)
+	submissionContext, cancel := submissionctx.New(ctx)
+	defer cancel()
+	txHash, err := backend.SubmitTxContext(submissionContext, s.chain, txBytes)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrSubmitRejected, err)
+		return "", submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
 	}
 	return hex.EncodeToString(txHash.Bytes()), nil
 }
@@ -2877,11 +2887,10 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.pending[pendingID]
-	expired := ok && s.now().Sub(p.created) > pendingTTL
 	if !ok {
 		return HardwareSignRequest{}, fmt.Errorf("%w: %q", ErrUnknownPending, pendingID)
 	}
-	if expired {
+	if expired := s.now().Sub(p.created) > pendingTTL; expired {
 		return HardwareSignRequest{}, fmt.Errorf("%w: %q", ErrExpiredPending, pendingID)
 	}
 
@@ -2936,9 +2945,11 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 	// rejected.
 	// Note: TxWithdrawals is a map[*Address]uint64; len works on nil maps (returns 0).
 	var unsupportedBodyFeature string
+	// No protocol-update case: Conway moved protocol parameter changes out of the
+	// transaction body and into governance proposal procedures, which the
+	// proposal-procedures case below rejects. A body carrying the old field 6
+	// now fails to decode upstream, so a guard here could never fire.
 	switch {
-	case tx.Body.Update != nil:
-		unsupportedBodyFeature = "protocol update"
 	case tx.Body.TxAuxDataHash != nil:
 		unsupportedBodyFeature = "auxiliary data"
 	case tx.Body.TxValidityIntervalStart != 0:

@@ -32,12 +32,13 @@ const {
     addressFieldHex: "0011",
   });
 
-  const mockAdaInstance = {
-    getExtendedPublicKey: mockGetExtendedPublicKey,
-    signTransaction: mockSignTransaction,
-    signMessage: mockSignMessage,
-  };
-  const mockAdaConstructor = vi.fn().mockImplementation(() => mockAdaInstance);
+  const mockAdaConstructor = vi.fn(
+    class MockAda {
+      getExtendedPublicKey = mockGetExtendedPublicKey;
+      signTransaction = mockSignTransaction;
+      signMessage = mockSignMessage;
+    },
+  );
 
   return {
     mockTransport,
@@ -145,13 +146,13 @@ describe("connectLedger", () => {
       addressFieldHex: "0011",
     });
     mockTransport.close.mockResolvedValue(undefined);
-    // mockAdaConstructor still returns the hoisted mockAdaInstance with the
-    // now-cleared fns; restore default mock returns set above via the fns.
-    mockAdaConstructor.mockImplementation(() => ({
-      getExtendedPublicKey: mockGetExtendedPublicKey,
-      signTransaction: mockSignTransaction,
-      signMessage: mockSignMessage,
-    }));
+    mockAdaConstructor.mockImplementation(
+      class MockAda {
+        getExtendedPublicKey = mockGetExtendedPublicKey;
+        signTransaction = mockSignTransaction;
+        signMessage = mockSignMessage;
+      },
+    );
     setWebHID(true);
   });
 

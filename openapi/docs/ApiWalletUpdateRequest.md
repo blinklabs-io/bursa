@@ -6,7 +6,6 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **Description** | Pointer to **string** |  | [optional] 
 **Name** | **string** |  | 
-**Password** | Pointer to **string** |  | [optional] 
 
 ## Methods
 
@@ -72,32 +71,6 @@ and a boolean to check if the value has been set.
 SetName sets Name field to given value.
 
 
-### GetPassword
-
-`func (o *ApiWalletUpdateRequest) GetPassword() string`
-
-GetPassword returns the Password field if non-nil, zero value otherwise.
-
-### GetPasswordOk
-
-`func (o *ApiWalletUpdateRequest) GetPasswordOk() (*string, bool)`
-
-GetPasswordOk returns a tuple with the Password field if it's non-nil, zero value otherwise
-and a boolean to check if the value has been set.
-
-### SetPassword
-
-`func (o *ApiWalletUpdateRequest) SetPassword(v string)`
-
-SetPassword sets Password field to given value.
-
-### HasPassword
-
-`func (o *ApiWalletUpdateRequest) HasPassword() bool`
-
-HasPassword returns a boolean if a field has been set.
-
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
 

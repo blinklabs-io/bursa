@@ -15,10 +15,21 @@
 package main
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/internal/signer"
 )
+
+func TestNewSignerHTTPServerReadTimeout(t *testing.T) {
+	srv := newSignerHTTPServer("127.0.0.1:0", http.NotFoundHandler())
+	if srv.ReadHeaderTimeout <= 0 {
+		t.Fatal("signer server must bound header reads")
+	}
+	if srv.ReadTimeout != signerReadTimeout {
+		t.Fatalf("ReadTimeout = %s, want %s", srv.ReadTimeout, signerReadTimeout)
+	}
+}
 
 func TestIsLocalListenAddress(t *testing.T) {
 	tests := []struct {

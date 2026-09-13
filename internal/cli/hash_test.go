@@ -90,13 +90,14 @@ func TestRunHashMetadata(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestRunHashMetadataCanonicalization(t *testing.T) {
+func TestRunHashMetadataPreservesFileBytes(t *testing.T) {
 	// Create a temporary directory for test files
 	tempDir, err := os.MkdirTemp("", "bursa-hash-test")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
-	// Test that different JSON formatting produces the same hash
+	// Cardano hashes the bytes of the hosted metadata file. Formatting changes
+	// therefore change the digest, even when both files decode to the same JSON.
 	metadata1 := `{"name":"Test","value":123}`
 	metadata2 := `{
 		"name": "Test",
@@ -122,8 +123,7 @@ func TestRunHashMetadataCanonicalization(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	// Both should produce the same hash due to canonicalization
-	assert.Equal(t, hash1, hash2, "Canonicalization should produce identical hashes for semantically equivalent JSON")
+	assert.NotEqual(t, hash1, hash2, "Metadata hashing must include the file's exact bytes")
 }
 
 func TestRunHashMetadataErrors(t *testing.T) {
@@ -168,6 +168,6 @@ func TestRunHashMetadataKnownHash(t *testing.T) {
 	})
 
 	// Verify the hash matches the expected value
-	expectedHash := "d7157feba618cc73df1d0cace17e12b27a5a4354c9272ca6d030496fc2556133"
+	expectedHash := "8daf56b8e2174d97fbf3928f89b69195194e6b592b01d176bfb3a048211f5e2d"
 	assert.Equal(t, expectedHash, hash, "Hash should match expected Blake2b-256 value")
 }

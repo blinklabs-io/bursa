@@ -356,8 +356,6 @@ definitions:
         maxLength: 100
         minLength: 1
         type: string
-      password:
-        type: string
     required:
     - name
     type: object
@@ -366,8 +364,6 @@ definitions:
       name:
         maxLength: 100
         minLength: 1
-        type: string
-      password:
         type: string
     required:
     - name
@@ -415,8 +411,6 @@ definitions:
       name:
         maxLength: 100
         minLength: 1
-        type: string
-      password:
         type: string
     required:
     - name
@@ -946,7 +940,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: Deletes a wallet from persistent storage and optional password.
+      description: Deletes a wallet from persistent storage.
         Requires an authenticated wallet storage administrator.
       parameters:
       - description: Wallet Delete Request
@@ -985,7 +979,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: Gets a wallet from persistent storage and optional password and
+      description: Gets a wallet from persistent storage and
         returns wallet details. Requires an authenticated wallet storage administrator.
       parameters:
       - description: Wallet Restore Request
@@ -1079,7 +1073,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: Updates a wallet from persistent storage and optional password
+      description: Updates a wallet from persistent storage
         and returns wallet details. Requires an authenticated wallet storage administrator.
       parameters:
       - description: Wallet Update Request

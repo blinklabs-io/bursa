@@ -24,7 +24,6 @@ var _ MappedNullable = &ApiWalletUpdateRequest{}
 type ApiWalletUpdateRequest struct {
 	Description *string `json:"description,omitempty"`
 	Name        string  `json:"name"`
-	Password    *string `json:"password,omitempty"`
 }
 
 type _ApiWalletUpdateRequest ApiWalletUpdateRequest
@@ -103,38 +102,6 @@ func (o *ApiWalletUpdateRequest) SetName(v string) {
 	o.Name = v
 }
 
-// GetPassword returns the Password field value if set, zero value otherwise.
-func (o *ApiWalletUpdateRequest) GetPassword() string {
-	if o == nil || IsNil(o.Password) {
-		var ret string
-		return ret
-	}
-	return *o.Password
-}
-
-// GetPasswordOk returns a tuple with the Password field value if set, nil otherwise
-// and a boolean to check if the value has been set.
-func (o *ApiWalletUpdateRequest) GetPasswordOk() (*string, bool) {
-	if o == nil || IsNil(o.Password) {
-		return nil, false
-	}
-	return o.Password, true
-}
-
-// HasPassword returns a boolean if a field has been set.
-func (o *ApiWalletUpdateRequest) HasPassword() bool {
-	if o != nil && !IsNil(o.Password) {
-		return true
-	}
-
-	return false
-}
-
-// SetPassword gets a reference to the given string and assigns it to the Password field.
-func (o *ApiWalletUpdateRequest) SetPassword(v string) {
-	o.Password = &v
-}
-
 func (o ApiWalletUpdateRequest) MarshalJSON() ([]byte, error) {
 	toSerialize, err := o.ToMap()
 	if err != nil {
@@ -149,9 +116,6 @@ func (o ApiWalletUpdateRequest) ToMap() (map[string]interface{}, error) {
 		toSerialize["description"] = o.Description
 	}
 	toSerialize["name"] = o.Name
-	if !IsNil(o.Password) {
-		toSerialize["password"] = o.Password
-	}
 	return toSerialize, nil
 }
 

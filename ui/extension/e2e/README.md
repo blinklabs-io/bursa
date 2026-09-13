@@ -83,8 +83,12 @@ python3 -m http.server 8080 --directory ui/extension/e2e
 # then navigate to http://localhost:8080/sample-dapp.html
 ```
 
-You can also open it as a `file://` URL, but only after enabling
-**Allow access to file URLs** for the Bursa extension in `chrome://extensions`.
+Use the HTTP server for this test. Do not open the sample as a `file://` URL:
+file pages have an opaque (`null`) origin, and the Bursa connector accepts only
+an exact `http://` or `https://` origin with a host and no path, query,
+fragment, or user information. Enabling **Allow access to file URLs** lets the
+extension inject into the page, but it does not make the page origin valid for
+connector authorization.
 
 After the page loads you should see:
 
@@ -106,13 +110,13 @@ Work through the buttons top-to-bottom:
 | `getExtensions()` | Returns `[{ "cip": 95 }]` |
 | `getNetworkId()` | Returns `0` (testnet) or `1` (mainnet) |
 | `getBalance()` | Returns a CBOR-hex encoded `Value` |
-| `getUsedAddresses()` | Returns an array of bech32 addresses (may be empty) |
-| `getUnusedAddresses()` | Returns an array of bech32 addresses |
-| `getChangeAddress()` | Returns a single bech32 address |
-| `getRewardAddresses()` | Returns an array of reward (stake) addresses |
+| `getUsedAddresses()` | Returns an array of hex-encoded raw address bytes (may be empty) |
+| `getUnusedAddresses()` | Returns an array of hex-encoded raw address bytes |
+| `getChangeAddress()` | Returns one hex-encoded raw address |
+| `getRewardAddresses()` | Returns an array of hex-encoded raw reward (stake) address bytes |
 | `getUtxos()` | Returns an array of CBOR-hex encoded UTxOs (may be null) |
 | `getCollateral()` | Returns an array of CBOR-hex UTxOs (may be empty) |
-| `signData(addr, payload)` | Bursa shows a **Sign Data** prompt; accept it. Returns `{ signature, key }`. |
+| `signData(addr, payload)` | Pass the hex address returned by an address method. Bursa shows a **Sign Data** prompt; accept it. Returns `{ signature, key }`. |
 | `signTx(dummyTx)` | Bursa shows a **Sign Transaction** prompt; accept it. The dummy tx is invalid so Bursa may return an error after the prompt — that is expected. |
 | `submitTx(dummyTx)` | Expected to fail with a Bursa/node error (dummy tx is not valid). Verifies the call reaches the daemon. |
 | `cip95.getPubDRepKey()` | Returns a hex-encoded DRep public key |

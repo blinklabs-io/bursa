@@ -35,11 +35,38 @@ const COSE_KTY_OKP = 1;
 const COSE_CRV_ED25519 = 6;
 
 /** Encode a non-negative integer as a CBOR unsigned-int head (major type 0). */
-function cborUintHead(n: number): number[] {
+export function cborUintHead(n: number): number[] {
+  if (!Number.isSafeInteger(n) || n < 0) {
+    throw new RangeError(`cborUintHead: ${n} is not a safe non-negative integer`);
+  }
   if (n < 24) return [n];
-  if (n < 256) return [0x18, n];
-  if (n < 65536) return [0x19, n >> 8, n & 0xff];
-  throw new RangeError(`cborUintHead: ${n} is too large`);
+  if (n <= 0xff) return [0x18, n];
+  if (n <= 0xffff) return [0x19, n >> 8, n & 0xff];
+  if (n <= 0xffffffff) {
+    return [
+      0x1a,
+      (n >>> 24) & 0xff,
+      (n >>> 16) & 0xff,
+      (n >>> 8) & 0xff,
+      n & 0xff,
+    ];
+  }
+
+  // JavaScript numbers are exact through 2^53 - 1. BigInt lets us split
+  // that exact value into the eight bytes required by CBOR additional info
+  // 27 without using lossy bitwise operations on a Number.
+  const wide = BigInt(n);
+  return [
+    0x1b,
+    Number((wide >> 56n) & 0xffn),
+    Number((wide >> 48n) & 0xffn),
+    Number((wide >> 40n) & 0xffn),
+    Number((wide >> 32n) & 0xffn),
+    Number((wide >> 24n) & 0xffn),
+    Number((wide >> 16n) & 0xffn),
+    Number((wide >> 8n) & 0xffn),
+    Number(wide & 0xffn),
+  ];
 }
 
 /** Encode a small negative integer (CBOR major type 1: value = -1 - arg). */

@@ -603,6 +603,14 @@ func TestLenientBech32Decode(t *testing.T) {
 	if !bytes.Equal(data2, longData) {
 		t.Error("Decoded data should match original data")
 	}
+	upperLongBech32 := strings.ToUpper(longEncoded)
+	hrpUpperLong, dataUpperLong, err := LenientBech32Decode(upperLongBech32)
+	if err != nil {
+		t.Fatalf("LenientBech32Decode failed on uppercase long string: %v", err)
+	}
+	if hrpUpperLong != "addr_vk" || !bytes.Equal(dataUpperLong, longData) {
+		t.Error("uppercase long encoding should preserve the decoded HRP and data")
+	}
 
 	// Test uppercase Bech32 string (should work with case-insensitive decoding)
 	upperBech32 := strings.ToUpper(validBech32)
@@ -615,6 +623,32 @@ func TestLenientBech32Decode(t *testing.T) {
 	}
 	if !bytes.Equal(data, data3) {
 		t.Error("Uppercase and lowercase should decode to same data")
+	}
+}
+
+func TestLenientBech32DecodeRejectsMixedCaseLongEncoding(t *testing.T) {
+	data := make([]byte, 100)
+	for i := range data {
+		data[i] = byte(i % 32)
+	}
+	encoded, err := bech32.Encode("addr_vk", data)
+	if err != nil {
+		t.Fatalf("bech32.Encode: %v", err)
+	}
+	if len(encoded) <= 90 {
+		t.Fatalf("test encoding must use the lenient path, got length %d", len(encoded))
+	}
+
+	mixed := []byte(encoded)
+	for i, ch := range mixed {
+		if ch >= 'a' && ch <= 'z' {
+			mixed[i] = ch - ('a' - 'A')
+			break
+		}
+	}
+
+	if _, _, err := LenientBech32Decode(string(mixed)); err == nil {
+		t.Fatal("LenientBech32Decode accepted a mixed-case long encoding")
 	}
 }
 

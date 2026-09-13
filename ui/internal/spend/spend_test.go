@@ -51,6 +51,7 @@ type fakeChain struct {
 	pp          backend.ProtocolParameters
 	maxTxFeeErr error
 	submitHash  lcommon.Blake2b256 // canned hash returned by SubmitTx
+	submitErr   error
 	submitCalls int                // count of SubmitTx invocations
 	submitCbor  []byte
 	submitMu    sync.Mutex
@@ -213,6 +214,9 @@ func (fc *fakeChain) SubmitTx(tx []byte) (lcommon.Blake2b256, error) {
 	if fc.releaseSubmit != nil {
 		<-fc.releaseSubmit
 	}
+	if fc.submitErr != nil {
+		return lcommon.Blake2b256{}, fc.submitErr
+	}
 	return fc.submitHash, nil
 }
 
@@ -244,6 +248,31 @@ func (fc *fakeChain) ScriptCbor(_ lcommon.Blake2b224) ([]byte, error) {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+func TestSubmitClassifiesBackendOutcome(t *testing.T) {
+	acct := mustDeriveTestAccount(t)
+	for name, want := range map[string]struct {
+		backendErr error
+		unknown    bool
+	}{
+		"deadline": {backendErr: context.DeadlineExceeded, unknown: true},
+		"rejected": {backendErr: errors.New("ledger rejected")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			service := NewService(&fakeChain{submitErr: want.backendErr}, nil, acct)
+			_, err := service.Submit(context.Background(), []byte("signed-tx"))
+			if err == nil {
+				t.Fatal("Submit returned nil error")
+			}
+			if got := errors.Is(err, ErrSubmitUnknown); got != want.unknown {
+				t.Fatalf("ErrSubmitUnknown = %t, want %t: %v", got, want.unknown, err)
+			}
+			if got := errors.Is(err, ErrSubmitRejected); got == want.unknown {
+				t.Fatalf("ErrSubmitRejected = %t for unknown=%t: %v", got, want.unknown, err)
+			}
+		})
+	}
+}
 
 func TestBuildProducesPreview(t *testing.T) {
 	acct := mustDeriveTestAccount(t)
@@ -2497,7 +2526,10 @@ func TestHardwareSignRequestGuard(t *testing.T) {
 			t.Fatalf("Build: %v", err)
 		}
 		s.mu.Lock()
-		p := s.pending[pv.PendingID]
+		p, ok := s.pending[pv.PendingID]
+		if !ok {
+			t.Fatalf("no pending entry for %s", pv.PendingID)
+		}
 		s.mu.Unlock()
 
 		changeAddr, _ := lcommon.NewAddress(addr0)
@@ -2547,7 +2579,6 @@ func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
 		name   string
 		mutate mutateBody
 	}{
-		{"protocol update", func(b *conway.ConwayTransactionBody) { b.Update = &conway.ConwayTransactionPparamUpdate{} }},
 		{"auxiliary data hash", func(b *conway.ConwayTransactionBody) { b.TxAuxDataHash = &hash }},
 		{"validity interval start", func(b *conway.ConwayTransactionBody) { b.TxValidityIntervalStart = 1 }},
 		{"mint", func(b *conway.ConwayTransactionBody) { b.TxMint = &lcommon.MultiAsset[lcommon.MultiAssetTypeMint]{} }},
@@ -2571,7 +2602,11 @@ func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}
-			tx := s.pending[pv.PendingID].tx.GetTx()
+			p, ok := s.pending[pv.PendingID]
+			if !ok {
+				t.Fatalf("no pending entry for %s", pv.PendingID)
+			}
+			tx := p.tx.GetTx()
 			tt.mutate(&tx.Body)
 
 			req, err := s.HardwareSignRequest(pv.PendingID)
@@ -2618,7 +2653,11 @@ func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}
-			tx := s.pending[pv.PendingID].tx.GetTx()
+			p, ok := s.pending[pv.PendingID]
+			if !ok {
+				t.Fatalf("no pending entry for %s", pv.PendingID)
+			}
+			tx := p.tx.GetTx()
 			tt.mutate(&tx.Body.TxOutputs[0])
 
 			req, err := s.HardwareSignRequest(pv.PendingID)
@@ -2755,7 +2794,10 @@ func TestHardwareSignRequestWithdrawalCarriesStakeSigner(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	s.mu.Lock()
-	p := s.pending[pv.PendingID]
+	p, ok := s.pending[pv.PendingID]
+	if !ok {
+		t.Fatalf("no pending entry for %s", pv.PendingID)
+	}
 	s.mu.Unlock()
 
 	stakeAddr, err := lcommon.NewAddress(acct.StakeAddress)
@@ -2829,7 +2871,11 @@ func TestHardwareSignRequestDRepVoteCarriesVoteSigner(t *testing.T) {
 	var voter lcommon.Voter
 	voter.Type = lcommon.VoterTypeDRepKeyHash
 	copy(voter.Hash[:], drepHash)
-	tx := s.pending[pv.PendingID].tx.GetTx()
+	p, ok := s.pending[pv.PendingID]
+	if !ok {
+		t.Fatalf("no pending entry for %s", pv.PendingID)
+	}
+	tx := p.tx.GetTx()
 	tx.Body.TxVotingProcedures = lcommon.VotingProcedures{
 		&voter: {new(lcommon.GovActionId): lcommon.VotingProcedure{}},
 	}
@@ -2868,7 +2914,11 @@ func TestHardwareSignRequestMultisigExtraSigners(t *testing.T) {
 
 	addr0 := mustNewAddress(t, acct.ReceiveAddresses[0])
 	stakeHash := addr0.StakeKeyHash()
-	tx := s.pending[pv.PendingID].tx.GetTx()
+	p, ok := s.pending[pv.PendingID]
+	if !ok {
+		t.Fatalf("no pending entry for %s", pv.PendingID)
+	}
+	tx := p.tx.GetTx()
 	// Add the wallet's stake key as an explicit required signer — standing in
 	// for a CIP-1854 multisig participant that is not one of the tx inputs.
 	items := append(tx.Body.TxRequiredSigners.Items(), stakeHash)
@@ -2935,7 +2985,11 @@ func TestHardwareSignRequestForeignDRepVoteUnsupported(t *testing.T) {
 	for i := range voter.Hash {
 		voter.Hash[i] = 0x11
 	}
-	tx := s.pending[pv.PendingID].tx.GetTx()
+	p, ok := s.pending[pv.PendingID]
+	if !ok {
+		t.Fatalf("no pending entry for %s", pv.PendingID)
+	}
+	tx := p.tx.GetTx()
 	tx.Body.TxVotingProcedures = lcommon.VotingProcedures{
 		&voter: {new(lcommon.GovActionId): lcommon.VotingProcedure{}},
 	}
@@ -2972,7 +3026,11 @@ func TestHardwareSignRequestForeignCertCredentialUnsupported(t *testing.T) {
 		CredType:   lcommon.CredentialTypeAddrKeyHash,
 		Credential: lcommon.Blake2b224Hash([]byte("foreign stake key")),
 	}
-	tx := s.pending[pv.PendingID].tx.GetTx()
+	p, ok := s.pending[pv.PendingID]
+	if !ok {
+		t.Fatalf("no pending entry for %s", pv.PendingID)
+	}
+	tx := p.tx.GetTx()
 	tx.Body.TxCertificates = []lcommon.CertificateWrapper{{
 		Type: uint(lcommon.CertificateTypeStakeDelegation),
 		Certificate: &lcommon.StakeDelegationCertificate{

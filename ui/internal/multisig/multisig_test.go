@@ -53,6 +53,7 @@ type fakeChain struct {
 	utxos      map[string][]lcommon.Utxo
 	pp         backend.ProtocolParameters
 	submitHash lcommon.Blake2b256
+	submitErr  error
 	submitCbor []byte
 	submitMu   sync.Mutex
 }
@@ -124,6 +125,9 @@ func (fc *fakeChain) SubmitTx(tx []byte) (lcommon.Blake2b256, error) {
 	fc.submitMu.Lock()
 	fc.submitCbor = append(fc.submitCbor[:0], tx...)
 	fc.submitMu.Unlock()
+	if fc.submitErr != nil {
+		return lcommon.Blake2b256{}, fc.submitErr
+	}
 	return fc.submitHash, nil
 }
 func (fc *fakeChain) EvaluateTx(_ []byte, _ []lcommon.Utxo) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {

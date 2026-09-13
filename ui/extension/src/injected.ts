@@ -38,7 +38,7 @@ interface CIP30API {
   getNetworkId(): Promise<number>;
   getUtxos(amount?: string, paginate?: Paginate): Promise<string[] | null>;
   getBalance(): Promise<string>;
-  getCollateral(params?: { amount: string }): Promise<string[]>;
+  getCollateral(params?: { amount: string }): Promise<string[] | null>;
   getUsedAddresses(paginate?: Paginate): Promise<string[]>;
   getUnusedAddresses(): Promise<string[]>;
   getChangeAddress(): Promise<string>;

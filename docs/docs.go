@@ -610,7 +610,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Deletes a wallet from persistent storage and optional password. Requires an authenticated wallet storage administrator.",
+                "description": "Deletes a wallet from persistent storage. Requires an authenticated wallet storage administrator.",
                 "consumes": [
                     "application/json"
                 ],
@@ -670,7 +670,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Gets a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.",
+                "description": "Gets a wallet from persistent storage and returns wallet details. Requires an authenticated wallet storage administrator.",
                 "consumes": [
                     "application/json"
                 ],
@@ -815,7 +815,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.",
+                "description": "Updates a wallet from persistent storage and returns wallet details. Requires an authenticated wallet storage administrator.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1382,9 +1382,6 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 100,
                     "minLength": 1
-                },
-                "password": {
-                    "type": "string"
                 }
             }
         },
@@ -1398,9 +1395,6 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 100,
                     "minLength": 1
-                },
-                "password": {
-                    "type": "string"
                 }
             }
         },
@@ -1466,9 +1460,6 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 100,
                     "minLength": 1
-                },
-                "password": {
-                    "type": "string"
                 }
             }
         },

@@ -151,7 +151,10 @@ func RunTxDecode(txFile, protocolParamsFile string) error {
 		if err != nil {
 			return err
 		}
-		fee := bursa.MinFee(insp.SizeBytes, params)
+		fee, err := bursa.MinFee(insp.SizeBytes, params)
+		if err != nil {
+			return fmt.Errorf("calculate minimum fee: %w", err)
+		}
 		out.MinFee = &fee
 	}
 	enc, err := json.MarshalIndent(out, "", "  ")

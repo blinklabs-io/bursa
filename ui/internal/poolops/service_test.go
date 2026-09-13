@@ -20,6 +20,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
+	"math"
 	"math/big"
 	"strings"
 	"testing"
@@ -401,6 +402,21 @@ func TestServiceRotateKES(t *testing.T) {
 	}
 }
 
+func TestServiceRotateKESRejectsIssueNumberOverflow(t *testing.T) {
+	s, _ := newSeedService(t)
+
+	_, err := s.RotateKES("spend-password", 1, math.MaxUint64, 5)
+	if err == nil {
+		t.Fatal("RotateKES accepted an issue number that would overflow")
+	}
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("RotateKES error = %v, want ErrInvalidRequest", err)
+	}
+	if !strings.Contains(err.Error(), "issue number overflow") {
+		t.Fatalf("RotateKES error = %q, want issue number overflow", err)
+	}
+}
+
 // TestServiceBuildRegistrationFromSeed checks the seed path builds a cert whose
 // pool ID matches the derived credentials and defaults the reward account to the
 // wallet's stake address.
@@ -424,6 +440,9 @@ func TestServiceBuildRegistrationFromSeed(t *testing.T) {
 	var arr []cbor.RawMessage
 	if _, err := cbor.Decode(raw, &arr); err != nil {
 		t.Fatalf("decode cert: %v", err)
+	}
+	if len(arr) < 7 {
+		t.Fatalf("cert has %d fields, want at least 7", len(arr))
 	}
 	var reward []byte
 	_, _ = cbor.Decode(arr[6], &reward)

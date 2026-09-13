@@ -1,4 +1,5 @@
 import { describe, test, expect, vi } from "vitest";
+import type { Mock } from "vitest";
 import {
   connectSeedSigner,
   encodeAccountRequest,
@@ -103,10 +104,10 @@ function txSigResCborHex(pubHex: string, sigHex: string, requestId = "id"): stri
   return "a2" + "01" + cborTextHex(requestId) + "02" + witnessSet;
 }
 
-function makeBridge(): SeedSignerQRBridge & {
-  displayRequest: ReturnType<typeof vi.fn>;
-  scanResponse: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn>;
+function makeBridge(): Omit<SeedSignerQRBridge, "displayRequest" | "scanResponse" | "close"> & {
+  displayRequest: Mock<SeedSignerQRBridge["displayRequest"]>;
+  scanResponse: Mock<SeedSignerQRBridge["scanResponse"]>;
+  close: Mock<SeedSignerQRBridge["close"]>;
 } {
   return {
     displayRequest: vi.fn(),

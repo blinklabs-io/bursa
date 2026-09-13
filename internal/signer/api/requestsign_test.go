@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -27,6 +28,19 @@ import (
 	"testing"
 	"time"
 )
+
+type trackingBody struct {
+	read bool
+}
+
+func (b *trackingBody) Read([]byte) (int, error) {
+	b.read = true
+	return 0, io.EOF
+}
+
+func (b *trackingBody) Close() error {
+	return nil
+}
 
 // signReq builds a request with authorized-keys signature headers for the given
 // signing key, body, timestamp, and nonce.
@@ -90,6 +104,25 @@ func TestRequestSigning_BadSignature(t *testing.T) {
 	req.Header.Set(HeaderSignature, valid.Header.Get(HeaderSignature))
 	if _, ok, err := a.Authenticate(req); !ok || err == nil {
 		t.Fatalf("bad signature should reject: ok=%v err=%v", ok, err)
+	}
+}
+
+// TestRequestSigning_InvalidSignatureDoesNotReadBody ensures malformed fixed-
+// width credentials are rejected before authentication consumes a body. The
+// old ordering blocked on the body reader before it checked signature length.
+func TestRequestSigning_InvalidSignatureDoesNotReadBody(t *testing.T) {
+	a, caller, priv := newAuth(t)
+	req := signReq(t, caller, priv, http.MethodPost, "/v1/sign", []byte("body"), time.Now(), "blocked")
+	req.Header.Set(HeaderSignature, "not-a-signature")
+	body := &trackingBody{}
+	req.Body = body
+
+	_, ok, err := a.Authenticate(req)
+	if !ok || err == nil {
+		t.Fatalf("malformed signature: ok=%v err=%v", ok, err)
+	}
+	if body.read {
+		t.Fatal("malformed signature caused the request body to be read")
 	}
 }
 
