@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -3535,4 +3536,89 @@ func TestHandleAddressEnumerate(t *testing.T) {
 	assert.Equal(t, uint32(0), addrs[0].Index)
 	assert.Equal(t, uint32(1), addrs[1].Index)
 	assert.Equal(t, uint32(2), addrs[2].Index)
+}
+
+// A listener that fails its first Accept, so the serving goroutine reports a
+// real error rather than the closure http.Server recognises.
+type failingListener struct {
+	net.Listener
+	failed  chan struct{}
+	once    sync.Once
+	failErr error
+}
+
+func (l *failingListener) Accept() (net.Conn, error) {
+	l.once.Do(func() { close(l.failed) })
+	return nil, l.failErr
+}
+
+// A serving error and a cancelled context can be ready at the same moment, and
+// select picks between ready cases at random. The cancellation branch used to
+// return nil unconditionally, so roughly half the time a server that had
+// genuinely failed was reported as a clean shutdown — and the failure is only
+// reachable in that window, since once Shutdown has been called http.Serve
+// returns ErrServerClosed and no serving error reaches the channel at all.
+//
+// Repeated, because one pass would be a coin toss: without the fix, twenty
+// consecutive runs all taking the error branch is a one-in-a-million event.
+func TestStartReportsServingErrorRacingCancellation(t *testing.T) {
+	errBoom := errors.New("boom")
+	for i := range 20 {
+		apiBase, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("api listener: %v", err)
+		}
+		metricsBase, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			apiBase.Close()
+			t.Fatalf("metrics listener: %v", err)
+		}
+		apiListener := &failingListener{
+			Listener: apiBase,
+			failed:   make(chan struct{}),
+			failErr:  errBoom,
+		}
+		metricsListener := &notifyingListener{
+			Listener: metricsBase,
+			started:  make(chan struct{}),
+		}
+		cfg := &config.Config{
+			Network: "testnet",
+			Api: config.ApiConfig{
+				ListenAddress: "127.0.0.1",
+				ListenPort:    uint(apiBase.Addr().(*net.TCPAddr).Port),
+			},
+			Metrics: config.MetricsConfig{
+				ListenAddress: "127.0.0.1",
+				ListenPort:    uint(metricsBase.Addr().(*net.TCPAddr).Port),
+			},
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() {
+			result <- Start(ctx, cfg, apiListener, metricsListener)
+		}()
+
+		// Cancel only once the serving error is on its way, so both cases of
+		// the select are ready and the choice between them is the one under
+		// test.
+		select {
+		case <-apiListener.failed:
+		case <-time.After(5 * time.Second):
+			cancel()
+			t.Fatal("api listener was never accepted on")
+		}
+		cancel()
+
+		select {
+		case err := <-result:
+			if !errors.Is(err, errBoom) {
+				t.Fatalf("run %d: Start = %v, want the serving error", i, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("run %d: Start did not return", i)
+		}
+		metricsBase.Close()
+	}
 }

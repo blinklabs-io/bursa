@@ -981,7 +981,16 @@ func Start(
 	case <-ctx.Done():
 		shutdown(ctx)
 		servers.Wait()
-		return nil
+		// A serving goroutine may have failed in the same moment the context
+		// was cancelled; select picks between ready cases at random, so landing
+		// here does not mean the servers were healthy. Report what they said
+		// rather than calling a failure a clean shutdown.
+		select {
+		case err := <-serveErrs:
+			return err
+		default:
+			return nil
+		}
 	}
 }
 
