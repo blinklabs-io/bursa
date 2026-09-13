@@ -1943,7 +1943,11 @@ func ValidateScript(
 	slot uint64,
 	requireSignatures bool,
 ) bool {
-	if len(witnesses) > maxScriptSignatures {
+	// The signature-count bound belongs to signature checking. Structural
+	// validation is asked whether the script itself is well formed, and
+	// answering false because the caller happened to pass a long witness list
+	// reports a malformed script that is nothing of the kind.
+	if requireSignatures && len(witnesses) > maxScriptSignatures {
 		return false
 	}
 	witnessesByHash := make(map[string][]ScriptWitness, len(witnesses))

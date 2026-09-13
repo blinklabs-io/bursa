@@ -3036,3 +3036,17 @@ func TestGetKESSKeyNilCheck(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "KES secret key cannot be nil")
 }
+
+// The signature-count bound belongs to signature checking. Structural
+// validation answers whether the script is well formed, so a witness list it
+// does not even look at must not make a valid script report as malformed.
+func TestValidateScriptStructuralIgnoresWitnessCount(t *testing.T) {
+	leaf, err := NewScriptSig(testKeyHash())
+	require.NoError(t, err)
+	witnesses := make([]ScriptWitness, maxScriptSignatures+1)
+
+	assert.True(t, ValidateScript(leaf, nil, witnesses, 0, false),
+		"structural validation must ignore the witness list")
+	assert.False(t, ValidateScript(leaf, nil, witnesses, 0, true),
+		"signature validation must still bound the witness list")
+}

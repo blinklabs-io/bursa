@@ -15,6 +15,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/hex"
@@ -848,6 +849,22 @@ func registerAPIHandlers(
 // allow an unbounded number of expensive requests to run at once.
 func boundedScriptValidation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Read the body before taking a slot. Holding one across the read let
+		// an unauthenticated client occupy every slot by sending its body
+		// slowly - or never finishing it - and turn the route into a 503 for
+		// everyone else without doing any validation work at all. The read is
+		// bounded by the same limit the handlers apply, so buffering it here
+		// costs at most that per in-flight request.
+		if r.Body != nil {
+			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			r.Body.Close()
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			r.ContentLength = int64(len(body))
+		}
 		select {
 		case scriptValidationSlots <- struct{}{}:
 			defer func() { <-scriptValidationSlots }()
@@ -913,12 +930,18 @@ func Start(
 				),
 				Handler:           metricsMux,
 				ReadHeaderTimeout: 60 * time.Second,
+				// Headers arriving is not the same as a body arriving: without
+				// this, a client can hold a connection open mid-body forever.
+				ReadTimeout: 120 * time.Second,
 			}
 			err = server.ListenAndServe()
 		} else {
 			server := &http.Server{
 				Handler:           metricsMux,
 				ReadHeaderTimeout: 60 * time.Second,
+				// Headers arriving is not the same as a body arriving: without
+				// this, a client can hold a connection open mid-body forever.
+				ReadTimeout: 120 * time.Second,
 			}
 			err = server.Serve(metricsListener)
 		}
@@ -942,6 +965,9 @@ func Start(
 			),
 			Handler:           mainHandler,
 			ReadHeaderTimeout: 60 * time.Second,
+			// Headers arriving is not the same as a body arriving: without
+			// this, a client can hold a connection open mid-body forever.
+			ReadTimeout: 120 * time.Second,
 			TLSConfig: &tls.Config{
 				MinVersion: tls.VersionTLS12,
 			},
@@ -955,6 +981,9 @@ func Start(
 		server := &http.Server{
 			Handler:           mainHandler,
 			ReadHeaderTimeout: 60 * time.Second,
+			// Headers arriving is not the same as a body arriving: without
+			// this, a client can hold a connection open mid-body forever.
+			ReadTimeout: 120 * time.Second,
 			TLSConfig: &tls.Config{
 				MinVersion: tls.VersionTLS12,
 			},
@@ -1577,6 +1606,7 @@ func handleScriptCreate(w http.ResponseWriter, r *http.Request) {
 //	@Success		200		{object}	ScriptValidateResponse	"Script validation result"
 //	@Failure		400		{object}	ErrorResponse			"Invalid request"
 //	@Failure		500		{object}	ErrorResponse			"Internal server error"
+//	@Failure		503		{object}	ErrorResponse			"Script validation busy; retry"
 //	@Router			/api/script/validate [post]
 func handleScriptValidate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

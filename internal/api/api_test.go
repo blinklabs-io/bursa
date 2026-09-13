@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -34,6 +35,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -3493,3 +3495,86 @@ func TestHandleAddressEnumerate(t *testing.T) {
 	assert.Equal(t, uint32(1), addrs[1].Index)
 	assert.Equal(t, uint32(2), addrs[2].Index)
 }
+
+// The validation slots exist to bound expensive work, but the slot used to be
+// taken before the body was read — so an unauthenticated client could hold all
+// four by sending bodies slowly, or never finishing them, and every honest
+// request got a 503 while no validation was running at all.
+func TestScriptValidationSlotIsNotHeldWhileReadingTheBody(t *testing.T) {
+	inHandler := make(chan struct{}, maxConcurrentScriptValidations+1)
+	release := make(chan struct{})
+	handler := boundedScriptValidation(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inHandler <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Occupy every slot with requests that have arrived in full.
+	for range maxConcurrentScriptValidations {
+		go func() {
+			req := httptest.NewRequest(http.MethodPost, "/api/script/validate", strings.NewReader("{}"))
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+		}()
+	}
+	for range maxConcurrentScriptValidations {
+		select {
+		case <-inHandler:
+		case <-time.After(5 * time.Second):
+			close(release)
+			t.Fatal("slots were never taken")
+		}
+	}
+
+	// A client that stops mid-body must be refused by the read, not by the
+	// slot limiter, and must not have consumed one.
+	stalled := &stallingBody{started: make(chan struct{}), release: make(chan struct{})}
+	req := httptest.NewRequest(http.MethodPost, "/api/script/validate", stalled)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(rec, req)
+		close(done)
+	}()
+	select {
+	case <-stalled.started:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("body was never read")
+	}
+	select {
+	case <-inHandler:
+		close(release)
+		t.Fatal("a slot was taken before the body finished arriving")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	stalled.fail()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("the stalled request never completed")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d for a body that did not arrive", rec.Code, http.StatusBadRequest)
+	}
+	close(release)
+}
+
+// stallingBody delivers nothing until fail() is called, standing in for a
+// client that has sent headers and then stopped.
+type stallingBody struct {
+	started   chan struct{}
+	release   chan struct{}
+	startOnce sync.Once
+}
+
+func (b *stallingBody) Read([]byte) (int, error) {
+	b.startOnce.Do(func() { close(b.started) })
+	<-b.release
+	return 0, errors.New("client went away")
+}
+
+func (b *stallingBody) Close() error { return nil }
+
+func (b *stallingBody) fail() { close(b.release) }
