@@ -287,10 +287,12 @@ func TestNonceCache_BoundsRetainedNonceBytes(t *testing.T) {
 	if err := c.checkAndStore("caller", largeNonce+"3"); err != errNonceCacheFull {
 		t.Fatalf("third large nonce should hit the byte budget, got %v", err)
 	}
-	for key := range c.entries {
-		if len(key) != nonceCacheKeyBytes {
-			t.Fatalf("cache retained key width %d, want %d", len(key), nonceCacheKeyBytes)
-		}
+	// Not the key width: the map key is a fixed-width array, so len(key) is a
+	// compile-time constant and could never disagree. What can drift is the
+	// accounting — the retained size must stay exactly the entry count times
+	// that width, however large the nonces that produced those entries were.
+	if want := int64(len(c.entries)) * nonceCacheKeyBytes; c.bytes != want {
+		t.Fatalf("retained bytes = %d, want %d for %d entries", c.bytes, want, len(c.entries))
 	}
 }
 
