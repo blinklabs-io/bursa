@@ -1,5 +1,12 @@
 import { describe, test, expect } from "vitest";
-import { encodeUR, decodeUR, createURAssembler, ensureBuffer } from "./ur";
+import {
+  encodeUR,
+  decodeUR,
+  createURAssembler,
+  ensureBuffer,
+  DEFAULT_UR_LIMITS,
+  URDecodeLimitError,
+} from "./ur";
 import { encodeCbor } from "./cbor";
 
 function toHex(b: Uint8Array): string {
@@ -56,6 +63,82 @@ describe("UR transport", () => {
   test("decodeUR throws when the parts are incomplete", async () => {
     const parts = await encodeUR("test-payload", payload(400), 50);
     await expect(decodeUR(parts.slice(0, 1))).rejects.toThrow(/incomplete/i);
+  });
+
+  test("rejects an oversized part before passing it to bc-ur", async () => {
+    const assembler = await createURAssembler({ maxPartBytes: 32 });
+
+    expect(() => assembler.receivePart(`ur:test-payload/${"x".repeat(64)}`)).toThrow(
+      URDecodeLimitError,
+    );
+    expect(assembler.isError()).toBe(true);
+  });
+
+  test("rejects a stream whose advertised part count is too large", async () => {
+    const assembler = await createURAssembler({ maxParts: 2 });
+
+    expect(() => assembler.receivePart("ur:test-payload/1-3/00")).toThrow(/too many parts/i);
+    expect(assembler.isError()).toBe(true);
+  });
+
+  test("records invalid sequence errors as terminal failures", async () => {
+    const assembler = await createURAssembler();
+
+    expect(() => assembler.receivePart("ur:test-payload/0-1/00")).toThrow(/invalid sequence/i);
+    expect(assembler.isError()).toBe(true);
+  });
+
+  test("uses defaults for undefined limits and rejects infinite limits", async () => {
+    const assembler = await createURAssembler({
+      maxPartBytes: undefined,
+      maxTotalBytes: undefined,
+      maxParts: undefined,
+      maxFrames: undefined,
+      maxDurationMs: undefined,
+    });
+    expect(() => assembler.receivePart(`ur:test-payload/${"x".repeat(4096)}`)).toThrow(/too large/i);
+
+    await expect(createURAssembler({ maxPartBytes: Infinity })).rejects.toThrow(/finite integer/i);
+  });
+
+  test("rejects a stream after its cumulative byte limit", async () => {
+    const part = (await encodeUR("test-payload", payload(8)))[0];
+    const assembler = await createURAssembler({
+      maxTotalBytes: part.length * 2 - 1,
+      maxPartBytes: part.length + 1,
+    });
+
+    assembler.receivePart(part);
+    expect(() => assembler.receivePart(part)).toThrow(/too large/i);
+    expect(assembler.isError()).toBe(true);
+  });
+
+  test("rejects incomplete streams that exceed the frame limit", async () => {
+    const assembler = await createURAssembler({ maxFrames: 2 });
+    const parts = await encodeUR("test-payload", payload(400), 50);
+
+    assembler.receivePart(parts[0]);
+    assembler.receivePart(parts[1]);
+    expect(() => assembler.receivePart(parts[2])).toThrow(/too many frames/i);
+  });
+
+  test("rejects a slow stream after the elapsed-time limit", async () => {
+    let clock = 1000;
+    const assembler = await createURAssembler({ maxDurationMs: 10 }, () => clock);
+    const part = (await encodeUR("test-payload", payload(8)))[0];
+
+    assembler.receivePart(part);
+    clock += 11;
+    expect(() => assembler.receivePart(part)).toThrow(/too long/i);
+    expect(assembler.isError()).toBe(true);
+  });
+
+  test("default limits remain finite", () => {
+    expect(DEFAULT_UR_LIMITS.maxPartBytes).toBeGreaterThan(0);
+    expect(DEFAULT_UR_LIMITS.maxTotalBytes).toBeGreaterThan(DEFAULT_UR_LIMITS.maxPartBytes);
+    expect(DEFAULT_UR_LIMITS.maxParts).toBeGreaterThan(0);
+    expect(DEFAULT_UR_LIMITS.maxFrames).toBeGreaterThan(0);
+    expect(DEFAULT_UR_LIMITS.maxDurationMs).toBeGreaterThan(0);
   });
 
   test("ensureBuffer installs a global Buffer", async () => {
