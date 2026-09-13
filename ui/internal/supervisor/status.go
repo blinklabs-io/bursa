@@ -37,8 +37,9 @@ const (
 // Whichever pair is populated for the active phase is what the UI renders to
 // show "where it is"; the rest stay zero (omitted).
 //
-// One report describes ONE phase. dingo runs some phases concurrently, so the
-// newest report is not the whole picture — see Status.BootstrapPhases.
+// One report describes ONE piece of work: a phase, or one download within a
+// phase that runs several. dingo runs both kinds concurrently, so the newest
+// report is never the whole picture — see Status.BootstrapPhases.
 type BootstrapProgress struct {
 	Phase           string  `json:"phase"`
 	Percent         float64 `json:"percent"`
@@ -68,12 +69,22 @@ type Status struct {
 	LatestBlockTime     *time.Time         `json:"latestBlockTime,omitempty"`
 	CaughtUp            bool               `json:"caughtUp"`
 	Bootstrap           *BootstrapProgress `json:"bootstrap,omitempty"`
-	// BootstrapPhases holds each phase's own latest progress, in the order the
-	// phases were first seen. dingo imports the ledger state and copies the
-	// immutable chain CONCURRENTLY (one errgroup, two goroutines) and reports
-	// both through a single callback, so Bootstrap alone alternates between two
-	// unrelated percentages. Keeping them apart is what lets a reader see two
-	// things running instead of one number jumping around.
+	// BootstrapPhases holds the latest progress of each piece of work the
+	// bootstrap has reported, in first-seen order.
+	//
+	// dingo runs work concurrently at two levels and reports all of it through
+	// a single callback, so the newest report is never the whole picture: the
+	// download phase fetches the immutable archives and the ancillary ledger
+	// state in parallel, and the ledger import later runs alongside the
+	// immutable copy. Bootstrap alone therefore alternates between unrelated
+	// percentages over unrelated totals.
+	//
+	// Work is identified by phase and download size. dingo labels each download
+	// report with the artifact it describes ("so concurrent downloads can be
+	// distinguished by callers consuming one callback") but drops that label
+	// when it flattens into mithril.SyncProgress, so the size — fixed for a
+	// download and different for each — is the identity available to us. Two
+	// downloads of exactly equal size would share a row; nothing worse.
 	BootstrapPhases []BootstrapProgress `json:"bootstrap_phases,omitempty"`
 	Err             string              `json:"error,omitempty"`
 }

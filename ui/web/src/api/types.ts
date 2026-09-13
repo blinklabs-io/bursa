@@ -25,10 +25,13 @@ export interface Status {
   latestBlockTime?: string;
   caughtUp: boolean;
   bootstrap?: BootstrapProgress;
-  // bootstrap_phases holds each bootstrap phase's own latest progress, in the
-  // order the phases were first seen. The node imports the ledger state and
-  // copies the immutable chain CONCURRENTLY, so `bootstrap` alone alternates
-  // between two unrelated percentages; render from this instead.
+  // bootstrap_phases holds the latest progress of each piece of work the
+  // bootstrap has reported, in first-seen order. The node runs work in parallel
+  // at two levels — two downloads at once during the download phase, then the
+  // ledger import alongside the chain copy — and reports all of it through one
+  // field, so `bootstrap` alone alternates between unrelated percentages over
+  // unrelated totals. Render from this instead. Entries within one phase are
+  // separate downloads, told apart by their size.
   bootstrap_phases?: BootstrapProgress[];
   error?: string;
   // The network the embedded node runs on ("preview" | "preprod" | "mainnet").

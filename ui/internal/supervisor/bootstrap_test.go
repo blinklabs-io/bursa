@@ -419,3 +419,67 @@ func TestToBootstrapProgressCarriesPhaseEnd(t *testing.T) {
 		t.Errorf("a mid-phase tick is not done: %+v", got)
 	}
 }
+
+// The download phase is itself two downloads running in parallel: the immutable
+// archives (14.8 GB on preview) and the ancillary ledger state. dingo fetches
+// them concurrently and reports both through one callback
+// (mithril/bootstrap_v2.go, "Steps 4+5 ... in parallel"), labelling each report
+// with the artifact it describes — but drops that label when it flattens into
+// mithril.SyncProgress, so what reaches us is one phase carrying two
+// interleaved series over two different totals. Keyed on the phase alone they
+// collapse into a row whose percent AND size flip between two downloads.
+func TestOnProgressSeparatesConcurrentDownloads(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{
+		Phase: "bootstrap", Percent: 75,
+		BytesDownloaded: 11086556385, TotalBytes: 14779773204,
+	})
+	s.onProgress(BootstrapProgress{
+		Phase: "bootstrap", Percent: 12,
+		BytesDownloaded: 30000000, TotalBytes: 250000000,
+	})
+	s.onProgress(BootstrapProgress{
+		Phase: "bootstrap", Percent: 78,
+		BytesDownloaded: 11530022099, TotalBytes: 14779773204,
+	})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 2 {
+		t.Fatalf("want one row per download, got %+v", phases)
+	}
+	if phases[0].TotalBytes != 14779773204 || phases[0].Percent != 78 {
+		t.Errorf("the immutable download should keep its own progress: %+v", phases[0])
+	}
+	if phases[1].TotalBytes != 250000000 || phases[1].Percent != 12 {
+		t.Errorf("the ancillary download should keep its own progress: %+v", phases[1])
+	}
+}
+
+// The phase ends once, for the phase as a whole — dingo emits no per-download
+// end edge — so it has to finish every download it covers.
+func TestPhaseEndCompletesEveryDownload(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 99.8, TotalBytes: 14779773204})
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 100, TotalBytes: 250000000})
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Done: true})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 2 {
+		t.Fatalf("the end edge should not add a row of its own: %+v", phases)
+	}
+	for _, p := range phases {
+		if !p.Done {
+			t.Errorf("the phase ended, so this download is not still running: %+v", p)
+		}
+		if p.Percent != 100 {
+			t.Errorf("a finished download is 100%%, got %v", p.Percent)
+		}
+	}
+	// Each row keeps the size it was measuring, so neither is mistaken for the
+	// other after the fact.
+	if phases[0].TotalBytes == phases[1].TotalBytes {
+		t.Error("the end edge collapsed two different downloads into one size")
+	}
+}

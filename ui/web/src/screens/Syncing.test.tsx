@@ -339,3 +339,76 @@ test("falls back to the single progress report when the node sends no phase list
   expect(screen.getByText("12.5%")).toBeInTheDocument();
   expect(screen.getByRole("progressbar", { name: /backfill blocks/i })).toBeInTheDocument();
 });
+
+// The download phase is two downloads at once: the chain archives (14.8 GB on
+// preview) and the ancillary ledger state, fetched in parallel and reported
+// through one field over two different totals. One row for the phase makes them
+// one number that contradicts itself.
+const parallelDownloads = {
+  state: "bootstrapping" as const,
+  tip: 0,
+  caughtUp: false,
+  network: "preview",
+  bootstrap: { phase: "bootstrap", percent: 75, bytes_downloaded: 11086556385, total_bytes: 14779773204 },
+  bootstrap_phases: [
+    { phase: "bootstrap", percent: 75, bytes_downloaded: 11086556385, total_bytes: 14779773204 },
+    { phase: "bootstrap", percent: 12, bytes_downloaded: 30000000, total_bytes: 250000000 },
+  ],
+};
+
+test("two downloads running at once each show their own progress", () => {
+  render(<Syncing status={parallelDownloads} onLoadAnyway={noop} />);
+
+  expect(screen.getByText("75.0%")).toBeInTheDocument();
+  expect(screen.getByText("12.0%")).toBeInTheDocument();
+  expect(screen.getByText(/10\.3 GB \/ 13\.8 GB/)).toBeInTheDocument();
+  expect(screen.getByText(/28\.6 MB \/ 238 MB/)).toBeInTheDocument();
+  expect(screen.getAllByRole("progressbar")).toHaveLength(2);
+});
+
+// Two rows both reading "Download snapshot" would look like a rendering bug
+// rather than like two downloads, so name them by what tells them apart.
+test("concurrent downloads in one phase are named apart by size", () => {
+  render(<Syncing status={parallelDownloads} onLoadAnyway={noop} />);
+
+  expect(screen.getByRole("progressbar", { name: /download snapshot · 13\.8 GB/i })).toBeInTheDocument();
+  expect(screen.getByRole("progressbar", { name: /download snapshot · 238 MB/i })).toBeInTheDocument();
+});
+
+// A phase carrying two downloads is still running while either one is.
+test("the checklist keeps a download phase active until both downloads finish", () => {
+  render(
+    <Syncing
+      status={{
+        ...parallelDownloads,
+        bootstrap_phases: [
+          { phase: "bootstrap", percent: 100, total_bytes: 250000000, done: true },
+          { phase: "bootstrap", percent: 75, total_bytes: 14779773204 },
+        ],
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+
+  const steps = screen.getByRole("list");
+  expect(within(steps).getByText("Download snapshot").closest("li")).toHaveClass("sync-step-active");
+});
+
+// A single download keeps the plain phase name: the size is identity, not decoration.
+test("a lone download is not labelled with its size", () => {
+  render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "bootstrap", percent: 75, total_bytes: 14779773204 },
+        bootstrap_phases: [{ phase: "bootstrap", percent: 75, total_bytes: 14779773204 }],
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+
+  expect(screen.getByRole("progressbar", { name: "Download snapshot" })).toBeInTheDocument();
+});

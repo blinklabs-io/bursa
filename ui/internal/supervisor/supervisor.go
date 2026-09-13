@@ -407,12 +407,12 @@ func (s *Supervisor) onProgressForRun(runID uint64, bp BootstrapProgress) {
 	if !s.activeRunLocked(runID) || s.status.State != StateBootstrapping {
 		return
 	}
-	s.status.BootstrapPhases = mergePhase(s.status.BootstrapPhases, bp)
-	// The headline is the phase that just reported, taken from the merged entry
-	// so the empty end edge reads as "finished" rather than blanking a phase
-	// that had just measured its way to 99.8%.
+	s.status.BootstrapPhases = mergeProgress(s.status.BootstrapPhases, bp)
+	// The headline is whatever just reported, taken from the merged entry so
+	// the empty end edge reads as "finished" rather than blanking work that had
+	// just measured its way to 99.8%.
 	for i := range s.status.BootstrapPhases {
-		if s.status.BootstrapPhases[i].Phase == bp.Phase {
+		if sameWork(s.status.BootstrapPhases[i], bp) {
 			latest := s.status.BootstrapPhases[i]
 			s.status.Bootstrap = &latest
 			break
@@ -420,33 +420,53 @@ func (s *Supervisor) onProgressForRun(runID uint64, bp BootstrapProgress) {
 	}
 }
 
-// mergePhase folds one report into the per-phase list, copy-on-write so a
+// mergeProgress folds one report into the retained list, copy-on-write so a
 // Status already handed out is never mutated under its reader.
 //
-// A phase keeps its position (first seen) so nothing moves under the reader
-// while two phases report in turn, and the end edge completes the phase rather
-// than overwriting its measurements with the zeroes it carries.
-func mergePhase(phases []BootstrapProgress, bp BootstrapProgress) []BootstrapProgress {
+// Identity is the phase AND the download size: one phase can have several
+// downloads in flight, each with its own size and its own percent. An entry
+// keeps its position (first seen) so nothing moves under the reader while
+// several report in turn.
+//
+// The end edge carries no measurements at all — dingo ends a phase once, not
+// once per download — so it completes every entry of that phase rather than
+// overwriting what they measured with the zeroes it carries.
+func mergeProgress(phases []BootstrapProgress, bp BootstrapProgress) []BootstrapProgress {
 	out := make([]BootstrapProgress, len(phases), len(phases)+1)
 	copy(out, phases)
-	for i := range out {
-		if out[i].Phase != bp.Phase {
-			continue
-		}
-		if bp.Done {
+	if bp.Done {
+		found := false
+		for i := range out {
+			if out[i].Phase != bp.Phase {
+				continue
+			}
 			out[i].Done = true
 			out[i].Percent = 100
+			found = true
+		}
+		if found {
 			return out
+		}
+		// A phase we never saw run, done on arrival: nothing measured it, so
+		// record the completion rather than an invented 0%.
+		bp.Percent = 100
+		return append(out, bp)
+	}
+	for i := range out {
+		if !sameWork(out[i], bp) {
+			continue
 		}
 		out[i] = bp
 		return out
 	}
-	if bp.Done {
-		// A phase we never saw run, done on arrival: nothing measured it, so
-		// record the completion rather than an invented 0%.
-		bp.Percent = 100
-	}
 	return append(out, bp)
+}
+
+// sameWork reports whether two progress reports describe the same piece of
+// work: the same phase, and — for a phase running several downloads at once —
+// the same download, told apart by the size only that download reports.
+func sameWork(a, b BootstrapProgress) bool {
+	return a.Phase == b.Phase && a.TotalBytes == b.TotalBytes
 }
 
 // Stop cancels the node's context, waits for the active run to exit, and marks

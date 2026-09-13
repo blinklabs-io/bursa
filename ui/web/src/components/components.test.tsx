@@ -479,3 +479,27 @@ test("SyncBanner falls back to the latest report when every phase is finished", 
 
   expect(screen.getByText(/rebuild indexes 100\.0%/i)).toBeInTheDocument();
 });
+
+// Two downloads run at once inside the download phase, over different totals.
+// Named only by phase, the strip would read "Download snapshot 75.0% · Download
+// snapshot 12.0%" — one name, two numbers, no way to tell what is what.
+test("SyncBanner tells two concurrent downloads apart", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "bootstrap", percent: 75, total_bytes: 14779773204 },
+        bootstrap_phases: [
+          { phase: "bootstrap", percent: 75, total_bytes: 14779773204 },
+          { phase: "bootstrap", percent: 12, total_bytes: 250000000 },
+        ],
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/download snapshot \(13\.8 GB\) 75\.0%/i)).toBeInTheDocument();
+  expect(screen.getByText(/download snapshot \(238 MB\) 12\.0%/i)).toBeInTheDocument();
+});
