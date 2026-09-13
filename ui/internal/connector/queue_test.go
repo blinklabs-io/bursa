@@ -68,8 +68,11 @@ func TestQueueRejectsDuplicateAfterDecisionConsumed(t *testing.T) {
 	}
 
 	q.mu.Lock()
-	w := q.waiters[req.ID]
+	w, ok := q.waiters[req.ID]
 	q.mu.Unlock()
+	if !ok {
+		t.Fatalf("no waiter registered for %s", req.ID)
+	}
 	if got := <-w.done; !got.Approved {
 		t.Fatalf("first decision = %+v, want approved", got)
 	}

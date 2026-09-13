@@ -2526,7 +2526,10 @@ func TestHardwareSignRequestGuard(t *testing.T) {
 			t.Fatalf("Build: %v", err)
 		}
 		s.mu.Lock()
-		p := s.pending[pv.PendingID]
+		p, ok := s.pending[pv.PendingID]
+		if !ok {
+			t.Fatalf("no pending entry for %s", pv.PendingID)
+		}
 		s.mu.Unlock()
 
 		changeAddr, _ := lcommon.NewAddress(addr0)
@@ -2599,7 +2602,11 @@ func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}
-			tx := s.pending[pv.PendingID].tx.GetTx()
+			p, ok := s.pending[pv.PendingID]
+			if !ok {
+				t.Fatalf("no pending entry for %s", pv.PendingID)
+			}
+			tx := p.tx.GetTx()
 			tt.mutate(&tx.Body)
 
 			req, err := s.HardwareSignRequest(pv.PendingID)
@@ -2646,7 +2653,11 @@ func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}
-			tx := s.pending[pv.PendingID].tx.GetTx()
+			p, ok := s.pending[pv.PendingID]
+			if !ok {
+				t.Fatalf("no pending entry for %s", pv.PendingID)
+			}
+			tx := p.tx.GetTx()
 			tt.mutate(&tx.Body.TxOutputs[0])
 
 			req, err := s.HardwareSignRequest(pv.PendingID)
@@ -2783,7 +2794,10 @@ func TestHardwareSignRequestWithdrawalCarriesStakeSigner(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	s.mu.Lock()
-	p := s.pending[pv.PendingID]
+	p, ok := s.pending[pv.PendingID]
+	if !ok {
+		t.Fatalf("no pending entry for %s", pv.PendingID)
+	}
 	s.mu.Unlock()
 
 	stakeAddr, err := lcommon.NewAddress(acct.StakeAddress)
@@ -2857,7 +2871,11 @@ func TestHardwareSignRequestDRepVoteCarriesVoteSigner(t *testing.T) {
 	var voter lcommon.Voter
 	voter.Type = lcommon.VoterTypeDRepKeyHash
 	copy(voter.Hash[:], drepHash)
-	tx := s.pending[pv.PendingID].tx.GetTx()
+	p, ok := s.pending[pv.PendingID]
+	if !ok {
+		t.Fatalf("no pending entry for %s", pv.PendingID)
+	}
+	tx := p.tx.GetTx()
 	tx.Body.TxVotingProcedures = lcommon.VotingProcedures{
 		&voter: {new(lcommon.GovActionId): lcommon.VotingProcedure{}},
 	}
@@ -2896,7 +2914,11 @@ func TestHardwareSignRequestMultisigExtraSigners(t *testing.T) {
 
 	addr0 := mustNewAddress(t, acct.ReceiveAddresses[0])
 	stakeHash := addr0.StakeKeyHash()
-	tx := s.pending[pv.PendingID].tx.GetTx()
+	p, ok := s.pending[pv.PendingID]
+	if !ok {
+		t.Fatalf("no pending entry for %s", pv.PendingID)
+	}
+	tx := p.tx.GetTx()
 	// Add the wallet's stake key as an explicit required signer — standing in
 	// for a CIP-1854 multisig participant that is not one of the tx inputs.
 	items := append(tx.Body.TxRequiredSigners.Items(), stakeHash)
@@ -2963,7 +2985,11 @@ func TestHardwareSignRequestForeignDRepVoteUnsupported(t *testing.T) {
 	for i := range voter.Hash {
 		voter.Hash[i] = 0x11
 	}
-	tx := s.pending[pv.PendingID].tx.GetTx()
+	p, ok := s.pending[pv.PendingID]
+	if !ok {
+		t.Fatalf("no pending entry for %s", pv.PendingID)
+	}
+	tx := p.tx.GetTx()
 	tx.Body.TxVotingProcedures = lcommon.VotingProcedures{
 		&voter: {new(lcommon.GovActionId): lcommon.VotingProcedure{}},
 	}
@@ -3000,7 +3026,11 @@ func TestHardwareSignRequestForeignCertCredentialUnsupported(t *testing.T) {
 		CredType:   lcommon.CredentialTypeAddrKeyHash,
 		Credential: lcommon.Blake2b224Hash([]byte("foreign stake key")),
 	}
-	tx := s.pending[pv.PendingID].tx.GetTx()
+	p, ok := s.pending[pv.PendingID]
+	if !ok {
+		t.Fatalf("no pending entry for %s", pv.PendingID)
+	}
+	tx := p.tx.GetTx()
 	tx.Body.TxCertificates = []lcommon.CertificateWrapper{{
 		Type: uint(lcommon.CertificateTypeStakeDelegation),
 		Certificate: &lcommon.StakeDelegationCertificate{

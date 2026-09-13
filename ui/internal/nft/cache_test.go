@@ -116,12 +116,18 @@ func TestCacheGetRefreshesEntryRecency(t *testing.T) {
 func TestCachePersistsAcrossInstances(t *testing.T) {
 	dir := t.TempDir()
 	const cid = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
-	c1, _ := newCache(dir)
+	c1, err := newCache(dir)
+	if err != nil {
+		t.Fatalf("newCache: %v", err)
+	}
 	if err := c1.put(cid, validTestPNG()); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	// A new cache over the same dir sees the entry until quota eviction is needed.
-	c2, _ := newCache(dir)
+	c2, err := newCache(dir)
+	if err != nil {
+		t.Fatalf("newCache: %v", err)
+	}
 	if !c2.has(cid) {
 		t.Fatal("entry not visible to a second cache instance")
 	}
@@ -146,14 +152,20 @@ func TestNewCacheRemovesStaleTemporaryFiles(t *testing.T) {
 }
 
 func TestCacheRejectsOversizeImage(t *testing.T) {
-	c, _ := newCache(t.TempDir())
+	c, err := newCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("newCache: %v", err)
+	}
 	if err := c.put("QmTooBig", make([]byte, maxImageBytes+1)); err == nil {
 		t.Fatal("put oversize image: want error, got nil")
 	}
 }
 
 func TestCacheRejectsLargeDecodedImage(t *testing.T) {
-	c, _ := newCache(t.TempDir())
+	c, err := newCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("newCache: %v", err)
+	}
 	if err := c.put("QmDecodedTooBig", pngWithDimensions(5000, 5000)); !errors.Is(err, ErrUnsafeImage) {
 		t.Fatalf("put decoded-oversize image = %v, want ErrUnsafeImage", err)
 	}
@@ -163,7 +175,10 @@ func TestCacheRejectsLargeDecodedImage(t *testing.T) {
 }
 
 func TestCacheGetRemovesUnsafeLegacyEntry(t *testing.T) {
-	c, _ := newCache(t.TempDir())
+	c, err := newCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("newCache: %v", err)
+	}
 	const cid = "QmLegacyBomb"
 	if err := os.WriteFile(c.path(cid), pngWithDimensions(5000, 5000), 0o600); err != nil {
 		t.Fatalf("seed legacy entry: %v", err)
@@ -177,7 +192,10 @@ func TestCacheGetRemovesUnsafeLegacyEntry(t *testing.T) {
 }
 
 func TestCacheEmptyCID(t *testing.T) {
-	c, _ := newCache(t.TempDir())
+	c, err := newCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("newCache: %v", err)
+	}
 	if c.has("") {
 		t.Fatal("has(\"\") = true")
 	}
