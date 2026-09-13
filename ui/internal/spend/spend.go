@@ -1270,8 +1270,9 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	// --- step 1: look up and consume the pending entry (reject unknown / TTL-expired) ---
 	s.mu.Lock()
 	p, ok := s.pending[pendingID]
-	expired := ok && s.now().Sub(p.created) > pendingTTL
+	var expired bool
 	if ok {
+		expired = s.now().Sub(p.created) > pendingTTL
 		delete(s.pending, pendingID)
 	}
 	s.mu.Unlock()
@@ -1498,11 +1499,10 @@ func (s *Service) ExportUnsigned(pendingID string) (UnsignedTx, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.pending[pendingID]
-	expired := ok && s.now().Sub(p.created) > pendingTTL
 	if !ok {
 		return UnsignedTx{}, fmt.Errorf("%w: %q", ErrUnknownPending, pendingID)
 	}
-	if expired {
+	if expired := s.now().Sub(p.created) > pendingTTL; expired {
 		return UnsignedTx{}, fmt.Errorf("%w: %q", ErrExpiredPending, pendingID)
 	}
 
@@ -2887,11 +2887,10 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.pending[pendingID]
-	expired := ok && s.now().Sub(p.created) > pendingTTL
 	if !ok {
 		return HardwareSignRequest{}, fmt.Errorf("%w: %q", ErrUnknownPending, pendingID)
 	}
-	if expired {
+	if expired := s.now().Sub(p.created) > pendingTTL; expired {
 		return HardwareSignRequest{}, fmt.Errorf("%w: %q", ErrExpiredPending, pendingID)
 	}
 

@@ -142,7 +142,11 @@ func Load(path string) (*Store, error) {
 // caller later performs a write (e.g. Upsert) against the returned Store.
 func LoadOrEmpty(path string) (*Store, error) {
 	s, err := Load(path)
-	if err != nil {
+	// The empty store also stands in for a nil one. Load only returns nil
+	// alongside an error today, but a caller of "load or empty" is entitled to
+	// use what it returns without a nil check, and saying so here keeps that
+	// guarantee local to this function rather than resting on Load's internals.
+	if err != nil || s == nil {
 		return &Store{path: path, d: data{Version: contactsVersion}}, err
 	}
 	return s, nil

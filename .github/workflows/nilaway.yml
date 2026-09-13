@@ -23,3 +23,9 @@ jobs:
         run: go install go.uber.org/nilaway/cmd/nilaway@latest
       - name: run nilaway
         run: nilaway -include-pkgs=github.com/blinklabs-io/bursa ./...
+      # ui/ is a separate module, so the root ./... never reaches it. Without
+      # this step the wallet - the largest body of Go in the repo - was
+      # unchecked.
+      - name: run nilaway (ui module)
+        working-directory: ui
+        run: nilaway -include-pkgs=github.com/blinklabs-io/bursa ./...

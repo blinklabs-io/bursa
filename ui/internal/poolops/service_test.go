@@ -441,6 +441,9 @@ func TestServiceBuildRegistrationFromSeed(t *testing.T) {
 	if _, err := cbor.Decode(raw, &arr); err != nil {
 		t.Fatalf("decode cert: %v", err)
 	}
+	if len(arr) < 7 {
+		t.Fatalf("cert has %d fields, want at least 7", len(arr))
+	}
 	var reward []byte
 	_, _ = cbor.Decode(arr[6], &reward)
 	if len(reward) != 29 {
