@@ -25,3 +25,22 @@ export function bootstrapPhaseLabel(phase: string): string {
     phase.replace(/_/g, " ")
   );
 }
+
+// Where a phase sits in the pipeline, or null for a phase we do not know.
+//
+// The per-phase percent restarts at 0 on every handoff. Measured on preview
+// (dingo v0.70.5): the snapshot download read 99.8% one moment and the next
+// phase read 0.1% five seconds later, with the byte readout replaced by a block
+// count. Showing the step position next to that percent is what keeps the reset
+// legible as forward motion rather than a restart.
+//
+// dingo may skip a phase — that run went straight from "bootstrap" to
+// "immutable_copy" — so the step can jump. This reports a position in the
+// pipeline rather than a count of phases seen, so a skip reads as progress.
+export function bootstrapStepPosition(
+  phase: string,
+): { step: number; total: number } | null {
+  const idx = BOOTSTRAP_PHASES.findIndex((p) => p.key === phase);
+  if (idx < 0) return null;
+  return { step: idx + 1, total: BOOTSTRAP_PHASES.length };
+}

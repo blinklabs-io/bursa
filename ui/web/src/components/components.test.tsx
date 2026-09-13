@@ -414,3 +414,74 @@ test("MultiSigProgress shows threshold-met indicator once signedCount reaches th
   expect(screen.getByText(/2 of 2/)).toBeInTheDocument();
   expect(screen.getByText(/threshold met/i)).toBeInTheDocument();
 });
+
+// The percent in the banner measures the CURRENT phase, and every handoff
+// restarts it near zero (measured on preview: 99.8% -> 0.1% in five seconds).
+// Without the step position the banner reads as progress being thrown away —
+// and it is on screen during the whole bootstrap, on every screen.
+test("SyncBanner places the bootstrap percent in the pipeline", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "immutable_copy", percent: 6.4 },
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/step 3 of 7/i)).toBeInTheDocument();
+});
+
+// A phase we cannot place has no honest step number, so the banner claims none
+// rather than inventing one.
+test("SyncBanner claims no step for a phase it cannot place", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "some_future_phase", percent: 1 },
+      }}
+    />,
+  );
+
+  expect(screen.queryByText(/step \d+ of/i)).toBeNull();
+});
+
+// The handoff itself: the percent collapses, but the step advances, so the pair
+// reads as the next step starting.
+test("SyncBanner advances the step as the percent restarts", () => {
+  const { rerender } = render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "bootstrap", percent: 99.79 },
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/step 1 of 7/i)).toBeInTheDocument();
+
+  rerender(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "immutable_copy", percent: 0.105 },
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/step 3 of 7/i)).toBeInTheDocument();
+  expect(screen.queryByText(/step 1 of 7/i)).toBeNull();
+});

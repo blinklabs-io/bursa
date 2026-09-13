@@ -1,6 +1,6 @@
 import type { Tone } from "./StatusPill";
 import type { Status, NodeState } from "../api/types";
-import { bootstrapPhaseLabel } from "../bootstrapPhases";
+import { bootstrapPhaseLabel, bootstrapStepPosition } from "../bootstrapPhases";
 
 interface SyncBannerProps {
   status: Status;
@@ -27,7 +27,16 @@ export function SyncBanner({ status }: SyncBannerProps) {
 
   let detail = "";
   if (status.state === "bootstrapping" && status.bootstrap) {
+    // The percent belongs to the current phase alone, and every handoff
+    // restarts it near zero. Naming the step the percent is measuring is what
+    // keeps that reset legible as the next step starting rather than as lost
+    // progress; this strip is on screen for the whole bootstrap, so it is where
+    // the collapse is seen most. A phase we cannot place gets no step.
+    const position = bootstrapStepPosition(status.bootstrap.phase);
     detail = `${bootstrapPhaseLabel(status.bootstrap.phase)} ${status.bootstrap.percent.toFixed(1)}%`;
+    if (position) {
+      detail += ` · Step ${position.step} of ${position.total}`;
+    }
   } else if (status.state === "ready") {
     detail = `tip ${status.tip} · ${status.caughtUp ? "caught up" : "catching up"}`;
   } else if (status.error) {
