@@ -363,6 +363,11 @@ export interface AssetInfo {
   fingerprint: string;
   quantity: string;
   onchain_metadata: Record<string, unknown> | null;
+  // metadata is the CIP-26 off-chain token-registry entry (curated: name,
+  // description, ticker, url, logo, decimals). Null when the registry has
+  // nothing for the asset, which is the common case — the node's registry
+  // sync is opt-in. Read defensively via ../tokenMeta.ts.
+  metadata: Record<string, unknown> | null;
 }
 
 export type VoteType = "abstain" | "no_confidence" | "drep" | "register_self";

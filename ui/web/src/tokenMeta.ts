@@ -14,31 +14,29 @@ export interface AssetDisplayMeta {
 }
 
 /**
- * Reads a handful of commonly-used on-chain-metadata keys defensively:
- * "name", "ticker" (or "symbol"), and "decimals" (number or numeric string).
- * Anything missing, null, or the wrong shape is silently ignored — a
- * malformed or absent metadata object must never break the Portfolio screen,
- * it just yields {} and callers fall back to the raw unit/quantity.
+ * Reads a handful of commonly-used metadata keys defensively: "name",
+ * "ticker" (or "symbol"), and "decimals" (number or numeric string).
+ * Anything missing, null, or the wrong shape is silently ignored.
  */
-export function extractAssetMeta(info: AssetInfo | undefined): AssetDisplayMeta {
-  const meta = info?.onchain_metadata;
+function readDisplayKeys(meta: unknown): AssetDisplayMeta {
   if (!meta || typeof meta !== "object") return {};
+  const source = meta as Record<string, unknown>;
 
   const result: AssetDisplayMeta = {};
 
-  const name = meta.name;
+  const name = source.name;
   if (typeof name === "string" && name.trim() !== "") {
     result.name = name.trim();
   }
 
-  for (const ticker of [meta.ticker, meta.symbol]) {
+  for (const ticker of [source.ticker, source.symbol]) {
     if (typeof ticker === "string" && ticker.trim() !== "") {
       result.ticker = ticker.trim();
       break;
     }
   }
 
-  const decimalsRaw = meta.decimals;
+  const decimalsRaw = source.decimals;
   if (typeof decimalsRaw === "number" && Number.isInteger(decimalsRaw) && decimalsRaw >= 0) {
     result.decimals = decimalsRaw;
   } else if (typeof decimalsRaw === "string" && /^\d+$/.test(decimalsRaw)) {
@@ -46,6 +44,30 @@ export function extractAssetMeta(info: AssetInfo | undefined): AssetDisplayMeta 
   }
 
   return result;
+}
+
+/**
+ * Display metadata for a native asset, merged from the two sources the node
+ * serves for it:
+ *
+ *   - `onchain_metadata` — the minter's own CIP-25/68 declaration.
+ *   - `metadata` — the curated CIP-26 off-chain token-registry entry.
+ *
+ * Merged per field, with the registry winning where both declare a value: the
+ * registry is reviewed, whereas on-chain metadata is whatever the minter wrote.
+ * That matters most for `decimals`, since a wrong value misstates the holder's
+ * balance. Per-field (rather than whole-object) precedence means a registry
+ * entry that declares only a ticker still keeps the on-chain name.
+ *
+ * Either source being absent, null, or malformed is normal — most assets have
+ * neither, and the node's registry sync is opt-in — so this yields {} and
+ * callers fall back to the raw unit/quantity.
+ */
+export function extractAssetMeta(info: AssetInfo | undefined): AssetDisplayMeta {
+  return {
+    ...readDisplayKeys(info?.onchain_metadata),
+    ...readDisplayKeys(info?.metadata),
+  };
 }
 
 /** Display label for a native asset: metadata name, else ticker, else the raw unit (policy id + hex asset name). */

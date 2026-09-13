@@ -1302,3 +1302,50 @@ func TestGovernanceActionsSkipsUnknownVoteKind(t *testing.T) {
 			got[0].YesVotes, got[0].NoVotes, got[0].AbstainVotes)
 	}
 }
+
+func TestAssetRegistryMetadata(t *testing.T) {
+	// The node serves the curated CIP-26 token-registry entry in `metadata`,
+	// separate from the minter's own `onchain_metadata`. Most registered
+	// fungible tokens carry no on-chain metadata at all, so this covers the
+	// realistic shape: a null onchain_metadata (which still runs the CIP-25
+	// enrichment path) alongside a populated registry entry that must survive it.
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"asset":"policy123746f6b656e","policy_id":"policy123","asset_name":"746f6b656e","asset_name_ascii":"token","fingerprint":"asset1xyz","quantity":"1000000","onchain_metadata":null,"metadata":{"name":"Curated Token","ticker":"CTK","decimals":6}}`))
+	})
+	got, err := c.Asset(context.Background(), "policy123746f6b656e")
+	if err != nil {
+		t.Fatalf("Asset: %v", err)
+	}
+	if got.Metadata == nil {
+		t.Fatalf("Metadata = nil, want the registry entry")
+	}
+	var reg struct {
+		Name     string `json:"name"`
+		Ticker   string `json:"ticker"`
+		Decimals int    `json:"decimals"`
+	}
+	if err := json.Unmarshal(got.Metadata, &reg); err != nil {
+		t.Fatalf("unmarshal Metadata: %v", err)
+	}
+	if reg.Name != "Curated Token" || reg.Ticker != "CTK" || reg.Decimals != 6 {
+		t.Fatalf("unexpected registry metadata: %+v", reg)
+	}
+}
+
+func TestAssetNilRegistryMetadata(t *testing.T) {
+	// The node's registry sync is opt-in, so an asset the registry knows
+	// nothing about (metadata: null) is the common case and must decode
+	// cleanly rather than erroring.
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"asset":"policy123746f6b656e","policy_id":"policy123","asset_name":"746f6b656e","asset_name_ascii":"token","fingerprint":"asset1xyz","quantity":"1000000","onchain_metadata":{"name":"Token"},"metadata":null}`))
+	})
+	got, err := c.Asset(context.Background(), "policy123746f6b656e")
+	if err != nil {
+		t.Fatalf("Asset: %v", err)
+	}
+	if string(got.Metadata) != "null" {
+		t.Fatalf("Metadata = %s, want the raw JSON null literal", got.Metadata)
+	}
+}
