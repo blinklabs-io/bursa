@@ -272,6 +272,13 @@ type AssetInfo struct {
 	Fingerprint     string          `json:"fingerprint"`
 	Quantity        string          `json:"quantity"`
 	OnchainMetadata json.RawMessage `json:"onchain_metadata"`
+	// Metadata is the CIP-26 off-chain token-registry entry the node serves
+	// for this asset (name/description/ticker/url/logo/decimals; absent
+	// properties are omitted, and the whole field is null when the registry
+	// has nothing — the common case, since the node's registry sync is
+	// opt-in). Left as raw JSON for the same reason as OnchainMetadata: every
+	// property is optional, so callers parse defensively.
+	Metadata json.RawMessage `json:"metadata"`
 }
 
 const cip25MetadataLabel = 721

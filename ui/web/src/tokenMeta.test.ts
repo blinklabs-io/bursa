@@ -1,7 +1,7 @@
 import { extractAssetMeta, assetDisplayName, assetMatchesQuery } from "./tokenMeta";
 import type { AssetInfo } from "./api/types";
 
-function makeInfo(onchainMetadata: unknown): AssetInfo {
+function makeInfo(onchainMetadata: unknown, registryMetadata: unknown = null): AssetInfo {
   return {
     asset: "policy123746f6b656e",
     policy_id: "policy123",
@@ -10,6 +10,7 @@ function makeInfo(onchainMetadata: unknown): AssetInfo {
     fingerprint: "asset1xyz",
     quantity: "1000000",
     onchain_metadata: onchainMetadata as AssetInfo["onchain_metadata"],
+    metadata: registryMetadata as AssetInfo["metadata"],
   };
 }
 
@@ -94,4 +95,39 @@ test("assetMatchesQuery: matches by raw unit substring when there is no metadata
 
 test("assetMatchesQuery: no match returns false", () => {
   expect(assetMatchesQuery("unit1", { name: "Token" }, "nomatch")).toBe(false);
+});
+
+// --- CIP-26 off-chain token-registry metadata (AssetInfo.metadata) ---
+//
+// The node serves the curated registry entry in `metadata` alongside the
+// minter's self-declared `onchain_metadata`. The registry is the source of
+// truth for fungible-token ticker/decimals, so it wins where both declare a
+// value — getting decimals wrong misstates the holder's balance.
+
+test("extractAssetMeta: reads name/ticker/decimals from the registry metadata", () => {
+  const info = makeInfo(null, { name: "Registry Token", ticker: "RTK", decimals: 6 });
+  expect(extractAssetMeta(info)).toEqual({ name: "Registry Token", ticker: "RTK", decimals: 6 });
+});
+
+test("extractAssetMeta: registry metadata wins over on-chain for name/ticker/decimals", () => {
+  const info = makeInfo(
+    { name: "Minter Name", ticker: "BAD", decimals: 0 },
+    { name: "Curated Name", ticker: "GOOD", decimals: 6 },
+  );
+  expect(extractAssetMeta(info)).toEqual({ name: "Curated Name", ticker: "GOOD", decimals: 6 });
+});
+
+test("extractAssetMeta: honours a registry decimals of 0 (a real declaration)", () => {
+  const info = makeInfo({ decimals: 8 }, { decimals: 0 });
+  expect(extractAssetMeta(info).decimals).toBe(0);
+});
+
+test("extractAssetMeta: falls back to on-chain when registry metadata is null", () => {
+  const info = makeInfo({ name: "Token", ticker: "TOK", decimals: 2 }, null);
+  expect(extractAssetMeta(info)).toEqual({ name: "Token", ticker: "TOK", decimals: 2 });
+});
+
+test("extractAssetMeta: ignores a malformed registry metadata object", () => {
+  const info = makeInfo({ name: "Token" }, { name: 42, ticker: {}, decimals: "six" });
+  expect(extractAssetMeta(info)).toEqual({ name: "Token" });
 });
