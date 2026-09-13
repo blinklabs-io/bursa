@@ -71,7 +71,7 @@ func TestSQLiteDatabasePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path, fileBacked, err := sqliteDatabasePath(tt.dsn)
+			path, fileBacked, _, err := sqliteTarget(tt.dsn)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantPath, path)
 			assert.Equal(t, tt.wantFile, fileBacked)
@@ -560,7 +560,7 @@ func TestSQLiteDatabasePathDropsTheURISlashBeforeADriveLetter(t *testing.T) {
 		{"file:///var/lib/wallet.db", "/var/lib/wallet.db"},
 		{"file:///w:x/not-a-drive", "/w:x/not-a-drive"},
 	} {
-		got, fileBacked, err := sqliteDatabasePath(tt.dsn)
+		got, fileBacked, _, err := sqliteTarget(tt.dsn)
 		if err != nil {
 			t.Fatalf("%s: %v", tt.dsn, err)
 		}

@@ -116,11 +116,6 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 // Memory databases and non-local URI authorities have no path that this
 // package can safely permission. The driver accepts both plain paths and file:
 // URIs, including query parameters such as _pragma and mode.
-func sqliteDatabasePath(dsn string) (string, bool, error) {
-	path, fileBacked, _, err := sqliteTarget(dsn)
-	return path, fileBacked, err
-}
-
 // sqliteTarget additionally reports the DSN's open mode ("", "ro", "rw",
 // "rwc", "memory"), which decides what the permission step is allowed to do:
 // creating the file itself would defeat a mode=rw DSN's contract that it opens
@@ -212,12 +207,12 @@ func ensureSQLiteFilePermissions(path, mode string) error {
 	flags := os.O_RDWR | os.O_CREATE
 	switch mode {
 	case "ro":
-		if _, err := os.Stat(path); err != nil {
+		if !sqliteFileExists(path) {
 			return nil
 		}
 		flags = os.O_RDONLY
 	case "rw":
-		if _, err := os.Stat(path); err != nil {
+		if !sqliteFileExists(path) {
 			return nil
 		}
 		flags = os.O_RDWR
@@ -696,4 +691,12 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 
 func (w *sqliteWallet) Delete(ctx context.Context) error {
 	return w.store.DeleteWallet(ctx, w.name)
+}
+
+// sqliteFileExists reports whether path is there to be opened. Any failure to
+// answer that - absent, or unreachable - leaves the database for SQLite to open
+// and report on, which is the whole point of honouring the DSN's mode here.
+func sqliteFileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
