@@ -43,6 +43,23 @@ jobs:
       - name: go-test
         run: go test ./...
 
+  # The PKCS#11 backend is behind a build tag, so the job above never compiles
+  # it, let alone runs its tests - and those are exactly the tests that prove
+  # the signing path stays bounded when a token stops answering. Scoped to the
+  # signer packages (the only tagged code) and run with -race, since what they
+  # cover is worker and cancellation concurrency. miekg/pkcs11 links only
+  # -ldl on linux, so no extra packages are needed.
+  go-test-pkcs11:
+    name: go-test (pkcs11)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
+        with:
+          go-version: 1.26.x
+      - name: go-test (pkcs11)
+        run: go test -tags pkcs11 -race ./internal/signer/...
+
   # Cross-compile every platform the release builds. `go test` above runs on
   # ubuntu only, so before this job the first thing that ever tried a non-linux
   # target was the publish workflow — after the merge had already landed. Builds

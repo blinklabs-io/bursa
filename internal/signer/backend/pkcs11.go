@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/miekg/pkcs11"
 )
@@ -96,6 +97,12 @@ type PKCS11Backend struct {
 }
 
 const maxQueuedPKCS11Signs = 1
+
+// defaultPKCS11SignTimeout caps a signing wait when the caller supplies an
+// unbounded context. Signing is milliseconds of work on a healthy token, so
+// reaching this means the token has stopped answering. A var rather than a
+// const only so tests can shorten it.
+var defaultPKCS11SignTimeout = 30 * time.Second
 
 type pkcs11SignRequest struct {
 	ctx  context.Context
@@ -173,6 +180,18 @@ func NewPKCS11Backend(cfg PKCS11Config) (Backend, error) {
 func (b *PKCS11Backend) signWithSession(ctx context.Context, priv pkcs11.ObjectHandle, msg []byte) ([]byte, error) {
 	if ctx == nil {
 		return nil, errors.New("pkcs11 sign: nil context")
+	}
+	// A bound that depends on the caller is no bound at all here: the signer's
+	// HTTP handler passes the request context straight through, and the server
+	// sets no handler timeout, so a wedged token would hold a live /v1/sign
+	// request open for as long as the client stayed connected. Impose our own
+	// ceiling when the caller brought none — the same stance vault.go takes for
+	// its key reads. An Ed25519 signature is milliseconds of work, so this only
+	// ever fires on a token that has stopped answering.
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultPKCS11SignTimeout)
+		defer cancel()
 	}
 	req := pkcs11SignRequest{
 		ctx:  ctx,

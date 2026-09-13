@@ -158,3 +158,45 @@ func TestPKCS11Sign_CanceledQueuedRequestIsNotSentToToken(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 }
+
+// The production caller — handleSign, via Coordinator.SignTx — passes the HTTP
+// request's context straight through, and the signer server sets no handler
+// timeout, so a caller-supplied bound cannot be relied on. A wedged token must
+// not be able to hold a signing call open indefinitely on that path.
+func TestPKCS11Sign_BoundsAnUnboundedCallerContext(t *testing.T) {
+	restore := defaultPKCS11SignTimeoutForTest(50 * time.Millisecond)
+	defer restore()
+
+	wedged := make(chan struct{})
+	defer close(wedged)
+	b := newTestPKCS11Backend(func(pkcs11.ObjectHandle, []byte) ([]byte, error) {
+		<-wedged
+		return make([]byte, ed25519.SignatureSize), nil
+	})
+	key := &pkcs11Key{sign: b.signWithSession}
+
+	done := make(chan error, 1)
+	go func() {
+		// context.Background() has no deadline: the bound has to come from the
+		// backend itself.
+		_, err := key.Sign(context.Background(), []byte("msg"))
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Sign = %v, want the backend's own deadline", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Sign did not return: an unbounded caller context left it waiting on the token")
+	}
+}
+
+// defaultPKCS11SignTimeoutForTest shortens the backend's self-imposed signing
+// bound and returns a function restoring it.
+func defaultPKCS11SignTimeoutForTest(d time.Duration) func() {
+	prev := defaultPKCS11SignTimeout
+	defaultPKCS11SignTimeout = d
+	return func() { defaultPKCS11SignTimeout = prev }
+}
