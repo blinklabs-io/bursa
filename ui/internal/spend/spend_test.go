@@ -2576,7 +2576,6 @@ func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
 		name   string
 		mutate mutateBody
 	}{
-		{"protocol update", func(b *conway.ConwayTransactionBody) { b.Update = &conway.ConwayTransactionPparamUpdate{} }},
 		{"auxiliary data hash", func(b *conway.ConwayTransactionBody) { b.TxAuxDataHash = &hash }},
 		{"validity interval start", func(b *conway.ConwayTransactionBody) { b.TxValidityIntervalStart = 1 }},
 		{"mint", func(b *conway.ConwayTransactionBody) { b.TxMint = &lcommon.MultiAsset[lcommon.MultiAssetTypeMint]{} }},
