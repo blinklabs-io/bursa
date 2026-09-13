@@ -191,3 +191,128 @@ test("a syncing node still says balances fill in when the sync finishes", () => 
 
   expect(screen.getByText(/until syncing finishes/i)).toBeInTheDocument();
 });
+
+// The bootstrap pipeline runs two separate downloads — the immutables snapshot
+// ("bootstrap") and the ancillary ledger state ("ledger_import") — each with
+// its own 0-100% and its own byte total. The per-phase percent therefore snaps
+// back to 0 at the handoff. These pin the context that keeps that reset legible
+// as forward motion rather than a restart.
+
+test("the first download names its position in the pipeline", () => {
+  render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "bootstrap", percent: 99.2, bytes_downloaded: 100, total_bytes: 101 },
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+  expect(screen.getByText(/Step 1 of 7/)).toBeInTheDocument();
+});
+
+test("the second download advances the step even though its percent restarts at zero", () => {
+  render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        // The handoff: the snapshot download just finished at 100%, and the
+        // ancillary download begins its own count from ~0 against a far
+        // smaller total.
+        bootstrap: { phase: "ledger_import", percent: 0.4, bytes_downloaded: 1024, total_bytes: 250 * 1024 * 1024 },
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+  expect(screen.getByText(/Step 2 of 7/)).toBeInTheDocument();
+  expect(screen.getByText("0.4%")).toBeInTheDocument();
+});
+
+test("the progress bar announces which step it measures, so a reset is not read as lost progress", () => {
+  render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "ledger_import", percent: 0.4 },
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+  expect(screen.getByRole("progressbar")).toHaveAttribute(
+    "aria-label",
+    expect.stringContaining("Step 2 of 7"),
+  );
+});
+
+test("a phase the UI does not know does not claim a step position", () => {
+  render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "some_new_phase", percent: 5 },
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+  expect(screen.queryByText(/Step \d+ of/)).not.toBeInTheDocument();
+});
+
+// Measured on a real preview bootstrap (dingo v0.70.5): the snapshot download
+// reported 99.79% at 14.75 GB / 14.78 GB, and five seconds later the next phase
+// reported 0.105% with no byte readout at all. dingo also skipped
+// "ledger_import" entirely, so the step can jump 1 -> 3. The step position is
+// what keeps that legible.
+test("a phase handoff that resets the percent still advances the step (measured case)", () => {
+  const { rerender } = render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: {
+          phase: "bootstrap",
+          percent: 99.79,
+          bytes_downloaded: 14749350099,
+          total_bytes: 14779773204,
+        },
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+  expect(screen.getByText(/Step 1 of 7/)).toBeInTheDocument();
+
+  rerender(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: {
+          phase: "immutable_copy",
+          percent: 0.105,
+          current_slot: 1368220,
+          tip_slot: 122592950,
+          count: 62800,
+        },
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+  // The percent went backwards; the step must not.
+  expect(screen.getByText(/Step 3 of 7/)).toBeInTheDocument();
+  expect(screen.queryByText(/Step 1 of 7/)).not.toBeInTheDocument();
+});

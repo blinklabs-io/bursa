@@ -1,5 +1,9 @@
 import type { Status, BootstrapProgress } from "../api/types";
-import { BOOTSTRAP_PHASES, bootstrapPhaseLabel } from "../bootstrapPhases";
+import {
+  BOOTSTRAP_PHASES,
+  bootstrapPhaseLabel,
+  bootstrapStepPosition,
+} from "../bootstrapPhases";
 
 interface SyncingProps {
   status: Status;
@@ -55,10 +59,18 @@ function fmtBehind(latest: string | undefined, nowMs: number): string {
   return pick(h / 24, "day");
 }
 
-function Bar({ percent, indeterminate }: { percent?: number; indeterminate?: boolean }) {
+function Bar({
+  percent,
+  indeterminate,
+  label,
+}: {
+  percent?: number;
+  indeterminate?: boolean;
+  label?: string;
+}) {
   if (indeterminate) {
     return (
-      <div className="sync-bar" role="progressbar" aria-label="Syncing…">
+      <div className="sync-bar" role="progressbar" aria-label={label ?? "Syncing…"}>
         <div className="sync-bar-fill sync-bar-indeterminate" />
       </div>
     );
@@ -68,6 +80,7 @@ function Bar({ percent, indeterminate }: { percent?: number; indeterminate?: boo
     <div
       className="sync-bar"
       role="progressbar"
+      aria-label={label}
       aria-valuenow={Math.round(p)}
       aria-valuemin={0}
       aria-valuemax={100}
@@ -99,8 +112,16 @@ function PhaseSteps({ active }: { active: string }) {
 // plus whichever positional pair the active phase populates (bytes for the
 // download, count/slot for the block-replay phases).
 function BootstrapDetail({ bp }: { bp: BootstrapProgress }) {
-  const phaseLabel =
-    bootstrapPhaseLabel(bp.phase);
+  const phaseLabel = bootstrapPhaseLabel(bp.phase);
+  // The percent measures the CURRENT step, and every handoff restarts it at 0
+  // (a measured preview run went 99.8% -> 0.1% in five seconds, with the byte
+  // readout swapped for a block count). Name the step the percent belongs to,
+  // both on screen and for assistive tech, so the reset reads as the next step
+  // starting rather than as lost progress.
+  const position = bootstrapStepPosition(bp.phase);
+  const barLabel = position
+    ? `Step ${position.step} of ${position.total}: ${phaseLabel}`
+    : phaseLabel;
 
   const readouts: string[] = [];
   if (bp.total_bytes && bp.total_bytes > 0) {
@@ -128,11 +149,12 @@ function BootstrapDetail({ bp }: { bp: BootstrapProgress }) {
       <div className="sync-phase-head">
         <span className="sync-phase-label">
           {phaseLabel}
+          {position ? ` · Step ${position.step} of ${position.total}` : ""}
           {bp.description ? ` · ${bp.description}` : ""}
         </span>
         <span className="sync-percent">{bp.percent.toFixed(1)}%</span>
       </div>
-      <Bar percent={bp.percent} />
+      <Bar percent={bp.percent} label={barLabel} />
       {readouts.map((r) => (
         <p key={r} className="sync-readout">
           {r}
