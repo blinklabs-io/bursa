@@ -2946,9 +2946,11 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 	// rejected.
 	// Note: TxWithdrawals is a map[*Address]uint64; len works on nil maps (returns 0).
 	var unsupportedBodyFeature string
+	// No protocol-update case: Conway moved protocol parameter changes out of the
+	// transaction body and into governance proposal procedures, which the
+	// proposal-procedures case below rejects. A body carrying the old field 6
+	// now fails to decode upstream, so a guard here could never fire.
 	switch {
-	case tx.Body.Update != nil:
-		unsupportedBodyFeature = "protocol update"
 	case tx.Body.TxAuxDataHash != nil:
 		unsupportedBodyFeature = "auxiliary data"
 	case tx.Body.TxValidityIntervalStart != 0:
