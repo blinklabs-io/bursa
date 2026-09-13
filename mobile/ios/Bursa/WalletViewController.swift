@@ -66,6 +66,10 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
         startWallet(dataDir: dataDir)
     }
 
+    // Written only after a migration has copied and verified every entry, so
+    // its absence means any content in the destination is a partial copy.
+    private static let migrationCompleteMarker = ".migration-complete"
+
     private func walletDataDirectory() -> URL {
         let fileManager = FileManager.default
         guard let applicationSupport = fileManager.urls(
@@ -78,6 +82,10 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
             for: .documentDirectory, in: .userDomainMask
         ).first
 
+        let marker = dataDir.appendingPathComponent(
+            Self.migrationCompleteMarker, isDirectory: false
+        )
+
         var copiedEntries: [URL] = []
         do {
             try fileManager.createDirectory(
@@ -86,10 +94,21 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
             if let documentsDir,
                fileManager.fileExists(atPath: documentsDir.path),
                fileManager.contentsOfDirectory(atPath: documentsDir.path)?.isEmpty == false {
-                let existingData = fileManager.contentsOfDirectory(atPath: dataDir.path) ?? []
-                if !existingData.isEmpty {
-                    Self.logger.error("wallet data migration already has an authoritative copy")
+                // A finished migration leaves the marker behind. Without it,
+                // anything already in dataDir is an interrupted copy rather
+                // than an authoritative tree — the legacy directory is still
+                // the real one, since its contents are only removed after the
+                // copy has been verified — so discard the remnants and copy
+                // again. Treating a partial tree as authoritative is how a
+                // kill mid-copy turned into a wallet that starts against half
+                // its data.
+                if fileManager.fileExists(atPath: marker.path) {
                     return dataDir
+                }
+                for stale in fileManager.contentsOfDirectory(atPath: dataDir.path) ?? [] {
+                    try fileManager.removeItem(
+                        at: dataDir.appendingPathComponent(stale)
+                    )
                 }
                 let entries = try fileManager.contentsOfDirectory(
                     at: documentsDir,
@@ -109,6 +128,9 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
                 guard Set(migrated.map(\.lastPathComponent)) == Set(entries.map(\.lastPathComponent)) else {
                     throw NSError(domain: "BursaWalletMigration", code: 1)
                 }
+                // Only now, with every entry copied and checked, does the copy
+                // become the authoritative one.
+                try Data().write(to: marker, options: .atomic)
                 do {
                     for entry in entries {
                         try fileManager.removeItem(at: entry)

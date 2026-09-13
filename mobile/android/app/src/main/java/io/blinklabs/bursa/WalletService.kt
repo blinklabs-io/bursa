@@ -86,6 +86,14 @@ class WalletService : Service() {
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
+    // What a foreground-service timeout detached and handed to the executor to
+    // stop. onDestroy can arrive before that task runs and shut the executor
+    // down underneath it, which would leave the native wallet running and the
+    // connectivity callback registered for the life of the process. Holding on
+    // to them here lets onDestroy finish the job instead of dropping it.
+    private var timedOutApp: App? = null
+    private var timedOutNetworkCallback: ConnectivityManager.NetworkCallback? = null
+
     private val debounceHandler = Handler(Looper.getMainLooper())
     private val reconnectRunnable = Runnable { handleNetworkChange() }
 
@@ -325,15 +333,28 @@ class WalletService : Service() {
             stopForeground(true)
         }
         stopSelfResult(startId)
+        synchronized(walletLock) {
+            timedOutApp = instance
+            timedOutNetworkCallback = callback
+        }
         // Return from the platform timeout callback promptly; a native stop
         // can block while draining an in-flight operation. Queue cleanup before
         // any resume-triggered restart on the same executor.
         try {
             walletExecutor.execute {
-                callback?.let { cb ->
+                // Claim the work before doing it, so a concurrent onDestroy
+                // sees it taken and does not stop the same instance twice.
+                val claimed = synchronized(walletLock) {
+                    val pending = timedOutApp
+                    val pendingCallback = timedOutNetworkCallback
+                    timedOutApp = null
+                    timedOutNetworkCallback = null
+                    Pair(pending, pendingCallback)
+                }
+                claimed.second?.let { cb ->
                     connectivityManager?.unregisterNetworkCallback(cb)
                 }
-                instance?.stop()
+                claimed.first?.stop()
             }
         } catch (e: RejectedExecutionException) {
             android.util.Log.w(TAG, "wallet timeout cleanup rejected", e)
@@ -364,6 +385,22 @@ class WalletService : Service() {
             current
         }
         instance?.stop()
+
+        // Anything a timeout detached but the executor has not yet stopped is
+        // ours to finish: shutdownNow() below would otherwise drop that task
+        // and leave the node running with nothing left holding a reference.
+        val leftover = synchronized(walletLock) {
+            val pending = timedOutApp
+            val pendingCallback = timedOutNetworkCallback
+            timedOutApp = null
+            timedOutNetworkCallback = null
+            Pair(pending, pendingCallback)
+        }
+        leftover.second?.let { cb ->
+            connectivityManager?.unregisterNetworkCallback(cb)
+        }
+        leftover.first?.stop()
+
         walletExecutor.shutdownNow()
         super.onDestroy()
     }
