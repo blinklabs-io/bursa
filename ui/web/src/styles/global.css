@@ -1203,6 +1203,25 @@ a:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* One row per phase the node is reporting. Several phases can be in flight at
+   once (the ledger import runs alongside the immutable copy), so the panel
+   holds more than one of these, each with its own percent and bar. */
+.sync-phase {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+/* A phase that has finished stays on screen as context for the ones still
+   running — that is what keeps a new phase at 0.1% from reading as lost
+   progress — so it recedes rather than competing for attention. */
+.sync-phase-done .sync-percent {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+.sync-phase-done .sync-bar-fill {
+  background: var(--text-faint);
+}
+
 /* Progress bar — blue (the "working" hue); gold stays reserved for identity. */
 .sync-bar {
   height: 6px;

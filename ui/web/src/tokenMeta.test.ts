@@ -1,5 +1,6 @@
 import { extractAssetMeta, assetDisplayName, assetMatchesQuery } from "./tokenMeta";
 import type { AssetInfo } from "./api/types";
+import { formatTokenQuantity } from "./format";
 
 function makeInfo(onchainMetadata: unknown, registryMetadata: unknown = null): AssetInfo {
   return {
@@ -130,4 +131,34 @@ test("extractAssetMeta: falls back to on-chain when registry metadata is null", 
 test("extractAssetMeta: ignores a malformed registry metadata object", () => {
   const info = makeInfo({ name: "Token" }, { name: 42, ticker: {}, decimals: "six" });
   expect(extractAssetMeta(info)).toEqual({ name: "Token" });
+});
+
+// Registry entries are third-party data: the node serves whatever the registry
+// published. A decimals value no token could have must not displace a good one,
+// because the merge lets the registry win per field — and the formatter, seeing
+// a scale it cannot use, falls back to the raw base-unit count, so a wild
+// registry value turns a correctly-scaled balance into a bare integer.
+test("an out-of-range registry decimals does not displace the on-chain value", () => {
+  const info = makeInfo({ decimals: 6 }, { decimals: Number.MAX_SAFE_INTEGER });
+  expect(extractAssetMeta(info).decimals).toBe(6);
+});
+
+test("an out-of-range decimals string does not displace the on-chain value", () => {
+  const info = makeInfo({ decimals: 6 }, { decimals: "9007199254740993" });
+  expect(extractAssetMeta(info).decimals).toBe(6);
+});
+
+test("decimals beyond what a quantity can be scaled by are ignored", () => {
+  expect(extractAssetMeta(makeInfo({ decimals: 19 })).decimals).toBeUndefined();
+  expect(extractAssetMeta(makeInfo({ decimals: 18 })).decimals).toBe(18);
+});
+
+// The scale a reader accepts has to be one the formatter can actually apply;
+// otherwise the balance silently degrades to a raw count.
+test("every accepted decimals value formats as a scaled quantity", () => {
+  for (const decimals of [0, 1, 6, 18]) {
+    const meta = extractAssetMeta(makeInfo({ decimals }));
+    expect(meta.decimals).toBe(decimals);
+    expect(formatTokenQuantity("1000000000000000000000", meta.decimals ?? 0)).toContain(",");
+  }
 });

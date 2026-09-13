@@ -414,3 +414,118 @@ test("MultiSigProgress shows threshold-met indicator once signedCount reaches th
   expect(screen.getByText(/2 of 2/)).toBeInTheDocument();
   expect(screen.getByText(/threshold met/i)).toBeInTheDocument();
 });
+
+// The node runs the ledger import and the immutable copy at the same time and
+// reports them through one field, so a banner showing "the" percent flipped
+// between two unrelated numbers every poll. Naming both is what makes two
+// numbers legible as two pieces of work.
+test("SyncBanner shows every phase that is running, each with its own percent", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "immutable_copy", percent: 79 },
+        bootstrap_phases: [
+          { phase: "immutable_copy", percent: 79 },
+          { phase: "ledger_import", percent: 52.3 },
+        ],
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/copy chain history 79\.0%/i)).toBeInTheDocument();
+  expect(screen.getByText(/import ledger state 52\.3%/i)).toBeInTheDocument();
+});
+
+// A finished phase is not news on a one-line strip; what is still running is.
+test("SyncBanner drops a phase that has finished", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "immutable_copy", percent: 0.1 },
+        bootstrap_phases: [
+          { phase: "bootstrap", percent: 100, done: true },
+          { phase: "immutable_copy", percent: 0.1 },
+        ],
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/copy chain history 0\.1%/i)).toBeInTheDocument();
+  expect(screen.queryByText(/download snapshot/i)).toBeNull();
+});
+
+// Every phase done and none started: the strip still has to say something.
+test("SyncBanner falls back to the latest report when every phase is finished", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "index_rebuild", percent: 100, done: true },
+        bootstrap_phases: [{ phase: "index_rebuild", percent: 100, done: true }],
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/rebuild indexes 100\.0%/i)).toBeInTheDocument();
+});
+
+// Two downloads run at once inside the download phase, over different totals.
+// Named only by phase, the strip would read "Download snapshot 75.0% · Download
+// snapshot 12.0%" — one name, two numbers, no way to tell what is what.
+test("SyncBanner tells two concurrent downloads apart", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "bootstrap", percent: 75, total_bytes: 14779773204 },
+        bootstrap_phases: [
+          { phase: "bootstrap", percent: 75, total_bytes: 14779773204 },
+          { phase: "bootstrap", percent: 12, total_bytes: 250000000 },
+        ],
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/download snapshot \(13\.8 GB\) 75\.0%/i)).toBeInTheDocument();
+  expect(screen.getByText(/download snapshot \(238 MB\) 12\.0%/i)).toBeInTheDocument();
+});
+
+// A download that has reached 100% is finished, whatever the phase-end edge has
+// said yet — the node ends a phase once, not once per download. The strip has
+// one line, so it names what is still working; the screen keeps the full list.
+test("SyncBanner drops a download that has reached 100%", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "bootstrap", percent: 9.3, total_bytes: 14780304000 },
+        bootstrap_phases: [
+          { phase: "bootstrap", percent: 100, total_bytes: 3525541 },
+          { phase: "bootstrap", percent: 86.7, total_bytes: 255611612 },
+          { phase: "bootstrap", percent: 9.3, total_bytes: 14780304000 },
+        ],
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/244 MB\) 86\.7%/i)).toBeInTheDocument();
+  expect(screen.getByText(/13\.8 GB\) 9\.3%/i)).toBeInTheDocument();
+  expect(screen.queryByText(/3\.4 MB/)).toBeNull();
+});

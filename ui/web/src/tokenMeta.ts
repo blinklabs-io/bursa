@@ -1,4 +1,5 @@
 import type { AssetInfo } from "./api/types";
+import { MAX_TOKEN_DECIMALS } from "./format";
 
 /**
  * Best-effort display metadata for a native asset, extracted from its
@@ -36,11 +37,20 @@ function readDisplayKeys(meta: unknown): AssetDisplayMeta {
     }
   }
 
+  // Registry entries are third-party data, and the merge below lets the
+  // registry win per field — so a decimals value no token could have would
+  // displace a good on-chain one, and the formatter, handed a scale it cannot
+  // use, falls back to the raw base-unit count. Accepting only what the
+  // formatter accepts keeps a wild value from costing us a correct one.
   const decimalsRaw = source.decimals;
-  if (typeof decimalsRaw === "number" && Number.isInteger(decimalsRaw) && decimalsRaw >= 0) {
-    result.decimals = decimalsRaw;
-  } else if (typeof decimalsRaw === "string" && /^\d+$/.test(decimalsRaw)) {
-    result.decimals = parseInt(decimalsRaw, 10);
+  const decimals =
+    typeof decimalsRaw === "number"
+      ? decimalsRaw
+      : typeof decimalsRaw === "string" && /^\d+$/.test(decimalsRaw)
+        ? Number(decimalsRaw)
+        : NaN;
+  if (Number.isInteger(decimals) && decimals >= 0 && decimals <= MAX_TOKEN_DECIMALS) {
+    result.decimals = decimals;
   }
 
   return result;

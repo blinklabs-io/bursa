@@ -1,6 +1,11 @@
-// The Mithril bootstrap pipeline, in the order dingo emits it, with operator-
-// facing labels. "complete" isn't shown — by the time it fires the node has
-// moved on to chain sync (or ready), so it never needs a step of its own.
+// The Mithril bootstrap pipeline with operator-facing labels. The order is a
+// reading order for the checklist, NOT a sequence: dingo runs the ledger import
+// and the immutable copy concurrently, and may skip a phase entirely, so a
+// phase's position here says nothing about whether it has run. Only what the
+// node reports for a phase does.
+//
+// "complete" isn't listed — by the time it fires the node has moved on to chain
+// sync (or ready), so it never needs a row of its own.
 //
 // Shared rather than private to the Syncing screen: the sync banner rides along
 // on every screen for the whole bootstrap, and the phase keys are dingo's
@@ -24,4 +29,18 @@ export function bootstrapPhaseLabel(phase: string): string {
     BOOTSTRAP_PHASES.find((p) => p.key === phase)?.label ??
     phase.replace(/_/g, " ")
   );
+}
+
+// Byte sizes, shared because both bootstrap readouts show them: the screen for
+// each download's progress, the banner to tell two concurrent downloads apart.
+export function fmtBytes(n?: number): string {
+  if (!n || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v.toFixed(i === 0 || v >= 100 ? 0 : 1)} ${units[i]}`;
 }

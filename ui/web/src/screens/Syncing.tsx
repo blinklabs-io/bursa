@@ -1,23 +1,11 @@
 import type { Status, BootstrapProgress } from "../api/types";
-import { BOOTSTRAP_PHASES, bootstrapPhaseLabel } from "../bootstrapPhases";
+import { BOOTSTRAP_PHASES, bootstrapPhaseLabel, fmtBytes } from "../bootstrapPhases";
 
 interface SyncingProps {
   status: Status;
   onLoadAnyway: () => void;
 }
 
-
-function fmtBytes(n?: number): string {
-  if (!n || n <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = n;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i += 1;
-  }
-  return `${v.toFixed(i === 0 || v >= 100 ? 0 : 1)} ${units[i]}`;
-}
 
 function fmtInt(n?: number): string {
   return (n ?? 0).toLocaleString();
@@ -55,10 +43,18 @@ function fmtBehind(latest: string | undefined, nowMs: number): string {
   return pick(h / 24, "day");
 }
 
-function Bar({ percent, indeterminate }: { percent?: number; indeterminate?: boolean }) {
+function Bar({
+  percent,
+  indeterminate,
+  label,
+}: {
+  percent?: number;
+  indeterminate?: boolean;
+  label?: string;
+}) {
   if (indeterminate) {
     return (
-      <div className="sync-bar" role="progressbar" aria-label="Syncing…">
+      <div className="sync-bar" role="progressbar" aria-label={label ?? "Syncing…"}>
         <div className="sync-bar-fill sync-bar-indeterminate" />
       </div>
     );
@@ -68,6 +64,7 @@ function Bar({ percent, indeterminate }: { percent?: number; indeterminate?: boo
     <div
       className="sync-bar"
       role="progressbar"
+      aria-label={label}
       aria-valuenow={Math.round(p)}
       aria-valuemin={0}
       aria-valuemax={100}
@@ -77,30 +74,54 @@ function Bar({ percent, indeterminate }: { percent?: number; indeterminate?: boo
   );
 }
 
-function PhaseSteps({ active }: { active: string }) {
-  const idx = BOOTSTRAP_PHASES.findIndex((p) => p.key === active);
+// The detail readout for an in-flight Mithril bootstrap: one row per phase the
+// node has reported, each with its own percent bar and whichever positional
+// pair that phase populates (bytes for the download, count/slot for the block
+// replay phases).
+//
+// One row per piece of work rather than one bar for the bootstrap, because the
+// node runs work in parallel at two levels and reports all of it through a
+// single progress field. The download phase fetches the immutable archives and
+// the ancillary ledger state AT THE SAME TIME, over different totals; later the
+// ledger import runs alongside the immutable copy. A lone bar fed from that
+// field alternates between unrelated percentages (measured: 75.1% copy, 52.3%
+// import, 79.0% copy in consecutive polls). Kept apart, each number only ever
+// moves forward, and work that has finished stays on screen as finished, so the
+// next phase starting at 0.1% does not read as lost progress.
+function BootstrapDetail({ bp, phases }: { bp: BootstrapProgress; phases?: BootstrapProgress[] }) {
+  // An older node sends only the latest report and no list; one row is then the
+  // whole truth it has to offer.
+  const live = phases && phases.length > 0 ? phases : [bp];
+  // Two concurrent downloads share a phase, so the size is part of the identity
+  // — the node drops the artifact label that would otherwise name them.
+  const workKey = (p: BootstrapProgress) => `${p.phase}:${p.total_bytes ?? 0}`;
+  const perPhase = new Map<string, number>();
+  for (const p of live) perPhase.set(p.phase, (perPhase.get(p.phase) ?? 0) + 1);
   return (
-    <ol className="sync-steps">
-      {BOOTSTRAP_PHASES.map((p, i) => {
-        const state =
-          idx < 0 ? "pending" : i < idx ? "done" : i === idx ? "active" : "pending";
-        return (
-          <li key={p.key} className={`sync-step sync-step-${state}`}>
-            <span className="sync-step-dot" aria-hidden="true" />
-            <span className="sync-step-label">{p.label}</span>
-          </li>
-        );
-      })}
-    </ol>
+    <div className="sync-panel">
+      {live.map((p) => (
+        <PhaseProgress
+          key={workKey(p)}
+          bp={p}
+          // Two rows reading "Download snapshot" would look like a bug rather
+          // than like two downloads, so name them by what distinguishes them.
+          sizeInLabel={(perPhase.get(p.phase) ?? 0) > 1}
+        />
+      ))}
+      <PhaseSteps live={live} />
+    </div>
   );
 }
 
-// The detail readout for an in-flight Mithril bootstrap phase: a percent bar
-// plus whichever positional pair the active phase populates (bytes for the
-// download, count/slot for the block-replay phases).
-function BootstrapDetail({ bp }: { bp: BootstrapProgress }) {
+function PhaseProgress({ bp, sizeInLabel }: { bp: BootstrapProgress; sizeInLabel?: boolean }) {
   const phaseLabel =
-    bootstrapPhaseLabel(bp.phase);
+    sizeInLabel && bp.total_bytes
+      ? `${bootstrapPhaseLabel(bp.phase)} · ${fmtBytes(bp.total_bytes)}`
+      : bootstrapPhaseLabel(bp.phase);
+  // A finished row shows how far it actually got. "Done" is not a claim of
+  // completeness — the node ends a phase even when something else tore the
+  // bootstrap down — and a bar snapped to full would hide that.
+  const percent = bp.percent;
 
   const readouts: string[] = [];
   if (bp.total_bytes && bp.total_bytes > 0) {
@@ -124,22 +145,51 @@ function BootstrapDetail({ bp }: { bp: BootstrapProgress }) {
   }
 
   return (
-    <div className="sync-panel">
+    <div className={`sync-phase${bp.done ? " sync-phase-done" : ""}`}>
       <div className="sync-phase-head">
         <span className="sync-phase-label">
           {phaseLabel}
           {bp.description ? ` · ${bp.description}` : ""}
         </span>
-        <span className="sync-percent">{bp.percent.toFixed(1)}%</span>
+        <span className="sync-percent">{bp.done ? "Done" : `${bp.percent.toFixed(1)}%`}</span>
       </div>
-      <Bar percent={bp.percent} />
-      {readouts.map((r) => (
-        <p key={r} className="sync-readout">
-          {r}
-        </p>
-      ))}
-      <PhaseSteps active={bp.phase} />
+      <Bar percent={percent} label={phaseLabel} />
+      {/* A finished phase keeps its label and bar but drops its running
+          readouts: a rate or an ETA for work that is over is noise. */}
+      {!bp.done &&
+        readouts.map((r) => (
+          <p key={r} className="sync-readout">
+            {r}
+          </p>
+        ))}
     </div>
+  );
+}
+
+// The whole pipeline, with each phase's state taken from what the node has
+// actually reported rather than from its position in the list. Position cannot
+// carry it: phases run concurrently and the node may skip one, so "everything
+// above the active phase is done" drew a phase as pending while it sat at 79%.
+function PhaseSteps({ live }: { live: BootstrapProgress[] }) {
+  return (
+    <ol className="sync-steps">
+      {BOOTSTRAP_PHASES.map((p) => {
+        const reported = live.filter((r) => r.phase === p.key);
+        // A phase carrying two downloads is still running while either is.
+        const state =
+          reported.length === 0
+            ? "pending"
+            : reported.every((r) => r.done)
+              ? "done"
+              : "active";
+        return (
+          <li key={p.key} className={`sync-step sync-step-${state}`}>
+            <span className="sync-step-dot" aria-hidden="true" />
+            <span className="sync-step-label">{p.label}</span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -203,7 +253,7 @@ export function Syncing({ status, onLoadAnyway }: SyncingProps) {
 
   let detail;
   if (status.state === "bootstrapping" && status.bootstrap) {
-    detail = <BootstrapDetail bp={status.bootstrap} />;
+    detail = <BootstrapDetail bp={status.bootstrap} phases={status.bootstrap_phases} />;
   } else if (status.state === "syncing") {
     detail = <ChainSyncDetail status={status} />;
   } else if (status.state === "error") {

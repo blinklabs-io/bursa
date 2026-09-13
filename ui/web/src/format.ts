@@ -158,7 +158,10 @@ export function shortId(id: string): string {
  *   formatTokenQuantity("1234567890", 6) → "1,234.56789"
  *   formatTokenQuantity("12345", 99)    → "12345"   (scale unknown)
  */
-const MAX_TOKEN_DECIMALS = 18;
+// Exported because the reader of token metadata applies the same bound: a
+// scale it accepts must be one this formatter can actually use, or a balance
+// silently degrades to a raw base-unit count.
+export const MAX_TOKEN_DECIMALS = 18;
 
 export function formatTokenQuantity(quantity: string, decimals: number): string {
   if (!/^-?\d+$/.test(quantity)) return quantity;

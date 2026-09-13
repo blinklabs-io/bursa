@@ -407,7 +407,90 @@ func (s *Supervisor) onProgressForRun(runID uint64, bp BootstrapProgress) {
 	if !s.activeRunLocked(runID) || s.status.State != StateBootstrapping {
 		return
 	}
-	s.status.Bootstrap = &bp
+	// The headline comes back from the merge rather than being looked up again
+	// here. The end edge carries no size, so a second lookup by size would miss
+	// every entry of a phase that ran several downloads, leaving the headline
+	// frozen on one of them and still claiming to be running.
+	phases, headline := mergeProgress(s.status.BootstrapPhases, bp)
+	s.status.BootstrapPhases = phases
+	s.status.Bootstrap = &headline
+}
+
+// mergeProgress folds one report into the retained list, copy-on-write so a
+// Status already handed out is never mutated under its reader.
+//
+// Identity is the phase AND the download size: one phase can have several
+// downloads in flight, each with its own size and its own percent. An entry
+// keeps its position (first seen) so nothing moves under the reader while
+// several report in turn.
+//
+// The end edge carries no measurements at all — dingo ends a phase once, not
+// once per download — so it marks every entry of that phase finished rather
+// than overwriting what they measured with the zeroes it carries.
+//
+// Finished is not complete. dingo emits the edge from a defer, so a phase torn
+// down by an error elsewhere ends too: a run that failed in the ledger import
+// left the immutable copy "finished" having copied 50 blocks of 122 million.
+// Snapping such a row to 100% would state something the node never said.
+// It returns the merged list and the entry that should stand as the headline:
+// the work this report describes, as it reads after merging.
+func mergeProgress(
+	phases []BootstrapProgress,
+	bp BootstrapProgress,
+) ([]BootstrapProgress, BootstrapProgress) {
+	out := make([]BootstrapProgress, len(phases), len(phases)+1)
+	copy(out, phases)
+	if bp.Done {
+		headline := -1
+		for i := range out {
+			if out[i].Phase != bp.Phase {
+				continue
+			}
+			out[i].Done = true
+			// Entries are in first-seen order, and the last of a phase is the
+			// one worth heading with: for the download phase that is the main
+			// archive rather than the small files fetched alongside it.
+			headline = i
+		}
+		if headline >= 0 {
+			return out, out[headline]
+		}
+		// A phase we never saw run, done on arrival: record that it ended, with
+		// the nothing it measured.
+		return append(out, bp), bp
+	}
+	for i := range out {
+		if !sameWork(out[i], bp) {
+			continue
+		}
+		out[i] = bp
+		return out, bp
+	}
+	// A phase opens with a bare "started" report and only then reports what it
+	// is doing. That opener has nothing to show and never gains anything, so the
+	// phase's first measured report takes its place instead of appearing beside
+	// it. Observed live: the download phase held an empty row alongside the
+	// three downloads it actually runs.
+	for i := range out {
+		if out[i].Phase == bp.Phase && !out[i].Done && !measured(out[i]) {
+			out[i] = bp
+			return out, bp
+		}
+	}
+	return append(out, bp), bp
+}
+
+// measured reports whether a progress report carries any measurement at all.
+func measured(bp BootstrapProgress) bool {
+	return bp.Percent != 0 || bp.TotalBytes != 0 || bp.BytesDownloaded != 0 ||
+		bp.Count != 0 || bp.Total != 0 || bp.CurrentSlot != 0 || bp.TipSlot != 0
+}
+
+// sameWork reports whether two progress reports describe the same piece of
+// work: the same phase, and — for a phase running several downloads at once —
+// the same download, told apart by the size only that download reports.
+func sameWork(a, b BootstrapProgress) bool {
+	return a.Phase == b.Phase && a.TotalBytes == b.TotalBytes
 }
 
 // Stop cancels the node's context, waits for the active run to exit, and marks
@@ -429,6 +512,7 @@ func (s *Supervisor) stop() <-chan struct{} {
 	s.runDone = nil
 	s.setStateLocked(StateStopped)
 	s.status.Bootstrap = nil // a clean shutdown is not a diagnostic failure
+	s.status.BootstrapPhases = nil
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -465,6 +549,7 @@ func (s *Supervisor) setStateForRun(runID uint64, st NodeState) {
 	s.setStateLocked(st)
 	if st != StateBootstrapping {
 		s.status.Bootstrap = nil
+		s.status.BootstrapPhases = nil
 	}
 }
 

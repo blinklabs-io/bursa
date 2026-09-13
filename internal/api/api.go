@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blinklabs-io/bursa"
@@ -911,87 +912,125 @@ func Start(
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", promhttp.Handler())
 
-	// Start metrics server
-	go func() {
-		logger.Info("starting metrics listener",
-			"address", cfg.Metrics.ListenAddress,
-			"port", cfg.Metrics.ListenPort,
+	metricsServer := &http.Server{
+		Handler:           metricsMux,
+		ReadHeaderTimeout: 60 * time.Second,
+		// Headers arriving is not the same as a body arriving: without this, a
+		// client can hold a connection open mid-body indefinitely.
+		ReadTimeout: 120 * time.Second,
+	}
+	if metricsListener == nil {
+		metricsServer.Addr = fmt.Sprintf(
+			"%s:%d",
+			cfg.Metrics.ListenAddress,
+			cfg.Metrics.ListenPort,
 		)
-		var err error
-		if metricsListener == nil {
-			server := &http.Server{
-				Addr: fmt.Sprintf(
-					"%s:%d",
-					cfg.Metrics.ListenAddress,
-					cfg.Metrics.ListenPort,
-				),
-				Handler:           metricsMux,
-				ReadHeaderTimeout: 60 * time.Second,
-				// Headers arriving is not the same as a body arriving: without
-				// this, a client can hold a connection open mid-body forever.
-				ReadTimeout: 120 * time.Second,
-			}
-			err = server.ListenAndServe()
-		} else {
-			server := &http.Server{
-				Handler:           metricsMux,
-				ReadHeaderTimeout: 60 * time.Second,
-				// Headers arriving is not the same as a body arriving: without
-				// this, a client can hold a connection open mid-body forever.
-				ReadTimeout: 120 * time.Second,
-			}
-			err = server.Serve(metricsListener)
-		}
-		if err != nil && err != http.ErrServerClosed {
-			logger.Error("metrics listener failed to start", "error", err)
-		}
-	}()
+	}
 
-	// Start API server
+	apiServer := &http.Server{
+		Handler:           mainHandler,
+		ReadHeaderTimeout: 60 * time.Second,
+		// Headers arriving is not the same as a body arriving: without this, a
+		// client can hold a connection open mid-body indefinitely.
+		ReadTimeout: 120 * time.Second,
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
+	}
+	if apiListener == nil {
+		apiServer.Addr = fmt.Sprintf(
+			"%s:%d",
+			cfg.Api.ListenAddress,
+			cfg.Api.ListenPort,
+		)
+	}
+
+	serveErrs := make(chan error, 2)
+	var servers sync.WaitGroup
+	serve := func(server *http.Server, listener net.Listener, tlsEnabled bool) {
+		defer servers.Done()
+		var err error
+		if listener == nil {
+			if tlsEnabled {
+				err = server.ListenAndServeTLS(
+					cfg.Api.TLSCertFile,
+					cfg.Api.TLSKeyFile,
+				)
+			} else {
+				err = server.ListenAndServe()
+			}
+		} else {
+			if tlsEnabled {
+				err = server.ServeTLS(
+					listener,
+					cfg.Api.TLSCertFile,
+					cfg.Api.TLSKeyFile,
+				)
+			} else {
+				err = server.Serve(listener)
+			}
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErrs <- err
+		}
+	}
+
+	servers.Add(2)
+	logger.Info("starting metrics listener",
+		"address", cfg.Metrics.ListenAddress,
+		"port", cfg.Metrics.ListenPort,
+	)
+	// Start metrics server.
+	go serve(metricsServer, metricsListener, false)
+
 	logger.Info("starting API listener",
 		"address", cfg.Api.ListenAddress,
 		"port", cfg.Api.ListenPort,
 		"tls", tlsConfigured,
 	)
-	if apiListener == nil {
-		server := &http.Server{
-			Addr: fmt.Sprintf(
-				"%s:%d",
-				cfg.Api.ListenAddress,
-				cfg.Api.ListenPort,
-			),
-			Handler:           mainHandler,
-			ReadHeaderTimeout: 60 * time.Second,
-			// Headers arriving is not the same as a body arriving: without
-			// this, a client can hold a connection open mid-body forever.
-			ReadTimeout: 120 * time.Second,
-			TLSConfig: &tls.Config{
-				MinVersion: tls.VersionTLS12,
-			},
-		}
-		if tlsConfigured {
-			err = server.ListenAndServeTLS(cfg.Api.TLSCertFile, cfg.Api.TLSKeyFile)
-		} else {
-			err = server.ListenAndServe()
-		}
-	} else {
-		server := &http.Server{
-			Handler:           mainHandler,
-			ReadHeaderTimeout: 60 * time.Second,
-			// Headers arriving is not the same as a body arriving: without
-			// this, a client can hold a connection open mid-body forever.
-			ReadTimeout: 120 * time.Second,
-			TLSConfig: &tls.Config{
-				MinVersion: tls.VersionTLS12,
-			},
-		}
-		if tlsConfigured {
-			err = server.ServeTLS(apiListener, cfg.Api.TLSCertFile, cfg.Api.TLSKeyFile)
-		} else {
-			err = server.Serve(apiListener)
+	// Start API server.
+	go serve(apiServer, apiListener, tlsConfigured)
+
+	shutdown := func(ctx context.Context) {
+		shutdownCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			10*time.Second,
+		)
+		defer cancel()
+		var shutdownServers sync.WaitGroup
+		shutdownServers.Add(2)
+		go func() {
+			defer shutdownServers.Done()
+			_ = metricsServer.Shutdown(shutdownCtx)
+		}()
+		go func() {
+			defer shutdownServers.Done()
+			_ = apiServer.Shutdown(shutdownCtx)
+		}()
+		shutdownServers.Wait()
+		_ = metricsServer.Close()
+		_ = apiServer.Close()
+	}
+
+	select {
+	case err := <-serveErrs:
+		shutdown(ctx)
+		servers.Wait()
+		return err
+	case <-ctx.Done():
+		shutdown(ctx)
+		servers.Wait()
+		// A serving goroutine may have failed in the same moment the context
+		// was cancelled; select picks between ready cases at random, so landing
+		// here does not mean the servers were healthy. Report what they said
+		// rather than calling a failure a clean shutdown.
+		select {
+		case err := <-serveErrs:
+			return err
+		default:
+			return nil
 		}
 	}
-	return err
 }
 
 func logMiddleware(next http.Handler, accessLogger *slog.Logger) http.Handler {
