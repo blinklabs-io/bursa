@@ -93,7 +93,7 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
             )
             if let documentsDir,
                fileManager.fileExists(atPath: documentsDir.path),
-               fileManager.contentsOfDirectory(atPath: documentsDir.path)?.isEmpty == false {
+               try !fileManager.contentsOfDirectory(atPath: documentsDir.path).isEmpty {
                 // A finished migration leaves the marker behind. Without it,
                 // anything already in dataDir is an interrupted copy rather
                 // than an authoritative tree — the legacy directory is still
@@ -105,7 +105,7 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
                 if fileManager.fileExists(atPath: marker.path) {
                     return dataDir
                 }
-                for stale in fileManager.contentsOfDirectory(atPath: dataDir.path) ?? [] {
+                for stale in try fileManager.contentsOfDirectory(atPath: dataDir.path) {
                     try fileManager.removeItem(
                         at: dataDir.appendingPathComponent(stale)
                     )
