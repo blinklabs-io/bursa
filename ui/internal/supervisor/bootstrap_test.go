@@ -575,3 +575,29 @@ func TestPhaseEndKeepsTheProgressItActuallyMade(t *testing.T) {
 		t.Errorf("the end edge must not discard what the phase measured: %+v", phases[0])
 	}
 }
+
+// The end edge names a phase, not one download within it, so it carries no
+// size. Matching the headline by size therefore found nothing once a phase ran
+// several downloads, and Status.Bootstrap stayed frozen on whichever download
+// had reported last, still claiming to be running. The banner reads the
+// headline exactly in that window — after every download of a phase has
+// finished and before the next phase reports.
+func TestPhaseEndRefreshesTheHeadlineForEveryDownload(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 100, TotalBytes: 100})
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 100, TotalBytes: 200})
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 99.8, TotalBytes: 300})
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Done: true})
+
+	got := s.Status().Bootstrap
+	if got == nil {
+		t.Fatal("no headline progress")
+	}
+	if !got.Done {
+		t.Errorf("the phase ended, so the headline is not still running: %+v", got)
+	}
+	if got.Phase != "bootstrap" {
+		t.Errorf("headline should stay on the phase that just ended: %+v", got)
+	}
+}

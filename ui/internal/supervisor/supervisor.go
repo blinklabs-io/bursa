@@ -407,17 +407,13 @@ func (s *Supervisor) onProgressForRun(runID uint64, bp BootstrapProgress) {
 	if !s.activeRunLocked(runID) || s.status.State != StateBootstrapping {
 		return
 	}
-	s.status.BootstrapPhases = mergeProgress(s.status.BootstrapPhases, bp)
-	// The headline is whatever just reported, taken from the merged entry so
-	// the empty end edge reads as "finished" rather than blanking work that had
-	// just measured its way to 99.8%.
-	for i := range s.status.BootstrapPhases {
-		if sameWork(s.status.BootstrapPhases[i], bp) {
-			latest := s.status.BootstrapPhases[i]
-			s.status.Bootstrap = &latest
-			break
-		}
-	}
+	// The headline comes back from the merge rather than being looked up again
+	// here. The end edge carries no size, so a second lookup by size would miss
+	// every entry of a phase that ran several downloads, leaving the headline
+	// frozen on one of them and still claiming to be running.
+	phases, headline := mergeProgress(s.status.BootstrapPhases, bp)
+	s.status.BootstrapPhases = phases
+	s.status.Bootstrap = &headline
 }
 
 // mergeProgress folds one report into the retained list, copy-on-write so a
@@ -436,31 +432,39 @@ func (s *Supervisor) onProgressForRun(runID uint64, bp BootstrapProgress) {
 // down by an error elsewhere ends too: a run that failed in the ledger import
 // left the immutable copy "finished" having copied 50 blocks of 122 million.
 // Snapping such a row to 100% would state something the node never said.
-func mergeProgress(phases []BootstrapProgress, bp BootstrapProgress) []BootstrapProgress {
+// It returns the merged list and the entry that should stand as the headline:
+// the work this report describes, as it reads after merging.
+func mergeProgress(
+	phases []BootstrapProgress,
+	bp BootstrapProgress,
+) ([]BootstrapProgress, BootstrapProgress) {
 	out := make([]BootstrapProgress, len(phases), len(phases)+1)
 	copy(out, phases)
 	if bp.Done {
-		found := false
+		headline := -1
 		for i := range out {
 			if out[i].Phase != bp.Phase {
 				continue
 			}
 			out[i].Done = true
-			found = true
+			// Entries are in first-seen order, and the last of a phase is the
+			// one worth heading with: for the download phase that is the main
+			// archive rather than the small files fetched alongside it.
+			headline = i
 		}
-		if found {
-			return out
+		if headline >= 0 {
+			return out, out[headline]
 		}
 		// A phase we never saw run, done on arrival: record that it ended, with
 		// the nothing it measured.
-		return append(out, bp)
+		return append(out, bp), bp
 	}
 	for i := range out {
 		if !sameWork(out[i], bp) {
 			continue
 		}
 		out[i] = bp
-		return out
+		return out, bp
 	}
 	// A phase opens with a bare "started" report and only then reports what it
 	// is doing. That opener has nothing to show and never gains anything, so the
@@ -470,10 +474,10 @@ func mergeProgress(phases []BootstrapProgress, bp BootstrapProgress) []Bootstrap
 	for i := range out {
 		if out[i].Phase == bp.Phase && !out[i].Done && !measured(out[i]) {
 			out[i] = bp
-			return out
+			return out, bp
 		}
 	}
-	return append(out, bp)
+	return append(out, bp), bp
 }
 
 // measured reports whether a progress report carries any measurement at all.
