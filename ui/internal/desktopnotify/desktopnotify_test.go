@@ -19,7 +19,10 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -186,4 +189,56 @@ func TestWindowsToastScriptEmbedsSanitizedText(t *testing.T) {
 	if !strings.Contains(script, "'Title'") || !strings.Contains(script, "'Body'") {
 		t.Fatalf("windows script missing embedded fields: %q", script)
 	}
+}
+
+// The Windows notifier owns its tray icon for as long as the balloon is up, so
+// killing it at the start grace would take the notification down with it. A
+// notifier given a longer lifetime keeps running past the grace period, and is
+// still reaped at the end of it.
+func TestStartWithLifetimeLetsALongNotifierFinish(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell to stand in for the notifier")
+	}
+	dir := t.TempDir()
+	// Outlives the grace period, then records that it got to run to the end.
+	// Nothing is interpolated into the command: the working directory carries
+	// the location instead.
+	cmd := exec.Command("sh", "-c", "sleep 0.5; : > finished")
+	cmd.Dir = dir
+	marker := filepath.Join(dir, "finished")
+
+	if !startWithLifetime(discardLogger(), cmd, 5*time.Second) {
+		t.Fatal("a notifier that is still running should report success")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(marker); err == nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the notifier was killed before it could finish")
+}
+
+// The bound still holds: a notifier that never exits is reaped at the end of
+// its lifetime rather than left behind.
+func TestStartWithLifetimeReapsANotifierThatNeverExits(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell to stand in for the notifier")
+	}
+	cmd := exec.Command("sleep", "300")
+
+	if !startWithLifetime(discardLogger(), cmd, notifyStartGrace+300*time.Millisecond) {
+		t.Fatal("a notifier that is still running should report success")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the notifier outlived its bound")
 }

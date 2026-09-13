@@ -128,7 +128,11 @@ func TestPolicyFromScript_RejectsInvalidThresholds(t *testing.T) {
 	}{
 		{name: "zero", n: 0},
 		{name: "greater than participants", n: 2},
-		{name: "integer overflow", n: ^uint(0)},
+		// Not the representability clause, whatever the size suggests: the
+		// participant bound above it rejects this first and always will, since
+		// a participant count cannot exceed maxInt. What this pins is that a
+		// threshold too large to represent never reaches the conversion.
+		{name: "larger than any participant count", n: ^uint(0)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw, err := gcbor.Encode(&lcommon.NativeScriptNofK{

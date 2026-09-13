@@ -295,6 +295,12 @@ func PolicyFromScript(ns *bursa.NativeScript) (Policy, error) {
 			// this policy or cannot be represented before converting; otherwise a
 			// malicious imported script can wrap to a negative threshold and pass
 			// the import flow's readiness checks.
+			//
+			// The representability clause cannot fire while the participant
+			// bound precedes it — a script with more than maxInt sub-scripts is
+			// not a thing that decodes — and is kept as the guard that makes the
+			// conversion below safe on its own terms rather than by argument
+			// about the clause before it.
 			if v.N == 0 || v.N > uint(len(v.Scripts)) || uint64(v.N) > uint64(^uint(0)>>1) {
 				return fmt.Errorf("%w: invalid threshold %d for %d participant scripts", ErrInvalidTx, v.N, len(v.Scripts))
 			}
