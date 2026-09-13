@@ -364,14 +364,14 @@ func TestOnProgressEndEdgeCompletesRatherThanBlanks(t *testing.T) {
 	if !phases[0].Done {
 		t.Error("the end edge should mark the phase done")
 	}
-	if phases[0].Percent != 100 {
-		t.Errorf("a finished phase is 100%%, got %v", phases[0].Percent)
+	if phases[0].Percent != 99.8 {
+		t.Errorf("the end edge must not overwrite the measured percent: %v", phases[0].Percent)
 	}
 	if phases[0].Count != 3634100 {
 		t.Errorf("the end edge must not discard what the phase measured: %+v", phases[0])
 	}
 	// The headline stays on real progress rather than the empty edge report.
-	if got := s.Status().Bootstrap; got == nil || got.Percent != 100 {
+	if got := s.Status().Bootstrap; got == nil || got.Percent != 99.8 {
 		t.Errorf("Status.Bootstrap blanked by the end edge: %+v", got)
 	}
 }
@@ -473,9 +473,9 @@ func TestPhaseEndCompletesEveryDownload(t *testing.T) {
 		if !p.Done {
 			t.Errorf("the phase ended, so this download is not still running: %+v", p)
 		}
-		if p.Percent != 100 {
-			t.Errorf("a finished download is 100%%, got %v", p.Percent)
-		}
+	}
+	if phases[0].Percent != 99.8 || phases[1].Percent != 100 {
+		t.Errorf("each download should keep the progress it measured: %+v", phases)
 	}
 	// Each row keeps the size it was measuring, so neither is mistaken for the
 	// other after the fact.
@@ -543,5 +543,35 @@ func TestNonByteProgressReplacesOpener(t *testing.T) {
 	phases := s.Status().BootstrapPhases
 	if len(phases) != 1 || phases[0].Percent != 47.1 {
 		t.Fatalf("want the opener replaced by the measured report, got %+v", phases)
+	}
+}
+
+// The end edge is a defer: dingo emits it whether the phase succeeded or was
+// torn down by an error elsewhere. Observed live — a bootstrap that failed in
+// the ledger import left the immutable copy reporting "done", having copied 50
+// blocks of 122 million. Reporting 100% there states something the node never
+// said. The end edge marks work finished; what it got through is whatever it
+// last measured.
+func TestPhaseEndKeepsTheProgressItActuallyMade(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{
+		Phase: "immutable_copy", Percent: 0.04, Count: 50,
+		CurrentSlot: 980, TipSlot: 122601558,
+	})
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Done: true})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 1 {
+		t.Fatalf("want one row, got %+v", phases)
+	}
+	if !phases[0].Done {
+		t.Error("the end edge should mark the phase finished")
+	}
+	if phases[0].Percent != 0.04 {
+		t.Errorf("an aborted phase must not claim completion: %+v", phases[0])
+	}
+	if phases[0].Count != 50 {
+		t.Errorf("the end edge must not discard what the phase measured: %+v", phases[0])
 	}
 }

@@ -429,8 +429,13 @@ func (s *Supervisor) onProgressForRun(runID uint64, bp BootstrapProgress) {
 // several report in turn.
 //
 // The end edge carries no measurements at all — dingo ends a phase once, not
-// once per download — so it completes every entry of that phase rather than
-// overwriting what they measured with the zeroes it carries.
+// once per download — so it marks every entry of that phase finished rather
+// than overwriting what they measured with the zeroes it carries.
+//
+// Finished is not complete. dingo emits the edge from a defer, so a phase torn
+// down by an error elsewhere ends too: a run that failed in the ledger import
+// left the immutable copy "finished" having copied 50 blocks of 122 million.
+// Snapping such a row to 100% would state something the node never said.
 func mergeProgress(phases []BootstrapProgress, bp BootstrapProgress) []BootstrapProgress {
 	out := make([]BootstrapProgress, len(phases), len(phases)+1)
 	copy(out, phases)
@@ -441,15 +446,13 @@ func mergeProgress(phases []BootstrapProgress, bp BootstrapProgress) []Bootstrap
 				continue
 			}
 			out[i].Done = true
-			out[i].Percent = 100
 			found = true
 		}
 		if found {
 			return out
 		}
-		// A phase we never saw run, done on arrival: nothing measured it, so
-		// record the completion rather than an invented 0%.
-		bp.Percent = 100
+		// A phase we never saw run, done on arrival: record that it ended, with
+		// the nothing it measured.
 		return append(out, bp)
 	}
 	for i := range out {

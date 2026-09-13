@@ -118,7 +118,10 @@ function PhaseProgress({ bp, sizeInLabel }: { bp: BootstrapProgress; sizeInLabel
     sizeInLabel && bp.total_bytes
       ? `${bootstrapPhaseLabel(bp.phase)} · ${fmtBytes(bp.total_bytes)}`
       : bootstrapPhaseLabel(bp.phase);
-  const percent = bp.done ? 100 : bp.percent;
+  // A finished row shows how far it actually got. "Done" is not a claim of
+  // completeness — the node ends a phase even when something else tore the
+  // bootstrap down — and a bar snapped to full would hide that.
+  const percent = bp.percent;
 
   const readouts: string[] = [];
   if (bp.total_bytes && bp.total_bytes > 0) {
