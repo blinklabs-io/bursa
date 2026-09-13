@@ -180,6 +180,7 @@ function makeAssetInfo(unit: string, metadata: Record<string, unknown> | null): 
     fingerprint: "",
     quantity: "0",
     onchain_metadata: metadata,
+    metadata: null,
   };
 }
 

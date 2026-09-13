@@ -178,6 +178,7 @@ function fakeAssetInfo(unit: string, name: string): AssetInfo {
     fingerprint: "",
     quantity: "0",
     onchain_metadata: { name },
+    metadata: null,
   };
 }
 
