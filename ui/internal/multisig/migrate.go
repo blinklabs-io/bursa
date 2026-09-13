@@ -1,6 +1,7 @@
 package multisig
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -189,6 +190,15 @@ func validateLegacyAccount(a Account) error {
 	if a.ScriptCBOR == "" {
 		return fmt.Errorf("wallet id %q has empty script CBOR", a.ID)
 	}
+	// Non-empty is not the same as usable, and this validation is what stands
+	// between a legacy record and the deletion of the store holding it: the
+	// migration removes the source after verifying the copy by string
+	// comparison, which a malformed script passes as happily as a good one.
+	// Decode it here so an unusable script fails the migration instead of
+	// surviving it as the only remaining copy.
+	if _, err := decodeScript(a.ScriptCBOR); err != nil {
+		return fmt.Errorf("wallet id %q has unusable script CBOR: %w", a.ID, err)
+	}
 	return nil
 }
 
@@ -224,10 +234,32 @@ func sameScriptWalletIdentity(a, b ScriptWalletRecord) bool {
 		jsonEqual(a.Policy, b.Policy)
 }
 
+// jsonEqual compares two JSON documents structurally.
+//
+// Numbers are decoded as json.Number rather than through any, whose float64
+// loses precision above 2^53: two policies differing only in a large integer
+// would otherwise compare equal, and this comparison is what the migration
+// trusts before deleting the source record.
 func jsonEqual(a, b []byte) bool {
-	var left, right any
-	return json.Unmarshal(a, &left) == nil && json.Unmarshal(b, &right) == nil &&
-		reflect.DeepEqual(left, right)
+	left, err := decodeJSONExact(a)
+	if err != nil {
+		return false
+	}
+	right, err := decodeJSONExact(b)
+	if err != nil {
+		return false
+	}
+	return reflect.DeepEqual(left, right)
+}
+
+func decodeJSONExact(b []byte) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // readStoreFile reads the accounts out of the standalone store without going

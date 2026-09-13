@@ -591,12 +591,13 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 	}
 	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
 	seeds[meta.ID] = seed
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
+	err = v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts)
+	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
 	v.activeID = meta.ID
-	return meta, nil
+	return meta, err
 }
 
 // AddHardwareWallet adds a hardware-backed wallet to the vault. It derives the
@@ -663,7 +664,8 @@ func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPasswor
 		}
 		nextActive[meta.ID] = accountIndex
 	}
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive); err != nil {
+	err = v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive)
+	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
@@ -672,7 +674,7 @@ func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPasswor
 		v.activeAccounts = nextActive
 		meta.ActiveAccountIndex = accountIndex
 	}
-	return meta, nil
+	return meta, err
 }
 
 // ImportWallet creates a new vault containing a single wallet. It is used for
@@ -708,12 +710,13 @@ func (v *Vault) importWallet(name string, mnemonic []byte, network, vaultPasswor
 	defer keystore.Zero(vek)
 	idx := &index{Wallets: []WalletMeta{meta}}
 	seeds := map[string]keystore.Container{meta.ID: seed}
-	if err := v.persistLocked(idx, seeds, vek, vaultPassword, nil, v.activeAccounts); err != nil {
+	err = v.persistLocked(idx, seeds, vek, vaultPassword, nil, v.activeAccounts)
+	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
 	v.idx = idx
 	v.activeID = meta.ID
-	return meta, nil
+	return meta, err
 }
 
 // RemoveWallet deletes the wallet with id (its metadata and its encrypted seed)
@@ -751,7 +754,8 @@ func (v *Vault) RemoveWallet(id, vaultPassword string) error {
 	// diverged from what is durably on disk.
 	nextActive := cloneActiveAccounts(v.activeAccounts)
 	delete(nextActive, id)
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive); err != nil {
+	err = v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive)
+	if err != nil && !isCommittedWriteError(err) {
 		return err
 	}
 	v.idx = newIdx
@@ -759,7 +763,7 @@ func (v *Vault) RemoveWallet(id, vaultPassword string) error {
 	if v.activeID == id {
 		v.activeID = ""
 	}
-	return nil
+	return err
 }
 
 // SetActive marks the wallet with id as active. The vault must be unlocked and
@@ -883,7 +887,8 @@ func (v *Vault) AddScriptWallet(id, name, network string, script ScriptMeta, vau
 		seeds = map[string]keystore.Container{}
 	}
 	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
+	err = v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts)
+	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
@@ -992,7 +997,8 @@ func (v *Vault) AddAccount(id, vaultPassword, spendPassword string, accountIndex
 		}
 	}
 	newIdx := &index{Wallets: newWallets}
-	if err := v.persistLocked(newIdx, env.Seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
+	err = v.persistLocked(newIdx, env.Seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts)
+	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
@@ -1000,7 +1006,7 @@ func (v *Vault) AddAccount(id, vaultPassword, spendPassword string, accountIndex
 		if newIdx.Wallets[i].ID == id {
 			meta := *cloneWallet(&newIdx.Wallets[i])
 			meta.ActiveAccountIndex = v.activeAccounts[id]
-			return meta, nil
+			return meta, err
 		}
 	}
 	return WalletMeta{}, fmt.Errorf("%w: %q", ErrUnknownWallet, id)
@@ -1284,7 +1290,10 @@ func (v *Vault) persistLocked(idx *index, seeds map[string]keystore.Container, v
 
 // committedWriteError reports that the target was replaced but a subsequent
 // durability step failed. Callers must publish the new in-memory state before
-// returning the error, because the old state no longer describes the file.
+// returning the error, because the old state no longer describes the file:
+// returning early would leave the vault serving an index the file on disk no
+// longer contains, and the next mutation would then write that stale state back
+// over the committed one.
 type committedWriteError struct{ err error }
 
 func (e *committedWriteError) Error() string { return e.err.Error() }
