@@ -503,3 +503,29 @@ test("SyncBanner tells two concurrent downloads apart", () => {
   expect(screen.getByText(/download snapshot \(13\.8 GB\) 75\.0%/i)).toBeInTheDocument();
   expect(screen.getByText(/download snapshot \(238 MB\) 12\.0%/i)).toBeInTheDocument();
 });
+
+// A download that has reached 100% is finished, whatever the phase-end edge has
+// said yet — the node ends a phase once, not once per download. The strip has
+// one line, so it names what is still working; the screen keeps the full list.
+test("SyncBanner drops a download that has reached 100%", () => {
+  render(
+    <SyncBanner
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "bootstrap", percent: 9.3, total_bytes: 14780304000 },
+        bootstrap_phases: [
+          { phase: "bootstrap", percent: 100, total_bytes: 3525541 },
+          { phase: "bootstrap", percent: 86.7, total_bytes: 255611612 },
+          { phase: "bootstrap", percent: 9.3, total_bytes: 14780304000 },
+        ],
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/244 MB\) 86\.7%/i)).toBeInTheDocument();
+  expect(screen.getByText(/13\.8 GB\) 9\.3%/i)).toBeInTheDocument();
+  expect(screen.queryByText(/3\.4 MB/)).toBeNull();
+});

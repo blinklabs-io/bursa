@@ -459,7 +459,24 @@ func mergeProgress(phases []BootstrapProgress, bp BootstrapProgress) []Bootstrap
 		out[i] = bp
 		return out
 	}
+	// A phase opens with a bare "started" report and only then reports what it
+	// is doing. That opener has nothing to show and never gains anything, so the
+	// phase's first measured report takes its place instead of appearing beside
+	// it. Observed live: the download phase held an empty row alongside the
+	// three downloads it actually runs.
+	for i := range out {
+		if out[i].Phase == bp.Phase && !out[i].Done && !measured(out[i]) {
+			out[i] = bp
+			return out
+		}
+	}
 	return append(out, bp)
+}
+
+// measured reports whether a progress report carries any measurement at all.
+func measured(bp BootstrapProgress) bool {
+	return bp.Percent != 0 || bp.TotalBytes != 0 || bp.BytesDownloaded != 0 ||
+		bp.Count != 0 || bp.Total != 0 || bp.CurrentSlot != 0 || bp.TipSlot != 0
 }
 
 // sameWork reports whether two progress reports describe the same piece of

@@ -33,7 +33,12 @@ export function SyncBanner({ status }: SyncBannerProps) {
     // percent here flipped between unrelated numbers every poll — and this
     // strip is on screen for the whole bootstrap, on every screen, which is
     // where that was seen most.
-    const running = (status.bootstrap_phases ?? []).filter((p) => !p.done);
+    // A download at 100% is finished whatever the phase-end edge has said yet:
+    // the node ends a phase once, not once per download. This strip has one
+    // line, so it names what is still working; the screen keeps the full list.
+    const running = (status.bootstrap_phases ?? []).filter(
+      (p) => !p.done && p.percent < 100,
+    );
     const shown = running.length > 0 ? running : [status.bootstrap];
     // Two downloads share a phase name, so the percent alone would read as one
     // number contradicting itself.

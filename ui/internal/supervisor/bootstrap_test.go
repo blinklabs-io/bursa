@@ -483,3 +483,65 @@ func TestPhaseEndCompletesEveryDownload(t *testing.T) {
 		t.Error("the end edge collapsed two different downloads into one size")
 	}
 }
+
+// A phase opens with a bare "started" report carrying no measurements, and only
+// then do its real reports arrive. Observed live on preview, the download phase
+// held four rows: the empty opener, plus the three downloads it actually runs
+// (digest list 3.4 MB, ancillary ledger state 244 MB, immutable archives
+// 13.8 GB). The opener has nothing to show and never gains anything, so the
+// first measured report for the phase takes its place.
+func TestPhaseOpenerIsReplacedByRealProgress(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "bootstrap"})
+	s.onProgress(BootstrapProgress{
+		Phase: "bootstrap", Percent: 100,
+		BytesDownloaded: 3525541, TotalBytes: 3525541,
+	})
+	s.onProgress(BootstrapProgress{
+		Phase: "bootstrap", Percent: 29.1,
+		BytesDownloaded: 74397448, TotalBytes: 255611612,
+	})
+	s.onProgress(BootstrapProgress{
+		Phase: "bootstrap", Percent: 1.13,
+		BytesDownloaded: 166499926, TotalBytes: 14780304000,
+	})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 3 {
+		t.Fatalf("want one row per download and no empty opener, got %+v", phases)
+	}
+	for _, p := range phases {
+		if p.TotalBytes == 0 {
+			t.Errorf("an empty row survived: %+v", p)
+		}
+	}
+}
+
+// Until the first real report arrives the opener is all there is, and it does
+// say something: this phase is running.
+func TestPhaseOpenerStandsUntilMeasured(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "bootstrap"})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 1 || phases[0].Phase != "bootstrap" {
+		t.Fatalf("the phase should show as running: %+v", phases)
+	}
+}
+
+// A phase that measures something other than bytes (the ledger import reports a
+// count and a percent) still replaces its own opener rather than sitting beside
+// it.
+func TestNonByteProgressReplacesOpener(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "ledger_import"})
+	s.onProgress(BootstrapProgress{Phase: "ledger_import", Percent: 47.1, Count: 1490000})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 1 || phases[0].Percent != 47.1 {
+		t.Fatalf("want the opener replaced by the measured report, got %+v", phases)
+	}
+}
