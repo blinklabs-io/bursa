@@ -13,6 +13,10 @@ export interface BootstrapProgress {
   count?: number;
   total?: number;
   description?: string;
+  // done marks the phase's end. The node signals the end with a report that
+  // carries no measurements, so this is the only way to tell a phase that
+  // finished from one that has just started at 0%.
+  done?: boolean;
 }
 
 export interface Status {
@@ -21,6 +25,14 @@ export interface Status {
   latestBlockTime?: string;
   caughtUp: boolean;
   bootstrap?: BootstrapProgress;
+  // bootstrap_phases holds the latest progress of each piece of work the
+  // bootstrap has reported, in first-seen order. The node runs work in parallel
+  // at two levels — two downloads at once during the download phase, then the
+  // ledger import alongside the chain copy — and reports all of it through one
+  // field, so `bootstrap` alone alternates between unrelated percentages over
+  // unrelated totals. Render from this instead. Entries within one phase are
+  // separate downloads, told apart by their size.
+  bootstrap_phases?: BootstrapProgress[];
   error?: string;
   // The network the embedded node runs on ("preview" | "preprod" | "mainnet").
   // The node runs exactly one network; wallet flows derive it from here.

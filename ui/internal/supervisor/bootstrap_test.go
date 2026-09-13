@@ -320,3 +320,284 @@ func TestSetErrorIgnoredAfterStop(t *testing.T) {
 		t.Fatalf("setError after Stop must be a no-op; state = %q, want stopped", got)
 	}
 }
+
+// dingo runs the ledger import and the immutable copy CONCURRENTLY (one
+// errgroup, two goroutines, mithril/sync.go), and both report through the same
+// progress callback. Keeping only the newest report makes /status alternate
+// between two unrelated percentages — a measured preview bootstrap reported
+// immutable_copy 75.1%, then ledger_import 52.3%, then immutable_copy 79.0%.
+// Retaining each phase's own latest progress is what lets a reader see two
+// things running rather than one number jumping around.
+func TestOnProgressRetainsConcurrentPhases(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 75.1})
+	s.onProgress(BootstrapProgress{Phase: "ledger_import", Percent: 52.3})
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 79})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 2 {
+		t.Fatalf("want both concurrent phases retained, got %+v", phases)
+	}
+	// First-seen order, so a phase does not move under the reader.
+	if phases[0].Phase != "immutable_copy" || phases[0].Percent != 79 {
+		t.Errorf("immutable_copy should hold its own latest percent: %+v", phases[0])
+	}
+	if phases[1].Phase != "ledger_import" || phases[1].Percent != 52.3 {
+		t.Errorf("ledger_import should hold its own latest percent: %+v", phases[1])
+	}
+}
+
+// The phase-end edge carries no measurements (dingo emits a bare
+// {Phase, Active: false}), so applying it verbatim would blank a phase that
+// just finished — reporting 0% for completed work.
+func TestOnProgressEndEdgeCompletesRatherThanBlanks(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 99.8, Count: 3634100})
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Done: true})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 1 {
+		t.Fatalf("want one phase, got %+v", phases)
+	}
+	if !phases[0].Done {
+		t.Error("the end edge should mark the phase done")
+	}
+	if phases[0].Percent != 99.8 {
+		t.Errorf("the end edge must not overwrite the measured percent: %v", phases[0].Percent)
+	}
+	if phases[0].Count != 3634100 {
+		t.Errorf("the end edge must not discard what the phase measured: %+v", phases[0])
+	}
+	// The headline stays on real progress rather than the empty edge report.
+	if got := s.Status().Bootstrap; got == nil || got.Percent != 99.8 {
+		t.Errorf("Status.Bootstrap blanked by the end edge: %+v", got)
+	}
+}
+
+// Status is copied out by value; a retained slice shared with the caller would
+// let a reader observe a phase mutating mid-render.
+func TestStatusCopiesPhases(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 10})
+
+	snapshot := s.Status()
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 20})
+
+	if snapshot.BootstrapPhases[0].Percent != 10 {
+		t.Fatal("Status() handed out the live slice: an earlier snapshot changed under the caller")
+	}
+}
+
+func TestSetStateClearsBootstrapPhases(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 10})
+	s.setState(StateStarting)
+	if s.Status().BootstrapPhases != nil {
+		t.Fatal("leaving StateBootstrapping should clear the retained phases")
+	}
+}
+
+// Active marks a phase's begin/end edge. Dropping it entirely (as this
+// conversion once did) loses the only signal that a phase finished, leaving the
+// end edge indistinguishable from a 0% report.
+func TestToBootstrapProgressCarriesPhaseEnd(t *testing.T) {
+	if got := toBootstrapProgress(mithril.SyncProgress{
+		Phase:  mithril.PhaseImmutableCopy,
+		Active: false,
+	}); !got.Done {
+		t.Errorf("phase-end edge should convert to Done: %+v", got)
+	}
+	if got := toBootstrapProgress(mithril.SyncProgress{
+		Phase:   mithril.PhaseImmutableCopy,
+		Active:  true,
+		Percent: 12,
+	}); got.Done {
+		t.Errorf("a mid-phase tick is not done: %+v", got)
+	}
+}
+
+// The download phase is itself two downloads running in parallel: the immutable
+// archives (14.8 GB on preview) and the ancillary ledger state. dingo fetches
+// them concurrently and reports both through one callback
+// (mithril/bootstrap_v2.go, "Steps 4+5 ... in parallel"), labelling each report
+// with the artifact it describes — but drops that label when it flattens into
+// mithril.SyncProgress, so what reaches us is one phase carrying two
+// interleaved series over two different totals. Keyed on the phase alone they
+// collapse into a row whose percent AND size flip between two downloads.
+func TestOnProgressSeparatesConcurrentDownloads(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{
+		Phase: "bootstrap", Percent: 75,
+		BytesDownloaded: 11086556385, TotalBytes: 14779773204,
+	})
+	s.onProgress(BootstrapProgress{
+		Phase: "bootstrap", Percent: 12,
+		BytesDownloaded: 30000000, TotalBytes: 250000000,
+	})
+	s.onProgress(BootstrapProgress{
+		Phase: "bootstrap", Percent: 78,
+		BytesDownloaded: 11530022099, TotalBytes: 14779773204,
+	})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 2 {
+		t.Fatalf("want one row per download, got %+v", phases)
+	}
+	if phases[0].TotalBytes != 14779773204 || phases[0].Percent != 78 {
+		t.Errorf("the immutable download should keep its own progress: %+v", phases[0])
+	}
+	if phases[1].TotalBytes != 250000000 || phases[1].Percent != 12 {
+		t.Errorf("the ancillary download should keep its own progress: %+v", phases[1])
+	}
+}
+
+// The phase ends once, for the phase as a whole — dingo emits no per-download
+// end edge — so it has to finish every download it covers.
+func TestPhaseEndCompletesEveryDownload(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 99.8, TotalBytes: 14779773204})
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 100, TotalBytes: 250000000})
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Done: true})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 2 {
+		t.Fatalf("the end edge should not add a row of its own: %+v", phases)
+	}
+	for _, p := range phases {
+		if !p.Done {
+			t.Errorf("the phase ended, so this download is not still running: %+v", p)
+		}
+	}
+	if phases[0].Percent != 99.8 || phases[1].Percent != 100 {
+		t.Errorf("each download should keep the progress it measured: %+v", phases)
+	}
+	// Each row keeps the size it was measuring, so neither is mistaken for the
+	// other after the fact.
+	if phases[0].TotalBytes == phases[1].TotalBytes {
+		t.Error("the end edge collapsed two different downloads into one size")
+	}
+}
+
+// A phase opens with a bare "started" report carrying no measurements, and only
+// then do its real reports arrive. Observed live on preview, the download phase
+// held four rows: the empty opener, plus the three downloads it actually runs
+// (digest list 3.4 MB, ancillary ledger state 244 MB, immutable archives
+// 13.8 GB). The opener has nothing to show and never gains anything, so the
+// first measured report for the phase takes its place.
+func TestPhaseOpenerIsReplacedByRealProgress(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "bootstrap"})
+	s.onProgress(BootstrapProgress{
+		Phase: "bootstrap", Percent: 100,
+		BytesDownloaded: 3525541, TotalBytes: 3525541,
+	})
+	s.onProgress(BootstrapProgress{
+		Phase: "bootstrap", Percent: 29.1,
+		BytesDownloaded: 74397448, TotalBytes: 255611612,
+	})
+	s.onProgress(BootstrapProgress{
+		Phase: "bootstrap", Percent: 1.13,
+		BytesDownloaded: 166499926, TotalBytes: 14780304000,
+	})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 3 {
+		t.Fatalf("want one row per download and no empty opener, got %+v", phases)
+	}
+	for _, p := range phases {
+		if p.TotalBytes == 0 {
+			t.Errorf("an empty row survived: %+v", p)
+		}
+	}
+}
+
+// Until the first real report arrives the opener is all there is, and it does
+// say something: this phase is running.
+func TestPhaseOpenerStandsUntilMeasured(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "bootstrap"})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 1 || phases[0].Phase != "bootstrap" {
+		t.Fatalf("the phase should show as running: %+v", phases)
+	}
+}
+
+// A phase that measures something other than bytes (the ledger import reports a
+// count and a percent) still replaces its own opener rather than sitting beside
+// it.
+func TestNonByteProgressReplacesOpener(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "ledger_import"})
+	s.onProgress(BootstrapProgress{Phase: "ledger_import", Percent: 47.1, Count: 1490000})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 1 || phases[0].Percent != 47.1 {
+		t.Fatalf("want the opener replaced by the measured report, got %+v", phases)
+	}
+}
+
+// The end edge is a defer: dingo emits it whether the phase succeeded or was
+// torn down by an error elsewhere. Observed live — a bootstrap that failed in
+// the ledger import left the immutable copy reporting "done", having copied 50
+// blocks of 122 million. Reporting 100% there states something the node never
+// said. The end edge marks work finished; what it got through is whatever it
+// last measured.
+func TestPhaseEndKeepsTheProgressItActuallyMade(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{
+		Phase: "immutable_copy", Percent: 0.04, Count: 50,
+		CurrentSlot: 980, TipSlot: 122601558,
+	})
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Done: true})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 1 {
+		t.Fatalf("want one row, got %+v", phases)
+	}
+	if !phases[0].Done {
+		t.Error("the end edge should mark the phase finished")
+	}
+	if phases[0].Percent != 0.04 {
+		t.Errorf("an aborted phase must not claim completion: %+v", phases[0])
+	}
+	if phases[0].Count != 50 {
+		t.Errorf("the end edge must not discard what the phase measured: %+v", phases[0])
+	}
+}
+
+// The end edge names a phase, not one download within it, so it carries no
+// size. Matching the headline by size therefore found nothing once a phase ran
+// several downloads, and Status.Bootstrap stayed frozen on whichever download
+// had reported last, still claiming to be running. The banner reads the
+// headline exactly in that window — after every download of a phase has
+// finished and before the next phase reports.
+func TestPhaseEndRefreshesTheHeadlineForEveryDownload(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 100, TotalBytes: 100})
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 100, TotalBytes: 200})
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 99.8, TotalBytes: 300})
+	s.onProgress(BootstrapProgress{Phase: "bootstrap", Done: true})
+
+	got := s.Status().Bootstrap
+	if got == nil {
+		t.Fatal("no headline progress")
+	}
+	if !got.Done {
+		t.Errorf("the phase ended, so the headline is not still running: %+v", got)
+	}
+	if got.Phase != "bootstrap" {
+		t.Errorf("headline should stay on the phase that just ended: %+v", got)
+	}
+}

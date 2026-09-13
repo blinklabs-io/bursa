@@ -54,7 +54,11 @@ test("(b) block-replay phase shows block count, slot range and the era label", (
   expect(screen.getByText(/Conway/)).toBeInTheDocument();
 });
 
-test("(c) the phase stepper marks earlier phases done and the current one active", () => {
+// Position in the list is not evidence: the node runs some phases concurrently
+// and may skip one, so "everything above the active phase must be done" was an
+// inference the pipeline does not support. With only one report to go on, the
+// stepper claims exactly what that report says.
+test("(c) the phase stepper claims only what the node has reported", () => {
   render(
     <Syncing
       status={{
@@ -71,7 +75,7 @@ test("(c) the phase stepper marks earlier phases done and the current one active
   // stepper list to assert on the steps themselves.
   const steps = screen.getByRole("list");
   expect(within(steps).getByText("Copy chain history").closest("li")).toHaveClass("sync-step-active");
-  expect(within(steps).getByText("Download snapshot").closest("li")).toHaveClass("sync-step-done");
+  expect(within(steps).getByText("Download snapshot").closest("li")).toHaveClass("sync-step-pending");
   expect(within(steps).getByText("Backfill blocks").closest("li")).toHaveClass("sync-step-pending");
 });
 
@@ -190,4 +194,221 @@ test("a syncing node still says balances fill in when the sync finishes", () => 
   render(<Syncing status={{ state: "syncing", tip: 5, caughtUp: false, network: "preview" }} onLoadAnyway={noop} />);
 
   expect(screen.getByText(/until syncing finishes/i)).toBeInTheDocument();
+});
+
+// The node imports the ledger state and copies the immutable chain AT THE SAME
+// TIME (dingo runs them as two goroutines in one errgroup), and both report
+// through a single progress field. Rendering only the newest report made one
+// bar alternate between two unrelated percentages — measured on preview:
+// immutable_copy 75.1%, then ledger_import 52.3%, then immutable_copy 79.0%.
+// These pin each phase keeping its own number.
+
+const concurrent = {
+  state: "bootstrapping" as const,
+  tip: 0,
+  caughtUp: false,
+  network: "preview",
+  bootstrap: { phase: "immutable_copy", percent: 79 },
+  bootstrap_phases: [
+    { phase: "immutable_copy", percent: 79, count: 3785300, tip_slot: 122592950, current_slot: 96863246 },
+    { phase: "ledger_import", percent: 52.3, description: "utxo" },
+  ],
+};
+
+test("two phases running at once each show their own progress", () => {
+  render(<Syncing status={concurrent} onLoadAnyway={noop} />);
+
+  expect(screen.getByText("79.0%")).toBeInTheDocument();
+  expect(screen.getByText("52.3%")).toBeInTheDocument();
+  const bars = screen.getAllByRole("progressbar");
+  expect(bars).toHaveLength(2);
+  expect(bars[0]).toHaveAttribute("aria-valuenow", "79");
+  expect(bars[1]).toHaveAttribute("aria-valuenow", "52");
+});
+
+test("each concurrent bar says which phase it measures", () => {
+  render(<Syncing status={concurrent} onLoadAnyway={noop} />);
+
+  expect(screen.getByRole("progressbar", { name: /copy chain history/i })).toBeInTheDocument();
+  expect(screen.getByRole("progressbar", { name: /import ledger state/i })).toBeInTheDocument();
+});
+
+// The bug this replaced: a single number that jumps from 79% to 52.3% and back
+// every poll, with nothing saying they measure different work.
+test("a report from one phase leaves the other phase's number alone", () => {
+  const { rerender } = render(<Syncing status={concurrent} onLoadAnyway={noop} />);
+
+  rerender(
+    <Syncing
+      status={{
+        ...concurrent,
+        bootstrap: { phase: "ledger_import", percent: 78.1 },
+        bootstrap_phases: [
+          concurrent.bootstrap_phases[0],
+          { phase: "ledger_import", percent: 78.1, description: "utxo" },
+        ],
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+
+  expect(screen.getByText("79.0%")).toBeInTheDocument();
+  expect(screen.getByText("78.1%")).toBeInTheDocument();
+});
+
+// A finished phase stays on screen as finished. That is what keeps the NEXT
+// phase starting at 0.1% from reading as an hour of work thrown away.
+test("a finished phase reads as done, not as a percent that fell back to zero", () => {
+  render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "immutable_copy", percent: 0.1 },
+        bootstrap_phases: [
+          { phase: "bootstrap", percent: 100, done: true },
+          { phase: "immutable_copy", percent: 0.1 },
+        ],
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+
+  const download = screen.getByRole("progressbar", { name: /download snapshot/i });
+  expect(download).toHaveAttribute("aria-valuenow", "100");
+  expect(screen.getByText(/^done$/i)).toBeInTheDocument();
+  expect(screen.getByText("0.1%")).toBeInTheDocument();
+});
+
+// The checklist used to derive done/pending from a phase's position in a fixed
+// list, so a phase running concurrently with an earlier-listed one was drawn as
+// "pending" while it sat at 79%.
+test("the checklist marks a running phase active even when a phase above it has not finished", () => {
+  render(<Syncing status={concurrent} onLoadAnyway={noop} />);
+
+  const items = screen.getAllByRole("listitem");
+  const copy = items.find((li) => li.textContent?.includes("Copy chain history"));
+  const importLedger = items.find((li) => li.textContent?.includes("Import ledger state"));
+  const gap = items.find((li) => li.textContent?.includes("Fetch gap blocks"));
+
+  expect(copy?.className).toContain("sync-step-active");
+  expect(importLedger?.className).toContain("sync-step-active");
+  expect(gap?.className).toContain("sync-step-pending");
+});
+
+test("the checklist marks a finished phase done", () => {
+  render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "immutable_copy", percent: 0.1 },
+        bootstrap_phases: [
+          { phase: "bootstrap", percent: 100, done: true },
+          { phase: "immutable_copy", percent: 0.1 },
+        ],
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+
+  const items = screen.getAllByRole("listitem");
+  const download = items.find((li) => li.textContent?.includes("Download snapshot"));
+  expect(download?.className).toContain("sync-step-done");
+});
+
+// An older node sends only the single latest report; the screen must still work.
+test("falls back to the single progress report when the node sends no phase list", () => {
+  render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "backfill", percent: 12.5, count: 27300, tip_slot: 122592180, current_slot: 546272 },
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+
+  expect(screen.getByText("12.5%")).toBeInTheDocument();
+  expect(screen.getByRole("progressbar", { name: /backfill blocks/i })).toBeInTheDocument();
+});
+
+// The download phase is two downloads at once: the chain archives (14.8 GB on
+// preview) and the ancillary ledger state, fetched in parallel and reported
+// through one field over two different totals. One row for the phase makes them
+// one number that contradicts itself.
+const parallelDownloads = {
+  state: "bootstrapping" as const,
+  tip: 0,
+  caughtUp: false,
+  network: "preview",
+  bootstrap: { phase: "bootstrap", percent: 75, bytes_downloaded: 11086556385, total_bytes: 14779773204 },
+  bootstrap_phases: [
+    { phase: "bootstrap", percent: 75, bytes_downloaded: 11086556385, total_bytes: 14779773204 },
+    { phase: "bootstrap", percent: 12, bytes_downloaded: 30000000, total_bytes: 250000000 },
+  ],
+};
+
+test("two downloads running at once each show their own progress", () => {
+  render(<Syncing status={parallelDownloads} onLoadAnyway={noop} />);
+
+  expect(screen.getByText("75.0%")).toBeInTheDocument();
+  expect(screen.getByText("12.0%")).toBeInTheDocument();
+  expect(screen.getByText(/10\.3 GB \/ 13\.8 GB/)).toBeInTheDocument();
+  expect(screen.getByText(/28\.6 MB \/ 238 MB/)).toBeInTheDocument();
+  expect(screen.getAllByRole("progressbar")).toHaveLength(2);
+});
+
+// Two rows both reading "Download snapshot" would look like a rendering bug
+// rather than like two downloads, so name them by what tells them apart.
+test("concurrent downloads in one phase are named apart by size", () => {
+  render(<Syncing status={parallelDownloads} onLoadAnyway={noop} />);
+
+  expect(screen.getByRole("progressbar", { name: /download snapshot · 13\.8 GB/i })).toBeInTheDocument();
+  expect(screen.getByRole("progressbar", { name: /download snapshot · 238 MB/i })).toBeInTheDocument();
+});
+
+// A phase carrying two downloads is still running while either one is.
+test("the checklist keeps a download phase active until both downloads finish", () => {
+  render(
+    <Syncing
+      status={{
+        ...parallelDownloads,
+        bootstrap_phases: [
+          { phase: "bootstrap", percent: 100, total_bytes: 250000000, done: true },
+          { phase: "bootstrap", percent: 75, total_bytes: 14779773204 },
+        ],
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+
+  const steps = screen.getByRole("list");
+  expect(within(steps).getByText("Download snapshot").closest("li")).toHaveClass("sync-step-active");
+});
+
+// A single download keeps the plain phase name: the size is identity, not decoration.
+test("a lone download is not labelled with its size", () => {
+  render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "bootstrap", percent: 75, total_bytes: 14779773204 },
+        bootstrap_phases: [{ phase: "bootstrap", percent: 75, total_bytes: 14779773204 }],
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+
+  expect(screen.getByRole("progressbar", { name: "Download snapshot" })).toBeInTheDocument();
 });

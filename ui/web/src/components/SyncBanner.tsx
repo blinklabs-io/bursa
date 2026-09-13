@@ -1,6 +1,6 @@
 import type { Tone } from "./StatusPill";
 import type { Status, NodeState } from "../api/types";
-import { bootstrapPhaseLabel } from "../bootstrapPhases";
+import { bootstrapPhaseLabel, fmtBytes } from "../bootstrapPhases";
 
 interface SyncBannerProps {
   status: Status;
@@ -27,7 +27,33 @@ export function SyncBanner({ status }: SyncBannerProps) {
 
   let detail = "";
   if (status.state === "bootstrapping" && status.bootstrap) {
-    detail = `${bootstrapPhaseLabel(status.bootstrap.phase)} ${status.bootstrap.percent.toFixed(1)}%`;
+    // Name everything that is running, because more than one thing is: the node
+    // fetches two downloads at once, then imports the ledger state while it
+    // copies the chain, and reports all of it through a single field. A lone
+    // percent here flipped between unrelated numbers every poll — and this
+    // strip is on screen for the whole bootstrap, on every screen, which is
+    // where that was seen most.
+    // A download at 100% is finished whatever the phase-end edge has said yet:
+    // the node ends a phase once, not once per download. This strip has one
+    // line, so it names what is still working; the screen keeps the full list.
+    const running = (status.bootstrap_phases ?? []).filter(
+      (p) => !p.done && p.percent < 100,
+    );
+    const shown = running.length > 0 ? running : [status.bootstrap];
+    // Two downloads share a phase name, so the percent alone would read as one
+    // number contradicting itself.
+    const phaseCounts = new Map<string, number>();
+    for (const p of shown) phaseCounts.set(p.phase, (phaseCounts.get(p.phase) ?? 0) + 1);
+    detail = shown
+      .map((p) => {
+        const label = bootstrapPhaseLabel(p.phase);
+        const name =
+          (phaseCounts.get(p.phase) ?? 0) > 1 && p.total_bytes
+            ? `${label} (${fmtBytes(p.total_bytes)})`
+            : label;
+        return `${name} ${p.percent.toFixed(1)}%`;
+      })
+      .join(" · ");
   } else if (status.state === "ready") {
     detail = `tip ${status.tip} · ${status.caughtUp ? "caught up" : "catching up"}`;
   } else if (status.error) {
