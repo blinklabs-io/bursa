@@ -320,3 +320,102 @@ func TestSetErrorIgnoredAfterStop(t *testing.T) {
 		t.Fatalf("setError after Stop must be a no-op; state = %q, want stopped", got)
 	}
 }
+
+// dingo runs the ledger import and the immutable copy CONCURRENTLY (one
+// errgroup, two goroutines, mithril/sync.go), and both report through the same
+// progress callback. Keeping only the newest report makes /status alternate
+// between two unrelated percentages — a measured preview bootstrap reported
+// immutable_copy 75.1%, then ledger_import 52.3%, then immutable_copy 79.0%.
+// Retaining each phase's own latest progress is what lets a reader see two
+// things running rather than one number jumping around.
+func TestOnProgressRetainsConcurrentPhases(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 75.1})
+	s.onProgress(BootstrapProgress{Phase: "ledger_import", Percent: 52.3})
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 79})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 2 {
+		t.Fatalf("want both concurrent phases retained, got %+v", phases)
+	}
+	// First-seen order, so a phase does not move under the reader.
+	if phases[0].Phase != "immutable_copy" || phases[0].Percent != 79 {
+		t.Errorf("immutable_copy should hold its own latest percent: %+v", phases[0])
+	}
+	if phases[1].Phase != "ledger_import" || phases[1].Percent != 52.3 {
+		t.Errorf("ledger_import should hold its own latest percent: %+v", phases[1])
+	}
+}
+
+// The phase-end edge carries no measurements (dingo emits a bare
+// {Phase, Active: false}), so applying it verbatim would blank a phase that
+// just finished — reporting 0% for completed work.
+func TestOnProgressEndEdgeCompletesRatherThanBlanks(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 99.8, Count: 3634100})
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Done: true})
+
+	phases := s.Status().BootstrapPhases
+	if len(phases) != 1 {
+		t.Fatalf("want one phase, got %+v", phases)
+	}
+	if !phases[0].Done {
+		t.Error("the end edge should mark the phase done")
+	}
+	if phases[0].Percent != 100 {
+		t.Errorf("a finished phase is 100%%, got %v", phases[0].Percent)
+	}
+	if phases[0].Count != 3634100 {
+		t.Errorf("the end edge must not discard what the phase measured: %+v", phases[0])
+	}
+	// The headline stays on real progress rather than the empty edge report.
+	if got := s.Status().Bootstrap; got == nil || got.Percent != 100 {
+		t.Errorf("Status.Bootstrap blanked by the end edge: %+v", got)
+	}
+}
+
+// Status is copied out by value; a retained slice shared with the caller would
+// let a reader observe a phase mutating mid-render.
+func TestStatusCopiesPhases(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 10})
+
+	snapshot := s.Status()
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 20})
+
+	if snapshot.BootstrapPhases[0].Percent != 10 {
+		t.Fatal("Status() handed out the live slice: an earlier snapshot changed under the caller")
+	}
+}
+
+func TestSetStateClearsBootstrapPhases(t *testing.T) {
+	s := newTestSupervisor(t, &fakeBootstrapper{})
+	s.setState(StateBootstrapping)
+	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 10})
+	s.setState(StateStarting)
+	if s.Status().BootstrapPhases != nil {
+		t.Fatal("leaving StateBootstrapping should clear the retained phases")
+	}
+}
+
+// Active marks a phase's begin/end edge. Dropping it entirely (as this
+// conversion once did) loses the only signal that a phase finished, leaving the
+// end edge indistinguishable from a 0% report.
+func TestToBootstrapProgressCarriesPhaseEnd(t *testing.T) {
+	if got := toBootstrapProgress(mithril.SyncProgress{
+		Phase:  mithril.PhaseImmutableCopy,
+		Active: false,
+	}); !got.Done {
+		t.Errorf("phase-end edge should convert to Done: %+v", got)
+	}
+	if got := toBootstrapProgress(mithril.SyncProgress{
+		Phase:   mithril.PhaseImmutableCopy,
+		Active:  true,
+		Percent: 12,
+	}); got.Done {
+		t.Errorf("a mid-phase tick is not done: %+v", got)
+	}
+}

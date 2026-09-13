@@ -407,7 +407,46 @@ func (s *Supervisor) onProgressForRun(runID uint64, bp BootstrapProgress) {
 	if !s.activeRunLocked(runID) || s.status.State != StateBootstrapping {
 		return
 	}
-	s.status.Bootstrap = &bp
+	s.status.BootstrapPhases = mergePhase(s.status.BootstrapPhases, bp)
+	// The headline is the phase that just reported, taken from the merged entry
+	// so the empty end edge reads as "finished" rather than blanking a phase
+	// that had just measured its way to 99.8%.
+	for i := range s.status.BootstrapPhases {
+		if s.status.BootstrapPhases[i].Phase == bp.Phase {
+			latest := s.status.BootstrapPhases[i]
+			s.status.Bootstrap = &latest
+			break
+		}
+	}
+}
+
+// mergePhase folds one report into the per-phase list, copy-on-write so a
+// Status already handed out is never mutated under its reader.
+//
+// A phase keeps its position (first seen) so nothing moves under the reader
+// while two phases report in turn, and the end edge completes the phase rather
+// than overwriting its measurements with the zeroes it carries.
+func mergePhase(phases []BootstrapProgress, bp BootstrapProgress) []BootstrapProgress {
+	out := make([]BootstrapProgress, len(phases), len(phases)+1)
+	copy(out, phases)
+	for i := range out {
+		if out[i].Phase != bp.Phase {
+			continue
+		}
+		if bp.Done {
+			out[i].Done = true
+			out[i].Percent = 100
+			return out
+		}
+		out[i] = bp
+		return out
+	}
+	if bp.Done {
+		// A phase we never saw run, done on arrival: nothing measured it, so
+		// record the completion rather than an invented 0%.
+		bp.Percent = 100
+	}
+	return append(out, bp)
 }
 
 // Stop cancels the node's context, waits for the active run to exit, and marks
@@ -429,6 +468,7 @@ func (s *Supervisor) stop() <-chan struct{} {
 	s.runDone = nil
 	s.setStateLocked(StateStopped)
 	s.status.Bootstrap = nil // a clean shutdown is not a diagnostic failure
+	s.status.BootstrapPhases = nil
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -465,6 +505,7 @@ func (s *Supervisor) setStateForRun(runID uint64, st NodeState) {
 	s.setStateLocked(st)
 	if st != StateBootstrapping {
 		s.status.Bootstrap = nil
+		s.status.BootstrapPhases = nil
 	}
 }
 

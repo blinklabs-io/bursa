@@ -1,6 +1,11 @@
-// The Mithril bootstrap pipeline, in the order dingo emits it, with operator-
-// facing labels. "complete" isn't shown — by the time it fires the node has
-// moved on to chain sync (or ready), so it never needs a step of its own.
+// The Mithril bootstrap pipeline with operator-facing labels. The order is a
+// reading order for the checklist, NOT a sequence: dingo runs the ledger import
+// and the immutable copy concurrently, and may skip a phase entirely, so a
+// phase's position here says nothing about whether it has run. Only what the
+// node reports for a phase does.
+//
+// "complete" isn't listed — by the time it fires the node has moved on to chain
+// sync (or ready), so it never needs a row of its own.
 //
 // Shared rather than private to the Syncing screen: the sync banner rides along
 // on every screen for the whole bootstrap, and the phase keys are dingo's
@@ -24,23 +29,4 @@ export function bootstrapPhaseLabel(phase: string): string {
     BOOTSTRAP_PHASES.find((p) => p.key === phase)?.label ??
     phase.replace(/_/g, " ")
   );
-}
-
-// Where a phase sits in the pipeline, or null for a phase we do not know.
-//
-// The per-phase percent restarts at 0 on every handoff. Measured on preview
-// (dingo v0.70.5): the snapshot download read 99.8% one moment and the next
-// phase read 0.1% five seconds later, with the byte readout replaced by a block
-// count. Showing the step position next to that percent is what keeps the reset
-// legible as forward motion rather than a restart.
-//
-// dingo may skip a phase — that run went straight from "bootstrap" to
-// "immutable_copy" — so the step can jump. This reports a position in the
-// pipeline rather than a count of phases seen, so a skip reads as progress.
-export function bootstrapStepPosition(
-  phase: string,
-): { step: number; total: number } | null {
-  const idx = BOOTSTRAP_PHASES.findIndex((p) => p.key === phase);
-  if (idx < 0) return null;
-  return { step: idx + 1, total: BOOTSTRAP_PHASES.length };
 }

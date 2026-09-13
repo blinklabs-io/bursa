@@ -415,11 +415,11 @@ test("MultiSigProgress shows threshold-met indicator once signedCount reaches th
   expect(screen.getByText(/threshold met/i)).toBeInTheDocument();
 });
 
-// The percent in the banner measures the CURRENT phase, and every handoff
-// restarts it near zero (measured on preview: 99.8% -> 0.1% in five seconds).
-// Without the step position the banner reads as progress being thrown away —
-// and it is on screen during the whole bootstrap, on every screen.
-test("SyncBanner places the bootstrap percent in the pipeline", () => {
+// The node runs the ledger import and the immutable copy at the same time and
+// reports them through one field, so a banner showing "the" percent flipped
+// between two unrelated numbers every poll. Naming both is what makes two
+// numbers legible as two pieces of work.
+test("SyncBanner shows every phase that is running, each with its own percent", () => {
   render(
     <SyncBanner
       status={{
@@ -427,17 +427,21 @@ test("SyncBanner places the bootstrap percent in the pipeline", () => {
         tip: 0,
         caughtUp: false,
         network: "preview",
-        bootstrap: { phase: "immutable_copy", percent: 6.4 },
+        bootstrap: { phase: "immutable_copy", percent: 79 },
+        bootstrap_phases: [
+          { phase: "immutable_copy", percent: 79 },
+          { phase: "ledger_import", percent: 52.3 },
+        ],
       }}
     />,
   );
 
-  expect(screen.getByText(/step 3 of 7/i)).toBeInTheDocument();
+  expect(screen.getByText(/copy chain history 79\.0%/i)).toBeInTheDocument();
+  expect(screen.getByText(/import ledger state 52\.3%/i)).toBeInTheDocument();
 });
 
-// A phase we cannot place has no honest step number, so the banner claims none
-// rather than inventing one.
-test("SyncBanner claims no step for a phase it cannot place", () => {
+// A finished phase is not news on a one-line strip; what is still running is.
+test("SyncBanner drops a phase that has finished", () => {
   render(
     <SyncBanner
       status={{
@@ -445,43 +449,33 @@ test("SyncBanner claims no step for a phase it cannot place", () => {
         tip: 0,
         caughtUp: false,
         network: "preview",
-        bootstrap: { phase: "some_future_phase", percent: 1 },
+        bootstrap: { phase: "immutable_copy", percent: 0.1 },
+        bootstrap_phases: [
+          { phase: "bootstrap", percent: 100, done: true },
+          { phase: "immutable_copy", percent: 0.1 },
+        ],
       }}
     />,
   );
 
-  expect(screen.queryByText(/step \d+ of/i)).toBeNull();
+  expect(screen.getByText(/copy chain history 0\.1%/i)).toBeInTheDocument();
+  expect(screen.queryByText(/download snapshot/i)).toBeNull();
 });
 
-// The handoff itself: the percent collapses, but the step advances, so the pair
-// reads as the next step starting.
-test("SyncBanner advances the step as the percent restarts", () => {
-  const { rerender } = render(
+// Every phase done and none started: the strip still has to say something.
+test("SyncBanner falls back to the latest report when every phase is finished", () => {
+  render(
     <SyncBanner
       status={{
         state: "bootstrapping",
         tip: 0,
         caughtUp: false,
         network: "preview",
-        bootstrap: { phase: "bootstrap", percent: 99.79 },
+        bootstrap: { phase: "index_rebuild", percent: 100, done: true },
+        bootstrap_phases: [{ phase: "index_rebuild", percent: 100, done: true }],
       }}
     />,
   );
 
-  expect(screen.getByText(/step 1 of 7/i)).toBeInTheDocument();
-
-  rerender(
-    <SyncBanner
-      status={{
-        state: "bootstrapping",
-        tip: 0,
-        caughtUp: false,
-        network: "preview",
-        bootstrap: { phase: "immutable_copy", percent: 0.105 },
-      }}
-    />,
-  );
-
-  expect(screen.getByText(/step 3 of 7/i)).toBeInTheDocument();
-  expect(screen.queryByText(/step 1 of 7/i)).toBeNull();
+  expect(screen.getByText(/rebuild indexes 100\.0%/i)).toBeInTheDocument();
 });

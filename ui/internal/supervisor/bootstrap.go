@@ -91,11 +91,15 @@ func syncConfigFor(p BootstrapParams, logger *slog.Logger) mithril.SyncConfig {
 }
 
 // toBootstrapProgress flattens dingo's SyncProgress into the package's API type
-// so the UI can show which phase is running and how far it has got. Active is
-// the one field we drop: it only marks a phase's begin/end edge, and Percent
-// already conveys completion within a phase.
+// so the UI can show which phase is running and how far it has got.
+//
+// Active marks a phase's begin/end edge: it is true on begin and on every
+// mid-phase tick, and false exactly once, at the end. The end report carries no
+// measurements at all, so Percent cannot stand in for it — without Done, a
+// finished phase is indistinguishable from one sitting at 0%.
 func toBootstrapProgress(sp mithril.SyncProgress) BootstrapProgress {
 	return BootstrapProgress{
+		Done:            !sp.Active,
 		Phase:           string(sp.Phase),
 		Percent:         sp.Percent,
 		BytesDownloaded: sp.BytesDownloaded,

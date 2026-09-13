@@ -1,6 +1,6 @@
 import type { Tone } from "./StatusPill";
 import type { Status, NodeState } from "../api/types";
-import { bootstrapPhaseLabel, bootstrapStepPosition } from "../bootstrapPhases";
+import { bootstrapPhaseLabel } from "../bootstrapPhases";
 
 interface SyncBannerProps {
   status: Status;
@@ -27,16 +27,16 @@ export function SyncBanner({ status }: SyncBannerProps) {
 
   let detail = "";
   if (status.state === "bootstrapping" && status.bootstrap) {
-    // The percent belongs to the current phase alone, and every handoff
-    // restarts it near zero. Naming the step the percent is measuring is what
-    // keeps that reset legible as the next step starting rather than as lost
-    // progress; this strip is on screen for the whole bootstrap, so it is where
-    // the collapse is seen most. A phase we cannot place gets no step.
-    const position = bootstrapStepPosition(status.bootstrap.phase);
-    detail = `${bootstrapPhaseLabel(status.bootstrap.phase)} ${status.bootstrap.percent.toFixed(1)}%`;
-    if (position) {
-      detail += ` · Step ${position.step} of ${position.total}`;
-    }
+    // Name every phase that is running, because more than one can be. The node
+    // imports the ledger state while it copies the immutable chain and reports
+    // both through a single field, so a lone percent here flipped between two
+    // unrelated numbers every poll — and this strip is on screen for the whole
+    // bootstrap, on every screen, which is where that was seen most.
+    const running = (status.bootstrap_phases ?? []).filter((p) => !p.done);
+    const shown = running.length > 0 ? running : [status.bootstrap];
+    detail = shown
+      .map((p) => `${bootstrapPhaseLabel(p.phase)} ${p.percent.toFixed(1)}%`)
+      .join(" · ");
   } else if (status.state === "ready") {
     detail = `tip ${status.tip} · ${status.caughtUp ? "caught up" : "catching up"}`;
   } else if (status.error) {

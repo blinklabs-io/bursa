@@ -54,7 +54,11 @@ test("(b) block-replay phase shows block count, slot range and the era label", (
   expect(screen.getByText(/Conway/)).toBeInTheDocument();
 });
 
-test("(c) the phase stepper marks earlier phases done and the current one active", () => {
+// Position in the list is not evidence: the node runs some phases concurrently
+// and may skip one, so "everything above the active phase must be done" was an
+// inference the pipeline does not support. With only one report to go on, the
+// stepper claims exactly what that report says.
+test("(c) the phase stepper claims only what the node has reported", () => {
   render(
     <Syncing
       status={{
@@ -71,7 +75,7 @@ test("(c) the phase stepper marks earlier phases done and the current one active
   // stepper list to assert on the steps themselves.
   const steps = screen.getByRole("list");
   expect(within(steps).getByText("Copy chain history").closest("li")).toHaveClass("sync-step-active");
-  expect(within(steps).getByText("Download snapshot").closest("li")).toHaveClass("sync-step-done");
+  expect(within(steps).getByText("Download snapshot").closest("li")).toHaveClass("sync-step-pending");
   expect(within(steps).getByText("Backfill blocks").closest("li")).toHaveClass("sync-step-pending");
 });
 
@@ -192,127 +196,146 @@ test("a syncing node still says balances fill in when the sync finishes", () => 
   expect(screen.getByText(/until syncing finishes/i)).toBeInTheDocument();
 });
 
-// The bootstrap pipeline runs two separate downloads — the immutables snapshot
-// ("bootstrap") and the ancillary ledger state ("ledger_import") — each with
-// its own 0-100% and its own byte total. The per-phase percent therefore snaps
-// back to 0 at the handoff. These pin the context that keeps that reset legible
-// as forward motion rather than a restart.
+// The node imports the ledger state and copies the immutable chain AT THE SAME
+// TIME (dingo runs them as two goroutines in one errgroup), and both report
+// through a single progress field. Rendering only the newest report made one
+// bar alternate between two unrelated percentages — measured on preview:
+// immutable_copy 75.1%, then ledger_import 52.3%, then immutable_copy 79.0%.
+// These pin each phase keeping its own number.
 
-test("the first download names its position in the pipeline", () => {
-  render(
-    <Syncing
-      status={{
-        state: "bootstrapping",
-        tip: 0,
-        caughtUp: false,
-        network: "preview",
-        bootstrap: { phase: "bootstrap", percent: 99.2, bytes_downloaded: 100, total_bytes: 101 },
-      }}
-      onLoadAnyway={noop}
-    />,
-  );
-  expect(screen.getByText(/Step 1 of 7/)).toBeInTheDocument();
+const concurrent = {
+  state: "bootstrapping" as const,
+  tip: 0,
+  caughtUp: false,
+  network: "preview",
+  bootstrap: { phase: "immutable_copy", percent: 79 },
+  bootstrap_phases: [
+    { phase: "immutable_copy", percent: 79, count: 3785300, tip_slot: 122592950, current_slot: 96863246 },
+    { phase: "ledger_import", percent: 52.3, description: "utxo" },
+  ],
+};
+
+test("two phases running at once each show their own progress", () => {
+  render(<Syncing status={concurrent} onLoadAnyway={noop} />);
+
+  expect(screen.getByText("79.0%")).toBeInTheDocument();
+  expect(screen.getByText("52.3%")).toBeInTheDocument();
+  const bars = screen.getAllByRole("progressbar");
+  expect(bars).toHaveLength(2);
+  expect(bars[0]).toHaveAttribute("aria-valuenow", "79");
+  expect(bars[1]).toHaveAttribute("aria-valuenow", "52");
 });
 
-test("the second download advances the step even though its percent restarts at zero", () => {
-  render(
-    <Syncing
-      status={{
-        state: "bootstrapping",
-        tip: 0,
-        caughtUp: false,
-        network: "preview",
-        // The handoff: the snapshot download just finished at 100%, and the
-        // ancillary download begins its own count from ~0 against a far
-        // smaller total.
-        bootstrap: { phase: "ledger_import", percent: 0.4, bytes_downloaded: 1024, total_bytes: 250 * 1024 * 1024 },
-      }}
-      onLoadAnyway={noop}
-    />,
-  );
-  expect(screen.getByText(/Step 2 of 7/)).toBeInTheDocument();
-  expect(screen.getByText("0.4%")).toBeInTheDocument();
+test("each concurrent bar says which phase it measures", () => {
+  render(<Syncing status={concurrent} onLoadAnyway={noop} />);
+
+  expect(screen.getByRole("progressbar", { name: /copy chain history/i })).toBeInTheDocument();
+  expect(screen.getByRole("progressbar", { name: /import ledger state/i })).toBeInTheDocument();
 });
 
-test("the progress bar announces which step it measures, so a reset is not read as lost progress", () => {
-  render(
-    <Syncing
-      status={{
-        state: "bootstrapping",
-        tip: 0,
-        caughtUp: false,
-        network: "preview",
-        bootstrap: { phase: "ledger_import", percent: 0.4 },
-      }}
-      onLoadAnyway={noop}
-    />,
-  );
-  expect(screen.getByRole("progressbar")).toHaveAttribute(
-    "aria-label",
-    expect.stringContaining("Step 2 of 7"),
-  );
-});
-
-test("a phase the UI does not know does not claim a step position", () => {
-  render(
-    <Syncing
-      status={{
-        state: "bootstrapping",
-        tip: 0,
-        caughtUp: false,
-        network: "preview",
-        bootstrap: { phase: "some_new_phase", percent: 5 },
-      }}
-      onLoadAnyway={noop}
-    />,
-  );
-  expect(screen.queryByText(/Step \d+ of/)).not.toBeInTheDocument();
-});
-
-// Measured on a real preview bootstrap (dingo v0.70.5): the snapshot download
-// reported 99.79% at 14.75 GB / 14.78 GB, and five seconds later the next phase
-// reported 0.105% with no byte readout at all. dingo also skipped
-// "ledger_import" entirely, so the step can jump 1 -> 3. The step position is
-// what keeps that legible.
-test("a phase handoff that resets the percent still advances the step (measured case)", () => {
-  const { rerender } = render(
-    <Syncing
-      status={{
-        state: "bootstrapping",
-        tip: 0,
-        caughtUp: false,
-        network: "preview",
-        bootstrap: {
-          phase: "bootstrap",
-          percent: 99.79,
-          bytes_downloaded: 14749350099,
-          total_bytes: 14779773204,
-        },
-      }}
-      onLoadAnyway={noop}
-    />,
-  );
-  expect(screen.getByText(/Step 1 of 7/)).toBeInTheDocument();
+// The bug this replaced: a single number that jumps from 79% to 52.3% and back
+// every poll, with nothing saying they measure different work.
+test("a report from one phase leaves the other phase's number alone", () => {
+  const { rerender } = render(<Syncing status={concurrent} onLoadAnyway={noop} />);
 
   rerender(
     <Syncing
       status={{
-        state: "bootstrapping",
-        tip: 0,
-        caughtUp: false,
-        network: "preview",
-        bootstrap: {
-          phase: "immutable_copy",
-          percent: 0.105,
-          current_slot: 1368220,
-          tip_slot: 122592950,
-          count: 62800,
-        },
+        ...concurrent,
+        bootstrap: { phase: "ledger_import", percent: 78.1 },
+        bootstrap_phases: [
+          concurrent.bootstrap_phases[0],
+          { phase: "ledger_import", percent: 78.1, description: "utxo" },
+        ],
       }}
       onLoadAnyway={noop}
     />,
   );
-  // The percent went backwards; the step must not.
-  expect(screen.getByText(/Step 3 of 7/)).toBeInTheDocument();
-  expect(screen.queryByText(/Step 1 of 7/)).not.toBeInTheDocument();
+
+  expect(screen.getByText("79.0%")).toBeInTheDocument();
+  expect(screen.getByText("78.1%")).toBeInTheDocument();
+});
+
+// A finished phase stays on screen as finished. That is what keeps the NEXT
+// phase starting at 0.1% from reading as an hour of work thrown away.
+test("a finished phase reads as done, not as a percent that fell back to zero", () => {
+  render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "immutable_copy", percent: 0.1 },
+        bootstrap_phases: [
+          { phase: "bootstrap", percent: 100, done: true },
+          { phase: "immutable_copy", percent: 0.1 },
+        ],
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+
+  const download = screen.getByRole("progressbar", { name: /download snapshot/i });
+  expect(download).toHaveAttribute("aria-valuenow", "100");
+  expect(screen.getByText(/^done$/i)).toBeInTheDocument();
+  expect(screen.getByText("0.1%")).toBeInTheDocument();
+});
+
+// The checklist used to derive done/pending from a phase's position in a fixed
+// list, so a phase running concurrently with an earlier-listed one was drawn as
+// "pending" while it sat at 79%.
+test("the checklist marks a running phase active even when a phase above it has not finished", () => {
+  render(<Syncing status={concurrent} onLoadAnyway={noop} />);
+
+  const items = screen.getAllByRole("listitem");
+  const copy = items.find((li) => li.textContent?.includes("Copy chain history"));
+  const importLedger = items.find((li) => li.textContent?.includes("Import ledger state"));
+  const gap = items.find((li) => li.textContent?.includes("Fetch gap blocks"));
+
+  expect(copy?.className).toContain("sync-step-active");
+  expect(importLedger?.className).toContain("sync-step-active");
+  expect(gap?.className).toContain("sync-step-pending");
+});
+
+test("the checklist marks a finished phase done", () => {
+  render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "immutable_copy", percent: 0.1 },
+        bootstrap_phases: [
+          { phase: "bootstrap", percent: 100, done: true },
+          { phase: "immutable_copy", percent: 0.1 },
+        ],
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+
+  const items = screen.getAllByRole("listitem");
+  const download = items.find((li) => li.textContent?.includes("Download snapshot"));
+  expect(download?.className).toContain("sync-step-done");
+});
+
+// An older node sends only the single latest report; the screen must still work.
+test("falls back to the single progress report when the node sends no phase list", () => {
+  render(
+    <Syncing
+      status={{
+        state: "bootstrapping",
+        tip: 0,
+        caughtUp: false,
+        network: "preview",
+        bootstrap: { phase: "backfill", percent: 12.5, count: 27300, tip_slot: 122592180, current_slot: 546272 },
+      }}
+      onLoadAnyway={noop}
+    />,
+  );
+
+  expect(screen.getByText("12.5%")).toBeInTheDocument();
+  expect(screen.getByRole("progressbar", { name: /backfill blocks/i })).toBeInTheDocument();
 });

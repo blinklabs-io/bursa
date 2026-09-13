@@ -36,6 +36,9 @@ const (
 // TipSlot describe the later block-replay phases (copy, gap-fill, backfill).
 // Whichever pair is populated for the active phase is what the UI renders to
 // show "where it is"; the rest stay zero (omitted).
+//
+// One report describes ONE phase. dingo runs some phases concurrently, so the
+// newest report is not the whole picture — see Status.BootstrapPhases.
 type BootstrapProgress struct {
 	Phase           string  `json:"phase"`
 	Percent         float64 `json:"percent"`
@@ -47,6 +50,10 @@ type BootstrapProgress struct {
 	Count           int     `json:"count,omitempty"`
 	Total           int     `json:"total,omitempty"`
 	Description     string  `json:"description,omitempty"`
+	// Done marks the phase's end edge. dingo signals the end with a bare
+	// report carrying no measurements, so this is the only way to tell a
+	// finished phase from one that has just started at 0%.
+	Done bool `json:"done,omitempty"`
 }
 
 // Status is a point-in-time snapshot of the embedded node, serialised by the API.
@@ -61,7 +68,14 @@ type Status struct {
 	LatestBlockTime     *time.Time         `json:"latestBlockTime,omitempty"`
 	CaughtUp            bool               `json:"caughtUp"`
 	Bootstrap           *BootstrapProgress `json:"bootstrap,omitempty"`
-	Err                 string             `json:"error,omitempty"`
+	// BootstrapPhases holds each phase's own latest progress, in the order the
+	// phases were first seen. dingo imports the ledger state and copies the
+	// immutable chain CONCURRENTLY (one errgroup, two goroutines) and reports
+	// both through a single callback, so Bootstrap alone alternates between two
+	// unrelated percentages. Keeping them apart is what lets a reader see two
+	// things running instead of one number jumping around.
+	BootstrapPhases []BootstrapProgress `json:"bootstrap_phases,omitempty"`
+	Err             string              `json:"error,omitempty"`
 }
 
 // caughtUp reports whether the latest block is recent enough to consider the
