@@ -44,7 +44,7 @@ const sqliteFileMode = 0o600
 // The dsn specifies the database file path or connection string.
 // The schema is automatically created on first use.
 func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
-	dbPath, fileBacked, err := sqliteDatabasePath(dsn)
+	dbPath, fileBacked, mode, err := sqliteTarget(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse sqlite database path: %w", err)
 	}
@@ -52,7 +52,7 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 		// Create the database with the intended mode before SQLite opens it. This
 		// avoids relying on the process umask for newly-created wallet stores and
 		// narrows the exposure window when opening an existing store.
-		if err := ensureSQLiteFilePermissions(dbPath); err != nil {
+		if err := ensureSQLiteFilePermissions(dbPath, mode); err != nil {
 			return nil, fmt.Errorf("failed to secure sqlite database: %w", err)
 		}
 	}
@@ -117,8 +117,17 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 // package can safely permission. The driver accepts both plain paths and file:
 // URIs, including query parameters such as _pragma and mode.
 func sqliteDatabasePath(dsn string) (string, bool, error) {
+	path, fileBacked, _, err := sqliteTarget(dsn)
+	return path, fileBacked, err
+}
+
+// sqliteTarget additionally reports the DSN's open mode ("", "ro", "rw",
+// "rwc", "memory"), which decides what the permission step is allowed to do:
+// creating the file itself would defeat a mode=rw DSN's contract that it opens
+// only something already there.
+func sqliteTarget(dsn string) (string, bool, string, error) {
 	if dsn == ":memory:" {
-		return "", false, nil
+		return "", false, "memory", nil
 	}
 
 	if !strings.HasPrefix(dsn, "file:") {
@@ -126,12 +135,21 @@ func sqliteDatabasePath(dsn string) (string, bool, error) {
 			dsn = dsn[:pos]
 		}
 		if dsn == ":memory:" {
-			return "", false, nil
+			return "", false, "memory", nil
 		}
-		return dsn, dsn != "", nil
+		// A bare path carries no mode, and SQLite creates it on demand.
+		return dsn, dsn != "", "", nil
 	}
 
 	uri := dsn[len("file:"):]
+	// SQLite ignores a URI fragment, so it is not part of the filename: leaving
+	// it on would secure "wallet.db#x" while SQLite opens "wallet.db", and the
+	// real database would keep whatever mode the umask gave it. It also has to
+	// come off before the query is split, or it lands in the query string and
+	// corrupts the mode we read from it.
+	if pos := strings.IndexByte(uri, '#'); pos >= 0 {
+		uri = uri[:pos]
+	}
 	query := ""
 	if pos := strings.IndexByte(uri, '?'); pos >= 0 {
 		query = uri[pos+1:]
@@ -139,33 +157,72 @@ func sqliteDatabasePath(dsn string) (string, bool, error) {
 	}
 	values, err := url.ParseQuery(query)
 	if err != nil {
-		return "", false, err
+		return "", false, "", err
 	}
-	if strings.EqualFold(values.Get("mode"), "memory") ||
-		uri == "" || uri == ":memory:" {
-		return "", false, nil
+	mode := strings.ToLower(values.Get("mode"))
+	if mode == "memory" || uri == "" || uri == ":memory:" {
+		return "", false, mode, nil
 	}
 
 	if strings.HasPrefix(uri, "//") {
 		parsed, err := url.Parse(dsn)
 		if err != nil {
-			return "", false, err
+			return "", false, mode, err
 		}
 		if parsed.Host != "" && !strings.EqualFold(parsed.Host, "localhost") {
 			// SQLite URI authorities other than localhost are not local paths.
-			return "", false, nil
+			return "", false, mode, nil
 		}
 		uri = parsed.Path
 	}
 	path, err := url.PathUnescape(uri)
 	if err != nil {
-		return "", false, err
+		return "", false, mode, err
 	}
-	return path, path != "", nil
+	path = nativeSQLitePath(path)
+	return path, path != "", mode, nil
 }
 
-func ensureSQLiteFilePermissions(path string) error {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, sqliteFileMode)
+// nativeSQLitePath converts a URI path to the platform's filesystem form. A
+// canonical Windows URI carries its drive letter behind the leading slash
+// ("file:///C:/wallet/db"), and "/C:/wallet/db" is not a path Windows can
+// open — the permission step would fail on a DSN SQLite itself handles fine.
+// Elsewhere the URI path is already the filesystem path.
+func nativeSQLitePath(path string) string {
+	if len(path) < 3 || path[0] != '/' || path[2] != ':' {
+		return path
+	}
+	if c := path[1]; (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+		return path
+	}
+	// A drive reference is the whole path ("/C:") or continues with a
+	// separator ("/C:/db"). Anything else - "/w:x/file" - is an ordinary
+	// POSIX path that happens to have a colon in its first segment.
+	if len(path) == 3 || path[3] == '/' || path[3] == '\\' {
+		return path[1:]
+	}
+	return path
+}
+
+func ensureSQLiteFilePermissions(path, mode string) error {
+	// A DSN that says how it wants the file opened is entitled to that: "ro"
+	// must not be opened for writing, and "rw" opens only what already exists,
+	// so creating it here would answer a missing-database error with an empty
+	// database. In both cases a file that is not there is SQLite's to report.
+	flags := os.O_RDWR | os.O_CREATE
+	switch mode {
+	case "ro":
+		if _, err := os.Stat(path); err != nil {
+			return nil
+		}
+		flags = os.O_RDONLY
+	case "rw":
+		if _, err := os.Stat(path); err != nil {
+			return nil
+		}
+		flags = os.O_RDWR
+	}
+	f, err := os.OpenFile(path, flags, sqliteFileMode)
 	if err != nil {
 		return err
 	}

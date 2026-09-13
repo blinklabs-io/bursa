@@ -133,11 +133,23 @@ func (s *FileStore) GetWallet(
 		return nil, fmt.Errorf("wallet %s path is not a regular file", name)
 	}
 
-	file, err := os.Open(walletPath)
+	// The checks above described the path a moment ago, not the file this
+	// opens: between the two, what the path names can be replaced. Opening
+	// without following a final symlink and without blocking on a special file
+	// closes the substitution, and re-checking the open handle below is what
+	// makes the regular-file guarantee hold for the descriptor actually read.
+	file, err := openRegularFileForRead(walletPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open wallet file: %w", err)
 	}
 	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect wallet file: %w", err)
+	}
+	if !openedInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("wallet %s path is not a regular file", name)
+	}
 	raw, err := io.ReadAll(io.LimitReader(file, maxWalletFileSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read wallet file: %w", err)

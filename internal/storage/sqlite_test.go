@@ -18,6 +18,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -504,4 +505,67 @@ func TestSQLiteStoreItemsCopy(t *testing.T) {
 	// Original should not be modified
 	_, err = wallet.GetItem("key2")
 	assert.Error(t, err)
+}
+
+// SQLite ignores a URI fragment, so it is not part of the filename. Securing
+// the fragment-bearing name left the database SQLite actually opens with
+// whatever mode the umask gave it.
+func TestSQLiteFragmentIsNotPartOfTheFilename(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "wallet.db")
+
+	store, err := NewSQLiteStore("file:" + dbPath + "#ignored")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("the database SQLite opened should be the one we secured: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != sqliteFileMode {
+			t.Fatalf("mode = %o, want %o", got, sqliteFileMode)
+		}
+	}
+	if _, err := os.Stat(dbPath + "#ignored"); err == nil {
+		t.Fatal("the fragment must not have produced a file of its own")
+	}
+}
+
+// A mode=rw DSN opens an existing database and reports one that is missing.
+// Pre-creating the file to fix its permissions answered that error with an
+// empty database instead.
+func TestSQLiteModeRWDoesNotCreateTheDatabase(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "absent.db")
+
+	store, err := NewSQLiteStore("file:" + dbPath + "?mode=rw")
+	if err == nil {
+		store.Close()
+		t.Fatal("mode=rw against a missing database should fail")
+	}
+	if _, statErr := os.Stat(dbPath); statErr == nil {
+		t.Fatal("mode=rw must not create the database it was told to open")
+	}
+}
+
+// The permission step runs before SQLite opens the DSN, so it has to speak the
+// platform's path form: a canonical Windows URI keeps its drive letter behind
+// the leading slash, and "/C:/..." is not openable.
+func TestSQLiteDatabasePathDropsTheURISlashBeforeADriveLetter(t *testing.T) {
+	for _, tt := range []struct{ dsn, want string }{
+		{"file:///C:/wallet/db.sqlite", "C:/wallet/db.sqlite"},
+		{"file:///c:/wallet/db.sqlite", "c:/wallet/db.sqlite"},
+		{"file:///var/lib/wallet.db", "/var/lib/wallet.db"},
+		{"file:///w:x/not-a-drive", "/w:x/not-a-drive"},
+	} {
+		got, fileBacked, err := sqliteDatabasePath(tt.dsn)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.dsn, err)
+		}
+		if !fileBacked || got != tt.want {
+			t.Errorf("%s -> %q, want %q", tt.dsn, got, tt.want)
+		}
+	}
 }

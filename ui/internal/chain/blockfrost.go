@@ -421,10 +421,18 @@ func sqliteReadOnlyDSN(path string) string {
 // and a leading slash so that the drive is not interpreted as a URI host.
 func sqliteURIPath(path string) string {
 	path = strings.ReplaceAll(path, `\`, "/")
-	if len(path) >= 2 && path[1] == ':' && path[0] != '/' {
+	// Only an absolute drive path needs the extra slash. A colon in the first
+	// segment of a relative POSIX path ("a:b/metadata.sqlite") is an ordinary
+	// filename character, and prefixing it would name a different file.
+	if len(path) >= 2 && path[1] == ':' && isDriveLetter(path[0]) &&
+		(len(path) == 2 || path[2] == '/') {
 		path = "/" + path
 	}
 	return path
+}
+
+func isDriveLetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 func stakeCredential(stakeAddr string) (uint8, []byte, error) {
