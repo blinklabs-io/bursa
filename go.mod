@@ -1,6 +1,6 @@
 module github.com/blinklabs-io/bursa
 
-go 1.25.13
+go 1.26.0
 
 require (
 	cloud.google.com/go/secretmanager v1.21.0
@@ -24,7 +24,7 @@ require (
 	github.com/swaggo/http-swagger v1.3.4
 	github.com/swaggo/swag v1.16.6
 	golang.org/x/crypto v0.55.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 	google.golang.org/api v0.295.0
