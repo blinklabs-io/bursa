@@ -267,7 +267,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Run the launch smoke test
-        uses: reactivecircus/android-emulator-runner@62dbb605bba737720e10b196cb4220d374026a6d # v2.33.0 https://github.com/ReactiveCircus/android-emulator-runner/releases/tag/v2.33.0
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0 https://github.com/ReactiveCircus/android-emulator-runner/releases/tag/v2.38.0
         with:
           api-level: 34
           target: google_apis
