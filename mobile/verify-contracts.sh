@@ -16,4 +16,9 @@ printf '%s\n' "$on_timeout" | rg -U -q 'override fun onTimeout\(startId: Int, fg
 
 rg -q '\.applicationSupportDirectory' "$ios"
 rg -q 'appendingPathComponent\("Bursa", isDirectory: true\)' "$ios"
+# A deferred legacy cleanup has to be finished on a later launch, or the old
+# Documents tree survives as a second, stale copy of the wallet. Scope the
+# check to the marker-present branch so moving the call elsewhere still fails.
+marker_branch=$(sed -n '/if fileManager.fileExists(atPath: marker.path)/,/^                }/p' "$ios")
+printf '%s\n' "$marker_branch" | rg -U -q 'Self\.removeMigratedLegacyEntries'
 printf '%s\n' 'mobile source contracts verified'

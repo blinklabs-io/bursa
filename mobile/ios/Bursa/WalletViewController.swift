@@ -103,6 +103,18 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
                 // kill mid-copy turned into a wallet that starts against half
                 // its data.
                 if fileManager.fileExists(atPath: marker.path) {
+                    // A finished migration can still have left the legacy tree
+                    // in place: removing it is allowed to fail and be deferred
+                    // so a complete copy is never discarded over a cleanup
+                    // error. The marker records what the migration copied, so
+                    // a later launch finishes the removal against exactly
+                    // those names and leaves anything written to Documents
+                    // since then alone.
+                    Self.removeMigratedLegacyEntries(
+                        fileManager: fileManager,
+                        marker: marker,
+                        documentsDir: documentsDir
+                    )
                     return dataDir
                 }
                 for stale in try fileManager.contentsOfDirectory(atPath: dataDir.path) {
@@ -130,7 +142,10 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
                 }
                 // Only now, with every entry copied and checked, does the copy
                 // become the authoritative one.
-                try Data().write(to: marker, options: .atomic)
+                try JSONSerialization.data(
+                    withJSONObject: entries.map(\.lastPathComponent),
+                    options: []
+                ).write(to: marker, options: .atomic)
                 do {
                     for entry in entries {
                         try fileManager.removeItem(at: entry)
@@ -147,6 +162,33 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
             // Keep using the old directory if migration did not complete, so
             // an upgrade never starts against an empty wallet tree.
             return documentsDir ?? dataDir
+        }
+    }
+
+    // Removes the legacy entries a completed migration recorded in its marker.
+    // Only the recorded names are touched, so a file written to Documents
+    // after the migration is never deleted. A marker that predates the record
+    // (or is unreadable) names nothing and removes nothing.
+    private static func removeMigratedLegacyEntries(
+        fileManager: FileManager,
+        marker: URL,
+        documentsDir: URL
+    ) {
+        guard let recorded = try? Data(contentsOf: marker),
+              let object = try? JSONSerialization.jsonObject(
+                  with: recorded, options: []
+              ),
+              let names = object as? [String] else {
+            return
+        }
+        for name in names {
+            let legacy = documentsDir.appendingPathComponent(name)
+            guard fileManager.fileExists(atPath: legacy.path) else { continue }
+            do {
+                try fileManager.removeItem(at: legacy)
+            } catch {
+                logger.error("wallet legacy cleanup deferred: \(String(describing: error))")
+            }
         }
     }
 
