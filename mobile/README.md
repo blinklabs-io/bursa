@@ -162,3 +162,16 @@ in any environment, but the native artifacts need their platform toolchains:
 | `bursa-debug.apk`   | same — `./gradlew assembleDebug` in the container     |
 | `Bursa.xcframework` | macOS only (CI `ios` job / a Mac with Xcode)          |
 | `Bursa.app`         | macOS only — `xcodebuild`                             |
+
+## Source contract checks
+
+The native lifecycle and storage invariants that are reviewable without a
+device can be checked with:
+
+```sh
+./mobile/verify-contracts.sh
+```
+
+This verifies the Android API 35 `dataSync` timeout callback and the iOS
+Application Support data directory. It does not replace Android emulator,
+physical-device, iOS simulator, or physical-device validation.
