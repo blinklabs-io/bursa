@@ -47,6 +47,12 @@ type Statuser interface {
 	Status() supervisor.Status
 }
 
+// maxRequestBodyBytes bounds JSON requests handled by the loopback UI API.
+// Transaction and witness payloads are represented as strings, so the limit
+// is shared by the regular API and connector routes rather than guessed per
+// handler.
+const maxRequestBodyBytes = 1 << 20
+
 // Wallet is the read-only wallet surface the API exposes: it serves views for
 // the active wallet. SetAccount binds the active wallet's read-only account
 // (pushed by the vault on unlock/activate/add).
@@ -1696,7 +1702,34 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// Wrap the whole mux in the same-origin / DNS-rebind guard. The /vault/* and
 	// /wallet/* routes register directly on the mux with no per-handler origin
 	// check, so this middleware is the single point that enforces it for them.
-	return sameOriginGuard(mux)
+	return sameOriginGuard(limitRequestBody(mux))
+}
+
+// limitRequestBody applies the request-body limit at the mux boundary. The
+// Content-Length check rejects oversized requests before any handler work;
+// MaxBytesReader also covers chunked or otherwise unknown-length requests.
+// Handlers that decode a body will receive a bounded reader even when the
+// request's length was not declared.
+func limitRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > maxRequestBodyBytes {
+			if strings.HasPrefix(r.URL.Path, "/connector/") {
+				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{
+					"error_code": -1,
+					"info":       "request body too large",
+				})
+			} else {
+				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
+					"error": "request body too large",
+				})
+			}
+			return
+		}
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // sameOriginGuard wraps the API mux with a uniform same-origin / DNS-rebind

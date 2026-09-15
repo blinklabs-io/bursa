@@ -74,7 +74,27 @@ func (s scriptVault) AddScriptWallet(id, name, network string, w multisig.Script
 	return err
 }
 
-func (s scriptVault) ScriptAddresses() ([]string, error) { return s.v.ScriptAddresses() }
+func (s scriptVault) ScriptWallets() ([]multisig.ScriptWalletRecord, error) {
+	metas, err := s.v.Wallets()
+	if err != nil {
+		return nil, err
+	}
+	wallets := make([]multisig.ScriptWalletRecord, 0, len(metas))
+	for _, m := range metas {
+		if !m.IsScript() {
+			continue
+		}
+		wallets = append(wallets, multisig.ScriptWalletRecord{
+			ID:            m.ID,
+			Name:          m.Name,
+			Network:       m.Network,
+			Policy:        m.Script.Policy,
+			ScriptCBOR:    m.Script.ScriptCBOR,
+			ScriptAddress: m.Script.ScriptAddress,
+		})
+	}
+	return wallets, nil
+}
 
 // scriptAccounts reads saved multi-signature accounts back out of the vault for
 // the multisig service, which spends from them but no longer stores them. The

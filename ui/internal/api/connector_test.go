@@ -20,6 +20,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -963,6 +965,43 @@ func TestConnectorGrants(t *testing.T) {
 			if !resp["ok"] {
 				t.Errorf("attempt %d: expected ok=true", i+1)
 			}
+		}
+	})
+
+	t.Run("POST /connector/unpair reports storage failure", func(t *testing.T) {
+		dir := t.TempDir()
+		svc := connector.NewService(dir, &fakeConnectorBackend{}, nil)
+		code, err := svc.BeginPair(extID)
+		if err != nil {
+			t.Fatalf("BeginPair: %v", err)
+		}
+		token, err := svc.ConfirmPair(extID, code)
+		if err != nil {
+			t.Fatalf("ConfirmPair: %v", err)
+		}
+		// Replace the token file with a non-empty directory so removal fails.
+		tokenPath := filepath.Join(dir, "connector-token.json")
+		if err := os.Remove(tokenPath); err != nil {
+			t.Fatalf("remove token file: %v", err)
+		}
+		if err := os.Mkdir(tokenPath, 0o700); err != nil {
+			t.Fatalf("make token directory: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tokenPath, "retained"), []byte("token"), 0o600); err != nil {
+			t.Fatalf("write token directory entry: %v", err)
+		}
+
+		mux := http.NewServeMux()
+		registerConnector(mux, svc)
+		req := strictReq(http.MethodPost, "/connector/unpair", "")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
+		}
+		if !svc.VerifyToken(token, extID) {
+			t.Fatal("failed unpair must not claim success while the old token remains valid")
 		}
 	})
 

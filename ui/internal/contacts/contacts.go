@@ -403,12 +403,3 @@ func (s *Store) writeLocked() (committed bool, err error) {
 }
 
 var syncDir = syncDirFS
-
-func syncDirFS(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
-}

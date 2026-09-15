@@ -15,6 +15,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/hex"
@@ -53,6 +54,10 @@ import (
 var validate *validator.Validate
 
 const maxRequestBodyBytes = 1 << 20
+
+const maxConcurrentScriptValidations = 4
+
+var scriptValidationSlots = make(chan struct{}, maxConcurrentScriptValidations)
 
 // writeJSONError writes a JSON error response safely
 // nolint:unparam // statusCode currently is always a bad request in some call sites but kept for future use
@@ -810,7 +815,7 @@ func registerAPIHandlers(
 	mux.Handle("/api/wallet/restore", protected(http.HandlerFunc(handleWalletRestore)))
 
 	mux.HandleFunc("/api/script/create", handleScriptCreate)
-	mux.HandleFunc("/api/script/validate", handleScriptValidate)
+	mux.Handle("/api/script/validate", boundedScriptValidation(http.HandlerFunc(handleScriptValidate)))
 	mux.HandleFunc("/api/script/address", handleScriptAddress)
 
 	mux.HandleFunc("/api/address/parse", handleAddressParse)
@@ -835,6 +840,37 @@ func registerAPIHandlers(
 		mux.Handle("/api/wallet/update", walletStorage(http.HandlerFunc(handleWalletUpdate)))
 		mux.Handle("/api/wallet/delete", walletStorage(http.HandlerFunc(handleWalletDelete)))
 	}
+}
+
+// boundedScriptValidation limits concurrent script parsing and validation. The
+// script route is intentionally public, so a body-size limit alone would still
+// allow an unbounded number of expensive requests to run at once.
+func boundedScriptValidation(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Read the body before taking a slot. Holding one across the read let
+		// an unauthenticated client occupy every slot by sending its body
+		// slowly - or never finishing it - and turn the route into a 503 for
+		// everyone else without doing any validation work at all. The read is
+		// bounded by the same limit the handlers apply, so buffering it here
+		// costs at most that per in-flight request.
+		if r.Body != nil {
+			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			r.Body.Close()
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			r.ContentLength = int64(len(body))
+		}
+		select {
+		case scriptValidationSlots <- struct{}{}:
+			defer func() { <-scriptValidationSlots }()
+			next.ServeHTTP(w, r)
+		default:
+			writeError(w, http.StatusServiceUnavailable, errors.New("script validation busy"))
+		}
+	})
 }
 
 // Start initializes and starts the HTTP servers for the API and metrics
@@ -879,6 +915,9 @@ func Start(
 	metricsServer := &http.Server{
 		Handler:           metricsMux,
 		ReadHeaderTimeout: 60 * time.Second,
+		// Headers arriving is not the same as a body arriving: without this, a
+		// client can hold a connection open mid-body indefinitely.
+		ReadTimeout: 120 * time.Second,
 	}
 	if metricsListener == nil {
 		metricsServer.Addr = fmt.Sprintf(
@@ -891,6 +930,9 @@ func Start(
 	apiServer := &http.Server{
 		Handler:           mainHandler,
 		ReadHeaderTimeout: 60 * time.Second,
+		// Headers arriving is not the same as a body arriving: without this, a
+		// client can hold a connection open mid-body indefinitely.
+		ReadTimeout: 120 * time.Second,
 		TLSConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 		},
@@ -1600,6 +1642,7 @@ func handleScriptCreate(w http.ResponseWriter, r *http.Request) {
 //	@Success		200		{object}	ScriptValidateResponse	"Script validation result"
 //	@Failure		400		{object}	ErrorResponse			"Invalid request"
 //	@Failure		500		{object}	ErrorResponse			"Internal server error"
+//	@Failure		503		{object}	ErrorResponse			"Script validation busy; retry"
 //	@Router			/api/script/validate [post]
 func handleScriptValidate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

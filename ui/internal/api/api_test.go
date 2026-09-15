@@ -4450,6 +4450,47 @@ func TestSameOriginGuardSkipsConnector(t *testing.T) {
 	}
 }
 
+// TestNewHandlerRejectsOversizedRequestBodies exercises the production mux
+// boundary for both the regular API and the connector routes. The payloads
+// are otherwise valid JSON, so the baseline reaches the handler and performs
+// the state-changing operation; the boundary must reject them first.
+func TestNewHandlerRejectsOversizedRequestBodies(t *testing.T) {
+	const maxRequestBodyBytes = 1 << 20
+
+	t.Run("regular API", func(t *testing.T) {
+		fv := &fakeVault{}
+		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		body := `{"password":"` + strings.Repeat("x", maxRequestBodyBytes) + `"}`
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodPost, "/vault", strings.NewReader(body)))
+
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("POST /vault oversized body = %d, want 413: %s", rec.Code, rec.Body.String())
+		}
+		if fv.exists {
+			t.Fatal("oversized request created a vault")
+		}
+	})
+
+	t.Run("connector", func(t *testing.T) {
+		svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+		h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithConnector(svc))
+		body := `{"extension_id":"chrome-extension://` + strings.Repeat("x", maxRequestBodyBytes) + `"}`
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
+		req.Host = "127.0.0.1:8090"
+		req.Header.Set("Origin", "chrome-extension://test")
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("POST /connector/pair oversized body = %d, want 413: %s", rec.Code, rec.Body.String())
+		}
+		if got := len(svc.PendingPairings()); got != 0 {
+			t.Fatalf("oversized request created %d pending pairings", got)
+		}
+	})
+}
+
 // TestMultiSigCreateReportsActivationFailure covers the case where the script
 // wallet is persisted but selecting it fails. The wallet exists, so the request
 // did not fail — but the response must not claim it is active, because reads

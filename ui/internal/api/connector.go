@@ -279,15 +279,18 @@ func handleConnectorDecide(svc *connector.Service) http.HandlerFunc {
 // handleConnectorUnpair handles POST /connector/unpair.
 //
 // SPA-facing — requires strict same-origin browser request. Unpairs the current extension.
-// The operation is idempotent (Unpair tolerates absence). Always responds 200
-// {"ok":true} when strict same-origin.
+// The operation is idempotent (Unpair tolerates absence). Storage failures are
+// returned instead of reporting success while the old token remains valid.
 func handleConnectorUnpair(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !strictSameOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
 			return
 		}
-		_ = svc.Unpair()
+		if err := svc.Unpair(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}
 }

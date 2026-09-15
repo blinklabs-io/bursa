@@ -73,13 +73,20 @@ type Event struct {
 type Service struct {
 	reader Reader
 
-	mu        sync.Mutex
-	walletID  string          // active wallet the baseline belongs to ("" = none)
-	primed    bool            // baseline established for walletID
-	seenTx    map[string]bool // tx hashes already reported/baselined
-	lastEpoch int32           // highest reward epoch already reported/baselined
-	hasEpoch  bool            // lastEpoch is meaningful
+	mu          sync.Mutex
+	walletID    string          // active wallet the baseline belongs to ("" = none)
+	primed      bool            // baseline established for walletID
+	seenTx      map[string]bool // recent tx hashes already reported/baselined
+	seenTxOrder []string        // newest-first retention order for seenTx
+	lastEpoch   int32           // highest reward epoch already reported/baselined
+	hasEpoch    bool            // lastEpoch is meaningful
 }
+
+// maxTrackedTransactions bounds the transaction-hash retention used for
+// notification deduplication. Wallet history can be much larger than the
+// useful notification window; keeping only its newest entries prevents a
+// long-lived wallet session from growing memory with its entire history.
+const maxTrackedTransactions = 1024
 
 // New builds a detector over the given node-local reader.
 func New(r Reader) *Service {
@@ -100,6 +107,7 @@ func (s *Service) SetActive(walletID string) {
 	s.walletID = walletID
 	s.primed = false
 	s.seenTx = nil
+	s.seenTxOrder = nil
 	s.lastEpoch = 0
 	s.hasEpoch = false
 }
@@ -150,19 +158,19 @@ func (s *Service) Poll(ctx context.Context) ([]Event, error) {
 	if s.seenTx == nil {
 		s.seenTx = make(map[string]bool)
 	}
+	recentTxs := recentReceived(txs)
 
 	if !s.primed {
-		// Baseline: record every existing receipt without emitting anything.
+		// Baseline: record the recent existing receipts without emitting anything.
 		// This deliberately checks Direction only, NOT isIncoming's Pending
 		// exclusion: a transient tip-lookup failure degrades every tx to
 		// Pending=true (see wallet.Service.Transactions), and baselining with
 		// isIncoming would then drop an already-confirmed receipt from the
 		// baseline, causing it to be reported as newly "received" once the tip
 		// lookup recovers on a later poll.
-		for _, tx := range txs {
-			if tx.Direction == wallet.TxDirectionReceived {
-				s.seenTx[tx.TxHash] = true
-			}
+		for _, tx := range recentTxs {
+			s.seenTx[tx.TxHash] = true
+			s.seenTxOrder = append(s.seenTxOrder, tx.TxHash)
 		}
 		for _, r := range sortedRewards {
 			if !s.hasEpoch || r.Epoch > s.lastEpoch {
@@ -175,11 +183,15 @@ func (s *Service) Poll(ctx context.Context) ([]Event, error) {
 	}
 
 	var events []Event
-	for _, tx := range txs {
+	var discovered []string
+	for _, tx := range recentTxs {
 		if !isIncoming(tx) || s.seenTx[tx.TxHash] {
 			continue
 		}
+		// Marked seen straight away so a hash repeated within this poll does
+		// not produce two events; the retention order is applied once, below.
 		s.seenTx[tx.TxHash] = true
+		discovered = append(discovered, tx.TxHash)
 		events = append(events, Event{
 			ID:       "tx:" + tx.TxHash,
 			Kind:     KindReceived,
@@ -187,6 +199,7 @@ func (s *Service) Poll(ctx context.Context) ([]Event, error) {
 			TxHash:   tx.TxHash,
 		})
 	}
+	s.rememberTxs(discovered)
 	for _, r := range sortedRewards {
 		if s.hasEpoch && r.Epoch <= s.lastEpoch {
 			continue
@@ -203,9 +216,88 @@ func (s *Service) Poll(ctx context.Context) ([]Event, error) {
 	return events, nil
 }
 
+// rememberTxs adds one poll's discoveries to the bounded deduplication window.
+// Callers hold s.mu and pass hashes newest-first, already marked seen.
+//
+// The batch goes in as a block, in the order given. Inserting them one at a
+// time at the front reversed each poll's own order — the newest of a batch
+// ended up nearest the eviction end, so once the window was full the newest
+// hashes were dropped first and their transactions were notified again on the
+// next poll, which is the opposite of what a deduplication window is for.
+func (s *Service) rememberTxs(hashes []string) {
+	if len(hashes) == 0 {
+		return
+	}
+	order := make([]string, 0, len(hashes)+len(s.seenTxOrder))
+	order = append(order, hashes...)
+	order = append(order, s.seenTxOrder...)
+	if len(order) > maxTrackedTransactions {
+		for _, evicted := range order[maxTrackedTransactions:] {
+			delete(s.seenTx, evicted)
+		}
+		order = order[:maxTrackedTransactions]
+	}
+	s.seenTxOrder = order
+}
+
+// recentReceived returns at most the newest received transactions. The wallet
+// service currently returns newest-first, but sort here as a contract guard for
+// other Reader implementations and tests. Pending received entries are kept in
+// the baseline window so a transient tip lookup failure cannot turn old history
+// into a notification after recovery.
+func recentReceived(txs []wallet.Tx) []wallet.Tx {
+	// The wallet service returns newest-first and a poll can carry the whole
+	// history — up to 100,000 entries — so cloning and sorting every time costs
+	// a wallet-sized allocation and an O(n log n) pass to learn nothing. Check
+	// the order instead, in one linear pass, and sort only a reader that did
+	// not deliver it. The guard for other Reader implementations stays; it just
+	// stops charging the common case for them.
+	sorted := txs
+	if !slices.IsSortedFunc(txs, newestFirst) {
+		sorted = slices.Clone(txs)
+		slices.SortFunc(sorted, newestFirst)
+	}
+
+	out := make([]wallet.Tx, 0, min(len(sorted), maxTrackedTransactions))
+	for _, tx := range sorted {
+		if tx.Direction != wallet.TxDirectionReceived {
+			continue
+		}
+		out = append(out, tx)
+		if len(out) == maxTrackedTransactions {
+			break
+		}
+	}
+	return out
+}
+
 // isIncoming reports whether tx is a confirmed transaction that paid the wallet
 // without spending any of its own inputs — the "you received funds" case. A
 // still-pending (unconfirmed) tx is excluded: only settled receipts notify.
 func isIncoming(tx wallet.Tx) bool {
 	return tx.Direction == wallet.TxDirectionReceived && !tx.Pending
+}
+
+// newestFirst orders transactions by block height, then position in the block,
+// then hash, newest first.
+func newestFirst(a, b wallet.Tx) int {
+	if a.BlockHeight != b.BlockHeight {
+		if a.BlockHeight > b.BlockHeight {
+			return -1
+		}
+		return 1
+	}
+	if a.TxIndex != b.TxIndex {
+		if a.TxIndex > b.TxIndex {
+			return -1
+		}
+		return 1
+	}
+	if a.TxHash > b.TxHash {
+		return -1
+	}
+	if a.TxHash < b.TxHash {
+		return 1
+	}
+	return 0
 }

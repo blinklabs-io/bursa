@@ -18,6 +18,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -25,6 +26,58 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSQLiteDatabasePath(t *testing.T) {
+	tests := []struct {
+		name     string
+		dsn      string
+		wantPath string
+		wantFile bool
+	}{
+		{
+			name:     "plain path",
+			dsn:      "/tmp/wallets.db",
+			wantPath: "/tmp/wallets.db",
+			wantFile: true,
+		},
+		{
+			name:     "plain path with query",
+			dsn:      "/tmp/wallets.db?_pragma=journal_mode(WAL)",
+			wantPath: "/tmp/wallets.db",
+			wantFile: true,
+		},
+		{
+			name:     "memory path with query",
+			dsn:      ":memory:?cache=shared",
+			wantFile: false,
+		},
+		{
+			name:     "memory URI",
+			dsn:      "file::memory:?cache=shared",
+			wantFile: false,
+		},
+		{
+			name:     "file URI",
+			dsn:      "file:/tmp/wallet%2Dstore.db?mode=rwc",
+			wantPath: "/tmp/wallet-store.db",
+			wantFile: true,
+		},
+		{
+			name:     "remote URI authority",
+			dsn:      "file://other-host/tmp/wallets.db",
+			wantFile: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path, fileBacked, _, err := sqliteTarget(tt.dsn)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantPath, path)
+			assert.Equal(t, tt.wantFile, fileBacked)
+		})
+	}
+}
 
 func newTestSQLiteStore(t *testing.T) *SQLiteStore {
 	t.Helper()
@@ -208,6 +261,40 @@ func TestSQLiteStoreWalletOperations(t *testing.T) {
 		_, err := wallet.GetItem("nonexistent")
 		assert.Error(t, err)
 	})
+}
+
+func TestSQLiteWalletSaveDoesNotPublishIDBeforeCommit(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	wallet, err := store.CreateWallet("retry-test")
+	require.NoError(t, err)
+	wallet.PutItem("fault", "value")
+
+	_, err = store.db.Exec(`
+		CREATE TRIGGER fail_wallet_item_insert
+		BEFORE INSERT ON wallet_items
+		WHEN NEW.key = 'fault'
+		BEGIN
+			SELECT RAISE(ABORT, 'injected item failure');
+		END;
+	`)
+	require.NoError(t, err)
+
+	err = wallet.Save(context.Background())
+	require.Error(t, err)
+
+	sqliteWallet, ok := wallet.(*sqliteWallet)
+	require.True(t, ok)
+	assert.Zero(t, sqliteWallet.id)
+
+	_, err = store.db.Exec("DROP TRIGGER fail_wallet_item_insert")
+	require.NoError(t, err)
+	require.NoError(t, wallet.Save(context.Background()))
+
+	loaded, err := store.GetWallet(context.Background(), "retry-test")
+	require.NoError(t, err)
+	value, err := loaded.GetItem("fault")
+	require.NoError(t, err)
+	assert.Equal(t, "value", value)
 }
 
 func TestSQLiteStoreUpdateWallet(t *testing.T) {
@@ -418,4 +505,67 @@ func TestSQLiteStoreItemsCopy(t *testing.T) {
 	// Original should not be modified
 	_, err = wallet.GetItem("key2")
 	assert.Error(t, err)
+}
+
+// SQLite ignores a URI fragment, so it is not part of the filename. Securing
+// the fragment-bearing name left the database SQLite actually opens with
+// whatever mode the umask gave it.
+func TestSQLiteFragmentIsNotPartOfTheFilename(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "wallet.db")
+
+	store, err := NewSQLiteStore("file:" + dbPath + "#ignored")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("the database SQLite opened should be the one we secured: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != sqliteFileMode {
+			t.Fatalf("mode = %o, want %o", got, sqliteFileMode)
+		}
+	}
+	if _, err := os.Stat(dbPath + "#ignored"); err == nil {
+		t.Fatal("the fragment must not have produced a file of its own")
+	}
+}
+
+// A mode=rw DSN opens an existing database and reports one that is missing.
+// Pre-creating the file to fix its permissions answered that error with an
+// empty database instead.
+func TestSQLiteModeRWDoesNotCreateTheDatabase(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "absent.db")
+
+	store, err := NewSQLiteStore("file:" + dbPath + "?mode=rw")
+	if err == nil {
+		store.Close()
+		t.Fatal("mode=rw against a missing database should fail")
+	}
+	if _, statErr := os.Stat(dbPath); statErr == nil {
+		t.Fatal("mode=rw must not create the database it was told to open")
+	}
+}
+
+// The permission step runs before SQLite opens the DSN, so it has to speak the
+// platform's path form: a canonical Windows URI keeps its drive letter behind
+// the leading slash, and "/C:/..." is not openable.
+func TestSQLiteDatabasePathDropsTheURISlashBeforeADriveLetter(t *testing.T) {
+	for _, tt := range []struct{ dsn, want string }{
+		{"file:///C:/wallet/db.sqlite", "C:/wallet/db.sqlite"},
+		{"file:///c:/wallet/db.sqlite", "c:/wallet/db.sqlite"},
+		{"file:///var/lib/wallet.db", "/var/lib/wallet.db"},
+		{"file:///w:x/not-a-drive", "/w:x/not-a-drive"},
+	} {
+		got, fileBacked, _, err := sqliteTarget(tt.dsn)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.dsn, err)
+		}
+		if !fileBacked || got != tt.want {
+			t.Errorf("%s -> %q, want %q", tt.dsn, got, tt.want)
+		}
+	}
 }
