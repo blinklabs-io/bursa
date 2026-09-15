@@ -489,14 +489,8 @@ func writeSecretFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return err
 	}
-	if dirFile, err := os.Open(dir); err == nil {
-		if syncErr := dirFile.Sync(); syncErr != nil {
-			_ = dirFile.Close()
-			return syncErr
-		}
-		if err := dirFile.Close(); err != nil {
-			return err
-		}
+	if err := syncDirectory(dir); err != nil {
+		return err
 	}
 	removeTmp = false
 	return nil

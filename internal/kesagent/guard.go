@@ -201,17 +201,8 @@ func (g *PeriodGuard) persistLocked() (committed bool, err error) {
 	// rename can lose the directory-entry update on some filesystems and
 	// restore an earlier (lower) floor on restart -- exactly the rollback
 	// this guard exists to prevent.
-	if dirFile, err := os.Open(dir); err == nil {
-		syncErr := dirFile.Sync()
-		closeErr := dirFile.Close()
-		if syncErr != nil {
-			return true, fmt.Errorf("kesagent: sync guard dir %q: %w", dir, syncErr)
-		}
-		if closeErr != nil {
-			return true, fmt.Errorf("kesagent: close guard dir %q: %w", dir, closeErr)
-		}
-	} else {
-		return true, fmt.Errorf("kesagent: open guard dir %q: %w", dir, err)
+	if err := syncDirectory(dir); err != nil {
+		return true, fmt.Errorf("kesagent: sync guard dir %q: %w", dir, err)
 	}
 	return true, nil
 }

@@ -1480,15 +1480,6 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 
 var syncVaultDir = syncDirFS
 
-func syncDirFS(dir string) error {
-	dirFile, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer dirFile.Close()
-	return dirFile.Sync()
-}
-
 // ---------------------------------------------------------------------------
 // clone helpers (defensive copies so callers cannot mutate the cached index)
 // ---------------------------------------------------------------------------
