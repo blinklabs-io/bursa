@@ -95,6 +95,12 @@ func TestSQLiteURIPath(t *testing.T) {
 	tests := map[string]string{
 		"/var/lib/dingo/metadata.sqlite": "/var/lib/dingo/metadata.sqlite",
 		`C:\Users\dingo\metadata.sqlite`: "/C:/Users/dingo/metadata.sqlite",
+		// A colon in the first segment of a relative POSIX path is an
+		// ordinary filename character, not a drive reference. Prefixing it
+		// would make the reader open a different file.
+		"a:b/metadata.sqlite": "a:b/metadata.sqlite",
+		"C:":                  "/C:",
+		"1:/metadata.sqlite":  "1:/metadata.sqlite",
 	}
 	for input, want := range tests {
 		t.Run(input, func(t *testing.T) {
