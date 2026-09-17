@@ -63,6 +63,15 @@ func TestNodeConfigOptionsHistoryExpiryOptIn(t *testing.T) {
 	}
 	mustApply(off)
 	mustApply(on)
+
+	configured := dingo.NewConfig(off...)
+	if configured.BlobPlugin() != "badger" || configured.MetadataPlugin() != "sqlite" {
+		t.Fatalf(
+			"storage plugins = (%q, %q), want (badger, sqlite)",
+			configured.BlobPlugin(),
+			configured.MetadataPlugin(),
+		)
+	}
 }
 
 // TestHistoryExpiryEnabledReadsProvider asserts the supervisor reads the

@@ -1419,19 +1419,6 @@ func CreateOperationalCertificate(
 	kesPeriod uint64,
 	coldSkey []byte,
 ) (*OperationalCertificate, error) {
-	opCert, err := ledger.CreateOpCert(
-		kesVkey,
-		issueNumber,
-		kesPeriod,
-		coldSkey,
-	)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"failed to create operational certificate: %w",
-			err,
-		)
-	}
-
 	// Derive the cold (pool) verification key from the cold signing key so
 	// the canonical NodeOperationalCertificate envelope can carry it. A real
 	// node cert is a 2-element structure [inner_cert, cold_vkey]; without the
@@ -1450,6 +1437,18 @@ func CreateOperationalCertificate(
 			ed25519.SeedSize,
 			ed25519.PrivateKeySize,
 			len(coldSkey),
+		)
+	}
+	opCert, err := ledger.CreateOpCert(
+		kesVkey,
+		issueNumber,
+		kesPeriod,
+		coldSkey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to create operational certificate: %w",
+			err,
 		)
 	}
 
