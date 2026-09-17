@@ -16,7 +16,10 @@
 
 package storage
 
-import "os"
+import (
+	"os"
+	"path/filepath"
+)
 
 // openRegularFileForRead opens path for reading.
 //
@@ -25,4 +28,8 @@ import "os"
 // guarantee here, as it does for secret-key reads in the root package.
 func openRegularFileForRead(path string) (*os.File, error) {
 	return os.Open(path)
+}
+
+func openWalletFileForRead(baseDir, name string) (*os.File, error) {
+	return openRegularFileForRead(filepath.Join(baseDir, "wallet-"+name, "wallet.json"))
 }

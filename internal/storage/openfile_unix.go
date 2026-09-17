@@ -18,7 +18,9 @@ package storage
 
 import (
 	"os"
-	"syscall"
+	"path/filepath"
+
+	"golang.org/x/sys/unix"
 )
 
 // openRegularFileForRead opens path for reading without following a final
@@ -30,9 +32,27 @@ import (
 // the caller until someone writes to it. The same pair guards secret-key reads
 // in the root package.
 func openRegularFileForRead(path string) (*os.File, error) {
-	return os.OpenFile(
-		path,
-		os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK,
-		0,
-	)
+	return os.OpenFile(path, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+}
+
+// openWalletFileForRead walks the wallet path from stable directory
+// descriptors so replacing the wallet directory cannot redirect the read.
+func openWalletFileForRead(baseDir, name string) (*os.File, error) {
+	baseFD, err := unix.Open(baseDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer unix.Close(baseFD)
+
+	dirFD, err := unix.Openat(baseFD, "wallet-"+name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer unix.Close(dirFD)
+
+	fd, err := unix.Openat(dirFD, filepath.Base("wallet.json"), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), "wallet.json"), nil
 }

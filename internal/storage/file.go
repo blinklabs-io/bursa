@@ -138,7 +138,7 @@ func (s *FileStore) GetWallet(
 	// without following a final symlink and without blocking on a special file
 	// closes the substitution, and re-checking the open handle below is what
 	// makes the regular-file guarantee hold for the descriptor actually read.
-	file, err := openRegularFileForRead(walletPath)
+	file, err := openWalletFileForRead(s.baseDir, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open wallet file: %w", err)
 	}
