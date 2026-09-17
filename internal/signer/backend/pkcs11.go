@@ -83,11 +83,12 @@ type PKCS11Backend struct {
 	name    string
 	ctx     *pkcs11.Ctx
 	session pkcs11.SessionHandle
-	// mu protects closed and the request-channel close. The signing worker is
+	// mu protects closed and the close signal. The signing worker is
 	// the sole owner of session and ctx during an operation.
 	mu         sync.Mutex
 	closed     bool
 	requests   chan pkcs11SignRequest
+	closing    chan struct{}
 	workerWG   sync.WaitGroup
 	closeOnce  sync.Once
 	closeDone  chan struct{}
@@ -168,6 +169,7 @@ func NewPKCS11Backend(cfg PKCS11Config) (Backend, error) {
 		return nil, fmt.Errorf("pkcs11 backend %q: no Ed25519 signing keys found on the token", cfg.Name)
 	}
 	b.requests = make(chan pkcs11SignRequest, maxQueuedPKCS11Signs)
+	b.closing = make(chan struct{})
 	b.closeDone = make(chan struct{})
 	b.workerWG.Add(1)
 	go b.signWorker()
@@ -200,16 +202,18 @@ func (b *PKCS11Backend) signWithSession(ctx context.Context, priv pkcs11.ObjectH
 		resp: make(chan pkcs11SignResult, 1),
 	}
 	b.mu.Lock()
-	if b.closed || b.requests == nil {
+	if b.closed || b.requests == nil || b.closing == nil {
 		b.mu.Unlock()
 		return nil, errors.New("pkcs11 sign: backend is closed")
 	}
+	requests, closing := b.requests, b.closing
+	b.mu.Unlock()
 	select {
-	case b.requests <- req:
-		b.mu.Unlock()
+	case requests <- req:
 	case <-ctx.Done():
-		b.mu.Unlock()
 		return nil, ctx.Err()
+	case <-closing:
+		return nil, errors.New("pkcs11 sign: backend is closed")
 	}
 	select {
 	case result := <-req.resp:
@@ -219,18 +223,25 @@ func (b *PKCS11Backend) signWithSession(ctx context.Context, priv pkcs11.ObjectH
 		return result.sig, result.err
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	case <-closing:
+		return nil, errors.New("pkcs11 sign: backend is closed")
 	}
 }
 
 func (b *PKCS11Backend) signWorker() {
 	defer b.workerWG.Done()
-	for req := range b.requests {
-		if err := req.ctx.Err(); err != nil {
-			req.resp <- pkcs11SignResult{err: err}
-			continue
+	for {
+		select {
+		case <-b.closing:
+			return
+		case req := <-b.requests:
+			if err := req.ctx.Err(); err != nil {
+				req.resp <- pkcs11SignResult{err: err}
+				continue
+			}
+			sig, err := b.signOperation(req.priv, req.msg)
+			req.resp <- pkcs11SignResult{sig: sig, err: err}
 		}
-		sig, err := b.signOperation(req.priv, req.msg)
-		req.resp <- pkcs11SignResult{sig: sig, err: err}
 	}
 }
 
@@ -461,8 +472,8 @@ func (b *PKCS11Backend) Close() error {
 		if b.closeDone == nil {
 			b.closeDone = make(chan struct{})
 		}
-		if b.requests != nil {
-			close(b.requests)
+		if b.closing != nil {
+			close(b.closing)
 		}
 		b.mu.Unlock()
 		b.workerWG.Wait()

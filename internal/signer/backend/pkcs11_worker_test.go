@@ -30,6 +30,7 @@ import (
 func newTestPKCS11Backend(nativeSign func(pkcs11.ObjectHandle, []byte) ([]byte, error)) *PKCS11Backend {
 	b := &PKCS11Backend{
 		requests:   make(chan pkcs11SignRequest, maxQueuedPKCS11Signs),
+		closing:    make(chan struct{}),
 		closeDone:  make(chan struct{}),
 		nativeSign: nativeSign,
 	}
