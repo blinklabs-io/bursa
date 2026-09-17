@@ -1,3 +1,4 @@
+import { BursaMark, Icon } from "../components/Icon";
 import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { useAddresses } from "../api/hooks";
@@ -61,8 +62,7 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
   }
 
   const data = addresses.data;
-  // Missing is treated as unknown too, so a newer UI paired with an older
-  // backend fails closed instead of labelling every address unused.
+  // Missing usage fails closed when this UI is paired with an older backend.
   const usageKnown = data?.usage_known === true;
   const nextUnused = usageKnown ? (data?.next_unused ?? "") : "";
   const receive = data?.receive ?? [];
@@ -72,14 +72,14 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
     { key: "address", label: "Address" },
     { key: "status", label: "Status" },
     { key: "qr", label: "QR" },
-    { key: "copy", label: "" },
+    { key: "copy", label: "Actions" },
   ];
 
   const rows = receive.map((addr) => {
     const isExpanded = expandedQr === addr;
     return {
-      address: truncateAddr(addr),
-      status: usageKnown ? (usedSet.has(addr) ? "Used" : "Unused") : "Unknown",
+      address: <span className="receive-address-cell"><Icon name="wallet" size={20} /><span className="mono" title={addr}>{truncateAddr(addr)}</span></span>,
+      status: <span className={!usageKnown || usedSet.has(addr) ? "receive-address-status used" : "receive-address-status"}>{usageKnown ? (usedSet.has(addr) ? "Used" : "Unused") : "Unknown"}</span>,
       qr: (
         <div className="receive-qr-cell">
           <button
@@ -97,7 +97,7 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
         </div>
       ),
       copy: (
-        <>
+        <div className="receive-row-actions">
           <CopyButton value={addr} ariaLabel="Copy this receive address" />
           <ExplorerLink
             network={network}
@@ -105,27 +105,27 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
             id={addr}
             label={`View address ${truncateAddr(addr)} on block explorer`}
           />
-        </>
+        </div>
       ),
     };
   });
 
   return (
     <div className="receive">
-      {usageKnown && (
-        <Card title="Next Unused Address">
-          <div className="receive-next">
-            {nextUnused && (
-              <AddressQR address={nextUnused} size={QR_SIZE_HERO} title={`QR code for ${nextUnused}`} />
-            )}
-            <div className="receive-next-details">
-              <p className="mono address-full">{nextUnused}</p>
-              <CopyButton value={nextUnused} ariaLabel="Copy next unused address" />
-              {nextUnused && <ExplorerLink network={network} kind="address" id={nextUnused} />}
-            </div>
+      {usageKnown && (<Card title="Next Unused Address">
+        <div className="receive-pass-mark" aria-hidden="true"><BursaMark /></div>
+        <div className="receive-next">
+          {nextUnused && (
+            <AddressQR address={nextUnused} size={QR_SIZE_HERO} title={`QR code for ${nextUnused}`} />
+          )}
+          <div className="receive-next-details">
+            <span className="receive-network">{network} network</span>
+            <p className="mono address-full">{nextUnused}</p>
+            <CopyButton value={nextUnused} text="Copy address" ariaLabel="Copy next unused address" />
+            {nextUnused && <ExplorerLink network={network} kind="address" id={nextUnused} />}
           </div>
-        </Card>
-      )}
+        </div>
+      </Card>)}
 
       <Card title="Receive Addresses">
         {!usageKnown && receive.length > 0 && (

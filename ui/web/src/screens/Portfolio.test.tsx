@@ -165,7 +165,7 @@ test("(h) fresh wallet with zero balance is valid — not an error", () => {
   render(<Portfolio />);
 
   // Should show "0 ADA" in the balance card without an error state.
-  expect(screen.getByText(/^0 ADA$/)).toBeInTheDocument();
+  expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent === "0 ADA")).toBeInTheDocument();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
