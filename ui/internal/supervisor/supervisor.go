@@ -157,6 +157,12 @@ func nodeConfigOptions(
 		dingo.WithPrometheusRegistry(promRegistry),
 		dingo.WithDatabasePath(cfg.DataDir),
 		dingo.WithStorageMode(dingo.StorageModeAPI),
+		dingo.WithPluginSelection(plugin.CapabilityStorageBlob, plugin.Selection{
+			Provider: "badger",
+		}),
+		dingo.WithPluginSelection(plugin.CapabilityStorageMetadata, plugin.Selection{
+			Provider: "sqlite",
+		}),
 		// Match Dingo's own Praos default mempool capacity (1 MiB) — ample for a
 		// single-user wallet submitting its own txs. In dingo v0.68 the mempool,
 		// blockfrost, and utxorpc APIs are configured as plugin selections rather

@@ -2460,6 +2460,11 @@ func TestCIP1853KeyFileGeneration(t *testing.T) {
 	assert.NotEmpty(t, extendedSkeyCbor)
 }
 
+func TestCreateOperationalCertificateRejectsInvalidColdSkeyLength(t *testing.T) {
+	_, err := CreateOperationalCertificate(make([]byte, ed25519.PublicKeySize), 0, 0, make([]byte, ed25519.SeedSize-1))
+	require.EqualError(t, err, "cold signing key must be 32 or 64 bytes, got 31")
+}
+
 func TestPoolColdKeyEnvelopeCompatibility(t *testing.T) {
 	rootKey, err := GetRootKeyFromMnemonic(
 		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
