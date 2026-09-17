@@ -348,3 +348,6 @@
  .receive > .card:last-child td:nth-child(3) { justify-self: end; }
  .receive > .card:last-child td:nth-child(3):has(.receive-qr-frame) { justify-self: stretch; }
 }
+
+.transfer-pass-top .bursa-logo { width: 132px; background: transparent; }
+.receive-pass-mark .bursa-symbol { width: 34px; height: 38px; }

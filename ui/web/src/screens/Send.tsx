@@ -1,4 +1,4 @@
-import { BursaMark, Icon } from "../components/Icon";
+import { BursaLogo, Icon } from "../components/Icon";
 import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Preview, TxResult, SendAsset, UnsignedTx, HandleInfo } from "../api/types";
@@ -327,7 +327,7 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
     <aside className="transfer-object" aria-hidden="true">
       <div className="transfer-object-back" />
       <div className="transfer-pass">
-        <div className="transfer-pass-top"><span>BVRSA</span><BursaMark /></div>
+        <div className="transfer-pass-top"><BursaLogo /></div>
         <div className="transfer-pass-body"><span className="transfer-pass-label">Transfer draft</span><strong>{adaAmount.trim() || "0.00"}<span> ADA</span></strong></div>
         <div className="transfer-pass-destination"><Icon name="send" size={22} /><div><span>Recipient</span><p>{to.trim() || "Enter an address"}</p></div></div>
         <div className="transfer-pass-footer"><span>Cardano</span><span>Not sent</span></div>

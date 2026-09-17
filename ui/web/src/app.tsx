@@ -11,7 +11,7 @@ import {
 import { lockVault, ApiError } from "./api/client";
 import { getStoredDeviceKind } from "./hw/deviceKind";
 import { useIdleLock } from "./useIdleLock";
-import { Icon, BursaMark } from "./components/Icon";
+import { Icon, BursaLogo } from "./components/Icon";
 import { Button } from "./components/Button";
 import { SyncBanner } from "./components/SyncBanner";
 import { WalletSwitcher } from "./components/WalletSwitcher";
@@ -640,7 +640,7 @@ export function App() {
         <nav className="sidebar">
           <div className="brand">
             <div className="brand-row">
-              <span className="brand-lockup"><BursaMark /><span className="brand-mark">BVRSA</span></span>
+              <span className="brand-lockup"><BursaLogo /></span>
               <CliButton onOpen={() => setPaletteOpen(true)} />
             </div>
             <span className="brand-motto">Your node. Your keys.</span>

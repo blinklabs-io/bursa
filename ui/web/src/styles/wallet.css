@@ -238,3 +238,13 @@ h1 { font-size: 36px; line-height: 1.2; font-weight: 650; letter-spacing: -.035e
     background: radial-gradient(ellipse 100% 430px at 100% 0%, #d8a65716, transparent 85%), #131820;
   }
 }
+
+/* Existing repository artwork, reproduced without redrawing the brand. */
+.bursa-logo { display: block; width: 140px; height: auto; background: #f6eddd; border-radius: 8px; }
+.bursa-symbol { display: block; object-fit: contain; }
+.brand-lockup { flex-shrink: 0; }
+.brand-motto { margin-left: 0; }
+.wallet-signature { transform: none; opacity: .18; }
+.wallet-signature .bursa-symbol { object-fit: contain; filter: none; }
+.card-wordmark .bursa-logo { width: 92px; border-radius: 5px; }
+.mobile-brand-mark .bursa-logo { width: 94px; border-radius: 5px; }

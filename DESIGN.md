@@ -2,6 +2,10 @@
 
 Bursa is a local-node Cardano wallet. Its interface prioritizes readable addresses, balances and signing steps, using slate surfaces and gold accents.
 
+## Brand assets
+
+Use the existing Bursa pouch and custom lowercase wordmark from `.github/assets/bursa-illustration.png` and `.github/assets/bursa-logo-with-text-horizontal.png`. Web copies live in `ui/web/public/brand`. The original colors and shapes are preserved; light backing improves wordmark contrast on slate. The invented B emblem and BVRSA text treatments have been removed from the redesigned UI.
+
 ## Visual system
 
 - Self-hosted Manrope for interface text; monospace for addresses and hashes.
