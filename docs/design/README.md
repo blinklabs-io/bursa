@@ -13,6 +13,10 @@ Responsive slate-and-gold redesign of Portfolio, Send, Receive, Activity, Stakin
 | Staking | [Desktop](screenshots/stake-desktop.png) | [Mobile](screenshots/stake-mobile.png) |
 | Settings | [Desktop](screenshots/settings-desktop.png) | [Mobile](screenshots/settings-mobile.png) |
 
+[Staking after scrolling](screenshots/stake-mobile-scrolled.png)
+
+Mobile images capture the actual 390 × 844 viewport. Full-page mobile captures place fixed navigation partway through the image, so they are avoided.
+
 [Visual gallery](gallery.html)
 
 ## Local preview
