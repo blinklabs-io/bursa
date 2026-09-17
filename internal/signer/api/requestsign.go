@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"net/http"
@@ -65,6 +66,16 @@ const (
 // distinct nonces can be live before boot-time capacity pressure.
 const defaultNonceCacheMax = 65536
 
+// nonceCacheKeyBytes is the fixed size of the digest retained for each replay
+// identity. Keeping only this digest avoids retaining attacker-controlled nonce
+// bytes while the count and byte limits bound map metadata and key storage.
+const nonceCacheKeyBytes = sha256.Size
+
+// defaultNonceCacheMaxBytes bounds retained replay-key bytes independently of
+// the entry count. It is derived from the fixed-width key so valid nonces of
+// any size accepted by the HTTP server remain compatible.
+const defaultNonceCacheMaxBytes = int64(defaultNonceCacheMax) * nonceCacheKeyBytes
+
 // An Ed25519 signature is fixed-width and is represented as lower-case hex in
 // the request header. Check that width before touching the request body.
 const maxSignatureHexLength = ed25519.SignatureSize * 2
@@ -106,7 +117,7 @@ func NewRequestSigningAuthenticator(keys map[string]ed25519.PublicKey, skew time
 	return &RequestSigningAuthenticator{
 		keys:    valid,
 		skew:    skew,
-		cache:   newNonceCache(2*skew, defaultNonceCacheMax),
+		cache:   newNonceCacheWithByteLimit(2*skew, defaultNonceCacheMax, defaultNonceCacheMaxBytes),
 		now:     time.Now,
 		maxBody: maxSignedBody,
 	}
@@ -166,7 +177,7 @@ func (a *RequestSigningAuthenticator) Authenticate(r *http.Request) (string, boo
 	}
 	// Replay check runs only after the signature verifies, so unauthenticated
 	// requests cannot flood the nonce cache.
-	if err := a.cache.checkAndStore(caller + "\x00" + nonce); err != nil {
+	if err := a.cache.checkAndStore(caller, nonce); err != nil {
 		return "", true, err
 	}
 	return caller, true, nil
@@ -190,53 +201,79 @@ func (a *RequestSigningAuthenticator) readBody(r *http.Request) ([]byte, error) 
 }
 
 // nonceCache is a bounded, TTL-expiring set of seen (key,nonce) identifiers for
-// replay protection. It is safe for concurrent use.
+// replay protection. It is safe for concurrent use. The map retains only a
+// fixed-width digest of each identifier; the original caller and nonce are
+// never retained after checkAndStore returns.
 type nonceCache struct {
-	mu      sync.Mutex
-	entries map[string]int64 // identifier -> expiry (unix nanos)
-	ttl     time.Duration
-	max     int
-	now     func() time.Time
+	mu       sync.Mutex
+	entries  map[[nonceCacheKeyBytes]byte]int64 // digest -> expiry (unix nanos)
+	ttl      time.Duration
+	max      int
+	bytes    int64
+	maxBytes int64
+	now      func() time.Time
 }
 
-func newNonceCache(ttl time.Duration, max int) *nonceCache {
+func newNonceCacheWithByteLimit(ttl time.Duration, max int, maxBytes int64) *nonceCache {
 	return &nonceCache{
-		entries: make(map[string]int64),
-		ttl:     ttl,
-		max:     max,
-		now:     time.Now,
+		entries:  make(map[[nonceCacheKeyBytes]byte]int64),
+		ttl:      ttl,
+		max:      max,
+		maxBytes: maxBytes,
+		now:      time.Now,
 	}
 }
 
-// checkAndStore records id and returns nil, errReplay if id is already present
-// and unexpired, or errNonceCacheFull if the cache is at capacity (fail closed:
-// replay protection cannot be guaranteed, so the request is refused). Expired
-// entries are purged lazily — only when the cache is at or over capacity —
-// rather than scanning every live entry on every call: a full O(n) sweep under
-// the single cache-wide mutex on every request would serialize all
-// request-signing traffic and grow with cache occupancy. The bound is still
-// memory-safe: capacity is reclaimed before a legitimate new nonce is ever
-// rejected as full.
-func (c *nonceCache) checkAndStore(id string) error {
+// checkAndStore records (caller, nonce) and returns nil, errReplay if the pair
+// is already present and unexpired, or errNonceCacheFull if the cache is at
+// either capacity (fail closed: replay protection cannot be guaranteed, so the
+// request is refused). Expired entries are purged lazily — only when the cache
+// is at or over capacity — rather than scanning every live entry on every call:
+// a full O(n) sweep under the single cache-wide mutex on every request would
+// serialize all request-signing traffic and grow with cache occupancy. The
+// count and byte bounds remain memory-safe because each retained key is exactly
+// 32 bytes.
+func (c *nonceCache) checkAndStore(caller, nonce string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now().UnixNano()
-	if exp, ok := c.entries[id]; ok {
+	key := nonceCacheKey(caller, nonce)
+	if exp, ok := c.entries[key]; ok {
 		if exp > now {
 			return errReplay
 		}
-		delete(c.entries, id)
+		delete(c.entries, key)
+		c.bytes -= nonceCacheKeyBytes
 	}
-	if len(c.entries) >= c.max {
+	if len(c.entries) >= c.max || c.bytes+nonceCacheKeyBytes > c.maxBytes {
 		for k, exp := range c.entries {
 			if exp <= now {
 				delete(c.entries, k)
+				c.bytes -= nonceCacheKeyBytes
 			}
 		}
 	}
-	if len(c.entries) >= c.max {
+	if len(c.entries) >= c.max || c.bytes+nonceCacheKeyBytes > c.maxBytes {
 		return errNonceCacheFull
 	}
-	c.entries[id] = c.now().Add(c.ttl).UnixNano()
+	c.entries[key] = c.now().Add(c.ttl).UnixNano()
+	c.bytes += nonceCacheKeyBytes
 	return nil
+}
+
+// nonceCacheKey hashes length-delimited caller and nonce fields. Length
+// prefixes preserve the pair boundary without allocating a concatenated string
+// proportional to an attacker-controlled nonce.
+func nonceCacheKey(caller, nonce string) [nonceCacheKeyBytes]byte {
+	h := sha256.New()
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(caller)))
+	_, _ = h.Write(length[:])
+	_, _ = io.WriteString(h, caller)
+	binary.BigEndian.PutUint64(length[:], uint64(len(nonce)))
+	_, _ = h.Write(length[:])
+	_, _ = io.WriteString(h, nonce)
+	var key [nonceCacheKeyBytes]byte
+	copy(key[:], h.Sum(nil))
+	return key
 }
