@@ -23,18 +23,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// openRegularFileForRead opens path for reading without following a final
-// symlink and without blocking on a special file.
-//
-// Inspecting a path and then opening it are two operations, and what the path
-// names can change in between: O_NOFOLLOW refuses a symlink substituted after
-// the check, and O_NONBLOCK means a FIFO put there returns instead of parking
-// the caller until someone writes to it. The same pair guards secret-key reads
-// in the root package.
-func openRegularFileForRead(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
-}
-
 // openWalletFileForRead walks the wallet path from stable directory
 // descriptors so replacing the wallet directory cannot redirect the read.
 func openWalletFileForRead(baseDir, name string) (*os.File, error) {

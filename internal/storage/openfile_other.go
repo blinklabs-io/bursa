@@ -31,5 +31,5 @@ func openRegularFileForRead(path string) (*os.File, error) {
 }
 
 func openWalletFileForRead(baseDir, name string) (*os.File, error) {
-	return openRegularFileForRead(filepath.Join(baseDir, "wallet-"+name, "wallet.json"))
+	return os.Open(filepath.Join(baseDir, "wallet-"+name, "wallet.json"))
 }
