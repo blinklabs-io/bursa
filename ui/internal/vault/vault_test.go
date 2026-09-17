@@ -171,6 +171,46 @@ func TestCreatePublishesStateWhenDirectorySyncFailsAfterRename(t *testing.T) {
 	}
 }
 
+func TestSelectAccountPublishesStateWhenDirectorySyncFailsAfterRename(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	meta, err := v.AddWallet("selected", mnemonicA, "preview", vaultPw, spendPwA, window)
+	if err != nil {
+		t.Fatalf("AddWallet: %v", err)
+	}
+	if _, err := v.AddAccount(meta.ID, vaultPw, spendPwA, 1, window); err != nil {
+		t.Fatalf("AddAccount(1): %v", err)
+	}
+
+	oldSync := syncVaultDir
+	syncVaultDir = func(string) error { return errors.New("directory sync failed") }
+	t.Cleanup(func() { syncVaultDir = oldSync })
+
+	selected, err := v.SelectAccount(meta.ID, 1)
+	if err == nil {
+		t.Fatal("SelectAccount should report the durability error")
+	}
+	if selected.ActiveAccountIndex != 1 {
+		t.Fatalf("returned ActiveAccountIndex = %d, want 1", selected.ActiveAccountIndex)
+	}
+	if got := v.ActiveAccountIndexFor(meta.ID); got != 1 {
+		t.Fatalf("in-memory active account index = %d, want 1", got)
+	}
+
+	reopened := New(v.path)
+	seal, open := keystore.CheapTestSealer()
+	reopened.SetCipher(seal, open)
+	wallets, err := reopened.Unlock(vaultPw)
+	if err != nil {
+		t.Fatalf("reopen Unlock: %v", err)
+	}
+	if len(wallets) != 1 || wallets[0].ActiveAccountIndex != 1 {
+		t.Fatalf("reopened wallets = %#v, want one wallet with active account 1", wallets)
+	}
+}
+
 func TestCreateRefusesOverwrite(t *testing.T) {
 	v := newTestVault(t)
 	if err := v.Create(vaultPw); err != nil {

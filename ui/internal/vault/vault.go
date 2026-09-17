@@ -1062,14 +1062,15 @@ func (v *Vault) SelectAccount(id string, accountIndex uint32) (WalletMeta, error
 	if err != nil {
 		return WalletMeta{}, err
 	}
-	if err := writeFileAtomic(v.path, out, 0o600); err != nil {
+	err = writeFileAtomic(v.path, out, 0o600)
+	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
 	v.activeAccounts = next
 
 	meta := *cloneWallet(&v.idx.Wallets[pos])
 	meta.ActiveAccountIndex = accountIndex
-	return meta, nil
+	return meta, err
 }
 
 // decodeSeedLocked decrypts the seed for wallet id from env under spendPassword.
