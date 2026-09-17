@@ -23,6 +23,10 @@ Mobile images capture the actual 390 × 844 viewport. Full-page mobile captures 
 
 From `ui/web`, run `npm ci`, `npm run build`, then `node design-preview.mjs`. Open http://127.0.0.1:4174 and enter any password. The preview serves synthetic wallet data, shows a persistent preview banner and rejects transaction/settings mutations. The preview server is outside the production bundle.
 
+## Brand artwork
+
+The UI uses Bursa’s existing repository logo and pouch illustration, copied unchanged from `.github/assets` into `ui/web/public/brand`.
+
 ## Design references
 
 - [Eternl published interface](https://cardano.org/apps/eternl/)

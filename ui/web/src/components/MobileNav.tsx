@@ -16,7 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Status, WalletView } from "../api/types";
 import type { Tone } from "./StatusPill";
 import { WalletSwitcher } from "./WalletSwitcher";
-import { Icon } from "./Icon";
+import { Icon, BursaLogo } from "./Icon";
 import { CliButton } from "./CliButton";
 
 const FOCUSABLE_SELECTOR = [
@@ -56,7 +56,7 @@ interface MobileNavProps {
 
 // MobileNav renders on viewports narrower than 768 px. It replaces the fixed
 // left sidebar with:
-//   - A compact top bar: BVRSA mark · active wallet name · sync chip · ☰
+//   - A compact top bar: Bursa logo · active wallet name · sync chip · ☰
 //   - A slide-out drawer (wallet switcher + full nav list) behind the hamburger
 //
 // The desktop sidebar is hidden at the same breakpoint via CSS, so both can live
@@ -177,9 +177,7 @@ export function MobileNav({
     <>
       {/* ── Top bar ─────────────────────────────────────────────────── */}
       <div className="mobile-topbar" role="banner">
-        <span className="mobile-brand-mark" aria-label="BVRSA">
-          BVRSA
-        </span>
+        <span className="mobile-brand-mark"><BursaLogo /></span>
 
         <div className="mobile-topbar-center">
           {activeWallet ? (

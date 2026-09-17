@@ -23,5 +23,9 @@ export function Icon({ name, size = 20, style }: { name: string; size?: number; 
 }
 
 export function BursaMark() {
-  return <svg className="bursa-symbol" width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M8 5h9a6 6 0 0 1 0 12H8zm0 12h11a5 5 0 0 1 0 10H8z" stroke="currentColor" strokeWidth="2"/><path d="M4 5h8M4 27h8M12 2v28" stroke="currentColor" strokeWidth="2"/></svg>;
+  return <img className="bursa-symbol" src="/brand/bursa-pouch.png" width="32" height="36" alt="" aria-hidden="true" />;
+}
+
+export function BursaLogo() {
+  return <img className="bursa-logo" src="/brand/bursa-logo.png" width="151" height="79" alt="Bursa" />;
 }

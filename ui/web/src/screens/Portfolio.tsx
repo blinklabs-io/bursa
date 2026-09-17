@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useBalance, useDelegation, useAssetMetadata, useNfts, useNftMedia } from "../api/hooks";
-import { BursaMark, Icon } from "../components/Icon";
+import { BursaMark, BursaLogo, Icon } from "../components/Icon";
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { Table } from "../components/Table";
@@ -196,7 +196,7 @@ export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }
         <svg className="engraved-lines" viewBox="0 0 700 400" fill="none" aria-hidden="true">
           {Array.from({ length: 24 }, (_, i) => <ellipse key={i} cx="570" cy="225" rx={75 + i * 9} ry={115 + i * 8} transform={`rotate(${-35 + i * 2} 570 225)`} />)}
         </svg>
-        <div className="wallet-card-footer"><span className="card-wordmark">BVRSA</span><span><Icon name="shield" size={14} />Your node. Your keys.</span></div>
+        <div className="wallet-card-footer"><span className="card-wordmark"><BursaLogo /></span><span><Icon name="shield" size={14} />Your node. Your keys.</span></div>
       </section>
 
       <div className="portfolio-assets"><Card>
