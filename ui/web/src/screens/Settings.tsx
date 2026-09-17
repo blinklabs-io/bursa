@@ -683,6 +683,7 @@ function GeneralSettings({
 
   return (
     <div className="screen-settings">
+      <div className="settings-overview">
       <Card title="Network">
         <p>{account.network}</p>
       </Card>
@@ -719,6 +720,7 @@ function GeneralSettings({
         )}
       </Card>
 
+      </div>
       <LeanStorageCard />
 
       <AutoLockCard setting={autoLock} />

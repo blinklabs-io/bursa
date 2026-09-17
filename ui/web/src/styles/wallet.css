@@ -1,0 +1,240 @@
+/* Shared wallet design: slate surfaces, gold actions, locally hosted type. */
+@font-face {
+  font-family: Manrope;
+  src: url('/fonts/manrope-variable.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+}
+:root {
+  color-scheme: dark;
+  --bg: #0c0f15;
+  --surface: #141921;
+  --inset: #1c2430;
+  --border: #29323f;
+  --text: #edf0f5;
+  --text-muted: #a0abba;
+  --text-faint: #939fad;
+  --accent: #d8a657;
+  --accent-strong: #ecc079;
+  --radius: 8px;
+  --radius-lg: 14px;
+  --font: Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+::selection { background: var(--accent); color: var(--accent-text); }
+input, textarea { caret-color: var(--accent); }
+button, input, select, textarea { font-family: var(--font); }
+a { text-underline-offset: 4px; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.layout { width: 100%; }
+.sidebar { width: 226px; padding: 30px 18px 24px; background: #0c0f15; border-right-color: #222933; }
+.brand { padding: 2px 6px 34px; }
+.brand-lockup { display: flex; align-items: center; gap: 9px; color: var(--accent); }
+.brand-mark { font-size: 24px; letter-spacing: .14em; text-indent: 0; font-weight: 700; }
+.brand-motto { font-family: var(--font); font-size: 11px; letter-spacing: 0; text-transform: none; margin: 8px 0 0 41px; color: var(--text-muted); }
+.cli-button { background: transparent; color: var(--text-muted); }
+.wallet-switcher { padding: 0 0 22px; margin-bottom: 22px; gap: 8px; }
+.wallet-switcher-label, .account-switcher-label { font-family: var(--font); font-size: 11px; text-transform: none; letter-spacing: 0; color: var(--text-muted); }
+.wallet-item { min-height: 58px; padding: 10px 12px; border-radius: 9px; }
+.wallet-item.active { background: linear-gradient(125deg, #29323f, #1c2430); border-color: #394351; color: var(--text); }
+.wallet-name { font-size: 13px; font-weight: 700; }
+.wallet-net { font-size: 10px; text-transform: capitalize; color: var(--text-muted); }
+.wallet-switcher-actions { flex-wrap: wrap; gap: 12px; }
+.wallet-action { font-family: var(--font); font-size: 11px; min-height: 32px; color: var(--text-muted); }
+.account-item { min-height: 36px; }
+.palette-trigger { min-height: 39px; margin-bottom: 18px; border-radius: 8px; }
+.search-label { display: flex; align-items: center; gap: 8px; }
+.nav-item { display: flex; align-items: center; gap: 13px; min-height: 47px; padding: 12px 14px; margin-bottom: 5px; font-size: 13px; }
+.nav-item.active { background: linear-gradient(115deg, #ecc079, #d8a657); color: #191611; box-shadow: 0 6px 14px -5px #0008; }
+.nav-item.active::before { display: none; }
+.nav-item svg { flex: 0 0 auto; }
+.sidebar-footer { display: flex; align-items: flex-start; gap: 10px; margin-top: auto; padding: 50px 9px 0; color: var(--text-muted); }
+.sidebar-footer svg { color: var(--accent); flex-shrink: 0; }
+.sidebar-footer strong, .sidebar-footer span { display: block; font-size: 11px; }
+.sidebar-footer strong { font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.sidebar-footer span { font-size: 10px; }
+.content { min-width: 0; padding: 0 42px 44px; overflow: visible; background: #131820; }
+.workspace-header { min-height: 77px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-muted); border-bottom: 1px solid #ffffff0b; margin-bottom: 30px; }
+.workspace-header > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.workspace-divider { margin: 0 13px; color: #697788; }
+.network-label { display: inline-flex; align-items: center; gap: 8px; text-transform: capitalize; flex-shrink: 0; padding: 6px 11px; border: 1px solid var(--border); border-radius: 7px; font-size: 11px; color: var(--text); }
+.network-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
+.sync-banner { background: #10141b; border-bottom-color: var(--border); min-height: 30px; padding: 7px 24px; font-size: 10px; }
+.sync-state { font-family: var(--font); font-size: 10px; text-transform: capitalize; letter-spacing: 0; }
+.sync-detail { font-size: 10px; color: var(--text-muted); }
+.portfolio { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(285px, 1fr); grid-template-areas: "heading heading" "balance staking" "assets collectibles"; max-width: 1200px; margin-inline: auto; gap: 26px 24px; }
+.portfolio-heading { grid-area: heading; }
+.balance-panel { grid-area: balance; }
+.portfolio-assets { grid-area: assets; }
+.portfolio-staking { grid-area: staking; }
+.portfolio-collectibles { grid-area: collectibles; }
+.portfolio-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+h1 { font-size: 36px; line-height: 1.2; font-weight: 650; letter-spacing: -.035em; }
+.balance-panel { position: relative; isolation: isolate; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; min-height: 320px; padding: 30px 34px 24px; border: 0; border-radius: 16px; color: var(--text); background: radial-gradient(ellipse at 100% 0%, #d8a65726, transparent 65%), linear-gradient(125deg, #29323f, #141921 75%); box-shadow: 0 18px 30px -20px #000c, inset 0 1px 0 #ecc07988, inset 0 -1px 0 #29323f; }
+.balance-copy { position: relative; z-index: 2; min-width: 0; width: 100%; }
+.wallet-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 26px; }
+.balance-copy h2 { color: #c8d0d8; font-size: 14px; font-weight: 650; margin: 0; }
+.card-chain { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 650; color: var(--accent-strong); }
+.cardano-mark { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid #d8a65766; border-radius: 50%; font-size: 16px; }
+.balance-ada { font-family: var(--font); font-size: 48px; font-weight: 600; letter-spacing: -.035em; line-height: 1.2; color: #edf0f5; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.balance-source { font-size: 12px; color: #a0abba; margin-top: 10px; }
+.portfolio-actions { margin-top: 27px; gap: 10px; }
+.btn { min-height: 42px; padding: 10px 19px; font-weight: 650; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; border-radius: 8px; }
+.btn.ghost { background: #242b35; border-color: #3b4552; color: var(--text); }
+.balance-panel .btn.primary { background: linear-gradient(115deg, #ecc079, #d8a657); color: #211d16; border-color: transparent; }
+.balance-panel .btn:disabled { opacity: 1; color: #6b5940; background: #e5c796; cursor: not-allowed; }
+.balance-panel .btn.primary:hover:not(:disabled) { background: #ecc079; }
+.balance-panel .btn.ghost { background: #29323f; color: #edf0f5; border-color: #48515c; }
+.balance-panel .btn.ghost:hover:not(:disabled) { background: #394351; }
+.balance-panel .helper-text { color: #c8d0d8; }
+.balance-panel .error-text { color: #7e1720; background: #f9e9ce; padding: 8px; border-radius: 6px; }
+.balance-panel button:focus-visible { outline-color: #ecc079; }
+.engraved-lines { position: absolute; z-index: 0; width: 100%; height: 100%; right: -22%; bottom: -4%; stroke: #d8a657; stroke-width: .65; opacity: .1; pointer-events: none; }
+.wallet-card-footer { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-top: 35px; color: #a0abba; }
+.card-wordmark { color: var(--accent); font-size: 14px; font-weight: 800; letter-spacing: .13em; }
+.wallet-card-footer > span:last-child { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.portfolio-assets, .portfolio-staking, .portfolio-collectibles { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+.card { padding: 25px; }
+.card h2 { font-family: var(--font); font-size: 15px; font-weight: 650; letter-spacing: -.015em; text-transform: none; color: var(--text); margin-bottom: 21px; }
+.token-search { width: 100%; font-family: var(--font); background: #10151c; font-size: 13px; border-radius: 8px; min-height: 40px; margin-bottom: 18px; }
+.table { font-size: 13px; }
+.table th { font-family: var(--font); font-size: 12px; letter-spacing: 0; text-transform: none; padding: 9px 12px; color: var(--text-muted); }
+.table td { font-family: var(--font); padding: 17px 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.portfolio .table th:last-child, .portfolio .table td:last-child { text-align: right; padding-left: 12px; overflow-wrap: anywhere; }
+.portfolio .table { table-layout: fixed; width: 100%; }
+.portfolio .table th:first-child { width: 65%; }
+.asset-identity { display: flex; align-items: center; gap: 12px; }
+.asset-identity > span:last-child { min-width: 0; }
+.asset-monogram { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 auto; background: #283340; color: #b6cbe1; border-radius: 50%; font-size: 15px; font-weight: 700; }
+.asset-monogram[data-tone="1"] { background: #342e3d; color: #d4bee3; }
+.asset-monogram[data-tone="2"] { background: #233932; color: #aed4c1; }
+.asset-name { display: block; white-space: normal; overflow-wrap: anywhere; font-weight: 650; }
+.asset-kind { display: block; font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.delegation-details .dl-row { display: flex; justify-content: space-between; gap: 18px; padding: 10px 0; font-size: 12px; }
+.delegation-details dt { font-family: var(--font); text-transform: none; letter-spacing: 0; color: var(--text-muted); flex-shrink: 0; }
+.delegation-details dd { font-family: var(--font); text-align: right; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.delegation-details .staking-rewards { display: block; padding: 0 0 21px; margin-bottom: 3px; }
+.staking-rewards dt { margin-bottom: 8px; }
+.staking-rewards dd { text-align: left; color: #edf0f5; font-size: 28px; letter-spacing: -.025em; }
+.staking-link { display: flex; align-items: center; justify-content: space-between; width: 100%; padding-top: 19px; margin-top: 10px; border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--accent); font-size: 12px; font-weight: 650; cursor: pointer; min-height: 44px; }
+.staking-link:hover { color: var(--accent-strong); }
+.collection-content { padding-block: 5px; }
+.collection-content p { font-size: 13px; line-height: 1.8; max-width: 36ch; }
+.mobile-bottom-nav { display: none; }
+.field-group label, .field-label, .send-form label, .sign-form label, .staking-form label { font-family: var(--font); letter-spacing: 0; text-transform: none; font-size: 12px; }
+.content-centered { justify-content: center; min-height: calc(100svh - 30px); padding: 28px; }
+.content-centered > .card { padding: 36px; }
+.content-centered .card h2 { font-size: 26px; }
+.content-centered .btn { width: 100%; }
+.portfolio-staking > .card { height: 100%; background: linear-gradient(145deg, #202934, #141921); border: 0; box-shadow: inset 0 1px 0 #ffffff21, 0 14px 24px -20px #000c; padding: 24px; }
+.portfolio-staking .card h2 { color: #c8d0d8; font-size: 13px; margin-bottom: 17px; }
+.portfolio-staking .staking-link { padding-top: 13px; margin-top: 5px; }
+.portfolio-assets > .card { padding: 0; background: transparent; border: 0; }
+.portfolio-assets .asset-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 18px; }
+.portfolio-assets .card h2 { display: flex; align-items: center; gap: 10px; font-size: 21px; margin: 0; }
+.asset-count { color: var(--text-muted); font-size: 12px; font-weight: 600; border: 1px solid var(--border); border-radius: 8px; padding: 3px 7px; }
+.asset-search { position: relative; width: 180px; }
+.asset-search > svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; }
+.asset-search .token-search { margin: 0; padding-left: 36px; }
+.portfolio-assets .table-wrap { background: transparent; border: 0; border-radius: 0; }
+.portfolio-assets .table { border-collapse: separate; border-spacing: 0 8px; }
+.portfolio-assets .table thead, .portfolio-assets .table th { background: transparent; }
+.portfolio-assets .table th { padding: 15px 20px 12px; font-size: 11px; }
+.portfolio-assets .table td { padding: 18px 20px; border: 0; background: linear-gradient(110deg, #202934, #1c2430); box-shadow: inset 0 1px 0 #ffffff0c; }
+.portfolio-assets .table td:first-child { border-radius: 12px 0 0 12px; }
+.portfolio-assets .table td:last-child { border-radius: 0 12px 12px 0; background: #1c2430; }
+.portfolio-assets .table tbody tr:last-child td { border-bottom: 0; }
+.portfolio-assets .table tr:hover td { background: var(--inset); }
+.portfolio-assets .table th:last-child, .portfolio-assets .table td:last-child { padding-right: 20px; }
+.portfolio-assets .asset-name { font-size: 15px; font-weight: 700; }
+.portfolio-assets .asset-kind { font-family: var(--mono); font-size: 11px; letter-spacing: .015em; }
+.asset-quantity { font-size: 19px; font-weight: 600; letter-spacing: -.025em; white-space: normal; overflow-wrap: anywhere; }
+.asset-monogram { position: relative; width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, #ecc079, #bd8840); color: #211d16; font-size: 21px; box-shadow: inset 0 1px 0 #ffffff21; }
+.asset-monogram[data-tone="1"] { background: linear-gradient(135deg, #29323f, #141921); color: #ecc079; }
+.asset-monogram[data-tone="2"] { background: linear-gradient(135deg, #f2d6a0, #ddb371); color: #211d16; }
+.asset-monogram svg { position: absolute; inset: 0; width: 100%; height: 100%; stroke: currentColor; stroke-width: .75; opacity: .4; }
+.asset-monogram > span { position: relative; }
+.balance-ada > span { font-size: .52em; font-weight: 500; color: var(--accent-strong); letter-spacing: 0; }
+.wallet-signature { position: absolute; right: 35px; top: 86px; width: 124px; height: 124px; color: #d8a657; opacity: .22; transform: rotate(-12deg); pointer-events: none; }
+.wallet-signature .bursa-symbol { width: 100%; height: 100%; filter: drop-shadow(0 5px 1px #0009); }
+.wallet-signature .bursa-symbol path { stroke-width: .65; }
+.portfolio-assets .asset-toolbar { margin-bottom: 6px; }
+.portfolio-collectibles > .card { padding-top: 8px; }
+@media (min-width: 1101px) and (max-width: 1300px) { .wallet-signature { opacity: .1; right: 10px; } }
+@media (max-width: 767.98px) { .wallet-signature { width: 100px; height: 100px; right: 14px; top: 48px; opacity: .1; } }
+@media (max-width: 767.98px) {
+  .asset-search { width: 100%; }
+  .portfolio-assets .asset-toolbar { gap: 14px; }
+  .portfolio-assets .table td { padding: 17px 12px; }
+  .portfolio-assets .table th { padding-inline: 12px; }
+  .portfolio-assets .table th:last-child, .portfolio-assets .table td:last-child { padding-right: 12px; }
+  .asset-monogram { width: 42px; height: 42px; font-size: 19px; }
+  .asset-identity { gap: 10px; }
+  .asset-quantity { font-size: 17px; }
+}
+.portfolio-collectibles { padding-top: 4px; }
+.portfolio-collectibles > .card { background: transparent; padding: 0 0 25px; border: 0; border-bottom: 1px solid #ffffff12; border-radius: 0; }
+.portfolio-collectibles .card h2 { font-size: 21px; margin-bottom: 24px; }
+
+.token-search { background: #0e141c; border-color: #ffffff0c; }
+.btn, .nav-item { transition: background .15s ease, color .15s ease, transform .15s ease; }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+@media (min-width: 1600px) { .content { padding-inline: 64px; } }
+@media (min-width: 768px) and (max-width: 1100px) {
+  .sidebar { width: 213px; padding-inline: 15px; }
+  .content { padding-inline: 26px; }
+  .portfolio { grid-template-columns: minmax(0, 1fr); grid-template-areas: "heading" "balance" "assets" "staking" "collectibles"; }
+  .balance-ada { font-size: 36px; }
+}
+@media (max-width: 767.98px) {
+  .content { padding: 0 20px 105px; width: 100%; }
+  .workspace-header { min-height: 46px; margin-bottom: 22px; font-size: 10px; }
+  .workspace-divider { margin-inline: 8px; }
+  .network-label { font-size: 10px; }
+  .portfolio { gap: 22px; }
+  h1 { font-size: 27px; }
+  .balance-panel { min-height: 274px; padding: 22px; }
+  .balance-copy { position: relative; z-index: 1; width: 100%; }
+  .balance-ada { font-size: 32px; }
+  .balance-source { font-size: 11px; }
+  .wallet-card-heading { margin-bottom: 23px; }
+  .wallet-card-footer { margin-top: 23px; }
+  .wallet-card-footer > span:last-child { font-size: 11px; }
+  .portfolio-actions { margin-top: 23px; }
+  .portfolio-actions .btn { flex: 1; min-height: 45px; }
+  .portfolio { grid-template-columns: minmax(0, 1fr); grid-template-areas: "heading" "balance" "assets" "staking" "collectibles"; }
+  .portfolio-assets, .portfolio-staking, .portfolio-collectibles { gap: 22px; }
+  .card { padding: 22px; }
+  .card h2 { font-size: 14px; }
+  .mobile-topbar { height: 62px; background: #10141b; padding: 0 20px; gap: 15px; }
+  .mobile-brand-mark { font-size: 16px; letter-spacing: .12em; }
+  .mobile-wallet-name { font-size: 11px; }
+  .mobile-sync-chip { display: none; }
+  .mobile-hamburger { width: 44px; height: 44px; }
+  .cli-button-mobile { display: none; }
+  .mobile-bottom-nav { display: flex; position: fixed; z-index: 190; bottom: 0; left: 0; right: 0; padding: 9px 8px max(10px, env(safe-area-inset-bottom)); background: #141921; border-top: 1px solid var(--border); }
+  .mobile-bottom-nav button { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 48px; border: 0; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; border-radius: 8px; }
+  .mobile-bottom-nav button[aria-current] { color: var(--accent); background: #27241e; }
+  .mobile-bottom-nav button:disabled { opacity: .4; cursor: not-allowed; }
+  .mobile-bottom-nav button:hover:not(:disabled) { color: var(--accent-strong); }
+  .token-search, input, select, textarea { font-size: 16px; }
+  .token-search::placeholder { font-size: 14px; }
+  .content-centered { padding: 20px; }
+  .content-centered > .card { padding: 26px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}
+
+/* Directional light keeps the portfolio canvas quiet around financial data. */
+.content:has(.portfolio) {
+  background:
+    radial-gradient(ellipse 65% 38% at 100% 0%, #d8a65724 0%, #d8a65708 48%, transparent 78%),
+    linear-gradient(125deg, #29323f55 0%, transparent 48%),
+    #131820;
+}
+@media (max-width: 767.98px) {
+  .content:has(.portfolio) {
+    background: radial-gradient(ellipse 100% 430px at 100% 0%, #d8a65716, transparent 85%), #131820;
+  }
+}

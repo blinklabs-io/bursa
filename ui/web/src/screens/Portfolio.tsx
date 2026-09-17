@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useBalance, useDelegation, useAssetMetadata, useNfts, useNftMedia } from "../api/hooks";
+import { BursaMark, Icon } from "../components/Icon";
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { Table } from "../components/Table";
@@ -52,7 +53,7 @@ function NftGallery() {
   if (!media.enabled) {
     return (
       <p className="muted">
-        Media off — enable NFT media in{" "}
+        Media off. Enable NFT media in{" "}
         <a href="#/settings" onClick={(e) => { e.preventDefault(); navigate("settings"); }}>
           Settings
         </a>{" "}
@@ -139,16 +140,35 @@ export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }
   ];
   const tokenRows = visibleAssets.map((a) => {
     const meta = extractAssetMeta(metadataByUnit[a.unit]);
+    const name = assetDisplayName(a.unit, meta);
+    const tone = Array.from(a.unit).reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) >>> 0, 0) % 3;
+    const identifier = meta.ticker && meta.ticker !== name
+      ? meta.ticker
+      : `${a.unit.slice(0, 8)}…${a.unit.slice(-6)}`;
     return {
-      unit: assetDisplayName(a.unit, meta),
-      quantity: meta.decimals !== undefined ? formatTokenQuantity(a.quantity, meta.decimals) : a.quantity,
+      unit: (
+        <span className="asset-identity">
+          <span className="asset-monogram" data-tone={tone} aria-hidden="true">
+            <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="21" /><circle cx="24" cy="24" r="17" />{[0, 60, 120, 180, 240, 300].map((angle) => <path key={angle} d="M24 3v4" transform={`rotate(${angle + tone * 15} 24 24)`} />)}</svg>
+            <span>{name.slice(0, 1).toUpperCase()}</span>
+          </span>
+          <span>
+            <span className="asset-name">{name}</span>
+            <span className="asset-kind" title={a.unit}>{identifier}</span>
+          </span>
+        </span>
+      ),
+      quantity: <span className="asset-quantity">{meta.decimals !== undefined ? formatTokenQuantity(a.quantity, meta.decimals) : a.quantity}</span>,
     };
   });
 
   return (
     <div className="portfolio">
-      <Card title="Balance">
-        <p className="balance-ada">{formatAda(lovelace)} ADA</p>
+      <header className="portfolio-heading"><h1>Portfolio</h1></header>
+      <section className="balance-panel" aria-label="Balance">
+        <div className="balance-copy"><div className="wallet-card-heading"><h2>Balance</h2><span className="card-chain"><span className="cardano-mark" aria-hidden="true">₳</span>Cardano</span></div>
+        <p className="balance-ada">{formatAda(lovelace)} <span>ADA</span></p>
+        <p className="balance-source">ADA held in this wallet</p>
         {/* Send and Receive are actions, not places. They sit on the balance
             they act on — where you already are when you decide to move funds —
             rather than costing two entries in a nav you have to scan. */}
@@ -159,10 +179,10 @@ export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }
         )}
         <div className="portfolio-actions">
           <Button onClick={() => navigate("send")} disabled={!canSend}>
-            Send
+            <Icon name="send" size={18} />Send
           </Button>
           <Button variant="ghost" onClick={() => navigate("receive")}>
-            Receive
+            <Icon name="receive" size={18} />Receive
           </Button>
         </div>
         {/* Suppressed when multiSigError is already on screen: that alert names the
@@ -171,21 +191,30 @@ export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }
         {!canSend && !multiSigError && sendDisabledReason && (
           <p className="helper-text">Send is unavailable — {sendDisabledReason.toLowerCase()}.</p>
         )}
-      </Card>
+        </div>
+        <div className="wallet-signature" aria-hidden="true"><BursaMark /></div>
+        <svg className="engraved-lines" viewBox="0 0 700 400" fill="none" aria-hidden="true">
+          {Array.from({ length: 24 }, (_, i) => <ellipse key={i} cx="570" cy="225" rx={75 + i * 9} ry={115 + i * 8} transform={`rotate(${-35 + i * 2} 570 225)`} />)}
+        </svg>
+        <div className="wallet-card-footer"><span className="card-wordmark">BVRSA</span><span><Icon name="shield" size={14} />Your node. Your keys.</span></div>
+      </section>
 
-      <Card title="Native Tokens">
+      <div className="portfolio-assets"><Card>
+        <div className="asset-toolbar">
+          <h2>Native Tokens <span className="asset-count" aria-label={`${assets.length} native tokens`}>{assets.length}</span></h2>
+          {assets.length > 0 && <div className="asset-search"><Icon name="search" size={16} /><Input
+            type="text"
+            className="token-search"
+            placeholder="Search tokens"
+            aria-label="Search native tokens"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          /></div>}
+        </div>
         {assets.length === 0 ? (
           <p className="muted">No native tokens</p>
         ) : (
           <>
-            <Input
-              type="text"
-              className="token-search"
-              placeholder="Search by name, ticker, policy, or unit…"
-              aria-label="Search native tokens"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
             {visibleAssets.length === 0 ? (
               <p className="muted">No tokens match &ldquo;{query}&rdquo;</p>
             ) : (
@@ -193,15 +222,15 @@ export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }
             )}
           </>
         )}
-      </Card>
-
-      <Card title="NFTs">
-        <NftGallery />
-      </Card>
-
-      <Card title="Delegation">
+      </Card></div>
+      <aside className="portfolio-staking"><Card title="Delegation">
         {del ? (
           <dl className="delegation-details">
+            <div className="dl-row staking-rewards">
+              <dt>Rewards</dt>
+              <dd>{formatAda(del.rewards_sum)} ADA</dd>
+            </div>
+
             <div className="dl-row">
               <dt>Pool</dt>
               <dd>{del.pool_id ?? <span className="muted">Not delegated</span>}</dd>
@@ -216,10 +245,6 @@ export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }
               </dd>
             </div>
 
-            <div className="dl-row">
-              <dt>Rewards</dt>
-              <dd>{formatAda(del.rewards_sum)} ADA</dd>
-            </div>
 
             <div className="dl-row">
               <dt>Withdrawable</dt>
@@ -238,7 +263,11 @@ export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }
         ) : (
           <p className="muted">Not delegated</p>
         )}
-      </Card>
+        <button className="staking-link" onClick={() => navigate("stake")}>Manage staking<Icon name="arrow" size={18} /></button>
+      </Card></aside>
+      <aside className="portfolio-collectibles"><Card title="NFTs">
+        <div className="collection-content"><NftGallery /></div>
+      </Card></aside>
     </div>
   );
 }
