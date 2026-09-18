@@ -30,20 +30,26 @@ import (
 )
 
 // notifyStartGrace bounds how long start waits to observe an immediate
-// notifier exit before assuming success. cmd.Start() only confirms the OS
-// could launch the process — a notifier binary that launches fine but
-// immediately errors out (e.g. no display/session, D-Bus unavailable) would
-// otherwise still be reported as delivered. Waiting this long for an early
-// exit catches that case while still returning well before a notifier that
-// stays running (to display a toast, or on Windows to hold the balloon tip
-// open) has a chance to finish — start must never block on the full process
-// lifetime.
+// notifier exit. cmd.Start() only confirms the OS could launch the process — a
+// notifier binary that launches fine but immediately errors out (e.g. no
+// display/session, D-Bus unavailable) would otherwise still be reported as
+// delivered. Waiting this long for an early exit catches that case while
+// allowing a notifier that needs a short amount of startup time to proceed.
 const notifyStartGrace = 200 * time.Millisecond
 
 // maxFieldLen caps a sanitized title/body. A real notification is a short line
 // ("Received 12.5 ADA"); anything longer is truncated defensively so a
 // malformed value can never balloon into an oversized OS command argument.
 const maxFieldLen = 200
+
+// windowsNotifyLifetime bounds the PowerShell balloon notifier.
+//
+// Unlike notify-send and osascript, which hand the notification to a daemon and
+// exit, the Windows script owns the tray icon for as long as the balloon is up:
+// it shows a 5s tip, sleeps 6s, then disposes the icon. Killing it at the start
+// grace would take the icon — and the notification with it — down almost
+// immediately, so the bound has to outlast the script's own display.
+const windowsNotifyLifetime = 8 * time.Second
 
 // maxRawScanLen bounds how many runes of the raw input Sanitize will examine,
 // independent of maxFieldLen. Dropped characters (quotes/backslashes/control
@@ -91,6 +97,7 @@ func Notify(logger *slog.Logger, title, body string) bool {
 		// single-quote, so the literals cannot be broken out of.
 		script := windowsToastScript(title, body)
 		cmd = exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script) //nolint:gosec // title/body are sanitized (Sanitize); no single-quotes remain
+		return startWithLifetime(logger, cmd, windowsNotifyLifetime)
 	default:
 		logger.Warn("no desktop notifier for this OS", "os", runtime.GOOS)
 		return false
@@ -99,17 +106,37 @@ func Notify(logger *slog.Logger, title, body string) bool {
 	return start(logger, cmd)
 }
 
-// start launches cmd and reports whether it was successfully started AND
-// did not fail within notifyStartGrace. Split out from Notify so the
-// start/failure outcome is unit-testable with an injected command,
-// independent of the OS-specific notifier selection above.
+// start launches cmd and reports whether it was successfully started AND did
+// not fail within notifyStartGrace. A notifier that is still running at the
+// end of the grace period is terminated and reaped before start returns. This
+// keeps the one Wait goroutine from surviving an unbounded child process and
+// gives every invocation a bounded lifetime.
+//
+// Process.Kill is provided by os/exec's supported Unix and Windows process
+// implementations. It terminates only this direct notifier process; the
+// commands used above do not intentionally create a child process whose
+// lifetime Bursa owns.
+//
+// Split out from Notify so the start/failure outcome is unit-testable with an
+// injected command, independent of the OS-specific notifier selection above.
 func start(logger *slog.Logger, cmd *exec.Cmd) bool {
+	return startWithLifetime(logger, cmd, notifyStartGrace)
+}
+
+// startWithLifetime is start with an explicit bound on how long the notifier
+// may run. A notifier that hands off to a daemon is done the moment it has
+// started, so the grace period doubles as its lifetime; one that has to stay
+// alive to keep the notification on screen needs longer, and gets it here
+// without giving up the guarantee that the process is eventually reaped.
+func startWithLifetime(logger *slog.Logger, cmd *exec.Cmd, lifetime time.Duration) bool {
 	if err := cmd.Start(); err != nil {
 		logger.Warn("failed to raise desktop notification", "error", err)
 		return false
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+	timer := time.NewTimer(notifyStartGrace)
+	defer timer.Stop()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -117,14 +144,32 @@ func start(logger *slog.Logger, cmd *exec.Cmd) bool {
 			return false
 		}
 		return true
-	case <-time.After(notifyStartGrace):
-		// Still running past the grace window: treat it as delivered rather
-		// than block the caller on the notifier's full lifetime. Any failure
-		// observed after this point is logged but can no longer change the
-		// already-reported result.
+	case <-timer.C:
+		// The process itself is the only owner of the Wait goroutine. Kill it
+		// at the end of its lifetime, then consume that same goroutine's result
+		// so the process and waiter are both released. Kill can race with a
+		// natural exit; in that case Wait still supplies the final result and no
+		// error is needed for the intentional shutdown.
+		reap := func() {
+			if err := cmd.Process.Kill(); err != nil {
+				logger.Debug("desktop notifier ended before shutdown", "error", err)
+			}
+			<-done
+		}
+		if lifetime <= notifyStartGrace {
+			reap()
+			return true
+		}
+		// It survived long enough to have started successfully, and it needs the
+		// rest of its lifetime to keep the notification up. Report the success
+		// now and reap it on its own schedule.
 		go func() {
-			if err := <-done; err != nil {
-				logger.Warn("desktop notifier process exited with error", "error", err)
+			remaining := time.NewTimer(lifetime - notifyStartGrace)
+			defer remaining.Stop()
+			select {
+			case <-done:
+			case <-remaining.C:
+				reap()
 			}
 		}()
 		return true

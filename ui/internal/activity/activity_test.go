@@ -17,6 +17,9 @@ package activity
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
@@ -98,6 +101,47 @@ func TestNewIncomingTxEmitsOneEventThenDedups(t *testing.T) {
 	}
 	if len(events) != 0 {
 		t.Fatalf("duplicate tx must not re-emit, got %v", events)
+	}
+}
+
+func TestPollBoundsTransactionRetentionToRecentHistory(t *testing.T) {
+	r := &fakeReader{}
+	r.txs = make([]wallet.Tx, maxTrackedTransactions+1)
+	for i := range r.txs {
+		r.txs[i] = received("old-"+strconv.Itoa(i), "1000000")
+		r.txs[i].BlockHeight = uint64(i + 1)
+	}
+
+	svc := New(r)
+	svc.SetActive("w1")
+	if _, err := svc.Poll(context.Background()); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+	if got := len(svc.seenTx); got != maxTrackedTransactions {
+		t.Fatalf("seen transaction count = %d, want %d", got, maxTrackedTransactions)
+	}
+
+	// A new receipt at the head remains observable, while the oldest history is
+	// outside the bounded notification window and must not be re-emitted.
+	r.txs = append([]wallet.Tx{received("new", "2000000")}, r.txs...)
+	r.txs[0].BlockHeight = maxTrackedTransactions + 2
+	events, err := svc.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll new receipt: %v", err)
+	}
+	if len(events) != 1 || events[0].TxHash != "new" {
+		t.Fatalf("new receipt events = %v, want only new receipt", events)
+	}
+	if got := len(svc.seenTx); got != maxTrackedTransactions {
+		t.Fatalf("seen transaction count after eviction = %d, want %d", got, maxTrackedTransactions)
+	}
+
+	events, err = svc.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll stable history: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("stable recent history re-emitted events: %v", events)
 	}
 }
 
@@ -283,5 +327,79 @@ func TestPollPropagatesReaderErrors(t *testing.T) {
 	svc.SetActive("w1")
 	if _, err := svc.Poll(context.Background()); !errors.Is(err, wantErr) {
 		t.Fatalf("Poll error = %v, want %v", err, wantErr)
+	}
+}
+
+// A poll that discovers several receipts used to insert them one at a time at
+// the front, which reversed the batch: the newest hash ended up nearest the
+// eviction end. Once the window filled, the newest hashes were dropped first
+// and their transactions notified all over again on the next poll — a
+// deduplication window that forgets exactly what it just saw.
+func TestRememberTxsKeepsTheNewestOfABatch(t *testing.T) {
+	s := &Service{seenTx: map[string]bool{}}
+
+	// One poll's worth, newest-first, larger than the window so eviction runs.
+	hashes := make([]string, maxTrackedTransactions+2)
+	for i := range hashes {
+		hashes[i] = fmt.Sprintf("tx-%05d", i)
+		s.seenTx[hashes[i]] = true
+	}
+	s.rememberTxs(hashes)
+
+	if got := len(s.seenTxOrder); got != maxTrackedTransactions {
+		t.Fatalf("window holds %d, want %d", got, maxTrackedTransactions)
+	}
+	if s.seenTxOrder[0] != hashes[0] {
+		t.Fatalf("front = %q, want the newest %q", s.seenTxOrder[0], hashes[0])
+	}
+	// The newest must survive; the oldest two are what fall off the end.
+	if !s.seenTx[hashes[0]] || !s.seenTx[hashes[1]] {
+		t.Fatal("the newest hashes were evicted, so their receipts notify again")
+	}
+	for _, dropped := range hashes[maxTrackedTransactions:] {
+		if s.seenTx[dropped] {
+			t.Fatalf("%q should have been evicted as the oldest", dropped)
+		}
+	}
+}
+
+// Successive polls still stack newest-first across batches.
+func TestRememberTxsPutsLaterPollsInFront(t *testing.T) {
+	s := &Service{seenTx: map[string]bool{}}
+	s.seenTx["old"] = true
+	s.rememberTxs([]string{"old"})
+	s.seenTx["new"] = true
+	s.rememberTxs([]string{"new"})
+
+	if s.seenTxOrder[0] != "new" || s.seenTxOrder[1] != "old" {
+		t.Fatalf("order = %v, want [new old]", s.seenTxOrder)
+	}
+}
+
+// The sort is a guard for readers that do not deliver newest-first; it must
+// still fire for them, and must not disturb one that does.
+func TestRecentReceivedSortsOnlyWhenTheReaderDidNot(t *testing.T) {
+	unordered := []wallet.Tx{
+		{TxHash: "b", BlockHeight: 1, Direction: wallet.TxDirectionReceived},
+		{TxHash: "a", BlockHeight: 3, Direction: wallet.TxDirectionReceived},
+		{TxHash: "c", BlockHeight: 2, Direction: wallet.TxDirectionReceived},
+	}
+	input := slices.Clone(unordered)
+	got := recentReceived(input)
+	if len(got) != 3 || got[0].TxHash != "a" || got[1].TxHash != "c" || got[2].TxHash != "b" {
+		t.Fatalf("unordered input not sorted: %+v", got)
+	}
+	if !slices.EqualFunc(input, unordered, func(x, y wallet.Tx) bool { return x.TxHash == y.TxHash }) {
+		t.Fatal("recentReceived must not reorder the caller's slice")
+	}
+
+	ordered := []wallet.Tx{
+		{TxHash: "a", BlockHeight: 3, Direction: wallet.TxDirectionReceived},
+		{TxHash: "c", BlockHeight: 2, Direction: wallet.TxDirectionReceived},
+		{TxHash: "b", BlockHeight: 1, Direction: wallet.TxDirectionReceived},
+	}
+	got = recentReceived(ordered)
+	if len(got) != 3 || got[0].TxHash != "a" || got[2].TxHash != "b" {
+		t.Fatalf("ordered input disturbed: %+v", got)
 	}
 }

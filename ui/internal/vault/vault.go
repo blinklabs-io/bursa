@@ -114,6 +114,10 @@ var (
 	// ErrNoSeed: an operation that needs the seed (e.g. deriving a new account)
 	// was attempted on a seedless wallet (hardware / read-only).
 	ErrNoSeed = errors.New("wallet has no seed")
+	// ErrCommittedWrite indicates that a write replaced the target but its
+	// subsequent durability step failed. Callers should report the error while
+	// treating the new state as committed.
+	ErrCommittedWrite = errors.New("write committed but durability sync failed")
 )
 
 // WalletMeta is the read-only record kept for one wallet inside the index. It
@@ -397,12 +401,13 @@ func (v *Vault) Create(vaultPassword string) error {
 	defer keystore.Zero(vek)
 	idx := &index{Wallets: []WalletMeta{}}
 	v.activeAccounts = map[string]uint32{}
-	if err := v.persistLocked(idx, map[string]keystore.Container{}, vek, vaultPassword, nil, v.activeAccounts); err != nil {
+	err = v.persistLocked(idx, map[string]keystore.Container{}, vek, vaultPassword, nil, v.activeAccounts)
+	if err != nil && !isCommittedWriteError(err) {
 		return err
 	}
 	v.idx = idx
 	v.activeID = ""
-	return nil
+	return err
 }
 
 // Unlock decrypts the index with the vault password and caches it, granting
@@ -590,12 +595,13 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 	}
 	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
 	seeds[meta.ID] = seed
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
+	err = v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts)
+	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
 	v.activeID = meta.ID
-	return meta, nil
+	return meta, err
 }
 
 // AddHardwareWallet adds a hardware-backed wallet to the vault. It derives the
@@ -662,7 +668,8 @@ func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPasswor
 		}
 		nextActive[meta.ID] = accountIndex
 	}
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive); err != nil {
+	err = v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive)
+	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
@@ -671,7 +678,7 @@ func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPasswor
 		v.activeAccounts = nextActive
 		meta.ActiveAccountIndex = accountIndex
 	}
-	return meta, nil
+	return meta, err
 }
 
 // ImportWallet creates a new vault containing a single wallet. It is used for
@@ -707,12 +714,13 @@ func (v *Vault) importWallet(name string, mnemonic []byte, network, vaultPasswor
 	defer keystore.Zero(vek)
 	idx := &index{Wallets: []WalletMeta{meta}}
 	seeds := map[string]keystore.Container{meta.ID: seed}
-	if err := v.persistLocked(idx, seeds, vek, vaultPassword, nil, v.activeAccounts); err != nil {
+	err = v.persistLocked(idx, seeds, vek, vaultPassword, nil, v.activeAccounts)
+	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
 	v.idx = idx
 	v.activeID = meta.ID
-	return meta, nil
+	return meta, err
 }
 
 // RemoveWallet deletes the wallet with id (its metadata and its encrypted seed)
@@ -750,7 +758,8 @@ func (v *Vault) RemoveWallet(id, vaultPassword string) error {
 	// diverged from what is durably on disk.
 	nextActive := cloneActiveAccounts(v.activeAccounts)
 	delete(nextActive, id)
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive); err != nil {
+	err = v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive)
+	if err != nil && !isCommittedWriteError(err) {
 		return err
 	}
 	v.idx = newIdx
@@ -758,7 +767,7 @@ func (v *Vault) RemoveWallet(id, vaultPassword string) error {
 	if v.activeID == id {
 		v.activeID = ""
 	}
-	return nil
+	return err
 }
 
 // SetActive marks the wallet with id as active. The vault must be unlocked and
@@ -882,7 +891,8 @@ func (v *Vault) AddScriptWallet(id, name, network string, script ScriptMeta, vau
 		seeds = map[string]keystore.Container{}
 	}
 	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
-	if err := v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
+	err = v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts)
+	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
@@ -893,7 +903,7 @@ func (v *Vault) AddScriptWallet(id, name, network string, script ScriptMeta, vau
 	if v.activeID == "" {
 		v.activeID = meta.ID
 	}
-	return meta, nil
+	return meta, err
 }
 
 // cloneScript deep-copies script material, including the policy bytes.
@@ -991,7 +1001,8 @@ func (v *Vault) AddAccount(id, vaultPassword, spendPassword string, accountIndex
 		}
 	}
 	newIdx := &index{Wallets: newWallets}
-	if err := v.persistLocked(newIdx, env.Seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts); err != nil {
+	err = v.persistLocked(newIdx, env.Seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts)
+	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
 	v.idx = newIdx
@@ -999,7 +1010,7 @@ func (v *Vault) AddAccount(id, vaultPassword, spendPassword string, accountIndex
 		if newIdx.Wallets[i].ID == id {
 			meta := *cloneWallet(&newIdx.Wallets[i])
 			meta.ActiveAccountIndex = v.activeAccounts[id]
-			return meta, nil
+			return meta, err
 		}
 	}
 	return WalletMeta{}, fmt.Errorf("%w: %q", ErrUnknownWallet, id)
@@ -1055,14 +1066,15 @@ func (v *Vault) SelectAccount(id string, accountIndex uint32) (WalletMeta, error
 	if err != nil {
 		return WalletMeta{}, err
 	}
-	if err := writeFileAtomic(v.path, out, 0o600); err != nil {
+	err = writeFileAtomic(v.path, out, 0o600)
+	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
 	v.activeAccounts = next
 
 	meta := *cloneWallet(&v.idx.Wallets[pos])
 	meta.ActiveAccountIndex = accountIndex
-	return meta, nil
+	return meta, err
 }
 
 // decodeSeedLocked decrypts the seed for wallet id from env under spendPassword.
@@ -1281,6 +1293,24 @@ func (v *Vault) persistLocked(idx *index, seeds map[string]keystore.Container, v
 	return writeFileAtomic(v.path, out, 0o600)
 }
 
+// committedWriteError reports that the target was replaced but a subsequent
+// durability step failed. Callers must publish the new in-memory state before
+// returning the error, because the old state no longer describes the file:
+// returning early would leave the vault serving an index the file on disk no
+// longer contains, and the next mutation would then write that stale state back
+// over the committed one.
+type committedWriteError struct{ err error }
+
+func (e *committedWriteError) Error() string { return e.err.Error() }
+func (e *committedWriteError) Unwrap() []error {
+	return []error{ErrCommittedWrite, e.err}
+}
+
+func isCommittedWriteError(err error) bool {
+	var committed *committedWriteError
+	return errors.As(err, &committed)
+}
+
 // cloneActiveAccounts returns a defensive copy (nil stays nil so omitempty
 // keeps single-account vaults byte-identical).
 func cloneActiveAccounts(in map[string]uint32) map[string]uint32 {
@@ -1416,6 +1446,9 @@ func (v *Vault) prepareWalletBytes(name string, mnemonic []byte, network, spendP
 // writeFileAtomic writes data to path via a temp file + rename, so a crash mid
 // write cannot leave a half-written (and thus unopenable) vault.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	if len(data) > maxVaultLen {
+		return fmt.Errorf("vault file exceeds %d bytes", maxVaultLen)
+	}
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".vault-*.tmp")
 	if err != nil {
@@ -1446,16 +1479,13 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		cleanup()
 		return err
 	}
-	dirFile, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer dirFile.Close()
-	if err := dirFile.Sync(); err != nil {
-		return err
+	if err := syncVaultDir(dir); err != nil {
+		return &committedWriteError{err: err}
 	}
 	return nil
 }
+
+var syncVaultDir = syncDirFS
 
 // ---------------------------------------------------------------------------
 // clone helpers (defensive copies so callers cannot mutate the cached index)

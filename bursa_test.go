@@ -1450,6 +1450,42 @@ func TestValidateScript(t *testing.T) {
 	) // Slot 500 < 1000
 }
 
+func TestUnmarshalScriptRejectsOverwideScripts(t *testing.T) {
+	scripts := make([]any, maxScriptWidth+1)
+	for i := range scripts {
+		scripts[i] = map[string]any{
+			"type":    "sig",
+			"keyHash": hex.EncodeToString(make([]byte, 28)),
+		}
+	}
+
+	_, err := UnmarshalScript(&ScriptData{
+		Type: "NativeScript",
+		Script: map[string]any{
+			"type":    "all",
+			"scripts": scripts,
+		},
+	})
+
+	assert.ErrorContains(t, err, "width limit")
+}
+
+func TestValidateScriptRejectsOverwideScripts(t *testing.T) {
+	keyHash := testKeyHash()
+	leaf, err := NewScriptSig(keyHash)
+	require.NoError(t, err)
+
+	leaves := make([]Script, maxScriptWidth+1)
+	for i := range leaves {
+		leaves[i] = leaf
+	}
+	wide, err := NewScriptAll(leaves...)
+	require.NoError(t, err)
+
+	assert.False(t, ValidateScript(wide, nil, nil, 0, false),
+		"validation must reject scripts wider than the work bound")
+}
+
 func TestMultiSigScriptGeneration(t *testing.T) {
 	// Use proper 28-byte key hashes
 	keyHash1 := make([]byte, 28)
@@ -3004,4 +3040,18 @@ func TestGetKESSKeyNilCheck(t *testing.T) {
 	_, err := GetKESSKey(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "KES secret key cannot be nil")
+}
+
+// The signature-count bound belongs to signature checking. Structural
+// validation answers whether the script is well formed, so a witness list it
+// does not even look at must not make a valid script report as malformed.
+func TestValidateScriptStructuralIgnoresWitnessCount(t *testing.T) {
+	leaf, err := NewScriptSig(testKeyHash())
+	require.NoError(t, err)
+	witnesses := make([]ScriptWitness, maxScriptSignatures+1)
+
+	assert.True(t, ValidateScript(leaf, nil, witnesses, 0, false),
+		"structural validation must ignore the witness list")
+	assert.False(t, ValidateScript(leaf, nil, witnesses, 0, true),
+		"signature validation must still bound the witness list")
 }

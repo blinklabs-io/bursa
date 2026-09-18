@@ -1,10 +1,12 @@
 package multisig
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 )
 
 // VaultSink is the slice of the vault this migration needs: somewhere to put a
@@ -15,7 +17,19 @@ type VaultSink interface {
 	// id carries the legacy account's own identifier, so references to it keep
 	// resolving after the move.
 	AddScriptWallet(id, name, network string, script ScriptWallet, vaultPassword string) error
-	ScriptAddresses() ([]string, error)
+	ScriptWallets() ([]ScriptWalletRecord, error)
+}
+
+// ScriptWalletRecord is the identity-bearing portion of a script wallet that a
+// migration needs in order to distinguish an already-migrated account from a
+// different legacy account that happens to derive the same address.
+type ScriptWalletRecord struct {
+	ID            string
+	Name          string
+	Network       string
+	Policy        json.RawMessage
+	ScriptCBOR    string
+	ScriptAddress string
 }
 
 // ScriptWallet is the material the vault stores for a script account. It
@@ -37,9 +51,9 @@ type ScriptWallet struct {
 //
 // Safety properties, in the order they matter:
 //
-//   - Idempotent. Accounts already in the vault (matched on script address) are
-//     skipped, so an interrupted run resumes cleanly and a completed one is a
-//     no-op.
+//   - Idempotent. Accounts already in the vault (matched on their complete
+//     identity) are skipped, so an interrupted run resumes cleanly and a
+//     completed one is a no-op.
 //   - The file is removed only after a VERIFIED write: every account is
 //     re-read back out of the vault and confirmed present. A partial or failed
 //     migration leaves the file untouched, so nothing is lost.
@@ -58,17 +72,60 @@ func MigrateStoreToVault(storePath string, v VaultSink, vaultPassword string) (m
 		return 0, removeStoreFile(storePath)
 	}
 
-	existing, err := v.ScriptAddresses()
+	existing, err := v.ScriptWallets()
 	if err != nil {
 		return 0, fmt.Errorf("read existing script wallets: %w", err)
 	}
-	have := make(map[string]struct{}, len(existing))
+	have := make(map[string]ScriptWalletRecord, len(existing))
+	haveByAddress := make(map[string]ScriptWalletRecord, len(existing))
 	for _, a := range existing {
-		have[a] = struct{}{}
+		if err := validateScriptWalletRecord(a); err != nil {
+			return 0, fmt.Errorf("invalid existing script wallet: %w", err)
+		}
+		if prior, ok := have[a.ID]; ok && !sameScriptWalletIdentity(prior, a) {
+			return 0, fmt.Errorf("existing vault contains conflicting wallets for id %q", a.ID)
+		}
+		if prior, ok := haveByAddress[a.ScriptAddress]; ok && prior.ID != a.ID {
+			return 0, fmt.Errorf("existing vault contains distinct wallets for script address %q", a.ScriptAddress)
+		}
+		have[a.ID] = a
+		haveByAddress[a.ScriptAddress] = a
+	}
+
+	// Preflight the complete source before making any write. The destination
+	// rejects address collisions, but an address is not an identity: retaining
+	// only the first of two legacy IDs would silently orphan references to the
+	// second. A collision between distinct IDs is therefore an error, not a
+	// duplicate to skip.
+	for i, a := range accounts {
+		if err := validateLegacyAccount(a); err != nil {
+			return 0, fmt.Errorf("legacy account %d: %w", i, err)
+		}
+		for j := 0; j < i; j++ {
+			prior := accounts[j]
+			if prior.ScriptAddress == a.ScriptAddress && prior.ID != a.ID {
+				return 0, fmt.Errorf(
+					"refusing to migrate distinct wallet ids %q and %q sharing script address %q",
+					prior.ID, a.ID, a.ScriptAddress,
+				)
+			}
+			if prior.ID == a.ID && !sameLegacyAccountIdentity(prior, a) {
+				return 0, fmt.Errorf("legacy wallet id %q has conflicting records", a.ID)
+			}
+		}
+		if prior, ok := have[a.ID]; ok && !sameLegacyToVaultIdentity(a, prior) {
+			return 0, fmt.Errorf("legacy wallet id %q conflicts with the vault record", a.ID)
+		}
+		if prior, ok := haveByAddress[a.ScriptAddress]; ok && prior.ID != a.ID {
+			return 0, fmt.Errorf(
+				"refusing to migrate legacy wallet id %q: script address %q belongs to vault wallet id %q",
+				a.ID, a.ScriptAddress, prior.ID,
+			)
+		}
 	}
 
 	for _, a := range accounts {
-		if _, ok := have[a.ScriptAddress]; ok {
+		if _, ok := have[a.ID]; ok {
 			continue
 		}
 		policy, err := json.Marshal(a.Policy)
@@ -82,29 +139,37 @@ func MigrateStoreToVault(storePath string, v VaultSink, vaultPassword string) (m
 		}, vaultPassword); err != nil {
 			return migrated, fmt.Errorf("add %q to vault: %w", a.Label, err)
 		}
-		// Record it immediately: a legacy store holding the same script address
-		// twice would otherwise send the duplicate to the vault, which rejects
-		// it, failing a migration that had in fact done its job.
-		have[a.ScriptAddress] = struct{}{}
+		// Record it immediately so an exact duplicate in the source file is
+		// treated as the same identity on this run. Distinct IDs sharing an
+		// address were rejected by the preflight above.
+		have[a.ID] = ScriptWalletRecord{
+			ID: a.ID, Name: a.Label, Network: a.Network, Policy: policy,
+			ScriptCBOR: a.ScriptCBOR, ScriptAddress: a.ScriptAddress,
+		}
+		haveByAddress[a.ScriptAddress] = have[a.ID]
 		migrated++
 	}
 
 	// Verify before deleting: read the vault back and confirm every account from
 	// the file is now in it. Trusting the writes we just made would mean
 	// deleting the only other copy on the strength of an unchecked assumption.
-	after, err := v.ScriptAddresses()
+	after, err := v.ScriptWallets()
 	if err != nil {
 		return migrated, fmt.Errorf("verify migrated script wallets: %w", err)
 	}
-	nowHave := make(map[string]struct{}, len(after))
+	nowHave := make(map[string]ScriptWalletRecord, len(after))
 	for _, a := range after {
-		nowHave[a] = struct{}{}
+		if err := validateScriptWalletRecord(a); err != nil {
+			return migrated, fmt.Errorf("invalid migrated script wallet: %w", err)
+		}
+		nowHave[a.ID] = a
 	}
 	for _, a := range accounts {
-		if _, ok := nowHave[a.ScriptAddress]; !ok {
+		stored, ok := nowHave[a.ID]
+		if !ok || !sameLegacyToVaultIdentity(a, stored) {
 			return migrated, fmt.Errorf(
-				"refusing to remove %s: %q is not in the vault after migration",
-				storePath, a.Label,
+				"refusing to remove %s: wallet id %q is not preserved in the vault",
+				storePath, a.ID,
 			)
 		}
 	}
@@ -113,6 +178,88 @@ func MigrateStoreToVault(storePath string, v VaultSink, vaultPassword string) (m
 		return migrated, err
 	}
 	return migrated, nil
+}
+
+func validateLegacyAccount(a Account) error {
+	if a.ID == "" {
+		return errors.New("wallet id is empty")
+	}
+	if a.ScriptAddress == "" {
+		return fmt.Errorf("wallet id %q has an empty script address", a.ID)
+	}
+	if a.ScriptCBOR == "" {
+		return fmt.Errorf("wallet id %q has empty script CBOR", a.ID)
+	}
+	// Non-empty is not the same as usable, and this validation is what stands
+	// between a legacy record and the deletion of the store holding it: the
+	// migration removes the source after verifying the copy by string
+	// comparison, which a malformed script passes as happily as a good one.
+	// Decode it here so an unusable script fails the migration instead of
+	// surviving it as the only remaining copy.
+	if _, err := decodeScript(a.ScriptCBOR); err != nil {
+		return fmt.Errorf("wallet id %q has unusable script CBOR: %w", a.ID, err)
+	}
+	return nil
+}
+
+func validateScriptWalletRecord(a ScriptWalletRecord) error {
+	if a.ID == "" {
+		return errors.New("wallet id is empty")
+	}
+	if a.ScriptAddress == "" {
+		return fmt.Errorf("wallet id %q has an empty script address", a.ID)
+	}
+	return nil
+}
+
+func sameLegacyAccountIdentity(a, b Account) bool {
+	return a.ID == b.ID && a.Label == b.Label && a.Network == b.Network &&
+		a.ScriptCBOR == b.ScriptCBOR && a.ScriptAddress == b.ScriptAddress &&
+		reflect.DeepEqual(a.Policy, b.Policy)
+}
+
+func sameLegacyToVaultIdentity(a Account, b ScriptWalletRecord) bool {
+	policy, err := json.Marshal(a.Policy)
+	if err != nil {
+		return false
+	}
+	return a.ID == b.ID && a.Label == b.Name && a.Network == b.Network &&
+		a.ScriptCBOR == b.ScriptCBOR && a.ScriptAddress == b.ScriptAddress &&
+		jsonEqual(policy, b.Policy)
+}
+
+func sameScriptWalletIdentity(a, b ScriptWalletRecord) bool {
+	return a.ID == b.ID && a.Name == b.Name && a.Network == b.Network &&
+		a.ScriptCBOR == b.ScriptCBOR && a.ScriptAddress == b.ScriptAddress &&
+		jsonEqual(a.Policy, b.Policy)
+}
+
+// jsonEqual compares two JSON documents structurally.
+//
+// Numbers are decoded as json.Number rather than through any, whose float64
+// loses precision above 2^53: two policies differing only in a large integer
+// would otherwise compare equal, and this comparison is what the migration
+// trusts before deleting the source record.
+func jsonEqual(a, b []byte) bool {
+	left, err := decodeJSONExact(a)
+	if err != nil {
+		return false
+	}
+	right, err := decodeJSONExact(b)
+	if err != nil {
+		return false
+	}
+	return reflect.DeepEqual(left, right)
+}
+
+func decodeJSONExact(b []byte) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // readStoreFile reads the accounts out of the standalone store without going

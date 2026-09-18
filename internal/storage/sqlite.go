@@ -19,7 +19,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,10 +38,25 @@ type SQLiteStore struct {
 	mu sync.RWMutex
 }
 
+const sqliteFileMode = 0o600
+
 // NewSQLiteStore creates a new SQLite-based storage backend.
 // The dsn specifies the database file path or connection string.
 // The schema is automatically created on first use.
 func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
+	dbPath, fileBacked, mode, err := sqliteTarget(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse sqlite database path: %w", err)
+	}
+	if fileBacked {
+		// Create the database with the intended mode before SQLite opens it. This
+		// avoids relying on the process umask for newly-created wallet stores and
+		// narrows the exposure window when opening an existing store.
+		if err := ensureSQLiteFilePermissions(dbPath, mode); err != nil {
+			return nil, fmt.Errorf("failed to secure sqlite database: %w", err)
+		}
+	}
+
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -53,6 +72,12 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 			"failed to set WAL mode: %w",
 			err,
 		)
+	}
+	if fileBacked {
+		if err := secureSQLiteSidecars(dbPath); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to secure sqlite journal files: %w", err)
+		}
 	}
 
 	// Enable foreign keys
@@ -77,8 +102,140 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 			err,
 		)
 	}
+	if fileBacked {
+		if err := secureSQLiteSidecars(dbPath); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to secure sqlite journal files: %w", err)
+		}
+	}
 
 	return store, nil
+}
+
+// sqliteDatabasePath returns the filesystem path for a file-backed SQLite DSN.
+// Memory databases and non-local URI authorities have no path that this
+// package can safely permission. The driver accepts both plain paths and file:
+// URIs, including query parameters such as _pragma and mode.
+// sqliteTarget additionally reports the DSN's open mode ("", "ro", "rw",
+// "rwc", "memory"), which decides what the permission step is allowed to do:
+// creating the file itself would defeat a mode=rw DSN's contract that it opens
+// only something already there.
+func sqliteTarget(dsn string) (string, bool, string, error) {
+	if dsn == ":memory:" {
+		return "", false, "memory", nil
+	}
+
+	if !strings.HasPrefix(dsn, "file:") {
+		if pos := strings.IndexByte(dsn, '?'); pos >= 0 {
+			dsn = dsn[:pos]
+		}
+		if dsn == ":memory:" {
+			return "", false, "memory", nil
+		}
+		// A bare path carries no mode, and SQLite creates it on demand.
+		return dsn, dsn != "", "", nil
+	}
+
+	uri := dsn[len("file:"):]
+	// SQLite ignores a URI fragment, so it is not part of the filename: leaving
+	// it on would secure "wallet.db#x" while SQLite opens "wallet.db", and the
+	// real database would keep whatever mode the umask gave it. It also has to
+	// come off before the query is split, or it lands in the query string and
+	// corrupts the mode we read from it.
+	if pos := strings.IndexByte(uri, '#'); pos >= 0 {
+		uri = uri[:pos]
+	}
+	query := ""
+	if pos := strings.IndexByte(uri, '?'); pos >= 0 {
+		query = uri[pos+1:]
+		uri = uri[:pos]
+	}
+	values, err := url.ParseQuery(query)
+	if err != nil {
+		return "", false, "", err
+	}
+	mode := strings.ToLower(values.Get("mode"))
+	if mode == "memory" || uri == "" || uri == ":memory:" {
+		return "", false, mode, nil
+	}
+
+	if strings.HasPrefix(uri, "//") {
+		parsed, err := url.Parse(dsn)
+		if err != nil {
+			return "", false, mode, err
+		}
+		if parsed.Host != "" && !strings.EqualFold(parsed.Host, "localhost") {
+			// SQLite URI authorities other than localhost are not local paths.
+			return "", false, mode, nil
+		}
+		uri = parsed.Path
+	}
+	path, err := url.PathUnescape(uri)
+	if err != nil {
+		return "", false, mode, err
+	}
+	path = nativeSQLitePath(path)
+	return path, path != "", mode, nil
+}
+
+// nativeSQLitePath converts a URI path to the platform's filesystem form. A
+// canonical Windows URI carries its drive letter behind the leading slash
+// ("file:///C:/wallet/db"), and "/C:/wallet/db" is not a path Windows can
+// open — the permission step would fail on a DSN SQLite itself handles fine.
+// Elsewhere the URI path is already the filesystem path.
+func nativeSQLitePath(path string) string {
+	if len(path) < 3 || path[0] != '/' || path[2] != ':' {
+		return path
+	}
+	if c := path[1]; (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+		return path
+	}
+	// A drive reference is the whole path ("/C:") or continues with a
+	// separator ("/C:/db"). Anything else - "/w:x/file" - is an ordinary
+	// POSIX path that happens to have a colon in its first segment.
+	if len(path) == 3 || path[3] == '/' || path[3] == '\\' {
+		return path[1:]
+	}
+	return path
+}
+
+func ensureSQLiteFilePermissions(path, mode string) error {
+	// A DSN that says how it wants the file opened is entitled to that: "ro"
+	// must not be opened for writing, and "rw" opens only what already exists,
+	// so creating it here would answer a missing-database error with an empty
+	// database. In both cases a file that is not there is SQLite's to report.
+	flags := os.O_RDWR | os.O_CREATE
+	switch mode {
+	case "ro":
+		if !sqliteFileExists(path) {
+			return nil
+		}
+		flags = os.O_RDONLY
+	case "rw":
+		if !sqliteFileExists(path) {
+			return nil
+		}
+		flags = os.O_RDWR
+	}
+	f, err := os.OpenFile(path, flags, sqliteFileMode)
+	if err != nil {
+		return err
+	}
+	if err := f.Chmod(sqliteFileMode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func secureSQLiteSidecars(path string) error {
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		if err := os.Chmod(path+suffix, sqliteFileMode); err != nil &&
+			!errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s: %w", suffix, err)
+		}
+	}
+	return nil
 }
 
 // migrate creates the database schema if it does not exist.
@@ -451,6 +608,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	walletID := w.id
 
 	tx, err := w.store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -460,7 +618,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	if w.id == 0 {
+	if walletID == 0 {
 		// Insert new wallet
 		result, err := tx.ExecContext(
 			ctx,
@@ -473,7 +631,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 				"failed to insert wallet: %w", err,
 			)
 		}
-		w.id, err = result.LastInsertId()
+		walletID, err = result.LastInsertId()
 		if err != nil {
 			return fmt.Errorf(
 				"failed to get wallet id: %w", err,
@@ -486,7 +644,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 			`UPDATE wallets
 			 SET description = ?, updated_at = ?
 			 WHERE id = ?`,
-			w.description, now, w.id,
+			w.description, now, walletID,
 		)
 		if err != nil {
 			return fmt.Errorf(
@@ -499,7 +657,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 	_, err = tx.ExecContext(
 		ctx,
 		"DELETE FROM wallet_items WHERE wallet_id = ?",
-		w.id,
+		walletID,
 	)
 	if err != nil {
 		return fmt.Errorf(
@@ -512,7 +670,7 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 			ctx,
 			`INSERT INTO wallet_items (wallet_id, key, value)
 			 VALUES (?, ?, ?)`,
-			w.id, key, value,
+			walletID, key, value,
 		)
 		if err != nil {
 			return fmt.Errorf(
@@ -526,10 +684,19 @@ func (w *sqliteWallet) Save(ctx context.Context) error {
 			"failed to commit transaction: %w", err,
 		)
 	}
+	w.id = walletID
 
 	return nil
 }
 
 func (w *sqliteWallet) Delete(ctx context.Context) error {
 	return w.store.DeleteWallet(ctx, w.name)
+}
+
+// sqliteFileExists reports whether path is there to be opened. Any failure to
+// answer that - absent, or unreachable - leaves the database for SQLite to open
+// and report on, which is the whole point of honouring the DSN's mode here.
+func sqliteFileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

@@ -150,6 +150,67 @@ func TestVerifyPasswordZerosRecoveredVEK(t *testing.T) {
 	}
 }
 
+func TestCreatePublishesStateWhenDirectorySyncFailsAfterRename(t *testing.T) {
+	v := newTestVault(t)
+	oldSync := syncVaultDir
+	syncVaultDir = func(string) error { return errors.New("directory sync failed") }
+	t.Cleanup(func() { syncVaultDir = oldSync })
+
+	err := v.Create(vaultPw)
+	if err == nil {
+		t.Fatal("Create should report the durability error")
+	}
+	if v.Locked() {
+		t.Fatal("Create must publish the in-memory vault after the file is renamed")
+	}
+	if !v.Exists() {
+		t.Fatal("Create must leave the renamed vault available")
+	}
+	if got := v.WalletCount(); got != 0 {
+		t.Fatalf("WalletCount = %d, want 0", got)
+	}
+}
+
+func TestSelectAccountPublishesStateWhenDirectorySyncFailsAfterRename(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	meta, err := v.AddWallet("selected", mnemonicA, "preview", vaultPw, spendPwA, window)
+	if err != nil {
+		t.Fatalf("AddWallet: %v", err)
+	}
+	if _, err := v.AddAccount(meta.ID, vaultPw, spendPwA, 1, window); err != nil {
+		t.Fatalf("AddAccount(1): %v", err)
+	}
+
+	oldSync := syncVaultDir
+	syncVaultDir = func(string) error { return errors.New("directory sync failed") }
+	t.Cleanup(func() { syncVaultDir = oldSync })
+
+	selected, err := v.SelectAccount(meta.ID, 1)
+	if err == nil {
+		t.Fatal("SelectAccount should report the durability error")
+	}
+	if selected.ActiveAccountIndex != 1 {
+		t.Fatalf("returned ActiveAccountIndex = %d, want 1", selected.ActiveAccountIndex)
+	}
+	if got := v.ActiveAccountIndexFor(meta.ID); got != 1 {
+		t.Fatalf("in-memory active account index = %d, want 1", got)
+	}
+
+	reopened := New(v.path)
+	seal, open := keystore.CheapTestSealer()
+	reopened.SetCipher(seal, open)
+	wallets, err := reopened.Unlock(vaultPw)
+	if err != nil {
+		t.Fatalf("reopen Unlock: %v", err)
+	}
+	if len(wallets) != 1 || wallets[0].ActiveAccountIndex != 1 {
+		t.Fatalf("reopened wallets = %#v, want one wallet with active account 1", wallets)
+	}
+}
+
 func TestCreateRefusesOverwrite(t *testing.T) {
 	v := newTestVault(t)
 	if err := v.Create(vaultPw); err != nil {
@@ -157,6 +218,16 @@ func TestCreateRefusesOverwrite(t *testing.T) {
 	}
 	if err := v.Create(vaultPw); !errors.Is(err, ErrVaultExists) {
 		t.Fatalf("second Create = %v, want ErrVaultExists", err)
+	}
+}
+
+func TestWriteFileAtomicRejectsOversizedVaultBeforePublish(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vault.json")
+	if err := writeFileAtomic(path, make([]byte, maxVaultLen+1), 0o600); err == nil {
+		t.Fatal("writeFileAtomic should reject data larger than the vault read limit")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversized write published destination: stat error = %v", err)
 	}
 }
 
@@ -874,5 +945,72 @@ func TestAddScriptWalletRequiresUnlock(t *testing.T) {
 
 	if _, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wscript"), vaultPw); !errors.Is(err, ErrLocked) {
 		t.Fatalf("err = %v, want ErrLocked", err)
+	}
+}
+
+func TestAddScriptWalletReportsCommittedWriteError(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := v.Unlock(vaultPw); err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+
+	oldSync := syncVaultDir
+	syncVaultDir = func(string) error { return errors.New("directory sync failed") }
+	t.Cleanup(func() { syncVaultDir = oldSync })
+
+	meta, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wscript"), vaultPw)
+	if !errors.Is(err, ErrCommittedWrite) {
+		t.Fatalf("AddScriptWallet error = %v, want committed write error", err)
+	}
+	if meta.ID == "" {
+		t.Fatal("AddScriptWallet should return the committed wallet metadata")
+	}
+	if got := v.WalletCount(); got != 1 {
+		t.Fatalf("in-memory WalletCount = %d, want 1", got)
+	}
+}
+
+// Create already published its state when the file was replaced but the
+// directory sync failed; every other mutation returned early instead, leaving
+// the vault serving an index the file on disk no longer contained. The next
+// mutation would then write that stale state back over the committed one — the
+// added wallet would disappear without an error ever mentioning it.
+func TestMutationsPublishStateWhenDirectorySyncFailsAfterRename(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := v.Unlock(vaultPw); err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+
+	oldSync := syncVaultDir
+	syncVaultDir = func(string) error { return errors.New("directory sync failed") }
+	t.Cleanup(func() { syncVaultDir = oldSync })
+
+	meta, err := v.AddWallet("added", mnemonicA, "preview", vaultPw, spendPwA, window)
+	if err == nil {
+		t.Fatal("AddWallet should report the durability error")
+	}
+	if meta.ID == "" {
+		t.Fatal("AddWallet should still describe the wallet it committed")
+	}
+	if got := v.WalletCount(); got != 1 {
+		t.Fatalf("in-memory WalletCount = %d, want 1: the write committed", got)
+	}
+
+	// The decisive part: what a fresh read of the file sees must match what the
+	// vault is serving from memory.
+	reopened := New(v.path)
+	seal, open := keystore.CheapTestSealer()
+	reopened.SetCipher(seal, open)
+	if _, err := reopened.Unlock(vaultPw); err != nil {
+		t.Fatalf("reopen Unlock: %v", err)
+	}
+	if got := reopened.WalletCount(); got != 1 {
+		t.Fatalf("on-disk WalletCount = %d, want 1", got)
 	}
 }

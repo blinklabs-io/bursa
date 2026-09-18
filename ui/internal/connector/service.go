@@ -137,11 +137,22 @@ func (s *Service) SetActiveAccount(walletID string, acct *wallet.Account) {
 // caches it. The code is returned for display in the Bursa UI. It rejects a
 // malformed extension ID and refuses to grow the pending map past
 // maxPendingPairCodes (after pruning expired entries), so a flood of distinct
-// IDs cannot exhaust memory.
+// IDs cannot exhaust memory. Repeated initiation for an unexpired extension
+// returns its existing code, so a competing claimant cannot invalidate an
+// in-progress browser pairing.
 func (s *Service) BeginPair(extensionID string) (string, error) {
 	extensionID = normalizeExtensionID(extensionID)
 	if !validExtensionID(extensionID) {
 		return "", ErrInvalidExtensionID
+	}
+	s.pairMu.Lock()
+	defer s.pairMu.Unlock()
+	s.prunePairCodesLocked()
+	if existing, exists := s.pairCodes[extensionID]; exists {
+		return existing.code, nil
+	}
+	if len(s.pairCodes) >= maxPendingPairCodes {
+		return "", ErrTooManyPairings
 	}
 	n, err := rand.Int(rand.Reader, big.NewInt(pairCodeMax))
 	if err != nil {
@@ -150,12 +161,6 @@ func (s *Service) BeginPair(extensionID string) (string, error) {
 		panic("connector: crypto/rand failure generating pair code: " + err.Error())
 	}
 	code := fmt.Sprintf("%0*d", pairCodeDigits, n.Int64())
-	s.pairMu.Lock()
-	defer s.pairMu.Unlock()
-	s.prunePairCodesLocked()
-	if _, exists := s.pairCodes[extensionID]; !exists && len(s.pairCodes) >= maxPendingPairCodes {
-		return "", ErrTooManyPairings
-	}
 	s.pairCodes[extensionID] = &pairEntry{code: code, created: s.now()}
 	return code, nil
 }
