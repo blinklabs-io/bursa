@@ -1772,7 +1772,7 @@ func NewScriptNOf(n int, scripts ...Script) (*NativeScript, error) {
 	}
 	concrete := &NativeScriptNofK{
 		Type:    3,
-		N:       uint(n),
+		N:       int64(n),
 		Scripts: nativeScripts,
 	}
 	cborData, err := cbor.Encode(concrete)

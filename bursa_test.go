@@ -1502,7 +1502,7 @@ func TestMultiSigScriptGeneration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 3, scriptType) // NOf type
 	nofScript := script2of3.Item().(*NativeScriptNofK)
-	assert.Equal(t, uint(2), nofScript.N)
+	assert.Equal(t, int64(2), nofScript.N)
 	assert.Len(t, nofScript.Scripts, 3)
 
 	// Test NewAllMultiSigScript
@@ -1558,7 +1558,7 @@ func TestMultiSigScriptFromKeys(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 3, scriptType) // NOf type
 	nofScript := script.Item().(*NativeScriptNofK)
-	assert.Equal(t, uint(2), nofScript.N)
+	assert.Equal(t, int64(2), nofScript.N)
 	assert.Len(t, nofScript.Scripts, 3)
 
 	// Verify the script can be validated
@@ -2268,7 +2268,7 @@ func TestCIP1854NativeScriptTestVectors(t *testing.T) {
 
 	// Validate script structure
 	nofScript := script2of3.Item().(*NativeScriptNofK)
-	assert.Equal(t, uint(2), nofScript.N)
+	assert.Equal(t, int64(2), nofScript.N)
 	assert.Len(t, nofScript.Scripts, 3)
 
 	// Test All script
