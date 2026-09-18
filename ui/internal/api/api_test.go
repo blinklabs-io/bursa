@@ -2838,6 +2838,14 @@ func TestSubmitUnknownStatusCodes(t *testing.T) {
 	}
 }
 
+func TestServeCommittedWriteStatus(t *testing.T) {
+	rec := httptest.NewRecorder()
+	serve(rec, struct{}{}, vault.ErrCommittedWrite)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
 type historyExpiryResponse struct {
 	Enabled         bool
 	RestartRequired bool

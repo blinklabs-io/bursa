@@ -948,6 +948,31 @@ func TestAddScriptWalletRequiresUnlock(t *testing.T) {
 	}
 }
 
+func TestAddScriptWalletReportsCommittedWriteError(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Create(vaultPw); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := v.Unlock(vaultPw); err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+
+	oldSync := syncVaultDir
+	syncVaultDir = func(string) error { return errors.New("directory sync failed") }
+	t.Cleanup(func() { syncVaultDir = oldSync })
+
+	meta, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wscript"), vaultPw)
+	if !errors.Is(err, ErrCommittedWrite) {
+		t.Fatalf("AddScriptWallet error = %v, want committed write error", err)
+	}
+	if meta.ID == "" {
+		t.Fatal("AddScriptWallet should return the committed wallet metadata")
+	}
+	if got := v.WalletCount(); got != 1 {
+		t.Fatalf("in-memory WalletCount = %d, want 1", got)
+	}
+}
+
 // Create already published its state when the file was replaced but the
 // directory sync failed; every other mutation returned early instead, leaving
 // the vault serving an index the file on disk no longer contained. The next

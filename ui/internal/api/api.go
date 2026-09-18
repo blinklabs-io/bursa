@@ -2400,6 +2400,8 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: active wallet switched during build
 	case errors.Is(err, vault.ErrTPMUnavailable):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: TPM not available on this machine
+	case errors.Is(err, vault.ErrCommittedWrite):
+		writeJSON(w, http.StatusServiceUnavailable, errBody(err)) // 503: state committed, durability sync failed
 	case errors.Is(err, vault.ErrWrongPassword), errors.Is(err, spend.ErrWrongPassword),
 		errors.Is(err, poolops.ErrWrongPassword), errors.Is(err, multisig.ErrWrongPassword):
 		writeJSON(w, http.StatusUnauthorized, errBody(err)) // 401

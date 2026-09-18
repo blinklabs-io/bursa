@@ -114,6 +114,10 @@ var (
 	// ErrNoSeed: an operation that needs the seed (e.g. deriving a new account)
 	// was attempted on a seedless wallet (hardware / read-only).
 	ErrNoSeed = errors.New("wallet has no seed")
+	// ErrCommittedWrite indicates that a write replaced the target but its
+	// subsequent durability step failed. Callers should report the error while
+	// treating the new state as committed.
+	ErrCommittedWrite = errors.New("write committed but durability sync failed")
 )
 
 // WalletMeta is the read-only record kept for one wallet inside the index. It
@@ -899,7 +903,7 @@ func (v *Vault) AddScriptWallet(id, name, network string, script ScriptMeta, vau
 	if v.activeID == "" {
 		v.activeID = meta.ID
 	}
-	return meta, nil
+	return meta, err
 }
 
 // cloneScript deep-copies script material, including the policy bytes.
@@ -1298,7 +1302,9 @@ func (v *Vault) persistLocked(idx *index, seeds map[string]keystore.Container, v
 type committedWriteError struct{ err error }
 
 func (e *committedWriteError) Error() string { return e.err.Error() }
-func (e *committedWriteError) Unwrap() error { return e.err }
+func (e *committedWriteError) Unwrap() []error {
+	return []error{ErrCommittedWrite, e.err}
+}
 
 func isCommittedWriteError(err error) bool {
 	var committed *committedWriteError
