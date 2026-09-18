@@ -11,6 +11,7 @@ import {
 import { lockVault, ApiError } from "./api/client";
 import { getStoredDeviceKind } from "./hw/deviceKind";
 import { useIdleLock } from "./useIdleLock";
+import { Icon, BursaLogo } from "./components/Icon";
 import { Button } from "./components/Button";
 import { SyncBanner } from "./components/SyncBanner";
 import { WalletSwitcher } from "./components/WalletSwitcher";
@@ -639,10 +640,10 @@ export function App() {
         <nav className="sidebar">
           <div className="brand">
             <div className="brand-row">
-              <span className="brand-mark">BVRSA</span>
+              <span className="brand-lockup"><BursaLogo /></span>
               <CliButton onOpen={() => setPaletteOpen(true)} />
             </div>
-            <span className="brand-motto">nodvs tvvs · claves tvæ</span>
+            <span className="brand-motto">Your node. Your keys.</span>
           </div>
           <WalletSwitcher
             wallets={wallets}
@@ -663,7 +664,7 @@ export function App() {
             onClick={() => setPaletteOpen(true)}
             aria-haspopup="dialog"
           >
-            <span>Search…</span>
+            <span className="search-label"><Icon name="search" size={16} />Search…</span>
             <span className="palette-kbd" aria-hidden="true">{paletteShortcutLabel}</span>
           </button>
           {navItems.map(({ key, label, disabled, active }) => (
@@ -674,12 +675,13 @@ export function App() {
               disabled={disabled}
               onClick={() => navigate(key)}
             >
-              {label}
+              <Icon name={key} /><span>{label}</span>
             </button>
           ))}
+          <div className="sidebar-footer"><Icon name="shield" /><div><strong>Locally secured</strong><span>Your keys stay on this device.</span></div></div>
         </nav>
         <main
-          className="content"
+          className={`content route-${screenLabel}`}
           key={`${activeWallet?.id ?? "none"}:${activeWallet?.active_account_index ?? 0}`}
         >
           {/* Scoped to the screen, not the shell: a screen that throws must not
@@ -691,6 +693,13 @@ export function App() {
               those would not clear a caught error. addingWallet is in the key
               too — it swaps the content without changing the route, and is a
               shell recovery action that must not land on a stale fallback. */}
+          <header className="workspace-header"><span>{activeWallet?.name ?? "Your wallet"}<span className="workspace-divider">/</span>{addingWallet ? "Add wallet" : screenLabel.charAt(0).toUpperCase() + screenLabel.slice(1)}</span><span className="network-label"><span className="network-dot" />{network || activeWallet?.network || "Network unavailable"}</span></header>
+          {!addingWallet && ["send", "receive", "activity", "stake", "staking", "rewards", "pools", "settings"].includes(screenLabel) && (
+            <header className="page-heading">
+              <h1>{["stake", "staking", "rewards", "pools"].includes(screenLabel) ? "Staking" : screenLabel.charAt(0).toUpperCase() + screenLabel.slice(1)}</h1>
+              <p>{screenLabel === "send" ? "Choose a recipient and review your transfer." : screenLabel === "receive" ? "Your addresses for ADA and Cardano native tokens." : screenLabel === "activity" ? "Transfers recorded by your node." : screenLabel === "settings" ? "Manage your wallet, privacy, and connections." : "Manage delegation and your staking rewards."}</p>
+            </header>
+          )}
           <ErrorBoundary
             label={screenLabel}
             resetKey={`${route}:${addingWallet}`}
