@@ -29,6 +29,8 @@ jobs:
   # produces the unsigned debug APK, which needs no signing material.
   android:
     name: android
+    # Temporarily disabled: enable only when BURSA_ANDROID_ENABLED is true.
+    if: ${{ vars.BURSA_ANDROID_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       # attestations + id-token are what actions/attest needs; contents:write
@@ -247,6 +249,8 @@ jobs:
   # back to full CPU emulation and time out.
   android-smoke-test:
     name: android-smoke-test
+    # The smoke test follows the Android build gate.
+    if: ${{ vars.BURSA_ANDROID_ENABLED == 'true' }}
     runs-on: ubuntu-24.04-arm
     needs: [android]
     steps:
