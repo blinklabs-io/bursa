@@ -305,7 +305,7 @@ func PolicyFromScript(ns *bursa.NativeScript) (Policy, error) {
 			// not a thing that decodes — and is kept as the guard that makes the
 			// conversion below safe on its own terms rather than by argument
 			// about the clause before it.
-			if v.N == 0 || v.N > uint(len(v.Scripts)) || uint64(v.N) > uint64(^uint(0)>>1) {
+			if v.N <= 0 || v.N > int64(len(v.Scripts)) || uint64(v.N) > uint64(^uint(0)>>1) {
 				return fmt.Errorf("%w: invalid threshold %d for %d participant scripts", ErrInvalidTx, v.N, len(v.Scripts))
 			}
 			parts := make([]Participant, 0, len(v.Scripts))
