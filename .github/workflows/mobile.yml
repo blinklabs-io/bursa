@@ -1,13 +1,9 @@
 name: mobile
 
-# Builds the Bursa mobile apps. Manual (workflow_dispatch) and on tags only —
-# the toolchains (Android SDK/NDK, Xcode) are heavy, so this does not run on
-# every push/PR like the Go/web CI does.
+# Builds the Bursa mobile apps manually. Mobile artifacts are not built or
+# released as part of a version-tagged release.
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - v*
 
 permissions:
   contents: read
