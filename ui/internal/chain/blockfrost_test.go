@@ -1,12 +1,14 @@
 package chain
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -1320,6 +1322,55 @@ func TestGovernanceActionsSkipsUnknownVoteKind(t *testing.T) {
 	if got[0].YesVotes != 1 || got[0].NoVotes != 1 || got[0].AbstainVotes != 0 {
 		t.Fatalf("tallies = yes %d no %d abstain %d, want 1/1/0 with the unknown kind skipped",
 			got[0].YesVotes, got[0].NoVotes, got[0].AbstainVotes)
+	}
+}
+
+func TestGovernanceActionsAggregatesUnknownVoteWarnings(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metadata.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(govProposalDDL); err != nil {
+		t.Fatalf("create governance_proposal: %v", err)
+	}
+	if _, err := db.Exec(govVoteDDL); err != nil {
+		t.Fatalf("create governance_vote: %v", err)
+	}
+
+	txHash := make([]byte, 32)
+	if _, err := db.Exec(
+		`INSERT INTO governance_proposal
+			(id, tx_hash, action_index, action_type, proposed_epoch, expires_epoch, anchor_url, deposit)
+			VALUES (1, ?, 0, ?, 100, 130, '', 100000000000)`,
+		txHash, lcommon.GovActionTypeInfo,
+	); err != nil {
+		t.Fatalf("insert proposal: %v", err)
+	}
+	for _, vote := range []int{7, 7, 8} {
+		if _, err := db.Exec(
+			`INSERT INTO governance_vote (proposal_id, vote, deleted_slot) VALUES (1, ?, NULL)`,
+			vote,
+		); err != nil {
+			t.Fatalf("insert vote: %v", err)
+		}
+	}
+
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	c := NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir))
+	if _, err := c.GovernanceActions(context.Background()); err != nil {
+		t.Fatalf("GovernanceActions: %v", err)
+	}
+	if got := strings.Count(logs.String(), "msg=\"skipping governance votes of unknown kinds\""); got != 1 {
+		t.Fatalf("unknown vote warning count = %d, want 1; logs: %s", got, logs.String())
+	}
+	if !strings.Contains(logs.String(), "unknown_vote_total=3") {
+		t.Fatalf("logs do not include the aggregate unknown vote count: %s", logs.String())
 	}
 }
 
