@@ -146,7 +146,11 @@ func (k *BLSKey) BLSKeyEnvelope() (KeyFile, error) {
 	if err != nil {
 		return KeyFile{}, fmt.Errorf("encode BLS secret key: %w", err)
 	}
-	return KeyFile{Type: "BlsSigningKey", Description: "BLS signing key", CborHex: hex.EncodeToString(cborHex)}, nil
+	return KeyFile{
+		Type:        "BlsSigningKey_bls12-381-BLS-Signature-Minimal-Signature-Size",
+		Description: "BLS12-381 signing key",
+		CborHex:     hex.EncodeToString(cborHex),
+	}, nil
 }
 
 // BLSVerificationKeyEnvelope returns a cardano-cli verification-key envelope.
@@ -158,5 +162,9 @@ func (k *BLSKey) BLSVerificationKeyEnvelope() (KeyFile, error) {
 	if err != nil {
 		return KeyFile{}, fmt.Errorf("encode BLS public key: %w", err)
 	}
-	return KeyFile{Type: "BlsVerificationKey", Description: "BLS verification key", CborHex: hex.EncodeToString(cborHex)}, nil
+	return KeyFile{
+		Type:        "BlsVerificationKey_bls12-381-BLS-Signature-Minimal-Signature-Size",
+		Description: "BLS12-381 verification key",
+		CborHex:     hex.EncodeToString(cborHex),
+	}, nil
 }

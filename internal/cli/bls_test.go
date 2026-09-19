@@ -51,8 +51,13 @@ func TestRunKeyBLSWritesCardanoCLIEnvelopes(t *testing.T) {
 		Key  []byte
 	}
 	for path, want := range map[string]envelopeTest{
-		signingPath:      {Type: "BlsSigningKey"},
-		verificationPath: {Type: "BlsVerificationKey", Key: publicKey},
+		signingPath: {
+			Type: "BlsSigningKey_bls12-381-BLS-Signature-Minimal-Signature-Size",
+		},
+		verificationPath: {
+			Type: "BlsVerificationKey_bls12-381-BLS-Signature-Minimal-Signature-Size",
+			Key:  publicKey,
+		},
 	} {
 		var envelope bursa.KeyFile
 		raw, err := os.ReadFile(path)
@@ -124,8 +129,12 @@ func TestRunKeyBLSRegistrationPopulatesDijkstraLeiosKey(t *testing.T) {
 	field, err := cbor.Encode([][]byte{key.PublicKey, key.PossessionProof})
 	require.NoError(t, err)
 	var decoded [][]byte
-	_, err = cbor.Decode(field, &decoded)
-	require.NoError(t, err)
+	if _, err = cbor.Decode(field, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded) != 2 {
+		t.Fatalf("decoded leios_key has %d elements, want 2", len(decoded))
+	}
 	require.Equal(t, [][]byte{key.PublicKey, key.PossessionProof}, decoded)
 	require.Len(t, decoded[0], bursa.BLSPublicKeySize)
 	require.Len(t, decoded[1], bursa.BLSPossessionProofSize)

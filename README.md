@@ -179,7 +179,8 @@ bursa key kes --mnemonic "..."            # KES key pair for block production
 
 Generate the Dijkstra-era BLS stake-pool key used by Leios and Peras. The
 signing key is never printed. The signing and verification files use
-cardano-cli-compatible `BlsSigningKey` and `BlsVerificationKey` envelopes;
+cardano-cli-compatible `BlsSigningKey_bls12-381-BLS-Signature-Minimal-Signature-Size`
+and `BlsVerificationKey_bls12-381-BLS-Signature-Minimal-Signature-Size` envelopes;
 the JSON output contains the 96-byte public key and 48-byte proof of
 possession required for pool registration.
 
