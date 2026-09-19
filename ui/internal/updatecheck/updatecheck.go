@@ -87,7 +87,10 @@ func checkAt(ctx context.Context, client *http.Client, currentVersion, endpoint 
 
 func validReleaseURL(raw, tag string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && u.Scheme == "https" && u.Host == "github.com" &&
+	if err != nil || u == nil {
+		return false
+	}
+	return u.Scheme == "https" && u.Host == "github.com" &&
 		u.Path == "/blinklabs-io/bursa/releases/tag/"+tag && u.RawQuery == "" && u.Fragment == ""
 }
 
@@ -101,16 +104,16 @@ func parseVersion(raw string) (version, error) {
 	core, pre, _ := strings.Cut(raw, "-")
 	parts := strings.Split(core, ".")
 	if len(parts) != 3 || pre != "" && strings.Contains(pre, "/") {
-		return version{}, fmt.Errorf("expected vMAJOR.MINOR.PATCH")
+		return version{}, errors.New("expected vMAJOR.MINOR.PATCH")
 	}
 	var values [3]int
 	for i, part := range parts {
 		if part == "" {
-			return version{}, fmt.Errorf("expected vMAJOR.MINOR.PATCH")
+			return version{}, errors.New("expected vMAJOR.MINOR.PATCH")
 		}
 		for _, r := range part {
 			if r < '0' || r > '9' {
-				return version{}, fmt.Errorf("expected vMAJOR.MINOR.PATCH")
+				return version{}, errors.New("expected vMAJOR.MINOR.PATCH")
 			}
 		}
 		var value int
