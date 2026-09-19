@@ -866,6 +866,8 @@ func governanceVoteTallies(ctx context.Context, db *sql.DB) (map[uint64]govVoteT
 		return nil, fmt.Errorf("query governance votes: %w", err)
 	}
 	defer rows.Close()
+	unknownVotes := make(map[uint8]int)
+	unknownVoteTotal := 0
 	for rows.Next() {
 		var (
 			proposalID uint64
@@ -891,18 +893,21 @@ func governanceVoteTallies(ctx context.Context, db *sql.DB) (map[uint64]govVoteT
 			// governance screen. The tally under-reports that vote, which is
 			// what every older client does with a newer chain, so it is logged
 			// rather than hidden.
-			slog.Warn(
-				"skipping governance vote of an unknown kind",
-				"vote", vote,
-				"proposal_id", proposalID,
-				"count", count,
-			)
+			unknownVotes[vote] += count
+			unknownVoteTotal += count
 			continue
 		}
 		tallies[proposalID] = t
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate governance votes: %w", err)
+	}
+	if len(unknownVotes) > 0 {
+		slog.Warn(
+			"skipping governance votes of unknown kinds",
+			"unknown_vote_kinds", unknownVotes,
+			"unknown_vote_total", unknownVoteTotal,
+		)
 	}
 	return tallies, nil
 }
