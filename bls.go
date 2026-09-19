@@ -50,7 +50,8 @@ func NewBLSKey() (*BLSKey, error) {
 }
 
 // NewBLSKeyFromIKM derives a key deterministically from BLS keygen input.
-// It is intended for test vectors and controlled key import, not passphrases.
+// It is intended for test vectors and controlled deterministic key generation,
+// not passphrases or importing an existing serialized secret key.
 func NewBLSKeyFromIKM(ikm []byte) (*BLSKey, error) {
 	if len(ikm) < BLSSecretKeySize {
 		return nil, fmt.Errorf("BLS keygen input must be at least %d bytes", BLSSecretKeySize)
@@ -133,8 +134,6 @@ func blsKeyGen(ikm []byte) ([]byte, error) {
 			out := sk.FillBytes(make([]byte, BLSSecretKeySize))
 			return out, nil
 		}
-		hash = sha256.Sum256(salt)
-		salt = hash[:]
 	}
 }
 

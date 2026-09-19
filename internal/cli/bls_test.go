@@ -6,6 +6,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -71,6 +72,17 @@ func TestRunKeyBLSWritesCardanoCLIEnvelopes(t *testing.T) {
 	}
 }
 
+func TestRunKeyBLSRestrictsExistingRegistrationFile(t *testing.T) {
+	dir := t.TempDir()
+	registrationPath := filepath.Join(dir, "bls.json")
+	require.NoError(t, os.WriteFile(registrationPath, []byte("old"), 0o644))
+	require.NoError(t, RunKeyBLS("", "", registrationPath))
+
+	info, err := os.Stat(registrationPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
 func TestRunKeyBLSRejectsCollidingOutputPaths(t *testing.T) {
 	dir := t.TempDir()
 	paths := []string{
@@ -87,4 +99,34 @@ func TestRunKeyBLSRejectsCollidingOutputPaths(t *testing.T) {
 			require.ErrorContains(t, err, "resolve to the same file")
 		}
 	}
+}
+
+func TestRunKeyBLSRejectsSymlinkedOutputPaths(t *testing.T) {
+	dir := t.TempDir()
+	shared := filepath.Join(dir, "shared")
+	linkDir := filepath.Join(dir, "link")
+	require.NoError(t, os.Mkdir(filepath.Join(shared), 0o700))
+	require.NoError(t, os.Symlink(shared, linkDir))
+
+	err := RunKeyBLS(
+		filepath.Join(shared, "bls.skey"),
+		filepath.Join(linkDir, "bls.skey"),
+		filepath.Join(dir, "bls.json"),
+	)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "resolve to the same file")
+}
+
+func TestRunKeyBLSRegistrationPopulatesDijkstraLeiosKey(t *testing.T) {
+	key, err := bursa.NewBLSKeyFromIKM(bytes.Repeat([]byte{0x42}, bursa.BLSSecretKeySize))
+	require.NoError(t, err)
+
+	field, err := cbor.Encode([][]byte{key.PublicKey, key.PossessionProof})
+	require.NoError(t, err)
+	var decoded [][]byte
+	_, err = cbor.Decode(field, &decoded)
+	require.NoError(t, err)
+	require.Equal(t, [][]byte{key.PublicKey, key.PossessionProof}, decoded)
+	require.Len(t, decoded[0], bursa.BLSPublicKeySize)
+	require.Len(t, decoded[1], bursa.BLSPossessionProofSize)
 }
