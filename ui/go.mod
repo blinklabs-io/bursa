@@ -7,7 +7,7 @@ toolchain go1.26.7
 require (
 	fyne.io/systray v1.12.1
 	github.com/Salvionied/apollo/v2 v2.1.1
-	github.com/blinklabs-io/bursa v0.16.1-0.20260918233400-d051865c7659
+	github.com/blinklabs-io/bursa v0.16.1-0.20260919022732-4a6da93d2a46
 	github.com/blinklabs-io/dingo v0.70.14
 	github.com/blinklabs-io/go-bip39 v0.2.0
 	github.com/blinklabs-io/gouroboros v0.205.5
