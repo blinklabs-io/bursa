@@ -564,6 +564,53 @@ func RunKeyPoolCold(
 	return nil
 }
 
+// RunKeyBLS generates a Dijkstra-era BLS signing key and registration material.
+func RunKeyBLS(signingKeyFile, verificationKeyFile, outputFile string) error {
+	key, err := bursa.NewBLSKey()
+	if err != nil {
+		return err
+	}
+	if signingKeyFile != "" {
+		envelope, err := key.BLSKeyEnvelope()
+		if err != nil {
+			return err
+		}
+		if err := writeKeyFile(envelope, signingKeyFile); err != nil {
+			return err
+		}
+	}
+	if verificationKeyFile != "" {
+		envelope, err := key.BLSVerificationKeyEnvelope()
+		if err != nil {
+			return err
+		}
+		if err := writeKeyFile(envelope, verificationKeyFile); err != nil {
+			return err
+		}
+	}
+
+	registration := struct {
+		PublicKey       string `json:"publicKey"`
+		PossessionProof string `json:"possessionProof"`
+	}{
+		PublicKey:       hex.EncodeToString(key.PublicKey),
+		PossessionProof: hex.EncodeToString(key.PossessionProof),
+	}
+	data, err := json.MarshalIndent(registration, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal BLS registration material: %w", err)
+	}
+	data = append(data, '\n')
+	if outputFile != "" {
+		if err := os.WriteFile(outputFile, data, 0o600); err != nil {
+			return fmt.Errorf("write BLS registration material: %w", err)
+		}
+		return nil
+	}
+	fmt.Print(string(data))
+	return nil
+}
+
 // encodePoolColdKey encodes a pool cold extended private key in bech32 format
 func encodePoolColdKey(key []byte) (string, error) {
 	return encodeExtendedPrivateKey(key, "pool_xsk")

@@ -177,7 +177,24 @@ bursa key vrf --mnemonic "..."            # VRF key pair for block production
 bursa key kes --mnemonic "..."            # KES key pair for block production
 ```
 
-All keys are output in bech32 format with appropriate prefixes (`root_xsk`, `acct_xsk`, `addr_xsk`, `stake_xsk`, `policy_xsk`, `pool_xsk`, `drep_xsk`, `cc_cold_xsk`, `cc_hot_xsk`, `vrf_sk`, `kes_sk`).
+Generate the Dijkstra-era BLS stake-pool key used by Leios and Peras. The
+signing key is never printed. The signing and verification files use
+cardano-cli-compatible `BlsSigningKey` and `BlsVerificationKey` envelopes;
+the JSON output contains the 96-byte public key and 48-byte proof of
+possession required for pool registration.
+
+```bash
+bursa key bls --signing-key-file bls.skey \
+  --verification-key-file bls.vkey --output-file bls-registration.json
+```
+
+Back up the signing key like other pool credentials and plan rotation with
+the Dijkstra-era registration policy. Leios and Peras rotation policy remains
+protocol-dependent.
+
+Mnemonic-derived keys are output in bech32 format with appropriate prefixes
+(`root_xsk`, `acct_xsk`, `addr_xsk`, `stake_xsk`, `policy_xsk`, `pool_xsk`,
+`drep_xsk`, `cc_cold_xsk`, `cc_hot_xsk`, `vrf_sk`, `kes_sk`).
 
 ### Address Commands
 
