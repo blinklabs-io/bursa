@@ -137,8 +137,8 @@ github.com/blang/semver v3.5.1+incompatible h1:cQNTCjp13qL8KC3Nbxr/y2Bqb63oX6wdn
 github.com/blang/semver v3.5.1+incompatible/go.mod h1:kRBLl5iJ+tD4TcOOxsy/0fnwebNt5EWlYSAyrTnjyyk=
 github.com/blinklabs-io/bark v0.2.0 h1:PWMUGaMj28omfWwKLjRsE0OVFlzDJlicEVMMfv+JDCg=
 github.com/blinklabs-io/bark v0.2.0/go.mod h1:Csm/dR5sdx4T/N9cZ3ZO+3tFmSWFul2HnmWDQtugWms=
-github.com/blinklabs-io/bursa v0.16.1-0.20260918233400-d051865c7659 h1:Z1raCHyTDxl2S69mmSHy7l9KFShaXvyX82ETUzcaszU=
-github.com/blinklabs-io/bursa v0.16.1-0.20260918233400-d051865c7659/go.mod h1:8PP8LVyh8OD+oK1RVxcrHGU/Rif0im6h3rQpuVccuOs=
+github.com/blinklabs-io/bursa v0.16.1-0.20260919022732-4a6da93d2a46 h1:1tnCoX1U1AxFKrHDsYVgfvNrn/Or5cKtH71mWFKh0xk=
+github.com/blinklabs-io/bursa v0.16.1-0.20260919022732-4a6da93d2a46/go.mod h1:8PP8LVyh8OD+oK1RVxcrHGU/Rif0im6h3rQpuVccuOs=
 github.com/blinklabs-io/dingo v0.70.14 h1:G6CKCjYXpa7PxR2s1MzbHHspQvCMklhmcQ0WZLhvydk=
 github.com/blinklabs-io/dingo v0.70.14/go.mod h1:LJfVsfDc+dKqC1Qy51DplrN5ol0iMpBKJtnyQmI/kLQ=
 github.com/blinklabs-io/go-bip39 v0.2.0 h1:rHYih+JzqaFVuP+UfvByKTAdJPeYtlvZu49yUGrZUk8=
