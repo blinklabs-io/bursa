@@ -566,6 +566,9 @@ func RunKeyPoolCold(
 
 // RunKeyBLS generates a Dijkstra-era BLS signing key and registration material.
 func RunKeyBLS(signingKeyFile, verificationKeyFile, outputFile string) error {
+	if err := validateDistinctPaths(signingKeyFile, verificationKeyFile, outputFile); err != nil {
+		return err
+	}
 	key, err := bursa.NewBLSKey()
 	if err != nil {
 		return err
@@ -608,6 +611,25 @@ func RunKeyBLS(signingKeyFile, verificationKeyFile, outputFile string) error {
 		return nil
 	}
 	fmt.Print(string(data))
+	return nil
+}
+
+func validateDistinctPaths(paths ...string) error {
+	seen := make(map[string]string, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		resolved, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("resolve output path %q: %w", path, err)
+		}
+		resolved = filepath.Clean(resolved)
+		if previous, ok := seen[resolved]; ok {
+			return fmt.Errorf("output paths %q and %q resolve to the same file", previous, path)
+		}
+		seen[resolved] = path
+	}
 	return nil
 }
 

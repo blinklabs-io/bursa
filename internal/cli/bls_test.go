@@ -70,3 +70,21 @@ func TestRunKeyBLSWritesCardanoCLIEnvelopes(t *testing.T) {
 		}
 	}
 }
+
+func TestRunKeyBLSRejectsCollidingOutputPaths(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{
+		filepath.Join(dir, "bls.skey"),
+		filepath.Join(dir, "bls.vkey"),
+		filepath.Join(dir, "bls.json"),
+	}
+	for i := range paths {
+		for j := i + 1; j < len(paths); j++ {
+			args := append([]string(nil), paths...)
+			args[j] = args[i]
+			err := RunKeyBLS(args[0], args[1], args[2])
+			require.Error(t, err, "paths %q and %q should be rejected", args[i], args[j])
+			require.ErrorContains(t, err, "resolve to the same file")
+		}
+	}
+}

@@ -53,6 +53,26 @@ func TestBLSKeyRejectsInvalidProof(t *testing.T) {
 	}
 }
 
+func TestBLSKeyRejectsInfinityPoints(t *testing.T) {
+	key, err := NewBLSKeyFromIKM(bytes.Repeat([]byte{0x42}, BLSSecretKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key.PublicKey = append([]byte{0xc0}, make([]byte, BLSPublicKeySize-1)...)
+	if key.VerifyPossessionProof() {
+		t.Fatal("infinity public key was accepted")
+	}
+
+	key, err = NewBLSKeyFromIKM(bytes.Repeat([]byte{0x42}, BLSSecretKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key.PossessionProof = append([]byte{0xc0}, make([]byte, BLSPossessionProofSize-1)...)
+	if key.VerifyPossessionProof() {
+		t.Fatal("infinity possession proof was accepted")
+	}
+}
+
 func TestNewBLSKeyFromIKMRejectsShortInput(t *testing.T) {
 	if _, err := NewBLSKeyFromIKM(make([]byte, BLSSecretKeySize-1)); err == nil {
 		t.Fatal("short keygen input was accepted")

@@ -8,6 +8,7 @@ package bursa
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -93,11 +94,11 @@ func (k *BLSKey) VerifyPossessionProof() bool {
 		return false
 	}
 	var pk bls12381.G2Affine
-	if n, err := pk.SetBytes(k.PublicKey); err != nil || n != len(k.PublicKey) || !pk.IsInSubGroup() {
+	if n, err := pk.SetBytes(k.PublicKey); err != nil || n != len(k.PublicKey) || !pk.IsInSubGroup() || pk.IsInfinity() {
 		return false
 	}
 	var proof bls12381.G1Affine
-	if n, err := proof.SetBytes(k.PossessionProof); err != nil || n != len(k.PossessionProof) || !proof.IsInSubGroup() {
+	if n, err := proof.SetBytes(k.PossessionProof); err != nil || n != len(k.PossessionProof) || !proof.IsInSubGroup() || proof.IsInfinity() {
 		return false
 	}
 	hashPoint, err := bls12381.HashToG1(k.PublicKey, []byte(BLSProofOfPossessionDST))
@@ -146,7 +147,7 @@ func (k *BLSKey) BLSKeyEnvelope() (KeyFile, error) {
 	if err != nil {
 		return KeyFile{}, fmt.Errorf("encode BLS secret key: %w", err)
 	}
-	return KeyFile{Type: "BlsSigningKey", Description: "BLS signing key", CborHex: fmt.Sprintf("%x", cborHex)}, nil
+	return KeyFile{Type: "BlsSigningKey", Description: "BLS signing key", CborHex: hex.EncodeToString(cborHex)}, nil
 }
 
 // BLSVerificationKeyEnvelope returns a cardano-cli verification-key envelope.
@@ -158,5 +159,5 @@ func (k *BLSKey) BLSVerificationKeyEnvelope() (KeyFile, error) {
 	if err != nil {
 		return KeyFile{}, fmt.Errorf("encode BLS public key: %w", err)
 	}
-	return KeyFile{Type: "BlsVerificationKey", Description: "BLS verification key", CborHex: fmt.Sprintf("%x", cborHex)}, nil
+	return KeyFile{Type: "BlsVerificationKey", Description: "BLS verification key", CborHex: hex.EncodeToString(cborHex)}, nil
 }
