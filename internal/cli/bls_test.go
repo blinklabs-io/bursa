@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
@@ -104,6 +105,7 @@ func TestRunKeyBLSRejectsCollidingOutputPaths(t *testing.T) {
 			require.ErrorContains(t, err, "resolve to the same file")
 		}
 	}
+	require.Error(t, RunKeyBLS(paths[0], strings.ToUpper(paths[0]), paths[2]))
 }
 
 func TestRunKeyBLSRejectsSymlinkedOutputPaths(t *testing.T) {

@@ -59,7 +59,19 @@ func TestBLSKeyRejectsInfinityPoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key.PublicKey = append([]byte{0xc0}, make([]byte, BLSPublicKeySize-1)...)
+	infinityPublic := append([]byte{0xc0}, make([]byte, BLSPublicKeySize-1)...)
+	infinityProof := append([]byte{0xc0}, make([]byte, BLSPossessionProofSize-1)...)
+	key.PublicKey = infinityPublic
+	key.PossessionProof = infinityProof
+	if key.VerifyPossessionProof() {
+		t.Fatal("infinity public key and proof were accepted")
+	}
+
+	key, err = NewBLSKeyFromIKM(bytes.Repeat([]byte{0x42}, BLSSecretKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key.PublicKey = infinityPublic
 	if key.VerifyPossessionProof() {
 		t.Fatal("infinity public key was accepted")
 	}
@@ -68,7 +80,7 @@ func TestBLSKeyRejectsInfinityPoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key.PossessionProof = append([]byte{0xc0}, make([]byte, BLSPossessionProofSize-1)...)
+	key.PossessionProof = infinityProof
 	if key.VerifyPossessionProof() {
 		t.Fatal("infinity possession proof was accepted")
 	}

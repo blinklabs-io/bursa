@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -663,9 +662,7 @@ func canonicalOutputPath(path string) (string, error) {
 			for i := len(suffix) - 1; i >= 0; i-- {
 				resolved = filepath.Join(resolved, suffix[i])
 			}
-			if runtime.GOOS == "windows" {
-				resolved = strings.ToLower(resolved)
-			}
+			resolved = strings.ToLower(resolved)
 			return filepath.Clean(resolved), nil
 		}
 		parent := filepath.Dir(current)
