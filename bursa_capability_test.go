@@ -551,7 +551,7 @@ func TestCreatePoolRegistrationCertificateWithMetadata(t *testing.T) {
 		PoolOwners:    []lcommon.AddrKeyHash{},
 		Relays:        nil,
 		MetadataURL:   "https://example.com/pool.json",
-		MetadataHash:  lcommon.NewBlake2b256(metaHash),
+		MetadataHash:  lcommon.PoolMetadataHash(metaHash),
 	}
 
 	cborBytes, err := CreatePoolRegistrationCertificate(cert)

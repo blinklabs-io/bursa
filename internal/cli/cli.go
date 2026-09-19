@@ -1199,7 +1199,7 @@ func RunCertPoolRegistration(
 				len(hashBytes),
 			)
 		}
-		cert.MetadataHash = lcommon.NewBlake2b256(hashBytes)
+		cert.MetadataHash = lcommon.PoolMetadataHash(hashBytes)
 	}
 
 	cborBytes, err := bursa.CreatePoolRegistrationCertificate(cert)

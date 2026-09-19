@@ -544,7 +544,7 @@ func (s *Service) buildRegistration(coldVKey, vrfHash []byte, p RegistrationPara
 			return CertResult{}, fmt.Errorf("%w: metadata hash must be %d bytes, got %d", ErrInvalidRequest, lcommon.Blake2b256Size, len(hb))
 		}
 		cert.MetadataURL = metadataURL
-		cert.MetadataHash = lcommon.NewBlake2b256(hb)
+		cert.MetadataHash = lcommon.PoolMetadataHash(hb)
 	}
 
 	cborBytes, err := bursa.CreatePoolRegistrationCertificate(cert)
