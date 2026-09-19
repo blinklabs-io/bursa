@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -562,6 +563,118 @@ func RunKeyPoolCold(
 	}
 
 	return nil
+}
+
+// RunKeyBLS generates a Dijkstra-era BLS signing key and registration material.
+func RunKeyBLS(signingKeyFile, verificationKeyFile, outputFile string) error {
+	if err := validateDistinctPaths(signingKeyFile, verificationKeyFile, outputFile); err != nil {
+		return err
+	}
+	key, err := bursa.NewBLSKey()
+	if err != nil {
+		return err
+	}
+	if signingKeyFile != "" {
+		envelope, err := key.BLSKeyEnvelope()
+		if err != nil {
+			return err
+		}
+		if err := writeKeyFile(envelope, signingKeyFile); err != nil {
+			return err
+		}
+	}
+	if verificationKeyFile != "" {
+		envelope, err := key.BLSVerificationKeyEnvelope()
+		if err != nil {
+			return err
+		}
+		if err := writeKeyFile(envelope, verificationKeyFile); err != nil {
+			return err
+		}
+	}
+
+	registration := struct {
+		PublicKey       string `json:"publicKey"`
+		PossessionProof string `json:"possessionProof"`
+	}{
+		PublicKey:       hex.EncodeToString(key.PublicKey),
+		PossessionProof: hex.EncodeToString(key.PossessionProof),
+	}
+	data, err := json.MarshalIndent(registration, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal BLS registration material: %w", err)
+	}
+	data = append(data, '\n')
+	if outputFile != "" {
+		if err := bursa.WriteSecretKeyFile(outputFile, data); err != nil {
+			return fmt.Errorf("write BLS registration material: %w", err)
+		}
+		return nil
+	}
+	fmt.Print(string(data))
+	return nil
+}
+
+func validateDistinctPaths(paths ...string) error {
+	type outputPath struct {
+		input string
+		path  string
+		info  os.FileInfo
+	}
+	seen := make(map[string]outputPath, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		resolved, err := canonicalOutputPath(path)
+		if err != nil {
+			return fmt.Errorf("resolve output path %q: %w", path, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect output path %q: %w", path, err)
+		}
+		candidate := outputPath{input: path, path: resolved, info: info}
+		for key, previous := range seen {
+			if key == resolved || (info != nil && previous.info != nil && os.SameFile(info, previous.info)) {
+				return fmt.Errorf("output paths %q and %q resolve to the same file", previous.input, path)
+			}
+		}
+		seen[resolved] = candidate
+	}
+	return nil
+}
+
+func canonicalOutputPath(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	absPath = filepath.Clean(absPath)
+	current := absPath
+	suffix := make([]string, 0, 2)
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			resolved, err = filepath.Abs(resolved)
+			if err != nil {
+				return "", err
+			}
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			if runtime.GOOS == "windows" {
+				resolved = strings.ToLower(resolved)
+			}
+			return filepath.Clean(resolved), nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(current))
+		current = parent
+	}
 }
 
 // encodePoolColdKey encodes a pool cold extended private key in bech32 format
