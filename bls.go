@@ -24,8 +24,9 @@ const (
 	BLSPublicKeySize       = 96
 	BLSPossessionProofSize = 48
 
-	// This is the IETF proof-of-possession ciphersuite for BLS12-381 MinSig.
-	BLSProofOfPossessionDST = "BLS_POP_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_"
+	// This is the draft-06 proof-of-possession DST for BLS12-381 MinSig.
+	// MinSig public keys are encoded in G2, while the PoP is encoded in G1.
+	BLSProofOfPossessionDST = "BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_"
 )
 
 var errInvalidBLSSecretKey = errors.New("invalid BLS secret key")

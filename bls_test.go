@@ -20,7 +20,7 @@ func TestBLSKeyDeterministicVector(t *testing.T) {
 	if got, want := hex.EncodeToString(key.PublicKey), "981e7e992ab88b62afe0c27c006af90d43bc42300eef15c21c50198cb8c389e11b4de7e282076868eb18ba5b520a2819153062abf515f2a7e593d180dec9ec2ed74fcd0dbb884743e61c4afb3ae6eb3356030c299de34fac5b62672b12aa745c"; got != want {
 		t.Fatalf("public key = %s, want %s", got, want)
 	}
-	if got, want := hex.EncodeToString(key.PossessionProof), "87b2f091cc71ee38de8406bd216260cdc9fe49f76edea1e74faba326d5b0b364e1832b0381ec2ed811434b7cf7d41c81"; got != want {
+	if got, want := hex.EncodeToString(key.PossessionProof), "90798ee2d044031096d849936f4302c841b37c6d4d737e451f65bb07313b56508ab89f5a8e2b77248c2d2404a11c6e52"; got != want {
 		t.Fatalf("possession proof = %s, want %s", got, want)
 	}
 	if len(key.PublicKey) != BLSPublicKeySize || len(key.PossessionProof) != BLSPossessionProofSize {
