@@ -8,6 +8,7 @@ package bursa
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"testing"
 )
 
@@ -77,4 +78,60 @@ func TestNewBLSKeyFromIKMRejectsShortInput(t *testing.T) {
 	if _, err := NewBLSKeyFromIKM(make([]byte, BLSSecretKeySize-1)); err == nil {
 		t.Fatal("short keygen input was accepted")
 	}
+}
+
+func TestBLSEnvelopesValidateMaterial(t *testing.T) {
+	key, err := NewBLSKeyFromIKM(bytes.Repeat([]byte{0x42}, BLSSecretKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	invalidSecret := &BLSKey{SecretKey: make([]byte, BLSSecretKeySize)}
+	if _, err := invalidSecret.BLSKeyEnvelope(); err == nil {
+		t.Fatal("zero BLS secret scalar was accepted")
+	}
+	invalidSecret.SecretKey = bytes.Repeat([]byte{0xff}, BLSSecretKeySize)
+	if _, err := invalidSecret.BLSKeyEnvelope(); err == nil {
+		t.Fatal("out-of-range BLS secret scalar was accepted")
+	}
+
+	invalidPublic := &BLSKey{PublicKey: append([]byte{0xc0}, make([]byte, BLSPublicKeySize-1)...)}
+	if _, err := invalidPublic.BLSVerificationKeyEnvelope(); err == nil {
+		t.Fatal("infinity BLS public key was accepted")
+	}
+
+	for _, envelope := range []KeyFile{
+		mustBLSKeyEnvelope(t, key),
+		mustBLSVerificationKeyEnvelope(t, key),
+	} {
+		data, err := json.Marshal(envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := LoadKeyFromBytes(data)
+		if err != nil {
+			t.Fatalf("load %s envelope: %v", envelope.Type, err)
+		}
+		if len(loaded.VKey) == 0 {
+			t.Fatalf("load %s envelope returned no public key", envelope.Type)
+		}
+	}
+}
+
+func mustBLSKeyEnvelope(t *testing.T, key *BLSKey) KeyFile {
+	t.Helper()
+	envelope, err := key.BLSKeyEnvelope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return envelope
+}
+
+func mustBLSVerificationKeyEnvelope(t *testing.T, key *BLSKey) KeyFile {
+	t.Helper()
+	envelope, err := key.BLSVerificationKeyEnvelope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return envelope
 }

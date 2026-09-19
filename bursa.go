@@ -2572,6 +2572,20 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		}
 		lk.SKey, lk.VKey = sk, vk
 		return lk, nil
+	case "BlsVerificationKey_bls12-381-BLS-Signature-Minimal-Signature-Size":
+		vk, err := decodeBLSVerificationKey(cborData)
+		if err != nil {
+			return nil, err
+		}
+		lk.VKey = vk
+		return lk, nil
+	case "BlsSigningKey_bls12-381-BLS-Signature-Minimal-Signature-Size":
+		sk, vk, err := decodeBLSSigningKey(cborData)
+		if err != nil {
+			return nil, err
+		}
+		lk.SKey, lk.VKey = sk, vk
+		return lk, nil
 	// Operational Certificate
 	case "NodeOperationalCertificate":
 		dec, err := DecodeOpCert(cborData)

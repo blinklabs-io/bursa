@@ -32,6 +32,28 @@ const (
 
 var errInvalidBLSSecretKey = errors.New("invalid BLS secret key")
 
+func validateBLSSecretKey(secret []byte) (*big.Int, error) {
+	if len(secret) != BLSSecretKeySize {
+		return nil, errInvalidBLSSecretKey
+	}
+	sk := new(big.Int).SetBytes(secret)
+	if sk.Sign() == 0 || sk.Cmp(fr.Modulus()) >= 0 {
+		return nil, errInvalidBLSSecretKey
+	}
+	return sk, nil
+}
+
+func validateBLSPublicKey(public []byte) error {
+	if len(public) != BLSPublicKeySize {
+		return errors.New("invalid BLS public key")
+	}
+	var point bls12381.G2Affine
+	if n, err := point.SetBytes(public); err != nil || n != len(public) || !point.IsInSubGroup() || point.IsInfinity() {
+		return errors.New("invalid BLS public key")
+	}
+	return nil
+}
+
 // BLSKey contains the private key and registration material for a Dijkstra-era
 // stake-pool key used by protocols such as Leios and Peras.
 type BLSKey struct {
@@ -139,8 +161,11 @@ func blsKeyGen(ikm []byte) ([]byte, error) {
 
 // BLSKeyEnvelope returns the cardano-cli signing-key envelope.
 func (k *BLSKey) BLSKeyEnvelope() (KeyFile, error) {
-	if k == nil || len(k.SecretKey) != BLSSecretKeySize {
+	if k == nil {
 		return KeyFile{}, errInvalidBLSSecretKey
+	}
+	if _, err := validateBLSSecretKey(k.SecretKey); err != nil {
+		return KeyFile{}, err
 	}
 	cborHex, err := cbor.Encode(k.SecretKey)
 	if err != nil {
@@ -155,7 +180,7 @@ func (k *BLSKey) BLSKeyEnvelope() (KeyFile, error) {
 
 // BLSVerificationKeyEnvelope returns a cardano-cli verification-key envelope.
 func (k *BLSKey) BLSVerificationKeyEnvelope() (KeyFile, error) {
-	if k == nil || len(k.PublicKey) != BLSPublicKeySize {
+	if k == nil || validateBLSPublicKey(k.PublicKey) != nil {
 		return KeyFile{}, errors.New("invalid BLS public key")
 	}
 	cborHex, err := cbor.Encode(k.PublicKey)
@@ -167,4 +192,32 @@ func (k *BLSKey) BLSVerificationKeyEnvelope() (KeyFile, error) {
 		Description: "BLS12-381 verification key",
 		CborHex:     hex.EncodeToString(cborHex),
 	}, nil
+}
+
+func decodeBLSSigningKey(cborData []byte) ([]byte, []byte, error) {
+	secret, err := decodeKeyEnvelopeBytes(cborData, "BLS signing key")
+	if err != nil {
+		return nil, nil, err
+	}
+	sk, err := validateBLSSecretKey(secret)
+	if err != nil {
+		return nil, nil, err
+	}
+	var publicPoint bls12381.G2Jac
+	publicPoint.ScalarMultiplicationBase(sk)
+	var publicAffine bls12381.G2Affine
+	publicAffine.FromJacobian(&publicPoint)
+	publicBytes := publicAffine.Bytes()
+	return append([]byte(nil), secret...), append([]byte(nil), publicBytes[:]...), nil
+}
+
+func decodeBLSVerificationKey(cborData []byte) ([]byte, error) {
+	public, err := decodeKeyEnvelopeBytes(cborData, "BLS verification key")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateBLSPublicKey(public); err != nil {
+		return nil, err
+	}
+	return public, nil
 }
