@@ -28,6 +28,24 @@ import (
 
 // captureStdout captures stdout during the execution of a function
 
+// captureStdoutLastLine returns only the final line written to stdout.
+//
+// internal/logging binds whatever os.Stdout is at the time into its slog
+// handler on the first GetLogger() call and keeps it for the life of the
+// process. When one of these tests is the first to reach that call - which is
+// what happens under a -run filter or a test shard rather than a full package
+// run - the handler binds the pipe that captureStdout installed, so the
+// command's log line is captured alongside the value under test. The payload
+// these tests assert on is always the last line printed.
+func captureStdoutLastLine(t *testing.T, f func()) string {
+	t.Helper()
+	out := captureStdout(t, f)
+	if idx := strings.LastIndexByte(out, '\n'); idx >= 0 {
+		return out[idx+1:]
+	}
+	return out
+}
+
 func captureStdout(t *testing.T, f func()) (out string) {
 	t.Helper()
 
@@ -113,12 +131,12 @@ func TestRunHashMetadataPreservesFileBytes(t *testing.T) {
 	require.NoError(t, err)
 
 	// Capture output from both calls
-	hash1 := captureStdout(t, func() {
+	hash1 := captureStdoutLastLine(t, func() {
 		err := RunHashMetadata(file1, "pool")
 		require.NoError(t, err)
 	})
 
-	hash2 := captureStdout(t, func() {
+	hash2 := captureStdoutLastLine(t, func() {
 		err := RunHashMetadata(file2, "pool")
 		require.NoError(t, err)
 	})
@@ -162,7 +180,7 @@ func TestRunHashMetadataKnownHash(t *testing.T) {
 	require.NoError(t, err)
 
 	// Capture the hash output
-	hash := captureStdout(t, func() {
+	hash := captureStdoutLastLine(t, func() {
 		err := RunHashMetadata(file, "pool")
 		require.NoError(t, err)
 	})
