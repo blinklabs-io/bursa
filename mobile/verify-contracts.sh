@@ -21,4 +21,22 @@ rg -q 'appendingPathComponent\("Bursa", isDirectory: true\)' "$ios"
 # check to the marker-present branch so moving the call elsewhere still fails.
 marker_branch=$(sed -n '/if fileManager.fileExists(atPath: marker.path)/,/^                }/p' "$ios")
 printf '%s\n' "$marker_branch" | rg -U -q 'Self\.removeMigratedLegacyEntries'
+
+# Library/Application Support is in iCloud and iTunes backup by default, so the
+# wallet tree (multi-GB chain db plus the encrypted vault) has to opt out. The
+# flag is a per-URL resource value, so it is set on every launch rather than at
+# first creation.
+rg -q 'values\.isExcludedFromBackup = true' "$ios"
+create_branch=$(sed -n '/try fileManager.createDirectory(/,/^            if let documentsDir,/p' "$ios")
+printf '%s\n' "$create_branch" | rg -U -q 'Self\.excludeFromBackup\(dataDir\)'
+# The failed-migration fallback runs from the legacy Documents tree, which is
+# backed up too, so it has to carry the exclusion and has to be reported.
+migration_catch=$(sed -n '/wallet data migration failed/,/^    }/p' "$ios")
+printf '%s\n' "$migration_catch" | rg -U -q 'Self\.excludeFromBackup\('
+printf '%s\n' "$migration_catch" | rg -U -q 'migrationFailureDetail = '
+
+# Android's cloud backup is off at the application level; nothing under
+# mobile/android may re-enable it.
+rg -q 'android:allowBackup="false"' "$manifest"
+
 printf '%s\n' 'mobile source contracts verified'

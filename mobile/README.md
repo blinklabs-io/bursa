@@ -172,6 +172,14 @@ device can be checked with:
 ./mobile/verify-contracts.sh
 ```
 
-This verifies the Android API 35 `dataSync` timeout callback and the iOS
-Application Support data directory. It does not replace Android emulator,
-physical-device, iOS simulator, or physical-device validation.
+This verifies the Android API 35 `dataSync` timeout callback, the Android
+`allowBackup` opt-out, and the iOS Application Support data directory with its
+backup exclusion. It does not replace Android emulator, physical-device, iOS
+simulator, or physical-device validation.
+
+The iOS wallet tree lives in `Library/Application Support/Bursa`, which iCloud
+and iTunes back up by default. The app marks that directory
+`isExcludedFromBackup` on every launch, so the chain database and the encrypted
+vault stay on the device. A device restore therefore does not carry the wallet
+over; recovery is from the recovery phrase. Android sets
+`android:allowBackup="false"` for the same reason.
