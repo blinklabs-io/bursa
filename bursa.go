@@ -415,7 +415,7 @@ func NewWallet(mnemonic string, opts ...WalletOption) (*Wallet, error) {
 		opt(cfg)
 	}
 
-	if !bip39.IsMnemonicValid(mnemonic) {
+	if !isMnemonicValid(mnemonic) {
 		return nil, ErrInvalidMnemonic
 	}
 	if cfg.AccountID >= 0x80000000 || cfg.PaymentID >= 0x80000000 ||

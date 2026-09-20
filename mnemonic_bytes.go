@@ -20,6 +20,7 @@ import (
 
 	"github.com/blinklabs-io/bursa/bip32"
 	bip39 "github.com/blinklabs-io/go-bip39"
+	"golang.org/x/text/unicode/norm"
 )
 
 // GetRootKeyFromMnemonicBytes derives the CIP-1852 root key from a mnemonic held
@@ -32,8 +33,9 @@ import (
 // (IsMnemonicValid, EntropyFromMnemonic) takes a string and would force an
 // immutable copy of the mnemonic. To avoid that, the BIP39 mnemonic->entropy
 // decode (word lookup + checksum verification) is reimplemented here over the
-// byte slice, using only go-bip39's word list. It produces entropy identical to
-// bip39.EntropyFromMnemonic for a valid mnemonic.
+// byte slice, using only go-bip39's word list. For a mnemonic already in NFKD
+// form it produces entropy identical to bip39.EntropyFromMnemonic; unlike that
+// function it also accepts the other Unicode forms BIP39 requires.
 func GetRootKeyFromMnemonicBytes(
 	mnemonic []byte,
 	password string,
@@ -54,7 +56,19 @@ func GetRootKeyFromMnemonicBytes(
 // entropyFromMnemonicBytes decodes BIP39 entropy from a mnemonic byte slice,
 // verifying the checksum, without allocating an immutable mnemonic string.
 func entropyFromMnemonicBytes(mnemonic []byte) ([]byte, error) {
-	words := bytes.Fields(mnemonic)
+	// BIP39 defines the mnemonic in NFKD, and the word lists are NFKD, so a
+	// byte comparison against them rejects every other Unicode form of the same
+	// phrase. Normalize before splitting, not after: NFKD folds the ideographic
+	// space U+3000 that Japanese mnemonics use as a separator into U+0020.
+	// norm.NFKD.Bytes may alias its argument, so only the copy it allocates for
+	// a non-NFKD mnemonic is zeroed here; the caller still owns mnemonic.
+	normalized := mnemonic
+	if !norm.NFKD.IsNormal(mnemonic) {
+		normalized = norm.NFKD.Bytes(mnemonic)
+		defer zeroBytes(normalized)
+	}
+
+	words := bytes.Fields(normalized)
 	if len(words)%3 != 0 || len(words) < 12 || len(words) > 24 {
 		return nil, ErrInvalidMnemonic
 	}
@@ -119,6 +133,21 @@ func mnemonicWordIndex(word []byte, wordList []string) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// isMnemonicValid reports whether mnemonic decodes to valid BIP39 entropy under
+// the active word list. It stands in for bip39.IsMnemonicValid, which matches
+// the mnemonic in whatever Unicode form it arrives in and so rejects the NFC
+// phrases input methods commonly produce for non-ASCII word lists.
+func isMnemonicValid(mnemonic string) bool {
+	b := []byte(mnemonic)
+	defer zeroBytes(b)
+	entropy, err := entropyFromMnemonicBytes(b)
+	if err != nil {
+		return false
+	}
+	zeroBytes(entropy)
+	return true
 }
 
 // zeroBytes overwrites b with zeros.
