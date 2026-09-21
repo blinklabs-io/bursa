@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright 2026 Blink Labs Software
+  Licensed under the Apache License, Version 2.0.
+
+  android:allowBackup="false" opts out of cloud backup and restore, but it does
+  not govern the Android 12+ device-to-device transfer path, and the platform
+  documentation warns that on devices from some manufacturers app files cannot
+  be kept out of D2D migration at all. This file is the documented control for
+  that path, so the wallet tree (the chain database plus the encrypted vault
+  under filesDir) is excluded from it explicitly.
+
+  Every domain is listed rather than relying on "root" alone: the domains are
+  separate extraction trees, so an exclusion of one does not cover the others.
+
+  cloud-backup repeats the exclusions even though allowBackup="false" already
+  disables that path, so flipping allowBackup can never silently re-enrol the
+  wallet in a cloud backup.
+
+  Ignored on Android 11 and lower, which have no D2D transfer path and where
+  allowBackup="false" is the whole opt-out.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>
