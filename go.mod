@@ -10,7 +10,7 @@ require (
 	github.com/blinklabs-io/gouroboros v0.205.5
 	github.com/btcsuite/btcd/btcutil v1.2.0
 	github.com/consensys/gnark-crypto v0.21.0
-	github.com/fxamacker/cbor/v2 v2.9.3
+	github.com/fxamacker/cbor/v2 v2.9.4
 	github.com/getsops/sops/v3 v3.13.3
 	github.com/go-playground/validator/v10 v10.30.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
