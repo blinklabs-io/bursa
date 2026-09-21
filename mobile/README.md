@@ -173,13 +173,39 @@ device can be checked with:
 ```
 
 This verifies the Android API 35 `dataSync` timeout callback, the Android
-`allowBackup` opt-out, and the iOS Application Support data directory with its
-backup exclusion. It does not replace Android emulator, physical-device, iOS
-simulator, or physical-device validation.
+`allowBackup` opt-out and device-transfer extraction rules, and the iOS
+Application Support data directory with its backup exclusion, the exclusion of
+the legacy `Documents` tree, and the reporting of a failed exclusion. It does
+not replace Android emulator, physical-device, iOS simulator, or
+physical-device validation.
 
 The iOS wallet tree lives in `Library/Application Support/Bursa`, which iCloud
 and iTunes back up by default. The app marks that directory
 `isExcludedFromBackup` on every launch, so the chain database and the encrypted
 vault stay on the device. A device restore therefore does not carry the wallet
-over; recovery is from the recovery phrase. Android sets
-`android:allowBackup="false"` for the same reason.
+over; recovery is from the recovery phrase.
+
+The legacy `Documents` tree carries the same exclusion for as long as it
+exists, set before the migration copies anything: `Documents` is backed up too,
+and the legacy copy survives the copy window, a cleanup this launch deferred,
+and a name a later launch could not remove.
+
+`setResourceValues` can fail — a disk too full to write the extended attribute
+while the multi-gigabyte chain database is being copied is the likely case —
+and the result is a wallet tree that is still backup-eligible. That failure is
+reported to the user in a one-time alert rather than only written to the system
+log, because the user is the only one who can clear the condition. It is not
+fatal: the wallet's data is intact, the next launch retries, and refusing to
+launch would deny access to a working wallet over something the app cannot fix.
+
+Android sets `android:allowBackup="false"`, which opts out of cloud backup and
+restore. That attribute does not govern Android 12+ device-to-device transfer,
+so `android:dataExtractionRules` points at
+`mobile/android/app/src/main/res/xml/data_extraction_rules.xml`, which excludes
+every domain from `<device-transfer>` (and repeats the exclusions under
+`<cloud-backup>`, so flipping `allowBackup` cannot silently re-enrol the
+wallet). The platform documentation warns that on devices from some
+manufacturers app files cannot be kept out of D2D migration at all, so treat
+the transfer exclusion as best effort; the cloud opt-out is the one the
+platform guarantees. The rules file is ignored on Android 11 and lower, which
+have no D2D transfer path.
