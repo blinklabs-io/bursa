@@ -157,4 +157,96 @@ describe('popup UI', () => {
     expect(pairError.hidden).toBe(false);
     expect(pairError.textContent).toContain('Pair failed');
   });
+  it('rejects a pair response that is not 202 Accepted', async () => {
+    // The connector answers step 1 with 202 Accepted; a plain 200 is a different
+    // server and must not persist the port or reveal the code entry.
+    const fetchMock = vi.fn(async () => ({ status: 200, ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    document.getElementById('pair-btn')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const pairError = document.getElementById('pair-error')!;
+    expect(pairError.hidden).toBe(false);
+    expect(pairError.textContent).toContain('Expected 202, got 200');
+    expect(document.getElementById('code-section')!.hidden).toBe(true);
+    expect(chromeMock.storage.local.set).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the default port when the port field is empty', async () => {
+    const fetchMock = vi.fn(async () => ({ status: 202, ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    (document.getElementById('port-input') as HTMLInputElement).value = '';
+    document.getElementById('pair-btn')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).toBe('http://127.0.0.1:8090/connector/pair');
+    expect(chromeMock.storage.local.set).toHaveBeenCalledWith({ port: 8090 });
+  });
+
+  it('persists the paired port and reuses it for confirm and the next render', async () => {
+    const pairFetch = vi.fn(async () => ({ status: 202, ok: true }));
+    vi.stubGlobal('fetch', pairFetch);
+    (document.getElementById('port-input') as HTMLInputElement).value = '9100';
+
+    document.getElementById('pair-btn')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const [pairURL] = pairFetch.mock.calls[0] as unknown as [string];
+    expect(pairURL).toBe('http://127.0.0.1:9100/connector/pair');
+    expect(chromeMock.storage.local.set).toHaveBeenCalledWith({ port: 9100 });
+
+    const confirmFetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ token: 'abc123' }),
+    }));
+    vi.stubGlobal('fetch', confirmFetch);
+    (document.getElementById('code-input') as HTMLInputElement).value = '1234';
+    (document.getElementById('port-input') as HTMLInputElement).value = '8090';
+
+    document.getElementById('confirm-btn')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Confirm reads the stored port, not the input, and init() re-renders it.
+    const [confirmURL] = confirmFetch.mock.calls[0] as unknown as [string];
+    expect(confirmURL).toBe('http://127.0.0.1:9100/connector/pair');
+    expect((document.getElementById('port-input') as HTMLInputElement).value).toBe('9100');
+  });
+
+  it('rejects a blank pairing code without contacting the connector', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    (document.getElementById('code-input') as HTMLInputElement).value = '   ';
+    document.getElementById('confirm-btn')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const codeError = document.getElementById('code-error')!;
+    expect(codeError.hidden).toBe(false);
+    expect(codeError.textContent).toBe('Enter the pairing code from Bursa Settings.');
+  });
+
+  it('does not store a token when the confirm response is not ok', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({}),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    (document.getElementById('code-input') as HTMLInputElement).value = '1234';
+    document.getElementById('confirm-btn')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const codeError = document.getElementById('code-error')!;
+    expect(codeError.hidden).toBe(false);
+    expect(codeError.textContent).toContain('Pairing failed: 401');
+    expect(chromeMock.storage.local.set).not.toHaveBeenCalled();
+    const statusBar = document.getElementById('status-bar')!;
+    expect(statusBar.textContent).toBe('Not paired');
+  });
 });
