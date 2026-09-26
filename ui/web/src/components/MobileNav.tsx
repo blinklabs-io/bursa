@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Status, WalletView } from "../api/types";
 import type { Tone } from "./StatusPill";
 import { WalletSwitcher } from "./WalletSwitcher";
+import { Icon, BursaLogo } from "./Icon";
 import { CliButton } from "./CliButton";
 
 const FOCUSABLE_SELECTOR = [
@@ -55,7 +56,7 @@ interface MobileNavProps {
 
 // MobileNav renders on viewports narrower than 768 px. It replaces the fixed
 // left sidebar with:
-//   - A compact top bar: BVRSA mark · active wallet name · sync chip · ☰
+//   - A compact top bar: Bursa logo · active wallet name · sync chip · ☰
 //   - A slide-out drawer (wallet switcher + full nav list) behind the hamburger
 //
 // The desktop sidebar is hidden at the same breakpoint via CSS, so both can live
@@ -176,9 +177,7 @@ export function MobileNav({
     <>
       {/* ── Top bar ─────────────────────────────────────────────────── */}
       <div className="mobile-topbar" role="banner">
-        <span className="mobile-brand-mark" aria-label="BVRSA">
-          BVRSA
-        </span>
+        <span className="mobile-brand-mark"><BursaLogo /></span>
 
         <div className="mobile-topbar-center">
           {activeWallet ? (
@@ -209,9 +208,17 @@ export function MobileNav({
           tabIndex={open ? -1 : undefined}
           onClick={() => setOpen(true)}
         >
-          ☰
+          <Icon name="menu" />
         </button>
       </div>
+
+      <nav className="mobile-bottom-nav" aria-label="Quick navigation" inert={open} aria-hidden={open}>
+        {navItems.filter(item => item.key !== "operate").map(({ key, label, disabled, active }) => (
+          <button key={key} type="button" disabled={disabled} aria-current={active ? "page" : undefined} onClick={() => handleNavClick(key)}>
+            <Icon name={key} size={21} /><span>{label}</span>
+          </button>
+        ))}
+      </nav>
 
       {/* ── Drawer overlay + panel ───────────────────────────────────── */}
       {open && (
@@ -226,10 +233,11 @@ export function MobileNav({
         ref={drawerRef}
         id="mobile-navigation-drawer"
         className={`mobile-drawer${open ? " mobile-drawer-open" : ""}`}
-        role="navigation"
-        aria-label="Wallet and navigation"
+        role={open ? "dialog" : undefined}
+        aria-modal={open ? true : undefined}
+        aria-label={open ? "Wallet menu" : undefined}
       >
-        <div className="mobile-drawer-inner">
+        <div className="mobile-drawer-inner" role="navigation" aria-label="Wallet and navigation">
           <div className="mobile-drawer-header">
             <button
               type="button"
@@ -237,7 +245,7 @@ export function MobileNav({
               aria-label="Close menu"
               onClick={() => setOpen(false)}
             >
-              ✕
+              <Icon name="close" />
             </button>
           </div>
 
@@ -280,7 +288,7 @@ export function MobileNav({
                 disabled={disabled}
                 onClick={() => handleNavClick(key)}
               >
-                {label}
+                <Icon name={key} /><span>{label}</span>
               </button>
             ))}
           </div>
