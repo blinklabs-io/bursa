@@ -27,6 +27,9 @@ import (
 	"unsafe"
 
 	"fyne.io/systray"
+	"github.com/blinklabs-io/bursa/ui/internal/desktopnotify"
+	"github.com/blinklabs-io/bursa/ui/internal/openexternal"
+	"github.com/blinklabs-io/bursa/ui/internal/updatecheck"
 )
 
 // menuAction enumerates the tray menu actions the click loop routes through the
@@ -67,6 +70,9 @@ type Config struct {
 	// When set, the tray shows a live node-status line polled from StatusURL+"/status".
 	// Empty disables the poller (the line then reads a static label).
 	StatusURL string
+	// CurrentVersion is the release version embedded by the build. Empty means
+	// this is a development build, so a check reports the latest release only.
+	CurrentVersion string
 	// Logger receives tray diagnostics; defaults to slog.Default when nil.
 	Logger *slog.Logger
 }
@@ -75,10 +81,11 @@ type Config struct {
 // webview run loop in a single process: see Launch for the per-OS threading
 // contract.
 type Tray struct {
-	ctrl      *Controller
-	dispatch  func(func())
-	statusURL string
-	logger    *slog.Logger
+	ctrl           *Controller
+	dispatch       func(func())
+	statusURL      string
+	currentVersion string
+	logger         *slog.Logger
 
 	start func() // systray backend start (RunWithExternalLoop)
 	stop  func() // systray backend stop
@@ -102,10 +109,11 @@ func New(cfg Config) *Tray {
 		logger = slog.Default()
 	}
 	t := &Tray{
-		dispatch:  cfg.Dispatch,
-		statusURL: cfg.StatusURL,
-		logger:    logger,
-		done:      make(chan struct{}),
+		dispatch:       cfg.Dispatch,
+		statusURL:      cfg.StatusURL,
+		currentVersion: cfg.CurrentVersion,
+		logger:         logger,
+		done:           make(chan struct{}),
 	}
 	win := newWindowController(cfg.Window)
 	t.ctrl = NewController(win, cfg.Dispatch, cfg.Terminate)
@@ -173,6 +181,8 @@ func (t *Tray) onReady() {
 	mStatus := systray.AddMenuItem("Node: starting…", "Embedded node status")
 	mStatus.Disable()
 	systray.AddSeparator()
+	mUpdates := systray.AddMenuItem("Check for updates", "Check the latest Bursa release")
+	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Quit Bursa Wallet and stop the node")
 
 	// Click loop: route tray clicks through the Controller, which owns the
@@ -184,6 +194,12 @@ func (t *Tray) onReady() {
 				t.ctrl.route(actionOpen)
 			case <-mQuit.ClickedCh:
 				t.ctrl.route(actionQuit)
+			case <-mUpdates.ClickedCh:
+				mUpdates.Disable()
+				go func() {
+					defer mUpdates.Enable()
+					t.checkUpdates()
+				}()
 			case <-t.done:
 				return
 			}
@@ -191,6 +207,28 @@ func (t *Tray) onReady() {
 	}()
 
 	go t.pollStatus(mStatus)
+}
+
+func (t *Tray) checkUpdates() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	release, update, err := updatecheck.Check(ctx, nil, t.currentVersion)
+	if err != nil {
+		t.logger.Warn("failed to check for wallet updates", "error", err)
+		_ = desktopnotify.Notify(t.logger, "Bursa Wallet", "Could not check for updates")
+		return
+	}
+	if update {
+		body := "Bursa " + release.TagName + " is available"
+		_ = desktopnotify.Notify(t.logger, "Bursa Wallet update available", body)
+		openexternal.Open(t.logger, release.HTMLURL)
+		return
+	}
+	if t.currentVersion == "" {
+		_ = desktopnotify.Notify(t.logger, "Bursa Wallet", "Latest release: "+release.TagName)
+		return
+	}
+	_ = desktopnotify.Notify(t.logger, "Bursa Wallet", "You are up to date")
 }
 
 // onExit runs in the systray event loop as it tears down; nothing extra to
