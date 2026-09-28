@@ -7,7 +7,7 @@ require (
 	filippo.io/edwards25519 v1.2.0
 	github.com/MicahParks/keyfunc/v3 v3.8.2
 	github.com/blinklabs-io/go-bip39 v0.2.0
-	github.com/blinklabs-io/gouroboros v0.205.5
+	github.com/blinklabs-io/gouroboros v0.207.5
 	github.com/btcsuite/btcd/btcutil v1.2.0
 	github.com/consensys/gnark-crypto v0.21.0
 	github.com/fxamacker/cbor/v2 v2.9.4
