@@ -97,3 +97,23 @@ jobs:
           go-version: 1.26.x
       - name: cross-build
         run: GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build -o /dev/null ./cmd/bursa
+
+  # openapi/ is a separate Go module, so the repository-root `go test ./...`
+  # above cannot reach it - it fails with "main module does not contain package
+  # .../openapi/test". Nothing else ran the generated client's tests either, so
+  # the published API client shipped with no executed coverage at all.
+  go-test-openapi:
+    name: go-test (openapi)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: openapi
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
+        with:
+          go-version: 1.26.x
+      - name: go-test (openapi)
+        run: go test -race ./...

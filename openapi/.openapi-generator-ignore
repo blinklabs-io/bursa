@@ -21,3 +21,9 @@
 #docs/*.md
 # Then explicitly reverse the ignore rule for a single file:
 #!docs/README.md
+
+# test/api_default_test.go holds hand-written httptest-backed tests for the
+# generated client. The generator also skips existing test files on its own,
+# but that is an internal rule of the tool; this entry states the intent where
+# the tool looks for it, so regeneration cannot reintroduce the scaffold.
+test/api_default_test.go
