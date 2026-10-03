@@ -5,13 +5,15 @@ against a stand-in Bursa connector backend (`fake-bursa.mjs`). It checks:
 
 - installation of the unpacked Chrome tree and of the Firefox package;
 - provider registration at `document_start`, including on a page whose CSP blocks
-  all scripts, and no extension storage in the page main world;
+  all scripts, the CIP-30 `apiVersion` and extension negotiation, and no
+  extension storage in the page main world;
 - popup pairing and persistence of the pairing across popup reloads;
 - `enable()` approval followed by a CIP-30 request, with the backend seeing the
   browser-verified page origin;
 - the unpaired error, a rejected approval, no authorization reuse across page
   origins, and an unreachable backend;
-- a request served after the background is suspended.
+- a request served after the background is suspended;
+- a prompt `-2` error from a build whose background registers no listener.
 
 ```sh
 cd ui/extension
@@ -23,7 +25,9 @@ npm run test:e2e           # builds, then runs both
 ```
 
 Set `CHROMIUM_PATH` or `FIREFOX_PATH` to use an existing executable. The Firefox
-run needs `geckodriver` and a Firefox of at least the minimum version below.
+run needs `geckodriver` and a Firefox of at least the minimum version below. A
+snap-packaged `geckodriver` can drive only the snap Firefox; use an upstream
+`geckodriver` release with any other Firefox build.
 
 ## Supported browsers
 

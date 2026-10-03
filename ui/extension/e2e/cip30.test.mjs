@@ -1,9 +1,11 @@
 // Usage: node e2e/cip30.test.mjs chrome|firefox   (after `npm run build`)
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { dirname, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { zipSync } from 'fflate';
 import { launchChrome, launchFirefox } from './browsers.mjs';
 import { FakeBursa, PAIRING_CODE } from './fake-bursa.mjs';
 
@@ -42,12 +44,32 @@ async function eventually(page, expression, what) {
   assert.fail(`timed out waiting for ${what}: ${JSON.stringify(diag)}`);
 }
 
+// A copy of the built extension whose background registers no message listener,
+// as when the background script fails to start.
+function withoutBackground() {
+  const dir = mkdtempSync(join(tmpdir(), 'bursa-extension-nobg-'));
+  const tree = join(dir, target);
+  cpSync(resolve(dist, target), tree, { recursive: true });
+  writeFileSync(join(tree, 'background.js'), '');
+  if (target === 'chrome') return { dir, path: tree };
+  const files = readdirSync(tree, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name));
+  const zip = join(dir, 'extension.zip');
+  writeFileSync(
+    zip,
+    zipSync(Object.fromEntries(files.map((file) => [relative(tree, file), readFileSync(file)]))),
+  );
+  return { dir, path: zip };
+}
+
+const launch = (path) => (target === 'chrome' ? launchChrome(path) : launchFirefox(path));
+
 const bursa = new FakeBursa();
 await bursa.start();
-const browser =
-  target === 'chrome'
-    ? await launchChrome(resolve(dist, 'chrome'))
-    : await launchFirefox(resolve(dist, `bursa-connector-firefox-${version}.zip`));
+const browser = await launch(
+  target === 'chrome' ? resolve(dist, 'chrome') : resolve(dist, `bursa-connector-firefox-${version}.zip`),
+);
 
 try {
   // Provider registration happens at document_start, also under a restrictive CSP.
@@ -56,6 +78,12 @@ try {
   await early.close();
   const csp = await browser.open(`${originA}/csp`);
   assert.deepEqual(await csp.run('return window.cardano.bursa.name;'), { ok: 'Bursa' });
+  assert.deepEqual(
+    await csp.run(
+      'const p = window.cardano.bursa; return [p.apiVersion, p.supportedExtensions];',
+    ),
+    { ok: ['1', [{ cip: 95 }]] },
+  );
   assert.deepEqual(await csp.run('return typeof (window.chrome && window.chrome.storage);'), {
     ok: 'undefined',
   });
@@ -105,6 +133,13 @@ try {
   assert.deepEqual(await call(pageA, 'enable().then(() => true)'), { ok: true });
   assert.deepEqual(await call(pageA, 'isEnabled()'), { ok: true });
   assert.deepEqual(await call(pageA, 'enable().then((api) => api.getNetworkId())'), { ok: 0 });
+  assert.deepEqual(
+    await call(
+      pageA,
+      'enable({ extensions: [{ cip: 95 }, { cip: 9999 }] }).then(async (api) => [await api.getExtensions(), typeof api.cip95])',
+    ),
+    { ok: [[{ cip: 95 }], 'object'] },
+  );
   assert.ok(
     bursa.requests.every((r) => r.origin === originA),
     `backend must see the browser-verified origin: ${JSON.stringify(bursa.requests)}`,
@@ -131,6 +166,25 @@ try {
 } finally {
   await browser.close();
   await bursa.stop().catch(() => undefined);
+}
+
+// A background that cannot answer yields a prompt -2 error, not a hung call.
+const broken = withoutBackground();
+try {
+  const noBackground = await launch(broken.path);
+  try {
+    const page = await noBackground.open(`${originA}/early`);
+    const result = await page.run(`return await Promise.race([
+      window.cardano.bursa.enable(),
+      new Promise((_, reject) => setTimeout(() => reject('no reply within 10s'), 10_000)),
+    ]);`);
+    assert.equal(result.err?.code, -2, JSON.stringify(result));
+    assert.notEqual(result.err.info, 'No response from Bursa extension', JSON.stringify(result));
+  } finally {
+    await noBackground.close();
+  }
+} finally {
+  rmSync(broken.dir, { recursive: true, force: true });
   await new Promise((resolveClose) => pageServer.close(resolveClose));
 }
 console.log(`${target}: ok`);
