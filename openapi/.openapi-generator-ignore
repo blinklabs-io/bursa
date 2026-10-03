@@ -21,3 +21,8 @@
 #docs/*.md
 # Then explicitly reverse the ignore rule for a single file:
 #!docs/README.md
+
+# git_push.sh is maintained here: it passes GIT_TOKEN to git through a
+# credential helper instead of the remote URL, and the generator's template
+# would restore the URL form.
+git_push.sh

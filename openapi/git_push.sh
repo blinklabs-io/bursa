@@ -37,21 +37,31 @@ git add .
 # Commits the tracked changes and prepares them to be pushed to a remote repository.
 git commit -m "$release_note"
 
+# Runs git with the credential in $GIT_TOKEN, if set. The token reaches git
+# through a credential helper that reads it from the environment, so it never
+# appears in a remote URL, in .git/config, or in a process argument list.
+git_authenticated() {
+    if [ "$GIT_TOKEN" = "" ]; then
+        git "$@"
+    else
+        git -c credential.helper= \
+            -c "credential.helper=!f() { test \"\$1\" = get && echo username=${git_user_id} && echo \"password=\$GIT_TOKEN\"; }; f" \
+            "$@"
+    fi
+}
+
+if [ "$GIT_TOKEN" = "" ]; then
+    echo "[INFO] \$GIT_TOKEN (environment variable) is not set. Using the git credential in your environment."
+fi
+
 # Sets the new remote
 git_remote=$(git remote)
 if [ "$git_remote" = "" ]; then # git remote not defined
-
-    if [ "$GIT_TOKEN" = "" ]; then
-        echo "[INFO] \$GIT_TOKEN (environment variable) is not set. Using the git credential in your environment."
-        git remote add origin https://${git_host}/${git_user_id}/${git_repo_id}.git
-    else
-        git remote add origin https://${git_user_id}:"${GIT_TOKEN}"@${git_host}/${git_user_id}/${git_repo_id}.git
-    fi
-
+    git remote add origin https://${git_host}/${git_user_id}/${git_repo_id}.git
 fi
 
-git pull origin master
+git_authenticated pull origin master
 
 # Pushes (Forces) the changes in the local repository up to the remote repository
 echo "Git pushing to https://${git_host}/${git_user_id}/${git_repo_id}.git"
-git push origin master 2>&1 | grep -v 'To https'
+git_authenticated push origin master
