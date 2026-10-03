@@ -20,6 +20,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
@@ -228,6 +229,32 @@ func TestWriteFileAtomicRejectsOversizedVaultBeforePublish(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("oversized write published destination: stat error = %v", err)
+	}
+}
+
+// paddedEnvelope returns a parseable legacy-format envelope of exactly n bytes.
+func paddedEnvelope(n int) []byte {
+	const head, tail = `{"format":1,"pad":"`, `"}`
+	return []byte(head + strings.Repeat("a", n-len(head)-len(tail)) + tail)
+}
+
+func TestWriteFileAtomicAtVaultLimitIsReadable(t *testing.T) {
+	v := newTestVault(t)
+	if err := writeFileAtomic(v.path, paddedEnvelope(maxVaultLen), 0o600); err != nil {
+		t.Fatalf("writeFileAtomic at the limit: %v", err)
+	}
+	if _, err := v.readEnvelope(); err != nil {
+		t.Fatalf("readEnvelope of a file written at the limit: %v", err)
+	}
+}
+
+func TestReadEnvelopeRejectsFileOneByteOverLimit(t *testing.T) {
+	v := newTestVault(t)
+	if err := os.WriteFile(v.path, paddedEnvelope(maxVaultLen+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.readEnvelope(); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("readEnvelope error = %v, want size-limit error", err)
 	}
 }
 

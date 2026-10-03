@@ -15,6 +15,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -41,6 +42,8 @@ func NewStore(cfg *config.Config) (Store, error) {
 		return NewSQLiteStore(cfg.Storage.DSN)
 	case "gcp":
 		return NewGCPStore(), nil
+	case "aws":
+		return NewAWSStore(context.Background(), cfg.Aws.Prefix)
 	default:
 		// Fall back to GCP if Google project is configured
 		if cfg.Google.Project != "" &&

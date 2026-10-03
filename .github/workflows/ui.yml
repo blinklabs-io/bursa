@@ -66,6 +66,23 @@ jobs:
       - name: go build
         run: cd ui && go build ./cmd/bursa-wallet
 
+  # Windows has no directory-flush primitive, so the vault write path commits
+  # without a directory sync there. Run the commit-boundary and size-limit
+  # tests natively; the rest of the package is not yet exercised on Windows.
+  ui-vault-windows:
+    name: ui-vault (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
+        with:
+          go-version: 1.26.x
+      - name: go test (vault write path)
+        working-directory: ui
+        run: go test -v -run "TestSyncDirFS|TestWriteFileAtomic|TestReadEnvelope|CommittedWriteError|StateWhenDirectorySyncFailsAfterRename" ./internal/vault/
+
   # Compile the `-tags webview` desktop variant. Every other Go job builds only
   # the default pure-Go wallet, so nothing on a pull request ever exercised the
   # CGO webview path or the per-platform window_*.go / window_darwin.m sources.

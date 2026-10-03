@@ -16,23 +16,85 @@ package signer
 
 import (
 	"context"
+	"errors"
+	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/internal/config"
+	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 )
 
-func TestBuildWatermark_MemDefault(t *testing.T) {
-	wm, mode, err := BuildWatermark(context.Background(), config.SignerWatermarkConfig{})
-	if err != nil {
-		t.Fatalf("BuildWatermark: %v", err)
+func TestBuildWatermark_MemRefusedUnderEnforce(t *testing.T) {
+	t.Parallel()
+	// The zero value and an explicit "mem" both mean in-memory state, which a
+	// restart wipes, so neither may back an enforced watermark.
+	for _, c := range []config.SignerWatermarkConfig{
+		{},
+		{Type: "mem"},
+		{Type: "mem", Mode: "enforce"},
+	} {
+		wm, _, err := BuildWatermark(context.Background(), c)
+		if err == nil {
+			t.Fatalf("config %+v: expected error, got store %T", c, wm)
+		}
+		if !strings.Contains(err.Error(), "durable") {
+			t.Fatalf("config %+v: error should name durable storage, got %v", c, err)
+		}
 	}
-	if _, ok := wm.(*watermark.MemWatermark); !ok {
-		t.Fatalf("default type: got %T, want *MemWatermark", wm)
+}
+
+func TestBuildWatermark_MemAllowedWhenNotEnforcing(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []watermark.Mode{watermark.ModeWarn, watermark.ModeOff} {
+		wm, got, err := BuildWatermark(context.Background(), config.SignerWatermarkConfig{Mode: string(mode)})
+		if err != nil {
+			t.Fatalf("mode %q: BuildWatermark: %v", mode, err)
+		}
+		if _, ok := wm.(*watermark.MemWatermark); !ok {
+			t.Fatalf("mode %q: got %T, want *MemWatermark", mode, wm)
+		}
+		if got != mode {
+			t.Fatalf("mode: got %q, want %q", got, mode)
+		}
+	}
+}
+
+func TestBuildWatermark_EnforcedFileSurvivesRestart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cfg := config.SignerWatermarkConfig{
+		Type: "file",
+		Path: filepath.Join(t.TempDir(), "wm.db"),
+		Mode: "enforce",
+	}
+	var key backend.KeyHash
+	key[0] = 9
+
+	first, mode, err := BuildWatermark(ctx, cfg)
+	if err != nil {
+		t.Fatalf("first BuildWatermark: %v", err)
 	}
 	if mode != watermark.ModeEnforce {
-		t.Fatalf("default mode: got %q, want enforce", mode)
+		t.Fatalf("mode: got %q, want enforce", mode)
+	}
+	if err := first.CheckAndCommit(ctx, key, "tx:restart", []byte("payload-1")); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := first.(io.Closer).Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	second, _, err := BuildWatermark(ctx, cfg)
+	if err != nil {
+		t.Fatalf("second BuildWatermark: %v", err)
+	}
+	defer second.(io.Closer).Close()
+	err = second.CheckAndCommit(ctx, key, "tx:restart", []byte("payload-2"))
+	if !errors.Is(err, watermark.ErrConflict) {
+		t.Fatalf("divergent payload after restart: got %v, want ErrConflict", err)
 	}
 }
 

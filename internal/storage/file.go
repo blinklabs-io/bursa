@@ -399,11 +399,9 @@ func (w *fileWallet) Save(ctx context.Context) error {
 	encryptedAtRest := w.encryptedAtRest
 	w.mu.RUnlock()
 
-	resourceID := config.GetConfig().Google.ResourceId
-	if encryptedAtRest && resourceID == "" {
-		return errors.New(
-			"wallet encryption is required but google kms resource id is not configured",
-		)
+	encrypt := sops.Configured(config.GetConfig())
+	if encryptedAtRest && !encrypt {
+		return fmt.Errorf("wallet encryption is required: %w", sops.ErrNoMasterKey)
 	}
 
 	// Ensure directory exists with secure permissions (0700)
@@ -417,7 +415,7 @@ func (w *fileWallet) Save(ctx context.Context) error {
 		return fmt.Errorf("failed to encode wallet data: %w", err)
 	}
 	raw = append(raw, '\n')
-	if resourceID != "" {
+	if encrypt {
 		enc, err := sops.Encrypt(raw)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt wallet at rest: %w", err)
@@ -431,7 +429,7 @@ func (w *fileWallet) Save(ctx context.Context) error {
 		return fmt.Errorf("failed to write wallet file: %w", err)
 	}
 	w.mu.Lock()
-	w.encryptedAtRest = resourceID != ""
+	w.encryptedAtRest = encrypt
 	w.mu.Unlock()
 	return nil
 }
