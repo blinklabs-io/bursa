@@ -182,6 +182,12 @@ type Config struct {
 	// DataDir is the per-network data directory (db, node socket, settings,
 	// keystore). It is created (0700) if missing.
 	DataDir string
+	// NodeDataDir is the node database directory. It defaults to <DataDir>/db.
+	// Setting it keeps the chain database out of the wallet tree so the two can
+	// carry different backup and protection policies. A database left at the
+	// default location by an earlier run is moved here when this directory does
+	// not exist yet.
+	NodeDataDir string
 	// Addr is the control-surface listen address. Use "127.0.0.1:8090" for the
 	// fixed desktop port or "127.0.0.1:0" to let the OS assign a free loopback
 	// port (mobile); the bound port is reported by App.Addr after Start.
@@ -303,7 +309,10 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			"error", contactsWarn)
 	}
 
-	nodeDataDir := filepath.Join(cfg.DataDir, "db")
+	nodeDataDir, err := prepareNodeDataDir(cfg.DataDir, cfg.NodeDataDir, logger)
+	if err != nil {
+		return nil, err
+	}
 	sup := supervisor.New(supervisor.Config{
 		Network:        cfg.Network,
 		DataDir:        nodeDataDir,
@@ -698,4 +707,31 @@ func (t tipAdapter) TipSlot() (uint64, error) {
 		return 0, fmt.Errorf("node is not synced (state: %s); wait for it to reach 'ready' before issuing opcerts", st.State)
 	}
 	return st.Tip, nil
+}
+
+// prepareNodeDataDir resolves the node database directory and creates it.
+// When a separate directory is requested for the first time, a database an
+// earlier run left at <dataDir>/db is renamed into it so a synced chain is not
+// abandoned. A rename failure (for example across volumes) leaves the old copy
+// in place and starts the node from an empty directory, which resyncs.
+func prepareNodeDataDir(dataDir, nodeDir string, logger *slog.Logger) (string, error) {
+	legacy := filepath.Join(dataDir, "db")
+	if nodeDir == "" || nodeDir == legacy {
+		return legacy, nil
+	}
+	if _, err := os.Stat(nodeDir); errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(legacy); err == nil {
+			if err := os.MkdirAll(filepath.Dir(nodeDir), 0o700); err != nil {
+				return "", fmt.Errorf("create node data dir parent %q: %w", nodeDir, err)
+			}
+			if err := os.Rename(legacy, nodeDir); err != nil {
+				logger.Warn("could not move the node database to its own directory; it will resync",
+					"from", legacy, "to", nodeDir, "error", err)
+			}
+		}
+	}
+	if err := os.MkdirAll(nodeDir, 0o700); err != nil {
+		return "", fmt.Errorf("create node data dir %q: %w", nodeDir, err)
+	}
+	return nodeDir, nil
 }

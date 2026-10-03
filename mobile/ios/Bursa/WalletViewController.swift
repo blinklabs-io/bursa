@@ -71,8 +71,9 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
         // "preview" is the network; lean = true selects the history-expiry
         // profile (small on-disk footprint) for a phone.
         let dataDir = walletDataDirectory().path
+        let nodeDir = nodeDataDirectory().path
 
-        startWallet(dataDir: dataDir)
+        startWallet(dataDir: dataDir, nodeDir: nodeDir)
     }
 
     private struct StartupWarning {
@@ -147,14 +148,47 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
     // its absence means any content in the destination is a partial copy.
     private static let migrationCompleteMarker = ".migration-complete"
 
+    // The system lookup does not fail on a real device. The fallback is the
+    // fixed sandbox path it would have returned, never a temporary location:
+    // the system may delete those while the app is not running, and this tree
+    // holds the encrypted vault.
+    private static func applicationSupportDirectory() -> URL {
+        FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+    }
+
+    // The node database lives beside the wallet tree, not inside it, so the
+    // vault and the chain data carry independent backup and protection
+    // settings. Both stay readable after the first unlock so the node can sync
+    // while the device is locked. The database is a child of the directory set
+    // up here: the Go side moves an existing database out of the wallet tree
+    // only while its destination does not exist yet, and the moved directory
+    // then sits inside the excluded, protected one.
+    private func nodeDataDirectory() -> URL {
+        let fileManager = FileManager.default
+        let nodeDir = Self.applicationSupportDirectory()
+            .appendingPathComponent("BursaNode", isDirectory: true)
+        do {
+            try fileManager.createDirectory(
+                at: nodeDir, withIntermediateDirectories: true
+            )
+            try fileManager.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: nodeDir.path
+            )
+        } catch {
+            Self.logger.error("node data directory setup failed: \(String(describing: error))")
+        }
+        noteBackupExclusionFailure(Self.excludeFromBackup(nodeDir))
+        return nodeDir.appendingPathComponent("db", isDirectory: true)
+    }
+
     private func walletDataDirectory() -> URL {
         let fileManager = FileManager.default
-        guard let applicationSupport = fileManager.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first else {
-            return URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        }
-        let dataDir = applicationSupport.appendingPathComponent("Bursa", isDirectory: true)
+        let dataDir = Self.applicationSupportDirectory()
+            .appendingPathComponent("Bursa", isDirectory: true)
         let documentsDir = fileManager.urls(
             for: .documentDirectory, in: .userDomainMask
         ).first
@@ -320,7 +354,7 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
         }
     }
 
-    private func startWallet(dataDir: String) {
+    private func startWallet(dataDir: String, nodeDir: String) {
         let app = MobileNew()
         stateQueue.async { [weak self] in
             guard let self = self else {
@@ -333,6 +367,7 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
             self.app = app
 
             do {
+                app?.setNodeDataDir(nodeDir)
                 try app?.start(dataDir, network: "preview", lean: true)
             } catch {
                 Self.logger.error("wallet start failed: \(String(describing: error))")
