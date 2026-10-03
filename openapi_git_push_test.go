@@ -52,6 +52,9 @@ type gitPushRun struct {
 func runGitPush(t *testing.T, serverToken string) gitPushRun {
 	t.Helper()
 
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh is not installed")
+	}
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("git is not installed")
