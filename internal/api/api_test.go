@@ -3737,3 +3737,119 @@ func TestStartReportsServingErrorRacingCancellation(t *testing.T) {
 		metricsBase.Close()
 	}
 }
+
+func TestHandleAddressParseFormats(t *testing.T) {
+	t.Parallel()
+
+	const (
+		baseBech32 = "addr1qxwqkfd3qz5pdwmemtv2llmetegdyku4ffxuldjcfrs05nfjtw33ktf3j6amgxsgnj9u3fa5nrle79nv2g24npnth0esk2dy7q"
+		baseHex    = "019c0b25b100a816bb79dad8afff795e50d25b954a4dcfb65848e0fa4d325ba31b2d3196bbb41a089c8bc8a7b498ff9f166c521559866bbbf3"
+		baseB64    = "AZwLJbEAqBa7edrYr/95XlDSW5VKTc+2WEjg+k0yW6MbLTGWu7QaCJyLyKe0mP+fFmxSFVmGa7vz"
+		stakeBech  = "stake1uye9hgcm95cedwa5rgyfez7g576f3lulzek9y92ese4mhucu439t0"
+		stakeHex   = "e1325ba31b2d3196bbb41a089c8bc8a7b498ff9f166c521559866bbbf3"
+		byronBase5 = "Ae2tdPwUPEZ4YjgvykNpoFeYUxoyhNj2kg8KfKWN2FizsSpLUPv68MpTVDo"
+		byronHex   = "82d818582183581c4d947501de882f64dba476c342abc6b31979be1c8cfaa01f424b0779a0001a4085d696"
+	)
+
+	tests := []struct {
+		name        string
+		body        string
+		wantStatus  int
+		wantAddress string
+		wantType    string
+		wantNetwork string
+	}{
+		{
+			name:        "explicit text format",
+			body:        `{"address":"` + baseBech32 + `","format":"text"}`,
+			wantStatus:  http.StatusOK,
+			wantAddress: baseBech32,
+			wantType:    "base",
+			wantNetwork: "mainnet",
+		},
+		{
+			name:        "hex base address",
+			body:        `{"address":"` + baseHex + `","format":"hex"}`,
+			wantStatus:  http.StatusOK,
+			wantAddress: baseBech32,
+			wantType:    "base",
+			wantNetwork: "mainnet",
+		},
+		{
+			name:        "base64 base address",
+			body:        `{"address":"` + baseB64 + `","format":"base64"}`,
+			wantStatus:  http.StatusOK,
+			wantAddress: baseBech32,
+			wantType:    "base",
+			wantNetwork: "mainnet",
+		},
+		{
+			name:        "hex stake address",
+			body:        `{"address":"` + stakeHex + `","format":"hex"}`,
+			wantStatus:  http.StatusOK,
+			wantAddress: stakeBech,
+			wantType:    "reward",
+			wantNetwork: "mainnet",
+		},
+		{
+			name:        "hex byron address",
+			body:        `{"address":"` + byronHex + `","format":"hex"}`,
+			wantStatus:  http.StatusOK,
+			wantAddress: byronBase5,
+			wantType:    "byron",
+		},
+		{
+			name:       "invalid hex",
+			body:       `{"address":"zz","format":"hex"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid base64",
+			body:       `{"address":"!!!!","format":"base64"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "hex that is not an address",
+			body:       `{"address":"00","format":"hex"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "bech32 text under hex format",
+			body:       `{"address":"` + baseBech32 + `","format":"hex"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "unknown format",
+			body:       `{"address":"` + baseBech32 + `","format":"bytes"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/address/parse",
+				strings.NewReader(tc.body),
+			)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			handleAddressParse(w, req)
+
+			resp := w.Result()
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantStatus, resp.StatusCode, string(body))
+			if tc.wantStatus != http.StatusOK {
+				return
+			}
+			var got AddressParseResponse
+			require.NoError(t, json.Unmarshal(body, &got))
+			assert.Equal(t, tc.wantAddress, got.Address)
+			assert.Equal(t, tc.wantType, got.Type)
+			assert.Equal(t, tc.wantNetwork, got.Network)
+		})
+	}
+}

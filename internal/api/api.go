@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -415,7 +416,10 @@ type ScriptAddressResponse struct {
 
 // AddressParseRequest defines the request payload for address parsing
 type AddressParseRequest struct {
-	Address string `json:"address" validate:"required"`
+	Address string `json:"address"          validate:"required"`
+	// Format selects how Address is encoded: "text" (bech32 or base58, the
+	// default), "hex", or "base64" for the raw address bytes.
+	Format string `json:"format,omitempty" validate:"omitempty,oneof=text hex base64" enums:"text,hex,base64"`
 }
 
 // AddressParseResponse defines the response payload for address parsing
@@ -1864,8 +1868,7 @@ func handleAddressParse(w http.ResponseWriter, r *http.Request) {
 
 	logger := logging.GetLogger()
 
-	// Parse the address
-	addr, err := lcommon.NewAddress(req.Address)
+	addr, err := decodeAddressParseRequest(&req)
 	if err != nil {
 		logger.Error(
 			"failed to parse address",
@@ -1884,7 +1887,7 @@ func handleAddressParse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build response
-	response, err := buildAddressParseResponse(&addr, req.Address)
+	response, err := buildAddressParseResponse(&addr, addr.String())
 	if err != nil {
 		logger.Error("failed to build address parse response", "error", err)
 		writeJSONError(
@@ -2280,6 +2283,28 @@ func handleAddressEnumerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, addrs)
+}
+
+// decodeAddressParseRequest decodes the address in the encoding the request
+// names. Binary encodings carry no text form to echo, so the response reports
+// the canonical string for every format.
+func decodeAddressParseRequest(
+	req *AddressParseRequest,
+) (lcommon.Address, error) {
+	var raw []byte
+	var err error
+	switch req.Format {
+	case "hex":
+		raw, err = hex.DecodeString(req.Address)
+	case "base64":
+		raw, err = base64.StdEncoding.DecodeString(req.Address)
+	default:
+		return lcommon.NewAddress(req.Address)
+	}
+	if err != nil {
+		return lcommon.Address{}, err
+	}
+	return lcommon.NewAddressFromBytes(raw)
 }
 
 // buildAddressParseResponse builds the response for address parsing
