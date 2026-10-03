@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	dingoblockfrost "github.com/blinklabs-io/dingo/api/blockfrost"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
@@ -1189,9 +1190,6 @@ func TestGovernanceActionsFromDingoMetadata(t *testing.T) {
 	if a.YesVotes != 2 || a.NoVotes != 1 || a.AbstainVotes != 1 {
 		t.Fatalf("action[0] tallies = %d/%d/%d, want 2/1/1", a.YesVotes, a.NoVotes, a.AbstainVotes)
 	}
-	if a.AnchorURL != "https://example.test/info.json" || a.Deposit != "100000000000" {
-		t.Fatalf("action[0] anchor/deposit = %q/%q", a.AnchorURL, a.Deposit)
-	}
 	if !strings.HasPrefix(a.ActionID, "gov_action1") {
 		t.Fatalf("action[0] id = %q, want CIP-129 gov_action1… bech32", a.ActionID)
 	}
@@ -1203,6 +1201,130 @@ func TestGovernanceActionsFromDingoMetadata(t *testing.T) {
 	}
 	if got[1].YesVotes != 0 || got[1].NoVotes != 0 || got[1].AbstainVotes != 0 {
 		t.Fatalf("action[1] tallies = %+v, want all zero", got[1])
+	}
+}
+
+// TestGovernanceActionJSONOmitsUnrenderedFields pins the browser contract: the
+// attacker-controlled anchor URL and the fields no screen renders are not part
+// of the response.
+func TestGovernanceActionJSONOmitsUnrenderedFields(t *testing.T) {
+	t.Parallel()
+	b, err := json.Marshal(GovernanceAction{ActionID: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(b, &keys); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"anchor_url", "expires_epoch", "deposit"} {
+		if _, ok := keys[k]; ok {
+			t.Errorf("GovernanceAction JSON carries %q", k)
+		}
+	}
+}
+
+func newGovernanceMetadataDB(t *testing.T) (dir string, db *sql.DB) {
+	t.Helper()
+	dir = t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metadata.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	for _, ddl := range []string{govProposalDDL, govVoteDDL} {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatalf("create table: %v", err)
+		}
+	}
+	return dir, db
+}
+
+func insertGovernanceProposal(t *testing.T, db *sql.DB, id int) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT INTO governance_proposal
+		 (id, tx_hash, action_index, action_type, proposed_epoch, expires_epoch, anchor_url, deposit)
+		 VALUES (?, ?, 0, ?, 100, 130, '', 1)`,
+		id, []byte{byte(id)}, lcommon.GovActionTypeInfo,
+	); err != nil {
+		t.Fatalf("insert proposal: %v", err)
+	}
+}
+
+// TestGovernanceActionsCachesWithinTTL asserts that repeated reads inside the
+// cache window do not touch the metadata database again, and that a read after
+// the window sees the database's current rows.
+func TestGovernanceActionsCachesWithinTTL(t *testing.T) {
+	t.Parallel()
+	dir, db := newGovernanceMetadataDB(t)
+	insertGovernanceProposal(t, db, 1)
+	c := NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir))
+
+	first, err := c.GovernanceActions(context.Background())
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first read = %d rows, %v; want 1 row", len(first), err)
+	}
+	insertGovernanceProposal(t, db, 2)
+
+	second, err := c.GovernanceActions(context.Background())
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if len(second) != 1 {
+		t.Fatalf("read inside the cache window returned %d rows, want the cached 1", len(second))
+	}
+
+	c.govMu.Lock()
+	c.govCacheUntil = time.Now().Add(-time.Second)
+	c.govMu.Unlock()
+	third, err := c.GovernanceActions(context.Background())
+	if err != nil {
+		t.Fatalf("third read: %v", err)
+	}
+	if len(third) != 2 {
+		t.Fatalf("read after expiry returned %d rows, want 2", len(third))
+	}
+}
+
+// TestGovernanceActionsCacheIgnoresCallerMutation asserts a caller cannot alter
+// what later readers are served.
+func TestGovernanceActionsCacheIgnoresCallerMutation(t *testing.T) {
+	t.Parallel()
+	dir, db := newGovernanceMetadataDB(t)
+	insertGovernanceProposal(t, db, 1)
+	c := NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir))
+
+	first, err := c.GovernanceActions(context.Background())
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first read = %d rows, %v", len(first), err)
+	}
+	first[0].Type = "tampered"
+	second, err := c.GovernanceActions(context.Background())
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if second[0].Type != "info" {
+		t.Fatalf("cached row type = %q, want info", second[0].Type)
+	}
+}
+
+// TestGovernanceActionsCanceledReadIsNotCached asserts a canceled read reports
+// the cancellation and leaves nothing behind for the next caller.
+func TestGovernanceActionsCanceledReadIsNotCached(t *testing.T) {
+	t.Parallel()
+	dir, db := newGovernanceMetadataDB(t)
+	insertGovernanceProposal(t, db, 1)
+	c := NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.GovernanceActions(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled read error = %v, want context.Canceled", err)
+	}
+	got, err := c.GovernanceActions(context.Background())
+	if err != nil || len(got) != 1 {
+		t.Fatalf("read after cancellation = %d rows, %v; want 1 row", len(got), err)
 	}
 }
 

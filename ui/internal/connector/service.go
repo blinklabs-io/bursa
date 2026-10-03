@@ -165,6 +165,13 @@ func (s *Service) BeginPair(extensionID string) (string, error) {
 	return code, nil
 }
 
+// TrustedPairingOrigin reports whether origin is the extension origin that
+// extensionID names, after the same normalization BeginPair applies.
+func (s *Service) TrustedPairingOrigin(origin, extensionID string) bool {
+	extensionID = normalizeExtensionID(extensionID)
+	return validExtensionID(extensionID) && origin == extensionID
+}
+
 // ConfirmPair validates the code for extensionID, then mints and returns a
 // bearer token. Returns ErrPairCodeMismatch if the code is wrong, expired, or
 // has exhausted its attempt budget. The code is compared in constant time so a

@@ -55,7 +55,7 @@ func TestTokenStoreRejectsInvalidExtensionIDs(t *testing.T) {
 	}
 }
 
-func TestTokenStoreClearKeepsMemoryOnRemoveFailure(t *testing.T) {
+func TestTokenStoreClearRevokesMemoryOnRemoveFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "token.json")
 	ts := NewTokenStore(path, func() (string, error) { return "tok", nil })
 	if _, err := ts.Mint("abc"); err != nil {
@@ -69,8 +69,11 @@ func TestTokenStoreClearKeepsMemoryOnRemoveFailure(t *testing.T) {
 	if err := ts.Clear(); err == nil {
 		t.Fatal("Clear on non-empty directory path should fail")
 	}
-	if !ts.Verify("tok", "chrome-extension://abc") {
-		t.Fatal("failed Clear must keep token in memory")
+	if ts.Verify("tok", "chrome-extension://abc") {
+		t.Fatal("failed Clear must still revoke the in-memory token")
+	}
+	if _, _, paired := ts.Pair(); paired {
+		t.Fatal("failed Clear must not leave a pairing reported")
 	}
 }
 

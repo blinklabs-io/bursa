@@ -932,8 +932,8 @@ func decodeGovernanceActions(t *testing.T, rec *httptest.ResponseRecorder) gover
 
 func sampleGovActions() []chain.GovernanceAction {
 	return []chain.GovernanceAction{
-		{ActionID: "gov_action1aaa", TxHash: "aa", ActionIndex: 0, Type: "info", Status: "active", ProposedEpoch: 100, YesVotes: 2, NoVotes: 1, AbstainVotes: 0, Deposit: "100000000000"},
-		{ActionID: "gov_action1bbb", TxHash: "bb", ActionIndex: 1, Type: "treasury-withdrawal", Status: "enacted", ProposedEpoch: 90, Deposit: "100000000000"},
+		{ActionID: "gov_action1aaa", TxHash: "aa", ActionIndex: 0, Type: "info", Status: "active", ProposedEpoch: 100, YesVotes: 2, NoVotes: 1, AbstainVotes: 0},
+		{ActionID: "gov_action1bbb", TxHash: "bb", ActionIndex: 1, Type: "treasury-withdrawal", Status: "enacted", ProposedEpoch: 90},
 	}
 }
 
