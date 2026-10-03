@@ -25,8 +25,11 @@ For the socket wire format, see
 - **`serve-key`** - the agent pushes the current KES signing key (with its
   opcert) to the producer over the service socket. Key custody moves to the
   producer for actual header signing.
-- **`sign`** - the producer sends header bytes and the agent returns
-  signatures; the KES signing key never leaves the agent.
+- **`sign`** - the producer sends a block header body and the agent returns
+  its signature; the KES signing key never leaves the agent. Only header
+  bodies matching the installed key and operational certificate are signed
+  (see the protocol document). To run the agent inside an attested workload,
+  see [`attested-custody.md`](attested-custody.md).
 
 ## Sockets
 

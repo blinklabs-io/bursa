@@ -280,7 +280,10 @@ func TestServiceSignMode(t *testing.T) {
 		t.Fatalf("bad hello mode: %s", hello.Mode)
 	}
 
-	msg := []byte("header")
+	// Each request carries a header body whose slot lies in the period it asks
+	// for, so the period rules, not header validation, decide the outcome.
+	spec := headerSpec{slot: 52, issuer: cold.pub, hotVkey: vkey, sequence: 1, kesPeriod: 3}
+	msg := spec.encode(t)
 	if err := writeFrame(conn, SignRequest{Type: "sign_request", Period: 5, Message: msg}); err != nil {
 		t.Fatalf("write sign request: %v", err)
 	}
@@ -297,7 +300,8 @@ func TestServiceSignMode(t *testing.T) {
 
 	// A future period must be rejected before the active key or durable guard
 	// advances, so an authorized service peer cannot destroy the signing state.
-	if err := writeFrame(conn, SignRequest{Type: "sign_request", Period: 6, Message: msg}); err != nil {
+	spec.slot = 62
+	if err := writeFrame(conn, SignRequest{Type: "sign_request", Period: 6, Message: spec.encode(t)}); err != nil {
 		t.Fatalf("write future-period request: %v", err)
 	}
 	var futureResp SignResponse
@@ -312,7 +316,8 @@ func TestServiceSignMode(t *testing.T) {
 	}
 
 	// A past period must be rejected with an error in the response.
-	if err := writeFrame(conn, SignRequest{Type: "sign_request", Period: 4, Message: msg}); err != nil {
+	spec.slot = 42
+	if err := writeFrame(conn, SignRequest{Type: "sign_request", Period: 4, Message: spec.encode(t)}); err != nil {
 		t.Fatalf("write past-period request: %v", err)
 	}
 	var resp2 SignResponse
@@ -321,6 +326,18 @@ func TestServiceSignMode(t *testing.T) {
 	}
 	if resp2.Error == "" {
 		t.Fatal("expected error for past-period sign request")
+	}
+
+	// An arbitrary message is refused even at a valid period.
+	if err := writeFrame(conn, SignRequest{Type: "sign_request", Period: 5, Message: []byte("header")}); err != nil {
+		t.Fatalf("write untyped request: %v", err)
+	}
+	var untyped SignResponse
+	if err := readFrame(conn, &untyped); err != nil {
+		t.Fatalf("read untyped response: %v", err)
+	}
+	if untyped.Error == "" || len(untyped.Signature) != 0 {
+		t.Fatalf("untyped message was signed: err=%q sig=%d bytes", untyped.Error, len(untyped.Signature))
 	}
 }
 
