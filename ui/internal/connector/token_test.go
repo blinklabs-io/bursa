@@ -25,6 +25,24 @@ func TestTokenStoreMintVerify(t *testing.T) {
 	}
 }
 
+func TestTokenStoreMintVerifyFirefoxOrigin(t *testing.T) {
+	t.Parallel()
+	ts := NewTokenStore(t.TempDir()+"/token.json", func() (string, error) { return "tok", nil })
+	const origin = "moz-extension://5c0cbe2a-0e5f-4b0a-9a3c-1f2f6c0c1d11"
+	if _, err := ts.Mint(origin); err != nil {
+		t.Fatalf("Mint(%q) error = %v", origin, err)
+	}
+	if !ts.Verify("tok", origin) {
+		t.Fatal("verify should pass for the paired moz-extension origin")
+	}
+	if ts.Verify("tok", "moz-extension://other") {
+		t.Fatal("verify must fail for a different moz-extension origin")
+	}
+	if ts.Verify("tok", "chrome-extension://5c0cbe2a-0e5f-4b0a-9a3c-1f2f6c0c1d11") {
+		t.Fatal("verify must not treat a chrome-extension origin as the paired moz-extension origin")
+	}
+}
+
 func TestTokenStoreMintDoesNotChangeMemoryOnPersistFailure(t *testing.T) {
 	blockedPath := t.TempDir()
 	ts := NewTokenStore(blockedPath, func() (string, error) { return "tok", nil })
@@ -42,7 +60,7 @@ func TestTokenStoreRejectsInvalidExtensionIDs(t *testing.T) {
 		calls++
 		return "tok", nil
 	})
-	for _, extID := range []string{"", "https://example.com", "moz-extension://abc", "chrome-extension://"} {
+	for _, extID := range []string{"", "https://example.com", "chrome-extension://", "moz-extension://", "moz-extension://has/slash"} {
 		if _, err := ts.Mint(extID); !errors.Is(err, ErrInvalidExtensionID) {
 			t.Fatalf("Mint(%q) error = %v, want ErrInvalidExtensionID", extID, err)
 		}

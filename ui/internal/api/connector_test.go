@@ -1296,6 +1296,27 @@ func TestConnectorMiddlewareNormalizesRawPairedExtensionID(t *testing.T) {
 	}
 }
 
+func TestConnectorMiddlewareAcceptsFirefoxExtensionOrigin(t *testing.T) {
+	t.Parallel()
+	const origin = "moz-extension://5c0cbe2a-0e5f-4b0a-9a3c-1f2f6c0c1d11"
+	svc, token := newTestService(t, origin)
+	mw := connectorMiddleware(svc, svc.PairedExtensionID)
+
+	var nextCalled bool
+	req := httptest.NewRequest(http.MethodGet, "/connector/utxos", nil)
+	req.Header.Set("Origin", origin)
+	req.Header.Set("X-Bursa-Token", token)
+	rec := httptest.NewRecorder()
+	mw(newOKHandler(&nextCalled)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !nextCalled {
+		t.Fatalf("status = %d, next called = %v; body: %s", rec.Code, nextCalled, rec.Body.String())
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, origin)
+	}
+}
+
 // TestHandlePendingPairings verifies POST /connector/pending-pairings.
 func TestHandlePendingPairings(t *testing.T) {
 	const extID = "chrome-extension://pending-pair-test"
