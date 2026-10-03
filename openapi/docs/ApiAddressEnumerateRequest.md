@@ -4,12 +4,12 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Account** | Pointer to **int32** |  | [optional]
-**Count** | **int32** |  |
-**Mnemonic** | **string** |  |
-**Network** | **string** |  |
-**Password** | Pointer to **string** |  | [optional]
-**Start** | Pointer to **int32** |  | [optional]
+**Account** | Pointer to **int32** |  | [optional] 
+**Count** | **int32** |  | 
+**Mnemonic** | **string** |  | 
+**Network** | **string** |  | 
+**Password** | Pointer to **string** |  | [optional] 
+**Start** | Pointer to **int32** |  | [optional] 
 
 ## Methods
 
@@ -167,3 +167,5 @@ HasStart returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

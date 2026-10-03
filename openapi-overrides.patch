@@ -1,0 +1,31 @@
+diff --git a/openapi/README.md b/openapi/README.md
+index e18137c..67815e3 100644
+--- a/openapi/README.md
++++ b/openapi/README.md
+@@ -154,2 +154,3 @@ Authentication schemes defined for the API:
+ Note, each API key must be added to a map of `map[string]APIKey` where the key is: BearerAuth and passed in as the auth context for each request.
++Set `Prefix` to `Bearer` so the client sends the JWT using the required `Authorization: Bearer <JWT>` header.
+ 
+@@ -162,3 +163,3 @@ auth := context.WithValue(
+ 		map[string]openapi.APIKey{
+-			"BearerAuth": {Key: "API_KEY_STRING"},
++			"BearerAuth": {Key: "JWT_STRING", Prefix: "Bearer"},
+ 		},
+diff --git a/openapi/client.go b/openapi/client.go
+index 21b554c..838a519 100644
+--- a/openapi/client.go
++++ b/openapi/client.go
+@@ -310,3 +310,3 @@ func (c *APIClient) prepareRequest(
+ 	// add form parameters and file if available.
+-	if strings.HasPrefix(headerParams["Content-Type"], "multipart/form-data") && len(formParams) > 0 || (len(formFiles) > 0) {
++	if strings.HasPrefix(headerParams["Content-Type"], "multipart/form-data") && (len(formParams) > 0 || len(formFiles) > 0) {
+ 		if body != nil {
+diff --git a/openapi/configuration.go b/openapi/configuration.go
+index 1ef85d5..b392fe9 100644
+--- a/openapi/configuration.go
++++ b/openapi/configuration.go
+@@ -31,3 +31,3 @@ func (c contextKey) String() string {
+ var (
+-	// ContextAPIKeys takes a string apikey as authentication for the request
++	// ContextAPIKeys takes a map[string]APIKey as authentication for the request.
+ 	ContextAPIKeys = contextKey("apiKeys")

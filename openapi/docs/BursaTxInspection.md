@@ -4,25 +4,25 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**CertificateCount** | Pointer to **int32** |  | [optional]
-**Era** | Pointer to **string** |  | [optional]
-**Fee** | Pointer to **string** |  | [optional]
-**HasMetadata** | Pointer to **bool** |  | [optional]
-**HasMint** | Pointer to **bool** |  | [optional]
-**HasTreasuryDonation** | Pointer to **bool** |  | [optional]
-**Inputs** | Pointer to [**[]BursaTxInput**](BursaTxInput.md) |  | [optional]
-**IsValid** | Pointer to **bool** |  | [optional]
-**NativeScripts** | Pointer to **int32** |  | [optional]
-**Outputs** | Pointer to [**[]BursaTxOutput**](BursaTxOutput.md) |  | [optional]
-**ProposalProcedureCount** | Pointer to **int32** |  | [optional]
-**RequiredSigners** | Pointer to **int32** |  | [optional]
-**SizeBytes** | Pointer to **int32** |  | [optional]
-**Ttl** | Pointer to **int32** |  | [optional]
-**TxId** | Pointer to **string** |  | [optional]
-**ValidityIntervalStart** | Pointer to **int32** |  | [optional]
-**VkeyWitnesses** | Pointer to **int32** |  | [optional]
-**VotingProcedureCount** | Pointer to **int32** | Conway governance and treasury components. These authorize high-impact actions (casting DRep/committee votes, submitting governance proposals, donating to the treasury) that are independent of outputs/certificates/withdrawals, so the policy engine must inspect and gate them explicitly. | [optional]
-**WithdrawalCount** | Pointer to **int32** |  | [optional]
+**CertificateCount** | Pointer to **int32** |  | [optional] 
+**Era** | Pointer to **string** |  | [optional] 
+**Fee** | Pointer to **string** |  | [optional] 
+**HasMetadata** | Pointer to **bool** |  | [optional] 
+**HasMint** | Pointer to **bool** |  | [optional] 
+**HasTreasuryDonation** | Pointer to **bool** |  | [optional] 
+**Inputs** | Pointer to [**[]BursaTxInput**](BursaTxInput.md) |  | [optional] 
+**IsValid** | Pointer to **bool** |  | [optional] 
+**NativeScripts** | Pointer to **int32** |  | [optional] 
+**Outputs** | Pointer to [**[]BursaTxOutput**](BursaTxOutput.md) |  | [optional] 
+**ProposalProcedureCount** | Pointer to **int32** |  | [optional] 
+**RequiredSigners** | Pointer to **int32** |  | [optional] 
+**SizeBytes** | Pointer to **int32** |  | [optional] 
+**Ttl** | Pointer to **int32** |  | [optional] 
+**TxId** | Pointer to **string** |  | [optional] 
+**ValidityIntervalStart** | Pointer to **int32** |  | [optional] 
+**VkeyWitnesses** | Pointer to **int32** |  | [optional] 
+**VotingProcedureCount** | Pointer to **int32** | Conway governance and treasury components. These authorize high-impact actions (casting DRep/committee votes, submitting governance proposals, donating to the treasury) that are independent of outputs/certificates/withdrawals, so the policy engine must inspect and gate them explicitly. | [optional] 
+**WithdrawalCount** | Pointer to **int32** |  | [optional] 
 
 ## Methods
 
@@ -520,3 +520,5 @@ HasWithdrawalCount returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

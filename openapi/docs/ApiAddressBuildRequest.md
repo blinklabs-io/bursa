@@ -4,10 +4,10 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Network** | **string** |  |
-**PaymentKey** | Pointer to **string** | bech32-encoded verification key (required for base and enterprise address types) | [optional]
-**StakeKey** | Pointer to **string** | bech32-encoded verification key (required for base and reward address types) | [optional]
-**Type** | Pointer to **string** | defaults to \&quot;base\&quot; - determines which keys are required: base requires both paymentKey and stakeKey, enterprise requires paymentKey only, reward requires stakeKey only | [optional]
+**Network** | **string** |  | 
+**PaymentKey** | Pointer to **string** | bech32-encoded verification key (required for base and enterprise address types) | [optional] 
+**StakeKey** | Pointer to **string** | bech32-encoded verification key (required for base and reward address types) | [optional] 
+**Type** | Pointer to **string** | defaults to \&quot;base\&quot; - determines which keys are required: base requires both paymentKey and stakeKey, enterprise requires paymentKey only, reward requires stakeKey only | [optional] 
 
 ## Methods
 
@@ -125,3 +125,5 @@ HasType returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

@@ -4,14 +4,14 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Address** | Pointer to **string** |  | [optional]
-**Byron** | Pointer to [**ApiByronAddressInfo**](ApiByronAddressInfo.md) |  | [optional]
-**Network** | Pointer to **string** |  | [optional]
-**Payment** | Pointer to [**ApiCredentialInfo**](ApiCredentialInfo.md) |  | [optional]
-**Pointer** | Pointer to [**ApiPointerInfo**](ApiPointerInfo.md) |  | [optional]
-**Stake** | Pointer to [**ApiCredentialInfo**](ApiCredentialInfo.md) |  | [optional]
-**Type** | Pointer to **string** |  | [optional]
-**TypeDescription** | Pointer to **string** |  | [optional]
+**Address** | Pointer to **string** |  | [optional] 
+**Byron** | Pointer to [**ApiByronAddressInfo**](ApiByronAddressInfo.md) |  | [optional] 
+**Network** | Pointer to **string** |  | [optional] 
+**Payment** | Pointer to [**ApiCredentialInfo**](ApiCredentialInfo.md) |  | [optional] 
+**Pointer** | Pointer to [**ApiPointerInfo**](ApiPointerInfo.md) |  | [optional] 
+**Stake** | Pointer to [**ApiCredentialInfo**](ApiCredentialInfo.md) |  | [optional] 
+**Type** | Pointer to **string** |  | [optional] 
+**TypeDescription** | Pointer to **string** |  | [optional] 
 
 ## Methods
 
@@ -234,3 +234,5 @@ HasTypeDescription returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

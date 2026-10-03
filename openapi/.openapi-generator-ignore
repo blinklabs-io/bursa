@@ -26,3 +26,8 @@
 # credential helper instead of the remote URL, and the generator's template
 # would restore the URL form.
 git_push.sh
+
+# The module manifests are maintained here: the generator emits a stale go
+# directive and no checksums for the test dependencies.
+go.mod
+go.sum

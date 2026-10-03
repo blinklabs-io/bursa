@@ -4,16 +4,16 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**AccountId** | Pointer to **int32** |  | [optional]
-**AddressId** | Pointer to **int32** |  | [optional]
-**CommitteeColdId** | Pointer to **int32** |  | [optional]
-**CommitteeHotId** | Pointer to **int32** |  | [optional]
-**DrepId** | Pointer to **int32** |  | [optional]
-**Mnemonic** | **string** | Mnemonic is a BIP39 mnemonic phrase. |
-**Password** | Pointer to **string** |  | [optional]
-**PaymentId** | Pointer to **int32** |  | [optional]
-**PoolColdId** | Pointer to **int32** |  | [optional]
-**StakeId** | Pointer to **int32** |  | [optional]
+**AccountId** | Pointer to **int32** |  | [optional] 
+**AddressId** | Pointer to **int32** |  | [optional] 
+**CommitteeColdId** | Pointer to **int32** |  | [optional] 
+**CommitteeHotId** | Pointer to **int32** |  | [optional] 
+**DrepId** | Pointer to **int32** |  | [optional] 
+**Mnemonic** | **string** | Mnemonic is a BIP39 mnemonic phrase. | 
+**Password** | Pointer to **string** |  | [optional] 
+**PaymentId** | Pointer to **int32** |  | [optional] 
+**PoolColdId** | Pointer to **int32** |  | [optional] 
+**StakeId** | Pointer to **int32** |  | [optional] 
 
 ## Methods
 
@@ -281,3 +281,5 @@ HasStakeId returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+
