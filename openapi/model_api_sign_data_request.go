@@ -22,8 +22,11 @@ var _ MappedNullable = &ApiSignDataRequest{}
 
 // ApiSignDataRequest struct for ApiSignDataRequest
 type ApiSignDataRequest struct {
-	Address    string `json:"address"`
-	Payload    string `json:"payload"`
+	// Address is a hex-encoded address.
+	Address string `json:"address"`
+	// Payload is a hex-encoded message payload.
+	Payload string `json:"payload"`
+	// SigningKey identifies the signing key.
 	SigningKey string `json:"signing_key"`
 }
 

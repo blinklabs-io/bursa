@@ -23,7 +23,8 @@ var _ MappedNullable = &ApiTxAssembleRequest{}
 // ApiTxAssembleRequest struct for ApiTxAssembleRequest
 type ApiTxAssembleRequest struct {
 	// raw hex CBOR or JSON text envelope
-	TxCbor    string   `json:"tx_cbor"`
+	TxCbor string `json:"tx_cbor"`
+	// Witnesses are hex-encoded transaction witnesses.
 	Witnesses []string `json:"witnesses"`
 }
 

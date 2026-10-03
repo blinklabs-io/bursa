@@ -4,9 +4,9 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Address** | Pointer to **string** |  | [optional]
-**HasAssets** | Pointer to **bool** | HasAssets is true when the output carries native (multi-)assets in addition to lovelace. The policy engine treats native-asset movement as a distinct, deny-by-default operation because lovelace limits do not bound token quantities. | [optional]
-**Lovelace** | Pointer to **string** |  | [optional]
+**Address** | Pointer to **string** |  | [optional] 
+**HasAssets** | Pointer to **bool** | HasAssets is true when the output carries native (multi-)assets in addition to lovelace. The policy engine treats native-asset movement as a distinct, deny-by-default operation because lovelace limits do not bound token quantities. | [optional] 
+**Lovelace** | Pointer to **string** |  | [optional] 
 
 ## Methods
 
@@ -104,3 +104,5 @@ HasLovelace returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

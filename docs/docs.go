@@ -279,6 +279,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
+                    },
+                    "503": {
+                        "description": "Script validation busy; retry",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
                     }
                 }
             }
@@ -962,6 +968,15 @@ const docTemplate = `{
             "properties": {
                 "address": {
                     "type": "string"
+                },
+                "format": {
+                    "description": "Format selects how Address is encoded: \"text\" (bech32 or base58, the\ndefault), \"hex\", or \"base64\" for the raw address bytes.",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "hex",
+                        "base64"
+                    ]
                 }
             }
         },
@@ -1154,17 +1169,16 @@ const docTemplate = `{
             ],
             "properties": {
                 "message": {
-                    "description": "Hex-encoded signed payload",
-                    "format": "hex",
-                    "type": "string"
+                    "type": "string",
+                    "format": "hex"
                 },
                 "public_keys": {
                     "type": "array",
                     "items": {
+                        "type": "string",
                         "format": "hex",
                         "maxLength": 64,
-                        "minLength": 64,
-                        "type": "string"
+                        "minLength": 64
                     }
                 },
                 "require_signatures": {

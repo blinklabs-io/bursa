@@ -4,9 +4,9 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Key** | **string** |  |
-**Payload** | **string** |  |
-**Signature** | **string** |  |
+**Key** | **string** |  | 
+**Payload** | **string** |  | 
+**Signature** | **string** |  | 
 
 ## Methods
 
@@ -89,3 +89,5 @@ SetSignature sets Signature field to given value.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

@@ -72,7 +72,7 @@ Other parameters are passed through a pointer to a apiApiAddressBuildPostRequest
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiAddressBuildRequest**](ApiAddressBuildRequest.md) | Address Build Request |
+ **request** | [**ApiAddressBuildRequest**](ApiAddressBuildRequest.md) | Address Build Request | 
 
 ### Return type
 
@@ -138,7 +138,7 @@ Other parameters are passed through a pointer to a apiApiAddressEnumeratePostReq
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiAddressEnumerateRequest**](ApiAddressEnumerateRequest.md) | Address Enumerate Request |
+ **request** | [**ApiAddressEnumerateRequest**](ApiAddressEnumerateRequest.md) | Address Enumerate Request | 
 
 ### Return type
 
@@ -204,7 +204,7 @@ Other parameters are passed through a pointer to a apiApiAddressParsePostRequest
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiAddressParseRequest**](ApiAddressParseRequest.md) | Address Parse Request |
+ **request** | [**ApiAddressParseRequest**](ApiAddressParseRequest.md) | Address Parse Request | 
 
 ### Return type
 
@@ -270,7 +270,7 @@ Other parameters are passed through a pointer to a apiApiScriptAddressPostReques
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiScriptAddressRequest**](ApiScriptAddressRequest.md) | Script Address Request |
+ **request** | [**ApiScriptAddressRequest**](ApiScriptAddressRequest.md) | Script Address Request | 
 
 ### Return type
 
@@ -336,7 +336,7 @@ Other parameters are passed through a pointer to a apiApiScriptCreatePostRequest
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiScriptCreateRequest**](ApiScriptCreateRequest.md) | Script Create Request |
+ **request** | [**ApiScriptCreateRequest**](ApiScriptCreateRequest.md) | Script Create Request | 
 
 ### Return type
 
@@ -402,7 +402,7 @@ Other parameters are passed through a pointer to a apiApiScriptValidatePostReque
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiScriptValidateRequest**](ApiScriptValidateRequest.md) | Script Validate Request |
+ **request** | [**ApiScriptValidateRequest**](ApiScriptValidateRequest.md) | Script Validate Request | 
 
 ### Return type
 
@@ -468,7 +468,7 @@ Other parameters are passed through a pointer to a apiApiSignDataPostRequest str
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiSignDataRequest**](ApiSignDataRequest.md) | Sign Data Request |
+ **request** | [**ApiSignDataRequest**](ApiSignDataRequest.md) | Sign Data Request | 
 
 ### Return type
 
@@ -534,7 +534,7 @@ Other parameters are passed through a pointer to a apiApiSignVerifyPostRequest s
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiVerifyDataRequest**](ApiVerifyDataRequest.md) | Verify Data Request |
+ **request** | [**ApiVerifyDataRequest**](ApiVerifyDataRequest.md) | Verify Data Request | 
 
 ### Return type
 
@@ -600,7 +600,7 @@ Other parameters are passed through a pointer to a apiApiTxAssemblePostRequest s
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiTxAssembleRequest**](ApiTxAssembleRequest.md) | Transaction + witnesses |
+ **request** | [**ApiTxAssembleRequest**](ApiTxAssembleRequest.md) | Transaction + witnesses | 
 
 ### Return type
 
@@ -666,7 +666,7 @@ Other parameters are passed through a pointer to a apiApiTxDecodePostRequest str
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiTxDecodeRequest**](ApiTxDecodeRequest.md) | Transaction |
+ **request** | [**ApiTxDecodeRequest**](ApiTxDecodeRequest.md) | Transaction | 
 
 ### Return type
 
@@ -732,7 +732,7 @@ Other parameters are passed through a pointer to a apiApiTxIdPostRequest struct 
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiTxIDRequest**](ApiTxIDRequest.md) | Transaction |
+ **request** | [**ApiTxIDRequest**](ApiTxIDRequest.md) | Transaction | 
 
 ### Return type
 
@@ -798,7 +798,7 @@ Other parameters are passed through a pointer to a apiApiTxSignPostRequest struc
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiTxSignRequest**](ApiTxSignRequest.md) | Transaction + signing keys |
+ **request** | [**ApiTxSignRequest**](ApiTxSignRequest.md) | Transaction + signing keys | 
 
 ### Return type
 
@@ -864,7 +864,7 @@ Other parameters are passed through a pointer to a apiApiTxWitnessPostRequest st
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiTxWitnessRequest**](ApiTxWitnessRequest.md) | Transaction + signing key |
+ **request** | [**ApiTxWitnessRequest**](ApiTxWitnessRequest.md) | Transaction + signing key | 
 
 ### Return type
 
@@ -991,7 +991,7 @@ Other parameters are passed through a pointer to a apiApiWalletDeletePostRequest
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiWalletDeleteRequest**](ApiWalletDeleteRequest.md) | Wallet Delete Request |
+ **request** | [**ApiWalletDeleteRequest**](ApiWalletDeleteRequest.md) | Wallet Delete Request | 
 
 ### Return type
 
@@ -1057,7 +1057,7 @@ Other parameters are passed through a pointer to a apiApiWalletGetPostRequest st
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiWalletGetRequest**](ApiWalletGetRequest.md) | Wallet Restore Request |
+ **request** | [**ApiWalletGetRequest**](ApiWalletGetRequest.md) | Wallet Restore Request | 
 
 ### Return type
 
@@ -1184,7 +1184,7 @@ Other parameters are passed through a pointer to a apiApiWalletRestorePostReques
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiWalletRestoreRequest**](ApiWalletRestoreRequest.md) | Wallet Restore Request |
+ **request** | [**ApiWalletRestoreRequest**](ApiWalletRestoreRequest.md) | Wallet Restore Request | 
 
 ### Return type
 
@@ -1250,7 +1250,7 @@ Other parameters are passed through a pointer to a apiApiWalletUpdatePostRequest
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **request** | [**ApiWalletUpdateRequest**](ApiWalletUpdateRequest.md) | Wallet Update Request |
+ **request** | [**ApiWalletUpdateRequest**](ApiWalletUpdateRequest.md) | Wallet Update Request | 
 
 ### Return type
 
@@ -1268,3 +1268,4 @@ Name | Type | Description  | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints)
 [[Back to Model list]](../README.md#documentation-for-models)
 [[Back to README]](../README.md)
+

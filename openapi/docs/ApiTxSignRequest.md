@@ -4,14 +4,14 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**SigningKeys** | **[]string** |  |
-**TxCbor** | **string** | raw hex CBOR or JSON text envelope |
+**SigningKeys** | **[]string** |  | 
+**TxCbor** | **string** | raw hex CBOR or JSON text envelope | 
 
 ## Methods
 
 ### NewApiTxSignRequest
 
-`func NewApiTxSignRequest(signingKeys []string, txCbor string) *ApiTxSignRequest`
+`func NewApiTxSignRequest(signingKeys []string, txCbor string, ) *ApiTxSignRequest`
 
 NewApiTxSignRequest instantiates a new ApiTxSignRequest object
 This constructor will assign default values to properties that have it defined,
@@ -34,7 +34,7 @@ GetSigningKeys returns the SigningKeys field if non-nil, zero value otherwise.
 
 ### GetSigningKeysOk
 
-`func (o *ApiTxSignRequest) GetSigningKeysOk() ([]string, bool)`
+`func (o *ApiTxSignRequest) GetSigningKeysOk() (*[]string, bool)`
 
 GetSigningKeysOk returns a tuple with the SigningKeys field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.
@@ -68,3 +68,5 @@ SetTxCbor sets TxCbor field to given value.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

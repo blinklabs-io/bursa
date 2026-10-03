@@ -22,16 +22,17 @@ var _ MappedNullable = &ApiWalletRestoreRequest{}
 
 // ApiWalletRestoreRequest struct for ApiWalletRestoreRequest
 type ApiWalletRestoreRequest struct {
-	AccountId       *int32  `json:"account_id,omitempty"`
-	AddressId       *int32  `json:"address_id,omitempty"`
-	CommitteeColdId *int32  `json:"committee_cold_id,omitempty"`
-	CommitteeHotId  *int32  `json:"committee_hot_id,omitempty"`
-	DrepId          *int32  `json:"drep_id,omitempty"`
-	Mnemonic        string  `json:"mnemonic"`
-	Password        *string `json:"password,omitempty"`
-	PaymentId       *int32  `json:"payment_id,omitempty"`
-	PoolColdId      *int32  `json:"pool_cold_id,omitempty"`
-	StakeId         *int32  `json:"stake_id,omitempty"`
+	AccountId       *int32 `json:"account_id,omitempty"`
+	AddressId       *int32 `json:"address_id,omitempty"`
+	CommitteeColdId *int32 `json:"committee_cold_id,omitempty"`
+	CommitteeHotId  *int32 `json:"committee_hot_id,omitempty"`
+	DrepId          *int32 `json:"drep_id,omitempty"`
+	// Mnemonic is a BIP39 mnemonic phrase.
+	Mnemonic   string  `json:"mnemonic"`
+	Password   *string `json:"password,omitempty"`
+	PaymentId  *int32  `json:"payment_id,omitempty"`
+	PoolColdId *int32  `json:"pool_cold_id,omitempty"`
+	StakeId    *int32  `json:"stake_id,omitempty"`
 }
 
 type _ApiWalletRestoreRequest ApiWalletRestoreRequest
