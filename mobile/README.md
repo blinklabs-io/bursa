@@ -186,11 +186,11 @@ device. If the system lookup of Application Support ever failed, the app uses
 the same sandbox path directly and never a temporary directory, which the
 system may purge.
 
-The node database is a separate directory: `Library/Application Support/BursaNode`
+The node database is a separate directory: `Library/Application Support/BursaNode/db`
 on iOS and `noBackupFilesDir/node` on Android, set through
 `App.SetNodeDataDir` before `Start`. An existing database inside the wallet tree
 is moved there on first start; if the move fails the node resyncs into the new
-directory. The iOS node directory carries the same backup exclusion and the
+directory. On iOS, `BursaNode` carries the same backup exclusion and the
 after-first-unlock protection class. A device restore therefore does not carry the wallet
 over; recovery is from the recovery phrase.
 

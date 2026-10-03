@@ -161,9 +161,11 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
 
     // The node database lives beside the wallet tree, not inside it, so the
     // vault and the chain data carry independent backup and protection
-    // settings. An existing database inside the wallet tree is moved here by
-    // the Go side on first start. Both stay readable after the first unlock so
-    // the node can sync while the device is locked.
+    // settings. Both stay readable after the first unlock so the node can sync
+    // while the device is locked. The database is a child of the directory set
+    // up here: the Go side moves an existing database out of the wallet tree
+    // only while its destination does not exist yet, and the moved directory
+    // then sits inside the excluded, protected one.
     private func nodeDataDirectory() -> URL {
         let fileManager = FileManager.default
         let nodeDir = Self.applicationSupportDirectory()
@@ -180,7 +182,7 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
             Self.logger.error("node data directory setup failed: \(String(describing: error))")
         }
         noteBackupExclusionFailure(Self.excludeFromBackup(nodeDir))
-        return nodeDir
+        return nodeDir.appendingPathComponent("db", isDirectory: true)
     }
 
     private func walletDataDirectory() -> URL {

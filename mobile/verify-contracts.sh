@@ -31,6 +31,10 @@ node_fn=$(sed -n '/private func nodeDataDirectory(/,/^    }/p' "$ios")
 printf '%s\n' "$node_fn" | rg -U -q 'appendingPathComponent\("BursaNode", isDirectory: true\)'
 printf '%s\n' "$node_fn" | rg -U -q 'noteBackupExclusionFailure\(Self\.excludeFromBackup\(nodeDir\)\)'
 printf '%s\n' "$node_fn" | rg -U -q '\.protectionKey'
+# Go moves an existing database into the node directory only while that
+# directory does not exist, so the app must hand over a child of the directory
+# it creates and excludes, never the directory itself.
+printf '%s\n' "$node_fn" | rg -U -q 'return nodeDir\.appendingPathComponent\("db", isDirectory: true\)'
 rg -q 'app\?\.setNodeDataDir\(nodeDir\)' "$ios"
 rg -q 'instance\.setNodeDataDir\(File\(noBackupFilesDir, "node"\)\.absolutePath\)' "$service"
 
