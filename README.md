@@ -124,6 +124,22 @@ api:
     - wallet-service-admin
 ```
 
+### Wallet storage encryption
+
+Wallet data stored with SOPS is encrypted to every configured master key; any
+one of them can decrypt it. At least one is required, and a malformed value
+is rejected before encryption starts:
+
+| Key | Config | Environment |
+| --- | --- | --- |
+| Google Cloud KMS | `google.kms_resource_id` | `GCP_KMS_RESOURCE_ID` |
+| AWS KMS | `aws.kms_key_arn` | `AWS_KMS_KEY_ARN` |
+| age | `age.recipients` (comma separated) | `AGE_RECIPIENTS` |
+
+Decryption uses the SOPS conventions: the AWS SDK credential chain, Google
+application default credentials, and `SOPS_AGE_KEY` or `SOPS_AGE_KEY_FILE` for
+age identities.
+
 ### Kubernetes and Helm deployment contract
 
 The Bursa container listens on loopback by default. A Kubernetes Service must

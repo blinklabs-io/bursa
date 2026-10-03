@@ -44,7 +44,7 @@ record the resulting submodule pointer when explicitly requested.
 | `cmd/bursa/` | CLI commands for keys, wallets, addresses, scripts, signing, encryption, and certificates | root Go tests; run command `--help` for CLI changes |
 | `internal/api/` | HTTP handlers, request validation, errors, Swagger annotations | root tests; regenerate `docs/` when annotations change |
 | `internal/config/` | YAML and `BURSA_*` environment configuration | config tests; verify defaults and unknown/malformed values |
-| `internal/storage/` and `gcp/` | file, SQLite, and Google Secret Manager wallet persistence | storage/backend tests; never use real credentials or wallets |
+| `internal/storage/` and `gcp/` | file, SQLite, Google and AWS Secrets Manager wallet persistence | storage/backend tests; never use real credentials or wallets |
 | `internal/signer/` | signer API, backends, policies, watermarks, and custody integrations | signer unit/integration tests; review authorization and replay boundaries |
 | `internal/sops/` | passphrase/SOPS key-file handling | encryption tests; keep passphrases out of argv, logs, and fixtures |
 | `ui/internal/` | wallet services, embedded node boot, chain/API adapters, vault, spend, and desktop support | `ui` Go checks; identify the affected service and its web consumer |

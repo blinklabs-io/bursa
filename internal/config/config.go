@@ -24,6 +24,8 @@ import (
 
 type Config struct {
 	Google   GoogleConfig   `yaml:"google"`
+	Aws      AwsConfig      `yaml:"aws"`
+	Age      AgeConfig      `yaml:"age"`
 	Logging  LoggingConfig  `yaml:"logging"`
 	Mnemonic string         `yaml:"mnemonic"        envconfig:"MNEMONIC"`
 	Network  string         `yaml:"cardano_network" envconfig:"CARDANO_NETWORK"`
@@ -222,6 +224,20 @@ type GoogleConfig struct {
 	Prefix     string `yaml:"secret_prefix"   envconfig:"GCP_SECRET_PREFIX"`
 }
 
+// AwsConfig selects AWS Secrets Manager storage and an AWS KMS SOPS key.
+// Region and credentials come from the standard AWS SDK resolution chain.
+type AwsConfig struct {
+	KMSKeyARN string `yaml:"kms_key_arn"   envconfig:"AWS_KMS_KEY_ARN"`
+	Prefix    string `yaml:"secret_prefix" envconfig:"AWS_SECRET_PREFIX"`
+}
+
+// AgeConfig lists the age recipients (comma separated) a SOPS file is
+// encrypted to. Decryption identities come from SOPS_AGE_KEY and
+// SOPS_AGE_KEY_FILE.
+type AgeConfig struct {
+	Recipients string `yaml:"recipients" envconfig:"AGE_RECIPIENTS"`
+}
+
 type LoggingConfig struct {
 	Level string `yaml:"level" envconfig:"LOGGING_LEVEL"`
 }
@@ -240,6 +256,9 @@ func defaultConfig() Config {
 			ListenPort:    8080,
 		},
 		Google: GoogleConfig{
+			Prefix: "bursa-wallet-",
+		},
+		Aws: AwsConfig{
 			Prefix: "bursa-wallet-",
 		},
 		Logging: LoggingConfig{
