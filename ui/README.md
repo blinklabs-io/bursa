@@ -171,7 +171,8 @@ The desktop binary serves on `127.0.0.1:8090`.
 CIP-95 for governance) that bridges web dApps to your local wallet.
 
 It is **off by default**. Start the wallet with `BURSA_CONNECTOR=true`, then
-load the extension. Every dApp connection is granted explicitly and every
+load the extension in Chrome 111+ or Firefox 140+ (see
+`extension/e2e/README.md`). Every dApp connection is granted explicitly and every
 signing request surfaces in the wallet for approval — the extension holds no
 keys.
 

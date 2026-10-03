@@ -1,19 +1,51 @@
 # CIP-30 Extension E2E Tests
 
-The automated test loads the unpacked extension in Chromium and opens a page
-whose Content Security Policy blocks all page scripts and requires Trusted
-Types for script sinks. It verifies that the MAIN-world provider is available
-and reports its registration to the isolated-world relay.
+`cip30.test.mjs` runs the same scenario in a real Chromium and a real Firefox
+against a stand-in Bursa connector backend (`fake-bursa.mjs`). It checks:
+
+- installation of the unpacked Chrome tree and of the Firefox package;
+- provider registration at `document_start`, including on a page whose CSP blocks
+  all scripts, and no extension storage in the page main world;
+- popup pairing and persistence of the pairing across popup reloads;
+- `enable()` approval followed by a CIP-30 request, with the backend seeing the
+  browser-verified page origin;
+- the unpaired error, a rejected approval, no authorization reuse across page
+  origins, and an unreachable backend;
+- a request served after the background is suspended.
 
 ```sh
 cd ui/extension
 npm ci
 npm exec playwright install --with-deps --no-shell chromium
-npm run test:e2e
+npm run test:e2e:chrome    # needs `npm run build` first
+npm run test:e2e:firefox   # needs `npm run build` first
+npm run test:e2e           # builds, then runs both
 ```
 
-Set `CHROMIUM_PATH` to use an existing Chromium executable instead of the
-Playwright-managed browser.
+Set `CHROMIUM_PATH` or `FIREFOX_PATH` to use an existing executable. The Firefox
+run needs `geckodriver` and a Firefox of at least the minimum version below.
+
+## Supported browsers
+
+| Browser | Minimum version | Reason |
+|---------|-----------------|--------|
+| Chrome / Chromium | 111 | `content_scripts[].world` |
+| Firefox | 140 (Android 142) | `content_scripts[].world` needs 128; `data_collection_permissions` needs 140 |
+
+## Build, lint, and package
+
+```sh
+cd ui/extension
+npm run build           # dist/chrome, dist/firefox and one zip per browser in dist/
+npm run lint:firefox    # web-ext lint --warnings-as-errors on dist/firefox
+npm run package         # build, then lint:firefox
+```
+
+`manifest.json` is the single manifest source. The build derives the Chrome
+manifest (`background.service_worker`) and the Firefox manifest
+(`background.scripts`, `browser_specific_settings`) from it. Each package has
+`manifest.json` at its root and is byte-identical across repeated builds.
+Signing and publication are separate release work.
 
 The static sample dApp (`sample-dapp.html`) remains available for manually
 verifying the complete extension ↔ Bursa daemon ↔ dApp flow.
@@ -22,7 +54,7 @@ verifying the complete extension ↔ Bursa daemon ↔ dApp flow.
 
 ## Prerequisites
 
-- Google Chrome 111 or later (or a compatible Chromium-based browser)
+- Google Chrome 111 or later (or a compatible Chromium-based browser), or Firefox 140 or later
 - Node.js 22 (for building the extension)
 - A running Bursa daemon with the CIP-30 connector enabled
 
@@ -36,18 +68,25 @@ npm ci
 npm run build
 ```
 
-The output is written to `ui/extension/dist/`.
+The Chrome tree is written to `ui/extension/dist/chrome/` and the Firefox tree to
+`ui/extension/dist/firefox/`.
 
 ---
 
-## Step 2 — Load the extension in Chrome
+## Step 2 — Load the extension
+
+### Chrome
 
 1. Open Chrome and navigate to `chrome://extensions`.
 2. Enable **Developer mode** (toggle in the top-right corner).
-3. Click **Load unpacked** and select the `ui/extension/dist/` directory.
+3. Click **Load unpacked** and select the `ui/extension/dist/chrome/` directory.
 4. The **Bursa** extension icon should appear in the toolbar.
 
----
+### Firefox
+
+1. Open `about:debugging#/runtime/this-firefox`.
+2. Click **Load Temporary Add-on...** and select
+   `ui/extension/dist/firefox/manifest.json` (or the Firefox zip in `dist/`).
 
 ## Step 3 — Start Bursa with the connector enabled
 
@@ -65,7 +104,7 @@ BURSA_CONNECTOR=1 ./ui/bursa-wallet
 
 ## Step 4 — Pair the extension with Bursa
 
-1. Click the Bursa extension icon in the Chrome toolbar to open the popup.
+1. Click the Bursa extension icon in the browser toolbar to open the popup.
 2. In the popup, confirm the Bursa port and click **Pair with Bursa**.
 3. In the Bursa app, open **Settings → dApp Connector**, reveal the pending
    pairing code, then enter that code in the extension popup.

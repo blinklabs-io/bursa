@@ -4,22 +4,29 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
+    "build": "vite build --mode chrome && vite build --mode firefox",
     "lint": "eslint .",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "npm run build && node e2e/restrictive-csp.test.mjs"
+    "test:e2e": "npm run build && node e2e/cip30.test.mjs chrome && node e2e/cip30.test.mjs firefox",
+    "lint:firefox": "web-ext lint --source-dir dist/firefox --warnings-as-errors",
+    "package": "npm run build && npm run lint:firefox",
+    "test:e2e:chrome": "node e2e/cip30.test.mjs chrome",
+    "test:e2e:firefox": "node e2e/cip30.test.mjs firefox"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@types/chrome": "^0.2.2",
+    "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^9.0.0",
+    "fflate": "0.8.3",
     "jsdom": "^24.0.0",
     "playwright": "^1.62.1",
+    "selenium-webdriver": "4.50.0",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.0.0",
     "vite": "^8.1.5",
     "vitest": "^4.1.11",
-    "@vitest/coverage-v8": "^4.1.10"
+    "web-ext": "10.7.0"
   }
 }
