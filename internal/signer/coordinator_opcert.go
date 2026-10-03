@@ -147,7 +147,7 @@ func (c *Coordinator) SignOpCert(ctx context.Context, kesVkey []byte, issueCount
 	signable := lcommon.OpCertSignableBytes(kesVkey, issueCounter, kesPeriod)
 
 	signStart := time.Now()
-	sig, err := ref.Sign(ctx, signable)
+	sig, err := backend.SignFor(ctx, ref, backend.PurposeOpCert, signable)
 	// Attempt latency, including failures — not successful-sign latency.
 	c.deps.Metrics.observeSignDuration(ref.Backend(), time.Since(signStart).Seconds())
 	if err != nil {
