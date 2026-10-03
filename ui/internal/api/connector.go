@@ -36,6 +36,10 @@ type connectorTokenVerifier interface {
 	VerifyToken(token, extensionID string) bool
 }
 
+// maxPairRequestBytes bounds the pairing body: an extension ID and a 12-digit
+// code fit in a small fraction of this.
+const maxPairRequestBytes = 4 << 10
+
 type connectorRouteConfig struct {
 	authorizePairingCode func(password string) error
 }
@@ -558,12 +562,26 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 			ExtensionID string `json:"extension_id"`
 			Code        string `json:"code"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxPairRequestBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 			return
 		}
 		if req.ExtensionID == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "extension_id is required"})
+			return
+		}
+		// A browser sets Origin to the extension's own origin and a web page
+		// cannot choose it, so pairing is accepted only from the extension it
+		// names. Local processes can still forge the header; the pairing code
+		// shown in the app remains the capability that authorizes the token.
+		if !svc.TrustedPairingOrigin(r.Header.Get("Origin"), req.ExtensionID) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "pairing origin refused"})
 			return
 		}
 

@@ -108,6 +108,7 @@ func TestConnectorPairRoute(t *testing.T) {
 		body := `{"extension_id":"` + extID + `","code":""}`
 		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", extID)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -138,6 +139,7 @@ func TestConnectorPairRoute(t *testing.T) {
 		body := `{"extension_id":"` + extID + `","code":"` + code + `"}`
 		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", extID)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -164,6 +166,7 @@ func TestConnectorPairRoute(t *testing.T) {
 		body := `{"extension_id":"` + extID + `","code":"000000"}`
 		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", extID)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -179,6 +182,7 @@ func TestConnectorPairRoute(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader("{bad json"))
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", extID)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -195,11 +199,89 @@ func TestConnectorPairRoute(t *testing.T) {
 		body := `{"extension_id":"","code":""}`
 		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", extID)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400", rec.Code)
+		}
+	})
+}
+
+func TestConnectorPairOriginPolicy(t *testing.T) {
+	t.Parallel()
+	const extID = "chrome-extension://testpair"
+
+	post := func(t *testing.T, svc *connector.Service, origin, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		mux := http.NewServeMux()
+		registerConnector(mux, svc)
+		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	tests := []struct {
+		name   string
+		origin string
+	}{
+		{"missing origin", ""},
+		{"web page origin", "https://evil.example"},
+		{"different extension", "chrome-extension://other"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name+" is refused without creating a pairing", func(t *testing.T) {
+			t.Parallel()
+			svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+			rec := post(t, svc, tc.origin, `{"extension_id":"`+extID+`"}`)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("initiate status = %d, want 403; body: %s", rec.Code, rec.Body.String())
+			}
+			if got := len(svc.PendingPairings()); got != 0 {
+				t.Fatalf("refused request created %d pending pairings", got)
+			}
+		})
+	}
+
+	t.Run("confirm with a foreign origin is refused and keeps the code usable", func(t *testing.T) {
+		t.Parallel()
+		svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+		code, err := svc.BeginPair(extID)
+		if err != nil {
+			t.Fatalf("BeginPair: %v", err)
+		}
+		rec := post(t, svc, "https://evil.example", `{"extension_id":"`+extID+`","code":"`+code+`"}`)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body: %s", rec.Code, rec.Body.String())
+		}
+		rec = post(t, svc, extID, `{"extension_id":"`+extID+`","code":"`+code+`"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("matching origin status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("bare extension id matches its normalized origin", func(t *testing.T) {
+		t.Parallel()
+		svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+		rec := post(t, svc, extID, `{"extension_id":"testpair"}`)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, want 202; body: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("oversized pairing body is refused before decoding", func(t *testing.T) {
+		t.Parallel()
+		svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+		// Well under the mux-wide request limit, far over what a pairing needs.
+		body := `{"extension_id":"` + extID + `","code":"` + strings.Repeat("0", 64<<10) + `"}`
+		rec := post(t, svc, extID, body)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want 413; body: %s", rec.Code, rec.Body.String())
 		}
 	})
 }
@@ -1000,8 +1082,8 @@ func TestConnectorGrants(t *testing.T) {
 		if rec.Code != http.StatusInternalServerError {
 			t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
 		}
-		if !svc.VerifyToken(token, extID) {
-			t.Fatal("failed unpair must not claim success while the old token remains valid")
+		if svc.VerifyToken(token, extID) {
+			t.Fatal("failed unpair must still revoke the in-memory token")
 		}
 	})
 

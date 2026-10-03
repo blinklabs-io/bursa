@@ -17,7 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +44,10 @@ type Client struct {
 	poolCache         map[string]PoolInfo
 	poolCacheComplete bool
 	poolCacheUntil    time.Time
+
+	govMu         sync.Mutex
+	govCache      []GovernanceAction
+	govCacheUntil time.Time
 }
 
 type ClientOption func(*Client)
@@ -717,10 +721,7 @@ type GovernanceAction struct {
 	ActionIndex   uint32 `json:"action_index"`
 	Type          string `json:"type"`
 	ProposedEpoch uint64 `json:"proposed_epoch"`
-	ExpiresEpoch  uint64 `json:"expires_epoch"`
 	Status        string `json:"status"`
-	AnchorURL     string `json:"anchor_url"`
-	Deposit       string `json:"deposit"`
 	YesVotes      int    `json:"yes_votes"`
 	NoVotes       int    `json:"no_votes"`
 	AbstainVotes  int    `json:"abstain_votes"`
@@ -754,7 +755,32 @@ const (
 // node-local source AccountDRepID uses — never an external service. An absent
 // data dir, missing metadata file, or a metadata DB without the governance
 // tables yields an empty list rather than an error.
+//
+// The list is cached for poolCacheTTL: every search keystroke and page change
+// asks for the whole list, and each uncached read scans every proposal and
+// aggregates every vote while the node may be writing the same database.
+// Failed and canceled reads are not cached.
 func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, error) {
+	c.govMu.Lock()
+	cached, fresh := c.govCache, c.govCache != nil && time.Now().Before(c.govCacheUntil)
+	c.govMu.Unlock()
+	if fresh {
+		return slices.Clone(cached), nil
+	}
+	actions, err := c.readGovernanceActions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if actions != nil {
+		c.govMu.Lock()
+		c.govCache, c.govCacheUntil = actions, time.Now().Add(poolCacheTTL)
+		c.govMu.Unlock()
+		return slices.Clone(actions), nil
+	}
+	return nil, nil
+}
+
+func (c *Client) readGovernanceActions(ctx context.Context) ([]GovernanceAction, error) {
 	if c.dingoDataDir == "" {
 		return nil, nil
 	}
@@ -788,8 +814,7 @@ func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, err
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, tx_hash, action_index, action_type, proposed_epoch,
-		       expires_epoch, enacted_epoch, ratified_epoch, expired_epoch,
-		       anchor_url, deposit
+		       enacted_epoch, ratified_epoch, expired_epoch
 		FROM governance_proposal
 		WHERE deleted_slot IS NULL
 		ORDER BY proposed_epoch DESC, id DESC`)
@@ -806,17 +831,13 @@ func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, err
 			actionIndex   uint32
 			actionType    uint8
 			proposedEpoch uint64
-			expiresEpoch  uint64
 			enactedEpoch  sql.NullInt64
 			ratifiedEpoch sql.NullInt64
 			expiredEpoch  sql.NullInt64
-			anchorURL     sql.NullString
-			deposit       uint64
 		)
 		if err := rows.Scan(
 			&id, &txHash, &actionIndex, &actionType, &proposedEpoch,
-			&expiresEpoch, &enactedEpoch, &ratifiedEpoch, &expiredEpoch,
-			&anchorURL, &deposit,
+			&enactedEpoch, &ratifiedEpoch, &expiredEpoch,
 		); err != nil {
 			return nil, fmt.Errorf("scan governance proposal: %w", err)
 		}
@@ -827,10 +848,7 @@ func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, err
 			ActionIndex:   actionIndex,
 			Type:          govActionTypeName(actionType),
 			ProposedEpoch: proposedEpoch,
-			ExpiresEpoch:  expiresEpoch,
 			Status:        govActionStatus(enactedEpoch, ratifiedEpoch, expiredEpoch),
-			AnchorURL:     anchorURL.String,
-			Deposit:       strconv.FormatUint(deposit, 10),
 			YesVotes:      tally.yes,
 			NoVotes:       tally.no,
 			AbstainVotes:  tally.abstain,
