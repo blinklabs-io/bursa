@@ -372,11 +372,30 @@ func (a *Agent) DropKey(target string) error {
 // derived from the configured genesis schedule. It never signs a period below
 // the monotonic floor or below the active key's current period.
 func (a *Agent) Sign(period uint64, msg []byte) ([]byte, error) {
+	return a.sign(period, msg, false)
+}
+
+// SignHeader is Sign for a request that must be a Praos block header body: the
+// message has to decode as one, name a slot inside the requested period, and
+// carry the operational certificate fields and issuer key the agent installed.
+// Sign mode serves only this entry point, so the key cannot be used as an
+// oracle for arbitrary messages.
+func (a *Agent) SignHeader(period uint64, headerBody []byte) ([]byte, error) {
+	return a.sign(period, headerBody, true)
+}
+
+func (a *Agent) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.active == nil {
 		a.metrics.incSign("error")
 		return nil, ErrNoActiveKey
+	}
+	if typed {
+		if err := a.checkHeaderLocked(period, msg); err != nil {
+			a.metrics.incSign("error")
+			return nil, err
+		}
 	}
 	currentPeriod := a.currentKESPeriod()
 	if period > currentPeriod {

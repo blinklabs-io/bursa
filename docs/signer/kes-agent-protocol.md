@@ -81,8 +81,19 @@ Server -> client:
 { "type": "sign_response", "period": 512, "signature": "<b64>", "error": "" }
 ```
 
+`message` must be a Praos (Babbage/Conway) block header body, CBOR-encoded
+exactly as it is signed, and nothing else. The agent refuses the request, with
+the guard and key untouched, unless:
+
+- the message decodes as a header body with no trailing bytes;
+- the header's slot divided by `slots_per_kes_period` equals `period`;
+- the issuer verification key equals the configured cold verification key;
+- the header's operational certificate carries the active KES vkey, the
+  installed issue counter, and the installed certificate start period.
+
 `error` is non-empty (and `signature` absent) when signing is refused, e.g. a
-period rollback or an exhausted key.
+message that is not a matching header body, a period rollback, or an exhausted
+key. Header bodies of the pre-Babbage (TPraos) eras are refused.
 
 ## Control socket
 
