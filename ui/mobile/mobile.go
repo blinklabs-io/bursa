@@ -60,6 +60,9 @@ type App struct {
 	// StartWithTimeout goroutine has not observed ctx.Done yet.
 	startDone chan struct{}
 	startID   uint64
+	// nodeDataDir, when set, holds the node database apart from the wallet
+	// tree. Guarded by mu.
+	nodeDataDir string
 	// draining is the done-channel of an in-flight (or already-finished)
 	// cleanupLateStart watching a superseded/canceled start. StartWithTimeout
 	// waits on it before rebinding boot's fixed node ports (5555/5556), so a
@@ -81,13 +84,24 @@ type runtimeApp interface {
 // New constructs an unstarted App handle. Call Start to boot the wallet.
 func New() *App { return &App{} }
 
+// SetNodeDataDir sets a directory for the node database that is separate from
+// the wallet data directory passed to Start. It must be called before Start;
+// an empty value keeps the database inside the wallet data directory.
+func (a *App) SetNodeDataDir(dir string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.nodeDataDir = dir
+}
+
 // Start boots the wallet stack in-process and begins serving the embedded SPA +
 // API on an OS-assigned loopback port (127.0.0.1:0). It returns once the node
 // goroutine is launched and the control surface is accepting connections; node
 // sync progress is reported via the /status API the WebView polls. After Start
 // returns nil, call Port to learn the loopback port to load in the WebView.
 //
-// dataDir is the per-app writable directory (Android filesDir, iOS Documents);
+// dataDir is the per-app writable directory for wallet files (Android filesDir,
+// iOS Application Support); the node database stays under it unless
+// SetNodeDataDir was called;
 // network is "preview" | "preprod" | "mainnet"; lean seeds the first-run
 // lean-node (history-expiry) profile (mobile passes true for a small on-disk
 // footprint). Calling Start on an already-started App returns an error.
@@ -107,6 +121,8 @@ func (a *App) StartWithTimeout(dataDir, network string, lean bool, timeoutMs int
 		startDone chan struct{}
 		startID   uint64
 		waited    <-chan struct{}
+
+		nodeDataDir string
 	)
 	for {
 		a.mu.Lock()
@@ -137,6 +153,7 @@ func (a *App) StartWithTimeout(dataDir, network string, lean bool, timeoutMs int
 		a.startDone = startDone
 		a.startID++
 		startID = a.startID
+		nodeDataDir = a.nodeDataDir
 		a.mu.Unlock()
 		break
 	}
@@ -148,6 +165,7 @@ func (a *App) StartWithTimeout(dataDir, network string, lean bool, timeoutMs int
 		app, err := bootWallet(ctx, boot.Config{
 			Network:        network,
 			DataDir:        dataDir,
+			NodeDataDir:    nodeDataDir,
 			Addr:           "127.0.0.1:0", // OS-assigned loopback port for the WebView
 			MithrilEnabled: true,
 			LeanDefault:    lean,

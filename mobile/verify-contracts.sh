@@ -17,6 +17,23 @@ printf '%s\n' "$on_timeout" | rg -U -q 'override fun onTimeout\(startId: Int, fg
 
 rg -q '\.applicationSupportDirectory' "$ios"
 rg -q 'appendingPathComponent\("Bursa", isDirectory: true\)' "$ios"
+# The wallet tree holds the encrypted vault, so it must never fall back to a
+# location the system purges.
+if rg -q 'NSTemporaryDirectory' "$ios"; then
+    printf '%s\n' 'iOS wallet data must not use NSTemporaryDirectory' >&2
+    exit 1
+fi
+support_fn=$(sed -n '/private static func applicationSupportDirectory(/,/^    }/p' "$ios")
+printf '%s\n' "$support_fn" | rg -U -q 'NSHomeDirectory\(\)'
+
+# The node database is kept out of the wallet tree on both platforms.
+node_fn=$(sed -n '/private func nodeDataDirectory(/,/^    }/p' "$ios")
+printf '%s\n' "$node_fn" | rg -U -q 'appendingPathComponent\("BursaNode", isDirectory: true\)'
+printf '%s\n' "$node_fn" | rg -U -q 'noteBackupExclusionFailure\(Self\.excludeFromBackup\(nodeDir\)\)'
+printf '%s\n' "$node_fn" | rg -U -q '\.protectionKey'
+rg -q 'app\?\.setNodeDataDir\(nodeDir\)' "$ios"
+rg -q 'instance\.setNodeDataDir\(File\(noBackupFilesDir, "node"\)\.absolutePath\)' "$service"
+
 # A deferred legacy cleanup has to be finished on a later launch, or the old
 # Documents tree survives as a second, stale copy of the wallet. Scope the
 # check to the marker-present branch so moving the call elsewhere still fails.

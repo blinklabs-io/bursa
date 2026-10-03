@@ -32,8 +32,8 @@ needed per feature.
 - **Shared core.** The boot logic lives in `ui/internal/boot` (`boot.Boot`),
   shared by the desktop binary (`ui/cmd/bursa-wallet`) and the mobile binding
   (`ui/mobile`) so every front end brings up an identical stack.
-- **gomobile binding** (`ui/mobile`): an opaque `App` handle with three methods —
-  `Start(dataDir, network string, lean bool) error`, `Port() int`, `Stop() error`.
+- **gomobile binding** (`ui/mobile`): an opaque `App` handle with these methods —
+  `Start(dataDir, network string, lean bool) error`, `SetNodeDataDir(dir string)`, `Port() int`, `Stop() error`.
   Start binds the control surface on `127.0.0.1:0` (an OS-assigned loopback port),
   boots the wallet with the lean (history-expiry) profile, and serves the SPA +
   API there; `Port()` returns the chosen port for the WebView. Only
@@ -181,8 +181,17 @@ physical-device validation.
 
 The iOS wallet tree lives in `Library/Application Support/Bursa`, which iCloud
 and iTunes back up by default. The app marks that directory
-`isExcludedFromBackup` on every launch, so the chain database and the encrypted
-vault stay on the device. A device restore therefore does not carry the wallet
+`isExcludedFromBackup` on every launch, so the encrypted vault stays on the
+device. If the system lookup of Application Support ever failed, the app uses
+the same sandbox path directly and never a temporary directory, which the
+system may purge.
+
+The node database is a separate directory: `Library/Application Support/BursaNode`
+on iOS and `noBackupFilesDir/node` on Android, set through
+`App.SetNodeDataDir` before `Start`. An existing database inside the wallet tree
+is moved there on first start; if the move fails the node resyncs into the new
+directory. The iOS node directory carries the same backup exclusion and the
+after-first-unlock protection class. A device restore therefore does not carry the wallet
 over; recovery is from the recovery phrase.
 
 The legacy `Documents` tree carries the same exclusion for as long as it
