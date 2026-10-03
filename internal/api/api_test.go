@@ -3853,3 +3853,14 @@ func TestHandleAddressParseFormats(t *testing.T) {
 		})
 	}
 }
+
+func TestNewHTTPServerBoundsEveryConnectionPhase(t *testing.T) {
+	t.Parallel()
+
+	srv := newHTTPServer(http.NotFoundHandler())
+
+	assert.Positive(t, srv.ReadHeaderTimeout, "ReadHeaderTimeout")
+	assert.Positive(t, srv.ReadTimeout, "ReadTimeout")
+	assert.Positive(t, srv.WriteTimeout, "WriteTimeout")
+	assert.Positive(t, srv.IdleTimeout, "IdleTimeout")
+}

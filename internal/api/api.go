@@ -877,6 +877,22 @@ func boundedScriptValidation(next http.Handler) http.Handler {
 	})
 }
 
+// newHTTPServer returns a server for handler with every connection phase
+// bounded.
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 60 * time.Second,
+		// Headers arriving is not the same as a body arriving: without this, a
+		// client can hold a connection open mid-body indefinitely.
+		ReadTimeout: 120 * time.Second,
+		// A client that stops reading the response would otherwise pin the
+		// connection, and the handler's slot, for as long as it likes.
+		WriteTimeout: 120 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+}
+
 // Start initializes and starts the HTTP servers for the API and metrics
 // Listeners can be passed in for testing purposes to provide ephermeral ports
 func Start(
@@ -916,13 +932,7 @@ func Start(
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", promhttp.Handler())
 
-	metricsServer := &http.Server{
-		Handler:           metricsMux,
-		ReadHeaderTimeout: 60 * time.Second,
-		// Headers arriving is not the same as a body arriving: without this, a
-		// client can hold a connection open mid-body indefinitely.
-		ReadTimeout: 120 * time.Second,
-	}
+	metricsServer := newHTTPServer(metricsMux)
 	if metricsListener == nil {
 		metricsServer.Addr = fmt.Sprintf(
 			"%s:%d",
@@ -931,15 +941,9 @@ func Start(
 		)
 	}
 
-	apiServer := &http.Server{
-		Handler:           mainHandler,
-		ReadHeaderTimeout: 60 * time.Second,
-		// Headers arriving is not the same as a body arriving: without this, a
-		// client can hold a connection open mid-body indefinitely.
-		ReadTimeout: 120 * time.Second,
-		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		},
+	apiServer := newHTTPServer(mainHandler)
+	apiServer.TLSConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
 	}
 	if apiListener == nil {
 		apiServer.Addr = fmt.Sprintf(
