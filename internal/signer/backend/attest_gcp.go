@@ -69,10 +69,10 @@ func NewConfidentialSpaceVerifier(jwks JWKSFunc, audience, imageDigest string) (
 
 type confidentialSpaceClaims struct {
 	jwt.RegisteredClaims
-	EATNonce []string `json:"eat_nonce"`
-	DbgStat  string   `json:"dbgstat"`
-	SWName   string   `json:"swname"`
-	SecBoot  bool     `json:"secboot"`
+	EATNonce jwt.ClaimStrings `json:"eat_nonce"`
+	DbgStat  string           `json:"dbgstat"`
+	SWName   string           `json:"swname"`
+	SecBoot  bool             `json:"secboot"`
 	Submods  struct {
 		Container struct {
 			ImageDigest string `json:"image_digest"`

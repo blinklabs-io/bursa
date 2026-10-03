@@ -93,6 +93,9 @@ func TestConfidentialSpaceVerifier(t *testing.T) {
 		wantErr bool
 	}{
 		{"valid", "k1", nil, false},
+		// Google issues a lone nonce as a JSON string, not a one-element array.
+		{"single nonce as a string", "k1", func(c jwt.MapClaims) { c["eat_nonce"] = c["eat_nonce"].([]string)[0] }, false},
+		{"string nonce for another binding", "k1", func(c jwt.MapClaims) { c["eat_nonce"] = "00" }, true},
 		{"wrong audience", "k1", func(c jwt.MapClaims) { c["aud"] = "https://other.example" }, true},
 		{"expired", "k1", func(c jwt.MapClaims) { c["exp"] = time.Now().Add(-time.Hour).Unix() }, true},
 		{"no expiry", "k1", func(c jwt.MapClaims) { delete(c, "exp") }, true},
