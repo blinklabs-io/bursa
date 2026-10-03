@@ -124,7 +124,7 @@ api:
     - wallet-service-admin
 ```
 
-### Wallet storage encryption and AWS Secrets Manager
+### Wallet storage encryption
 
 Wallet data stored with SOPS is encrypted to every configured master key; any
 one of them can decrypt it. At least one is required, and a malformed value
@@ -139,12 +139,6 @@ is rejected before encryption starts:
 Decryption uses the SOPS conventions: the AWS SDK credential chain, Google
 application default credentials, and `SOPS_AGE_KEY` or `SOPS_AGE_KEY_FILE` for
 age identities.
-
-`storage.backend: aws` stores each wallet as a secret named
-`aws.secret_prefix` (default `bursa-wallet-`) plus the wallet name in AWS
-Secrets Manager, with the region and credentials taken from the AWS SDK
-chain. Deleting a wallet deletes its secret without a recovery window. The
-HTTP API's built-in Google Secret Manager persistence is unchanged.
 
 ### Kubernetes and Helm deployment contract
 
