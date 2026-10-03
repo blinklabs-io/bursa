@@ -196,7 +196,8 @@ Unknown policy fields fail at boot.
 `signer.watermark` records the highest period/counter signed per key and refuses
 regressions.
 
-- `type: mem` - in-memory, non-durable (lost on restart). Default.
+- `type: mem` - in-memory, non-durable (lost on restart). Default type, but
+  refused unless `mode` is `warn` or `off`.
 - `type: file` - SQLite file at `path`, durable across restarts (single process).
 - `type: postgres` - durable store shared by every replica; the HA-safe option.
   The connection string is set via `dsn_env` (an env var name, keeping

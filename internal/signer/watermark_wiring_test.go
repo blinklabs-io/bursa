@@ -30,11 +30,14 @@ import (
 func TestBuildWatermark_MemRefusedUnderEnforce(t *testing.T) {
 	t.Parallel()
 	// The zero value and an explicit "mem" both mean in-memory state, which a
-	// restart wipes, so neither may back an enforced watermark.
+	// restart wipes, so neither may back an enforced watermark. An unrecognised
+	// mode is coerced to enforce by New, so it is refused here too.
 	for _, c := range []config.SignerWatermarkConfig{
 		{},
 		{Type: "mem"},
 		{Type: "mem", Mode: "enforce"},
+		{Type: "mem", Mode: "Enforce"},
+		{Mode: "enforced"},
 	} {
 		wm, _, err := BuildWatermark(context.Background(), c)
 		if err == nil {

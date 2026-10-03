@@ -63,7 +63,7 @@ signer:
   allow_insecure_file_backend: false   # env: SIGNER_ALLOW_INSECURE_FILE_BACKEND
 
   # --- Anti-double-sign watermark ---
-  # type: "mem" (non-durable; refused when mode is enforce), "file" (SQLite; requires path), or
+  # type: "mem" (non-durable; refused unless mode is warn or off), "file" (SQLite; requires path), or
   #       "postgres" (shared store for HA; requires dsn or dsn_env).
   # mode: "off" | "warn" | "enforce" (default enforce).
   watermark:

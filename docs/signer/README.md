@@ -39,7 +39,7 @@ current `main`.
 | Transport | Server-side TLS (TLS 1.2+); loopback may run plaintext. Optional mutual TLS is **not yet in main** - implemented by PR #673 |
 | Custody backends | `vault` (Transit, remote signing), `pkcs11` (HSM, keys never leave the token; CGO, `-tags pkcs11`; merged in #668), `sops` (GCP Secret Manager + SOPS), `software`/`file` (in-process plaintext, dev-only) |
 | Operations | `tx`, `cip8`, `opcert` signing; key list/detail with effective policy |
-| Anti-double-sign | Watermark store: `mem` (non-durable; not allowed with `enforce`), `file` (SQLite), or shared HA-safe `postgres`; modes off/warn/enforce |
+| Anti-double-sign | Watermark store: `mem` (non-durable; only with `warn` or `off`), `file` (SQLite), or shared HA-safe `postgres`; modes off/warn/enforce |
 | Observability | Static liveness on `/healthz`, dependency-aware readiness on `/readyz`, Prometheus `/metrics` |
 
 ## Quick start (development)

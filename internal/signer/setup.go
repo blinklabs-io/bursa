@@ -299,8 +299,10 @@ func BuildWatermark(ctx context.Context, c config.SignerWatermarkConfig) (waterm
 	switch c.Type {
 	case "", "mem":
 		// In-memory state is lost on restart, which would let a restarted
-		// signer sign a divergent payload for an already-signed scope.
-		if mode == watermark.ModeEnforce {
+		// signer sign a divergent payload for an already-signed scope. Test
+		// for the modes that do not enforce: New coerces any unrecognised
+		// mode to enforce.
+		if mode != watermark.ModeWarn && mode != watermark.ModeOff {
 			return nil, mode, errors.New(
 				"enforced watermark requires durable storage: set signer.watermark.type to \"file\" or \"postgres\", or set mode to \"warn\" or \"off\"",
 			)
