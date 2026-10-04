@@ -57,7 +57,7 @@ func walletCreateCommand() *cobra.Command {
 	}
 
 	walletCreateCommand.PersistentFlags().
-		StringVar(&output, "output", "", "optional path to write files")
+		StringVar(&output, "output", "", "directory to write the mnemonic and key files to (required)")
 
 	return &walletCreateCommand
 }
@@ -83,7 +83,7 @@ The mnemonic should be a valid BIP-39 mnemonic (typically 24 words).
 An optional password can be provided for additional security.
 
 Examples:
-  bursa wallet restore --mnemonic "word1 word2 ... word24"
+  bursa wallet restore --mnemonic-file seed.txt
   bursa wallet restore --mnemonic-file /path/to/seed.txt
   bursa wallet restore  # reads from MNEMONIC env var or seed.txt
   bursa wallet restore --password "secret" --output ./wallet-keys`,

@@ -40,16 +40,16 @@ Derivation paths by key type:
   Dijkstra: bls (random BLS12-381 MinSig key for Leios and Peras registration)
 
 Examples:
-  bursa key root --mnemonic "word1 word2 ..."
-  bursa key account --mnemonic "word1 word2 ..." --index 0
-  bursa key payment --mnemonic "word1 word2 ..."
-  bursa key stake --mnemonic "word1 word2 ..."
-  bursa key pool-cold --mnemonic "word1 word2 ..."
-  bursa key policy --mnemonic "word1 word2 ..."
-  bursa key calidus --mnemonic "word1 word2 ..."
-  bursa key drep --mnemonic "word1 word2 ..."
-  bursa key committee-cold --mnemonic "word1 word2 ..."
-  bursa key committee-hot --mnemonic "word1 word2 ..."
+  bursa key root --mnemonic-file seed.txt
+  bursa key account --mnemonic-file seed.txt --index 0
+  bursa key payment --mnemonic-file seed.txt
+  bursa key stake --mnemonic-file seed.txt
+  bursa key pool-cold --mnemonic-file seed.txt
+  bursa key policy --mnemonic-file seed.txt
+  bursa key calidus --mnemonic-file seed.txt
+  bursa key drep --mnemonic-file seed.txt
+  bursa key committee-cold --mnemonic-file seed.txt
+  bursa key committee-hot --mnemonic-file seed.txt
   bursa key bls --signing-key-file bls.skey --output-file bls.json`,
 	}
 
@@ -117,7 +117,7 @@ The mnemonic can be provided via:
   4. Default file "seed.txt"
 
 Examples:
-  bursa key root --mnemonic "word1 word2 ... word24"
+  bursa key root --mnemonic-file seed.txt
   bursa key root --mnemonic-file seed.txt
   bursa key root --signing-key-file root.skey`,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -161,8 +161,8 @@ The account key follows CIP-1852 path: m/1852'/1815'/account'
 Output is in bech32 format (acct_xsk prefix) unless --signing-key-file is specified.
 
 Examples:
-  bursa key account --mnemonic "word1 word2 ... word24"
-  bursa key account --mnemonic "word1 word2 ..." --index 1
+  bursa key account --mnemonic-file seed.txt
+  bursa key account --mnemonic-file seed.txt --index 1
   bursa key account --signing-key-file account.skey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyAccount(
@@ -212,8 +212,8 @@ The payment key follows CIP-1852 path: m/1852'/1815'/account'/0/index
 Output is in bech32 format (addr_xsk prefix) unless key files are specified.
 
 Examples:
-  bursa key payment --mnemonic "word1 word2 ... word24"
-  bursa key payment --mnemonic "word1 word2 ..." --account-index 0 --index 0
+  bursa key payment --mnemonic-file seed.txt
+  bursa key payment --mnemonic-file seed.txt --account-index 0 --index 0
   bursa key payment --signing-key-file payment.skey --verification-key-file payment.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyPayment(
@@ -278,8 +278,8 @@ The stake key follows CIP-1852 path: m/1852'/1815'/account'/2/index
 Output is in bech32 format (stake_xsk prefix) unless key files are specified.
 
 Examples:
-  bursa key stake --mnemonic "word1 word2 ... word24"
-  bursa key stake --mnemonic "word1 word2 ..." --account-index 0 --index 0
+  bursa key stake --mnemonic-file seed.txt
+  bursa key stake --mnemonic-file seed.txt --account-index 0 --index 0
   bursa key stake --signing-key-file stake.skey --verification-key-file stake.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyStake(
@@ -344,8 +344,8 @@ These keys are used for native asset minting/burning policies.
 Output is in bech32 format (policy_xsk prefix) unless key files are specified.
 
 Examples:
-  bursa key policy --mnemonic "word1 word2 ... word24"
-  bursa key policy --mnemonic "word1 word2 ..." --index 0
+  bursa key policy --mnemonic-file seed.txt
+  bursa key policy --mnemonic-file seed.txt --index 0
   bursa key policy --signing-key-file policy.skey --verification-key-file policy.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyPolicy(
@@ -402,8 +402,8 @@ These keys are used as the long-term identity keys for stake pool operators.
 Output is in bech32 format (pool_xsk prefix) unless key files are specified.
 
 Examples:
-  bursa key pool-cold --mnemonic "word1 word2 ... word24"
-  bursa key pool-cold --mnemonic "word1 word2 ..." --index 0
+  bursa key pool-cold --mnemonic-file seed.txt
+  bursa key pool-cold --mnemonic-file seed.txt --index 0
   bursa key pool-cold --signing-key-file pool-cold.skey --verification-key-file pool-cold.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyPoolCold(
@@ -468,8 +468,8 @@ text envelope types for SPO identity purposes.
 Output is in bech32 format (calidus_xsk prefix) unless key files are specified.
 
 Examples:
-  bursa key calidus --mnemonic "word1 word2 ... word24"
-  bursa key calidus --mnemonic "word1 word2 ..." --account-index 0 --index 0
+  bursa key calidus --mnemonic-file seed.txt
+  bursa key calidus --mnemonic-file seed.txt --account-index 0 --index 0
   bursa key calidus --signing-key-file calidus.skey --verification-key-file calidus.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyCalidus(
@@ -537,8 +537,8 @@ Output includes both signing key (vrf_sk) and verification key (vrf_vk)
 in bech32 format unless key files are specified.
 
 Examples:
-  bursa key vrf --mnemonic "word1 word2 ... word24"
-  bursa key vrf --mnemonic "word1 word2 ..." --index 0
+  bursa key vrf --mnemonic-file seed.txt
+  bursa key vrf --mnemonic-file seed.txt --index 0
   bursa key vrf --signing-key-file vrf.skey --verification-key-file vrf.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyVRF(
@@ -601,8 +601,8 @@ Output includes both signing key (kes_sk, 608 bytes) and verification key
 (kes_vk, 32 bytes) in bech32 format unless key files are specified.
 
 Examples:
-  bursa key kes --mnemonic "word1 word2 ... word24"
-  bursa key kes --mnemonic "word1 word2 ..." --index 0
+  bursa key kes --mnemonic-file seed.txt
+  bursa key kes --mnemonic-file seed.txt --index 0
   bursa key kes --signing-key-file kes.skey --verification-key-file kes.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyKES(
@@ -660,8 +660,8 @@ These keys are used for governance participation as a Delegated Representative.
 Output is in bech32 format (drep_xsk prefix) unless key files are specified.
 
 Examples:
-  bursa key drep --mnemonic "word1 word2 ... word24"
-  bursa key drep --mnemonic "word1 word2 ..." --account-index 0 --index 0
+  bursa key drep --mnemonic-file seed.txt
+  bursa key drep --mnemonic-file seed.txt --account-index 0 --index 0
   bursa key drep --signing-key-file drep.skey --verification-key-file drep.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyDRep(
@@ -726,8 +726,8 @@ These keys are used for Constitutional Committee membership (long-term identity)
 Output is in bech32 format (cc_cold_xsk prefix) unless key files are specified.
 
 Examples:
-  bursa key committee-cold --mnemonic "word1 word2 ... word24"
-  bursa key committee-cold --mnemonic "word1 word2 ..." --account-index 0 --index 0
+  bursa key committee-cold --mnemonic-file seed.txt
+  bursa key committee-cold --mnemonic-file seed.txt --account-index 0 --index 0
   bursa key committee-cold --signing-key-file committee-cold.skey --verification-key-file committee-cold.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyCommitteeCold(
@@ -793,8 +793,8 @@ These keys are used for Constitutional Committee voting (operational key).
 Output is in bech32 format (cc_hot_xsk prefix) unless key files are specified.
 
 Examples:
-  bursa key committee-hot --mnemonic "word1 word2 ... word24"
-  bursa key committee-hot --mnemonic "word1 word2 ..." --account-index 0 --index 0
+  bursa key committee-hot --mnemonic-file seed.txt
+  bursa key committee-hot --mnemonic-file seed.txt --account-index 0 --index 0
   bursa key committee-hot --signing-key-file committee-hot.skey --verification-key-file committee-hot.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyCommitteeHot(
