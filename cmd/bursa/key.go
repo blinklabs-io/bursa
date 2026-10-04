@@ -212,7 +212,8 @@ func keyPaymentCommand() *cobra.Command {
 
 The payment key follows CIP-1852 path: m/1852'/1815'/account'/0/index
 Output is in bech32 format (addr_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
-key files instead; a signing key destination is required.
+key files instead; a signing key destination is required unless only
+--verification-key-file is given.
 
 Examples:
   bursa key payment --mnemonic-file seed.txt --signing-key-file -
@@ -279,7 +280,8 @@ func keyStakeCommand() *cobra.Command {
 
 The stake key follows CIP-1852 path: m/1852'/1815'/account'/2/index
 Output is in bech32 format (stake_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
-key files instead; a signing key destination is required.
+key files instead; a signing key destination is required unless only
+--verification-key-file is given.
 
 Examples:
   bursa key stake --mnemonic-file seed.txt --signing-key-file -
@@ -346,7 +348,8 @@ func keyPolicyCommand() *cobra.Command {
 The policy key follows CIP-1855 path: m/1855'/1815'/policy_ix'
 These keys are used for native asset minting/burning policies.
 Output is in bech32 format (policy_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
-key files instead; a signing key destination is required.
+key files instead; a signing key destination is required unless only
+--verification-key-file is given.
 
 Examples:
   bursa key policy --mnemonic-file seed.txt --signing-key-file -
@@ -405,7 +408,8 @@ func keyPoolColdCommand() *cobra.Command {
 The pool cold key follows CIP-1853 path: m/1853'/1815'/0'/index'
 These keys are used as the long-term identity keys for stake pool operators.
 Output is in bech32 format (pool_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
-key files instead; a signing key destination is required.
+key files instead; a signing key destination is required unless only
+--verification-key-file is given.
 
 Examples:
   bursa key pool-cold --mnemonic-file seed.txt --signing-key-file -
@@ -472,7 +476,8 @@ bech32 prefixes (calidus_xsk/calidus_xvk) and different cardano-cli
 text envelope types for SPO identity purposes.
 
 Output is in bech32 format (calidus_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
-key files instead; a signing key destination is required.
+key files instead; a signing key destination is required unless only
+--verification-key-file is given.
 
 Examples:
   bursa key calidus --mnemonic-file seed.txt --signing-key-file -
@@ -542,7 +547,8 @@ allowing for key recovery.
 
 Output includes both signing key (vrf_sk) and verification key (vrf_vk)
 in bech32 format on standard output when --signing-key-file is "-". Paths write cardano-cli
-key files instead; a signing key destination is required.
+key files instead; a signing key destination is required unless only
+--verification-key-file is given.
 
 Examples:
   bursa key vrf --mnemonic-file seed.txt --signing-key-file -
@@ -607,7 +613,8 @@ The seed is derived deterministically from the mnemonic, allowing for key recove
 
 Output includes both signing key (kes_sk, 608 bytes) and verification key
 (kes_vk, 32 bytes) in bech32 format on standard output when --signing-key-file is "-". Paths write cardano-cli
-key files instead; a signing key destination is required.
+key files instead; a signing key destination is required unless only
+--verification-key-file is given.
 
 Examples:
   bursa key kes --mnemonic-file seed.txt --signing-key-file -
@@ -667,7 +674,8 @@ func keyDRepCommand() *cobra.Command {
 The DRep key follows CIP-0105 path: m/1852'/1815'/account'/3/index
 These keys are used for governance participation as a Delegated Representative.
 Output is in bech32 format (drep_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
-key files instead; a signing key destination is required.
+key files instead; a signing key destination is required unless only
+--verification-key-file is given.
 
 Examples:
   bursa key drep --mnemonic-file seed.txt --signing-key-file -
@@ -734,7 +742,8 @@ func keyCommitteeColdCommand() *cobra.Command {
 The committee cold key follows CIP-0105 path: m/1852'/1815'/account'/4/index
 These keys are used for Constitutional Committee membership (long-term identity).
 Output is in bech32 format (cc_cold_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
-key files instead; a signing key destination is required.
+key files instead; a signing key destination is required unless only
+--verification-key-file is given.
 
 Examples:
   bursa key committee-cold --mnemonic-file seed.txt --signing-key-file -
@@ -802,7 +811,8 @@ func keyCommitteeHotCommand() *cobra.Command {
 The committee hot key follows CIP-0105 path: m/1852'/1815'/account'/5/index
 These keys are used for Constitutional Committee voting (operational key).
 Output is in bech32 format (cc_hot_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
-key files instead; a signing key destination is required.
+key files instead; a signing key destination is required unless only
+--verification-key-file is given.
 
 Examples:
   bursa key committee-hot --mnemonic-file seed.txt --signing-key-file -
