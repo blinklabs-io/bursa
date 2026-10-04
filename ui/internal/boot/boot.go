@@ -49,6 +49,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/settings"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
+	"github.com/blinklabs-io/bursa/ui/internal/survey"
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 	"github.com/blinklabs-io/bursa/ui/internal/webui"
@@ -430,6 +431,11 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		}
 	}
 
+	// CIP-179 surveys are read from the embedded node's label-17 history; the
+	// wallet's spend service builds responses, new surveys and cancellations.
+	surveySvc := survey.NewService(chainClient, cfg.Network)
+	surveySvc.SetBuilder(spendSvc)
+
 	// Bind the control-surface listener BEFORE starting the node so an
 	// OS-assigned port (127.0.0.1:0) is known to the caller the moment Boot
 	// returns — the mobile WebView needs the concrete port to load the SPA.
@@ -485,6 +491,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		api.WithDiagnostics(diagSvc),
 		api.WithScriptMigration(migrateScripts),
 		api.WithActivity(activitySvc),
+		api.WithSurveys(surveySvc),
 	}
 	if connectorSvc != nil {
 		handlerOpts = append(handlerOpts, api.WithConnector(connectorSvc))

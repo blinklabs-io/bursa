@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useGovernanceActions } from "../api/hooks";
+import { useGovernanceActions, useLinkedSurveys } from "../api/hooks";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
@@ -8,6 +8,7 @@ import { CopyButton } from "../components/CopyButton";
 import { ExplorerLink } from "../components/ExplorerLink";
 import { errorMessage } from "../errorMessage";
 import { shortId } from "../format";
+import { navigate } from "../router";
 
 // Human-readable type label ("treasury-withdrawal" → "Treasury withdrawal").
 function typeLabel(type: string): string {
@@ -26,6 +27,7 @@ const COLUMNS = [
   { key: "status", label: "Status" },
   { key: "proposed", label: "Proposed (epoch)" },
   { key: "votes", label: "Votes (Y / N / A)" },
+  { key: "survey", label: "Survey" },
   { key: "actions", label: "" },
 ];
 
@@ -41,6 +43,7 @@ export function Governance({ network }: GovernanceProps) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const { data, error, loading } = useGovernanceActions({ q: query, page });
+  const linkedSurveys = useLinkedSurveys();
 
   const actions = data?.actions ?? [];
   const count = data?.count ?? 0;
@@ -62,6 +65,13 @@ export function Governance({ network }: GovernanceProps) {
     status: statusLabel(a.status),
     proposed: a.proposed_epoch,
     votes: `${a.yes_votes} / ${a.no_votes} / ${a.abstain_votes}`,
+    survey: linkedSurveys.has(a.action_id) ? (
+      <Button variant="ghost" onClick={() => navigate("surveys")}>
+        {linkedSurveys.get(a.action_id)?.title || "Linked survey"}
+      </Button>
+    ) : (
+      ""
+    ),
     actions: <CopyButton value={a.action_id} aria-label={`Copy action id ${a.action_id}`} />,
   }));
 

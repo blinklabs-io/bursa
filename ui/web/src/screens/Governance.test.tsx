@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Governance } from "./Governance";
 import * as client from "../api/client";
-import type { GovernanceAction, GovernanceActionsResponse } from "../api/types";
+import type { GovernanceAction, GovernanceActionsResponse, SurveySummary } from "../api/types";
 
 const ACTION_A: GovernanceAction = {
   action_id: "gov_action1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaqqq0001",
@@ -100,4 +100,54 @@ test("surfaces an API error", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(/node not ready/i);
   // An unavailable node read must not be mistaken for an empty database.
   expect(screen.queryByText(/no governance actions found/i)).not.toBeInTheDocument();
+});
+
+function linkedSurvey(over: Partial<SurveySummary> = {}): SurveySummary {
+  return {
+    id: `${"cc".repeat(32)}:0`,
+    tx_hash: "cc".repeat(32),
+    index: 0,
+    title: "Treasury poll",
+    description: "",
+    owner: "dd".repeat(28),
+    owner_script: false,
+    roles: [0],
+    end_epoch: 130,
+    status: "open",
+    sealed: false,
+    questions: 1,
+    linked_actions: [],
+    owned: false,
+    ...over,
+  };
+}
+
+test("shows the survey a governance action links to, and none for unlinked actions", async () => {
+  vi.spyOn(client, "getGovernanceActions").mockResolvedValue(response([ACTION_A, ACTION_B]));
+  vi.spyOn(client, "getSurveys").mockResolvedValue({
+    surveys: [linkedSurvey({ linked_actions: [ACTION_A.action_id] })],
+    total: 1,
+    page: 1,
+    count: 200,
+  });
+
+  render(<Governance network="preview" />);
+
+  const link = await screen.findByRole("button", { name: "Treasury poll" });
+  expect(link).toBeInTheDocument();
+  // Only the linked action carries it.
+  expect(screen.getAllByRole("button", { name: "Treasury poll" })).toHaveLength(1);
+
+  fireEvent.click(link);
+  expect(window.location.hash).toBe("#/surveys");
+});
+
+test("a failed survey lookup leaves the governance list intact", async () => {
+  vi.spyOn(client, "getGovernanceActions").mockResolvedValue(response([ACTION_A]));
+  vi.spyOn(client, "getSurveys").mockRejectedValue(new client.ApiError(503, "node not ready"));
+
+  render(<Governance network="preview" />);
+
+  expect(await screen.findByText("Info")).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
