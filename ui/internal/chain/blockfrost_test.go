@@ -1520,13 +1520,12 @@ func TestRequiredSigners(t *testing.T) {
 	}
 }
 
-const offchainMetadataDDL = `CREATE TABLE offchain_metadata (
-	id integer PRIMARY KEY,
-	url text,
-	source_type text,
-	status text,
-	content blob
-)`
+// dingoGovProposalDDL and dingoOffchainMetadataDDL are Dingo v0.70.14's own
+// SQLite DDL for the two tables GovernanceAnchorDocuments joins, copied from its
+// v1 migration, so the query is checked against the real column names.
+const dingoGovProposalDDL = "CREATE TABLE IF NOT EXISTS `governance_proposal` (`id` integer PRIMARY KEY AUTOINCREMENT,`tx_hash` blob NOT NULL,`action_index` integer NOT NULL,`action_type` integer NOT NULL,`proposed_epoch` integer NOT NULL,`expires_epoch` integer NOT NULL,`parent_tx_hash` blob,`parent_action_idx` integer,`enacted_epoch` integer,`enacted_slot` integer,`ratified_epoch` integer,`ratified_slot` integer,`policy_hash` blob,`anchor_url` text NOT NULL,`anchor_hash` blob NOT NULL,`deposit` integer NOT NULL,`return_address` blob NOT NULL,`gov_action_cbor` blob,`expired_epoch` integer,`expired_slot` integer,`added_slot` integer NOT NULL,`deleted_slot` integer)"
+
+const dingoOffchainMetadataDDL = "CREATE TABLE IF NOT EXISTS `offchain_metadata` (`fetched_at` datetime,`next_fetch_after` datetime,`created_at` datetime,`updated_at` datetime,`url` text NOT NULL,`source_type` text NOT NULL,`status` text NOT NULL,`content_type` text,`last_error` text,`hash` blob NOT NULL,`body_hash` blob,`content` blob,`id` integer PRIMARY KEY AUTOINCREMENT,`fetch_attempts` integer,`last_http_status` integer)"
 
 func TestGovernanceAnchorDocuments(t *testing.T) {
 	t.Parallel()
@@ -1536,7 +1535,7 @@ func TestGovernanceAnchorDocuments(t *testing.T) {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	defer db.Close()
-	for _, ddl := range []string{govProposalDDL, offchainMetadataDDL} {
+	for _, ddl := range []string{dingoGovProposalDDL, dingoOffchainMetadataDDL} {
 		if _, err := db.Exec(ddl); err != nil {
 			t.Fatalf("create table: %v", err)
 		}
@@ -1545,37 +1544,47 @@ func TestGovernanceAnchorDocuments(t *testing.T) {
 	for i := range tx {
 		tx[i] = byte(i + 1)
 	}
+	hashOf := func(b byte) []byte { return bytes.Repeat([]byte{b}, 32) }
 	for _, p := range []struct {
 		id      int
 		index   int
 		expires int
 		url     string
+		hash    []byte
 		deleted any
 	}{
-		{1, 0, 130, "https://example.test/linked.json", nil},
-		{2, 1, 140, "https://example.test/pending.json", nil},
-		{3, 2, 150, "https://example.test/other-source.json", nil},
-		{4, 3, 160, "https://example.test/rolled-back.json", 42},
-		{5, 4, 170, "", nil},
+		{1, 0, 130, "https://example.test/linked.json", hashOf(1), nil},
+		{2, 1, 140, "https://example.test/pending.json", hashOf(2), nil},
+		{3, 2, 150, "https://example.test/other-source.json", hashOf(3), nil},
+		{4, 3, 160, "https://example.test/rolled-back.json", hashOf(4), 42},
+		{5, 4, 170, "", hashOf(5), nil},
+		// Same URL as proposal 1, different anchor hash: the document Dingo
+		// fetched and verified is proposal 1's, not this one's.
+		{6, 5, 180, "https://example.test/linked.json", hashOf(6), nil},
 	} {
 		if _, err := db.Exec(
 			`INSERT INTO governance_proposal
-			 (id, tx_hash, action_index, action_type, proposed_epoch, expires_epoch, anchor_url, deposit, deleted_slot)
-			 VALUES (?, ?, ?, ?, 100, ?, ?, 1, ?)`,
-			p.id, tx, p.index, lcommon.GovActionTypeInfo, p.expires, p.url, p.deleted,
+			 (id, tx_hash, action_index, action_type, proposed_epoch, expires_epoch, anchor_url, anchor_hash, deposit, return_address, added_slot, deleted_slot)
+			 VALUES (?, ?, ?, ?, 100, ?, ?, ?, 1, x'00', 1, ?)`,
+			p.id, tx, p.index, lcommon.GovActionTypeInfo, p.expires, p.url, p.hash, p.deleted,
 		); err != nil {
 			t.Fatalf("insert proposal %d: %v", p.id, err)
 		}
 	}
-	for _, m := range []struct{ url, source, status, content string }{
-		{"https://example.test/linked.json", "gov_proposal", "fetched", `{"body":{}}`},
-		{"https://example.test/pending.json", "gov_proposal", "pending", ""},
-		{"https://example.test/other-source.json", "pool", "fetched", `{"ticker":"X"}`},
-		{"https://example.test/rolled-back.json", "gov_proposal", "fetched", `{"body":{}}`},
+	for _, m := range []struct {
+		url, source, status string
+		hash                []byte
+		content             string
+	}{
+		{"https://example.test/linked.json", "gov_proposal", "fetched", hashOf(1), `{"body":{}}`},
+		{"https://example.test/linked.json", "gov_proposal", "failed", hashOf(6), ""},
+		{"https://example.test/pending.json", "gov_proposal", "pending", hashOf(2), ""},
+		{"https://example.test/other-source.json", "pool", "fetched", hashOf(3), `{"ticker":"X"}`},
+		{"https://example.test/rolled-back.json", "gov_proposal", "fetched", hashOf(4), `{"body":{}}`},
 	} {
 		if _, err := db.Exec(
-			`INSERT INTO offchain_metadata (url, source_type, status, content) VALUES (?, ?, ?, ?)`,
-			m.url, m.source, m.status, []byte(m.content),
+			`INSERT INTO offchain_metadata (url, source_type, status, hash, content) VALUES (?, ?, ?, ?, ?)`,
+			m.url, m.source, m.status, m.hash, []byte(m.content),
 		); err != nil {
 			t.Fatalf("insert metadata: %v", err)
 		}
@@ -1587,7 +1596,7 @@ func TestGovernanceAnchorDocuments(t *testing.T) {
 		t.Fatalf("GovernanceAnchorDocuments: %v", err)
 	}
 	if len(got) != 1 {
-		t.Fatalf("got %+v, want only the fetched, live, governance-proposal document", got)
+		t.Fatalf("got %+v, want only the fetched, live, governance-proposal document under its own anchor hash", got)
 	}
 	want := AnchorDocument{ActionID: govActionID(tx, 0), ExpiresEpoch: 130, Content: []byte(`{"body":{}}`)}
 	if got[0].ActionID != want.ActionID || got[0].ExpiresEpoch != 130 || string(got[0].Content) != string(want.Content) {
@@ -1607,7 +1616,7 @@ func TestGovernanceAnchorDocumentsAbsentStores(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if _, err := db.Exec(govProposalDDL); err != nil {
+	if _, err := db.Exec(dingoGovProposalDDL); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
 	db.Close()

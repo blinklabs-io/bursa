@@ -110,8 +110,8 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (Detail, error)
 	if !ok {
 		return Detail{}, ErrNotFound
 	}
-	if !k.def.Mode.Sealed {
-		return Detail{}, invalidf("survey is not sealed")
+	if err := k.def.Mode.checkQuicknet(); err != nil {
+		return Detail{}, err
 	}
 	round := k.def.Mode.Round
 	if s.cachedBeacon(round) == nil {

@@ -23,6 +23,13 @@ import (
 // response or payload.
 var ErrInvalid = errors.New("survey: invalid")
 
+// MaxOptions bounds a question's option count and a rating's level count. In
+// external-content mode either is a bare integer on chain, while the tally and
+// the respond form hold one entry per option, so an unbounded count lets any
+// definition make the wallet allocate without limit. A definition over the
+// bound is treated as invalid.
+const MaxOptions = 1024
+
 func invalidf(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalid, fmt.Sprintf(format, args...))
 }
@@ -98,8 +105,8 @@ func (q Question) validateOptions() error {
 	if len(q.Options) > 0 && q.OptionCount != 0 {
 		return invalidf("options and option count are mutually exclusive")
 	}
-	if q.NumOptions() < 2 {
-		return invalidf("need at least 2 options")
+	if n := q.NumOptions(); n < 2 || n > MaxOptions {
+		return invalidf("need 2 to %d options, have %d", MaxOptions, n)
 	}
 	for _, o := range q.Options {
 		if len(o) > MaxChunk {
@@ -145,8 +152,8 @@ func (s *RatingScale) validate() error {
 				return invalidf("rating label %q exceeds %d bytes", l, MaxChunk)
 			}
 		}
-	case s.Levels < 2:
-		return invalidf("rating needs at least 2 levels")
+	case s.Levels < 2 || s.Levels > MaxOptions:
+		return invalidf("rating needs 2 to %d levels", MaxOptions)
 	}
 	return nil
 }

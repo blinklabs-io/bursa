@@ -249,3 +249,31 @@ func TestCreateSealedSurvey(t *testing.T) {
 		equal(t, 0, len(b.requests))
 	}
 }
+
+// Only quicknet beacons are fetched and cached, keyed by round. A sealed survey
+// on another drand chain shares round numbers with quicknet but not beacons,
+// so its responses stay sealed rather than failing to unseal.
+func TestOtherDrandChainsStaySealed(t *testing.T) {
+	t.Parallel()
+	svc, f, calls := relayStub(t, quicknetRound100Sig)
+	other := sealedSimple(2, 60, 100)
+	other.Mode.ChainHash = [32]byte(rep(0x77, 32))
+	f.add(t, 0xa1, 100, 0, 40, defPayload(sealedSimple(1, 60, 100)), credHex(1))
+	f.add(t, 0xa2, 101, 0, 40, defPayload(other), credHex(2))
+	f.add(t, 0xd1, 110, 0, 41, respPayload(Response{Survey: ref(0xa2, 0), Role: RoleKeyholder, Credential: cred(false, 10), Sealed: []byte("ciphertext")}), credHex(10))
+	ctx := context.Background()
+
+	if _, err := svc.Reveal(ctx, RevealRequest{Survey: surveyID(0xa2, 0), Consent: true}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Reveal on another drand chain: err = %v, want ErrInvalid", err)
+	}
+	equal(t, int32(0), calls.Load())
+
+	_, err := svc.Reveal(ctx, RevealRequest{Survey: surveyID(0xa1, 0), Consent: true})
+	noErr(t, err)
+	d, err := svc.Get(ctx, surveyID(0xa2, 0))
+	noErr(t, err)
+	rt := keyholder(t, d)
+	equal(t, uint64(1), rt.Responses)
+	equal(t, uint64(1), rt.Sealed)
+	equal(t, 0, len(d.Tally.Excluded))
+}

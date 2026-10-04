@@ -293,7 +293,7 @@ func TestCancelRejectsWithoutBuilding(t *testing.T) {
 		want    error
 	}{
 		"someone else's survey": {func(f *fakeChain) { f.add(t, 0xa1, 100, 0, 40, defPayload(simple(2, 60)), credHex(2)) }, surveyID(0xa1, 0), ErrInvalid},
-		"script owner":          {func(f *fakeChain) { f.add(t, 0xa1, 100, 0, 40, defPayload(script)) }, surveyID(0xa1, 0), ErrInvalid},
+		"script owner":          {func(f *fakeChain) { f.add(t, 0xa1, 100, 0, 40, defPayload(script)) }, surveyID(0xa1, 0), ErrNotFound},
 		"already cancelled": {func(f *fakeChain) {
 			f.add(t, 0xa1, 100, 0, 40, defPayload(simple(0x91, 60)), credHex(0x91))
 			f.add(t, 0xc1, 101, 0, 41, cancelPayload(ref(0xa1, 0)), credHex(0x91))
@@ -326,7 +326,7 @@ func TestSurveysOwnedByTheWalletAreMarkedOwned(t *testing.T) {
 	f := newFakeChain()
 	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(0x91, 60)), credHex(0x91)) // the fake wallet's payment key
 	f.add(t, 0xa2, 101, 0, 40, defPayload(simple(0x92, 60)), credHex(0x92)) // someone else
-	f.add(t, 0xa3, 102, 0, 40, defPayload(script))                          // same hash, but a script
+	f.add(t, 0xa3, 102, 0, 40, defPayload(script), credHex(0x91))           // same hash, but a script: never verified
 
 	svc := NewService(f, "preview")
 	list, err := svc.List(context.Background())
@@ -340,7 +340,7 @@ func TestSurveysOwnedByTheWalletAreMarkedOwned(t *testing.T) {
 	noErr(t, err)
 	equal(t, true, summaryByID(t, list, surveyID(0xa1, 0)).Owned)
 	equal(t, false, summaryByID(t, list, surveyID(0xa2, 0)).Owned)
-	equal(t, false, summaryByID(t, list, surveyID(0xa3, 0)).Owned)
+	equal(t, 2, len(list))
 
 	d, err := svc.Get(context.Background(), surveyID(0xa1, 0))
 	noErr(t, err)

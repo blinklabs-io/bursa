@@ -15,6 +15,7 @@
 package survey
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -225,36 +226,51 @@ func TestListSkipsMalformedAndInvalidDefinitions(t *testing.T) {
 	equal(t, surveyID(0xb8, 0), list[0].ID)
 }
 
-func TestCancellationRules(t *testing.T) {
+// A script owner can only be proven by resolving the script and checking the
+// transaction satisfies it (CIP-179 mechanism A), which this service does not
+// do, so a script-owned definition is never shown as a verified survey.
+func TestListSkipsScriptOwnedDefinitions(t *testing.T) {
 	t.Parallel()
 	script := simple(9, 60)
 	script.Owner = cred(true, 9)
+	f := newFakeChain()
+	f.add(t, 0xb1, 1, 0, 40, defPayload(script))             // nobody signed
+	f.add(t, 0xb2, 2, 0, 40, defPayload(script), credHex(9)) // signer hash equals the script hash
+	f.add(t, 0xb3, 3, 0, 40, defPayload(simple(3, 60)), credHex(3))
 
+	svc := NewService(f, "preview")
+	list, err := svc.List(context.Background())
+	noErr(t, err)
+	if len(list) != 1 || list[0].ID != surveyID(0xb3, 0) {
+		t.Fatalf("listed %+v, want only the key-owned survey", list)
+	}
+	if _, err := svc.Get(context.Background(), surveyID(0xb1, 0)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get script-owned survey: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCancellationRules(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		cancelEpoch uint64
 		signers     []string
 		ref         Ref
 		cancelled   bool
 	}{
-		"owner before end epoch":  {41, []string{credHex(1)}, ref(0xa1, 0), true},
-		"someone else":            {41, []string{credHex(2)}, ref(0xa1, 0), false},
-		"nobody signed":           {41, nil, ref(0xa1, 0), false},
-		"unknown survey":          {41, []string{credHex(1)}, ref(0xee, 0), false},
-		"unknown index":           {41, []string{credHex(1)}, ref(0xa1, 1), false},
-		"script owner unprovable": {41, []string{credHex(9)}, ref(0xa2, 0), false},
+		"owner before end epoch": {41, []string{credHex(1)}, ref(0xa1, 0), true},
+		"someone else":           {41, []string{credHex(2)}, ref(0xa1, 0), false},
+		"nobody signed":          {41, nil, ref(0xa1, 0), false},
+		"unknown survey":         {41, []string{credHex(1)}, ref(0xee, 0), false},
+		"unknown index":          {41, []string{credHex(1)}, ref(0xa1, 1), false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newFakeChain()
 			f.add(t, 0xa1, 100, 0, 40, defPayload(simple(1, 60)), credHex(1))
-			f.add(t, 0xa2, 101, 0, 40, defPayload(script))
 			f.add(t, 0xc1, 200, 0, tc.cancelEpoch, cancelPayload(tc.ref), tc.signers...)
 			list, err := NewService(f, "preview").List(context.Background())
 			noErr(t, err)
 			id := surveyID(0xa1, 0)
-			if tc.ref.TxID == [32]byte(rep(0xa2, 32)) {
-				id = surveyID(0xa2, 0)
-			}
 			want := "open"
 			if tc.cancelled {
 				want = "cancelled"
@@ -494,5 +510,38 @@ func TestEpochOf(t *testing.T) {
 		if got := cl.epochOf(blockTime); got != want {
 			t.Errorf("epochOf(%d) = %d, want %d", blockTime, got, want)
 		}
+	}
+}
+
+// An option or level count is a bare integer on chain, and tallying or showing
+// a question allocates one entry per option, so a count no transaction could
+// answer is refused rather than allocated.
+func TestListSkipsDefinitionsTooLargeToTally(t *testing.T) {
+	t.Parallel()
+	counted := simple(1, 60)
+	counted.Questions[0].Options, counted.Questions[0].OptionCount = nil, 1000
+	levels := simple(2, 60)
+	levels.Questions[0] = Question{Kind: KindRating, Prompt: "q", Options: []string{"a", "b"}, Scale: &RatingScale{Levels: 1000}}
+
+	// 1000 encodes as 0x1903e8; swap it for 2^40 after encoding.
+	huge := func(d Definition) []byte {
+		raw, err := Marshal(defPayload(d))
+		noErr(t, err)
+		equal(t, 1, bytes.Count(raw, []byte{0x19, 0x03, 0xe8}))
+		return bytes.Replace(raw, []byte{0x19, 0x03, 0xe8}, []byte{0x1b, 0, 0, 1, 0, 0, 0, 0, 0}, 1)
+	}
+	f := newFakeChain()
+	f.addRaw(0xb1, 1, 0, 40, huge(counted), credHex(1))
+	f.addRaw(0xb2, 2, 0, 40, huge(levels), credHex(2))
+	f.add(t, 0xb3, 3, 0, 40, defPayload(simple(3, 60)), credHex(3))
+
+	svc := NewService(f, "preview")
+	list, err := svc.List(context.Background())
+	noErr(t, err)
+	if len(list) != 1 || list[0].ID != surveyID(0xb3, 0) {
+		t.Fatalf("listed %d surveys, want only the one with a bounded option count", len(list))
+	}
+	if _, err := svc.Get(context.Background(), surveyID(0xb1, 0)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get: err = %v, want ErrNotFound", err)
 	}
 }

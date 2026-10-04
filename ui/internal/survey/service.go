@@ -229,7 +229,9 @@ func (s *Service) scan(ctx context.Context) ([]entry, error) {
 
 // definitions returns every verified definition, oldest first, with
 // cancellations applied. A definition is verified when its key owner signed the
-// transaction and it ends after the epoch it was published in.
+// transaction and it ends after the epoch it was published in. A script owner
+// is never verified: proving one means resolving the native script and checking
+// the transaction satisfies it, which this service does not do.
 func (s *Service) definitions(ctx context.Context, entries []entry, cl clk) ([]*known, error) {
 	var defs []*known
 	byRef := map[Ref]*known{}
@@ -246,7 +248,7 @@ func (s *Service) definitions(ctx context.Context, entries []entry, cl clk) ([]*
 			continue
 		}
 		for i, d := range e.payload.Definitions {
-			if !d.Owner.Script && !f.proves(d.Owner) {
+			if !f.proves(d.Owner) {
 				continue
 			}
 			if d.EndEpoch <= cl.epochOf(f.blockTime) {
@@ -419,8 +421,10 @@ func (s *Service) detail(ctx context.Context, sn snapshot, k *known) (Detail, er
 // observe collects every response to the survey with its chain placement and
 // the outcome of the credential-proof and role checks.
 func (s *Service) observe(ctx context.Context, entries []entry, k *known, cl clk) ([]Observed, error) {
+	// Beacons are cached by quicknet round only; another chain's survey with the
+	// same round number must not be opened with a quicknet beacon.
 	var beaconSig []byte
-	if k.def.Mode.Sealed {
+	if k.def.Mode.checkQuicknet() == nil {
 		beaconSig = s.cachedBeacon(k.def.Mode.Round)
 	}
 	verified := map[identity]string{}

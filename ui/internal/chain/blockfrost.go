@@ -907,6 +907,10 @@ type AnchorDocument struct {
 // already fetched for live governance actions. It reads Dingo's local metadata
 // DB only (read-only); the wallet never fetches an anchor itself. An absent
 // data dir, metadata file, or table yields no documents.
+//
+// Dingo keys a fetched document by (source, URL, hash), and two proposals can
+// share an anchor URL with different hashes, so the join matches the hash too:
+// a document is only attributed to the proposal whose anchor it verified.
 func (c *Client) GovernanceAnchorDocuments(ctx context.Context) ([]AnchorDocument, error) {
 	if c.dingoDataDir == "" {
 		return nil, nil
@@ -937,7 +941,7 @@ func (c *Client) GovernanceAnchorDocuments(ctx context.Context) ([]AnchorDocumen
 	rows, err := db.QueryContext(ctx, `
 		SELECT p.tx_hash, p.action_index, p.expires_epoch, m.content
 		FROM governance_proposal p
-		JOIN offchain_metadata m ON m.url = p.anchor_url
+		JOIN offchain_metadata m ON m.url = p.anchor_url AND m.hash = p.anchor_hash
 		WHERE p.deleted_slot IS NULL
 		  AND m.source_type = 'gov_proposal'
 		  AND m.status = 'fetched'
