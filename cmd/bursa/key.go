@@ -40,16 +40,16 @@ Derivation paths by key type:
   Dijkstra: bls (random BLS12-381 MinSig key for Leios and Peras registration)
 
 Examples:
-  bursa key root --mnemonic-file seed.txt
-  bursa key account --mnemonic-file seed.txt --index 0
-  bursa key payment --mnemonic-file seed.txt
-  bursa key stake --mnemonic-file seed.txt
-  bursa key pool-cold --mnemonic-file seed.txt
-  bursa key policy --mnemonic-file seed.txt
-  bursa key calidus --mnemonic-file seed.txt
-  bursa key drep --mnemonic-file seed.txt
-  bursa key committee-cold --mnemonic-file seed.txt
-  bursa key committee-hot --mnemonic-file seed.txt
+  bursa key root --mnemonic-file seed.txt --signing-key-file -
+  bursa key account --mnemonic-file seed.txt --index 0 --signing-key-file -
+  bursa key payment --mnemonic-file seed.txt --signing-key-file -
+  bursa key stake --mnemonic-file seed.txt --signing-key-file -
+  bursa key pool-cold --mnemonic-file seed.txt --signing-key-file -
+  bursa key policy --mnemonic-file seed.txt --signing-key-file -
+  bursa key calidus --mnemonic-file seed.txt --signing-key-file -
+  bursa key drep --mnemonic-file seed.txt --signing-key-file -
+  bursa key committee-cold --mnemonic-file seed.txt --signing-key-file -
+  bursa key committee-hot --mnemonic-file seed.txt --signing-key-file -
   bursa key bls --signing-key-file bls.skey --output-file bls.json`,
 	}
 
@@ -108,17 +108,18 @@ func keyRootCommand() *cobra.Command {
 		Long: `Derives the root extended private key from a BIP-39 mnemonic.
 
 The root key is the master key from which all other keys are derived.
-Output is in bech32 format (root_xsk prefix) unless --signing-key-file is specified.
+Output is in bech32 format (root_xsk prefix) on standard output when --signing-key-file is "-". A path writes a
+cardano-cli key file instead; one of the two is required.
 
 The mnemonic can be provided via:
-  1. --mnemonic flag
+  1. --mnemonic flag (deprecated: visible in the process list)
   2. MNEMONIC environment variable
-  3. --mnemonic-file flag
+  3. --mnemonic-file flag ("-" reads standard input)
   4. Default file "seed.txt"
 
 Examples:
-  bursa key root --mnemonic-file seed.txt
-  bursa key root --mnemonic-file seed.txt
+  bursa key root --mnemonic-file seed.txt --signing-key-file -
+  bursa key root --mnemonic-file seed.txt --signing-key-file root.skey
   bursa key root --signing-key-file root.skey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyRoot(
@@ -139,7 +140,7 @@ Examples:
 		&signingKeyFile,
 		"signing-key-file",
 		"",
-		"Path to write signing key in cardano-cli compatible JSON format",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
 	)
 
 	return &cmd
@@ -158,11 +159,12 @@ func keyAccountCommand() *cobra.Command {
 		Long: `Derives an account extended private key from a BIP-39 mnemonic.
 
 The account key follows CIP-1852 path: m/1852'/1815'/account'
-Output is in bech32 format (acct_xsk prefix) unless --signing-key-file is specified.
+Output is in bech32 format (acct_xsk prefix) on standard output when --signing-key-file is "-". A path writes a
+cardano-cli key file instead; one of the two is required.
 
 Examples:
-  bursa key account --mnemonic-file seed.txt
-  bursa key account --mnemonic-file seed.txt --index 1
+  bursa key account --mnemonic-file seed.txt --signing-key-file -
+  bursa key account --mnemonic-file seed.txt --index 1 --signing-key-file -
   bursa key account --signing-key-file account.skey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyAccount(
@@ -188,7 +190,7 @@ Examples:
 		&signingKeyFile,
 		"signing-key-file",
 		"",
-		"Path to write signing key in cardano-cli compatible JSON format",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
 	)
 
 	return &cmd
@@ -209,11 +211,12 @@ func keyPaymentCommand() *cobra.Command {
 		Long: `Derives a payment extended private key from a BIP-39 mnemonic.
 
 The payment key follows CIP-1852 path: m/1852'/1815'/account'/0/index
-Output is in bech32 format (addr_xsk prefix) unless key files are specified.
+Output is in bech32 format (addr_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
+key files instead; a signing key destination is required.
 
 Examples:
-  bursa key payment --mnemonic-file seed.txt
-  bursa key payment --mnemonic-file seed.txt --account-index 0 --index 0
+  bursa key payment --mnemonic-file seed.txt --signing-key-file -
+  bursa key payment --mnemonic-file seed.txt --account-index 0 --index 0 --signing-key-file -
   bursa key payment --signing-key-file payment.skey --verification-key-file payment.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyPayment(
@@ -248,7 +251,7 @@ Examples:
 		&signingKeyFile,
 		"signing-key-file",
 		"",
-		"Path to write signing key in cardano-cli compatible JSON format",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
 	)
 	cmd.Flags().StringVar(
 		&verificationKeyFile,
@@ -275,11 +278,12 @@ func keyStakeCommand() *cobra.Command {
 		Long: `Derives a stake extended private key from a BIP-39 mnemonic.
 
 The stake key follows CIP-1852 path: m/1852'/1815'/account'/2/index
-Output is in bech32 format (stake_xsk prefix) unless key files are specified.
+Output is in bech32 format (stake_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
+key files instead; a signing key destination is required.
 
 Examples:
-  bursa key stake --mnemonic-file seed.txt
-  bursa key stake --mnemonic-file seed.txt --account-index 0 --index 0
+  bursa key stake --mnemonic-file seed.txt --signing-key-file -
+  bursa key stake --mnemonic-file seed.txt --account-index 0 --index 0 --signing-key-file -
   bursa key stake --signing-key-file stake.skey --verification-key-file stake.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyStake(
@@ -314,7 +318,7 @@ Examples:
 		&signingKeyFile,
 		"signing-key-file",
 		"",
-		"Path to write signing key in cardano-cli compatible JSON format",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
 	)
 	cmd.Flags().StringVar(
 		&verificationKeyFile,
@@ -341,11 +345,12 @@ func keyPolicyCommand() *cobra.Command {
 
 The policy key follows CIP-1855 path: m/1855'/1815'/policy_ix'
 These keys are used for native asset minting/burning policies.
-Output is in bech32 format (policy_xsk prefix) unless key files are specified.
+Output is in bech32 format (policy_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
+key files instead; a signing key destination is required.
 
 Examples:
-  bursa key policy --mnemonic-file seed.txt
-  bursa key policy --mnemonic-file seed.txt --index 0
+  bursa key policy --mnemonic-file seed.txt --signing-key-file -
+  bursa key policy --mnemonic-file seed.txt --index 0 --signing-key-file -
   bursa key policy --signing-key-file policy.skey --verification-key-file policy.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyPolicy(
@@ -372,7 +377,7 @@ Examples:
 		&signingKeyFile,
 		"signing-key-file",
 		"",
-		"Path to write signing key in cardano-cli compatible JSON format",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
 	)
 	cmd.Flags().StringVar(
 		&verificationKeyFile,
@@ -399,11 +404,12 @@ func keyPoolColdCommand() *cobra.Command {
 
 The pool cold key follows CIP-1853 path: m/1853'/1815'/0'/index'
 These keys are used as the long-term identity keys for stake pool operators.
-Output is in bech32 format (pool_xsk prefix) unless key files are specified.
+Output is in bech32 format (pool_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
+key files instead; a signing key destination is required.
 
 Examples:
-  bursa key pool-cold --mnemonic-file seed.txt
-  bursa key pool-cold --mnemonic-file seed.txt --index 0
+  bursa key pool-cold --mnemonic-file seed.txt --signing-key-file -
+  bursa key pool-cold --mnemonic-file seed.txt --index 0 --signing-key-file -
   bursa key pool-cold --signing-key-file pool-cold.skey --verification-key-file pool-cold.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyPoolCold(
@@ -431,7 +437,7 @@ Examples:
 		&signingKeyFile,
 		"signing-key-file",
 		"",
-		"Path to write signing key in cardano-cli compatible JSON format",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
 	)
 	cmd.Flags().StringVar(
 		&verificationKeyFile,
@@ -465,11 +471,12 @@ The key is functionally identical to the payment key but uses different
 bech32 prefixes (calidus_xsk/calidus_xvk) and different cardano-cli
 text envelope types for SPO identity purposes.
 
-Output is in bech32 format (calidus_xsk prefix) unless key files are specified.
+Output is in bech32 format (calidus_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
+key files instead; a signing key destination is required.
 
 Examples:
-  bursa key calidus --mnemonic-file seed.txt
-  bursa key calidus --mnemonic-file seed.txt --account-index 0 --index 0
+  bursa key calidus --mnemonic-file seed.txt --signing-key-file -
+  bursa key calidus --mnemonic-file seed.txt --account-index 0 --index 0 --signing-key-file -
   bursa key calidus --signing-key-file calidus.skey --verification-key-file calidus.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyCalidus(
@@ -504,7 +511,7 @@ Examples:
 		&signingKeyFile,
 		"signing-key-file",
 		"",
-		"Path to write signing key in cardano-cli compatible JSON format",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
 	)
 	cmd.Flags().StringVar(
 		&verificationKeyFile,
@@ -534,11 +541,12 @@ consensus protocol. The seed is derived deterministically from the mnemonic,
 allowing for key recovery.
 
 Output includes both signing key (vrf_sk) and verification key (vrf_vk)
-in bech32 format unless key files are specified.
+in bech32 format on standard output when --signing-key-file is "-". Paths write cardano-cli
+key files instead; a signing key destination is required.
 
 Examples:
-  bursa key vrf --mnemonic-file seed.txt
-  bursa key vrf --mnemonic-file seed.txt --index 0
+  bursa key vrf --mnemonic-file seed.txt --signing-key-file -
+  bursa key vrf --mnemonic-file seed.txt --index 0 --signing-key-file -
   bursa key vrf --signing-key-file vrf.skey --verification-key-file vrf.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyVRF(
@@ -565,7 +573,7 @@ Examples:
 		&signingKeyFile,
 		"signing-key-file",
 		"",
-		"Path to write signing key in cardano-cli compatible JSON format",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
 	)
 	cmd.Flags().StringVar(
 		&verificationKeyFile,
@@ -598,11 +606,12 @@ This implementation uses Cardano's depth 6, providing 64 time periods.
 The seed is derived deterministically from the mnemonic, allowing for key recovery.
 
 Output includes both signing key (kes_sk, 608 bytes) and verification key
-(kes_vk, 32 bytes) in bech32 format unless key files are specified.
+(kes_vk, 32 bytes) in bech32 format on standard output when --signing-key-file is "-". Paths write cardano-cli
+key files instead; a signing key destination is required.
 
 Examples:
-  bursa key kes --mnemonic-file seed.txt
-  bursa key kes --mnemonic-file seed.txt --index 0
+  bursa key kes --mnemonic-file seed.txt --signing-key-file -
+  bursa key kes --mnemonic-file seed.txt --index 0 --signing-key-file -
   bursa key kes --signing-key-file kes.skey --verification-key-file kes.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyKES(
@@ -629,7 +638,7 @@ Examples:
 		&signingKeyFile,
 		"signing-key-file",
 		"",
-		"Path to write signing key in cardano-cli compatible JSON format",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
 	)
 	cmd.Flags().StringVar(
 		&verificationKeyFile,
@@ -657,11 +666,12 @@ func keyDRepCommand() *cobra.Command {
 
 The DRep key follows CIP-0105 path: m/1852'/1815'/account'/3/index
 These keys are used for governance participation as a Delegated Representative.
-Output is in bech32 format (drep_xsk prefix) unless key files are specified.
+Output is in bech32 format (drep_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
+key files instead; a signing key destination is required.
 
 Examples:
-  bursa key drep --mnemonic-file seed.txt
-  bursa key drep --mnemonic-file seed.txt --account-index 0 --index 0
+  bursa key drep --mnemonic-file seed.txt --signing-key-file -
+  bursa key drep --mnemonic-file seed.txt --account-index 0 --index 0 --signing-key-file -
   bursa key drep --signing-key-file drep.skey --verification-key-file drep.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyDRep(
@@ -695,7 +705,7 @@ Examples:
 		&signingKeyFile,
 		"signing-key-file",
 		"",
-		"Path to write signing key in cardano-cli compatible JSON format",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
 	)
 	cmd.Flags().StringVar(
 		&verificationKeyFile,
@@ -723,11 +733,12 @@ func keyCommitteeColdCommand() *cobra.Command {
 
 The committee cold key follows CIP-0105 path: m/1852'/1815'/account'/4/index
 These keys are used for Constitutional Committee membership (long-term identity).
-Output is in bech32 format (cc_cold_xsk prefix) unless key files are specified.
+Output is in bech32 format (cc_cold_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
+key files instead; a signing key destination is required.
 
 Examples:
-  bursa key committee-cold --mnemonic-file seed.txt
-  bursa key committee-cold --mnemonic-file seed.txt --account-index 0 --index 0
+  bursa key committee-cold --mnemonic-file seed.txt --signing-key-file -
+  bursa key committee-cold --mnemonic-file seed.txt --account-index 0 --index 0 --signing-key-file -
   bursa key committee-cold --signing-key-file committee-cold.skey --verification-key-file committee-cold.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyCommitteeCold(
@@ -762,7 +773,7 @@ Examples:
 		&signingKeyFile,
 		"signing-key-file",
 		"",
-		"Path to write signing key in cardano-cli compatible JSON format",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
 	)
 	cmd.Flags().StringVar(
 		&verificationKeyFile,
@@ -790,11 +801,12 @@ func keyCommitteeHotCommand() *cobra.Command {
 
 The committee hot key follows CIP-0105 path: m/1852'/1815'/account'/5/index
 These keys are used for Constitutional Committee voting (operational key).
-Output is in bech32 format (cc_hot_xsk prefix) unless key files are specified.
+Output is in bech32 format (cc_hot_xsk prefix) on standard output when --signing-key-file is "-". Paths write cardano-cli
+key files instead; a signing key destination is required.
 
 Examples:
-  bursa key committee-hot --mnemonic-file seed.txt
-  bursa key committee-hot --mnemonic-file seed.txt --account-index 0 --index 0
+  bursa key committee-hot --mnemonic-file seed.txt --signing-key-file -
+  bursa key committee-hot --mnemonic-file seed.txt --account-index 0 --index 0 --signing-key-file -
   bursa key committee-hot --signing-key-file committee-hot.skey --verification-key-file committee-hot.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyCommitteeHot(
@@ -829,7 +841,7 @@ Examples:
 		&signingKeyFile,
 		"signing-key-file",
 		"",
-		"Path to write signing key in cardano-cli compatible JSON format",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
 	)
 	cmd.Flags().StringVar(
 		&verificationKeyFile,

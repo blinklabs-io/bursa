@@ -27,7 +27,7 @@ import (
 
 func TestStartDebugListenerRefusesNonLoopback(t *testing.T) {
 	t.Parallel()
-	for _, addr := range []string{"", "0.0.0.0", "::", "10.1.2.3"} {
+	for _, addr := range []string{"", "0.0.0.0", "::", "10.1.2.3", "example.com"} {
 		srv, err := startDebugListener(
 			config.DebugConfig{ListenAddress: addr, ListenPort: 6060},
 		)

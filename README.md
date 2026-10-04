@@ -161,20 +161,23 @@ Use "bursa [command] --help" for more information about a command.
 
 ### Key Derivation Commands
 
-Derive individual keys from a BIP-39 mnemonic:
+Derive individual keys from a BIP-39 mnemonic. Secret output needs an explicit
+destination: `--signing-key-file <path>` writes a cardano-cli key file and
+`--signing-key-file -` prints to standard output. `key decrypt` takes
+`--out-file` the same way.
 
 ```bash
-bursa key root --mnemonic-file seed.txt           # Root extended private key
-bursa key account --mnemonic-file seed.txt        # Account key (CIP-1852)
-bursa key payment --mnemonic-file seed.txt        # Payment key (CIP-1852)
-bursa key stake --mnemonic-file seed.txt          # Stake key (CIP-1852)
-bursa key policy --mnemonic-file seed.txt         # Forging policy key (CIP-1855)
-bursa key pool-cold --mnemonic-file seed.txt      # Pool cold key (CIP-1853)
-bursa key drep --mnemonic-file seed.txt           # DRep key (CIP-0105)
-bursa key committee-cold --mnemonic-file seed.txt # Committee cold key (CIP-0105)
-bursa key committee-hot --mnemonic-file seed.txt  # Committee hot key (CIP-0105)
-bursa key vrf --mnemonic-file seed.txt            # VRF key pair for block production
-bursa key kes --mnemonic-file seed.txt            # KES key pair for block production
+bursa key root --mnemonic-file seed.txt --signing-key-file - # Root extended private key
+bursa key account --mnemonic-file seed.txt --signing-key-file - # Account key (CIP-1852)
+bursa key payment --mnemonic-file seed.txt --signing-key-file - # Payment key (CIP-1852)
+bursa key stake --mnemonic-file seed.txt --signing-key-file - # Stake key (CIP-1852)
+bursa key policy --mnemonic-file seed.txt --signing-key-file - # Forging policy key (CIP-1855)
+bursa key pool-cold --mnemonic-file seed.txt --signing-key-file - # Pool cold key (CIP-1853)
+bursa key drep --mnemonic-file seed.txt --signing-key-file - # DRep key (CIP-0105)
+bursa key committee-cold --mnemonic-file seed.txt --signing-key-file - # Committee cold key (CIP-0105)
+bursa key committee-hot --mnemonic-file seed.txt --signing-key-file - # Committee hot key (CIP-0105)
+bursa key vrf --mnemonic-file seed.txt --signing-key-file - # VRF key pair for block production
+bursa key kes --mnemonic-file seed.txt --signing-key-file - # KES key pair for block production
 ```
 
 Generate the Dijkstra-era BLS stake-pool key used by Leios and Peras. The

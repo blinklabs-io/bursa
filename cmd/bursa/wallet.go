@@ -74,9 +74,9 @@ func walletRestoreCommand() *cobra.Command {
 		Long: `Restores a wallet from an existing mnemonic phrase.
 
 The mnemonic can be provided via (in order of precedence):
-  1. --mnemonic flag (direct string)
+  1. --mnemonic flag (deprecated: visible in the process list)
   2. MNEMONIC environment variable
-  3. --mnemonic-file flag (path to file containing mnemonic)
+  3. --mnemonic-file flag (path to file containing mnemonic, "-" for standard input)
   4. Default file "seed.txt" in current directory
 
 The mnemonic should be a valid BIP-39 mnemonic (typically 24 words).
@@ -86,7 +86,7 @@ Examples:
   bursa wallet restore --mnemonic-file seed.txt
   bursa wallet restore --mnemonic-file /path/to/seed.txt
   bursa wallet restore  # reads from MNEMONIC env var or seed.txt
-  bursa wallet restore --password "secret" --output ./wallet-keys`,
+  bursa wallet restore --password-file password.txt --output ./wallet-keys`,
 		Run: func(cmd *cobra.Command, args []string) {
 			cfg, err := config.LoadConfig()
 			if err != nil {

@@ -335,19 +335,9 @@ kes_agent:
 	}
 }
 
-func TestDebugConfigValidate(t *testing.T) {
+func TestDefaultDebugListenAddressIsLoopback(t *testing.T) {
 	t.Parallel()
-	if got := defaultConfig().Debug; got.Validate() != nil {
-		t.Fatalf("default debug config must be valid: %+v", got)
-	}
-	for _, addr := range []string{"127.0.0.1", "127.0.0.2", "::1", "localhost"} {
-		if err := (DebugConfig{ListenAddress: addr}).Validate(); err != nil {
-			t.Errorf("address %q: unexpected error %v", addr, err)
-		}
-	}
-	for _, addr := range []string{"", "0.0.0.0", "::", "10.1.2.3", "example.com"} {
-		if err := (DebugConfig{ListenAddress: addr}).Validate(); err == nil {
-			t.Errorf("address %q: expected error", addr)
-		}
+	if got := defaultConfig().Debug.ListenAddress; got != "127.0.0.1" {
+		t.Fatalf("default debug listen address = %q, want 127.0.0.1", got)
 	}
 }

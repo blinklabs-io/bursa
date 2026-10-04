@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -66,20 +67,18 @@ func TestResolveMnemonicReadsStdin(t *testing.T) {
 }
 
 func TestReadSecretFile(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "pw")
 	require.NoError(t, os.WriteFile(path, []byte(" pass word \r\n"), 0o600))
-	got, err := ReadSecretFile(path)
+	got, err := ReadSecretFile(path, nil)
 	require.NoError(t, err)
 	assert.Equal(t, " pass word ", got)
 
-	old := secretStdin
-	secretStdin = strings.NewReader("from-stdin\n")
-	t.Cleanup(func() { secretStdin = old })
-	got, err = ReadSecretFile("-")
+	got, err = ReadSecretFile("-", strings.NewReader("from-stdin\n"))
 	require.NoError(t, err)
 	assert.Equal(t, "from-stdin", got)
 
-	_, err = ReadSecretFile(filepath.Join(t.TempDir(), "missing"))
+	_, err = ReadSecretFile(filepath.Join(t.TempDir(), "missing"), nil)
 	assert.Error(t, err)
 }
 
@@ -104,6 +103,11 @@ func TestRunCreateWritesSecretsOnlyToOutput(t *testing.T) {
 	assert.Equal(t, testKeyMnemonic, string(seed))
 	assert.NotContains(t, logged, "abandon")
 	assert.NotContains(t, logged, "cborHex")
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(dir)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+	}
 }
 
 func TestRunRestoreWithoutOutputKeepsKeysOutOfLog(t *testing.T) {

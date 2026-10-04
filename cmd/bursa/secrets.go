@@ -49,14 +49,14 @@ func addSecretFlags(
 	_ = flags.MarkDeprecated("password", "process arguments are visible to other users; use --password-file")
 	cmd.MarkFlagsMutuallyExclusive("password", "password-file")
 
-	cmd.PreRunE = func(*cobra.Command, []string) error {
+	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
 		if passwordFile == "" {
 			return nil
 		}
 		if passwordFile == "-" && *mnemonicFile == "-" {
 			return errors.New(`--mnemonic-file and --password-file cannot both read standard input`)
 		}
-		value, err := cli.ReadSecretFile(passwordFile)
+		value, err := cli.ReadSecretFile(passwordFile, cmd.InOrStdin())
 		if err != nil {
 			return err
 		}

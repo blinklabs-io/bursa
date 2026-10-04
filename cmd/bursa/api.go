@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -30,6 +31,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/api"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	"github.com/blinklabs-io/bursa/internal/signer"
 	"github.com/spf13/cobra"
 )
 
@@ -40,8 +42,11 @@ func startDebugListener(cfg config.DebugConfig) (*http.Server, error) {
 	if cfg.ListenPort == 0 {
 		return nil, nil
 	}
-	if err := cfg.Validate(); err != nil {
-		return nil, err
+	if !signer.IsLoopbackListenAddress(cfg.ListenAddress) {
+		return nil, fmt.Errorf(
+			"debug listen address %q must be a loopback address",
+			cfg.ListenAddress,
+		)
 	}
 	addr := net.JoinHostPort(cfg.ListenAddress, strconv.FormatUint(uint64(cfg.ListenPort), 10))
 	ln, err := net.Listen("tcp", addr)

@@ -16,7 +16,6 @@ package config
 
 import (
 	"fmt"
-	"net"
 	"os"
 
 	"github.com/kelseyhightower/envconfig"
@@ -215,23 +214,6 @@ type ApiConfig struct {
 type DebugConfig struct {
 	ListenAddress string `yaml:"address" envconfig:"DEBUG_LISTEN_ADDRESS"`
 	ListenPort    uint   `yaml:"port"    envconfig:"DEBUG_LISTEN_PORT"`
-}
-
-// Validate rejects a debug listener address that is reachable from other
-// hosts: the profiling endpoints it serves have no authentication, so they may
-// only be bound to loopback. An empty address binds every interface and is
-// refused too.
-func (d DebugConfig) Validate() error {
-	if d.ListenAddress == "localhost" {
-		return nil
-	}
-	if ip := net.ParseIP(d.ListenAddress); ip != nil && ip.IsLoopback() {
-		return nil
-	}
-	return fmt.Errorf(
-		"debug listen address %q must be a loopback address",
-		d.ListenAddress,
-	)
 }
 
 type GoogleConfig struct {
