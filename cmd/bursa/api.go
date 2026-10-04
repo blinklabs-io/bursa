@@ -16,12 +16,14 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	_ "net/http/pprof" // #nosec G108
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -30,6 +32,31 @@ import (
 	"github.com/blinklabs-io/bursa/internal/logging"
 	"github.com/spf13/cobra"
 )
+
+// startDebugListener serves the pprof endpoints on a loopback address. It
+// returns nil when the listener is disabled (port 0) and refuses any address
+// other hosts could reach, since the endpoints are unauthenticated.
+func startDebugListener(cfg config.DebugConfig) (*http.Server, error) {
+	if cfg.ListenPort == 0 {
+		return nil, nil
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	addr := net.JoinHostPort(cfg.ListenAddress, strconv.FormatUint(uint64(cfg.ListenPort), 10))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("starting debug listener on " + addr)
+	debugger := &http.Server{ReadHeaderTimeout: 60 * time.Second}
+	go func() {
+		if err := debugger.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("debug listener stopped", "error", err)
+		}
+	}()
+	return debugger, nil
+}
 
 func apiCommand() *cobra.Command {
 	apiCommand := cobra.Command{
@@ -45,34 +72,9 @@ func apiCommand() *cobra.Command {
 			}
 			logging.ConfigureJSON()
 
-			// Start debug listener
-			if cfg.Debug.ListenPort > 0 {
-				slog.Info(
-					fmt.Sprintf(
-						"starting debug listener on %s:%d",
-						cfg.Debug.ListenAddress,
-						cfg.Debug.ListenPort,
-					),
-				)
-				go func() {
-					debugger := &http.Server{
-						Addr: fmt.Sprintf(
-							"%s:%d",
-							cfg.Debug.ListenAddress,
-							cfg.Debug.ListenPort,
-						),
-						ReadHeaderTimeout: 60 * time.Second,
-					}
-					err := debugger.ListenAndServe()
-					if err != nil {
-						slog.Error(
-							"failed to start debug listener",
-							"error",
-							err,
-						)
-						return
-					}
-				}()
+			if _, err := startDebugListener(cfg.Debug); err != nil {
+				logging.GetLogger().Error("failed to start debug listener", "error", err)
+				os.Exit(1)
 			}
 
 			// Create a context that can be canceled for graceful shutdown

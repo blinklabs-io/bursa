@@ -134,19 +134,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(
-		&mnemonicFile,
-		"mnemonic-file",
-		"",
-		"Path to file containing mnemonic (default: seed.txt)",
-	)
-	cmd.Flags().StringVar(
-		&password,
-		"password",
-		"",
-		"Optional password for key derivation",
-	)
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().StringVar(
 		&signingKeyFile,
 		"signing-key-file",
@@ -194,19 +182,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(
-		&mnemonicFile,
-		"mnemonic-file",
-		"",
-		"Path to file containing mnemonic (default: seed.txt)",
-	)
-	cmd.Flags().StringVar(
-		&password,
-		"password",
-		"",
-		"Optional password for key derivation",
-	)
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(&index, "index", 0, "Account index (default: 0)")
 	cmd.Flags().StringVar(
 		&signingKeyFile,
@@ -259,19 +235,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(
-		&mnemonicFile,
-		"mnemonic-file",
-		"",
-		"Path to file containing mnemonic (default: seed.txt)",
-	)
-	cmd.Flags().StringVar(
-		&password,
-		"password",
-		"",
-		"Optional password for key derivation",
-	)
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(
 		&accountIndex,
 		"account-index",
@@ -337,19 +301,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(
-		&mnemonicFile,
-		"mnemonic-file",
-		"",
-		"Path to file containing mnemonic (default: seed.txt)",
-	)
-	cmd.Flags().StringVar(
-		&password,
-		"password",
-		"",
-		"Optional password for key derivation",
-	)
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(
 		&accountIndex,
 		"account-index",
@@ -414,19 +366,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(
-		&mnemonicFile,
-		"mnemonic-file",
-		"",
-		"Path to file containing mnemonic (default: seed.txt)",
-	)
-	cmd.Flags().StringVar(
-		&password,
-		"password",
-		"",
-		"Optional password for key derivation",
-	)
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(&index, "index", 0, "Policy key index (default: 0)")
 	cmd.Flags().StringVar(
 		&signingKeyFile,
@@ -484,19 +424,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(
-		&mnemonicFile,
-		"mnemonic-file",
-		"",
-		"Path to file containing mnemonic (default: seed.txt)",
-	)
-	cmd.Flags().StringVar(
-		&password,
-		"password",
-		"",
-		"Optional password for key derivation",
-	)
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().
 		Uint32Var(&index, "index", 0, "Pool cold key index (default: 0)")
 	cmd.Flags().StringVar(
@@ -563,20 +491,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().
-		StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(
-		&mnemonicFile,
-		"mnemonic-file",
-		"",
-		"Path to file containing mnemonic (default: seed.txt)",
-	)
-	cmd.Flags().StringVar(
-		&password,
-		"password",
-		"",
-		"Optional password for key derivation",
-	)
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(
 		&accountIndex,
 		"account-index",
@@ -644,19 +559,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(
-		&mnemonicFile,
-		"mnemonic-file",
-		"",
-		"Path to file containing mnemonic (default: seed.txt)",
-	)
-	cmd.Flags().StringVar(
-		&password,
-		"password",
-		"",
-		"Optional password for key derivation",
-	)
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(&index, "index", 0, "VRF key index (default: 0)")
 	cmd.Flags().StringVar(
 		&signingKeyFile,
@@ -720,19 +623,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(
-		&mnemonicFile,
-		"mnemonic-file",
-		"",
-		"Path to file containing mnemonic (default: seed.txt)",
-	)
-	cmd.Flags().StringVar(
-		&password,
-		"password",
-		"",
-		"Optional password for key derivation",
-	)
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(&index, "index", 0, "KES key index (default: 0)")
 	cmd.Flags().StringVar(
 		&signingKeyFile,
@@ -792,19 +683,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(
-		&mnemonicFile,
-		"mnemonic-file",
-		"",
-		"Path to file containing mnemonic (default: seed.txt)",
-	)
-	cmd.Flags().StringVar(
-		&password,
-		"password",
-		"",
-		"Optional password for key derivation",
-	)
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(
 		&accountIndex,
 		"account-index",
@@ -870,19 +749,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(
-		&mnemonicFile,
-		"mnemonic-file",
-		"",
-		"Path to file containing mnemonic (default: seed.txt)",
-	)
-	cmd.Flags().StringVar(
-		&password,
-		"password",
-		"",
-		"Optional password for key derivation",
-	)
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(
 		&accountIndex,
 		"account-index",
@@ -949,19 +816,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(
-		&mnemonicFile,
-		"mnemonic-file",
-		"",
-		"Path to file containing mnemonic (default: seed.txt)",
-	)
-	cmd.Flags().StringVar(
-		&password,
-		"password",
-		"",
-		"Optional password for key derivation",
-	)
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(
 		&accountIndex,
 		"account-index",

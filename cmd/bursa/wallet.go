@@ -49,7 +49,10 @@ func walletCreateCommand() *cobra.Command {
 				logging.GetLogger().Error("failed to load config", "error", err)
 				os.Exit(1)
 			}
-			cli.RunCreate(cfg, output)
+			if err := cli.RunCreate(cfg, output); err != nil {
+				logging.GetLogger().Error("failed to create wallet", "error", err)
+				os.Exit(1)
+			}
 		},
 	}
 
@@ -90,21 +93,14 @@ Examples:
 				logging.GetLogger().Error("failed to load config", "error", err)
 				os.Exit(1)
 			}
-			cli.RunRestore(cfg, mnemonic, mnemonicFile, password, restoreOutput)
+			if err := cli.RunRestore(cfg, mnemonic, mnemonicFile, password, restoreOutput); err != nil {
+				logging.GetLogger().Error("failed to restore wallet", "error", err)
+				os.Exit(1)
+			}
 		},
 	}
 
-	walletRestoreCommand.Flags().
-		StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	walletRestoreCommand.Flags().
-		StringVar(
-			&mnemonicFile,
-			"mnemonic-file",
-			"",
-			"Path to file containing mnemonic (default: seed.txt)",
-		)
-	walletRestoreCommand.Flags().
-		StringVar(&password, "password", "", "Optional password for key derivation")
+	addSecretFlags(&walletRestoreCommand, &mnemonic, &mnemonicFile, &password)
 	walletRestoreCommand.Flags().
 		StringVar(&restoreOutput, "output", "", "Optional path to write key files")
 

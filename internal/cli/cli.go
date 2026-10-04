@@ -40,11 +40,17 @@ import (
 )
 
 // It remains a default entrypoint for creation
-func Run(cfg *config.Config, output string) {
-	RunCreate(cfg, output)
+func Run(cfg *config.Config, output string) error {
+	return RunCreate(cfg, output)
 }
 
-func RunCreate(cfg *config.Config, output string) {
+func RunCreate(cfg *config.Config, output string) error {
+	if output == "" {
+		return errors.New(
+			"wallet create writes the mnemonic and private keys: " +
+				"an output directory is required",
+		)
+	}
 	logger := logging.GetLogger()
 	// Load mnemonic
 	var err error
@@ -52,66 +58,72 @@ func RunCreate(cfg *config.Config, output string) {
 	if mnemonic == "" {
 		mnemonic, err = bursa.GenerateMnemonic()
 		if err != nil {
-			logger.Error("failed to generate mnemonic", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("failed to generate mnemonic: %w", err)
 		}
 	}
 	w, err := bursa.NewWallet(mnemonic, bursa.WithNetwork(cfg.Network))
 	if err != nil {
-		logger.Error("failed to initialize wallet", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to initialize wallet: %w", err)
 	}
 	if w == nil {
-		logger.Error("wallet empty after init... this shouldn't happen")
-		os.Exit(1)
+		return errors.New("wallet empty after init... this shouldn't happen")
 	}
 
 	logger.Info("Loaded mnemonic and generated address")
 
 	keyFiles, err := bursa.ExtractKeyFiles(w)
 	if err != nil {
-		logger.Error("failed to extract key files", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to extract key files: %w", err)
 	}
 
-	if output == "" {
-		logger.Info("MNEMONIC", "mnemonic", w.Mnemonic)
-		logger.Info("PAYMENT_ADDRESS", "payment_address", w.PaymentAddress)
-		logger.Info("STAKE_ADDRESS", "stake_address", w.StakeAddress)
-		for key, value := range keyFiles {
-			logger.Info(key, key, value)
-		}
-	} else {
-		fmt.Printf("Output dir: %v\n", output)
-		_, err := os.Stat(output)
-		if os.IsNotExist(err) {
-			err = os.MkdirAll(output, 0o755)
-			if err != nil {
-				panic(err)
-			}
-		}
-		fileMap := make([]map[string]string, 0, 3+len(keyFiles))
-		fileMap = append(fileMap,
-			map[string]string{"seed.txt": w.Mnemonic},
-			map[string]string{"payment.addr": w.PaymentAddress},
-			map[string]string{"stake.addr": w.StakeAddress},
-		)
-		for key, value := range keyFiles {
-			fileMap = append(fileMap, map[string]string{key: value})
-		}
-		err = writeWalletOutputs(output, fileMap)
-		if err != nil {
-			logger.Error("error occurred", "error", err)
-			os.Exit(1)
-		}
-		logger.Info("wrote output files", "directory", output)
+	fileMap := make([]map[string]string, 0, 3+len(keyFiles))
+	fileMap = append(fileMap,
+		map[string]string{"seed.txt": w.Mnemonic},
+		map[string]string{"payment.addr": w.PaymentAddress},
+		map[string]string{"stake.addr": w.StakeAddress},
+	)
+	for key, value := range keyFiles {
+		fileMap = append(fileMap, map[string]string{key: value})
 	}
+	return writeWalletDir(output, fileMap)
+}
+
+// writeWalletDir writes the wallet files into output, creating it if needed.
+func writeWalletDir(output string, fileMap []map[string]string) error {
+	if err := os.MkdirAll(output, 0o755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+	if err := writeWalletOutputs(output, fileMap); err != nil {
+		return err
+	}
+	logging.GetLogger().Info("wrote output files", "directory", output)
+	return nil
+}
+
+// secretStdin is where a secret file path of "-" is read from.
+var secretStdin io.Reader = os.Stdin
+
+func readSecretFile(path string) ([]byte, error) {
+	if path == "-" {
+		return io.ReadAll(secretStdin)
+	}
+	return os.ReadFile(path)
+}
+
+// ReadSecretFile reads a secret from path, or from standard input when path is
+// "-", without the trailing line break.
+func ReadSecretFile(path string) (string, error) {
+	data, err := readSecretFile(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read secret file %q: %w", path, err)
+	}
+	return strings.TrimRight(string(data), "\r\n"), nil
 }
 
 // resolveMnemonic loads a mnemonic from various sources in order of precedence:
 // 1. Direct mnemonic string (--mnemonic flag)
 // 2. MNEMONIC environment variable
-// 3. File specified by mnemonicFile (--mnemonic-file flag)
+// 3. File specified by mnemonicFile (--mnemonic-file flag), "-" for stdin
 // 4. Default file "seed.txt" in current directory
 func resolveMnemonic(mnemonic, mnemonicFile string) (string, error) {
 	// 1. Direct mnemonic string takes highest precedence
@@ -130,7 +142,7 @@ func resolveMnemonic(mnemonic, mnemonicFile string) (string, error) {
 		filePath = "seed.txt"
 	}
 
-	data, err := os.ReadFile(filePath)
+	data, err := readSecretFile(filePath)
 	if err != nil {
 		if mnemonicFile != "" {
 			// User explicitly specified a file that doesn't exist
@@ -153,14 +165,13 @@ func resolveMnemonic(mnemonic, mnemonicFile string) (string, error) {
 func RunRestore(
 	cfg *config.Config,
 	mnemonic, mnemonicFile, password, output string,
-) {
+) error {
 	logger := logging.GetLogger()
 
 	// Load mnemonic from various sources (in order of precedence)
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
-		logger.Error("failed to load mnemonic", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load mnemonic: %w", err)
 	}
 
 	w, err := bursa.NewWallet(
@@ -169,54 +180,35 @@ func RunRestore(
 		bursa.WithPassword(password),
 	)
 	if err != nil {
-		logger.Error("failed to restore wallet", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to restore wallet: %w", err)
 	}
 	if w == nil {
-		logger.Error("wallet empty after restore... this shouldn't happen")
-		os.Exit(1)
+		return errors.New("wallet empty after restore... this shouldn't happen")
 	}
 
 	logger.Info("Restored wallet from mnemonic")
 
-	keyFiles, err := bursa.ExtractKeyFiles(w)
-	if err != nil {
-		logger.Error("failed to extract key files", "error", err)
-		os.Exit(1)
-	}
-
+	// Key files hold private keys, so they only ever go to --output; the
+	// diagnostic log carries addresses alone.
 	if output == "" {
-		// Don't output the mnemonic since the user already has it
 		logger.Info("PAYMENT_ADDRESS", "payment_address", w.PaymentAddress)
 		logger.Info("STAKE_ADDRESS", "stake_address", w.StakeAddress)
-		for key, value := range keyFiles {
-			logger.Info(key, key, value)
-		}
-	} else {
-		fmt.Printf("Output dir: %v\n", output)
-		_, err := os.Stat(output)
-		if os.IsNotExist(err) {
-			err = os.MkdirAll(output, 0o755)
-			if err != nil {
-				logger.Error("failed to create output directory", "error", err)
-				os.Exit(1)
-			}
-		}
-		fileMap := make([]map[string]string, 0, 2+len(keyFiles))
-		fileMap = append(fileMap,
-			map[string]string{"payment.addr": w.PaymentAddress},
-			map[string]string{"stake.addr": w.StakeAddress},
-		)
-		for key, value := range keyFiles {
-			fileMap = append(fileMap, map[string]string{key: value})
-		}
-		err = writeWalletOutputs(output, fileMap)
-		if err != nil {
-			logger.Error("error occurred", "error", err)
-			os.Exit(1)
-		}
-		logger.Info("wrote output files", "directory", output)
+		return nil
 	}
+
+	keyFiles, err := bursa.ExtractKeyFiles(w)
+	if err != nil {
+		return fmt.Errorf("failed to extract key files: %w", err)
+	}
+	fileMap := make([]map[string]string, 0, 2+len(keyFiles))
+	fileMap = append(fileMap,
+		map[string]string{"payment.addr": w.PaymentAddress},
+		map[string]string{"stake.addr": w.StakeAddress},
+	)
+	for key, value := range keyFiles {
+		fileMap = append(fileMap, map[string]string{key: value})
+	}
+	return writeWalletDir(output, fileMap)
 }
 
 func RunLoad(dir string, showSecrets bool) {

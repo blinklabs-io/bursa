@@ -16,6 +16,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 
 	"github.com/kelseyhightower/envconfig"
@@ -216,6 +217,23 @@ type DebugConfig struct {
 	ListenPort    uint   `yaml:"port"    envconfig:"DEBUG_LISTEN_PORT"`
 }
 
+// Validate rejects a debug listener address that is reachable from other
+// hosts: the profiling endpoints it serves have no authentication, so they may
+// only be bound to loopback. An empty address binds every interface and is
+// refused too.
+func (d DebugConfig) Validate() error {
+	if d.ListenAddress == "localhost" {
+		return nil
+	}
+	if ip := net.ParseIP(d.ListenAddress); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf(
+		"debug listen address %q must be a loopback address",
+		d.ListenAddress,
+	)
+}
+
 type GoogleConfig struct {
 	Project    string `yaml:"project"         envconfig:"GOOGLE_PROJECT"`
 	ResourceId string `yaml:"kms_resource_id" envconfig:"GCP_KMS_RESOURCE_ID"`
@@ -246,7 +264,7 @@ func defaultConfig() Config {
 			Level: "info",
 		},
 		Debug: DebugConfig{
-			ListenAddress: "",
+			ListenAddress: "127.0.0.1",
 			ListenPort:    0,
 		},
 		Metrics: MetricsConfig{

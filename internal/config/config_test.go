@@ -334,3 +334,20 @@ kes_agent:
 		t.Errorf("env override service_socket_mode: got %q, want 0640", cfg2.KESAgent.ServiceSocketMode)
 	}
 }
+
+func TestDebugConfigValidate(t *testing.T) {
+	t.Parallel()
+	if got := defaultConfig().Debug; got.Validate() != nil {
+		t.Fatalf("default debug config must be valid: %+v", got)
+	}
+	for _, addr := range []string{"127.0.0.1", "127.0.0.2", "::1", "localhost"} {
+		if err := (DebugConfig{ListenAddress: addr}).Validate(); err != nil {
+			t.Errorf("address %q: unexpected error %v", addr, err)
+		}
+	}
+	for _, addr := range []string{"", "0.0.0.0", "::", "10.1.2.3", "example.com"} {
+		if err := (DebugConfig{ListenAddress: addr}).Validate(); err == nil {
+			t.Errorf("address %q: expected error", addr)
+		}
+	}
+}
