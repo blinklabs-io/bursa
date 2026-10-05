@@ -28,8 +28,11 @@ func (d Definition) CheckResponse(r Response) error {
 		return invalidf("role %d is not eligible", r.Role)
 	}
 	if d.Mode.Sealed {
-		if len(r.Sealed) == 0 || len(r.Answers) > 0 {
+		if len(r.Sealed) == 0 {
 			return invalidf("sealed survey needs a ciphertext response")
+		}
+		if len(r.Answers) > 0 {
+			return invalidf("sealed survey responses must not carry plaintext answers")
 		}
 		return nil
 	}
@@ -104,6 +107,11 @@ func (q Question) checkAnswer(a Answer) error {
 			return invalidf("points sum to %d, budget is %d", sum, q.Budget)
 		}
 	case KindRating:
+		// CIP-179: a present rating answer rates a non-empty subset; omitting
+		// the question is how a respondent abstains.
+		if len(a.Pairs) == 0 {
+			return invalidf("at least one option must be rated")
+		}
 		opts := make([]uint64, len(a.Pairs))
 		for i, p := range a.Pairs {
 			opts[i] = p.Option
@@ -123,7 +131,8 @@ func (q Question) checkAnswer(a Answer) error {
 	return nil
 }
 
-// checkDistinctOptions requires at least one index, all unique and below n.
+// checkDistinctOptions requires every index unique and below n. It accepts an
+// empty list; callers enforce their own minimum.
 func checkDistinctOptions(indices []uint64, n uint64) error {
 	seen := make(map[uint64]bool, len(indices))
 	for _, i := range indices {
@@ -168,17 +177,22 @@ func (s *RatingScale) check(v int64) error {
 // OptionTally counts what respondents did with one option. Count is how many
 // responses selected, ranked, allocated to or rated it; First counts ranking
 // first places; Sum totals allocated points or ratings.
+//
+// Sums are floating point: answers span the whole int64 range, so an integer
+// total of several of them can overflow, and the browser reads every JSON
+// number as a float64 anyway.
 type OptionTally struct {
-	Count uint64 `json:"count"`
-	First uint64 `json:"first,omitempty"`
-	Sum   int64  `json:"sum,omitempty"`
+	Count uint64  `json:"count"`
+	First uint64  `json:"first,omitempty"`
+	Sum   float64 `json:"sum,omitempty"`
 }
 
-// NumericTally summarises a numeric-range question's answers.
+// NumericTally summarises a numeric-range question's answers. Sum is floating
+// point for the reason given on OptionTally.
 type NumericTally struct {
-	Sum int64 `json:"sum"`
-	Min int64 `json:"min"`
-	Max int64 `json:"max"`
+	Sum float64 `json:"sum"`
+	Min int64   `json:"min"`
+	Max int64   `json:"max"`
 }
 
 // QuestionTally is one question's result among a set of responses. Abstained
@@ -234,7 +248,7 @@ func (t *QuestionTally) add(a Answer) {
 		if t.Numeric == nil {
 			t.Numeric = &NumericTally{Min: math.MaxInt64, Max: math.MinInt64}
 		}
-		t.Numeric.Sum += a.Number
+		t.Numeric.Sum += float64(a.Number)
 		t.Numeric.Min = min(t.Numeric.Min, a.Number)
 		t.Numeric.Max = max(t.Numeric.Max, a.Number)
 	case KindPointsAllocation:
@@ -242,12 +256,12 @@ func (t *QuestionTally) add(a Answer) {
 			if p.Value > 0 {
 				t.Options[p.Option].Count++
 			}
-			t.Options[p.Option].Sum += p.Value
+			t.Options[p.Option].Sum += float64(p.Value)
 		}
 	case KindRating:
 		for _, p := range a.Pairs {
 			t.Options[p.Option].Count++
-			t.Options[p.Option].Sum += p.Value
+			t.Options[p.Option].Sum += float64(p.Value)
 		}
 	case KindCustom:
 		// Only counted as answered, which the caller has already done.

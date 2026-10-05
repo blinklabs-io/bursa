@@ -33,14 +33,14 @@ func relayServer(t *testing.T, handler http.HandlerFunc) func(context.Context, u
 
 func TestRelayFetcherReadsTheQuicknetBeacon(t *testing.T) {
 	t.Parallel()
-	var path string
+	paths := make(chan string, 1)
 	fetch := relayServer(t, func(w http.ResponseWriter, r *http.Request) {
-		path = r.URL.Path
+		paths <- r.URL.Path
 		fmt.Fprintf(w, `{"round":100,"randomness":"79fe","signature":%q}`, quicknetRound100Sig)
 	})
 	got, err := fetch(context.Background(), 100)
 	noErr(t, err)
-	equal(t, "/"+QuicknetChainHash+"/public/100", path)
+	equal(t, "/"+QuicknetChainHash+"/public/100", <-paths)
 	equal(t, quicknetRound100Sig, hex.EncodeToString(got))
 }
 

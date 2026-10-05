@@ -224,6 +224,12 @@ export function SurveyBuilder({ onBack, onPreview }: SurveyBuilderProps) {
                 {ROLE_LABELS[r]}
               </label>
             ))}
+            {draft.roles.includes(2) && (
+              <p className="helper-text">
+                The node does not expose committee membership, so this wallet excludes Constitutional Committee
+                responses from its own results; other tools may count them.
+              </p>
+            )}
           </fieldset>
           <p className="helper-text">The survey is owned by this wallet&apos;s payment key, which can cancel it.</p>
         </div>

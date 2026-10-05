@@ -36,13 +36,15 @@ interface SurveysProps {
   // Building a transaction needs a wallet that signs with a local seed and a
   // fully synced node; reading only needs a queryable node.
   canSubmit: boolean;
+  // A survey to open directly, as a link from the governance browser does.
+  initialId?: string;
 }
 
 // Surveys browses CIP-179 on-chain surveys and polls read from the embedded
 // node, shows their per-role results, and lets this wallet respond to, create
 // and cancel them.
-export function Surveys({ canSubmit }: SurveysProps) {
-  const [view, setView] = useState<View>({ name: "list" });
+export function Surveys({ canSubmit, initialId }: SurveysProps) {
+  const [view, setView] = useState<View>(initialId ? { name: "detail", id: initialId } : { name: "list" });
   const [pending, setPending] = useState<Pending | null>(null);
 
   // After a transaction is submitted the node needs a block to show it, so go
@@ -156,9 +158,14 @@ function SurveyList({ canSubmit, onOpen, onCreate }: SurveyListProps) {
           </p>
         )}
         {loading && !data && <p className="helper-text">Loading…</p>}
+        {loading && data && (
+          <p className="helper-text" role="status">
+            Updating…
+          </p>
+        )}
         {!error && !loading && surveys.length === 0 && <p className="helper-text">No surveys found.</p>}
         {surveys.length > 0 && (
-          <>
+          <div aria-busy={loading}>
             <Table
               columns={[
                 { key: "title", label: "Survey" },
@@ -180,7 +187,7 @@ function SurveyList({ canSubmit, onOpen, onCreate }: SurveyListProps) {
                 Next
               </Button>
             </div>
-          </>
+          </div>
         )}
       </Card>
     </div>

@@ -104,7 +104,7 @@ func TestRespondBuildsALabel17ResponseSignedByTheRoleKey(t *testing.T) {
 func TestRespondRejectsWithoutBuilding(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
-		prepare func(*fakeChain)
+		prepare func(*testing.T, *fakeChain)
 		req     RespondRequest
 		want    error
 	}{
@@ -116,10 +116,10 @@ func TestRespondRejectsWithoutBuilding(t *testing.T) {
 		"option out of range": {nil, RespondRequest{Survey: surveyID(0xa1, 0), Role: RoleDRep, Answers: answer(2)}, ErrInvalid},
 		"no answers":          {nil, RespondRequest{Survey: surveyID(0xa1, 0), Role: RoleDRep}, ErrInvalid},
 		"role out of range":   {nil, RespondRequest{Survey: surveyID(0xa1, 0), Role: 9, Answers: answer(0)}, ErrInvalid},
-		"closed survey": {func(f *fakeChain) {
+		"closed survey": {func(t *testing.T, f *fakeChain) {
 			f.add(t, 0xa3, 101, 0, 40, defPayload(simple(3, 45, RoleDRep)), credHex(3))
 		}, RespondRequest{Survey: surveyID(0xa3, 0), Role: RoleDRep, Answers: answer(0)}, ErrInvalid},
-		"cancelled survey": {func(f *fakeChain) {
+		"cancelled survey": {func(t *testing.T, f *fakeChain) {
 			f.add(t, 0xa4, 102, 0, 40, defPayload(simple(4, 60, RoleDRep)), credHex(4))
 			f.add(t, 0xc4, 103, 0, 41, cancelPayload(ref(0xa4, 0)), credHex(4))
 		}, RespondRequest{Survey: surveyID(0xa4, 0), Role: RoleDRep, Answers: answer(0)}, ErrInvalid},
@@ -129,7 +129,7 @@ func TestRespondRejectsWithoutBuilding(t *testing.T) {
 			svc, f, b := newBuilderService(t)
 			f.add(t, 0xa2, 104, 0, 40, defPayload(simple(2, 60, RoleDRep)), credHex(2))
 			if tc.prepare != nil {
-				tc.prepare(f)
+				tc.prepare(t, f)
 			}
 			_, err := svc.Respond(context.Background(), tc.req)
 			if !errors.Is(err, tc.want) {
@@ -288,24 +288,26 @@ func TestCancelRejectsWithoutBuilding(t *testing.T) {
 	script := simple(0x91, 60)
 	script.Owner = cred(true, 0x91)
 	for name, tc := range map[string]struct {
-		prepare func(*fakeChain)
+		prepare func(*testing.T, *fakeChain)
 		id      string
 		want    error
 	}{
-		"someone else's survey": {func(f *fakeChain) { f.add(t, 0xa1, 100, 0, 40, defPayload(simple(2, 60)), credHex(2)) }, surveyID(0xa1, 0), ErrInvalid},
-		"script owner":          {func(f *fakeChain) { f.add(t, 0xa1, 100, 0, 40, defPayload(script)) }, surveyID(0xa1, 0), ErrNotFound},
-		"already cancelled": {func(f *fakeChain) {
+		"someone else's survey": {func(t *testing.T, f *fakeChain) { f.add(t, 0xa1, 100, 0, 40, defPayload(simple(2, 60)), credHex(2)) }, surveyID(0xa1, 0), ErrInvalid},
+		"script owner":          {func(t *testing.T, f *fakeChain) { f.add(t, 0xa1, 100, 0, 40, defPayload(script)) }, surveyID(0xa1, 0), ErrNotFound},
+		"already cancelled": {func(t *testing.T, f *fakeChain) {
 			f.add(t, 0xa1, 100, 0, 40, defPayload(simple(0x91, 60)), credHex(0x91))
 			f.add(t, 0xc1, 101, 0, 41, cancelPayload(ref(0xa1, 0)), credHex(0x91))
 		}, surveyID(0xa1, 0), ErrInvalid},
-		"already ended": {func(f *fakeChain) { f.add(t, 0xa1, 100, 0, 40, defPayload(simple(0x91, 45)), credHex(0x91)) }, surveyID(0xa1, 0), ErrInvalid},
-		"unknown":       {nil, surveyID(0xee, 0), ErrNotFound},
+		"already ended": {func(t *testing.T, f *fakeChain) {
+			f.add(t, 0xa1, 100, 0, 40, defPayload(simple(0x91, 45)), credHex(0x91))
+		}, surveyID(0xa1, 0), ErrInvalid},
+		"unknown": {nil, surveyID(0xee, 0), ErrNotFound},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newFakeChain()
 			if tc.prepare != nil {
-				tc.prepare(f)
+				tc.prepare(t, f)
 			}
 			svc := NewService(f, "preview")
 			b := &fakeBuilder{}

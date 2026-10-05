@@ -8,15 +8,27 @@ import { Select } from "../components/Select";
 import { errorMessage } from "../errorMessage";
 import {
   KIND_LABELS,
+  MAX_DROPDOWN_ENTRIES,
   ROLE_LABELS,
   WALLET_ROLES,
+  answerableHere,
   answersFor,
   emptyDraft,
+  indexToPosition,
   optionLabels,
+  positionToIndex,
   ratingChoices,
   roundTime,
 } from "../surveys";
 import type { QuestionDraft } from "../surveys";
+
+// ratingHint says what a typed rating means for scales answered by number.
+function ratingHint(q: SurveyQuestion): string {
+  const grid = q.scale?.grid;
+  if (grid) return `Type a whole number from ${grid.min} to ${grid.max}${grid.step ? ` in steps of ${grid.step}` : ""}.`;
+  const levels = q.scale?.labels?.length ?? q.scale?.levels ?? 0;
+  return `Type a level from 1 (lowest) to ${levels}.`;
+}
 
 interface QuestionInputProps {
   q: SurveyQuestion;
@@ -31,6 +43,9 @@ function QuestionInput({ q, index, draft, error, onChange }: QuestionInputProps)
   const id = `survey-q${index}`;
   const set = (patch: Partial<QuestionDraft>) => onChange({ ...draft, ...patch });
   const maxRanks = q.max ?? 0;
+  const rankByNumber = maxRanks * labels.length > MAX_DROPDOWN_ENTRIES;
+  const choices = q.kind === 6 ? ratingChoices(q.scale) : [];
+  const rateByNumber = choices.length === 0 || labels.length * choices.length > MAX_DROPDOWN_ENTRIES;
 
   return (
     <fieldset className="survey-question">
@@ -89,23 +104,36 @@ function QuestionInput({ q, index, draft, error, onChange }: QuestionInputProps)
       {draft.answered && q.kind === 3 && (
         <>
           <p className="helper-text">
-            Rank between {q.min ?? 1} and {maxRanks} options, most preferred first.
+            Rank between {q.min ?? 1} and {maxRanks} options, most preferred first
+            {rankByNumber ? `, by option number (1 to ${labels.length})` : ""}.
           </p>
-          {Array.from({ length: maxRanks }, (_, rank) => (
-            <div key={rank}>
-              <label htmlFor={`${id}-rank${rank}`}>Rank {rank + 1}</label>
-              <Select
-                id={`${id}-rank${rank}`}
-                value={draft.ranked[rank] ?? ""}
-                onChange={(e) => {
-                  const ranked = Array.from({ length: maxRanks }, (_, r) => draft.ranked[r] ?? "");
-                  ranked[rank] = e.target.value;
-                  set({ ranked });
-                }}
-                options={[{ value: "", label: "—" }, ...labels.map((label, i) => ({ value: String(i), label }))]}
-              />
-            </div>
-          ))}
+          {Array.from({ length: maxRanks }, (_, rank) => {
+            const setRank = (value: string) => {
+              const ranked = Array.from({ length: maxRanks }, (_, r) => draft.ranked[r] ?? "");
+              ranked[rank] = value;
+              set({ ranked });
+            };
+            return (
+              <div key={rank}>
+                <label htmlFor={`${id}-rank${rank}`}>Rank {rank + 1}</label>
+                {rankByNumber ? (
+                  <Input
+                    id={`${id}-rank${rank}`}
+                    inputMode="numeric"
+                    value={indexToPosition(draft.ranked[rank] ?? "")}
+                    onChange={(e) => setRank(positionToIndex(e.target.value))}
+                  />
+                ) : (
+                  <Select
+                    id={`${id}-rank${rank}`}
+                    value={draft.ranked[rank] ?? ""}
+                    onChange={(e) => setRank(e.target.value)}
+                    options={[{ value: "", label: "—" }, ...labels.map((label, i) => ({ value: String(i), label }))]}
+                  />
+                )}
+              </div>
+            );
+          })}
         </>
       )}
 
@@ -142,25 +170,37 @@ function QuestionInput({ q, index, draft, error, onChange }: QuestionInputProps)
 
       {draft.answered && q.kind === 6 && (
         <>
-          <p className="helper-text">{q.require_all ? "Rate every option." : "Rate any of the options."}</p>
-          {labels.map((label, i) => (
-            <div key={i}>
-              <label htmlFor={`${id}-r${i}`}>{label} rating</label>
-              <Select
-                id={`${id}-r${i}`}
-                value={draft.ratings[i] ?? ""}
-                onChange={(e) => {
-                  const ratings = [...draft.ratings];
-                  ratings[i] = e.target.value;
-                  set({ ratings });
-                }}
-                options={[
-                  { value: "", label: "—" },
-                  ...ratingChoices(q.scale).map((c) => ({ value: String(c.value), label: c.label })),
-                ]}
-              />
-            </div>
-          ))}
+          <p className="helper-text">
+            {q.require_all ? "Rate every option." : "Rate any of the options."}
+            {rateByNumber ? ` ${ratingHint(q)}` : ""}
+          </p>
+          {labels.map((label, i) => {
+            const setRating = (value: string) => {
+              const ratings = [...draft.ratings];
+              ratings[i] = value;
+              set({ ratings });
+            };
+            return (
+              <div key={i}>
+                <label htmlFor={`${id}-r${i}`}>{label} rating</label>
+                {rateByNumber ? (
+                  <Input
+                    id={`${id}-r${i}`}
+                    inputMode="numeric"
+                    value={q.scale?.grid ? (draft.ratings[i] ?? "") : indexToPosition(draft.ratings[i] ?? "")}
+                    onChange={(e) => setRating(q.scale?.grid ? e.target.value : positionToIndex(e.target.value))}
+                  />
+                ) : (
+                  <Select
+                    id={`${id}-r${i}`}
+                    value={draft.ratings[i] ?? ""}
+                    onChange={(e) => setRating(e.target.value)}
+                    options={[{ value: "", label: "—" }, ...choices.map((c) => ({ value: String(c.value), label: c.label }))]}
+                  />
+                )}
+              </div>
+            );
+          })}
         </>
       )}
 
@@ -188,6 +228,16 @@ export function SurveyRespond({ survey, onPreview }: SurveyRespondProps) {
   const [errors, setErrors] = useState<Record<number, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  if (!answerableHere(def)) {
+    return (
+      <Card title="Respond">
+        <p className="helper-text">
+          This survey has a required question that uses a custom method, which this wallet cannot answer.
+        </p>
+      </Card>
+    );
+  }
 
   if (roles.length === 0 || role === null) {
     return (

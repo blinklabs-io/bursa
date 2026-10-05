@@ -60,7 +60,8 @@ export function SurveyResults({ survey }: { survey: SurveyDetail }) {
             {plural(r.responses, "response")}
             {r.sealed ? `, ${r.sealed} still sealed` : ""}
           </p>
-          {r.responses > 0 &&
+          {/* Sealed responses carry no answers yet, so they are not shown as zeros. */}
+          {r.responses > (r.sealed ?? 0) &&
             survey.definition.questions.map((q, i) => (
               <QuestionResult key={i} index={i} q={q} t={r.questions[i]} />
             ))}

@@ -4,11 +4,14 @@ import {
   buildCreateRequest,
   emptyBuilderDraft,
   emptyBuilderQuestion,
+  answerableHere,
   emptyDraft,
   optionLabels,
   ratingChoices,
   roundAt,
   roundTime,
+  surveyIdFromRoute,
+  surveyRoute,
 } from "./surveys";
 import type { QuestionDraft, BuilderDraft } from "./surveys";
 import type { SurveyDefinition, SurveyQuestion } from "./api/types";
@@ -278,4 +281,64 @@ describe("buildCreateRequest", () => {
     }
     expect(buildCreateRequest({ ...valid(), sealed: false }, NOW).request?.seal).toBeUndefined();
   });
+});
+
+test("a grid too wide for a dropdown offers no choices instead of a truncated list", () => {
+  expect(ratingChoices({ grid: { min: 0, max: 1_000_000 } })).toEqual([]);
+  expect(ratingChoices({ grid: { min: 0, max: 100 } })).toHaveLength(101);
+});
+
+test("a survey link round-trips through the hash route", () => {
+  const id = `${"ab".repeat(32)}:3`;
+  expect(surveyIdFromRoute(surveyRoute(id))).toBe(id);
+  expect(surveyIdFromRoute("surveys")).toBeUndefined();
+  expect(surveyIdFromRoute("surveys/")).toBeUndefined();
+  expect(surveyIdFromRoute("surveys/%E0%A4%A")).toBeUndefined();
+  expect(surveyIdFromRoute("governance")).toBeUndefined();
+});
+
+test("a required custom question makes a survey unanswerable here", () => {
+  const custom: SurveyQuestion = { kind: 0, prompt: "c", anchor: { uri: "ipfs://x", hash: "00".repeat(32) } };
+  const def = (questions: SurveyQuestion[]): SurveyDefinition => ({
+    title: "t", description: "", roles: [4], end_epoch: 9, mode: { sealed: false }, questions,
+  });
+  expect(answerableHere(def([custom]))).toBe(true);
+  expect(answerableHere(def([{ ...custom, required: true }]))).toBe(false);
+});
+
+describe("answers are checked against the question", () => {
+  test("single choice must name one of the options", () => {
+    const q: SurveyQuestion = { kind: 1, prompt: "", options: OPTS };
+    expect(answerFor(q, 0, draft(q, { choice: "2" })).answer?.choice).toBe(2);
+    expect(answerFor(q, 0, draft(q, { choice: "3" })).error).toMatch(/pick an option/i);
+    expect(answerFor(q, 0, draft(q, { choice: "-1" })).error).toMatch(/pick an option/i);
+  });
+
+  test("ratings are whole numbers on the scale", () => {
+    const q: SurveyQuestion = { kind: 6, prompt: "", options: ["a", "b"], scale: { grid: { min: 1, max: 9, step: 2 } } };
+    expect(answerFor(q, 0, draft(q, { ratings: ["3", ""] })).answer?.pairs).toEqual([{ option: 0, value: 3 }]);
+    for (const bad of ["x", "2.5", "4", "11"]) {
+      expect(answerFor(q, 0, draft(q, { ratings: [bad, ""] })).error).toMatch(/on the scale/i);
+    }
+    const levels: SurveyQuestion = { kind: 6, prompt: "", options: ["a"], scale: { levels: 3 } };
+    expect(answerFor(levels, 0, draft(levels, { ratings: ["3"] })).error).toMatch(/on the scale/i);
+  });
+
+  test("ranked positions must be option numbers", () => {
+    const q: SurveyQuestion = { kind: 3, prompt: "", options: OPTS, min: 1, max: 2 };
+    expect(answerFor(q, 0, draft(q, { ranked: ["3", ""] })).error).toMatch(/1 to 3/);
+    expect(answerFor(q, 0, draft(q, { ranked: ["x", ""] })).error).toMatch(/1 to 3/);
+  });
+});
+
+test("an end epoch below 1 is rejected before building", () => {
+  const d: BuilderDraft = {
+    ...emptyBuilderDraft(),
+    title: "t",
+    roles: [4],
+    endEpoch: "0",
+    questions: [{ ...emptyBuilderQuestion(1), prompt: "p", optionsText: "a\nb" }],
+  };
+  expect(buildCreateRequest(d, 0).errors).toEqual(["End epoch must be a future epoch."]);
+  expect(buildCreateRequest({ ...d, endEpoch: "1" }, 0).request?.end_epoch).toBe(1);
 });

@@ -15,6 +15,7 @@
 package survey
 
 import (
+	"math"
 	"testing"
 )
 
@@ -174,4 +175,35 @@ func TestAggregateSealedResponses(t *testing.T) {
 	equal(t, uint64(0), rt.Sealed)
 	equal(t, []OptionTally{{}, {Count: 1}}, rt.Questions[0].Options)
 	isTrue(t, reasons(tally)["c"] != "")
+}
+
+func TestAggregateTalliesARepeatedRoleOnce(t *testing.T) {
+	t.Parallel()
+	d := singleDef()
+	d.Roles = []Role{RoleDRep, RoleStakeholder, RoleDRep}
+	tally := d.Aggregate([]Observed{obs("a", 1, 0, 0, 50, vote(RoleDRep, 0x11, 0))})
+	equal(t, 2, len(tally.Roles))
+	equal(t, []OptionTally{{Count: 1}, {}}, roleTally(t, tally, RoleDRep).Questions[0].Options)
+}
+
+func TestAggregateSumsDoNotOverflow(t *testing.T) {
+	t.Parallel()
+	d := Definition{
+		Owner: cred(false, 1), Roles: []Role{RoleDRep}, EndEpoch: 100,
+		Questions: []Question{
+			{Kind: KindNumericRange, Range: &Range{Min: 0, Max: math.MaxInt64}},
+			{Kind: KindPointsAllocation, Options: []string{"a", "b"}, Budget: math.MaxInt64},
+		},
+	}
+	big := func(who byte) Response {
+		return Response{Role: RoleDRep, Credential: cred(false, who), Answers: []Answer{
+			{Kind: KindNumericRange, Question: 0, Number: math.MaxInt64},
+			{Kind: KindPointsAllocation, Question: 1, Pairs: []Pair{{0, math.MaxInt64}}},
+		}}
+	}
+	tally := d.Aggregate([]Observed{obs("a", 1, 0, 0, 50, big(0x11)), obs("b", 2, 0, 0, 50, big(0x12))})
+	rt := roleTally(t, tally, RoleDRep)
+	equal(t, 0, len(tally.Excluded))
+	equal(t, 2*float64(math.MaxInt64), rt.Questions[0].Numeric.Sum)
+	equal(t, 2*float64(math.MaxInt64), rt.Questions[1].Options[0].Sum)
 }

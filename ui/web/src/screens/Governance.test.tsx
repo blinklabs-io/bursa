@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { Governance } from "./Governance";
 import * as client from "../api/client";
 import type { GovernanceAction, GovernanceActionsResponse, SurveySummary } from "../api/types";
@@ -134,12 +134,39 @@ test("shows the survey a governance action links to, and none for unlinked actio
   render(<Governance network="preview" />);
 
   const link = await screen.findByRole("button", { name: "Treasury poll" });
-  expect(link).toBeInTheDocument();
-  // Only the linked action carries it.
+  // Only the linked action's row carries it.
   expect(screen.getAllByRole("button", { name: "Treasury poll" })).toHaveLength(1);
+  expect(within(link.closest("tr") as HTMLElement).getByText("Info")).toBeInTheDocument();
+  const rowB = screen.getByText("Treasury withdrawal").closest("tr") as HTMLElement;
+  expect(within(rowB).queryByRole("button", { name: "Treasury poll" })).not.toBeInTheDocument();
 
+  // The link opens that survey, not the survey list.
   fireEvent.click(link);
-  expect(window.location.hash).toBe("#/surveys");
+  expect(window.location.hash).toBe(`#/surveys/${encodeURIComponent(`${"cc".repeat(32)}:0`)}`);
+});
+
+test("finds linked surveys beyond the first page", async () => {
+  vi.spyOn(client, "getGovernanceActions").mockResolvedValue(response([ACTION_A, ACTION_B]));
+  const unrelated = Array.from({ length: 200 }, (_, i) =>
+    linkedSurvey({ id: `${i.toString(16).padStart(64, "0")}:0`, title: `Other ${i}`, linked_actions: [`gov_action_other${i}`] }),
+  );
+  const getSurveys = vi
+    .spyOn(client, "getSurveys")
+    .mockResolvedValueOnce({ surveys: unrelated, total: 201, page: 1, count: 200 })
+    .mockResolvedValueOnce({
+      surveys: [linkedSurvey({ title: "Late poll", linked_actions: [ACTION_B.action_id] })],
+      total: 201,
+      page: 2,
+      count: 200,
+    });
+
+  render(<Governance network="preview" />);
+
+  const link = await screen.findByRole("button", { name: "Late poll" });
+  expect(within(link.closest("tr") as HTMLElement).getByText("Treasury withdrawal")).toBeInTheDocument();
+  expect(getSurveys).toHaveBeenNthCalledWith(1, { linked: true, page: 1, count: 200 });
+  expect(getSurveys).toHaveBeenNthCalledWith(2, { linked: true, page: 2, count: 200 });
+  expect(getSurveys).toHaveBeenCalledTimes(2);
 });
 
 test("a failed survey lookup leaves the governance list intact", async () => {

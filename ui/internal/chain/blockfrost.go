@@ -563,14 +563,20 @@ type labelMetadataRow struct {
 	CBORMetadata *string `json:"cbor_metadata"`
 }
 
-// MetadataByLabel lists, oldest first, the transactions carrying metadata under
-// label, from GET /api/v0/metadata/txs/labels/{label}/cbor. At most maxPages
-// pages are read; a longer list fails with errPageLimitExceeded rather than
-// returning a silently partial set.
-func (c *Client) MetadataByLabel(ctx context.Context, label uint64, maxPages int) ([]LabelMetadata, error) {
-	path := "/api/v0/metadata/txs/labels/" + strconv.FormatUint(label, 10) + "/cbor"
-	rows, err := getAllPagesLimit[labelMetadataRow](ctx, c, path, maxPages)
-	if err != nil {
+// LabelPageSize is the number of rows a full MetadataByLabelPage page holds; a
+// shorter page is the last one.
+const LabelPageSize = pageSize
+
+// MetadataByLabelPage reads one page (1-based) of the transactions carrying
+// metadata under label, oldest first, from
+// GET /api/v0/metadata/txs/labels/{label}/cbor.
+func (c *Client) MetadataByLabelPage(ctx context.Context, label uint64, page int) ([]LabelMetadata, error) {
+	if page < 1 {
+		return nil, fmt.Errorf("metadata label %d: invalid page %d", label, page)
+	}
+	path := fmt.Sprintf("/api/v0/metadata/txs/labels/%d/cbor?count=%d&page=%d", label, pageSize, page)
+	var rows []labelMetadataRow
+	if err := c.get(ctx, path, &rows); err != nil {
 		return nil, err
 	}
 	out := make([]LabelMetadata, len(rows))

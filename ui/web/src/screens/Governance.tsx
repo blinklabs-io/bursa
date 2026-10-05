@@ -9,6 +9,7 @@ import { ExplorerLink } from "../components/ExplorerLink";
 import { errorMessage } from "../errorMessage";
 import { shortId } from "../format";
 import { navigate } from "../router";
+import { surveyRoute } from "../surveys";
 
 // Human-readable type label ("treasury-withdrawal" → "Treasury withdrawal").
 function typeLabel(type: string): string {
@@ -66,7 +67,7 @@ export function Governance({ network }: GovernanceProps) {
     proposed: a.proposed_epoch,
     votes: `${a.yes_votes} / ${a.no_votes} / ${a.abstain_votes}`,
     survey: linkedSurveys.has(a.action_id) ? (
-      <Button variant="ghost" onClick={() => navigate("surveys")}>
+      <Button variant="ghost" onClick={() => navigate(surveyRoute(linkedSurveys.get(a.action_id)?.id ?? ""))}>
         {linkedSurveys.get(a.action_id)?.title || "Linked survey"}
       </Button>
     ) : (

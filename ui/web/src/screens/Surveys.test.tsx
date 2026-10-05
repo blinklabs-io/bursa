@@ -605,3 +605,103 @@ describe("create", () => {
     expect(await screen.findByRole("button", { name: "New survey" })).toBeInTheDocument();
   });
 });
+
+describe("large and unusual definitions", () => {
+  test("a ranking over many options is typed by option number, not offered as dropdowns", async () => {
+    const options = Array.from({ length: 1024 }, (_, i) => `o${i}`);
+    // Three dropdowns of 1024 options each would already be 3075 entries.
+    await openSurvey(detail({}, [{ kind: 3, prompt: "Rank all", options, min: 1, max: 3 }]));
+    const respond = vi.spyOn(client, "respondToSurvey").mockResolvedValue(PREVIEW);
+    fireEvent.click(screen.getByLabelText(/answer this question/i));
+
+    // The only dropdown is the role picker.
+    expect(document.querySelectorAll("select")).toHaveLength(1);
+    expect(document.querySelectorAll("option").length).toBeLessThan(10);
+    fireEvent.change(screen.getByLabelText("Rank 1"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("Rank 2"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: /review response/i }));
+    await waitFor(() =>
+      expect(respond).toHaveBeenCalledWith({ survey: ID_A, role: 0, answers: [{ kind: 3, question: 0, indices: [2, 0] }] }),
+    );
+  });
+
+  test("a rating on a grid too wide for a dropdown is typed", async () => {
+    await openSurvey(detail({}, [{ kind: 6, prompt: "Rate", options: ["a"], scale: { grid: { min: 0, max: 1000 } } }]));
+    const respond = vi.spyOn(client, "respondToSurvey").mockResolvedValue(PREVIEW);
+    fireEvent.click(screen.getByLabelText(/answer this question/i));
+
+    expect(screen.getByText(/from 0 to 1000/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("a rating"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: /review response/i }));
+    await waitFor(() =>
+      expect(respond).toHaveBeenCalledWith({
+        survey: ID_A,
+        role: 0,
+        answers: [{ kind: 6, question: 0, pairs: [{ option: 0, value: 750 }] }],
+      }),
+    );
+  });
+
+  test("a survey with a required custom question says it cannot be answered here", async () => {
+    await openSurvey(
+      detail({}, [YES_NO, { kind: 0, prompt: "Custom", required: true, anchor: { uri: "ipfs://x", hash: "00".repeat(32) } }]),
+    );
+    expect(screen.getByText(/required question that uses a custom method/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /review response/i })).not.toBeInTheDocument();
+  });
+
+  test("a role whose responses are all still sealed shows no zero results", async () => {
+    const d = detail({
+      tally: {
+        roles: [{ role: 0, responses: 2, sealed: 2, questions: [{ answered: 0, abstained: 0, options: [{ count: 0 }, { count: 0 }] }] }],
+        excluded: [],
+      },
+    });
+    await openSurvey(d);
+    expect(screen.getByText("2 responses, 2 still sealed")).toBeInTheDocument();
+    expect(screen.queryByText(/0 answered/)).not.toBeInTheDocument();
+  });
+});
+
+test("a survey id passed in opens that survey directly", async () => {
+  vi.spyOn(client, "getSurveys").mockResolvedValue(list([]));
+  const getSurvey = vi.spyOn(client, "getSurvey").mockResolvedValue(detail());
+  render(<Surveys canSubmit initialId={ID_A} />);
+  expect(await screen.findByText("Should we fund the thing")).toBeInTheDocument();
+  expect(getSurvey).toHaveBeenCalledWith(ID_A);
+});
+
+test("the list says it is updating while a new search is in flight", async () => {
+  const getSurveys = vi.spyOn(client, "getSurveys").mockResolvedValue(list([summary()]));
+  render(<Surveys canSubmit />);
+  await screen.findByRole("button", { name: "Fund the thing?" });
+  expect(screen.queryByText("Updating…")).not.toBeInTheDocument();
+
+  getSurveys.mockReturnValue(new Promise(() => {}));
+  fireEvent.change(screen.getByLabelText(/search by title/i), { target: { value: "x" } });
+  expect(await screen.findByText("Updating…")).toBeInTheDocument();
+  expect(screen.getByRole("table").closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
+});
+
+test("whitespace around the search does not fetch again", async () => {
+  const getSurveys = vi.spyOn(client, "getSurveys").mockResolvedValue(list([summary()]));
+  render(<Surveys canSubmit />);
+  await screen.findByRole("button", { name: "Fund the thing?" });
+  fireEvent.change(screen.getByLabelText(/search by title/i), { target: { value: "fund" } });
+  await waitFor(() => expect(getSurveys).toHaveBeenLastCalledWith({ q: "fund", status: "", page: 1 }));
+  const calls = getSurveys.mock.calls.length;
+
+  fireEvent.change(screen.getByLabelText(/search by title/i), { target: { value: "fund " } });
+  await new Promise((r) => setTimeout(r, 400));
+  expect(getSurveys).toHaveBeenCalledTimes(calls);
+});
+
+test("choosing Constitutional Committee says this wallet will not count its responses", async () => {
+  vi.spyOn(client, "getSurveys").mockResolvedValue(list([]));
+  render(<Surveys canSubmit />);
+  fireEvent.click(await screen.findByRole("button", { name: "New survey" }));
+  await screen.findByText("Question 1");
+  expect(screen.queryByText(/does not expose committee membership/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Constitutional Committee" }));
+  expect(screen.getByText(/does not expose committee membership/i)).toBeInTheDocument();
+});

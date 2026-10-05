@@ -15,6 +15,7 @@
 package survey
 
 import (
+	"math"
 	"strings"
 
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
@@ -160,6 +161,8 @@ func asChunkedBytes(md metadatum) ([]byte, error) {
 }
 
 // asKeyed reads an integer-keyed map, rejecting duplicate and non-integer keys.
+// An integer key outside the unsigned 64-bit range (a negative one, say) is no
+// key CIP-179 defines, so it is skipped like any other unknown key.
 func asKeyed(md metadatum) (map[uint64]metadatum, error) {
 	m, ok := md.(metaMap)
 	if !ok {
@@ -167,10 +170,14 @@ func asKeyed(md metadatum) (map[uint64]metadatum, error) {
 	}
 	out := make(map[uint64]metadatum, len(m.Pairs))
 	for _, pair := range m.Pairs {
-		k, err := asUint(pair.Key)
-		if err != nil {
-			return nil, err
+		i, ok := pair.Key.(lcommon.MetaInt)
+		if !ok || i.Value == nil {
+			return nil, invalidf("expected integer map key, got %s", typeName(pair.Key))
 		}
+		if !i.Value.IsUint64() {
+			continue
+		}
+		k := i.Value.Uint64()
 		if _, dup := out[k]; dup {
 			return nil, invalidf("duplicate map key %d", k)
 		}
@@ -565,7 +572,7 @@ func decodePairs(md metadatum, unsigned bool) ([]Pair, error) {
 		var val int64
 		if unsigned {
 			u, err := asUint(pair[1])
-			if err != nil || u > 1<<62 {
+			if err != nil || u > math.MaxInt64 {
 				return nil, invalidf("points value")
 			}
 			val = int64(u) //nolint:gosec // bounded above

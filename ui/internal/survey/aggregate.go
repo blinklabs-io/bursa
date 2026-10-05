@@ -121,7 +121,9 @@ func (d Definition) Aggregate(observed []Observed) Tally {
 		latest[id] = o
 	}
 
-	for _, role := range d.Roles {
+	// CIP-179 only asks that eligible roles be unique, so a repeated one is
+	// tallied once.
+	for _, role := range uniqueRoles(d.Roles) {
 		rt := RoleTally{Role: role}
 		var sets [][]Answer
 		for _, o := range valid {
@@ -168,4 +170,14 @@ func (d Definition) rejection(o Observed) string {
 		}
 	}
 	return ""
+}
+
+func uniqueRoles(roles []Role) []Role {
+	out := make([]Role, 0, len(roles))
+	for _, r := range roles {
+		if !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	return out
 }

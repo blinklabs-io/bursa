@@ -23,6 +23,7 @@ import (
 type linkDocument struct {
 	Body struct {
 		CIP179 *struct {
+			SpecVersion json.RawMessage `json:"specVersion"`
 			Kind        string          `json:"kind"`
 			SurveyTxID  string          `json:"surveyTxId"`
 			SurveyIndex json.RawMessage `json:"surveyIndex"`
@@ -32,15 +33,16 @@ type linkDocument struct {
 
 // ParseLink reads the CIP-179 survey link from a CIP-108 governance-action
 // anchor document: the namespaced cip179 object inside the body. A missing or
-// malformed link, including an index that is absent or not a non-negative
-// integer, reports false rather than falling back to a default.
+// malformed link, including a spec version other than SpecVersion or an index
+// that is absent or not a non-negative integer, reports false rather than
+// falling back to a default.
 func ParseLink(doc []byte) (Ref, bool) {
 	var d linkDocument
 	if err := json.Unmarshal(doc, &d); err != nil || d.Body.CIP179 == nil {
 		return Ref{}, false
 	}
 	l := d.Body.CIP179
-	if l.Kind != "survey-link" {
+	if string(l.SpecVersion) != strconv.FormatUint(SpecVersion, 10) || l.Kind != "survey-link" {
 		return Ref{}, false
 	}
 	txid, err := hex.DecodeString(l.SurveyTxID)

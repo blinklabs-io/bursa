@@ -1654,13 +1654,17 @@ a:hover {
 }
 .survey-option-result {
   display: grid;
-  grid-template-columns: minmax(6rem, 1fr) minmax(8rem, 2fr) auto;
+  /* Zero minimums let the row shrink to a phone's width instead of overflowing. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
   gap: var(--space-2);
   align-items: center;
   padding: var(--space-1) 0;
 }
 .survey-option-result meter {
   width: 100%;
+}
+.survey-option-result span {
+  overflow-wrap: anywhere;
 }
 
 /* Itemized confirm — one line per certificate/withdrawal. */

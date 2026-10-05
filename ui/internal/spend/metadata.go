@@ -61,12 +61,20 @@ func walletCredential(acct *wallet.Account, kind SignerKind) ([28]byte, error) {
 	if err != nil {
 		return [28]byte{}, fmt.Errorf("base address: %w", err)
 	}
+	// A script credential's hash reads through the same accessors as a key
+	// hash, but no wallet key can witness it, so it is refused rather than
+	// listed as a required signer the transaction could never satisfy.
 	switch kind {
 	case SignerPayment:
-		return addr.PaymentKeyHash(), nil
+		switch addr.Type() {
+		case lcommon.AddressTypeKeyKey, lcommon.AddressTypeKeyScript, lcommon.AddressTypeKeyPointer, lcommon.AddressTypeKeyNone:
+			return addr.PaymentKeyHash(), nil
+		}
+		return [28]byte{}, fmt.Errorf("%w: wallet payment credential is not a key", ErrInvalidRequest)
 	case SignerStake:
-		if kh := addr.StakeKeyHash(); kh != (lcommon.Blake2b224{}) {
-			return kh, nil
+		switch addr.Type() {
+		case lcommon.AddressTypeKeyKey, lcommon.AddressTypeScriptKey:
+			return addr.StakeKeyHash(), nil
 		}
 		return [28]byte{}, fmt.Errorf("%w: wallet has no stake key", ErrInvalidRequest)
 	case SignerDRep:

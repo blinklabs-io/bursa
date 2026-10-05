@@ -134,10 +134,18 @@ func (m SubmissionMode) checkQuicknet() error {
 	return nil
 }
 
+// maxPadding bounds the plaintext a sealed response is padded to. A larger
+// padding size is refused rather than silently reduced, since a shorter
+// plaintext would no longer hide its answers' length as the survey intends.
+const maxPadding = 1 << 20
+
 // answersPlaintext is the canonical CBOR of the answer array, right-padded with
 // zero bytes to padding. A plaintext already longer than padding is not
 // truncated.
 func answersPlaintext(answers []Answer, padding uint64) ([]byte, error) {
+	if padding > maxPadding {
+		return nil, invalidf("padding size %d exceeds %d bytes", padding, maxPadding)
+	}
 	items := make([]metadatum, len(answers))
 	for i, a := range answers {
 		md, err := encodeAnswer(a)
@@ -150,7 +158,7 @@ func answersPlaintext(answers []Answer, padding uint64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if missing := int(min(padding, 1<<20)) - len(raw); missing > 0 { //nolint:gosec // padding capped above
+	if missing := int(padding) - len(raw); missing > 0 { //nolint:gosec // padding bounded above
 		raw = append(raw, make([]byte, missing)...)
 	}
 	return raw, nil

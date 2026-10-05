@@ -113,6 +113,11 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (Detail, error)
 	if err := k.def.Mode.checkQuicknet(); err != nil {
 		return Detail{}, err
 	}
+	// A cancelled survey is never tallied, so there is nothing to unseal and no
+	// reason to contact a relay.
+	if k.cancelled {
+		return s.detail(ctx, sn, k)
+	}
 	round := k.def.Mode.Round
 	if s.cachedBeacon(round) == nil {
 		if err := s.obtainBeacon(ctx, req, round); err != nil {

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1421,24 +1422,27 @@ func TestAssetNilRegistryMetadata(t *testing.T) {
 	}
 }
 
-func TestMetadataByLabelPaginatesAndNormalisesCBOR(t *testing.T) {
+func TestMetadataByLabelPageReadsOnePageAndNormalisesCBOR(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v0/metadata/txs/labels/17/cbor" {
 			t.Errorf("path = %q", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("count"); got != strconv.Itoa(LabelPageSize) {
+			t.Errorf("count = %q", got)
 		}
 		var rows []string
 		switch r.URL.Query().Get("page") {
 		case "1":
 			// Rows are built from Dingo's own response type so the client is
 			// tied to what the node really sends.
-			for i := range 100 {
+			for i := range LabelPageSize {
 				cbor := "820281"
 				b, err := json.Marshal(dingoblockfrost.MetadataTransactionCBORResponse{
 					TxHash: fmt.Sprintf("%064x", i), CborMetadata: &cbor, Metadata: cbor,
 				})
 				if err != nil {
-					t.Fatalf("marshal row: %v", err)
+					t.Errorf("marshal row: %v", err)
 				}
 				rows = append(rows, string(b))
 			}
@@ -1451,48 +1455,34 @@ func TestMetadataByLabelPaginatesAndNormalisesCBOR(t *testing.T) {
 		_, _ = w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
 	})
 
-	got, err := c.MetadataByLabel(context.Background(), 17, 5)
+	first, err := c.MetadataByLabelPage(context.Background(), 17, 1)
 	if err != nil {
-		t.Fatalf("MetadataByLabel: %v", err)
+		t.Fatalf("page 1: %v", err)
 	}
-	if len(got) != 101 {
-		t.Fatalf("len = %d, want 101", len(got))
+	if len(first) != LabelPageSize {
+		t.Fatalf("page 1 len = %d, want %d", len(first), LabelPageSize)
 	}
-	if got[0].TxHash != fmt.Sprintf("%064x", 0) || hex.EncodeToString(got[0].CBOR) != "820281" {
-		t.Fatalf("got[0] = %+v", got[0])
+	if first[0].TxHash != fmt.Sprintf("%064x", 0) || hex.EncodeToString(first[0].CBOR) != "820281" {
+		t.Fatalf("first[0] = %+v", first[0])
 	}
-	last := got[100]
-	if last.TxHash != strings.Repeat("ab", 32) || hex.EncodeToString(last.CBOR) != "8200" {
-		t.Fatalf("last = %+v", last)
+	second, err := c.MetadataByLabelPage(context.Background(), 17, 2)
+	if err != nil {
+		t.Fatalf("page 2: %v", err)
 	}
-}
-
-func TestMetadataByLabelIsBounded(t *testing.T) {
-	t.Parallel()
-	requests := 0
-	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		rows := make([]string, pageSize)
-		for i := range rows {
-			rows[i] = `{"tx_hash":"` + strings.Repeat("00", 32) + `","cbor_metadata":"00"}`
-		}
-		_, _ = w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
-	})
-	_, err := c.MetadataByLabel(context.Background(), 17, 3)
-	if !errors.Is(err, errPageLimitExceeded) {
-		t.Fatalf("err = %v, want errPageLimitExceeded", err)
+	if len(second) != 1 || second[0].TxHash != strings.Repeat("ab", 32) || hex.EncodeToString(second[0].CBOR) != "8200" {
+		t.Fatalf("page 2 = %+v", second)
 	}
-	if requests != 3 {
-		t.Fatalf("requests = %d, want 3", requests)
+	if _, err := c.MetadataByLabelPage(context.Background(), 17, 0); err == nil {
+		t.Fatal("page 0: expected an error")
 	}
 }
 
-func TestMetadataByLabelRejectsBadHex(t *testing.T) {
+func TestMetadataByLabelPageRejectsBadHex(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`[{"tx_hash":"aa","cbor_metadata":"zz"}]`))
 	})
-	if _, err := c.MetadataByLabel(context.Background(), 17, 1); err == nil {
+	if _, err := c.MetadataByLabelPage(context.Background(), 17, 1); err == nil {
 		t.Fatal("expected a hex decode error")
 	}
 }

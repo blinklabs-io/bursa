@@ -493,6 +493,40 @@ test("deep-linking #/surveys renders the Surveys screen, and a full wallet on a 
   expect(screen.getByRole("button", { name: "New survey" })).toBeEnabled();
 });
 
+test("deep-linking one survey opens its detail view", async () => {
+  stubSurveysRoute(walletA, "ready");
+  const id = `${"ab".repeat(32)}:0`;
+  const getSurvey = vi.spyOn(client, "getSurvey").mockResolvedValue({
+    id,
+    tx_hash: "ab".repeat(32),
+    index: 0,
+    title: "Linked poll",
+    description: "Opened from a link",
+    owner: "cd".repeat(28),
+    owner_script: false,
+    roles: [0],
+    end_epoch: 700,
+    status: "closed",
+    sealed: false,
+    questions: 1,
+    linked_actions: [],
+    owned: false,
+    definition: {
+      title: "Linked poll",
+      description: "Opened from a link",
+      roles: [0],
+      end_epoch: 700,
+      mode: { sealed: false },
+      questions: [{ kind: 1, prompt: "Yes?", options: ["Yes", "No"] }],
+    },
+  });
+  window.location.hash = `#/surveys/${encodeURIComponent(id)}`;
+  render(<App />);
+  unlockWithPassword();
+  expect(await screen.findByText("Opened from a link")).toBeInTheDocument();
+  expect(getSurvey).toHaveBeenCalledWith(id);
+});
+
 test("surveys are readable while syncing but cannot be created until the node is ready", async () => {
   stubSurveysRoute(walletA, "syncing");
   render(<App />);

@@ -234,3 +234,38 @@ func TestBuildMetadataRejectsBadRequests(t *testing.T) {
 		t.Errorf("no wallet: err = %v, want ErrNoWallet", err)
 	}
 }
+
+func TestWalletCredentialRefusesScriptCredentials(t *testing.T) {
+	t.Parallel()
+	hash := lcommon.Blake2b224(bytes.Repeat([]byte{0x5c}, 28))
+	key := lcommon.Blake2b224(bytes.Repeat([]byte{0x6d}, 28))
+	addr := func(typ uint8, payment, stake []byte) string {
+		a, err := lcommon.NewAddressFromParts(typ, 0, payment, stake)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a.String()
+	}
+	for name, tc := range map[string]struct {
+		addr string
+		kind SignerKind
+	}{
+		"script payment, no stake":  {addr(lcommon.AddressTypeScriptNone, hash[:], nil), SignerPayment},
+		"script payment, key stake": {addr(lcommon.AddressTypeScriptKey, hash[:], key[:]), SignerPayment},
+		"script stake":              {addr(lcommon.AddressTypeKeyScript, key[:], hash[:]), SignerStake},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := NewService(nil, nil, &wallet.Account{ReceiveAddresses: []string{tc.addr}})
+			if _, err := s.WalletCredential(tc.kind); !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("err = %v, want ErrInvalidRequest", err)
+			}
+		})
+	}
+	// The key half of a mixed address still serves.
+	s := NewService(nil, nil, &wallet.Account{ReceiveAddresses: []string{addr(lcommon.AddressTypeScriptKey, hash[:], key[:])}})
+	got, err := s.WalletCredential(SignerStake)
+	if err != nil || got != key {
+		t.Fatalf("stake key of a script/key address = %x, %v", got, err)
+	}
+}

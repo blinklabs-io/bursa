@@ -144,8 +144,8 @@ func (s *RatingScale) validate() error {
 	case s.Grid != nil:
 		return s.Grid.validate()
 	case len(s.Labels) > 0:
-		if len(s.Labels) < 2 {
-			return invalidf("rating needs at least 2 labels")
+		if len(s.Labels) < 2 || len(s.Labels) > MaxOptions {
+			return invalidf("rating needs 2 to %d labels", MaxOptions)
 		}
 		for _, l := range s.Labels {
 			if len(l) > MaxChunk {

@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
@@ -38,6 +39,9 @@ type fakeChain struct {
 	accounts map[string]chain.AccountInfo
 	docs     []chain.AnchorDocument
 	roleErr  error
+	pages    []int // label pages read, in order
+	start    int64 // current epoch's start; timeIn assumes the default
+	junk     int   // junk rows ever added, so each has a distinct hash
 }
 
 func newFakeChain() *fakeChain {
@@ -70,11 +74,14 @@ func (f *fakeChain) addRaw(b byte, height uint64, index int, epoch uint64, raw [
 	f.signers[h] = signers
 }
 
-func (f *fakeChain) MetadataByLabel(_ context.Context, label uint64, _ int) ([]chain.LabelMetadata, error) {
+func (f *fakeChain) MetadataByLabelPage(_ context.Context, label uint64, page int) ([]chain.LabelMetadata, error) {
 	if label != Label {
 		return nil, fmt.Errorf("unexpected label %d", label)
 	}
-	return f.labels, nil
+	f.pages = append(f.pages, page)
+	start := min((page-1)*chain.LabelPageSize, len(f.labels))
+	end := min(start+chain.LabelPageSize, len(f.labels))
+	return slices.Clone(f.labels[start:end]), nil
 }
 
 func (f *fakeChain) Transaction(_ context.Context, hash string) (chain.TxInfo, error) {
@@ -90,7 +97,11 @@ func (f *fakeChain) RequiredSigners(_ context.Context, hash string) ([]string, e
 }
 
 func (f *fakeChain) LatestEpoch(context.Context) (chain.EpochInfo, error) {
-	return chain.EpochInfo{Epoch: 50, StartTime: 10000, EndTime: 10100}, nil
+	start := f.start
+	if start == 0 {
+		start = 10000
+	}
+	return chain.EpochInfo{Epoch: 50, StartTime: start, EndTime: start + 100}, nil
 }
 
 func (f *fakeChain) Genesis(context.Context) (chain.Genesis, error) {
@@ -463,7 +474,7 @@ func TestLinkedGovernanceActions(t *testing.T) {
 	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(1, 60)), credHex(1))
 	f.add(t, 0xa2, 101, 0, 40, defPayload(simple(2, 70)), credHex(2))
 	link := func(b byte, idx int) []byte {
-		return []byte(fmt.Sprintf(`{"body":{"cip179":{"kind":"survey-link","surveyTxId":"%s","surveyIndex":%d}}}`, txHash(b), idx))
+		return []byte(fmt.Sprintf(`{"body":{"cip179":{"specVersion":5,"kind":"survey-link","surveyTxId":"%s","surveyIndex":%d}}}`, txHash(b), idx))
 	}
 	f.docs = []chain.AnchorDocument{
 		{ActionID: "gov_action_one", ExpiresEpoch: 60, Content: link(0xa1, 0)},
@@ -544,4 +555,70 @@ func TestListSkipsDefinitionsTooLargeToTally(t *testing.T) {
 	if _, err := svc.Get(context.Background(), surveyID(0xb1, 0)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Get: err = %v, want ErrNotFound", err)
 	}
+}
+
+// addJunk appends n label-17 rows that do not decode as CIP-179 payloads, each
+// in a distinct transaction.
+func (f *fakeChain) addJunk(n int) {
+	for range n {
+		f.junk++
+		f.labels = append(f.labels, chain.LabelMetadata{TxHash: fmt.Sprintf("%064x", 1<<20+f.junk), CBOR: []byte{0x00}})
+	}
+}
+
+func titles(t *testing.T, s *Service) []string {
+	t.Helper()
+	list, err := s.List(context.Background())
+	noErr(t, err)
+	out := make([]string, len(list))
+	for i, sm := range list {
+		out[i] = sm.Title
+	}
+	return out
+}
+
+func TestLabelHistoryReadsOnlyNewPages(t *testing.T) {
+	t.Parallel()
+	f := newFakeChain()
+	f.addJunk(250)
+	s := NewService(f, "preview")
+	titles(t, s)
+	equal(t, []int{1, 2, 3}, f.pages)
+
+	// The two full pages are kept; the last of them is re-read to detect a
+	// rollback, then reading resumes after it.
+	f.addJunk(60)
+	f.pages = nil
+	titles(t, s)
+	equal(t, []int{2, 3, 4}, f.pages)
+}
+
+func TestLabelHistoryLongerThanOneRequestCompletesLater(t *testing.T) {
+	t.Parallel()
+	f := newFakeChain()
+	f.addJunk((maxLabelPages + 3) * chain.LabelPageSize)
+	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(1, 60)), credHex(1))
+	s := NewService(f, "preview")
+
+	if _, err := s.List(context.Background()); !errors.Is(err, ErrIndexing) {
+		t.Fatalf("first List err = %v, want ErrIndexing", err)
+	}
+	equal(t, []string{"survey by 1"}, titles(t, s))
+}
+
+func TestLabelHistoryDropsRolledBackTransactions(t *testing.T) {
+	t.Parallel()
+	f := newFakeChain()
+	f.addJunk(99)
+	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(1, 60)), credHex(1))
+	f.addJunk(105)
+	s := NewService(f, "preview")
+	equal(t, []string{"survey by 1"}, titles(t, s))
+
+	// A rollback removes the survey and everything after it; the chain then
+	// carries a different survey in its place.
+	f.labels = f.labels[:99]
+	f.add(t, 0xa2, 101, 0, 40, defPayload(simple(2, 60)), credHex(2))
+	f.addJunk(120)
+	equal(t, []string{"survey by 2"}, titles(t, s))
 }

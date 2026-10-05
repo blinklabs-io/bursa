@@ -117,6 +117,11 @@ func chunkedText(s string) metadatum {
 		for n > 0 && n < len(s) && !utf8.RuneStart(s[n]) {
 			n--
 		}
+		// No rune starts inside the window, so s is not valid UTF-8 here; cut
+		// at the byte limit rather than loop on an empty chunk.
+		if n == 0 {
+			n = min(MaxChunk, len(s))
+		}
 		items = append(items, mText(s[:n]))
 		s = s[n:]
 	}

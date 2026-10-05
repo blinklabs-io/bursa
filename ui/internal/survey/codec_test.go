@@ -16,10 +16,13 @@ package survey
 
 import (
 	"bytes"
+	"fmt"
+	"math"
 	"math/big"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
@@ -522,5 +525,91 @@ func equal(t *testing.T, want, got any) {
 	t.Helper()
 	if !reflect.DeepEqual(want, got) {
 		t.Fatalf("mismatch\nwant %#v\n got %#v", want, got)
+	}
+}
+
+func TestDecodeSkipsIntegerKeysOutsideTheUnsignedRange(t *testing.T) {
+	t.Parallel()
+	// 0x20 is the CBOR integer -1: an integer key no CIP-179 version defines.
+	raw := arr(uintv(0), arr(mapv(
+		uintv(0), uintv(5),
+		uintv(1), credCBOR(false, 0xcd),
+		uintv(2), tstr("t"),
+		uintv(3), tstr("d"),
+		uintv(4), arr(uintv(3)),
+		uintv(5), uintv(10),
+		uintv(6), arr(uintv(0)),
+		uintv(7), arr(arr(uintv(1), tstr("q"), arr(tstr("a"), tstr("b")))),
+		[]byte{0x20}, tstr("signed extension"),
+	)))
+	p, err := Decode(raw)
+	noErr(t, err)
+	equal(t, "t", p.Definitions[0].Title)
+
+	textKey := arr(uintv(0), arr(mapv(uintv(0), uintv(5), tstr("k"), tstr("v"))))
+	_, err = Decode(textKey)
+	isErr(t, err)
+}
+
+func TestRatingLabelsAreBoundedLikeLevels(t *testing.T) {
+	t.Parallel()
+	labels := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprint(i)
+		}
+		return out
+	}
+	def := func(n int) Definition {
+		return Definition{
+			Owner: cred(false, 1), Title: "t", Roles: []Role{RoleDRep}, EndEpoch: 5,
+			Questions: []Question{{Kind: KindRating, Prompt: "p", Options: []string{"a", "b"}, Scale: &RatingScale{Labels: labels(n)}}},
+		}
+	}
+	noErr(t, def(MaxOptions).Validate())
+	isErr(t, def(MaxOptions+1).Validate())
+
+	// A definition read from chain is held to the same bound.
+	raw, err := Marshal(Payload{Kind: KindDefinitions, Definitions: []Definition{def(MaxOptions)}})
+	noErr(t, err)
+	_, err = Decode(raw)
+	noErr(t, err)
+	over := bytes.Replace(raw, cat(head(4, MaxOptions), tstr("0")), cat(head(4, MaxOptions+1), tstr("x"), tstr("0")), 1)
+	isTrue(t, !bytes.Equal(over, raw))
+	_, err = Decode(over)
+	isErr(t, err)
+}
+
+func TestPointsDecodeAcrossTheWholeInt64Range(t *testing.T) {
+	t.Parallel()
+	for _, v := range []int64{1<<62 + 1, math.MaxInt64} {
+		r := Response{
+			Survey: ref(0xa1, 0), Role: RoleDRep, Credential: cred(false, 2),
+			Answers: []Answer{{Kind: KindPointsAllocation, Question: 0, Pairs: []Pair{{0, v}}}},
+		}
+		raw, err := Marshal(Payload{Kind: KindResponses, Responses: []Response{r}})
+		noErr(t, err)
+		p, err := Decode(raw)
+		noErr(t, err)
+		equal(t, v, p.Responses[0].Answers[0].Pairs[0].Value)
+	}
+}
+
+func TestChunkingInvalidUTF8Terminates(t *testing.T) {
+	t.Parallel()
+	s := strings.Repeat("\x80", 3*MaxChunk+5)
+	done := make(chan metadatum, 1)
+	go func() { done <- chunkedText(s) }()
+	select {
+	case md := <-done:
+		var sb strings.Builder
+		for _, item := range md.(metaList).Items {
+			chunk := item.(lcommon.MetaText).Value
+			isTrue(t, len(chunk) > 0 && len(chunk) <= MaxChunk)
+			sb.WriteString(chunk)
+		}
+		equal(t, s, sb.String())
+	case <-time.After(5 * time.Second):
+		t.Fatal("chunkedText did not return on invalid UTF-8")
 	}
 }

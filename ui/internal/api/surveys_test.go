@@ -144,6 +144,32 @@ func TestSurveyListPagesFiltersAndSearches(t *testing.T) {
 	}
 }
 
+func TestSurveyListLinkedFilter(t *testing.T) {
+	t.Parallel()
+	list := sampleSurveys(5)
+	list[1].LinkedActions = []string{"gov_action_one"}
+	list[4].LinkedActions = []string{"gov_action_two", "gov_action_three"}
+	h := surveyHandler(readyStatuser(), &fakeSurveys{list: list})
+
+	rec := serveSurveyReq(h, http.MethodGet, "/wallet/surveys?linked=true", "")
+	var resp surveyListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("GET linked = %d %s", rec.Code, rec.Body.String())
+	}
+	if resp.Total != 2 || resp.Surveys[0].ID != list[1].ID || resp.Surveys[1].ID != list[4].ID {
+		t.Fatalf("linked = %+v", resp)
+	}
+}
+
+func TestSurveyListWhileStillIndexing(t *testing.T) {
+	t.Parallel()
+	h := surveyHandler(readyStatuser(), &fakeSurveys{err: fmt.Errorf("%w: 5000 transactions so far", survey.ErrIndexing)})
+	rec := serveSurveyReq(h, http.MethodGet, "/wallet/surveys", "")
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "still being read") {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSurveyGet(t *testing.T) {
 	t.Parallel()
 	fs := &fakeSurveys{detail: survey.Detail{Definition: survey.Definition{Title: "T"}}}

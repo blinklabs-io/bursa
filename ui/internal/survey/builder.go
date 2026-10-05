@@ -190,6 +190,15 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (spend.Preview,
 		if current := CurrentRound(time.Now()); req.Seal.Round <= current {
 			return spend.Preview{}, invalidf("reveal round %d is not in the future (current round %d)", req.Seal.Round, current)
 		}
+		// A round that publishes while the survey is open would let anyone read
+		// the answers given so far before the rest are in, and this wallet stops
+		// sealing responses once the round is out.
+		if closes := CurrentRound(cl.endOf(req.EndEpoch)); req.Seal.Round <= closes {
+			return spend.Preview{}, invalidf("reveal round %d publishes before epoch %d ends (round %d)", req.Seal.Round, req.EndEpoch, closes)
+		}
+		if req.Seal.PaddingSize > maxPadding {
+			return spend.Preview{}, invalidf("padding size %d exceeds %d bytes", req.Seal.PaddingSize, maxPadding)
+		}
 	}
 	return s.build(ctx, Payload{Kind: KindDefinitions, Definitions: []Definition{def}}, spend.SignerPayment)
 }

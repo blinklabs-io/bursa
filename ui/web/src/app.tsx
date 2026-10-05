@@ -34,6 +34,7 @@ import { Swap } from "./screens/Swap";
 import { Stake } from "./screens/Stake";
 import { Governance } from "./screens/Governance";
 import { Surveys } from "./screens/Surveys";
+import { surveyIdFromRoute } from "./surveys";
 import { DRepDirectory } from "./screens/DRepDirectory";
 import { Offline } from "./screens/Offline";
 import { Operate } from "./screens/Operate";
@@ -130,6 +131,8 @@ export function App() {
   // starts/stops polling in this same session.
   const notifications = useNotifications();
   const route = useHashRoute();
+  const surveyId = surveyIdFromRoute(route);
+  const isSurveysRoute = route === "surveys" || surveyId !== undefined;
 
   // Vault session state, established after create/unlock and kept in memory.
   const [wallets, setWallets] = useState<WalletView[]>([]);
@@ -382,7 +385,7 @@ export function App() {
     // on screen — and mislabel the error boundary with it.
     else if (STAKE_ROUTES.has(route)) activeRoute = "stake";
     else if (route === "governance" && canQueryNode) activeRoute = "governance";
-    else if (route === "surveys" && canQueryNode) activeRoute = "surveys";
+    else if (isSurveysRoute && canQueryNode) activeRoute = "surveys";
     else if (route === "dreps" && canQueryNode) activeRoute = "dreps";
     else if (route === "offline" && canSign) activeRoute = "offline";
     else if (route === "operate" && canSign) activeRoute = "operate";
@@ -490,13 +493,17 @@ export function App() {
     // Falls back to Portfolio while the node cannot serve queries.
     if (!canQueryNode) screenLabel = "portfolio";
     content = canQueryNode ? <Governance network={activeWallet.network} /> : <Portfolio canSend={canSend} />;
-  } else if (route === "surveys") {
+  } else if (isSurveysRoute) {
     // CIP-179 surveys: reading needs only a queryable node. Responding,
     // creating and cancelling build a transaction signed with the local seed,
     // so those need a synced node and a full wallet (the audited seed path;
     // hardware devices are never shown survey metadata to sign).
-    if (!canQueryNode) screenLabel = "portfolio";
-    content = canQueryNode ? <Surveys canSubmit={isReady && canSign} /> : <Portfolio canSend={canSend} />;
+    screenLabel = canQueryNode ? "surveys" : "portfolio";
+    content = canQueryNode ? (
+      <Surveys key={surveyId ?? ""} canSubmit={isReady && canSign} initialId={surveyId} />
+    ) : (
+      <Portfolio canSend={canSend} />
+    );
   } else if (route === "dreps") {
     // Read-only DRep directory: browse/search DReps the node has indexed, to
     // inform vote-delegation. Needs only a queryable node (not a full sync, no

@@ -38,6 +38,29 @@ export const BUILDABLE_KINDS: SurveyKind[] = [1, 2, 3, 4, 5, 6];
 // A grid wider than this is not offered as a dropdown.
 const MAX_GRID_CHOICES = 101;
 
+// A question whose dropdowns would hold more entries than this in total is
+// answered by typing numbers instead: a definition may carry 1024 options, and
+// a dropdown of every option for each of 1024 ranks freezes the page.
+export const MAX_DROPDOWN_ENTRIES = 2000;
+
+const SURVEY_ROUTE = "surveys/";
+
+// surveyRoute is the hash route that opens one survey's detail view.
+export function surveyRoute(id: string): string {
+  return SURVEY_ROUTE + encodeURIComponent(id);
+}
+
+// surveyIdFromRoute reads the survey id from a surveyRoute, or undefined for
+// any other route.
+export function surveyIdFromRoute(route: string): string | undefined {
+  if (!route.startsWith(SURVEY_ROUTE)) return undefined;
+  try {
+    return decodeURIComponent(route.slice(SURVEY_ROUTE.length)) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Drand quicknet: round 1 is published at genesis, then one round every 3 s.
 const QUICKNET_GENESIS = 1692803367;
 const QUICKNET_PERIOD = 3;
@@ -65,20 +88,35 @@ export interface RatingChoice {
 }
 
 // ratingChoices lists the values a rating scale accepts. A rating is always an
-// integer on the wire: a grid value, or the index of a label or level.
+// integer on the wire: a grid value, or the index of a label or level. A grid
+// too wide for a dropdown yields no choices; it is answered by typing a value.
 export function ratingChoices(scale: SurveyScale | undefined): RatingChoice[] {
   if (!scale) return [];
   if (scale.grid) {
     const { min, max } = scale.grid;
     const step = scale.grid.step && scale.grid.step > 0 ? scale.grid.step : 1;
+    if (Math.floor((max - min) / step) + 1 > MAX_GRID_CHOICES) return [];
     const out: RatingChoice[] = [];
-    for (let v = min; v <= max && out.length < MAX_GRID_CHOICES; v += step) {
+    for (let v = min; v <= max; v += step) {
       out.push({ value: v, label: String(v) });
     }
     return out;
   }
   if (scale.labels) return scale.labels.map((label, i) => ({ value: i, label }));
   return Array.from({ length: scale.levels ?? 0 }, (_, i) => ({ value: i, label: `Level ${i + 1}` }));
+}
+
+// positionToIndex turns a typed 1-based position into the 0-based index a draft
+// holds. Anything that is not a whole number is kept so validation rejects it.
+export function positionToIndex(text: string): string {
+  const t = text.trim();
+  if (t === "") return "";
+  return /^\d+$/.test(t) ? String(Number(t) - 1) : t;
+}
+
+// indexToPosition shows a draft's 0-based index as the 1-based position typed.
+export function indexToPosition(raw: string): string {
+  return /^-?\d+$/.test(raw) ? String(Number(raw) + 1) : raw;
 }
 
 // QuestionDraft is a respondent's in-progress answer to one question; every
@@ -91,6 +129,25 @@ export interface QuestionDraft {
   number: string;
   points: string[];
   ratings: string[];
+}
+
+// onScale reports whether v is a value the rating scale accepts.
+export function onScale(scale: SurveyScale | undefined, v: number): boolean {
+  if (!scale) return false;
+  if (scale.grid) {
+    const { min, max } = scale.grid;
+    const step = scale.grid.step && scale.grid.step > 0 ? scale.grid.step : 1;
+    return v >= min && v <= max && (v - min) % step === 0;
+  }
+  const levels = scale.labels ? scale.labels.length : (scale.levels ?? 0);
+  return v >= 0 && v < levels;
+}
+
+// answerableHere reports whether this wallet can build a response: a required
+// question with a custom method cannot be answered, and leaving it out makes
+// every response invalid.
+export function answerableHere(def: SurveyDefinition): boolean {
+  return !def.questions.some((q) => q.kind === 0 && q.required === true);
 }
 
 export function emptyDraft(q: SurveyQuestion): QuestionDraft {
@@ -131,7 +188,7 @@ export function answerFor(
       return { error: "Custom questions are answered with another tool." };
     case 1: {
       const choice = parseInteger(d.choice);
-      if (choice === null) return { error: "Pick an option." };
+      if (choice === null || choice < 0 || choice >= optionLabels(q).length) return { error: "Pick an option." };
       return { answer: { kind, question: index, choice } };
     }
     case 2: {
@@ -144,14 +201,18 @@ export function answerFor(
     }
     case 3: {
       const picked = d.ranked.filter((r) => r !== "");
-      const indices = picked.map(Number);
+      const indices = picked.map(parseInteger);
       const min = q.min ?? 1;
       const max = q.max ?? 0;
+      const n = optionLabels(q).length;
+      if (indices.some((i) => i === null || i < 0 || i >= n)) {
+        return { error: `Rank options by their number, 1 to ${n}.` };
+      }
       if (indices.length < min || indices.length > max) {
         return { error: `Rank between ${min} and ${max} options.` };
       }
       if (new Set(indices).size !== indices.length) return { error: "Each option can be ranked once." };
-      return { answer: { kind, question: index, indices } };
+      return { answer: { kind, question: index, indices: indices as number[] } };
     }
     case 4: {
       const n = parseInteger(d.number);
@@ -178,8 +239,10 @@ export function answerFor(
     case 6: {
       const pairs = [];
       for (const [option, raw] of d.ratings.entries()) {
-        if (raw === "") continue;
-        pairs.push({ option, value: Number(raw) });
+        if (raw.trim() === "") continue;
+        const v = parseInteger(raw);
+        if (v === null || !onScale(q.scale, v)) return { error: "Give each rating as a value on the scale." };
+        pairs.push({ option, value: v });
       }
       if (pairs.length === 0) return { error: "Rate at least one option." };
       if (q.require_all && pairs.length !== d.ratings.length) return { error: "Rate every option." };
@@ -379,7 +442,9 @@ export function buildCreateRequest(
   }
   if (d.title.trim() === "" && !anchored) errors.push("Write a title.");
   if (d.roles.length === 0) errors.push("Choose who may respond.");
+  const before = errors.length;
   const endEpoch = toInt("End epoch", d.endEpoch, errors);
+  if (errors.length === before && endEpoch < 1) errors.push("End epoch must be a future epoch.");
   if (d.questions.length === 0) errors.push("Add at least one question.");
   const questions = d.questions.map((b, i) => questionFrom(b, i + 1, errors));
 

@@ -195,3 +195,12 @@ func TestCurrentRound(t *testing.T) {
 	equal(t, uint64(100), at(1692803367+99*3))
 	equal(t, uint64(1), at(1692803000)) // before genesis
 }
+
+func TestAnswersPlaintextRefusesPaddingOverTheBound(t *testing.T) {
+	t.Parallel()
+	raw, err := answersPlaintext(zeroAnswers(), maxPadding)
+	noErr(t, err)
+	equal(t, maxPadding, len(raw))
+	_, err = answersPlaintext(zeroAnswers(), maxPadding+1)
+	isErr(t, err)
+}

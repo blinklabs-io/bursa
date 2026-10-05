@@ -15,6 +15,7 @@
 package survey
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -23,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
@@ -33,8 +35,12 @@ import (
 // ErrNotFound is returned for a survey that does not exist or is not valid.
 var ErrNotFound = errors.New("survey: not found")
 
-// maxLabelPages bounds the label-17 scan (100 transactions per page). A longer
-// history fails the scan rather than yielding silently partial tallies.
+// ErrIndexing is returned while the label-17 history is still being read: a
+// request reads at most maxLabelPages pages, and a longer history is completed
+// by later requests rather than tallied partially.
+var ErrIndexing = errors.New("survey: label history is still being read")
+
+// maxLabelPages bounds the label-17 pages one request reads.
 const maxLabelPages = 50
 
 // maxCachedTxs bounds the per-transaction fact cache.
@@ -42,7 +48,7 @@ const maxCachedTxs = 20000
 
 // Chain is the node surface the service reads. *chain.Client satisfies it.
 type Chain interface {
-	MetadataByLabel(ctx context.Context, label uint64, maxPages int) ([]chain.LabelMetadata, error)
+	MetadataByLabelPage(ctx context.Context, label uint64, page int) ([]chain.LabelMetadata, error)
 	Transaction(ctx context.Context, hash string) (chain.TxInfo, error)
 	RequiredSigners(ctx context.Context, hash string) ([]string, error)
 	LatestEpoch(ctx context.Context) (chain.EpochInfo, error)
@@ -67,6 +73,11 @@ type Service struct {
 	mu      sync.Mutex
 	facts   map[string]txFacts
 	beacons map[uint64][]byte // verified quicknet signatures by round
+
+	// labelMu serialises label reads and guards labelRows, the label-17 history
+	// read so far in whole pages.
+	labelMu   sync.Mutex
+	labelRows []chain.LabelMetadata
 }
 
 // NewService builds a service over the node for the named Cardano network.
@@ -130,6 +141,13 @@ func (c clk) epochOf(blockTime int64) uint64 {
 	return c.epoch - back
 }
 
+// endOf is the moment epoch e ends, projected from the current epoch's start.
+// It is only meaningful for an epoch at or after the current one.
+func (c clk) endOf(e uint64) time.Time {
+	ahead := int64(e-c.epoch) + 1 //nolint:gosec // e >= c.epoch, and any real epoch fits
+	return time.Unix(c.start+ahead*c.epochSecs, 0)
+}
+
 func (s *Service) clock(ctx context.Context) (clk, error) {
 	latest, err := s.chain.LatestEpoch(ctx)
 	if err != nil {
@@ -187,8 +205,6 @@ type entry struct {
 type known struct {
 	ref       Ref
 	tx        string
-	height    uint64
-	txIndex   int
 	def       Definition
 	cancelled bool
 }
@@ -212,9 +228,9 @@ func parseID(id string) (Ref, bool) {
 // scan reads label 17 and returns the decoded transactions, skipping anything
 // that does not decode as a CIP-179 payload.
 func (s *Service) scan(ctx context.Context) ([]entry, error) {
-	rows, err := s.chain.MetadataByLabel(ctx, Label, maxLabelPages)
+	rows, err := s.labelHistory(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("label %d metadata: %w", Label, err)
+		return nil, err
 	}
 	out := make([]entry, 0, len(rows))
 	for _, r := range rows {
@@ -225,6 +241,48 @@ func (s *Service) scan(ctx context.Context) ([]entry, error) {
 		out = append(out, entry{hash: r.TxHash, payload: p})
 	}
 	return out, nil
+}
+
+// labelHistory returns the whole label-17 history, reading only what changed
+// since the last call. The node lists the label oldest first, so new
+// transactions land on the last page and a rollback removes a suffix: the last
+// cached page is re-read every time, and a page that no longer matches is
+// dropped together with everything after it.
+func (s *Service) labelHistory(ctx context.Context) ([]chain.LabelMetadata, error) {
+	s.labelMu.Lock()
+	defer s.labelMu.Unlock()
+	const size = chain.LabelPageSize
+	page := max(len(s.labelRows)/size, 1)
+	for range maxLabelPages {
+		rows, err := s.chain.MetadataByLabelPage(ctx, Label, page)
+		if err != nil {
+			return nil, fmt.Errorf("label %d metadata: %w", Label, err)
+		}
+		start := (page - 1) * size
+		if start < len(s.labelRows) {
+			if samePage(s.labelRows[start:start+size], rows) {
+				page++
+				continue
+			}
+			s.labelRows = s.labelRows[:start]
+			if page > 1 {
+				page--
+				continue
+			}
+		}
+		if len(rows) < size {
+			return append(slices.Clip(s.labelRows), rows...), nil
+		}
+		s.labelRows = append(s.labelRows, rows...)
+		page++
+	}
+	return nil, fmt.Errorf("%w: %d transactions so far", ErrIndexing, len(s.labelRows))
+}
+
+func samePage(a, b []chain.LabelMetadata) bool {
+	return slices.EqualFunc(a, b, func(x, y chain.LabelMetadata) bool {
+		return x.TxHash == y.TxHash && bytes.Equal(x.CBOR, y.CBOR)
+	})
 }
 
 // definitions returns every verified definition, oldest first, with
@@ -254,7 +312,7 @@ func (s *Service) definitions(ctx context.Context, entries []entry, cl clk) ([]*
 			if d.EndEpoch <= cl.epochOf(f.blockTime) {
 				continue
 			}
-			k := &known{ref: Ref{Index: uint64(i)}, tx: e.hash, height: f.height, txIndex: f.index, def: d}
+			k := &known{ref: Ref{Index: uint64(i)}, tx: e.hash, def: d}
 			copy(k.ref.TxID[:], raw)
 			defs = append(defs, k)
 			byRef[k.ref] = k

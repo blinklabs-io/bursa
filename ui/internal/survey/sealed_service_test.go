@@ -239,6 +239,7 @@ func TestCreateSealedSurvey(t *testing.T) {
 		"round already published": {Round: 100, PaddingSize: 256},
 		"no round":                {PaddingSize: 256},
 		"no padding":              {Round: round},
+		"padding over the bound":  {Round: round, PaddingSize: maxPadding + 1},
 	} {
 		svc, _, b := newBuilderService(t)
 		req := createRequest()
@@ -276,4 +277,52 @@ func TestOtherDrandChainsStaySealed(t *testing.T) {
 	equal(t, uint64(1), rt.Responses)
 	equal(t, uint64(1), rt.Sealed)
 	equal(t, 0, len(d.Tally.Excluded))
+}
+
+func TestRevealOfACancelledSurveyFetchesNoBeacon(t *testing.T) {
+	t.Parallel()
+	svc, f, calls := relayStub(t, quicknetRound100Sig)
+	f.add(t, 0xa1, 100, 0, 40, defPayload(sealedSimple(1, 60, 100)), credHex(1))
+	f.add(t, 0xc1, 101, 0, 41, cancelPayload(ref(0xa1, 0)), credHex(1))
+
+	d, err := svc.Reveal(context.Background(), RevealRequest{Survey: surveyID(0xa1, 0), Consent: true})
+	noErr(t, err)
+	equal(t, "cancelled", d.Status)
+	equal(t, int32(0), calls.Load())
+	isTrue(t, svc.cachedBeacon(100) == nil)
+}
+
+func TestCreateSealedSurveyRevealsOnlyAfterItCloses(t *testing.T) {
+	t.Parallel()
+	// Epoch 50 starts now and lasts 100 s, so the request's end epoch 55 closes
+	// 600 s from now, 200 quicknet rounds ahead.
+	now := time.Now()
+	current := CurrentRound(now)
+	for name, tc := range map[string]struct {
+		round uint64
+		ok    bool
+	}{
+		"while open":       {current + 100, false},
+		"as it closes":     {CurrentRound(now.Add(600 * time.Second)), false},
+		"after it closes":  {current + 230, true},
+		"well after close": {futureRound(), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			svc, f, b := newBuilderService(t)
+			f.start = now.Unix()
+			req := createRequest()
+			req.Seal = &SealOptions{Round: tc.round, PaddingSize: 256}
+			_, err := svc.Create(context.Background(), req)
+			if tc.ok {
+				noErr(t, err)
+				equal(t, 1, len(b.requests))
+				return
+			}
+			if !errors.Is(err, ErrInvalid) {
+				t.Fatalf("err = %v, want ErrInvalid", err)
+			}
+			equal(t, 0, len(b.requests))
+		})
+	}
 }

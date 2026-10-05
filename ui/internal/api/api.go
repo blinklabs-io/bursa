@@ -2140,13 +2140,8 @@ func registerPoolRoutes(mux *http.ServeMux, st Statuser, po PoolOps) {
 	}))
 }
 
-// registerMultiSigRoutes wires the native multi-signature endpoints under
-// /wallet/multisig. Account management (list/create/get/delete) and sharing the
-// wallet's own participant key are local/offline; balance is a node read
-// (gated); build and submit need a synced node (readyGate); sign is pure crypto
-// over the keystore (ungated).
 // surveyListResponse is the GET /wallet/surveys response: one page of surveys
-// plus the total that matched the search and status filter.
+// plus the total that matched the search, status and linked filters.
 type surveyListResponse struct {
 	Surveys []survey.Summary `json:"surveys"`
 	Total   int              `json:"total"`
@@ -2164,10 +2159,15 @@ func registerSurveyRoutes(mux *http.ServeMux, st Statuser, sv Surveys) {
 			serveSurvey(w, list, err)
 			return
 		}
-		if status := r.URL.Query().Get("status"); status != "" {
+		q := r.URL.Query()
+		if status := q.Get("status"); status != "" {
 			list = slices.DeleteFunc(slices.Clone(list), func(s survey.Summary) bool { return s.Status != status })
 		}
-		q := r.URL.Query()
+		// linked=true keeps only surveys a governance action links to, which is
+		// all the governance browser needs.
+		if q.Get("linked") == "true" {
+			list = slices.DeleteFunc(slices.Clone(list), func(s survey.Summary) bool { return len(s.LinkedActions) == 0 })
+		}
 		items, total, page, count := filterAndPage(list, q.Get("q"), q.Get("page"), q.Get("count"), func(s survey.Summary, needle string) bool {
 			return strings.Contains(strings.ToLower(s.Title), needle) ||
 				strings.Contains(strings.ToLower(s.Description), needle) ||
@@ -2214,6 +2214,11 @@ func registerSurveyRoutes(mux *http.ServeMux, st Statuser, sv Surveys) {
 	}))
 }
 
+// registerMultiSigRoutes wires the native multi-signature endpoints under
+// /wallet/multisig. Account management (list/create/get/delete) and sharing the
+// wallet's own participant key are local/offline; balance is a node read
+// (gated); build and submit need a synced node (readyGate); sign is pure crypto
+// over the keystore (ungated).
 func registerMultiSigRoutes(
 	mux *http.ServeMux,
 	st Statuser,
@@ -2557,6 +2562,8 @@ func serveSurvey[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusBadRequest, errBody(err))
 	case errors.Is(err, survey.ErrConsentRequired):
 		writeJSON(w, http.StatusForbidden, errBody(err))
+	case errors.Is(err, survey.ErrIndexing):
+		writeJSON(w, http.StatusServiceUnavailable, errBody(err))
 	default:
 		serve(w, v, err)
 	}

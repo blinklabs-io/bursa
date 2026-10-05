@@ -423,10 +423,12 @@ export const getSurveys = (params?: {
   status?: SurveyStatus | "";
   page?: number;
   count?: number;
+  linked?: boolean;
 }) => {
   const qs = new URLSearchParams();
   if (params?.q) qs.set("q", params.q);
   if (params?.status) qs.set("status", params.status);
+  if (params?.linked) qs.set("linked", "true");
   if (params?.page && params.page > 1) qs.set("page", String(params.page));
   if (params?.count) qs.set("count", String(params.count));
   const suffix = qs.toString() ? `?${qs.toString()}` : "";

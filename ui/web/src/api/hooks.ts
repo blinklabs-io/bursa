@@ -539,8 +539,9 @@ export function useSurveys(params: {
   status: SurveyStatus | "";
   page: number;
 }): FetchedState<SurveysResponse> {
-  const { q, status, page } = params;
-  return useFetched(() => getSurveys({ q: q.trim(), status, page }), [q, status, page], SURVEYS_DEBOUNCE_MS);
+  const { status, page } = params;
+  const q = params.q.trim();
+  return useFetched(() => getSurveys({ q, status, page }), [q, status, page], SURVEYS_DEBOUNCE_MS);
 }
 
 // useSurvey fetches one survey with its tally.
@@ -548,13 +549,26 @@ export function useSurvey(id: string): FetchedState<SurveyDetail> {
   return useFetched(() => getSurvey(id), [id]);
 }
 
+// The node's largest page.
+const LINKED_SURVEYS_PAGE = 200;
+
+// linkedSurveys reads every survey a governance action links to, page by page.
+async function linkedSurveys(): Promise<SurveySummary[]> {
+  const out: SurveySummary[] = [];
+  for (let page = 1; ; page++) {
+    const r = await getSurveys({ linked: true, page, count: LINKED_SURVEYS_PAGE });
+    out.push(...r.surveys);
+    if (r.surveys.length === 0 || out.length >= r.total) return out;
+  }
+}
+
 // useLinkedSurveys maps governance action ids to the survey their CIP-108
 // anchor links to, for showing the link from the governance browser. Linking is
 // discovery only, so a failed or empty lookup just shows no link.
 export function useLinkedSurveys(): Map<string, SurveySummary> {
-  const { data } = useFetched(() => getSurveys({ count: 200 }), []);
+  const { data } = useFetched(linkedSurveys, []);
   const linked = new Map<string, SurveySummary>();
-  for (const s of data?.surveys ?? []) {
+  for (const s of data ?? []) {
     for (const action of s.linked_actions) linked.set(action, s);
   }
   return linked;
