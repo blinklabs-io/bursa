@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -74,6 +75,31 @@ func TestTokenStoreClearRevokesMemoryOnRemoveFailure(t *testing.T) {
 	}
 	if _, _, paired := ts.Pair(); paired {
 		t.Fatal("failed Clear must not leave a pairing reported")
+	}
+}
+
+// TestTokenStoreClearNeutralizesUnremovableFile covers a token file that cannot
+// be unlinked but can still be written: the revocation must survive a restart.
+func TestTokenStoreClearNeutralizesUnremovableFile(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX directory permissions enforced for the current user")
+	}
+	dir := filepath.Join(t.TempDir(), "connector")
+	path := filepath.Join(dir, "token.json")
+	ts := NewTokenStore(path, func() (string, error) { return "tok", nil })
+	if _, err := ts.Mint("abc"); err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if err := ts.Clear(); err != nil {
+		t.Fatalf("Clear with a writable but unremovable token file: %v", err)
+	}
+	if _, _, paired := NewTokenStore(path, nil).Pair(); paired {
+		t.Fatal("token file still authorizes after Clear and a restart")
 	}
 }
 

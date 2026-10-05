@@ -284,6 +284,28 @@ func TestConnectorPairOriginPolicy(t *testing.T) {
 			t.Fatalf("status = %d, want 413; body: %s", rec.Code, rec.Body.String())
 		}
 	})
+
+	t.Run("valid pairing object followed by oversized trailing data is refused", func(t *testing.T) {
+		t.Parallel()
+		svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+		body := `{"extension_id":"testpair"}` + strings.Repeat(" ", 64<<10) + `x`
+		rec := post(t, svc, extID, body)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want 413; body: %s", rec.Code, rec.Body.String())
+		}
+		if got := len(svc.PendingPairings()); got != 0 {
+			t.Fatalf("oversized request created %d pending pairings", got)
+		}
+	})
+
+	t.Run("valid pairing object followed by trailing data is refused", func(t *testing.T) {
+		t.Parallel()
+		svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+		rec := post(t, svc, extID, `{"extension_id":"testpair"} {}`)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 // decideWhenPending polls svc.Pending() until at least one request appears (or

@@ -562,13 +562,19 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 			ExtensionID string `json:"extension_id"`
 			Code        string `json:"code"`
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxPairRequestBytes)
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// Read the whole body through the limit: a decoder stops after the
+		// first JSON value and would accept any amount of trailing data.
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPairRequestBytes))
+		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
 				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
 				return
 			}
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 			return
 		}

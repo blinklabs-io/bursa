@@ -48,6 +48,11 @@ type Client struct {
 	govMu         sync.Mutex
 	govCache      []GovernanceAction
 	govCacheUntil time.Time
+	// govRefresh admits one metadata read at a time, so callers missing the
+	// cache together wait for the first read instead of each scanning the DB.
+	govRefresh chan struct{}
+	// govRead replaces readGovernanceActions in tests.
+	govRead func(context.Context) ([]GovernanceAction, error)
 }
 
 type ClientOption func(*Client)
@@ -67,7 +72,11 @@ func NewClient(port uint, opts ...ClientOption) *Client {
 
 // NewClientURL builds a client for an explicit base URL (used in tests).
 func NewClientURL(baseURL string, opts ...ClientOption) *Client {
-	c := &Client{BaseURL: baseURL, http: &http.Client{Timeout: 10 * time.Second}}
+	c := &Client{
+		BaseURL:    baseURL,
+		http:       &http.Client{Timeout: 10 * time.Second},
+		govRefresh: make(chan struct{}, 1),
+	}
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -759,15 +768,25 @@ const (
 // The list is cached for poolCacheTTL: every search keystroke and page change
 // asks for the whole list, and each uncached read scans every proposal and
 // aggregates every vote while the node may be writing the same database.
-// Failed and canceled reads are not cached.
+// Concurrent misses share one read. Failed and canceled reads are not cached.
 func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, error) {
-	c.govMu.Lock()
-	cached, fresh := c.govCache, c.govCache != nil && time.Now().Before(c.govCacheUntil)
-	c.govMu.Unlock()
-	if fresh {
-		return slices.Clone(cached), nil
+	if cached, ok := c.cachedGovernanceActions(); ok {
+		return cached, nil
 	}
-	actions, err := c.readGovernanceActions(ctx)
+	select {
+	case c.govRefresh <- struct{}{}:
+		defer func() { <-c.govRefresh }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if cached, ok := c.cachedGovernanceActions(); ok {
+		return cached, nil
+	}
+	read := c.readGovernanceActions
+	if c.govRead != nil {
+		read = c.govRead
+	}
+	actions, err := read(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -778,6 +797,15 @@ func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, err
 		return slices.Clone(actions), nil
 	}
 	return nil, nil
+}
+
+func (c *Client) cachedGovernanceActions() ([]GovernanceAction, bool) {
+	c.govMu.Lock()
+	defer c.govMu.Unlock()
+	if c.govCache == nil || !time.Now().Before(c.govCacheUntil) {
+		return nil, false
+	}
+	return slices.Clone(c.govCache), true
 }
 
 func (c *Client) readGovernanceActions(ctx context.Context) ([]GovernanceAction, error) {

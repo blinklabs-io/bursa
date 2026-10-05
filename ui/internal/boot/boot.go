@@ -340,9 +340,9 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 
 	// Spending builds/signs/submits through the node's loopback UTxO-RPC
 	// endpoint; the active wallet's seed is decrypted from the vault on demand.
-	chainCtx := utxorpc.NewUtxoRpcChainContext(
+	chainCtx := newBoundedChainContext(utxorpc.NewUtxoRpcChainContext(
 		fmt.Sprintf("http://127.0.0.1:%d", utxorpcPort), netID, nil,
-	)
+	), chainCallTimeout)
 	spendSvc := spend.NewService(chainCtx, vaultKeystore{v: vlt}, nil)
 	spendSvc.SetChainQuerier(chainClient)
 

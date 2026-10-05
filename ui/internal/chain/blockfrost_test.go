@@ -12,7 +12,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1209,18 +1212,82 @@ func TestGovernanceActionsFromDingoMetadata(t *testing.T) {
 // of the response.
 func TestGovernanceActionJSONOmitsUnrenderedFields(t *testing.T) {
 	t.Parallel()
-	b, err := json.Marshal(GovernanceAction{ActionID: "a"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var keys map[string]json.RawMessage
-	if err := json.Unmarshal(b, &keys); err != nil {
-		t.Fatal(err)
-	}
-	for _, k := range []string{"anchor_url", "expires_epoch", "deposit"} {
-		if _, ok := keys[k]; ok {
-			t.Errorf("GovernanceAction JSON carries %q", k)
+	typ := reflect.TypeFor[GovernanceAction]()
+	for i := range typ.NumField() {
+		name, _, _ := strings.Cut(typ.Field(i).Tag.Get("json"), ",")
+		switch name {
+		case "anchor_url", "expires_epoch", "deposit":
+			t.Errorf("GovernanceAction field %s carries JSON key %q", typ.Field(i).Name, name)
 		}
+	}
+}
+
+// TestGovernanceActionsCoalescesConcurrentMisses asserts that callers missing
+// the cache together share one metadata read instead of each scanning it.
+func TestGovernanceActionsCoalescesConcurrentMisses(t *testing.T) {
+	t.Parallel()
+	var reads atomic.Int32
+	entered := make(chan struct{}, 16)
+	release := make(chan struct{})
+	c := NewClientURL("http://127.0.0.1:1")
+	c.govRead = func(ctx context.Context) ([]GovernanceAction, error) {
+		reads.Add(1)
+		entered <- struct{}{}
+		<-release
+		return []GovernanceAction{{ActionID: "a"}}, nil
+	}
+
+	const callers = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for range callers {
+		wg.Go(func() {
+			got, err := c.GovernanceActions(context.Background())
+			if err == nil && len(got) != 1 {
+				err = fmt.Errorf("got %d rows, want 1", len(got))
+			}
+			errs <- err
+		})
+	}
+	<-entered
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := reads.Load(); n != 1 {
+		t.Fatalf("%d concurrent cache misses ran %d metadata reads, want 1", callers, n)
+	}
+}
+
+// TestGovernanceActionsWaiterHonorsCancellation asserts a caller queued behind
+// an in-flight read returns when its own context ends.
+func TestGovernanceActionsWaiterHonorsCancellation(t *testing.T) {
+	t.Parallel()
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	defer close(release)
+	var reads atomic.Int32
+	c := NewClientURL("http://127.0.0.1:1")
+	c.govRead = func(ctx context.Context) ([]GovernanceAction, error) {
+		if reads.Add(1) > 1 {
+			return nil, errors.New("second metadata read while the first is in flight")
+		}
+		entered <- struct{}{}
+		<-release
+		return nil, nil
+	}
+	go func() { _, _ = c.GovernanceActions(context.Background()) }()
+	<-entered
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := c.GovernanceActions(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("queued read error = %v, want context.DeadlineExceeded", err)
 	}
 }
 
