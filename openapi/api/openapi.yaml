@@ -881,6 +881,7 @@ components:
     api.ScriptValidateRequest:
       properties:
         message:
+          description: Message is the hex-encoded signed payload.
           format: hex
           type: string
         public_keys:
@@ -932,7 +933,7 @@ components:
           description: Payload is a hex-encoded message payload.
           type: string
         signing_key:
-          description: SigningKey identifies the signing key.
+          description: SigningKey is a cardano-cli JSON signing key envelope.
           type: string
       required:
       - address

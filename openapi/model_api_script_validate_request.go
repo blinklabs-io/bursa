@@ -22,6 +22,7 @@ var _ MappedNullable = &ApiScriptValidateRequest{}
 
 // ApiScriptValidateRequest struct for ApiScriptValidateRequest
 type ApiScriptValidateRequest struct {
+	// Message is the hex-encoded signed payload.
 	Message           *string                           `json:"message,omitempty"`
 	PublicKeys        []string                          `json:"public_keys,omitempty"`
 	RequireSignatures *bool                             `json:"require_signatures,omitempty"`

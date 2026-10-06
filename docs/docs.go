@@ -1169,6 +1169,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "message": {
+                    "description": "Message is the hex-encoded signed payload.",
                     "type": "string",
                     "format": "hex"
                 },
@@ -1235,7 +1236,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "signing_key": {
-                    "description": "SigningKey identifies the signing key.",
+                    "description": "SigningKey is a cardano-cli JSON signing key envelope.",
                     "type": "string"
                 }
             }

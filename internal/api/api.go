@@ -377,12 +377,13 @@ type ScriptCreateRequest struct {
 // required whenever RequireSignatures is true and the script needs
 // signatures.
 type ScriptValidateRequest struct {
-	Script            map[string]any `json:"script"                       validate:"required"`
-	Message           string         `json:"message,omitempty"            validate:"omitempty,hexadecimal" format:"hex"`
-	PublicKeys        []string       `json:"public_keys,omitempty"        validate:"dive,hexadecimal,len=64" minLength:"64" maxLength:"64" format:"hex"`
-	Signatures        []string       `json:"signatures,omitempty"         validate:"dive,hexadecimal,len=128"`
-	Slot              uint64         `json:"slot,omitempty"                                                   swaggertype:"integer" format:"int64"`
-	RequireSignatures bool           `json:"require_signatures,omitempty"`
+	Script map[string]any `json:"script"                       validate:"required"`
+	// Message is the hex-encoded signed payload.
+	Message           string   `json:"message,omitempty"            validate:"omitempty,hexadecimal" format:"hex"`
+	PublicKeys        []string `json:"public_keys,omitempty"        validate:"dive,hexadecimal,len=64" minLength:"64" maxLength:"64" format:"hex"`
+	Signatures        []string `json:"signatures,omitempty"         validate:"dive,hexadecimal,len=128"`
+	Slot              uint64   `json:"slot,omitempty"                                                   swaggertype:"integer" format:"int64"`
+	RequireSignatures bool     `json:"require_signatures,omitempty"`
 }
 
 // ScriptAddressRequest defines the request payload for script address generation
@@ -513,7 +514,7 @@ type SignDataRequest struct {
 	Address string `json:"address"     validate:"required,hexadecimal"`
 	// Payload is a hex-encoded message payload.
 	Payload string `json:"payload"     validate:"required,hexadecimal"`
-	// SigningKey identifies the signing key.
+	// SigningKey is a cardano-cli JSON signing key envelope.
 	SigningKey string `json:"signing_key" validate:"required"`
 }
 
