@@ -52,5 +52,8 @@ func (a *Agent) checkHeaderLocked(period uint64, msg []byte) error {
 	if oc.SequenceNumber != a.active.issueNumber || oc.KesPeriod != a.active.startPeriod {
 		return fmt.Errorf("%w: operational certificate counter/period do not match the installed one", ErrInvalidHeader)
 	}
+	if !bytes.Equal(oc.Signature, a.active.coldSig) {
+		return fmt.Errorf("%w: operational certificate cold signature is not the installed one", ErrInvalidHeader)
+	}
 	return nil
 }

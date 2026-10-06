@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/blinklabs-io/gouroboros/kes"
 	"github.com/blinklabs-io/gouroboros/ledger/babbage"
@@ -32,6 +33,7 @@ type headerSpec struct {
 	hotVkey   []byte
 	sequence  uint64
 	kesPeriod uint64
+	coldSig   []byte
 }
 
 // newHeaderAgent returns a sign-mode agent at KES period 5 (slot 50..59) with
@@ -45,10 +47,21 @@ func newHeaderAgent(t *testing.T) (*Agent, coldKeyPair, headerSpec) {
 	if err != nil {
 		t.Fatalf("GenStagedKey: %v", err)
 	}
-	if _, err := a.InstallKey(makeOpCert(t, vkey, 7, 3, cold)); err != nil {
+	opcert := makeOpCert(t, vkey, 7, 3, cold)
+	if _, err := a.InstallKey(opcert); err != nil {
 		t.Fatalf("InstallKey: %v", err)
 	}
-	return a, cold, headerSpec{slot: 52, issuer: cold.pub, hotVkey: vkey, sequence: 7, kesPeriod: 3}
+	return a, cold, headerSpec{slot: 52, issuer: cold.pub, hotVkey: vkey, sequence: 7, kesPeriod: 3, coldSig: opCertColdSig(t, opcert)}
+}
+
+// opCertColdSig returns the cold-key signature an encoded opcert carries.
+func opCertColdSig(t *testing.T, opcert []byte) []byte {
+	t.Helper()
+	dec, err := bursa.DecodeOpCert(opcert)
+	if err != nil {
+		t.Fatalf("DecodeOpCert: %v", err)
+	}
+	return dec.ColdSig
 }
 
 func (s headerSpec) encode(t *testing.T) []byte {
@@ -61,7 +74,7 @@ func (s headerSpec) encode(t *testing.T) []byte {
 	hb.VrfResult.Output = make([]byte, 64)
 	hb.VrfResult.Proof = make([]byte, 80)
 	hb.OpCert = babbage.BabbageOpCert{
-		HotVkey: s.hotVkey, SequenceNumber: s.sequence, KesPeriod: s.kesPeriod, Signature: make([]byte, 64),
+		HotVkey: s.hotVkey, SequenceNumber: s.sequence, KesPeriod: s.kesPeriod, Signature: s.coldSig,
 	}
 	hb.ProtoVersion = babbage.BabbageProtoVersion{Major: 10}
 	b, err := cbor.Encode(&hb)
@@ -108,6 +121,7 @@ func TestSignHeaderRefusesUntypedOrMismatchedRequests(t *testing.T) {
 		{name: "another KES key", reason: "different KES key", spec: func(s *headerSpec) { s.hotVkey = make([]byte, 32) }},
 		{name: "superseded issue counter", reason: "counter/period", spec: func(s *headerSpec) { s.sequence = 6 }},
 		{name: "opcert start period not the installed one", reason: "counter/period", spec: func(s *headerSpec) { s.kesPeriod = 4 }},
+		{name: "opcert signature not the installed one", reason: "cold signature", spec: func(s *headerSpec) { s.coldSig = make([]byte, 64) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

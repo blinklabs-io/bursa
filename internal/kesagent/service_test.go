@@ -255,7 +255,8 @@ func TestServiceSignMode(t *testing.T) {
 	cold := newColdKey(t)
 	a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(5))
 	vkey, _ := a.GenStagedKey()
-	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 3, cold)); err != nil {
+	opcert := makeOpCert(t, vkey, 1, 3, cold)
+	if _, err := a.InstallKey(opcert); err != nil {
 		t.Fatalf("InstallKey: %v", err)
 	}
 
@@ -282,7 +283,7 @@ func TestServiceSignMode(t *testing.T) {
 
 	// Each request carries a header body whose slot lies in the period it asks
 	// for, so the period rules, not header validation, decide the outcome.
-	spec := headerSpec{slot: 52, issuer: cold.pub, hotVkey: vkey, sequence: 1, kesPeriod: 3}
+	spec := headerSpec{slot: 52, issuer: cold.pub, hotVkey: vkey, sequence: 1, kesPeriod: 3, coldSig: opCertColdSig(t, opcert)}
 	msg := spec.encode(t)
 	if err := writeFrame(conn, SignRequest{Type: "sign_request", Period: 5, Message: msg}); err != nil {
 		t.Fatalf("write sign request: %v", err)

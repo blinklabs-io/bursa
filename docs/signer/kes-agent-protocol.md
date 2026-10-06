@@ -89,7 +89,8 @@ the guard and key untouched, unless:
 - the header's slot divided by `slots_per_kes_period` equals `period`;
 - the issuer verification key equals the configured cold verification key;
 - the header's operational certificate carries the active KES vkey, the
-  installed issue counter, and the installed certificate start period.
+  installed issue counter, the installed certificate start period, and the
+  installed cold-key signature.
 
 `error` is non-empty (and `signature` absent) when signing is refused, e.g. a
 message that is not a matching header body, a period rollback, or an exhausted

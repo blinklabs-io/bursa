@@ -70,6 +70,7 @@ type keyState struct {
 	buf         *securemem.Buffer
 	vkey        []byte
 	opcert      []byte // installed opcert CBOR (active keys only)
+	coldSig     []byte // installed opcert cold-key signature (active keys only)
 	issueNumber uint64 // opcert issue counter (active keys only)
 	exhausted   bool
 }
@@ -294,6 +295,7 @@ func (a *Agent) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
 	ks.maxEvol = maxEvol
 	ks.opcert = append([]byte(nil), opcertBytes...)
 	ks.issueNumber = dec.IssueNumber
+	ks.coldSig = append([]byte(nil), dec.ColdSig...)
 	ks.exhausted = false
 	a.active = ks
 
