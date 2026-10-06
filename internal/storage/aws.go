@@ -103,6 +103,10 @@ func (s *AWSStore) ListWallets(ctx context.Context) ([]Wallet, error) {
 			name := strings.TrimPrefix(secretName, s.prefix)
 			w, err := s.GetWallet(ctx, name)
 			if err != nil {
+				// A cancelled caller must not receive a partial list.
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return nil, ctxErr
+				}
 				logging.GetLogger().
 					Debug("skipping inaccessible wallet during list", "wallet", name, "error", err)
 				continue
@@ -169,20 +173,28 @@ func (w *awsWallet) Save(ctx context.Context) error {
 		return fmt.Errorf("failed to encrypt data: %w", err)
 	}
 	id := w.store.secretName(w.Name())
-	_, err = w.store.client.PutSecretValue(ctx, &secretsmanager.PutSecretValueInput{
-		SecretId:     &id,
-		SecretBinary: enc,
-	})
+	put := func() error {
+		_, err := w.store.client.PutSecretValue(ctx, &secretsmanager.PutSecretValueInput{
+			SecretId:     &id,
+			SecretBinary: enc,
+		})
+		return err
+	}
+	err = put()
 	var notFound *smtypes.ResourceNotFoundException
 	if errors.As(err, &notFound) {
 		_, err = w.store.client.CreateSecret(ctx, &secretsmanager.CreateSecretInput{
 			Name:         &id,
 			SecretBinary: enc,
 		})
-		if err != nil {
+		// A concurrent first save may create the secret between the two
+		// calls; write this save as a new version of it instead.
+		var exists *smtypes.ResourceExistsException
+		if errors.As(err, &exists) {
+			err = put()
+		} else if err != nil {
 			return fmt.Errorf("failed to create secret: %w", err)
 		}
-		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("failed to add secret version: %w", err)

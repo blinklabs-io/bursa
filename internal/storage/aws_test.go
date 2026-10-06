@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"sort"
-	"strings"
 	"testing"
 
 	"filippo.io/age"
@@ -35,15 +34,25 @@ type fakeSecrets struct {
 	putErr  error
 	creates int
 	deleted []string
+	// raceCreate makes CreateSecret behave as if another writer created the
+	// secret first.
+	raceCreate bool
+	// getHook, when set, runs before GetSecretValue and may fail it.
+	getHook func(ctx context.Context) error
 }
 
 func newFakeSecrets() *fakeSecrets { return &fakeSecrets{secrets: map[string][]byte{}} }
 
 func (f *fakeSecrets) GetSecretValue(
-	_ context.Context,
+	ctx context.Context,
 	in *secretsmanager.GetSecretValueInput,
 	_ ...func(*secretsmanager.Options),
 ) (*secretsmanager.GetSecretValueOutput, error) {
+	if f.getHook != nil {
+		if err := f.getHook(ctx); err != nil {
+			return nil, err
+		}
+	}
 	v, ok := f.secrets[*in.SecretId]
 	if !ok {
 		return nil, &smtypes.ResourceNotFoundException{}
@@ -57,6 +66,10 @@ func (f *fakeSecrets) CreateSecret(
 	_ ...func(*secretsmanager.Options),
 ) (*secretsmanager.CreateSecretOutput, error) {
 	f.creates++
+	if f.raceCreate {
+		f.secrets[*in.Name] = []byte("concurrent writer")
+		return nil, &smtypes.ResourceExistsException{}
+	}
 	f.secrets[*in.Name] = in.SecretBinary
 	return &secretsmanager.CreateSecretOutput{}, nil
 }
@@ -88,16 +101,15 @@ func (f *fakeSecrets) DeleteSecret(
 
 func (f *fakeSecrets) ListSecrets(
 	_ context.Context,
-	in *secretsmanager.ListSecretsInput,
+	_ *secretsmanager.ListSecretsInput,
 	_ ...func(*secretsmanager.Options),
 ) (*secretsmanager.ListSecretsOutput, error) {
-	prefix := in.Filters[0].Values[0]
+	// Return every secret and ignore the filter, so the store's own prefix
+	// check decides what is listed.
 	out := &secretsmanager.ListSecretsOutput{}
 	names := []string{}
 	for name := range f.secrets {
-		if strings.HasPrefix(name, prefix) {
-			names = append(names, name)
-		}
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {
@@ -147,6 +159,8 @@ func TestAWSStoreSaveLoadListDelete(t *testing.T) {
 	require.NoError(t, err)
 
 	fake.secrets["other-w2"] = []byte("not ours")
+	// Unprefixed, but its name maps onto an existing wallet if stripped.
+	fake.secrets["w1"] = []byte("not ours")
 	wallets, err := store.ListWallets(ctx)
 	require.NoError(t, err)
 	require.Len(t, wallets, 1)
@@ -200,4 +214,47 @@ func TestNewStoreAWSBackend(t *testing.T) {
 	aws, ok := store.(*AWSStore)
 	require.True(t, ok, "got %T", store)
 	require.Equal(t, "pre-", aws.prefix)
+}
+
+func TestAWSStoreSaveOverwritesAfterConcurrentCreate(t *testing.T) {
+	// Not t.Parallel: see useAgeRecipient.
+	useAgeRecipient(t)
+	fake := newFakeSecrets()
+	fake.raceCreate = true
+	store := &AWSStore{client: fake, prefix: "pre-"}
+
+	w, err := store.CreateWallet("w1")
+	require.NoError(t, err)
+	w.PutItem("k", "v")
+	require.NoError(t, w.Save(context.Background()))
+	require.NotEqual(t, "concurrent writer", string(fake.secrets["pre-w1"]))
+
+	got, err := store.GetWallet(context.Background(), "w1")
+	require.NoError(t, err)
+	item, err := got.GetItem("k")
+	require.NoError(t, err)
+	require.Equal(t, "v", item)
+}
+
+func TestAWSStoreListWalletsReportsCancellation(t *testing.T) {
+	// Not t.Parallel: see useAgeRecipient.
+	useAgeRecipient(t)
+	fake := newFakeSecrets()
+	store := &AWSStore{client: fake, prefix: "pre-"}
+	for _, name := range []string{"w1", "w2"} {
+		w, err := store.CreateWallet(name)
+		require.NoError(t, err)
+		w.PutItem("k", "v")
+		require.NoError(t, w.Save(context.Background()))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fake.getHook = func(ctx context.Context) error {
+		cancel()
+		return ctx.Err()
+	}
+	wallets, err := store.ListWallets(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, wallets)
 }
