@@ -18,9 +18,9 @@ describe('buildManifest', () => {
       id: 'bursa-connector@blinklabs.io',
       strict_min_version: '140.0',
     });
-    expect(manifest.browser_specific_settings.gecko.data_collection_permissions.required).not.toContain(
-      'none',
-    );
+    expect(manifest.browser_specific_settings.gecko.data_collection_permissions).toEqual({
+      required: ['browsingActivity', 'financialAndPaymentInfo'],
+    });
     expect(manifest.browser_specific_settings.gecko_android.strict_min_version).toBe('142.0');
   });
 

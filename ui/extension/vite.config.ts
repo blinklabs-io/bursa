@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { zipSync } from 'fflate';
 import { defineConfig } from 'vite';
@@ -42,10 +42,14 @@ export default defineConfig(({ mode }) => {
               [readFileSync(file), { mtime, level: 9 }] as const,
             ]),
           );
-          writeFileSync(
-            join(outDir, '..', `bursa-connector-${target}-${source.version}.zip`),
-            zipSync(entries),
-          );
+          // emptyOutDir clears only this browser's tree, so a package from an earlier
+          // version would otherwise sit beside the new one.
+          const packages = join(outDir, '..');
+          const prefix = `bursa-connector-${target}-`;
+          for (const name of readdirSync(packages)) {
+            if (name.startsWith(prefix) && name.endsWith('.zip')) rmSync(join(packages, name));
+          }
+          writeFileSync(join(packages, `${prefix}${source.version}.zip`), zipSync(entries));
         },
       },
     ],
