@@ -415,7 +415,7 @@ func NewWallet(mnemonic string, opts ...WalletOption) (*Wallet, error) {
 		opt(cfg)
 	}
 
-	if !bip39.IsMnemonicValid(mnemonic) {
+	if !isMnemonicValid(mnemonic) {
 		return nil, ErrInvalidMnemonic
 	}
 	if cfg.AccountID >= 0x80000000 || cfg.PaymentID >= 0x80000000 ||
@@ -2567,6 +2567,20 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 	case "KesSigningKey_ed25519_kes_2^6",
 		"KESSigningKey_PraosV2":
 		sk, vk, err := decodeKESSKey(cborData)
+		if err != nil {
+			return nil, err
+		}
+		lk.SKey, lk.VKey = sk, vk
+		return lk, nil
+	case "BlsVerificationKey_bls12-381-BLS-Signature-Minimal-Signature-Size":
+		vk, err := decodeBLSVerificationKey(cborData)
+		if err != nil {
+			return nil, err
+		}
+		lk.VKey = vk
+		return lk, nil
+	case "BlsSigningKey_bls12-381-BLS-Signature-Minimal-Signature-Size":
+		sk, vk, err := decodeBLSSigningKey(cborData)
 		if err != nil {
 			return nil, err
 		}

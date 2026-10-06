@@ -21,6 +21,7 @@ import (
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
 	bip39 "github.com/blinklabs-io/go-bip39"
+	"golang.org/x/text/unicode/norm"
 )
 
 // RootKeyFromMnemonicBytes derives a CIP-1852 root key from a zeroable mnemonic
@@ -44,7 +45,19 @@ func RootKeyFromMnemonicBytes(mnemonic []byte) (bip32.XPrv, error) {
 }
 
 func entropyFromMnemonicBytes(mnemonic []byte) ([]byte, error) {
-	words := bytes.Fields(mnemonic)
+	// BIP39 defines the mnemonic in NFKD, and the word lists are NFKD, so a
+	// byte comparison against them rejects every other Unicode form of the same
+	// phrase. Normalize before splitting, not after: NFKD folds the ideographic
+	// space U+3000 that Japanese mnemonics use as a separator into U+0020.
+	// norm.NFKD.Bytes may alias its argument, so only the copy it allocates for
+	// a non-NFKD mnemonic is zeroed here; the caller still owns mnemonic.
+	normalized := mnemonic
+	if !norm.NFKD.IsNormal(mnemonic) {
+		normalized = norm.NFKD.Bytes(mnemonic)
+		defer zeroBytes(normalized)
+	}
+
+	words := bytes.Fields(normalized)
 	if len(words)%3 != 0 || len(words) < 12 || len(words) > 24 {
 		return nil, bursa.ErrInvalidMnemonic
 	}

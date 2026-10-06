@@ -79,6 +79,85 @@ func TestPoolColdKeyFilesAcceptedByCardanoCLI(t *testing.T) {
 	assert.Equal(t, "StakePoolVerificationKey_ed25519", derivedEnvelope.Type)
 }
 
+func TestBLSKeyFilesAcceptedByCardanoCLIDijkstra(t *testing.T) {
+	cardanoCLI, err := exec.LookPath("cardano-cli")
+	if err != nil {
+		t.Skip("cardano-cli is not installed")
+	}
+	help, err := exec.Command(
+		cardanoCLI,
+		"dijkstra", "stake-pool", "registration-certificate", "--help",
+	).CombinedOutput()
+	if err != nil || !strings.Contains(string(help), "--bls-signing-key-file") {
+		t.Skip("cardano-cli does not support Dijkstra Leios BLS registration")
+	}
+
+	tmpDir := t.TempDir()
+	blsSigning := filepath.Join(tmpDir, "bls.skey")
+	registration := filepath.Join(tmpDir, "bls.json")
+	require.NoError(t, RunKeyBLS(blsSigning, "", registration))
+
+	coldVkey := createTestVkeyFile(
+		t, tmpDir, "cold.vkey", "StakePoolVerificationKey_ed25519",
+		"Stake Pool Operator Verification Key", testColdVKeyCborHex,
+	)
+	vrfVkey := createTestVkeyFile(
+		t, tmpDir, "vrf.vkey", "VrfVerificationKey_PraosVRF",
+		"VRF Verification Key", testVRFVKeyCborHex,
+	)
+	stakeVkey := createTestVkeyFile(
+		t, tmpDir, "stake.vkey", "StakeVerificationKeyShelley_ed25519",
+		"Stake Verification Key", testStakeVKeyCborHex,
+	)
+	certificate := filepath.Join(tmpDir, "pool.cert")
+	output, err := exec.Command(
+		cardanoCLI,
+		"dijkstra", "stake-pool", "registration-certificate",
+		"--cold-verification-key-file", coldVkey,
+		"--vrf-verification-key-file", vrfVkey,
+		"--bls-signing-key-file", blsSigning,
+		"--pool-pledge", "1000000000",
+		"--pool-cost", "340000000",
+		"--pool-margin", "0.03",
+		"--pool-reward-account-verification-key-file", stakeVkey,
+		"--pool-owner-stake-verification-key-file", stakeVkey,
+		"--testnet-magic", "42",
+		"--out-file", certificate,
+	).CombinedOutput()
+	require.NoErrorf(t, err, "cardano-cli Dijkstra registration failed: %s", output)
+
+	var registrationMaterial struct {
+		PublicKey       string `json:"publicKey"`
+		PossessionProof string `json:"possessionProof"`
+	}
+	data, err := os.ReadFile(registration)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &registrationMaterial))
+	publicKey, err := hex.DecodeString(registrationMaterial.PublicKey)
+	require.NoError(t, err)
+	proof, err := hex.DecodeString(registrationMaterial.PossessionProof)
+	require.NoError(t, err)
+
+	var envelope struct {
+		Type    string `json:"type"`
+		CborHex string `json:"cborHex"`
+	}
+	data, err = os.ReadFile(certificate)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &envelope))
+	require.Equal(t, "Certificate", envelope.Type)
+	certificateCBOR, err := hex.DecodeString(envelope.CborHex)
+	require.NoError(t, err)
+	var certificateFields []any
+	require.NoError(t, cbor.Unmarshal(certificateCBOR, &certificateFields))
+	require.Len(t, certificateFields, 11)
+	leiosKey, ok := certificateFields[3].([]any)
+	require.True(t, ok)
+	require.Len(t, leiosKey, 2)
+	require.Equal(t, publicKey, leiosKey[0])
+	require.Equal(t, proof, leiosKey[1])
+}
+
 // Test mnemonic - CIP-1852 test vector (DO NOT USE FOR REAL FUNDS)
 const testMnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 

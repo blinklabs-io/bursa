@@ -43,6 +43,15 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
         return queue
     }()
     private var stopping = false
+    // Set by walletDataDirectory when it fell back to the legacy tree, and
+    // cleared by the first presentation. Main-thread only: written from
+    // viewDidLoad, read from viewDidAppear.
+    private var migrationFailureDetail: String?
+    // Set by walletDataDirectory when a backup exclusion did not take. Only the
+    // first failure of a launch is kept: the condition that fails one
+    // setResourceValues (a full disk) fails the rest, so the rest would repeat
+    // one fact. Same threading contract as migrationFailureDetail.
+    private var backupExclusionFailureDetail: String?
 
     override func loadView() {
         let config = WKWebViewConfiguration()
@@ -64,6 +73,74 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
         let dataDir = walletDataDirectory().path
 
         startWallet(dataDir: dataDir)
+    }
+
+    private struct StartupWarning {
+        let title: String
+        let message: String
+    }
+
+    // A failed migration leaves the wallet running from the legacy directory,
+    // and a failed exclusion leaves a wallet tree the next backup will copy.
+    // Neither refuses the launch: the wallet's data is intact in both cases and
+    // the next launch retries, so refusing would deny access to a working
+    // wallet over a condition the app cannot clear. Neither is left to the
+    // system log either, because the user is the only one who can clear it —
+    // free the disk, or turn iCloud Backup off. Presented here because
+    // viewDidLoad runs before this controller is in a window.
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        var pending: [StartupWarning] = []
+        // The exclusion failure comes first: it is the one that puts wallet
+        // material somewhere the user did not choose.
+        if let detail = backupExclusionFailureDetail {
+            backupExclusionFailureDetail = nil
+            pending.append(
+                StartupWarning(
+                    title: "Wallet data is not excluded from backup",
+                    message: "Bursa could not mark its data directory as excluded from "
+                        + "iCloud and iTunes backup, so a backup may copy the wallet off "
+                        + "this device. It will try again on the next launch.\n\n\(detail)"
+                )
+            )
+        }
+        if let detail = migrationFailureDetail {
+            migrationFailureDetail = nil
+            pending.append(
+                StartupWarning(
+                    title: "Wallet data was not moved",
+                    message: "Bursa could not move its data into private app storage and "
+                        + "is running from the previous location. It will try again on the "
+                        + "next launch.\n\n\(detail)"
+                )
+            )
+        }
+        presentStartupWarnings(pending)
+    }
+
+    // One at a time: UIKit cannot present a second alert while the first is up,
+    // so the next is presented from the previous one's action handler rather
+    // than in the same run-loop turn.
+    private func presentStartupWarnings(_ pending: [StartupWarning]) {
+        guard let warning = pending.first else { return }
+        let rest = Array(pending.dropFirst())
+        let alert = UIAlertController(
+            title: warning.title,
+            message: warning.message,
+            preferredStyle: .alert
+        )
+        alert.addAction(
+            UIAlertAction(title: "Continue", style: .default) { [weak self] _ in
+                self?.presentStartupWarnings(rest)
+            }
+        )
+        present(alert, animated: true)
+    }
+
+    // Keeps the first failure of a launch; see backupExclusionFailureDetail.
+    private func noteBackupExclusionFailure(_ detail: String?) {
+        guard let detail, backupExclusionFailureDetail == nil else { return }
+        backupExclusionFailureDetail = detail
     }
 
     // Written only after a migration has copied and verified every entry, so
@@ -91,6 +168,20 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
             try fileManager.createDirectory(
                 at: dataDir, withIntermediateDirectories: true
             )
+            // Before anything is written or copied in, so the tree is never
+            // eligible for a backup that starts mid-migration.
+            noteBackupExclusionFailure(Self.excludeFromBackup(dataDir))
+            // Documents is backed up too, and the legacy tree outlives the
+            // copy: it is still there during the copy window, after a cleanup
+            // this launch deferred, and after a name a later launch could not
+            // remove. So it carries the exclusion for as long as it exists,
+            // not only on the migration-failure fallback path. Nothing else
+            // uses this directory — the app declares neither
+            // UIFileSharingEnabled nor LSSupportsOpeningDocumentsInPlace — so
+            // excluding it takes nothing of the user's out of backup.
+            if let documentsDir, fileManager.fileExists(atPath: documentsDir.path) {
+                noteBackupExclusionFailure(Self.excludeFromBackup(documentsDir))
+            }
             if let documentsDir,
                fileManager.fileExists(atPath: documentsDir.path),
                try !fileManager.contentsOfDirectory(atPath: documentsDir.path).isEmpty {
@@ -159,9 +250,46 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
         } catch {
             for entry in copiedEntries { try? fileManager.removeItem(at: entry) }
             Self.logger.error("wallet data migration failed: \(String(describing: error))")
-            // Keep using the old directory if migration did not complete, so
-            // an upgrade never starts against an empty wallet tree.
-            return documentsDir ?? dataDir
+            // The legacy tree is only emptied after the copy has been verified,
+            // so on failure it is still the authoritative one and the
+            // destination holds nothing but the rolled-back partial copy.
+            // Booting against the destination would show an empty wallet, and
+            // the next launch would then discard whatever was created in it.
+            // So keep using the legacy directory — but surface the failure:
+            // silently running from the directory the app is migrating away
+            // from is how a one-off copy error becomes a permanent second tree.
+            let fallback = documentsDir ?? dataDir
+            noteBackupExclusionFailure(Self.excludeFromBackup(fallback))
+            migrationFailureDetail = error.localizedDescription
+            return fallback
+        }
+    }
+
+    // Returns the failure description, nil on success. setResourceValues can
+    // fail for reasons the app cannot recover from here — a disk too full to
+    // write the extended attribute while the chain database is being copied is
+    // the likely one — and the result is a wallet tree that is still backup
+    // eligible, which is the exact condition this call exists to remove. So the
+    // caller gets it back to report, not just a line in the system log.
+    //
+    // Set on every launch, not once at creation: the flag is a per-URL resource
+    // value, so an install that predates it, or a directory restored from an
+    // older backup, has the directory present without it. Re-setting an
+    // already-excluded URL is a no-op.
+    //
+    // Application Support + this flag, rather than Library/Caches: the system
+    // may purge Caches at any time, and vault.json is the encrypted wallet
+    // seeds, which cannot be regenerated by re-syncing.
+    private static func excludeFromBackup(_ url: URL) -> String? {
+        var url = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        do {
+            try url.setResourceValues(values)
+            return nil
+        } catch {
+            logger.error("wallet backup exclusion failed: \(String(describing: error))")
+            return error.localizedDescription
         }
     }
 

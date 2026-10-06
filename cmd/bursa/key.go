@@ -37,6 +37,7 @@ Derivation paths by key type:
   CIP-1855: policy (m/1855'/1815'/...)
   CIP-0105: drep, committee-cold, committee-hot (m/1852'/1815'/account'/role/...)
   CIP-88/151: calidus (m/1852'/1815'/account'/0/index, SPO authentication)
+  Dijkstra: bls (random BLS12-381 MinSig key for Leios and Peras registration)
 
 Examples:
   bursa key root --mnemonic "word1 word2 ..."
@@ -48,7 +49,8 @@ Examples:
   bursa key calidus --mnemonic "word1 word2 ..."
   bursa key drep --mnemonic "word1 word2 ..."
   bursa key committee-cold --mnemonic "word1 word2 ..."
-  bursa key committee-hot --mnemonic "word1 word2 ..."`,
+  bursa key committee-hot --mnemonic "word1 word2 ..."
+  bursa key bls --signing-key-file bls.skey --output-file bls.json`,
 	}
 
 	keyCommand.AddCommand(
@@ -64,10 +66,34 @@ Examples:
 		keyDRepCommand(),
 		keyCommitteeColdCommand(),
 		keyCommitteeHotCommand(),
+		keyBLSCommand(),
 		keyEncryptCommand(),
 		keyDecryptCommand(),
 	)
 	return &keyCommand
+}
+
+func keyBLSCommand() *cobra.Command {
+	var signingKeyFile string
+	var verificationKeyFile string
+	var outputFile string
+
+	cmd := cobra.Command{
+		Use:   "bls",
+		Short: "Generate a Dijkstra BLS key and possession proof",
+		Long: `Generates a cryptographically random BLS12-381 MinSig key for
+Dijkstra-era Leios and Peras stake-pool registration. The signing key is never printed;
+specify --signing-key-file to persist it in cardano-cli envelope format.
+The registration material contains the 96-byte public key and 48-byte proof
+of possession as lowercase hexadecimal strings.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.RunKeyBLS(signingKeyFile, verificationKeyFile, outputFile)
+		},
+	}
+	cmd.Flags().StringVar(&signingKeyFile, "signing-key-file", "", "Path to write the BLS signing key")
+	cmd.Flags().StringVar(&verificationKeyFile, "verification-key-file", "", "Path to write the BLS verification key")
+	cmd.Flags().StringVar(&outputFile, "output-file", "", "Path to write public key and proof JSON (default: stdout)")
+	return &cmd
 }
 
 func keyRootCommand() *cobra.Command {
