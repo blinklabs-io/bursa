@@ -81,7 +81,7 @@ jobs:
           go-version: 1.26.x
       - name: go test (vault write path)
         working-directory: ui
-        run: go test -v -run "TestSyncDirFS|TestWriteFileAtomic|TestReadEnvelope|CommittedWriteError|StateWhenDirectorySyncFailsAfterRename" ./internal/vault/
+        run: go test -v -run "^(TestSyncDirFSIsANoOp|TestWriteFileAtomicDoesNotReturnACommittedWriteError|TestWriteFileAtomicRejectsOversizedVaultBeforePublish|TestWriteFileAtomicAtVaultLimitIsReadable|TestReadEnvelopeRejectsFileOneByteOverLimit|TestAddScriptWalletReportsCommittedWriteError|TestCreatePublishesStateWhenDirectorySyncFailsAfterRename|TestSelectAccountPublishesStateWhenDirectorySyncFailsAfterRename|TestMutationsPublishStateWhenDirectorySyncFailsAfterRename)$" ./internal/vault/
 
   # Compile the `-tags webview` desktop variant. Every other Go job builds only
   # the default pure-Go wallet, so nothing on a pull request ever exercised the
