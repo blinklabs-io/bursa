@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeAll, beforeEach } from 'vitest';
 
 // Set up chrome mock BEFORE any module import so side effects see the mock
 const sendMessageCallbacks: ((response: unknown) => void)[] = [];
-const chromeMock = {
+const chromeMock: {
+  runtime: {
+    sendMessage: ReturnType<typeof vi.fn>;
+    lastError?: { message: string };
+  };
+} = {
   runtime: {
     sendMessage: vi.fn((_message: unknown, callback: (response: unknown) => void) => {
       sendMessageCallbacks.push(callback);
@@ -46,6 +51,7 @@ describe('content script', () => {
     vi.clearAllMocks();
     jsdomEnv.jsdom.reconfigure({ url: 'https://dapp.example/' });
     sendMessageCallbacks.length = 0;
+    chromeMock.runtime.lastError = undefined;
   });
 
   it('reports when the provider does not register in the page main world', () => {
@@ -154,5 +160,149 @@ describe('content script', () => {
       })
     );
     expect(chromeMock.runtime.sendMessage).not.toHaveBeenCalled();
+  });
+  it('relays the runtime lastError message instead of the generic fallback', () => {
+    const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+    chromeMock.runtime.lastError = {
+      message: 'The message port closed before a response was received.',
+    };
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'bursa-cip30', id: 'req-7', method: 'signTx' },
+        source: window,
+      })
+    );
+
+    sendMessageCallbacks[0](undefined);
+
+    // Without this reply the page's CIP-30 promise never settles, so the id must
+    // be the ORIGINAL request id and the info the runtime's own diagnosis.
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      {
+        source: 'bursa-cip30-reply',
+        id: 'req-7',
+        error: {
+          code: -2,
+          info: 'The message port closed before a response was received.',
+        },
+      },
+      'https://dapp.example'
+    );
+  });
+});
+
+describe('content script provider registration handshake', () => {
+  const PROVIDER_REGISTRATION_ERROR = 'Bursa provider failed to register in the page main world';
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    jsdomEnv.jsdom.reconfigure({ url: 'https://dapp.example/' });
+    sendMessageCallbacks.length = 0;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Each test needs its own module instance: monitorProviderRegistration() arms
+  // the watchdog once, as a module side effect.
+  async function loadContentScript() {
+    vi.useFakeTimers();
+    const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await import('../src/content');
+    return postMessageSpy;
+  }
+
+  function registrationFailures(
+    postMessageSpy: ReturnType<typeof vi.spyOn>,
+  ): [Record<string, unknown>, string][] {
+    const calls = postMessageSpy.mock.calls as unknown as [Record<string, unknown>, string][];
+    return calls.filter(
+      ([message]) =>
+        message?.source === 'bursa-cip30-provider-status' && message?.status === 'error',
+    );
+  }
+
+  it('stops reporting a registration failure once the provider reports ready', async () => {
+    const postMessageSpy = await loadContentScript();
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'bursa-cip30-provider-status', status: 'ready' },
+        source: window,
+      })
+    );
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(registrationFailures(postMessageSpy)).toHaveLength(0);
+  });
+
+  it('keeps reporting the failure when the status is not ready', async () => {
+    const postMessageSpy = await loadContentScript();
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'bursa-cip30-provider-status', status: 'error', error: 'boom' },
+        source: window,
+      })
+    );
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(registrationFailures(postMessageSpy)).toHaveLength(1);
+  });
+
+  it('keeps reporting the failure when a foreign message claims readiness', async () => {
+    const postMessageSpy = await loadContentScript();
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'other-extension', status: 'ready' },
+        source: window,
+      })
+    );
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(registrationFailures(postMessageSpy)).toHaveLength(1);
+  });
+
+  it('keeps reporting the failure when readiness arrives from another window', async () => {
+    const postMessageSpy = await loadContentScript();
+    const frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'bursa-cip30-provider-status', status: 'ready' },
+        source: frame.contentWindow,
+      })
+    );
+    await vi.advanceTimersByTimeAsync(2_000);
+    frame.remove();
+
+    expect(registrationFailures(postMessageSpy)).toHaveLength(1);
+  });
+
+  it('announces the registration failure to a file URL page with a wildcard target', async () => {
+    jsdomEnv.jsdom.reconfigure({ url: 'file:///home/tester/sample-dapp.html' });
+    const postMessageSpy = await loadContentScript();
+
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    // A file page has an opaque origin, which is not a usable postMessage target.
+    // Without the wildcard the diagnosis is dropped and the page shows nothing.
+    expect(registrationFailures(postMessageSpy)).toEqual([
+      [
+        {
+          source: 'bursa-cip30-provider-status',
+          status: 'error',
+          error: PROVIDER_REGISTRATION_ERROR,
+        },
+        '*',
+      ],
+    ]);
   });
 });

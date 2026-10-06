@@ -1,99 +1,32 @@
-name: go-test
+# Generated automatically by org-governance-bot. Do not edit manually.
+name: "go-test"
 
 on:
+  pull_request:
   push:
-    tags:
-      - v*
     branches:
       - main
-  pull_request:
-
-permissions:
-  contents: read
+    tags:
+      - v*
 
 jobs:
-  go-test:
-    name: go-test
-    strategy:
-      matrix:
-        go-version: [1.26.x]
-        platform: [ubuntu-latest]
-    runs-on: ${{ matrix.platform }}
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: bursa_test
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d bursa_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      BURSA_TEST_POSTGRES_DSN: postgres://postgres:postgres@127.0.0.1:5432/bursa_test?sslmode=disable
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
-        with:
-          go-version: ${{ matrix.go-version }}
-      - name: go-test
-        run: go test ./...
-
-  # The PKCS#11 backend is behind a build tag, so the job above never compiles
-  # it, let alone runs its tests - and those are exactly the tests that prove
-  # the signing path stays bounded when a token stops answering. Scoped to the
-  # signer packages (the only tagged code) and run with -race, since what they
-  # cover is worker and cancellation concurrency. miekg/pkcs11 links only
-  # -ldl on linux, so no extra packages are needed.
-  go-test-pkcs11:
-    name: go-test (pkcs11)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
-        with:
-          go-version: 1.26.x
-      - name: go-test (pkcs11)
-        run: go test -tags pkcs11 -race ./internal/signer/...
-
-  # Cross-compile every platform the release builds. `go test` above runs on
-  # ubuntu only, so before this job the first thing that ever tried a non-linux
-  # target was the publish workflow — after the merge had already landed. Builds
-  # ./cmd/bursa, the same package `make build` produces in the release job, so
-  # this fails exactly when a release would.
-  cross-build:
-    name: cross-build
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: darwin
-            arch: arm64
-          - os: freebsd
-            arch: amd64
-          - os: freebsd
-            arch: arm64
-          - os: linux
-            arch: amd64
-          - os: linux
-            arch: arm64
-          - os: windows
-            arch: amd64
-          - os: windows
-            arch: arm64
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
-        with:
-          go-version: 1.26.x
-      - name: cross-build
-        run: GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build -o /dev/null ./cmd/bursa
+  orchestrate:
+    uses: blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main
+    with:
+      additional-module-directories: openapi
+      build-packages: ./cmd/bursa
+      cross-build-go-version: 1.26.x
+      cross-build-targets: '[{"os":"darwin","arch":"arm64"},{"os":"freebsd","arch":"amd64"},{"os":"freebsd","arch":"arm64"},{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"},{"os":"windows","arch":"amd64"},{"os":"windows","arch":"arm64"}]'
+      extra-test-flags: -tags pkcs11 -race
+      extra-test-packages: ./internal/signer/...
+      go-versions: '["1.26.x"]'
+      golangci-additional-working-directories: openapi
+      nilaway-additional-working-directories: ui
+      nilaway-include-pkgs: github.com/blinklabs-io/bursa
+      nilaway-version: latest
+      run-golangci-lint: true
+      run-nilaway: true
+      run-vet: true
+      services: '{"postgres":{"image":"postgres:16","env":{"POSTGRES_DB":"bursa_test","POSTGRES_PASSWORD":"postgres","POSTGRES_USER":"postgres"},"ports":["5432:5432"],"options":"--health-cmd \"pg_isready -U postgres -d bursa_test\" --health-interval 10s --health-timeout 5s --health-retries 5"}}'
+      test-env: BURSA_TEST_POSTGRES_DSN=postgres://postgres:postgres@127.0.0.1:5432/bursa_test?sslmode=disable
+      verify-modules: true
