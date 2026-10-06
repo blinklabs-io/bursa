@@ -43,6 +43,8 @@ type gitPushRun struct {
 	gitConfig     string // the work tree's .git/config
 	bareHead      string // the pushed master in the server repository, if any
 	authenticated int32  // requests that carried the expected credentials
+	challenged    int32  // requests that carried any credentials
+	workDir       string // the directory the script ran in
 }
 
 // runGitPush runs the script against a local smart-HTTPS server that only
@@ -50,6 +52,12 @@ type gitPushRun struct {
 // pushTestToken. GIT_TRACE echoes every argument git is run with, so the
 // captured output also covers process arguments.
 func runGitPush(t *testing.T, serverToken string) gitPushRun {
+	t.Helper()
+	return runGitPushAs(t, pushTestUser, serverToken)
+}
+
+// runGitPushAs is runGitPush with the git_user_id argument set to userID.
+func runGitPushAs(t *testing.T, userID, serverToken string) gitPushRun {
 	t.Helper()
 
 	if _, err := exec.LookPath("sh"); err != nil {
@@ -89,6 +97,9 @@ func runGitPush(t *testing.T, serverToken string) gitPushRun {
 	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()
+		if ok {
+			atomic.AddInt32(&run.challenged, 1)
+		}
 		if !ok || user != pushTestUser || pass != serverToken {
 			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
 			w.WriteHeader(http.StatusUnauthorized)
@@ -106,7 +117,7 @@ func runGitPush(t *testing.T, serverToken string) gitPushRun {
 
 	script, err := filepath.Abs(filepath.Join("openapi", "git_push.sh"))
 	require.NoError(t, err)
-	cmd := exec.Command("sh", script, pushTestUser, "bursa", "msg", host)
+	cmd := exec.Command("sh", script, userID, "bursa", "msg", host)
 	cmd.Dir = work
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
@@ -126,6 +137,7 @@ func runGitPush(t *testing.T, serverToken string) gitPushRun {
 		"GIT_CONFIG_VALUE_1=test@example.com",
 	}
 	out, err := cmd.CombinedOutput()
+	run.workDir = work
 	run.err = err
 	run.output = string(out)
 
@@ -179,4 +191,18 @@ func TestGitPushScriptKeepsTokenOutOfRemoteOnFailure(t *testing.T) {
 	assert.Zero(t, atomic.LoadInt32(&run.authenticated),
 		"the server must have rejected the credential")
 	assertNoCredentialLeak(t, run)
+}
+
+func TestGitPushScriptDoesNotEvaluateUserID(t *testing.T) {
+	t.Parallel()
+
+	// The credential helper runs through a shell, so a user ID spliced into
+	// its text would execute this command substitution.
+	run := runGitPushAs(t, "u`>pwned`", pushTestToken)
+
+	require.Error(t, run.err, "the server rejects this user")
+	assert.Positive(t, run.challenged,
+		"git must have asked the credential helper")
+	assert.NoFileExists(t, filepath.Join(run.workDir, "pwned"),
+		"git_user_id must not be evaluated by the credential helper")
 }

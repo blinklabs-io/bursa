@@ -39,13 +39,15 @@ git commit -m "$release_note"
 
 # Runs git with the credential in $GIT_TOKEN, if set. The token reaches git
 # through a credential helper that reads it from the environment, so it never
-# appears in a remote URL, in .git/config, or in a process argument list.
+# appears in a remote URL, in .git/config, or in a process argument list. The
+# helper runs through a shell, so the user ID reaches it the same way rather
+# than being spliced into its text.
 git_authenticated() {
     if [ "$GIT_TOKEN" = "" ]; then
         git "$@"
     else
-        git -c credential.helper= \
-            -c "credential.helper=!f() { test \"\$1\" = get && echo username=${git_user_id} && echo \"password=\$GIT_TOKEN\"; }; f" \
+        GIT_USER_ID="$git_user_id" git -c credential.helper= \
+            -c 'credential.helper=!f() { test "$1" = get && printf "username=%s\npassword=%s\n" "$GIT_USER_ID" "$GIT_TOKEN"; }; f' \
             "$@"
     fi
 }
