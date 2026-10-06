@@ -38,7 +38,7 @@ GetKeyHashes returns the KeyHashes field if non-nil, zero value otherwise.
 
 ### GetKeyHashesOk
 
-`func (o *ApiScriptCreateRequest) GetKeyHashesOk() (*[]string, bool)`
+`func (o *ApiScriptCreateRequest) GetKeyHashesOk() ([]string, bool)`
 
 GetKeyHashesOk returns a tuple with the KeyHashes field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.

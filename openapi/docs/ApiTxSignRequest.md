@@ -34,7 +34,7 @@ GetSigningKeys returns the SigningKeys field if non-nil, zero value otherwise.
 
 ### GetSigningKeysOk
 
-`func (o *ApiTxSignRequest) GetSigningKeysOk() (*[]string, bool)`
+`func (o *ApiTxSignRequest) GetSigningKeysOk() ([]string, bool)`
 
 GetSigningKeysOk returns a tuple with the SigningKeys field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.

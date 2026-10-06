@@ -4,7 +4,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Message** | Pointer to **string** |  | [optional] 
+**Message** | Pointer to **string** | Message is the hex-encoded signed payload. | [optional] 
 **PublicKeys** | Pointer to **[]string** |  | [optional] 
 **RequireSignatures** | Pointer to **bool** |  | [optional] 
 **Script** | **map[string]map[string]interface{}** |  | 
@@ -63,7 +63,7 @@ GetPublicKeys returns the PublicKeys field if non-nil, zero value otherwise.
 
 ### GetPublicKeysOk
 
-`func (o *ApiScriptValidateRequest) GetPublicKeysOk() (*[]string, bool)`
+`func (o *ApiScriptValidateRequest) GetPublicKeysOk() ([]string, bool)`
 
 GetPublicKeysOk returns a tuple with the PublicKeys field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.
@@ -113,7 +113,7 @@ GetScript returns the Script field if non-nil, zero value otherwise.
 
 ### GetScriptOk
 
-`func (o *ApiScriptValidateRequest) GetScriptOk() (*map[string]map[string]interface{}, bool)`
+`func (o *ApiScriptValidateRequest) GetScriptOk() (map[string]map[string]interface{}, bool)`
 
 GetScriptOk returns a tuple with the Script field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.
@@ -133,7 +133,7 @@ GetSignatures returns the Signatures field if non-nil, zero value otherwise.
 
 ### GetSignaturesOk
 
-`func (o *ApiScriptValidateRequest) GetSignaturesOk() (*[]string, bool)`
+`func (o *ApiScriptValidateRequest) GetSignaturesOk() ([]string, bool)`
 
 GetSignaturesOk returns a tuple with the Signatures field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.

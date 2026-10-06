@@ -54,7 +54,7 @@ GetScript returns the Script field if non-nil, zero value otherwise.
 
 ### GetScriptOk
 
-`func (o *ApiScriptAddressRequest) GetScriptOk() (*map[string]map[string]interface{}, bool)`
+`func (o *ApiScriptAddressRequest) GetScriptOk() (map[string]map[string]interface{}, bool)`
 
 GetScriptOk returns a tuple with the Script field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.
