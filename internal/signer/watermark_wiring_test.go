@@ -49,6 +49,14 @@ func TestBuildWatermark_MemRefusedUnderEnforce(t *testing.T) {
 	}
 }
 
+func TestBuildWatermark_MemRefusalNamesMode(t *testing.T) {
+	t.Parallel()
+	_, _, err := BuildWatermark(context.Background(), config.SignerWatermarkConfig{Mode: "enforced"})
+	if err == nil || !strings.Contains(err.Error(), `"enforced"`) {
+		t.Fatalf("error should name the configured mode, got %v", err)
+	}
+}
+
 func TestBuildWatermark_MemAllowedWhenNotEnforcing(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []watermark.Mode{watermark.ModeWarn, watermark.ModeOff} {

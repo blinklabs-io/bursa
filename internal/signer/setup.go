@@ -303,8 +303,9 @@ func BuildWatermark(ctx context.Context, c config.SignerWatermarkConfig) (waterm
 		// for the modes that do not enforce: New coerces any unrecognised
 		// mode to enforce.
 		if mode != watermark.ModeWarn && mode != watermark.ModeOff {
-			return nil, mode, errors.New(
-				"enforced watermark requires durable storage: set signer.watermark.type to \"file\" or \"postgres\", or set mode to \"warn\" or \"off\"",
+			return nil, mode, fmt.Errorf(
+				"watermark mode %q enforces and requires durable storage: set signer.watermark.type to \"file\" or \"postgres\", or set mode to \"warn\" or \"off\"",
+				mode,
 			)
 		}
 		return watermark.NewMemWatermark(), mode, nil
