@@ -492,8 +492,16 @@ jobs:
                 -Pattern 'Pre-build placeholder' -Quiet) {
             Write-Error "embed dir still holds the placeholder after copy"; exit 1
           }
+          # Mirror the Makefile's UI version ldflags: the tray update check
+          # reads the embedded version, and only an exact tag is a release.
+          $uiVersion = (& git describe --tags --exact-match 2>$null)
+          $uiCommit = (& git rev-parse --short HEAD)
+          $uiModule = "github.com/blinklabs-io/bursa/ui"
+          $ldflags = "-s -w -H=windowsgui " +
+            "-X '$uiModule/internal/version.Version=$uiVersion' " +
+            "-X '$uiModule/internal/version.CommitHash=$uiCommit'"
           Push-Location ui
-          go build -tags webview -ldflags "-s -w -H=windowsgui" -o "$env:GITHUB_WORKSPACE\bursa-wallet.exe" ./cmd/bursa-wallet
+          go build -tags webview -ldflags $ldflags -o "$env:GITHUB_WORKSPACE\bursa-wallet.exe" ./cmd/bursa-wallet
           if ($LASTEXITCODE -ne 0) { Write-Error "webview exe build failed"; exit 1 }
           Pop-Location
 
