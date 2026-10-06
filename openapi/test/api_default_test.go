@@ -41,7 +41,7 @@ func newStubServer(
 	server := httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			body, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			recorded.method = r.Method
 			recorded.path = r.URL.Path
 			recorded.body = body
