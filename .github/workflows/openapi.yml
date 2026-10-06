@@ -27,4 +27,5 @@ jobs:
       - name: fail on generated diff
         run: |
           git status --short
+          git --no-pager diff
           test -z "$(git status --porcelain)"
