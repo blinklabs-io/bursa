@@ -189,7 +189,8 @@ system may purge.
 The node database is a separate directory: `Library/Application Support/BursaNode/db`
 on iOS and `noBackupFilesDir/node` on Android, set through
 `App.SetNodeDataDir` before `Start`. An existing database inside the wallet tree
-is moved there on first start; if the move fails the node resyncs into the new
+is moved there on the first start that finds the node directory absent; if the
+move fails the node resyncs into the new
 directory. On iOS, `BursaNode` carries the same backup exclusion and the
 after-first-unlock protection class. A device restore therefore does not carry the wallet
 over; recovery is from the recovery phrase.

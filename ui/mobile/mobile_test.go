@@ -448,7 +448,12 @@ func TestStartPassesNodeDataDir(t *testing.T) {
 	a := New()
 	a.SetNodeDataDir("/node")
 	_ = a.Start("/wallet", "preview", true)
-	cfg := <-got
+	var cfg boot.Config
+	select {
+	case cfg = <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("bootWallet was not called")
+	}
 	if cfg.DataDir != "/wallet" || cfg.NodeDataDir != "/node" {
 		t.Fatalf("boot got DataDir=%q NodeDataDir=%q, want /wallet and /node", cfg.DataDir, cfg.NodeDataDir)
 	}

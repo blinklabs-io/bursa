@@ -174,4 +174,22 @@ func TestPrepareNodeDataDir(t *testing.T) {
 			t.Fatalf("legacy directory removed although node dir existed: %v", err)
 		}
 	})
+
+	// Creating the node directory closes the one-time move for good, so a
+	// legacy location that cannot be inspected must stop the boot rather than
+	// strand a database there and resync.
+	t.Run("uninspectable legacy location fails without creating the node directory", func(t *testing.T) {
+		t.Parallel()
+		dataDir := filepath.Join(t.TempDir(), "wallet")
+		if err := os.WriteFile(dataDir, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		nodeDir := filepath.Join(t.TempDir(), "node")
+		if _, err := prepareNodeDataDir(dataDir, nodeDir, logger); err == nil {
+			t.Fatal("want an error when the legacy database location cannot be inspected")
+		}
+		if _, err := os.Stat(nodeDir); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("node dir created although the move could not be decided: %v", err)
+		}
+	})
 }

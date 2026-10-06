@@ -713,14 +713,21 @@ func (t tipAdapter) TipSlot() (uint64, error) {
 // When a separate directory is requested for the first time, a database an
 // earlier run left at <dataDir>/db is renamed into it so a synced chain is not
 // abandoned. A rename failure (for example across volumes) leaves the old copy
-// in place and starts the node from an empty directory, which resyncs.
+// in place and starts the node from an empty directory, which resyncs. Either
+// location failing to stat is an error instead: creating the node directory
+// would end the one-time move, so the decision is left to a later start.
 func prepareNodeDataDir(dataDir, nodeDir string, logger *slog.Logger) (string, error) {
 	legacy := filepath.Join(dataDir, "db")
 	if nodeDir == "" || nodeDir == legacy {
 		return legacy, nil
 	}
-	if _, err := os.Stat(nodeDir); errors.Is(err, os.ErrNotExist) {
-		if _, err := os.Stat(legacy); err == nil {
+	_, err := os.Stat(nodeDir)
+	switch {
+	case err == nil:
+	case errors.Is(err, os.ErrNotExist):
+		_, legacyErr := os.Stat(legacy)
+		switch {
+		case legacyErr == nil:
 			if err := os.MkdirAll(filepath.Dir(nodeDir), 0o700); err != nil {
 				return "", fmt.Errorf("create node data dir parent %q: %w", nodeDir, err)
 			}
@@ -728,7 +735,11 @@ func prepareNodeDataDir(dataDir, nodeDir string, logger *slog.Logger) (string, e
 				logger.Warn("could not move the node database to its own directory; it will resync",
 					"from", legacy, "to", nodeDir, "error", err)
 			}
+		case !errors.Is(legacyErr, os.ErrNotExist):
+			return "", fmt.Errorf("inspect legacy node database %q: %w", legacy, legacyErr)
 		}
+	default:
+		return "", fmt.Errorf("inspect node data dir %q: %w", nodeDir, err)
 	}
 	if err := os.MkdirAll(nodeDir, 0o700); err != nil {
 		return "", fmt.Errorf("create node data dir %q: %w", nodeDir, err)
