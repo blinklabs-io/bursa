@@ -17,6 +17,7 @@ package sops
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
@@ -53,6 +54,26 @@ func Configured(cfg *config.Config) bool {
 		cfg.Age.Recipients != ""
 }
 
+// gcpResourceID is the form SOPS requires of a Google KMS key; it otherwise
+// rejects a malformed ID only when generating the data key.
+var gcpResourceID = regexp.MustCompile(
+	`^projects/[^/]+/locations/[^/]+/keyRings/[^/]+/cryptoKeys/[^/]+$`,
+)
+
+// splitEntries splits a comma-separated list and trims each entry. The SOPS
+// constructors strip only spaces, so a tab or newline would otherwise reach
+// the KMS request.
+func splitEntries(list string) []string {
+	if list == "" {
+		return nil
+	}
+	entries := strings.Split(list, ",")
+	for i, v := range entries {
+		entries[i] = strings.TrimSpace(v)
+	}
+	return entries
+}
+
 // masterKeys builds the master keys for every configured resource. Any one of
 // them can decrypt the result. It fails when none is configured or when a
 // configured value is malformed.
@@ -61,21 +82,18 @@ func masterKeys(cfg *config.Config) ([]skeys.MasterKey, error) {
 		return nil, ErrNoMasterKey
 	}
 	keys := []skeys.MasterKey{}
-	for _, k := range gcpkms.MasterKeysFromResourceIDString(
-		cfg.Google.ResourceId,
-	) {
-		keys = append(keys, k)
+	for _, v := range splitEntries(cfg.Google.ResourceId) {
+		if !gcpResourceID.MatchString(v) {
+			return nil, fmt.Errorf("invalid google kms resource id %q", v)
+		}
+		keys = append(keys, gcpkms.NewMasterKeyFromResourceID(v))
 	}
-	if cfg.Aws.KMSKeyARN != "" {
-		for _, v := range strings.Split(cfg.Aws.KMSKeyARN, ",") {
-			parsed, err := arn.Parse(strings.TrimSpace(v))
-			if err != nil || parsed.Service != "kms" {
-				return nil, fmt.Errorf("invalid aws kms key arn %q", v)
-			}
+	for _, v := range splitEntries(cfg.Aws.KMSKeyARN) {
+		parsed, err := arn.Parse(v)
+		if err != nil || parsed.Service != "kms" {
+			return nil, fmt.Errorf("invalid aws kms key arn %q", v)
 		}
-		for _, k := range kms.MasterKeysFromArnString(cfg.Aws.KMSKeyARN, nil, "") {
-			keys = append(keys, k)
-		}
+		keys = append(keys, kms.NewMasterKeyFromArn(v, nil, ""))
 	}
 	if cfg.Age.Recipients != "" {
 		ageKeys, err := age.MasterKeysFromRecipients(cfg.Age.Recipients)

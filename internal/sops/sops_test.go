@@ -19,6 +19,8 @@ import (
 
 	"filippo.io/age"
 	"github.com/blinklabs-io/bursa/internal/config"
+	"github.com/getsops/sops/v3/gcpkms"
+	"github.com/getsops/sops/v3/kms"
 	"github.com/stretchr/testify/require"
 )
 
@@ -92,4 +94,38 @@ func TestEncryptWithoutMasterKeyFailsBeforeBuildingTree(t *testing.T) {
 
 	_, err := Encrypt([]byte(`{"a":"b"}`))
 	require.ErrorIs(t, err, ErrNoMasterKey)
+}
+
+func TestMasterKeysRejectsMalformedGoogleResourceID(t *testing.T) {
+	t.Parallel()
+	for _, id := range []string{
+		"projects/p/keyRings/r/cryptoKeys/k",
+		"projects/p/locations/l/keyRings/r/cryptoKeys/k,",
+	} {
+		_, err := masterKeys(&config.Config{
+			Google: config.GoogleConfig{ResourceId: id},
+		})
+		require.Error(t, err, id)
+		require.NotErrorIs(t, err, ErrNoMasterKey)
+	}
+}
+
+func TestMasterKeysTrimsEachEntry(t *testing.T) {
+	t.Parallel()
+	const (
+		gcpID  = "projects/p/locations/l/keyRings/r/cryptoKeys/k"
+		kmsArn = "arn:aws:kms:us-east-1:123456789012:key/abcd"
+	)
+	keys, err := masterKeys(&config.Config{
+		Google: config.GoogleConfig{ResourceId: "\t" + gcpID + "\n"},
+		Aws:    config.AwsConfig{KMSKeyARN: "\t" + kmsArn + "\n"},
+	})
+	require.NoError(t, err)
+	require.Len(t, keys, 2)
+	gk, ok := keys[0].(*gcpkms.MasterKey)
+	require.True(t, ok, "got %T", keys[0])
+	require.Equal(t, gcpID, gk.ResourceID)
+	ak, ok := keys[1].(*kms.MasterKey)
+	require.True(t, ok, "got %T", keys[1])
+	require.Equal(t, kmsArn, ak.Arn)
 }
