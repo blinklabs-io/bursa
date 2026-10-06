@@ -61,7 +61,11 @@ jobs:
         run: npm run type-check
       - name: test
         run: npm run test
+      - name: build
+        if: matrix.browser == 'chrome'
+        run: npm run build
       - name: build and lint Firefox package
+        if: matrix.browser == 'firefox'
         run: npm run package
       - name: Install Chromium
         if: matrix.browser == 'chrome'
