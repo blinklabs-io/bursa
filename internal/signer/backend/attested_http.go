@@ -108,7 +108,9 @@ func (e *HTTPEnclave) post(ctx context.Context, path string, in, out any) error 
 	if err := dec.Decode(out); err != nil {
 		return fmt.Errorf("%w: %w", ErrAttestedProtocol, err)
 	}
-	if dec.More() {
+	// Decoder.More does not see a stray closing bracket or brace at the top
+	// level, so require the stream to end.
+	if err := dec.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
 		return fmt.Errorf("%w: trailing data after response", ErrAttestedProtocol)
 	}
 	return nil

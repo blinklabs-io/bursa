@@ -70,10 +70,8 @@ func buildConfidentialSpaceBackend(ctx context.Context, c config.SignerBackendCo
 	if err != nil {
 		return nil, fmt.Errorf("invalid jwks_url: %w", err)
 	}
-	// Keys fetched over cleartext could be substituted in transit, which would
-	// let a forged attestation token verify.
-	if u.Scheme != "https" && (u.Scheme != "http" || !backend.IsLoopbackHost(u.Hostname())) {
-		return nil, errors.New("jwks_url must use https; plain http is allowed only for loopback addresses")
+	if err := checkJWKSURL(u); err != nil {
+		return nil, err
 	}
 	verifier, err := backend.NewConfidentialSpaceVerifier(
 		func(ctx context.Context) (jose.JSONWebKeySet, error) { return fetchJWKS(ctx, jwksURL) },
@@ -102,14 +100,39 @@ func loadAttestedBackend(ctx context.Context, c config.SignerBackendConfig, veri
 	return b, nil
 }
 
-// fetchJWKS downloads a JSON Web Key Set over HTTPS.
+// errJWKSURLPolicy is returned for a JWKS location that is neither HTTPS nor
+// loopback HTTP.
+var errJWKSURLPolicy = errors.New("jwks_url must use https; plain http is allowed only for loopback addresses")
+
+// checkJWKSURL applies the JWKS location policy. Keys fetched over cleartext
+// could be substituted in transit, which would let a forged attestation token
+// verify.
+func checkJWKSURL(u *url.URL) error {
+	if u.Scheme != "https" && (u.Scheme != "http" || !backend.IsLoopbackHost(u.Hostname())) {
+		return errJWKSURLPolicy
+	}
+	return nil
+}
+
+// jwksClient applies the JWKS location policy to every redirect hop, not only
+// to the configured URL.
+var jwksClient = &http.Client{
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("jwks fetch: stopped after 10 redirects")
+		}
+		return checkJWKSURL(req.URL)
+	},
+}
+
+// fetchJWKS downloads a JSON Web Key Set over HTTPS or loopback HTTP.
 func fetchJWKS(ctx context.Context, url string) (jose.JSONWebKeySet, error) {
 	var set jose.JSONWebKeySet
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return set, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := jwksClient.Do(req)
 	if err != nil {
 		return set, err
 	}

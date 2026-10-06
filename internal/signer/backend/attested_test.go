@@ -148,6 +148,16 @@ func loadAttested(t *testing.T, e *fakeEnclave) *AttestedBackend {
 	return b
 }
 
+// mustKey resolves hash or fails the test.
+func mustKey(t *testing.T, b *AttestedBackend, hash KeyHash) KeyRef {
+	t.Helper()
+	ref, err := b.GetKey(t.Context(), hash)
+	if err != nil {
+		t.Fatalf("GetKey %s: %v", hash, err)
+	}
+	return ref
+}
+
 func TestAttestedBackendResolvesByHashAndRole(t *testing.T) {
 	t.Parallel()
 	e := newFakeEnclave(t, KeyTypePool, KeyTypePayment)
@@ -237,12 +247,19 @@ func TestAttestedBackendReloadReplacesKeys(t *testing.T) {
 	old := e.hashOf(0)
 	b := loadAttested(t, e)
 
+	held := mustKey(t, b, old)
+
 	// The enclave restarts with a different key set.
 	fresh := newFakeEnclave(t, KeyTypePayment)
 	e.keys = fresh.keys
 	if err := b.Load(ctx); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
+	// A handle resolved before the reload no longer signs.
+	if _, err := SignFor(ctx, held, PurposeOpCert, make([]byte, opCertSignableSize)); !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("handle from before reload: got %v, want ErrKeyNotFound", err)
+	}
+	current := mustKey(t, b, e.hashOf(0))
 	if _, err := b.GetKey(ctx, old); !errors.Is(err, ErrKeyNotFound) {
 		t.Fatalf("stale key still served after reload: %v", err)
 	}
@@ -258,6 +275,9 @@ func TestAttestedBackendReloadReplacesKeys(t *testing.T) {
 	if _, err := b.GetKey(ctx, e.hashOf(0)); !errors.Is(err, ErrKeyNotFound) {
 		t.Fatalf("key still served after failed re-attestation: %v", err)
 	}
+	if _, err := SignFor(ctx, current, PurposeTxHash, make([]byte, txHashSize)); !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("handle signed after failed re-attestation: got %v, want ErrKeyNotFound", err)
+	}
 }
 
 func TestAttestedKeySignPurpose(t *testing.T) {
@@ -265,8 +285,8 @@ func TestAttestedKeySignPurpose(t *testing.T) {
 	ctx := context.Background()
 	e := newFakeEnclave(t, KeyTypePool, KeyTypePayment)
 	b := loadAttested(t, e)
-	pool, _ := b.GetKey(ctx, e.hashOf(0))
-	pay, _ := b.GetKey(ctx, e.hashOf(1))
+	pool := mustKey(t, b, e.hashOf(0))
+	pay := mustKey(t, b, e.hashOf(1))
 	ps := func(k KeyRef) PurposeSigner { return k.(PurposeSigner) }
 
 	txHash := make([]byte, 32)
@@ -300,8 +320,8 @@ func TestAttestedKeyRefusesBeforeContactingEnclave(t *testing.T) {
 	ctx := context.Background()
 	e := newFakeEnclave(t, KeyTypePool, KeyTypePayment)
 	b := loadAttested(t, e)
-	pool, _ := b.GetKey(ctx, e.hashOf(0))
-	pay, _ := b.GetKey(ctx, e.hashOf(1))
+	pool := mustKey(t, b, e.hashOf(0))
+	pay := mustKey(t, b, e.hashOf(1))
 
 	for _, tc := range []struct {
 		name    string
@@ -344,7 +364,7 @@ func TestAttestedKeyRejectsBadEnclaveResponses(t *testing.T) {
 			t.Parallel()
 			e := newFakeEnclave(t, KeyTypePayment)
 			e.tamperResp = tc.tamper
-			ref, _ := loadAttested(t, e).GetKey(ctx, e.hashOf(0))
+			ref := mustKey(t, loadAttested(t, e), e.hashOf(0))
 			_, err := ref.(PurposeSigner).SignPurpose(ctx, PurposeTxHash, make([]byte, 32))
 			if err == nil {
 				t.Fatal("expected an error")
@@ -360,7 +380,7 @@ func TestAttestedKeyNonceIsFreshPerRequest(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newFakeEnclave(t, KeyTypePayment)
-	ref, _ := loadAttested(t, e).GetKey(ctx, e.hashOf(0))
+	ref := mustKey(t, loadAttested(t, e), e.hashOf(0))
 	// The enclave refuses a repeated nonce, so two identical requests only
 	// both succeed when the signer draws a new nonce for each.
 	for i := range 3 {
@@ -374,7 +394,7 @@ func TestSignFor(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newFakeEnclave(t, KeyTypePayment)
-	ref, _ := loadAttested(t, e).GetKey(ctx, e.hashOf(0))
+	ref := mustKey(t, loadAttested(t, e), e.hashOf(0))
 	sig, err := SignFor(ctx, ref, PurposeTxHash, make([]byte, 32))
 	if err != nil || len(sig) != ed25519.SignatureSize {
 		t.Fatalf("SignFor attested: sig=%d err=%v", len(sig), err)

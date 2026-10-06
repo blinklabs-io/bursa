@@ -176,6 +176,7 @@ func InventoryBinding(nonce []byte, keys []AttestedKeyInfo) []byte {
 }
 
 type attestedKey struct {
+	owner       *AttestedBackend
 	enclave     Enclave
 	pub         ed25519.PublicKey
 	hash        KeyHash
@@ -193,9 +194,15 @@ func (k *attestedKey) Sign(context.Context, []byte) ([]byte, error) {
 	return nil, ErrPurposeRequired
 }
 
+// SignPurpose refuses unless k is still in the owner's served set, both before
+// contacting the enclave and after it answers: a handle resolved before a
+// reload must not outlive the attestation that admitted it.
 func (k *attestedKey) SignPurpose(ctx context.Context, purpose Purpose, payload []byte) ([]byte, error) {
 	if err := purpose.validate(k.typ, payload); err != nil {
 		return nil, err
+	}
+	if !k.owner.serves(k) {
+		return nil, ErrKeyNotFound
 	}
 	nonce := make([]byte, attestedNonceSize)
 	if _, err := rand.Read(nonce); err != nil {
@@ -223,6 +230,9 @@ func (k *attestedKey) SignPurpose(ctx context.Context, purpose Purpose, payload 
 	}
 	if len(resp.Signature) != ed25519.SignatureSize {
 		return nil, fmt.Errorf("%w: signature must be %d bytes, got %d", ErrAttestedProtocol, ed25519.SignatureSize, len(resp.Signature))
+	}
+	if !k.owner.serves(k) {
+		return nil, ErrKeyNotFound
 	}
 	return resp.Signature, nil
 }
@@ -282,6 +292,7 @@ func (b *AttestedBackend) Load(ctx context.Context) error {
 			return fmt.Errorf("%w: duplicate key %s in inventory", ErrAttestedProtocol, hash)
 		}
 		keys[hash] = &attestedKey{
+			owner:       b,
 			enclave:     b.enclave,
 			pub:         ed25519.PublicKey(append([]byte(nil), ki.PublicKey...)),
 			hash:        hash,
@@ -293,6 +304,13 @@ func (b *AttestedBackend) Load(ctx context.Context) error {
 	b.keys = keys
 	b.mu.Unlock()
 	return nil
+}
+
+// serves reports whether k is the handle the current attested load issued.
+func (b *AttestedBackend) serves(k *attestedKey) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.keys[k.hash] == k
 }
 
 // Name returns the configured backend name.

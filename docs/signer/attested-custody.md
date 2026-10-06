@@ -53,8 +53,9 @@ Anything the enclave does not enforce is only as strong as the host.
 
 ## Protocol
 
-The protocol version is `bursa-attested-signer/1`; every message carries it and
-a peer speaking another version is refused. Messages are JSON; `[]byte` fields
+The protocol version is `bursa-attested-signer/1`. The inventory response and
+both sign messages carry it, and a peer answering with another version is
+refused; the inventory request carries only the nonce. Messages are JSON; `[]byte` fields
 are base64.
 
 `POST /v1/inventory` takes `{"nonce": <32 bytes>}` and returns:
@@ -184,8 +185,8 @@ cloud boundary:
 | Cold-key custody (separate backend) | the pool cold key; the agent holds only the cold verification key |
 
 - Sign mode accepts only a Praos header body whose slot lies in the requested
-  period and whose issuer key, KES key, issue counter and certificate period
-  match the installed operational certificate.
+  period and whose issuer key, KES key, issue counter, certificate period and
+  cold-key signature match the installed operational certificate.
 - Stage, certify and install keys through the control socket as described in
   [`kes-agent.md`](kes-agent.md); the opcert is issued with the cold key
   elsewhere (the signer's `opcert` purpose on a `pool` key).

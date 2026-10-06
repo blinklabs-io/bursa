@@ -15,6 +15,7 @@
 package backend
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"net"
@@ -69,9 +70,13 @@ func TestHTTPEnclaveEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sig, err := SignFor(t.Context(), ref, PurposeOpCert, make([]byte, 48))
-	if err != nil || len(sig) != 64 {
-		t.Fatalf("sign: %d bytes, err %v", len(sig), err)
+	payload := make([]byte, 48)
+	sig, err := SignFor(t.Context(), ref, PurposeOpCert, payload)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if !ed25519.Verify(ref.PublicKey(), payload, sig) {
+		t.Fatal("signature does not verify")
 	}
 }
 
@@ -107,6 +112,8 @@ func TestHTTPEnclaveRejectsBadResponses(t *testing.T) {
 		{"server error", http.StatusInternalServerError, `{}`, nil},
 		{"unknown field", http.StatusOK, `{"version":"bursa-attested-signer/1","keys":[],"attestation":"AA==","extra":1}`, ErrAttestedProtocol},
 		{"trailing data", http.StatusOK, `{"version":"bursa-attested-signer/1"} {}`, ErrAttestedProtocol},
+		{"trailing close bracket", http.StatusOK, `{"version":"bursa-attested-signer/1"}]`, ErrAttestedProtocol},
+		{"trailing close brace", http.StatusOK, `{"version":"bursa-attested-signer/1"}}`, ErrAttestedProtocol},
 		{"not json", http.StatusOK, `nope`, ErrAttestedProtocol},
 		// Valid JSON that only an enforced size cap refuses: a truncated read
 		// of the padding would still decode.
@@ -119,8 +126,11 @@ func TestHTTPEnclaveRejectsBadResponses(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			t.Cleanup(srv.Close)
-			enc, _ := NewHTTPEnclave(srv.URL)
-			_, err := enc.Inventory(t.Context(), make([]byte, attestedNonceSize))
+			enc, err := NewHTTPEnclave(srv.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = enc.Inventory(t.Context(), make([]byte, attestedNonceSize))
 			if err == nil {
 				t.Fatal("expected an error")
 			}

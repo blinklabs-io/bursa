@@ -162,9 +162,12 @@ func TestConfidentialSpaceVerifierRejectsUnattested(t *testing.T) {
 		t.Error("unsigned token accepted")
 	}
 	// A key-source failure fails closed.
-	failing, _ := NewConfidentialSpaceVerifier(func(context.Context) (jose.JSONWebKeySet, error) {
+	failing, err := NewConfidentialSpaceVerifier(func(context.Context) (jose.JSONWebKeySet, error) {
 		return jose.JSONWebKeySet{}, errors.New("jwks unreachable")
 	}, testAudience, testDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := failing.Verify(t.Context(), []byte(f.token(t, "k1", nil)), f.binding); err == nil {
 		t.Error("token accepted while key source was down")
 	}

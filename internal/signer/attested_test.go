@@ -27,6 +27,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -176,7 +177,7 @@ func TestAttestedKeySignsOpCert(t *testing.T) {
 		t.Fatalf("enclave purposes = %v, want [opcert]", got)
 	}
 
-	// The durable counter watermark still gates the enclave: a repeated counter
+	// The counter watermark still gates the enclave: a repeated counter
 	// is refused without a second enclave call.
 	if _, code, err := c.SignOpCert(t.Context(), kes, 5, 101, hash.String()); err == nil || code != CodeConflict {
 		t.Fatalf("repeated counter: code=%s err=%v, want conflict", code, err)
@@ -334,5 +335,18 @@ func TestBuildAttestedBackendsRejectBadConfig(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: got %v, want error containing %q", tc.name, err, tc.want)
 		}
+	}
+}
+
+// A JWKS endpoint that passes the URL policy must not hand the fetch to one
+// that does not: a redirect to cleartext would let the keys be substituted.
+func TestFetchJWKSRefusesRedirectToCleartext(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.RedirectHandler("http://192.0.2.1/jwks", http.StatusFound))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	if _, err := fetchJWKS(ctx, srv.URL); !errors.Is(err, errJWKSURLPolicy) {
+		t.Fatalf("got %v, want errJWKSURLPolicy", err)
 	}
 }
