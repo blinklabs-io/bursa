@@ -58,7 +58,7 @@ verifying the complete extension ↔ Bursa daemon ↔ dApp flow.
 
 ## Prerequisites
 
-- Google Chrome 111 or later (or a compatible Chromium-based browser), or Firefox 140 or later
+- Google Chrome 111 or later (or a compatible Chromium-based browser), or Firefox 140 or later (142 or later on Android)
 - Node.js 22 (for building the extension)
 - A running Bursa daemon with the CIP-30 connector enabled
 
