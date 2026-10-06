@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -40,8 +41,8 @@ type Release struct {
 }
 
 // Check returns the latest stable release and whether it is newer than the
-// supplied version. An empty current version is treated as a development build
-// and never reports an update.
+// supplied version. A development build (see DevelopmentBuild) never reports
+// an update.
 func Check(ctx context.Context, client *http.Client, currentVersion string) (Release, bool, error) {
 	return checkAt(ctx, client, currentVersion, latestReleaseURL)
 }
@@ -74,13 +75,10 @@ func checkAt(ctx context.Context, client *http.Client, currentVersion, endpoint 
 	if !validReleaseURL(release.HTMLURL, release.TagName) {
 		return Release{}, false, errors.New("release response contains an unsafe URL")
 	}
-	if currentVersion == "" {
+	if DevelopmentBuild(currentVersion) {
 		return release, false, nil
 	}
-	current, err := parseVersion(currentVersion)
-	if err != nil {
-		return Release{}, false, fmt.Errorf("invalid current version: %w", err)
-	}
+	current, _ := parseVersion(currentVersion)
 	latest, _ := parseVersion(release.TagName)
 	return release, latest.compare(current) > 0, nil
 }
@@ -92,6 +90,26 @@ func validReleaseURL(raw, tag string) bool {
 	}
 	return u.Scheme == "https" && u.Host == "github.com" &&
 		u.Path == "/blinklabs-io/bursa/releases/tag/"+tag && u.RawQuery == "" && u.Fragment == ""
+}
+
+// gitDescribeSuffix matches what `git describe --tags --always --dirty` appends
+// to a tag when the build is not exactly that tag: "-<commits>-g<hash>", an
+// optional "-dirty", or both.
+var gitDescribeSuffix = regexp.MustCompile(`(^|-)(\d+-g[0-9a-f]+(-dirty)?|dirty)$`)
+
+// DevelopmentBuild reports whether currentVersion identifies a build that is
+// not a release: empty, not a vMAJOR.MINOR.PATCH version, or a release tag
+// carrying git describe commit or dirty suffixes. Such a build cannot be
+// ordered against a release, so it is never told an update is available.
+func DevelopmentBuild(currentVersion string) bool {
+	if currentVersion == "" {
+		return true
+	}
+	v, err := parseVersion(currentVersion)
+	if err != nil {
+		return true
+	}
+	return gitDescribeSuffix.MatchString(v.pre)
 }
 
 type version struct {

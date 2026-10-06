@@ -87,3 +87,30 @@ func TestCheckDevelopmentBuildDoesNotReportUpdate(t *testing.T) {
 		t.Fatal("development build should not report an update")
 	}
 }
+
+func TestCheckGitDescribeBuildIsDevelopment(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v0.18.0","html_url":"https://github.com/blinklabs-io/bursa/releases/tag/v0.18.0"}`))
+	}))
+	defer server.Close()
+
+	// Packaging builds outside a release tag embed `git describe --tags
+	// --always --dirty` output, which must not read as older than the tag.
+	for _, current := range []string{"0.18.0-2-gfb48389", "v0.18.0-dirty", "0.18.0-2-gfb48389-dirty", "fb48389"} {
+		if !DevelopmentBuild(current) {
+			t.Errorf("DevelopmentBuild(%q) = false, want true", current)
+		}
+		_, update, err := checkAt(context.Background(), server.Client(), current, server.URL)
+		if err != nil {
+			t.Errorf("%s: %v", current, err)
+		}
+		if update {
+			t.Errorf("%s: development build reported an update", current)
+		}
+	}
+	for _, release := range []string{"v1.2.3", "1.2.3", "v1.2.3-rc.1"} {
+		if DevelopmentBuild(release) {
+			t.Errorf("DevelopmentBuild(%q) = true, want false", release)
+		}
+	}
+}

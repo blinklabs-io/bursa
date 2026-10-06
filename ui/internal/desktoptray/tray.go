@@ -27,9 +27,6 @@ import (
 	"unsafe"
 
 	"fyne.io/systray"
-	"github.com/blinklabs-io/bursa/ui/internal/desktopnotify"
-	"github.com/blinklabs-io/bursa/ui/internal/openexternal"
-	"github.com/blinklabs-io/bursa/ui/internal/updatecheck"
 )
 
 // menuAction enumerates the tray menu actions the click loop routes through the
@@ -81,11 +78,11 @@ type Config struct {
 // webview run loop in a single process: see Launch for the per-OS threading
 // contract.
 type Tray struct {
-	ctrl           *Controller
-	dispatch       func(func())
-	statusURL      string
-	currentVersion string
-	logger         *slog.Logger
+	ctrl      *Controller
+	dispatch  func(func())
+	statusURL string
+	updates   *UpdateChecker
+	logger    *slog.Logger
 
 	start func() // systray backend start (RunWithExternalLoop)
 	stop  func() // systray backend stop
@@ -109,12 +106,12 @@ func New(cfg Config) *Tray {
 		logger = slog.Default()
 	}
 	t := &Tray{
-		dispatch:       cfg.Dispatch,
-		statusURL:      cfg.StatusURL,
-		currentVersion: cfg.CurrentVersion,
-		logger:         logger,
-		done:           make(chan struct{}),
+		dispatch:  cfg.Dispatch,
+		statusURL: cfg.StatusURL,
+		logger:    logger,
+		done:      make(chan struct{}),
 	}
+	t.updates = NewUpdateChecker(cfg.CurrentVersion, t.done, logger)
 	win := newWindowController(cfg.Window)
 	t.ctrl = NewController(win, cfg.Dispatch, cfg.Terminate)
 
@@ -195,11 +192,10 @@ func (t *Tray) onReady() {
 			case <-mQuit.ClickedCh:
 				t.ctrl.route(actionQuit)
 			case <-mUpdates.ClickedCh:
+				// A click while a check runs starts nothing; the running
+				// check re-enables the item when it finishes.
 				mUpdates.Disable()
-				go func() {
-					defer mUpdates.Enable()
-					t.checkUpdates()
-				}()
+				t.updates.Start(mUpdates.Enable)
 			case <-t.done:
 				return
 			}
@@ -207,28 +203,6 @@ func (t *Tray) onReady() {
 	}()
 
 	go t.pollStatus(mStatus)
-}
-
-func (t *Tray) checkUpdates() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	release, update, err := updatecheck.Check(ctx, nil, t.currentVersion)
-	if err != nil {
-		t.logger.Warn("failed to check for wallet updates", "error", err)
-		_ = desktopnotify.Notify(t.logger, "Bursa Wallet", "Could not check for updates")
-		return
-	}
-	if update {
-		body := "Bursa " + release.TagName + " is available"
-		_ = desktopnotify.Notify(t.logger, "Bursa Wallet update available", body)
-		openexternal.Open(t.logger, release.HTMLURL)
-		return
-	}
-	if t.currentVersion == "" {
-		_ = desktopnotify.Notify(t.logger, "Bursa Wallet", "Latest release: "+release.TagName)
-		return
-	}
-	_ = desktopnotify.Notify(t.logger, "Bursa Wallet", "You are up to date")
 }
 
 // onExit runs in the systray event loop as it tears down; nothing extra to
