@@ -29,19 +29,21 @@ const pageServer = createServer((request, response) => {
   response.end(body);
 });
 await new Promise((resolveListen) => pageServer.listen(0, '127.0.0.1', resolveListen));
+try {
 const pagePort = pageServer.address().port;
 // Distinct loopback hostnames are distinct web origins.
 const originA = `http://127.0.0.1:${pagePort}`;
 const originB = `http://localhost:${pagePort}`;
 
 async function eventually(page, expression, what) {
+  let lastResult;
   for (let i = 0; i < 100; i++) {
-    const { ok } = await page.run(`return ${expression};`);
-    if (ok) return;
+    lastResult = await page.run(`return ${expression};`);
+    if (lastResult?.ok) return;
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   const diag = await page.run('return [document.body.innerText, document.getElementById("port-input").value, String(typeof chrome), Array.from(document.scripts).map(s=>s.src)];');
-  assert.fail(`timed out waiting for ${what}: ${JSON.stringify(diag)}`);
+  assert.fail(`timed out waiting for ${what}: ${JSON.stringify({ lastResult, diag })}`);
 }
 
 // A copy of the built extension whose background registers no message listener,
@@ -66,12 +68,12 @@ function withoutBackground() {
 const launch = (path) => (target === 'chrome' ? launchChrome(path) : launchFirefox(path));
 
 const bursa = new FakeBursa();
-await bursa.start();
-const browser = await launch(
-  target === 'chrome' ? resolve(dist, 'chrome') : resolve(dist, `bursa-connector-firefox-${version}.zip`),
-);
-
+let browser;
 try {
+  await bursa.start();
+  browser = await launch(
+    target === 'chrome' ? resolve(dist, 'chrome') : resolve(dist, `bursa-connector-firefox-${version}.zip`),
+  );
   // Provider registration happens at document_start, also under a restrictive CSP.
   const early = await browser.open(`${originA}/early`);
   assert.deepEqual(await early.run('return window.__atStart;'), { ok: true });
@@ -164,8 +166,11 @@ try {
   assert.deepEqual(await call(pageA, 'enable().then((api) => api.getNetworkId())'), { ok: 0 });
   assert.equal(bursa.paired, browser.origin);
 } finally {
-  await browser.close();
-  await bursa.stop().catch(() => undefined);
+  try {
+    await browser?.close();
+  } finally {
+    await bursa.stop().catch(() => undefined);
+  }
 }
 
 // A background that cannot answer yields a prompt -2 error, not a hung call.
@@ -185,6 +190,8 @@ try {
   }
 } finally {
   rmSync(broken.dir, { recursive: true, force: true });
-  await new Promise((resolveClose) => pageServer.close(resolveClose));
 }
 console.log(`${target}: ok`);
+} finally {
+  await new Promise((resolveClose) => pageServer.close(resolveClose));
+}

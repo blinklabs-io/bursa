@@ -26,38 +26,53 @@ export async function launchChrome(extensionDir) {
   };
   if (process.env.CHROMIUM_PATH) options.executablePath = process.env.CHROMIUM_PATH;
   else options.channel = 'chromium';
-  const context = await chromium.launchPersistentContext(userDataDir, options);
-  const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
-  const { protocol, host } = new URL(worker.url());
-  const origin = `${protocol}//${host}`;
+  let context;
+  try {
+    context = await chromium.launchPersistentContext(userDataDir, options);
+    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const { protocol, host } = new URL(worker.url());
+    const origin = `${protocol}//${host}`;
 
-  return {
-    origin,
-    async open(url) {
-      const page = await context.newPage();
-      await page.goto(url, { waitUntil: 'domcontentloaded' });
-      return { run: (body) => page.evaluate(wrap(body)), close: () => page.close() };
-    },
-    async suspendBackground() {
-      const page = await context.newPage();
-      const cdp = await context.newCDPSession(page);
-      await cdp.send('ServiceWorker.enable');
-      const stopped = new Promise((resolve) =>
-        cdp.on('ServiceWorker.workerVersionUpdated', ({ versions }) => {
-          if (versions.some((v) => v.runningStatus === 'stopped' && v.scriptURL.startsWith(origin))) {
-            resolve();
-          }
-        }),
-      );
-      await cdp.send('ServiceWorker.stopAllWorkers');
-      await stopped;
-      await page.close();
-    },
-    async close() {
-      await context.close();
-      await rm(userDataDir, { recursive: true, force: true });
-    },
-  };
+    return {
+      origin,
+      async open(url) {
+        const page = await context.newPage();
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
+        return { run: (body) => page.evaluate(wrap(body)), close: () => page.close() };
+      },
+      async suspendBackground() {
+        const page = await context.newPage();
+        const cdp = await context.newCDPSession(page);
+        await cdp.send('ServiceWorker.enable');
+        const stopped = new Promise((resolve) =>
+          cdp.on('ServiceWorker.workerVersionUpdated', ({ versions }) => {
+            if (versions.some((v) => v.runningStatus === 'stopped' && v.scriptURL.startsWith(origin))) {
+              resolve();
+            }
+          }),
+        );
+        await cdp.send('ServiceWorker.stopAllWorkers');
+        await stopped;
+        await page.close();
+      },
+      async close() {
+        try {
+          await context.close();
+        } finally {
+          await rm(userDataDir, { recursive: true, force: true });
+        }
+      },
+    };
+  } catch (err) {
+    try {
+      await context?.close();
+    } catch {
+      // Preserve the initialization error while still removing the profile.
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+    throw err;
+  }
 }
 
 export async function launchFirefox(packagePath) {
@@ -69,7 +84,12 @@ export async function launchFirefox(packagePath) {
   options.setPreference('extensions.background.idle.timeout', 1000);
   process.env.MOZ_REMOTE_ALLOW_SYSTEM_ACCESS = '1';
   const driver = await new Builder().forBrowser('firefox').setFirefoxOptions(options).build();
-  await driver.installAddon(packagePath, true);
+  try {
+    await driver.installAddon(packagePath, true);
+  } catch (err) {
+    await driver.quit().catch(() => undefined);
+    throw err;
+  }
 
   return {
     origin: `moz-extension://${FIREFOX_UUID}`,
