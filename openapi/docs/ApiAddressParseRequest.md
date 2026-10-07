@@ -4,8 +4,8 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Address** | **string** |  | 
-**Format** | Pointer to **string** | Format selects how Address is encoded: \&quot;text\&quot; (bech32 or base58, the default), \&quot;hex\&quot;, or \&quot;base64\&quot; for the raw address bytes. | [optional] 
+**Address** | **string** |  |
+**Format** | Pointer to **string** | Format selects how Address is encoded: \&quot;text\&quot; (bech32 or base58, the default), \&quot;hex\&quot;, or \&quot;base64\&quot; for the raw address bytes. | [optional]
 
 ## Methods
 
@@ -73,5 +73,3 @@ HasFormat returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

@@ -119,8 +119,15 @@ func TestGeneratedClientCoversSwagger(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal(raw, &doc))
 
 	var declared, covered []string
+	operations := map[string]struct{}{
+		"get": {}, "put": {}, "post": {}, "delete": {},
+		"options": {}, "head": {}, "patch": {}, "trace": {},
+	}
 	for path, methods := range doc.Paths {
 		for method := range methods {
+			if _, ok := operations[strings.ToLower(method)]; !ok {
+				continue
+			}
 			declared = append(declared, strings.ToUpper(method)+" "+path)
 		}
 	}

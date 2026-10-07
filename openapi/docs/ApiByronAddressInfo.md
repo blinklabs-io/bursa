@@ -4,7 +4,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Type** | Pointer to **string** | \&quot;pubkey\&quot;, \&quot;script\&quot;, or \&quot;redeem\&quot; | [optional] 
+**Type** | Pointer to **string** | \&quot;pubkey\&quot;, \&quot;script\&quot;, or \&quot;redeem\&quot; | [optional]
 
 ## Methods
 
@@ -52,5 +52,3 @@ HasType returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

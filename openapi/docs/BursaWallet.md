@@ -4,27 +4,27 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**CommitteeColdExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**CommitteeColdSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**CommitteeColdVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**CommitteeHotExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**CommitteeHotSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**CommitteeHotVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**DrepExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**DrepSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**DrepVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**Mnemonic** | Pointer to **string** |  | [optional] 
-**PaymentAddress** | Pointer to **string** |  | [optional] 
-**PaymentExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**PaymentSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**PaymentVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**PoolColdExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**PoolColdSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**PoolColdVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**StakeAddress** | Pointer to **string** |  | [optional] 
-**StakeExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**StakeSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
-**StakeVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional] 
+**CommitteeColdExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**CommitteeColdSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**CommitteeColdVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**CommitteeHotExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**CommitteeHotSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**CommitteeHotVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**DrepExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**DrepSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**DrepVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**Mnemonic** | Pointer to **string** |  | [optional]
+**PaymentAddress** | Pointer to **string** |  | [optional]
+**PaymentExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**PaymentSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**PaymentVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**PoolColdExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**PoolColdSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**PoolColdVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**StakeAddress** | Pointer to **string** |  | [optional]
+**StakeExtendedSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**StakeSkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
+**StakeVkey** | Pointer to [**BursaKeyFile**](BursaKeyFile.md) |  | [optional]
 
 ## Methods
 
@@ -572,5 +572,3 @@ HasStakeVkey returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

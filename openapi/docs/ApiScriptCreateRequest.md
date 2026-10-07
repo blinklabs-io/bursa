@@ -4,12 +4,12 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**KeyHashes** | **[]string** |  | 
-**Network** | **string** |  | 
-**Required** | Pointer to **int32** |  | [optional] 
-**TimelockAfter** | Pointer to **int64** |  | [optional] 
-**TimelockBefore** | Pointer to **int64** |  | [optional] 
-**Type** | **string** |  | 
+**KeyHashes** | **[]string** |  |
+**Network** | **string** |  |
+**Required** | Pointer to **int32** |  | [optional]
+**TimelockAfter** | Pointer to **int64** |  | [optional]
+**TimelockBefore** | Pointer to **int64** |  | [optional]
+**Type** | **string** |  |
 
 ## Methods
 
@@ -167,5 +167,3 @@ SetType sets Type field to given value.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

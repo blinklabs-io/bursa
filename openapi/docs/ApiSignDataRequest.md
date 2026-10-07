@@ -4,9 +4,9 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Address** | **string** | Address is a hex-encoded address. | 
-**Payload** | **string** | Payload is a hex-encoded message payload. | 
-**SigningKey** | **string** | SigningKey is a cardano-cli JSON signing key envelope. | 
+**Address** | **string** | Address is a hex-encoded address. |
+**Payload** | **string** | Payload is a hex-encoded message payload. |
+**SigningKey** | **string** | SigningKey is a cardano-cli JSON signing key envelope. |
 
 ## Methods
 
@@ -89,5 +89,3 @@ SetSigningKey sets SigningKey field to given value.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

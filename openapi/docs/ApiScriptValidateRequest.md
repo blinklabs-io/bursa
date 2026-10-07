@@ -4,12 +4,12 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Message** | Pointer to **string** | Message is the hex-encoded signed payload. | [optional] 
-**PublicKeys** | Pointer to **[]string** |  | [optional] 
-**RequireSignatures** | Pointer to **bool** |  | [optional] 
-**Script** | **map[string]map[string]interface{}** |  | 
-**Signatures** | Pointer to **[]string** |  | [optional] 
-**Slot** | Pointer to **int64** |  | [optional] 
+**Message** | Pointer to **string** | Message is the hex-encoded signed payload. | [optional]
+**PublicKeys** | Pointer to **[]string** |  | [optional]
+**RequireSignatures** | Pointer to **bool** |  | [optional]
+**Script** | **map[string]map[string]interface{}** |  |
+**Signatures** | Pointer to **[]string** |  | [optional]
+**Slot** | Pointer to **int64** |  | [optional]
 
 ## Methods
 
@@ -177,5 +177,3 @@ HasSlot returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

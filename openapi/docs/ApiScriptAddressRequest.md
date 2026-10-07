@@ -4,8 +4,8 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Network** | **string** |  | 
-**Script** | **map[string]map[string]interface{}** |  | 
+**Network** | **string** |  |
+**Script** | **map[string]map[string]interface{}** |  |
 
 ## Methods
 
@@ -68,5 +68,3 @@ SetScript sets Script field to given value.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

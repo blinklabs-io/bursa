@@ -4,9 +4,9 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Bech32** | Pointer to **string** | bech32-encoded credential | [optional] 
-**Hex** | Pointer to **string** | hex-encoded credential | [optional] 
-**Type** | Pointer to **string** | \&quot;key\&quot; or \&quot;script\&quot; | [optional] 
+**Bech32** | Pointer to **string** | bech32-encoded credential | [optional]
+**Hex** | Pointer to **string** | hex-encoded credential | [optional]
+**Type** | Pointer to **string** | \&quot;key\&quot; or \&quot;script\&quot; | [optional]
 
 ## Methods
 
@@ -104,5 +104,3 @@ HasType returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

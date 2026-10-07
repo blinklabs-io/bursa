@@ -4,10 +4,10 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Address** | Pointer to **string** |  | [optional] 
-**Script** | Pointer to **map[string]map[string]interface{}** |  | [optional] 
-**ScriptHash** | Pointer to **string** |  | [optional] 
-**Type** | Pointer to **string** |  | [optional] 
+**Address** | Pointer to **string** |  | [optional]
+**Script** | Pointer to **map[string]map[string]interface{}** |  | [optional]
+**ScriptHash** | Pointer to **string** |  | [optional]
+**Type** | Pointer to **string** |  | [optional]
 
 ## Methods
 
@@ -130,5 +130,3 @@ HasType returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-
