@@ -28,6 +28,7 @@ jobs:
         run: bash .github/scripts/test-image-manifests.sh
 
   docker:
+    if: ${{ !cancelled() }}
     needs: [image-manifest-script]
     strategy:
       fail-fast: false
@@ -40,6 +41,9 @@ jobs:
       max-parallel: 1
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Require manifest composition check
+        if: ${{ always() && needs.image-manifest-script.result != 'success' }}
+        run: exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           fetch-depth: '0'
