@@ -161,6 +161,23 @@ func TestBuildMetadataCanonicalHash(t *testing.T) {
 	}
 }
 
+// TestBuildMetadataMatchesCanonicalVector pins the same document and hash the
+// bursa CLI hash commands are tested against, so metadata hashed in the UI and
+// by the CLI cannot diverge.
+func TestBuildMetadataMatchesCanonicalVector(t *testing.T) {
+	const (
+		wantJSON = `{"description":"A pool.","homepage":"https://pool.example","name":"My Pool","ticker":"POOL"}`
+		wantHash = "1687692d9e04a2e58c63ca972c9594cbdea9bae5007455b996dc0a72748abfa5"
+	)
+	res, err := buildMetadata(MetadataInput{Name: "My Pool", Ticker: "POOL", Homepage: "https://pool.example", Description: "A pool."})
+	if err != nil {
+		t.Fatalf("buildMetadata: %v", err)
+	}
+	if res.JSON != wantJSON || res.HashHex != wantHash {
+		t.Fatalf("got (%s, %s), want (%s, %s)", res.JSON, res.HashHex, wantJSON, wantHash)
+	}
+}
+
 func TestBuildMetadataValidation(t *testing.T) {
 	longName := strings.Repeat("n", metadataNameMax+1)
 	longHomepage := "https://" + strings.Repeat("h", metadataHomepageMax)

@@ -64,7 +64,7 @@ func AccountXpubForIndexFromMnemonicBytes(mnemonic []byte, accountIndex uint32) 
 	if accountIndex >= hardenedKeyStart {
 		return "", fmt.Errorf("account index must be less than %d, got %d", hardenedKeyStart, accountIndex)
 	}
-	root, err := RootKeyFromMnemonicBytes(mnemonic)
+	root, err := bursa.GetRootKeyFromMnemonicBytes(mnemonic, "")
 	if err != nil {
 		return "", fmt.Errorf("root key from mnemonic: %w", err)
 	}
@@ -115,7 +115,7 @@ func DeriveAccountFromMnemonicBytes(mnemonic []byte, network string, accountInde
 	if err != nil {
 		return nil, err
 	}
-	root, err := RootKeyFromMnemonicBytes(mnemonic)
+	root, err := bursa.GetRootKeyFromMnemonicBytes(mnemonic, "")
 	if err != nil {
 		return nil, fmt.Errorf("root key from mnemonic: %w", err)
 	}

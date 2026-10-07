@@ -170,9 +170,7 @@ func addressListCommand() *cobra.Command {
 			}
 		},
 	}
-	cmd.Flags().StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	cmd.Flags().StringVar(&mnemonicFile, "mnemonic-file", "", "Path to mnemonic file")
-	cmd.Flags().StringVar(&password, "password", "", "Optional derivation password")
+	addSecretFlags(cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().StringVar(&network, "network", "mainnet", "Network (mainnet|preprod|preview)")
 	cmd.Flags().Uint32Var(&account, "account", 0, "Account index")
 	cmd.Flags().Uint32Var(&start, "start", 0, "Starting address index")
