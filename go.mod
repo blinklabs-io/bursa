@@ -3,7 +3,7 @@ module github.com/blinklabs-io/bursa
 go 1.26.5
 
 require (
-	cloud.google.com/go/secretmanager v1.21.0
+	cloud.google.com/go/secretmanager v1.22.0
 	filippo.io/edwards25519 v1.2.0
 	github.com/MicahParks/keyfunc/v3 v3.8.2
 	github.com/blinklabs-io/go-bip39 v0.2.0
