@@ -4,9 +4,9 @@
 package spend
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -271,7 +271,11 @@ func (s *Service) SetWallet(mnemonic, network, password string) (*wallet.Account
 				mn[i] = 0
 			}
 		}()
-		if !bytes.Equal(mn, []byte(mnemonic)) {
+		match, err := sameMnemonic(mn, mnemonic)
+		if err != nil {
+			return nil, err
+		}
+		if !match {
 			return nil, errors.New("mnemonic does not match existing keystore")
 		}
 		acct, err = wallet.Derive(string(mn), network, addressWindow)
@@ -295,6 +299,24 @@ func (s *Service) SetWallet(mnemonic, network, password string) (*wallet.Account
 	s.pending = make(map[string]*pending)
 	s.mu.Unlock()
 	return acct, nil
+}
+
+// sameMnemonic reports whether stored and entered decode to the same root key,
+// so equivalent Unicode forms of one phrase compare equal.
+func sameMnemonic(stored []byte, entered string) (bool, error) {
+	enteredBytes := []byte(entered)
+	defer keystore.Zero(enteredBytes)
+	a, err := bursa.GetRootKeyFromMnemonicBytes(stored, "")
+	if err != nil {
+		return false, err
+	}
+	defer keystore.Zero(a)
+	b, err := bursa.GetRootKeyFromMnemonicBytes(enteredBytes, "")
+	if err != nil {
+		return false, err
+	}
+	defer keystore.Zero(b)
+	return subtle.ConstantTimeCompare(a, b) == 1, nil
 }
 
 // SetAccount sets the active spending account directly, without creating a
@@ -806,7 +828,7 @@ func (s *Service) SignData(addrStr string, message []byte, password string) (sig
 		}
 	}()
 
-	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
+	rootKey, err = bursa.GetRootKeyFromMnemonicBytes(mnemonicBytes, "")
 	if err != nil {
 		return "", "", fmt.Errorf("root key: %w", err)
 	}
@@ -941,7 +963,7 @@ func (s *Service) PubDRepKey(password string) ([]byte, error) {
 		}
 	}()
 
-	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
+	rootKey, err = bursa.GetRootKeyFromMnemonicBytes(mnemonicBytes, "")
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}
@@ -997,7 +1019,7 @@ func (s *Service) PubStakeKey(password string) ([]byte, error) {
 		}
 	}()
 
-	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
+	rootKey, err = bursa.GetRootKeyFromMnemonicBytes(mnemonicBytes, "")
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}
@@ -1315,7 +1337,7 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	if acct == nil {
 		return TxResult{}, ErrNoWallet
 	}
-	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
+	rootKey, err = bursa.GetRootKeyFromMnemonicBytes(mnemonicBytes, "")
 	if err != nil {
 		return TxResult{}, fmt.Errorf("root key: %w", err)
 	}
@@ -1622,7 +1644,7 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 		}
 	}()
 
-	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
+	rootKey, err = bursa.GetRootKeyFromMnemonicBytes(mnemonicBytes, "")
 	if err != nil {
 		return Witness{}, fmt.Errorf("root key: %w", err)
 	}
@@ -2090,7 +2112,7 @@ func (s *Service) CosignTx(
 			mnemonicBytes[i] = 0
 		}
 	}()
-	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
+	rootKey, err = bursa.GetRootKeyFromMnemonicBytes(mnemonicBytes, "")
 	if err != nil {
 		return CosignResult{}, fmt.Errorf("root key: %w", err)
 	}
@@ -2406,7 +2428,7 @@ func (s *Service) WitnessTx(
 		}
 	}()
 
-	rootKey, err = wallet.RootKeyFromMnemonicBytes(mnemonicBytes)
+	rootKey, err = bursa.GetRootKeyFromMnemonicBytes(mnemonicBytes, "")
 	if err != nil {
 		return nil, fmt.Errorf("root key: %w", err)
 	}

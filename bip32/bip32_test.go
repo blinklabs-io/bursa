@@ -730,3 +730,50 @@ func TestCIP3IcarusTestVectors(t *testing.T) {
 		t.Errorf("kL not clamped: byte 31 high bits should be 010xxxxx, got %08b", rootKey[31])
 	}
 }
+
+func TestLenientBech32DecodeRejectsInvalidVectors(t *testing.T) {
+	long := make([]byte, 100)
+	for i := range long {
+		long[i] = byte(i % 32)
+	}
+	longEncoded, err := bech32.Encode("addr_vk", long)
+	if err != nil {
+		t.Fatalf("bech32.Encode: %v", err)
+	}
+	if len(longEncoded) <= 90 {
+		t.Fatalf("vector must exceed the bounded decoder limit, got %d", len(longEncoded))
+	}
+	shortEncoded, err := bech32.Encode("addr_vk", long[:20])
+	if err != nil {
+		t.Fatalf("bech32.Encode: %v", err)
+	}
+	// A different valid character in the last checksum position breaks the
+	// checksum without changing the length or the case.
+	flipLast := func(s string) string {
+		last := byte('q')
+		if s[len(s)-1] == 'q' {
+			last = 'p'
+		}
+		return s[:len(s)-1] + string(last)
+	}
+
+	vectors := map[string]string{
+		"long bad checksum":           flipLast(longEncoded),
+		"long truncated checksum":     longEncoded[:len(longEncoded)-3],
+		"long no data part":           strings.Repeat("a", 91) + "1",
+		"short bad checksum":          flipLast(shortEncoded),
+		"empty":                       "",
+		"separator only":              "1",
+		"checksum shorter than 6":     "addr_vk1qqqqq",
+		"hrp missing":                 "1qqqqqqqqqqqq",
+		"long mixed case":             longEncoded[:5] + strings.ToUpper(longEncoded[5:6]) + longEncoded[6:],
+		"long invalid data character": longEncoded[:len(longEncoded)-8] + "b" + longEncoded[len(longEncoded)-7:],
+	}
+	for name, vector := range vectors {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := LenientBech32Decode(vector); err == nil {
+				t.Fatalf("LenientBech32Decode accepted %q", vector)
+			}
+		})
+	}
+}

@@ -285,6 +285,8 @@ func TestSQLiteWalletSaveDoesNotPublishIDBeforeCommit(t *testing.T) {
 	sqliteWallet, ok := wallet.(*sqliteWallet)
 	require.True(t, ok)
 	assert.Zero(t, sqliteWallet.id)
+	assert.Zero(t, countRows(t, store, "wallets"), "failed save left a wallet row")
+	assert.Zero(t, countRows(t, store, "wallet_items"), "failed save left item rows")
 
 	_, err = store.db.Exec("DROP TRIGGER fail_wallet_item_insert")
 	require.NoError(t, err)
@@ -295,6 +297,43 @@ func TestSQLiteWalletSaveDoesNotPublishIDBeforeCommit(t *testing.T) {
 	value, err := loaded.GetItem("fault")
 	require.NoError(t, err)
 	assert.Equal(t, "value", value)
+}
+
+func countRows(t *testing.T, store *SQLiteStore, table string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, store.db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&n))
+	return n
+}
+
+func TestSQLiteWalletFailedUpdateLeavesDatabaseUnchanged(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+	wallet, err := store.CreateWallet("update-fault")
+	require.NoError(t, err)
+	wallet.SetDescription("original")
+	wallet.PutItem("a", "1")
+	require.NoError(t, wallet.Save(ctx))
+
+	_, err = store.db.Exec(`
+		CREATE TRIGGER fail_wallet_item_insert
+		BEFORE INSERT ON wallet_items
+		WHEN NEW.key = 'fault'
+		BEGIN
+			SELECT RAISE(ABORT, 'injected item failure');
+		END;
+	`)
+	require.NoError(t, err)
+	wallet.SetDescription("changed")
+	wallet.PutItem("a", "2")
+	wallet.PutItem("fault", "x")
+	require.Error(t, wallet.Save(ctx))
+
+	loaded, err := store.GetWallet(ctx, "update-fault")
+	require.NoError(t, err)
+	assert.Equal(t, "original", loaded.Description())
+	assert.Equal(t, map[string]string{"a": "1"}, loaded.Items())
+	assert.Equal(t, 1, countRows(t, store, "wallets"))
 }
 
 func TestSQLiteStoreUpdateWallet(t *testing.T) {

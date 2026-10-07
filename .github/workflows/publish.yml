@@ -54,7 +54,7 @@ jobs:
             echo "::error::This workflow may only be dispatched from ${DEFAULT_BRANCH}. Its macOS job holds the Apple signing and notarization credentials and runs the packaging scripts from the selected ref."
             exit 1
           fi
-      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
+      - run: echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 https://github.com/actions/github-script/releases/tag/v9.0.0
         id: create-release
         if: startsWith(github.ref, 'refs/tags/')
@@ -106,6 +106,7 @@ jobs:
           - runner: ubuntu-latest
             os: windows
             arch: arm64
+      max-parallel: 2
     runs-on: ${{ matrix.runner }}
     needs: [create-draft-release]
     permissions:
@@ -117,7 +118,7 @@ jobs:
       packages: write
       statuses: write
     steps:
-      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
+      - run: echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           fetch-depth: '0'
@@ -242,6 +243,7 @@ jobs:
   # Signing/notarization is env-gated: unsigned artifacts are produced on
   # non-tag pushes (validating the packaging path) and signed ones on tags.
   build-wallet-binaries:
+    if: ${{ !cancelled() && needs.create-draft-release.result == 'success' && (github.event_name == 'workflow_dispatch' || needs.build-binaries.result == 'success') }}
     strategy:
       fail-fast: false
       matrix:
@@ -267,8 +269,9 @@ jobs:
           - runner: ubuntu-latest
             os: freebsd
             arch: arm64
+      max-parallel: 2
     runs-on: ${{ matrix.runner }}
-    needs: [create-draft-release]
+    needs: [create-draft-release, build-binaries]
     permissions:
       actions: write
       attestations: write
@@ -302,7 +305,7 @@ jobs:
       - name: Set up MSYS2 MinGW64 for Windows amd64 CGO
         if: matrix.os == 'windows' && matrix.arch == 'amd64'
         id: msys2-amd64
-        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0 https://github.com/msys2/setup-msys2/releases/tag/v2.32.0
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0 https://github.com/msys2/setup-msys2/releases/tag/v2.33.0
         with:
           msystem: MINGW64
           update: true
@@ -311,7 +314,7 @@ jobs:
       - name: Set up MSYS2 clangarm64 for Windows arm64 CGO
         if: matrix.os == 'windows' && matrix.arch == 'arm64'
         id: msys2-arm64
-        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0 https://github.com/msys2/setup-msys2/releases/tag/v2.32.0
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0 https://github.com/msys2/setup-msys2/releases/tag/v2.33.0
         with:
           msystem: CLANGARM64
           update: true
@@ -743,8 +746,9 @@ jobs:
             arch: amd64
           - os: ubuntu-24.04-arm
             arch: arm64
+      max-parallel: 2
     runs-on: ${{ matrix.os }}
-    needs: [create-draft-release]
+    needs: [create-draft-release, build-wallet-binaries]
     permissions:
       actions: write
       attestations: write
@@ -754,13 +758,13 @@ jobs:
       packages: write
       statuses: write
     steps:
-      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
+      - run: echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           fetch-depth: '0'
           persist-credentials: false
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0 https://github.com/docker/setup-buildx-action/releases/tag/v4.3.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1 https://github.com/docker/setup-buildx-action/releases/tag/v4.4.1
       - name: Login to Docker Hub
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0 https://github.com/docker/login-action/releases/tag/v4.6.0
         with:
@@ -853,7 +857,7 @@ jobs:
             # semver
             type=semver,pattern={{version}}
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0 https://github.com/docker/setup-buildx-action/releases/tag/v4.3.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1 https://github.com/docker/setup-buildx-action/releases/tag/v4.4.1
       - name: Create and push image manifests
         id: manifest
         shell: bash

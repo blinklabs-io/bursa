@@ -334,3 +334,10 @@ kes_agent:
 		t.Errorf("env override service_socket_mode: got %q, want 0640", cfg2.KESAgent.ServiceSocketMode)
 	}
 }
+
+func TestDefaultDebugListenAddressIsLoopback(t *testing.T) {
+	t.Parallel()
+	if got := defaultConfig().Debug.ListenAddress; got != "127.0.0.1" {
+		t.Fatalf("default debug listen address = %q, want 127.0.0.1", got)
+	}
+}
