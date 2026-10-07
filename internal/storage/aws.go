@@ -83,13 +83,34 @@ func (s *AWSStore) GetWallet(ctx context.Context, name string) (Wallet, error) {
 }
 
 func (s *AWSStore) ListWallets(ctx context.Context) ([]Wallet, error) {
+	names, err := s.ListWalletNames(ctx)
+	if err != nil {
+		return nil, err
+	}
+	wallets := make([]Wallet, 0, len(names))
+	for _, name := range names {
+		w, err := s.GetWallet(ctx, name)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			logging.GetLogger().Debug("skipping inaccessible wallet during list", "wallet", name, "error", err)
+			continue
+		}
+		wallets = append(wallets, w)
+	}
+	return wallets, nil
+}
+
+// ListWalletNames returns matching secret names without loading wallet contents.
+func (s *AWSStore) ListWalletNames(ctx context.Context) ([]string, error) {
 	pages := secretsmanager.NewListSecretsPaginator(s.client, &secretsmanager.ListSecretsInput{
 		Filters: []smtypes.Filter{{
 			Key:    smtypes.FilterNameStringTypeName,
 			Values: []string{s.prefix},
 		}},
 	})
-	var wallets []Wallet
+	var names []string
 	for pages.HasMorePages() {
 		page, err := pages.NextPage(ctx)
 		if err != nil {
@@ -97,24 +118,12 @@ func (s *AWSStore) ListWallets(ctx context.Context) ([]Wallet, error) {
 		}
 		for _, entry := range page.SecretList {
 			secretName := aws.ToString(entry.Name)
-			if !strings.HasPrefix(secretName, s.prefix) {
-				continue
+			if strings.HasPrefix(secretName, s.prefix) {
+				names = append(names, strings.TrimPrefix(secretName, s.prefix))
 			}
-			name := strings.TrimPrefix(secretName, s.prefix)
-			w, err := s.GetWallet(ctx, name)
-			if err != nil {
-				// A cancelled caller must not receive a partial list.
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					return nil, ctxErr
-				}
-				logging.GetLogger().
-					Debug("skipping inaccessible wallet during list", "wallet", name, "error", err)
-				continue
-			}
-			wallets = append(wallets, w)
 		}
 	}
-	return wallets, nil
+	return names, nil
 }
 
 func (s *AWSStore) CreateWallet(name string) (Wallet, error) {

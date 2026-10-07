@@ -39,6 +39,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/logging"
 	"github.com/blinklabs-io/bursa/internal/signer"
 	signerapi "github.com/blinklabs-io/bursa/internal/signer/api"
+	"github.com/blinklabs-io/bursa/internal/storage"
 	ouroboros "github.com/blinklabs-io/gouroboros"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/btcsuite/btcd/btcutil/bech32"
@@ -554,7 +555,111 @@ type legacyWalletStore interface {
 	Delete(context.Context, string) error
 }
 
+type legacyWalletCreator interface {
+	Create(context.Context, string, *bursa.Wallet, string) error
+}
+
 type gcpLegacyWalletStore struct{}
+
+// configuredLegacyWalletStore adapts the configured backend to the legacy API
+// handlers while storage implementations converge on the Store interface.
+type configuredLegacyWalletStore struct {
+	store storage.Store
+}
+
+func (s configuredLegacyWalletStore) List(ctx context.Context) ([]string, error) {
+	if _, ok := s.store.(*storage.GCPStore); ok {
+		return gcp.ListGoogleWallets(ctx, nil)
+	}
+	if nameLister, ok := s.store.(interface {
+		ListWalletNames(context.Context) ([]string, error)
+	}); ok {
+		return nameLister.ListWalletNames(ctx)
+	}
+	wallets, err := s.store.ListWallets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(wallets))
+	for _, wallet := range wallets {
+		names = append(names, wallet.Name())
+	}
+	return names, nil
+}
+
+func (s configuredLegacyWalletStore) Get(ctx context.Context, name string) (*bursa.Wallet, error) {
+	stored, err := s.store.GetWallet(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	wallet := new(bursa.Wallet)
+	if err := stored.PopulateTo(wallet); err != nil {
+		return nil, err
+	}
+	return wallet, nil
+}
+
+func (s configuredLegacyWalletStore) Update(ctx context.Context, name, description string) (bool, error) {
+	stored, err := s.store.GetWallet(ctx, name)
+	if err != nil {
+		return false, err
+	}
+	if stored.Description() == description {
+		return false, nil
+	}
+	stored.SetDescription(description)
+	if err := stored.Save(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s configuredLegacyWalletStore) Delete(ctx context.Context, name string) error {
+	return s.store.DeleteWallet(ctx, name)
+}
+
+func (s configuredLegacyWalletStore) Close() error {
+	closer, ok := s.store.(io.Closer)
+	if !ok {
+		return nil
+	}
+	return closer.Close()
+}
+
+func (s configuredLegacyWalletStore) Create(ctx context.Context, name string, wallet *bursa.Wallet, description string) error {
+	stored, err := s.store.CreateWallet(name)
+	if err != nil {
+		return err
+	}
+	stored.SetDescription(description)
+	if err := stored.PopulateFrom(wallet); err != nil {
+		return err
+	}
+	return stored.Save(ctx)
+}
+
+func walletStorageConfigured(cfg *config.Config) bool {
+	return cfg.Storage.Backend != "" ||
+		(cfg.Google.Project != "" && cfg.Google.ResourceId != "")
+}
+
+func configuredWalletStore(cfg *config.Config) (legacyWalletStore, error) {
+	return configuredWalletStoreWithFactory(cfg, storage.NewStore)
+}
+
+func configuredWalletStoreWithFactory(
+	cfg *config.Config,
+	newStore func(*config.Config) (storage.Store, error),
+) (legacyWalletStore, error) {
+	if !walletStorageConfigured(cfg) {
+		return nil, nil
+	}
+	store, err := newStore(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("initialize wallet storage: %w", err)
+	}
+	return configuredLegacyWalletStore{store: store}, nil
+}
 
 func (gcpLegacyWalletStore) List(ctx context.Context) ([]string, error) {
 	return gcp.ListGoogleWallets(ctx, nil)
@@ -767,9 +872,9 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 			cfg.Api.ListenAddress,
 		)
 	}
-	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+	if walletStorageConfigured(cfg) {
 		if auth == nil {
-			return errors.New("API JWT/JWKS authentication is required when GCP wallet storage is enabled")
+			return errors.New("API JWT/JWKS authentication is required when wallet storage is enabled")
 		}
 		hasAdmin := false
 		for _, subject := range cfg.Api.JWTAdminSubjects {
@@ -779,7 +884,7 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 			}
 		}
 		if !hasAdmin {
-			return errors.New("api.jwt_admin_subjects must identify at least one administrator when authenticated GCP wallet storage is enabled")
+			return errors.New("api.jwt_admin_subjects must identify at least one administrator when authenticated wallet storage is enabled")
 		}
 	}
 	return nil
@@ -811,8 +916,8 @@ func registerAPIHandlers(
 	protected := func(next http.Handler) http.Handler {
 		return protectAPIHandler(auth, next)
 	}
-	mux.Handle("/api/wallet/create", protected(http.HandlerFunc(handleWalletCreate)))
-	mux.Handle("/api/wallet/restore", protected(http.HandlerFunc(handleWalletRestore)))
+	mux.Handle("/api/wallet/create", protected(withLegacyStore(store, http.HandlerFunc(handleWalletCreate))))
+	mux.Handle("/api/wallet/restore", protected(withLegacyStore(store, http.HandlerFunc(handleWalletRestore))))
 
 	mux.HandleFunc("/api/script/create", handleScriptCreate)
 	mux.Handle("/api/script/validate", boundedScriptValidation(http.HandlerFunc(handleScriptValidate)))
@@ -831,7 +936,7 @@ func registerAPIHandlers(
 	mux.Handle("/api/sign/data", protected(http.HandlerFunc(handleSignData)))
 	mux.HandleFunc("/api/sign/verify", handleVerifyData)
 
-	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+	if walletStorageConfigured(cfg) {
 		walletStorage := func(next http.Handler) http.Handler {
 			return withLegacyStore(store, protectWalletStorageHandler(auth, cfg.Api.JWTAdminSubjects, next))
 		}
@@ -901,7 +1006,21 @@ func Start(
 	// Main HTTP server for API endpoints
 	//
 	mainMux := http.NewServeMux()
-	registerAPIHandlers(mainMux, cfg, apiAuth, gcpLegacyWalletStore{})
+	walletStore, err := configuredWalletStore(cfg)
+	if err != nil {
+		return err
+	}
+	if walletStore == nil {
+		walletStore = gcpLegacyWalletStore{}
+	}
+	if closer, ok := walletStore.(interface{ Close() error }); ok {
+		defer func() {
+			if err := closer.Close(); err != nil {
+				logger.Warn("failed to close wallet storage", "error", err)
+			}
+		}()
+	}
+	registerAPIHandlers(mainMux, cfg, apiAuth, walletStore)
 
 	// Wrap the mainMux with an access-logging middleware
 	mainHandler := logMiddleware(mainMux, accessLogger)
@@ -1124,23 +1243,19 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Persistence
-	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+	if walletStorageConfigured(cfg) {
 		name := uuid.NewString()
-		g := gcp.NewGoogleWallet(name)
-		g.SetDescription("automatically generated at " + time.Now().String())
-		if err := g.PopulateFrom(wallet); err != nil {
-			logger.Error("failed to populate wallet", "error", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprintf(w, "failed to populate wallet: %s", err)
+		description := "automatically generated at " + time.Now().String()
+		creator, ok := legacyStore(r).(legacyWalletCreator)
+		if !ok {
+			logger.Error("configured wallet store cannot create wallets")
+			writeJSONError(w, logger, map[string]string{"error": "Internal server error"}, http.StatusInternalServerError)
 			walletsFailCounter.Inc()
 			return
 		}
-		if err := g.Save(r.Context()); err != nil {
-			logger.Error("failed to save wallet", "error", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprintf(w,
-				"failed to save wallet: %s", err)
-			// Increment fail counter
+		if err := creator.Create(r.Context(), name, wallet, description); err != nil {
+			logger.Error("failed to persist wallet", "error", err)
+			writeError(w, http.StatusInternalServerError, errors.New("failed to persist wallet"))
 			walletsFailCounter.Inc()
 			return
 		}
@@ -1224,25 +1339,19 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Persistence
-	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+	if walletStorageConfigured(cfg) {
 		name := uuid.NewString()
-		g := gcp.NewGoogleWallet(name)
-		g.SetDescription("restored at " + time.Now().String())
-		if err := g.PopulateFrom(wallet); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			logger.Error("failed to populate wallet", "error", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprintf(w, "failed to populate wallet: %s", err)
+		description := "restored at " + time.Now().String()
+		creator, ok := legacyStore(r).(legacyWalletCreator)
+		if !ok {
+			logger.Error("configured wallet store cannot create wallets")
+			writeJSONError(w, logger, map[string]string{"error": "Internal server error"}, http.StatusInternalServerError)
 			walletsFailCounter.Inc()
 			return
 		}
-		if err := g.Save(r.Context()); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			logger.Error("failed to save wallet", "error", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprintf(w,
-				"failed to save wallet: %s", err)
-			// Increment fail counter
+		if err := creator.Create(r.Context(), name, wallet, description); err != nil {
+			logger.Error("failed to persist restored wallet", "error", err)
+			writeJSONError(w, logger, map[string]string{"error": "Internal server error"}, http.StatusInternalServerError)
 			walletsFailCounter.Inc()
 			return
 		}
@@ -1283,10 +1392,8 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 
 	wallets, err := legacyStore(r).List(r.Context())
 	if err != nil {
-		logger.Error("failed to load google wallets", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = fmt.Fprintf(w,
-			"failed to load google wallets: %s", err)
+		logger.Error("failed to load wallets", "error", err)
+		http.Error(w, "failed to load wallets", http.StatusInternalServerError)
 		walletsFailCounter.Inc()
 		return
 	}
@@ -1294,11 +1401,8 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	resp, err := json.Marshal(wallets)
 	if err != nil {
-		logger.Error("failed to deserialize google wallets", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = fmt.Fprintf(w,
-
-			"failed to deserialize google wallets: %s", err)
+		logger.Error("failed to serialize wallet names", "error", err)
+		http.Error(w, "failed to serialize wallet names", http.StatusInternalServerError)
 		walletsFailCounter.Inc()
 		return
 	}

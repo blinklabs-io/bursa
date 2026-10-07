@@ -17,6 +17,8 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/blinklabs-io/bursa/internal/config"
 )
@@ -43,15 +45,17 @@ func NewStore(cfg *config.Config) (Store, error) {
 	case "gcp":
 		return NewGCPStore(), nil
 	case "aws":
+		if strings.TrimSpace(cfg.Aws.Prefix) == "" {
+			return nil, errors.New("aws secret prefix is required for aws backend")
+		}
 		return NewAWSStore(context.Background(), cfg.Aws.Prefix)
 	default:
-		// Fall back to GCP if Google project is configured
-		if cfg.Google.Project != "" &&
-			cfg.Google.ResourceId != "" {
+		if cfg.Storage.Backend != "" {
+			return nil, fmt.Errorf("unsupported storage backend %q", cfg.Storage.Backend)
+		}
+		if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
 			return NewGCPStore(), nil
 		}
-		return nil, errors.New(
-			"no storage backend configured",
-		)
+		return nil, errors.New("no storage backend configured")
 	}
 }

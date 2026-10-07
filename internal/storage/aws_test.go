@@ -204,6 +204,31 @@ func TestAWSStoreSaveWithoutMasterKeyWritesNothing(t *testing.T) {
 	require.Empty(t, fake.secrets)
 }
 
+func TestNewStoreAWSBackendRequiresPrefix(t *testing.T) {
+	store, err := NewStore(&config.Config{
+		Storage: config.StorageConfig{Backend: "aws"},
+	})
+	require.Nil(t, store)
+	require.ErrorContains(t, err, "aws secret prefix is required")
+}
+
+func TestNewStoreRejectsUnknownBackendWithGCPConfigured(t *testing.T) {
+	store, err := NewStore(&config.Config{
+		Storage: config.StorageConfig{Backend: "awss"},
+		Google:  config.GoogleConfig{Project: "project", ResourceId: "resource"},
+	})
+	require.Nil(t, store)
+	require.ErrorContains(t, err, `unsupported storage backend "awss"`)
+}
+
+func TestNewStoreUsesGCPForLegacyConfiguration(t *testing.T) {
+	store, err := NewStore(&config.Config{
+		Google: config.GoogleConfig{Project: "project", ResourceId: "resource"},
+	})
+	require.NoError(t, err)
+	require.IsType(t, (*GCPStore)(nil), store)
+}
+
 func TestNewStoreAWSBackend(t *testing.T) {
 	t.Parallel()
 	store, err := NewStore(&config.Config{
@@ -234,6 +259,19 @@ func TestAWSStoreSaveOverwritesAfterConcurrentCreate(t *testing.T) {
 	item, err := got.GetItem("k")
 	require.NoError(t, err)
 	require.Equal(t, "v", item)
+}
+
+func TestAWSStoreListWalletNamesDoesNotLoadWalletContents(t *testing.T) {
+	fake := newFakeSecrets()
+	fake.secrets["pre-one"] = []byte("unused")
+	fake.secrets["other"] = []byte("unused")
+	fake.getHook = func(context.Context) error {
+		return errors.New("wallet contents were loaded")
+	}
+
+	names, err := (&AWSStore{client: fake, prefix: "pre-"}).ListWalletNames(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"one"}, names)
 }
 
 func TestAWSStoreListWalletsReportsCancellation(t *testing.T) {
