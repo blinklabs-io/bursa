@@ -63,6 +63,21 @@ func TestUpdateCheckerRunsOneCheckAtATime(t *testing.T) {
 	}
 }
 
+func TestUpdateCheckerStopPreventsStart(t *testing.T) {
+	var calls atomic.Int32
+	u, _, _ := newTestUpdateChecker(make(chan struct{}), func(context.Context) (updatecheck.Release, bool, error) {
+		calls.Add(1)
+		return updatecheck.Release{}, false, nil
+	})
+	u.Stop()
+	if u.Start(func() {}) {
+		t.Fatal("Start succeeded after Stop")
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("check ran %d times after Stop, want 0", got)
+	}
+}
+
 func TestUpdateCheckerStopCancelsCheckAndDropsResult(t *testing.T) {
 	done := make(chan struct{})
 	u, notifies, opens := newTestUpdateChecker(done, func(ctx context.Context) (updatecheck.Release, bool, error) {

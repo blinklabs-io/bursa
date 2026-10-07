@@ -101,7 +101,9 @@ func TestRunKeyBLSRegistrationReplacesSymlink(t *testing.T) {
 	target := filepath.Join(dir, "target")
 	outputPath := filepath.Join(dir, "bls.json")
 	require.NoError(t, os.WriteFile(target, []byte("untouched"), 0o600))
-	require.NoError(t, os.Symlink(target, outputPath))
+	if err := os.Symlink(target, outputPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
 
 	require.NoError(t, RunKeyBLS(signingPath, "", outputPath))
 
@@ -159,7 +161,9 @@ func TestRunKeyBLSRejectsSymlinkedOutputPaths(t *testing.T) {
 	shared := filepath.Join(dir, "shared")
 	linkDir := filepath.Join(dir, "link")
 	require.NoError(t, os.Mkdir(filepath.Join(shared), 0o700))
-	require.NoError(t, os.Symlink(shared, linkDir))
+	if err := os.Symlink(shared, linkDir); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
 
 	err := RunKeyBLS(
 		filepath.Join(shared, "bls.skey"),
