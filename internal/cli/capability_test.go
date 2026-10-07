@@ -39,7 +39,7 @@ const testVRFVKeyCborHex = "5820" +
 
 func TestRunKeyCalidus_Bech32Output(t *testing.T) {
 	output := captureStdout(t, func() {
-		err := RunKeyCalidus(testKeyMnemonic, "", "", "", "", 0, 0)
+		err := RunKeyCalidus(testKeyMnemonic, "", "", "-", "", 0, 0)
 		require.NoError(t, err)
 	})
 	assert.True(
@@ -51,7 +51,7 @@ func TestRunKeyCalidus_Bech32Output(t *testing.T) {
 }
 
 func TestRunKeyCalidus_MissingMnemonic(t *testing.T) {
-	err := RunKeyCalidus("", "", "", "", "", 0, 0)
+	err := RunKeyCalidus("", "", "", "-", "", 0, 0)
 	assert.Error(t, err)
 }
 

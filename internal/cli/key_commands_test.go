@@ -32,7 +32,7 @@ const testKeyMnemonic = "abandon abandon abandon abandon " +
 
 func TestRunKeyRoot_Bech32Output(t *testing.T) {
 	output := captureStdout(t, func() {
-		err := RunKeyRoot(testKeyMnemonic, "", "", "")
+		err := RunKeyRoot(testKeyMnemonic, "", "", "-")
 		require.NoError(t, err)
 	})
 	assert.True(
@@ -43,7 +43,7 @@ func TestRunKeyRoot_Bech32Output(t *testing.T) {
 }
 
 func TestRunKeyRoot_MissingMnemonic(t *testing.T) {
-	err := RunKeyRoot("", "", "", "")
+	err := RunKeyRoot("", "", "", "-")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no mnemonic provided")
 }
@@ -65,7 +65,7 @@ func TestRunKeyRoot_SigningKeyFile(t *testing.T) {
 func TestRunKeyAccount_Bech32Output(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyAccount(
-			testKeyMnemonic, "", "", "", 0,
+			testKeyMnemonic, "", "", "-", 0,
 		)
 		require.NoError(t, err)
 	})
@@ -77,7 +77,7 @@ func TestRunKeyAccount_Bech32Output(t *testing.T) {
 }
 
 func TestRunKeyAccount_MissingMnemonic(t *testing.T) {
-	err := RunKeyAccount("", "", "", "", 0)
+	err := RunKeyAccount("", "", "", "-", 0)
 	assert.Error(t, err)
 }
 
@@ -100,7 +100,7 @@ func TestRunKeyAccount_SigningKeyFile(t *testing.T) {
 func TestRunKeyPayment_Bech32Output(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyPayment(
-			testKeyMnemonic, "", "", "", "", 0, 0,
+			testKeyMnemonic, "", "", "-", "", 0, 0,
 		)
 		require.NoError(t, err)
 	})
@@ -112,14 +112,14 @@ func TestRunKeyPayment_Bech32Output(t *testing.T) {
 }
 
 func TestRunKeyPayment_MissingMnemonic(t *testing.T) {
-	err := RunKeyPayment("", "", "", "", "", 0, 0)
+	err := RunKeyPayment("", "", "", "-", "", 0, 0)
 	assert.Error(t, err)
 }
 
 func TestRunKeyStake_Bech32Output(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyStake(
-			testKeyMnemonic, "", "", "", "", 0, 0,
+			testKeyMnemonic, "", "", "-", "", 0, 0,
 		)
 		require.NoError(t, err)
 	})
@@ -131,14 +131,14 @@ func TestRunKeyStake_Bech32Output(t *testing.T) {
 }
 
 func TestRunKeyStake_MissingMnemonic(t *testing.T) {
-	err := RunKeyStake("", "", "", "", "", 0, 0)
+	err := RunKeyStake("", "", "", "-", "", 0, 0)
 	assert.Error(t, err)
 }
 
 func TestRunKeyPolicy_Bech32Output(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyPolicy(
-			testKeyMnemonic, "", "", "", "", 0,
+			testKeyMnemonic, "", "", "-", "", 0,
 		)
 		require.NoError(t, err)
 	})
@@ -150,14 +150,14 @@ func TestRunKeyPolicy_Bech32Output(t *testing.T) {
 }
 
 func TestRunKeyPolicy_MissingMnemonic(t *testing.T) {
-	err := RunKeyPolicy("", "", "", "", "", 0)
+	err := RunKeyPolicy("", "", "", "-", "", 0)
 	assert.Error(t, err)
 }
 
 func TestRunKeyPoolCold_Bech32Output(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyPoolCold(
-			testKeyMnemonic, "", "", "", "", 0,
+			testKeyMnemonic, "", "", "-", "", 0,
 		)
 		require.NoError(t, err)
 	})
@@ -169,14 +169,14 @@ func TestRunKeyPoolCold_Bech32Output(t *testing.T) {
 }
 
 func TestRunKeyPoolCold_MissingMnemonic(t *testing.T) {
-	err := RunKeyPoolCold("", "", "", "", "", 0)
+	err := RunKeyPoolCold("", "", "", "-", "", 0)
 	assert.Error(t, err)
 }
 
 func TestRunKeyDRep_Bech32Output(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyDRep(
-			testKeyMnemonic, "", "", "", "", 0, 0,
+			testKeyMnemonic, "", "", "-", "", 0, 0,
 		)
 		require.NoError(t, err)
 	})
@@ -188,14 +188,14 @@ func TestRunKeyDRep_Bech32Output(t *testing.T) {
 }
 
 func TestRunKeyDRep_MissingMnemonic(t *testing.T) {
-	err := RunKeyDRep("", "", "", "", "", 0, 0)
+	err := RunKeyDRep("", "", "", "-", "", 0, 0)
 	assert.Error(t, err)
 }
 
 func TestRunKeyCommitteeCold_Bech32Output(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyCommitteeCold(
-			testKeyMnemonic, "", "", "", "", 0, 0,
+			testKeyMnemonic, "", "", "-", "", 0, 0,
 		)
 		require.NoError(t, err)
 	})
@@ -207,14 +207,14 @@ func TestRunKeyCommitteeCold_Bech32Output(t *testing.T) {
 }
 
 func TestRunKeyCommitteeCold_MissingMnemonic(t *testing.T) {
-	err := RunKeyCommitteeCold("", "", "", "", "", 0, 0)
+	err := RunKeyCommitteeCold("", "", "", "-", "", 0, 0)
 	assert.Error(t, err)
 }
 
 func TestRunKeyCommitteeHot_Bech32Output(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyCommitteeHot(
-			testKeyMnemonic, "", "", "", "", 0, 0,
+			testKeyMnemonic, "", "", "-", "", 0, 0,
 		)
 		require.NoError(t, err)
 	})
@@ -226,14 +226,14 @@ func TestRunKeyCommitteeHot_Bech32Output(t *testing.T) {
 }
 
 func TestRunKeyCommitteeHot_MissingMnemonic(t *testing.T) {
-	err := RunKeyCommitteeHot("", "", "", "", "", 0, 0)
+	err := RunKeyCommitteeHot("", "", "", "-", "", 0, 0)
 	assert.Error(t, err)
 }
 
 func TestRunKeyVRF_Bech32Output(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyVRF(
-			testKeyMnemonic, "", "", "", "", 0,
+			testKeyMnemonic, "", "", "-", "", 0,
 		)
 		require.NoError(t, err)
 	})
@@ -266,14 +266,14 @@ func TestRunKeyVRF_Bech32Output(t *testing.T) {
 }
 
 func TestRunKeyVRF_MissingMnemonic(t *testing.T) {
-	err := RunKeyVRF("", "", "", "", "", 0)
+	err := RunKeyVRF("", "", "", "-", "", 0)
 	assert.Error(t, err)
 }
 
 func TestRunKeyKES_Bech32Output(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyKES(
-			testKeyMnemonic, "", "", "", "", 0,
+			testKeyMnemonic, "", "", "-", "", 0,
 		)
 		require.NoError(t, err)
 	})
@@ -305,14 +305,14 @@ func TestRunKeyKES_Bech32Output(t *testing.T) {
 }
 
 func TestRunKeyKES_MissingMnemonic(t *testing.T) {
-	err := RunKeyKES("", "", "", "", "", 0)
+	err := RunKeyKES("", "", "", "-", "", 0)
 	assert.Error(t, err)
 }
 
 func TestRunKeyPayment_NonZeroIndex(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyPayment(
-			testKeyMnemonic, "", "", "", "", 1, 2,
+			testKeyMnemonic, "", "", "-", "", 1, 2,
 		)
 		require.NoError(t, err)
 	})
@@ -326,7 +326,7 @@ func TestRunKeyPayment_NonZeroIndex(t *testing.T) {
 func TestRunKeyStake_NonZeroIndex(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyStake(
-			testKeyMnemonic, "", "", "", "", 1, 1,
+			testKeyMnemonic, "", "", "-", "", 1, 1,
 		)
 		require.NoError(t, err)
 	})
@@ -340,7 +340,7 @@ func TestRunKeyStake_NonZeroIndex(t *testing.T) {
 func TestRunKeyRoot_WithPassword(t *testing.T) {
 	output := captureStdout(t, func() {
 		err := RunKeyRoot(
-			testKeyMnemonic, "", "testpassword", "",
+			testKeyMnemonic, "", "testpassword", "-",
 		)
 		require.NoError(t, err)
 	})
@@ -356,13 +356,13 @@ func TestRunKeyPayment_DifferentIndicesProduceDifferentKeys(
 ) {
 	output0 := captureStdout(t, func() {
 		err := RunKeyPayment(
-			testKeyMnemonic, "", "", "", "", 0, 0,
+			testKeyMnemonic, "", "", "-", "", 0, 0,
 		)
 		require.NoError(t, err)
 	})
 	output1 := captureStdout(t, func() {
 		err := RunKeyPayment(
-			testKeyMnemonic, "", "", "", "", 0, 1,
+			testKeyMnemonic, "", "", "-", "", 0, 1,
 		)
 		require.NoError(t, err)
 	})
