@@ -17,9 +17,11 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/blinklabs-io/bursa"
 	"golang.org/x/sys/unix"
 )
 
@@ -43,4 +45,16 @@ func openWalletFileForRead(baseDir, name string) (*os.File, error) {
 		return nil, err
 	}
 	return os.NewFile(uintptr(fd), "wallet.json"), nil
+}
+
+// checkWalletFileMode rejects a wallet file other users can access. Saves
+// create it owner-only, so any group or other bit means it was changed since.
+func checkWalletFileMode(info os.FileInfo) error {
+	if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		return fmt.Errorf(
+			"wallet file has mode %04o; group/other access is not permitted: %w",
+			mode, bursa.ErrInsecureFileMode,
+		)
+	}
+	return nil
 }
