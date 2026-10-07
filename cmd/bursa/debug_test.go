@@ -15,10 +15,13 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -48,33 +51,58 @@ func TestStartDebugListenerDisabledAtPortZero(t *testing.T) {
 	}
 }
 
+// startDebugListenerOnFreePort starts the listener on host at a port picked
+// from the kernel. The probe releases the port before the listener binds it,
+// so a bind lost to another process is retried on a fresh port.
+func startDebugListenerOnFreePort(t *testing.T, host string) (*http.Server, int) {
+	t.Helper()
+	for range 5 {
+		probe, err := net.Listen("tcp", net.JoinHostPort(strings.Trim(host, "[]"), "0"))
+		if err != nil {
+			t.Fatalf("probe listen: %v", err)
+		}
+		port := probe.Addr().(*net.TCPAddr).Port
+		_ = probe.Close()
+		srv, err := startDebugListener(
+			config.DebugConfig{ListenAddress: host, ListenPort: uint(port)},
+		)
+		if errors.Is(err, syscall.EADDRINUSE) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("startDebugListener(%q): %v", host, err)
+		}
+		t.Cleanup(func() { _ = srv.Close() })
+		return srv, port
+	}
+	t.Fatal("no free port after 5 attempts")
+	return nil, 0
+}
+
 func TestStartDebugListenerServesPprofOnLoopback(t *testing.T) {
 	t.Parallel()
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("probe listen: %v", err)
-	}
-	port := probe.Addr().(*net.TCPAddr).Port
-	_ = probe.Close()
-
-	srv, err := startDebugListener(
-		config.DebugConfig{ListenAddress: "127.0.0.1", ListenPort: uint(port)},
-	)
-	if err != nil {
-		t.Fatalf("startDebugListener: %v", err)
-	}
-	t.Cleanup(func() { _ = srv.Close() })
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(
-		"http://127.0.0.1:" + strconv.Itoa(port) + "/debug/pprof/",
-	)
-	if err != nil {
-		t.Fatalf("GET pprof index: %v", err)
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status %d, want 200", resp.StatusCode)
+	for _, host := range []string{"127.0.0.1", "[::1]", "::1"} {
+		if strings.Contains(host, ":") {
+			ln, err := net.Listen("tcp", "[::1]:0")
+			if err != nil {
+				t.Logf("skipping %q: no IPv6 loopback: %v", host, err)
+				continue
+			}
+			_ = ln.Close()
+		}
+		_, port := startDebugListenerOnFreePort(t, host)
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get(
+			"http://" + net.JoinHostPort(strings.Trim(host, "[]"), strconv.Itoa(port)) +
+				"/debug/pprof/",
+		)
+		if err != nil {
+			t.Fatalf("%s: GET pprof index: %v", host, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status %d, want 200", host, resp.StatusCode)
+		}
 	}
 }

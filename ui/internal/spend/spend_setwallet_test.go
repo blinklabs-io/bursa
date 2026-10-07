@@ -15,15 +15,14 @@
 package spend
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/blinklabs-io/bursa/ui/internal/keystore"
+	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
 
 // TestSetWalletReattachAcceptsEquivalentUnicodeForm re-attaches to a keystore
-// created from one Unicode form of a phrase using a different form that
+// holding one Unicode form of a phrase using a different form that
 // decodes to the same entropy. Full-width Latin folds to ASCII under NFKD.
 func TestSetWalletReattachAcceptsEquivalentUnicodeForm(t *testing.T) {
 	t.Parallel()
@@ -37,12 +36,11 @@ func TestSetWalletReattachAcceptsEquivalentUnicodeForm(t *testing.T) {
 		t.Fatal("full-width form is identical, vector proves nothing")
 	}
 
-	ks := keystore.New(filepath.Join(t.TempDir(), "keystore.json"))
-	s := NewService(newFakeChain(0, ""), ks, nil)
-	want, err := s.SetWallet(testMnemonic, "preview", "spend-password-1")
+	want, err := wallet.Derive(testMnemonic, "preview", addressWindow)
 	if err != nil {
-		t.Fatalf("SetWallet create: %v", err)
+		t.Fatalf("Derive: %v", err)
 	}
+	s := NewService(newFakeChain(0, ""), &trackingKeystore{mnemonic: testMnemonic}, nil)
 	got, err := s.SetWallet(fullWidth, "preview", "spend-password-1")
 	if err != nil {
 		t.Fatalf("SetWallet re-attach with equivalent form: %v", err)

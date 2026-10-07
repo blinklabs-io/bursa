@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -89,9 +90,21 @@ func RunCreate(cfg *config.Config, output string) error {
 }
 
 // writeWalletDir writes the wallet files into output, creating it if needed.
+// It refuses an existing directory other users can write to, where they could
+// replace the files after they are written.
 func writeWalletDir(output string, fileMap []map[string]string) error {
 	if err := os.MkdirAll(output, 0o700); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+	info, err := os.Stat(output)
+	if err != nil {
+		return fmt.Errorf("failed to stat output directory: %w", err)
+	}
+	if mode := info.Mode().Perm(); runtime.GOOS != "windows" && mode&0o022 != 0 {
+		return fmt.Errorf(
+			"output directory %q has mode %04o; group/other write access is not permitted",
+			output, mode,
+		)
 	}
 	if err := writeWalletOutputs(output, fileMap); err != nil {
 		return err
@@ -157,8 +170,11 @@ func resolveMnemonic(mnemonic, mnemonicFile string) (string, error) {
 				"set MNEMONIC env var, or create seed.txt",
 		)
 	}
-
-	return strings.TrimSpace(data), nil
+	resolved := strings.TrimSpace(data)
+	if resolved == "" {
+		return "", fmt.Errorf("mnemonic file %q is empty", filePath)
+	}
+	return resolved, nil
 }
 
 func RunRestore(

@@ -36,7 +36,7 @@ func TestFileStoreGetWalletRejectsGroupOrOtherAccess(t *testing.T) {
 	require.NoError(t, w.Save(ctx))
 	path := store.walletPath("perm")
 
-	for _, mode := range []os.FileMode{0o644, 0o640, 0o604, 0o660, 0o666} {
+	for _, mode := range []os.FileMode{0o644, 0o640, 0o604, 0o660, 0o666, 0o610, 0o601} {
 		require.NoError(t, os.Chmod(path, mode))
 		_, err := store.GetWallet(ctx, "perm")
 		assert.ErrorIs(t, err, bursa.ErrInsecureFileMode, "mode %04o", mode)

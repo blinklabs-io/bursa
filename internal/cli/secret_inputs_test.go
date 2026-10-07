@@ -121,3 +121,41 @@ func TestRunRestoreWithoutOutputKeepsKeysOutOfLog(t *testing.T) {
 	assert.NotContains(t, logged, "cborHex")
 	assert.NotContains(t, logged, ".skey")
 }
+
+func TestRunCreateRefusesWritableOutputDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory mode bits do not describe access on windows")
+	}
+	cfg := &config.Config{Network: "preview", Mnemonic: testKeyMnemonic}
+	for _, mode := range []os.FileMode{0o770, 0o707, 0o1777} {
+		dir := filepath.Join(t.TempDir(), "wallet")
+		require.NoError(t, os.Mkdir(dir, 0o700))
+		require.NoError(t, os.Chmod(dir, mode))
+		var err error
+		captureLog(t, func() { err = RunCreate(cfg, dir) })
+		require.Error(t, err, "mode %04o", mode)
+		_, statErr := os.Stat(filepath.Join(dir, "seed.txt"))
+		assert.ErrorIs(t, statErr, os.ErrNotExist, "mode %04o", mode)
+	}
+	dir := filepath.Join(t.TempDir(), "wallet")
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	require.NoError(t, os.Chmod(dir, 0o755))
+	var err error
+	captureLog(t, func() { err = RunCreate(cfg, dir) })
+	require.NoError(t, err)
+}
+
+func TestResolveMnemonicRejectsEmptySource(t *testing.T) {
+	old := secretStdin
+	secretStdin = strings.NewReader("\n")
+	t.Cleanup(func() { secretStdin = old })
+	_, err := resolveMnemonic("", "-")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"-" is empty`)
+
+	path := filepath.Join(t.TempDir(), "seed.txt")
+	require.NoError(t, os.WriteFile(path, []byte(" \n"), 0o600))
+	_, err = resolveMnemonic("", path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is empty")
+}

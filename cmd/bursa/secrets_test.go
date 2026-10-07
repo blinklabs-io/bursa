@@ -84,6 +84,10 @@ func TestDerivationCommandsOfferSecretFiles(t *testing.T) {
 			c.Flags().Lookup("password-file") == nil {
 			t.Errorf("%s has --password but no --password-file", c.CommandPath())
 		}
+		if c.Flags().Lookup("mnemonic") != nil &&
+			c.Flags().Lookup("mnemonic-file") == nil {
+			t.Errorf("%s has --mnemonic but no --mnemonic-file", c.CommandPath())
+		}
 		for _, sub := range c.Commands() {
 			walk(sub)
 		}

@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -48,12 +49,15 @@ func startDebugListener(cfg config.DebugConfig) (*http.Server, error) {
 			cfg.ListenAddress,
 		)
 	}
-	addr := net.JoinHostPort(cfg.ListenAddress, strconv.FormatUint(uint64(cfg.ListenPort), 10))
+	// The loopback check accepts a bracketed IPv6 literal, which JoinHostPort
+	// would bracket a second time.
+	host := strings.Trim(strings.TrimSpace(cfg.ListenAddress), "[]")
+	addr := net.JoinHostPort(host, strconv.FormatUint(uint64(cfg.ListenPort), 10))
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("starting debug listener on " + addr)
+	slog.Info("starting debug listener", "addr", addr)
 	debugger := &http.Server{ReadHeaderTimeout: 60 * time.Second}
 	go func() {
 		if err := debugger.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -78,8 +82,7 @@ func apiCommand() *cobra.Command {
 			logging.ConfigureJSON()
 
 			if _, err := startDebugListener(cfg.Debug); err != nil {
-				logging.GetLogger().Error("failed to start debug listener", "error", err)
-				os.Exit(1)
+				logging.GetLogger().Warn("failed to start debug listener; continuing without pprof", "error", err)
 			}
 
 			// Create a context that can be canceled for graceful shutdown
