@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blinklabs-io/bursa/internal/logging"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -170,4 +171,37 @@ func TestRunHashMetadataKnownHash(t *testing.T) {
 	// Verify the hash matches the expected value
 	expectedHash := "8daf56b8e2174d97fbf3928f89b69195194e6b592b01d176bfb3a048211f5e2d"
 	assert.Equal(t, expectedHash, hash, "Hash should match expected Blake2b-256 value")
+}
+
+// canonicalMetadataVector is a pool-metadata document in RFC 8785 form and its
+// Blake2b-256 hash. The same pair is pinned in the ui poolops tests; every
+// command hashing metadata must produce this hash for these exact bytes.
+const (
+	canonicalMetadataVector = `{"description":"A pool.","homepage":"https://pool.example","name":"My Pool","ticker":"POOL"}`
+	canonicalMetadataHash   = "1687692d9e04a2e58c63ca972c9594cbdea9bae5007455b996dc0a72748abfa5"
+)
+
+func TestHashCommandsAgreeOnCanonicalVector(t *testing.T) {
+	// Keep log lines off the captured stdout, whatever ran before.
+	logging.ConfigureText()
+	file := filepath.Join(t.TempDir(), "metadata.json")
+	require.NoError(t, os.WriteFile(file, []byte(canonicalMetadataVector), 0o600))
+
+	hashes := map[string]string{
+		"hash metadata": captureStdout(t, func() {
+			require.NoError(t, RunHashMetadata(file, "pool"))
+		}),
+		"hash anchor-data --file-text": captureStdout(t, func() {
+			require.NoError(t, RunHashAnchorData("", file, "", "", "", ""))
+		}),
+		"hash anchor-data --file-binary": captureStdout(t, func() {
+			require.NoError(t, RunHashAnchorData("", "", file, "", "", ""))
+		}),
+		"hash anchor-data --text": captureStdout(t, func() {
+			require.NoError(t, RunHashAnchorData(canonicalMetadataVector, "", "", "", "", ""))
+		}),
+	}
+	for name, got := range hashes {
+		assert.Equal(t, canonicalMetadataHash, got, name)
+	}
 }

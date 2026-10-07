@@ -150,6 +150,9 @@ func (s *FileStore) GetWallet(
 	if !openedInfo.Mode().IsRegular() {
 		return nil, fmt.Errorf("wallet %s path is not a regular file", name)
 	}
+	if err := checkWalletFileMode(openedInfo); err != nil {
+		return nil, fmt.Errorf("wallet %s: %w", name, err)
+	}
 	raw, err := io.ReadAll(io.LimitReader(file, maxWalletFileSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read wallet file: %w", err)
