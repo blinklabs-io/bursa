@@ -133,7 +133,7 @@ func fileURLDir(u *url.URL) (string, bool) {
 	if !filepath.IsAbs(p) {
 		return "", false
 	}
-	info, err := os.Stat(p)
+	info, err := os.Stat(p) //nolint:gosec // G703: p is a cleaned absolute local path; remote hosts are rejected above
 	if err != nil || !info.IsDir() {
 		return "", false
 	}

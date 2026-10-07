@@ -46,6 +46,12 @@ func RunKeyDecrypt(inFile, outFile, passphrase string) error {
 	if passphrase == "" {
 		return errors.New("--passphrase is required")
 	}
+	if outFile == "" {
+		return errors.New(
+			"no destination for decrypted key output: pass --out-file <path>, " +
+				"or --out-file - to write to standard output",
+		)
+	}
 	data, err := os.ReadFile(inFile)
 	if err != nil {
 		return err
@@ -54,7 +60,7 @@ func RunKeyDecrypt(inFile, outFile, passphrase string) error {
 	if err != nil {
 		return err
 	}
-	if outFile == "" {
+	if outFile == stdoutDestination {
 		fmt.Print(string(dec))
 		return nil
 	}

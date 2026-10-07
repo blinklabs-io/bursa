@@ -16,20 +16,56 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	_ "net/http/pprof" // #nosec G108
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/api"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	"github.com/blinklabs-io/bursa/internal/signer"
 	"github.com/spf13/cobra"
 )
+
+// startDebugListener serves the pprof endpoints on a loopback address. It
+// returns nil when the listener is disabled (port 0) and refuses any address
+// other hosts could reach, since the endpoints are unauthenticated.
+func startDebugListener(cfg config.DebugConfig) (*http.Server, error) {
+	if cfg.ListenPort == 0 {
+		return nil, nil
+	}
+	if !signer.IsLoopbackListenAddress(cfg.ListenAddress) {
+		return nil, fmt.Errorf(
+			"debug listen address %q must be a loopback address",
+			cfg.ListenAddress,
+		)
+	}
+	// The loopback check accepts a bracketed IPv6 literal, which JoinHostPort
+	// would bracket a second time.
+	host := strings.Trim(strings.TrimSpace(cfg.ListenAddress), "[]")
+	addr := net.JoinHostPort(host, strconv.FormatUint(uint64(cfg.ListenPort), 10))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("starting debug listener", "addr", addr)
+	debugger := &http.Server{ReadHeaderTimeout: 60 * time.Second}
+	go func() {
+		if err := debugger.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("debug listener stopped", "error", err)
+		}
+	}()
+	return debugger, nil
+}
 
 func apiCommand() *cobra.Command {
 	apiCommand := cobra.Command{
@@ -45,34 +81,8 @@ func apiCommand() *cobra.Command {
 			}
 			logging.ConfigureJSON()
 
-			// Start debug listener
-			if cfg.Debug.ListenPort > 0 {
-				slog.Info(
-					fmt.Sprintf(
-						"starting debug listener on %s:%d",
-						cfg.Debug.ListenAddress,
-						cfg.Debug.ListenPort,
-					),
-				)
-				go func() {
-					debugger := &http.Server{
-						Addr: fmt.Sprintf(
-							"%s:%d",
-							cfg.Debug.ListenAddress,
-							cfg.Debug.ListenPort,
-						),
-						ReadHeaderTimeout: 60 * time.Second,
-					}
-					err := debugger.ListenAndServe()
-					if err != nil {
-						slog.Error(
-							"failed to start debug listener",
-							"error",
-							err,
-						)
-						return
-					}
-				}()
+			if _, err := startDebugListener(cfg.Debug); err != nil {
+				logging.GetLogger().Warn("failed to start debug listener; continuing without pprof", "error", err)
 			}
 
 			// Create a context that can be canceled for graceful shutdown
