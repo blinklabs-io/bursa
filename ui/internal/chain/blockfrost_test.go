@@ -1371,6 +1371,9 @@ func TestGovernanceActionsCacheIgnoresCallerMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second read: %v", err)
 	}
+	if len(second) != 1 {
+		t.Fatalf("second read returned %d rows, want 1", len(second))
+	}
 	if second[0].Type != "info" {
 		t.Fatalf("cached row type = %q, want info", second[0].Type)
 	}
