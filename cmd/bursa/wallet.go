@@ -49,12 +49,15 @@ func walletCreateCommand() *cobra.Command {
 				logging.GetLogger().Error("failed to load config", "error", err)
 				os.Exit(1)
 			}
-			cli.RunCreate(cfg, output)
+			if err := cli.RunCreate(cfg, output); err != nil {
+				logging.GetLogger().Error("failed to create wallet", "error", err)
+				os.Exit(1)
+			}
 		},
 	}
 
 	walletCreateCommand.PersistentFlags().
-		StringVar(&output, "output", "", "optional path to write files")
+		StringVar(&output, "output", "", "directory to write the mnemonic and key files to (required)")
 
 	return &walletCreateCommand
 }
@@ -71,40 +74,33 @@ func walletRestoreCommand() *cobra.Command {
 		Long: `Restores a wallet from an existing mnemonic phrase.
 
 The mnemonic can be provided via (in order of precedence):
-  1. --mnemonic flag (direct string)
+  1. --mnemonic flag (deprecated: visible in the process list)
   2. MNEMONIC environment variable
-  3. --mnemonic-file flag (path to file containing mnemonic)
+  3. --mnemonic-file flag (path to file containing mnemonic, "-" for standard input)
   4. Default file "seed.txt" in current directory
 
 The mnemonic should be a valid BIP-39 mnemonic (typically 24 words).
 An optional password can be provided for additional security.
 
 Examples:
-  bursa wallet restore --mnemonic "word1 word2 ... word24"
+  bursa wallet restore --mnemonic-file seed.txt
   bursa wallet restore --mnemonic-file /path/to/seed.txt
   bursa wallet restore  # reads from MNEMONIC env var or seed.txt
-  bursa wallet restore --password "secret" --output ./wallet-keys`,
+  bursa wallet restore --password-file password.txt --output ./wallet-keys`,
 		Run: func(cmd *cobra.Command, args []string) {
 			cfg, err := config.LoadConfig()
 			if err != nil {
 				logging.GetLogger().Error("failed to load config", "error", err)
 				os.Exit(1)
 			}
-			cli.RunRestore(cfg, mnemonic, mnemonicFile, password, restoreOutput)
+			if err := cli.RunRestore(cfg, mnemonic, mnemonicFile, password, restoreOutput); err != nil {
+				logging.GetLogger().Error("failed to restore wallet", "error", err)
+				os.Exit(1)
+			}
 		},
 	}
 
-	walletRestoreCommand.Flags().
-		StringVar(&mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
-	walletRestoreCommand.Flags().
-		StringVar(
-			&mnemonicFile,
-			"mnemonic-file",
-			"",
-			"Path to file containing mnemonic (default: seed.txt)",
-		)
-	walletRestoreCommand.Flags().
-		StringVar(&password, "password", "", "Optional password for key derivation")
+	addSecretFlags(&walletRestoreCommand, &mnemonic, &mnemonicFile, &password)
 	walletRestoreCommand.Flags().
 		StringVar(&restoreOutput, "output", "", "Optional path to write key files")
 

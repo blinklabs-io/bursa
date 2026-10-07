@@ -33,3 +33,6 @@ func openRegularFileForRead(path string) (*os.File, error) {
 func openWalletFileForRead(baseDir, name string) (*os.File, error) {
 	return os.Open(filepath.Join(baseDir, "wallet-"+name, "wallet.json"))
 }
+
+// checkWalletFileMode is a no-op where file modes do not describe access.
+func checkWalletFileMode(os.FileInfo) error { return nil }
