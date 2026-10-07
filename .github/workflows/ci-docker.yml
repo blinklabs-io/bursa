@@ -11,6 +11,10 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   # The release manifest composition cannot be rehearsed on a pull request, so
   # its source and destination tags are checked against a docker stub instead.
@@ -24,6 +28,7 @@ jobs:
         run: bash .github/scripts/test-image-manifests.sh
 
   docker:
+    needs: [image-manifest-script]
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +37,7 @@ jobs:
             arch: amd64
           - os: ubuntu-24.04-arm
             arch: arm64
+      max-parallel: 1
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1

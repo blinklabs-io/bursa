@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   web:
     name: web
@@ -38,6 +42,7 @@ jobs:
 
   ui-go:
     name: ui-go
+    needs: [web]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
@@ -79,6 +84,7 @@ jobs:
   # remains that platform's guard.
   ui-webview:
     name: ui-webview (${{ matrix.os }})
+    needs: [ui-go]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -88,6 +94,7 @@ jobs:
             os: linux
           - runner: macos-15
             os: darwin
+      max-parallel: 1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
@@ -121,6 +128,7 @@ jobs:
 
   ui-lint:
     name: ui-lint
+    needs: [ui-go]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1

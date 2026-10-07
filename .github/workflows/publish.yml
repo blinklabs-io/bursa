@@ -54,7 +54,7 @@ jobs:
             echo "::error::This workflow may only be dispatched from ${DEFAULT_BRANCH}. Its macOS job holds the Apple signing and notarization credentials and runs the packaging scripts from the selected ref."
             exit 1
           fi
-      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
+      - run: echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 https://github.com/actions/github-script/releases/tag/v9.0.0
         id: create-release
         if: startsWith(github.ref, 'refs/tags/')
@@ -106,6 +106,7 @@ jobs:
           - runner: ubuntu-latest
             os: windows
             arch: arm64
+      max-parallel: 2
     runs-on: ${{ matrix.runner }}
     needs: [create-draft-release]
     permissions:
@@ -117,7 +118,7 @@ jobs:
       packages: write
       statuses: write
     steps:
-      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
+      - run: echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           fetch-depth: '0'
@@ -242,6 +243,7 @@ jobs:
   # Signing/notarization is env-gated: unsigned artifacts are produced on
   # non-tag pushes (validating the packaging path) and signed ones on tags.
   build-wallet-binaries:
+    if: ${{ always() && needs.create-draft-release.result == 'success' && (github.event_name == 'workflow_dispatch' || needs.build-binaries.result == 'success') }}
     strategy:
       fail-fast: false
       matrix:
@@ -267,8 +269,9 @@ jobs:
           - runner: ubuntu-latest
             os: freebsd
             arch: arm64
+      max-parallel: 2
     runs-on: ${{ matrix.runner }}
-    needs: [create-draft-release]
+    needs: [create-draft-release, build-binaries]
     permissions:
       actions: write
       attestations: write
@@ -735,8 +738,9 @@ jobs:
             arch: amd64
           - os: ubuntu-24.04-arm
             arch: arm64
+      max-parallel: 2
     runs-on: ${{ matrix.os }}
-    needs: [create-draft-release]
+    needs: [create-draft-release, build-wallet-binaries]
     permissions:
       actions: write
       attestations: write
@@ -746,7 +750,7 @@ jobs:
       packages: write
       statuses: write
     steps:
-      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
+      - run: echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           fetch-depth: '0'
