@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -40,11 +41,17 @@ import (
 )
 
 // It remains a default entrypoint for creation
-func Run(cfg *config.Config, output string) {
-	RunCreate(cfg, output)
+func Run(cfg *config.Config, output string) error {
+	return RunCreate(cfg, output)
 }
 
-func RunCreate(cfg *config.Config, output string) {
+func RunCreate(cfg *config.Config, output string) error {
+	if output == "" {
+		return errors.New(
+			"wallet create writes the mnemonic and private keys: " +
+				"an output directory is required",
+		)
+	}
 	logger := logging.GetLogger()
 	// Load mnemonic
 	var err error
@@ -52,66 +59,83 @@ func RunCreate(cfg *config.Config, output string) {
 	if mnemonic == "" {
 		mnemonic, err = bursa.GenerateMnemonic()
 		if err != nil {
-			logger.Error("failed to generate mnemonic", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("failed to generate mnemonic: %w", err)
 		}
 	}
 	w, err := bursa.NewWallet(mnemonic, bursa.WithNetwork(cfg.Network))
 	if err != nil {
-		logger.Error("failed to initialize wallet", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to initialize wallet: %w", err)
 	}
 	if w == nil {
-		logger.Error("wallet empty after init... this shouldn't happen")
-		os.Exit(1)
+		return errors.New("wallet empty after init... this shouldn't happen")
 	}
 
 	logger.Info("Loaded mnemonic and generated address")
 
 	keyFiles, err := bursa.ExtractKeyFiles(w)
 	if err != nil {
-		logger.Error("failed to extract key files", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to extract key files: %w", err)
 	}
 
-	if output == "" {
-		logger.Info("MNEMONIC", "mnemonic", w.Mnemonic)
-		logger.Info("PAYMENT_ADDRESS", "payment_address", w.PaymentAddress)
-		logger.Info("STAKE_ADDRESS", "stake_address", w.StakeAddress)
-		for key, value := range keyFiles {
-			logger.Info(key, key, value)
-		}
-	} else {
-		fmt.Printf("Output dir: %v\n", output)
-		_, err := os.Stat(output)
-		if os.IsNotExist(err) {
-			err = os.MkdirAll(output, 0o755)
-			if err != nil {
-				panic(err)
-			}
-		}
-		fileMap := make([]map[string]string, 0, 3+len(keyFiles))
-		fileMap = append(fileMap,
-			map[string]string{"seed.txt": w.Mnemonic},
-			map[string]string{"payment.addr": w.PaymentAddress},
-			map[string]string{"stake.addr": w.StakeAddress},
-		)
-		for key, value := range keyFiles {
-			fileMap = append(fileMap, map[string]string{key: value})
-		}
-		err = writeWalletOutputs(output, fileMap)
-		if err != nil {
-			logger.Error("error occurred", "error", err)
-			os.Exit(1)
-		}
-		logger.Info("wrote output files", "directory", output)
+	fileMap := make([]map[string]string, 0, 3+len(keyFiles))
+	fileMap = append(fileMap,
+		map[string]string{"seed.txt": w.Mnemonic},
+		map[string]string{"payment.addr": w.PaymentAddress},
+		map[string]string{"stake.addr": w.StakeAddress},
+	)
+	for key, value := range keyFiles {
+		fileMap = append(fileMap, map[string]string{key: value})
 	}
+	return writeWalletDir(output, fileMap)
+}
+
+// writeWalletDir writes the wallet files into output, creating it if needed.
+// It refuses an existing directory other users can write to, where they could
+// replace the files after they are written.
+func writeWalletDir(output string, fileMap []map[string]string) error {
+	if err := os.MkdirAll(output, 0o700); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+	info, err := os.Stat(output)
+	if err != nil {
+		return fmt.Errorf("failed to stat output directory: %w", err)
+	}
+	if mode := info.Mode().Perm(); runtime.GOOS != "windows" && mode&0o022 != 0 {
+		return fmt.Errorf(
+			"output directory %q has mode %04o; group/other write access is not permitted",
+			output, mode,
+		)
+	}
+	if err := writeWalletOutputs(output, fileMap); err != nil {
+		return err
+	}
+	logging.GetLogger().Info("wrote output files", "directory", output)
+	return nil
+}
+
+// secretStdin is where a secret file path of "-" is read from.
+var secretStdin io.Reader = os.Stdin
+
+// ReadSecretFile reads a secret from path, or from stdin when path is "-",
+// without the trailing line break.
+func ReadSecretFile(path string, stdin io.Reader) (string, error) {
+	var data []byte
+	var err error
+	if path == "-" {
+		data, err = io.ReadAll(stdin)
+	} else {
+		data, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(data), "\r\n"), nil
 }
 
 // resolveMnemonic loads a mnemonic from various sources in order of precedence:
 // 1. Direct mnemonic string (--mnemonic flag)
 // 2. MNEMONIC environment variable
-// 3. File specified by mnemonicFile (--mnemonic-file flag)
+// 3. File specified by mnemonicFile (--mnemonic-file flag), "-" for stdin
 // 4. Default file "seed.txt" in current directory
 func resolveMnemonic(mnemonic, mnemonicFile string) (string, error) {
 	// 1. Direct mnemonic string takes highest precedence
@@ -130,7 +154,7 @@ func resolveMnemonic(mnemonic, mnemonicFile string) (string, error) {
 		filePath = "seed.txt"
 	}
 
-	data, err := os.ReadFile(filePath)
+	data, err := ReadSecretFile(filePath, secretStdin)
 	if err != nil {
 		if mnemonicFile != "" {
 			// User explicitly specified a file that doesn't exist
@@ -146,21 +170,23 @@ func resolveMnemonic(mnemonic, mnemonicFile string) (string, error) {
 				"set MNEMONIC env var, or create seed.txt",
 		)
 	}
-
-	return strings.TrimSpace(string(data)), nil
+	resolved := strings.TrimSpace(data)
+	if resolved == "" {
+		return "", fmt.Errorf("mnemonic file %q is empty", filePath)
+	}
+	return resolved, nil
 }
 
 func RunRestore(
 	cfg *config.Config,
 	mnemonic, mnemonicFile, password, output string,
-) {
+) error {
 	logger := logging.GetLogger()
 
 	// Load mnemonic from various sources (in order of precedence)
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
-		logger.Error("failed to load mnemonic", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load mnemonic: %w", err)
 	}
 
 	w, err := bursa.NewWallet(
@@ -169,54 +195,35 @@ func RunRestore(
 		bursa.WithPassword(password),
 	)
 	if err != nil {
-		logger.Error("failed to restore wallet", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to restore wallet: %w", err)
 	}
 	if w == nil {
-		logger.Error("wallet empty after restore... this shouldn't happen")
-		os.Exit(1)
+		return errors.New("wallet empty after restore... this shouldn't happen")
 	}
 
 	logger.Info("Restored wallet from mnemonic")
 
-	keyFiles, err := bursa.ExtractKeyFiles(w)
-	if err != nil {
-		logger.Error("failed to extract key files", "error", err)
-		os.Exit(1)
-	}
-
+	// Key files hold private keys, so they only ever go to --output; the
+	// diagnostic log carries addresses alone.
 	if output == "" {
-		// Don't output the mnemonic since the user already has it
 		logger.Info("PAYMENT_ADDRESS", "payment_address", w.PaymentAddress)
 		logger.Info("STAKE_ADDRESS", "stake_address", w.StakeAddress)
-		for key, value := range keyFiles {
-			logger.Info(key, key, value)
-		}
-	} else {
-		fmt.Printf("Output dir: %v\n", output)
-		_, err := os.Stat(output)
-		if os.IsNotExist(err) {
-			err = os.MkdirAll(output, 0o755)
-			if err != nil {
-				logger.Error("failed to create output directory", "error", err)
-				os.Exit(1)
-			}
-		}
-		fileMap := make([]map[string]string, 0, 2+len(keyFiles))
-		fileMap = append(fileMap,
-			map[string]string{"payment.addr": w.PaymentAddress},
-			map[string]string{"stake.addr": w.StakeAddress},
-		)
-		for key, value := range keyFiles {
-			fileMap = append(fileMap, map[string]string{key: value})
-		}
-		err = writeWalletOutputs(output, fileMap)
-		if err != nil {
-			logger.Error("error occurred", "error", err)
-			os.Exit(1)
-		}
-		logger.Info("wrote output files", "directory", output)
+		return nil
 	}
+
+	keyFiles, err := bursa.ExtractKeyFiles(w)
+	if err != nil {
+		return fmt.Errorf("failed to extract key files: %w", err)
+	}
+	fileMap := make([]map[string]string, 0, 2+len(keyFiles))
+	fileMap = append(fileMap,
+		map[string]string{"payment.addr": w.PaymentAddress},
+		map[string]string{"stake.addr": w.StakeAddress},
+	)
+	for key, value := range keyFiles {
+		fileMap = append(fileMap, map[string]string{key: value})
+	}
+	return writeWalletDir(output, fileMap)
 }
 
 func RunLoad(dir string, showSecrets bool) {
@@ -233,8 +240,37 @@ func RunLoad(dir string, showSecrets bool) {
 	bursa.PrintLoadedKeys(keys, showSecrets)
 }
 
+// stdoutDestination is the destination value that selects standard output.
+const stdoutDestination = "-"
+
+// keyDestination checks that a derivation command was told where its secret
+// key material goes. It reports whether the secret is printed to standard
+// output, which must be requested with "-"; leaving the signing key file empty
+// is an error unless only a verification key file is requested.
+func keyDestination(signingKeyFile, verificationKeyFile string) (bool, error) {
+	switch {
+	case signingKeyFile == stdoutDestination && verificationKeyFile != "":
+		return false, errors.New(
+			"signing key destination \"-\" cannot be combined with a verification key file",
+		)
+	case signingKeyFile == stdoutDestination:
+		return true, nil
+	case signingKeyFile == "" && verificationKeyFile == "":
+		return false, errors.New(
+			"no destination for secret key output: pass --signing-key-file " +
+				"<path>, or --signing-key-file - to write to standard output",
+		)
+	}
+	return false, nil
+}
+
 // RunKeyRoot derives and outputs the root extended private key from a mnemonic
 func RunKeyRoot(mnemonic, mnemonicFile, password, signingKeyFile string) error {
+	toStdout, err := keyDestination(signingKeyFile, "")
+	if err != nil {
+		return err
+	}
+
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -246,7 +282,7 @@ func RunKeyRoot(mnemonic, mnemonicFile, password, signingKeyFile string) error {
 	}
 
 	// If signing key file is specified, write to file
-	if signingKeyFile != "" {
+	if !toStdout {
 		// Create KeyFile for root signing key
 		rootSKey, err := bursa.GetRootSKey(rootKey)
 		if err != nil {
@@ -269,6 +305,11 @@ func RunKeyAccount(
 	mnemonic, mnemonicFile, password, signingKeyFile string,
 	accountIndex uint32,
 ) error {
+	toStdout, err := keyDestination(signingKeyFile, "")
+	if err != nil {
+		return err
+	}
+
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -285,7 +326,7 @@ func RunKeyAccount(
 	}
 
 	// If signing key file is specified, write to file
-	if signingKeyFile != "" {
+	if !toStdout {
 		// Create KeyFile for account signing key
 		accountSKey, err := bursa.GetAccountSKey(accountKey)
 		if err != nil {
@@ -312,6 +353,11 @@ func RunKeyPayment(
 	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	accountIndex, paymentIndex uint32,
 ) error {
+	toStdout, err := keyDestination(signingKeyFile, verificationKeyFile)
+	if err != nil {
+		return err
+	}
+
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -333,7 +379,7 @@ func RunKeyPayment(
 	}
 
 	// If key files are specified, write to files
-	if signingKeyFile != "" || verificationKeyFile != "" {
+	if !toStdout {
 		if signingKeyFile != "" {
 			paymentSKey, err := bursa.GetPaymentSKey(paymentKey)
 			if err != nil {
@@ -370,6 +416,11 @@ func RunKeyStake(
 	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	accountIndex, stakeIndex uint32,
 ) error {
+	toStdout, err := keyDestination(signingKeyFile, verificationKeyFile)
+	if err != nil {
+		return err
+	}
+
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -391,7 +442,7 @@ func RunKeyStake(
 	}
 
 	// If key files are specified, write to files
-	if signingKeyFile != "" || verificationKeyFile != "" {
+	if !toStdout {
 		if signingKeyFile != "" {
 			stakeSKey, err := bursa.GetStakeSKey(stakeKey)
 			if err != nil {
@@ -428,6 +479,11 @@ func RunKeyPolicy(
 	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	index uint32,
 ) error {
+	toStdout, err := keyDestination(signingKeyFile, verificationKeyFile)
+	if err != nil {
+		return err
+	}
+
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -444,7 +500,7 @@ func RunKeyPolicy(
 	}
 
 	// If key files are specified, write to files
-	if signingKeyFile != "" || verificationKeyFile != "" {
+	if !toStdout {
 		if signingKeyFile != "" {
 			policySKey, err := bursa.GetPolicySKey(policyKey)
 			if err != nil {
@@ -515,6 +571,11 @@ func RunKeyPoolCold(
 	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	index uint32,
 ) error {
+	toStdout, err := keyDestination(signingKeyFile, verificationKeyFile)
+	if err != nil {
+		return err
+	}
+
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -532,7 +593,7 @@ func RunKeyPoolCold(
 	}
 
 	// If key files are specified, write to files
-	if signingKeyFile != "" || verificationKeyFile != "" {
+	if !toStdout {
 		if signingKeyFile != "" {
 			poolColdSKey, err := bursa.GetPoolColdSKey(poolColdKey)
 			if err != nil {
@@ -685,6 +746,11 @@ func RunKeyCalidus(
 	signingKeyFile, verificationKeyFile string,
 	accountIndex, index uint32,
 ) error {
+	toStdout, err := keyDestination(signingKeyFile, verificationKeyFile)
+	if err != nil {
+		return err
+	}
+
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -709,7 +775,7 @@ func RunKeyCalidus(
 	}
 
 	// If key files are specified, write to files
-	if signingKeyFile != "" || verificationKeyFile != "" {
+	if !toStdout {
 		if signingKeyFile != "" {
 			calidusSKey, err := bursa.GetCalidusSKey(calidusKey)
 			if err != nil {
@@ -781,6 +847,11 @@ func RunKeyDRep(
 	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	accountIndex, index uint32,
 ) error {
+	toStdout, err := keyDestination(signingKeyFile, verificationKeyFile)
+	if err != nil {
+		return err
+	}
+
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -803,7 +874,7 @@ func RunKeyDRep(
 	}
 
 	// If key files are specified, write to files
-	if signingKeyFile != "" || verificationKeyFile != "" {
+	if !toStdout {
 		if signingKeyFile != "" {
 			drepSKey, err := bursa.GetDRepSKey(drepKey)
 			if err != nil {
@@ -840,6 +911,11 @@ func RunKeyCommitteeCold(
 	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	accountIndex, index uint32,
 ) error {
+	toStdout, err := keyDestination(signingKeyFile, verificationKeyFile)
+	if err != nil {
+		return err
+	}
+
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -862,7 +938,7 @@ func RunKeyCommitteeCold(
 	}
 
 	// If key files are specified, write to files
-	if signingKeyFile != "" || verificationKeyFile != "" {
+	if !toStdout {
 		if signingKeyFile != "" {
 			committeeColdSKey, err := bursa.GetCommitteeColdSKey(committeeColdKey)
 			if err != nil {
@@ -899,6 +975,11 @@ func RunKeyCommitteeHot(
 	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	accountIndex, index uint32,
 ) error {
+	toStdout, err := keyDestination(signingKeyFile, verificationKeyFile)
+	if err != nil {
+		return err
+	}
+
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -921,7 +1002,7 @@ func RunKeyCommitteeHot(
 	}
 
 	// If key files are specified, write to files
-	if signingKeyFile != "" || verificationKeyFile != "" {
+	if !toStdout {
 		if signingKeyFile != "" {
 			committeeHotSKey, err := bursa.GetCommitteeHotSKey(committeeHotKey)
 			if err != nil {
@@ -958,6 +1039,11 @@ func RunKeyVRF(
 	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	index uint32,
 ) error {
+	toStdout, err := keyDestination(signingKeyFile, verificationKeyFile)
+	if err != nil {
+		return err
+	}
+
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -981,7 +1067,7 @@ func RunKeyVRF(
 	}
 
 	// If key files are specified, write to files
-	if signingKeyFile != "" || verificationKeyFile != "" {
+	if !toStdout {
 		if signingKeyFile != "" {
 			vrfSKey, err := bursa.GetVRFSKey(vrfSecKey)
 			if err != nil {
@@ -1053,6 +1139,11 @@ func RunKeyKES(
 	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	index uint32,
 ) error {
+	toStdout, err := keyDestination(signingKeyFile, verificationKeyFile)
+	if err != nil {
+		return err
+	}
+
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
@@ -1076,7 +1167,7 @@ func RunKeyKES(
 	}
 
 	// If key files are specified, write to files
-	if signingKeyFile != "" || verificationKeyFile != "" {
+	if !toStdout {
 		if signingKeyFile != "" {
 			kesSKey, err := bursa.GetKESSKey(kesSecKey)
 			if err != nil {

@@ -417,6 +417,50 @@ func TestServiceRotateKESRejectsIssueNumberOverflow(t *testing.T) {
 	}
 }
 
+func TestServiceRotateKESAcceptsMaxMinusOne(t *testing.T) {
+	s, _ := newSeedService(t)
+
+	rotated, err := s.RotateKES("spend-password", 1, math.MaxUint64-1, 5)
+	if err != nil {
+		t.Fatalf("RotateKES: %v", err)
+	}
+	if rotated.IssueNumber != math.MaxUint64 {
+		t.Fatalf("issue number = %d, want %d", rotated.IssueNumber, uint64(math.MaxUint64))
+	}
+}
+
+// TestServiceRotateKESRejectionKeepsState checks a rejected rotation returns no
+// certificate and leaves the wallet binding and the certificate the same
+// inputs produce unchanged.
+func TestServiceRotateKESRejectionKeepsState(t *testing.T) {
+	s, _ := newSeedService(t)
+	before, err := s.IssueOpCert("spend-password", 0, 5, 7)
+	if err != nil {
+		t.Fatalf("IssueOpCert: %v", err)
+	}
+	walletID, acct := s.currentBinding()
+
+	got, err := s.RotateKES("spend-password", 1, math.MaxUint64, 7)
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("RotateKES error = %v, want ErrInvalidRequest", err)
+	}
+	if got != (OpCert{}) {
+		t.Fatalf("rejected rotation returned a certificate: %+v", got)
+	}
+
+	after, err := s.IssueOpCert("spend-password", 0, 5, 7)
+	if err != nil {
+		t.Fatalf("IssueOpCert after rejection: %v", err)
+	}
+	if after != before {
+		t.Fatalf("certificate changed across a rejected rotation:\n before %+v\n after  %+v", before, after)
+	}
+	walletIDAfter, acctAfter := s.currentBinding()
+	if walletIDAfter != walletID || acctAfter != acct {
+		t.Fatal("wallet binding changed across a rejected rotation")
+	}
+}
+
 // TestServiceBuildRegistrationFromSeed checks the seed path builds a cert whose
 // pool ID matches the derived credentials and defaults the reward account to the
 // wallet's stake address.

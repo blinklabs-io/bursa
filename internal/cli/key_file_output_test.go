@@ -129,15 +129,14 @@ func TestKeyFileOutput(t *testing.T) {
 }
 
 func TestKeyFileOutputBackwardCompatibility(t *testing.T) {
-	// Test that when no file paths are provided, functions still work (backward compatibility)
+	// "-" selects standard output for the secret key
 	testMnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
-	// Test payment key generation without files (should not error)
-	err := RunKeyPayment(testMnemonic, "", "", "", "", 0, 0)
+	var err error
+	captureStdout(t, func() { err = RunKeyPayment(testMnemonic, "", "", "-", "", 0, 0) })
 	require.NoError(t, err)
 
-	// Test stake key generation without files (should not error)
-	err = RunKeyStake(testMnemonic, "", "", "", "", 0, 0)
+	captureStdout(t, func() { err = RunKeyStake(testMnemonic, "", "", "-", "", 0, 0) })
 	require.NoError(t, err)
 }
 

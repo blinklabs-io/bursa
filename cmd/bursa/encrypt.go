@@ -17,9 +17,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"strings"
 
 	"github.com/blinklabs-io/bursa/internal/cli"
 	"github.com/blinklabs-io/bursa/internal/logging"
@@ -69,7 +67,7 @@ func keyDecryptCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&inFile, "in-file", "", "File to decrypt")
-	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
+	cmd.Flags().StringVar(&outFile, "out-file", "", `Destination for the decrypted key: a path, or "-" for standard output`)
 	cmd.Flags().StringVar(&passphraseFile, "passphrase-file", "", "File containing decryption passphrase (use - for stdin)")
 	_ = cmd.MarkFlagRequired("in-file")
 	return cmd
@@ -78,17 +76,11 @@ func keyDecryptCommand() *cobra.Command {
 func readPassphrase(cmd *cobra.Command, passphraseFile, prompt string) (string, error) {
 	var passphrase string
 	if passphraseFile != "" {
-		var data []byte
 		var err error
-		if passphraseFile == "-" {
-			data, err = io.ReadAll(cmd.InOrStdin())
-		} else {
-			data, err = os.ReadFile(passphraseFile)
-		}
+		passphrase, err = cli.ReadSecretFile(passphraseFile, cmd.InOrStdin())
 		if err != nil {
 			return "", err
 		}
-		passphrase = strings.TrimRight(string(data), "\r\n")
 	} else {
 		fd := int(os.Stdin.Fd())
 		if !term.IsTerminal(fd) {

@@ -246,7 +246,7 @@ func defaultConfig() Config {
 			Level: "info",
 		},
 		Debug: DebugConfig{
-			ListenAddress: "",
+			ListenAddress: "127.0.0.1",
 			ListenPort:    0,
 		},
 		Metrics: MetricsConfig{

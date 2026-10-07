@@ -16,6 +16,7 @@ jobs:
       additional-module-directories: openapi
       build-packages: ./cmd/bursa
       cross-build-go-version: 1.26.x
+      cross-build-max-parallel: 2
       cross-build-targets: '[{"os":"darwin","arch":"arm64"},{"os":"freebsd","arch":"amd64"},{"os":"freebsd","arch":"arm64"},{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"},{"os":"windows","arch":"amd64"},{"os":"windows","arch":"arm64"}]'
       extra-test-flags: -tags pkcs11 -race
       extra-test-packages: ./internal/signer/...
