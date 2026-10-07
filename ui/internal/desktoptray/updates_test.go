@@ -86,3 +86,17 @@ func TestUpdateCheckerStopCancelsCheckAndDropsResult(t *testing.T) {
 			notifies.Load(), opens.Load(), finished.Load())
 	}
 }
+
+func TestUpdateCheckerDoesNotOpenOrFinishAfterNotificationStopsTray(t *testing.T) {
+	done := make(chan struct{})
+	var opens, finishes atomic.Int32
+	u, _, _ := newTestUpdateChecker(done, func(context.Context) (updatecheck.Release, bool, error) {
+		return updatecheck.Release{TagName: "v9.9.9", HTMLURL: "https://github.com/blinklabs-io/bursa/releases/tag/v9.9.9"}, true, nil
+	})
+	u.notify = func(string, string) { close(done) }
+	u.open = func(string) { opens.Add(1) }
+	u.run(func() { finishes.Add(1) })
+	if opens.Load() != 0 || finishes.Load() != 0 {
+		t.Fatalf("callbacks ran after tray stopped: opens=%d finishes=%d", opens.Load(), finishes.Load())
+	}
+}

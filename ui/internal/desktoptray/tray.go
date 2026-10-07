@@ -157,6 +157,9 @@ func (t *Tray) Launch() {
 // the systray backend. Idempotent.
 func (t *Tray) Stop() {
 	t.stopOnce.Do(func() {
+		if t.updates != nil {
+			t.updates.Stop()
+		}
 		close(t.done)
 		if t.stop != nil {
 			t.stop()

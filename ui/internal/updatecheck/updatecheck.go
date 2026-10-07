@@ -85,7 +85,7 @@ func checkAt(ctx context.Context, client *http.Client, currentVersion, endpoint 
 
 func validReleaseURL(raw, tag string) bool {
 	u, err := url.Parse(raw)
-	if err != nil || u == nil {
+	if err != nil || u == nil || u.User != nil {
 		return false
 	}
 	return u.Scheme == "https" && u.Host == "github.com" &&

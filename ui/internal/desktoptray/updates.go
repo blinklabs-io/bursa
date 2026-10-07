@@ -17,6 +17,7 @@ package desktoptray
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,6 +39,8 @@ type UpdateChecker struct {
 	done     <-chan struct{}
 	devBuild bool
 	running  atomic.Bool
+	mu       sync.Mutex
+	stopped  bool
 }
 
 // NewUpdateChecker returns an UpdateChecker for the build's embedded version
@@ -62,6 +65,11 @@ func NewUpdateChecker(currentVersion string, done <-chan struct{}, logger *slog.
 // reports whether it started one. finished runs when the check ends, unless the
 // tray was stopped first.
 func (u *UpdateChecker) Start(finished func()) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.stopped || channelClosed(u.done) {
+		return false
+	}
 	if !u.running.CompareAndSwap(false, true) {
 		return false
 	}
@@ -70,6 +78,14 @@ func (u *UpdateChecker) Start(finished func()) bool {
 		u.run(finished)
 	}()
 	return true
+}
+
+// Stop prevents further callbacks and lets the tray cancel an in-flight check
+// by closing its done channel immediately afterward.
+func (u *UpdateChecker) Stop() {
+	u.mu.Lock()
+	u.stopped = true
+	u.mu.Unlock()
 }
 
 func (u *UpdateChecker) run(finished func()) {
@@ -83,21 +99,35 @@ func (u *UpdateChecker) run(finished func()) {
 		}
 	}()
 	release, update, err := u.check(ctx)
-	select {
-	case <-u.done:
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.stopped || channelClosed(u.done) {
 		return
-	default:
 	}
-	defer finished()
 	switch {
 	case err != nil:
 		u.notify("Bursa Wallet", "Could not check for updates")
 	case update:
 		u.notify("Bursa Wallet update available", "Bursa "+release.TagName+" is available")
+		if u.stopped || channelClosed(u.done) {
+			return
+		}
 		u.open(release.HTMLURL)
 	case u.devBuild:
 		u.notify("Bursa Wallet", "Latest release: "+release.TagName)
 	default:
 		u.notify("Bursa Wallet", "You are up to date")
+	}
+	if !u.stopped && !channelClosed(u.done) && finished != nil {
+		finished()
+	}
+}
+
+func channelClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
 	}
 }

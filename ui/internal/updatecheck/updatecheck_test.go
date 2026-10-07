@@ -16,20 +16,25 @@ package updatecheck
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
 func TestCheckRejectsUnsafeReleaseURL(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"tag_name":"v1.2.3","html_url":"https://example.com/update"}`))
-	}))
-	defer server.Close()
-
-	_, _, err := checkAt(context.Background(), server.Client(), "v1.0.0", server.URL)
-	if err == nil {
-		t.Fatal("Check accepted an untrusted release URL")
+	for _, releaseURL := range []string{
+		"https://example.com/update",
+		"https://attacker@github.com/blinklabs-io/bursa/releases/tag/v1.2.3",
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprintf(w, `{"tag_name":"v1.2.3","html_url":%q}`, releaseURL)
+		}))
+		_, _, err := checkAt(context.Background(), server.Client(), "v1.0.0", server.URL)
+		server.Close()
+		if err == nil {
+			t.Errorf("Check accepted an untrusted release URL %q", releaseURL)
+		}
 	}
 }
 
