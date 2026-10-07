@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -82,9 +83,9 @@ func TestHTTPEnclaveEndToEnd(t *testing.T) {
 
 func TestHTTPEnclaveDoesNotFollowRedirects(t *testing.T) {
 	t.Parallel()
-	var redirectedRequests int
+	var redirectedRequests atomic.Int32
 	redirected := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		redirectedRequests++
+		redirectedRequests.Add(1)
 	}))
 	t.Cleanup(redirected.Close)
 
@@ -101,8 +102,8 @@ func TestHTTPEnclaveDoesNotFollowRedirects(t *testing.T) {
 	if _, err := enc.Inventory(t.Context(), make([]byte, attestedNonceSize)); err == nil {
 		t.Fatal("expected redirect response to be rejected")
 	}
-	if redirectedRequests != 0 {
-		t.Fatalf("redirect target received %d requests, want 0", redirectedRequests)
+	if got := redirectedRequests.Load(); got != 0 {
+		t.Fatalf("redirect target received %d requests, want 0", got)
 	}
 }
 
