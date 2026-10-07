@@ -54,7 +54,12 @@ func NewHTTPEnclave(address string) (*HTTPEnclave, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid enclave address: %w", err)
 	}
-	client := &http.Client{Timeout: attestedRequestTimeout}
+	client := &http.Client{
+		Timeout: attestedRequestTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	switch u.Scheme {
 	case "http", "https":
 		if u.Host == "" {

@@ -80,6 +80,32 @@ func TestHTTPEnclaveEndToEnd(t *testing.T) {
 	}
 }
 
+func TestHTTPEnclaveDoesNotFollowRedirects(t *testing.T) {
+	t.Parallel()
+	var redirectedRequests int
+	redirected := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		redirectedRequests++
+	}))
+	t.Cleanup(redirected.Close)
+
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", redirected.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(proxy.Close)
+
+	enc, err := NewHTTPEnclave(proxy.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enc.Inventory(t.Context(), make([]byte, attestedNonceSize)); err == nil {
+		t.Fatal("expected redirect response to be rejected")
+	}
+	if redirectedRequests != 0 {
+		t.Fatalf("redirect target received %d requests, want 0", redirectedRequests)
+	}
+}
+
 func TestHTTPEnclaveUnixSocket(t *testing.T) {
 	t.Parallel()
 	e := newFakeEnclave(t, KeyTypePayment)
