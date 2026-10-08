@@ -99,6 +99,21 @@ export.
 Conway-era governance is a first-class part of the wallet: DRep delegation and
 voting build on the CIP-105/CIP-129 key chains the Bursa library implements.
 
+**Surveys** (reached from the command line, under Governance) browses the
+on-chain surveys and polls of CIP-179, read from your own node's label-17
+history. Results are shown per role with abstains counted, never as a weighted
+total; cancelled surveys and responses that fail a CIP-179 check are left out
+and listed with the reason. A full wallet can respond, publish a survey and
+cancel one it owns; these are metadata-only transactions signed with the
+wallet's own key, so they are not offered on hardware devices. A survey can
+seal its responses with Drand timelock encryption: sealing needs no network, and
+opening them after the reveal time asks you first before it fetches the beacon
+from `api.drand.sh` (or accepts a beacon you paste in). A sealed survey created
+here reveals only after its last epoch ends. A governance action whose CIP-108
+anchor links to a survey shows the link in the Governance browser, which opens
+that survey. The label-17 history is read once and then only its newest pages,
+so a very long history is shown after a few reads rather than failing.
+
 **NFT images** need fetching from IPFS, so they are off by default and only
 available in builds compiled with `-tags nftmedia`. When you opt in, retrieval
 is direct peer-to-peer through an embedded libp2p client — no third-party

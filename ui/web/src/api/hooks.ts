@@ -17,6 +17,10 @@ import type {
   NFT,
   Diagnostics,
   GovernanceActionsResponse,
+  SurveysResponse,
+  SurveyDetail,
+  SurveyStatus,
+  SurveySummary,
 } from "./types";
 import {
   getStatus,
@@ -41,6 +45,8 @@ import {
   getActivity,
   getDiagnostics,
   getGovernanceActions,
+  getSurveys,
+  getSurvey,
 } from "./client";
 import {
   notificationPermission,
@@ -473,4 +479,97 @@ export function useActivityNotifications(active: boolean, walletId: string | nul
       clearInterval(id);
     };
   }, [active, walletId]);
+}
+
+export interface FetchedState<T> {
+  data: T | null;
+  error: Error | null;
+  loading: boolean;
+  reload: () => void;
+}
+
+// useFetched runs load after delayMs whenever deps change (or reload is
+// called), dropping a superseded request's result. Unlike useAsync it follows
+// its inputs, which the survey list's search/filter/page and the detail view's
+// id need. A failed request clears data so stale rows never sit beside the
+// error.
+function useFetched<T>(load: () => Promise<T>, deps: unknown[], delayMs = 0): FetchedState<T> {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [tick, setTick] = useState(0);
+  const reload = useCallback(() => setTick((t) => t + 1), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const timer = setTimeout(() => {
+      load()
+        .then((d) => {
+          if (!cancelled) setData(d);
+        })
+        .catch((e: Error) => {
+          if (!cancelled) {
+            setError(e);
+            setData(null);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, delayMs);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // load is rebuilt every render; the caller names what it depends on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [...deps, tick]);
+
+  return { data, error, loading, reload };
+}
+
+const SURVEYS_DEBOUNCE_MS = 250;
+
+// useSurveys fetches one page of the node's CIP-179 surveys, debounced so the
+// search box does not fire a request per keystroke.
+export function useSurveys(params: {
+  q: string;
+  status: SurveyStatus | "";
+  page: number;
+}): FetchedState<SurveysResponse> {
+  const { status, page } = params;
+  const q = params.q.trim();
+  return useFetched(() => getSurveys({ q, status, page }), [q, status, page], SURVEYS_DEBOUNCE_MS);
+}
+
+// useSurvey fetches one survey with its tally.
+export function useSurvey(id: string): FetchedState<SurveyDetail> {
+  return useFetched(() => getSurvey(id), [id]);
+}
+
+// The node's largest page.
+const LINKED_SURVEYS_PAGE = 200;
+
+// linkedSurveys reads every survey a governance action links to, page by page.
+async function linkedSurveys(): Promise<SurveySummary[]> {
+  const out: SurveySummary[] = [];
+  for (let page = 1; ; page++) {
+    const r = await getSurveys({ linked: true, page, count: LINKED_SURVEYS_PAGE });
+    out.push(...r.surveys);
+    if (r.surveys.length === 0 || out.length >= r.total) return out;
+  }
+}
+
+// useLinkedSurveys maps governance action ids to the survey their CIP-108
+// anchor links to, for showing the link from the governance browser. Linking is
+// discovery only, so a failed or empty lookup just shows no link.
+export function useLinkedSurveys(): Map<string, SurveySummary> {
+  const { data } = useFetched(linkedSurveys, []);
+  const linked = new Map<string, SurveySummary>();
+  for (const s of data ?? []) {
+    for (const action of s.linked_actions) linked.set(action, s);
+  }
+  return linked;
 }

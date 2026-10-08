@@ -191,6 +191,7 @@ type pending struct {
 	walletID  string
 	account   *wallet.Account
 	certKinds []CertKind // non-nil for delegation txs; drives stake/DRep witness addition at Confirm
+	signer    SignerKind // set for metadata txs: the wallet key whose credential the tx proves
 }
 
 // hwInputValue is a resolved input UTxO's value, retained at build time so the
@@ -1371,6 +1372,14 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 		}
 	}
 
+	// A metadata tx proves control of its signer's credential even when none of
+	// its inputs sit at that key's address, so the payment key signs regardless.
+	if p.signer == SignerPayment {
+		if first := acct.ReceiveAddresses[0]; !seen[first] {
+			distinctAddrs = append(distinctAddrs, first)
+		}
+	}
+
 	// --- step 6: sign once per distinct address ---
 	a := p.tx
 	for _, addrStr := range distinctAddrs {
@@ -1414,6 +1423,8 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	// and reward withdrawal). It also requires a witness from the DRep key for a
 	// DRep registration. These are in addition to the payment-key witnesses above.
 	needsStakeWitness, needsDRepWitness := certKindsRequireWitnesses(p.certKinds)
+	needsStakeWitness = needsStakeWitness || p.signer == SignerStake
+	needsDRepWitness = needsDRepWitness || p.signer == SignerDRep
 	if needsStakeWitness {
 		stakeKey, err := bursa.GetStakeKey(acctKey, 0)
 		if err != nil {

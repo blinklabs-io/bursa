@@ -445,6 +445,20 @@ a:hover {
   max-width: 880px;
 }
 
+.survey-confirm-content {
+  max-height: 18rem;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--inset);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ---------------------------------------------------------------- panels -- */
 .card {
   background: var(--surface);
@@ -1609,6 +1623,62 @@ a:hover {
   font-size: 0.8rem;
   color: var(--text-muted);
   margin-top: var(--space-1);
+}
+
+/* CIP-179 surveys: question groups, answer controls and result bars. */
+.survey-question {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  margin: 0 0 var(--space-3);
+  min-width: 0;
+}
+.survey-question legend {
+  padding: 0 var(--space-1);
+  font-weight: 600;
+}
+.staking-form label.survey-choice,
+.staking-form label.survey-answer-toggle,
+.survey-question label {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  /* Option rows read as sentences, not instrument captions. */
+  font-family: var(--font);
+  font-size: 0.9rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text);
+}
+.survey-question label[for] {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.survey-prompt {
+  font-weight: 600;
+}
+.survey-result {
+  margin-bottom: var(--space-3);
+}
+.survey-option-result {
+  display: grid;
+  /* Zero minimums let the row shrink to a phone's width instead of overflowing. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-1) 0;
+}
+.survey-option-result meter {
+  width: 100%;
+}
+.survey-option-result span {
+  overflow-wrap: anywhere;
 }
 
 /* Itemized confirm — one line per certificate/withdrawal. */

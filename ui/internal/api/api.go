@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -38,6 +39,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
+	"github.com/blinklabs-io/bursa/ui/internal/survey"
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
@@ -217,6 +219,7 @@ type handlerOptions struct {
 	diagnostics    Diagnostics
 	migrateScripts ScriptMigrator
 	activity       Activity
+	surveys        Surveys
 }
 
 // ScriptMigrator moves saved multi-signature accounts out of the standalone
@@ -267,6 +270,11 @@ func WithScriptMigration(m ScriptMigrator) HandlerOption {
 // (GET /wallet/activity) and keeps the detector bound to the active wallet.
 func WithActivity(a Activity) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.activity = a }
+}
+
+// WithSurveys enables the CIP-179 survey routes.
+func WithSurveys(sv Surveys) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.surveys = sv }
 }
 
 // SettingsController is the user-facing app-settings surface. It exposes the
@@ -457,6 +465,21 @@ type NFTs interface {
 	ServeImage(ctx context.Context, w http.ResponseWriter, unit string)
 	Enabled() bool
 	SetEnabled(enabled bool) error
+}
+
+// Surveys is the node-backed CIP-179 survey surface: discovery and tallies, and
+// the builders that turn a response, a new survey or a cancellation into a
+// pending transaction confirmed through the spend flow. *survey.Service
+// satisfies it.
+type Surveys interface {
+	List(ctx context.Context) ([]survey.Summary, error)
+	Get(ctx context.Context, id string) (survey.Detail, error)
+	Respond(ctx context.Context, req survey.RespondRequest) (spend.Preview, error)
+	Create(ctx context.Context, req survey.CreateRequest) (spend.Preview, error)
+	Cancel(ctx context.Context, req survey.CancelRequest) (spend.Preview, error)
+	// Reveal unseals a sealed survey's responses with the drand beacon for its
+	// reveal round. Fetching that beacon from a relay needs the caller's consent.
+	Reveal(ctx context.Context, req survey.RevealRequest) (survey.Detail, error)
 }
 
 const defaultWindow = 20
@@ -1643,6 +1666,10 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		serve(w, res, err)
 	}))
 
+	if sv := cfg.surveys; sv != nil {
+		registerSurveyRoutes(mux, st, sv)
+	}
+
 	// GET /wallet/send/{id}/hardware-sign-request — structured signing request for Ledger.
 	// The pending entry is NOT consumed — the user can still confirm online instead.
 	mux.HandleFunc("GET /wallet/send/{id}/hardware-sign-request", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
@@ -2113,6 +2140,82 @@ func registerPoolRoutes(mux *http.ServeMux, st Statuser, po PoolOps) {
 	}))
 }
 
+// surveyListResponse is the GET /wallet/surveys response: one page of surveys
+// plus the total that matched the search, status and linked filters.
+type surveyListResponse struct {
+	Surveys []survey.Summary `json:"surveys"`
+	Total   int              `json:"total"`
+	Page    int              `json:"page"`
+	Count   int              `json:"count"`
+	Partial bool             `json:"partial,omitempty"`
+}
+
+// registerSurveyRoutes registers the CIP-179 routes. Reads come from the
+// embedded node only. Building a response, survey or cancellation returns a
+// pending transaction that POST /wallet/send/{id}/confirm signs and submits.
+func registerSurveyRoutes(mux *http.ServeMux, st Statuser, sv Surveys) {
+	mux.HandleFunc("GET /wallet/surveys", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		list, err := sv.List(r.Context())
+		partial := errors.Is(err, survey.ErrIndexing)
+		if err != nil && !partial {
+			serveSurvey(w, list, err)
+			return
+		}
+		q := r.URL.Query()
+		if status := q.Get("status"); status != "" {
+			list = slices.DeleteFunc(slices.Clone(list), func(s survey.Summary) bool { return s.Status != status })
+		}
+		// linked=true keeps only surveys a governance action links to, which is
+		// all the governance browser needs.
+		if q.Get("linked") == "true" {
+			list = slices.DeleteFunc(slices.Clone(list), func(s survey.Summary) bool { return len(s.LinkedActions) == 0 })
+		}
+		items, total, page, count := filterAndPage(list, q.Get("q"), q.Get("page"), q.Get("count"), func(s survey.Summary, needle string) bool {
+			return strings.Contains(strings.ToLower(s.Title), needle) ||
+				strings.Contains(strings.ToLower(s.Description), needle) ||
+				strings.Contains(strings.ToLower(s.ID), needle)
+		})
+		writeJSON(w, http.StatusOK, surveyListResponse{Surveys: items, Total: total, Page: page, Count: count, Partial: partial})
+	}))
+	mux.HandleFunc("GET /wallet/surveys/{id}", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		d, err := sv.Get(r.Context(), r.PathValue("id"))
+		serveSurvey(w, d, err)
+	}))
+	mux.HandleFunc("POST /wallet/surveys/{id}/reveal", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		var req survey.RevealRequest
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		req.Survey = r.PathValue("id")
+		d, err := sv.Reveal(r.Context(), req)
+		serveSurvey(w, d, err)
+	}))
+	mux.HandleFunc("POST /wallet/surveys/respond", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req survey.RespondRequest
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		pv, err := sv.Respond(r.Context(), req)
+		serveSurvey(w, pv, err)
+	}))
+	mux.HandleFunc("POST /wallet/surveys/create", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req survey.CreateRequest
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		pv, err := sv.Create(r.Context(), req)
+		serveSurvey(w, pv, err)
+	}))
+	mux.HandleFunc("POST /wallet/surveys/cancel", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req survey.CancelRequest
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		pv, err := sv.Cancel(r.Context(), req)
+		serveSurvey(w, pv, err)
+	}))
+}
+
 // registerMultiSigRoutes wires the native multi-signature endpoints under
 // /wallet/multisig. Account management (list/create/get/delete) and sharing the
 // wallet's own participant key are local/offline; balance is a node read
@@ -2448,6 +2551,23 @@ func serveDex[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusUnprocessableEntity, errBody(err))
 	default:
 		writeJSON(w, http.StatusInternalServerError, errBody(err))
+	}
+}
+
+// serveSurvey maps survey errors to HTTP statuses and leaves the rest (spend
+// and wallet sentinels) to serve.
+func serveSurvey[T any](w http.ResponseWriter, v T, err error) {
+	switch {
+	case errors.Is(err, survey.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, errBody(err))
+	case errors.Is(err, survey.ErrInvalid):
+		writeJSON(w, http.StatusBadRequest, errBody(err))
+	case errors.Is(err, survey.ErrConsentRequired):
+		writeJSON(w, http.StatusForbidden, errBody(err))
+	case errors.Is(err, survey.ErrIndexing):
+		writeJSON(w, http.StatusServiceUnavailable, errBody(err))
+	default:
+		serve(w, v, err)
 	}
 }
 
