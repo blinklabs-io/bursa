@@ -1,10 +1,10 @@
 # Bursa UI review
 
-The wallet uses a plain gold wordmark, compact asset rows, grouped wallets and accounts, token logos, NFT media states, pool metrics and a quote-only swap flow.
+The wallet uses a gold wordmark, compact asset rows, grouped wallets and accounts, token logos, NFT media states, pool metrics and a quote-only swap flow. Gold cards have a brushed-metal finish; the transfer card and mobile amount panel use recessed Bursa lettering.
 
 ## Current screenshots
 
-Captured October 8, 2026 from the production SPA build after rebasing onto `main` at `9909075`. These are the actual React screens with synthetic API data. Desktop captures are 1440 × 900; mobile captures are 390 × 844 at device scale 1. Each image is a viewport capture. Longer screens continue below the viewport.
+Captured October 8, 2026 from the production SPA build after the spacing and metal-surface pass, based on `main` at `9909075`. These are the actual React screens with synthetic API data. Desktop captures are 1440 × 900; mobile captures are 390 × 844 at device scale 1. Each image is a viewport capture. Longer screens continue below the viewport.
 
 | Screen | Desktop | Mobile |
 | --- | --- | --- |
@@ -62,7 +62,8 @@ The first-run scenario accepts a demo password of at least 12 characters, then o
 - `npm ci`, lint (zero errors, one existing unused-disable warning), type-check and production build passed.
 - 1,029 tests across 73 files passed, including preview URL/write guards, Send progress, visible copy feedback and mobile navigation behavior. Existing jsdom navigation diagnostics appear during the suite; all tests pass.
 - UI Go vet/tests and `make wallet-binary` passed.
-- Browser captures cover 1440px desktop and 390px mobile with no horizontal overflow or page errors. A separate 320px check covers Portfolio, Send, Receive, Activity, Staking, Settings, Pools, Import, Swap and vault creation.
+- Browser spacing checks cover 90 screen/viewport combinations at 1440, 1024, 768, 390 and 320px, including first-run states, message tools, contact forms, delegation, rewards and expanded QR codes. No horizontal overflow or page errors were observed. An additional 320 × 740 check covers the primary routes.
+- Computed card padding is 24px on desktop and 20px on mobile; unboxed ledgers use zero. Flat-form labels sit 8px above their controls. Wallet setup stays in one column and recovery words fit small phones. The Settings tools have a measured 24px gap.
 - Receive with unknown usage has no hero card, zero outer padding, a transparent background and no shadow at both screenshot sizes.
 
 Live IPFS retrieval, hardware signing, native webviews and physical devices were not exercised. NFT media requires the `nftmedia` build capability. Swap execution stays with the chosen DEX.

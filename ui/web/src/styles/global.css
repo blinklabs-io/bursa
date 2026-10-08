@@ -183,7 +183,7 @@ a:hover {
 .content-centered > * {
   width: 100%;
   max-width: 480px;
-  margin-top: var(--space-4);
+  margin-top: 0;
 }
 
 /* ------------------------------------------------------- wallet switcher -- */
@@ -502,6 +502,7 @@ a:hover {
 .sign-form label,
 .staking-form label,
 .field-group label,
+.preview-details > label,
 .field-label {
   display: block;
   font-family: var(--mono);
@@ -510,7 +511,7 @@ a:hover {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-muted);
-  margin-bottom: var(--space-1);
+  margin-bottom: var(--space-2);
 }
 
 .field {
@@ -538,11 +539,31 @@ a:hover {
   opacity: 0.55;
   cursor: not-allowed;
 }
-/* Forms: inputs carry the rhythm; labels hug the input above them. */
-.send-form .field,
-.sign-form .field,
-.staking-form .field {
-  margin-bottom: var(--space-3);
+/* Flat forms own sibling spacing; grouped fields own their internal spacing. */
+:is(.send-form, .sign-form, .staking-form, .preview-details, .done-details, .operate-form, .operate-subform) {
+  gap: 0;
+}
+:is(.send-form, .sign-form, .staking-form, .preview-details, .done-details, .operate-form, .operate-subform) > * {
+  margin: 0 0 var(--space-3);
+}
+:is(.send-form, .sign-form, .staking-form, .preview-details, .done-details, .operate-form, .operate-subform) > :is(label, .field-label) {
+  margin-bottom: var(--space-2);
+}
+:is(.send-form, .sign-form, .staking-form, .preview-details, .done-details, .operate-form, .operate-subform) > :last-child {
+  margin-bottom: 0;
+}
+.field-group > .field + .helper-text {
+  margin: var(--space-2) 0 0;
+}
+:is(.send-form, .sign-form, .staking-form, .preview-details, .done-details, .operate-form, .operate-subform) > :is(.preview-actions, .row-actions) {
+  margin-top: 0;
+}
+.card > form > .helper-text:first-child {
+  margin-bottom: var(--space-4);
+}
+.card > :last-child,
+.field-group > :last-child {
+  margin-bottom: 0;
 }
 
 .helper-text {
@@ -1724,7 +1745,7 @@ a:hover {
 .operate-subform {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 0;
   max-width: 880px;
 }
 .operate-form label,
@@ -2021,18 +2042,19 @@ a:hover {
 /* 3-column word grid for the generated 24-word phrase. */
 .recovery-phrase-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-1) var(--space-2);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
   margin: var(--space-3) 0;
 }
 .recovery-phrase-word {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--space-2);
   background: var(--inset);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 6px 10px;
+  padding: var(--space-2);
+  min-width: 0;
 }
 .recovery-phrase-index {
   font-family: var(--mono);
@@ -2047,6 +2069,7 @@ a:hover {
   font-size: 0.875rem;
   color: var(--text);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 /* Backup warning box. */

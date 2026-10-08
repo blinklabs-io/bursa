@@ -261,7 +261,10 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
 
         </div>
         <div className="transfer-amount">
-        <label htmlFor="send-amount">Amount (ADA)</label>
+        <div className="transfer-amount-heading">
+          <label htmlFor="send-amount">Amount (ADA)</label>
+          <span className="transfer-amount-brand" aria-hidden="true"><BursaLogo /></span>
+        </div>
         <Input
           id="send-amount"
           type="text"

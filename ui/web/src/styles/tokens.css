@@ -30,7 +30,25 @@
   --space-2: 8px;
   --space-3: 16px;
   --space-4: 24px;
-  --space-5: 36px;
+  --space-5: 32px;
+  --space-compact: 12px;
+  --space-comfortable: 20px;
+  --page-gutter: 40px;
+  --panel-padding: var(--space-4);
+  --section-gap: var(--space-4);
+  --content-width: 1180px;
+  --form-width: 760px;
+
+  --gold-metal:
+    repeating-linear-gradient(0deg, #fff4cf0a 0px, #fff4cf0a 1px, #68421205 1px, transparent 3px),
+    linear-gradient(112deg, #bd985a 0%, #e8cc91 17%, #fff0c2 28%, #cfaa68 43%, #b88f4d 51%, #e7c98a 68%, #f9e8b8 82%, #c49e5c 100%);
+  --gold-metal-shadow:
+    inset 0 1px 0 #fff8de,
+    inset 1px 0 0 #ffedbe99,
+    inset -1px -1px 0 #65451f99,
+    0 2px 0 #806032,
+    0 4px 0 #392d1e,
+    0 18px 30px -12px #000b;
 
   --font:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
