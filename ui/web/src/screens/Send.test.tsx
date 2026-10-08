@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { Send } from "./Send";
 import * as client from "../api/client";
 import { mockContacts } from "../test/mockContacts";
@@ -42,6 +42,35 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+test("transfer progress follows review, back, success, and reset", async () => {
+  vi.spyOn(client, "buildSend").mockResolvedValue(MOCK_PREVIEW);
+  vi.spyOn(client, "confirmSend").mockResolvedValue(MOCK_TX_RESULT);
+  render(<Send />);
+
+  const expectStep = (label: string) => {
+    const steps = within(screen.getByRole("list", { name: "Transfer steps" })).getAllByRole("listitem");
+    expect(steps.filter((step) => step.getAttribute("aria-current") === "step")).toHaveLength(1);
+    expect(steps.find((step) => step.getAttribute("aria-current") === "step")).toHaveTextContent(label);
+  };
+  expectStep("Details");
+  fireEvent.change(screen.getByLabelText(/recipient address/i), { target: { value: "addr_test1recipient" } });
+  fireEvent.change(screen.getByLabelText("Amount (ADA)"), { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+  await screen.findByLabelText(/spending password/i);
+  expectStep("Review");
+
+  fireEvent.click(screen.getByRole("button", { name: /back/i }));
+  expectStep("Details");
+  fireEvent.click(screen.getByRole("button", { name: /review/i }));
+  fireEvent.change(await screen.findByLabelText(/spending password/i), { target: { value: "test-password" } });
+  fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+  await screen.findByRole("button", { name: /send another/i });
+  expectStep("Sent");
+
+  fireEvent.click(screen.getByRole("button", { name: /send another/i }));
+  expectStep("Details");
 });
 
 // --- compose → preview ---

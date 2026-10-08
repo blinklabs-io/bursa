@@ -293,7 +293,7 @@ test("NFT media on renders same-origin image thumbnails", () => {
   );
 });
 
-test("NFT image load failure renders the empty thumbnail", () => {
+test("NFT image load failure explains the state and lets the user retry", () => {
   mockBalance("0", []);
   mockDelegation();
   vi.spyOn(hooks, "useNftMedia").mockReturnValue({
@@ -309,6 +309,20 @@ test("NFT image load failure renders the empty thumbnail", () => {
 
   expect(screen.queryByRole("img", { name: "Token" })).not.toBeInTheDocument();
   expect(container.querySelector(".nft-thumb-empty")).toBeInTheDocument();
+  expect(screen.getByText(/image unavailable/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /retry image/i }));
+  expect(screen.getByRole("img", { name: "Token" })).toBeInTheDocument();
+});
+
+test("an unsupported build explains NFT media availability before offering an enable action", () => {
+  mockBalance("0", []);
+  mockDelegation();
+  vi.spyOn(hooks, "useNftMedia").mockReturnValue({
+    available: false, enabled: false, loading: false, saving: false, error: null, setEnabled: vi.fn(),
+  });
+  render(<Portfolio />);
+  expect(screen.getByText(/this build/i)).toHaveTextContent(/image/i);
+  expect(screen.queryByRole("button", { name: /enable images/i })).not.toBeInTheDocument();
 });
 
 // A greyed Send with no reason leaves someone guessing whether the wallet is

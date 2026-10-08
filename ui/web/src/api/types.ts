@@ -526,6 +526,7 @@ export interface NFT {
 
 export interface NftMediaSetting {
   enabled: boolean;
+  available?: boolean;
 }
 
 // App setting: whether node-local wallet-activity notifications (incoming funds

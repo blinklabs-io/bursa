@@ -63,7 +63,6 @@ a:hover {
   padding: var(--space-3) var(--space-3) var(--space-4);
 }
 
-/* Classical Roman-inscription wordmark: BVRSA (V for U), letter-spaced gold. */
 .brand {
   padding: var(--space-2) var(--space-2) var(--space-4);
 }

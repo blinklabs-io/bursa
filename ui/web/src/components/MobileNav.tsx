@@ -17,6 +17,7 @@ import type { Status, WalletView } from "../api/types";
 import type { Tone } from "./StatusPill";
 import { WalletSwitcher } from "./WalletSwitcher";
 import { Icon, BursaLogo } from "./Icon";
+import type { IconName } from "./Icon";
 import { CliButton } from "./CliButton";
 
 const FOCUSABLE_SELECTOR = [
@@ -31,7 +32,7 @@ const FOCUSABLE_SELECTOR = [
 const DESKTOP_MEDIA_QUERY = "(min-width: 768px)";
 
 export interface MobileNavItem {
-  key: string;
+  key: IconName;
   label: string;
   disabled?: boolean;
   active?: boolean;

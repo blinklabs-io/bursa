@@ -199,7 +199,6 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
 
   return (
     <section className="send-compose">
-      <ol className="transfer-steps" aria-label="Transfer steps"><li aria-current="step"><span>1</span>Details</li><li><span>2</span>Review</li><li><span>3</span>Confirm</li></ol>
       <Card title="Send ADA">
       <div className="send-form">
         <div className="transfer-recipient">
@@ -827,32 +826,39 @@ export function Send({
     setPhase("compose");
   }
 
-  if (phase === "done" && txResult) {
-    return <DonePhase result={txResult} onReset={handleReset} />;
-  }
-
-  if (phase === "preview" && preview) {
-    return (
-      <PreviewPhase
-        preview={preview}
-        isHardware={isHardware ?? false}
-        walletId={walletId}
-        storedDeviceKind={storedDeviceKind}
-        onBack={() => setPhase("compose")}
-        onDone={handleDone}
-      />
-    );
-  }
+  const currentStep = phase === "compose" ? 0 : phase === "preview" ? 1 : 2;
 
   return (
-    <Compose
-      to={to}
-      setTo={setTo}
-      adaAmount={adaAmount}
-      setAdaAmount={setAdaAmount}
-      assetRows={assetRows}
-      setAssetRows={setAssetRows}
-      onPreview={handlePreview}
-    />
+    <div className="send-flow">
+      <ol className="transfer-steps" aria-label="Transfer steps">
+        {["Details", "Review", "Sent"].map((label, index) => (
+          <li key={label} aria-current={index === currentStep ? "step" : undefined}>
+            <span>{index + 1}</span>{label}
+          </li>
+        ))}
+      </ol>
+      {phase === "done" && txResult ? (
+        <DonePhase result={txResult} onReset={handleReset} />
+      ) : phase === "preview" && preview ? (
+        <PreviewPhase
+          preview={preview}
+          isHardware={isHardware ?? false}
+          walletId={walletId}
+          storedDeviceKind={storedDeviceKind}
+          onBack={() => setPhase("compose")}
+          onDone={handleDone}
+        />
+      ) : (
+        <Compose
+          to={to}
+          setTo={setTo}
+          adaAmount={adaAmount}
+          setAdaAmount={setAdaAmount}
+          assetRows={assetRows}
+          setAssetRows={setAssetRows}
+          onPreview={handlePreview}
+        />
+      )}
+    </div>
   );
 }

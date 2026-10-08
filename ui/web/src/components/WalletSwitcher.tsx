@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { WalletView } from "../api/types";
 import { activateWallet, ApiError } from "../api/client";
 import { AccountSwitcher } from "./AccountSwitcher";
+import { WalletSecurity } from "./WalletSecurity";
 
 interface WalletSwitcherProps {
   wallets: WalletView[];
@@ -27,7 +28,6 @@ export function WalletSwitcher({
 }: WalletSwitcherProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const activeWallet = wallets.find((w) => w.id === activeId) ?? null;
 
   async function select(id: string) {
     if (id === activeId || busyId !== null) return;
@@ -60,7 +60,11 @@ export function WalletSwitcher({
               >
                 <span className="wallet-name">{w.name}</span>
                 <span className="wallet-net">{w.network}</span>
+                <WalletSecurity type={w.type} />
               </button>
+              {active && onAccountChanged && (
+                <AccountSwitcher key={w.id} wallet={w} onChanged={onAccountChanged} />
+              )}
             </li>
           );
         })}
@@ -69,9 +73,6 @@ export function WalletSwitcher({
         <p className="error-text" role="alert">
           {error}
         </p>
-      )}
-      {activeWallet && onAccountChanged && (
-        <AccountSwitcher wallet={activeWallet} onChanged={onAccountChanged} />
       )}
       <div className="wallet-switcher-actions">
         <button type="button" className="wallet-action" onClick={onAddWallet}>

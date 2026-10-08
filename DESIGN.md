@@ -1,33 +1,25 @@
 # Bursa interface design
 
-Bursa is a local-node Cardano wallet. Its interface prioritizes readable addresses, balances and signing steps, using slate surfaces and gold accents.
+Bursa is a local-node Cardano wallet. The interface uses charcoal surfaces, self-hosted Manrope, aligned data rows and restrained gold accents.
 
-## Brand assets
+## Brand
 
-Use the existing Bursa pouch and custom lowercase wordmark from `.github/assets/bursa-illustration.png` and `.github/assets/bursa-logo-with-text-horizontal.png`. Web copies live in `ui/web/public/brand`. The original colors and shapes are preserved; light backing improves wordmark contrast on slate. The invented B emblem and BVRSA text treatments have been removed from the redesigned UI.
+Use lowercase **bursa** as plain gold text. The previous pouch illustration and image wordmark are excluded from the interface. Gold identifies primary actions and selected navigation.
 
-## Visual system
+## Layout
 
-- Self-hosted Manrope for interface text; monospace for addresses and hashes.
-- Upright surfaces with directional light, subtle edge highlights and offset shadows.
-- Gold primary actions, restrained selected navigation, recessed inputs and visible keyboard focus.
-- Responsive desktop sidebar and mobile bottom navigation with an accessible wallet drawer.
-- Reduced-motion preferences are respected.
+Keep forms at a readable width. Import caps at 760px, with explicit spacing between its introduction, field label, textarea and action. Portfolio pairs a compact balance panel with delegation, followed by native assets and NFT media. Mobile uses one column and fixed bottom navigation.
 
-## Screens
+Group accounts beneath their wallet. Show each account label and balance on separate lines. Security labels reflect the wallet type: password protected, hardware secured, watch-only or shared wallet.
 
-Portfolio emphasizes the ADA balance and groups native assets in raised slate rows. Asset initials are derived from identity and do not claim official token branding.
+## Asset and quote presentation
 
-Send keeps transaction entry upright and displays a decorative live draft on wide screens. The draft reflects entered values, says Not sent, is hidden from assistive technology and disappears below 1100px.
+Token icons use bounded PNG data from the Cardano token registry. Missing or failed logos fall back to colored initials. NFT media requires opt-in and a build with media support; unavailable images have a visible error and retry action. NFT identity and description remain available alongside supported media.
 
-Receive groups the QR and full address above a full-width address ledger. Mobile rows retain address status, QR, copy and explorer actions. QR codes keep a white quiet zone.
+Pool rows expose margin, fixed cost per epoch, pledge, live stake, active stake and saturation. Values come from the existing API; names and tickers are omitted when the node does not provide them.
 
-Staking emphasizes withdrawable rewards on a slate surface with a compact adjoining delegation panel. Existing provisional notes, validation and signing flows are preserved.
+Swap uses readable amounts when decimals are known and explicitly labels base units otherwise. A changed amount scale clears the input. Quotes show estimated output, price impact, pool fee and route, then offer parameter export. Execution remains on the chosen DEX.
 
-Activity uses aligned transaction rows that become complete stacked entries on mobile. Settings groups node context and preferences with desktop side tabs and mobile horizontal tabs.
+## Verification
 
-## Product truth
-
-Values come from existing wallet hooks. Capability and signing gates remain in place. The standalone design preview contains synthetic fixtures and rejects transaction/settings writes; it is outside the production bundle. Settings availability depends on platform, node and wallet capabilities.
-
-See [screenshots and preview instructions](docs/design/README.md). Core styling is in `ui/web/src/styles/wallet.css` and `ui/web/src/styles/screens.css`.
+The isolated preview uses synthetic data and rejects transaction writes. See [preview instructions, screenshots and research](docs/design/README.md). Live hardware signing and IPFS retrieval require separate verification.

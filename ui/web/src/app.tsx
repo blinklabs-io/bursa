@@ -12,6 +12,8 @@ import { lockVault, ApiError } from "./api/client";
 import { getStoredDeviceKind } from "./hw/deviceKind";
 import { useIdleLock } from "./useIdleLock";
 import { Icon, BursaLogo } from "./components/Icon";
+import type { IconName } from "./components/Icon";
+import { WalletSecurity } from "./components/WalletSecurity";
 import { Button } from "./components/Button";
 import { SyncBanner } from "./components/SyncBanner";
 import { WalletSwitcher } from "./components/WalletSwitcher";
@@ -97,7 +99,7 @@ const SEND_ROUTES = new Set(["send", "multisig"]);
 // Operate is appended when operator mode is on; see operatorMode.ts. Import Tx
 // and Offline are reachable from the send flow and the command palette rather
 // than costing a permanent entry each.
-const NAV: { key: string; label: string }[] = [
+const NAV: { key: IconName; label: string }[] = [
   { key: "portfolio", label: "Portfolio" },
   { key: "activity", label: "Activity" },
   { key: "stake", label: "Stake" },
@@ -616,7 +618,7 @@ export function App() {
     { id: "lock", label: "Lock the vault", group: "Wallet", keywords: "logout sign out secure", run: () => void handleLock() },
   ];
 
-  const navEntries = operatorMode
+  const navEntries: typeof NAV = operatorMode
     ? [...NAV.slice(0, -1), { key: "operate", label: "Pool Ops" }, NAV[NAV.length - 1]]
     : NAV;
 
@@ -625,9 +627,7 @@ export function App() {
       activeWallet === null ||
       addingWallet ||
       (key === "swap" && !canSwap) ||
-      (key === "offline" && !canSign) ||
-      (key === "operate" && !canSign) ||
-      (key === "import" && !canSign);
+      (key === "operate" && !canSign);
     return { key, label, disabled: gated, active: key === activeRoute };
   });
 
@@ -695,7 +695,7 @@ export function App() {
               <Icon name={key} /><span>{label}</span>
             </button>
           ))}
-          <div className="sidebar-footer"><Icon name="shield" /><div><strong>Locally secured</strong><span>Your keys stay on this device.</span></div></div>
+          <div className="sidebar-footer">{activeWallet && <WalletSecurity type={activeWallet.type} detail />}</div>
         </nav>
         <main
           className={`content route-${screenLabel}`}
@@ -710,7 +710,7 @@ export function App() {
               those would not clear a caught error. addingWallet is in the key
               too — it swaps the content without changing the route, and is a
               shell recovery action that must not land on a stale fallback. */}
-          <header className="workspace-header"><span>{activeWallet?.name ?? "Your wallet"}<span className="workspace-divider">/</span>{addingWallet ? "Add wallet" : screenLabel.charAt(0).toUpperCase() + screenLabel.slice(1)}</span><span className="network-label"><span className="network-dot" />{network || activeWallet?.network || "Network unavailable"}</span></header>
+          <header className="workspace-header"><span className="workspace-account"><Icon name="wallet" size={17} /><span>{activeWallet?.name ?? "Your wallet"}</span>{activeWallet?.accounts?.length ? <><span className="workspace-divider">/</span><strong>{activeWallet.accounts.find((a) => a.index === (activeWallet.active_account_index ?? 0))?.label ?? `Account #${activeWallet.active_account_index ?? 0}`}</strong></> : null}</span><span className="network-label"><span className="network-dot" />{network || activeWallet?.network || "Network unavailable"}</span></header>
           {!addingWallet && ["send", "receive", "activity", "stake", "staking", "rewards", "pools", "settings"].includes(screenLabel) && (
             <header className="page-heading">
               <h1>{["stake", "staking", "rewards", "pools"].includes(screenLabel) ? "Staking" : screenLabel.charAt(0).toUpperCase() + screenLabel.slice(1)}</h1>

@@ -2,7 +2,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Swap } from "./Swap";
 import * as client from "../api/client";
 import * as hooks from "../api/hooks";
-import type { DexQuote, DexPool } from "../api/types";
+import type { AssetInfo, DexQuote, DexPool } from "../api/types";
 
 const POOL: DexPool = {
   protocol: "minswap-v2",
@@ -13,7 +13,7 @@ const POOL: DexPool = {
   reserve_y: "200000000",
   price_xy: 2.0,
   price_yx: 0.5,
-  effective_fee: 0.997,
+  effective_fee: 0.003,
   tx_hash: "deadbeef",
   tx_index: 0,
 };
@@ -26,7 +26,7 @@ const QUOTE: DexQuote = {
   amount_in: "1000000",
   amount_out: "1980000",
   price_impact_pct: 0.4925,
-  effective_fee: 0.997,
+  effective_fee: 0.003,
   route: "minswap-v2 lovelace→abcd1234",
 };
 
@@ -39,6 +39,11 @@ function stubPools(pools: DexPool[], opts?: { error?: Error | null; loading?: bo
   } as never);
 }
 
+beforeEach(() => {
+  vi.spyOn(hooks, "useBalance").mockReturnValue({ data: { lovelace: "100000000", assets: [] }, loading: false, error: null, refresh: vi.fn() } as never);
+  vi.spyOn(hooks, "useAssetMetadata").mockReturnValue({});
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -47,8 +52,8 @@ test("lists pools read from the node with prices", () => {
   stubPools([POOL]);
   render(<Swap />);
   expect(screen.getByText("minswap-v2")).toBeInTheDocument();
-  // effective fee 0.997 → 99.70%
-  expect(screen.getByText("99.70%")).toBeInTheDocument();
+  // API fee fraction 0.003 = 0.30%.
+  expect(screen.getByText("0.30%")).toBeInTheDocument();
 });
 
 test("formats very large / very small pool prices without scientific notation", () => {
@@ -80,11 +85,12 @@ test("gets the best quote and shows route, amount out, price impact and fee", as
 
   render(<Swap />);
 
-  fireEvent.change(screen.getByLabelText(/receive \(asset out\)/i), {
+  fireEvent.change(screen.getByLabelText(/receive \(asset out\)/i), { target: { value: "custom" } });
+  fireEvent.change(screen.getByLabelText(/custom receive asset/i), {
     target: { value: "abcd1234" },
   });
   fireEvent.change(screen.getByLabelText(/amount in/i), {
-    target: { value: "1000000" },
+    target: { value: "1" },
   });
   fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
 
@@ -97,25 +103,26 @@ test("gets the best quote and shows route, amount out, price impact and fee", as
   );
 
   expect(await screen.findByText(/minswap-v2 lovelace→abcd1234/)).toBeInTheDocument();
-  expect(screen.getByText("1980000")).toBeInTheDocument();
+  expect(screen.getByText("1980000 base units")).toBeInTheDocument();
   expect(screen.getByText("0.4925%")).toBeInTheDocument();
 });
 
-test("rejects a non-positive / non-integer amount before calling the API", async () => {
+test("rejects excessive ADA precision before calling the API", async () => {
   stubPools([POOL]);
   const computeDexQuote = vi.spyOn(client, "computeDexQuote");
 
   render(<Swap />);
-  fireEvent.change(screen.getByLabelText(/receive \(asset out\)/i), {
+  fireEvent.change(screen.getByLabelText(/receive \(asset out\)/i), { target: { value: "custom" } });
+  fireEvent.change(screen.getByLabelText(/custom receive asset/i), {
     target: { value: "abcd1234" },
   });
   fireEvent.change(screen.getByLabelText(/amount in/i), {
-    target: { value: "1.5" },
+    target: { value: "1.0000001" },
   });
   fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
 
   await waitFor(() =>
-    expect(screen.getByText(/positive whole number/i)).toBeInTheDocument(),
+    expect(screen.getByText(/decimal places/i)).toBeInTheDocument(),
   );
   expect(computeDexQuote).not.toHaveBeenCalled();
 });
@@ -127,11 +134,12 @@ test("surfaces the API error when no route is found", async () => {
   );
 
   render(<Swap />);
-  fireEvent.change(screen.getByLabelText(/receive \(asset out\)/i), {
+  fireEvent.change(screen.getByLabelText(/receive \(asset out\)/i), { target: { value: "custom" } });
+  fireEvent.change(screen.getByLabelText(/custom receive asset/i), {
     target: { value: "nope" },
   });
   fireEvent.change(screen.getByLabelText(/amount in/i), {
-    target: { value: "1000000" },
+    target: { value: "1" },
   });
   fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
 
@@ -145,11 +153,12 @@ test("Prepare order shows the prepared order parameters (no in-app submit)", asy
   vi.spyOn(client, "computeDexQuote").mockResolvedValue(QUOTE);
 
   render(<Swap />);
-  fireEvent.change(screen.getByLabelText(/receive \(asset out\)/i), {
+  fireEvent.change(screen.getByLabelText(/receive \(asset out\)/i), { target: { value: "custom" } });
+  fireEvent.change(screen.getByLabelText(/custom receive asset/i), {
     target: { value: "abcd1234" },
   });
   fireEvent.change(screen.getByLabelText(/amount in/i), {
-    target: { value: "1000000" },
+    target: { value: "1" },
   });
   fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
 
@@ -166,4 +175,36 @@ test("Get quote is disabled until an asset-out and amount are entered", () => {
   stubPools([POOL]);
   render(<Swap />);
   expect(screen.getByRole("button", { name: /get quote/i })).toBeDisabled();
+});
+
+
+test("converts fractional ADA exactly and clears a stale quote when the amount changes", async () => {
+  stubPools([POOL]);
+  const compute = vi.spyOn(client, "computeDexQuote").mockResolvedValue(QUOTE);
+  render(<Swap />);
+  fireEvent.change(screen.getByLabelText(/receive \(asset out\)/i), { target: { value: POOL.asset_y } });
+  fireEvent.change(screen.getByLabelText(/amount in/i), { target: { value: "1.234567" } });
+  fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+  await screen.findByRole("button", { name: /prepare order/i });
+  expect(compute).toHaveBeenCalledWith({ asset_in: "lovelace", asset_out: POOL.asset_y, amount_in: "1234567" });
+  fireEvent.change(screen.getByLabelText(/amount in/i), { target: { value: "2" } });
+  expect(screen.queryByRole("button", { name: /prepare order/i })).not.toBeInTheDocument();
+});
+
+test("clears the entered amount when delayed metadata changes its scale", () => {
+  stubPools([POOL]);
+  const { rerender } = render(<Swap />);
+  fireEvent.change(screen.getByLabelText(/pay \(asset in\)/i), { target: { value: POOL.asset_y } });
+  fireEvent.change(screen.getByLabelText(/receive \(asset out\)/i), { target: { value: "lovelace" } });
+  fireEvent.change(screen.getByLabelText(/amount in/i), { target: { value: "1000000" } });
+  const token: AssetInfo = { asset: POOL.asset_y, policy_id: "", asset_name: "", asset_name_ascii: "Token", fingerprint: "", quantity: "0", onchain_metadata: { decimals: 6 }, metadata: null };
+  vi.mocked(hooks.useAssetMetadata).mockReturnValue({ [POOL.asset_y]: token });
+  rerender(<Swap />);
+  expect(screen.getByLabelText(/amount in/i)).toHaveValue("");
+  expect(screen.getByRole("button", { name: /get quote/i })).toBeDisabled();
+
+  fireEvent.change(screen.getByLabelText(/amount in/i), { target: { value: "1" } });
+  vi.mocked(hooks.useAssetMetadata).mockReturnValue({});
+  rerender(<Swap />);
+  expect(screen.getByLabelText(/amount in/i)).toHaveValue("");
 });

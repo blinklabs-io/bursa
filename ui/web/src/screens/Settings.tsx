@@ -728,6 +728,7 @@ function GeneralSettings({
       <NotificationsCard notifications={notifications} />
 
       <Card title="NFT Media">
+        {nftMedia.available === false && <p className="helper-text">This build does not include NFT images. Install a Bursa build with NFT media support to enable them.</p>}
         <p className="helper-text">
           Runs an embedded IPFS client to fetch NFT images without a third-party gateway.
           It is off by default and only starts after you enable it.
@@ -739,7 +740,7 @@ function GeneralSettings({
         <div className="preview-actions">
           <Button
             variant={nftMedia.enabled ? "ghost" : "primary"}
-            disabled={nftMedia.loading || nftMedia.saving}
+            disabled={nftMedia.available === false || nftMedia.loading || nftMedia.saving}
             aria-pressed={nftMedia.enabled}
             onClick={() => void nftMedia.setEnabled(!nftMedia.enabled)}
           >

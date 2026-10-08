@@ -187,6 +187,7 @@ export const useDiagnostics = (): AsyncState<Diagnostics> =>
 
 export interface NftMediaState {
   enabled: boolean;
+  available?: boolean;
   loading: boolean;
   saving: boolean;
   error: Error | null;
@@ -195,6 +196,7 @@ export interface NftMediaState {
 
 export function useNftMedia(): NftMediaState {
   const [enabled, setEnabled] = useState(false);
+  const [available, setAvailable] = useState<boolean>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -203,7 +205,10 @@ export function useNftMedia(): NftMediaState {
     let cancelled = false;
     getNftMedia()
       .then((setting) => {
-        if (!cancelled) setEnabled(setting.enabled);
+        if (!cancelled) {
+          setEnabled(setting.enabled);
+          setAvailable(setting.available);
+        }
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err);
@@ -220,6 +225,7 @@ export function useNftMedia(): NftMediaState {
     try {
       const setting = await setNftMedia(next);
       setEnabled(setting.enabled);
+      setAvailable(setting.available);
     } catch (err) {
       setError(err as Error);
     } finally {
@@ -227,7 +233,7 @@ export function useNftMedia(): NftMediaState {
     }
   }, []);
 
-  return { enabled, loading, saving, error, setEnabled: set };
+  return { enabled, available, loading, saving, error, setEnabled: set };
 }
 
 // useAssetMetadata looks up on-chain metadata for a set of native-asset units
@@ -306,9 +312,8 @@ export function useAssetMetadata(units: string[]): Record<string, AssetInfo | un
   useEffect(() => {
     let cancelled = false;
 
-    // Do not expose results for units from the previous request set while the
-    // new lookups are pending.
-    setMetadata({});
+    // Keep unchanged units stable while new metadata loads; discard removed units.
+    setMetadata((current) => Object.fromEntries(uniqueUnits.filter((unit) => current[unit]).map((unit) => [unit, current[unit]])));
 
     // Publish each successful lookup immediately. A slow or rejected unit
     // must not delay metadata that the node has already returned for another.

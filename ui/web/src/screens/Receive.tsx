@@ -1,4 +1,4 @@
-import { BursaMark, Icon } from "../components/Icon";
+import { BursaLogo, Icon } from "../components/Icon";
 import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { useAddresses } from "../api/hooks";
@@ -113,7 +113,7 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
   return (
     <div className="receive">
       {usageKnown && (<Card title="Next Unused Address">
-        <div className="receive-pass-mark" aria-hidden="true"><BursaMark /></div>
+        <div className="receive-pass-mark" aria-hidden="true"><BursaLogo /></div>
         <div className="receive-next">
           {nextUnused && (
             <AddressQR address={nextUnused} size={QR_SIZE_HERO} title={`QR code for ${nextUnused}`} />

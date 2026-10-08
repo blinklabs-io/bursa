@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState } from "react";
 import { useBalance, useDelegation, useAssetMetadata, useNfts, useNftMedia } from "../api/hooks";
-import { BursaMark, BursaLogo, Icon } from "../components/Icon";
+import { Icon } from "../components/Icon";
+import { AssetIcon } from "../components/AssetIcon";
+import { CopyButton } from "../components/CopyButton";
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { Table } from "../components/Table";
@@ -24,6 +26,12 @@ function NftList() {
         <figure className="nft-item" key={n.unit}>
           <NftThumbnail unit={n.unit} name={n.name} hasImage={Boolean(n.image_cid)} />
           <figcaption className="nft-name">{n.name || n.unit}</figcaption>
+          <details className="nft-details">
+            <summary>Asset details</summary>
+            {n.description && <p>{n.description}</p>}
+            <code>{n.unit}</code>
+            <CopyButton value={n.unit} ariaLabel={`Copy asset ID for ${n.name || n.unit}`} />
+          </details>
         </figure>
       ))}
     </div>
@@ -32,13 +40,18 @@ function NftList() {
 
 function NftThumbnail({ unit, name, hasImage }: { unit: string; name: string; hasImage: boolean }) {
   const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   if (!hasImage || failed) {
-    return <div className="nft-thumb nft-thumb-empty" aria-hidden="true" />;
+    return <div className="nft-thumb nft-thumb-empty">
+      <Icon name="image" size={28} />
+      <span>{failed ? "Image unavailable" : "No supported image"}</span>
+      {failed && <button type="button" onClick={() => { setAttempt((n) => n + 1); setFailed(false); }}>Retry image</button>}
+    </div>;
   }
   return (
     <img
       className="nft-thumb"
-      src={nftImageUrl(unit)}
+      src={`${nftImageUrl(unit)}${attempt ? `?retry=${attempt}` : ""}`}
       alt={name || unit}
       loading="lazy"
       onError={() => setFailed(true)}
@@ -50,15 +63,18 @@ function NftGallery() {
   const media = useNftMedia();
   if (media.loading) return <p className="muted">Loading…</p>;
   if (media.error) return <p role="alert" className="error-text">{media.error.message}</p>;
+  if (media.available === false) {
+    return <div className="collection-empty"><Icon name="image" size={28} /><h3>Images need media support</h3><p className="muted">This build can show token balances, but NFT images require a Bursa build with NFT media support.</p></div>;
+  }
   if (!media.enabled) {
     return (
-      <p className="muted">
-        Media off. Enable NFT media in{" "}
+      <div className="collection-empty"><Icon name="image" size={28} /><h3>Your collection, in view</h3><p className="muted">
+        Media off. Enabling images connects to IPFS peers through your local client. You can change this in{" "}
         <a href="#/settings" onClick={(e) => { e.preventDefault(); navigate("settings"); }}>
           Settings
         </a>{" "}
-        to fetch images.
-      </p>
+        at any time.
+      </p><Button disabled={media.saving} onClick={() => void media.setEnabled(true)}>{media.saving ? "Enabling…" : "Enable images"}</Button></div>
     );
   }
   return <NftList />;
@@ -141,34 +157,30 @@ export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }
   const tokenRows = visibleAssets.map((a) => {
     const meta = extractAssetMeta(metadataByUnit[a.unit]);
     const name = assetDisplayName(a.unit, meta);
-    const tone = Array.from(a.unit).reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) >>> 0, 0) % 3;
     const identifier = meta.ticker && meta.ticker !== name
       ? meta.ticker
       : `${a.unit.slice(0, 8)}…${a.unit.slice(-6)}`;
     return {
       unit: (
         <span className="asset-identity">
-          <span className="asset-monogram" data-tone={tone} aria-hidden="true">
-            <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="21" /><circle cx="24" cy="24" r="17" />{[0, 60, 120, 180, 240, 300].map((angle) => <path key={angle} d="M24 3v4" transform={`rotate(${angle + tone * 15} 24 24)`} />)}</svg>
-            <span>{name.slice(0, 1).toUpperCase()}</span>
-          </span>
+          <AssetIcon unit={a.unit} name={name} info={metadataByUnit[a.unit]} />
           <span>
             <span className="asset-name">{name}</span>
             <span className="asset-kind" title={a.unit}>{identifier}</span>
           </span>
         </span>
       ),
-      quantity: <span className="asset-quantity">{meta.decimals !== undefined ? formatTokenQuantity(a.quantity, meta.decimals) : a.quantity}</span>,
+      quantity: <span className="asset-quantity">{meta.decimals !== undefined ? formatTokenQuantity(a.quantity, meta.decimals) : a.quantity}{meta.decimals === undefined && <small>Base units</small>}</span>,
     };
   });
 
   return (
     <div className="portfolio">
-      <header className="portfolio-heading"><h1>Portfolio</h1></header>
+      <header className="portfolio-heading"><div><h1>Portfolio</h1><p>Your assets, in one place.</p></div></header>
       <section className="balance-panel" aria-label="Balance">
         <div className="balance-copy"><div className="wallet-card-heading"><h2>Balance</h2><span className="card-chain"><span className="cardano-mark" aria-hidden="true">₳</span>Cardano</span></div>
         <p className="balance-ada">{formatAda(lovelace)} <span>ADA</span></p>
-        <p className="balance-source">ADA held in this wallet</p>
+        <p className="balance-source">ADA in your selected account</p>
         {/* Send and Receive are actions, not places. They sit on the balance
             they act on — where you already are when you decide to move funds —
             rather than costing two entries in a nav you have to scan. */}
@@ -192,11 +204,6 @@ export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }
           <p className="helper-text">Send is unavailable — {sendDisabledReason.toLowerCase()}.</p>
         )}
         </div>
-        <div className="wallet-signature" aria-hidden="true"><BursaMark /></div>
-        <svg className="engraved-lines" viewBox="0 0 700 400" fill="none" aria-hidden="true">
-          {Array.from({ length: 24 }, (_, i) => <ellipse key={i} cx="570" cy="225" rx={75 + i * 9} ry={115 + i * 8} transform={`rotate(${-35 + i * 2} 570 225)`} />)}
-        </svg>
-        <div className="wallet-card-footer"><span className="card-wordmark"><BursaLogo /></span><span><Icon name="shield" size={14} />Your node. Your keys.</span></div>
       </section>
 
       <div className="portfolio-assets"><Card>

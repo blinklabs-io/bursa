@@ -1416,7 +1416,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		nfts.ServeImage(r.Context(), w, r.PathValue("asset"))
 	}))
 	mux.HandleFunc("GET /wallet/settings/nft-media", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]bool{"enabled": nfts != nil && nfts.Enabled()})
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": nfts != nil && nfts.Enabled(), "available": nfts != nil})
 	})
 	mux.HandleFunc("PUT /wallet/settings/nft-media", func(w http.ResponseWriter, r *http.Request) {
 		if nfts == nil {
@@ -1438,7 +1438,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"enabled": nfts.Enabled()})
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": nfts.Enabled(), "available": true})
 	})
 
 	// Air-gap step 1 (online instance): export the completed-but-unsigned tx for

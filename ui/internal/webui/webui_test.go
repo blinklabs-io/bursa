@@ -16,8 +16,8 @@ func TestServesIndexWithCSP(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Bursa Wallet") {
 		t.Fatalf("index body unexpected: %s", rec.Body.String())
 	}
-	if got := rec.Header().Get("Content-Security-Policy"); got != "default-src 'self'" {
-		t.Fatalf("CSP = %q, want default-src 'self'", got)
+	if got := rec.Header().Get("Content-Security-Policy"); got != "default-src 'self'; img-src 'self' data:" {
+		t.Fatalf("CSP = %q, want default-src 'self'; img-src 'self' data:", got)
 	}
 }
 
@@ -45,7 +45,7 @@ func TestServesEmbeddedFileDirectly(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /index.html = %d, want 200", rec.Code)
 	}
-	if got := rec.Header().Get("Content-Security-Policy"); got != "default-src 'self'" {
-		t.Fatalf("CSP = %q, want default-src 'self'", got)
+	if got := rec.Header().Get("Content-Security-Policy"); got != "default-src 'self'; img-src 'self' data:" {
+		t.Fatalf("CSP = %q, want default-src 'self'; img-src 'self' data:", got)
 	}
 }
