@@ -342,11 +342,14 @@ describe("respond", () => {
         { kind: 1, question: 0, choice: 0 },
         { kind: 2, question: 1, indices: [0, 2] },
         { kind: 3, question: 2, indices: [2, 0] },
-        { kind: 4, question: 3, number: 35 },
+        { kind: 4, question: 3, number: "35" },
         { kind: 5, question: 4, pairs: [{ option: 0, value: 70 }, { option: 1, value: 30 }] },
-        { kind: 6, question: 5, pairs: [{ option: 0, value: 1 }] },
+        { kind: 6, question: 5, pairs: [{ option: 0, value: "1" }] },
       ],
     });
+    expect(await screen.findByText("Content to publish")).toBeInTheDocument();
+    expect(screen.getByText(/"prompt": "Fund it\?"/)).toBeInTheDocument();
+    expect(screen.getByText(/"number": "35"/)).toBeInTheDocument();
   });
 
   test("points that miss the budget are rejected before building", async () => {
@@ -645,7 +648,7 @@ describe("large and unusual definitions", () => {
       expect(respond).toHaveBeenCalledWith({
         survey: ID_A,
         role: 0,
-        answers: [{ kind: 6, question: 0, pairs: [{ option: 0, value: 750 }] }],
+        answers: [{ kind: 6, question: 0, pairs: [{ option: 0, value: "750" }] }],
       }),
     );
   });

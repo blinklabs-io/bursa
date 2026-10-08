@@ -11,6 +11,7 @@ import { formatAda } from "../format";
 interface SurveyConfirmProps {
   // What publishing does, in a sentence.
   summary: string;
+  signedContent: string;
   preview: Preview;
   onBack: () => void;
   onDone: () => void;
@@ -18,7 +19,7 @@ interface SurveyConfirmProps {
 
 // SurveyConfirm signs and submits a built survey transaction with the spending
 // password, through the same confirm step a send uses.
-export function SurveyConfirm({ summary, preview, onBack, onDone }: SurveyConfirmProps) {
+export function SurveyConfirm({ summary, signedContent, preview, onBack, onDone }: SurveyConfirmProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -56,6 +57,10 @@ export function SurveyConfirm({ summary, preview, onBack, onDone }: SurveyConfir
     <Card title="Confirm">
       <div className="staking-form">
         <p>{summary}</p>
+        <div>
+          <p className="field-label">Content to publish</p>
+          <pre className="survey-confirm-content">{signedContent}</pre>
+        </div>
         <dl className="preview-summary">
           <div className="dl-row">
             <dt>Network fee</dt>

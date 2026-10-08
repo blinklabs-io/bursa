@@ -30,6 +30,7 @@ type View = { name: "list" } | { name: "detail"; id: string } | { name: "create"
 interface Pending {
   preview: Preview;
   summary: string;
+  signedContent: string;
 }
 
 interface SurveysProps {
@@ -57,7 +58,13 @@ export function Surveys({ canSubmit, initialId }: SurveysProps) {
   if (pending) {
     return (
       <div className="staking">
-        <SurveyConfirm summary={pending.summary} preview={pending.preview} onBack={() => setPending(null)} onDone={done} />
+        <SurveyConfirm
+          summary={pending.summary}
+          signedContent={pending.signedContent}
+          preview={pending.preview}
+          onBack={() => setPending(null)}
+          onDone={done}
+        />
       </div>
     );
   }
@@ -65,7 +72,7 @@ export function Surveys({ canSubmit, initialId }: SurveysProps) {
     return (
       <SurveyBuilder
         onBack={() => setView({ name: "list" })}
-        onPreview={(preview, summary) => setPending({ preview, summary })}
+        onPreview={(preview, summary, signedContent) => setPending({ preview, summary, signedContent })}
       />
     );
   }
@@ -75,7 +82,7 @@ export function Surveys({ canSubmit, initialId }: SurveysProps) {
         id={view.id}
         canSubmit={canSubmit}
         onBack={() => setView({ name: "list" })}
-        onPreview={(preview, summary) => setPending({ preview, summary })}
+        onPreview={(preview, summary, signedContent) => setPending({ preview, summary, signedContent })}
       />
     );
   }
@@ -203,7 +210,7 @@ interface SurveyDetailViewProps {
   id: string;
   canSubmit: boolean;
   onBack: () => void;
-  onPreview: (preview: Preview, summary: string) => void;
+  onPreview: (preview: Preview, summary: string, signedContent: string) => void;
 }
 
 function SurveyDetailView({ id, canSubmit, onBack, onPreview }: SurveyDetailViewProps) {
@@ -226,12 +233,17 @@ function SurveyDetailView({ id, canSubmit, onBack, onPreview }: SurveyDetailView
   if (!survey) {
     return <Card title="Survey">{loading ? <p className="helper-text">Loading…</p> : null}</Card>;
   }
+  const currentSurvey = survey;
 
   async function cancel() {
     setActionError(null);
     setBusy(true);
     try {
-      onPreview(await cancelSurvey(id), `Cancel the survey “${survey?.title}”`);
+      onPreview(
+        await cancelSurvey(id),
+        `Cancel the survey “${currentSurvey.title}”`,
+        JSON.stringify({ cancellation: currentSurvey.id }, null, 2),
+      );
     } catch (e) {
       setActionError(errorMessage(e));
     } finally {

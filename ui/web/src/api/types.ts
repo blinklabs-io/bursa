@@ -1093,17 +1093,16 @@ export interface SurveysResponse {
 }
 
 export interface SurveyRange {
-  min: number;
-  max: number;
-  step?: number;
+  min: number | string;
+  max: number | string;
+  step?: number | string;
 }
 
 // Exactly one of grid, labels or levels is set.
-export interface SurveyScale {
-  grid?: SurveyRange;
-  labels?: string[];
-  levels?: number;
-}
+export type SurveyScale =
+  | { grid: SurveyRange; labels?: never; levels?: never }
+  | { labels: string[]; grid?: never; levels?: never }
+  | { levels: number; grid?: never; labels?: never };
 
 export interface SurveyAnchor {
   uri: string;
@@ -1147,7 +1146,7 @@ export interface SurveyDefinition {
 
 export interface SurveyAnswerPair {
   option: number;
-  value: number;
+  value: number | string;
 }
 
 // SurveyAnswer holds the value field its kind uses: choice (single-choice),
@@ -1157,7 +1156,7 @@ export interface SurveyAnswer {
   question: number;
   choice?: number;
   indices?: number[];
-  number?: number;
+  number?: number | string;
   pairs?: SurveyAnswerPair[];
 }
 

@@ -7,6 +7,7 @@ import {
   answerableHere,
   emptyDraft,
   optionLabels,
+  onScale,
   ratingChoices,
   roundAt,
   roundTime,
@@ -38,16 +39,20 @@ test("option labels fall back to positions when the labels are off-chain", () =>
 });
 
 test("rating choices cover a grid, labels and levels", () => {
-  expect(ratingChoices({ grid: { min: 1, max: 5 } }).map((c) => c.value)).toEqual([1, 2, 3, 4, 5]);
-  expect(ratingChoices({ grid: { min: 0, max: 10, step: 5 } }).map((c) => c.value)).toEqual([0, 5, 10]);
+  expect(ratingChoices({ grid: { min: 1, max: 5 } }).map((c) => c.value)).toEqual(["1", "2", "3", "4", "5"]);
+  expect(ratingChoices({ grid: { min: 0, max: 10, step: 5 } }).map((c) => c.value)).toEqual(["0", "5", "10"]);
   expect(ratingChoices({ labels: ["bad", "ok"] })).toEqual([
-    { value: 0, label: "bad" },
-    { value: 1, label: "ok" },
+    { value: "0", label: "bad" },
+    { value: "1", label: "ok" },
   ]);
-  expect(ratingChoices({ levels: 3 }).map((c) => c.value)).toEqual([0, 1, 2]);
+  expect(ratingChoices({ levels: 3 }).map((c) => c.value)).toEqual(["0", "1", "2"]);
   expect(ratingChoices(undefined)).toEqual([]);
   // A pathological grid is capped rather than rendered in full.
   expect(ratingChoices({ grid: { min: 0, max: 1_000_000 } }).length).toBeLessThanOrEqual(101);
+  expect(ratingChoices({ grid: { min: "9223372036854775806", max: "9223372036854775807" } })).toEqual([
+    { value: "9223372036854775806", label: "9223372036854775806" },
+    { value: "9223372036854775807", label: "9223372036854775807" },
+  ]);
 });
 
 describe("answerFor", () => {
@@ -88,9 +93,9 @@ describe("answerFor", () => {
 
   test("numeric range checks bounds and step", () => {
     const q: SurveyQuestion = { kind: 4, prompt: "", range: { min: 10, max: 1000, step: 5 } };
-    expect(answerFor(q, 0, draft(q, { number: "325" })).answer?.number).toBe(325);
-    expect(answerFor(q, 0, draft(q, { number: "10" })).answer?.number).toBe(10);
-    expect(answerFor(q, 0, draft(q, { number: "1000" })).answer?.number).toBe(1000);
+    expect(answerFor(q, 0, draft(q, { number: "325" })).answer?.number).toBe("325");
+    expect(answerFor(q, 0, draft(q, { number: "10" })).answer?.number).toBe("10");
+    expect(answerFor(q, 0, draft(q, { number: "1000" })).answer?.number).toBe("1000");
     expect(answerFor(q, 0, draft(q, { number: "5" })).error).toMatch(/from 10 to 1000/);
     expect(answerFor(q, 0, draft(q, { number: "1005" })).error).toMatch(/from 10 to 1000/);
     expect(answerFor(q, 0, draft(q, { number: "326" })).error).toMatch(/steps of 5/);
@@ -100,7 +105,18 @@ describe("answerFor", () => {
 
   test("a numeric answer of zero is an answer", () => {
     const q: SurveyQuestion = { kind: 4, prompt: "", range: { min: -5, max: 5 } };
-    expect(answerFor(q, 0, draft(q, { number: "0" })).answer).toEqual({ kind: 4, question: 0, number: 0 });
+    expect(answerFor(q, 0, draft(q, { number: "0" })).answer).toEqual({ kind: 4, question: 0, number: "0" });
+  });
+
+  test("numeric answers preserve the full int64 range", () => {
+    const q: SurveyQuestion = {
+      kind: 4,
+      prompt: "",
+      range: { min: "-9223372036854775808", max: "9223372036854775807" },
+    };
+    expect(answerFor(q, 0, draft(q, { number: "9223372036854775807" })).answer?.number).toBe("9223372036854775807");
+    expect(answerFor(q, 0, draft(q, { number: "-9223372036854775808" })).answer?.number).toBe("-9223372036854775808");
+    expect(answerFor(q, 0, draft(q, { number: "9223372036854775808" })).error).toMatch(/whole number/i);
   });
 
   test("points must total the budget", () => {
@@ -116,9 +132,10 @@ describe("answerFor", () => {
 
   test("rating can require every option", () => {
     const q: SurveyQuestion = { kind: 6, prompt: "", options: OPTS, scale: { grid: { min: 1, max: 5 } } };
+    expect(onScale(q.scale, "5")).toBe(true);
     expect(answerFor(q, 0, draft(q, { ratings: ["5", "", "1"] })).answer?.pairs).toEqual([
-      { option: 0, value: 5 },
-      { option: 2, value: 1 },
+      { option: 0, value: "5" },
+      { option: 2, value: "1" },
     ]);
     expect(answerFor(q, 0, draft(q, { ratings: ["", "", ""] })).error).toMatch(/at least one/);
     const all = { ...q, require_all: true };
@@ -195,9 +212,9 @@ describe("buildCreateRequest", () => {
     expect(request?.questions).toEqual([
       { kind: 2, prompt: "m", options: ["a", "b", "c"], min: 0, max: 2, required: true },
       { kind: 3, prompt: "r", options: ["a", "b"], min: 1, max: 2 },
-      { kind: 4, prompt: "n", range: { min: -5, max: 5, step: 5 } },
+      { kind: 4, prompt: "n", range: { min: "-5", max: "5", step: "5" } },
       { kind: 5, prompt: "p", options: ["a", "b"], budget: 100 },
-      { kind: 6, prompt: "g", options: ["a", "b"], require_all: true, scale: { grid: { min: 1, max: 5 } } },
+      { kind: 6, prompt: "g", options: ["a", "b"], require_all: true, scale: { grid: { min: "1", max: "5" } } },
       { kind: 6, prompt: "l", options: ["a", "b"], require_all: false, scale: { labels: ["bad", "good"] } },
     ]);
   });
@@ -316,7 +333,7 @@ describe("answers are checked against the question", () => {
 
   test("ratings are whole numbers on the scale", () => {
     const q: SurveyQuestion = { kind: 6, prompt: "", options: ["a", "b"], scale: { grid: { min: 1, max: 9, step: 2 } } };
-    expect(answerFor(q, 0, draft(q, { ratings: ["3", ""] })).answer?.pairs).toEqual([{ option: 0, value: 3 }]);
+    expect(answerFor(q, 0, draft(q, { ratings: ["3", ""] })).answer?.pairs).toEqual([{ option: 0, value: "3" }]);
     for (const bad of ["x", "2.5", "4", "11"]) {
       expect(answerFor(q, 0, draft(q, { ratings: [bad, ""] })).error).toMatch(/on the scale/i);
     }

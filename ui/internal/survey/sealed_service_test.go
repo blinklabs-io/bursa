@@ -76,6 +76,31 @@ func keyholder(t *testing.T, d Detail) RoleTally {
 	return roleTally(t, *d.Tally, RoleKeyholder)
 }
 
+func TestBeaconCacheIsBoundedAndRefreshesUsedRounds(t *testing.T) {
+	t.Parallel()
+	svc := NewService(newFakeChain(), "preview")
+	for round := uint64(1); round <= maxCachedBeacons+1; round++ {
+		svc.mu.Lock()
+		svc.rememberBeaconLocked(round, []byte{byte(round)})
+		svc.mu.Unlock()
+	}
+	if got := len(svc.beacons); got != maxCachedBeacons {
+		t.Fatalf("cache has %d entries, want at most %d", got, maxCachedBeacons)
+	}
+	if svc.cachedBeacon(2) == nil {
+		t.Fatal("round 2 should be cached")
+	}
+	svc.mu.Lock()
+	svc.rememberBeaconLocked(maxCachedBeacons+2, []byte{0xff})
+	svc.mu.Unlock()
+	if svc.cachedBeacon(2) == nil {
+		t.Fatal("recently used round 2 was evicted")
+	}
+	if svc.cachedBeacon(3) != nil {
+		t.Fatal("least recently used round 3 was not evicted")
+	}
+}
+
 func TestSealedResponsesStayCountedButUntalliedUntilRevealed(t *testing.T) {
 	t.Parallel()
 	svc, calls := revealFixture(t, quicknetRound100Sig)

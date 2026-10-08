@@ -144,7 +144,7 @@ function QuestionEditor({ n, q, count, onChange, onMove, onRemove }: QuestionEdi
 
 interface SurveyBuilderProps {
   onBack: () => void;
-  onPreview: (preview: Preview, summary: string) => void;
+  onPreview: (preview: Preview, summary: string, signedContent: string) => void;
 }
 
 // SurveyBuilder writes a new survey: questions of the six built-in types, who
@@ -171,7 +171,11 @@ export function SurveyBuilder({ onBack, onPreview }: SurveyBuilderProps) {
     if (!request) return;
     setLoading(true);
     try {
-      onPreview(await createSurvey(request), `Publish the survey “${request.title}”`);
+      onPreview(
+        await createSurvey(request),
+        `Publish the survey “${request.title}”`,
+        JSON.stringify(request, null, 2),
+      );
     } catch (e) {
       setError(errorMessage(e));
     } finally {

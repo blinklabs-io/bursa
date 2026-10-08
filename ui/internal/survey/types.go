@@ -21,6 +21,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
@@ -136,6 +138,79 @@ type Range struct {
 	Step uint64 `json:"step,omitempty"` // 0 = unstepped
 }
 
+// MarshalJSON encodes range values as decimal strings so browser clients can
+// preserve the full int64 range without IEEE-754 rounding.
+func (r Range) MarshalJSON() ([]byte, error) {
+	value := struct {
+		Min  string `json:"min"`
+		Max  string `json:"max"`
+		Step string `json:"step,omitempty"`
+	}{Min: strconv.FormatInt(r.Min, 10), Max: strconv.FormatInt(r.Max, 10)}
+	if r.Step != 0 {
+		value.Step = strconv.FormatUint(r.Step, 10)
+	}
+	return json.Marshal(value)
+}
+
+// UnmarshalJSON accepts numeric and decimal-string values for API callers.
+func (r *Range) UnmarshalJSON(data []byte) error {
+	var value struct {
+		Min  json.RawMessage `json:"min"`
+		Max  json.RawMessage `json:"max"`
+		Step json.RawMessage `json:"step"`
+	}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	var err error
+	if len(value.Min) != 0 {
+		r.Min, err = parseJSONInt64(value.Min)
+		if err != nil {
+			return fmt.Errorf("range min: %w", err)
+		}
+	}
+	if len(value.Max) != 0 {
+		r.Max, err = parseJSONInt64(value.Max)
+		if err != nil {
+			return fmt.Errorf("range max: %w", err)
+		}
+	}
+	if len(value.Step) != 0 {
+		step, err := parseJSONUint64(value.Step)
+		if err != nil {
+			return fmt.Errorf("range step: %w", err)
+		}
+		r.Step = step
+	}
+	return nil
+}
+
+func parseJSONInt64(data json.RawMessage) (int64, error) {
+	text, err := parseJSONIntegerText(data)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(text, 10, 64)
+}
+
+func parseJSONUint64(data json.RawMessage) (uint64, error) {
+	text, err := parseJSONIntegerText(data)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(text, 10, 64)
+}
+
+func parseJSONIntegerText(data json.RawMessage) (string, error) {
+	text := strings.TrimSpace(string(data))
+	if len(text) > 0 && text[0] == '"' {
+		if err := json.Unmarshal(data, &text); err != nil {
+			return "", err
+		}
+	}
+	return text, nil
+}
+
 // RatingScale is a numeric grid, ordered worst-to-best labels, or (external
 // content mode) a bare level count. Exactly one is set.
 type RatingScale struct {
@@ -201,6 +276,50 @@ type Answer struct {
 	Number   int64                        `json:"number,omitempty"`
 	Pairs    []Pair                       `json:"pairs,omitempty"`
 	Custom   lcommon.TransactionMetadatum `json:"-"`
+}
+
+// UnmarshalJSON accepts numeric answers as JSON numbers or decimal strings.
+// Strings preserve values that browser clients cannot represent as Numbers.
+func (a *Answer) UnmarshalJSON(data []byte) error {
+	var value struct {
+		Kind     QuestionKind    `json:"kind"`
+		Question uint64          `json:"question"`
+		Choice   uint64          `json:"choice,omitempty"`
+		Indices  []uint64        `json:"indices,omitempty"`
+		Number   json.RawMessage `json:"number,omitempty"`
+		Pairs    []Pair          `json:"pairs,omitempty"`
+	}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*a = Answer{
+		Kind: value.Kind, Question: value.Question, Choice: value.Choice, Indices: value.Indices, Pairs: value.Pairs,
+	}
+	if len(value.Number) != 0 {
+		number, err := parseJSONInt64(value.Number)
+		if err != nil {
+			return fmt.Errorf("answer number: %w", err)
+		}
+		a.Number = number
+	}
+	return nil
+}
+
+// UnmarshalJSON accepts pair values as JSON numbers or decimal strings.
+func (p *Pair) UnmarshalJSON(data []byte) error {
+	var value struct {
+		Option uint64          `json:"option"`
+		Value  json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	n, err := parseJSONInt64(value.Value)
+	if err != nil {
+		return fmt.Errorf("pair value: %w", err)
+	}
+	p.Option, p.Value = value.Option, n
+	return nil
 }
 
 // Response is a survey_response. A sealed survey's response carries Sealed (the

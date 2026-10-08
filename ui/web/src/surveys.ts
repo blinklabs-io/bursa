@@ -83,7 +83,7 @@ export function optionLabels(q: SurveyQuestion): string[] {
 }
 
 export interface RatingChoice {
-  value: number;
+  value: string;
   label: string;
 }
 
@@ -93,17 +93,19 @@ export interface RatingChoice {
 export function ratingChoices(scale: SurveyScale | undefined): RatingChoice[] {
   if (!scale) return [];
   if (scale.grid) {
-    const { min, max } = scale.grid;
-    const step = scale.grid.step && scale.grid.step > 0 ? scale.grid.step : 1;
-    if (Math.floor((max - min) / step) + 1 > MAX_GRID_CHOICES) return [];
+    const min = BigInt(scale.grid.min);
+    const max = BigInt(scale.grid.max);
+    const rawStep = scale.grid.step === undefined ? 0n : BigInt(scale.grid.step);
+    const step = rawStep > 0n ? rawStep : 1n;
+    if ((max - min) / step + 1n > BigInt(MAX_GRID_CHOICES)) return [];
     const out: RatingChoice[] = [];
     for (let v = min; v <= max; v += step) {
-      out.push({ value: v, label: String(v) });
+      out.push({ value: v.toString(), label: v.toString() });
     }
     return out;
   }
-  if (scale.labels) return scale.labels.map((label, i) => ({ value: i, label }));
-  return Array.from({ length: scale.levels ?? 0 }, (_, i) => ({ value: i, label: `Level ${i + 1}` }));
+  if (scale.labels) return scale.labels.map((label, i) => ({ value: String(i), label }));
+  return Array.from({ length: scale.levels }, (_, i) => ({ value: String(i), label: `Level ${i + 1}` }));
 }
 
 // positionToIndex turns a typed 1-based position into the 0-based index a draft
@@ -132,15 +134,19 @@ export interface QuestionDraft {
 }
 
 // onScale reports whether v is a value the rating scale accepts.
-export function onScale(scale: SurveyScale | undefined, v: number): boolean {
+export function onScale(scale: SurveyScale | undefined, value: string): boolean {
   if (!scale) return false;
+  if (!INTEGER.test(value)) return false;
+  const v = BigInt(value);
   if (scale.grid) {
-    const { min, max } = scale.grid;
-    const step = scale.grid.step && scale.grid.step > 0 ? scale.grid.step : 1;
-    return v >= min && v <= max && (v - min) % step === 0;
+    const min = BigInt(scale.grid.min);
+    const max = BigInt(scale.grid.max);
+    const rawStep = scale.grid.step === undefined ? 0n : BigInt(scale.grid.step);
+    const step = rawStep > 0n ? rawStep : 1n;
+    return v >= min && v <= max && (v - min) % step === 0n;
   }
-  const levels = scale.labels ? scale.labels.length : (scale.levels ?? 0);
-  return v >= 0 && v < levels;
+  const levels = BigInt(scale.labels ? scale.labels.length : scale.levels);
+  return v >= 0n && v < levels;
 }
 
 // answerableHere reports whether this wallet can build a response: a required
@@ -170,6 +176,24 @@ function parseInteger(s: string): number | null {
   if (!INTEGER.test(t)) return null;
   const n = Number(t);
   return Number.isSafeInteger(n) ? n : null;
+}
+
+const INT64_MIN = -(1n << 63n);
+const INT64_MAX = (1n << 63n) - 1n;
+const UINT64_MAX = (1n << 64n) - 1n;
+
+function parseInt64(s: string): string | null {
+  const t = s.trim();
+  if (!INTEGER.test(t)) return null;
+  const n = BigInt(t);
+  return n < INT64_MIN || n > INT64_MAX ? null : n.toString();
+}
+
+function parseUint64(s: string): string | null {
+  const t = s.trim();
+  if (!/^\d+$/.test(t)) return null;
+  const n = BigInt(t);
+  return n > UINT64_MAX ? null : n.toString();
 }
 
 // answerFor converts a draft to an answer item, or reports why it is not valid.
@@ -215,11 +239,15 @@ export function answerFor(
       return { answer: { kind, question: index, indices: indices as number[] } };
     }
     case 4: {
-      const n = parseInteger(d.number);
+      const n = parseInt64(d.number);
       const r = q.range;
       if (n === null || !r) return { error: "Enter a whole number." };
-      if (n < r.min || n > r.max) return { error: `Enter a number from ${r.min} to ${r.max}.` };
-      if (r.step && (n - r.min) % r.step !== 0) return { error: `Enter a number in steps of ${r.step} from ${r.min}.` };
+      const value = BigInt(n);
+      const min = BigInt(r.min);
+      const max = BigInt(r.max);
+      const step = r.step === undefined ? 0n : BigInt(r.step);
+      if (value < min || value > max) return { error: `Enter a number from ${r.min} to ${r.max}.` };
+      if (step > 0n && (value - min) % step !== 0n) return { error: `Enter a number in steps of ${r.step} from ${r.min}.` };
       return { answer: { kind, question: index, number: n } };
     }
     case 5: {
@@ -240,7 +268,7 @@ export function answerFor(
       const pairs = [];
       for (const [option, raw] of d.ratings.entries()) {
         if (raw.trim() === "") continue;
-        const v = parseInteger(raw);
+        const v = parseInt64(raw);
         if (v === null || !onScale(q.scale, v)) return { error: "Give each rating as a value on the scale." };
         pairs.push({ option, value: v });
       }
@@ -355,6 +383,24 @@ function toInt(label: string, raw: string, errors: string[]): number {
   return n;
 }
 
+function toInt64(label: string, raw: string, errors: string[]): string {
+  const value = parseInt64(raw);
+  if (value === null) {
+    errors.push(`${label} must be an integer in the int64 range.`);
+    return "0";
+  }
+  return value;
+}
+
+function toUint64(label: string, raw: string, errors: string[]): string {
+  const value = parseUint64(raw);
+  if (value === null) {
+    errors.push(`${label} must be an integer in the uint64 range.`);
+    return "0";
+  }
+  return value;
+}
+
 function questionFrom(b: BuilderQuestion, n: number, errors: string[]): SurveyQuestion {
   const at = `Question ${n}`;
   const fail = (msg: string) => errors.push(`${at}: ${msg}`);
@@ -385,16 +431,16 @@ function questionFrom(b: BuilderQuestion, n: number, errors: string[]): SurveyQu
       }
       break;
     case 4: {
-      const range = { min: toInt("Minimum", b.rangeMin, e), max: toInt("Maximum", b.rangeMax, e) } as {
-        min: number;
-        max: number;
-        step?: number;
+      const range = { min: toInt64("Minimum", b.rangeMin, e), max: toInt64("Maximum", b.rangeMax, e) } as {
+        min: string;
+        max: string;
+        step?: string;
       };
       if (b.rangeStep.trim() !== "") {
-        range.step = toInt("Step", b.rangeStep, e);
-        if (e.length === 0 && range.step < 1) fail("the step must be positive.");
+        range.step = toUint64("Step", b.rangeStep, e);
+        if (e.length === 0 && BigInt(range.step) < 1n) fail("the step must be positive.");
       }
-      if (e.length === 0 && range.min > range.max) fail("the minimum is above the maximum.");
+      if (e.length === 0 && BigInt(range.min) > BigInt(range.max)) fail("the minimum is above the maximum.");
       q.range = range;
       break;
     }
@@ -410,15 +456,15 @@ function questionFrom(b: BuilderQuestion, n: number, errors: string[]): SurveyQu
         if (labels.some((l) => textBytes(l) > 64)) fail("each rating label must be 64 bytes or fewer.");
         q.scale = { labels };
       } else {
-        const grid: { min: number; max: number; step?: number } = {
-          min: toInt("Rating minimum", b.scaleMin, e),
-          max: toInt("Rating maximum", b.scaleMax, e),
+        const grid: { min: string; max: string; step?: string } = {
+          min: toInt64("Rating minimum", b.scaleMin, e),
+          max: toInt64("Rating maximum", b.scaleMax, e),
         };
         if (b.scaleStep.trim() !== "") {
-          grid.step = toInt("Rating step", b.scaleStep, e);
-          if (e.length === 0 && grid.step < 1) fail("the rating step must be positive.");
+          grid.step = toUint64("Rating step", b.scaleStep, e);
+          if (e.length === 0 && BigInt(grid.step) < 1n) fail("the rating step must be positive.");
         }
-        if (e.length === 0 && grid.min > grid.max) fail("the rating minimum is above the maximum.");
+        if (e.length === 0 && BigInt(grid.min) > BigInt(grid.max)) fail("the rating minimum is above the maximum.");
         q.scale = { grid };
       }
       break;

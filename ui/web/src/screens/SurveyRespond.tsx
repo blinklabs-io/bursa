@@ -215,7 +215,7 @@ function QuestionInput({ q, index, draft, error, onChange }: QuestionInputProps)
 
 interface SurveyRespondProps {
   survey: SurveyDetail;
-  onPreview: (preview: Preview, summary: string) => void;
+  onPreview: (preview: Preview, summary: string, signedContent: string) => void;
 }
 
 // SurveyRespond collects answers for every question (abstaining by default) and
@@ -252,6 +252,7 @@ export function SurveyRespond({ survey, onPreview }: SurveyRespondProps) {
 
   async function submit() {
     setError(null);
+    const selectedRole = role as SurveyRole;
     const { answers, errors: found } = answersFor(def, drafts);
     setErrors(found);
     if (Object.keys(found).length > 0) return;
@@ -261,8 +262,20 @@ export function SurveyRespond({ survey, onPreview }: SurveyRespondProps) {
     }
     setLoading(true);
     try {
-      const preview = await respondToSurvey({ survey: survey.id, role: role as SurveyRole, answers });
-      onPreview(preview, `Publish your response to “${survey.title}”`);
+      const preview = await respondToSurvey({ survey: survey.id, role: selectedRole, answers });
+      onPreview(
+        preview,
+        `Publish your response to “${survey.title}”`,
+        JSON.stringify(
+          {
+            survey: survey.id,
+            role: ROLE_LABELS[selectedRole],
+            answers: answers.map((answer) => ({ prompt: def.questions[answer.question].prompt, ...answer })),
+          },
+          null,
+          2,
+        ),
+      );
     } catch (e) {
       setError(errorMessage(e));
     } finally {

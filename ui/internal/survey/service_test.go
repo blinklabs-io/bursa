@@ -34,7 +34,7 @@ type fakeChain struct {
 	labels   []chain.LabelMetadata
 	txs      map[string]chain.TxInfo
 	signers  map[string][]string
-	dreps    map[string]bool // credential hex
+	dreps    map[string]bool // CIP-129 DRep ID
 	pools    map[string]bool // pool id bech32
 	accounts map[string]chain.AccountInfo
 	docs     []chain.AnchorDocument
@@ -142,6 +142,10 @@ func (f *fakeChain) GovernanceAnchorDocuments(context.Context) ([]chain.AnchorDo
 }
 
 func credHex(b byte) string { return hex.EncodeToString(rep(b, 28)) }
+
+func drepID(b byte) string {
+	return (&lcommon.Drep{Type: lcommon.DrepTypeAddrKeyHash, Credential: rep(b, 28)}).String()
+}
 
 // simple builds a one-question single-choice survey owned by key credential
 // owner.
@@ -312,8 +316,8 @@ func TestGetTalliesVerifiedResponses(t *testing.T) {
 	f := newFakeChain()
 	s := ref(0xa1, 0)
 	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(1, 45, RoleDRep, RoleKeyholder)), credHex(1))
-	f.dreps[credHex(10)] = true
-	f.dreps[credHex(11)] = true
+	f.dreps[drepID(10)] = true
+	f.dreps[drepID(11)] = true
 
 	f.add(t, 0xd1, 110, 0, 41, respPayload(respond(s, RoleDRep, 10, 0)), credHex(10))
 	f.add(t, 0xd2, 111, 0, 41, respPayload(respond(s, RoleDRep, 11, 1)), credHex(11))

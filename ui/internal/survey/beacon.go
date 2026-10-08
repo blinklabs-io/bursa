@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 )
 
@@ -76,7 +77,12 @@ func defaultBeaconFetcher() func(context.Context, uint64) ([]byte, error) {
 func (s *Service) cachedBeacon(round uint64) []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.beacons[round]
+	sig, ok := s.beacons[round]
+	if !ok {
+		return nil
+	}
+	s.rememberBeaconLocked(round, sig)
+	return slices.Clone(sig)
 }
 
 func (s *Service) cacheBeacon(round uint64, sig []byte) error {
@@ -84,9 +90,22 @@ func (s *Service) cacheBeacon(round uint64, sig []byte) error {
 		return err
 	}
 	s.mu.Lock()
-	s.beacons[round] = sig
+	s.rememberBeaconLocked(round, sig)
 	s.mu.Unlock()
 	return nil
+}
+
+// rememberBeaconLocked refreshes a verified beacon and evicts the least
+// recently used round when the cache reaches its bound. The caller holds s.mu.
+func (s *Service) rememberBeaconLocked(round uint64, sig []byte) {
+	s.beaconOrder = slices.DeleteFunc(s.beaconOrder, func(existing uint64) bool { return existing == round })
+	s.beacons[round] = slices.Clone(sig)
+	s.beaconOrder = append(s.beaconOrder, round)
+	if len(s.beaconOrder) > maxCachedBeacons {
+		oldest := s.beaconOrder[0]
+		s.beaconOrder = s.beaconOrder[1:]
+		delete(s.beacons, oldest)
+	}
 }
 
 // RevealRequest asks for a sealed survey's responses to be unsealed. Beacon is

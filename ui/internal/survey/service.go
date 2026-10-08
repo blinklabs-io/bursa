@@ -46,6 +46,9 @@ const maxLabelPages = 50
 // maxCachedTxs bounds the per-transaction fact cache.
 const maxCachedTxs = 20000
 
+// maxCachedBeacons bounds verified reveal signatures retained by this service.
+const maxCachedBeacons = 32
+
 // Chain is the node surface the service reads. *chain.Client satisfies it.
 type Chain interface {
 	MetadataByLabelPage(ctx context.Context, label uint64, page int) ([]chain.LabelMetadata, error)
@@ -70,9 +73,10 @@ type Service struct {
 	// runs only when the user asks to reveal a sealed survey and consents.
 	fetchBeacon func(ctx context.Context, round uint64) ([]byte, error)
 
-	mu      sync.Mutex
-	facts   map[string]txFacts
-	beacons map[uint64][]byte // verified quicknet signatures by round
+	mu          sync.Mutex
+	facts       map[string]txFacts
+	beacons     map[uint64][]byte // verified quicknet signatures by round
+	beaconOrder []uint64          // least recently used round first
 
 	// labelMu serialises label reads and guards labelRows, the label-17 history
 	// read so far in whole pages.
@@ -560,7 +564,8 @@ func (s *Service) verifyRole(ctx context.Context, role Role, c Credential) (stri
 		return "", nil
 	case RoleDRep:
 		var info chain.DRepInfo
-		if info, err = s.chain.DRep(ctx, hex.EncodeToString(c.Hash[:])); err == nil && info.Retired {
+		drepID := (&lcommon.Drep{Type: lcommon.DrepTypeAddrKeyHash, Credential: c.Hash[:]}).String()
+		if info, err = s.chain.DRep(ctx, drepID); err == nil && info.Retired {
 			return "DRep is retired", nil
 		}
 	case RoleSPO:

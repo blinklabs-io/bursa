@@ -445,6 +445,20 @@ a:hover {
   max-width: 880px;
 }
 
+.survey-confirm-content {
+  max-height: 18rem;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--inset);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ---------------------------------------------------------------- panels -- */
 .card {
   background: var(--surface);
