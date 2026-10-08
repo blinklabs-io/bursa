@@ -2147,6 +2147,7 @@ type surveyListResponse struct {
 	Total   int              `json:"total"`
 	Page    int              `json:"page"`
 	Count   int              `json:"count"`
+	Partial bool             `json:"partial,omitempty"`
 }
 
 // registerSurveyRoutes registers the CIP-179 routes. Reads come from the
@@ -2155,7 +2156,8 @@ type surveyListResponse struct {
 func registerSurveyRoutes(mux *http.ServeMux, st Statuser, sv Surveys) {
 	mux.HandleFunc("GET /wallet/surveys", gated(st, func(w http.ResponseWriter, r *http.Request) {
 		list, err := sv.List(r.Context())
-		if err != nil {
+		partial := errors.Is(err, survey.ErrIndexing)
+		if err != nil && !partial {
 			serveSurvey(w, list, err)
 			return
 		}
@@ -2173,7 +2175,7 @@ func registerSurveyRoutes(mux *http.ServeMux, st Statuser, sv Surveys) {
 				strings.Contains(strings.ToLower(s.Description), needle) ||
 				strings.Contains(strings.ToLower(s.ID), needle)
 		})
-		writeJSON(w, http.StatusOK, surveyListResponse{Surveys: items, Total: total, Page: page, Count: count})
+		writeJSON(w, http.StatusOK, surveyListResponse{Surveys: items, Total: total, Page: page, Count: count, Partial: partial})
 	}))
 	mux.HandleFunc("GET /wallet/surveys/{id}", gated(st, func(w http.ResponseWriter, r *http.Request) {
 		d, err := sv.Get(r.Context(), r.PathValue("id"))

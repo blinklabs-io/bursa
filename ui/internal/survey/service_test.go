@@ -40,6 +40,7 @@ type fakeChain struct {
 	docs     []chain.AnchorDocument
 	roleErr  error
 	pages    []int // label pages read, in order
+	pageRows func(int) []chain.LabelMetadata
 	start    int64 // current epoch's start; timeIn assumes the default
 	junk     int   // junk rows ever added, so each has a distinct hash
 }
@@ -79,6 +80,9 @@ func (f *fakeChain) MetadataByLabelPage(_ context.Context, label uint64, page in
 		return nil, fmt.Errorf("unexpected label %d", label)
 	}
 	f.pages = append(f.pages, page)
+	if f.pageRows != nil {
+		return slices.Clone(f.pageRows(page)), nil
+	}
 	start := min((page-1)*chain.LabelPageSize, len(f.labels))
 	end := min(start+chain.LabelPageSize, len(f.labels))
 	return slices.Clone(f.labels[start:end]), nil
@@ -593,15 +597,36 @@ func TestLabelHistoryReadsOnlyNewPages(t *testing.T) {
 	equal(t, []int{2, 3, 4}, f.pages)
 }
 
+func TestLabelHistoryRejectsOversizedPage(t *testing.T) {
+	t.Parallel()
+	f := newFakeChain()
+	f.pageRows = func(int) []chain.LabelMetadata {
+		return make([]chain.LabelMetadata, chain.LabelPageSize+1)
+	}
+	s := NewService(f, "preview")
+
+	for range 2 {
+		if _, err := s.labelHistory(context.Background()); err == nil {
+			t.Fatal("labelHistory succeeded with an oversized metadata page")
+		}
+	}
+	equal(t, []int{1, 1}, f.pages)
+	equal(t, 0, len(s.labelRows))
+}
+
 func TestLabelHistoryLongerThanOneRequestCompletesLater(t *testing.T) {
 	t.Parallel()
 	f := newFakeChain()
-	f.addJunk((maxLabelPages + 3) * chain.LabelPageSize)
 	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(1, 60)), credHex(1))
+	f.addJunk((maxLabelPages + 3) * chain.LabelPageSize)
 	s := NewService(f, "preview")
 
-	if _, err := s.List(context.Background()); !errors.Is(err, ErrIndexing) {
+	partial, err := s.List(context.Background())
+	if !errors.Is(err, ErrIndexing) {
 		t.Fatalf("first List err = %v, want ErrIndexing", err)
+	}
+	if len(partial) != 1 || partial[0].Title != "survey by 1" {
+		t.Fatalf("partial list = %+v", partial)
 	}
 	equal(t, []string{"survey by 1"}, titles(t, s))
 }

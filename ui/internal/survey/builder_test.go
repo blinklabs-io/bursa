@@ -93,6 +93,7 @@ func TestRespondBuildsALabel17ResponseSignedByTheRoleKey(t *testing.T) {
 			req, p := b.built(t)
 			equal(t, Label, req.Label)
 			equal(t, tc.signer, req.Signer)
+			equal(t, [28]byte(cred(false, tc.cred).Hash), req.ExpectedSignerCredential)
 			equal(t, KindResponses, p.Kind)
 			equal(t, []Response{{
 				Survey: ref(0xa1, 0), Role: role, Credential: cred(false, tc.cred), Answers: answer(1),
@@ -180,6 +181,7 @@ func TestCreateBuildsADefinitionOwnedByThePaymentKey(t *testing.T) {
 	built, p := b.built(t)
 	equal(t, Label, built.Label)
 	equal(t, spend.SignerPayment, built.Signer)
+	equal(t, [28]byte(cred(false, 0x91).Hash), built.ExpectedSignerCredential)
 	equal(t, KindDefinitions, p.Kind)
 	equal(t, []Definition{{
 		Owner: cred(false, 0x91), Title: "Poll", Description: "Pick one",
@@ -279,6 +281,7 @@ func TestCancelBuildsACancellationForTheOwner(t *testing.T) {
 	noErr(t, err)
 	built, p := b.built(t)
 	equal(t, spend.SignerPayment, built.Signer)
+	equal(t, [28]byte(cred(false, 0x91).Hash), built.ExpectedSignerCredential)
 	equal(t, KindCancellations, p.Kind)
 	equal(t, []Ref{ref(0xa1, 0)}, p.Cancellations)
 }

@@ -163,10 +163,18 @@ func TestSurveyListLinkedFilter(t *testing.T) {
 
 func TestSurveyListWhileStillIndexing(t *testing.T) {
 	t.Parallel()
-	h := surveyHandler(readyStatuser(), &fakeSurveys{err: fmt.Errorf("%w: 5000 transactions so far", survey.ErrIndexing)})
+	list := sampleSurveys(1)
+	h := surveyHandler(readyStatuser(), &fakeSurveys{
+		list: list,
+		err:  fmt.Errorf("%w: 5000 transactions scanned", survey.ErrIndexing),
+	})
 	rec := serveSurveyReq(h, http.MethodGet, "/wallet/surveys", "")
-	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "still being read") {
+	var resp surveyListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || rec.Code != http.StatusOK {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	if !resp.Partial || resp.Total != 1 || len(resp.Surveys) != 1 {
+		t.Fatalf("partial list = %+v", resp)
 	}
 }
 

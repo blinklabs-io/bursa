@@ -35,9 +35,9 @@ import (
 // ErrNotFound is returned for a survey that does not exist or is not valid.
 var ErrNotFound = errors.New("survey: not found")
 
-// ErrIndexing is returned while the label-17 history is still being read: a
-// request reads at most maxLabelPages pages, and a longer history is completed
-// by later requests rather than tallied partially.
+// ErrIndexing marks results from a label-17 history that is still being read.
+// List returns the surveys decoded so far with this error so callers can expose
+// a partial result; Get waits until the scan is complete.
 var ErrIndexing = errors.New("survey: label history is still being read")
 
 // maxLabelPages bounds the label-17 pages one request reads.
@@ -229,7 +229,7 @@ func parseID(id string) (Ref, bool) {
 // that does not decode as a CIP-179 payload.
 func (s *Service) scan(ctx context.Context) ([]entry, error) {
 	rows, err := s.labelHistory(ctx)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrIndexing) {
 		return nil, err
 	}
 	out := make([]entry, 0, len(rows))
@@ -240,7 +240,7 @@ func (s *Service) scan(ctx context.Context) ([]entry, error) {
 		}
 		out = append(out, entry{hash: r.TxHash, payload: p})
 	}
-	return out, nil
+	return out, err
 }
 
 // labelHistory returns the whole label-17 history, reading only what changed
@@ -257,6 +257,15 @@ func (s *Service) labelHistory(ctx context.Context) ([]chain.LabelMetadata, erro
 		rows, err := s.chain.MetadataByLabelPage(ctx, Label, page)
 		if err != nil {
 			return nil, fmt.Errorf("label %d metadata: %w", Label, err)
+		}
+		if len(rows) > size {
+			return nil, fmt.Errorf(
+				"label %d metadata page %d has %d rows, maximum is %d",
+				Label,
+				page,
+				len(rows),
+				size,
+			)
 		}
 		start := (page - 1) * size
 		if start < len(s.labelRows) {
@@ -276,7 +285,7 @@ func (s *Service) labelHistory(ctx context.Context) ([]chain.LabelMetadata, erro
 		s.labelRows = append(s.labelRows, rows...)
 		page++
 	}
-	return nil, fmt.Errorf("%w: %d transactions so far", ErrIndexing, len(s.labelRows))
+	return slices.Clone(s.labelRows), fmt.Errorf("%w: %d transactions scanned", ErrIndexing, len(s.labelRows))
 }
 
 func samePage(a, b []chain.LabelMetadata) bool {
@@ -394,16 +403,18 @@ func (s *Service) links(ctx context.Context, defs []*known) (map[Ref][]string, e
 // snapshot is the label-17 history read once: decoded transactions, the
 // verified definitions among them, and the epoch clock.
 type snapshot struct {
-	entries []entry
-	defs    []*known
-	cl      clk
+	entries  []entry
+	defs     []*known
+	cl       clk
+	indexErr error
 }
 
 func (s *Service) snapshot(ctx context.Context) (snapshot, error) {
 	entries, err := s.scan(ctx)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrIndexing) {
 		return snapshot{}, err
 	}
+	indexErr := err
 	cl, err := s.clock(ctx)
 	if err != nil {
 		return snapshot{}, err
@@ -412,7 +423,7 @@ func (s *Service) snapshot(ctx context.Context) (snapshot, error) {
 	if err != nil {
 		return snapshot{}, err
 	}
-	return snapshot{entries: entries, defs: defs, cl: cl}, nil
+	return snapshot{entries: entries, defs: defs, cl: cl, indexErr: indexErr}, nil
 }
 
 func (sn snapshot) find(id string) (*known, bool) {
@@ -442,7 +453,7 @@ func (s *Service) List(ctx context.Context) ([]Summary, error) {
 	for _, k := range slices.Backward(sn.defs) {
 		out = append(out, s.summarize(k, sn.cl, links))
 	}
-	return out, nil
+	return out, sn.indexErr
 }
 
 // Get returns one survey and, unless it was cancelled, its tally.
@@ -450,6 +461,9 @@ func (s *Service) Get(ctx context.Context, id string) (Detail, error) {
 	sn, err := s.snapshot(ctx)
 	if err != nil {
 		return Detail{}, err
+	}
+	if sn.indexErr != nil {
+		return Detail{}, sn.indexErr
 	}
 	k, ok := sn.find(id)
 	if !ok {

@@ -97,6 +97,14 @@ describe("list", () => {
     expect(table.getByText("Sealed · Yours")).toBeInTheDocument();
   });
 
+  test("shows when the node is still indexing survey history", async () => {
+    vi.spyOn(client, "getSurveys").mockResolvedValue({ ...list([summary()]), partial: true });
+    render(<Surveys canSubmit />);
+
+    expect(await screen.findByRole("button", { name: "Fund the thing?" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/more may appear while the node scans/i);
+  });
+
   test("search and status filter query the node with the typed terms", async () => {
     const getSurveys = vi.spyOn(client, "getSurveys").mockResolvedValue(list([summary()]));
     render(<Surveys canSubmit />);

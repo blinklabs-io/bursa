@@ -56,6 +56,17 @@ func accountKeyHashes(t *testing.T, acct *wallet.Account) map[SignerKind]string 
 	}
 }
 
+func expectedCredential(t *testing.T, acct *wallet.Account, kind SignerKind) [28]byte {
+	t.Helper()
+	hash, err := hex.DecodeString(accountKeyHashes(t, acct)[kind])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out [28]byte
+	copy(out[:], hash)
+	return out
+}
+
 func TestWalletCredential(t *testing.T) {
 	t.Parallel()
 	acct := mustDeriveConfirmAccount(t)
@@ -83,7 +94,10 @@ func TestBuildMetadataCarriesTheValueUnchanged(t *testing.T) {
 	s := NewService(newFakeChain(10_000_000, acct.ReceiveAddresses[0]), nil, acct)
 	value := metaValue()
 
-	pv, err := s.BuildMetadata(context.Background(), MetadataRequest{Label: 17, Value: value, Signer: SignerPayment})
+	pv, err := s.BuildMetadata(context.Background(), MetadataRequest{
+		Label: 17, Value: value, Signer: SignerPayment,
+		ExpectedSignerCredential: expectedCredential(t, acct, SignerPayment),
+	})
 	if err != nil {
 		t.Fatalf("BuildMetadata: %v", err)
 	}
@@ -128,7 +142,10 @@ func TestBuildMetadataRequiresTheCredentialSigner(t *testing.T) {
 			t.Parallel()
 			acct := mustDeriveConfirmAccount(t)
 			s := NewService(newFakeChain(10_000_000, acct.ReceiveAddresses[0]), nil, acct)
-			pv, err := s.BuildMetadata(context.Background(), MetadataRequest{Label: 17, Value: metaValue(), Signer: kind})
+			pv, err := s.BuildMetadata(context.Background(), MetadataRequest{
+				Label: 17, Value: metaValue(), Signer: kind,
+				ExpectedSignerCredential: expectedCredential(t, acct, kind),
+			})
 			if err != nil {
 				t.Fatalf("BuildMetadata: %v", err)
 			}
@@ -176,7 +193,10 @@ func TestConfirmMetadataTxSignsWithTheCredentialKey(t *testing.T) {
 			s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
 			ctx := context.Background()
 
-			pv, err := s.BuildMetadata(ctx, MetadataRequest{Label: 17, Value: metaValue(), Signer: kind})
+			pv, err := s.BuildMetadata(ctx, MetadataRequest{
+				Label: 17, Value: metaValue(), Signer: kind,
+				ExpectedSignerCredential: expectedCredential(t, acct, kind),
+			})
 			if err != nil {
 				t.Fatalf("BuildMetadata: %v", err)
 			}
@@ -204,7 +224,10 @@ func TestBuildMetadataStaysUnsignableOnHardware(t *testing.T) {
 	t.Parallel()
 	acct := mustDeriveConfirmAccount(t)
 	s := NewService(newFakeChain(10_000_000, acct.ReceiveAddresses[0]), nil, acct)
-	pv, err := s.BuildMetadata(context.Background(), MetadataRequest{Label: 17, Value: metaValue(), Signer: SignerPayment})
+	pv, err := s.BuildMetadata(context.Background(), MetadataRequest{
+		Label: 17, Value: metaValue(), Signer: SignerPayment,
+		ExpectedSignerCredential: expectedCredential(t, acct, SignerPayment),
+	})
 	if err != nil {
 		t.Fatalf("BuildMetadata: %v", err)
 	}
@@ -214,6 +237,21 @@ func TestBuildMetadataStaysUnsignableOnHardware(t *testing.T) {
 	}
 	if !strings.Contains(req.Unsupported, "auxiliary data") {
 		t.Fatalf("Unsupported = %q, want an auxiliary data rejection", req.Unsupported)
+	}
+}
+
+func TestBuildMetadataRejectsChangedWalletCredential(t *testing.T) {
+	t.Parallel()
+	acct := mustDeriveConfirmAccount(t)
+	s := NewService(newFakeChain(10_000_000, acct.ReceiveAddresses[0]), nil, acct)
+	got := expectedCredential(t, acct, SignerPayment)
+	got[0] ^= 0xff
+	_, err := s.BuildMetadata(context.Background(), MetadataRequest{
+		Label: 17, Value: metaValue(), Signer: SignerPayment,
+		ExpectedSignerCredential: got,
+	})
+	if !errors.Is(err, ErrWalletChanged) {
+		t.Fatalf("BuildMetadata err = %v, want ErrWalletChanged", err)
 	}
 }
 
@@ -230,7 +268,9 @@ func TestBuildMetadataRejectsBadRequests(t *testing.T) {
 		t.Errorf("unknown signer: err = %v, want ErrInvalidRequest", err)
 	}
 	empty := NewService(newFakeChain(10_000_000, acct.ReceiveAddresses[0]), nil, nil)
-	if _, err := empty.BuildMetadata(ctx, MetadataRequest{Label: 17, Value: metaValue(), Signer: SignerPayment}); !errors.Is(err, ErrNoWallet) {
+	if _, err := empty.BuildMetadata(ctx, MetadataRequest{
+		Label: 17, Value: metaValue(), Signer: SignerPayment,
+	}); !errors.Is(err, ErrNoWallet) {
 		t.Errorf("no wallet: err = %v, want ErrNoWallet", err)
 	}
 }

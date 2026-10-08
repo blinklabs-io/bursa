@@ -126,6 +126,11 @@ function SurveyList({ canSubmit, onOpen, onCreate }: SurveyListProps) {
           On-chain surveys and polls (CIP-179) read from your embedded node — no external service is contacted.
           Anyone can publish one, so check who is asking before you respond.
         </p>
+        {data?.partial && (
+          <p role="status" className="helper-text">
+            Showing surveys indexed so far. More may appear while the node scans the CIP-179 history.
+          </p>
+        )}
         <div className="preview-actions">
           <Button onClick={onCreate} disabled={!canSubmit} title={canSubmit ? undefined : "Needs a synced node and a wallet with a local seed"}>
             New survey

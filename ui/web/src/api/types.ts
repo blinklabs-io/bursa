@@ -1089,6 +1089,7 @@ export interface SurveysResponse {
   total: number;
   page: number;
   count: number;
+  partial?: boolean;
 }
 
 export interface SurveyRange {

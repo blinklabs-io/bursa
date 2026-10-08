@@ -80,12 +80,22 @@ var walletSigners = map[Role]spend.SignerKind{
 	RoleKeyholder:   spend.SignerPayment,
 }
 
-func (s *Service) build(ctx context.Context, p Payload, signer spend.SignerKind) (spend.Preview, error) {
+func (s *Service) build(
+	ctx context.Context,
+	p Payload,
+	signer spend.SignerKind,
+	expectedCredential [28]byte,
+) (spend.Preview, error) {
 	md, err := Encode(p)
 	if err != nil {
 		return spend.Preview{}, err
 	}
-	return s.builder.BuildMetadata(ctx, spend.MetadataRequest{Label: Label, Value: md, Signer: signer})
+	return s.builder.BuildMetadata(ctx, spend.MetadataRequest{
+		Label:                    Label,
+		Value:                    md,
+		Signer:                   signer,
+		ExpectedSignerCredential: expectedCredential,
+	})
 }
 
 // openSurvey finds a survey and requires that it still accepts activity.
@@ -134,7 +144,12 @@ func (s *Service) Respond(ctx context.Context, req RespondRequest) (spend.Previe
 	if err := k.def.CheckResponse(resp); err != nil {
 		return spend.Preview{}, err
 	}
-	return s.build(ctx, Payload{Kind: KindResponses, Responses: []Response{resp}}, signer)
+	return s.build(
+		ctx,
+		Payload{Kind: KindResponses, Responses: []Response{resp}},
+		signer,
+		hash,
+	)
 }
 
 // sealResponse validates the answers and replaces them with their timelock
@@ -200,7 +215,12 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (spend.Preview,
 			return spend.Preview{}, invalidf("padding size %d exceeds %d bytes", req.Seal.PaddingSize, maxPadding)
 		}
 	}
-	return s.build(ctx, Payload{Kind: KindDefinitions, Definitions: []Definition{def}}, spend.SignerPayment)
+	return s.build(
+		ctx,
+		Payload{Kind: KindDefinitions, Definitions: []Definition{def}},
+		spend.SignerPayment,
+		owner,
+	)
 }
 
 // Cancel builds a cancellation of a survey the wallet's payment key owns.
@@ -219,5 +239,10 @@ func (s *Service) Cancel(ctx context.Context, req CancelRequest) (spend.Preview,
 	if k.def.Owner.Script || k.def.Owner.Hash != owner {
 		return spend.Preview{}, invalidf("survey is not owned by this wallet's payment key")
 	}
-	return s.build(ctx, Payload{Kind: KindCancellations, Cancellations: []Ref{k.ref}}, spend.SignerPayment)
+	return s.build(
+		ctx,
+		Payload{Kind: KindCancellations, Cancellations: []Ref{k.ref}},
+		spend.SignerPayment,
+		owner,
+	)
 }

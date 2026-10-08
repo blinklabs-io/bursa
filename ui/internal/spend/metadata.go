@@ -38,9 +38,10 @@ const (
 // metadata Label and lists the Signer key in its required signers, so the
 // ledger enforces that the wallet controls that credential.
 type MetadataRequest struct {
-	Label  uint64
-	Value  lcommon.TransactionMetadatum
-	Signer SignerKind
+	Label                    uint64
+	Value                    lcommon.TransactionMetadatum
+	Signer                   SignerKind
+	ExpectedSignerCredential [28]byte
 }
 
 // WalletCredential returns the key hash of the active wallet's key of the given
@@ -105,6 +106,9 @@ func (s *Service) BuildMetadata(ctx context.Context, req MetadataRequest) (Previ
 	credential, err := walletCredential(acct, req.Signer)
 	if err != nil {
 		return Preview{}, err
+	}
+	if credential != req.ExpectedSignerCredential {
+		return Preview{}, ErrWalletChanged
 	}
 
 	a, utxoAddr, err := s.completeWithSigners(ctx, acct, []lcommon.Blake2b224{credential},
