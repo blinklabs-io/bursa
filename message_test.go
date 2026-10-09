@@ -218,6 +218,15 @@ func TestSignData_NilLoadedKeyFails(t *testing.T) {
 	}
 }
 
+func TestSignDataWith_NilSignerFails(t *testing.T) {
+	lk := testLoadedKey(make([]byte, 32))
+	addr := testEnterpriseAddress(t, lk.VKey)
+	_, _, err := SignDataWith(addr, []byte("payload"), lk.VKey, nil)
+	if err == nil {
+		t.Fatalf("SignDataWith must reject a nil sign function")
+	}
+}
+
 func TestSignData_RejectsSpoofedAddress(t *testing.T) {
 	lk := testLoadedKey(make([]byte, 32))
 	other := testLoadedKey(append(make([]byte, 31), 1))

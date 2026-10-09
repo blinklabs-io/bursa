@@ -297,6 +297,16 @@ func SignData(addr, payload []byte, lk *LoadedKey) (signatureHex, keyHex string,
 	if err != nil {
 		return "", "", err
 	}
+	return SignDataWith(addr, payload, vkey, sign)
+}
+
+// SignDataWith is SignData for a key that is not held in process: sign
+// receives the COSE Sig_structure bytes and returns a 64-byte Ed25519
+// signature by vkey.
+func SignDataWith(addr, payload, vkey []byte, sign func([]byte) ([]byte, error)) (signatureHex, keyHex string, err error) {
+	if sign == nil {
+		return "", "", errors.New("sign function cannot be nil")
+	}
 	if err := validateAddressForVKey(addr, vkey); err != nil {
 		return "", "", err
 	}
