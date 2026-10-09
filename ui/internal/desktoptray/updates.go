@@ -75,7 +75,13 @@ func (u *UpdateChecker) Start(finished func()) bool {
 	}
 	go func() {
 		defer u.running.Store(false)
-		u.run(finished)
+		u.run(func() {
+			// Release the guard before the callback re-enables the tray item.
+			u.running.Store(false)
+			if finished != nil {
+				finished()
+			}
+		})
 	}()
 	return true
 }
