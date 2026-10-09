@@ -131,6 +131,7 @@ func TestBindingSignaturesAreGomobileCompatible(t *testing.T) {
 	sigs := []sig{
 		{"Start", []string{"string", "string", "bool"}, []string{"error"}},
 		{"StartWithTimeout", []string{"string", "string", "bool", "int64"}, []string{"error"}},
+		{"SetNodeDataDir", []string{"string"}, nil},
 		{"Port", nil, []string{"int"}},
 		{"Stop", nil, []string{"error"}},
 		{"OnNetworkChanged", nil, []string{"error"}},
@@ -430,5 +431,30 @@ func TestCleanupLateStartStopsLiveAppAndTerminates(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("cleanupLateStart did not terminate; goroutine leaked")
+	}
+}
+
+// Not t.Parallel: swaps the package-level bootWallet seam.
+func TestStartPassesNodeDataDir(t *testing.T) {
+	orig := bootWallet
+	defer func() { bootWallet = orig }()
+
+	got := make(chan boot.Config, 1)
+	bootWallet = func(_ context.Context, cfg boot.Config) (*boot.App, error) {
+		got <- cfg
+		return nil, errors.New("stop here")
+	}
+
+	a := New()
+	a.SetNodeDataDir("/node")
+	_ = a.Start("/wallet", "preview", true)
+	var cfg boot.Config
+	select {
+	case cfg = <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("bootWallet was not called")
+	}
+	if cfg.DataDir != "/wallet" || cfg.NodeDataDir != "/node" {
+		t.Fatalf("boot got DataDir=%q NodeDataDir=%q, want /wallet and /node", cfg.DataDir, cfg.NodeDataDir)
 	}
 }
