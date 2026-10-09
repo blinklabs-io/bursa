@@ -281,17 +281,14 @@ export interface PoolDirectoryResponse {
 // lifecycle status and Yes/No/Abstain vote tallies. Read from the node's local
 // metadata DB — no external service is contacted. action_id is the CIP-129
 // bech32 gov_action1… identifier (falling back to txhash#index if it can't be
-// encoded). deposit is lovelace as a decimal string.
+// encoded).
 export interface GovernanceAction {
   action_id: string;
   tx_hash: string;
   action_index: number;
   type: string;
   proposed_epoch: number;
-  expires_epoch: number;
   status: string;
-  anchor_url: string;
-  deposit: string;
   yes_votes: number;
   no_votes: number;
   abstain_votes: number;

@@ -48,6 +48,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
 	"github.com/blinklabs-io/bursa/ui/internal/settings"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
+	"github.com/blinklabs-io/bursa/ui/internal/submissionctx"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/survey"
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
@@ -340,9 +341,9 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 
 	// Spending builds/signs/submits through the node's loopback UTxO-RPC
 	// endpoint; the active wallet's seed is decrypted from the vault on demand.
-	chainCtx := utxorpc.NewUtxoRpcChainContext(
+	chainCtx := newBoundedChainContext(utxorpc.NewUtxoRpcChainContext(
 		fmt.Sprintf("http://127.0.0.1:%d", utxorpcPort), netID, nil,
-	)
+	), chainCallTimeout)
 	spendSvc := spend.NewService(chainCtx, vaultKeystore{v: vlt}, nil)
 	spendSvc.SetChainQuerier(chainClient)
 
@@ -564,7 +565,10 @@ func (a *App) Stop() error {
 		return nil
 	}
 	a.logger.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// A detached submission can run for up to submissionctx.Timeout after its
+	// request is gone; draining must outlast it, or Shutdown gives up on a
+	// broadcast that is still bounded and about to finish.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), submissionctx.Timeout+5*time.Second)
 	defer cancel()
 	err := a.srv.Shutdown(shutdownCtx)
 	// Cancel the node context AFTER the control surface drains so in-flight API
