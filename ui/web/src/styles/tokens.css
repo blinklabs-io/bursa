@@ -1,31 +1,29 @@
 :root {
-  /* Bursa — Lat. "purse / treasury". A node-operator instrument panel:
-     a dark cockpit for your own full node, with a classical gold (coin) accent. */
-
-  /* Surfaces — dark, cool blue-slate cockpit */
-  --bg: #0c0f15; /* ground */
-  --surface: #151a22; /* panels */
-  --inset: #1d2531; /* inputs, hovers, table stripes */
-  --border: #283442; /* hairlines */
-
-  /* Ink */
-  --text: #e2e8f0;
-  --text-muted: #8492a2;
-  --text-faint: #5b6675;
-
-  /* Gold — the purse/coin; primary interactive + identity + key readouts */
-  --accent: #d8a657;
-  --accent-strong: #ecc079; /* hover / bright */
-  --accent-dim: color-mix(in srgb, var(--accent) 16%, transparent);
-  --accent-text: #14110a; /* dark ink on gold fills */
+  color-scheme: dark;
+  --bg: #121310;
+  --canvas: #181916;
+  --surface: #20211d;
+  --inset: #292a25;
+  --border: #393b33;
+  --divider: #2e3029;
+  --text: #f0efe9;
+  --text-muted: #b2b3a8;
+  --text-faint: #9c9e91;
+  --accent: #c6ad77;
+  --accent-strong: #d8c394;
+  --accent-dim: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-text: #201c13;
+  --text-caption: 12px;
+  --text-label: 13px;
+  --text-body: 14px;
 
   /* Node-health readouts — a distinct family so none clashes with gold */
   --ok: #58c47a; /* ready */
   --warn: #5fa2e6; /* syncing / working (blue reads as "in progress") */
   --error: #ff6166; /* error */
 
-  --radius: 6px;
-  --radius-lg: 10px;
+  --radius: 8px;
+  --radius-lg: 14px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 16px;
@@ -40,17 +38,10 @@
   --form-width: 760px;
 
   --gold-metal:
-    repeating-linear-gradient(0deg, #fff4cf0a 0px, #fff4cf0a 1px, #68421205 1px, transparent 3px),
-    linear-gradient(112deg, #bd985a 0%, #e8cc91 17%, #fff0c2 28%, #cfaa68 43%, #b88f4d 51%, #e7c98a 68%, #f9e8b8 82%, #c49e5c 100%);
-  --gold-metal-shadow:
-    inset 0 1px 0 #fff8de,
-    inset 1px 0 0 #ffedbe99,
-    inset -1px -1px 0 #65451f99,
-    0 2px 0 #806032,
-    0 4px 0 #392d1e,
-    0 18px 30px -12px #000b;
+    repeating-linear-gradient(0deg, #f4e6c004 0px, #f4e6c004 1px, transparent 1px, transparent 3px),
+    linear-gradient(115deg, #b29a6b, #c2ad82 42%, #b7a073 76%, #bda77c);
+  --gold-metal-shadow: inset 0 1px 0 #dfcea36b, inset 0 -1px 0 #75613e66, 0 8px 20px -12px #0008;
 
-  --font:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font: Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
 }

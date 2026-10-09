@@ -1,25 +1,9 @@
 @font-face {
-  font-family: Manrope;
-  src: url('/fonts/manrope-variable.ttf') format('truetype');
+  font-family: Geist;
+  src: url('/fonts/geist-variable.woff2') format('woff2');
   font-style: normal;
-  font-weight: 200 800;
+  font-weight: 100 900;
   font-display: swap;
-}
-:root {
-  color-scheme: dark;
-  --bg: #101214;
-  --surface: #191c20;
-  --inset: #202429;
-  --border: #30343a;
-  --text: #f0f0ee;
-  --text-muted: #a7abb2;
-  --text-faint: #959ba5;
-  --accent: #d9b56d;
-  --accent-strong: #ecd09a;
-  --accent-text: #211b10;
-  --radius: 8px;
-  --radius-lg: 14px;
-  --font: Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 ::selection { background: var(--accent); color: var(--accent-text); }
 input, textarea { caret-color: var(--accent); }
@@ -27,98 +11,99 @@ button, input, select, textarea { font-family: var(--font); }
 a { text-underline-offset: 4px; }
 button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .layout { width: 100%; }
-.sidebar { width: 244px; padding: var(--space-4) var(--space-comfortable); background: var(--bg); border-right-color: #ffffff0d; max-height: calc(100vh - 28px); overflow-y: auto; position: sticky; top: 0; }
+.sidebar { width: 244px; padding: var(--space-4) var(--space-comfortable); background: var(--bg); border-right-color: var(--divider); max-height: calc(100vh - 28px); overflow-y: auto; position: sticky; top: 0; }
 .brand { padding: 0 var(--space-2) var(--space-4); }
 .brand-lockup { display: flex; align-items: center; flex-shrink: 0; }
-.bursa-wordmark { display: inline-block; font-family: var(--font); font-size: 36px; font-weight: 750; line-height: 1; letter-spacing: -.035em; color: var(--accent); }
-.brand-motto { margin: var(--space-compact) 0 0; font: 11px var(--font); letter-spacing: 0; text-transform: none; color: var(--text-muted); }
+.bursa-wordmark { display: inline-block; font-family: var(--font); font-size: 36px; font-weight: 700; line-height: 1; letter-spacing: -.025em; color: var(--accent); }
+.brand-motto { margin: var(--space-compact) 0 0; font: var(--text-caption) var(--font); letter-spacing: 0; text-transform: none; color: var(--text-muted); }
 .cli-button { background: transparent; color: var(--text-muted); }
 .wallet-switcher { padding-bottom: var(--space-compact); margin-bottom: var(--space-compact); gap: var(--space-1); }
-.wallet-switcher-label, .account-switcher-label { font: 11px var(--font); text-transform: none; letter-spacing: 0; color: var(--text-muted); }
+.wallet-switcher-label, .account-switcher-label { font: var(--text-caption) var(--font); text-transform: none; letter-spacing: 0; color: var(--text-muted); }
 .wallet-item { min-height: 64px; padding: var(--space-2); border-radius: 10px; display: grid; grid-template-columns: 1fr auto; gap: var(--space-1) var(--space-2); }
-.wallet-item.active { background: var(--inset); border-color: #444138; color: var(--text); }
+.wallet-item.active { background: var(--inset); border-color: var(--border); color: var(--text); }
 .wallet-name { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
-.wallet-net { font: 10px var(--font); letter-spacing: 0; text-transform: capitalize; color: var(--text-muted); }
-.wallet-security { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 10px; color: var(--text-muted); }
+.wallet-net { font: var(--text-caption) var(--font); letter-spacing: 0; text-transform: capitalize; color: var(--text-muted); }
+.wallet-security { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-caption); color: var(--text-muted); }
 .wallet-security strong { font-weight: 500; }
-.wallet-security small { display: block; margin-top: var(--space-1); font-size: 11px; line-height: 1.6; }
+.wallet-security small { display: block; margin-top: var(--space-1); font-size: var(--text-caption); line-height: 1.6; }
 .wallet-security[data-custody="hardware"] > svg { color: var(--accent); }
 .wallet-item > .wallet-security { grid-column: 1 / -1; }
 .wallet-switcher-actions { gap: var(--space-2); flex-direction: row; flex-wrap: wrap; justify-content: space-between; }
-.wallet-action { font: 11px var(--font); min-height: 34px; color: var(--text-muted); }
+.wallet-action { font: var(--text-caption) var(--font); min-height: 34px; color: var(--text-muted); }
 .account-switcher { margin: var(--space-compact) 0 var(--space-compact) var(--space-2); padding-left: var(--space-compact); border-left: 1px solid var(--border); border-top: 0; }
 .account-item { min-height: 56px; padding: var(--space-2); border: 0; font-family: var(--font); flex-direction: column; align-items: flex-start; gap: var(--space-1); }
-.account-item.active { background: #d9b56d0c; color: var(--accent-strong); border-color: transparent; }
-.account-name { font-size: 11px; white-space: normal; overflow-wrap: anywhere; }
-.account-balance { font-size: 10px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.account-item.active { background: var(--accent-dim); color: var(--accent-strong); border-color: transparent; }
+.account-name { font-size: var(--text-label); white-space: normal; overflow-wrap: anywhere; }
+.account-balance { font-size: var(--text-caption); max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .palette-trigger { min-height: 40px; margin-bottom: var(--space-3); border-radius: 8px; background: transparent; }
 .search-label { display: flex; align-items: center; gap: var(--space-2); }
-.nav-item { display: flex; align-items: center; gap: var(--space-compact); min-height: 48px; padding: var(--space-compact) var(--space-compact); margin-bottom: var(--space-1); font-size: 13px; }
-.nav-item.active { background: #d9b56d14; color: var(--accent-strong); box-shadow: none; }
+.nav-item { display: flex; align-items: center; gap: var(--space-compact); min-height: 48px; padding: var(--space-compact); margin-bottom: var(--space-1); font-size: var(--text-body); }
+.nav-item.active { background: var(--accent-dim); color: var(--accent-strong); box-shadow: none; }
 .nav-item.active::before { display: none; }
 .nav-item svg { flex: 0 0 auto; }
 .sidebar-footer { margin-top: auto; padding: var(--space-5) var(--space-2) 0; }
-.sidebar-footer .wallet-security { align-items: flex-start; font-size: 11px; }
+.sidebar-footer .wallet-security { align-items: flex-start; font-size: var(--text-caption); }
 .sidebar-footer .wallet-security > svg { margin-top: var(--space-1); flex-shrink: 0; color: var(--accent); }
-.content { min-width: 0; padding: 0 var(--page-gutter) 48px; overflow: visible; background: #15181b; }
-.workspace-header { min-height: 78px; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); font-size: 12px; color: var(--text-muted); border-bottom: 1px solid #ffffff0d; margin: 0 auto var(--space-5); max-width: var(--content-width); }
+.content { min-width: 0; padding: 0 var(--page-gutter) 48px; overflow: visible; background: var(--canvas); }
+.workspace-header { min-height: 78px; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); font-size: 12px; color: var(--text-muted); border-bottom: 1px solid var(--divider); margin: 0 auto var(--space-5); max-width: var(--content-width); }
 .workspace-account { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-width: 0; overflow-wrap: anywhere; }
 .workspace-account strong { color: var(--text); font-weight: 500; }
-.workspace-divider { color: #757b85; }
-.network-label { display: inline-flex; align-items: center; gap: var(--space-2); text-transform: capitalize; flex-shrink: 0; padding: var(--space-1) var(--space-2); border-radius: 6px; background: #ffffff05; font-size: 11px; color: var(--text-muted); }
+.workspace-divider { color: var(--text-faint); }
+.network-label { display: inline-flex; align-items: center; gap: var(--space-2); text-transform: capitalize; flex-shrink: 0; padding: var(--space-1) var(--space-2); border-radius: 6px; background: #ffffff05; font-size: var(--text-caption); color: var(--text-muted); }
 .network-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
-.sync-banner { background: var(--bg); border-bottom-color: #ffffff08; min-height: 28px; padding: var(--space-1) var(--space-4); font-size: 10px; }
-.sync-state { font: 10px var(--font); text-transform: capitalize; letter-spacing: 0; }
-.sync-detail { font-size: 10px; color: var(--text-muted); }
+.sync-banner { background: var(--bg); border-bottom-color: #ffffff08; min-height: 28px; padding: var(--space-1) var(--space-4); font-size: var(--text-caption); }
+.sync-state { font: var(--text-caption) var(--font); text-transform: capitalize; letter-spacing: 0; }
+.sync-detail { font-size: var(--text-caption); color: var(--text-muted); }
 h1 { font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -.03em; }
 .portfolio { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); grid-template-areas: "heading heading" "balance staking" "assets collectibles"; max-width: var(--content-width); margin-inline: auto; gap: var(--section-gap); }
 .portfolio-heading { grid-area: heading; display: flex; justify-content: space-between; align-items: center; }
-.portfolio-heading p { color: var(--text-muted); font-size: 13px; margin-top: var(--space-2); }
-.balance-panel { grid-area: balance; background: var(--surface); padding: var(--panel-padding); border: 1px solid var(--border); border-radius: 14px; min-width: 0; display: flex; align-items: center; }
+.portfolio-heading p { color: var(--text-muted); font-size: var(--text-body); margin-top: var(--space-2); }
+.balance-panel { grid-area: balance; background: transparent; padding: var(--panel-padding) 0; border: 0; min-width: 0; display: flex; align-items: center; }
 .balance-copy { min-width: 0; width: 100%; }
 .wallet-card-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-compact); margin-bottom: var(--space-3); }
 .balance-copy h2 { color: var(--text-muted); font-size: 13px; font-weight: 500; margin: 0; }
-.card-chain { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 11px; color: var(--text-muted); }
+.card-chain { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-caption); color: var(--text-muted); }
 .cardano-mark { color: var(--accent); font-size: 17px; }
-.balance-ada { font-family: var(--font); font-size: 44px; font-weight: 600; letter-spacing: -.03em; line-height: 1.2; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; color: var(--text); }
+.balance-ada { font-family: var(--font); font-size: 56px; font-weight: 550; letter-spacing: -.03em; line-height: 1.2; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; color: var(--text); }
 .balance-ada > span { font-size: 20px; font-weight: 500; color: var(--text-muted); letter-spacing: 0; }
 .balance-source { font-size: 12px; color: var(--text-muted); margin-top: var(--space-2); }
 .portfolio-actions { display: flex; margin-top: var(--space-4); gap: var(--space-2); }
-.btn { min-height: 44px; padding: var(--space-2) var(--space-3); font: 600 12px var(--font); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border-radius: 8px; transition: background .15s ease, color .15s ease; }
+.btn { min-height: 44px; padding: var(--space-2) var(--space-3); font: 600 var(--text-label) var(--font); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border-radius: 8px; transition: background .15s ease, color .15s ease; }
 .btn.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
 .btn.primary:hover:not(:disabled) { background: var(--accent-strong); }
-.btn.ghost { background: #ffffff04; border-color: var(--border); color: var(--text); }
+.btn.ghost { background: transparent; border-color: var(--border); color: var(--text); }
 .btn.ghost:hover:not(:disabled) { background: var(--inset); }
 .btn:disabled { opacity: .45; }
 .portfolio-assets { grid-area: assets; }
 .portfolio-staking { grid-area: staking; }
 .portfolio-collectibles { grid-area: collectibles; }
 .portfolio-assets, .portfolio-staking, .portfolio-collectibles { min-width: 0; }
-.card { padding: var(--panel-padding); }
+.card { padding: var(--panel-padding); border-color: var(--divider); }
+.helper-text { font-family: var(--font); font-size: var(--text-body); }
 .card h2 { font-family: var(--font); font-size: 16px; font-weight: 650; letter-spacing: -.015em; text-transform: none; color: var(--text); margin-bottom: var(--space-3); }
-.portfolio-staking > .card { height: 100%; padding: var(--panel-padding); background: transparent; border-color: var(--border); box-shadow: none; }
+.portfolio-staking > .card { height: 100%; padding: var(--panel-padding); background: var(--surface); border: 0; box-shadow: none; }
 .portfolio-staking .card h2 { font-size: 14px; }
 .delegation-details .dl-row { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; font-size: 12px; }
 .delegation-details dt { font-family: var(--font); text-transform: none; letter-spacing: 0; color: var(--text-muted); flex-shrink: 0; }
 .delegation-details dd { font-family: var(--font); text-align: right; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .staking-rewards dd { color: var(--text); font-size: 16px; font-weight: 600; }
-.staking-link { display: flex; align-items: center; justify-content: space-between; width: 100%; padding-top: var(--space-3); margin-top: var(--space-compact); border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--accent); font: 600 12px var(--font); cursor: pointer; min-height: 42px; }
+.staking-link { display: flex; align-items: center; justify-content: space-between; width: 100%; padding-top: var(--space-3); margin-top: var(--space-compact); border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--accent); font: 600 var(--text-label) var(--font); cursor: pointer; min-height: 42px; }
 .portfolio-assets > .card, .portfolio-collectibles > .card { padding: 0; background: transparent; border: 0; }
 .portfolio-assets .asset-toolbar { min-height: 40px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-compact); margin-bottom: var(--space-3); }
 .portfolio-assets .card h2 { display: flex; align-items: center; gap: var(--space-2); margin: 0; }
-.asset-count { color: var(--text-muted); font-size: 11px; font-weight: 500; border-radius: 5px; background: var(--inset); padding: var(--space-1) var(--space-2); }
+.asset-count { color: var(--text-muted); font-size: var(--text-caption); font-weight: 500; border-radius: 5px; background: var(--inset); padding: var(--space-1) var(--space-2); }
 .asset-search { position: relative; width: 174px; }
 .asset-search > svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; }
 .asset-search .token-search { margin: 0; padding-left: var(--space-5); }
-.token-search { width: 100%; font: 12px var(--font); background: transparent; border-color: var(--border); border-radius: 8px; min-height: 36px; }
+.token-search { width: 100%; font: var(--text-label) var(--font); background: transparent; border-color: var(--border); border-radius: 8px; min-height: 36px; }
 .table { font-size: 13px; }
-.table th { font-family: var(--font); font-size: 11px; letter-spacing: 0; text-transform: none; padding: var(--space-compact); color: var(--text-muted); }
+.table th { font-family: var(--font); font-size: var(--text-caption); letter-spacing: 0; text-transform: none; padding: var(--space-compact); color: var(--text-muted); }
 .table td { font-family: var(--font); padding: var(--space-3) var(--space-compact); font-size: 13px; font-variant-numeric: tabular-nums; }
 .portfolio-assets .table-wrap { background: transparent; border: 0; border-radius: 0; }
 .portfolio-assets .table { table-layout: fixed; width: 100%; }
 .portfolio-assets .table th { background: transparent; border-bottom: 1px solid var(--border); }
 .portfolio-assets .table th:first-child { width: 62%; }
-.portfolio-assets .table td { background: transparent; border-bottom: 1px solid #ffffff0b; }
+.portfolio-assets .table td { background: transparent; border-bottom: 1px solid var(--divider); }
 .portfolio-assets .table th:first-child, .portfolio-assets .table td:first-child { padding-left: 0; }
 .portfolio-assets .table th:last-child, .portfolio-assets .table td:last-child { text-align: right; padding-right: 0; overflow-wrap: anywhere; }
 .portfolio-assets .table tr:hover td { background: #ffffff02; }
@@ -129,10 +114,10 @@ h1 { font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -.03e
 .asset-monogram[data-tone="1"] { background: #263c36; color: #b5d9c7; }
 .asset-monogram[data-tone="2"] { background: #3d3428; color: #ecd09a; }
 .asset-monogram[data-tone="3"] { background: #2a3749; color: #b9d4f4; }
-.asset-name { display: block; white-space: normal; overflow-wrap: anywhere; font-weight: 600; font-size: 13px; }
-.asset-kind { display: block; font-size: 10px; color: var(--text-muted); margin-top: var(--space-1); overflow-wrap: anywhere; }
+.asset-name { display: block; white-space: normal; overflow-wrap: anywhere; font-weight: 500; font-size: var(--text-body); }
+.asset-kind { display: block; font-size: var(--text-caption); color: var(--text-muted); margin-top: var(--space-1); overflow-wrap: anywhere; }
 .asset-quantity { display: block; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.asset-quantity small { display: block; color: var(--text-muted); font-size: 10px; font-weight: 400; margin-top: var(--space-1); }
+.asset-quantity small { display: block; color: var(--text-muted); font-size: var(--text-caption); font-weight: 400; margin-top: var(--space-1); }
 .collection-content { padding-top: 0; }
 .portfolio-collectibles > .card > h2 { display: flex; align-items: center; min-height: 40px; margin-bottom: var(--space-3); }
 .collection-empty { display: flex; align-items: flex-start; flex-direction: column; gap: var(--space-compact); padding: var(--space-4); border: 1px dashed var(--border); border-radius: 12px; }
@@ -142,18 +127,18 @@ h1 { font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -.03e
 .nft-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-3); }
 .nft-item { min-width: 0; padding: 0; border: 0; background: transparent; }
 .nft-thumb { display: block; width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 12px; background: var(--inset); }
-.nft-thumb-empty { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: var(--space-2); padding: var(--space-compact); text-align: center; color: var(--text-muted); font-size: 11px; }
+.nft-thumb-empty { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: var(--space-2); padding: var(--space-compact); text-align: center; color: var(--text-muted); font-size: var(--text-caption); }
 .nft-thumb-empty::before { display: none; }
 .nft-thumb-empty button { background: transparent; color: var(--accent); border: 0; text-decoration: underline; cursor: pointer; min-height: 32px; }
-.nft-name { margin-top: var(--space-2); font: 600 12px var(--font); overflow-wrap: anywhere; }
-.nft-details { margin-top: var(--space-1); font-size: 11px; color: var(--text-muted); }
+.nft-name { margin-top: var(--space-2); font: 600 var(--text-label) var(--font); overflow-wrap: anywhere; }
+.nft-details { margin-top: var(--space-1); font-size: var(--text-caption); color: var(--text-muted); }
 .nft-details summary { cursor: pointer; min-height: 30px; }
-.nft-details code { display: block; overflow-wrap: anywhere; margin: var(--space-2) 0; font-size: 10px; }
+.nft-details code { display: block; overflow-wrap: anywhere; margin: var(--space-2) 0; font-size: var(--text-caption); }
 .nft-details p { margin-top: var(--space-2); }
 .mobile-bottom-nav { display: none; }
-.field-group label, .field-label, .send-form label, .sign-form label, .staking-form label, .preview-details > label { font: 12px var(--font); letter-spacing: 0; text-transform: none; }
+.field-group label, .field-label, .send-form label, .sign-form label, .staking-form label, .preview-details > label { font: var(--text-label) var(--font); letter-spacing: 0; text-transform: none; }
 .content-centered { justify-content: center; min-height: calc(100svh - 28px); padding: var(--space-5) var(--page-gutter); }
-.content-centered > .card, .vault-setup > .card { padding: var(--panel-padding); }
+.content-centered > .card, .vault-setup > .card { padding: var(--panel-padding); border-color: var(--divider); }
 .content-centered > .vault-setup { display: flex; flex-direction: column; gap: var(--section-gap); max-width: 560px; }
 .content-centered .card h2 { font-size: 26px; }
 .vault-setup > .card:first-child h2 { font-size: 16px; margin-bottom: var(--space-2); }
@@ -168,24 +153,24 @@ h1 { font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -.03e
 @media (max-width: 767.98px) {
   :root { --page-gutter: 16px; --panel-padding: 20px; }
   .content { padding: 0 var(--page-gutter) calc(96px + env(safe-area-inset-bottom, 0px)); width: 100%; }
-  .workspace-header { min-height: 64px; margin-bottom: var(--space-4); gap: var(--space-2); font-size: 10px; }
+  .workspace-header { min-height: 64px; margin-bottom: var(--space-4); gap: var(--space-2); font-size: var(--text-caption); }
   .workspace-account { gap: var(--space-1); }
   .workspace-account > svg { display: none; }
-  .network-label { font-size: 10px; padding: var(--space-1) var(--space-2); }
+  .network-label { font-size: var(--text-caption); padding: var(--space-1) var(--space-2); }
   .portfolio { grid-template-columns: minmax(0,1fr); grid-template-areas: "heading" "balance" "assets" "collectibles" "staking"; gap: var(--space-4); }
   h1 { font-size: 26px; }
-  .balance-panel { padding: var(--space-comfortable); }
-  .balance-ada { font-size: 34px; }
+  .balance-panel { padding: var(--space-2) 0; }
+  .balance-ada { font-size: clamp(32px, 9.5vw, 42px); }
   .balance-ada > span { font-size: 17px; }
   .portfolio-actions .btn { flex: 1; min-height: 44px; }
-  .card { padding: var(--space-comfortable); }
+  .card { padding: var(--panel-padding); }
   .mobile-topbar { height: 64px; background: var(--bg); padding: 0 var(--page-gutter); gap: var(--space-3); }
   .mobile-brand-mark .bursa-wordmark { font-size: 28px; }
-  .mobile-wallet-name { font-size: 11px; }
+  .mobile-wallet-name { font-size: var(--text-caption); }
   .mobile-sync-chip, .cli-button-mobile { display: none; }
   .mobile-hamburger { width: 44px; height: 44px; }
   .mobile-bottom-nav { display: flex; position: fixed; z-index: 190; bottom: 0; left: 0; right: 0; padding: var(--space-2) var(--space-2) max(var(--space-2), env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--border); }
-  .mobile-bottom-nav button { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1); min-height: 48px; border: 0; background: transparent; color: var(--text-muted); font-size: 10px; cursor: pointer; border-radius: 8px; }
+  .mobile-bottom-nav button { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1); min-height: 48px; border: 0; background: transparent; color: var(--text-muted); font-size: var(--text-caption); cursor: pointer; border-radius: 8px; }
   .mobile-bottom-nav button[aria-current] { color: var(--accent-strong); }
   .mobile-bottom-nav button:disabled { opacity: .4; cursor: not-allowed; }
   .token-search, input, select, textarea { font-size: 16px; }
@@ -194,7 +179,7 @@ h1 { font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -.03e
   .asset-identity { gap: var(--space-compact); }
   .asset-quantity { font-size: 14px; }
   .content-centered { padding: var(--space-comfortable); }
-  .content-centered > .card { padding: var(--panel-padding); }
+  .content-centered > .card { padding: var(--panel-padding); border-color: var(--divider); }
 }
 @media (max-width: 480px) {
   .recovery-phrase-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -111,7 +111,7 @@ a:hover {
   display: block;
   margin-top: 6px;
   font-family: var(--mono);
-  font-size: 0.5625rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -197,7 +197,7 @@ a:hover {
 }
 .wallet-switcher-label {
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -254,7 +254,7 @@ a:hover {
 }
 .wallet-net {
   font-family: var(--mono);
-  font-size: 0.625rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -275,7 +275,7 @@ a:hover {
   background: transparent;
   color: var(--text-muted);
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.06em;
   cursor: pointer;
   transition: color 0.12s ease;
@@ -299,7 +299,7 @@ a:hover {
 }
 .account-switcher-label {
   font-family: var(--mono);
-  font-size: 0.625rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -369,7 +369,7 @@ a:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   color: var(--text-faint);
   white-space: nowrap;
 }
@@ -381,7 +381,7 @@ a:hover {
 }
 .account-add-label {
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.06em;
   color: var(--text-muted);
 }
@@ -413,7 +413,7 @@ a:hover {
   background: var(--accent-dim);
   color: var(--accent);
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.06em;
   cursor: pointer;
 }
@@ -468,7 +468,7 @@ a:hover {
 /* Panel label — a small monospace instrument caption. */
 .card h2 {
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -506,7 +506,7 @@ a:hover {
 .field-label {
   display: block;
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -761,7 +761,7 @@ a:hover {
 .dl-row dt,
 .stat-list dt {
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);
@@ -902,7 +902,7 @@ a:hover {
 }
 .palette-group {
   font-family: var(--mono);
-  font-size: 0.625rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -942,7 +942,7 @@ a:hover {
 }
 .palette-kbd {
   font-family: var(--mono);
-  font-size: 0.625rem;
+  font-size: var(--text-caption);
   color: var(--text-faint);
 }
 
@@ -1005,7 +1005,7 @@ a:hover {
 .table th {
   text-align: left;
   font-weight: 600;
-  font-size: 0.625rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: var(--space-2) var(--space-3);
@@ -1112,7 +1112,7 @@ a:hover {
   padding: 3px 9px;
   border-radius: 999px;
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1223,7 +1223,7 @@ a:hover {
 }
 .sync-phase-label {
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1316,7 +1316,7 @@ a:hover {
 }
 .sync-stats dt {
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);
@@ -1409,7 +1409,7 @@ a:hover {
 }
 .setting-toggle-label {
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1546,7 +1546,7 @@ a:hover {
   border-bottom: 2px solid transparent;
   padding: var(--space-2) var(--space-3);
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1674,7 +1674,7 @@ a:hover {
 .survey-question label[for] {
   display: block;
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1752,7 +1752,7 @@ a:hover {
 .operate-subform label {
   display: block;
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1780,7 +1780,7 @@ a:hover {
 .operate-tab,
 .tabset-tab {
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1988,7 +1988,7 @@ a:hover {
 }
 .drawer-section h3 {
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -2023,7 +2023,7 @@ a:hover {
 }
 .io-owner {
   font-family: var(--mono);
-  font-size: 0.625rem;
+  font-size: var(--text-caption);
   font-weight: 600;
   text-transform: uppercase;
   color: var(--text-muted);
@@ -2058,7 +2058,7 @@ a:hover {
 }
 .recovery-phrase-index {
   font-family: var(--mono);
-  font-size: 0.625rem;
+  font-size: var(--text-caption);
   color: var(--text-faint);
   min-width: 1.4em;
   text-align: right;
@@ -2266,7 +2266,7 @@ a:hover {
     padding: 2px 8px;
     border-radius: 999px;
     font-family: var(--mono);
-    font-size: 0.625rem;
+    font-size: var(--text-caption);
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -2586,7 +2586,7 @@ a:hover {
 }
 .ms-account-policy {
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);

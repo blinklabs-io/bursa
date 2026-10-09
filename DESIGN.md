@@ -1,16 +1,18 @@
 # Bursa interface design
 
-Bursa is a local-node Cardano wallet. The interface uses charcoal surfaces, self-hosted Manrope, aligned data rows and restrained gold accents.
+Bursa is a local-node Cardano wallet. The interface uses warm ink surfaces, self-hosted Geist, aligned data rows and muted brass accents.
 
 ## Brand
 
 Use lowercase **bursa** as plain gold text. The previous pouch illustration and image wordmark are excluded from the interface. Gold identifies primary actions and selected navigation.
 
-The transfer card uses brushed gold metal, a machined rim and recessed gold lettering. Its finish is CSS, so amounts and addresses remain live text. The mobile amount panel and Settings network card share the metal surface. Keep surrounding panels charcoal so the metal has a clear focal role.
+The transfer card uses satin gold with a soft edge and recessed lettering. Its finish is CSS, so amounts and addresses remain live text. The mobile amount panel shares the finish. Keep other surfaces solid, with quiet dividers; gold fills identify primary actions and the transfer draft.
+
+Use Geist for the interface and a system monospace for addresses and hashes. Labels use 13px, explanatory text 14px and compact metadata at least 12px. Mobile inputs use 16px. Financial amounts use tabular numerals. Tune the wordmark independently at weight 700 with slight negative tracking.
 
 ## Layout
 
-Keep forms at a readable width. Import caps at 760px, with explicit spacing between its introduction, field label, textarea and action. Portfolio pairs a compact balance panel with delegation, followed by native assets and NFT media. Mobile uses one column and fixed bottom navigation.
+Keep forms at a readable width. Import caps at 760px, with explicit spacing between its introduction, field label, textarea and action. Portfolio gives the balance and its actions an open area beside delegation, followed by native assets and NFT media. The Send editor is unboxed beside the transfer draft. Activity and Receive use continuous rows separated by dividers. Mobile uses one column and fixed bottom navigation.
 
 Use the shared spacing tokens: 8px from a field label to its control, 16px between fields, and 24px between sections. Cards use 24px padding on desktop and 20px on mobile; unboxed ledgers use zero padding. Page gutters are 40px on desktop, 24px on tablet and 16px on mobile. Headers and screen containers share the 1180px content limit. Flat forms use child margins; grouped forms use gaps, with one owner for each interval.
 

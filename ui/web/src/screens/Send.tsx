@@ -327,7 +327,6 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
       </div>
     </Card>
     <aside className="transfer-object" aria-hidden="true">
-      <div className="transfer-object-back" />
       <div className="transfer-pass">
         <div className="transfer-pass-top"><BursaLogo /></div>
         <div className="transfer-pass-body"><span className="transfer-pass-label">Transfer draft</span><strong>{adaAmount.trim() || "0.00"}<span> ADA</span></strong></div>
