@@ -153,7 +153,7 @@ func (s *Service) unlockRoot(walletID, password string) (bip32.XPrv, func(), err
 		}
 		return nil, func() {}, fmt.Errorf("unlock keystore: %w", err)
 	}
-	root, err := wallet.RootKeyFromMnemonicBytes(mnemonic)
+	root, err := bursa.GetRootKeyFromMnemonicBytes(mnemonic, "")
 	if err != nil {
 		keystore.Zero(mnemonic)
 		return nil, func() {}, fmt.Errorf("root key: %w", err)

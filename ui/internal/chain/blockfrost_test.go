@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1418,5 +1419,199 @@ func TestAssetNilRegistryMetadata(t *testing.T) {
 	}
 	if string(got.Metadata) != "null" {
 		t.Fatalf("Metadata = %s, want the raw JSON null literal", got.Metadata)
+	}
+}
+
+func TestMetadataByLabelPageReadsOnePageAndNormalisesCBOR(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/metadata/txs/labels/17/cbor" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("count"); got != strconv.Itoa(LabelPageSize) {
+			t.Errorf("count = %q", got)
+		}
+		var rows []string
+		switch r.URL.Query().Get("page") {
+		case "1":
+			// Rows are built from Dingo's own response type so the client is
+			// tied to what the node really sends.
+			for i := range LabelPageSize {
+				cbor := "820281"
+				b, err := json.Marshal(dingoblockfrost.MetadataTransactionCBORResponse{
+					TxHash: fmt.Sprintf("%064x", i), CborMetadata: &cbor, Metadata: cbor,
+				})
+				if err != nil {
+					t.Errorf("marshal row: %v", err)
+				}
+				rows = append(rows, string(b))
+			}
+		case "2":
+			// Blockfrost proper prefixes its hex with \x; dingo does not.
+			rows = append(rows, `{"tx_hash":"`+strings.Repeat("ab", 32)+`","cbor_metadata":"\\x8200","metadata":""}`)
+		default:
+			t.Errorf("page = %q", r.URL.Query().Get("page"))
+		}
+		_, _ = w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
+	})
+
+	first, err := c.MetadataByLabelPage(context.Background(), 17, 1)
+	if err != nil {
+		t.Fatalf("page 1: %v", err)
+	}
+	if len(first) != LabelPageSize {
+		t.Fatalf("page 1 len = %d, want %d", len(first), LabelPageSize)
+	}
+	if first[0].TxHash != fmt.Sprintf("%064x", 0) || hex.EncodeToString(first[0].CBOR) != "820281" {
+		t.Fatalf("first[0] = %+v", first[0])
+	}
+	second, err := c.MetadataByLabelPage(context.Background(), 17, 2)
+	if err != nil {
+		t.Fatalf("page 2: %v", err)
+	}
+	if len(second) != 1 || second[0].TxHash != strings.Repeat("ab", 32) || hex.EncodeToString(second[0].CBOR) != "8200" {
+		t.Fatalf("page 2 = %+v", second)
+	}
+	if _, err := c.MetadataByLabelPage(context.Background(), 17, 0); err == nil {
+		t.Fatal("page 0: expected an error")
+	}
+}
+
+func TestMetadataByLabelPageRejectsBadHex(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"tx_hash":"aa","cbor_metadata":"zz"}]`))
+	})
+	if _, err := c.MetadataByLabelPage(context.Background(), 17, 1); err == nil {
+		t.Fatal("expected a hex decode error")
+	}
+}
+
+func TestRequiredSigners(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/txs/abcd/required_signers" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		b, err := json.Marshal([]dingoblockfrost.TransactionRequiredSignerResponse{
+			{WitnessHash: strings.Repeat("11", 28)}, {WitnessHash: strings.Repeat("22", 28)},
+		})
+		if err != nil {
+			t.Errorf("marshal signers: %v", err)
+		}
+		_, _ = w.Write(b)
+	})
+	got, err := c.RequiredSigners(context.Background(), "abcd")
+	if err != nil {
+		t.Fatalf("RequiredSigners: %v", err)
+	}
+	if len(got) != 2 || got[0] != strings.Repeat("11", 28) || got[1] != strings.Repeat("22", 28) {
+		t.Fatalf("got = %v", got)
+	}
+}
+
+// dingoGovProposalDDL and dingoOffchainMetadataDDL are Dingo v0.70.14's own
+// SQLite DDL for the two tables GovernanceAnchorDocuments joins, copied from its
+// v1 migration, so the query is checked against the real column names.
+const dingoGovProposalDDL = "CREATE TABLE IF NOT EXISTS `governance_proposal` (`id` integer PRIMARY KEY AUTOINCREMENT,`tx_hash` blob NOT NULL,`action_index` integer NOT NULL,`action_type` integer NOT NULL,`proposed_epoch` integer NOT NULL,`expires_epoch` integer NOT NULL,`parent_tx_hash` blob,`parent_action_idx` integer,`enacted_epoch` integer,`enacted_slot` integer,`ratified_epoch` integer,`ratified_slot` integer,`policy_hash` blob,`anchor_url` text NOT NULL,`anchor_hash` blob NOT NULL,`deposit` integer NOT NULL,`return_address` blob NOT NULL,`gov_action_cbor` blob,`expired_epoch` integer,`expired_slot` integer,`added_slot` integer NOT NULL,`deleted_slot` integer)"
+
+const dingoOffchainMetadataDDL = "CREATE TABLE IF NOT EXISTS `offchain_metadata` (`fetched_at` datetime,`next_fetch_after` datetime,`created_at` datetime,`updated_at` datetime,`url` text NOT NULL,`source_type` text NOT NULL,`status` text NOT NULL,`content_type` text,`last_error` text,`hash` blob NOT NULL,`body_hash` blob,`content` blob,`id` integer PRIMARY KEY AUTOINCREMENT,`fetch_attempts` integer,`last_http_status` integer)"
+
+func TestGovernanceAnchorDocuments(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metadata.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	for _, ddl := range []string{dingoGovProposalDDL, dingoOffchainMetadataDDL} {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatalf("create table: %v", err)
+		}
+	}
+	tx := make([]byte, 32)
+	for i := range tx {
+		tx[i] = byte(i + 1)
+	}
+	hashOf := func(b byte) []byte { return bytes.Repeat([]byte{b}, 32) }
+	for _, p := range []struct {
+		id      int
+		index   int
+		expires int
+		url     string
+		hash    []byte
+		deleted any
+	}{
+		{1, 0, 130, "https://example.test/linked.json", hashOf(1), nil},
+		{2, 1, 140, "https://example.test/pending.json", hashOf(2), nil},
+		{3, 2, 150, "https://example.test/other-source.json", hashOf(3), nil},
+		{4, 3, 160, "https://example.test/rolled-back.json", hashOf(4), 42},
+		{5, 4, 170, "", hashOf(5), nil},
+		// Same URL as proposal 1, different anchor hash: the document Dingo
+		// fetched and verified is proposal 1's, not this one's.
+		{6, 5, 180, "https://example.test/linked.json", hashOf(6), nil},
+	} {
+		if _, err := db.Exec(
+			`INSERT INTO governance_proposal
+			 (id, tx_hash, action_index, action_type, proposed_epoch, expires_epoch, anchor_url, anchor_hash, deposit, return_address, added_slot, deleted_slot)
+			 VALUES (?, ?, ?, ?, 100, ?, ?, ?, 1, x'00', 1, ?)`,
+			p.id, tx, p.index, lcommon.GovActionTypeInfo, p.expires, p.url, p.hash, p.deleted,
+		); err != nil {
+			t.Fatalf("insert proposal %d: %v", p.id, err)
+		}
+	}
+	for _, m := range []struct {
+		url, source, status string
+		hash                []byte
+		content             string
+	}{
+		{"https://example.test/linked.json", "gov_proposal", "fetched", hashOf(1), `{"body":{}}`},
+		{"https://example.test/linked.json", "gov_proposal", "failed", hashOf(6), ""},
+		{"https://example.test/pending.json", "gov_proposal", "pending", hashOf(2), ""},
+		{"https://example.test/other-source.json", "pool", "fetched", hashOf(3), `{"ticker":"X"}`},
+		{"https://example.test/rolled-back.json", "gov_proposal", "fetched", hashOf(4), `{"body":{}}`},
+	} {
+		if _, err := db.Exec(
+			`INSERT INTO offchain_metadata (url, source_type, status, hash, content) VALUES (?, ?, ?, ?, ?)`,
+			m.url, m.source, m.status, m.hash, []byte(m.content),
+		); err != nil {
+			t.Fatalf("insert metadata: %v", err)
+		}
+	}
+
+	c := NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir))
+	got, err := c.GovernanceAnchorDocuments(context.Background())
+	if err != nil {
+		t.Fatalf("GovernanceAnchorDocuments: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %+v, want only the fetched, live, governance-proposal document under its own anchor hash", got)
+	}
+	want := AnchorDocument{ActionID: govActionID(tx, 0), ExpiresEpoch: 130, Content: []byte(`{"body":{}}`)}
+	if got[0].ActionID != want.ActionID || got[0].ExpiresEpoch != 130 || string(got[0].Content) != string(want.Content) {
+		t.Fatalf("got[0] = %+v, want %+v", got[0], want)
+	}
+}
+
+func TestGovernanceAnchorDocumentsAbsentStores(t *testing.T) {
+	t.Parallel()
+	got, err := NewClientURL("http://127.0.0.1:1").GovernanceAnchorDocuments(context.Background())
+	if err != nil || len(got) != 0 {
+		t.Fatalf("no data dir: got %v, %v", got, err)
+	}
+
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metadata.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(dingoGovProposalDDL); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	db.Close()
+	got, err = NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir)).GovernanceAnchorDocuments(context.Background())
+	if err != nil || len(got) != 0 {
+		t.Fatalf("no offchain table: got %v, %v", got, err)
 	}
 }
