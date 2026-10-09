@@ -289,7 +289,8 @@ func BuildPolicyHook(cfg config.SignerConfig) PolicyHook {
 	return NewHTTPPolicyHook(cfg.PolicyHookURL, time.Duration(timeoutMs)*time.Millisecond)
 }
 
-// BuildWatermark constructs the configured watermark store and mode.
+// BuildWatermark constructs the configured watermark store and mode. The
+// in-memory store is refused in enforce mode because it is not durable.
 func BuildWatermark(ctx context.Context, c config.SignerWatermarkConfig) (watermark.Watermark, watermark.Mode, error) {
 	mode := watermark.Mode(c.Mode)
 	if mode == "" {
@@ -297,6 +298,16 @@ func BuildWatermark(ctx context.Context, c config.SignerWatermarkConfig) (waterm
 	}
 	switch c.Type {
 	case "", "mem":
+		// In-memory state is lost on restart, which would let a restarted
+		// signer sign a divergent payload for an already-signed scope. Test
+		// for the modes that do not enforce: New coerces any unrecognised
+		// mode to enforce.
+		if mode != watermark.ModeWarn && mode != watermark.ModeOff {
+			return nil, mode, fmt.Errorf(
+				"watermark mode %q enforces and requires durable storage: set signer.watermark.type to \"file\" or \"postgres\", or set mode to \"warn\" or \"off\"",
+				mode,
+			)
+		}
 		return watermark.NewMemWatermark(), mode, nil
 	case "file":
 		if c.Path == "" {

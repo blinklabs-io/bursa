@@ -15,10 +15,17 @@
 package storage
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/blinklabs-io/bursa/internal/config"
+	"github.com/blinklabs-io/bursa/internal/sops"
 )
+
+// ErrWalletNotFound identifies a wallet that does not exist in a storage backend.
+var ErrWalletNotFound = errors.New("wallet not found")
 
 // NewStore creates a new storage backend based on the provided
 // configuration. It returns the appropriate Store implementation
@@ -26,6 +33,11 @@ import (
 func NewStore(cfg *config.Config) (Store, error) {
 	switch cfg.Storage.Backend {
 	case "file":
+		if !cfg.Storage.AllowUnencryptedWalletStorage && !sops.Configured(cfg) {
+			return nil, errors.New(
+				"file backend requires a SOPS master key or storage.allow_unencrypted_wallet_storage=true; refusing unencrypted wallet storage",
+			)
+		}
 		if cfg.Storage.Dir == "" {
 			return nil, errors.New(
 				"storage dir is required for file backend",
@@ -33,6 +45,11 @@ func NewStore(cfg *config.Config) (Store, error) {
 		}
 		return NewFileStore(cfg.Storage.Dir), nil
 	case "sqlite":
+		if !cfg.Storage.AllowUnencryptedWalletStorage {
+			return nil, errors.New(
+				"sqlite backend does not encrypt wallet contents; set storage.allow_unencrypted_wallet_storage=true to permit unencrypted wallet storage",
+			)
+		}
 		if cfg.Storage.DSN == "" {
 			return nil, errors.New(
 				"storage dsn is required for sqlite backend",
@@ -41,14 +58,18 @@ func NewStore(cfg *config.Config) (Store, error) {
 		return NewSQLiteStore(cfg.Storage.DSN)
 	case "gcp":
 		return NewGCPStore(), nil
+	case "aws":
+		if strings.TrimSpace(cfg.Aws.Prefix) == "" {
+			return nil, errors.New("aws secret prefix is required for aws backend")
+		}
+		return NewAWSStore(context.Background(), cfg.Aws.Prefix)
 	default:
-		// Fall back to GCP if Google project is configured
-		if cfg.Google.Project != "" &&
-			cfg.Google.ResourceId != "" {
+		if cfg.Storage.Backend != "" {
+			return nil, fmt.Errorf("unsupported storage backend %q", cfg.Storage.Backend)
+		}
+		if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
 			return NewGCPStore(), nil
 		}
-		return nil, errors.New(
-			"no storage backend configured",
-		)
+		return nil, errors.New("no storage backend configured")
 	}
 }
