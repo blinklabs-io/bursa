@@ -99,7 +99,7 @@ describe('popup UI', () => {
     expect(url).toBe('http://127.0.0.1:8090/connector/pair');
     expect(opts.method).toBe('POST');
     const body = JSON.parse(opts.body as string);
-    expect(body).toEqual({ extension_id: 'test-extension-id' });
+    expect(body).toEqual({ extension_id: window.location.origin });
 
     const codeSection = document.getElementById('code-section')!;
     expect(codeSection.hidden).toBe(false);
@@ -127,7 +127,7 @@ describe('popup UI', () => {
     expect(url).toBe('http://127.0.0.1:8090/connector/pair');
     expect(opts.method).toBe('POST');
     const body = JSON.parse(opts.body as string);
-    expect(body).toEqual({ extension_id: 'test-extension-id', code: '1234' });
+    expect(body).toEqual({ extension_id: window.location.origin, code: '1234' });
 
     expect(chromeMock.storage.local.set).toHaveBeenCalledWith({ token: 'abc123' });
 

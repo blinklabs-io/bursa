@@ -302,7 +302,7 @@ func handleConnectorUnpair(svc *connector.Service) http.HandlerFunc {
 // token-gated counterpart available to a future extension-side grants UI.
 // (/connector/grants/revoke is the separate SPA-facing route, gated by
 // strictSameOrigin instead of a token; an extension fetch would fail that check
-// since its Origin is chrome-extension://<id>, not the API's own host.)
+// since its Origin is the extension origin, not the API's own host.)
 // Body: {"origin": string}.
 func handleConnectorSelfRevoke(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

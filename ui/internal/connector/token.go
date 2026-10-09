@@ -142,11 +142,12 @@ func normalizeExtensionID(extensionID string) string {
 	return "chrome-extension://" + extensionID
 }
 
+// validExtensionID accepts the origin of a Chromium or Firefox extension page.
 func validExtensionID(extensionID string) bool {
-	const prefix = "chrome-extension://"
-	if !strings.HasPrefix(extensionID, prefix) {
-		return false
+	for _, prefix := range []string{"chrome-extension://", "moz-extension://"} {
+		if id, ok := strings.CutPrefix(extensionID, prefix); ok {
+			return id != "" && !strings.Contains(id, "/")
+		}
 	}
-	id := strings.TrimPrefix(extensionID, prefix)
-	return id != "" && !strings.Contains(id, "/")
+	return false
 }
