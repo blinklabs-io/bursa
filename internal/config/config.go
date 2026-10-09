@@ -188,9 +188,11 @@ type SignerKeyConfig struct {
 }
 
 type StorageConfig struct {
-	Backend string `yaml:"backend" envconfig:"STORAGE_BACKEND"`
-	Dir     string `yaml:"dir"     envconfig:"STORAGE_DIR"`
-	DSN     string `yaml:"dsn"     envconfig:"STORAGE_DSN"`
+	Backend string `yaml:"backend"                            envconfig:"STORAGE_BACKEND"`
+	Dir     string `yaml:"dir"                                envconfig:"STORAGE_DIR"`
+	DSN     string `yaml:"dsn"                                envconfig:"STORAGE_DSN"`
+	// AllowUnencryptedWalletStorage opts into file storage without SOPS or SQLite storage.
+	AllowUnencryptedWalletStorage bool `yaml:"allow_unencrypted_wallet_storage" envconfig:"STORAGE_ALLOW_UNENCRYPTED_WALLET_STORAGE"`
 }
 
 type ApiConfig struct {

@@ -64,6 +64,37 @@ func TestAPIAuthConfig_Env(t *testing.T) {
 	}
 }
 
+func TestStorageAllowUnencryptedWalletStorageEnv(t *testing.T) {
+	previous := globalConfig
+	t.Cleanup(func() { globalConfig = previous })
+	t.Setenv("STORAGE_ALLOW_UNENCRYPTED_WALLET_STORAGE", "true")
+	globalConfig = defaultConfig()
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.Storage.AllowUnencryptedWalletStorage {
+		t.Fatal("storage allow unencrypted wallet storage env was not loaded")
+	}
+}
+
+func TestLoadConfigFile_StorageAllowUnencryptedWalletStorage(t *testing.T) {
+	previous := globalConfig
+	t.Cleanup(func() { globalConfig = previous })
+	configPath := filepath.Join(t.TempDir(), "bursa.yml")
+	if err := os.WriteFile(configPath, []byte("storage:\n  allow_unencrypted_wallet_storage: true\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	globalConfig = defaultConfig()
+	cfg, err := LoadConfigFile(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfigFile: %v", err)
+	}
+	if !cfg.Storage.AllowUnencryptedWalletStorage {
+		t.Fatal("storage allow_unencrypted_wallet_storage was not loaded")
+	}
+}
+
 func TestLoadConfigFile_SignerSection(t *testing.T) {
 	yaml := `
 signer:

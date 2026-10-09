@@ -292,9 +292,7 @@ func (s *SQLiteStore) GetWallet(
 	).Scan(&walletID, &description)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf(
-				"wallet %s not found", name,
-			)
+			return nil, fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
 		}
 		return nil, fmt.Errorf(
 			"failed to query wallet: %w", err,
@@ -423,7 +421,7 @@ func (s *SQLiteStore) DeleteWallet(
 		)
 	}
 	if rows == 0 {
-		return fmt.Errorf("wallet %s not found", name)
+		return fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
 	}
 
 	return nil

@@ -279,6 +279,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
+                    },
+                    "503": {
+                        "description": "Script validation busy; retry",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
                     }
                 }
             }
@@ -654,6 +660,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
+                    "404": {
+                        "description": "Wallet not found",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
@@ -710,6 +722,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Wallet storage administrator access required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Wallet not found",
                         "schema": {
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
@@ -855,6 +873,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Wallet storage administrator access required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Wallet not found",
                         "schema": {
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
@@ -1154,17 +1178,16 @@ const docTemplate = `{
             ],
             "properties": {
                 "message": {
-                    "description": "Hex-encoded signed payload",
-                    "format": "hex",
-                    "type": "string"
+                    "type": "string",
+                    "format": "hex"
                 },
                 "public_keys": {
                     "type": "array",
                     "items": {
+                        "type": "string",
                         "format": "hex",
                         "maxLength": 64,
-                        "minLength": 64,
-                        "type": "string"
+                        "minLength": 64
                     }
                 },
                 "require_signatures": {

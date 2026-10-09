@@ -39,6 +39,7 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	signerapi "github.com/blinklabs-io/bursa/internal/signer/api"
@@ -65,6 +66,10 @@ func (l *notifyingListener) Accept() (net.Conn, error) {
 
 func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 	const secret = "01234567890123456789012345678901"
+	identity, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	t.Setenv("SOPS_AGE_KEY", identity.String())
+	storageDir := t.TempDir()
 	apiBase, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	metricsBase, err := net.Listen("tcp", "127.0.0.1:0")
@@ -73,7 +78,8 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 	metricsListener := &notifyingListener{Listener: metricsBase, started: make(chan struct{})}
 	cfg := &config.Config{
 		Network: "mainnet",
-		Storage: config.StorageConfig{Backend: "file", Dir: t.TempDir()},
+		Storage: config.StorageConfig{Backend: "file", Dir: storageDir},
+		Age:     config.AgeConfig{Recipients: identity.Recipient().String()},
 		Api: config.ApiConfig{
 			ListenAddress:    "127.0.0.1",
 			ListenPort:       uint(apiBase.Addr().(*net.TCPAddr).Port),
@@ -146,6 +152,10 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 	listResponse.Body.Close()
 	require.Equal(t, http.StatusOK, listResponse.StatusCode)
 	require.Len(t, names, 1)
+	storedFile, err := os.ReadFile(filepath.Join(storageDir, "wallet-"+names[0], "wallet.json"))
+	require.NoError(t, err)
+	require.NotContains(t, string(storedFile), created.Mnemonic)
+	require.NotContains(t, string(storedFile), created.PaymentSKey.CborHex)
 
 	getResponse := request(http.MethodPost, "/api/wallet/get", `{"name":"`+names[0]+`"}`)
 	var loaded bursa.Wallet
@@ -161,6 +171,19 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 	deleteResponse.Body.Close()
 	require.Equal(t, http.StatusOK, deleteResponse.StatusCode)
 
+	for _, missingRequest := range []struct {
+		path string
+		body string
+	}{
+		{path: "/api/wallet/get", body: `{"name":"` + names[0] + `"}`},
+		{path: "/api/wallet/update", body: `{"name":"` + names[0] + `","description":"updated again"}`},
+		{path: "/api/wallet/delete", body: `{"name":"` + names[0] + `"}`},
+	} {
+		missingResponse := request(http.MethodPost, missingRequest.path, missingRequest.body)
+		missingResponse.Body.Close()
+		require.Equal(t, http.StatusNotFound, missingResponse.StatusCode, missingRequest.path)
+	}
+
 	cancel()
 	select {
 	case err := <-result:
@@ -168,6 +191,51 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
 		t.Fatal("API server did not stop after cancellation")
+	}
+}
+
+func TestStartRejectsUnencryptedWalletStorage(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name string
+		cfg  config.Config
+	}{
+		{
+			name: "file without SOPS key",
+			cfg: config.Config{
+				Storage: config.StorageConfig{Backend: "file", Dir: t.TempDir()},
+				Api: config.ApiConfig{
+					ListenAddress:    "127.0.0.1",
+					JWTSecret:        "01234567890123456789012345678901",
+					JWTAdminSubjects: []string{"wallet-admin"},
+				},
+				Metrics: config.MetricsConfig{ListenAddress: "127.0.0.1"},
+			},
+		},
+		{
+			name: "sqlite despite configured SOPS key",
+			cfg: config.Config{
+				Storage: config.StorageConfig{Backend: "sqlite", DSN: ":memory:"},
+				Age:     config.AgeConfig{Recipients: identity.Recipient().String()},
+				Api: config.ApiConfig{
+					ListenAddress:    "127.0.0.1",
+					JWTSecret:        "01234567890123456789012345678901",
+					JWTAdminSubjects: []string{"wallet-admin"},
+				},
+				Metrics: config.MetricsConfig{ListenAddress: "127.0.0.1"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			err := Start(ctx, &tt.cfg, nil, nil)
+			require.ErrorContains(t, err, "unencrypted wallet storage")
+		})
 	}
 }
 
@@ -283,7 +351,7 @@ func (f *fakeLegacyWalletStore) List(context.Context) ([]string, error) {
 func (f *fakeLegacyWalletStore) Get(_ context.Context, name string) (*bursa.Wallet, error) {
 	wallet, ok := f.wallets[name]
 	if !ok {
-		return nil, fmt.Errorf("wallet %q not found", name)
+		return nil, fmt.Errorf("wallet %q: %w", name, storage.ErrWalletNotFound)
 	}
 	return wallet, nil
 }
@@ -294,7 +362,7 @@ func (f *fakeLegacyWalletStore) Update(
 	description string,
 ) (bool, error) {
 	if _, ok := f.wallets[name]; !ok {
-		return false, fmt.Errorf("wallet %q not found", name)
+		return false, fmt.Errorf("wallet %q: %w", name, storage.ErrWalletNotFound)
 	}
 	if f.descriptions[name] == description {
 		return false, nil
@@ -306,7 +374,7 @@ func (f *fakeLegacyWalletStore) Update(
 
 func (f *fakeLegacyWalletStore) Delete(_ context.Context, name string) error {
 	if _, ok := f.wallets[name]; !ok {
-		return fmt.Errorf("wallet %q not found", name)
+		return fmt.Errorf("wallet %q: %w", name, storage.ErrWalletNotFound)
 	}
 	f.deletedWallet = name
 	return nil

@@ -150,6 +150,10 @@ func (w *awsWallet) Load(ctx context.Context) error {
 		SecretId: new(w.store.secretName(w.Name())),
 	})
 	if err != nil {
+		var notFound *smtypes.ResourceNotFoundException
+		if errors.As(err, &notFound) {
+			return fmt.Errorf("wallet %s: %w", w.Name(), ErrWalletNotFound)
+		}
 		return fmt.Errorf("failed to get secret: %w", err)
 	}
 	payload := out.SecretBinary
@@ -217,6 +221,10 @@ func (w *awsWallet) Delete(ctx context.Context) error {
 		ForceDeleteWithoutRecovery: new(true),
 	})
 	if err != nil {
+		var notFound *smtypes.ResourceNotFoundException
+		if errors.As(err, &notFound) {
+			return fmt.Errorf("wallet %s: %w", w.Name(), ErrWalletNotFound)
+		}
 		return fmt.Errorf("failed to delete secret: %w", err)
 	}
 	return nil

@@ -106,7 +106,7 @@ func (s *FileStore) GetWallet(
 	walletDir := s.walletDir(name)
 	dirInfo, err := os.Lstat(walletDir)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("wallet %s not found", name)
+		return nil, fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect wallet directory: %w", err)
@@ -121,7 +121,7 @@ func (s *FileStore) GetWallet(
 	walletPath := s.walletPath(name)
 	fileInfo, err := os.Lstat(walletPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("wallet %s not found", name)
+		return nil, fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect wallet file: %w", err)
@@ -140,6 +140,9 @@ func (s *FileStore) GetWallet(
 	// makes the regular-file guarantee hold for the descriptor actually read.
 	file, err := openWalletFileForRead(s.baseDir, name)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
+		}
 		return nil, fmt.Errorf("failed to open wallet file: %w", err)
 	}
 	defer file.Close()
@@ -243,6 +246,11 @@ func (s *FileStore) DeleteWallet(ctx context.Context, name string) error {
 	}
 
 	walletDir := s.walletDir(name)
+	if _, err := os.Lstat(walletDir); errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
+	} else if err != nil {
+		return fmt.Errorf("failed to inspect wallet directory: %w", err)
+	}
 	return os.RemoveAll(walletDir)
 }
 

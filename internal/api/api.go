@@ -125,9 +125,14 @@ func writeError(w http.ResponseWriter, code int, err error) {
 	if code >= http.StatusInternalServerError {
 		message = "Internal server error"
 	}
+	body, marshalErr := json.Marshal(map[string]string{"error": message})
+	if marshalErr != nil {
+		code = http.StatusInternalServerError
+		body = []byte(`{"error":"Internal server error"}`)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_, _ = fmt.Fprintf(w, `{"error":%q}`, message)
+	_, _ = w.Write(body)
 }
 
 // decodeAndValidate decodes a JSON request body and validates it.
@@ -314,6 +319,18 @@ func mapGRPCToHTTPError(w http.ResponseWriter, grpcStatus *status.Status) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
 	}
+}
+
+func writeWalletStorageError(w http.ResponseWriter, err error) {
+	if errors.Is(err, storage.ErrWalletNotFound) {
+		mapGRPCToHTTPError(w, status.New(codes.NotFound, err.Error()))
+		return
+	}
+	if grpcStatus, ok := status.FromError(err); ok {
+		mapGRPCToHTTPError(w, grpcStatus)
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err)
 }
 
 // ErrorResponse defines the standard error payload returned by the API
@@ -1422,6 +1439,9 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 //	@Failure		403		{object}	ErrorResponse		"Wallet storage administrator access required"
 //	@Failure		500		{object}	ErrorResponse		"Internal server error"
 //	@Security		BearerAuth
+//
+//	@Failure		404	{object}	ErrorResponse	"Wallet not found"
+//
 //	@Router			/api/wallet/get [post]
 func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1449,15 +1469,7 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 			req.Name,
 		)
 
-		// Check GCP error codes for proper HTTP status mapping
-		if grpcStatus, ok := status.FromError(err); ok {
-			mapGRPCToHTTPError(w, grpcStatus)
-		} else {
-			// Non-gRPC error, treat as internal server error
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
-		}
+		writeWalletStorageError(w, err)
 		walletsFailCounter.Inc()
 		return
 	}
@@ -1489,6 +1501,9 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 //	@Failure		403		{object}	ErrorResponse		"Wallet storage administrator access required"
 //	@Failure		500		{object}	ErrorResponse		"Internal server error"
 //	@Security		BearerAuth
+//
+//	@Failure		404	{object}	ErrorResponse	"Wallet not found"
+//
 //	@Router			/api/wallet/delete [post]
 func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1514,15 +1529,7 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 			req.Name,
 		)
 
-		// Check GCP error codes for proper HTTP status mapping
-		if grpcStatus, ok := status.FromError(err); ok {
-			mapGRPCToHTTPError(w, grpcStatus)
-		} else {
-			// Non-gRPC error, treat as internal server error
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
-		}
+		writeWalletStorageError(w, err)
 		walletsFailCounter.Inc()
 		return
 	}
@@ -1546,6 +1553,9 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 //	@Failure		403		{object}	ErrorResponse		"Wallet storage administrator access required"
 //	@Failure		500		{string}	string				"Internal server error"
 //	@Security		BearerAuth
+//
+//	@Failure		404	{object}	ErrorResponse	"Wallet not found"
+//
 //	@Router			/api/wallet/update [post]
 func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1576,15 +1586,7 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 			req.Name,
 		)
 
-		// Check GCP error codes for proper HTTP status mapping
-		if grpcStatus, ok := status.FromError(err); ok {
-			mapGRPCToHTTPError(w, grpcStatus)
-		} else {
-			// Non-gRPC error, treat as internal server error
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
-		}
+		writeWalletStorageError(w, err)
 		walletsFailCounter.Inc()
 		return
 	}

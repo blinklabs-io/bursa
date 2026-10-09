@@ -140,6 +140,17 @@ Decryption uses the SOPS conventions: the AWS SDK credential chain, Google
 application default credentials, and `SOPS_AGE_KEY` or `SOPS_AGE_KEY_FILE` for
 age identities.
 
+### Wallet storage encryption
+
+The file backend encrypts wallet contents with SOPS when a master key is
+configured. Bursa refuses to start with file storage and no SOPS master key,
+or with SQLite storage, unless `storage.allow_unencrypted_wallet_storage` is
+explicitly enabled (`STORAGE_ALLOW_UNENCRYPTED_WALLET_STORAGE=true`). SQLite
+does not encrypt wallet contents, even when a SOPS key is configured. The
+opt-in writes mnemonics and signing keys in plaintext; deleting a SQLite wallet
+does not guarantee that old page data is removed from the database file. Use
+the opt-in only for isolated development or test deployments.
+
 ### AWS Secrets Manager wallet storage
 
 To persist API-created wallets in AWS Secrets Manager, select the AWS backend
