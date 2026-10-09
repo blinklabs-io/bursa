@@ -23,6 +23,8 @@ var _ MappedNullable = &ApiAddressParseRequest{}
 // ApiAddressParseRequest struct for ApiAddressParseRequest
 type ApiAddressParseRequest struct {
 	Address string `json:"address"`
+	// Format selects how Address is encoded: \"text\" (bech32 or base58, the default), \"hex\", or \"base64\" for the raw address bytes.
+	Format *string `json:"format,omitempty"`
 }
 
 type _ApiAddressParseRequest ApiAddressParseRequest
@@ -69,6 +71,38 @@ func (o *ApiAddressParseRequest) SetAddress(v string) {
 	o.Address = v
 }
 
+// GetFormat returns the Format field value if set, zero value otherwise.
+func (o *ApiAddressParseRequest) GetFormat() string {
+	if o == nil || IsNil(o.Format) {
+		var ret string
+		return ret
+	}
+	return *o.Format
+}
+
+// GetFormatOk returns a tuple with the Format field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ApiAddressParseRequest) GetFormatOk() (*string, bool) {
+	if o == nil || IsNil(o.Format) {
+		return nil, false
+	}
+	return o.Format, true
+}
+
+// HasFormat returns a boolean if a field has been set.
+func (o *ApiAddressParseRequest) HasFormat() bool {
+	if o != nil && !IsNil(o.Format) {
+		return true
+	}
+
+	return false
+}
+
+// SetFormat gets a reference to the given string and assigns it to the Format field.
+func (o *ApiAddressParseRequest) SetFormat(v string) {
+	o.Format = &v
+}
+
 func (o ApiAddressParseRequest) MarshalJSON() ([]byte, error) {
 	toSerialize, err := o.ToMap()
 	if err != nil {
@@ -80,6 +114,9 @@ func (o ApiAddressParseRequest) MarshalJSON() ([]byte, error) {
 func (o ApiAddressParseRequest) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["address"] = o.Address
+	if !IsNil(o.Format) {
+		toSerialize["format"] = o.Format
+	}
 	return toSerialize, nil
 }
 

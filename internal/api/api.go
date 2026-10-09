@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -376,12 +377,13 @@ type ScriptCreateRequest struct {
 // required whenever RequireSignatures is true and the script needs
 // signatures.
 type ScriptValidateRequest struct {
-	Script            map[string]any `json:"script"                       validate:"required"`
-	Message           string         `json:"message,omitempty"            validate:"omitempty,hexadecimal" format:"hex"`
-	PublicKeys        []string       `json:"public_keys,omitempty"        validate:"dive,hexadecimal,len=64" minLength:"64" maxLength:"64" format:"hex"`
-	Signatures        []string       `json:"signatures,omitempty"         validate:"dive,hexadecimal,len=128"`
-	Slot              uint64         `json:"slot,omitempty"                                                   swaggertype:"integer" format:"int64"`
-	RequireSignatures bool           `json:"require_signatures,omitempty"`
+	Script map[string]any `json:"script"                       validate:"required"`
+	// Message is the hex-encoded signed payload.
+	Message           string   `json:"message,omitempty"            validate:"omitempty,hexadecimal" format:"hex"`
+	PublicKeys        []string `json:"public_keys,omitempty"        validate:"dive,hexadecimal,len=64" minLength:"64" maxLength:"64" format:"hex"`
+	Signatures        []string `json:"signatures,omitempty"         validate:"dive,hexadecimal,len=128"`
+	Slot              uint64   `json:"slot,omitempty"                                                   swaggertype:"integer" format:"int64"`
+	RequireSignatures bool     `json:"require_signatures,omitempty"`
 }
 
 // ScriptAddressRequest defines the request payload for script address generation
@@ -415,7 +417,10 @@ type ScriptAddressResponse struct {
 
 // AddressParseRequest defines the request payload for address parsing
 type AddressParseRequest struct {
-	Address string `json:"address" validate:"required"`
+	Address string `json:"address"          validate:"required"`
+	// Format selects how Address is encoded: "text" (bech32 or base58, the
+	// default), "hex", or "base64" for the raw address bytes.
+	Format string `json:"format,omitempty" validate:"omitempty,oneof=text hex base64" enums:"text,hex,base64"`
 }
 
 // AddressParseResponse defines the response payload for address parsing
@@ -509,7 +514,7 @@ type SignDataRequest struct {
 	Address string `json:"address"     validate:"required,hexadecimal"`
 	// Payload is a hex-encoded message payload.
 	Payload string `json:"payload"     validate:"required,hexadecimal"`
-	// SigningKey identifies the signing key.
+	// SigningKey is a cardano-cli JSON signing key envelope.
 	SigningKey string `json:"signing_key" validate:"required"`
 }
 
@@ -873,6 +878,22 @@ func boundedScriptValidation(next http.Handler) http.Handler {
 	})
 }
 
+// newHTTPServer returns a server for handler with every connection phase
+// bounded.
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 60 * time.Second,
+		// Headers arriving is not the same as a body arriving: without this, a
+		// client can hold a connection open mid-body indefinitely.
+		ReadTimeout: 120 * time.Second,
+		// A client that stops reading the response would otherwise pin the
+		// connection, and the handler's slot, for as long as it likes.
+		WriteTimeout: 120 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+}
+
 // Start initializes and starts the HTTP servers for the API and metrics
 // Listeners can be passed in for testing purposes to provide ephermeral ports
 func Start(
@@ -912,13 +933,7 @@ func Start(
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", promhttp.Handler())
 
-	metricsServer := &http.Server{
-		Handler:           metricsMux,
-		ReadHeaderTimeout: 60 * time.Second,
-		// Headers arriving is not the same as a body arriving: without this, a
-		// client can hold a connection open mid-body indefinitely.
-		ReadTimeout: 120 * time.Second,
-	}
+	metricsServer := newHTTPServer(metricsMux)
 	if metricsListener == nil {
 		metricsServer.Addr = fmt.Sprintf(
 			"%s:%d",
@@ -927,15 +942,9 @@ func Start(
 		)
 	}
 
-	apiServer := &http.Server{
-		Handler:           mainHandler,
-		ReadHeaderTimeout: 60 * time.Second,
-		// Headers arriving is not the same as a body arriving: without this, a
-		// client can hold a connection open mid-body indefinitely.
-		ReadTimeout: 120 * time.Second,
-		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		},
+	apiServer := newHTTPServer(mainHandler)
+	apiServer.TLSConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
 	}
 	if apiListener == nil {
 		apiServer.Addr = fmt.Sprintf(
@@ -1864,8 +1873,7 @@ func handleAddressParse(w http.ResponseWriter, r *http.Request) {
 
 	logger := logging.GetLogger()
 
-	// Parse the address
-	addr, err := lcommon.NewAddress(req.Address)
+	addr, err := decodeAddressParseRequest(&req)
 	if err != nil {
 		logger.Error(
 			"failed to parse address",
@@ -1884,7 +1892,7 @@ func handleAddressParse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build response
-	response, err := buildAddressParseResponse(&addr, req.Address)
+	response, err := buildAddressParseResponse(&addr, addr.String())
 	if err != nil {
 		logger.Error("failed to build address parse response", "error", err)
 		writeJSONError(
@@ -2280,6 +2288,28 @@ func handleAddressEnumerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, addrs)
+}
+
+// decodeAddressParseRequest decodes the address in the encoding the request
+// names. Binary encodings carry no text form to echo, so the response reports
+// the canonical string for every format.
+func decodeAddressParseRequest(
+	req *AddressParseRequest,
+) (lcommon.Address, error) {
+	var raw []byte
+	var err error
+	switch req.Format {
+	case "hex":
+		raw, err = hex.DecodeString(req.Address)
+	case "base64":
+		raw, err = base64.StdEncoding.DecodeString(req.Address)
+	default:
+		return lcommon.NewAddress(req.Address)
+	}
+	if err != nil {
+		return lcommon.Address{}, err
+	}
+	return lcommon.NewAddressFromBytes(raw)
 }
 
 // buildAddressParseResponse builds the response for address parsing
