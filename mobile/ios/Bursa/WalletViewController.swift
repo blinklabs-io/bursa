@@ -71,7 +71,14 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
         // "preview" is the network; lean = true selects the history-expiry
         // profile (small on-disk footprint) for a phone.
         let dataDir = walletDataDirectory().path
-        let nodeDir = nodeDataDirectory().path
+        let nodeDir: String
+        do {
+            nodeDir = try nodeDataDirectory().path
+        } catch {
+            Self.logger.error("node data directory setup failed: \(String(describing: error))")
+            showStartupError("Wallet failed to start", detail: error.localizedDescription)
+            return
+        }
 
         startWallet(dataDir: dataDir, nodeDir: nodeDir)
     }
@@ -166,21 +173,17 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
     // up here: the Go side moves an existing database out of the wallet tree
     // only while its destination does not exist yet, and the moved directory
     // then sits inside the excluded, protected one.
-    private func nodeDataDirectory() -> URL {
+    private func nodeDataDirectory() throws -> URL {
         let fileManager = FileManager.default
         let nodeDir = Self.applicationSupportDirectory()
             .appendingPathComponent("BursaNode", isDirectory: true)
-        do {
-            try fileManager.createDirectory(
-                at: nodeDir, withIntermediateDirectories: true
-            )
-            try fileManager.setAttributes(
-                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-                ofItemAtPath: nodeDir.path
-            )
-        } catch {
-            Self.logger.error("node data directory setup failed: \(String(describing: error))")
-        }
+        try fileManager.createDirectory(
+            at: nodeDir, withIntermediateDirectories: true
+        )
+        try fileManager.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: nodeDir.path
+        )
         noteBackupExclusionFailure(Self.excludeFromBackup(nodeDir))
         return nodeDir.appendingPathComponent("db", isDirectory: true)
     }
