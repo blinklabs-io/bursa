@@ -17,7 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +44,15 @@ type Client struct {
 	poolCache         map[string]PoolInfo
 	poolCacheComplete bool
 	poolCacheUntil    time.Time
+
+	govMu         sync.Mutex
+	govCache      []GovernanceAction
+	govCacheUntil time.Time
+	// govRefresh admits one metadata read at a time, so callers missing the
+	// cache together wait for the first read instead of each scanning the DB.
+	govRefresh chan struct{}
+	// govRead replaces readGovernanceActions in tests.
+	govRead func(context.Context) ([]GovernanceAction, error)
 }
 
 type ClientOption func(*Client)
@@ -63,7 +72,11 @@ func NewClient(port uint, opts ...ClientOption) *Client {
 
 // NewClientURL builds a client for an explicit base URL (used in tests).
 func NewClientURL(baseURL string, opts ...ClientOption) *Client {
-	c := &Client{BaseURL: baseURL, http: &http.Client{Timeout: 10 * time.Second}}
+	c := &Client{
+		BaseURL:    baseURL,
+		http:       &http.Client{Timeout: 10 * time.Second},
+		govRefresh: make(chan struct{}, 1),
+	}
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -551,6 +564,65 @@ func (c *Client) Transaction(ctx context.Context, hash string) (TxInfo, error) {
 	return out, err
 }
 
+// LabelMetadata is one transaction carrying metadata under a label: its hash
+// and the CBOR of the value stored under that label.
+type LabelMetadata struct {
+	TxHash string
+	CBOR   []byte
+}
+
+type labelMetadataRow struct {
+	TxHash       string  `json:"tx_hash"`
+	CBORMetadata *string `json:"cbor_metadata"`
+}
+
+// LabelPageSize is the number of rows a full MetadataByLabelPage page holds; a
+// shorter page is the last one.
+const LabelPageSize = pageSize
+
+// MetadataByLabelPage reads one page (1-based) of the transactions carrying
+// metadata under label, oldest first, from
+// GET /api/v0/metadata/txs/labels/{label}/cbor.
+func (c *Client) MetadataByLabelPage(ctx context.Context, label uint64, page int) ([]LabelMetadata, error) {
+	if page < 1 {
+		return nil, fmt.Errorf("metadata label %d: invalid page %d", label, page)
+	}
+	path := fmt.Sprintf("/api/v0/metadata/txs/labels/%d/cbor?count=%d&page=%d", label, pageSize, page)
+	var rows []labelMetadataRow
+	if err := c.get(ctx, path, &rows); err != nil {
+		return nil, err
+	}
+	out := make([]LabelMetadata, len(rows))
+	for i, r := range rows {
+		if r.CBORMetadata == nil {
+			return nil, fmt.Errorf("metadata label %d tx %s: no cbor", label, r.TxHash)
+		}
+		// Blockfrost prefixes its hex with \x; dingo does not.
+		raw, err := hex.DecodeString(strings.TrimPrefix(*r.CBORMetadata, `\x`))
+		if err != nil {
+			return nil, fmt.Errorf("metadata label %d tx %s: %w", label, r.TxHash, err)
+		}
+		out[i] = LabelMetadata{TxHash: r.TxHash, CBOR: raw}
+	}
+	return out, nil
+}
+
+// RequiredSigners returns the key hashes (hex) in a transaction's
+// required_signers field, from GET /api/v0/txs/{hash}/required_signers.
+func (c *Client) RequiredSigners(ctx context.Context, hash string) ([]string, error) {
+	var rows []struct {
+		WitnessHash string `json:"witness_hash"`
+	}
+	if err := c.get(ctx, "/api/v0/txs/"+url.PathEscape(hash)+"/required_signers", &rows); err != nil {
+		return nil, err
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.WitnessHash
+	}
+	return out, nil
+}
+
 // TxIO is one input or output of a transaction, as returned by
 // GET /api/v0/txs/{hash}/utxos: the address it belongs to and its per-asset
 // amounts (unit "lovelace" or policy+hexname, same shape as UTxO.Amount).
@@ -717,10 +789,7 @@ type GovernanceAction struct {
 	ActionIndex   uint32 `json:"action_index"`
 	Type          string `json:"type"`
 	ProposedEpoch uint64 `json:"proposed_epoch"`
-	ExpiresEpoch  uint64 `json:"expires_epoch"`
 	Status        string `json:"status"`
-	AnchorURL     string `json:"anchor_url"`
-	Deposit       string `json:"deposit"`
 	YesVotes      int    `json:"yes_votes"`
 	NoVotes       int    `json:"no_votes"`
 	AbstainVotes  int    `json:"abstain_votes"`
@@ -754,7 +823,51 @@ const (
 // node-local source AccountDRepID uses — never an external service. An absent
 // data dir, missing metadata file, or a metadata DB without the governance
 // tables yields an empty list rather than an error.
+//
+// The list is cached for poolCacheTTL: every search keystroke and page change
+// asks for the whole list, and each uncached read scans every proposal and
+// aggregates every vote while the node may be writing the same database.
+// Concurrent misses share one read. Failed and canceled reads are not cached.
 func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, error) {
+	if cached, ok := c.cachedGovernanceActions(); ok {
+		return cached, nil
+	}
+	select {
+	case c.govRefresh <- struct{}{}:
+		defer func() { <-c.govRefresh }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if cached, ok := c.cachedGovernanceActions(); ok {
+		return cached, nil
+	}
+	read := c.readGovernanceActions
+	if c.govRead != nil {
+		read = c.govRead
+	}
+	actions, err := read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if actions != nil {
+		c.govMu.Lock()
+		c.govCache, c.govCacheUntil = actions, time.Now().Add(poolCacheTTL)
+		c.govMu.Unlock()
+		return slices.Clone(actions), nil
+	}
+	return nil, nil
+}
+
+func (c *Client) cachedGovernanceActions() ([]GovernanceAction, bool) {
+	c.govMu.Lock()
+	defer c.govMu.Unlock()
+	if c.govCache == nil || !time.Now().Before(c.govCacheUntil) {
+		return nil, false
+	}
+	return slices.Clone(c.govCache), true
+}
+
+func (c *Client) readGovernanceActions(ctx context.Context) ([]GovernanceAction, error) {
 	if c.dingoDataDir == "" {
 		return nil, nil
 	}
@@ -788,8 +901,7 @@ func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, err
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, tx_hash, action_index, action_type, proposed_epoch,
-		       expires_epoch, enacted_epoch, ratified_epoch, expired_epoch,
-		       anchor_url, deposit
+		       enacted_epoch, ratified_epoch, expired_epoch
 		FROM governance_proposal
 		WHERE deleted_slot IS NULL
 		ORDER BY proposed_epoch DESC, id DESC`)
@@ -806,17 +918,13 @@ func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, err
 			actionIndex   uint32
 			actionType    uint8
 			proposedEpoch uint64
-			expiresEpoch  uint64
 			enactedEpoch  sql.NullInt64
 			ratifiedEpoch sql.NullInt64
 			expiredEpoch  sql.NullInt64
-			anchorURL     sql.NullString
-			deposit       uint64
 		)
 		if err := rows.Scan(
 			&id, &txHash, &actionIndex, &actionType, &proposedEpoch,
-			&expiresEpoch, &enactedEpoch, &ratifiedEpoch, &expiredEpoch,
-			&anchorURL, &deposit,
+			&enactedEpoch, &ratifiedEpoch, &expiredEpoch,
 		); err != nil {
 			return nil, fmt.Errorf("scan governance proposal: %w", err)
 		}
@@ -827,10 +935,7 @@ func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, err
 			ActionIndex:   actionIndex,
 			Type:          govActionTypeName(actionType),
 			ProposedEpoch: proposedEpoch,
-			ExpiresEpoch:  expiresEpoch,
 			Status:        govActionStatus(enactedEpoch, ratifiedEpoch, expiredEpoch),
-			AnchorURL:     anchorURL.String,
-			Deposit:       strconv.FormatUint(deposit, 10),
 			YesVotes:      tally.yes,
 			NoVotes:       tally.no,
 			AbstainVotes:  tally.abstain,
@@ -840,6 +945,85 @@ func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, err
 		return nil, fmt.Errorf("iterate governance proposals: %w", err)
 	}
 	return actions, nil
+}
+
+// AnchorDocument is a governance action's anchor document as fetched and
+// hash-verified by the embedded node.
+type AnchorDocument struct {
+	ActionID     string
+	ExpiresEpoch uint64
+	Content      []byte
+}
+
+// GovernanceAnchorDocuments returns the anchor documents the embedded node has
+// already fetched for live governance actions. It reads Dingo's local metadata
+// DB only (read-only); the wallet never fetches an anchor itself. An absent
+// data dir, metadata file, or table yields no documents.
+//
+// Dingo keys a fetched document by (source, URL, hash), and two proposals can
+// share an anchor URL with different hashes, so the join matches the hash too:
+// a document is only attributed to the proposal whose anchor it verified.
+func (c *Client) GovernanceAnchorDocuments(ctx context.Context) ([]AnchorDocument, error) {
+	if c.dingoDataDir == "" {
+		return nil, nil
+	}
+	metadataPath := filepath.Join(c.dingoDataDir, "metadata.sqlite")
+	if _, err := os.Stat(metadataPath); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("governance anchor documents metadata: %w", err)
+	}
+	db, err := sql.Open("sqlite", sqliteReadOnlyDSN(metadataPath))
+	if err != nil {
+		return nil, fmt.Errorf("open governance anchor metadata: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	for _, table := range []string{"governance_proposal", "offchain_metadata"} {
+		has, err := sqliteHasTable(ctx, db, table)
+		if err != nil {
+			return nil, err
+		}
+		if !has {
+			return nil, nil
+		}
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT p.tx_hash, p.action_index, p.expires_epoch, m.content
+		FROM governance_proposal p
+		JOIN offchain_metadata m ON m.url = p.anchor_url AND m.hash = p.anchor_hash
+		WHERE p.deleted_slot IS NULL
+		  AND m.source_type = 'gov_proposal'
+		  AND m.status = 'fetched'
+		ORDER BY p.id`)
+	if err != nil {
+		return nil, fmt.Errorf("query governance anchor documents: %w", err)
+	}
+	defer rows.Close()
+
+	var docs []AnchorDocument
+	for rows.Next() {
+		var (
+			txHash      nullableBytes
+			actionIndex uint32
+			expires     uint64
+			content     []byte
+		)
+		if err := rows.Scan(&txHash, &actionIndex, &expires, &content); err != nil {
+			return nil, fmt.Errorf("scan governance anchor document: %w", err)
+		}
+		docs = append(docs, AnchorDocument{
+			ActionID:     govActionID(txHash.Bytes, actionIndex),
+			ExpiresEpoch: expires,
+			Content:      content,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate governance anchor documents: %w", err)
+	}
+	return docs, nil
 }
 
 type govVoteTally struct{ yes, no, abstain int }

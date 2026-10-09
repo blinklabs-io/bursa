@@ -56,7 +56,7 @@ export function CreateVault({ network, onReady }: CreateVaultProps) {
 
   if (vaultPassword !== null) {
     return (
-      <div className="screen-settings">
+      <div className="vault-setup">
         <Card title="Vault Created">
           <p className="helper-text">
             Your vault is ready. Add your first wallet to begin.

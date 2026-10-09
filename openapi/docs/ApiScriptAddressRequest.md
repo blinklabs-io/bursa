@@ -4,8 +4,8 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Network** | **string** |  | 
-**Script** | **map[string]map[string]interface{}** |  | 
+**Network** | **string** |  |
+**Script** | **map[string]map[string]interface{}** |  |
 
 ## Methods
 
@@ -54,7 +54,7 @@ GetScript returns the Script field if non-nil, zero value otherwise.
 
 ### GetScriptOk
 
-`func (o *ApiScriptAddressRequest) GetScriptOk() (*map[string]map[string]interface{}, bool)`
+`func (o *ApiScriptAddressRequest) GetScriptOk() (map[string]map[string]interface{}, bool)`
 
 GetScriptOk returns a tuple with the Script field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.
@@ -68,5 +68,3 @@ SetScript sets Script field to given value.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

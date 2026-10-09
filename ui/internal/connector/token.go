@@ -96,13 +96,21 @@ func (s *TokenStore) Pair() (string, string, bool) {
 	return s.data.ExtensionID, s.data.Token, s.data.Token != ""
 }
 
+// Clear revokes the pairing. Authorization ends immediately. A token file that
+// cannot be removed is truncated instead, which NewTokenStore loads as no
+// pairing; an error is returned only when neither succeeds, so the file may
+// authorize again after a restart.
 func (s *TokenStore) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.Remove(s.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
 	s.data = tokenData{}
+	err := os.Remove(s.path)
+	if err == nil || errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if truncErr := os.Truncate(s.path, 0); truncErr != nil {
+		return fmt.Errorf("connector: pairing revoked but token file not removed: %w", errors.Join(err, truncErr))
+	}
 	return nil
 }
 

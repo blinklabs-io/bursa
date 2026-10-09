@@ -4,10 +4,10 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Address** | Pointer to **string** |  | [optional] 
-**Script** | Pointer to **map[string]map[string]interface{}** |  | [optional] 
-**ScriptHash** | Pointer to **string** |  | [optional] 
-**Type** | Pointer to **string** |  | [optional] 
+**Address** | Pointer to **string** |  | [optional]
+**Script** | Pointer to **map[string]map[string]interface{}** |  | [optional]
+**ScriptHash** | Pointer to **string** |  | [optional]
+**Type** | Pointer to **string** |  | [optional]
 
 ## Methods
 
@@ -61,7 +61,7 @@ GetScript returns the Script field if non-nil, zero value otherwise.
 
 ### GetScriptOk
 
-`func (o *ApiScriptResponse) GetScriptOk() (*map[string]map[string]interface{}, bool)`
+`func (o *ApiScriptResponse) GetScriptOk() (map[string]map[string]interface{}, bool)`
 
 GetScriptOk returns a tuple with the Script field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.
@@ -130,5 +130,3 @@ HasType returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

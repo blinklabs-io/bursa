@@ -68,6 +68,15 @@ definitions:
     properties:
       address:
         type: string
+      format:
+        description: |-
+          Format selects how Address is encoded: "text" (bech32 or base58, the
+          default), "hex", or "base64" for the raw address bytes.
+        enum:
+        - text
+        - hex
+        - base64
+        type: string
     required:
     - address
     type: object
@@ -199,6 +208,7 @@ definitions:
   api.ScriptValidateRequest:
     properties:
       message:
+        description: Message is the hex-encoded signed payload.
         format: hex
         type: string
       public_keys:
@@ -244,7 +254,7 @@ definitions:
         description: Payload is a hex-encoded message payload.
         type: string
       signing_key:
-        description: SigningKey identifies the signing key.
+        description: SigningKey is a cardano-cli JSON signing key envelope.
         type: string
     required:
     - address
@@ -971,10 +981,6 @@ paths:
           description: Wallet storage administrator access required
           schema:
             $ref: '#/definitions/api.ErrorResponse'
-        "404":
-          description: Wallet not found
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:
@@ -1012,10 +1018,6 @@ paths:
             $ref: '#/definitions/api.ErrorResponse'
         "403":
           description: Wallet storage administrator access required
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "404":
-          description: Wallet not found
           schema:
             $ref: '#/definitions/api.ErrorResponse'
         "500":
@@ -1110,10 +1112,6 @@ paths:
             $ref: '#/definitions/api.ErrorResponse'
         "403":
           description: Wallet storage administrator access required
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "404":
-          description: Wallet not found
           schema:
             $ref: '#/definitions/api.ErrorResponse'
         "500":

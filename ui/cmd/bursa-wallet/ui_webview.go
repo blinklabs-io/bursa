@@ -29,6 +29,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/desktopnotify"
 	"github.com/blinklabs-io/bursa/ui/internal/desktoptray"
 	"github.com/blinklabs-io/bursa/ui/internal/openexternal"
+	"github.com/blinklabs-io/bursa/ui/internal/version"
 	webview "github.com/webview/webview_go"
 )
 
@@ -110,11 +111,12 @@ func awaitUI(ctx context.Context, url string, logger *slog.Logger, srvErr <-chan
 	// native close-interception hook, which touches the window. w.Window() is
 	// valid immediately after webview.New (the native window already exists).
 	tray := desktoptray.New(desktoptray.Config{
-		Window:    w.Window(),
-		Dispatch:  w.Dispatch,
-		Terminate: w.Terminate,
-		StatusURL: url,
-		Logger:    logger,
+		Window:         w.Window(),
+		Dispatch:       w.Dispatch,
+		Terminate:      w.Terminate,
+		StatusURL:      url,
+		CurrentVersion: version.Version,
+		Logger:         logger,
 	})
 	tray.Launch()
 	defer tray.Stop()

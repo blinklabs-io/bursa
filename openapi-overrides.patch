@@ -1,0 +1,129 @@
+diff --git a/openapi/README.md b/openapi/README.md
+index e18137c..67815e3 100644
+--- a/openapi/README.md
++++ b/openapi/README.md
+@@ -154,2 +154,3 @@ Authentication schemes defined for the API:
+ Note, each API key must be added to a map of `map[string]APIKey` where the key is: BearerAuth and passed in as the auth context for each request.
++Set `Prefix` to `Bearer` so the client sends the JWT using the required `Authorization: Bearer <JWT>` header.
+ 
+@@ -162,3 +163,3 @@ auth := context.WithValue(
+ 		map[string]openapi.APIKey{
+-			"BearerAuth": {Key: "API_KEY_STRING"},
++			"BearerAuth": {Key: "JWT_STRING", Prefix: "Bearer"},
+ 		},
+diff --git a/openapi/client.go b/openapi/client.go
+index 21b554c..838a519 100644
+--- a/openapi/client.go
++++ b/openapi/client.go
+@@ -310,3 +310,3 @@ func (c *APIClient) prepareRequest(
+ 	// add form parameters and file if available.
+-	if strings.HasPrefix(headerParams["Content-Type"], "multipart/form-data") && len(formParams) > 0 || (len(formFiles) > 0) {
++	if strings.HasPrefix(headerParams["Content-Type"], "multipart/form-data") && (len(formParams) > 0 || len(formFiles) > 0) {
+ 		if body != nil {
+diff --git a/openapi/configuration.go b/openapi/configuration.go
+index 1ef85d5..b392fe9 100644
+--- a/openapi/configuration.go
++++ b/openapi/configuration.go
+@@ -31,3 +31,3 @@ func (c contextKey) String() string {
+ var (
+-	// ContextAPIKeys takes a string apikey as authentication for the request
++	// ContextAPIKeys takes a map[string]APIKey as authentication for the request.
+ 	ContextAPIKeys = contextKey("apiKeys")
+diff --git a/openapi/docs/ApiScriptAddressRequest.md b/openapi/docs/ApiScriptAddressRequest.md
+index 35d3cdb..85d0888 100644
+--- a/openapi/docs/ApiScriptAddressRequest.md
++++ b/openapi/docs/ApiScriptAddressRequest.md
+@@ -55,5 +55,5 @@ GetScript returns the Script field if non-nil, zero value otherwise.
+ ### GetScriptOk
+ 
+-`func (o *ApiScriptAddressRequest) GetScriptOk() (*map[string]map[string]interface{}, bool)`
++`func (o *ApiScriptAddressRequest) GetScriptOk() (map[string]map[string]interface{}, bool)`
+ 
+ GetScriptOk returns a tuple with the Script field if it's non-nil, zero value otherwise
+diff --git a/openapi/docs/ApiScriptCreateRequest.md b/openapi/docs/ApiScriptCreateRequest.md
+index bc305dc..4346e1f 100644
+--- a/openapi/docs/ApiScriptCreateRequest.md
++++ b/openapi/docs/ApiScriptCreateRequest.md
+@@ -39,5 +39,5 @@ GetKeyHashes returns the KeyHashes field if non-nil, zero value otherwise.
+ ### GetKeyHashesOk
+ 
+-`func (o *ApiScriptCreateRequest) GetKeyHashesOk() (*[]string, bool)`
++`func (o *ApiScriptCreateRequest) GetKeyHashesOk() ([]string, bool)`
+ 
+ GetKeyHashesOk returns a tuple with the KeyHashes field if it's non-nil, zero value otherwise
+diff --git a/openapi/docs/ApiScriptResponse.md b/openapi/docs/ApiScriptResponse.md
+index 6b2e394..9a7cb0e 100644
+--- a/openapi/docs/ApiScriptResponse.md
++++ b/openapi/docs/ApiScriptResponse.md
+@@ -62,5 +62,5 @@ GetScript returns the Script field if non-nil, zero value otherwise.
+ ### GetScriptOk
+ 
+-`func (o *ApiScriptResponse) GetScriptOk() (*map[string]map[string]interface{}, bool)`
++`func (o *ApiScriptResponse) GetScriptOk() (map[string]map[string]interface{}, bool)`
+ 
+ GetScriptOk returns a tuple with the Script field if it's non-nil, zero value otherwise
+diff --git a/openapi/docs/ApiScriptValidateRequest.md b/openapi/docs/ApiScriptValidateRequest.md
+index bb04765..3d74b30 100644
+--- a/openapi/docs/ApiScriptValidateRequest.md
++++ b/openapi/docs/ApiScriptValidateRequest.md
+@@ -64,5 +64,5 @@ GetPublicKeys returns the PublicKeys field if non-nil, zero value otherwise.
+ ### GetPublicKeysOk
+ 
+-`func (o *ApiScriptValidateRequest) GetPublicKeysOk() (*[]string, bool)`
++`func (o *ApiScriptValidateRequest) GetPublicKeysOk() ([]string, bool)`
+ 
+ GetPublicKeysOk returns a tuple with the PublicKeys field if it's non-nil, zero value otherwise
+@@ -114,5 +114,5 @@ GetScript returns the Script field if non-nil, zero value otherwise.
+ ### GetScriptOk
+ 
+-`func (o *ApiScriptValidateRequest) GetScriptOk() (*map[string]map[string]interface{}, bool)`
++`func (o *ApiScriptValidateRequest) GetScriptOk() (map[string]map[string]interface{}, bool)`
+ 
+ GetScriptOk returns a tuple with the Script field if it's non-nil, zero value otherwise
+@@ -134,5 +134,5 @@ GetSignatures returns the Signatures field if non-nil, zero value otherwise.
+ ### GetSignaturesOk
+ 
+-`func (o *ApiScriptValidateRequest) GetSignaturesOk() (*[]string, bool)`
++`func (o *ApiScriptValidateRequest) GetSignaturesOk() ([]string, bool)`
+ 
+ GetSignaturesOk returns a tuple with the Signatures field if it's non-nil, zero value otherwise
+diff --git a/openapi/docs/ApiTxAssembleRequest.md b/openapi/docs/ApiTxAssembleRequest.md
+index 24d73ba..bab6244 100644
+--- a/openapi/docs/ApiTxAssembleRequest.md
++++ b/openapi/docs/ApiTxAssembleRequest.md
+@@ -55,5 +55,5 @@ GetWitnesses returns the Witnesses field if non-nil, zero value otherwise.
+ ### GetWitnessesOk
+ 
+-`func (o *ApiTxAssembleRequest) GetWitnessesOk() (*[]string, bool)`
++`func (o *ApiTxAssembleRequest) GetWitnessesOk() ([]string, bool)`
+ 
+ GetWitnessesOk returns a tuple with the Witnesses field if it's non-nil, zero value otherwise
+diff --git a/openapi/docs/ApiTxSignRequest.md b/openapi/docs/ApiTxSignRequest.md
+index 4ed1108..f630e70 100644
+--- a/openapi/docs/ApiTxSignRequest.md
++++ b/openapi/docs/ApiTxSignRequest.md
+@@ -35,5 +35,5 @@ GetSigningKeys returns the SigningKeys field if non-nil, zero value otherwise.
+ ### GetSigningKeysOk
+ 
+-`func (o *ApiTxSignRequest) GetSigningKeysOk() (*[]string, bool)`
++`func (o *ApiTxSignRequest) GetSigningKeysOk() ([]string, bool)`
+ 
+ GetSigningKeysOk returns a tuple with the SigningKeys field if it's non-nil, zero value otherwise
+diff --git a/openapi/docs/BursaTxInspection.md b/openapi/docs/BursaTxInspection.md
+index 9105531..e4c9f89 100644
+--- a/openapi/docs/BursaTxInspection.md
++++ b/openapi/docs/BursaTxInspection.md
+@@ -202,5 +202,5 @@ GetInputs returns the Inputs field if non-nil, zero value otherwise.
+ ### GetInputsOk
+ 
+-`func (o *BursaTxInspection) GetInputsOk() (*[]BursaTxInput, bool)`
++`func (o *BursaTxInspection) GetInputsOk() ([]BursaTxInput, bool)`
+ 
+ GetInputsOk returns a tuple with the Inputs field if it's non-nil, zero value otherwise
+@@ -277,5 +277,5 @@ GetOutputs returns the Outputs field if non-nil, zero value otherwise.
+ ### GetOutputsOk
+ 
+-`func (o *BursaTxInspection) GetOutputsOk() (*[]BursaTxOutput, bool)`
++`func (o *BursaTxInspection) GetOutputsOk() ([]BursaTxOutput, bool)`
+ 
+ GetOutputsOk returns a tuple with the Outputs field if it's non-nil, zero value otherwise

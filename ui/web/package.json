@@ -18,7 +18,8 @@
     "@keystonehq/hw-transport-webusb": "^0.5.2",
     "@ledgerhq/hw-transport-webhid": "^6.35.4",
     "@ngraveio/bc-ur": "^1.1.13",
-    "@trezor/connect-web": "^9.7.3",
+    "@trezor/connect-web": "^10.0.1",
+    "@trezor/protobuf": "^10.0.1",
     "@zxing/browser": "^0.1.5",
     "@zxing/library": "^0.21.0",
     "bech32": "^1.1.4",
@@ -35,6 +36,7 @@
   "devDependencies": {
     "@testing-library/jest-dom": "^6.4.0",
     "@testing-library/react": "^16.0.0",
+    "@types/node": "^26.6.4",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",

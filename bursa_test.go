@@ -3055,3 +3055,139 @@ func TestValidateScriptStructuralIgnoresWitnessCount(t *testing.T) {
 	assert.False(t, ValidateScript(leaf, nil, witnesses, 0, true),
 		"signature validation must still bound the witness list")
 }
+
+// scriptTreeWithNodes builds an all-script tree of exactly n nodes whose every
+// node stays within the width limit and whose depth is two, so that only the
+// node budget can reject it.
+func scriptTreeWithNodes[T any](
+	t *testing.T,
+	n int,
+	leaf func() T,
+	all func([]T) T,
+) T {
+	t.Helper()
+	const groupSize = 201
+	var children []T
+	for remaining := n - 1; remaining > 0; {
+		g := min(remaining, groupSize)
+		remaining -= g
+		if g == 1 {
+			children = append(children, leaf())
+			continue
+		}
+		leaves := make([]T, g-1)
+		for i := range leaves {
+			leaves[i] = leaf()
+		}
+		children = append(children, all(leaves))
+	}
+	return all(children)
+}
+
+// nestedScripts wraps leaf in depth all-scripts, putting the leaf at the
+// given depth.
+func nestedScripts[T any](depth int, leaf T, all func([]T) T) T {
+	node := leaf
+	for range depth {
+		node = all([]T{node})
+	}
+	return node
+}
+
+func TestValidateScriptNodeBudget(t *testing.T) {
+	t.Parallel()
+	leaf, err := NewScriptSig(testKeyHash())
+	require.NoError(t, err)
+	build := func(n int) Script {
+		return scriptTreeWithNodes(
+			t,
+			n,
+			func() Script { return leaf },
+			func(children []Script) Script {
+				s, err := NewScriptAll(children...)
+				require.NoError(t, err)
+				return s
+			},
+		)
+	}
+
+	assert.True(t, ValidateScript(build(maxScriptNodes), nil, nil, 0, false),
+		"a script of exactly the node limit must validate")
+	assert.False(t, ValidateScript(build(maxScriptNodes+1), nil, nil, 0, false),
+		"validation must reject scripts above the node limit")
+}
+
+func TestValidateScriptDepthLimit(t *testing.T) {
+	t.Parallel()
+	leaf, err := NewScriptSig(testKeyHash())
+	require.NoError(t, err)
+	all := func(children []Script) Script {
+		s, err := NewScriptAll(children...)
+		require.NoError(t, err)
+		return s
+	}
+
+	assert.True(
+		t,
+		ValidateScript(nestedScripts(maxScriptDepth, Script(leaf), all), nil, nil, 0, false),
+		"a leaf at exactly the depth limit must validate",
+	)
+	assert.False(
+		t,
+		ValidateScript(nestedScripts(maxScriptDepth+1, Script(leaf), all), nil, nil, 0, false),
+		"validation must reject scripts deeper than the depth limit",
+	)
+}
+
+func TestUnmarshalScriptNodeBudget(t *testing.T) {
+	t.Parallel()
+	build := func(n int) *ScriptData {
+		return &ScriptData{
+			Type: "NativeScript",
+			Script: scriptTreeWithNodes(
+				t,
+				n,
+				func() map[string]any {
+					return map[string]any{
+						"type":    "sig",
+						"keyHash": hex.EncodeToString(make([]byte, 28)),
+					}
+				},
+				func(children []map[string]any) map[string]any {
+					scripts := make([]any, len(children))
+					for i, c := range children {
+						scripts[i] = c
+					}
+					return map[string]any{"type": "all", "scripts": scripts}
+				},
+			),
+		}
+	}
+
+	_, err := UnmarshalScript(build(maxScriptNodes))
+	assert.NoError(t, err, "a script of exactly the node limit must parse")
+	_, err = UnmarshalScript(build(maxScriptNodes + 1))
+	assert.ErrorContains(t, err, "validation limits")
+}
+
+func TestUnmarshalScriptDepthLimit(t *testing.T) {
+	t.Parallel()
+	leaf := map[string]any{
+		"type":    "sig",
+		"keyHash": hex.EncodeToString(make([]byte, 28)),
+	}
+	all := func(children []map[string]any) map[string]any {
+		return map[string]any{"type": "all", "scripts": []any{children[0]}}
+	}
+
+	_, err := UnmarshalScript(&ScriptData{
+		Type:   "NativeScript",
+		Script: nestedScripts(maxScriptDepth, leaf, all),
+	})
+	assert.NoError(t, err, "a leaf at exactly the depth limit must parse")
+	_, err = UnmarshalScript(&ScriptData{
+		Type:   "NativeScript",
+		Script: nestedScripts(maxScriptDepth+1, leaf, all),
+	})
+	assert.ErrorContains(t, err, "validation limits")
+}

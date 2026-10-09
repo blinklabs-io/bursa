@@ -227,6 +227,17 @@ test("useAssetMetadata: an empty unit list resolves to {} without calling the cl
   expect(spy).not.toHaveBeenCalled();
 });
 
+test("useAssetMetadata retains unchanged assets while new lookups are pending", async () => {
+  const spy = vi.spyOn(client, "getAssetMetadata").mockImplementation((unit) => Promise.resolve(fakeAssetInfo(unit, unit)));
+  const { result, rerender } = renderHook(({ units }) => useAssetMetadata(units), { initialProps: { units: ["keep", "remove"] } });
+  await waitFor(() => expect(result.current.keep).toBeDefined());
+  spy.mockImplementation(() => new Promise(() => {}));
+  rerender({ units: ["keep", "pending"] });
+  expect(result.current.keep).toBeDefined();
+  expect(result.current.remove).toBeUndefined();
+  expect(result.current.pending).toBeUndefined();
+});
+
 test("useAssetMetadata: reordering the same units does not retrigger lookups", async () => {
   const spy = vi
     .spyOn(client, "getAssetMetadata")
