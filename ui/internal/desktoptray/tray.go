@@ -67,6 +67,9 @@ type Config struct {
 	// When set, the tray shows a live node-status line polled from StatusURL+"/status".
 	// Empty disables the poller (the line then reads a static label).
 	StatusURL string
+	// CurrentVersion is the release version embedded by the build. Empty means
+	// this is a development build, so a check reports the latest release only.
+	CurrentVersion string
 	// Logger receives tray diagnostics; defaults to slog.Default when nil.
 	Logger *slog.Logger
 }
@@ -78,6 +81,7 @@ type Tray struct {
 	ctrl      *Controller
 	dispatch  func(func())
 	statusURL string
+	updates   *UpdateChecker
 	logger    *slog.Logger
 
 	start func() // systray backend start (RunWithExternalLoop)
@@ -107,6 +111,7 @@ func New(cfg Config) *Tray {
 		logger:    logger,
 		done:      make(chan struct{}),
 	}
+	t.updates = NewUpdateChecker(cfg.CurrentVersion, t.done, logger)
 	win := newWindowController(cfg.Window)
 	t.ctrl = NewController(win, cfg.Dispatch, cfg.Terminate)
 
@@ -152,6 +157,9 @@ func (t *Tray) Launch() {
 // the systray backend. Idempotent.
 func (t *Tray) Stop() {
 	t.stopOnce.Do(func() {
+		if t.updates != nil {
+			t.updates.Stop()
+		}
 		close(t.done)
 		if t.stop != nil {
 			t.stop()
@@ -173,6 +181,8 @@ func (t *Tray) onReady() {
 	mStatus := systray.AddMenuItem("Node: starting…", "Embedded node status")
 	mStatus.Disable()
 	systray.AddSeparator()
+	mUpdates := systray.AddMenuItem("Check for updates", "Check the latest Bursa release")
+	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Quit Bursa Wallet and stop the node")
 
 	// Click loop: route tray clicks through the Controller, which owns the
@@ -184,6 +194,11 @@ func (t *Tray) onReady() {
 				t.ctrl.route(actionOpen)
 			case <-mQuit.ClickedCh:
 				t.ctrl.route(actionQuit)
+			case <-mUpdates.ClickedCh:
+				// A click while a check runs starts nothing; the running
+				// check re-enables the item when it finishes.
+				mUpdates.Disable()
+				t.updates.Start(mUpdates.Enable)
 			case <-t.done:
 				return
 			}
