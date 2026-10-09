@@ -58,6 +58,13 @@ test("lists every wallet with its name and network, marking the active one", () 
   expect(inactive).not.toHaveAttribute("aria-current");
 });
 
+test("hardware security is claimed only for hardware wallets", () => {
+  renderSwitcher({ wallets: [walletA, { ...walletB, type: "hardware" }] });
+  expect(screen.getByRole("button", { name: /savings/i })).toHaveTextContent("Hardware secured");
+  expect(screen.getByRole("button", { name: /main/i })).toHaveTextContent("Password protected");
+  expect(screen.getByRole("button", { name: /main/i })).not.toHaveTextContent("Hardware secured");
+});
+
 // --- switching ---
 
 test("selecting an inactive wallet activates it server-side and reports the result", async () => {

@@ -90,3 +90,12 @@ test("surfaces an API error", async () => {
   render(<PoolDirectory network="preview" />);
   expect(await screen.findByRole("alert")).toHaveTextContent(/node not ready/i);
 });
+
+
+test("shows fixed costs and active stake alongside saturation", async () => {
+  vi.spyOn(client, "getPoolDirectory").mockResolvedValue(directory([POOL_A]));
+  render(<PoolDirectory network="preview" />);
+  expect(await screen.findByText("340")).toBeInTheDocument();
+  expect(screen.getByText("4,800")).toBeInTheDocument();
+  expect(screen.getByRole("meter")).toHaveAttribute("aria-valuenow", "42");
+});

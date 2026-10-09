@@ -1,4 +1,4 @@
-import { extractAssetMeta, assetDisplayName, assetMatchesQuery } from "./tokenMeta";
+import { extractAssetMeta, assetDisplayName, assetMatchesQuery, tokenIconUrl } from "./tokenMeta";
 import type { AssetInfo } from "./api/types";
 import { formatTokenQuantity } from "./format";
 
@@ -14,6 +14,28 @@ function makeInfo(onchainMetadata: unknown, registryMetadata: unknown = null): A
     metadata: registryMetadata as AssetInfo["metadata"],
   };
 }
+
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV9sAAAAASUVORK5CYII=";
+
+test("token icons use embedded registry PNG data without contacting an external host", () => {
+  expect(tokenIconUrl(makeInfo(null, { logo: PNG }))).toBe(`data:image/png;base64,${PNG}`);
+  expect(tokenIconUrl(makeInfo(null, { logo: "https://example.com/track.png" }))).toBeUndefined();
+  expect(tokenIconUrl(makeInfo(null, { logo: btoa('<svg onload="alert(1)"/>') }))).toBeUndefined();
+  expect(tokenIconUrl(makeInfo(null, { logo: "x".repeat(400000) }))).toBeUndefined();
+});
+
+test("token icon headers accept larger registry images and bound decoded dimensions", () => {
+  const bytes = Uint8Array.from(atob(PNG), (c) => c.charCodeAt(0));
+  const view = new DataView(bytes.buffer);
+  view.setUint32(16, 1200);
+  view.setUint32(20, 1200);
+  const encoded = () => btoa(String.fromCharCode(...bytes));
+  expect(tokenIconUrl(makeInfo(null, { logo: encoded() }))).toBeDefined();
+  view.setUint32(16, 2049);
+  expect(tokenIconUrl(makeInfo(null, { logo: encoded() }))).toBeUndefined();
+  view.setUint32(16, 0);
+  expect(tokenIconUrl(makeInfo(null, { logo: encoded() }))).toBeUndefined();
+});
 
 // --- extractAssetMeta ---
 

@@ -40,7 +40,7 @@ func Handler() http.Handler {
 	}
 	files := http.FileServer(http.FS(sub))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:")
 		// The SPA is read-only: serve only safe methods. A non-GET/HEAD request
 		// that fell through the API routes is a misuse — return 405 rather than
 		// masking it with a 200 HTML body.

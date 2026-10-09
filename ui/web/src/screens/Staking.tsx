@@ -25,6 +25,7 @@ import { getKeystoneXfp, setKeystoneXfp } from "../hw/deviceKind";
 import { recoverSeedSignerXfp } from "../hw/seedsigner";
 import { useSeedSignerQRBridge } from "../components/SeedSignerQRModal";
 import { Card } from "../components/Card";
+import { Icon } from "../components/Icon";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { StatusPill } from "../components/StatusPill";
@@ -667,7 +668,8 @@ function ActiveState({ poolId, withdrawable, note, onChange, onWithdraw, network
     <>
       <StatusPanel poolId={poolId} active={true} network={network} />
       <Card title="Rewards">
-        <div className="dl-row">
+        <div className="stake-reward-symbol" aria-hidden="true"><Icon name="stake" size={42} /></div>
+        <div className="dl-row reward-balance">
           <dt className="field-label">Withdrawable</dt>
           <dd className="total-accent mono">{formatAda(withdrawable)} ADA</dd>
         </div>
@@ -832,7 +834,7 @@ export function Staking({
   // a fresh wallet drops straight into the set-up form.
   if (phase === "status" && isActive && del) {
     return (
-      <div className="staking">
+      <div className="staking staking-overview">
         <ActiveState
           poolId={del.pool_id}
           withdrawable={del.withdrawable_amount}

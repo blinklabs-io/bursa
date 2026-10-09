@@ -163,6 +163,19 @@ export function shortId(id: string): string {
 // silently degrades to a raw base-unit count.
 export const MAX_TOKEN_DECIMALS = 18;
 
+/** parseTokenQuantity converts a displayed amount to the quote API's uint64 base units. */
+export function parseTokenQuantity(amount: string, decimals: number): string {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > MAX_TOKEN_DECIMALS) throw new Error("Unknown token decimals");
+  const value = amount.trim();
+  if (!/^\d+(\.\d+)?$/.test(value) || value.length > 80) throw new Error("Enter a positive amount");
+  const [whole, fraction = ""] = value.split(".");
+  if (fraction.length > decimals) throw new Error(`Amount supports up to ${decimals} decimal places`);
+  const baseUnits = BigInt(whole) * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, "0") || "0");
+  if (baseUnits <= 0n) throw new Error("Amount must be greater than zero");
+  if (baseUnits > 18446744073709551615n) throw new Error("Amount is too large");
+  return baseUnits.toString();
+}
+
 export function formatTokenQuantity(quantity: string, decimals: number): string {
   if (!/^-?\d+$/.test(quantity)) return quantity;
   // An out-of-range or non-integer decimals value means the scale is unknown,

@@ -215,6 +215,11 @@ func TestNFTSettingsToggleAndValidation(t *testing.T) {
 	nf := &fakeNFTs{}
 	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, nf)
 	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/nft-media", nil))
+	if !strings.Contains(rec.Body.String(), `"available":true`) {
+		t.Fatalf("NFT-capable build must report availability: %s", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/nft-media", strings.NewReader(`{"enabled":true}`)))
 	if rec.Code != http.StatusOK || !nf.enabled {
 		t.Fatalf("enable = %d enabled=%v", rec.Code, nf.enabled)
@@ -236,7 +241,7 @@ func TestNFTNilServiceDegradesGracefully(t *testing.T) {
 	}
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/nft-media", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":false`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":false`) || !strings.Contains(rec.Body.String(), `"available":false`) {
 		t.Fatalf("nil service setting = %d body=%q", rec.Code, rec.Body.String())
 	}
 }
