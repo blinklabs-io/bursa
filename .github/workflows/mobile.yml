@@ -202,7 +202,7 @@ jobs:
           mv "${apk}" "out/bursa-${BURSA_VERSION_NAME}-android-arm64.apk"
           mv "${aab}" "out/bursa-${BURSA_VERSION_NAME}-android.aab"
       - name: Upload artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 https://github.com/actions/upload-artifact/releases/tag/v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2 https://github.com/actions/upload-artifact/releases/tag/v7.0.2
         with:
           name: bursa-android-${{ steps.variant.outputs.build-type }}
           path: |
@@ -344,7 +344,7 @@ jobs:
           mkdir -p ../../out
           ditto -c -k --sequesterRsrc --keepParent "$APP" ../../out/Bursa-ios-sim.zip
       - name: Upload .app
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 https://github.com/actions/upload-artifact/releases/tag/v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2 https://github.com/actions/upload-artifact/releases/tag/v7.0.2
         with:
           name: bursa-ios-app
           path: out/Bursa-ios-sim.zip
