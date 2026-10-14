@@ -162,8 +162,9 @@ func (c *Coordinator) SignOpCert(ctx context.Context, kesVkey []byte, issueCount
 		switch code {
 		case CodeBackend:
 			c.deps.Metrics.observeBackendError(ref.Backend())
-		case CodeUnsupported:
+		case CodeBadRequest, CodeNotFound, CodeDenied, CodeConflict, CodeUnsupported:
 			c.deps.Metrics.observeDeny(string(code))
+		case CodeInternal:
 		}
 		return nil, code, fmt.Errorf("opcert sign: %w", err)
 	}

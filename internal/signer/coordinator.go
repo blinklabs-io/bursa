@@ -286,8 +286,9 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []st
 			switch code {
 			case CodeBackend:
 				c.deps.Metrics.observeBackendError(ref.Backend())
-			case CodeUnsupported:
+			case CodeBadRequest, CodeNotFound, CodeDenied, CodeConflict, CodeUnsupported:
 				c.deps.Metrics.observeDeny(string(code))
+			case CodeInternal:
 			}
 			continue
 		}
