@@ -45,6 +45,9 @@ var (
 	// ErrAttestedProtocol is returned for a malformed, mismatched, or replayed
 	// enclave message.
 	ErrAttestedProtocol = errors.New("attested protocol violation")
+	// ErrInvalidSignature is returned when an attested signer response does not
+	// verify under the key admitted by the attestation.
+	ErrInvalidSignature = errors.New("attested signature does not verify")
 )
 
 // Purpose binds a signature request to the Cardano operation it authorizes.
@@ -230,6 +233,9 @@ func (k *attestedKey) SignPurpose(ctx context.Context, purpose Purpose, payload 
 	}
 	if len(resp.Signature) != ed25519.SignatureSize {
 		return nil, fmt.Errorf("%w: signature must be %d bytes, got %d", ErrAttestedProtocol, ed25519.SignatureSize, len(resp.Signature))
+	}
+	if !ed25519.Verify(k.pub, payload, resp.Signature) {
+		return nil, fmt.Errorf("%w: %w", ErrAttestedProtocol, ErrInvalidSignature)
 	}
 	if !k.owner.serves(k) {
 		return nil, ErrKeyNotFound

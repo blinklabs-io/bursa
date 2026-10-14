@@ -357,6 +357,7 @@ func TestAttestedKeyRejectsBadEnclaveResponses(t *testing.T) {
 		{"missing nonce", func(_ AttestedRequest, r *AttestedResponse) { r.Nonce = nil }, ErrAttestedProtocol},
 		{"wrong version", func(_ AttestedRequest, r *AttestedResponse) { r.Version = "other/1" }, ErrAttestedProtocol},
 		{"short signature", func(_ AttestedRequest, r *AttestedResponse) { r.Signature = r.Signature[:63] }, ErrAttestedProtocol},
+		{"invalid signature", func(_ AttestedRequest, r *AttestedResponse) { r.Signature[0] ^= 0xff }, ErrInvalidSignature},
 		{"empty signature", func(_ AttestedRequest, r *AttestedResponse) { r.Signature = nil }, ErrAttestedProtocol},
 		{"enclave refusal", func(_ AttestedRequest, r *AttestedResponse) { r.Error = "policy denied"; r.Signature = nil }, nil},
 	} {

@@ -152,14 +152,17 @@ func (c *Coordinator) SignOpCert(ctx context.Context, kesVkey []byte, issueCount
 	c.deps.Metrics.observeSignDuration(ref.Backend(), time.Since(signStart).Seconds())
 	if err != nil {
 		code := CodeBackend
-		if errors.Is(err, backend.ErrUnsupportedExtended) {
+		if errors.Is(err, backend.ErrInvalidSignature) {
+			code = CodeInternal
+		} else if errors.Is(err, backend.ErrUnsupportedExtended) {
 			code = CodeUnsupported
 		}
 		c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "error", "reason", err.Error())
 		c.deps.Metrics.observe("opcert", string(code))
-		if code == CodeBackend {
+		switch code {
+		case CodeBackend:
 			c.deps.Metrics.observeBackendError(ref.Backend())
-		} else {
+		case CodeUnsupported:
 			c.deps.Metrics.observeDeny(string(code))
 		}
 		return nil, code, fmt.Errorf("opcert sign: %w", err)
