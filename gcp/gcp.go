@@ -27,6 +27,7 @@ import (
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/sops"
+	"github.com/googleapis/gax-go/v2"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -237,6 +238,49 @@ func (g *GoogleWallet) Load(ctx context.Context) error {
 	return nil
 }
 
+// secretAdmin is the part of the Secret Manager client that ensureSecret uses.
+type secretAdmin interface {
+	GetSecret(
+		ctx context.Context,
+		req *secretmanager.GetSecretRequest,
+		opts ...gax.CallOption,
+	) (*secretmanager.Secret, error)
+	CreateSecret(
+		ctx context.Context,
+		req *secretmanager.CreateSecretRequest,
+		opts ...gax.CallOption,
+	) (*secretmanager.Secret, error)
+}
+
+// ensureSecret creates the named secret when it does not exist. Any lookup
+// error other than not-found is returned, since the secret's state is unknown.
+func ensureSecret(ctx context.Context, c secretAdmin, project, secretID string) error {
+	_, err := c.GetSecret(ctx, &secretmanager.GetSecretRequest{
+		Name: fmt.Sprintf("projects/%s/secrets/%s", project, secretID),
+	})
+	if err == nil {
+		return nil
+	}
+	if status.Code(err) != codes.NotFound {
+		return fmt.Errorf("failed to look up secret: %w", err)
+	}
+	_, err = c.CreateSecret(ctx, &secretmanager.CreateSecretRequest{
+		Parent:   "projects/" + project,
+		SecretId: secretID,
+		Secret: &secretmanager.Secret{
+			Replication: &secretmanager.Replication{
+				Replication: &secretmanager.Replication_Automatic_{
+					Automatic: &secretmanager.Replication_Automatic{},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create secret: %w", err)
+	}
+	return nil
+}
+
 func (g *GoogleWallet) Save(ctx context.Context) error {
 	client, err := secretmanagerclient.NewClient(ctx)
 	if err != nil {
@@ -246,34 +290,8 @@ func (g *GoogleWallet) Save(ctx context.Context) error {
 
 	cfg := config.GetConfig()
 
-	// Check if the GoogleWallet exists in Secrets Manager, create if not
-	secretRequest := &secretmanager.GetSecretRequest{
-		Name: fmt.Sprintf(
-			"projects/%s/secrets/%s%s",
-			cfg.Google.Project,
-			cfg.Google.Prefix,
-			g.name,
-		),
-	}
-	if _, err = client.GetSecret(ctx, secretRequest); err != nil {
-		if status.Code(err) == codes.NotFound {
-			// create it
-			createRequest := &secretmanager.CreateSecretRequest{
-				Parent:   "projects/" + cfg.Google.Project,
-				SecretId: fmt.Sprintf("%s%s", cfg.Google.Prefix, g.name),
-				Secret: &secretmanager.Secret{
-					Replication: &secretmanager.Replication{
-						Replication: &secretmanager.Replication_Automatic_{
-							Automatic: &secretmanager.Replication_Automatic{},
-						},
-					},
-				},
-			}
-			_, createErr := client.CreateSecret(ctx, createRequest)
-			if createErr != nil {
-				return fmt.Errorf("failed to create secret: %w", createErr)
-			}
-		}
+	if err := ensureSecret(ctx, client, cfg.Google.Project, cfg.Google.Prefix+g.name); err != nil {
+		return err
 	}
 
 	// encrypt

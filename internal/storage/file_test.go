@@ -453,3 +453,25 @@ func TestFileStoreInvalidWalletNames(t *testing.T) {
 		}
 	})
 }
+
+func TestFileStoreEncryptsAtRestWithAgeRecipient(t *testing.T) {
+	// Not t.Parallel: see useAgeRecipient.
+	useAgeRecipient(t)
+
+	store := NewFileStore(t.TempDir())
+	ctx := context.Background()
+	w, err := store.CreateWallet("age-wallet")
+	require.NoError(t, err)
+	w.PutItem("mnemonic", "secret seed phrase")
+	require.NoError(t, w.Save(ctx))
+
+	onDisk, err := os.ReadFile(store.walletPath("age-wallet"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(onDisk), "secret seed phrase")
+
+	got, err := store.GetWallet(ctx, "age-wallet")
+	require.NoError(t, err)
+	item, err := got.GetItem("mnemonic")
+	require.NoError(t, err)
+	assert.Equal(t, "secret seed phrase", item)
+}

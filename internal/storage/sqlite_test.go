@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -606,5 +607,39 @@ func TestSQLiteDatabasePathDropsTheURISlashBeforeADriveLetter(t *testing.T) {
 		if !fileBacked || got != tt.want {
 			t.Errorf("%s -> %q, want %q", tt.dsn, got, tt.want)
 		}
+	}
+}
+
+func TestNewStoreExplicitlyAllowsUnencryptedBackends(t *testing.T) {
+	tests := []struct {
+		name    string
+		storage config.StorageConfig
+	}{
+		{
+			name: "file",
+			storage: config.StorageConfig{
+				Backend:                       "file",
+				Dir:                           t.TempDir(),
+				AllowUnencryptedWalletStorage: true,
+			},
+		},
+		{
+			name: "sqlite",
+			storage: config.StorageConfig{
+				Backend:                       "sqlite",
+				DSN:                           ":memory:",
+				AllowUnencryptedWalletStorage: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, err := NewStore(&config.Config{Storage: tt.storage})
+			require.NoError(t, err)
+			if closer, ok := store.(interface{ Close() error }); ok {
+				require.NoError(t, closer.Close())
+			}
+		})
 	}
 }
