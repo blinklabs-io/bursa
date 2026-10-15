@@ -16,6 +16,7 @@ package signer
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"time"
@@ -26,8 +27,10 @@ import (
 )
 
 // SignCIP8 produces a CIP-8/CIP-30 COSE_Sign1 signature for payload bound to
-// address, using the key referenced by keyID. Only software/SOPS keys (which
-// expose a LoadedKey) are supported in Phase 1; remote keys return CodeUnsupported.
+// address, using the key referenced by keyID. Software/SOPS keys (which expose
+// a LoadedKey) sign in process; attested remote keys sign the COSE
+// Sig_structure through their purpose-bound path. Other remote keys return
+// CodeUnsupported.
 //
 // Every decision (allow or deny) is emitted as a structured audit-log line.
 // Secrets (private key material, raw payload) are never logged.
@@ -53,17 +56,18 @@ func (c *Coordinator) SignCIP8(ctx context.Context, payload []byte, address, key
 		return nil, CodeBackend, err
 	}
 
-	// Gate on LoadedKeyProvider before parsing the address: remote-custody keys
-	// cannot perform CIP-8 signing regardless of address validity, so we fail
-	// fast here rather than returning a misleading bad_request for the address.
-	provider, ok := ref.(backend.LoadedKeyProvider)
-	if !ok {
+	// Gate on the key's capability before parsing the address: other
+	// remote-custody keys cannot perform CIP-8 signing regardless of address
+	// validity, so we fail fast here rather than returning a misleading
+	// bad_request for the address.
+	provider, isLocal := ref.(backend.LoadedKeyProvider)
+	remote, isRemote := ref.(backend.PurposeSigner)
+	if !isLocal && !isRemote {
 		c.deps.Logger.Info("sign", "type", "cip8", "caller-key", hash.String(), "address", address, "result", "denied", "reason", "unsupported backend for CIP-8")
 		c.deps.Metrics.observe("cip8", string(CodeUnsupported))
 		c.deps.Metrics.observeDeny(string(CodeUnsupported))
 		return nil, CodeUnsupported, fmt.Errorf("CIP-8 signing is not supported for keys held in the %q backend", ref.Backend())
 	}
-	lk := provider.LoadedKey()
 
 	addr, err := lcommon.NewAddress(address)
 	if err != nil {
@@ -104,7 +108,22 @@ func (c *Coordinator) SignCIP8(ctx context.Context, payload []byte, address, key
 	}
 
 	signStart := time.Now()
-	sigHex, keyHex, err := bursa.SignData(addrBytes, payload, lk)
+	var sigHex, keyHex string
+	if isLocal {
+		sigHex, keyHex, err = bursa.SignData(addrBytes, payload, provider.LoadedKey())
+	} else {
+		pub := ref.PublicKey()
+		sigHex, keyHex, err = bursa.SignDataWith(addrBytes, payload, pub, func(toBeSigned []byte) ([]byte, error) {
+			sig, serr := remote.SignPurpose(ctx, backend.PurposeCIP8, toBeSigned)
+			if serr != nil {
+				return nil, serr
+			}
+			if !ed25519.Verify(pub, toBeSigned, sig) {
+				return nil, errors.New("produced signature failed verification")
+			}
+			return sig, nil
+		})
+	}
 	// Attempt latency, including failures — not successful-sign latency.
 	c.deps.Metrics.observeSignDuration(ref.Backend(), time.Since(signStart).Seconds())
 	if err != nil {

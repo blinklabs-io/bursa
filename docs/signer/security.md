@@ -57,6 +57,11 @@ high-value key (pool cold, governance, payment hot). The `pkcs11` driver is CGO
 and requires the `-tags pkcs11` build; the default pure-Go build refuses to boot
 if a `pkcs11` backend is configured (`ErrPKCS11NotCompiled`). Merged in #668.
 
+The `nitro` and `confidential-space` backends keep keys inside an attested
+enclave and trust a key only after verifying platform attestation and each
+signature; see [`attested-custody.md`](attested-custody.md) for the protocol and
+for what the enclave itself must enforce when the host is untrusted.
+
 The `sops` backend fetches SOPS-encrypted envelopes from GCP Secret Manager and
 decrypts them **in process** at boot; the decrypted key then lives in signer
 memory for the process lifetime. This is stronger than plaintext-at-rest but

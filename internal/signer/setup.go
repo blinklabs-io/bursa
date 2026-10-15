@@ -177,6 +177,16 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 				return nil, fmt.Errorf("pkcs11 backend %q: %w", c.Name, err)
 			}
 			backends = append(backends, b)
+		case "nitro", "confidential-space":
+			build := buildNitroBackend
+			if c.Type == "confidential-space" {
+				build = buildConfidentialSpaceBackend
+			}
+			b, err := build(ctx, c)
+			if err != nil {
+				return nil, fmt.Errorf("%s backend %q: %w", c.Type, c.Name, err)
+			}
+			backends = append(backends, b)
 		default:
 			return nil, fmt.Errorf("unknown backend type %q", c.Type)
 		}

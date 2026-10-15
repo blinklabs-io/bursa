@@ -270,21 +270,25 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []st
 			}
 		}
 		signStart := time.Now()
-		sig, err := ref.Sign(ctx, txid)
+		sig, err := backend.SignFor(ctx, ref, backend.PurposeTxHash, txid)
 		// Attempt latency, including failures — not successful-sign latency.
 		c.deps.Metrics.observeSignDuration(ref.Backend(), time.Since(signStart).Seconds())
 		if err != nil {
 			code := CodeBackend
-			if errors.Is(err, backend.ErrUnsupportedExtended) {
+			if errors.Is(err, backend.ErrInvalidSignature) {
+				code = CodeInternal
+			} else if errors.Is(err, backend.ErrUnsupportedExtended) {
 				code = CodeUnsupported
 			}
 			errs = append(errs, SignerError{Signer: s, Code: code, Reason: err.Error()})
 			c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "error", "reason", err.Error())
 			c.deps.Metrics.observe("tx", string(code))
-			if code == CodeBackend {
+			switch code {
+			case CodeBackend:
 				c.deps.Metrics.observeBackendError(ref.Backend())
-			} else {
+			case CodeBadRequest, CodeNotFound, CodeDenied, CodeConflict, CodeUnsupported:
 				c.deps.Metrics.observeDeny(string(code))
+			case CodeInternal:
 			}
 			continue
 		}
