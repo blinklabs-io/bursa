@@ -1771,8 +1771,8 @@ func limitRequestBody(next http.Handler) http.Handler {
 // The /connector/* routes are skipped: they already carry their own guards — a
 // bearer token for the extension-facing routes and in-handler
 // sameOrigin/strictSameOrigin for the SPA-facing ones — and an extension request
-// legitimately carries a chrome-extension:// Origin that would fail
-// strictSameOrigin here. Re-guarding them would break the connector.
+// legitimately carries a chrome-extension:// or moz-extension:// Origin that
+// would fail strictSameOrigin here. Re-guarding them would break the connector.
 //
 // For every guarded request:
 //   - The Host must be a loopback address (isLoopbackHost). A non-loopback Host

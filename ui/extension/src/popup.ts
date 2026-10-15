@@ -18,6 +18,9 @@ async function init() {
   }
 }
 
+// The extension origin (chrome-extension://<id> or moz-extension://<uuid>) is the
+// identity the backend later sees in the Origin header; Firefox's runtime.id is a
+// manifest string that never appears there.
 // Pair button: step 1 — POST /connector/pair {extension_id}
 document.getElementById('pair-btn')!.addEventListener('click', async () => {
   const portInput = document.getElementById('port-input') as HTMLInputElement;
@@ -31,7 +34,7 @@ document.getElementById('pair-btn')!.addEventListener('click', async () => {
     const resp = await fetch(`http://127.0.0.1:${port}/connector/pair`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extension_id: chrome.runtime.id }),
+      body: JSON.stringify({ extension_id: location.origin }),
     });
 
     if (resp.status !== 202) {
@@ -65,7 +68,7 @@ document.getElementById('confirm-btn')!.addEventListener('click', async () => {
     const resp = await fetch(`http://127.0.0.1:${port}/connector/pair`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extension_id: chrome.runtime.id, code }),
+      body: JSON.stringify({ extension_id: location.origin, code }),
     });
 
     if (!resp.ok) {

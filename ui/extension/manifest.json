@@ -3,6 +3,21 @@
   "name": "Bursa Connector",
   "version": "0.1.0",
   "minimum_chrome_version": "111",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "bursa-connector@blinklabs.io",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": [
+          "browsingActivity",
+          "financialAndPaymentInfo"
+        ]
+      }
+    },
+    "gecko_android": {
+      "strict_min_version": "142.0"
+    }
+  },
   "description": "CIP-30 browser wallet connector for Bursa",
   "icons": {
     "16": "icons/icon16.png",
@@ -10,25 +25,38 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["storage"],
+  "permissions": [
+    "storage"
+  ],
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*"
   ],
   "background": {
     "service_worker": "background.js",
+    "scripts": [
+      "background.js"
+    ],
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_start",
       "world": "ISOLATED"
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["injected.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "injected.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     }
