@@ -87,6 +87,42 @@ test("CopyButton copies its value and shows feedback on success", async () => {
   expect(status.closest("button")).toBeNull();
 });
 
+test("CopyButton replaces its visible label after copying", async () => {
+  Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
+  render(<CopyButton value="addr_test1abc" text="Copy address" />);
+  const button = screen.getByRole("button");
+  expect(button).toHaveTextContent("Copy address");
+  fireEvent.click(button);
+  await waitFor(() => expect(button).toHaveTextContent("Copied"));
+  expect(button).not.toHaveTextContent("Copy address");
+});
+
+test("MobileNav quick navigation excludes operator tools and marks the active route", () => {
+  const { props } = renderMobileNav({ navItems: [
+    { key: "portfolio", label: "Portfolio", active: true },
+    { key: "activity", label: "Activity" },
+    { key: "operate", label: "Pool Ops" },
+  ] });
+  const nav = within(screen.getByRole("navigation", { name: "Quick navigation" }));
+  expect(nav.queryByRole("button", { name: "Pool Ops" })).not.toBeInTheDocument();
+  expect(nav.getByRole("button", { name: "Portfolio" })).toHaveAttribute("aria-current", "page");
+  expect(nav.getByRole("button", { name: "Activity" })).not.toHaveAttribute("aria-current");
+  fireEvent.click(nav.getByRole("button", { name: "Activity" }));
+  expect(props.onNavigate).toHaveBeenCalledWith("activity");
+});
+
+test("MobileNav makes quick navigation inert while its drawer is open", () => {
+  renderMobileNav();
+  const nav = screen.getByRole("navigation", { name: "Quick navigation" });
+  expect(nav).not.toHaveAttribute("inert");
+  fireEvent.click(screen.getByRole("button", { name: /open.*menu/i }));
+  expect(nav).toHaveAttribute("inert");
+  expect(nav).toHaveAttribute("aria-hidden", "true");
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(nav).not.toHaveAttribute("inert");
+  expect(nav).toHaveAttribute("aria-hidden", "false");
+});
+
 // On a touch layout there is no Cmd/Ctrl-K and the sidebar's "Search…" pill is
 // hidden, so this button is the palette's only one-tap route in. Asserting it
 // renders is not enough — it has to actually fire.

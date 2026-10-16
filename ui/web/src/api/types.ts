@@ -281,17 +281,14 @@ export interface PoolDirectoryResponse {
 // lifecycle status and Yes/No/Abstain vote tallies. Read from the node's local
 // metadata DB — no external service is contacted. action_id is the CIP-129
 // bech32 gov_action1… identifier (falling back to txhash#index if it can't be
-// encoded). deposit is lovelace as a decimal string.
+// encoded).
 export interface GovernanceAction {
   action_id: string;
   tx_hash: string;
   action_index: number;
   type: string;
   proposed_epoch: number;
-  expires_epoch: number;
   status: string;
-  anchor_url: string;
-  deposit: string;
   yes_votes: number;
   no_votes: number;
   abstain_votes: number;
@@ -526,6 +523,7 @@ export interface NFT {
 
 export interface NftMediaSetting {
   enabled: boolean;
+  available?: boolean;
 }
 
 // App setting: whether node-local wallet-activity notifications (incoming funds
@@ -1049,4 +1047,179 @@ export interface Diagnostics {
   listen: DiagnosticsListen;
   uptime: DiagnosticsUptime;
   log: DiagnosticsLog;
+}
+
+// --- CIP-179 surveys ---
+
+// Role codes of a survey response, as on the wire: 0 DRep, 1 SPO, 2 CC,
+// 3 Stakeholder, 4 Keyholder.
+export type SurveyRole = 0 | 1 | 2 | 3 | 4;
+
+// Question/answer kind codes: 0 custom, 1 single-choice, 2 multi-select,
+// 3 ranking, 4 numeric-range, 5 points-allocation, 6 rating.
+export type SurveyKind = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export type SurveyStatus = "open" | "closed" | "cancelled";
+
+// SurveySummary mirrors one entry of GET /wallet/surveys.
+export interface SurveySummary {
+  // "<tx hash>:<index>"
+  id: string;
+  tx_hash: string;
+  index: number;
+  title: string;
+  description: string;
+  owner: string;
+  owner_script: boolean;
+  roles: SurveyRole[];
+  end_epoch: number;
+  status: SurveyStatus;
+  sealed: boolean;
+  questions: number;
+  // Governance actions whose CIP-108 anchor links to this survey.
+  linked_actions: string[];
+  // Owned by the active wallet's payment key (the only key that can cancel it).
+  owned: boolean;
+}
+
+export interface SurveysResponse {
+  surveys: SurveySummary[];
+  total: number;
+  page: number;
+  count: number;
+  partial?: boolean;
+}
+
+export interface SurveyRange {
+  min: number | string;
+  max: number | string;
+  step?: number | string;
+}
+
+// Exactly one of grid, labels or levels is set.
+export type SurveyScale =
+  | { grid: SurveyRange; labels?: never; levels?: never }
+  | { labels: string[]; grid?: never; levels?: never }
+  | { levels: number; grid?: never; labels?: never };
+
+export interface SurveyAnchor {
+  uri: string;
+  // 32-byte blake2b-256 hash, hex.
+  hash: string;
+}
+
+// SurveyQuestion carries only the fields its kind uses. Options hold inline
+// labels; option_count stands in when a definition keeps its labels off-chain.
+export interface SurveyQuestion {
+  kind: SurveyKind;
+  prompt: string;
+  options?: string[];
+  option_count?: number;
+  min?: number;
+  max?: number;
+  budget?: number;
+  range?: SurveyRange;
+  scale?: SurveyScale;
+  require_all?: boolean;
+  anchor?: SurveyAnchor;
+  required?: boolean;
+}
+
+export interface SurveyMode {
+  sealed: boolean;
+  // Drand quicknet round at which sealed responses can be opened.
+  round?: number;
+  padding_size?: number;
+}
+
+export interface SurveyDefinition {
+  title: string;
+  description: string;
+  roles: SurveyRole[];
+  end_epoch: number;
+  mode: SurveyMode;
+  questions: SurveyQuestion[];
+  anchor?: SurveyAnchor;
+}
+
+export interface SurveyAnswerPair {
+  option: number;
+  value: number | string;
+}
+
+// SurveyAnswer holds the value field its kind uses: choice (single-choice),
+// indices (multi-select, ranking), number (numeric), pairs (points, rating).
+export interface SurveyAnswer {
+  kind: SurveyKind;
+  question: number;
+  choice?: number;
+  indices?: number[];
+  number?: number | string;
+  pairs?: SurveyAnswerPair[];
+}
+
+export interface SurveyOptionTally {
+  count: number;
+  first?: number;
+  sum?: number;
+}
+
+export interface SurveyQuestionTally {
+  answered: number;
+  abstained: number;
+  options?: SurveyOptionTally[];
+  numeric?: { sum: number; min: number; max: number };
+}
+
+export interface SurveyRoleTally {
+  role: SurveyRole;
+  responses: number;
+  // Counted responses whose answers are still sealed.
+  sealed?: number;
+  questions: SurveyQuestionTally[];
+}
+
+export interface SurveyExclusion {
+  tx_hash: string;
+  role: SurveyRole;
+  credential: string;
+  reason: string;
+}
+
+export interface SurveyTally {
+  roles: SurveyRoleTally[];
+  excluded: SurveyExclusion[];
+}
+
+// SurveyDetail mirrors GET /wallet/surveys/{id}. The tally is absent for a
+// cancelled survey, which is never tallied.
+export interface SurveyDetail extends SurveySummary {
+  definition: SurveyDefinition;
+  tally?: SurveyTally;
+}
+
+export interface SurveyRespondRequest {
+  survey: string;
+  role: SurveyRole;
+  answers: SurveyAnswer[];
+}
+
+export interface SurveyCreateRequest {
+  title: string;
+  description: string;
+  roles: SurveyRole[];
+  end_epoch: number;
+  questions: SurveyQuestion[];
+  // Optional longer presentation of the survey, published by the author at
+  // anchor_uri; its hash goes on chain.
+  anchor_uri?: string;
+  anchor_document?: string;
+  seal?: { round: number; padding_size: number };
+}
+
+// SurveyRevealRequest unseals a sealed survey. consent allows fetching the
+// drand beacon from a public relay; a pasted beacon needs no fetch.
+export interface SurveyRevealRequest {
+  consent?: boolean;
+  beacon?: string;
 }

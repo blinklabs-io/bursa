@@ -4,10 +4,10 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**ScriptHash** | Pointer to **string** |  | [optional] 
-**Signatures** | Pointer to **int32** |  | [optional] 
-**Slot** | Pointer to **int64** |  | [optional] 
-**Valid** | Pointer to **bool** |  | [optional] 
+**ScriptHash** | Pointer to **string** |  | [optional]
+**Signatures** | Pointer to **int32** |  | [optional]
+**Slot** | Pointer to **int64** |  | [optional]
+**Valid** | Pointer to **bool** |  | [optional]
 
 ## Methods
 
@@ -130,5 +130,3 @@ HasValid returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

@@ -54,7 +54,7 @@ GetWitnesses returns the Witnesses field if non-nil, zero value otherwise.
 
 ### GetWitnessesOk
 
-`func (o *ApiTxAssembleRequest) GetWitnessesOk() (*[]string, bool)`
+`func (o *ApiTxAssembleRequest) GetWitnessesOk() ([]string, bool)`
 
 GetWitnessesOk returns a tuple with the Witnesses field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.

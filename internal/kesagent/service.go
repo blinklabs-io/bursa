@@ -240,7 +240,7 @@ func (a *Agent) handleSign(ctx context.Context, conn net.Conn) {
 			return
 		}
 		resp := SignResponse{Type: "sign_response", Period: req.Period}
-		sig, err := a.Sign(req.Period, req.Message)
+		sig, err := a.SignHeader(req.Period, req.Message)
 		if err != nil {
 			resp.Error = err.Error()
 		} else {

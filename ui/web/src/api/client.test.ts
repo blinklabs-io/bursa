@@ -1,4 +1,17 @@
-import { apiDelete, apiGet, ApiError, decodeTx, cosignTx, submitTx } from "./client";
+import {
+  apiDelete,
+  apiGet,
+  ApiError,
+  decodeTx,
+  cosignTx,
+  submitTx,
+  getSurveys,
+  getSurvey,
+  respondToSurvey,
+  createSurvey,
+  cancelSurvey,
+  revealSurvey,
+} from "./client";
 
 function mockFetch(status: number, body: unknown) {
   const fn = vi.fn().mockResolvedValue({
@@ -140,4 +153,54 @@ test("submitTx POSTs tx_cbor to /wallet/submit-tx and returns a TxResult", async
     method: "POST",
     body: { tx_cbor: "84beef" },
   });
+});
+
+// --- CIP-179 surveys ---------------------------------------------------------
+
+test("getSurveys sends only the filters that are set", async () => {
+  const fn = mockFetch(200, { surveys: [], total: 0, page: 1, count: 50 });
+  await getSurveys();
+  expect(lastRequest(fn)).toEqual({ url: "/wallet/surveys", method: "GET", body: undefined });
+
+  const withFilters = mockFetch(200, { surveys: [], total: 0, page: 3, count: 20 });
+  await getSurveys({ q: "fund", status: "open", page: 3, count: 20 });
+  expect(lastRequest(withFilters).url).toBe("/wallet/surveys?q=fund&status=open&page=3&count=20");
+
+  // Page 1 is the default and an empty status means all, so neither is sent.
+  const defaults = mockFetch(200, { surveys: [], total: 0, page: 1, count: 50 });
+  await getSurveys({ q: "", status: "", page: 1 });
+  expect(lastRequest(defaults).url).toBe("/wallet/surveys");
+});
+
+test("a survey id is escaped into the path, colon and all", async () => {
+  const fn = mockFetch(200, {});
+  await getSurvey("abcd:3");
+  expect(lastRequest(fn)).toEqual({ url: "/wallet/surveys/abcd%3A3", method: "GET", body: undefined });
+
+  const reveal = mockFetch(200, {});
+  await revealSurvey("abcd:3", { consent: true });
+  expect(lastRequest(reveal)).toEqual({
+    url: "/wallet/surveys/abcd%3A3/reveal",
+    method: "POST",
+    body: { consent: true },
+  });
+});
+
+test("the survey builders post to their own routes", async () => {
+  const respond = mockFetch(200, {});
+  await respondToSurvey({ survey: "ab:0", role: 3, answers: [{ kind: 1, question: 0, choice: 1 }] });
+  expect(lastRequest(respond)).toEqual({
+    url: "/wallet/surveys/respond",
+    method: "POST",
+    body: { survey: "ab:0", role: 3, answers: [{ kind: 1, question: 0, choice: 1 }] },
+  });
+
+  const create = mockFetch(200, {});
+  const req = { title: "t", description: "d", roles: [0 as const], end_epoch: 9, questions: [] };
+  await createSurvey(req);
+  expect(lastRequest(create)).toEqual({ url: "/wallet/surveys/create", method: "POST", body: req });
+
+  const cancel = mockFetch(200, {});
+  await cancelSurvey("ab:0");
+  expect(lastRequest(cancel)).toEqual({ url: "/wallet/surveys/cancel", method: "POST", body: { survey: "ab:0" } });
 });

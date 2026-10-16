@@ -22,8 +22,10 @@ function pct(fraction: number): string {
 const POOL_COLUMNS = [
   { key: "pool", label: "Pool ID" },
   { key: "margin", label: "Margin" },
+  { key: "fixed_cost", label: "Fixed cost (ADA/epoch)" },
   { key: "pledge", label: "Pledge (ADA)" },
   { key: "live_stake", label: "Live stake (ADA)" },
+  { key: "active_stake", label: "Active stake (ADA)" },
   { key: "saturation", label: "Saturation" },
   { key: "actions", label: "" },
 ];
@@ -86,9 +88,11 @@ export function PoolDirectory({ network, onDelegate }: PoolDirectoryProps) {
       </span>
     ),
     margin: pct(p.margin_cost),
+    fixed_cost: formatAda(p.fixed_cost),
+    active_stake: formatAda(p.active_stake),
     pledge: formatAda(p.declared_pledge),
     live_stake: formatAda(p.live_stake),
-    saturation: pct(p.live_saturation),
+    saturation: <span className="pool-saturation"><span>{pct(p.live_saturation)}</span>{Number.isFinite(p.live_saturation) && <meter min={0} max={100} value={Math.min(100, Math.max(0, p.live_saturation * 100))} aria-valuenow={Math.min(100, Math.max(0, p.live_saturation * 100))} aria-label={`Saturation for ${p.pool_id}`} />}{p.live_saturation >= 1 && <small>Fully saturated</small>}</span>,
     actions: (
       <span className="row-actions">
         {onDelegate && (
@@ -102,7 +106,7 @@ export function PoolDirectory({ network, onDelegate }: PoolDirectoryProps) {
   }));
 
   return (
-    <div className="send-form">
+    <div className="pool-directory">
       <Card title="Stake Pool Directory">
         <p className="helper-text">
           Browse and search stake pools your embedded node has indexed — read

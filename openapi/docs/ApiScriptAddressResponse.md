@@ -4,9 +4,9 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**Address** | Pointer to **string** |  | [optional] 
-**Network** | Pointer to **string** |  | [optional] 
-**ScriptHash** | Pointer to **string** |  | [optional] 
+**Address** | Pointer to **string** |  | [optional]
+**Network** | Pointer to **string** |  | [optional]
+**ScriptHash** | Pointer to **string** |  | [optional]
 
 ## Methods
 
@@ -104,5 +104,3 @@ HasScriptHash returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

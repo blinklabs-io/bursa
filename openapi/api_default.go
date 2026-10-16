@@ -220,7 +220,7 @@ type DefaultAPI interface {
 	/*
 		ApiWalletDeletePost Delete wallet from persistent storage
 
-		Deletes a wallet from persistent storage and optional password. Requires an authenticated wallet storage administrator.
+		Deletes a wallet from persistent storage. Requires an authenticated wallet storage administrator.
 
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiWalletDeletePostRequest
@@ -234,7 +234,7 @@ type DefaultAPI interface {
 	/*
 		ApiWalletGetPost Get wallet from persistent storage
 
-		Gets a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.
+		Gets a wallet from persistent storage and returns wallet details. Requires an authenticated wallet storage administrator.
 
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiWalletGetPostRequest
@@ -276,7 +276,7 @@ type DefaultAPI interface {
 	/*
 		ApiWalletUpdatePost Update a wallet in persistent storage
 
-		Updates a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.
+		Updates a wallet from persistent storage and returns wallet details. Requires an authenticated wallet storage administrator.
 
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiWalletUpdatePostRequest
@@ -1068,6 +1068,17 @@ func (a *DefaultAPIService) ApiScriptValidatePostExecute(r DefaultAPIApiScriptVa
 			return localVarReturnValue, localVarHTTPResponse, newErr
 		}
 		if localVarHTTPResponse.StatusCode == 500 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 503 {
 			var v ApiErrorResponse
 			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {
@@ -2165,7 +2176,7 @@ func (r DefaultAPIApiWalletDeletePostRequest) Execute() (string, *http.Response,
 /*
 ApiWalletDeletePost Delete wallet from persistent storage
 
-Deletes a wallet from persistent storage and optional password. Requires an authenticated wallet storage administrator.
+Deletes a wallet from persistent storage. Requires an authenticated wallet storage administrator.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiWalletDeletePostRequest
@@ -2334,7 +2345,7 @@ func (r DefaultAPIApiWalletGetPostRequest) Execute() (*BursaWallet, *http.Respon
 /*
 ApiWalletGetPost Get wallet from persistent storage
 
-Gets a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.
+Gets a wallet from persistent storage and returns wallet details. Requires an authenticated wallet storage administrator.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiWalletGetPostRequest
@@ -2785,7 +2796,7 @@ func (r DefaultAPIApiWalletUpdatePostRequest) Execute() (string, *http.Response,
 /*
 ApiWalletUpdatePost Update a wallet in persistent storage
 
-Updates a wallet from persistent storage and optional password and returns wallet details. Requires an authenticated wallet storage administrator.
+Updates a wallet from persistent storage and returns wallet details. Requires an authenticated wallet storage administrator.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiWalletUpdatePostRequest

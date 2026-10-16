@@ -11,7 +11,7 @@ Name | Type | Description | Notes
 
 ### NewApiTxSignRequest
 
-`func NewApiTxSignRequest(signingKeys []string, txCbor string) *ApiTxSignRequest`
+`func NewApiTxSignRequest(signingKeys []string, txCbor string, ) *ApiTxSignRequest`
 
 NewApiTxSignRequest instantiates a new ApiTxSignRequest object
 This constructor will assign default values to properties that have it defined,

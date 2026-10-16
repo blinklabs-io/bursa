@@ -54,6 +54,10 @@ func (s *GCPStore) ListWallets(ctx context.Context) ([]Wallet, error) {
 	for _, name := range walletNames {
 		gcpWallet, err := gcp.GetGoogleWallet(ctx, name)
 		if err != nil {
+			// A cancelled caller must not receive a partial list.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			logging.GetLogger().
 				Debug("skipping inaccessible wallet during list", "wallet", name, "error", err)
 			continue // Skip wallets that can't be loaded

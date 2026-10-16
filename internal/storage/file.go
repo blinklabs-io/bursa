@@ -106,7 +106,7 @@ func (s *FileStore) GetWallet(
 	walletDir := s.walletDir(name)
 	dirInfo, err := os.Lstat(walletDir)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("wallet %s not found", name)
+		return nil, fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect wallet directory: %w", err)
@@ -121,7 +121,7 @@ func (s *FileStore) GetWallet(
 	walletPath := s.walletPath(name)
 	fileInfo, err := os.Lstat(walletPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("wallet %s not found", name)
+		return nil, fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect wallet file: %w", err)
@@ -140,6 +140,9 @@ func (s *FileStore) GetWallet(
 	// makes the regular-file guarantee hold for the descriptor actually read.
 	file, err := openWalletFileForRead(s.baseDir, name)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
+		}
 		return nil, fmt.Errorf("failed to open wallet file: %w", err)
 	}
 	defer file.Close()
@@ -243,6 +246,11 @@ func (s *FileStore) DeleteWallet(ctx context.Context, name string) error {
 	}
 
 	walletDir := s.walletDir(name)
+	if _, err := os.Lstat(walletDir); errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
+	} else if err != nil {
+		return fmt.Errorf("failed to inspect wallet directory: %w", err)
+	}
 	return os.RemoveAll(walletDir)
 }
 
@@ -402,11 +410,9 @@ func (w *fileWallet) Save(ctx context.Context) error {
 	encryptedAtRest := w.encryptedAtRest
 	w.mu.RUnlock()
 
-	resourceID := config.GetConfig().Google.ResourceId
-	if encryptedAtRest && resourceID == "" {
-		return errors.New(
-			"wallet encryption is required but google kms resource id is not configured",
-		)
+	encrypt := sops.Configured(config.GetConfig())
+	if encryptedAtRest && !encrypt {
+		return fmt.Errorf("wallet encryption is required: %w", sops.ErrNoMasterKey)
 	}
 
 	// Ensure directory exists with secure permissions (0700)
@@ -420,7 +426,7 @@ func (w *fileWallet) Save(ctx context.Context) error {
 		return fmt.Errorf("failed to encode wallet data: %w", err)
 	}
 	raw = append(raw, '\n')
-	if resourceID != "" {
+	if encrypt {
 		enc, err := sops.Encrypt(raw)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt wallet at rest: %w", err)
@@ -434,7 +440,7 @@ func (w *fileWallet) Save(ctx context.Context) error {
 		return fmt.Errorf("failed to write wallet file: %w", err)
 	}
 	w.mu.Lock()
-	w.encryptedAtRest = resourceID != ""
+	w.encryptedAtRest = encrypt
 	w.mu.Unlock()
 	return nil
 }

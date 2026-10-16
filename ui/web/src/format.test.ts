@@ -158,3 +158,14 @@ test("formatAdaPlain leaves digits ungrouped for machine output", () => {
   // Same value, grouped, for display.
   expect(formatAda("1500000000")).toBe("1,500");
 });
+
+
+test("token input converts exact decimal quantities and rejects uint64 overflow", async () => {
+  const { parseTokenQuantity } = await import("./format");
+  expect(parseTokenQuantity("1.234567", 6)).toBe("1234567");
+  expect(parseTokenQuantity("9007199254740993", 0)).toBe("9007199254740993");
+  expect(() => parseTokenQuantity("1.1234567", 6)).toThrow(/decimal places/i);
+  expect(() => parseTokenQuantity("1.5", 0)).toThrow();
+  expect(() => parseTokenQuantity("18446744073709551616", 0)).toThrow(/too large/i);
+  expect(() => parseTokenQuantity("0", 6)).toThrow();
+});

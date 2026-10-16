@@ -201,7 +201,7 @@ GetInputs returns the Inputs field if non-nil, zero value otherwise.
 
 ### GetInputsOk
 
-`func (o *BursaTxInspection) GetInputsOk() (*[]BursaTxInput, bool)`
+`func (o *BursaTxInspection) GetInputsOk() ([]BursaTxInput, bool)`
 
 GetInputsOk returns a tuple with the Inputs field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.
@@ -276,7 +276,7 @@ GetOutputs returns the Outputs field if non-nil, zero value otherwise.
 
 ### GetOutputsOk
 
-`func (o *BursaTxInspection) GetOutputsOk() (*[]BursaTxOutput, bool)`
+`func (o *BursaTxInspection) GetOutputsOk() ([]BursaTxOutput, bool)`
 
 GetOutputsOk returns a tuple with the Outputs field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.

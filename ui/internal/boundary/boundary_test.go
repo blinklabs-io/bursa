@@ -49,6 +49,27 @@ var denylist = []string{
 	"bybit",
 	"blockfrost/blockfrost-go", // hosted Blockfrost SaaS SDK (we use the LOCAL dingo/blockfrost endpoint, not this)
 	"maestro",                  // hosted indexer
+	// Drand relay clients. CIP-179 sealed responses link only the offline
+	// timelock encryption in drand/tlock; the one relay request is made by
+	// internal/survey with net/http, after the user consents to it. A linked
+	// relay client would make beacon fetching an always-on capability.
+	"drand/tlock/networks",
+	"drand/go-clients",
+}
+
+func TestDrandRelayClientDenylistMatchesRealModulePaths(t *testing.T) {
+	for _, module := range []string{
+		"github.com/drand/tlock/networks/http",
+		"github.com/drand/go-clients/client/http",
+	} {
+		matched := false
+		for _, bad := range denylist {
+			matched = matched || strings.Contains(module, bad)
+		}
+		if !matched {
+			t.Errorf("drand relay client %q is not denied", module)
+		}
+	}
 }
 
 func TestHostedIPFSDenylistMatchesRealModulePaths(t *testing.T) {

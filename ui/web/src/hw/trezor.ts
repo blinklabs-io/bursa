@@ -148,11 +148,14 @@ export async function connectTrezor(opts: ExternalConnectOptions): Promise<Hardw
 
   // Import the SDK only now, after consent — keeps the cloud bundle out of the
   // initial load and makes it impossible to init() it before approval.
-  const { default: TrezorConnect, PROTO } = await import("@trezor/connect-web");
+  const [{ default: TrezorConnect }, { MessagesSchema: TREZOR_PROTO }] = await Promise.all([
+    import("@trezor/connect-web"),
+    import("@trezor/protobuf"),
+  ]);
 
   // Guard init with a shared promise so concurrent connects can't both init().
   if (!trezorInitPromise) {
-    trezorInitPromise = TrezorConnect.init({ manifest: TREZOR_MANIFEST, lazyLoad: true }).catch(
+    trezorInitPromise = TrezorConnect.init({ manifest: TREZOR_MANIFEST }).catch(
       (err: unknown) => {
         // A failed init must not poison future attempts — clear the shared
         // promise so a later connect can retry from a clean slate.
@@ -180,7 +183,7 @@ export async function connectTrezor(opts: ExternalConnectOptions): Promise<Hardw
         showOnTrezor: false,
       });
       if (!res.success) {
-        throw new Error(res.payload.error);
+        throw new Error(res.error.message);
       }
       // The extended public key is carried as node.public_key || node.chain_code
       // (32 + 32 bytes). Re-encode through the shared helper so the bech32
@@ -208,7 +211,7 @@ export async function connectTrezor(opts: ExternalConnectOptions): Promise<Hardw
               // Wallet-owned change: describe it by path so the device can
               // recognise it as its own and not prompt as an external send.
               addressParameters: {
-                addressType: PROTO.CardanoAddressType.BASE,
+                addressType: TREZOR_PROTO.CardanoAddressType.BASE,
                 path: parseBip32Path(out.payment_path),
                 stakingPath: parseBip32Path(out.stake_path),
               },
@@ -224,7 +227,7 @@ export async function connectTrezor(opts: ExternalConnectOptions): Promise<Hardw
       });
 
       const res = await TrezorConnect.cardanoSignTransaction({
-        signingMode: PROTO.CardanoTxSigningMode.ORDINARY_TRANSACTION,
+        signingMode: TREZOR_PROTO.CardanoTxSigningMode.ORDINARY_TRANSACTION,
         inputs,
         outputs,
         fee: req.fee,
@@ -236,7 +239,7 @@ export async function connectTrezor(opts: ExternalConnectOptions): Promise<Hardw
         tagCborSets: req.body_set_tag_policy === "tagged",
       });
       if (!res.success) {
-        throw new Error(res.payload.error);
+        throw new Error(res.error.message);
       }
 
       // Trezor returns one witness per signer as {pubKey, signature}; the shared
@@ -268,13 +271,13 @@ export async function connectTrezor(opts: ExternalConnectOptions): Promise<Hardw
         networkId: req.networkId,
         protocolMagic: req.protocolMagic,
         addressParameters: {
-          addressType: PROTO.CardanoAddressType.BASE,
+          addressType: TREZOR_PROTO.CardanoAddressType.BASE,
           path: parseBip32Path(req.signingPath),
           stakingPath: parseBip32Path(req.stakePath),
         },
       });
       if (!res.success) {
-        throw new Error(res.payload.error);
+        throw new Error(res.error.message);
       }
       return {
         signature: res.payload.coseSignature,

@@ -91,6 +91,7 @@ of possession as lowercase hexadecimal strings.`,
 		},
 	}
 	cmd.Flags().StringVar(&signingKeyFile, "signing-key-file", "", "Path to write the BLS signing key")
+	_ = cmd.MarkFlagRequired("signing-key-file")
 	cmd.Flags().StringVar(&verificationKeyFile, "verification-key-file", "", "Path to write the BLS verification key")
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Path to write public key and proof JSON (default: stdout)")
 	return &cmd

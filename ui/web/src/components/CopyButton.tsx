@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 
 interface CopyButtonProps {
   value: string;
+  text?: string;
   ariaLabel?: string;
   "aria-label"?: string;
 }
 
-// Icon-only: a copy control sits beside almost every address, hash and CBOR
+// Icon-only by default; prominent actions can supply visible text. A copy
+// control sits beside almost every address, hash and CBOR
 // blob in the wallet, and 39 buttons reading "Copy" turned dense readouts into
 // a wall of repeated words. The glyph carries the meaning; the label carries
 // the accessible name.
@@ -29,6 +31,7 @@ function CheckGlyph() {
 
 export function CopyButton({
   value,
+  text,
   ariaLabel,
   "aria-label": ariaLabelAttribute,
 }: CopyButtonProps) {
@@ -76,6 +79,7 @@ export function CopyButton({
         title={copied ? `${label} (copied)` : label}
       >
         {copied ? <CheckGlyph /> : <CopyGlyph />}
+        {text && <span>{copied ? "Copied" : text}</span>}
       </button>
       {/* A changed accessible name on an already-focused control is not
           reliably announced, so success also goes through a live region.

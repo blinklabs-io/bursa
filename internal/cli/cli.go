@@ -627,6 +627,9 @@ func RunKeyPoolCold(
 
 // RunKeyBLS generates a Dijkstra-era BLS signing key and registration material.
 func RunKeyBLS(signingKeyFile, verificationKeyFile, outputFile string) error {
+	if signingKeyFile == "" {
+		return errors.New("BLS signing key file is required")
+	}
 	if err := validateDistinctPaths(signingKeyFile, verificationKeyFile, outputFile); err != nil {
 		return err
 	}

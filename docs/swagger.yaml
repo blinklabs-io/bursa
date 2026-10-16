@@ -68,6 +68,15 @@ definitions:
     properties:
       address:
         type: string
+      format:
+        description: |-
+          Format selects how Address is encoded: "text" (bech32 or base58, the
+          default), "hex", or "base64" for the raw address bytes.
+        enum:
+        - text
+        - hex
+        - base64
+        type: string
     required:
     - address
     type: object
@@ -199,7 +208,7 @@ definitions:
   api.ScriptValidateRequest:
     properties:
       message:
-        description: Hex-encoded signed payload
+        description: Message is the hex-encoded signed payload.
         format: hex
         type: string
       public_keys:
@@ -245,7 +254,7 @@ definitions:
         description: Payload is a hex-encoded message payload.
         type: string
       signing_key:
-        description: SigningKey identifies the signing key.
+        description: SigningKey is a cardano-cli JSON signing key envelope.
         type: string
     required:
     - address
@@ -732,6 +741,10 @@ paths:
           description: Internal server error
           schema:
             $ref: '#/definitions/api.ErrorResponse'
+        "503":
+          description: Script validation busy; retry
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
       summary: Validate a script
   /api/sign/data:
     post:
@@ -940,8 +953,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Deletes a wallet from persistent storage.
-        Requires an authenticated wallet storage administrator.
+      description: Deletes a wallet from persistent storage. Requires an authenticated
+        wallet storage administrator.
       parameters:
       - description: Wallet Delete Request
         in: body
@@ -979,8 +992,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Gets a wallet from persistent storage and
-        returns wallet details. Requires an authenticated wallet storage administrator.
+      description: Gets a wallet from persistent storage and returns wallet details.
+        Requires an authenticated wallet storage administrator.
       parameters:
       - description: Wallet Restore Request
         in: body
@@ -1073,8 +1086,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Updates a wallet from persistent storage
-        and returns wallet details. Requires an authenticated wallet storage administrator.
+      description: Updates a wallet from persistent storage and returns wallet details.
+        Requires an authenticated wallet storage administrator.
       parameters:
       - description: Wallet Update Request
         in: body

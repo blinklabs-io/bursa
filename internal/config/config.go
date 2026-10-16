@@ -24,6 +24,8 @@ import (
 
 type Config struct {
 	Google   GoogleConfig   `yaml:"google"`
+	Aws      AwsConfig      `yaml:"aws"`
+	Age      AgeConfig      `yaml:"age"`
 	Logging  LoggingConfig  `yaml:"logging"`
 	Mnemonic string         `yaml:"mnemonic"        envconfig:"MNEMONIC"`
 	Network  string         `yaml:"cardano_network" envconfig:"CARDANO_NETWORK"`
@@ -153,11 +155,11 @@ type SignerWatermarkConfig struct {
 // SignerBackendConfig configures a key-custody backend.
 type SignerBackendConfig struct {
 	Name          string                   `yaml:"name"`
-	Type          string                   `yaml:"type"`           // "software" | "sops" | "vault" | "pkcs11"
+	Type          string                   `yaml:"type"`           // "software" | "sops" | "vault" | "pkcs11" | "nitro" | "confidential-space"
 	Path          string                   `yaml:"path"`           // software: key dir
 	PassphraseEnv string                   `yaml:"passphrase_env"` // software: env var holding the key-file passphrase
 	SecretPrefix  string                   `yaml:"secret_prefix"`  // sops: secret short-name prefix within google.project
-	Address       string                   `yaml:"address"`        // vault
+	Address       string                   `yaml:"address"`        // vault: server URL; nitro, confidential-space: enclave URL (http, https, or unix:///socket)
 	TransitMount  string                   `yaml:"transit_mount"`  // vault
 	TokenEnv      string                   `yaml:"token_env"`      // vault: env var holding the token (default VAULT_TOKEN)
 	Module        string                   `yaml:"module"`         // pkcs11: path to the PKCS#11 module (.so)
@@ -165,6 +167,11 @@ type SignerBackendConfig struct {
 	Slot          *uint                    `yaml:"slot"`           // pkcs11: explicit slot id (alternative to token_label)
 	PINEnv        string                   `yaml:"pin_env"`        // pkcs11: env var holding the user PIN (never stored in config)
 	Keys          []SignerBackendKeyConfig `yaml:"keys"`           // vault: explicit transit key list; pkcs11: optional CKA_LABEL filter + key type
+	RootCAFile    string                   `yaml:"root_ca_file"`   // nitro: PEM file with the AWS Nitro Enclaves root certificate
+	PCRs          map[uint]string          `yaml:"pcrs"`           // nitro: expected PCR index -> hex value; PCR0 is required
+	Audience      string                   `yaml:"audience"`       // confidential-space: audience the attestation token must carry
+	ImageDigest   string                   `yaml:"image_digest"`   // confidential-space: required container image digest (sha256:...)
+	JWKSURL       string                   `yaml:"jwks_url"`       // confidential-space: token signing keys (default: Google's published set)
 }
 
 // SignerBackendKeyConfig names a remote key and its Cardano key type. For vault
@@ -186,9 +193,11 @@ type SignerKeyConfig struct {
 }
 
 type StorageConfig struct {
-	Backend string `yaml:"backend" envconfig:"STORAGE_BACKEND"`
-	Dir     string `yaml:"dir"     envconfig:"STORAGE_DIR"`
-	DSN     string `yaml:"dsn"     envconfig:"STORAGE_DSN"`
+	Backend string `yaml:"backend"                            envconfig:"STORAGE_BACKEND"`
+	Dir     string `yaml:"dir"                                envconfig:"STORAGE_DIR"`
+	DSN     string `yaml:"dsn"                                envconfig:"STORAGE_DSN"`
+	// AllowUnencryptedWalletStorage opts into file storage without SOPS or SQLite storage.
+	AllowUnencryptedWalletStorage bool `yaml:"allow_unencrypted_wallet_storage" envconfig:"STORAGE_ALLOW_UNENCRYPTED_WALLET_STORAGE"`
 }
 
 type ApiConfig struct {
@@ -222,6 +231,20 @@ type GoogleConfig struct {
 	Prefix     string `yaml:"secret_prefix"   envconfig:"GCP_SECRET_PREFIX"`
 }
 
+// AwsConfig selects AWS Secrets Manager storage and an AWS KMS SOPS key.
+// Region and credentials come from the standard AWS SDK resolution chain.
+type AwsConfig struct {
+	KMSKeyARN string `yaml:"kms_key_arn"   envconfig:"AWS_KMS_KEY_ARN"`
+	Prefix    string `yaml:"secret_prefix" envconfig:"AWS_SECRET_PREFIX"`
+}
+
+// AgeConfig lists the age recipients (comma separated) a SOPS file is
+// encrypted to. Decryption identities come from SOPS_AGE_KEY and
+// SOPS_AGE_KEY_FILE.
+type AgeConfig struct {
+	Recipients string `yaml:"recipients" envconfig:"AGE_RECIPIENTS"`
+}
+
 type LoggingConfig struct {
 	Level string `yaml:"level" envconfig:"LOGGING_LEVEL"`
 }
@@ -240,6 +263,9 @@ func defaultConfig() Config {
 			ListenPort:    8080,
 		},
 		Google: GoogleConfig{
+			Prefix: "bursa-wallet-",
+		},
+		Aws: AwsConfig{
 			Prefix: "bursa-wallet-",
 		},
 		Logging: LoggingConfig{

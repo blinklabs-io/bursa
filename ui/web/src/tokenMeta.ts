@@ -101,3 +101,20 @@ export function assetMatchesQuery(unit: string, meta: AssetDisplayMeta, query: s
   );
   return haystacks.some((s) => s.toLowerCase().includes(q));
 }
+
+/** tokenIconUrl accepts bounded registry PNGs; URLs never trigger external requests. */
+export function tokenIconUrl(info: AssetInfo | undefined): string | undefined {
+  const logo = info?.metadata?.logo;
+  if (typeof logo !== "string" || logo.length > 350000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(logo)) return;
+  try {
+    const bytes = Uint8Array.from(atob(logo), (c) => c.charCodeAt(0));
+    if (bytes.length < 33 || ![137, 80, 78, 71, 13, 10, 26, 10].every((b, i) => bytes[i] === b)) return;
+    const view = new DataView(bytes.buffer);
+    if (view.getUint32(8) !== 13 || view.getUint32(12) !== 0x49484452) return;
+    const width = view.getUint32(16), height = view.getUint32(20);
+    if (!width || !height || width > 2048 || height > 2048) return;
+    return `data:image/png;base64,${logo}`;
+  } catch {
+    return;
+  }
+}

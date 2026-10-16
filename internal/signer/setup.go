@@ -177,6 +177,16 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 				return nil, fmt.Errorf("pkcs11 backend %q: %w", c.Name, err)
 			}
 			backends = append(backends, b)
+		case "nitro", "confidential-space":
+			build := buildNitroBackend
+			if c.Type == "confidential-space" {
+				build = buildConfidentialSpaceBackend
+			}
+			b, err := build(ctx, c)
+			if err != nil {
+				return nil, fmt.Errorf("%s backend %q: %w", c.Type, c.Name, err)
+			}
+			backends = append(backends, b)
 		default:
 			return nil, fmt.Errorf("unknown backend type %q", c.Type)
 		}
@@ -289,7 +299,8 @@ func BuildPolicyHook(cfg config.SignerConfig) PolicyHook {
 	return NewHTTPPolicyHook(cfg.PolicyHookURL, time.Duration(timeoutMs)*time.Millisecond)
 }
 
-// BuildWatermark constructs the configured watermark store and mode.
+// BuildWatermark constructs the configured watermark store and mode. The
+// in-memory store is refused in enforce mode because it is not durable.
 func BuildWatermark(ctx context.Context, c config.SignerWatermarkConfig) (watermark.Watermark, watermark.Mode, error) {
 	mode := watermark.Mode(c.Mode)
 	if mode == "" {
@@ -297,6 +308,16 @@ func BuildWatermark(ctx context.Context, c config.SignerWatermarkConfig) (waterm
 	}
 	switch c.Type {
 	case "", "mem":
+		// In-memory state is lost on restart, which would let a restarted
+		// signer sign a divergent payload for an already-signed scope. Test
+		// for the modes that do not enforce: New coerces any unrecognised
+		// mode to enforce.
+		if mode != watermark.ModeWarn && mode != watermark.ModeOff {
+			return nil, mode, fmt.Errorf(
+				"watermark mode %q enforces and requires durable storage: set signer.watermark.type to \"file\" or \"postgres\", or set mode to \"warn\" or \"off\"",
+				mode,
+			)
+		}
 		return watermark.NewMemWatermark(), mode, nil
 	case "file":
 		if c.Path == "" {

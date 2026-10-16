@@ -88,6 +88,16 @@ func TestResolveTargetFileScheme(t *testing.T) {
 			rawurl: "javascript:alert(1)",
 			wantOK: false,
 		},
+		{
+			name:   "data scheme refused",
+			rawurl: "data:text/html,<script>alert(1)</script>",
+			wantOK: false,
+		},
+		{
+			name:   "http url without a host refused",
+			rawurl: "https:///path",
+			wantOK: false,
+		},
 	}
 
 	for _, tc := range tests {

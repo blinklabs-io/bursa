@@ -43,9 +43,6 @@ docs/BursaTxInspection.md
 docs/BursaTxOutput.md
 docs/BursaWallet.md
 docs/DefaultAPI.md
-git_push.sh
-go.mod
-go.sum
 model_api_address_build_request.go
 model_api_address_build_response.go
 model_api_address_enumerate_request.go

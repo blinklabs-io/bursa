@@ -17,14 +17,19 @@ package sops
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/blinklabs-io/bursa/internal/config"
 	sops "github.com/getsops/sops/v3"
 	"github.com/getsops/sops/v3/aes"
+	"github.com/getsops/sops/v3/age"
 	scommon "github.com/getsops/sops/v3/cmd/sops/common"
 	"github.com/getsops/sops/v3/decrypt"
 	"github.com/getsops/sops/v3/gcpkms"
 	skeys "github.com/getsops/sops/v3/keys"
+	"github.com/getsops/sops/v3/kms"
 	json "github.com/getsops/sops/v3/stores/json"
 	"github.com/getsops/sops/v3/version"
 )
@@ -35,6 +40,71 @@ func Decrypt(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	return ret, nil
+}
+
+// ErrNoMasterKey is returned when no SOPS master key resource is configured.
+var ErrNoMasterKey = errors.New(
+	"no SOPS master key configured: set a google kms resource id, an aws kms key arn or age recipients",
+)
+
+// Configured reports whether any SOPS master key resource is set.
+func Configured(cfg *config.Config) bool {
+	return cfg.Google.ResourceId != "" ||
+		cfg.Aws.KMSKeyARN != "" ||
+		cfg.Age.Recipients != ""
+}
+
+// gcpResourceID is the form SOPS requires of a Google KMS key; it otherwise
+// rejects a malformed ID only when generating the data key.
+var gcpResourceID = regexp.MustCompile(
+	`^projects/[^/]+/locations/[^/]+/keyRings/[^/]+/cryptoKeys/[^/]+$`,
+)
+
+// splitEntries splits a comma-separated list and trims each entry. The SOPS
+// constructors strip only spaces, so a tab or newline would otherwise reach
+// the KMS request.
+func splitEntries(list string) []string {
+	if list == "" {
+		return nil
+	}
+	entries := strings.Split(list, ",")
+	for i, v := range entries {
+		entries[i] = strings.TrimSpace(v)
+	}
+	return entries
+}
+
+// masterKeys builds the master keys for every configured resource. Any one of
+// them can decrypt the result. It fails when none is configured or when a
+// configured value is malformed.
+func masterKeys(cfg *config.Config) ([]skeys.MasterKey, error) {
+	if !Configured(cfg) {
+		return nil, ErrNoMasterKey
+	}
+	keys := []skeys.MasterKey{}
+	for _, v := range splitEntries(cfg.Google.ResourceId) {
+		if !gcpResourceID.MatchString(v) {
+			return nil, fmt.Errorf("invalid google kms resource id %q", v)
+		}
+		keys = append(keys, gcpkms.NewMasterKeyFromResourceID(v))
+	}
+	for _, v := range splitEntries(cfg.Aws.KMSKeyARN) {
+		parsed, err := arn.Parse(v)
+		if err != nil || parsed.Service != "kms" {
+			return nil, fmt.Errorf("invalid aws kms key arn %q", v)
+		}
+		keys = append(keys, kms.NewMasterKeyFromArn(v, nil, ""))
+	}
+	if cfg.Age.Recipients != "" {
+		ageKeys, err := age.MasterKeysFromRecipients(cfg.Age.Recipients)
+		if err != nil {
+			return nil, fmt.Errorf("invalid age recipients: %w", err)
+		}
+		for _, k := range ageKeys {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
 }
 
 func Encrypt(data []byte) ([]byte, error) {
@@ -54,27 +124,23 @@ func Encrypt(data []byte) ([]byte, error) {
 		}
 	}
 
-	cfg := config.GetConfig()
-
-	// create tree and encrypt
-	tree := sops.Tree{Branches: branches}
-	// configure Google KMS to encrypt
-	if cfg.Google.ResourceId != "" {
-		keys := []skeys.MasterKey{}
-		for _, k := range gcpkms.MasterKeysFromResourceIDString(
-			cfg.Google.ResourceId,
-		) {
-			keys = append(keys, k)
-		}
-		keyGroups := []sops.KeyGroup{keys}
-		tree.Metadata = sops.Metadata{
-			KeyGroups: keyGroups,
-			Version:   version.Version,
-		}
+	// Resolve and validate the master keys before touching the data so a
+	// missing or malformed resource is reported as such, not as a tree error.
+	keys, err := masterKeys(config.GetConfig())
+	if err != nil {
+		return nil, err
 	}
-	dataKey, errors := tree.GenerateDataKey()
-	if len(errors) > 0 {
-		return nil, fmt.Errorf("failed generating data key: %v", errors)
+
+	tree := sops.Tree{
+		Branches: branches,
+		Metadata: sops.Metadata{
+			KeyGroups: []sops.KeyGroup{keys},
+			Version:   version.Version,
+		},
+	}
+	dataKey, errs := tree.GenerateDataKey()
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("failed generating data key: %v", errs)
 	}
 	err = scommon.EncryptTree(scommon.EncryptTreeOpts{
 		DataKey: dataKey,

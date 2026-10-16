@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -25,6 +26,24 @@ func TestTokenStoreMintVerify(t *testing.T) {
 	}
 }
 
+func TestTokenStoreMintVerifyFirefoxOrigin(t *testing.T) {
+	t.Parallel()
+	ts := NewTokenStore(t.TempDir()+"/token.json", func() (string, error) { return "tok", nil })
+	const origin = "moz-extension://5c0cbe2a-0e5f-4b0a-9a3c-1f2f6c0c1d11"
+	if _, err := ts.Mint(origin); err != nil {
+		t.Fatalf("Mint(%q) error = %v", origin, err)
+	}
+	if !ts.Verify("tok", origin) {
+		t.Fatal("verify should pass for the paired moz-extension origin")
+	}
+	if ts.Verify("tok", "moz-extension://other") {
+		t.Fatal("verify must fail for a different moz-extension origin")
+	}
+	if ts.Verify("tok", "chrome-extension://5c0cbe2a-0e5f-4b0a-9a3c-1f2f6c0c1d11") {
+		t.Fatal("verify must not treat a chrome-extension origin as the paired moz-extension origin")
+	}
+}
+
 func TestTokenStoreMintDoesNotChangeMemoryOnPersistFailure(t *testing.T) {
 	blockedPath := t.TempDir()
 	ts := NewTokenStore(blockedPath, func() (string, error) { return "tok", nil })
@@ -42,7 +61,7 @@ func TestTokenStoreRejectsInvalidExtensionIDs(t *testing.T) {
 		calls++
 		return "tok", nil
 	})
-	for _, extID := range []string{"", "https://example.com", "moz-extension://abc", "chrome-extension://"} {
+	for _, extID := range []string{"", "https://example.com", "chrome-extension://", "moz-extension://", "moz-extension://has/slash"} {
 		if _, err := ts.Mint(extID); !errors.Is(err, ErrInvalidExtensionID) {
 			t.Fatalf("Mint(%q) error = %v, want ErrInvalidExtensionID", extID, err)
 		}
@@ -55,7 +74,7 @@ func TestTokenStoreRejectsInvalidExtensionIDs(t *testing.T) {
 	}
 }
 
-func TestTokenStoreClearKeepsMemoryOnRemoveFailure(t *testing.T) {
+func TestTokenStoreClearRevokesMemoryOnRemoveFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "token.json")
 	ts := NewTokenStore(path, func() (string, error) { return "tok", nil })
 	if _, err := ts.Mint("abc"); err != nil {
@@ -69,8 +88,36 @@ func TestTokenStoreClearKeepsMemoryOnRemoveFailure(t *testing.T) {
 	if err := ts.Clear(); err == nil {
 		t.Fatal("Clear on non-empty directory path should fail")
 	}
-	if !ts.Verify("tok", "chrome-extension://abc") {
-		t.Fatal("failed Clear must keep token in memory")
+	if ts.Verify("tok", "chrome-extension://abc") {
+		t.Fatal("failed Clear must still revoke the in-memory token")
+	}
+	if _, _, paired := ts.Pair(); paired {
+		t.Fatal("failed Clear must not leave a pairing reported")
+	}
+}
+
+// TestTokenStoreClearNeutralizesUnremovableFile covers a token file that cannot
+// be unlinked but can still be written: the revocation must survive a restart.
+func TestTokenStoreClearNeutralizesUnremovableFile(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX directory permissions enforced for the current user")
+	}
+	dir := filepath.Join(t.TempDir(), "connector")
+	path := filepath.Join(dir, "token.json")
+	ts := NewTokenStore(path, func() (string, error) { return "tok", nil })
+	if _, err := ts.Mint("abc"); err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if err := ts.Clear(); err != nil {
+		t.Fatalf("Clear with a writable but unremovable token file: %v", err)
+	}
+	if _, _, paired := NewTokenStore(path, nil).Pair(); paired {
+		t.Fatal("token file still authorizes after Clear and a restart")
 	}
 }
 

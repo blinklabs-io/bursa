@@ -39,9 +39,11 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	signerapi "github.com/blinklabs-io/bursa/internal/signer/api"
+	"github.com/blinklabs-io/bursa/internal/storage"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
@@ -60,6 +62,181 @@ type notifyingListener struct {
 func (l *notifyingListener) Accept() (net.Conn, error) {
 	l.once.Do(func() { close(l.started) })
 	return l.Listener.Accept()
+}
+
+func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	identity, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	t.Setenv("SOPS_AGE_KEY", identity.String())
+	storageDir := t.TempDir()
+	apiBase, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	metricsBase, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	apiListener := &notifyingListener{Listener: apiBase, started: make(chan struct{})}
+	metricsListener := &notifyingListener{Listener: metricsBase, started: make(chan struct{})}
+	cfg := &config.Config{
+		Network: "mainnet",
+		Storage: config.StorageConfig{Backend: "file", Dir: storageDir},
+		Age:     config.AgeConfig{Recipients: identity.Recipient().String()},
+		Api: config.ApiConfig{
+			ListenAddress:    "127.0.0.1",
+			ListenPort:       uint(apiBase.Addr().(*net.TCPAddr).Port),
+			JWTSecret:        secret,
+			JWTAdminSubjects: []string{"wallet-admin"},
+		},
+		Metrics: config.MetricsConfig{
+			ListenAddress: "127.0.0.1",
+			ListenPort:    uint(metricsBase.Addr().(*net.TCPAddr).Port),
+		},
+	}
+	globalConfig := config.GetConfig()
+	originalConfig := *globalConfig
+	*globalConfig = *cfg
+	t.Cleanup(func() { *globalConfig = originalConfig })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := false
+	result := make(chan error, 1)
+	go func() { result <- Start(ctx, cfg, apiListener, metricsListener) }()
+	t.Cleanup(func() {
+		cancel()
+		if finished {
+			return
+		}
+		select {
+		case <-result:
+		case <-time.After(5 * time.Second):
+			t.Error("API server did not stop after cancellation")
+		}
+	})
+	select {
+	case <-apiListener.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("API server did not start")
+	}
+	select {
+	case <-metricsListener.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("metrics server did not start")
+	}
+
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "wallet-admin",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	require.NoError(t, err)
+	client := &http.Client{Timeout: 5 * time.Second}
+	baseURL := "http://" + apiListener.Addr().String()
+	request := func(method, path, body string) *http.Response {
+		t.Helper()
+		req, reqErr := http.NewRequest(method, baseURL+path, strings.NewReader(body))
+		require.NoError(t, reqErr)
+		req.Header.Set("Authorization", "Bearer "+token)
+		response, reqErr := client.Do(req)
+		require.NoError(t, reqErr)
+		return response
+	}
+
+	createdResponse := request(http.MethodPost, "/api/wallet/create", "")
+	var created bursa.Wallet
+	require.NoError(t, json.NewDecoder(createdResponse.Body).Decode(&created))
+	createdResponse.Body.Close()
+	require.Equal(t, http.StatusOK, createdResponse.StatusCode)
+	require.NotEmpty(t, created.Mnemonic)
+
+	listResponse := request(http.MethodGet, "/api/wallet/list", "")
+	var names []string
+	require.NoError(t, json.NewDecoder(listResponse.Body).Decode(&names))
+	listResponse.Body.Close()
+	require.Equal(t, http.StatusOK, listResponse.StatusCode)
+	require.Len(t, names, 1)
+	storedFile, err := os.ReadFile(filepath.Join(storageDir, "wallet-"+names[0], "wallet.json"))
+	require.NoError(t, err)
+	require.NotContains(t, string(storedFile), created.Mnemonic)
+	require.NotContains(t, string(storedFile), created.PaymentSKey.CborHex)
+
+	getResponse := request(http.MethodPost, "/api/wallet/get", `{"name":"`+names[0]+`"}`)
+	var loaded bursa.Wallet
+	require.NoError(t, json.NewDecoder(getResponse.Body).Decode(&loaded))
+	getResponse.Body.Close()
+	require.Equal(t, http.StatusOK, getResponse.StatusCode)
+	require.Equal(t, created.Mnemonic, loaded.Mnemonic)
+
+	updateResponse := request(http.MethodPost, "/api/wallet/update", `{"name":"`+names[0]+`","description":"updated"}`)
+	updateResponse.Body.Close()
+	require.Equal(t, http.StatusOK, updateResponse.StatusCode)
+	deleteResponse := request(http.MethodPost, "/api/wallet/delete", `{"name":"`+names[0]+`"}`)
+	deleteResponse.Body.Close()
+	require.Equal(t, http.StatusOK, deleteResponse.StatusCode)
+
+	for _, missingRequest := range []struct {
+		path string
+		body string
+	}{
+		{path: "/api/wallet/get", body: `{"name":"` + names[0] + `"}`},
+		{path: "/api/wallet/update", body: `{"name":"` + names[0] + `","description":"updated again"}`},
+		{path: "/api/wallet/delete", body: `{"name":"` + names[0] + `"}`},
+	} {
+		missingResponse := request(http.MethodPost, missingRequest.path, missingRequest.body)
+		missingResponse.Body.Close()
+		require.Equal(t, http.StatusNotFound, missingResponse.StatusCode, missingRequest.path)
+	}
+
+	cancel()
+	select {
+	case err := <-result:
+		finished = true
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("API server did not stop after cancellation")
+	}
+}
+
+func TestStartRejectsUnencryptedWalletStorage(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name string
+		cfg  config.Config
+	}{
+		{
+			name: "file without SOPS key",
+			cfg: config.Config{
+				Storage: config.StorageConfig{Backend: "file", Dir: t.TempDir()},
+				Api: config.ApiConfig{
+					ListenAddress:    "127.0.0.1",
+					JWTSecret:        "01234567890123456789012345678901",
+					JWTAdminSubjects: []string{"wallet-admin"},
+				},
+				Metrics: config.MetricsConfig{ListenAddress: "127.0.0.1"},
+			},
+		},
+		{
+			name: "sqlite despite configured SOPS key",
+			cfg: config.Config{
+				Storage: config.StorageConfig{Backend: "sqlite", DSN: ":memory:"},
+				Age:     config.AgeConfig{Recipients: identity.Recipient().String()},
+				Api: config.ApiConfig{
+					ListenAddress:    "127.0.0.1",
+					JWTSecret:        "01234567890123456789012345678901",
+					JWTAdminSubjects: []string{"wallet-admin"},
+				},
+				Metrics: config.MetricsConfig{ListenAddress: "127.0.0.1"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			err := Start(ctx, &tt.cfg, nil, nil)
+			require.ErrorContains(t, err, "unencrypted wallet storage")
+		})
+	}
 }
 
 func TestStartStopsServersOnContextCancellation(t *testing.T) {
@@ -153,6 +330,7 @@ var mockWalletResponseJSON = `{
 }`
 
 type fakeLegacyWalletStore struct {
+	listErr       error
 	wallets       map[string]*bursa.Wallet
 	descriptions  map[string]string
 	updatedWallet string
@@ -160,6 +338,9 @@ type fakeLegacyWalletStore struct {
 }
 
 func (f *fakeLegacyWalletStore) List(context.Context) ([]string, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	names := make([]string, 0, len(f.wallets))
 	for name := range f.wallets {
 		names = append(names, name)
@@ -170,7 +351,7 @@ func (f *fakeLegacyWalletStore) List(context.Context) ([]string, error) {
 func (f *fakeLegacyWalletStore) Get(_ context.Context, name string) (*bursa.Wallet, error) {
 	wallet, ok := f.wallets[name]
 	if !ok {
-		return nil, fmt.Errorf("wallet %q not found", name)
+		return nil, fmt.Errorf("wallet %q: %w", name, storage.ErrWalletNotFound)
 	}
 	return wallet, nil
 }
@@ -181,7 +362,7 @@ func (f *fakeLegacyWalletStore) Update(
 	description string,
 ) (bool, error) {
 	if _, ok := f.wallets[name]; !ok {
-		return false, fmt.Errorf("wallet %q not found", name)
+		return false, fmt.Errorf("wallet %q: %w", name, storage.ErrWalletNotFound)
 	}
 	if f.descriptions[name] == description {
 		return false, nil
@@ -193,7 +374,7 @@ func (f *fakeLegacyWalletStore) Update(
 
 func (f *fakeLegacyWalletStore) Delete(_ context.Context, name string) error {
 	if _, ok := f.wallets[name]; !ok {
-		return fmt.Errorf("wallet %q not found", name)
+		return fmt.Errorf("wallet %q: %w", name, storage.ErrWalletNotFound)
 	}
 	f.deletedWallet = name
 	return nil
@@ -339,6 +520,21 @@ func TestValidateAPIExposureRejectsUnauthenticatedNonLoopback(t *testing.T) {
 	}, signerapi.HS256Validator(
 		[]byte("01234567890123456789012345678901"), "", "",
 	)), "jwt_admin_subjects")
+}
+
+func TestValidateAPIExposureRequiresAWSWalletAdministrator(t *testing.T) {
+	cfg := &config.Config{
+		Storage: config.StorageConfig{Backend: "aws"},
+		Api:     config.ApiConfig{ListenAddress: "127.0.0.1"},
+	}
+	assert.ErrorContains(t, validateAPIExposure(cfg, nil), "authentication is required")
+
+	auth := signerapi.HS256Validator(
+		[]byte("01234567890123456789012345678901"), "", "",
+	)
+	assert.ErrorContains(t, validateAPIExposure(cfg, auth), "jwt_admin_subjects")
+	cfg.Api.JWTAdminSubjects = []string{"wallet-admin"}
+	assert.NoError(t, validateAPIExposure(cfg, auth))
 }
 
 func TestValidateAPIExposureRejectsIncompleteTLSConfiguration(t *testing.T) {
@@ -603,6 +799,85 @@ func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {
 			})
 		}
 	})
+}
+
+type apiTestStorageStore struct{}
+
+func (apiTestStorageStore) GetWallet(context.Context, string) (storage.Wallet, error) {
+	return nil, errors.New("not found")
+}
+
+func (apiTestStorageStore) ListWallets(context.Context) ([]storage.Wallet, error) {
+	return nil, errors.New("wallet contents should not be loaded for names")
+}
+
+func (apiTestStorageStore) ListWalletNames(context.Context) ([]string, error) {
+	return []string{"wallet-1"}, nil
+}
+
+func (apiTestStorageStore) CreateWallet(string) (storage.Wallet, error) {
+	return nil, errors.New("unused")
+}
+
+func (apiTestStorageStore) DeleteWallet(context.Context, string) error {
+	return nil
+}
+
+func TestConfiguredAWSStoreIsWiredToProtectedWalletRoutes(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	cfg := &config.Config{
+		Storage: config.StorageConfig{Backend: "aws"},
+		Api: config.ApiConfig{
+			ListenAddress:    "127.0.0.1",
+			JWTAdminSubjects: []string{"wallet-admin"},
+		},
+	}
+	factoryCalled := false
+	store, err := configuredWalletStoreWithFactory(cfg, func(got *config.Config) (storage.Store, error) {
+		factoryCalled = true
+		assert.Equal(t, "aws", got.Storage.Backend)
+		return apiTestStorageStore{}, nil
+	})
+	require.NoError(t, err)
+	require.True(t, factoryCalled, "configured backend factory must be called")
+
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, cfg, signerapi.HS256Validator([]byte(secret), "", ""), store)
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "wallet-admin",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodGet, "/api/wallet/list", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, req)
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.JSONEq(t, `["wallet-1"]`, response.Body.String())
+}
+
+func TestWalletCreateFailsClosedWhenConfiguredStoreCannotPersist(t *testing.T) {
+	cfg := config.GetConfig()
+	original := *cfg
+	cfg.Storage.Backend = "aws"
+	defer func() { *cfg = original }()
+
+	response := httptest.NewRecorder()
+	handleWalletCreate(response, httptest.NewRequest(http.MethodPost, "/api/wallet/create", nil))
+	assert.Equal(t, http.StatusInternalServerError, response.Code)
+	assert.NotContains(t, response.Body.String(), "secret")
+}
+
+func TestWalletListDoesNotExposeStorageErrors(t *testing.T) {
+	const backendError = "AWS secret access token must not reach the caller"
+	store := &fakeLegacyWalletStore{listErr: errors.New(backendError)}
+	handler := withLegacyStore(store, http.HandlerFunc(handleWalletList))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/wallet/list", nil))
+
+	assert.Equal(t, http.StatusInternalServerError, response.Code)
+	assert.NotContains(t, response.Body.String(), backendError)
+	assert.Contains(t, response.Body.String(), "failed to load wallets")
 }
 
 func TestGCPWalletRoutesFailClosedWithoutAuth(t *testing.T) {
@@ -3736,4 +4011,131 @@ func TestStartReportsServingErrorRacingCancellation(t *testing.T) {
 		}
 		metricsBase.Close()
 	}
+}
+
+func TestHandleAddressParseFormats(t *testing.T) {
+	t.Parallel()
+
+	const (
+		baseBech32 = "addr1qxwqkfd3qz5pdwmemtv2llmetegdyku4ffxuldjcfrs05nfjtw33ktf3j6amgxsgnj9u3fa5nrle79nv2g24npnth0esk2dy7q"
+		baseHex    = "019c0b25b100a816bb79dad8afff795e50d25b954a4dcfb65848e0fa4d325ba31b2d3196bbb41a089c8bc8a7b498ff9f166c521559866bbbf3"
+		baseB64    = "AZwLJbEAqBa7edrYr/95XlDSW5VKTc+2WEjg+k0yW6MbLTGWu7QaCJyLyKe0mP+fFmxSFVmGa7vz"
+		stakeBech  = "stake1uye9hgcm95cedwa5rgyfez7g576f3lulzek9y92ese4mhucu439t0"
+		stakeHex   = "e1325ba31b2d3196bbb41a089c8bc8a7b498ff9f166c521559866bbbf3"
+		byronBase5 = "Ae2tdPwUPEZ4YjgvykNpoFeYUxoyhNj2kg8KfKWN2FizsSpLUPv68MpTVDo"
+		byronHex   = "82d818582183581c4d947501de882f64dba476c342abc6b31979be1c8cfaa01f424b0779a0001a4085d696"
+	)
+
+	tests := []struct {
+		name        string
+		body        string
+		wantStatus  int
+		wantAddress string
+		wantType    string
+		wantNetwork string
+	}{
+		{
+			name:        "explicit text format",
+			body:        `{"address":"` + baseBech32 + `","format":"text"}`,
+			wantStatus:  http.StatusOK,
+			wantAddress: baseBech32,
+			wantType:    "base",
+			wantNetwork: "mainnet",
+		},
+		{
+			name:        "hex base address",
+			body:        `{"address":"` + baseHex + `","format":"hex"}`,
+			wantStatus:  http.StatusOK,
+			wantAddress: baseBech32,
+			wantType:    "base",
+			wantNetwork: "mainnet",
+		},
+		{
+			name:        "base64 base address",
+			body:        `{"address":"` + baseB64 + `","format":"base64"}`,
+			wantStatus:  http.StatusOK,
+			wantAddress: baseBech32,
+			wantType:    "base",
+			wantNetwork: "mainnet",
+		},
+		{
+			name:        "hex stake address",
+			body:        `{"address":"` + stakeHex + `","format":"hex"}`,
+			wantStatus:  http.StatusOK,
+			wantAddress: stakeBech,
+			wantType:    "reward",
+			wantNetwork: "mainnet",
+		},
+		{
+			name:        "hex byron address",
+			body:        `{"address":"` + byronHex + `","format":"hex"}`,
+			wantStatus:  http.StatusOK,
+			wantAddress: byronBase5,
+			wantType:    "byron",
+		},
+		{
+			name:       "invalid hex",
+			body:       `{"address":"zz","format":"hex"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid base64",
+			body:       `{"address":"!!!!","format":"base64"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "hex that is not an address",
+			body:       `{"address":"00","format":"hex"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "bech32 text under hex format",
+			body:       `{"address":"` + baseBech32 + `","format":"hex"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "unknown format",
+			body:       `{"address":"` + baseBech32 + `","format":"bytes"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/address/parse",
+				strings.NewReader(tc.body),
+			)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			handleAddressParse(w, req)
+
+			resp := w.Result()
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantStatus, resp.StatusCode, string(body))
+			if tc.wantStatus != http.StatusOK {
+				return
+			}
+			var got AddressParseResponse
+			require.NoError(t, json.Unmarshal(body, &got))
+			assert.Equal(t, tc.wantAddress, got.Address)
+			assert.Equal(t, tc.wantType, got.Type)
+			assert.Equal(t, tc.wantNetwork, got.Network)
+		})
+	}
+}
+
+func TestNewHTTPServerBoundsEveryConnectionPhase(t *testing.T) {
+	t.Parallel()
+
+	srv := newHTTPServer(http.NotFoundHandler())
+
+	assert.Positive(t, srv.ReadHeaderTimeout, "ReadHeaderTimeout")
+	assert.Positive(t, srv.ReadTimeout, "ReadTimeout")
+	assert.Positive(t, srv.WriteTimeout, "WriteTimeout")
+	assert.Positive(t, srv.IdleTimeout, "IdleTimeout")
 }

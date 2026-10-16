@@ -80,13 +80,61 @@ func TestRunKeyBLSWritesCardanoCLIEnvelopes(t *testing.T) {
 
 func TestRunKeyBLSRestrictsExistingRegistrationFile(t *testing.T) {
 	dir := t.TempDir()
+	signingPath := filepath.Join(dir, "bls.skey")
 	registrationPath := filepath.Join(dir, "bls.json")
 	require.NoError(t, os.WriteFile(registrationPath, []byte("old"), 0o644))
-	require.NoError(t, RunKeyBLS("", "", registrationPath))
+	require.NoError(t, RunKeyBLS(signingPath, "", registrationPath))
 
 	info, err := os.Stat(registrationPath)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestRunKeyBLSRequiresSigningKeyFile(t *testing.T) {
+	err := RunKeyBLS("", "", filepath.Join(t.TempDir(), "bls.json"))
+	require.ErrorContains(t, err, "BLS signing key file is required")
+}
+
+func TestRunKeyBLSRegistrationReplacesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	signingPath := filepath.Join(dir, "bls.skey")
+	target := filepath.Join(dir, "target")
+	outputPath := filepath.Join(dir, "bls.json")
+	require.NoError(t, os.WriteFile(target, []byte("untouched"), 0o600))
+	if err := os.Symlink(target, outputPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	require.NoError(t, RunKeyBLS(signingPath, "", outputPath))
+
+	gotTarget, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, "untouched", string(gotTarget))
+	info, err := os.Lstat(outputPath)
+	require.NoError(t, err)
+	require.Zero(t, info.Mode()&os.ModeSymlink)
+}
+
+func TestRunKeyBLSRegistrationReplacesHardlink(t *testing.T) {
+	dir := t.TempDir()
+	signingPath := filepath.Join(dir, "bls.skey")
+	target := filepath.Join(dir, "target")
+	outputPath := filepath.Join(dir, "bls.json")
+	require.NoError(t, os.WriteFile(target, []byte("untouched"), 0o600))
+	if err := os.Link(target, outputPath); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+
+	require.NoError(t, RunKeyBLS(signingPath, "", outputPath))
+
+	gotTarget, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, "untouched", string(gotTarget))
+	info, err := os.Stat(outputPath)
+	require.NoError(t, err)
+	targetInfo, err := os.Stat(target)
+	require.NoError(t, err)
+	require.False(t, os.SameFile(info, targetInfo))
 }
 
 func TestRunKeyBLSRejectsCollidingOutputPaths(t *testing.T) {
@@ -113,7 +161,9 @@ func TestRunKeyBLSRejectsSymlinkedOutputPaths(t *testing.T) {
 	shared := filepath.Join(dir, "shared")
 	linkDir := filepath.Join(dir, "link")
 	require.NoError(t, os.Mkdir(filepath.Join(shared), 0o700))
-	require.NoError(t, os.Symlink(shared, linkDir))
+	if err := os.Symlink(shared, linkDir); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
 
 	err := RunKeyBLS(
 		filepath.Join(shared, "bls.skey"),

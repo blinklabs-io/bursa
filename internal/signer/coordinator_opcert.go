@@ -147,20 +147,24 @@ func (c *Coordinator) SignOpCert(ctx context.Context, kesVkey []byte, issueCount
 	signable := lcommon.OpCertSignableBytes(kesVkey, issueCounter, kesPeriod)
 
 	signStart := time.Now()
-	sig, err := ref.Sign(ctx, signable)
+	sig, err := backend.SignFor(ctx, ref, backend.PurposeOpCert, signable)
 	// Attempt latency, including failures — not successful-sign latency.
 	c.deps.Metrics.observeSignDuration(ref.Backend(), time.Since(signStart).Seconds())
 	if err != nil {
 		code := CodeBackend
-		if errors.Is(err, backend.ErrUnsupportedExtended) {
+		if errors.Is(err, backend.ErrInvalidSignature) {
+			code = CodeInternal
+		} else if errors.Is(err, backend.ErrUnsupportedExtended) {
 			code = CodeUnsupported
 		}
 		c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "error", "reason", err.Error())
 		c.deps.Metrics.observe("opcert", string(code))
-		if code == CodeBackend {
+		switch code {
+		case CodeBackend:
 			c.deps.Metrics.observeBackendError(ref.Backend())
-		} else {
+		case CodeBadRequest, CodeNotFound, CodeDenied, CodeConflict, CodeUnsupported:
 			c.deps.Metrics.observeDeny(string(code))
+		case CodeInternal:
 		}
 		return nil, code, fmt.Errorf("opcert sign: %w", err)
 	}

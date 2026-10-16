@@ -560,10 +560,6 @@ func (s *Service) buildDelegationTx(
 	certs []Cert,
 	params ProtocolParams,
 ) (*apollo.Apollo, map[string]string, error) {
-	changeAddr, err := lcommon.NewAddress(acct.ReceiveAddresses[0])
-	if err != nil {
-		return nil, nil, fmt.Errorf("change address: %w", err)
-	}
 	stakeAddr, err := lcommon.NewAddress(acct.StakeAddress)
 	if err != nil {
 		return nil, nil, fmt.Errorf("stake address: %w", err)
@@ -579,6 +575,30 @@ func (s *Service) buildDelegationTx(
 	cred := lcommon.Credential{
 		CredType:   lcommon.CredentialTypeAddrKeyHash,
 		Credential: stakeKeyHash,
+	}
+	certSigners, err := delegationCertRequiredSigners(certs, stakeKeyHash, acct)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.completeWithSigners(ctx, acct, certSigners, func(next *apollo.Apollo) (*apollo.Apollo, error) {
+		return s.applyDelegationTx(next, req, certs, params, stakeAddr, cred)
+	})
+}
+
+// completeWithSigners builds and completes a payment-less transaction for the
+// account: apply adds the transaction's own content, fixedSigners are required
+// signers it needs regardless of inputs, and the payment key hashes of whatever
+// inputs coin selection picks are added until that set is stable, so fee
+// estimation covers the fully bound body.
+func (s *Service) completeWithSigners(
+	ctx context.Context,
+	acct *wallet.Account,
+	fixedSigners []lcommon.Blake2b224,
+	apply func(*apollo.Apollo) (*apollo.Apollo, error),
+) (*apollo.Apollo, map[string]string, error) {
+	changeAddr, err := lcommon.NewAddress(acct.ReceiveAddresses[0])
+	if err != nil {
+		return nil, nil, fmt.Errorf("change address: %w", err)
 	}
 
 	var loaded []lcommon.Utxo
@@ -600,11 +620,6 @@ func (s *Service) buildDelegationTx(
 		}
 	}
 
-	certSigners, err := delegationCertRequiredSigners(certs, stakeKeyHash, acct)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	var a *apollo.Apollo
 	var paymentSigners []lcommon.Blake2b224
 	maxAttempts := len(acct.ReceiveAddresses) + 2
@@ -615,10 +630,10 @@ func (s *Service) buildDelegationTx(
 			SetFeePadding(feePaddingLovelace).
 			SetTransactionBodySetTagPolicy(apollo.TransactionBodySetTagPolicyUntagged).
 			AddLoadedUTxOs(loaded...)
-		for _, kh := range appendKeyHashes(nil, certSigners, paymentSigners) {
+		for _, kh := range appendKeyHashes(nil, fixedSigners, paymentSigners) {
 			next = next.AddRequiredSigner(kh)
 		}
-		next, err = s.applyDelegationTx(next, req, certs, params, stakeAddr, cred)
+		next, err = apply(next)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -646,7 +661,7 @@ func (s *Service) buildDelegationTx(
 		paymentSigners = actualPaymentSigners
 	}
 	if a == nil {
-		return nil, nil, errors.New("delegation required signer set did not converge")
+		return nil, nil, errors.New("required signer set did not converge")
 	}
 	return a, utxoAddr, nil
 }

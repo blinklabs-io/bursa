@@ -63,7 +63,7 @@ signer:
   allow_insecure_file_backend: false   # env: SIGNER_ALLOW_INSECURE_FILE_BACKEND
 
   # --- Anti-double-sign watermark ---
-  # type: "mem" (default, non-durable), "file" (SQLite; requires path), or
+  # type: "mem" (non-durable; refused unless mode is warn or off), "file" (SQLite; requires path), or
   #       "postgres" (shared store for HA; requires dsn or dsn_env).
   # mode: "off" | "warn" | "enforce" (default enforce).
   watermark:
@@ -108,6 +108,20 @@ signer:
     #     - name: "pool-cold"                        # object CKA_LABEL
     #       type: "pool"                             # payment|stake|drep|cc-hot|cc-cold|pool|policy
     #   # When keys is omitted, every Ed25519 signing key on the token loads as payment.
+
+    # Attested TEE custody (see attested-custody.md): keys live in an enclave
+    # and are trusted only after platform attestation verifies at boot.
+    # - name: "nitro"
+    #   type: "nitro"
+    #   address: "unix:///run/bursa/enclave.sock"
+    #   root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
+    #   pcrs:
+    #     0: "<96 hex chars: PCR0 of the EIF>"
+    # - name: "gcp-cs"
+    #   type: "confidential-space"
+    #   address: "https://workload.example.internal:8443"
+    #   audience: "https://signer.example.internal"
+    #   image_digest: "sha256:<64 hex chars>"
 
     # SOPS-encrypted secrets pulled from GCP Secret Manager and decrypted
     # in-process at boot. Requires the top-level `google.project`.

@@ -71,6 +71,12 @@ import type {
   NotificationsSetting,
   ActivityResponse,
   Diagnostics,
+  SurveysResponse,
+  SurveyDetail,
+  SurveyRespondRequest,
+  SurveyCreateRequest,
+  SurveyRevealRequest,
+  SurveyStatus,
 } from "./types";
 
 export class ApiError extends Error {
@@ -408,3 +414,33 @@ export const nftImageUrl = (unit: string) => `/wallet/nft/${encodeURIComponent(u
 // zip (used as an <a href> / bridge target rather than a JSON fetch).
 export const getDiagnostics = () => apiGet<Diagnostics>("/diagnostics");
 export const diagnosticsLogsUrl = () => "/diagnostics/logs";
+
+// --- CIP-179 surveys (node-local reads; building returns a pending
+// transaction that confirmSend signs and submits) ---
+
+export const getSurveys = (params?: {
+  q?: string;
+  status?: SurveyStatus | "";
+  page?: number;
+  count?: number;
+  linked?: boolean;
+}) => {
+  const qs = new URLSearchParams();
+  if (params?.q) qs.set("q", params.q);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.linked) qs.set("linked", "true");
+  if (params?.page && params.page > 1) qs.set("page", String(params.page));
+  if (params?.count) qs.set("count", String(params.count));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiGet<SurveysResponse>(`/wallet/surveys${suffix}`);
+};
+export const getSurvey = (id: string) =>
+  apiGet<SurveyDetail>(`/wallet/surveys/${encodeURIComponent(id)}`);
+export const respondToSurvey = (req: SurveyRespondRequest) =>
+  apiPost<Preview>("/wallet/surveys/respond", req);
+export const createSurvey = (req: SurveyCreateRequest) =>
+  apiPost<Preview>("/wallet/surveys/create", req);
+export const cancelSurvey = (survey: string) =>
+  apiPost<Preview>("/wallet/surveys/cancel", { survey });
+export const revealSurvey = (id: string, req: SurveyRevealRequest) =>
+  apiPost<SurveyDetail>(`/wallet/surveys/${encodeURIComponent(id)}/reveal`, req);

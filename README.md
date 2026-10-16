@@ -124,6 +124,57 @@ api:
     - wallet-service-admin
 ```
 
+### Wallet storage encryption
+
+Wallet data stored with SOPS is encrypted to every configured master key; any
+one of them can decrypt it. At least one is required, and a malformed value
+is rejected before encryption starts:
+
+| Key | Config | Environment |
+| --- | --- | --- |
+| Google Cloud KMS | `google.kms_resource_id` | `GCP_KMS_RESOURCE_ID` |
+| AWS KMS | `aws.kms_key_arn` | `AWS_KMS_KEY_ARN` |
+| age | `age.recipients` (comma separated) | `AGE_RECIPIENTS` |
+
+Decryption uses the SOPS conventions: the AWS SDK credential chain, Google
+application default credentials, and `SOPS_AGE_KEY` or `SOPS_AGE_KEY_FILE` for
+age identities.
+
+### Wallet storage encryption
+
+The file backend encrypts wallet contents with SOPS when a master key is
+configured. Bursa refuses to start with file storage and no SOPS master key,
+or with SQLite storage, unless `storage.allow_unencrypted_wallet_storage` is
+explicitly enabled (`STORAGE_ALLOW_UNENCRYPTED_WALLET_STORAGE=true`). SQLite
+does not encrypt wallet contents, even when a SOPS key is configured. The
+opt-in writes mnemonics and signing keys in plaintext; deleting a SQLite wallet
+does not guarantee that old page data is removed from the database file. Use
+the opt-in only for isolated development or test deployments.
+
+### AWS Secrets Manager wallet storage
+
+To persist API-created wallets in AWS Secrets Manager, select the AWS backend
+and configure a secret-name prefix. SOPS requires at least one configured
+master key; this example uses AWS KMS. Bursa uses the AWS SDK credential chain
+and region settings, and requires JWT authentication plus an administrator
+subject whenever wallet storage is enabled:
+
+```yaml
+storage:
+  backend: aws
+aws:
+  secret_prefix: bursa-wallet-
+  kms_key_arn: arn:aws:kms:us-east-1:123456789012:key/example
+api:
+  jwt_admin_subjects:
+    - wallet-service-admin
+```
+
+Set `STORAGE_BACKEND`, `AWS_SECRET_PREFIX`, and `AWS_KMS_KEY_ARN` through the
+process environment when those values should stay outside the config file.
+Configure `API_JWT_SECRET` or `API_JWKS_URL` as the API trust source. Remote
+API listeners also require TLS.
+
 ### Kubernetes and Helm deployment contract
 
 The Bursa container listens on loopback by default. A Kubernetes Service must

@@ -471,6 +471,80 @@ test("deep-linking #/import with an active wallet renders the Import Transaction
   );
 });
 
+function stubSurveysRoute(wallet: WalletView, state: string) {
+  stubStatus(state);
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([wallet]);
+  vi.spyOn(client, "getSurveys").mockResolvedValue({ surveys: [], total: 0, page: 1, count: 50 });
+  window.location.hash = "#/surveys";
+}
+
+function unlockWithPassword() {
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+}
+
+test("deep-linking #/surveys renders the Surveys screen, and a full wallet on a synced node can create", async () => {
+  stubSurveysRoute(walletA, "ready");
+  render(<App />);
+  unlockWithPassword();
+  expect(await screen.findByRole("heading", { name: "Surveys" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "New survey" })).toBeEnabled();
+});
+
+test("deep-linking one survey opens its detail view", async () => {
+  stubSurveysRoute(walletA, "ready");
+  const id = `${"ab".repeat(32)}:0`;
+  const getSurvey = vi.spyOn(client, "getSurvey").mockResolvedValue({
+    id,
+    tx_hash: "ab".repeat(32),
+    index: 0,
+    title: "Linked poll",
+    description: "Opened from a link",
+    owner: "cd".repeat(28),
+    owner_script: false,
+    roles: [0],
+    end_epoch: 700,
+    status: "closed",
+    sealed: false,
+    questions: 1,
+    linked_actions: [],
+    owned: false,
+    definition: {
+      title: "Linked poll",
+      description: "Opened from a link",
+      roles: [0],
+      end_epoch: 700,
+      mode: { sealed: false },
+      questions: [{ kind: 1, prompt: "Yes?", options: ["Yes", "No"] }],
+    },
+  });
+  window.location.hash = `#/surveys/${encodeURIComponent(id)}`;
+  render(<App />);
+  unlockWithPassword();
+  expect(await screen.findByText("Opened from a link")).toBeInTheDocument();
+  expect(getSurvey).toHaveBeenCalledWith(id);
+});
+
+test("surveys are readable while syncing but cannot be created until the node is ready", async () => {
+  stubSurveysRoute(walletA, "syncing");
+  render(<App />);
+  // A syncing node puts the Syncing view in front of the vault.
+  fireEvent.click(screen.getByRole("button", { name: /load wallet anyway/i }));
+  unlockWithPassword();
+  expect(await screen.findByRole("heading", { name: "Surveys" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "New survey" })).toBeDisabled();
+});
+
+test("a hardware wallet can read surveys but not publish them", async () => {
+  stubSurveysRoute(hardwareWallet, "ready");
+  render(<App />);
+  unlockWithPassword();
+  expect(await screen.findByRole("heading", { name: "Surveys" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "New survey" })).toBeDisabled();
+});
+
 test("switching active wallets remounts routed content and refetches read state", async () => {
   stubStatus("ready");
   stubVault({ exists: true, locked: true, wallet_count: 2 });
@@ -814,6 +888,7 @@ test("the palette lists every destination the nav no longer carries", async () =
     "send", "receive", "import", "offline",
     "contacts", "sign", "verify", "diagnostics",
     "governance",
+    "surveys",
     "dreps",
     "operate", "add-wallet", "lock",
   ]);
@@ -826,6 +901,7 @@ test.each([
   ["Address book", "#/contacts"],
   ["Node diagnostics", "#/diagnostics"],
   ["Sign a transaction offline", "#/offline"],
+  ["Surveys and polls", "#/surveys"],
 ])("%s is actually reachable from the palette", async (label, hash) => {
   const palette = await openPalette(walletA);
 

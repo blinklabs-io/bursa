@@ -20,10 +20,6 @@ vi.mock("@trezor/connect-web", () => ({
     cardanoSignMessage: mockSignMessage,
     dispose: mockDispose,
   },
-  PROTO: {
-    CardanoTxSigningMode: { ORDINARY_TRANSACTION: 0 },
-    CardanoAddressType: { BASE: 0 },
-  },
 }));
 
 import { connectTrezor } from "./trezor";
@@ -126,11 +122,10 @@ describe("connectTrezor consent gate", () => {
     const session = await pending;
 
     expect(mockInit).toHaveBeenCalledOnce();
-    // init carries the manifest + lazyLoad settings.
+    // Connect 10 initializes with the app manifest.
     expect(mockInit).toHaveBeenCalledWith(
       expect.objectContaining({
         manifest: expect.objectContaining({ email: expect.any(String), appUrl: expect.any(String) }),
-        lazyLoad: true,
       }),
     );
     await session.close();
@@ -163,7 +158,7 @@ describe("connectTrezor session", () => {
   });
 
   test("getAccountXpub throws on an unsuccessful device response", async () => {
-    mockGetPublicKey.mockResolvedValueOnce({ success: false, payload: { error: "device disconnected" } });
+    mockGetPublicKey.mockResolvedValueOnce({ success: false, error: { message: "device disconnected" } });
     const session = await connectTrezor({ requestExternalConsent: approve });
     await expect(session.getAccountXpub(0)).rejects.toThrow("device disconnected");
     await session.close();
@@ -262,7 +257,7 @@ describe("connectTrezor session", () => {
   });
 
   test("signTx throws on an unsuccessful device response", async () => {
-    mockSignTransaction.mockResolvedValueOnce({ success: false, payload: { error: "user cancelled" } });
+    mockSignTransaction.mockResolvedValueOnce({ success: false, error: { message: "user cancelled" } });
     const session = await connectTrezor({ requestExternalConsent: approve });
     await expect(session.signTx(NEUTRAL_REQ)).rejects.toThrow("user cancelled");
     await session.close();
@@ -306,7 +301,7 @@ describe("connectTrezor session", () => {
   });
 
   test("signMessage throws on an unsuccessful device response", async () => {
-    mockSignMessage.mockResolvedValueOnce({ success: false, payload: { error: "user cancelled" } });
+    mockSignMessage.mockResolvedValueOnce({ success: false, error: { message: "user cancelled" } });
     const session = await connectTrezor({ requestExternalConsent: approve });
     await expect(session.signMessage(MSG_REQ)).rejects.toThrow("user cancelled");
     await session.close();

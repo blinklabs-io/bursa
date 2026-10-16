@@ -33,6 +33,7 @@ import androidx.core.app.NotificationCompat
 
 import io.blinklabs.bursa.mobile.App
 import io.blinklabs.bursa.mobile.Mobile
+import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
@@ -184,8 +185,12 @@ class WalletService : Service() {
         }
         val instance = Mobile.new_()
         try {
-            // filesDir = app-private writable dir; "preview" network; lean=true
-            // selects the small-footprint history-expiry profile for a phone.
+            // filesDir = app-private wallet tree; the node database goes to the
+            // separate no-backup directory so the vault and chain data carry
+            // independent policies (the Go side moves an existing database
+            // across on first start). "preview" network; lean=true selects the
+            // small-footprint history-expiry profile for a phone.
+            instance.setNodeDataDir(File(noBackupFilesDir, "node").absolutePath)
             instance.start(filesDir.absolutePath, "preview", true)
         } catch (e: Exception) {
             android.util.Log.e(TAG, "wallet start failed", e)

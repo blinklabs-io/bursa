@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -39,6 +40,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/logging"
 	"github.com/blinklabs-io/bursa/internal/signer"
 	signerapi "github.com/blinklabs-io/bursa/internal/signer/api"
+	"github.com/blinklabs-io/bursa/internal/storage"
 	ouroboros "github.com/blinklabs-io/gouroboros"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/btcsuite/btcd/btcutil/bech32"
@@ -124,9 +126,14 @@ func writeError(w http.ResponseWriter, code int, err error) {
 	if code >= http.StatusInternalServerError {
 		message = "Internal server error"
 	}
+	body, marshalErr := json.Marshal(map[string]string{"error": message})
+	if marshalErr != nil {
+		code = http.StatusInternalServerError
+		body = []byte(`{"error":"Internal server error"}`)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_, _ = fmt.Fprintf(w, `{"error":%q}`, message)
+	_, _ = w.Write(body)
 }
 
 // decodeAndValidate decodes a JSON request body and validates it.
@@ -315,6 +322,18 @@ func mapGRPCToHTTPError(w http.ResponseWriter, grpcStatus *status.Status) {
 	}
 }
 
+func writeWalletStorageError(w http.ResponseWriter, err error) {
+	if errors.Is(err, storage.ErrWalletNotFound) {
+		mapGRPCToHTTPError(w, status.New(codes.NotFound, err.Error()))
+		return
+	}
+	if grpcStatus, ok := status.FromError(err); ok {
+		mapGRPCToHTTPError(w, grpcStatus)
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err)
+}
+
 // ErrorResponse defines the standard error payload returned by the API
 type ErrorResponse struct {
 	Error  string            `json:"error"`
@@ -376,12 +395,13 @@ type ScriptCreateRequest struct {
 // required whenever RequireSignatures is true and the script needs
 // signatures.
 type ScriptValidateRequest struct {
-	Script            map[string]any `json:"script"                       validate:"required"`
-	Message           string         `json:"message,omitempty"            validate:"omitempty,hexadecimal" format:"hex"`
-	PublicKeys        []string       `json:"public_keys,omitempty"        validate:"dive,hexadecimal,len=64" minLength:"64" maxLength:"64" format:"hex"`
-	Signatures        []string       `json:"signatures,omitempty"         validate:"dive,hexadecimal,len=128"`
-	Slot              uint64         `json:"slot,omitempty"                                                   swaggertype:"integer" format:"int64"`
-	RequireSignatures bool           `json:"require_signatures,omitempty"`
+	Script map[string]any `json:"script"                       validate:"required"`
+	// Message is the hex-encoded signed payload.
+	Message           string   `json:"message,omitempty"            validate:"omitempty,hexadecimal" format:"hex"`
+	PublicKeys        []string `json:"public_keys,omitempty"        validate:"dive,hexadecimal,len=64" minLength:"64" maxLength:"64" format:"hex"`
+	Signatures        []string `json:"signatures,omitempty"         validate:"dive,hexadecimal,len=128"`
+	Slot              uint64   `json:"slot,omitempty"                                                   swaggertype:"integer" format:"int64"`
+	RequireSignatures bool     `json:"require_signatures,omitempty"`
 }
 
 // ScriptAddressRequest defines the request payload for script address generation
@@ -415,7 +435,10 @@ type ScriptAddressResponse struct {
 
 // AddressParseRequest defines the request payload for address parsing
 type AddressParseRequest struct {
-	Address string `json:"address" validate:"required"`
+	Address string `json:"address"          validate:"required"`
+	// Format selects how Address is encoded: "text" (bech32 or base58, the
+	// default), "hex", or "base64" for the raw address bytes.
+	Format string `json:"format,omitempty" validate:"omitempty,oneof=text hex base64" enums:"text,hex,base64"`
 }
 
 // AddressParseResponse defines the response payload for address parsing
@@ -509,7 +532,7 @@ type SignDataRequest struct {
 	Address string `json:"address"     validate:"required,hexadecimal"`
 	// Payload is a hex-encoded message payload.
 	Payload string `json:"payload"     validate:"required,hexadecimal"`
-	// SigningKey identifies the signing key.
+	// SigningKey is a cardano-cli JSON signing key envelope.
 	SigningKey string `json:"signing_key" validate:"required"`
 }
 
@@ -554,7 +577,111 @@ type legacyWalletStore interface {
 	Delete(context.Context, string) error
 }
 
+type legacyWalletCreator interface {
+	Create(context.Context, string, *bursa.Wallet, string) error
+}
+
 type gcpLegacyWalletStore struct{}
+
+// configuredLegacyWalletStore adapts the configured backend to the legacy API
+// handlers while storage implementations converge on the Store interface.
+type configuredLegacyWalletStore struct {
+	store storage.Store
+}
+
+func (s configuredLegacyWalletStore) List(ctx context.Context) ([]string, error) {
+	if _, ok := s.store.(*storage.GCPStore); ok {
+		return gcp.ListGoogleWallets(ctx, nil)
+	}
+	if nameLister, ok := s.store.(interface {
+		ListWalletNames(context.Context) ([]string, error)
+	}); ok {
+		return nameLister.ListWalletNames(ctx)
+	}
+	wallets, err := s.store.ListWallets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(wallets))
+	for _, wallet := range wallets {
+		names = append(names, wallet.Name())
+	}
+	return names, nil
+}
+
+func (s configuredLegacyWalletStore) Get(ctx context.Context, name string) (*bursa.Wallet, error) {
+	stored, err := s.store.GetWallet(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	wallet := new(bursa.Wallet)
+	if err := stored.PopulateTo(wallet); err != nil {
+		return nil, err
+	}
+	return wallet, nil
+}
+
+func (s configuredLegacyWalletStore) Update(ctx context.Context, name, description string) (bool, error) {
+	stored, err := s.store.GetWallet(ctx, name)
+	if err != nil {
+		return false, err
+	}
+	if stored.Description() == description {
+		return false, nil
+	}
+	stored.SetDescription(description)
+	if err := stored.Save(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s configuredLegacyWalletStore) Delete(ctx context.Context, name string) error {
+	return s.store.DeleteWallet(ctx, name)
+}
+
+func (s configuredLegacyWalletStore) Close() error {
+	closer, ok := s.store.(io.Closer)
+	if !ok {
+		return nil
+	}
+	return closer.Close()
+}
+
+func (s configuredLegacyWalletStore) Create(ctx context.Context, name string, wallet *bursa.Wallet, description string) error {
+	stored, err := s.store.CreateWallet(name)
+	if err != nil {
+		return err
+	}
+	stored.SetDescription(description)
+	if err := stored.PopulateFrom(wallet); err != nil {
+		return err
+	}
+	return stored.Save(ctx)
+}
+
+func walletStorageConfigured(cfg *config.Config) bool {
+	return cfg.Storage.Backend != "" ||
+		(cfg.Google.Project != "" && cfg.Google.ResourceId != "")
+}
+
+func configuredWalletStore(cfg *config.Config) (legacyWalletStore, error) {
+	return configuredWalletStoreWithFactory(cfg, storage.NewStore)
+}
+
+func configuredWalletStoreWithFactory(
+	cfg *config.Config,
+	newStore func(*config.Config) (storage.Store, error),
+) (legacyWalletStore, error) {
+	if !walletStorageConfigured(cfg) {
+		return nil, nil
+	}
+	store, err := newStore(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("initialize wallet storage: %w", err)
+	}
+	return configuredLegacyWalletStore{store: store}, nil
+}
 
 func (gcpLegacyWalletStore) List(ctx context.Context) ([]string, error) {
 	return gcp.ListGoogleWallets(ctx, nil)
@@ -767,9 +894,9 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 			cfg.Api.ListenAddress,
 		)
 	}
-	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+	if walletStorageConfigured(cfg) {
 		if auth == nil {
-			return errors.New("API JWT/JWKS authentication is required when GCP wallet storage is enabled")
+			return errors.New("API JWT/JWKS authentication is required when wallet storage is enabled")
 		}
 		hasAdmin := false
 		for _, subject := range cfg.Api.JWTAdminSubjects {
@@ -779,7 +906,7 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 			}
 		}
 		if !hasAdmin {
-			return errors.New("api.jwt_admin_subjects must identify at least one administrator when authenticated GCP wallet storage is enabled")
+			return errors.New("api.jwt_admin_subjects must identify at least one administrator when authenticated wallet storage is enabled")
 		}
 	}
 	return nil
@@ -811,8 +938,8 @@ func registerAPIHandlers(
 	protected := func(next http.Handler) http.Handler {
 		return protectAPIHandler(auth, next)
 	}
-	mux.Handle("/api/wallet/create", protected(http.HandlerFunc(handleWalletCreate)))
-	mux.Handle("/api/wallet/restore", protected(http.HandlerFunc(handleWalletRestore)))
+	mux.Handle("/api/wallet/create", protected(withLegacyStore(store, http.HandlerFunc(handleWalletCreate))))
+	mux.Handle("/api/wallet/restore", protected(withLegacyStore(store, http.HandlerFunc(handleWalletRestore))))
 
 	mux.HandleFunc("/api/script/create", handleScriptCreate)
 	mux.Handle("/api/script/validate", boundedScriptValidation(http.HandlerFunc(handleScriptValidate)))
@@ -831,7 +958,7 @@ func registerAPIHandlers(
 	mux.Handle("/api/sign/data", protected(http.HandlerFunc(handleSignData)))
 	mux.HandleFunc("/api/sign/verify", handleVerifyData)
 
-	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+	if walletStorageConfigured(cfg) {
 		walletStorage := func(next http.Handler) http.Handler {
 			return withLegacyStore(store, protectWalletStorageHandler(auth, cfg.Api.JWTAdminSubjects, next))
 		}
@@ -873,6 +1000,22 @@ func boundedScriptValidation(next http.Handler) http.Handler {
 	})
 }
 
+// newHTTPServer returns a server for handler with every connection phase
+// bounded.
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 60 * time.Second,
+		// Headers arriving is not the same as a body arriving: without this, a
+		// client can hold a connection open mid-body indefinitely.
+		ReadTimeout: 120 * time.Second,
+		// A client that stops reading the response would otherwise pin the
+		// connection, and the handler's slot, for as long as it likes.
+		WriteTimeout: 120 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+}
+
 // Start initializes and starts the HTTP servers for the API and metrics
 // Listeners can be passed in for testing purposes to provide ephermeral ports
 func Start(
@@ -901,7 +1044,21 @@ func Start(
 	// Main HTTP server for API endpoints
 	//
 	mainMux := http.NewServeMux()
-	registerAPIHandlers(mainMux, cfg, apiAuth, gcpLegacyWalletStore{})
+	walletStore, err := configuredWalletStore(cfg)
+	if err != nil {
+		return err
+	}
+	if walletStore == nil {
+		walletStore = gcpLegacyWalletStore{}
+	}
+	if closer, ok := walletStore.(interface{ Close() error }); ok {
+		defer func() {
+			if err := closer.Close(); err != nil {
+				logger.Warn("failed to close wallet storage", "error", err)
+			}
+		}()
+	}
+	registerAPIHandlers(mainMux, cfg, apiAuth, walletStore)
 
 	// Wrap the mainMux with an access-logging middleware
 	mainHandler := logMiddleware(mainMux, accessLogger)
@@ -912,13 +1069,7 @@ func Start(
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", promhttp.Handler())
 
-	metricsServer := &http.Server{
-		Handler:           metricsMux,
-		ReadHeaderTimeout: 60 * time.Second,
-		// Headers arriving is not the same as a body arriving: without this, a
-		// client can hold a connection open mid-body indefinitely.
-		ReadTimeout: 120 * time.Second,
-	}
+	metricsServer := newHTTPServer(metricsMux)
 	if metricsListener == nil {
 		metricsServer.Addr = fmt.Sprintf(
 			"%s:%d",
@@ -927,15 +1078,9 @@ func Start(
 		)
 	}
 
-	apiServer := &http.Server{
-		Handler:           mainHandler,
-		ReadHeaderTimeout: 60 * time.Second,
-		// Headers arriving is not the same as a body arriving: without this, a
-		// client can hold a connection open mid-body indefinitely.
-		ReadTimeout: 120 * time.Second,
-		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		},
+	apiServer := newHTTPServer(mainHandler)
+	apiServer.TLSConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
 	}
 	if apiListener == nil {
 		apiServer.Addr = fmt.Sprintf(
@@ -1124,23 +1269,19 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Persistence
-	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+	if walletStorageConfigured(cfg) {
 		name := uuid.NewString()
-		g := gcp.NewGoogleWallet(name)
-		g.SetDescription("automatically generated at " + time.Now().String())
-		if err := g.PopulateFrom(wallet); err != nil {
-			logger.Error("failed to populate wallet", "error", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprintf(w, "failed to populate wallet: %s", err)
+		description := "automatically generated at " + time.Now().String()
+		creator, ok := legacyStore(r).(legacyWalletCreator)
+		if !ok {
+			logger.Error("configured wallet store cannot create wallets")
+			writeJSONError(w, logger, map[string]string{"error": "Internal server error"}, http.StatusInternalServerError)
 			walletsFailCounter.Inc()
 			return
 		}
-		if err := g.Save(r.Context()); err != nil {
-			logger.Error("failed to save wallet", "error", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprintf(w,
-				"failed to save wallet: %s", err)
-			// Increment fail counter
+		if err := creator.Create(r.Context(), name, wallet, description); err != nil {
+			logger.Error("failed to persist wallet", "error", err)
+			writeError(w, http.StatusInternalServerError, errors.New("failed to persist wallet"))
 			walletsFailCounter.Inc()
 			return
 		}
@@ -1224,25 +1365,19 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Persistence
-	if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+	if walletStorageConfigured(cfg) {
 		name := uuid.NewString()
-		g := gcp.NewGoogleWallet(name)
-		g.SetDescription("restored at " + time.Now().String())
-		if err := g.PopulateFrom(wallet); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			logger.Error("failed to populate wallet", "error", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprintf(w, "failed to populate wallet: %s", err)
+		description := "restored at " + time.Now().String()
+		creator, ok := legacyStore(r).(legacyWalletCreator)
+		if !ok {
+			logger.Error("configured wallet store cannot create wallets")
+			writeJSONError(w, logger, map[string]string{"error": "Internal server error"}, http.StatusInternalServerError)
 			walletsFailCounter.Inc()
 			return
 		}
-		if err := g.Save(r.Context()); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			logger.Error("failed to save wallet", "error", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprintf(w,
-				"failed to save wallet: %s", err)
-			// Increment fail counter
+		if err := creator.Create(r.Context(), name, wallet, description); err != nil {
+			logger.Error("failed to persist restored wallet", "error", err)
+			writeJSONError(w, logger, map[string]string{"error": "Internal server error"}, http.StatusInternalServerError)
 			walletsFailCounter.Inc()
 			return
 		}
@@ -1283,10 +1418,8 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 
 	wallets, err := legacyStore(r).List(r.Context())
 	if err != nil {
-		logger.Error("failed to load google wallets", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = fmt.Fprintf(w,
-			"failed to load google wallets: %s", err)
+		logger.Error("failed to load wallets", "error", err)
+		http.Error(w, "failed to load wallets", http.StatusInternalServerError)
 		walletsFailCounter.Inc()
 		return
 	}
@@ -1294,11 +1427,8 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	resp, err := json.Marshal(wallets)
 	if err != nil {
-		logger.Error("failed to deserialize google wallets", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = fmt.Fprintf(w,
-
-			"failed to deserialize google wallets: %s", err)
+		logger.Error("failed to serialize wallet names", "error", err)
+		http.Error(w, "failed to serialize wallet names", http.StatusInternalServerError)
 		walletsFailCounter.Inc()
 		return
 	}
@@ -1318,6 +1448,9 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 //	@Failure		403		{object}	ErrorResponse		"Wallet storage administrator access required"
 //	@Failure		500		{object}	ErrorResponse		"Internal server error"
 //	@Security		BearerAuth
+//
+//	@Failure		404	{object}	ErrorResponse	"Wallet not found"
+//
 //	@Router			/api/wallet/get [post]
 func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1345,15 +1478,7 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 			req.Name,
 		)
 
-		// Check GCP error codes for proper HTTP status mapping
-		if grpcStatus, ok := status.FromError(err); ok {
-			mapGRPCToHTTPError(w, grpcStatus)
-		} else {
-			// Non-gRPC error, treat as internal server error
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
-		}
+		writeWalletStorageError(w, err)
 		walletsFailCounter.Inc()
 		return
 	}
@@ -1385,6 +1510,9 @@ func handleWalletGet(w http.ResponseWriter, r *http.Request) {
 //	@Failure		403		{object}	ErrorResponse		"Wallet storage administrator access required"
 //	@Failure		500		{object}	ErrorResponse		"Internal server error"
 //	@Security		BearerAuth
+//
+//	@Failure		404	{object}	ErrorResponse	"Wallet not found"
+//
 //	@Router			/api/wallet/delete [post]
 func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1410,15 +1538,7 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 			req.Name,
 		)
 
-		// Check GCP error codes for proper HTTP status mapping
-		if grpcStatus, ok := status.FromError(err); ok {
-			mapGRPCToHTTPError(w, grpcStatus)
-		} else {
-			// Non-gRPC error, treat as internal server error
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
-		}
+		writeWalletStorageError(w, err)
 		walletsFailCounter.Inc()
 		return
 	}
@@ -1442,6 +1562,9 @@ func handleWalletDelete(w http.ResponseWriter, r *http.Request) {
 //	@Failure		403		{object}	ErrorResponse		"Wallet storage administrator access required"
 //	@Failure		500		{string}	string				"Internal server error"
 //	@Security		BearerAuth
+//
+//	@Failure		404	{object}	ErrorResponse	"Wallet not found"
+//
 //	@Router			/api/wallet/update [post]
 func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1472,15 +1595,7 @@ func handleWalletUpdate(w http.ResponseWriter, r *http.Request) {
 			req.Name,
 		)
 
-		// Check GCP error codes for proper HTTP status mapping
-		if grpcStatus, ok := status.FromError(err); ok {
-			mapGRPCToHTTPError(w, grpcStatus)
-		} else {
-			// Non-gRPC error, treat as internal server error
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error":"Internal server error"}`))
-		}
+		writeWalletStorageError(w, err)
 		walletsFailCounter.Inc()
 		return
 	}
@@ -1864,8 +1979,7 @@ func handleAddressParse(w http.ResponseWriter, r *http.Request) {
 
 	logger := logging.GetLogger()
 
-	// Parse the address
-	addr, err := lcommon.NewAddress(req.Address)
+	addr, err := decodeAddressParseRequest(&req)
 	if err != nil {
 		logger.Error(
 			"failed to parse address",
@@ -1884,7 +1998,7 @@ func handleAddressParse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build response
-	response, err := buildAddressParseResponse(&addr, req.Address)
+	response, err := buildAddressParseResponse(&addr, addr.String())
 	if err != nil {
 		logger.Error("failed to build address parse response", "error", err)
 		writeJSONError(
@@ -2280,6 +2394,28 @@ func handleAddressEnumerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, addrs)
+}
+
+// decodeAddressParseRequest decodes the address in the encoding the request
+// names. Binary encodings carry no text form to echo, so the response reports
+// the canonical string for every format.
+func decodeAddressParseRequest(
+	req *AddressParseRequest,
+) (lcommon.Address, error) {
+	var raw []byte
+	var err error
+	switch req.Format {
+	case "hex":
+		raw, err = hex.DecodeString(req.Address)
+	case "base64":
+		raw, err = base64.StdEncoding.DecodeString(req.Address)
+	default:
+		return lcommon.NewAddress(req.Address)
+	}
+	if err != nil {
+		return lcommon.Address{}, err
+	}
+	return lcommon.NewAddressFromBytes(raw)
 }
 
 // buildAddressParseResponse builds the response for address parsing

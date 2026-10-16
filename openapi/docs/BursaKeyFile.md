@@ -4,9 +4,9 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**CborHex** | Pointer to **string** |  | [optional] 
-**Description** | Pointer to **string** |  | [optional] 
-**Type** | Pointer to **string** |  | [optional] 
+**CborHex** | Pointer to **string** |  | [optional]
+**Description** | Pointer to **string** |  | [optional]
+**Type** | Pointer to **string** |  | [optional]
 
 ## Methods
 
@@ -104,5 +104,3 @@ HasType returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
-

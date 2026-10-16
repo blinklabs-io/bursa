@@ -294,7 +294,7 @@ jobs:
         with:
           fetch-depth: '0'
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 https://github.com/actions/setup-node/releases/tag/v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0 https://github.com/actions/setup-node/releases/tag/v7.1.0
         with:
           node-version: 22
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
@@ -447,7 +447,7 @@ jobs:
       # verified pkg as a workflow artifact for inspection.
       - name: Upload exercised macOS .pkg
         if: matrix.os == 'darwin' && github.event_name == 'workflow_dispatch' && inputs.exercise_macos_signing
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 https://github.com/actions/upload-artifact/releases/tag/v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2 https://github.com/actions/upload-artifact/releases/tag/v7.0.2
         with:
           name: bursa-wallet-macos-pkg-${{ matrix.arch }}
           path: dist/*.pkg
@@ -495,8 +495,16 @@ jobs:
                 -Pattern 'Pre-build placeholder' -Quiet) {
             Write-Error "embed dir still holds the placeholder after copy"; exit 1
           }
+          # Mirror the Makefile's UI version ldflags: the tray update check
+          # reads the embedded version, and only an exact tag is a release.
+          $uiVersion = (& git describe --tags --exact-match 2>$null)
+          $uiCommit = (& git rev-parse --short HEAD)
+          $uiModule = "github.com/blinklabs-io/bursa/ui"
+          $ldflags = "-s -w -H=windowsgui " +
+            "-X '$uiModule/internal/version.Version=$uiVersion' " +
+            "-X '$uiModule/internal/version.CommitHash=$uiCommit'"
           Push-Location ui
-          go build -tags webview -ldflags "-s -w -H=windowsgui" -o "$env:GITHUB_WORKSPACE\bursa-wallet.exe" ./cmd/bursa-wallet
+          go build -tags webview -ldflags $ldflags -o "$env:GITHUB_WORKSPACE\bursa-wallet.exe" ./cmd/bursa-wallet
           if ($LASTEXITCODE -ne 0) { Write-Error "webview exe build failed"; exit 1 }
           Pop-Location
 
