@@ -154,7 +154,9 @@ func startWithLifetime(logger *slog.Logger, cmd *exec.Cmd, lifetime time.Duratio
 			if err := cmd.Process.Kill(); err != nil {
 				logger.Debug("desktop notifier ended before shutdown", "error", err)
 			}
-			<-done
+			if err := <-done; err != nil {
+				logger.Debug("desktop notifier reaped", "error", err)
+			}
 		}
 		if lifetime <= notifyStartGrace {
 			reap()
@@ -167,7 +169,10 @@ func startWithLifetime(logger *slog.Logger, cmd *exec.Cmd, lifetime time.Duratio
 			remaining := time.NewTimer(lifetime - notifyStartGrace)
 			defer remaining.Stop()
 			select {
-			case <-done:
+			case err := <-done:
+				if err != nil {
+					logger.Debug("desktop notifier exited", "error", err)
+				}
 			case <-remaining.C:
 				reap()
 			}
