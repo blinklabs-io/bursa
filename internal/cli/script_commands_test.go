@@ -415,7 +415,7 @@ func TestRunAddressInfo_InvalidAddressString(t *testing.T) {
 }
 
 func TestRunHashAnchorData_TextInput(t *testing.T) {
-	output := captureStdout(t, func() {
+	output := captureStdoutLastLine(t, func() {
 		err := RunHashAnchorData(
 			"test data", "", "", "", "", "",
 		)
@@ -436,7 +436,7 @@ func TestRunHashAnchorData_FileTextInput(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	output := captureStdout(t, func() {
+	output := captureStdoutLastLine(t, func() {
 		err := RunHashAnchorData(
 			"", testFile, "", "", "", "",
 		)
@@ -456,7 +456,7 @@ func TestRunHashAnchorData_FileBinaryInput(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	output := captureStdout(t, func() {
+	output := captureStdoutLastLine(t, func() {
 		err := RunHashAnchorData(
 			"", "", testFile, "", "", "",
 		)
@@ -473,7 +473,7 @@ func TestRunHashAnchorData_NoInput(t *testing.T) {
 
 func TestRunHashAnchorData_ExpectedHash_Match(t *testing.T) {
 	// First compute hash of "test data"
-	hash := captureStdout(t, func() {
+	hash := captureStdoutLastLine(t, func() {
 		err := RunHashAnchorData(
 			"test data", "", "", "", "", "",
 		)
