@@ -2,10 +2,15 @@ package boot
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/Salvionied/apollo/v2/backend"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	cardanosubmit "github.com/utxorpc/go-codegen/utxorpc/v1beta/submit"
+	utxorpcsdk "github.com/utxorpc/go-sdk"
 )
 
 // chainCallTimeout bounds each UTxO-RPC call, request and response body
@@ -19,8 +24,13 @@ const chainCallTimeout = 30 * time.Second
 // the wrapped chain context, including the historic methods without a context
 // parameter.
 type boundedChainContext struct {
-	inner   backend.ChainContext
-	timeout time.Duration
+	inner     backend.ChainContext
+	timeout   time.Duration
+	submitter *boundedUTxORPCSubmitter
+}
+
+type boundedUTxORPCSubmitter struct {
+	client *utxorpcsdk.UtxorpcClient
 }
 
 var (
@@ -31,6 +41,23 @@ var (
 
 func newBoundedChainContext(inner backend.ChainContext, timeout time.Duration) boundedChainContext {
 	return boundedChainContext{inner: inner, timeout: timeout}
+}
+
+func newBoundedUTxORPCChainContext(
+	inner backend.ChainContext,
+	baseURL string,
+	timeout time.Duration,
+) boundedChainContext {
+	client := utxorpcsdk.NewClient(
+		utxorpcsdk.WithBaseUrl(baseURL),
+		utxorpcsdk.WithDialTimeout(timeout),
+		utxorpcsdk.WithRequestTimeout(timeout),
+	)
+	result := newBoundedChainContext(inner, timeout)
+	result.submitter = &boundedUTxORPCSubmitter{
+		client: client,
+	}
+	return result
 }
 
 func (b boundedChainContext) Capabilities() backend.CapabilitySet {
@@ -78,7 +105,39 @@ func (b boundedChainContext) UtxosContext(ctx context.Context, address lcommon.A
 func (b boundedChainContext) SubmitTxContext(ctx context.Context, txCbor []byte) (lcommon.Blake2b256, error) {
 	ctx, cancel := b.bound(ctx)
 	defer cancel()
+	if b.submitter != nil {
+		return b.submitter.SubmitTxContext(ctx, txCbor)
+	}
 	return backend.SubmitTxContext(ctx, b.inner, txCbor)
+}
+
+func (s *boundedUTxORPCSubmitter) SubmitTxContext(
+	ctx context.Context,
+	txCbor []byte,
+) (lcommon.Blake2b256, error) {
+	if s == nil || s.client == nil {
+		return lcommon.Blake2b256{}, errors.New("UTxO-RPC submit client is unavailable")
+	}
+	req := connect.NewRequest(&cardanosubmit.SubmitTxRequest{
+		Tx: &cardanosubmit.AnyChainTx{
+			Type: &cardanosubmit.AnyChainTx_Raw{Raw: txCbor},
+		},
+	})
+	resp, err := s.client.SubmitTxWithContext(ctx, req)
+	if err != nil {
+		return lcommon.Blake2b256{}, err
+	}
+	ref := resp.Msg.GetRef()
+	if len(ref) != lcommon.Blake2b256Size {
+		return lcommon.Blake2b256{}, fmt.Errorf(
+			"invalid transaction reference length: expected %d bytes, got %d",
+			lcommon.Blake2b256Size,
+			len(ref),
+		)
+	}
+	var result lcommon.Blake2b256
+	copy(result[:], ref)
+	return result, nil
 }
 
 func (b boundedChainContext) EvaluateTxContext(
