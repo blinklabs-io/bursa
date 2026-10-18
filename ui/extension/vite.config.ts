@@ -13,9 +13,8 @@ function listFiles(dir: string): string[] {
 }
 
 // `vite build --mode chrome|firefox` writes one loadable tree per browser and a
-// package of it beside the tree. The zip is written here, not by web-ext, because
-// web-ext stamps entries with the current time and in completion order, which makes
-// every package differ; sorted entries and a fixed local-time epoch do not.
+// package of it beside the tree. Sorted entries and a fixed local-time epoch keep
+// every package reproducible.
 export default defineConfig(({ mode }) => {
   const target = mode === 'firefox' ? 'firefox' : 'chrome';
   const source = JSON.parse(readFileSync(resolve(__dirname, 'manifest.json'), 'utf8'));

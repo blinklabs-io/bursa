@@ -9,7 +9,7 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "npm run build && node e2e/cip30.test.mjs chrome && node e2e/cip30.test.mjs firefox",
-    "lint:firefox": "web-ext lint --source-dir dist/firefox --warnings-as-errors",
+    "lint:firefox": "addons-linter dist/firefox --warnings-as-errors",
     "package": "npm run build && npm run lint:firefox",
     "test:e2e:chrome": "node e2e/cip30.test.mjs chrome",
     "test:e2e:firefox": "node e2e/cip30.test.mjs firefox"
@@ -27,6 +27,6 @@
     "typescript-eslint": "^8.0.0",
     "vite": "^8.1.5",
     "vitest": "^4.1.11",
-    "web-ext": "10.8.0"
+    "addons-linter": "10.14.0"
   }
 }
