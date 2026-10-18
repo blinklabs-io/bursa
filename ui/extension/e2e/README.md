@@ -41,7 +41,7 @@ snap-packaged `geckodriver` can drive only the snap Firefox; use an upstream
 ```sh
 cd ui/extension
 npm run build           # dist/chrome, dist/firefox and one zip per browser in dist/
-npm run lint:firefox    # web-ext lint --warnings-as-errors on dist/firefox
+npm run lint:firefox    # addons-linter --warnings-as-errors on dist/firefox
 npm run package         # build, then lint:firefox
 ```
 
