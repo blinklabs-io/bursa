@@ -1,6 +1,6 @@
 module github.com/blinklabs-io/bursa
 
-go 1.26.5
+go 1.26.8
 
 require (
 	cloud.google.com/go/secretmanager v1.22.0
@@ -11,9 +11,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.6
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.1
 	github.com/blinklabs-io/go-bip39 v0.2.0
-	github.com/blinklabs-io/gouroboros v0.212.5
+	github.com/blinklabs-io/gouroboros v0.213.3
 	github.com/btcsuite/btcd/btcutil v1.2.0
-	github.com/consensys/gnark-crypto v0.21.0
+	github.com/consensys/gnark-crypto v0.22.0
 	github.com/fxamacker/cbor/v2 v2.9.6
 	github.com/getsops/sops/v3 v3.13.3
 	github.com/go-jose/go-jose/v4 v4.1.4
@@ -84,7 +84,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.1 // indirect
 	github.com/aws/smithy-go v1.28.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/bits-and-blooms/bitset v1.24.6 // indirect
+	github.com/bits-and-blooms/bitset v1.25.0 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/blinklabs-io/plutigo v0.9.1 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.5.0 // indirect
