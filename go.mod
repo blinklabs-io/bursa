@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	cloud.google.com/go/secretmanager v1.22.0
-	filippo.io/age v1.3.1
+	filippo.io/age v1.3.2
 	filippo.io/edwards25519 v1.2.0
 	github.com/MicahParks/keyfunc/v3 v3.8.2
 	github.com/aws/aws-sdk-go-v2 v1.47.1
