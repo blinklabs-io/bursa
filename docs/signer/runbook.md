@@ -25,7 +25,8 @@ key passphrase) should be delivered via environment variables, not the file.
 
 Boot performs eager validation and exits non-zero on any of:
 
-- neither or both of `signer.jwt_secret` / `signer.jwks_url` set;
+- no authentication mode configured, or both `signer.jwt_secret` and
+  `signer.jwks_url` set;
 - `signer.jwt_secret` shorter than 32 bytes;
 - only one of `tls_cert_file` / `tls_key_file` set;
 - a non-loopback listen address without TLS;
@@ -35,15 +36,6 @@ Boot performs eager validation and exits non-zero on any of:
 - invalid policy, watermark, or caller ACL.
 
 ## 3. Authentication
-
-> **Implementation status.** JWT bearer is the only auth mode in `main` today
-> (`internal/signer/api/auth.go`). The mTLS client-certificate and
-> authorized-keys request-signing modes described below, and the precedence
-> chain between them, are implemented by PR #673 (branch `feat/signer-mtls`).
-> Their config keys (`client_ca_cert`, `require_client_cert`,
-> `authorized_keys`, `request_sign_skew_seconds`) are absent from
-> `config.SignerConfig` until that PR merges and are not read by the current
-> build.
 
 At least one auth mode must be configured. The modes are composable and all
 resolve to a single caller identity fed to the caller ACL. When more than one is
@@ -65,7 +57,7 @@ Configure **at most one** validator:
 unset only if you intend to accept any issuer/audience (a warning is logged).
 The caller identity is the token `sub` claim.
 
-### mTLS client certificate (PR #673)
+### mTLS client certificate
 
 Set `signer.client_ca_cert` to a PEM bundle of CA certificate(s) used to verify
 TLS client certificates. This requires server TLS (below) - the client cert is
@@ -84,7 +76,7 @@ The caller identity is derived from the verified leaf certificate: first URI
 SAN, else first DNS SAN, else the Subject CommonName. Set the matching value as
 a `signer.callers[].subject` to scope keys per client identity.
 
-### Authorized-keys request signing (PR #673)
+### Authorized-keys request signing
 
 `signer.authorized_keys` registers Ed25519 public keys allowed to authenticate
 by signing each request. Each entry is `{caller, ed25519_pubkey_hex}` (the
@@ -111,12 +103,15 @@ identity is `X-Bursa-Key`.
 
 ### Caller ACL
 
-`signer.callers` maps a caller identity to a list of key hashes. Today that
-identity is the JWT `sub`; the mTLS cert identity and authorized-key `caller`
-join it when PR #673 merges. When any callers are configured, unlisted subjects
-are denied every key, and each subject is limited to its listed keys. Without a
-caller ACL, any valid token may use any configured key (a warning is logged at
-boot). Sign-path ACL denials return HTTP 403; key
+`signer.callers` maps a caller identity to a list of key hashes. That identity
+is the verified certificate identity, authorized-key `caller`, or JWT `sub`,
+depending on the authentication mode. When any callers are configured, unlisted
+subjects are denied every key, and each subject is limited to its listed keys.
+Without a caller ACL, any authenticated caller may use any configured key (a
+warning is logged at boot). A signing request denied entirely by the caller
+ACL returns HTTP 403. Transaction requests can return HTTP 200 with successful
+witnesses and per-signer ACL errors; if no signer succeeds, a signing error
+takes precedence over an ACL error when selecting the response status. Key
 list/detail filtering hides unauthorized keys (detail returns 404 to prevent
 existence probing).
 
@@ -127,10 +122,10 @@ are set (TLS 1.2 minimum). A non-loopback listen address without TLS is refused
 at boot. Loopback listeners may run plaintext (for local development or when a
 co-located proxy terminates TLS).
 
-Mutual TLS is not yet supported natively: `signer.client_ca_cert` and the
-handshake-time client-certificate verification described in the mTLS subsection
-under [Authentication](#3-authentication) are implemented by PR #673. Until it
-merges, terminate mTLS at a reverse proxy that forwards a JWT.
+For mutual TLS, set `signer.client_ca_cert` and optionally
+`signer.require_client_cert` as described under
+[Authentication](#3-authentication). Client certificates are verified during
+the TLS handshake.
 
 ## 5. Custody backends
 
@@ -158,7 +153,7 @@ into process memory. Passphrase-encrypted files require `passphrase_env`. This
 backend is gated by `allow_insecure_file_backend` on non-loopback addresses;
 see [security.md](security.md).
 
-### pkcs11 (HSM; requires `-tags pkcs11`; merged in #668)
+### pkcs11 (HSM; requires `-tags pkcs11`)
 
 Hardware-custody backend that signs with an Ed25519 key held in a PKCS#11 token
 (HSM). The private key never leaves the token: the signer sends the message and

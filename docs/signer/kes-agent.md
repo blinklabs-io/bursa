@@ -2,15 +2,14 @@
 
 `bursa kes-agent` is a KES (Key Evolving Signature) agent daemon: a Go replica
 of IOG's kes-agent, serving a Go block producer (dingo) rather than
-cardano-node. It was introduced in #675.
+cardano-node.
 
-It requires a bursa build that includes the `kes-agent` command; the
-configuration described here is consumed by that daemon and by nothing else, so
-on a build without it these settings — including the socket modes — have no
-effect. Verify with `bursa kes-agent --help`.
+The configuration described here is consumed by `bursa kes-agent`, separately
+from the remote signer's configuration. Run `bursa kes-agent --help` for command
+options.
 
-The agent holds the block-production KES signing key in locked (mlock'd) secure
-memory, evolves it forward-securely each KES period, and serves it to the
+The agent holds the block-production KES signing key in memory with best-effort
+`mlock`, evolves it forward-securely each KES period, and serves it to the
 producer over Unix-domain sockets. **The pool cold signing key never touches the
 agent**; the agent holds only the cold *verification* key and consumes the
 operational certificate that the cold signer (e.g. cardano-cli or `bursa signer`
@@ -85,10 +84,11 @@ period are rejected before key evolution or guard persistence.
 
 ## Locked memory
 
-The KES signing key is held in `mlock`'d memory so it is never swapped to disk.
-This requires a sufficient `RLIMIT_MEMLOCK`; the provided systemd unit sets
-`LimitMEMLOCK`. On platforms without mlock support the agent degrades to
-unlocked memory.
+The agent attempts to lock the KES signing key buffer with `mlock` so that
+buffer cannot be swapped to disk. This requires a sufficient `RLIMIT_MEMLOCK`;
+the provided systemd unit sets `LimitMEMLOCK`. If the platform does not support
+`mlock` or the lock request is refused, the agent logs a warning and continues
+with unlocked memory, which may be swapped to disk.
 
 ## Slot / period configuration
 

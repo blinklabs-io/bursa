@@ -3,7 +3,7 @@
 This document specifies the Unix-domain-socket protocol spoken by the bursa KES
 agent (`bursa kes-agent`) so a client (e.g. a dingo block producer) can
 implement it. It is transcribed from `internal/kesagent/protocol.go` and
-`internal/kesagent/control.go` (introduced in #675).
+`internal/kesagent/control.go`.
 
 The agent exposes two sockets:
 

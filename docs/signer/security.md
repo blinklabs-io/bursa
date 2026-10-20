@@ -10,7 +10,7 @@ protect them:
 | Asset | Threat | Control |
 |-------|--------|---------|
 | Private key material | Exfiltration from the signer host | Prefer custody where the key never enters the signer process - a PKCS#11 HSM token or Vault Transit; keep the plaintext software backend on loopback/dev only |
-| The signing capability | Unauthorized callers | Bearer JWT (HS256/JWKS) with enforced `iss`/`aud`; per-subject caller ACL over the resolved identity. mTLS client certificate and authorized-keys Ed25519 request signing (timestamp window + nonce replay cache) are not yet in main - implemented by PR #673 |
+| The signing capability | Unauthorized callers | mTLS client certificates, authorized-keys Ed25519 request signing (timestamp window + nonce replay cache), or bearer JWT (HS256/JWKS) with configured `iss`/`aud` checks; per-subject caller ACL over the resolved identity |
 | Correct-but-unwanted signatures | Over-broad key use | Deny-by-default per-key policy (`allowed_requests`, tx/cip8 policy) |
 | Consensus safety / key reuse | Double-signing, period rollback | Watermark store in `enforce` mode; KES period guard in the KES agent |
 | Request contents | Leakage via logs/errors | No secrets or raw CBOR logged; 5xx bodies masked; audit IDs correlate |
@@ -22,12 +22,6 @@ filesystem permissions and a dedicated service user (see the systemd units in
 `packaging/signer/`).
 
 ## Machine-to-machine authentication
-
-> **Implementation status.** Bearer JWT is the only auth scheme in `main` today
-> (`internal/signer/api/auth.go`). The mTLS and authorized-keys schemes below,
-> the precedence chain, and the `client_ca_cert`, `require_client_cert`,
-> `authorized_keys` and `request_sign_skew_seconds` settings are implemented by
-> PR #673 (branch `feat/signer-mtls`) and are not available until it merges.
 
 The signer is a service-to-service component; its production auth is designed for
 machine callers, tried in precedence order **mTLS > request-signing > JWT**:
@@ -44,7 +38,8 @@ machine callers, tried in precedence order **mTLS > request-signing > JWT**:
 - **JWT bearer** remains available for IdP-issued tokens (`iss`/`aud` enforced).
 
 All three resolve to a single caller identity fed to the per-subject caller ACL.
-Until #673 merges, that identity is always the JWT `sub`.
+Only schemes presenting no credential fall through to the next configured
+scheme; an invalid credential rejects the request.
 
 ## Custody guarantees
 
@@ -55,7 +50,7 @@ Transit and receives a signature back. In both cases the signer process never
 holds the key. These are the recommended postures for production and for any
 high-value key (pool cold, governance, payment hot). The `pkcs11` driver is CGO
 and requires the `-tags pkcs11` build; the default pure-Go build refuses to boot
-if a `pkcs11` backend is configured (`ErrPKCS11NotCompiled`). Merged in #668.
+if a `pkcs11` backend is configured (`ErrPKCS11NotCompiled`).
 
 The `nitro` and `confidential-space` backends keep keys inside an attested
 enclave and trust a key only after verifying platform attestation and each
@@ -94,10 +89,9 @@ anything that can read the process memory or the key directory.
   hardening (`NoNewPrivileges`, `ProtectSystem=strict`, `MemoryDenyWriteExecute`,
   etc.).
 - Terminate/serve TLS (TLS 1.2+); never expose a plaintext non-loopback listener.
-- Use JWKS with `iss` and `aud` enforced in production and rotate signing keys
-  at the IdP. Once PR #673 merges, prefer machine-to-machine auth instead: mTLS
-  client certificates (with `require_client_cert`) and/or authorized-keys
-  request signing.
+- Prefer mTLS client certificates (with `require_client_cert`) or
+  authorized-keys request signing for machine callers. When using JWT, use
+  JWKS with `iss` and `aud` enforced and rotate signing keys at the IdP.
 - Configure a caller ACL so each subject reaches only the keys it needs.
 - Prefer the `pkcs11` (HSM) or `vault` backend so keys never enter the process;
   reserve `software`/`file` for development.

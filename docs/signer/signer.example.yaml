@@ -10,7 +10,8 @@ signer:
   listen_address: "127.0.0.1"   # env: SIGNER_LISTEN_ADDRESS
   listen_port: 8090             # env: SIGNER_LISTEN_PORT
 
-  # --- Authentication (configure exactly ONE of jwt_secret or jwks_url) ---
+  # Configure at least one auth mode: JWT, mTLS, or authorized-keys signing.
+  # When using JWT, configure exactly one of jwt_secret or jwks_url.
 
   # HS256 shared secret (development / simple). Minimum 32 bytes.
   jwt_secret: ""                # env: SIGNER_JWT_SECRET
@@ -28,9 +29,6 @@ signer:
   tls_key_file: "/etc/bursa/signer/tls/server.key"   # env: SIGNER_TLS_KEY_FILE
 
   # --- mTLS client-certificate auth ---
-  # NOT YET IN MAIN: implemented by PR #673 (branch feat/signer-mtls). The keys
-  # below are not read by the current build; JWT bearer is the only auth scheme
-  # main implements today.
   # When client_ca_cert is set, TLS client certificates are verified against
   # this CA bundle and the caller identity is derived from the verified cert
   # (first URI SAN, else first DNS SAN, else CN). Requires server TLS above.
@@ -42,8 +40,6 @@ signer:
   #            the next configured auth mode.
 
   # --- Authorized-keys request signing ---
-  # NOT YET IN MAIN: implemented by PR #673 (branch feat/signer-mtls). The keys
-  # below are not read by the current build.
   # Each caller signs the canonical string
   #   METHOD|PATH|sha256(body)|timestamp|nonce
   # with its Ed25519 key and sends X-Bursa-{Signature,Timestamp,Nonce,Key}.
@@ -96,7 +92,7 @@ signer:
     # PKCS#11 / HSM: keys never leave the token; the HSM performs the Ed25519
     # signature. CGO-only, requires the `pkcs11` build tag
     # (CGO_ENABLED=1 go build -tags pkcs11 ...); the default pure-Go build
-    # refuses to boot if this backend is configured. Merged in #668. Does not
+    # refuses to boot if this backend is configured. Does not
     # serve cip8 (no in-process key).
     # - name: "hsm"
     #   type: "pkcs11"
