@@ -7,10 +7,11 @@ Operator documentation for the two bursa signing daemons:
   Cardano signatures (transactions, CIP-8/CIP-30 messages, operational
   certificates) under a per-key policy engine and an anti-double-sign watermark.
 - **`bursa kes-agent`** - a KES (Key Evolving Signature) agent daemon for a Go
-  block producer (dingo). It holds the block-production KES key in locked
-  (mlock'd) memory, evolves it forward-securely each KES period, and serves it
-  over Unix sockets. The pool cold signing key never touches the agent.
-  (Introduced in #675.)
+  block producer (dingo). It holds the block-production KES key in memory with
+  best-effort `mlock`, evolves it forward-securely each KES period, and serves
+  it over Unix sockets. If locking is unavailable or refused, it logs a warning
+  and continues with potentially swappable memory. The pool cold signing key
+  never touches the agent.
 
 ## Documents
 
@@ -30,15 +31,11 @@ Systemd units, an `EnvironmentFile` example, and a Dockerfile live in
 
 ## Capability summary
 
-Rows marked **not yet in main** describe a capability that is specified here but
-served by an open pull request; the caveat names it. Everything else is in the
-current `main`.
-
 | Capability | Support |
 |------------|---------|
-| Auth | JWT bearer (HS256 shared secret dev, or JWKS RS256/ES256/EdDSA prod); optional per-subject caller ACL. mTLS client certificate and authorized-keys Ed25519 request signing (precedence mTLS > request-signing > JWT) are **not yet in main** - implemented by PR #673 |
-| Transport | Server-side TLS (TLS 1.2+); loopback may run plaintext. Optional mutual TLS is **not yet in main** - implemented by PR #673 |
-| Custody backends | `nitro` and `confidential-space` (keys held in an attested TEE), `vault` (Transit, remote signing), `pkcs11` (HSM, keys never leave the token; CGO, `-tags pkcs11`; merged in #668), `sops` (GCP Secret Manager + SOPS), `software`/`file` (in-process plaintext, dev-only) |
+| Auth | mTLS client certificate, authorized-keys Ed25519 request signing, and JWT bearer (HS256 shared secret or JWKS RS256/ES256/EdDSA); precedence mTLS > request-signing > JWT; optional per-subject caller ACL |
+| Transport | Server-side TLS (TLS 1.2+); loopback may run plaintext. Optional mutual TLS verifies client certificates against a configured CA bundle |
+| Custody backends | `nitro` and `confidential-space` (keys held in an attested TEE), `vault` (Transit, remote signing), `pkcs11` (HSM, keys never leave the token; CGO, `-tags pkcs11`), `sops` (GCP Secret Manager + SOPS), `software`/`file` (in-process plaintext, dev-only) |
 | Operations | `tx`, `cip8`, `opcert` signing; key list/detail with effective policy |
 | Anti-double-sign | Watermark store: `mem` (non-durable; only with `warn` or `off`), `file` (SQLite), or shared HA-safe `postgres`; modes off/warn/enforce |
 | Observability | Static liveness on `/healthz`, dependency-aware readiness on `/readyz`, Prometheus `/metrics` |

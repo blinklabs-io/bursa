@@ -46,9 +46,11 @@ func kesAgentCommand() *cobra.Command {
 		Short: "Run the KES agent daemon for a Cardano block producer",
 		Long: `Run the KES agent daemon.
 
-The KES agent holds the block-production KES signing key in locked secure
-memory, evolves it forward-securely each KES period, and serves it to a Go
-block producer (dingo) over a Unix socket. It runs in one of two modes:
+The KES agent holds the block-production KES signing key in memory with
+best-effort mlock, evolves it forward-securely each KES period, and serves it
+to a Go block producer (dingo) over a Unix socket. If locking is unavailable
+or refused, it logs a warning and continues with potentially swappable memory.
+It runs in one of two modes:
 
   serve-key  push the current KES signing key (with its opcert) to the producer
   sign       sign block headers on the producer's behalf; the key never leaves
@@ -69,7 +71,7 @@ drop-key, info.`,
 // exit code. It is a plain function (rather than logic inlined in cobra's
 // Run) so that every exit path -- validation failure, listener setup
 // failure, or a listener error at runtime -- returns normally and lets
-// deferred cleanup (agent.Close(), which wipes the locked secure-memory KES
+// deferred cleanup (agent.Close(), which wipes the secure-memory KES
 // buffer, and socket removal) run. os.Exit skips deferred functions, so it
 // must only be called once, by the caller, after this function returns.
 func runKesAgent(configFile string) int {

@@ -17,6 +17,15 @@ Bursa is two things that share one set of keys:
   governance and stake-pool operations. It lives in [`ui/`](./ui) and has
   [its own README](./ui/README.md).
 
+## Documentation
+
+- [Bursa guides](https://docs.blinklabs.io/guides/bursa/001-bursa/) cover
+  installation, configuration, wallet usage, and CLI commands.
+- [Full-node wallet guide](./ui/README.md) covers desktop setup and operation.
+- [Signer documentation](./docs/signer/README.md) and the
+  [signer runbook](./docs/signer/runbook.md) cover remote signing, authentication,
+  custody backends, and deployment.
+
 ## Supported CIPs
 
 Bursa implements the following Cardano Improvement Proposals:
@@ -199,9 +208,14 @@ Available Commands:
   address     Address utility commands
   api         Runs the api
   cert        Certificate generation commands
+  hash        Hash utility commands
   help        Help about any command
+  kes-agent   Run the KES agent daemon for a Cardano block producer
   key         Key derivation commands
   script      Script commands for multi-signature operations
+  sign        CIP-8/CIP-30 message signing
+  signer      Run the Cardano remote signing service
+  tx          Offline transaction operations (sign, witness, assemble)
   wallet      Wallet commands
 
 Flags:
