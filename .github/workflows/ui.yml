@@ -1,11 +1,8 @@
 name: ui
 
+# Pull requests only: a push to main or a tag re-ran the checks its pull
+# request had just passed, and the release builds the UI itself.
 on:
-  push:
-    tags:
-      - v*
-    branches:
-      - main
   pull_request:
 
 permissions:
@@ -50,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         browser: [chrome, firefox]
     defaults:
