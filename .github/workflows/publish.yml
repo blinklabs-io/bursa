@@ -82,30 +82,19 @@ jobs:
     # A manual run exists to exercise the macOS packaging path. This job
     # publishes or finalises release output, so it stays on the push triggers.
     if: github.event_name != 'workflow_dispatch'
+    # The CLI is pure Go (CGO_ENABLED=0), so every target cross-compiles from one
+    # ubuntu runner. Only darwin/arm64 needs macOS, for codesign and notarytool.
+    # Each row builds its space-separated GOOS/GOARCH targets in turn.
+    name: build-binaries (${{ matrix.name }})
     strategy:
       matrix:
         include:
-          - runner: macos-15
-            os: darwin
-            arch: arm64
-          - runner: ubuntu-latest
-            os: freebsd
-            arch: amd64
-          - runner: ubuntu-latest
-            os: freebsd
-            arch: arm64
-          - runner: ubuntu-latest
-            os: linux
-            arch: amd64
-          - runner: ubuntu-latest
-            os: linux
-            arch: arm64
-          - runner: ubuntu-latest
-            os: windows
-            arch: amd64
-          - runner: ubuntu-latest
-            os: windows
-            arch: arm64
+          - name: darwin
+            runner: macos-15
+            targets: darwin/arm64
+          - name: freebsd, linux, windows
+            runner: ubuntu-latest
+            targets: freebsd/amd64 freebsd/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
       max-parallel: 2
     runs-on: ${{ matrix.runner }}
     needs: [create-draft-release]
@@ -117,6 +106,8 @@ jobs:
       id-token: write
       packages: write
       statuses: write
+    env:
+      TARGETS: ${{ matrix.targets }}
     steps:
       - run: echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
@@ -126,27 +117,41 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
           go-version: 1.26.x
-      - name: Build binary
-        run: GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} make build
+      # Each target's binary is kept at build/<os>-<arch>/bursa. The make target
+      # depends on the Go sources, not on GOOS/GOARCH, so the previous target's
+      # output is removed first or make would skip the rebuild.
+      - name: Build binaries
+        run: |
+          set -euo pipefail
+          for _target in $TARGETS; do
+            _os="${_target%/*}"
+            _arch="${_target#*/}"
+            echo "::group::GOOS=${_os} GOARCH=${_arch}"
+            rm -f bursa
+            GOOS="${_os}" GOARCH="${_arch}" make build
+            mkdir -p "build/${_os}-${_arch}"
+            mv bursa "build/${_os}-${_arch}/bursa"
+            echo "::endgroup::"
+          done
 
-      # Sign Windows build
+      # Sign Windows builds
       - name: Set up Java
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0 https://github.com/actions/setup-java/releases/tag/v6.1.0
-        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
+        if: ${{ startsWith(github.ref, 'refs/tags/') && contains(matrix.targets, 'windows/') }}
         with:
           java-version: 17
           distribution: 'temurin'
       - id: 'auth'
         name: Authenticate with Google Cloud
-        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
+        if: ${{ startsWith(github.ref, 'refs/tags/') && contains(matrix.targets, 'windows/') }}
         uses: 'google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093' # v3.0.0 https://github.com/google-github-actions/auth/releases/tag/v3.0.0
         with:
           credentials_json: '${{ secrets.CERTIFICATE_SA_CREDENTIALS }}'
       - name: Set up Cloud SDK
-        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
+        if: ${{ startsWith(github.ref, 'refs/tags/') && contains(matrix.targets, 'windows/') }}
         uses: 'google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db' # v3.0.1 https://github.com/google-github-actions/setup-gcloud/releases/tag/v3.0.1
-      - name: Sign windows binary
-        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
+      - name: Sign windows binaries
+        if: ${{ startsWith(github.ref, 'refs/tags/') && contains(matrix.targets, 'windows/') }}
         run: |
           echo "Downloading jsign.jar"
           curl -L -o jsign.jar https://github.com/ebourg/jsign/releases/download/6.0/jsign-6.0.jar
@@ -154,28 +159,29 @@ jobs:
           echo '05ca18d4ab7b8c2183289b5378d32860f0ea0f3bdab1f1b8cae5894fb225fa8a  jsign.jar' | sha256sum -c
           echo "${{ secrets.CERTIFICATE_CHAIN }}" | base64 --decode > codesign-chain.pem
           set +x
-          _filename=bursa
           ACCESS_TOKEN=$(gcloud auth print-access-token)
           echo "::add-mask::$ACCESS_TOKEN"
-          java -jar jsign.jar \
-            --storetype ${{ secrets.CERTIFICATE_STORE_TYPE }} \
-            --storepass "$ACCESS_TOKEN" \
-            --keystore ${{ secrets.CERTIFICATE_KEYSTORE }} \
-            --alias ${{ secrets.CERTIFICATE_KEY_NAME }} \
-            --certfile codesign-chain.pem \
-            --tsmode RFC3161 \
-            --tsaurl http://timestamp.globalsign.com/tsa/r6advanced1 \
-            ${_filename}
+          for _filename in build/windows-*/bursa; do
+            java -jar jsign.jar \
+              --storetype ${{ secrets.CERTIFICATE_STORE_TYPE }} \
+              --storepass "$ACCESS_TOKEN" \
+              --keystore ${{ secrets.CERTIFICATE_KEYSTORE }} \
+              --alias ${{ secrets.CERTIFICATE_KEY_NAME }} \
+              --certfile codesign-chain.pem \
+              --tsmode RFC3161 \
+              --tsaurl http://timestamp.globalsign.com/tsa/r6advanced1 \
+              "${_filename}"
+            echo "Signed Windows binary: ${_filename}"
+          done
           unset ACCESS_TOKEN
           set -x
-          echo "Signed Windows binary: ${_filename}"
           echo "Cleaning up certificate chain"
           rm -f codesign-chain.pem
 
       # Sign MacOS build
 
       - name: Sign macos binary
-        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'darwin' }}
+        if: ${{ startsWith(github.ref, 'refs/tags/') && contains(matrix.targets, 'darwin/') }}
         run: |
           echo "Decoding and importing Apple certificate..."
           echo -n "${{ secrets.APPLE_CERTIFICATE }}" | base64 --decode -o apple_certificate.p12
@@ -185,51 +191,68 @@ jobs:
           security unlock-keychain -p "${{ secrets.APPLE_KEYCHAIN_PASSWORD }}" build.keychain
           security import apple_certificate.p12 -k build.keychain -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${{ secrets.APPLE_KEYCHAIN_PASSWORD }}" build.keychain
-          /usr/bin/codesign --force -s "Developer ID Application: Blink Labs Software (${{ secrets.APPLE_TEAM_ID }})" --timestamp --options runtime -i com.blinklabssoftware.bursa bursa -v
-          _filename=bursa-${{ env.RELEASE_TAG }}-${{ matrix.os }}-${{ matrix.arch }}.zip
-          zip -r ${_filename} bursa
           xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_ID }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" --password "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}"
-          xcrun notarytool submit ${_filename} --keychain-profile "notarytool-profile" --wait
+          for _dir in build/darwin-*; do
+            _arch="${_dir#build/darwin-}"
+            /usr/bin/codesign --force -s "Developer ID Application: Blink Labs Software (${{ secrets.APPLE_TEAM_ID }})" --timestamp --options runtime -i com.blinklabssoftware.bursa "${_dir}/bursa" -v
+            _filename="bursa-${{ env.RELEASE_TAG }}-darwin-${_arch}.zip"
+            (cd "${_dir}" && zip -r "${GITHUB_WORKSPACE}/${_filename}" bursa)
+            xcrun notarytool submit "${_filename}" --keychain-profile "notarytool-profile" --wait
+          done
 
-      - name: Upload release asset
+      - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          _filename=bursa-${{ env.RELEASE_TAG }}-${{ matrix.os }}-${{ matrix.arch }}
-          if [[ "${{ matrix.os }}" == "windows" ]]; then
-            _filename=${_filename}.exe
-            cp bursa ${_filename}
-          fi
-          if [[ "${{ matrix.os }}" == "linux" || "${{ matrix.os }}" == "freebsd" ]]; then
-            _filename=${_filename}.tar.gz
-            tar czf ${_filename} bursa
-          fi
-          if [[ "${{ matrix.os }}" == "darwin" ]]; then
-            # macOS stays a .zip: notarization above is submitted for the
-            # zipped binary, so re-use that exact archive as the asset.
-            _filename=${_filename}.zip
-            if [[ ! -e ${_filename} ]]; then
-              zip -r ${_filename} bursa
+          set -euo pipefail
+          _assets=()
+          for _target in $TARGETS; do
+            _os="${_target%/*}"
+            _arch="${_target#*/}"
+            _dir="build/${_os}-${_arch}"
+            _filename="bursa-${{ env.RELEASE_TAG }}-${_os}-${_arch}"
+            if [[ "${_os}" == "windows" ]]; then
+              _filename="${_filename}.exe"
+              cp "${_dir}/bursa" "${_filename}"
             fi
-          fi
-          # Export the shipped asset path so the attest step below can target
-          # the ACTUAL uploaded artifact (mirrors the wallet job's TARBALL_PATH
-          # pattern); attesting the raw binary would hash a file we do not ship.
-          echo "ASSET_PATH=${_filename}" >> "$GITHUB_ENV"
-          curl \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary @${_filename} \
-            https://uploads.github.com/repos/${{ github.repository_owner }}/bursa/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}
+            if [[ "${_os}" == "linux" || "${_os}" == "freebsd" ]]; then
+              _filename="${_filename}.tar.gz"
+              tar czf "${_filename}" -C "${_dir}" bursa
+            fi
+            if [[ "${_os}" == "darwin" ]]; then
+              # macOS stays a .zip: notarization above is submitted for the
+              # zipped binary, so re-use that exact archive as the asset.
+              _filename="${_filename}.zip"
+              if [[ ! -e "${_filename}" ]]; then
+                (cd "${_dir}" && zip -r "${GITHUB_WORKSPACE}/${_filename}" bursa)
+              fi
+            fi
+            curl \
+              --fail --show-error --silent \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"${_filename}" \
+              "https://uploads.github.com/repos/${{ github.repository_owner }}/bursa/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}"
+            _assets+=("${_filename}")
+          done
+          # Export the shipped asset paths so the attest step below targets the
+          # ACTUAL uploaded artifacts (mirrors the wallet job's TARBALL_PATH
+          # pattern); attesting the raw binaries would hash files we do not ship.
+          _delimiter="ASSET_PATHS_EOF_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          {
+            echo "ASSET_PATHS<<${_delimiter}"
+            printf '%s\n' "${_assets[@]}"
+            echo "${_delimiter}"
+          } >> "$GITHUB_ENV"
 
-      - name: Attest binary
+      - name: Attest binaries
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2 https://github.com/actions/attest/releases/tag/v4.2.2
         with:
-          # Attest the uploaded asset, not the raw binary, so the attested
+          # Attest the uploaded assets, not the raw binaries, so each attested
           # digest matches what `gh attestation verify` sees for the download.
-          # ASSET_PATH is exported by the upload step, which is tags-only, so
+          # ASSET_PATHS is exported by the upload step, which is tags-only, so
           # this step carries the same guard.
-          subject-path: ${{ env.ASSET_PATH }}
+          subject-path: ${{ env.ASSET_PATHS }}
 
   # Build + package the Bursa desktop wallet (ui/cmd/bursa-wallet).
   #

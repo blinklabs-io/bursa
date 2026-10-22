@@ -1,13 +1,14 @@
 name: openapi
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   # go-test.yml builds and tests the openapi module but never regenerates it,
