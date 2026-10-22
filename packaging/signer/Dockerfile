@@ -23,7 +23,7 @@
 #     --ulimit memlock=67108864:67108864 \
 #     bursa-signer kes-agent --config /etc/bursa/kes-agent/kes-agent.yaml
 
-FROM ghcr.io/blinklabs-io/go:1.26.3-1 AS build
+FROM ghcr.io/blinklabs-io/go:1.27.3-1 AS build
 WORKDIR /code
 COPY go.* .
 RUN go mod download

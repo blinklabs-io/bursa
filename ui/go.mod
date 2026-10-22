@@ -1,10 +1,9 @@
 module github.com/blinklabs-io/bursa/ui
 
-go 1.26.5
-
-toolchain go1.26.7
+go 1.26.10
 
 require (
+	connectrpc.com/connect v1.21.0
 	fyne.io/systray v1.12.1
 	github.com/Salvionied/apollo/v2 v2.1.1
 	github.com/blinklabs-io/bursa v0.18.1-0.20260926142054-83d794689ded
@@ -47,7 +46,6 @@ require (
 	cloud.google.com/go/longrunning v1.2.0 // indirect
 	cloud.google.com/go/monitoring v1.30.0 // indirect
 	cloud.google.com/go/storage v1.67.0 // indirect
-	connectrpc.com/connect v1.21.0 // indirect
 	connectrpc.com/grpchealth v1.5.0 // indirect
 	connectrpc.com/grpcreflect v1.3.0 // indirect
 	filippo.io/age v1.3.1 // indirect
