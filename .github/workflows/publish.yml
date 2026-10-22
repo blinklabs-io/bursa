@@ -227,6 +227,7 @@ jobs:
               fi
             fi
             curl \
+              --fail --show-error --silent \
               -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               -H "Content-Type: application/octet-stream" \
               --data-binary @"${_filename}" \
