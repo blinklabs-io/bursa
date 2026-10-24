@@ -14,11 +14,11 @@ jobs:
     with:
       additional-module-directories: openapi
       build-packages: ./cmd/bursa
-      cross-build-go-version: 1.26.10
+      cross-build-go-version: 1.26.x
       cross-build-targets: '[{"os":"darwin","arch":"arm64"},{"os":"freebsd","arch":"amd64"},{"os":"freebsd","arch":"arm64"},{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"},{"os":"windows","arch":"amd64"},{"os":"windows","arch":"arm64"}]'
       extra-test-flags: -tags pkcs11 -race
       extra-test-packages: ./internal/signer/...
-      go-versions: '["1.26.10","1.27.x"]'
+      go-versions: '["1.26.x","1.27.x"]'
       golangci-additional-working-directories: openapi
       nilaway-additional-working-directories: ui
       nilaway-include-pkgs: github.com/blinklabs-io/bursa
