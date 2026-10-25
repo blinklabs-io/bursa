@@ -48,20 +48,20 @@ func TestKeyFileOutput(t *testing.T) {
 		{
 			name:             "drep key",
 			runFunc:          func(skey, vkey string) error { return RunKeyDRep(testMnemonic, "", "", skey, vkey, 0, 0) },
-			expectedVKeyType: "DRepVerificationKeyShelley_ed25519",
-			expectedSKeyType: "DRepExtendedSigningKeyShelley_ed25519_bip32",
+			expectedVKeyType: "DRepVerificationKey_ed25519",
+			expectedSKeyType: "DRepExtendedSigningKey_ed25519_bip32",
 		},
 		{
 			name:             "committee cold key",
 			runFunc:          func(skey, vkey string) error { return RunKeyCommitteeCold(testMnemonic, "", "", skey, vkey, 0, 0) },
-			expectedVKeyType: "CommitteeColdVerificationKeyShelley_ed25519",
-			expectedSKeyType: "CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
+			expectedVKeyType: "ConstitutionalCommitteeColdVerificationKey_ed25519",
+			expectedSKeyType: "ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32",
 		},
 		{
 			name:             "committee hot key",
 			runFunc:          func(skey, vkey string) error { return RunKeyCommitteeHot(testMnemonic, "", "", skey, vkey, 0, 0) },
-			expectedVKeyType: "CommitteeHotVerificationKeyShelley_ed25519",
-			expectedSKeyType: "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
+			expectedVKeyType: "ConstitutionalCommitteeHotVerificationKey_ed25519",
+			expectedSKeyType: "ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32",
 		},
 		{
 			name:             "VRF key",

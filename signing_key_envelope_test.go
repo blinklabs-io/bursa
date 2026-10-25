@@ -152,32 +152,32 @@ func signingKeyExporterRegistry(t *testing.T) []signingKeyExporterVector {
 		{
 			name: "GetDRepSKey", signingKey: mustSigningKey(GetDRepSKey(drep)),
 			verificationKey: drep.PublicKey(),
-			wantType:        "DRepExtendedSigningKeyShelley_ed25519_bip32", wantMaterialBytes: 128,
+			wantType:        "DRepExtendedSigningKey_ed25519_bip32", wantMaterialBytes: 128,
 		},
 		{
 			name: "GetDRepExtendedSKey", signingKey: mustSigningKey(GetDRepExtendedSKey(drep)),
 			verificationKey: drep.PublicKey(),
-			wantType:        "DRepExtendedSigningKeyShelley_ed25519_bip32", wantMaterialBytes: 128,
+			wantType:        "DRepExtendedSigningKey_ed25519_bip32", wantMaterialBytes: 128,
 		},
 		{
 			name: "GetCommitteeColdSKey", signingKey: mustSigningKey(GetCommitteeColdSKey(committeeCold)),
 			verificationKey: committeeCold.PublicKey(),
-			wantType:        "CommitteeColdExtendedSigningKeyShelley_ed25519_bip32", wantMaterialBytes: 128,
+			wantType:        "ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32", wantMaterialBytes: 128,
 		},
 		{
 			name: "GetCommitteeColdExtendedSKey", signingKey: mustSigningKey(GetCommitteeColdExtendedSKey(committeeCold)),
 			verificationKey: committeeCold.PublicKey(),
-			wantType:        "CommitteeColdExtendedSigningKeyShelley_ed25519_bip32", wantMaterialBytes: 128,
+			wantType:        "ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32", wantMaterialBytes: 128,
 		},
 		{
 			name: "GetCommitteeHotSKey", signingKey: mustSigningKey(GetCommitteeHotSKey(committeeHot)),
 			verificationKey: committeeHot.PublicKey(),
-			wantType:        "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32", wantMaterialBytes: 128,
+			wantType:        "ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32", wantMaterialBytes: 128,
 		},
 		{
 			name: "GetCommitteeHotExtendedSKey", signingKey: mustSigningKey(GetCommitteeHotExtendedSKey(committeeHot)),
 			verificationKey: committeeHot.PublicKey(),
-			wantType:        "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32", wantMaterialBytes: 128,
+			wantType:        "ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32", wantMaterialBytes: 128,
 		},
 		{
 			name: "GetPoolColdSKey", signingKey: mustSigningKey(GetPoolColdSKey(poolCold)),
