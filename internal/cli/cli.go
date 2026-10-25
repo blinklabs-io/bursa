@@ -1092,8 +1092,11 @@ func RunKeyVRF(
 		}
 	} else {
 		// Output VRF keys in bech32 format
-		// VRF signing key (secret key / seed)
-		vrfSkEncoded, err := encodeVRFSigningKey(vrfSecKey)
+		// VRF signing key: seed followed by public key, as cardano-cli
+		// reads vrf_sk
+		vrfSkEncoded, err := encodeVRFSigningKey(
+			append(append([]byte(nil), vrfSecKey...), vrfPubKey...),
+		)
 		if err != nil {
 			return fmt.Errorf("failed to encode VRF signing key: %w", err)
 		}
