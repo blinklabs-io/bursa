@@ -2082,6 +2082,17 @@ func handleAddressBuild(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(resp)
 }
 
+// readTxRequest decodes a request's tx_cbor and resolves its era. The request
+// has no separate era field, so CBOR valid in several eras must arrive as a
+// text envelope whose type names the era.
+func readTxRequest(txCbor string) ([]byte, uint, error) {
+	txBytes, txType, err := bursa.ReadTxInput([]byte(txCbor), "")
+	if errors.Is(err, bursa.ErrAmbiguousTxEra) {
+		return nil, 0, fmt.Errorf("%w; send tx_cbor as a text envelope whose type names the era, such as \"Tx ConwayEra\"", err)
+	}
+	return txBytes, txType, err
+}
+
 // handleTxSign godoc
 //
 //	@Summary		Sign a transaction
@@ -2103,7 +2114,7 @@ func handleTxSign(w http.ResponseWriter, r *http.Request) {
 	if !decodeAndValidate(w, r, &req) {
 		return
 	}
-	txBytes, err := bursa.ReadCborInput([]byte(req.TxCbor))
+	txBytes, txType, err := readTxRequest(req.TxCbor)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -2117,7 +2128,7 @@ func handleTxSign(w http.ResponseWriter, r *http.Request) {
 		}
 		signers = append(signers, lk)
 	}
-	signed, err := bursa.SignTransaction(txBytes, signers)
+	signed, err := bursa.SignTransactionForEra(txBytes, txType, signers)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -2195,7 +2206,7 @@ func handleTxAssemble(w http.ResponseWriter, r *http.Request) {
 	if !decodeAndValidate(w, r, &req) {
 		return
 	}
-	txBytes, err := bursa.ReadCborInput([]byte(req.TxCbor))
+	txBytes, txType, err := readTxRequest(req.TxCbor)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -2214,7 +2225,7 @@ func handleTxAssemble(w http.ResponseWriter, r *http.Request) {
 		}
 		wits = append(wits, w2)
 	}
-	assembled, err := bursa.AssembleTransaction(txBytes, wits)
+	assembled, err := bursa.AssembleTransactionForEra(txBytes, txType, wits)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

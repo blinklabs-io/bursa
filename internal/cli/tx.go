@@ -24,8 +24,22 @@ import (
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
-func RunTxSign(txFile string, signingKeyFiles []string, outFile string) error {
-	txBytes, err := bursa.ReadCborInputFile(txFile)
+// readTxFile reads a transaction file and resolves its era from era (the
+// --era flag), its envelope type, or unambiguous CBOR.
+func readTxFile(path, era string) ([]byte, uint, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to read %q: %w", path, err)
+	}
+	txBytes, txType, err := bursa.ReadTxInput(data, era)
+	if errors.Is(err, bursa.ErrAmbiguousTxEra) {
+		return nil, 0, fmt.Errorf("%w; pass --era or an era-typed envelope such as \"Tx ConwayEra\"", err)
+	}
+	return txBytes, txType, err
+}
+
+func RunTxSign(txFile string, signingKeyFiles []string, outFile, era string) error {
+	txBytes, txType, err := readTxFile(txFile, era)
 	if err != nil {
 		return err
 	}
@@ -40,11 +54,12 @@ func RunTxSign(txFile string, signingKeyFiles []string, outFile string) error {
 		}
 		signers = append(signers, lk)
 	}
-	signed, err := bursa.SignTransaction(txBytes, signers)
+	signed, err := bursa.SignTransactionForEra(txBytes, txType, signers)
 	if err != nil {
 		return err
 	}
-	out, err := bursa.WriteCborEnvelope("Tx", "Signed transaction", signed, outFile)
+	envType, _ := bursa.TxEnvelopeTypes(txType)
+	out, err := bursa.WriteCborEnvelope(envType, "Signed transaction", signed, outFile)
 	if err != nil {
 		return err
 	}
@@ -54,8 +69,8 @@ func RunTxSign(txFile string, signingKeyFiles []string, outFile string) error {
 	return nil
 }
 
-func RunTxWitness(txFile, signingKeyFile, outFile string) error {
-	txBytes, err := bursa.ReadCborInputFile(txFile)
+func RunTxWitness(txFile, signingKeyFile, outFile, era string) error {
+	txBytes, txType, err := readTxFile(txFile, era)
 	if err != nil {
 		return err
 	}
@@ -71,7 +86,8 @@ func RunTxWitness(txFile, signingKeyFile, outFile string) error {
 	if err != nil {
 		return err
 	}
-	out, err := bursa.WriteCborEnvelope("TxWitness", "Detached vkey witness", witCbor, outFile)
+	_, envType := bursa.TxEnvelopeTypes(txType)
+	out, err := bursa.WriteCborEnvelope(envType, "Detached vkey witness", witCbor, outFile)
 	if err != nil {
 		return err
 	}
@@ -81,8 +97,8 @@ func RunTxWitness(txFile, signingKeyFile, outFile string) error {
 	return nil
 }
 
-func RunTxAssemble(txFile string, witnessFiles []string, outFile string) error {
-	txBytes, err := bursa.ReadCborInputFile(txFile)
+func RunTxAssemble(txFile string, witnessFiles []string, outFile, era string) error {
+	txBytes, txType, err := readTxFile(txFile, era)
 	if err != nil {
 		return err
 	}
@@ -101,11 +117,12 @@ func RunTxAssemble(txFile string, witnessFiles []string, outFile string) error {
 		}
 		wits = append(wits, w)
 	}
-	signed, err := bursa.AssembleTransaction(txBytes, wits)
+	signed, err := bursa.AssembleTransactionForEra(txBytes, txType, wits)
 	if err != nil {
 		return err
 	}
-	out, err := bursa.WriteCborEnvelope("Tx", "Assembled signed transaction", signed, outFile)
+	envType, _ := bursa.TxEnvelopeTypes(txType)
+	out, err := bursa.WriteCborEnvelope(envType, "Assembled signed transaction", signed, outFile)
 	if err != nil {
 		return err
 	}

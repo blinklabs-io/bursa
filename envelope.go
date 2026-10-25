@@ -33,23 +33,30 @@ type CborEnvelope struct {
 // ReadCborInput accepts either raw hex-encoded CBOR or a JSON text envelope
 // and returns the decoded CBOR bytes.
 func ReadCborInput(data []byte) ([]byte, error) {
+	raw, _, err := readCborInput(data)
+	return raw, err
+}
+
+// readCborInput is ReadCborInput that also returns the envelope type, which
+// is empty for raw hex input.
+func readCborInput(data []byte) ([]byte, string, error) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) > 0 && trimmed[0] == '{' {
 		var env CborEnvelope
 		if err := json.Unmarshal(trimmed, &env); err != nil {
-			return nil, fmt.Errorf("failed to parse JSON envelope: %w", err)
+			return nil, "", fmt.Errorf("failed to parse JSON envelope: %w", err)
 		}
 		raw, err := hex.DecodeString(strings.TrimSpace(env.CborHex))
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode cborHex: %w", err)
+			return nil, "", fmt.Errorf("failed to decode cborHex: %w", err)
 		}
-		return raw, nil
+		return raw, strings.TrimSpace(env.Type), nil
 	}
 	raw, err := hex.DecodeString(string(bytes.TrimSpace(trimmed)))
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode hex CBOR: %w", err)
+		return nil, "", fmt.Errorf("failed to decode hex CBOR: %w", err)
 	}
-	return raw, nil
+	return raw, "", nil
 }
 
 // ReadCborInputFile reads a file and returns its decoded CBOR bytes.

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math/bits"
+	"strings"
 
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/gouroboros/cbor"
@@ -208,6 +209,15 @@ func SignTransaction(txCbor []byte, signers []*LoadedKey) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to determine transaction era: %w", err)
 	}
+	return SignTransactionForEra(txCbor, txType, signers)
+}
+
+// SignTransactionForEra is SignTransaction for a transaction of a known era
+// (a ledger.TxType value), which selects the witness set encoding.
+func SignTransactionForEra(txCbor []byte, txType uint, signers []*LoadedKey) ([]byte, error) {
+	if len(signers) == 0 {
+		return nil, errors.New("no signing keys provided")
+	}
 	tx, err := ledger.NewTransactionFromCbor(txType, txCbor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode transaction: %w", err)
@@ -247,6 +257,15 @@ func AssembleTransaction(txCbor []byte, wits []lcommon.VkeyWitness) ([]byte, err
 	txType, err := ledger.DetermineTransactionType(txCbor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to determine transaction era: %w", err)
+	}
+	return AssembleTransactionForEra(txCbor, txType, wits)
+}
+
+// AssembleTransactionForEra is AssembleTransaction for a transaction of a
+// known era (a ledger.TxType value), which selects the witness set encoding.
+func AssembleTransactionForEra(txCbor []byte, txType uint, wits []lcommon.VkeyWitness) ([]byte, error) {
+	if len(wits) == 0 {
+		return nil, errors.New("no witnesses provided")
 	}
 	return injectVkeyWitnesses(txCbor, wits, useTagForTxType(txType))
 }
@@ -348,6 +367,181 @@ func eraName(txType uint) string {
 	default:
 		return fmt.Sprintf("Unknown(%d)", txType)
 	}
+}
+
+// eraEnvelopeName returns the era name cardano-cli uses in text envelope
+// types, or "" for eras it has no envelope type for.
+func eraEnvelopeName(txType uint) string {
+	switch txType {
+	case ledger.TxTypeShelley:
+		return "Shelley"
+	case ledger.TxTypeAllegra:
+		return "Allegra"
+	case ledger.TxTypeMary:
+		return "Mary"
+	case ledger.TxTypeAlonzo:
+		return "Alonzo"
+	case ledger.TxTypeBabbage:
+		return "Babbage"
+	case ledger.TxTypeConway:
+		return "Conway"
+	case ledger.TxTypeDijkstra:
+		return "Dijkstra"
+	default:
+		return ""
+	}
+}
+
+// txEnvelopeType returns the cardano-cli text envelope type for a signed
+// transaction of the given era. Unknown eras fall back to the plain "Tx".
+func txEnvelopeType(txType uint) string {
+	switch txType {
+	case ledger.TxTypeShelley:
+		return "TxSignedShelley"
+	}
+	if era := eraEnvelopeName(txType); era != "" {
+		return "Tx " + era + "Era"
+	}
+	return "Tx"
+}
+
+// txWitnessEnvelopeType returns the cardano-cli text envelope type for a
+// detached witness of the given era. Unknown eras fall back to "TxWitness".
+func txWitnessEnvelopeType(txType uint) string {
+	if era := eraEnvelopeName(txType); era != "" {
+		return "TxWitness " + era + "Era"
+	}
+	return "TxWitness"
+}
+
+// TxEnvelopeTypes returns the text envelope types for a signed transaction
+// and a detached witness of the given era (a ledger.TxType value), as
+// cardano-cli expects them.
+func TxEnvelopeTypes(txType uint) (txEnvType, witnessEnvType string) {
+	return txEnvelopeType(txType), txWitnessEnvelopeType(txType)
+}
+
+// ErrAmbiguousTxEra is returned when transaction CBOR decodes in more than one
+// era and the input does not declare which one it is.
+var ErrAmbiguousTxEra = errors.New("transaction era is ambiguous")
+
+// envelopeEras lists the eras with cardano-cli text envelope types.
+var envelopeEras = []uint{
+	ledger.TxTypeShelley,
+	ledger.TxTypeAllegra,
+	ledger.TxTypeMary,
+	ledger.TxTypeAlonzo,
+	ledger.TxTypeBabbage,
+	ledger.TxTypeConway,
+	ledger.TxTypeDijkstra,
+}
+
+// txTypeFromEraName returns the transaction type for an era name such as
+// "babbage", compared case-insensitively.
+func txTypeFromEraName(name string) (uint, error) {
+	for _, txType := range envelopeEras {
+		if strings.EqualFold(eraEnvelopeName(txType), name) {
+			return txType, nil
+		}
+	}
+	return 0, fmt.Errorf("unknown era %q", name)
+}
+
+// envelopeTxType returns the era declared by a cardano-cli transaction text
+// envelope type such as "Tx BabbageEra", "Unwitnessed Tx ConwayEra" or
+// "TxSignedShelley". declared is false for raw hex input (empty type) and for
+// era-less types such as the plain "Tx" written by earlier Bursa releases.
+func envelopeTxType(envType string) (txType uint, declared bool, err error) {
+	switch envType {
+	case "TxSignedShelley", "TxUnsignedShelley":
+		return ledger.TxTypeShelley, true, nil
+	}
+	for _, prefix := range []string{"Unwitnessed Tx ", "Witnessed Tx ", "Tx "} {
+		rest, found := strings.CutPrefix(envType, prefix)
+		if !found {
+			continue
+		}
+		name, hasSuffix := strings.CutSuffix(rest, "Era")
+		if !hasSuffix {
+			return 0, false, fmt.Errorf("unsupported transaction envelope type %q", envType)
+		}
+		txType, err := txTypeFromEraName(name)
+		if err != nil {
+			return 0, false, fmt.Errorf("unsupported transaction envelope type %q: %w", envType, err)
+		}
+		return txType, true, nil
+	}
+	return 0, false, nil
+}
+
+// inferTxType determines the era of transaction CBOR that declares none. It
+// fails with ErrAmbiguousTxEra when the CBOR decodes in more than one era of
+// its transaction shape, because the era selects the envelope type and the
+// witness set encoding and cannot be guessed.
+func inferTxType(txCbor []byte) (uint, error) {
+	txType, err := ledger.DetermineTransactionType(txCbor)
+	if err != nil {
+		return 0, fmt.Errorf("failed to determine transaction era: %w", err)
+	}
+	var candidates []uint
+	switch txType {
+	case ledger.TxTypeShelley, ledger.TxTypeAllegra, ledger.TxTypeMary:
+		candidates = []uint{ledger.TxTypeShelley, ledger.TxTypeAllegra, ledger.TxTypeMary}
+	case ledger.TxTypeAlonzo, ledger.TxTypeBabbage, ledger.TxTypeConway:
+		candidates = []uint{ledger.TxTypeAlonzo, ledger.TxTypeBabbage, ledger.TxTypeConway}
+	default:
+		// Byron has its own shape; Dijkstra is only reported when the CBOR
+		// carries Dijkstra-only fields.
+		return txType, nil
+	}
+	var eras []string
+	for _, candidate := range candidates {
+		if _, err := ledger.NewTransactionFromCbor(candidate, txCbor); err == nil {
+			eras = append(eras, eraEnvelopeName(candidate))
+		}
+	}
+	if len(eras) > 1 {
+		return 0, fmt.Errorf("%w: the CBOR is valid in the %s eras", ErrAmbiguousTxEra, strings.Join(eras, ", "))
+	}
+	return txType, nil
+}
+
+// ReadTxInput decodes a transaction given as raw hex CBOR or a JSON text
+// envelope and returns its CBOR and era (a ledger.TxType value). The era is
+// taken from era (a name such as "babbage") when it is non-empty, otherwise
+// from the envelope type. Input that declares no era is accepted only when
+// its CBOR decodes in a single era; otherwise ReadTxInput fails with
+// ErrAmbiguousTxEra.
+func ReadTxInput(data []byte, era string) ([]byte, uint, error) {
+	raw, envType, err := readCborInput(data)
+	if err != nil {
+		return nil, 0, err
+	}
+	txType, declared, err := envelopeTxType(envType)
+	if err != nil {
+		return nil, 0, err
+	}
+	if era != "" {
+		eraType, err := txTypeFromEraName(era)
+		if err != nil {
+			return nil, 0, err
+		}
+		if declared && eraType != txType {
+			return nil, 0, fmt.Errorf("era %q conflicts with envelope type %q", era, envType)
+		}
+		txType, declared = eraType, true
+	}
+	if !declared {
+		txType, err = inferTxType(raw)
+		if err != nil {
+			return nil, 0, err
+		}
+		return raw, txType, nil
+	}
+	if _, err := ledger.NewTransactionFromCbor(txType, raw); err != nil {
+		return nil, 0, fmt.Errorf("transaction is not valid %s era CBOR: %w", eraEnvelopeName(txType), err)
+	}
+	return raw, txType, nil
 }
 
 // InspectTransaction decodes a transaction into a human-readable summary.
