@@ -19,7 +19,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -65,23 +64,28 @@ func runStakeCertCommand(
 	return envelope["cborHex"]
 }
 
+// certTestStakeCred is the CBOR stake credential [0, keyhash] for
+// certTestStakeVkey. The Conway certificates below match
+// cardano-cli 11.0 for the same key and deposit.
+const certTestStakeCred = "8200581cd88b9f136cc94612ed33dd8774c6f43db347ae5814d8efd725d39313"
+
 func TestCertStakeRegistrationDepositFlag(t *testing.T) {
 	tests := []struct {
-		name   string
-		extra  []string
-		prefix string
+		name  string
+		extra []string
+		want  string
 	}{
-		{"absent", nil, "8200"},
-		{"zero", []string{"--deposit", "0"}, "8307"},
-		{"set", []string{"--deposit", "2000000"}, "8307"},
+		{"absent", nil, "8200" + certTestStakeCred},
+		{"zero", []string{"--deposit", "0"}, "8307" + certTestStakeCred + "00"},
+		{"set", []string{"--deposit", "2000000"}, "8307" + certTestStakeCred + "1a001e8480"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := runStakeCertCommand(
 				t, certStakeRegistrationCommand, tc.extra...,
 			)
-			if !strings.HasPrefix(got, tc.prefix) {
-				t.Fatalf("cborHex %s, want prefix %s", got, tc.prefix)
+			if got != tc.want {
+				t.Fatalf("cborHex %s, want %s", got, tc.want)
 			}
 		})
 	}
@@ -89,21 +93,21 @@ func TestCertStakeRegistrationDepositFlag(t *testing.T) {
 
 func TestCertStakeDeregistrationDepositRefundFlag(t *testing.T) {
 	tests := []struct {
-		name   string
-		extra  []string
-		prefix string
+		name  string
+		extra []string
+		want  string
 	}{
-		{"absent", nil, "8201"},
-		{"zero", []string{"--deposit-refund", "0"}, "8308"},
-		{"set", []string{"--deposit-refund", "2000000"}, "8308"},
+		{"absent", nil, "8201" + certTestStakeCred},
+		{"zero", []string{"--deposit-refund", "0"}, "8308" + certTestStakeCred + "00"},
+		{"set", []string{"--deposit-refund", "2000000"}, "8308" + certTestStakeCred + "1a001e8480"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := runStakeCertCommand(
 				t, certStakeDeregistrationCommand, tc.extra...,
 			)
-			if !strings.HasPrefix(got, tc.prefix) {
-				t.Fatalf("cborHex %s, want prefix %s", got, tc.prefix)
+			if got != tc.want {
+				t.Fatalf("cborHex %s, want %s", got, tc.want)
 			}
 		})
 	}
