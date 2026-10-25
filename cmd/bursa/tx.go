@@ -32,14 +32,14 @@ func txCommand() *cobra.Command {
 }
 
 func txSignCommand() *cobra.Command {
-	var txFile string
+	var txFile, era string
 	var signingKeyFiles []string
 	var outFile string
 	cmd := &cobra.Command{
 		Use:   "sign",
 		Short: "Sign a transaction with one or more signing keys",
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := cli.RunTxSign(txFile, signingKeyFiles, outFile); err != nil {
+			if err := cli.RunTxSign(txFile, signingKeyFiles, outFile, era); err != nil {
 				logging.GetLogger().Error("failed to sign transaction", "error", err)
 				os.Exit(1)
 			}
@@ -47,6 +47,7 @@ func txSignCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&txFile, "tx-file", "", "Path to the transaction (hex CBOR or JSON envelope)")
 	cmd.Flags().StringArrayVar(&signingKeyFiles, "signing-key-file", nil, "Signing key file (repeatable)")
+	cmd.Flags().StringVar(&era, "era", "", "Transaction era (e.g. babbage, conway); required when the input does not name its era and its CBOR is valid in more than one")
 	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
 	_ = cmd.MarkFlagRequired("tx-file")
 	_ = cmd.MarkFlagRequired("signing-key-file")
@@ -54,12 +55,12 @@ func txSignCommand() *cobra.Command {
 }
 
 func txWitnessCommand() *cobra.Command {
-	var txFile, signingKeyFile, outFile string
+	var txFile, signingKeyFile, outFile, era string
 	cmd := &cobra.Command{
 		Use:   "witness",
 		Short: "Produce a detached vkey witness for a transaction",
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := cli.RunTxWitness(txFile, signingKeyFile, outFile); err != nil {
+			if err := cli.RunTxWitness(txFile, signingKeyFile, outFile, era); err != nil {
 				logging.GetLogger().Error("failed to create witness", "error", err)
 				os.Exit(1)
 			}
@@ -67,6 +68,7 @@ func txWitnessCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&txFile, "tx-file", "", "Path to the transaction (hex CBOR or JSON envelope)")
 	cmd.Flags().StringVar(&signingKeyFile, "signing-key-file", "", "Signing key file")
+	cmd.Flags().StringVar(&era, "era", "", "Transaction era (e.g. babbage, conway); required when the input does not name its era and its CBOR is valid in more than one")
 	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
 	_ = cmd.MarkFlagRequired("tx-file")
 	_ = cmd.MarkFlagRequired("signing-key-file")
@@ -74,14 +76,14 @@ func txWitnessCommand() *cobra.Command {
 }
 
 func txAssembleCommand() *cobra.Command {
-	var txFile string
+	var txFile, era string
 	var witnessFiles []string
 	var outFile string
 	cmd := &cobra.Command{
 		Use:   "assemble",
 		Short: "Merge detached witnesses into a transaction",
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := cli.RunTxAssemble(txFile, witnessFiles, outFile); err != nil {
+			if err := cli.RunTxAssemble(txFile, witnessFiles, outFile, era); err != nil {
 				logging.GetLogger().Error("failed to assemble transaction", "error", err)
 				os.Exit(1)
 			}
@@ -89,6 +91,7 @@ func txAssembleCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&txFile, "tx-file", "", "Path to the transaction (hex CBOR or JSON envelope)")
 	cmd.Flags().StringArrayVar(&witnessFiles, "witness-file", nil, "Witness file (repeatable)")
+	cmd.Flags().StringVar(&era, "era", "", "Transaction era (e.g. babbage, conway); required when the input does not name its era and its CBOR is valid in more than one")
 	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
 	_ = cmd.MarkFlagRequired("tx-file")
 	_ = cmd.MarkFlagRequired("witness-file")

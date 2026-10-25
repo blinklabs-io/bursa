@@ -16,6 +16,7 @@ package bursa
 
 import (
 	"encoding/hex"
+	"errors"
 	"testing"
 
 	"github.com/blinklabs-io/gouroboros/ledger"
@@ -69,6 +70,86 @@ func TestEnvelopeTypeForEra(t *testing.T) {
 			}
 			if got := txWitnessEnvelopeType(tc.txType); got != tc.wantWit {
 				t.Errorf("txWitnessEnvelopeType = %q, want %q", got, tc.wantWit)
+			}
+		})
+	}
+}
+
+func TestEnvelopeTxType(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		envType      string
+		wantType     uint
+		wantDeclared bool
+		wantErr      bool
+	}{
+		{"", 0, false, false},
+		{"Tx", 0, false, false},
+		{"Tx BabbageEra", ledger.TxTypeBabbage, true, false},
+		{"Unwitnessed Tx BabbageEra", ledger.TxTypeBabbage, true, false},
+		{"Witnessed Tx AlonzoEra", ledger.TxTypeAlonzo, true, false},
+		{"Tx ConwayEra", ledger.TxTypeConway, true, false},
+		{"TxSignedShelley", ledger.TxTypeShelley, true, false},
+		{"TxUnsignedShelley", ledger.TxTypeShelley, true, false},
+		{"Tx GoguenEra", 0, false, true},
+		{"Tx Babbage", 0, false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.envType, func(t *testing.T) {
+			t.Parallel()
+			got, declared, err := envelopeTxType(tc.envType)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got != tc.wantType || declared != tc.wantDeclared {
+				t.Errorf("got (%d, %v), want (%d, %v)", got, declared, tc.wantType, tc.wantDeclared)
+			}
+		})
+	}
+}
+
+func TestReadTxInput(t *testing.T) {
+	t.Parallel()
+	const babbageHex = "84a3008001800200a0f5f6"
+	envelope := func(envType, cborHex string) string {
+		return `{"type":"` + envType + `","description":"","cborHex":"` + cborHex + `"}`
+	}
+	conwayHex := hex.EncodeToString(mustTestTx(t))
+	tests := []struct {
+		name      string
+		input     string
+		era       string
+		wantType  uint
+		ambiguous bool
+		wantErr   bool
+	}{
+		{"babbage envelope", envelope("Tx BabbageEra", babbageHex), "", ledger.TxTypeBabbage, false, false},
+		{"babbage raw hex", babbageHex, "", 0, true, true},
+		{"babbage legacy Tx envelope", envelope("Tx", babbageHex), "", 0, true, true},
+		{"babbage raw hex with era", babbageHex, "babbage", ledger.TxTypeBabbage, false, false},
+		{"era conflicts with envelope", envelope("Tx BabbageEra", babbageHex), "conway", 0, false, true},
+		{"conway raw hex", conwayHex, "", ledger.TxTypeConway, false, false},
+		{"conway legacy Tx envelope", envelope("Tx", conwayHex), "", ledger.TxTypeConway, false, false},
+		{"conway CBOR in babbage envelope", envelope("Tx BabbageEra", conwayHex), "", 0, false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			raw, got, err := ReadTxInput([]byte(tc.input), tc.era)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if errors.Is(err, ErrAmbiguousTxEra) != tc.ambiguous {
+				t.Fatalf("err = %v, want ErrAmbiguousTxEra: %v", err, tc.ambiguous)
+			}
+			if err != nil {
+				return
+			}
+			if got != tc.wantType {
+				t.Errorf("tx type = %d, want %d", got, tc.wantType)
+			}
+			if len(raw) == 0 {
+				t.Errorf("empty CBOR")
 			}
 		})
 	}

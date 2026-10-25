@@ -2103,7 +2103,7 @@ func handleTxSign(w http.ResponseWriter, r *http.Request) {
 	if !decodeAndValidate(w, r, &req) {
 		return
 	}
-	txBytes, err := bursa.ReadCborInput([]byte(req.TxCbor))
+	txBytes, txType, err := bursa.ReadTxInput([]byte(req.TxCbor), "")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -2117,7 +2117,7 @@ func handleTxSign(w http.ResponseWriter, r *http.Request) {
 		}
 		signers = append(signers, lk)
 	}
-	signed, err := bursa.SignTransaction(txBytes, signers)
+	signed, err := bursa.SignTransactionForEra(txBytes, txType, signers)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -2195,7 +2195,7 @@ func handleTxAssemble(w http.ResponseWriter, r *http.Request) {
 	if !decodeAndValidate(w, r, &req) {
 		return
 	}
-	txBytes, err := bursa.ReadCborInput([]byte(req.TxCbor))
+	txBytes, txType, err := bursa.ReadTxInput([]byte(req.TxCbor), "")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -2214,7 +2214,7 @@ func handleTxAssemble(w http.ResponseWriter, r *http.Request) {
 		}
 		wits = append(wits, w2)
 	}
-	assembled, err := bursa.AssembleTransaction(txBytes, wits)
+	assembled, err := bursa.AssembleTransactionForEra(txBytes, txType, wits)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
