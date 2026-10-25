@@ -173,7 +173,7 @@ on.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `BURSA_NETWORK` | `preview` | Cardano network; also selects the data directory. |
+| `BURSA_NETWORK` | `preview` | Cardano network (`mainnet`, `preprod`, `preview`, `musashi`, `dijkstra`); also selects the data directory. The `-n`/`--network` flag overrides it. Musashi and dijkstra have no Mithril snapshots, so they sync from genesis. |
 | `BURSA_SYNC` | `mithril` | `genesis` replays the chain from the start instead of bootstrapping from a Mithril snapshot. |
 | `BURSA_LEAN` | `false` | Seeds the lean-node profile, which prunes historical chain data to keep the on-disk footprint down. |
 | `BURSA_CONNECTOR` | `false` | Enables the dApp connector backend. |

@@ -383,7 +383,7 @@ type ScriptCreateRequest struct {
 	KeyHashes      []string `json:"key_hashes"                validate:"required,min=1,dive,hexadecimal,len=56"`
 	TimelockBefore uint64   `json:"timelock_before,omitempty"                                                   swaggertype:"integer" format:"int64"`
 	TimelockAfter  uint64   `json:"timelock_after,omitempty"                                                    swaggertype:"integer" format:"int64"`
-	Network        string   `json:"network"                   validate:"required,oneof=mainnet preprod preview"`
+	Network        string   `json:"network"                   validate:"required,oneof=mainnet preprod preview musashi dijkstra"`
 }
 
 // ScriptValidateRequest defines the request payload for script validation
@@ -407,7 +407,7 @@ type ScriptValidateRequest struct {
 // ScriptAddressRequest defines the request payload for script address generation
 type ScriptAddressRequest struct {
 	Script  map[string]any `json:"script"  validate:"required"`
-	Network string         `json:"network" validate:"required,oneof=mainnet preprod preview"`
+	Network string         `json:"network" validate:"required,oneof=mainnet preprod preview musashi dijkstra"`
 }
 
 // ScriptResponse defines the response payload for script operations
@@ -476,7 +476,7 @@ type ByronAddressInfo struct {
 type AddressBuildRequest struct {
 	PaymentKey string `json:"paymentKey,omitempty"` // bech32-encoded verification key (required for base and enterprise address types)
 	StakeKey   string `json:"stakeKey,omitempty"`   // bech32-encoded verification key (required for base and reward address types)
-	Network    string `json:"network"              validate:"required,oneof=mainnet preprod preview"`
+	Network    string `json:"network"              validate:"required,oneof=mainnet preprod preview musashi dijkstra"`
 	Type       string `json:"type,omitempty"       validate:"omitempty,oneof=base enterprise reward"` // defaults to "base" - determines which keys are required: base requires both paymentKey and stakeKey, enterprise requires paymentKey only, reward requires stakeKey only
 }
 
@@ -520,7 +520,7 @@ type TxIDRequest struct {
 type AddressEnumerateRequest struct {
 	Mnemonic string `json:"mnemonic" validate:"required"`
 	Password string `json:"password,omitempty"`
-	Network  string `json:"network"  validate:"required,oneof=mainnet preprod preview"`
+	Network  string `json:"network"  validate:"required,oneof=mainnet preprod preview musashi dijkstra"`
 	Account  uint32 `json:"account"  validate:"max=2147483647"`
 	Start    uint32 `json:"start"    validate:"max=2147483647"`
 	Count    uint32 `json:"count"    validate:"required,min=1,max=1000"`

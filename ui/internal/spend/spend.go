@@ -21,6 +21,7 @@ import (
 	"github.com/Salvionied/apollo/v2/backend"
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
+	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/submissionctx"
 	"github.com/blinklabs-io/bursa/ui/internal/submissionerror"
@@ -869,9 +870,24 @@ type HardwareSignDataRequest struct {
 	StakePath string `json:"stake_path"`
 	// NetworkID is 1 for mainnet, 0 for the testnets.
 	NetworkID int `json:"network_id"`
-	// ProtocolMagic disambiguates the testnets (preprod=1, preview=2); the device
+	// ProtocolMagic disambiguates the testnets (preprod=1, preview=2, musashi=164, dijkstra=6); the device
 	// uses it together with NetworkID when it renders the address.
 	ProtocolMagic uint32 `json:"protocol_magic"`
+}
+
+// networkParams returns the address network id (1 mainnet, 0 testnets) and the
+// protocol magic a hardware device needs for the named network. An unknown
+// network is an error: guessing a magic would sign for the wrong network.
+func networkParams(name string) (int, uint32, error) {
+	id, err := cardanonet.AddressNetworkID(name)
+	if err != nil {
+		return 0, 0, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+	}
+	magic, err := cardanonet.ProtocolMagic(name)
+	if err != nil {
+		return 0, 0, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+	}
+	return int(id), magic, nil
 }
 
 // SignDataHardwareRequest resolves the seedless signing metadata a hardware
@@ -905,16 +921,9 @@ func (s *Service) SignDataHardwareRequest(addrStr string) (HardwareSignDataReque
 	if err != nil {
 		return HardwareSignDataRequest{}, fmt.Errorf("%w: address bytes: %w", ErrInvalidRequest, err)
 	}
-	networkID := 0
-	var protocolMagic uint32
-	switch acct.Network {
-	case "mainnet":
-		networkID = 1
-		protocolMagic = 764824073
-	case "preprod":
-		protocolMagic = 1
-	default: // preview; the account network is validated when it is derived.
-		protocolMagic = 2
+	networkID, protocolMagic, err := networkParams(acct.Network)
+	if err != nil {
+		return HardwareSignDataRequest{}, err
 	}
 	accountNum := acct.AccountIndex
 	return HardwareSignDataRequest{
@@ -2741,11 +2750,12 @@ func (s *Service) deriveWitnesses(
 // scripts, minting, proposals, …) still set Unsupported, and the caller MUST
 // check it before signing.
 type HardwareSignRequest struct {
-	// Network: "mainnet", "preprod", or "preview".
+	// Network: "mainnet", "preprod", "preview", "musashi", or "dijkstra".
 	Network string `json:"network"`
 	// NetworkID: 1 for mainnet, 0 for testnet.
 	NetworkID int `json:"network_id"`
-	// ProtocolMagic: 764824073 for mainnet, 1 for preprod, 2 for preview.
+	// ProtocolMagic: 764824073 for mainnet, 1 for preprod, 2 for preview, 164 for
+	// musashi, 6 for dijkstra.
 	ProtocolMagic uint32 `json:"protocol_magic"`
 	// Inputs: one entry per tx input the wallet owns.
 	Inputs []HWInput `json:"inputs"`
@@ -2944,16 +2954,9 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 		return HardwareSignRequest{}, ErrNoWallet
 	}
 	networkName := acct.Network
-	networkID := 0
-	var protocolMagic uint32
-	switch networkName {
-	case "mainnet":
-		networkID = 1
-		protocolMagic = 764824073
-	case "preprod":
-		protocolMagic = 1
-	default: // preview; the account network is validated when it is derived.
-		protocolMagic = 2
+	networkID, protocolMagic, err := networkParams(networkName)
+	if err != nil {
+		return HardwareSignRequest{}, err
 	}
 
 	result := HardwareSignRequest{

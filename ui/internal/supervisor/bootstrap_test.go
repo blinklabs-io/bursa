@@ -601,3 +601,16 @@ func TestPhaseEndRefreshesTheHeadlineForEveryDownload(t *testing.T) {
 		t.Errorf("headline should stay on the phase that just ended: %+v", got)
 	}
 }
+
+func TestMithrilSupported(t *testing.T) {
+	for _, n := range []string{"mainnet", "preprod", "preview"} {
+		if !mithrilSupported(n) {
+			t.Errorf("mithrilSupported(%q) = false, want true", n)
+		}
+	}
+	for _, n := range []string{"musashi", "dijkstra"} {
+		if mithrilSupported(n) {
+			t.Errorf("mithrilSupported(%q) = true, want false", n)
+		}
+	}
+}

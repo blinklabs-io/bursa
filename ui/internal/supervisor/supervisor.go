@@ -333,7 +333,13 @@ func (s *Supervisor) start(ctx context.Context) error {
 		return nil
 	}
 
-	if !shouldBootstrap(s.cfg.MithrilEnabled, s.cfg.DataDir) {
+	mithrilEnabled := s.cfg.MithrilEnabled
+	if mithrilEnabled && !mithrilSupported(s.cfg.Network) {
+		s.cfg.Logger.Info("no Mithril aggregator for network; syncing from genesis",
+			"network", s.cfg.Network)
+		mithrilEnabled = false
+	}
+	if !shouldBootstrap(mithrilEnabled, s.cfg.DataDir) {
 		if err := launch(); err != nil {
 			return fail(fmt.Errorf("create node: %w", err))
 		}
