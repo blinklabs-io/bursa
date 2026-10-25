@@ -458,6 +458,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/api.ErrorResponse"
           description: Wallet storage administrator access required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Wallet not found
         "500":
           content:
             application/json:
@@ -504,6 +510,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/api.ErrorResponse"
           description: Wallet storage administrator access required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Wallet not found
         "500":
           content:
             application/json:
@@ -612,6 +624,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/api.ErrorResponse"
           description: Wallet storage administrator access required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Wallet not found
         "500":
           content:
             application/json:
@@ -631,6 +649,8 @@ components:
           - mainnet
           - preprod
           - preview
+          - musashi
+          - dijkstra
           type: string
         paymentKey:
           description: bech32-encoded verification key (required for base and enterprise
@@ -681,6 +701,8 @@ components:
           - mainnet
           - preprod
           - preview
+          - musashi
+          - dijkstra
           type: string
         password:
           type: string
@@ -804,6 +826,8 @@ components:
           - mainnet
           - preprod
           - preview
+          - musashi
+          - dijkstra
           type: string
         script:
           additionalProperties:
@@ -838,6 +862,8 @@ components:
           - mainnet
           - preprod
           - preview
+          - musashi
+          - dijkstra
           type: string
         required:
           minimum: 1
