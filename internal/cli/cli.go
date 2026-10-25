@@ -21,11 +21,13 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1305,12 +1307,158 @@ func RunCertOpCert(
 	return nil
 }
 
+// PoolRelayFlags holds the relay specifications accepted by
+// RunCertPoolRegistration. Relays are written in the order addresses,
+// hosts, multi-hosts.
+type PoolRelayFlags struct {
+	// Addresses are "IPv4:port" or "[IPv6]:port" single host address relays.
+	Addresses []string
+	// Hosts are "name:port" or "name" single host name relays.
+	Hosts []string
+	// MultiHosts are host names for multi host name relays.
+	MultiHosts []string
+}
+
+// resolvePoolOwners returns the stake key hashes of the pool owners. With no
+// owner verification key files it defaults to the stake key of the reward
+// account.
+func resolvePoolOwners(
+	ownerVkeyFiles []string,
+	rewardAddr lcommon.Address,
+) ([]lcommon.AddrKeyHash, error) {
+	if len(ownerVkeyFiles) == 0 {
+		if rewardAddr.Type() != lcommon.AddressTypeNoneKey {
+			return nil, errors.New(
+				"reward account is not a stake key address: " +
+					"--owner-stake-vkey is required",
+			)
+		}
+		return []lcommon.AddrKeyHash{rewardAddr.StakeKeyHash()}, nil
+	}
+	owners := make([]lcommon.AddrKeyHash, 0, len(ownerVkeyFiles))
+	for _, file := range ownerVkeyFiles {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to read owner stake vkey file: %w",
+				err,
+			)
+		}
+		vkey, err := parseVerificationKey(data)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to parse owner stake vkey %s: %w",
+				file,
+				err,
+			)
+		}
+		owners = append(owners, lcommon.Blake2b224Hash(vkey))
+	}
+	return owners, nil
+}
+
+// parsePoolRelays converts relay flag values to pool relays, in the order
+// addresses, hosts, multi-hosts.
+func parsePoolRelays(f PoolRelayFlags) ([]lcommon.PoolRelay, error) {
+	relays := []lcommon.PoolRelay{}
+	for _, v := range f.Addresses {
+		host, portStr, err := net.SplitHostPort(v)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"invalid relay address %q (want IPv4:port or [IPv6]:port): %w",
+				v,
+				err,
+			)
+		}
+		port, err := parseRelayPort(v, portStr)
+		if err != nil {
+			return nil, err
+		}
+		ip := net.ParseIP(host)
+		if ip == nil {
+			return nil, fmt.Errorf(
+				"invalid relay address %q: %q is not an IP address",
+				v,
+				host,
+			)
+		}
+		relay := lcommon.PoolRelay{
+			Type: lcommon.PoolRelayTypeSingleHostAddress,
+			Port: &port,
+		}
+		if v4 := ip.To4(); v4 != nil {
+			relay.Ipv4 = &v4
+		} else {
+			v6 := ledgerIPv6Bytes(ip)
+			relay.Ipv6 = &v6
+		}
+		relays = append(relays, relay)
+	}
+	for _, v := range f.Hosts {
+		host, portStr, hasPort := strings.Cut(v, ":")
+		if host == "" {
+			return nil, fmt.Errorf("invalid relay host %q: empty name", v)
+		}
+		relay := lcommon.PoolRelay{
+			Type:     lcommon.PoolRelayTypeSingleHostName,
+			Hostname: &host,
+		}
+		if hasPort {
+			port, err := parseRelayPort(v, portStr)
+			if err != nil {
+				return nil, err
+			}
+			relay.Port = &port
+		}
+		relays = append(relays, relay)
+	}
+	for _, v := range f.MultiHosts {
+		if v == "" {
+			return nil, errors.New("invalid relay multi-host: empty name")
+		}
+		host := v
+		relays = append(relays, lcommon.PoolRelay{
+			Type:     lcommon.PoolRelayTypeMultiHostName,
+			Hostname: &host,
+		})
+	}
+	return relays, nil
+}
+
+// ledgerIPv6Bytes returns the IPv6 address in the ledger wire form. The
+// ledger serializes an IPv6 address as four 32-bit words, each stored
+// little-endian, and cardano-cli emits that form. The PoolRelay encoder in
+// gouroboros writes the 16 bytes in network order, so the bytes of each word
+// are reversed before they are handed to it.
+func ledgerIPv6Bytes(ip net.IP) net.IP {
+	ip16 := ip.To16()
+	out := make(net.IP, len(ip16))
+	for i := 0; i < len(ip16); i += 4 {
+		out[i], out[i+1], out[i+2], out[i+3] =
+			ip16[i+3], ip16[i+2], ip16[i+1], ip16[i]
+	}
+	return out
+}
+
+func parseRelayPort(spec, portStr string) (uint32, error) {
+	port, err := strconv.ParseUint(portStr, 10, 16)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"invalid relay port in %q: must be 0-65535",
+			spec,
+		)
+	}
+	return uint32(port), nil
+}
+
 // RunCertPoolRegistration creates a pool registration certificate
 func RunCertPoolRegistration(
 	coldVkeyFile, vrfVkeyFile, rewardAccount, outputFile string,
 	pledge, cost uint64,
 	marginFloat float64,
 	metadataURL, metadataHash string,
+	ownerVkeyFiles []string,
+	relayFlags PoolRelayFlags,
 ) error {
 	marginNum, marginDenom, err := floatToRational(marginFloat)
 	if err != nil {
@@ -1373,6 +1521,15 @@ func RunCertPoolRegistration(
 		)
 	}
 
+	owners, err := resolvePoolOwners(ownerVkeyFiles, rewardAddr)
+	if err != nil {
+		return err
+	}
+	relays, err := parsePoolRelays(relayFlags)
+	if err != nil {
+		return err
+	}
+
 	// Build pool registration certificate
 	cert := &bursa.PoolRegistrationCertificate{
 		Operator:      poolKeyHash,
@@ -1382,8 +1539,8 @@ func RunCertPoolRegistration(
 		MarginNum:     marginNum,
 		MarginDenom:   marginDenom,
 		RewardAccount: rewardAddrBytes,
-		PoolOwners:    []lcommon.AddrKeyHash{poolKeyHash},
-		Relays:        []lcommon.PoolRelay{},
+		PoolOwners:    owners,
+		Relays:        relays,
 	}
 
 	// Set metadata if provided
