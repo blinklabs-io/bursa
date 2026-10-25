@@ -1248,7 +1248,7 @@ func GetVRFVKey(vrfPubKey []byte) (KeyFile, error) {
 		)
 	}
 	kf := KeyFile{
-		Type:        "VRFVerificationKey_PraosVRF",
+		Type:        "VrfVerificationKey_PraosVRF",
 		Description: "VRF Verification Key",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
@@ -1256,14 +1256,20 @@ func GetVRFVKey(vrfPubKey []byte) (KeyFile, error) {
 	return kf, nil
 }
 
-// GetVRFSKey creates a KeyFile for a VRF signing key
+// GetVRFSKey creates a KeyFile for a VRF signing key. The envelope holds the
+// seed followed by the public key, which is the layout cardano-cli requires.
+// The input may be the 32-byte seed or the 64-byte seed||public-key form.
 func GetVRFSKey(vrfSecKey []byte) (KeyFile, error) {
 	switch len(vrfSecKey) {
 	case vrf.SeedSize:
-		// Bursa's native form stores the seed; the loader derives its identity.
+		derived, _, err := vrf.KeyGen(vrfSecKey)
+		if err != nil {
+			return KeyFile{}, fmt.Errorf("failed to derive VRF public key: %w", err)
+		}
+		vrfSecKey = append(append([]byte(nil), vrfSecKey...), derived...)
 	case vrf.SeedSize + vrf.PublicKeySize:
-		// Preserve cardano-cli's seed||public-key form, but do not emit an
-		// envelope whose embedded identity disagrees with the seed.
+		// Do not emit an envelope whose embedded identity disagrees with the
+		// seed.
 		derived, _, err := vrf.KeyGen(vrfSecKey[:vrf.SeedSize])
 		if err != nil {
 			return KeyFile{}, fmt.Errorf("failed to derive VRF public key: %w", err)
@@ -1287,7 +1293,7 @@ func GetVRFSKey(vrfSecKey []byte) (KeyFile, error) {
 		)
 	}
 	kf := KeyFile{
-		Type:        "VRFSigningKey_PraosVRF",
+		Type:        "VrfSigningKey_PraosVRF",
 		Description: "VRF Signing Key",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
@@ -1351,7 +1357,7 @@ func GetKESVKey(kesPubKey []byte) (KeyFile, error) {
 		)
 	}
 	kf := KeyFile{
-		Type:        "KESVerificationKey_PraosV2",
+		Type:        "KesVerificationKey_ed25519_kes_2^6",
 		Description: "KES Verification Key",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
@@ -1385,7 +1391,7 @@ func GetKESSKey(kesSecKey *kes.SecretKey) (KeyFile, error) {
 		)
 	}
 	kf := KeyFile{
-		Type:        "KESSigningKey_PraosV2",
+		Type:        "KesSigningKey_ed25519_kes_2^6",
 		Description: "KES Signing Key",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}

@@ -66,14 +66,14 @@ func TestKeyFileOutput(t *testing.T) {
 		{
 			name:             "VRF key",
 			runFunc:          func(skey, vkey string) error { return RunKeyVRF(testMnemonic, "", "", skey, vkey, 0) },
-			expectedVKeyType: "VRFVerificationKey_PraosVRF",
-			expectedSKeyType: "VRFSigningKey_PraosVRF",
+			expectedVKeyType: "VrfVerificationKey_PraosVRF",
+			expectedSKeyType: "VrfSigningKey_PraosVRF",
 		},
 		{
 			name:             "KES key",
 			runFunc:          func(skey, vkey string) error { return RunKeyKES(testMnemonic, "", "", skey, vkey, 0) },
-			expectedVKeyType: "KESVerificationKey_PraosV2",
-			expectedSKeyType: "KESSigningKey_PraosV2",
+			expectedVKeyType: "KesVerificationKey_ed25519_kes_2^6",
+			expectedSKeyType: "KesSigningKey_ed25519_kes_2^6",
 		},
 	}
 
