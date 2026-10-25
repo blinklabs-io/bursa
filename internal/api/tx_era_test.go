@@ -60,6 +60,9 @@ func vkeyWitnessesTagged(t *testing.T, txHex string) bool {
 	var arr []cbor.RawMessage
 	_, err = cbor.Decode(raw, &arr)
 	require.NoError(t, err)
+	if len(arr) < 2 {
+		t.Fatalf("transaction has %d elements, want at least 2", len(arr))
+	}
 	ws := map[uint64]cbor.RawMessage{}
 	_, err = cbor.Decode(arr[1], &ws)
 	require.NoError(t, err)
@@ -120,12 +123,12 @@ func TestHandleTxAmbiguousEraRejected(t *testing.T) {
 		SigningKeys: []string{skey},
 	})
 	require.Equal(t, http.StatusBadRequest, status, "body: %s", body)
-	require.Contains(t, string(body), "era")
+	require.Contains(t, string(body), "Tx ConwayEra", "error must name an era-typed envelope")
 
 	status, body = postTx(t, handleTxAssemble, "/api/tx/assemble", TxAssembleRequest{
 		TxCbor:    babbageTxHex,
 		Witnesses: []string{zeroWitness},
 	})
 	require.Equal(t, http.StatusBadRequest, status, "body: %s", body)
-	require.Contains(t, string(body), "era")
+	require.Contains(t, string(body), "Tx ConwayEra", "error must name an era-typed envelope")
 }

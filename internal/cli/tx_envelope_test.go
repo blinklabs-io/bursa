@@ -133,6 +133,9 @@ func vkeyWitnessesTagged(t *testing.T, cborHex string) bool {
 	if _, err := cbor.Decode(raw, &arr); err != nil {
 		t.Fatalf("decode tx: %v", err)
 	}
+	if len(arr) < 2 {
+		t.Fatalf("transaction has %d elements, want at least 2", len(arr))
+	}
 	ws := map[uint64]cbor.RawMessage{}
 	if _, err := cbor.Decode(arr[1], &ws); err != nil {
 		t.Fatalf("decode witness set: %v", err)
