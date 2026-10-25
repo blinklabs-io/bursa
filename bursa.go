@@ -2396,7 +2396,7 @@ func decodeVerificationKey(vkeyBytes []byte) ([]byte, error) {
 
 // decodeVRFSKey decodes a VRF signing key from CBOR.
 // VRF signing keys can be stored as:
-// - 32 bytes: just the seed (bursa format)
+// - 32 bytes: just the seed (written by earlier Bursa releases)
 // - 64 bytes: seed (32) + public key (32) (cardano-cli format)
 func decodeVRFSKey(skeyBytes []byte) ([]byte, []byte, error) {
 	keyBytes, err := decodeKeyEnvelopeBytes(skeyBytes, "VRF skey")
