@@ -188,11 +188,11 @@ func RunCertStakeRegistration(
 //
 //	stake_deregistration = (1, stake_credential)
 //
-// When deposit is non-nil the Conway certificate is written
-// instead (unreg_cert = (8, stake_credential, coin)).
+// When depositRefund is non-nil the Conway certificate is
+// written instead (unreg_cert = (8, stake_credential, coin)).
 func RunCertStakeDeregistration(
 	stakeVkeyFile, outputFile string,
-	deposit *uint64,
+	depositRefund *uint64,
 ) error {
 	// Read and parse the stake verification key
 	stakeVkeyData, err := os.ReadFile(stakeVkeyFile)
@@ -219,9 +219,9 @@ func RunCertStakeDeregistration(
 	// Encode certificate: [1, stake_credential]
 	cert := []any{uint64(1), cred}
 	envType := "CertificateShelley"
-	if deposit != nil {
-		// Conway form carries the deposit explicitly.
-		cert = []any{uint64(8), cred, *deposit}
+	if depositRefund != nil {
+		// Conway form carries the refund explicitly.
+		cert = []any{uint64(8), cred, *depositRefund}
 		envType = "CertificateConway"
 	}
 	certBytes, err := cbor.Encode(cert)

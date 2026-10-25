@@ -438,7 +438,7 @@ Examples:
 func certStakeDeregistrationCommand() *cobra.Command {
 	var stakeVkeyFile string
 	var outputFile string
-	var deposit uint64
+	var depositRefund uint64
 
 	cmd := cobra.Command{
 		Use:   "stake-deregistration",
@@ -448,8 +448,9 @@ func certStakeDeregistrationCommand() *cobra.Command {
 This certificate deregisters a stake address, returning the
 deposit and removing the stake key from on-chain registration.
 
-Without --deposit the Shelley certificate (type 1) is written. With
---deposit (lovelace refund) the Conway certificate (type 8) is written.
+Without --deposit-refund the Shelley certificate (type 1) is written.
+With --deposit-refund (lovelace) the Conway certificate (type 8) is
+written.
 
 Output format is a cardano-cli compatible JSON text envelope.
 
@@ -457,16 +458,17 @@ Examples:
   bursa cert stake-deregistration \
     --stake-vkey stake.vkey --out stake-dereg.cert
   bursa cert stake-deregistration \
-    --stake-vkey stake.vkey --deposit 2000000 --out stake-dereg.cert`,
+    --stake-vkey stake.vkey --deposit-refund 2000000 \
+    --out stake-dereg.cert`,
 		Run: func(cmd *cobra.Command, args []string) {
-			var depositPtr *uint64
-			if cmd.Flags().Changed("deposit") {
-				depositPtr = &deposit
+			var refundPtr *uint64
+			if cmd.Flags().Changed("deposit-refund") {
+				refundPtr = &depositRefund
 			}
 			if err := cli.RunCertStakeDeregistration(
 				stakeVkeyFile,
 				outputFile,
-				depositPtr,
+				refundPtr,
 			); err != nil {
 				logging.GetLogger().Error(
 					"failed to create stake deregistration certificate",
@@ -492,8 +494,8 @@ Examples:
 		"Output file for certificate (stdout if not specified)",
 	)
 	cmd.Flags().Uint64Var(
-		&deposit,
-		"deposit",
+		&depositRefund,
+		"deposit-refund",
 		0,
 		"Deposit refund in lovelace; writes the Conway certificate when set",
 	)
