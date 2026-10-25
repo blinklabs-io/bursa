@@ -75,7 +75,7 @@ func TestRunCertStakeRegistration(t *testing.T) {
 	// Create output file
 	outFile := filepath.Join(tmpDir, "stake-reg.cert")
 
-	err := RunCertStakeRegistration(vkeyFile, outFile)
+	err := RunCertStakeRegistration(vkeyFile, outFile, nil)
 	require.NoError(t, err)
 
 	// Verify the output file exists and has correct format
@@ -111,7 +111,7 @@ func TestRunCertStakeDeregistration(t *testing.T) {
 
 	outFile := filepath.Join(tmpDir, "stake-dereg.cert")
 
-	err := RunCertStakeDeregistration(vkeyFile, outFile)
+	err := RunCertStakeDeregistration(vkeyFile, outFile, nil)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(outFile)
@@ -751,7 +751,7 @@ func TestRunCertStakeRegistration_MissingFile(
 	outFile := filepath.Join(tmpDir, "out.cert")
 
 	err := RunCertStakeRegistration(
-		"/nonexistent/stake.vkey", outFile,
+		"/nonexistent/stake.vkey", outFile, nil,
 	)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to read")
@@ -781,4 +781,84 @@ func TestWriteCertEnvelope(t *testing.T) {
 		t, "Test Description", envelope["description"],
 	)
 	assert.Equal(t, "010203", envelope["cborHex"])
+}
+
+// stakeKeyHashHex is blake2b-224 of the key in testStakeVKeyCborHex,
+// computed independently of the code under test.
+const stakeKeyHashHex = "d88b9f136cc94612ed33dd8774c6f43db347ae5814d8efd725d39313"
+
+func runStakeCertCBOR(
+	t *testing.T,
+	run func(vkey, out string, deposit *uint64) error,
+	deposit *uint64,
+) (envType, cborHex string) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	vkeyFile := createTestVkeyFile(
+		t, tmpDir, "stake.vkey",
+		"StakeVerificationKeyShelley_ed25519",
+		"Stake Verification Key",
+		testStakeVKeyCborHex,
+	)
+	outFile := filepath.Join(tmpDir, "out.cert")
+	require.NoError(t, run(vkeyFile, outFile, deposit))
+	data, err := os.ReadFile(outFile)
+	require.NoError(t, err)
+	var envelope map[string]string
+	require.NoError(t, json.Unmarshal(data, &envelope))
+	return envelope["type"], envelope["cborHex"]
+}
+
+func TestRunCertStakeRegistration_Deposit(t *testing.T) {
+	t.Parallel()
+
+	// Without a deposit the Shelley certificate is unchanged.
+	envType, cborHex := runStakeCertCBOR(
+		t, RunCertStakeRegistration, nil,
+	)
+	assert.Equal(t, "CertificateShelley", envType)
+	assert.Equal(t, "82008200581c"+stakeKeyHashHex, cborHex)
+
+	// With a deposit the Conway certificate (type 7) is written.
+	deposit := uint64(2000000)
+	envType, cborHex = runStakeCertCBOR(
+		t, RunCertStakeRegistration, &deposit,
+	)
+	assert.Equal(t, "CertificateConway", envType)
+	assert.Equal(
+		t,
+		"83078200581c"+stakeKeyHashHex+"1a001e8480",
+		cborHex,
+	)
+
+	// A zero deposit is explicit and still selects Conway.
+	zero := uint64(0)
+	envType, cborHex = runStakeCertCBOR(
+		t, RunCertStakeRegistration, &zero,
+	)
+	assert.Equal(t, "CertificateConway", envType)
+	assert.Equal(
+		t, "83078200581c"+stakeKeyHashHex+"00", cborHex,
+	)
+}
+
+func TestRunCertStakeDeregistration_Deposit(t *testing.T) {
+	t.Parallel()
+
+	envType, cborHex := runStakeCertCBOR(
+		t, RunCertStakeDeregistration, nil,
+	)
+	assert.Equal(t, "CertificateShelley", envType)
+	assert.Equal(t, "82018200581c"+stakeKeyHashHex, cborHex)
+
+	deposit := uint64(2000000)
+	envType, cborHex = runStakeCertCBOR(
+		t, RunCertStakeDeregistration, &deposit,
+	)
+	assert.Equal(t, "CertificateConway", envType)
+	assert.Equal(
+		t,
+		"83088200581c"+stakeKeyHashHex+"1a001e8480",
+		cborHex,
+	)
 }
