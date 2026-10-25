@@ -29,6 +29,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -1506,12 +1507,17 @@ func CreatePoolRegistrationCertificate(
 		cert.MarginDenom,
 	)
 
-	// Pool owners as a set
-	owners := make(
-		[]cbor.ByteString,
-		len(cert.PoolOwners),
+	// Pool owners as a tag-258 set, sorted and deduplicated to match
+	// cardano-cli
+	sorted := slices.SortedFunc(
+		slices.Values(cert.PoolOwners),
+		func(a, b lcommon.AddrKeyHash) int {
+			return bytes.Compare(a[:], b[:])
+		},
 	)
-	for i, owner := range cert.PoolOwners {
+	sorted = slices.Compact(sorted)
+	owners := make(cbor.Set, len(sorted))
+	for i, owner := range sorted {
 		owners[i] = cbor.NewByteString(owner[:])
 	}
 

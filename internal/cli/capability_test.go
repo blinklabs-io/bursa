@@ -107,7 +107,7 @@ func TestRunCertPoolRegistration_FileOutput(t *testing.T) {
 
 	err := RunCertPoolRegistration(
 		coldVkey, vrfVkey, goldenStakeAddr, outFile,
-		1_000_000_000, 340_000_000, 0.03, "", "",
+		1_000_000_000, 340_000_000, 0.03, "", "", nil, PoolRelayFlags{},
 	)
 	require.NoError(t, err)
 
@@ -144,6 +144,7 @@ func TestRunCertPoolRegistration_StdoutWithMetadata(t *testing.T) {
 		err := RunCertPoolRegistration(
 			coldVkey, vrfVkey, goldenStakeAddr, "",
 			1_000_000, 0, 0.0, "https://example.com/p.json", metaHash,
+			nil, PoolRelayFlags{},
 		)
 		require.NoError(t, err)
 	})
@@ -154,7 +155,7 @@ func TestRunCertPoolRegistration_StdoutWithMetadata(t *testing.T) {
 func TestRunCertPoolRegistration_InvalidMargin(t *testing.T) {
 	err := RunCertPoolRegistration(
 		"cold.vkey", "vrf.vkey", goldenStakeAddr, "",
-		1, 1, 1.5, "", "",
+		1, 1, 1.5, "", "", nil, PoolRelayFlags{},
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "margin")
@@ -164,7 +165,7 @@ func TestRunCertPoolRegistration_RejectsNonFiniteMargins(t *testing.T) {
 	for _, margin := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
 		err := RunCertPoolRegistration(
 			"cold.vkey", "vrf.vkey", goldenStakeAddr, "",
-			1, 1, margin, "", "",
+			1, 1, margin, "", "", nil, PoolRelayFlags{},
 		)
 		require.Error(t, err, "margin %v", margin)
 		assert.Contains(t, err.Error(), "margin", "margin %v", margin)
@@ -174,7 +175,7 @@ func TestRunCertPoolRegistration_RejectsNonFiniteMargins(t *testing.T) {
 func TestRunCertPoolRegistration_MetadataPairing(t *testing.T) {
 	err := RunCertPoolRegistration(
 		"cold.vkey", "vrf.vkey", goldenStakeAddr, "",
-		1, 1, 0.03, "https://example.com/p.json", "",
+		1, 1, 0.03, "https://example.com/p.json", "", nil, PoolRelayFlags{},
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "metadata")
@@ -183,7 +184,7 @@ func TestRunCertPoolRegistration_MetadataPairing(t *testing.T) {
 func TestRunCertPoolRegistration_MissingColdVkey(t *testing.T) {
 	err := RunCertPoolRegistration(
 		filepath.Join(t.TempDir(), "nope.vkey"), "vrf.vkey",
-		goldenStakeAddr, "", 1, 1, 0.03, "", "",
+		goldenStakeAddr, "", 1, 1, 0.03, "", "", nil, PoolRelayFlags{},
 	)
 	require.Error(t, err)
 }

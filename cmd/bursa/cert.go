@@ -176,6 +176,8 @@ func certPoolRegistrationCommand() *cobra.Command {
 	var metadataURL string
 	var metadataHash string
 	var outputFile string
+	var ownerVkeyFiles []string
+	var relays cli.PoolRelayFlags
 
 	cmd := cobra.Command{
 		Use:   "pool-registration",
@@ -196,6 +198,15 @@ Required inputs:
 Optional inputs:
   --metadata-url    Pool metadata URL
   --metadata-hash   Pool metadata hash (hex)
+  --owner-stake-vkey  Pool owner stake verification key file (repeatable).
+                    Defaults to the stake key of --reward-account.
+  --relay-address   Relay IP address with port, IPv4:port or [IPv6]:port
+                    (repeatable)
+  --relay-host      Relay host name with optional port, name[:port]
+                    (repeatable)
+  --relay-multi-host  Relay multi host name (DNS SRV, repeatable)
+
+Relays are written in the order address, host, multi-host.
 
 Output format is compatible with cardano-cli certificates.
 
@@ -210,7 +221,14 @@ Examples:
     --pledge 1000000000 --cost 340000000 --margin 0.01 \
     --reward-account stake1... \
     --metadata-url "https://example.com/pool.json" \
-    --metadata-hash "abc123..." --out pool-reg.cert`,
+    --metadata-hash "abc123..." --out pool-reg.cert
+
+  bursa cert pool-registration \
+    --cold-vkey cold.vkey --vrf-vkey vrf.vkey \
+    --pledge 500000000 --cost 340000000 --margin 0.05 \
+    --reward-account stake1... --owner-stake-vkey owner.vkey \
+    --relay-address 203.0.113.10:3001 \
+    --relay-host relay.example.com:3001 --out pool-reg.cert`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunCertPoolRegistration(
 				coldVkeyFile,
@@ -222,6 +240,8 @@ Examples:
 				margin,
 				metadataURL,
 				metadataHash,
+				ownerVkeyFiles,
+				relays,
 			); err != nil {
 				logging.GetLogger().Error(
 					"failed to create pool registration certificate",
@@ -280,6 +300,31 @@ Examples:
 		"metadata-hash",
 		"",
 		"Pool metadata hash in hex (optional)",
+	)
+	cmd.Flags().StringArrayVar(
+		&ownerVkeyFiles,
+		"owner-stake-vkey",
+		nil,
+		"Pool owner stake verification key file (repeatable, "+
+			"defaults to the reward account stake key)",
+	)
+	cmd.Flags().StringArrayVar(
+		&relays.Addresses,
+		"relay-address",
+		nil,
+		"Relay IP address with port, IPv4:port or [IPv6]:port (repeatable)",
+	)
+	cmd.Flags().StringArrayVar(
+		&relays.Hosts,
+		"relay-host",
+		nil,
+		"Relay host name with optional port, name[:port] (repeatable)",
+	)
+	cmd.Flags().StringArrayVar(
+		&relays.MultiHosts,
+		"relay-multi-host",
+		nil,
+		"Relay multi host name (repeatable)",
 	)
 	cmd.Flags().StringVarP(
 		&outputFile,
