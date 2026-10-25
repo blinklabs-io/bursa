@@ -108,9 +108,11 @@ func KeyTypeFromEnvelope(envelopeType string) KeyType {
 		return KeyTypeStake
 	case strings.HasPrefix(envelopeType, "DRep"):
 		return KeyTypeDRep
-	case strings.HasPrefix(envelopeType, "CommitteeHot"):
+	case strings.HasPrefix(envelopeType, "CommitteeHot"),
+		strings.HasPrefix(envelopeType, "ConstitutionalCommitteeHot"):
 		return KeyTypeCCHot
-	case strings.HasPrefix(envelopeType, "CommitteeCold"):
+	case strings.HasPrefix(envelopeType, "CommitteeCold"),
+		strings.HasPrefix(envelopeType, "ConstitutionalCommitteeCold"):
 		return KeyTypeCCCold
 	case strings.HasPrefix(envelopeType, "Policy"),
 		strings.HasPrefix(envelopeType, "Calidus"):

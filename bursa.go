@@ -142,23 +142,32 @@ func (kf KeyFile) String() string {
 		prefix = "stake_sk"
 	case "StakeExtendedSigningKeyShelley_ed25519_bip32":
 		prefix = "stake_xsk"
-	case "DRepVerificationKeyShelley_ed25519":
+	case "DRepVerificationKeyShelley_ed25519",
+		"DRepVerificationKey_ed25519":
 		prefix = "drep_vk"
-	case "DRepSigningKeyShelley_ed25519":
+	case "DRepSigningKeyShelley_ed25519",
+		"DRepSigningKey_ed25519":
 		prefix = "drep_sk"
-	case "DRepExtendedSigningKeyShelley_ed25519_bip32":
+	case "DRepExtendedSigningKeyShelley_ed25519_bip32",
+		"DRepExtendedSigningKey_ed25519_bip32":
 		prefix = "drep_xsk"
-	case "CommitteeColdVerificationKeyShelley_ed25519":
+	case "CommitteeColdVerificationKeyShelley_ed25519",
+		"ConstitutionalCommitteeColdVerificationKey_ed25519":
 		prefix = "cc_cold_vk"
-	case "CommitteeColdSigningKeyShelley_ed25519":
+	case "CommitteeColdSigningKeyShelley_ed25519",
+		"ConstitutionalCommitteeColdSigningKey_ed25519":
 		prefix = "cc_cold_sk"
-	case "CommitteeColdExtendedSigningKeyShelley_ed25519_bip32":
+	case "CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
+		"ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32":
 		prefix = "cc_cold_xsk"
-	case "CommitteeHotVerificationKeyShelley_ed25519":
+	case "CommitteeHotVerificationKeyShelley_ed25519",
+		"ConstitutionalCommitteeHotVerificationKey_ed25519":
 		prefix = "cc_hot_vk"
-	case "CommitteeHotSigningKeyShelley_ed25519":
+	case "CommitteeHotSigningKeyShelley_ed25519",
+		"ConstitutionalCommitteeHotSigningKey_ed25519":
 		prefix = "cc_hot_sk"
-	case "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32":
+	case "CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
+		"ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32":
 		prefix = "cc_hot_xsk"
 	case "StakePoolVerificationKey_ed25519",
 		"StakePoolVerificationKeyShelley_ed25519":
@@ -944,7 +953,7 @@ func GetDRepVKey(drepKey bip32.XPrv) (KeyFile, error) {
 		)
 	}
 	kf := KeyFile{
-		Type:        "DRepVerificationKeyShelley_ed25519",
+		Type:        "DRepVerificationKey_ed25519",
 		Description: "DRep Verification Key",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
@@ -955,7 +964,7 @@ func GetDRepVKey(drepKey bip32.XPrv) (KeyFile, error) {
 func GetDRepSKey(drepKey bip32.XPrv) (KeyFile, error) {
 	return getExtendedSigningKeyFile(
 		drepKey,
-		"DRepExtendedSigningKeyShelley_ed25519_bip32",
+		"DRepExtendedSigningKey_ed25519_bip32",
 		"DRep Extended Signing Key (BIP32)",
 	)
 }
@@ -963,7 +972,7 @@ func GetDRepSKey(drepKey bip32.XPrv) (KeyFile, error) {
 func GetDRepExtendedSKey(drepKey bip32.XPrv) (KeyFile, error) {
 	return getExtendedSigningKeyFile(
 		drepKey,
-		"DRepExtendedSigningKeyShelley_ed25519_bip32",
+		"DRepExtendedSigningKey_ed25519_bip32",
 		"DRep Extended Signing Key (BIP32)",
 	)
 }
@@ -988,7 +997,7 @@ func GetCommitteeColdVKey(committeeKey bip32.XPrv) (KeyFile, error) {
 		)
 	}
 	kf := KeyFile{
-		Type:        "CommitteeColdVerificationKeyShelley_ed25519",
+		Type:        "ConstitutionalCommitteeColdVerificationKey_ed25519",
 		Description: "Committee Cold Verification Key",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
@@ -999,7 +1008,7 @@ func GetCommitteeColdVKey(committeeKey bip32.XPrv) (KeyFile, error) {
 func GetCommitteeColdSKey(committeeKey bip32.XPrv) (KeyFile, error) {
 	return getExtendedSigningKeyFile(
 		committeeKey,
-		"CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
+		"ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32",
 		"Committee Cold Extended Signing Key (BIP32)",
 	)
 }
@@ -1007,7 +1016,7 @@ func GetCommitteeColdSKey(committeeKey bip32.XPrv) (KeyFile, error) {
 func GetCommitteeColdExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
 	return getExtendedSigningKeyFile(
 		committeeKey,
-		"CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
+		"ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32",
 		"Committee Cold Extended Signing Key (BIP32)",
 	)
 }
@@ -1029,7 +1038,7 @@ func GetCommitteeHotVKey(committeeKey bip32.XPrv) (KeyFile, error) {
 		)
 	}
 	kf := KeyFile{
-		Type:        "CommitteeHotVerificationKeyShelley_ed25519",
+		Type:        "ConstitutionalCommitteeHotVerificationKey_ed25519",
 		Description: "Committee Hot Verification Key",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
@@ -1040,7 +1049,7 @@ func GetCommitteeHotVKey(committeeKey bip32.XPrv) (KeyFile, error) {
 func GetCommitteeHotSKey(committeeKey bip32.XPrv) (KeyFile, error) {
 	return getExtendedSigningKeyFile(
 		committeeKey,
-		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
+		"ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32",
 		"Committee Hot Extended Signing Key (BIP32)",
 	)
 }
@@ -1048,7 +1057,7 @@ func GetCommitteeHotSKey(committeeKey bip32.XPrv) (KeyFile, error) {
 func GetCommitteeHotExtendedSKey(committeeKey bip32.XPrv) (KeyFile, error) {
 	return getExtendedSigningKeyFile(
 		committeeKey,
-		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
+		"ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32",
 		"Committee Hot Extended Signing Key (BIP32)",
 	)
 }
@@ -2505,8 +2514,11 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"PaymentVerificationKeyShelley_ed25519",
 		"StakeVerificationKeyShelley_ed25519",
 		"DRepVerificationKeyShelley_ed25519",
+		"DRepVerificationKey_ed25519",
 		"CommitteeColdVerificationKeyShelley_ed25519",
+		"ConstitutionalCommitteeColdVerificationKey_ed25519",
 		"CommitteeHotVerificationKeyShelley_ed25519",
+		"ConstitutionalCommitteeHotVerificationKey_ed25519",
 		"StakePoolVerificationKey_ed25519",
 		"StakePoolVerificationKeyShelley_ed25519",
 		"PolicyVerificationKeyShelley_ed25519",
@@ -2522,8 +2534,11 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"PaymentSigningKeyShelley_ed25519",
 		"StakeSigningKeyShelley_ed25519",
 		"DRepSigningKeyShelley_ed25519",
+		"DRepSigningKey_ed25519",
 		"CommitteeColdSigningKeyShelley_ed25519",
+		"ConstitutionalCommitteeColdSigningKey_ed25519",
 		"CommitteeHotSigningKeyShelley_ed25519",
+		"ConstitutionalCommitteeHotSigningKey_ed25519",
 		"StakePoolSigningKey_ed25519",
 		"StakePoolSigningKeyShelley_ed25519",
 		"PolicySigningKeyShelley_ed25519",
@@ -2539,8 +2554,11 @@ func parseKeyEnvelope(fileBytes []byte) (*LoadedKey, error) {
 		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		"StakeExtendedSigningKeyShelley_ed25519_bip32",
 		"DRepExtendedSigningKeyShelley_ed25519_bip32",
+		"DRepExtendedSigningKey_ed25519_bip32",
 		"CommitteeColdExtendedSigningKeyShelley_ed25519_bip32",
+		"ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32",
 		"CommitteeHotExtendedSigningKeyShelley_ed25519_bip32",
+		"ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32",
 		"StakePoolExtendedSigningKeyShelley_ed25519_bip32",
 		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
 		"CalidusExtendedSigningKeyShelley_ed25519_bip32":

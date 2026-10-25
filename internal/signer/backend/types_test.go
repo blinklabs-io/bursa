@@ -64,16 +64,21 @@ func TestKeyType_Valid(t *testing.T) {
 
 func TestKeyTypeFromEnvelope(t *testing.T) {
 	cases := map[string]KeyType{
-		"PaymentSigningKeyShelley_ed25519":               KeyTypePayment,
-		"PaymentExtendedSigningKeyShelley_ed25519_bip32": KeyTypePayment,
-		"StakePoolSigningKey_ed25519":                    KeyTypePool,
-		"StakeSigningKeyShelley_ed25519":                 KeyTypeStake,
-		"DRepSigningKey_ed25519":                         KeyTypeDRep,
-		"CommitteeHotSigningKey_ed25519":                 KeyTypeCCHot,
-		"CommitteeColdSigningKey_ed25519":                KeyTypeCCCold,
-		"PolicySigningKey_ed25519":                       KeyTypePolicy,
-		"CalidusSigningKey_ed25519":                      KeyTypePolicy,
-		"SomethingUnknown":                               KeyTypePayment,
+		"PaymentSigningKeyShelley_ed25519":                            KeyTypePayment,
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32":              KeyTypePayment,
+		"StakePoolSigningKey_ed25519":                                 KeyTypePool,
+		"StakeSigningKeyShelley_ed25519":                              KeyTypeStake,
+		"DRepSigningKey_ed25519":                                      KeyTypeDRep,
+		"CommitteeHotSigningKey_ed25519":                              KeyTypeCCHot,
+		"CommitteeColdSigningKey_ed25519":                             KeyTypeCCCold,
+		"ConstitutionalCommitteeHotSigningKey_ed25519":                KeyTypeCCHot,
+		"ConstitutionalCommitteeColdSigningKey_ed25519":               KeyTypeCCCold,
+		"ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32":  KeyTypeCCHot,
+		"ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32": KeyTypeCCCold,
+		"DRepExtendedSigningKey_ed25519_bip32":                        KeyTypeDRep,
+		"PolicySigningKey_ed25519":                                    KeyTypePolicy,
+		"CalidusSigningKey_ed25519":                                   KeyTypePolicy,
+		"SomethingUnknown":                                            KeyTypePayment,
 	}
 	for in, want := range cases {
 		if got := KeyTypeFromEnvelope(in); got != want {

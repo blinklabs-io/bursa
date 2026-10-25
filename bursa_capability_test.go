@@ -193,12 +193,12 @@ func TestGetDRepKeyFiles(t *testing.T) {
 
 	vkey, err := GetDRepVKey(drepKey)
 	require.NoError(t, err)
-	assert.Equal(t, "DRepVerificationKeyShelley_ed25519", vkey.Type)
+	assert.Equal(t, "DRepVerificationKey_ed25519", vkey.Type)
 	assert.Equal(t, "5820", vkey.CborHex[:4])
 
 	skey, err := GetDRepSKey(drepKey)
 	require.NoError(t, err)
-	assert.Equal(t, "DRepExtendedSigningKeyShelley_ed25519_bip32", skey.Type)
+	assert.Equal(t, "DRepExtendedSigningKey_ed25519_bip32", skey.Type)
 	assert.Equal(t, "5880", skey.CborHex[:4])
 
 	_, err = GetDRepKey(accountKey, 0x80000000)
@@ -221,7 +221,7 @@ func TestGetCommitteeColdKeyFiles(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(
 		t,
-		"CommitteeColdVerificationKeyShelley_ed25519",
+		"ConstitutionalCommitteeColdVerificationKey_ed25519",
 		vkey.Type,
 	)
 	assert.Equal(t, "5820", vkey.CborHex[:4])
@@ -246,7 +246,7 @@ func TestGetCommitteeHotKeyFiles(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(
 		t,
-		"CommitteeHotVerificationKeyShelley_ed25519",
+		"ConstitutionalCommitteeHotVerificationKey_ed25519",
 		vkey.Type,
 	)
 	assert.Equal(t, "5820", vkey.CborHex[:4])
