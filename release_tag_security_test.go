@@ -56,7 +56,7 @@ func TestReleaseTagRejectedBeforeReleaseCreation(t *testing.T) {
 	}{
 		{tag: "v0.21.0", allowed: true},
 		{tag: "v0.22.0-rc.2", allowed: true},
-		{tag: "v1.2.3+build.4", allowed: true},
+		{tag: "v1.2.3+build.4"},
 		{tag: "v1.2.3$(id)"},
 		{tag: "v1.2.3;id"},
 	} {
