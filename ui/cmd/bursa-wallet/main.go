@@ -115,6 +115,9 @@ func parseNetwork(args []string, out io.Writer) (string, error) {
 	if err := fs.Parse(args); err != nil {
 		return "", err
 	}
+	if fs.NArg() > 0 {
+		return "", fmt.Errorf("unexpected argument %q: pass the network as -n <name>", fs.Arg(0))
+	}
 	if !cardanonet.ValidNetwork(network) {
 		return "", fmt.Errorf("unknown network %q: must be one of %s", network, cardanonet.SupportedNetworks())
 	}
@@ -127,12 +130,12 @@ func parseNetwork(args []string, out io.Writer) (string, error) {
 // disabled, rather than blocking startup.
 func openLogFile(dataDir string) (string, *os.File) {
 	logDir := filepath.Join(dataDir, "logs")
-	if err := os.MkdirAll(logDir, 0o700); err != nil {
+	if err := os.MkdirAll(logDir, 0o700); err != nil { //nolint:gosec // G703: dataDir embeds the network name, which parseNetwork restricts to the fixed registry
 		fmt.Fprintln(os.Stderr, "bursa-wallet: could not create log dir:", err)
 		return "", nil
 	}
 	path := filepath.Join(logDir, "bursa-wallet.log")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G703: same dataDir, restricted to the fixed network registry
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bursa-wallet: could not open log file:", err)
 		return "", nil

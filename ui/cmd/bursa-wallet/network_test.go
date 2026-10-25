@@ -18,6 +18,7 @@ func TestParseNetwork(t *testing.T) {
 		{name: "short flag", args: []string{"-n", "musashi"}, want: "musashi"},
 		{name: "long flag", args: []string{"--network", "dijkstra"}, want: "dijkstra"},
 		{name: "flag beats env", env: "preprod", args: []string{"-n", "mainnet"}, want: "mainnet"},
+		{name: "positional arg", args: []string{"musashi", "-n", "dijkstra"}, wantErr: true},
 		{name: "unknown", args: []string{"-n", "sanchonet"}, wantErr: true},
 		{name: "unknown env", env: "nope", wantErr: true},
 	}
