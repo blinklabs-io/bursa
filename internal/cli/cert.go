@@ -554,8 +554,8 @@ func RunCertDRepDeregistration(
 //	vote_deleg_cert = (9, stake_credential, drep)
 //	drep = [0, keyhash]     -- specific DRep by key hash
 //	     / [1, scripthash]  -- specific DRep by script hash
-//	     / 2                -- always-abstain
-//	     / 3                -- always-no-confidence
+//	     / [2]              -- always-abstain
+//	     / [3]              -- always-no-confidence
 func RunCertVoteDelegation(
 	stakeVkeyFile, drepVkeyHash, drepID, outputFile string,
 	alwaysAbstain, alwaysNoConfidence bool,
@@ -649,15 +649,15 @@ func RunCertVoteDelegation(
 
 // buildDRepTarget builds a CBOR-encoded DRep value for vote
 // delegation. The DRep can be a specific key hash, a DRep ID,
-// always-abstain (2), or always-no-confidence (3).
+// always-abstain ([2]), or always-no-confidence ([3]).
 func buildDRepTarget(
 	drepVkeyHash, drepID string,
 	alwaysAbstain, alwaysNoConfidence bool,
 ) (cbor.RawMessage, error) {
 	switch {
 	case alwaysAbstain:
-		// always-abstain = 2
-		encoded, err := cbor.Encode(uint64(2))
+		// always-abstain = [2]
+		encoded, err := cbor.Encode([]any{uint64(2)})
 		if err != nil {
 			return nil, fmt.Errorf(
 				"failed to encode always-abstain: %w",
@@ -667,8 +667,8 @@ func buildDRepTarget(
 		return cbor.RawMessage(encoded), nil
 
 	case alwaysNoConfidence:
-		// always-no-confidence = 3
-		encoded, err := cbor.Encode(uint64(3))
+		// always-no-confidence = [3]
+		encoded, err := cbor.Encode([]any{uint64(3)})
 		if err != nil {
 			return nil, fmt.Errorf(
 				"failed to encode "+

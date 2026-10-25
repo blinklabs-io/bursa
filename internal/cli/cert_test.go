@@ -712,8 +712,8 @@ func TestBuildDRepTarget_AlwaysAbstain(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.NotEmpty(t, target)
-	// CBOR encoding of uint64(2) = 0x02
-	assert.Equal(t, byte(0x02), target[0])
+	// always-abstain = [2], CBOR 0x8102
+	assert.Equal(t, []byte{0x81, 0x02}, []byte(target))
 }
 
 func TestBuildDRepTarget_AlwaysNoConfidence(t *testing.T) {
@@ -722,8 +722,8 @@ func TestBuildDRepTarget_AlwaysNoConfidence(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.NotEmpty(t, target)
-	// CBOR encoding of uint64(3) = 0x03
-	assert.Equal(t, byte(0x03), target[0])
+	// always-no-confidence = [3], CBOR 0x8103
+	assert.Equal(t, []byte{0x81, 0x03}, []byte(target))
 }
 
 func TestBuildDRepTarget_KeyHash(t *testing.T) {
