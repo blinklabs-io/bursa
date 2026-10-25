@@ -30,6 +30,7 @@ import (
 	"testing"
 
 	"github.com/blinklabs-io/gouroboros/cbor"
+	"github.com/blinklabs-io/gouroboros/vrf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -202,12 +203,12 @@ func signingKeyExporterRegistry(t *testing.T) []signingKeyExporterVector {
 		{
 			name: "GetVRFSKey", signingKey: mustSigningKey(GetVRFSKey(vrfSKey)),
 			verificationKey: vrfVKey,
-			wantType:        "VRFSigningKey_PraosVRF", wantMaterialBytes: len(vrfSKey),
+			wantType:        "VrfSigningKey_PraosVRF", wantMaterialBytes: len(vrfSKey) + vrf.PublicKeySize,
 		},
 		{
 			name: "GetKESSKey", signingKey: mustSigningKey(GetKESSKey(kesSKey)),
 			verificationKey: kesVKey,
-			wantType:        "KESSigningKey_PraosV2", wantMaterialBytes: len(kesSKey.Data),
+			wantType:        "KesSigningKey_ed25519_kes_2^6", wantMaterialBytes: len(kesSKey.Data),
 		},
 		{
 			name: "GetMultiSigPaymentSKey", signingKey: mustSigningKey(GetMultiSigPaymentSKey(multisigPayment)),

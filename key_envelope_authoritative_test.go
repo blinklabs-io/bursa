@@ -346,7 +346,7 @@ func TestVRFCardanoCLIEnvelopeRejectsMismatchedIdentity(t *testing.T) {
 	encoded, err := cbor.Encode(body)
 	require.NoError(t, err)
 	key := KeyFile{
-		Type:    "VRFSigningKey_PraosVRF",
+		Type:    "VrfSigningKey_PraosVRF",
 		CborHex: hex.EncodeToString(encoded),
 	}
 	_, err = LoadKeyFromBytes(authoritativeEnvelopeJSON(t, key))
@@ -356,15 +356,15 @@ func TestVRFCardanoCLIEnvelopeRejectsMismatchedIdentity(t *testing.T) {
 func TestExportedKESAndVRFVectorsUseCanonicalLengths(t *testing.T) {
 	for _, vector := range authoritativeEnvelopeVectors(t) {
 		switch vector.key.Type {
-		case "VRFVerificationKey_PraosVRF", "VRFSigningKey_PraosVRF":
-			if vector.key.Type == "VRFSigningKey_PraosVRF" {
-				require.Len(t, decodeCborBytes(t, vector.key.CborHex), vrf.SeedSize)
+		case "VrfVerificationKey_PraosVRF", "VrfSigningKey_PraosVRF":
+			if vector.key.Type == "VrfSigningKey_PraosVRF" {
+				require.Len(t, decodeCborBytes(t, vector.key.CborHex), vrf.SeedSize+vrf.PublicKeySize)
 			} else {
 				require.Len(t, decodeCborBytes(t, vector.key.CborHex), vrf.PublicKeySize)
 			}
-		case "KESVerificationKey_PraosV2":
+		case "KesVerificationKey_ed25519_kes_2^6":
 			require.Len(t, decodeCborBytes(t, vector.key.CborHex), kes.PublicKeySize)
-		case "KESSigningKey_PraosV2":
+		case "KesSigningKey_ed25519_kes_2^6":
 			require.Len(t, decodeCborBytes(t, vector.key.CborHex), kes.CardanoKesSecretKeySize)
 		}
 	}

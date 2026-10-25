@@ -295,13 +295,13 @@ func TestVRFDerivation(t *testing.T) {
 
 	vkey, err := GetVRFVKey(pub)
 	require.NoError(t, err)
-	assert.Equal(t, "VRFVerificationKey_PraosVRF", vkey.Type)
+	assert.Equal(t, "VrfVerificationKey_PraosVRF", vkey.Type)
 	assert.Equal(t, pub, decodeCborBytes(t, vkey.CborHex))
 
 	skey, err := GetVRFSKey(sec)
 	require.NoError(t, err)
-	assert.Equal(t, "VRFSigningKey_PraosVRF", skey.Type)
-	assert.Equal(t, sec, decodeCborBytes(t, skey.CborHex))
+	assert.Equal(t, "VrfSigningKey_PraosVRF", skey.Type)
+	assert.Equal(t, append(append([]byte(nil), sec...), pub...), decodeCborBytes(t, skey.CborHex))
 }
 
 func TestVRFSeedInvalidIndex(t *testing.T) {
@@ -339,12 +339,12 @@ func TestKESDerivation(t *testing.T) {
 
 	vkey, err := GetKESVKey(pub)
 	require.NoError(t, err)
-	assert.Equal(t, "KESVerificationKey_PraosV2", vkey.Type)
+	assert.Equal(t, "KesVerificationKey_ed25519_kes_2^6", vkey.Type)
 	assert.Equal(t, pub, decodeCborBytes(t, vkey.CborHex))
 
 	skey, err := GetKESSKey(secKey)
 	require.NoError(t, err)
-	assert.Equal(t, "KESSigningKey_PraosV2", skey.Type)
+	assert.Equal(t, "KesSigningKey_ed25519_kes_2^6", skey.Type)
 	assert.NotEmpty(t, skey.CborHex)
 }
 
