@@ -116,6 +116,13 @@ func TestRunCertPoolRegistration_MatchesCardanoCLI(t *testing.T) {
 			want: poolRegPrefix + ownerSetTwo + "80" + noMetadata,
 		},
 		{
+			name: "duplicate owner appears once",
+			owners: []string{
+				goldenStakeVKeyCborHex, goldenStakeVKeyCborHex,
+			},
+			want: poolRegPrefix + ownerSetOne + "80" + noMetadata,
+		},
+		{
 			name: "address, host and multi host relays",
 			relays: PoolRelayFlags{
 				Addresses:  []string{"1.2.3.4:3001"},
