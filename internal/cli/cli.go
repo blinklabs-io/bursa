@@ -1319,6 +1319,9 @@ type PoolRelayFlags struct {
 	MultiHosts []string
 }
 
+// stakeVkeyEnvelopeType is the text envelope type of a stake verification key.
+const stakeVkeyEnvelopeType = "StakeVerificationKeyShelley_ed25519"
+
 // resolvePoolOwners returns the stake key hashes of the pool owners. With no
 // owner verification key files it defaults to the stake key of the reward
 // account.
@@ -1342,6 +1345,15 @@ func resolvePoolOwners(
 			return nil, fmt.Errorf(
 				"failed to read owner stake vkey file: %w",
 				err,
+			)
+		}
+		var env keyEnvelope
+		if err := json.Unmarshal(data, &env); err != nil ||
+			env.Type != stakeVkeyEnvelopeType {
+			return nil, fmt.Errorf(
+				"owner stake vkey %s: expected a %s key envelope",
+				file,
+				stakeVkeyEnvelopeType,
 			)
 		}
 		vkey, err := parseVerificationKey(data)
