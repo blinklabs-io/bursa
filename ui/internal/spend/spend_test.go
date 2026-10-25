@@ -52,7 +52,7 @@ type fakeChain struct {
 	maxTxFeeErr error
 	submitHash  lcommon.Blake2b256 // canned hash returned by SubmitTx
 	submitErr   error
-	submitCalls int                // count of SubmitTx invocations
+	submitCalls int // count of SubmitTx invocations
 	submitCbor  []byte
 	submitMu    sync.Mutex
 
@@ -2426,6 +2426,41 @@ func TestHardwareSignRequestPreprodProtocolMagic(t *testing.T) {
 	}
 	if req.ProtocolMagic != 1 {
 		t.Fatalf("ProtocolMagic = %d, want 1", req.ProtocolMagic)
+	}
+}
+
+func TestHardwareSignRequestProtocolMagicForNewNetworks(t *testing.T) {
+	for name, magic := range map[string]uint32{"musashi": 164, "dijkstra": 6} {
+		t.Run(name, func(t *testing.T) {
+			acct, err := wallet.Derive(testMnemonic, name, 2)
+			if err != nil {
+				t.Fatalf("derive %s account: %v", name, err)
+			}
+			fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
+			s := NewService(fc, nil, acct)
+
+			pv, err := s.Build(context.Background(), SendRequest{
+				To:       acct.ReceiveAddresses[1],
+				Lovelace: "1000000",
+			})
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			req, err := s.HardwareSignRequest(pv.PendingID)
+			if err != nil {
+				t.Fatalf("HardwareSignRequest: %v", err)
+			}
+			if req.NetworkID != 0 || req.ProtocolMagic != magic {
+				t.Fatalf("network = (id %d, magic %d), want (0, %d)", req.NetworkID, req.ProtocolMagic, magic)
+			}
+			dr, err := s.SignDataHardwareRequest(acct.ReceiveAddresses[0])
+			if err != nil {
+				t.Fatalf("SignDataHardwareRequest: %v", err)
+			}
+			if dr.ProtocolMagic != magic {
+				t.Fatalf("sign-data magic = %d, want %d", dr.ProtocolMagic, magic)
+			}
+		})
 	}
 }
 

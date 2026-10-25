@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -29,6 +30,7 @@ import (
 	"syscall"
 
 	"github.com/blinklabs-io/bursa/ui/internal/boot"
+	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
 )
 
 // desktopAddr is the fixed loopback control-surface address the desktop binary
@@ -48,7 +50,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	network := envOr("BURSA_NETWORK", "preview")
+	network, err := parseNetwork(os.Args[1:], os.Stderr)
+	if err != nil {
+		return err
+	}
 	dataDir := filepath.Join(home, ".bursa-wallet", network)
 
 	// Log to a file under the data dir in addition to stderr, so the
@@ -97,18 +102,40 @@ func run() error {
 	return uiErr
 }
 
+// parseNetwork resolves the network to run on: -n/--network wins, then
+// BURSA_NETWORK, then preview. An unsupported name is rejected before anything
+// is created on disk, since the name also selects the per-network data dir.
+func parseNetwork(args []string, out io.Writer) (string, error) {
+	fs := flag.NewFlagSet("bursa-wallet", flag.ContinueOnError)
+	fs.SetOutput(out)
+	network := envOr("BURSA_NETWORK", "preview")
+	usage := "Cardano network (" + cardanonet.SupportedNetworks() + ")"
+	fs.StringVar(&network, "n", network, usage)
+	fs.StringVar(&network, "network", network, usage)
+	if err := fs.Parse(args); err != nil {
+		return "", err
+	}
+	if fs.NArg() > 0 {
+		return "", fmt.Errorf("unexpected argument %q: pass the network as -n <name>", fs.Arg(0))
+	}
+	if !cardanonet.ValidNetwork(network) {
+		return "", fmt.Errorf("unknown network %q: must be one of %s", network, cardanonet.SupportedNetworks())
+	}
+	return network, nil
+}
+
 // openLogFile creates <dataDir>/logs/bursa-wallet.log (appending) and returns
 // its path plus the open file for the logger to also write to. On any failure
 // it returns ("", nil): logging then stays stderr-only and log export is
 // disabled, rather than blocking startup.
 func openLogFile(dataDir string) (string, *os.File) {
 	logDir := filepath.Join(dataDir, "logs")
-	if err := os.MkdirAll(logDir, 0o700); err != nil {
+	if err := os.MkdirAll(logDir, 0o700); err != nil { //nolint:gosec // G703: dataDir embeds the network name, which parseNetwork restricts to the fixed registry
 		fmt.Fprintln(os.Stderr, "bursa-wallet: could not create log dir:", err)
 		return "", nil
 	}
 	path := filepath.Join(logDir, "bursa-wallet.log")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G703: same dataDir, restricted to the fixed network registry
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bursa-wallet: could not open log file:", err)
 		return "", nil

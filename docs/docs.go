@@ -660,6 +660,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
+                    "404": {
+                        "description": "Wallet not found",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
@@ -716,6 +722,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Wallet storage administrator access required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Wallet not found",
                         "schema": {
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
@@ -865,6 +877,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
+                    "404": {
+                        "description": "Wallet not found",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
@@ -887,7 +905,9 @@ const docTemplate = `{
                     "enum": [
                         "mainnet",
                         "preprod",
-                        "preview"
+                        "preview",
+                        "musashi",
+                        "dijkstra"
                     ]
                 },
                 "paymentKey": {
@@ -948,7 +968,9 @@ const docTemplate = `{
                     "enum": [
                         "mainnet",
                         "preprod",
-                        "preview"
+                        "preview",
+                        "musashi",
+                        "dijkstra"
                     ]
                 },
                 "password": {
@@ -1076,7 +1098,9 @@ const docTemplate = `{
                     "enum": [
                         "mainnet",
                         "preprod",
-                        "preview"
+                        "preview",
+                        "musashi",
+                        "dijkstra"
                     ]
                 },
                 "script": {
@@ -1119,7 +1143,9 @@ const docTemplate = `{
                     "enum": [
                         "mainnet",
                         "preprod",
-                        "preview"
+                        "preview",
+                        "musashi",
+                        "dijkstra"
                     ]
                 },
                 "required": {

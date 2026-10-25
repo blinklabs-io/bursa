@@ -20,6 +20,10 @@ const HOSTS: Record<string, string> = {
   preview: "preview.cardanoscan.io",
 };
 
+// Networks with no public explorer. A link is never built for them, since the
+// mainnet fallback below would point at the wrong chain.
+const NO_EXPLORER = new Set(["musashi", "dijkstra"]);
+
 const PATHS: Record<ExplorerKind, string> = {
   tx: "transaction",
   address: "address",
@@ -34,9 +38,11 @@ const PATHS: Record<ExplorerKind, string> = {
  * An unrecognized network string falls back to the mainnet host rather than
  * throwing — callers pass through whatever network string the server reports
  * for a wallet, and a broken/unknown value should still produce a usable (if
- * possibly wrong-network) link rather than crash the screen.
+ * possibly wrong-network) link rather than crash the screen. Networks listed in
+ * NO_EXPLORER (musashi, dijkstra) return "" so callers can omit the link.
  */
 export function explorerUrl(network: string, kind: ExplorerKind, id: string): string {
+  if (NO_EXPLORER.has(network)) return "";
   const host = HOSTS[network] ?? HOSTS.mainnet;
   return `https://${host}/${PATHS[kind]}/${encodeURIComponent(id)}`;
 }

@@ -34,6 +34,8 @@ export function ExplorerLink({ network, kind, id, label }: ExplorerLinkProps) {
   const accessibleLabel = label ?? "View on public block explorer (opens in a new tab)";
   const url = explorerUrl(network, kind, id);
 
+  if (!url) return null;
+
   function handleClick(e: MouseEvent<HTMLAnchorElement>) {
     e.preventDefault();
     if (typeof window.bursaOpenExternal === "function") {

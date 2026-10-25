@@ -22,6 +22,8 @@ const NETWORK_LABELS: Record<string, string> = {
   preview: "Preview",
   preprod: "Preprod",
   mainnet: "Mainnet",
+  musashi: "Musashi",
+  dijkstra: "Dijkstra",
 };
 
 function networkLabel(network: string): string {

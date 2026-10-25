@@ -41,3 +41,8 @@ test("explorerUrl always produces an https URL (never calls out to it itself)", 
   const url = explorerUrl("mainnet", "pool", "pool1abc");
   expect(url.startsWith("https://")).toBe(true);
 });
+
+test("musashi and dijkstra have no configured public explorer", () => {
+  expect(explorerUrl("musashi", "tx", "abc")).toBe("");
+  expect(explorerUrl("dijkstra", "tx", "abc")).toBe("");
+});

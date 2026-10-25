@@ -171,7 +171,7 @@ func addressListCommand() *cobra.Command {
 		},
 	}
 	addSecretFlags(cmd, &mnemonic, &mnemonicFile, &password)
-	cmd.Flags().StringVar(&network, "network", "mainnet", "Network (mainnet|preprod|preview)")
+	cmd.Flags().StringVar(&network, "network", "mainnet", "Network (mainnet|preprod|preview|musashi|dijkstra)")
 	cmd.Flags().Uint32Var(&account, "account", 0, "Account index")
 	cmd.Flags().Uint32Var(&start, "start", 0, "Starting address index")
 	cmd.Flags().Uint32Var(&count, "count", 20, "Number of addresses to derive")

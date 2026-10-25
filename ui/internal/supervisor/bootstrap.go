@@ -113,6 +113,14 @@ func toBootstrapProgress(sp mithril.SyncProgress) BootstrapProgress {
 	}
 }
 
+// mithrilSupported reports whether dingo ships a Mithril aggregator config for
+// the network. Dev and prototype networks (musashi, dijkstra) have none, so a
+// fresh node there syncs from genesis instead of failing to bootstrap.
+func mithrilSupported(network string) bool {
+	_, err := mithril.NetworkConfigForNetwork(network)
+	return err == nil
+}
+
 // shouldBootstrap reports whether a Mithril bootstrap should run: only when
 // enabled and no completed bootstrap is recorded for the DB dir.
 func shouldBootstrap(enabled bool, dataDir string) bool {

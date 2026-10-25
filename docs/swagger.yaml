@@ -7,6 +7,8 @@ definitions:
         - mainnet
         - preprod
         - preview
+        - musashi
+        - dijkstra
         type: string
       paymentKey:
         description: bech32-encoded verification key (required for base and enterprise
@@ -53,6 +55,8 @@ definitions:
         - mainnet
         - preprod
         - preview
+        - musashi
+        - dijkstra
         type: string
       password:
         type: string
@@ -143,6 +147,8 @@ definitions:
         - mainnet
         - preprod
         - preview
+        - musashi
+        - dijkstra
         type: string
       script:
         additionalProperties: {}
@@ -172,6 +178,8 @@ definitions:
         - mainnet
         - preprod
         - preview
+        - musashi
+        - dijkstra
         type: string
       required:
         minimum: 1
@@ -981,6 +989,10 @@ paths:
           description: Wallet storage administrator access required
           schema:
             $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Wallet not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal server error
           schema:
@@ -1018,6 +1030,10 @@ paths:
             $ref: '#/definitions/api.ErrorResponse'
         "403":
           description: Wallet storage administrator access required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Wallet not found
           schema:
             $ref: '#/definitions/api.ErrorResponse'
         "500":
@@ -1112,6 +1128,10 @@ paths:
             $ref: '#/definitions/api.ErrorResponse'
         "403":
           description: Wallet storage administrator access required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Wallet not found
           schema:
             $ref: '#/definitions/api.ErrorResponse'
         "500":
