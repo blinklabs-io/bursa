@@ -350,6 +350,61 @@ func eraName(txType uint) string {
 	}
 }
 
+// eraEnvelopeName returns the era name cardano-cli uses in text envelope
+// types, or "" for eras it has no envelope type for.
+func eraEnvelopeName(txType uint) string {
+	switch txType {
+	case ledger.TxTypeShelley:
+		return "Shelley"
+	case ledger.TxTypeAllegra:
+		return "Allegra"
+	case ledger.TxTypeMary:
+		return "Mary"
+	case ledger.TxTypeAlonzo:
+		return "Alonzo"
+	case ledger.TxTypeBabbage:
+		return "Babbage"
+	case ledger.TxTypeConway:
+		return "Conway"
+	case ledger.TxTypeDijkstra:
+		return "Dijkstra"
+	default:
+		return ""
+	}
+}
+
+// txEnvelopeType returns the cardano-cli text envelope type for a signed
+// transaction of the given era. Unknown eras fall back to the plain "Tx".
+func txEnvelopeType(txType uint) string {
+	switch txType {
+	case ledger.TxTypeShelley:
+		return "TxSignedShelley"
+	}
+	if era := eraEnvelopeName(txType); era != "" {
+		return "Tx " + era + "Era"
+	}
+	return "Tx"
+}
+
+// txWitnessEnvelopeType returns the cardano-cli text envelope type for a
+// detached witness of the given era. Unknown eras fall back to "TxWitness".
+func txWitnessEnvelopeType(txType uint) string {
+	if era := eraEnvelopeName(txType); era != "" {
+		return "TxWitness " + era + "Era"
+	}
+	return "TxWitness"
+}
+
+// TxEnvelopeTypes returns the text envelope types for a signed transaction
+// and a detached witness of the era of txCbor, as cardano-cli expects them.
+func TxEnvelopeTypes(txCbor []byte) (txEnvType, witnessEnvType string, err error) {
+	txType, err := ledger.DetermineTransactionType(txCbor)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to determine transaction era: %w", err)
+	}
+	return txEnvelopeType(txType), txWitnessEnvelopeType(txType), nil
+}
+
 // InspectTransaction decodes a transaction into a human-readable summary.
 func InspectTransaction(txCbor []byte) (*TxInspection, error) {
 	txType, err := ledger.DetermineTransactionType(txCbor)

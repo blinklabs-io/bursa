@@ -44,7 +44,11 @@ func RunTxSign(txFile string, signingKeyFiles []string, outFile string) error {
 	if err != nil {
 		return err
 	}
-	out, err := bursa.WriteCborEnvelope("Tx", "Signed transaction", signed, outFile)
+	envType, _, err := bursa.TxEnvelopeTypes(txBytes)
+	if err != nil {
+		return err
+	}
+	out, err := bursa.WriteCborEnvelope(envType, "Signed transaction", signed, outFile)
 	if err != nil {
 		return err
 	}
@@ -71,7 +75,11 @@ func RunTxWitness(txFile, signingKeyFile, outFile string) error {
 	if err != nil {
 		return err
 	}
-	out, err := bursa.WriteCborEnvelope("TxWitness", "Detached vkey witness", witCbor, outFile)
+	_, envType, err := bursa.TxEnvelopeTypes(txBytes)
+	if err != nil {
+		return err
+	}
+	out, err := bursa.WriteCborEnvelope(envType, "Detached vkey witness", witCbor, outFile)
 	if err != nil {
 		return err
 	}
@@ -105,7 +113,11 @@ func RunTxAssemble(txFile string, witnessFiles []string, outFile string) error {
 	if err != nil {
 		return err
 	}
-	out, err := bursa.WriteCborEnvelope("Tx", "Assembled signed transaction", signed, outFile)
+	envType, _, err := bursa.TxEnvelopeTypes(txBytes)
+	if err != nil {
+		return err
+	}
+	out, err := bursa.WriteCborEnvelope(envType, "Assembled signed transaction", signed, outFile)
 	if err != nil {
 		return err
 	}

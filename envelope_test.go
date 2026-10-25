@@ -17,6 +17,8 @@ package bursa
 import (
 	"encoding/hex"
 	"testing"
+
+	"github.com/blinklabs-io/gouroboros/ledger"
 )
 
 func TestReadCborInput_Hex(t *testing.T) {
@@ -39,5 +41,35 @@ func TestReadCborInput_Envelope(t *testing.T) {
 	}
 	if hex.EncodeToString(got) != hex.EncodeToString(raw) {
 		t.Fatalf("got %x want %x", got, raw)
+	}
+}
+
+func TestEnvelopeTypeForEra(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name            string
+		txType          uint
+		wantTx, wantWit string
+	}{
+		{"shelley", ledger.TxTypeShelley, "TxSignedShelley", "TxWitness ShelleyEra"},
+		{"allegra", ledger.TxTypeAllegra, "Tx AllegraEra", "TxWitness AllegraEra"},
+		{"mary", ledger.TxTypeMary, "Tx MaryEra", "TxWitness MaryEra"},
+		{"alonzo", ledger.TxTypeAlonzo, "Tx AlonzoEra", "TxWitness AlonzoEra"},
+		{"babbage", ledger.TxTypeBabbage, "Tx BabbageEra", "TxWitness BabbageEra"},
+		{"conway", ledger.TxTypeConway, "Tx ConwayEra", "TxWitness ConwayEra"},
+		{"dijkstra", ledger.TxTypeDijkstra, "Tx DijkstraEra", "TxWitness DijkstraEra"},
+		{"byron", ledger.TxTypeByron, "Tx", "TxWitness"},
+		{"unknown", 999, "Tx", "TxWitness"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := txEnvelopeType(tc.txType); got != tc.wantTx {
+				t.Errorf("txEnvelopeType = %q, want %q", got, tc.wantTx)
+			}
+			if got := txWitnessEnvelopeType(tc.txType); got != tc.wantWit {
+				t.Errorf("txWitnessEnvelopeType = %q, want %q", got, tc.wantWit)
+			}
+		})
 	}
 }
