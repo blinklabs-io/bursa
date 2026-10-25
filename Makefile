@@ -18,12 +18,12 @@ BINARIES=$(shell cd $(ROOT_DIR)/cmd && ls -1 | grep -v ^common)
 GOMODULE=$(shell grep ^module $(ROOT_DIR)/go.mod | awk '{ print $$2 }')
 
 # Set version strings based on git tag and current ref
-GO_LDFLAGS=-ldflags "-X '$(GOMODULE)/internal/version.Version=$(shell git describe --tags --exact-match 2>/dev/null)' -X '$(GOMODULE)/internal/version.CommitHash=$(shell git rev-parse --short HEAD)'"
+GO_LDFLAGS=-ldflags "-X '$(GOMODULE)/internal/version.Version=$$(git describe --tags --exact-match 2>/dev/null)' -X '$(GOMODULE)/internal/version.CommitHash=$$(git rev-parse --short HEAD)'"
 
 # The nested ui/ module is a separate Go module; mirror the version-ldflags
 # pattern against its module path for the embedded-SPA wallet binary.
 UI_GOMODULE=$(shell grep ^module $(ROOT_DIR)/ui/go.mod | awk '{ print $$2 }')
-UI_LDFLAGS_CONTENT=-X '$(UI_GOMODULE)/internal/version.Version=$(shell git describe --tags --exact-match 2>/dev/null)' -X '$(UI_GOMODULE)/internal/version.CommitHash=$(shell git rev-parse --short HEAD)'
+UI_LDFLAGS_CONTENT=-X '$(UI_GOMODULE)/internal/version.Version=$$(git describe --tags --exact-match 2>/dev/null)' -X '$(UI_GOMODULE)/internal/version.CommitHash=$$(git rev-parse --short HEAD)'
 UI_GO_LDFLAGS=-ldflags "$(UI_LDFLAGS_CONTENT)"
 # The webview desktop build must link the Windows GUI subsystem so launching it
 # does not spawn a console window. -H=windowsgui is only valid for
