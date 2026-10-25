@@ -15,11 +15,14 @@
 package cli
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/blinklabs-io/gouroboros/cbor"
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -478,6 +481,69 @@ func TestRunCertVoteDelegation_MultipleTargets(
 	)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "exactly one of")
+}
+
+// TestRunCertVoteDelegation_LedgerDecode decodes the written
+// certificate with the ledger's VoteDelegationCertificate type,
+// so the DRep encoding is checked against the ledger decoder
+// rather than against hand-written bytes.
+func TestRunCertVoteDelegation_LedgerDecode(t *testing.T) {
+	drepHash := "d88b9f136cc94612ed33dd8774c6f43d" +
+		"b347ae5814d8efd725d39313"
+	tests := []struct {
+		name               string
+		drepVkeyHash       string
+		alwaysAbstain      bool
+		alwaysNoConfidence bool
+		wantType           int
+	}{
+		{
+			name:          "always-abstain",
+			alwaysAbstain: true,
+			wantType:      lcommon.DrepTypeAbstain,
+		},
+		{
+			name:               "always-no-confidence",
+			alwaysNoConfidence: true,
+			wantType:           lcommon.DrepTypeNoConfidence,
+		},
+		{
+			name:         "key hash",
+			drepVkeyHash: drepHash,
+			wantType:     lcommon.DrepTypeAddrKeyHash,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			vkeyFile := createTestVkeyFile(
+				t, tmpDir, "stake.vkey",
+				"StakeVerificationKeyShelley_ed25519",
+				"Stake Verification Key",
+				testStakeVKeyCborHex,
+			)
+			outFile := filepath.Join(tmpDir, "vote-deleg.cert")
+
+			err := RunCertVoteDelegation(
+				vkeyFile, tc.drepVkeyHash, "", outFile,
+				tc.alwaysAbstain, tc.alwaysNoConfidence,
+			)
+			require.NoError(t, err)
+
+			data, err := os.ReadFile(outFile)
+			require.NoError(t, err)
+			var envelope map[string]string
+			require.NoError(t, json.Unmarshal(data, &envelope))
+			certBytes, err := hex.DecodeString(envelope["cborHex"])
+			require.NoError(t, err)
+
+			var cert lcommon.VoteDelegationCertificate
+			_, err = cbor.Decode(certBytes, &cert)
+			require.NoError(t, err)
+			assert.Equal(t, uint(9), cert.CertType)
+			assert.Equal(t, tc.wantType, cert.Drep.Type)
+		})
+	}
 }
 
 func TestRunCertCommitteeHotAuth(t *testing.T) {
