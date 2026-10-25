@@ -369,6 +369,7 @@ Examples:
 func certStakeRegistrationCommand() *cobra.Command {
 	var stakeVkeyFile string
 	var outputFile string
+	var deposit uint64
 
 	cmd := cobra.Command{
 		Use:   "stake-registration",
@@ -379,15 +380,25 @@ This certificate registers a stake address on-chain, which is
 required before the stake key can be used for delegation or
 reward withdrawal.
 
+Without --deposit the Shelley certificate (type 0) is written. With
+--deposit (lovelace) the Conway certificate (type 7) is written.
+
 Output format is a cardano-cli compatible JSON text envelope.
 
 Examples:
   bursa cert stake-registration \
-    --stake-vkey stake.vkey --out stake-reg.cert`,
+    --stake-vkey stake.vkey --out stake-reg.cert
+  bursa cert stake-registration \
+    --stake-vkey stake.vkey --deposit 2000000 --out stake-reg.cert`,
 		Run: func(cmd *cobra.Command, args []string) {
+			var depositPtr *uint64
+			if cmd.Flags().Changed("deposit") {
+				depositPtr = &deposit
+			}
 			if err := cli.RunCertStakeRegistration(
 				stakeVkeyFile,
 				outputFile,
+				depositPtr,
 			); err != nil {
 				logging.GetLogger().Error(
 					"failed to create stake registration certificate",
@@ -412,6 +423,12 @@ Examples:
 		"",
 		"Output file for certificate (stdout if not specified)",
 	)
+	cmd.Flags().Uint64Var(
+		&deposit,
+		"deposit",
+		0,
+		"Deposit in lovelace; writes the Conway certificate when set",
+	)
 
 	_ = cmd.MarkFlagRequired("stake-vkey")
 
@@ -421,6 +438,7 @@ Examples:
 func certStakeDeregistrationCommand() *cobra.Command {
 	var stakeVkeyFile string
 	var outputFile string
+	var deposit uint64
 
 	cmd := cobra.Command{
 		Use:   "stake-deregistration",
@@ -430,15 +448,25 @@ func certStakeDeregistrationCommand() *cobra.Command {
 This certificate deregisters a stake address, returning the
 deposit and removing the stake key from on-chain registration.
 
+Without --deposit the Shelley certificate (type 1) is written. With
+--deposit (lovelace refund) the Conway certificate (type 8) is written.
+
 Output format is a cardano-cli compatible JSON text envelope.
 
 Examples:
   bursa cert stake-deregistration \
-    --stake-vkey stake.vkey --out stake-dereg.cert`,
+    --stake-vkey stake.vkey --out stake-dereg.cert
+  bursa cert stake-deregistration \
+    --stake-vkey stake.vkey --deposit 2000000 --out stake-dereg.cert`,
 		Run: func(cmd *cobra.Command, args []string) {
+			var depositPtr *uint64
+			if cmd.Flags().Changed("deposit") {
+				depositPtr = &deposit
+			}
 			if err := cli.RunCertStakeDeregistration(
 				stakeVkeyFile,
 				outputFile,
+				depositPtr,
 			); err != nil {
 				logging.GetLogger().Error(
 					"failed to create stake deregistration certificate",
@@ -462,6 +490,12 @@ Examples:
 		"o",
 		"",
 		"Output file for certificate (stdout if not specified)",
+	)
+	cmd.Flags().Uint64Var(
+		&deposit,
+		"deposit",
+		0,
+		"Deposit refund in lovelace; writes the Conway certificate when set",
 	)
 
 	_ = cmd.MarkFlagRequired("stake-vkey")

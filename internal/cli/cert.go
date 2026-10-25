@@ -115,8 +115,12 @@ func buildKeyCredential(
 // Cardano ledger CDDL:
 //
 //	stake_registration = (0, stake_credential)
+//
+// When deposit is non-nil the Conway certificate is written
+// instead (reg_cert = (7, stake_credential, coin)).
 func RunCertStakeRegistration(
 	stakeVkeyFile, outputFile string,
+	deposit *uint64,
 ) error {
 	// Read and parse the stake verification key
 	stakeVkeyData, err := os.ReadFile(stakeVkeyFile)
@@ -142,6 +146,12 @@ func RunCertStakeRegistration(
 
 	// Encode certificate: [0, stake_credential]
 	cert := []any{uint64(0), cred}
+	envType := "CertificateShelley"
+	if deposit != nil {
+		// Conway form carries the deposit explicitly.
+		cert = []any{uint64(7), cred, *deposit}
+		envType = "CertificateConway"
+	}
 	certBytes, err := cbor.Encode(cert)
 	if err != nil {
 		return fmt.Errorf(
@@ -151,7 +161,7 @@ func RunCertStakeRegistration(
 
 	if outputFile != "" {
 		if err := writeCertEnvelope(
-			"CertificateShelley",
+			envType,
 			"Stake Address Registration Certificate",
 			certBytes,
 			outputFile,
@@ -177,8 +187,12 @@ func RunCertStakeRegistration(
 // Cardano ledger CDDL:
 //
 //	stake_deregistration = (1, stake_credential)
+//
+// When deposit is non-nil the Conway certificate is written
+// instead (unreg_cert = (8, stake_credential, coin)).
 func RunCertStakeDeregistration(
 	stakeVkeyFile, outputFile string,
+	deposit *uint64,
 ) error {
 	// Read and parse the stake verification key
 	stakeVkeyData, err := os.ReadFile(stakeVkeyFile)
@@ -204,6 +218,12 @@ func RunCertStakeDeregistration(
 
 	// Encode certificate: [1, stake_credential]
 	cert := []any{uint64(1), cred}
+	envType := "CertificateShelley"
+	if deposit != nil {
+		// Conway form carries the deposit explicitly.
+		cert = []any{uint64(8), cred, *deposit}
+		envType = "CertificateConway"
+	}
 	certBytes, err := cbor.Encode(cert)
 	if err != nil {
 		return fmt.Errorf(
@@ -213,7 +233,7 @@ func RunCertStakeDeregistration(
 
 	if outputFile != "" {
 		if err := writeCertEnvelope(
-			"CertificateShelley",
+			envType,
 			"Stake Address Deregistration Certificate",
 			certBytes,
 			outputFile,
