@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/blinklabs-io/bursa/gcp"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/sops"
 )
@@ -57,6 +58,9 @@ func NewStore(cfg *config.Config) (Store, error) {
 		}
 		return NewSQLiteStore(cfg.Storage.DSN)
 	case "gcp":
+		if err := gcp.ValidateWalletSecretPrefix(cfg.Google.Prefix); err != nil {
+			return nil, err
+		}
 		return NewGCPStore(), nil
 	case "aws":
 		if strings.TrimSpace(cfg.Aws.Prefix) == "" {
@@ -68,6 +72,9 @@ func NewStore(cfg *config.Config) (Store, error) {
 			return nil, fmt.Errorf("unsupported storage backend %q", cfg.Storage.Backend)
 		}
 		if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
+			if err := gcp.ValidateWalletSecretPrefix(cfg.Google.Prefix); err != nil {
+				return nil, err
+			}
 			return NewGCPStore(), nil
 		}
 		return nil, errors.New("no storage backend configured")
