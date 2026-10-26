@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -148,7 +149,7 @@ func NewHTTPPolicyHook(rawURL string, timeout time.Duration) (*HTTPPolicyHook, e
 	if u.Scheme != "https" {
 		return nil, errors.New("policy hook URL must use HTTPS")
 	}
-	if u.Host == "" {
+	if u.Hostname() == "" {
 		return nil, errors.New("policy hook URL has no host")
 	}
 	if timeout <= 0 {
@@ -187,8 +188,12 @@ func (h *HTTPPolicyHook) Authorize(ctx context.Context, sum OperationSummary) er
 		Allow  bool   `json:"allow"`
 		Reason string `json:"reason"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&decision); err != nil {
+	decoder := json.NewDecoder(resp.Body)
+	if err := decoder.Decode(&decision); err != nil {
 		return fmt.Errorf("policy hook: unreadable response: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("policy hook: response contains trailing data")
 	}
 	if !decision.Allow {
 		if decision.Reason != "" {

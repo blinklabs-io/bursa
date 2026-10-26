@@ -82,6 +82,24 @@ func TestHTTPPolicyHook_DenyBody(t *testing.T) {
 	}
 }
 
+func TestHTTPPolicyHook_TrailingDataFailsClosed(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"allow": true}not-json`))
+	}))
+	defer srv.Close()
+
+	h := newTestHTTPPolicyHook(t, srv, time.Second)
+	if err := h.Authorize(context.Background(), testSummary()); err == nil {
+		t.Fatal("expected deny (fail closed) on trailing response data")
+	}
+}
+
+func TestNewHTTPPolicyHook_EmptyHostnameFailsClosed(t *testing.T) {
+	if _, err := NewHTTPPolicyHook("https://:443/policy", time.Second); err == nil {
+		t.Fatal("expected empty hostname to be rejected")
+	}
+}
+
 func TestHTTPPolicyHook_NonOKStatus(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
