@@ -1986,6 +1986,9 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 		ExistingSignatures: []TxSummarySigner{},
 		WalletCanAdd:       []TxSummarySigner{},
 	}
+	if !tx.TxIsValid {
+		out.UnsupportedEffects = append(out.UnsupportedEffects, "transaction marked invalid (collateral path)")
+	}
 	knownBodyFields := map[uint64]bool{
 		0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 7: true,
 		8: true, 9: true, 11: true, 13: true, 14: true, 15: true,
@@ -2010,12 +2013,17 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 		out.RequiredSigners = append(out.RequiredSigners, hex.EncodeToString(signer.Bytes()))
 	}
 	sort.Strings(out.RequiredSigners)
-	for _, o := range tx.Body.Outputs() {
+	for i, o := range tx.Body.Outputs() {
 		out.Outputs = append(out.Outputs, TxSummaryOutput{
 			Address:  o.Address().String(),
 			Lovelace: o.Amount().String(),
 			Assets:   assetsFromOutput(o),
 		})
+		out.UnsupportedEffects = appendUnsupportedOutputEffects(
+			out.UnsupportedEffects,
+			o,
+			fmt.Sprintf("output %d", i),
+		)
 	}
 	if tx.Body.TxAuxDataHash != nil {
 		out.AuxiliaryDataHash = hex.EncodeToString(tx.Body.TxAuxDataHash.Bytes())
@@ -2047,7 +2055,6 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	if out.ProposalCount != 0 {
 		out.UnsupportedEffects = append(out.UnsupportedEffects, "governance proposal details")
 	}
-	sort.Strings(out.UnsupportedEffects)
 	// TxWithdrawals is a Go map (randomized iteration); collect then sort by
 	// reward address so out.Withdrawals is deterministic.
 	for addr, amount := range tx.Body.TxWithdrawals {
@@ -2096,11 +2103,17 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 			Lovelace: collateralReturn.Amount().String(),
 			Assets:   assetsFromOutput(collateralReturn),
 		}
+		out.UnsupportedEffects = appendUnsupportedOutputEffects(
+			out.UnsupportedEffects,
+			collateralReturn,
+			"collateral return",
+		)
 	}
 	if _, ok := bodyFields[17]; ok {
 		value := strconv.FormatUint(tx.Body.TxTotalCollateral, 10)
 		out.TotalCollateral = &value
 	}
+	sort.Strings(out.UnsupportedEffects)
 	if acct != nil {
 		seen := map[string]bool{}
 		addCanAdd := func(khHex, role string) {
@@ -2262,15 +2275,22 @@ func (s *Service) CosignTx(
 		return CosignResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
 	}
 
-	// Best-effort input-address resolution (needs a node; non-fatal without one
-	// -- required-signer and cert credentials still match without it).
+	// Resolve and validate the exact transaction summary before unlocking the
+	// keystore. A cosignature must not authorize effects the preview cannot
+	// account for, including unresolved inputs and collateral.
+	summary, err := s.DecodeTx(ctx, trimmed)
+	if err != nil {
+		return CosignResult{}, err
+	}
+	if err := summary.ValidateForSigning(); err != nil {
+		return CosignResult{}, fmt.Errorf("%w: transaction effects are incomplete: %v", ErrInvalidTx, err)
+	}
+
 	var inputAddrs []string
-	for _, inp := range tx.Body.Inputs() {
-		u, err := backend.UtxoByRefContext(ctx, s.chain, inp.Id(), inp.Index())
-		if err != nil || u == nil || u.Output == nil {
-			continue
+	for _, input := range summary.Inputs {
+		if input.Address != "" {
+			inputAddrs = append(inputAddrs, input.Address)
 		}
-		inputAddrs = append(inputAddrs, u.Output.Address().String())
 	}
 
 	// Unlock + derive account key (zeroing on exit), same pattern as WitnessTx.
@@ -2365,11 +2385,25 @@ func (s *Service) CosignTx(
 		return CosignResult{}, fmt.Errorf("encode merged tx: %w", err)
 	}
 	mergedHex := hex.EncodeToString(mergedBytes)
-	summary, err := s.DecodeTx(ctx, mergedHex)
+	summary, err = s.DecodeTx(ctx, mergedHex)
 	if err != nil {
 		return CosignResult{}, err
 	}
 	return CosignResult{TxCBOR: mergedHex, Added: added, Summary: summary}, nil
+}
+
+func appendUnsupportedOutputEffects(
+	effects []string,
+	output lcommon.TransactionOutput,
+	label string,
+) []string {
+	if output.DatumHash() != nil {
+		effects = append(effects, label+" datum")
+	}
+	if output.ScriptRef() != nil {
+		effects = append(effects, label+" reference script")
+	}
+	return effects
 }
 
 // assetsFromOutput enumerates a transaction output's native assets as decimal
