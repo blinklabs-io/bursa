@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
 
@@ -68,6 +69,7 @@ type Backend interface {
 	ChangeAddress(ctx context.Context) (string, error)
 	RewardAddresses(ctx context.Context) ([]string, error)
 	Collateral(ctx context.Context, amount string) ([]string, error)
+	InspectTx(ctx context.Context, txHex string) (spend.TxSummary, error)
 	SignTx(ctx context.Context, txHex string, partialSign bool, password string) (string, error)
 	SignData(addrHex, payloadHex, password string) (sig, key string, err error)
 	SubmitTx(ctx context.Context, txHex string) (string, error)
@@ -460,7 +462,7 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if p.Tx == "" {
 			return nil, fmt.Errorf("%w: tx is required", ErrInvalidParams)
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
+		return s.inspectEnqueueAndAwait(ctx, origin, method, params, p.Tx, func(d Decision) (json.RawMessage, error) {
 			if !d.Approved {
 				return nil, ErrUserDeclined
 			}
@@ -561,6 +563,38 @@ func (s *Service) enqueueAndAwait(
 	if err != nil {
 		return nil, err
 	}
+	return s.promptAndAwait(ctx, req, fn)
+}
+
+func (s *Service) inspectEnqueueAndAwait(
+	ctx context.Context,
+	origin, method string,
+	params json.RawMessage,
+	txHex string,
+	fn func(Decision) (json.RawMessage, error),
+) (json.RawMessage, error) {
+	req, err := s.queue.reserve(origin, method, params)
+	if err != nil {
+		return nil, err
+	}
+	effects, err := s.be.InspectTx(ctx, txHex)
+	if err != nil {
+		s.queue.cancelReservation(req.ID)
+		return nil, fmt.Errorf("%w: transaction effects unavailable: %v", ErrInvalidParams, err)
+	}
+	req, err = s.queue.publish(req.ID, &effects)
+	if err != nil {
+		s.queue.cancelReservation(req.ID)
+		return nil, err
+	}
+	return s.promptAndAwait(ctx, req, fn)
+}
+
+func (s *Service) promptAndAwait(
+	ctx context.Context,
+	req *Request,
+	fn func(Decision) (json.RawMessage, error),
+) (json.RawMessage, error) {
 	if s.prompt != nil {
 		s.prompt()
 	}

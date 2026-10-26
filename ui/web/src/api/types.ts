@@ -893,6 +893,7 @@ export interface ConnectorRequest {
   origin: string;
   method: string;
   params?: unknown;
+  effects?: TxSummary;
   created: string; // RFC3339 timestamp
 }
 

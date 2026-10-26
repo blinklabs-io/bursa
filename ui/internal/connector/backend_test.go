@@ -771,6 +771,9 @@ func TestWalletBackendSigningMethodsErrorWithoutSpendService(t *testing.T) {
 	// they return a "signing service not configured" error rather than
 	// errNotImplemented.  Verify they at least return a non-nil error.
 	ctx := context.Background()
+	if _, err := be.InspectTx(ctx, ""); err == nil {
+		t.Error("InspectTx(nil sp): want error, got nil")
+	}
 	if _, err := be.SignTx(ctx, "", false, ""); err == nil {
 		t.Error("SignTx(nil sp): want error, got nil")
 	}

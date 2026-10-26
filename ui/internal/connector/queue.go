@@ -6,6 +6,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/blinklabs-io/bursa/ui/internal/spend"
 )
 
 var (
@@ -21,11 +23,12 @@ const (
 )
 
 type Request struct {
-	ID      string          `json:"id"`
-	Origin  string          `json:"origin"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Created time.Time       `json:"created"`
+	ID      string           `json:"id"`
+	Origin  string           `json:"origin"`
+	Method  string           `json:"method"`
+	Params  json.RawMessage  `json:"params,omitempty"`
+	Effects *spend.TxSummary `json:"effects,omitempty"`
+	Created time.Time        `json:"created"`
 }
 
 type Decision struct {
@@ -36,6 +39,7 @@ type Decision struct {
 type waiter struct {
 	req     Request
 	done    chan Decision
+	ready   bool
 	decided bool
 }
 
@@ -58,6 +62,16 @@ func NewQueue(now func() time.Time, mkID func() (string, error), timeout time.Du
 }
 
 func (q *Queue) Submit(origin, method string, params json.RawMessage) (*Request, error) {
+	req, err := q.reserve(origin, method, params)
+	if err != nil {
+		return nil, err
+	}
+	return q.publish(req.ID, nil)
+}
+
+// reserve claims queue capacity without exposing a request to approval clients.
+// Callers must publish the complete request or cancel the reservation.
+func (q *Queue) reserve(origin, method string, params json.RawMessage) (*Request, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.pendingCountLocked() >= maxPendingRequests || q.pendingForOriginLocked(origin) >= maxPendingRequestsPerOrigin {
@@ -67,17 +81,46 @@ func (q *Queue) Submit(origin, method string, params json.RawMessage) (*Request,
 	if err != nil {
 		return nil, err
 	}
-	r := Request{ID: id, Origin: origin, Method: method, Params: params, Created: q.now()}
+	params = append(json.RawMessage(nil), params...)
+	r := Request{
+		ID:      id,
+		Origin:  origin,
+		Method:  method,
+		Params:  params,
+		Created: q.now(),
+	}
 	q.waiters[r.ID] = &waiter{req: r, done: make(chan Decision, 1)}
-	q.notifyLocked()
 	return &r, nil
+}
+
+func (q *Queue) publish(id string, effects *spend.TxSummary) (*Request, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	w, ok := q.waiters[id]
+	if !ok || w.decided || w.ready {
+		return nil, ErrUnknownRequest
+	}
+	w.req.Effects = effects
+	w.ready = true
+	q.notifyLocked()
+	r := w.req
+	return &r, nil
+}
+
+func (q *Queue) cancelReservation(id string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	w, ok := q.waiters[id]
+	if ok && !w.ready {
+		delete(q.waiters, id)
+	}
 }
 
 func (q *Queue) Await(ctx context.Context, id string) (Decision, error) {
 	q.mu.Lock()
 	w, ok := q.waiters[id]
 	q.mu.Unlock()
-	if !ok {
+	if !ok || !w.ready {
 		return Decision{}, ErrUnknownRequest
 	}
 	defer q.remove(id)
@@ -122,7 +165,7 @@ func drainDecision(done <-chan Decision) (Decision, error) {
 func (q *Queue) Decide(id string, d Decision) error {
 	q.mu.Lock()
 	w, ok := q.waiters[id]
-	if !ok {
+	if !ok || !w.ready {
 		q.mu.Unlock()
 		return ErrUnknownRequest
 	}
@@ -143,7 +186,7 @@ func (q *Queue) Pending() []Request {
 	defer q.mu.Unlock()
 	out := make([]Request, 0, len(q.waiters))
 	for _, w := range q.waiters {
-		if w.decided {
+		if w.decided || !w.ready {
 			continue
 		}
 		out = append(out, w.req)
@@ -182,11 +225,9 @@ func (q *Queue) remove(id string) {
 	}
 }
 
-// pendingCountLocked returns the number of undecided waiters. Decided waiters
-// linger in the map until their Await goroutine runs cleanup (see remove); the
-// global bound must ignore them so Submit does not return ErrQueueFull while
-// fewer than maxPendingRequests requests are actually awaiting a decision. This
-// matches pendingForOriginLocked and Pending semantics.
+// pendingCountLocked returns the number of undecided waiters, including hidden
+// reservations. Decided waiters linger until Await runs cleanup, but no longer
+// consume admission capacity.
 func (q *Queue) pendingCountLocked() int {
 	n := 0
 	for _, w := range q.waiters {

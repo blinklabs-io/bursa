@@ -5,9 +5,9 @@ import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
 import { DownloadButton } from "../components/DownloadButton";
 import { MultiSigProgress } from "../components/MultiSigProgress";
+import { TransactionEffects } from "../components/TransactionEffects";
 import { decodeTx, cosignTx, submitTx, ApiError } from "../api/client";
 import type { TxSummary, CosignResult, TxResult } from "../api/types";
-import { formatAda } from "../format";
 
 function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message;
@@ -161,55 +161,7 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
 
       {summary && (
         <div className="import-preview">
-          <dl className="preview-summary">
-            <div className="dl-row">
-              <dt>Fee</dt>
-              <dd>{formatAda(summary.fee)} ADA</dd>
-            </div>
-            {summary.ttl ? (
-              <div className="dl-row">
-                <dt>TTL (slot)</dt>
-                <dd>{summary.ttl}</dd>
-              </div>
-            ) : null}
-            {summary.certificates?.length ? (
-              <div className="dl-row">
-                <dt>Certificates</dt>
-                <dd>{summary.certificates.join(", ")}</dd>
-              </div>
-            ) : null}
-            {summary.network_id != null ? (
-              <div className="dl-row">
-                <dt>Network</dt>
-                <dd>{summary.network_id === 1 ? "mainnet (1)" : `testnet (${summary.network_id})`}</dd>
-              </div>
-            ) : null}
-          </dl>
-
-          <p className="field-label">Outputs</p>
-          <ul className="signer-list">
-            {summary.outputs.map((o, i) => (
-              <li key={i}>
-                <code className="tx-hash">{o.address}</code> — {formatAda(o.lovelace)} ADA
-              </li>
-            ))}
-          </ul>
-
-          {summary.withdrawals?.length ? (
-            <>
-              {/* Reward withdrawals move funds out of this wallet's staking
-                  rewards just like outputs move funds out of its UTxOs, so they
-                  MUST be shown before the user cosigns or submits. */}
-              <p className="field-label">Reward withdrawals</p>
-              <ul className="signer-list">
-                {summary.withdrawals.map((wd, i) => (
-                  <li key={i}>
-                    <code className="tx-hash">{wd.address}</code> — {formatAda(wd.lovelace)} ADA
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : null}
+          <TransactionEffects summary={summary} />
 
           {ms?.is_multisig ? (
             <MultiSigProgress
