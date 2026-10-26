@@ -303,6 +303,61 @@ func TestWalletBackendBalanceRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWalletBackendExcludesForeignPaymentCredential(t *testing.T) {
+	acct, wl := mustDeriveBackendAccount(t)
+	owned := acct.ReceiveAddresses[0]
+	local, err := lcommon.NewAddress(owned)
+	if err != nil {
+		t.Fatalf("parse local address: %v", err)
+	}
+	foreignAddr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeKeyKey,
+		lcommon.AddressNetworkTestnet,
+		bytes.Repeat([]byte{0x42}, lcommon.AddressHashSize),
+		local.StakeKeyHash().Bytes(),
+	)
+	if err != nil {
+		t.Fatalf("build foreign address: %v", err)
+	}
+	foreign := foreignAddr.String()
+	fc := &fakeConnectorChain{
+		addresses: []string{foreign, owned},
+		utxos: map[string][]chain.UTxO{
+			owned:   twoKnownUTxOs(owned)[:1],
+			foreign: twoKnownUTxOs(foreign),
+		},
+	}
+	be := NewWalletBackend(wl, nil, acct, "preview", fc)
+
+	utxos, err := be.Utxos(context.Background(), "", nil)
+	if err != nil {
+		t.Fatalf("Utxos: %v", err)
+	}
+	if len(utxos) != 1 {
+		t.Fatalf("Utxos count = %d, want only the locally controlled UTxO", len(utxos))
+	}
+	_, _, gotAddr, _ := decodeUTxOHex(t, utxos[0])
+	if gotAddr != owned {
+		t.Fatalf("Utxos address = %q, want %q", gotAddr, owned)
+	}
+
+	balHex, err := be.Balance(context.Background())
+	if err != nil {
+		t.Fatalf("Balance: %v", err)
+	}
+	raw, err := hex.DecodeString(balHex)
+	if err != nil {
+		t.Fatalf("hex decode balance: %v", err)
+	}
+	var value mary.MaryTransactionOutputValue
+	if _, err := gocbor.Decode(raw, &value); err != nil {
+		t.Fatalf("decode balance: %v", err)
+	}
+	if value.Amount != 2_000_000 {
+		t.Fatalf("Balance lovelace = %d, want only locally controlled 2000000", value.Amount)
+	}
+}
+
 func TestWalletBackendAddressesHex(t *testing.T) {
 	acct, _ := mustDeriveBackendAccount(t)
 	// "used" address = the chain's reported addresses; unused = derived not in used.
