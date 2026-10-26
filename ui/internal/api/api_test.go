@@ -4728,3 +4728,7 @@ func TestMultiSigCreateReportsActivationFailure(t *testing.T) {
 			rec.Body.String())
 	}
 }
+
+func withAutoLockRuntime(runtime autoLockRuntime) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.autoLockRuntime = runtime }
+}

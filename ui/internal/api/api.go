@@ -278,10 +278,6 @@ func WithSurveys(sv Surveys) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.surveys = sv }
 }
 
-func withAutoLockRuntime(runtime autoLockRuntime) HandlerOption {
-	return func(cfg *handlerOptions) { cfg.autoLockRuntime = runtime }
-}
-
 // Handler serves the wallet control surface and owns its server-side vault
 // idle deadline.
 type Handler struct {
