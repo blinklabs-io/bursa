@@ -123,8 +123,8 @@ github.com/bits-and-blooms/bitset v1.25.0 h1:0Ro0qF4abCkM6SqWPVj29sFhAbMPAZpaDD7
 github.com/bits-and-blooms/bitset v1.25.0/go.mod h1:7hO7Gc7Pp1vODcmWvKMRA9BNmbv6a/7QIWpPxHddWR8=
 github.com/blang/semver v3.5.1+incompatible h1:cQNTCjp13qL8KC3Nbxr/y2Bqb63oX6wdnnjpJbkM4JQ=
 github.com/blang/semver v3.5.1+incompatible/go.mod h1:kRBLl5iJ+tD4TcOOxsy/0fnwebNt5EWlYSAyrTnjyyk=
-github.com/blinklabs-io/go-bip39 v0.2.0 h1:rHYih+JzqaFVuP+UfvByKTAdJPeYtlvZu49yUGrZUk8=
-github.com/blinklabs-io/go-bip39 v0.2.0/go.mod h1:9Bp7a+XDc/KTPOqNnS7T/v1vH2lDXpmjM0GArwvOQL4=
+github.com/blinklabs-io/go-bip39 v0.2.1 h1:kE44ZAhBJ75ITHFpKT+LS+Sg4iXwo2xENRdW+y2/sLo=
+github.com/blinklabs-io/go-bip39 v0.2.1/go.mod h1:QvidBC8rXEWuylfpTNA2WbbeIDJmYvq9D6xdjFmK/Io=
 github.com/blinklabs-io/gouroboros v0.215.0 h1:9pquH6zrYRN/sOtSW4EaC/YDlgxcakQo9SOsfn+hQ/E=
 github.com/blinklabs-io/gouroboros v0.215.0/go.mod h1:xxoU1gXR2LcNLFDxp4bavQoIld6XDvVjT3ku/ayPDVw=
 github.com/blinklabs-io/ouroboros-mock v0.21.1 h1:eWOCYM6K6R10yZbB6y/sTA99wi8oO4LbxsAp1jcLZvI=

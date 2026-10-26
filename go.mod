@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.47.3
 	github.com/aws/aws-sdk-go-v2/config v1.33.6
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.1
-	github.com/blinklabs-io/go-bip39 v0.2.0
+	github.com/blinklabs-io/go-bip39 v0.2.1
 	github.com/blinklabs-io/gouroboros v0.215.0
 	github.com/btcsuite/btcd/btcutil v1.2.0
 	github.com/consensys/gnark-crypto v0.22.0
