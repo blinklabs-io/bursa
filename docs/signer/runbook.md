@@ -32,6 +32,7 @@ Boot performs eager validation and exits non-zero on any of:
 - a non-loopback listen address without TLS;
 - a software/file backend on a non-loopback address without
   `allow_insecure_file_backend` (see [security.md](security.md));
+- a `signer.policy_hook_url` that is not an absolute HTTPS URL;
 - no backends configured, or the same key hash served by two backends;
 - invalid policy, watermark, or caller ACL.
 
@@ -185,6 +186,20 @@ Configure:
 entry can sign nothing). `allowed_requests` lists the permitted request kinds
 (`tx`, `cip8`, `opcert`); `tx_policy` / `cip8_policy` add typed constraints.
 Unknown policy fields fail at boot.
+
+### External transaction-policy hook
+
+`signer.policy_hook_url` adds an external authorization step after the static
+transaction policy allows a request. The signer sends the parsed operation
+summary as JSON and signs only when the endpoint returns HTTP 200 with
+`{"allow":true}`. Transport errors, timeouts, redirects, other status codes,
+and malformed or non-allow responses deny signing.
+
+The URL must use HTTPS. Bursa verifies the endpoint certificate against the
+host's system trust store and refuses redirects, so a policy decision cannot be
+downgraded to an unauthenticated plaintext response. Install a private policy
+service CA in the host trust store when needed. Set the request deadline with
+`signer.policy_hook_timeout_ms` (default 5 seconds).
 
 ## 7. Anti-double-sign watermark
 

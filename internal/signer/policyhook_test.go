@@ -33,9 +33,19 @@ func testSummary() OperationSummary {
 			Voters: []policy.VoterInfo{{Kind: policy.VoterDrepKey, DrepId: "beef"}}})
 }
 
+func newTestHTTPPolicyHook(t *testing.T, srv *httptest.Server, timeout time.Duration) *HTTPPolicyHook {
+	t.Helper()
+	h, err := NewHTTPPolicyHook(srv.URL, timeout)
+	if err != nil {
+		t.Fatalf("NewHTTPPolicyHook: %v", err)
+	}
+	h.client.Transport = srv.Client().Transport
+	return h
+}
+
 func TestHTTPPolicyHook_Allow(t *testing.T) {
 	var gotType string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var sum OperationSummary
 		_ = json.NewDecoder(r.Body).Decode(&sum)
 		gotType = sum.Type
@@ -44,7 +54,7 @@ func TestHTTPPolicyHook_Allow(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := NewHTTPPolicyHook(srv.URL, time.Second)
+	h := newTestHTTPPolicyHook(t, srv, time.Second)
 	if err := h.Authorize(context.Background(), testSummary()); err != nil {
 		t.Fatalf("expected allow, got %v", err)
 	}
@@ -54,38 +64,38 @@ func TestHTTPPolicyHook_Allow(t *testing.T) {
 }
 
 func TestHTTPPolicyHook_DenyBody(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"allow": false, "reason": "nope"}`))
 	}))
 	defer srv.Close()
 
-	h := NewHTTPPolicyHook(srv.URL, time.Second)
+	h := newTestHTTPPolicyHook(t, srv, time.Second)
 	if err := h.Authorize(context.Background(), testSummary()); err == nil {
 		t.Fatalf("expected deny on allow=false body")
 	}
 }
 
 func TestHTTPPolicyHook_NonOKStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 	}))
 	defer srv.Close()
 
-	h := NewHTTPPolicyHook(srv.URL, time.Second)
+	h := newTestHTTPPolicyHook(t, srv, time.Second)
 	if err := h.Authorize(context.Background(), testSummary()); err == nil {
 		t.Fatalf("expected deny on non-200 status")
 	}
 }
 
 func TestHTTPPolicyHook_TimeoutFailsClosed(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"allow": true}`))
 	}))
 	defer srv.Close()
 
-	h := NewHTTPPolicyHook(srv.URL, 10*time.Millisecond)
+	h := newTestHTTPPolicyHook(t, srv, 10*time.Millisecond)
 	if err := h.Authorize(context.Background(), testSummary()); err == nil {
 		t.Fatalf("expected deny (fail closed) on timeout")
 	}
@@ -93,12 +103,25 @@ func TestHTTPPolicyHook_TimeoutFailsClosed(t *testing.T) {
 
 func TestHTTPPolicyHook_TransportErrorFailsClosed(t *testing.T) {
 	// Point at a closed server to force a transport error.
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	url := srv.URL
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	h := newTestHTTPPolicyHook(t, srv, 100*time.Millisecond)
 	srv.Close()
 
-	h := NewHTTPPolicyHook(url, 100*time.Millisecond)
 	if err := h.Authorize(context.Background(), testSummary()); err == nil {
 		t.Fatalf("expected deny (fail closed) on transport error")
+	}
+}
+
+func TestHTTPPolicyHook_RedirectFailsClosed(t *testing.T) {
+	allow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"allow": true}`))
+	}))
+	t.Cleanup(allow.Close)
+	srv := httptest.NewTLSServer(http.RedirectHandler(allow.URL, http.StatusFound))
+	t.Cleanup(srv.Close)
+
+	h := newTestHTTPPolicyHook(t, srv, time.Second)
+	if err := h.Authorize(context.Background(), testSummary()); err == nil {
+		t.Fatal("expected deny (fail closed) on redirect")
 	}
 }

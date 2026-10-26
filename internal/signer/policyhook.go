@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/blinklabs-io/bursa"
@@ -85,7 +86,7 @@ func summarizeTx(caller, key string, insp *bursa.TxInspection, ops policy.TxOps)
 	return sum
 }
 
-// HTTPPolicyHook POSTs the operation summary as JSON to a configured URL and
+// HTTPPolicyHook POSTs the operation summary as JSON to a configured HTTPS URL
 // signs only on an explicit allow. The endpoint must return HTTP 200 with a
 // JSON body {"allow": true}; any other status, a non-allow body, or a
 // transport/timeout error denies (fail closed).
@@ -94,13 +95,32 @@ type HTTPPolicyHook struct {
 	client *http.Client
 }
 
-// NewHTTPPolicyHook builds an HTTP policy hook. A non-positive timeout defaults
-// to 5 seconds.
-func NewHTTPPolicyHook(url string, timeout time.Duration) *HTTPPolicyHook {
+// NewHTTPPolicyHook builds an HTTPS policy hook. The server certificate is
+// verified against the system trust store, and redirects are refused. A
+// non-positive timeout defaults to 5 seconds.
+func NewHTTPPolicyHook(rawURL string, timeout time.Duration) (*HTTPPolicyHook, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid policy hook URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return nil, errors.New("policy hook URL must use HTTPS")
+	}
+	if u.Host == "" {
+		return nil, errors.New("policy hook URL has no host")
+	}
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	return &HTTPPolicyHook{url: url, client: &http.Client{Timeout: timeout}}
+	return &HTTPPolicyHook{
+		url: rawURL,
+		client: &http.Client{
+			Timeout: timeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+	}, nil
 }
 
 func (h *HTTPPolicyHook) Authorize(ctx context.Context, sum OperationSummary) error {
