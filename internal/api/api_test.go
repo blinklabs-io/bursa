@@ -4026,6 +4026,12 @@ func (b *retainingBody) fail() { close(b.release) }
 
 // A listener that fails its first Accept, so the serving goroutine reports a
 // real error rather than the closure http.Server recognises.
+//
+// failed closes on the first Close. http.Server.Serve closes its listener only
+// after it has already classified the Accept error, so closure means the
+// serving error is decided and cannot be reclassified as ErrServerClosed by a
+// Shutdown that starts afterwards. Closing from Accept instead would let a
+// cancellation land before that classification.
 type failingListener struct {
 	net.Listener
 	failed  chan struct{}
@@ -4034,8 +4040,12 @@ type failingListener struct {
 }
 
 func (l *failingListener) Accept() (net.Conn, error) {
-	l.once.Do(func() { close(l.failed) })
 	return nil, l.failErr
+}
+
+func (l *failingListener) Close() error {
+	l.once.Do(func() { close(l.failed) })
+	return l.Listener.Close()
 }
 
 // A serving error and a cancelled context can be ready at the same moment, and
@@ -4086,9 +4096,9 @@ func TestStartReportsServingErrorRacingCancellation(t *testing.T) {
 			result <- Start(ctx, cfg, apiListener, metricsListener)
 		}()
 
-		// Cancel only once the serving error is on its way, so both cases of
-		// the select are ready and the choice between them is the one under
-		// test.
+		// Cancel only once the serving error is decided, so it is either already
+		// queued or about to be, and Start must report it on either branch of
+		// its select.
 		select {
 		case <-apiListener.failed:
 		case <-time.After(5 * time.Second):
