@@ -669,11 +669,12 @@ func (s *Service) inspectEnqueueAndAwait(
 	effects, err := s.be.InspectTx(ctx, txHex)
 	if err != nil {
 		s.queue.cancelReservation(req.ID)
-		return nil, fmt.Errorf("%w: transaction effects unavailable: %v", ErrInvalidParams, err)
+		return nil, fmt.Errorf("%w: transaction effects unavailable: %w", ErrInvalidParams, err)
 	}
-	req, err = s.queue.publish(req.ID, &effects)
+	reservedID := req.ID
+	req, err = s.queue.publish(reservedID, &effects)
 	if err != nil {
-		s.queue.cancelReservation(req.ID)
+		s.queue.cancelReservation(reservedID)
 		return nil, err
 	}
 	return s.promptAndAwait(ctx, req, fn)

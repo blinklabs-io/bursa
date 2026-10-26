@@ -115,6 +115,9 @@ func mutateConwayBody(t *testing.T, txHex string, mutate func(*conway.ConwayTran
 	if _, err := cbor.Decode(txBytes, &outer); err != nil {
 		t.Fatalf("decode tx array: %v", err)
 	}
+	if len(outer) == 0 {
+		t.Fatal("decoded tx array is empty")
+	}
 	body, err := conway.NewConwayTransactionBodyFromCbor(outer[0])
 	if err != nil {
 		t.Fatalf("decode tx body: %v", err)

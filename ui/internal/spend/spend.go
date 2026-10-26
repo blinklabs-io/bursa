@@ -2283,7 +2283,7 @@ func (s *Service) CosignTx(
 		return CosignResult{}, err
 	}
 	if err := summary.ValidateForSigning(); err != nil {
-		return CosignResult{}, fmt.Errorf("%w: transaction effects are incomplete: %v", ErrInvalidTx, err)
+		return CosignResult{}, fmt.Errorf("%w: transaction effects are incomplete: %w", ErrInvalidTx, err)
 	}
 
 	var inputAddrs []string
