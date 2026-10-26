@@ -21,6 +21,8 @@ var _ MappedNullable = &BursaTxInspection{}
 // BursaTxInspection struct for BursaTxInspection
 type BursaTxInspection struct {
 	CertificateCount       *int32          `json:"certificate_count,omitempty"`
+	CollateralInputs       []BursaTxInput  `json:"collateral_inputs,omitempty"`
+	CollateralReturn       *BursaTxOutput  `json:"collateral_return,omitempty"`
 	Era                    *string         `json:"era,omitempty"`
 	Fee                    *string         `json:"fee,omitempty"`
 	HasMetadata            *bool           `json:"has_metadata,omitempty"`
@@ -33,6 +35,7 @@ type BursaTxInspection struct {
 	ProposalProcedureCount *int32          `json:"proposal_procedure_count,omitempty"`
 	RequiredSigners        *int32          `json:"required_signers,omitempty"`
 	SizeBytes              *int32          `json:"size_bytes,omitempty"`
+	TotalCollateral        *string         `json:"total_collateral,omitempty"`
 	Ttl                    *int32          `json:"ttl,omitempty"`
 	TxId                   *string         `json:"tx_id,omitempty"`
 	ValidityIntervalStart  *int32          `json:"validity_interval_start,omitempty"`
@@ -89,6 +92,70 @@ func (o *BursaTxInspection) HasCertificateCount() bool {
 // SetCertificateCount gets a reference to the given int32 and assigns it to the CertificateCount field.
 func (o *BursaTxInspection) SetCertificateCount(v int32) {
 	o.CertificateCount = &v
+}
+
+// GetCollateralInputs returns the CollateralInputs field value if set, zero value otherwise.
+func (o *BursaTxInspection) GetCollateralInputs() []BursaTxInput {
+	if o == nil || IsNil(o.CollateralInputs) {
+		var ret []BursaTxInput
+		return ret
+	}
+	return o.CollateralInputs
+}
+
+// GetCollateralInputsOk returns a tuple with the CollateralInputs field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaTxInspection) GetCollateralInputsOk() ([]BursaTxInput, bool) {
+	if o == nil || IsNil(o.CollateralInputs) {
+		return nil, false
+	}
+	return o.CollateralInputs, true
+}
+
+// HasCollateralInputs returns a boolean if a field has been set.
+func (o *BursaTxInspection) HasCollateralInputs() bool {
+	if o != nil && !IsNil(o.CollateralInputs) {
+		return true
+	}
+
+	return false
+}
+
+// SetCollateralInputs gets a reference to the given []BursaTxInput and assigns it to the CollateralInputs field.
+func (o *BursaTxInspection) SetCollateralInputs(v []BursaTxInput) {
+	o.CollateralInputs = v
+}
+
+// GetCollateralReturn returns the CollateralReturn field value if set, zero value otherwise.
+func (o *BursaTxInspection) GetCollateralReturn() BursaTxOutput {
+	if o == nil || IsNil(o.CollateralReturn) {
+		var ret BursaTxOutput
+		return ret
+	}
+	return *o.CollateralReturn
+}
+
+// GetCollateralReturnOk returns a tuple with the CollateralReturn field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaTxInspection) GetCollateralReturnOk() (*BursaTxOutput, bool) {
+	if o == nil || IsNil(o.CollateralReturn) {
+		return nil, false
+	}
+	return o.CollateralReturn, true
+}
+
+// HasCollateralReturn returns a boolean if a field has been set.
+func (o *BursaTxInspection) HasCollateralReturn() bool {
+	if o != nil && !IsNil(o.CollateralReturn) {
+		return true
+	}
+
+	return false
+}
+
+// SetCollateralReturn gets a reference to the given BursaTxOutput and assigns it to the CollateralReturn field.
+func (o *BursaTxInspection) SetCollateralReturn(v BursaTxOutput) {
+	o.CollateralReturn = &v
 }
 
 // GetEra returns the Era field value if set, zero value otherwise.
@@ -475,6 +542,38 @@ func (o *BursaTxInspection) SetSizeBytes(v int32) {
 	o.SizeBytes = &v
 }
 
+// GetTotalCollateral returns the TotalCollateral field value if set, zero value otherwise.
+func (o *BursaTxInspection) GetTotalCollateral() string {
+	if o == nil || IsNil(o.TotalCollateral) {
+		var ret string
+		return ret
+	}
+	return *o.TotalCollateral
+}
+
+// GetTotalCollateralOk returns a tuple with the TotalCollateral field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaTxInspection) GetTotalCollateralOk() (*string, bool) {
+	if o == nil || IsNil(o.TotalCollateral) {
+		return nil, false
+	}
+	return o.TotalCollateral, true
+}
+
+// HasTotalCollateral returns a boolean if a field has been set.
+func (o *BursaTxInspection) HasTotalCollateral() bool {
+	if o != nil && !IsNil(o.TotalCollateral) {
+		return true
+	}
+
+	return false
+}
+
+// SetTotalCollateral gets a reference to the given string and assigns it to the TotalCollateral field.
+func (o *BursaTxInspection) SetTotalCollateral(v string) {
+	o.TotalCollateral = &v
+}
+
 // GetTtl returns the Ttl field value if set, zero value otherwise.
 func (o *BursaTxInspection) GetTtl() int32 {
 	if o == nil || IsNil(o.Ttl) {
@@ -680,6 +779,12 @@ func (o BursaTxInspection) ToMap() (map[string]interface{}, error) {
 	if !IsNil(o.CertificateCount) {
 		toSerialize["certificate_count"] = o.CertificateCount
 	}
+	if !IsNil(o.CollateralInputs) {
+		toSerialize["collateral_inputs"] = o.CollateralInputs
+	}
+	if !IsNil(o.CollateralReturn) {
+		toSerialize["collateral_return"] = o.CollateralReturn
+	}
 	if !IsNil(o.Era) {
 		toSerialize["era"] = o.Era
 	}
@@ -715,6 +820,9 @@ func (o BursaTxInspection) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.SizeBytes) {
 		toSerialize["size_bytes"] = o.SizeBytes
+	}
+	if !IsNil(o.TotalCollateral) {
+		toSerialize["total_collateral"] = o.TotalCollateral
 	}
 	if !IsNil(o.Ttl) {
 		toSerialize["ttl"] = o.Ttl

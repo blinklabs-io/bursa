@@ -1542,6 +1542,15 @@
                 "certificate_count": {
                     "type": "integer"
                 },
+                "collateral_inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/bursa.TxInput"
+                    }
+                },
+                "collateral_return": {
+                    "$ref": "#/definitions/bursa.TxOutput"
+                },
                 "era": {
                     "type": "string"
                 },
@@ -1583,6 +1592,9 @@
                 },
                 "size_bytes": {
                     "type": "integer"
+                },
+                "total_collateral": {
+                    "type": "string"
                 },
                 "ttl": {
                     "type": "integer"

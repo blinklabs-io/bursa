@@ -196,6 +196,8 @@ Secret Manager persistence is enabled, the deployment must inject
 as `API_TLS_CERT_FILE` and `API_TLS_KEY_FILE`. The API refuses a non-loopback
 listener without both TLS files and authentication. These values belong in
 the chart's secret/config wiring; do not place credentials in chart defaults.
+`GCP_SECRET_PREFIX` must be a non-empty Secret Manager ID prefix containing
+only letters, numbers, hyphens, or underscores.
 
 For more information about Bursa CLI
 

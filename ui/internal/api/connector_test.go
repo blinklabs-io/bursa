@@ -30,6 +30,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
+	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
 
 // fakeConnectorBackend is a minimal Backend implementation for tests in this package.
@@ -73,6 +74,7 @@ func (f *fakeConnectorBackend) UnregisteredPubStakeKeys(_ string) ([]string, err
 func newTestService(t *testing.T, extensionID string) (*connector.Service, string) {
 	t.Helper()
 	svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+	svc.SetActiveAccount("test-wallet", &wallet.Account{AccountIndex: 0})
 	code, err := svc.BeginPair(extensionID)
 	if err != nil {
 		t.Fatalf("BeginPair: %v", err)
@@ -668,6 +670,7 @@ func TestConnectorSelfRevoke(t *testing.T) {
 // (ResponseRecorder cannot flush mid-handler, so a live server is required).
 func TestConnectorEvents(t *testing.T) {
 	svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+	svc.SetActiveAccount("test-wallet", &wallet.Account{AccountIndex: 0})
 
 	mux := http.NewServeMux()
 	registerConnector(mux, svc)

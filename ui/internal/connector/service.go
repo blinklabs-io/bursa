@@ -88,6 +88,12 @@ type Service struct {
 	prompt func()
 	now    func() time.Time
 
+	// bindingMu keeps the active identity stable from the final grant check
+	// through each protected backend call. SetActiveAccount takes the write lock
+	// while rebinding the backend, closing the authorization-to-use race.
+	bindingMu sync.RWMutex
+	identity  accountIdentity
+
 	// pending pair codes: extensionID → entry (code + expiry/attempt metadata)
 	pairMu    sync.Mutex
 	pairCodes map[string]*pairEntry
@@ -125,14 +131,64 @@ type accountRebinder interface {
 	SetAccount(walletID string, acct *wallet.Account)
 }
 
-// SetActiveAccount rebinds the underlying backend to the active wallet's
-// account if the backend supports it (implements accountRebinder). Backends
-// that do not track an account (e.g. test fakes) are left untouched. A nil
-// account clears the binding.
+// SetActiveAccount atomically updates the identity used for grants and rebinds
+// the underlying backend when it supports accountRebinder. A nil account or an
+// empty wallet ID clears the binding.
 func (s *Service) SetActiveAccount(walletID string, acct *wallet.Account) {
+	s.bindingMu.Lock()
+	defer s.bindingMu.Unlock()
+
+	s.identity = accountIdentity{}
+	if walletID != "" && acct != nil {
+		s.identity = accountIdentity{WalletID: walletID, AccountIndex: acct.AccountIndex}
+	}
 	if rb, ok := s.be.(accountRebinder); ok {
 		rb.SetAccount(walletID, acct)
 	}
+}
+
+func (s *Service) activeIdentity() (accountIdentity, bool) {
+	s.bindingMu.RLock()
+	defer s.bindingMu.RUnlock()
+	return s.identity, s.identity.valid()
+}
+
+func (s *Service) grantedIdentity(origin string) (accountIdentity, bool) {
+	s.bindingMu.RLock()
+	defer s.bindingMu.RUnlock()
+	if !s.identity.valid() || !s.grants.IsGranted(origin, s.identity) {
+		return accountIdentity{}, false
+	}
+	return s.identity, true
+}
+
+func (s *Service) withCurrentGrant(
+	origin string,
+	fn func() (json.RawMessage, error),
+) (json.RawMessage, error) {
+	s.bindingMu.RLock()
+	defer s.bindingMu.RUnlock()
+	if !s.identity.valid() || !s.grants.IsGranted(origin, s.identity) {
+		return nil, ErrNotGranted
+	}
+	return fn()
+}
+
+func (s *Service) withExpectedIdentity(
+	expected accountIdentity,
+	origin string,
+	requireGrant bool,
+	fn func() (json.RawMessage, error),
+) (json.RawMessage, error) {
+	s.bindingMu.RLock()
+	defer s.bindingMu.RUnlock()
+	if !expected.valid() || s.identity != expected {
+		return nil, ErrNotGranted
+	}
+	if requireGrant && !s.grants.IsGranted(origin, expected) {
+		return nil, ErrNotGranted
+	}
+	return fn()
 }
 
 // BeginPair generates a numeric pairing code for the given extensionID and
@@ -248,12 +304,16 @@ func (s *Service) Decide(id string, d Decision) error {
 
 // Grants returns all currently granted origins.
 func (s *Service) Grants() []string {
-	return s.grants.List()
+	s.bindingMu.RLock()
+	defer s.bindingMu.RUnlock()
+	return s.grants.List(s.identity)
 }
 
 // RevokeGrant removes the grant for the given origin.
 func (s *Service) RevokeGrant(origin string) error {
-	return s.grants.Revoke(origin)
+	s.bindingMu.RLock()
+	defer s.bindingMu.RUnlock()
+	return s.grants.Revoke(origin, s.identity)
 }
 
 // PendingPairing holds an extension ID and its associated pairing code.
@@ -285,42 +345,48 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 	switch method {
 	// isEnabled is a special case: returns a bool without requiring a grant.
 	case "isEnabled":
-		if s.grants.IsGranted(origin) {
+		if _, ok := s.grantedIdentity(origin); ok {
 			return json.RawMessage(`true`), nil
 		}
 		return json.RawMessage(`false`), nil
 
-	// enable: enqueue, await decision, then grant on approval.
+	// enable: capture the identity being presented for consent, enqueue, then
+	// grant only if that exact identity remains active after approval.
 	case "enable":
+		identity, ok := s.activeIdentity()
+		if !ok {
+			return nil, ErrNotGranted
+		}
 		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
 			if !d.Approved {
 				return nil, ErrUserDeclined
 			}
-			if err := s.grants.Grant(origin); err != nil {
-				return nil, err
-			}
-			return json.RawMessage(`true`), nil
+			return s.withExpectedIdentity(identity, origin, false, func() (json.RawMessage, error) {
+				if err := s.grants.Grant(origin, identity); err != nil {
+					return nil, err
+				}
+				return json.RawMessage(`true`), nil
+			})
 		})
 
 	// Read methods: require grant, call Backend immediately.
 	case "getNetworkId":
-		if !s.grants.IsGranted(origin) {
-			return nil, ErrNotGranted
-		}
-		return json.Marshal(s.be.NetworkID())
+		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+			return json.Marshal(s.be.NetworkID())
+		})
 
 	case "getBalance":
-		if !s.grants.IsGranted(origin) {
-			return nil, ErrNotGranted
-		}
-		v, err := s.be.Balance(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(v)
+		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+			v, err := s.be.Balance(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(v)
+		})
 
 	case "getUtxos":
-		if !s.grants.IsGranted(origin) {
+		identity, ok := s.grantedIdentity(origin)
+		if !ok {
 			return nil, ErrNotGranted
 		}
 		var p struct {
@@ -330,14 +396,17 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if err := unmarshalParams(params, &p); err != nil {
 			return nil, err
 		}
-		v, err := s.be.Utxos(ctx, p.Amount, p.Paginate)
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(v)
+		return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
+			v, err := s.be.Utxos(ctx, p.Amount, p.Paginate)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(v)
+		})
 
 	case "getCollateral":
-		if !s.grants.IsGranted(origin) {
+		identity, ok := s.grantedIdentity(origin)
+		if !ok {
 			return nil, ErrNotGranted
 		}
 		var p struct {
@@ -346,14 +415,17 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if err := unmarshalParams(params, &p); err != nil {
 			return nil, err
 		}
-		v, err := s.be.Collateral(ctx, p.Amount)
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(v)
+		return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
+			v, err := s.be.Collateral(ctx, p.Amount)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(v)
+		})
 
 	case "getUsedAddresses":
-		if !s.grants.IsGranted(origin) {
+		identity, ok := s.grantedIdentity(origin)
+		if !ok {
 			return nil, ErrNotGranted
 		}
 		var p struct {
@@ -362,94 +434,103 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if err := unmarshalParams(params, &p); err != nil {
 			return nil, err
 		}
-		v, err := s.be.UsedAddresses(ctx, p.Paginate)
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(v)
+		return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
+			v, err := s.be.UsedAddresses(ctx, p.Paginate)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(v)
+		})
 
 	case "getUnusedAddresses":
-		if !s.grants.IsGranted(origin) {
-			return nil, ErrNotGranted
-		}
-		v, err := s.be.UnusedAddresses(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(v)
+		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+			v, err := s.be.UnusedAddresses(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(v)
+		})
 
 	case "getChangeAddress":
-		if !s.grants.IsGranted(origin) {
-			return nil, ErrNotGranted
-		}
-		v, err := s.be.ChangeAddress(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(v)
+		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+			v, err := s.be.ChangeAddress(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(v)
+		})
 
 	case "getRewardAddresses":
-		if !s.grants.IsGranted(origin) {
-			return nil, ErrNotGranted
-		}
-		v, err := s.be.RewardAddresses(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(v)
+		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+			v, err := s.be.RewardAddresses(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(v)
+		})
 
 	// CIP-95 read methods.
 	// NOTE: the injected.ts provider sends the "cip95." prefixed names below
 	// (e.g. "cip95.getPubDRepKey"). These cases MUST match the exact strings
 	// emitted by the provider; the bare-name aliases are kept for robustness.
 	case "cip95.getPubDRepKey", "getPubDRepKey":
-		if !s.grants.IsGranted(origin) {
+		identity, ok := s.grantedIdentity(origin)
+		if !ok {
 			return nil, ErrNotGranted
 		}
 		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
 			if !d.Approved {
 				return nil, ErrUserDeclined
 			}
-			v, err := s.be.PubDRepKey(d.Password)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(v)
+			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
+				v, err := s.be.PubDRepKey(d.Password)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(v)
+			})
 		})
 
 	case "cip95.getRegisteredPubStakeKeys", "getRegisteredPubStakeKeys":
-		if !s.grants.IsGranted(origin) {
+		identity, ok := s.grantedIdentity(origin)
+		if !ok {
 			return nil, ErrNotGranted
 		}
 		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
 			if !d.Approved {
 				return nil, ErrUserDeclined
 			}
-			v, err := s.be.RegisteredPubStakeKeys(d.Password)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(v)
+			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
+				v, err := s.be.RegisteredPubStakeKeys(d.Password)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(v)
+			})
 		})
 
 	case "cip95.getUnregisteredPubStakeKeys", "getUnregisteredPubStakeKeys":
-		if !s.grants.IsGranted(origin) {
+		identity, ok := s.grantedIdentity(origin)
+		if !ok {
 			return nil, ErrNotGranted
 		}
 		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
 			if !d.Approved {
 				return nil, ErrUserDeclined
 			}
-			v, err := s.be.UnregisteredPubStakeKeys(d.Password)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(v)
+			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
+				v, err := s.be.UnregisteredPubStakeKeys(d.Password)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(v)
+			})
 		})
 
 	// Sign/submit methods: always enqueue (password required).
 	case "signTx":
-		if !s.grants.IsGranted(origin) {
+		identity, ok := s.grantedIdentity(origin)
+		if !ok {
 			return nil, ErrNotGranted
 		}
 		var p struct {
@@ -466,15 +547,18 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 			if !d.Approved {
 				return nil, ErrUserDeclined
 			}
-			v, err := s.be.SignTx(ctx, p.Tx, p.PartialSign, d.Password)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(v)
+			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
+				v, err := s.be.SignTx(ctx, p.Tx, p.PartialSign, d.Password)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(v)
+			})
 		})
 
 	case "signData":
-		if !s.grants.IsGranted(origin) {
+		identity, ok := s.grantedIdentity(origin)
+		if !ok {
 			return nil, ErrNotGranted
 		}
 		var p struct {
@@ -494,15 +578,18 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 			if !d.Approved {
 				return nil, ErrUserDeclined
 			}
-			sig, key, err := s.be.SignData(p.Addr, *p.Payload, d.Password)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(map[string]string{"signature": sig, "key": key})
+			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
+				sig, key, err := s.be.SignData(p.Addr, *p.Payload, d.Password)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(map[string]string{"signature": sig, "key": key})
+			})
 		})
 
 	case "submitTx":
-		if !s.grants.IsGranted(origin) {
+		identity, ok := s.grantedIdentity(origin)
+		if !ok {
 			return nil, ErrNotGranted
 		}
 		var p struct {
@@ -518,11 +605,13 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 			if !d.Approved {
 				return nil, ErrUserDeclined
 			}
-			v, err := s.be.SubmitTx(ctx, p.Tx)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(v)
+			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
+				v, err := s.be.SubmitTx(ctx, p.Tx)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(v)
+			})
 		})
 
 	default:

@@ -38,15 +38,18 @@ type HookOutput struct {
 // contains no secrets — only the caller, the signing key, and the decoded
 // operation types/amounts/destinations.
 type OperationSummary struct {
-	Type         string       `json:"type"` // "tx"
-	Caller       string       `json:"caller"`
-	Key          string       `json:"key"`
-	TxID         string       `json:"tx_id"`
-	Fee          string       `json:"fee,omitempty"`
-	Outputs      []HookOutput `json:"outputs,omitempty"`
-	Certificates []string     `json:"certificates,omitempty"`
-	VoterKinds   []string     `json:"voter_kinds,omitempty"`
-	DrepIds      []string     `json:"drep_ids,omitempty"`
+	Type             string          `json:"type"` // "tx"
+	Caller           string          `json:"caller"`
+	Key              string          `json:"key"`
+	TxID             string          `json:"tx_id"`
+	Fee              string          `json:"fee,omitempty"`
+	Outputs          []HookOutput    `json:"outputs,omitempty"`
+	CollateralInputs []bursa.TxInput `json:"collateral_inputs,omitempty"`
+	CollateralReturn *HookOutput     `json:"collateral_return,omitempty"`
+	TotalCollateral  string          `json:"total_collateral,omitempty"`
+	Certificates     []string        `json:"certificates,omitempty"`
+	VoterKinds       []string        `json:"voter_kinds,omitempty"`
+	DrepIds          []string        `json:"drep_ids,omitempty"`
 }
 
 // PolicyHook is an optional external authorization step consulted after the
@@ -68,12 +71,21 @@ func summarizeTx(caller, key string, insp *bursa.TxInspection, ops policy.TxOps)
 	if insp != nil {
 		sum.TxID = insp.TxId
 		sum.Fee = insp.Fee
+		sum.CollateralInputs = insp.CollateralInputs
+		sum.TotalCollateral = insp.TotalCollateral
 		for _, o := range insp.Outputs {
 			sum.Outputs = append(sum.Outputs, HookOutput{
 				Address:   o.Address,
 				Lovelace:  o.Lovelace,
 				HasAssets: o.HasAssets,
 			})
+		}
+		if insp.CollateralReturn != nil {
+			sum.CollateralReturn = &HookOutput{
+				Address:   insp.CollateralReturn.Address,
+				Lovelace:  insp.CollateralReturn.Lovelace,
+				HasAssets: insp.CollateralReturn.HasAssets,
+			}
 		}
 	}
 	for _, v := range ops.Voters {

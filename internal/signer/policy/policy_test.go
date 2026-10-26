@@ -15,10 +15,14 @@
 package policy
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/blinklabs-io/gouroboros/cbor"
+	"github.com/blinklabs-io/gouroboros/ledger/conway"
 )
 
 func mustHash(t *testing.T, s string) backend.KeyHash {
@@ -216,6 +220,117 @@ func TestEvaluateTx_MaxFeeAda(t *testing.T) {
 	}
 	if !e.EvaluateTx(h, &bursa.TxInspection{Fee: "2000000"}).Allow {
 		t.Fatalf("expected allow: fee at exactly max_fee_ada")
+	}
+}
+
+func TestEvaluateTx_CollateralPath(t *testing.T) {
+	raw, err := os.ReadFile("../../../testdata/conway-unsigned.tx")
+	if err != nil {
+		t.Fatalf("read transaction fixture: %v", err)
+	}
+	txCbor, err := bursa.ReadCborInput(raw)
+	if err != nil {
+		t.Fatalf("decode transaction envelope: %v", err)
+	}
+	var tx conway.ConwayTransaction
+	if _, err := cbor.Decode(txCbor, &tx); err != nil {
+		t.Fatalf("decode Conway transaction: %v", err)
+	}
+	wantCollateralInputs := len(tx.Body.TxInputs.Items())
+	tx.Body.TxCollateral = cbor.NewSetType(tx.Body.TxInputs.Items(), true)
+	collateralReturn := tx.Body.TxOutputs[0]
+	tx.Body.TxCollateralReturn = &collateralReturn
+	tx.Body.TxTotalCollateral = 3_000_000
+	tx.TxIsValid = true
+	tx.SetCbor(nil)
+	tx.Body.SetCbor(nil)
+	txCbor, err = cbor.Encode(&tx)
+	if err != nil {
+		t.Fatalf("encode transaction with collateral: %v", err)
+	}
+
+	insp, err := bursa.InspectTransaction(txCbor)
+	if err != nil {
+		t.Fatalf("InspectTransaction: %v", err)
+	}
+	if !insp.IsValid {
+		t.Fatal("fixture must exercise collateral policy while is_valid is true")
+	}
+	if len(insp.CollateralInputs) != wantCollateralInputs {
+		t.Fatalf("collateral input count = %d, want %d", len(insp.CollateralInputs), wantCollateralInputs)
+	}
+	if insp.CollateralReturn == nil {
+		t.Fatal("missing collateral return")
+	}
+	if insp.TotalCollateral != "3000000" {
+		t.Fatalf("total collateral = %q, want 3000000", insp.TotalCollateral)
+	}
+
+	e, h := engineWith(t, KeyPolicy{
+		AllowedRequests: []string{"tx"},
+		Tx: &TxPolicy{
+			MaxFeeAda:         2,
+			AllowCertificates: true,
+			AllowMultiAsset:   true,
+		},
+	})
+	decision := e.EvaluateTx(h, insp)
+	if decision.Allow {
+		t.Fatal("expected collateral forfeiture above max_fee_ada to be denied")
+	}
+	if !strings.Contains(decision.Reason, "collateral total collateral 3000000 exceeds max_fee_ada") {
+		t.Fatalf("unexpected denial reason: %q", decision.Reason)
+	}
+}
+
+func TestEvaluateTx_CollateralRequiresTotal(t *testing.T) {
+	e, h := engineWith(t, KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}})
+	decision := e.EvaluateTx(h, &bursa.TxInspection{CollateralInputs: []bursa.TxInput{{}}})
+	if decision.Allow {
+		t.Fatal("expected collateral without total_collateral to be denied")
+	}
+}
+
+func TestEvaluateTx_CollateralReturnUsesOutputPolicy(t *testing.T) {
+	e, h := engineWith(t, KeyPolicy{
+		AllowedRequests: []string{"tx"},
+		Tx: &TxPolicy{
+			AllowedOutputs: []string{"addr1good"},
+			MaxOutputAda:   2,
+			MaxTotalOutAda: 3,
+			MaxFeeAda:      2,
+		},
+	})
+	insp := &bursa.TxInspection{
+		CollateralInputs: []bursa.TxInput{{}},
+		CollateralReturn: &bursa.TxOutput{Address: "addr1bad", Lovelace: "1000000"},
+		TotalCollateral:  "1000000",
+	}
+	if e.EvaluateTx(h, insp).Allow {
+		t.Fatal("expected disallowed collateral return address to be denied")
+	}
+
+	insp.CollateralReturn.Address = "addr1good"
+	if decision := e.EvaluateTx(h, insp); !decision.Allow {
+		t.Fatalf("expected bounded collateral path to be allowed: %s", decision.Reason)
+	}
+
+	insp.CollateralReturn.Lovelace = "2000000"
+	insp.TotalCollateral = "2000000"
+	if e.EvaluateTx(h, insp).Allow {
+		t.Fatal("expected collateral return plus forfeiture above max_total_out_ada to be denied")
+	}
+
+	insp.TotalCollateral = "1000000"
+	insp.CollateralReturn.Lovelace = "2000001"
+	if e.EvaluateTx(h, insp).Allow {
+		t.Fatal("expected collateral return above max_output_ada to be denied")
+	}
+
+	insp.CollateralReturn.Lovelace = "1000000"
+	insp.CollateralReturn.HasAssets = true
+	if e.EvaluateTx(h, insp).Allow {
+		t.Fatal("expected native assets in collateral return to be denied")
 	}
 }
 
