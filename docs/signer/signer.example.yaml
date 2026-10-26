@@ -58,6 +58,13 @@ signer:
   # backend is in use, even on loopback.
   allow_insecure_file_backend: false   # env: SIGNER_ALLOW_INSECURE_FILE_BACKEND
 
+  # --- External transaction-policy hook (optional) ---
+  # The endpoint must use HTTPS with a certificate trusted by the host. The
+  # signer refuses redirects and signs only when the endpoint returns HTTP 200
+  # with {"allow":true}; every other result fails closed.
+  # policy_hook_url: "https://policy.example.internal/v1/authorize"  # env: SIGNER_POLICY_HOOK_URL
+  # policy_hook_timeout_ms: 2000   # env: SIGNER_POLICY_HOOK_TIMEOUT_MS
+
   # --- Anti-double-sign watermark ---
   # type: "mem" (non-durable; refused unless mode is warn or off), "file" (SQLite; requires path), or
   #       "postgres" (shared store for HA; requires dsn or dsn_env).

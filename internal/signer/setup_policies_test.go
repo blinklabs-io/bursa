@@ -15,6 +15,8 @@
 package signer
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -73,11 +75,33 @@ func TestBuildCallerPolicies_UnknownField(t *testing.T) {
 }
 
 func TestBuildPolicyHook(t *testing.T) {
-	if h := BuildPolicyHook(config.SignerConfig{}); h != nil {
+	h, err := BuildPolicyHook(config.SignerConfig{})
+	if err != nil {
+		t.Fatalf("BuildPolicyHook with no URL: %v", err)
+	}
+	if h != nil {
 		t.Fatalf("expected nil hook when policy_hook_url unset")
 	}
-	h := BuildPolicyHook(config.SignerConfig{PolicyHookURL: "http://localhost:9/decide", PolicyHookTimeoutMs: 250})
+	h, err = BuildPolicyHook(config.SignerConfig{PolicyHookURL: "https://policy.example/decide", PolicyHookTimeoutMs: 250})
+	if err != nil {
+		t.Fatalf("BuildPolicyHook: %v", err)
+	}
 	if h == nil {
 		t.Fatalf("expected a hook when policy_hook_url is set")
+	}
+}
+
+func TestBuildPolicyHookRejectsPlaintextAllowEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"allow": true}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	h, err := BuildPolicyHook(config.SignerConfig{PolicyHookURL: srv.URL})
+	if err == nil {
+		if authErr := h.Authorize(t.Context(), testSummary()); authErr == nil {
+			t.Fatal("plaintext policy hook allow response authorized signing")
+		}
+		t.Fatal("plaintext policy hook URL was accepted")
 	}
 }

@@ -153,6 +153,11 @@ key.`,
 				logger.Error("invalid signer.caller_policies", "error", err)
 				os.Exit(1)
 			}
+			policyHook, err := signer.BuildPolicyHook(cfg.Signer)
+			if err != nil {
+				logger.Error("invalid signer.policy_hook_url", "error", err)
+				os.Exit(1)
+			}
 			acl := api.NewCallerACL(aclMap)
 			if !acl.Restricted() {
 				logger.Warn("no signer.callers configured; any valid token may use any configured key")
@@ -205,7 +210,6 @@ key.`,
 				os.Exit(1)
 			}
 			eng.SetCallerPolicies(callerPolicies)
-			policyHook := signer.BuildPolicyHook(cfg.Signer)
 			wm, mode, err := signer.BuildWatermark(ctx, cfg.Signer.Watermark)
 			if err != nil {
 				logger.Error("failed to build watermark", "error", err)
