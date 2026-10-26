@@ -73,6 +73,8 @@ createServer(async (req, res) => {
     if (!activeWallet().accounts.some(a => a.index === body.account_index)) return json({ error: 'Unknown preview account.' }, 404);
     activeWallet().active_account_index = body.account_index; return json(view(activeWallet()));
   }
+  // Invalid placeholder words exercise the phrase layout without creating key material.
+  if (req.method === 'POST' && path === '/wallet/mnemonic/generate') return json({ mnemonic: Array(24).fill('preview').join(' ') });
   if (req.method === 'PUT' && path === '/wallet/settings/nft-media') { mediaEnabled = body.enabled === true; return json({ enabled: mediaEnabled, available: true }); }
   if (req.method === 'POST' && path === '/wallet/dex/quote') {
     const p = dexPools.find(p => (p.asset_x === body.asset_in && p.asset_y === body.asset_out) || (p.asset_y === body.asset_in && p.asset_x === body.asset_out));
@@ -82,8 +84,6 @@ createServer(async (req, res) => {
     return json({ protocol: p.protocol, pool_id: p.pool_id, asset_in: body.asset_in, asset_out: body.asset_out, amount_in: body.amount_in, amount_out: output.toString(), price_impact_pct: 0.12, effective_fee: 0.003, route: `${p.protocol} ${body.asset_in}→${body.asset_out}` });
   }
   if (req.method !== 'GET') return json({ error: 'Design preview: transactions and persistent changes are disabled.' }, 403);
-  // Invalid placeholder words exercise the phrase layout without creating key material.
-  if (path === '/wallet/mnemonic/generate') return json({ mnemonic: Array(24).fill('preview').join(' ') });
   if (path === '/wallet/settings/nft-media') return json({ available: true, enabled: mediaEnabled });
   if (path === '/wallet/nft') return json(nfts);
   const nftIndex = nfts.findIndex(n => path === `/wallet/nft/${n.unit}/image`);
