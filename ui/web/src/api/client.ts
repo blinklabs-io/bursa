@@ -164,6 +164,7 @@ export const getVaultStatus = () => apiGet<VaultStatus>("/vault/status");
 export const createVault = (req: CreateVaultRequest) => apiPost<VaultStatus>("/vault", req);
 export const unlockVault = (req: UnlockVaultRequest) => apiPost<WalletView[]>("/vault/unlock", req);
 export const lockVault = () => apiPost<VaultStatus>("/vault/lock");
+export const recordVaultActivity = () => apiPost<VaultStatus>("/vault/activity");
 export const migrateLegacyKeystore = (req: MigrateLegacyKeystoreRequest) =>
   apiPost<WalletView>("/vault/migrate-legacy", req);
 

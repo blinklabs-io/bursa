@@ -203,7 +203,7 @@ export interface HistoryExpirySetting {
 }
 
 // App setting: the idle auto-lock timeout, in minutes. 0 means "Off" (never
-// auto-lock). Takes effect immediately client-side — no restart_required.
+// auto-lock). Takes effect immediately — no restart_required.
 export interface AutoLockSetting {
   minutes: 0 | 1 | 5 | 15 | 30;
 }
