@@ -15,11 +15,30 @@ package boot
 
 import "testing"
 
+type fakeAutoLockChecker struct {
+	checked bool
+}
+
+func (f *fakeAutoLockChecker) CheckAutoLock() {
+	f.checked = true
+}
+
 // TestAppOnResumeNilApp: OnResume on a zero-value App (sup == nil) must return
 // nil and not panic. This is the pre-Boot / already-stopped safe no-op guard.
 func TestAppOnResumeNilApp(t *testing.T) {
 	a := &App{}
 	if err := a.OnResume(); err != nil {
 		t.Fatalf("OnResume on zero App = %v, want nil", err)
+	}
+}
+
+func TestAppOnResumeChecksAutoLockDeadline(t *testing.T) {
+	checker := &fakeAutoLockChecker{}
+	a := &App{handler: checker}
+	if err := a.OnResume(); err != nil {
+		t.Fatalf("OnResume = %v, want nil", err)
+	}
+	if !checker.checked {
+		t.Fatal("OnResume did not check the server-owned auto-lock deadline")
 	}
 }
