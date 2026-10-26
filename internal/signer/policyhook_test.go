@@ -50,12 +50,15 @@ func newTestHTTPPolicyHook(t *testing.T, srv *httptest.Server, timeout time.Dura
 
 func TestSummarizeTx_Collateral(t *testing.T) {
 	returnOutput := &bursa.TxOutput{Address: "addr1return", Lovelace: "4000000", HasAssets: true}
-	sum := summarizeTx("alice", "cafe", &bursa.TxInspection{
+	sum, err := summarizeTx("alice", "cafe", &bursa.TxInspection{
 		TxId:             "abc",
 		CollateralInputs: []bursa.TxInput{{TxId: "def", Index: 2}},
 		CollateralReturn: returnOutput,
 		TotalCollateral:  "1000000",
 	}, policy.TxOps{})
+	if err != nil {
+		t.Fatalf("summarizeTx: %v", err)
+	}
 	if len(sum.CollateralInputs) != 1 || sum.CollateralInputs[0].TxId != "def" {
 		t.Fatalf("unexpected collateral inputs: %+v", sum.CollateralInputs)
 	}
