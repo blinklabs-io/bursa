@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
 
 // fakeBackend implements Backend with canned values.
@@ -29,6 +32,40 @@ type fakeBackend struct {
 	signDataCalled  bool
 	signDataAddr    string
 	signDataPayload string
+}
+
+type blockingBalanceBackend struct {
+	fakeBackend
+
+	mu               sync.Mutex
+	walletID         string
+	accountIndex     uint32
+	balanceStarted   chan struct{}
+	releaseBalance   chan struct{}
+	rebound          chan struct{}
+	balanceStartOnce sync.Once
+	reboundOnce      sync.Once
+}
+
+func (b *blockingBalanceBackend) SetAccount(walletID string, acct *wallet.Account) {
+	b.mu.Lock()
+	b.walletID = walletID
+	b.accountIndex = 0
+	if acct != nil {
+		b.accountIndex = acct.AccountIndex
+	}
+	b.mu.Unlock()
+	if walletID == "wallet-b" {
+		b.reboundOnce.Do(func() { close(b.rebound) })
+	}
+}
+
+func (b *blockingBalanceBackend) Balance(_ context.Context) (string, error) {
+	b.balanceStartOnce.Do(func() { close(b.balanceStarted) })
+	<-b.releaseBalance
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return fmt.Sprintf("%s/%d", b.walletID, b.accountIndex), nil
 }
 
 func (b *fakeBackend) NetworkID() int { return b.networkID }
@@ -86,6 +123,12 @@ func ctx(t *testing.T) context.Context {
 	return c
 }
 
+func bindTestIdentity(s *Service) accountIdentity {
+	identity := accountIdentity{WalletID: "test-wallet", AccountIndex: 0}
+	s.SetActiveAccount(identity.WalletID, &wallet.Account{AccountIndex: identity.AccountIndex})
+	return identity
+}
+
 // decideWhenPending spins (bounded) until at least one request is pending, then decides.
 func decideWhenPending(s *Service, d Decision) {
 	deadline := time.Now().Add(4 * time.Second)
@@ -97,6 +140,20 @@ func decideWhenPending(s *Service, d Decision) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+func waitForPendingID(t *testing.T, s *Service) string {
+	t.Helper()
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		pending := s.Pending()
+		if len(pending) > 0 {
+			return pending[0].ID
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("no connector request became pending")
+	return ""
 }
 
 // ConfirmPairForTest is a test helper that runs BeginPair+ConfirmPair for the given extensionID.
@@ -112,6 +169,7 @@ func (s *Service) ConfirmPairForTest(extensionID string) (string, error) {
 func TestServiceEnableThenRead(t *testing.T) {
 	be := &fakeBackend{balance: "1a002dc6c0"}
 	s := NewService(t.TempDir(), be, func() {})
+	bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")
 
 	// ungranted read refused
@@ -136,6 +194,7 @@ func TestServiceEnableThenRead(t *testing.T) {
 func TestServiceSignTxApprove(t *testing.T) {
 	be := &fakeBackend{signedTx: "deadbeef"}
 	s := NewService(t.TempDir(), be, func() {})
+	bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")
 
 	// Grant origin first via enable.
@@ -165,6 +224,7 @@ func TestServiceSignTxApprove(t *testing.T) {
 func TestServiceSignTxReject(t *testing.T) {
 	be := &fakeBackend{signedTx: "deadbeef"}
 	s := NewService(t.TempDir(), be, func() {})
+	bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")
 
 	// Grant origin first.
@@ -185,6 +245,7 @@ func TestServiceSignTxReject(t *testing.T) {
 func TestServiceEnableReject(t *testing.T) {
 	be := &fakeBackend{}
 	s := NewService(t.TempDir(), be, func() {})
+	identity := bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")
 
 	go decideWhenPending(s, Decision{Approved: false})
@@ -192,7 +253,7 @@ func TestServiceEnableReject(t *testing.T) {
 	if err != ErrUserDeclined {
 		t.Fatalf("want ErrUserDeclined, got %v", err)
 	}
-	if s.grants.IsGranted("https://d.io") {
+	if s.grants.IsGranted("https://d.io", identity) {
 		t.Fatal("origin must not be granted after rejected enable")
 	}
 }
@@ -337,6 +398,7 @@ func TestServiceBeginPairBounded(t *testing.T) {
 func TestServiceGrantsAndRevoke(t *testing.T) {
 	be := &fakeBackend{}
 	s := NewService(t.TempDir(), be, nil)
+	bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")
 
 	go decideWhenPending(s, Decision{Approved: true})
@@ -358,9 +420,160 @@ func TestServiceGrantsAndRevoke(t *testing.T) {
 	}
 }
 
+func TestServiceGrantDoesNotFollowActiveAccount(t *testing.T) {
+	be := &fakeBackend{balance: "balance-a"}
+	s := NewService(t.TempDir(), be, nil)
+	const origin = "https://identity.example"
+
+	s.SetActiveAccount("wallet-a", &wallet.Account{AccountIndex: 0})
+	go decideWhenPending(s, Decision{Approved: true})
+	if _, err := s.Handle(ctx(t), origin, "enable", nil); err != nil {
+		t.Fatalf("enable account 0: %v", err)
+	}
+	if _, err := s.Handle(ctx(t), origin, "getBalance", nil); err != nil {
+		t.Fatalf("getBalance account 0: %v", err)
+	}
+
+	s.SetActiveAccount("wallet-a", &wallet.Account{AccountIndex: 1})
+	if _, err := s.Handle(ctx(t), origin, "getBalance", nil); !errors.Is(err, ErrNotGranted) {
+		t.Fatalf("getBalance after account switch error = %v, want ErrNotGranted", err)
+	}
+	out, err := s.Handle(ctx(t), origin, "isEnabled", nil)
+	if err != nil {
+		t.Fatalf("isEnabled after account switch: %v", err)
+	}
+	if string(out) != "false" {
+		t.Fatalf("isEnabled after account switch = %s, want false", out)
+	}
+
+	s.SetActiveAccount("wallet-b", &wallet.Account{AccountIndex: 0})
+	if _, err := s.Handle(ctx(t), origin, "getBalance", nil); !errors.Is(err, ErrNotGranted) {
+		t.Fatalf("getBalance after wallet switch error = %v, want ErrNotGranted", err)
+	}
+
+	s.SetActiveAccount("wallet-a", &wallet.Account{AccountIndex: 0})
+	if _, err := s.Handle(ctx(t), origin, "getBalance", nil); err != nil {
+		t.Fatalf("getBalance after restoring approved identity: %v", err)
+	}
+}
+
+func TestServiceProtectedReadSerializesAccountRebinding(t *testing.T) {
+	be := &blockingBalanceBackend{
+		balanceStarted: make(chan struct{}),
+		releaseBalance: make(chan struct{}),
+		rebound:        make(chan struct{}),
+	}
+	s := NewService(t.TempDir(), be, nil)
+	identity := accountIdentity{WalletID: "wallet-a", AccountIndex: 0}
+	s.SetActiveAccount(identity.WalletID, &wallet.Account{AccountIndex: identity.AccountIndex})
+	const origin = "https://race.example"
+	if err := s.grants.Grant(origin, identity); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	type result struct {
+		body json.RawMessage
+		err  error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		body, err := s.Handle(context.Background(), origin, "getBalance", nil)
+		resultCh <- result{body: body, err: err}
+	}()
+	<-be.balanceStarted
+
+	rebindDone := make(chan struct{})
+	rebindStarted := make(chan struct{})
+	go func() {
+		close(rebindStarted)
+		s.SetActiveAccount("wallet-b", &wallet.Account{AccountIndex: 0})
+		close(rebindDone)
+	}()
+	<-rebindStarted
+	select {
+	case <-be.rebound:
+		t.Fatal("backend account changed during an authorized read")
+	case <-time.After(250 * time.Millisecond):
+	}
+	close(be.releaseBalance)
+
+	got := <-resultCh
+	if got.err != nil {
+		t.Fatalf("getBalance: %v", got.err)
+	}
+	if string(got.body) != `"wallet-a/0"` {
+		t.Fatalf("getBalance = %s, want wallet-a account 0", got.body)
+	}
+	<-rebindDone
+	select {
+	case <-be.rebound:
+	default:
+		t.Fatal("account did not rebind after the protected read completed")
+	}
+}
+
+func TestServicePendingApprovalRejectsIdentitySwitch(t *testing.T) {
+	t.Run("enable", func(t *testing.T) {
+		s := NewService(t.TempDir(), &fakeBackend{}, nil)
+		s.SetActiveAccount("wallet-a", &wallet.Account{AccountIndex: 0})
+		const origin = "https://enable.example"
+
+		done := make(chan error, 1)
+		handleCtx := ctx(t)
+		go func() {
+			_, err := s.Handle(handleCtx, origin, "enable", nil)
+			done <- err
+		}()
+		pendingID := waitForPendingID(t, s)
+		s.SetActiveAccount("wallet-b", &wallet.Account{AccountIndex: 0})
+		if err := s.Decide(pendingID, Decision{Approved: true}); err != nil {
+			t.Fatalf("decide enable: %v", err)
+		}
+		if err := <-done; !errors.Is(err, ErrNotGranted) {
+			t.Fatalf("enable after wallet switch error = %v, want ErrNotGranted", err)
+		}
+		if grants := s.Grants(); len(grants) != 0 {
+			t.Fatalf("switched wallet received grants: %v", grants)
+		}
+	})
+
+	t.Run("signTx", func(t *testing.T) {
+		be := &fakeBackend{signedTx: "deadbeef"}
+		s := NewService(t.TempDir(), be, nil)
+		identity := accountIdentity{WalletID: "wallet-a", AccountIndex: 0}
+		s.SetActiveAccount(identity.WalletID, &wallet.Account{AccountIndex: identity.AccountIndex})
+		const origin = "https://sign.example"
+		if err := s.grants.Grant(origin, identity); err != nil {
+			t.Fatalf("Grant: %v", err)
+		}
+
+		done := make(chan error, 1)
+		handleCtx := ctx(t)
+		go func() {
+			_, err := s.Handle(
+				handleCtx, origin, "signTx",
+				json.RawMessage(`{"tx":"aabbcc","partialSign":false}`),
+			)
+			done <- err
+		}()
+		pendingID := waitForPendingID(t, s)
+		s.SetActiveAccount("wallet-a", &wallet.Account{AccountIndex: 1})
+		if err := s.Decide(pendingID, Decision{Approved: true, Password: "secret"}); err != nil {
+			t.Fatalf("decide signTx: %v", err)
+		}
+		if err := <-done; !errors.Is(err, ErrNotGranted) {
+			t.Fatalf("signTx after account switch error = %v, want ErrNotGranted", err)
+		}
+		if be.signTxCalled {
+			t.Fatal("backend SignTx called after the approved identity changed")
+		}
+	})
+}
+
 // TestServiceSubscribe verifies that a subscriber receives request notifications.
 func TestServiceSubscribe(t *testing.T) {
 	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")
 
 	ch, unsub := s.Subscribe()
@@ -411,6 +624,7 @@ func TestServiceUnpair(t *testing.T) {
 func TestServiceNetworkIDAndIsEnabled(t *testing.T) {
 	be := &fakeBackend{networkID: 1}
 	s := NewService(t.TempDir(), be, nil)
+	bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")
 
 	// isEnabled returns false for ungranted origin (no error).
@@ -449,6 +663,7 @@ func TestServiceNetworkIDAndIsEnabled(t *testing.T) {
 func TestServiceGetUsedAddressesPassesPagination(t *testing.T) {
 	be := &fakeBackend{usedAddrs: []string{"addr1", "addr2"}}
 	s := NewService(t.TempDir(), be, nil)
+	bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")
 
 	go decideWhenPending(s, Decision{Approved: true})
@@ -483,6 +698,7 @@ func TestServiceCIP95PrefixedMethods(t *testing.T) {
 
 	be := &fakeBackend{}
 	s := NewService(t.TempDir(), be, func() {})
+	bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")
 
 	// Grant origin via enable.
@@ -569,7 +785,8 @@ func TestServiceRejectsMalformedSigningParamsBeforePrompt(t *testing.T) {
 	prompts := 0
 	s := NewService(t.TempDir(), &fakeBackend{}, func() { prompts++ })
 	const origin = "https://signing.example"
-	if err := s.grants.Grant(origin); err != nil {
+	identity := bindTestIdentity(s)
+	if err := s.grants.Grant(origin, identity); err != nil {
 		t.Fatalf("Grant: %v", err)
 	}
 
@@ -607,7 +824,8 @@ func TestServiceSignDataAcceptsEmptyPayload(t *testing.T) {
 	be := &fakeBackend{signSig: "sig", signKey: "key"}
 	s := NewService(t.TempDir(), be, func() {})
 	const origin = "https://signdata.example"
-	if err := s.grants.Grant(origin); err != nil {
+	identity := bindTestIdentity(s)
+	if err := s.grants.Grant(origin, identity); err != nil {
 		t.Fatalf("Grant: %v", err)
 	}
 
