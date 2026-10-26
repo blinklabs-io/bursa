@@ -38,18 +38,26 @@ type HookOutput struct {
 // contains no secrets — only the caller, the signing key, and the decoded
 // operation types/amounts/destinations.
 type OperationSummary struct {
-	Type             string          `json:"type"` // "tx"
-	Caller           string          `json:"caller"`
-	Key              string          `json:"key"`
-	TxID             string          `json:"tx_id"`
-	Fee              string          `json:"fee,omitempty"`
-	Outputs          []HookOutput    `json:"outputs,omitempty"`
-	CollateralInputs []bursa.TxInput `json:"collateral_inputs,omitempty"`
-	CollateralReturn *HookOutput     `json:"collateral_return,omitempty"`
-	TotalCollateral  string          `json:"total_collateral,omitempty"`
-	Certificates     []string        `json:"certificates,omitempty"`
-	VoterKinds       []string        `json:"voter_kinds,omitempty"`
-	DrepIds          []string        `json:"drep_ids,omitempty"`
+	Type                            string          `json:"type"` // "tx"
+	Caller                          string          `json:"caller"`
+	Key                             string          `json:"key"`
+	TxID                            string          `json:"tx_id"`
+	Fee                             string          `json:"fee,omitempty"`
+	Outputs                         []HookOutput    `json:"outputs,omitempty"`
+	CollateralInputs                []bursa.TxInput `json:"collateral_inputs,omitempty"`
+	CollateralReturn                *HookOutput     `json:"collateral_return,omitempty"`
+	TotalCollateral                 string          `json:"total_collateral,omitempty"`
+	TreasuryDonation                string          `json:"treasury_donation,omitempty"`
+	CertificateDepositTotal         string          `json:"certificate_deposit_total,omitempty"`
+	CertificateRefundTotal          string          `json:"certificate_refund_total,omitempty"`
+	UnresolvedCertificateDeposits   int             `json:"unresolved_certificate_deposits,omitempty"`
+	UnresolvedCertificateRefunds    int             `json:"unresolved_certificate_refunds,omitempty"`
+	CertificateValueEffectsComplete bool            `json:"certificate_value_effects_complete"`
+	ProposalProcedureCount          int             `json:"proposal_procedure_count,omitempty"`
+	ProposalDepositTotal            string          `json:"proposal_deposit_total,omitempty"`
+	Certificates                    []string        `json:"certificates,omitempty"`
+	VoterKinds                      []string        `json:"voter_kinds,omitempty"`
+	DrepIds                         []string        `json:"drep_ids,omitempty"`
 }
 
 // PolicyHook is an optional external authorization step consulted after the
@@ -73,6 +81,14 @@ func summarizeTx(caller, key string, insp *bursa.TxInspection, ops policy.TxOps)
 		sum.Fee = insp.Fee
 		sum.CollateralInputs = insp.CollateralInputs
 		sum.TotalCollateral = insp.TotalCollateral
+		sum.TreasuryDonation = insp.TreasuryDonationLovelace
+		sum.CertificateDepositTotal = insp.CertificateDepositTotal
+		sum.CertificateRefundTotal = insp.CertificateRefundTotal
+		sum.UnresolvedCertificateDeposits = insp.UnresolvedCertificateDeposits
+		sum.UnresolvedCertificateRefunds = insp.UnresolvedCertificateRefunds
+		sum.CertificateValueEffectsComplete = insp.CertificateValueEffectsComplete
+		sum.ProposalProcedureCount = insp.ProposalProcedureCount
+		sum.ProposalDepositTotal = insp.ProposalDepositTotal
 		for _, o := range insp.Outputs {
 			sum.Outputs = append(sum.Outputs, HookOutput{
 				Address:   o.Address,

@@ -27,10 +27,14 @@ import (
 )
 
 func testSummary() OperationSummary {
-	return summarizeTx("alice", "cafe", &bursa.TxInspection{TxId: "abc", Fee: "1000000",
-		Outputs: []bursa.TxOutput{{Address: "addr1x", Lovelace: "1000000"}}},
-		policy.TxOps{Certificates: []string{policy.CertStakeDelegation},
-			Voters: []policy.VoterInfo{{Kind: policy.VoterDrepKey, DrepId: "beef"}}})
+	return summarizeTx("alice", "cafe", &bursa.TxInspection{
+		TxId: "abc", Fee: "1000000",
+		Outputs: []bursa.TxOutput{{Address: "addr1x", Lovelace: "1000000"}},
+	},
+		policy.TxOps{
+			Certificates: []string{policy.CertStakeDelegation},
+			Voters:       []policy.VoterInfo{{Kind: policy.VoterDrepKey, DrepId: "beef"}},
+		})
 }
 
 func TestSummarizeTx_Collateral(t *testing.T) {
@@ -49,6 +53,51 @@ func TestSummarizeTx_Collateral(t *testing.T) {
 	}
 	if sum.TotalCollateral != "1000000" {
 		t.Fatalf("total collateral = %q, want 1000000", sum.TotalCollateral)
+	}
+}
+
+func TestSummarizeTx_ValueEffects(t *testing.T) {
+	sum := summarizeTx("alice", "cafe", &bursa.TxInspection{
+		TreasuryDonationLovelace:        "4000000",
+		CertificateDepositTotal:         "3000000",
+		CertificateRefundTotal:          "2000000",
+		UnresolvedCertificateDeposits:   1,
+		UnresolvedCertificateRefunds:    2,
+		CertificateValueEffectsComplete: true,
+		ProposalProcedureCount:          1,
+		ProposalDepositTotal:            "5000000",
+	}, policy.TxOps{})
+	if sum.TreasuryDonation != "4000000" ||
+		sum.CertificateDepositTotal != "3000000" ||
+		sum.CertificateRefundTotal != "2000000" ||
+		sum.UnresolvedCertificateDeposits != 1 ||
+		sum.UnresolvedCertificateRefunds != 2 ||
+		!sum.CertificateValueEffectsComplete ||
+		sum.ProposalProcedureCount != 1 ||
+		sum.ProposalDepositTotal != "5000000" {
+		t.Fatalf("unexpected value effects summary: %+v", sum)
+	}
+	body, err := json.Marshal(sum)
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal summary: %v", err)
+	}
+	for key, want := range map[string]any{
+		"treasury_donation":                  "4000000",
+		"certificate_deposit_total":          "3000000",
+		"certificate_refund_total":           "2000000",
+		"unresolved_certificate_deposits":    float64(1),
+		"unresolved_certificate_refunds":     float64(2),
+		"certificate_value_effects_complete": true,
+		"proposal_procedure_count":           float64(1),
+		"proposal_deposit_total":             "5000000",
+	} {
+		if got := payload[key]; got != want {
+			t.Fatalf("JSON field %s = %#v, want %#v", key, got, want)
+		}
 	}
 }
 
