@@ -1055,15 +1055,21 @@ func (k fakeTestKeystore) Unlock(_ string) ([]byte, error) {
 type fakeSpendChain struct {
 	submitHash lcommon.Blake2b256
 	submitErr  error
+	maxTxSize  int
+	utxoCalls  int
 }
 
 var _ apollobackend.ChainContext = (*fakeSpendChain)(nil)
 
 func (f *fakeSpendChain) ProtocolParams() (apollobackend.ProtocolParameters, error) {
+	maxTxSize := f.maxTxSize
+	if maxTxSize == 0 {
+		maxTxSize = 16384
+	}
 	return apollobackend.ProtocolParameters{
 		MinFeeConstant:    155381,
 		MinFeeCoefficient: 44,
-		MaxTxSize:         16384,
+		MaxTxSize:         maxTxSize,
 		CoinsPerUtxoByte:  "4310",
 	}, nil
 }
@@ -1092,6 +1098,7 @@ func (f *fakeSpendChain) EvaluateTx(_ []byte, _ []lcommon.Utxo) (map[lcommon.Red
 	return nil, nil
 }
 func (f *fakeSpendChain) UtxoByRef(_ lcommon.Blake2b256, _ uint32) (*lcommon.Utxo, error) {
+	f.utxoCalls++
 	return nil, nil
 }
 func (f *fakeSpendChain) ScriptCbor(_ lcommon.Blake2b224) ([]byte, error) {
@@ -1313,6 +1320,35 @@ func TestWalletBackendSignTx(t *testing.T) {
 	// re-encoded body that differs byte-for-byte from the original).
 	if !ed25519.Verify(ed25519.PublicKey(witnesses[0].Vkey), signingTarget.Bytes(), witnesses[0].Signature) {
 		t.Error("witness signature does not verify against blake2b-256 of the original tx body")
+	}
+}
+
+func TestWalletBackendInspectTxRejectsOversizeBeforeInputResolution(t *testing.T) {
+	sc := &fakeSpendChain{maxTxSize: 1}
+	sp := spend.NewService(sc, nil, nil)
+	be := &WalletBackend{sp: sp}
+
+	var txID lcommon.Blake2b256
+	copy(txID[:], bytes32("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"))
+	tx := conway.ConwayTransaction{
+		Body: conway.ConwayTransactionBody{
+			TxInputs: conway.NewConwayTransactionInputSet([]shelley.ShelleyTransactionInput{{
+				TxId: txID, OutputIndex: 0,
+			}}),
+			TxFee: 200000,
+		},
+		WitnessSet: conway.ConwayTransactionWitnessSet{},
+		TxIsValid:  true,
+	}
+	txBytes, err := gocbor.Encode(&tx)
+	if err != nil {
+		t.Fatalf("encode tx: %v", err)
+	}
+	if _, err := be.InspectTx(context.Background(), hex.EncodeToString(txBytes)); err == nil {
+		t.Fatal("InspectTx accepted transaction over live MaxTxSize")
+	}
+	if sc.utxoCalls != 0 {
+		t.Fatalf("UtxoByRef calls = %d, want 0 before size admission", sc.utxoCalls)
 	}
 }
 

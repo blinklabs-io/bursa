@@ -221,11 +221,17 @@ func TestServiceEnableThenRead(t *testing.T) {
 
 // TestServiceSignTxApprove verifies signTx calls Backend.SignTx with the approved password.
 func TestServiceSignTxApprove(t *testing.T) {
+	totalCollateral := "1000000"
 	be := &fakeBackend{
 		signedTx: "deadbeef",
 		inspectSummary: spend.TxSummary{
 			Outputs: []spend.TxSummaryOutput{{Address: "addr_test1approval", Lovelace: "2000000"}},
 			Fee:     "170000",
+			CollateralInputs: []spend.TxSummaryInput{{
+				TxHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				Index:  1, Resolved: true, Address: "addr_test1collateral", Lovelace: "3000000",
+			}},
+			TotalCollateral: &totalCollateral,
 		},
 	}
 	s := NewService(t.TempDir(), be, func() {})
@@ -267,7 +273,9 @@ func TestServiceSignTxApprove(t *testing.T) {
 		t.Fatal("signTx request did not reach the approval queue")
 	}
 	if pending.Effects == nil || pending.Effects.Fee != "170000" ||
-		len(pending.Effects.Outputs) != 1 || pending.Effects.Outputs[0].Address != "addr_test1approval" {
+		len(pending.Effects.Outputs) != 1 || pending.Effects.Outputs[0].Address != "addr_test1approval" ||
+		len(pending.Effects.CollateralInputs) != 1 || pending.Effects.CollateralInputs[0].Address != "addr_test1collateral" ||
+		pending.Effects.TotalCollateral == nil || *pending.Effects.TotalCollateral != totalCollateral {
 		t.Fatalf("queued effects = %+v, want inspector summary", pending.Effects)
 	}
 	wire, err := json.Marshal(pending)

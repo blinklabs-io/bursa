@@ -36,6 +36,26 @@ test("decodes a pasted tx and shows the preview", async () => {
   expect(screen.getByText(/add my signature/i)).toBeInTheDocument();
 });
 
+test("shows unresolved consumed and collateral references for offline review", async () => {
+  vi.spyOn(client, "decodeTx").mockResolvedValue({
+    ...vkeySummary,
+    inputs: [{ tx_hash: "aa".repeat(32), index: 0, resolved: false }],
+    collateral_inputs: [{ tx_hash: "bb".repeat(32), index: 1, resolved: false }],
+    total_collateral: "1000000",
+  });
+
+  render(<ImportTransaction canSubmit={true} />);
+  fireEvent.change(screen.getByLabelText(/transaction cbor/i), {
+    target: { value: "84a4" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /decode/i }));
+
+  await screen.findByText(`${"aa".repeat(32)}#0`);
+  expect(screen.getByText(`${"bb".repeat(32)}#1`)).toBeInTheDocument();
+  expect(screen.getAllByText(/unresolved.*value unavailable/i)).toHaveLength(2);
+  expect(screen.getByText(/collateral if script validation fails/i)).toBeInTheDocument();
+});
+
 test("adds a signature and reveals export + submit", async () => {
   vi.spyOn(client, "decodeTx").mockResolvedValue(vkeySummary);
   vi.spyOn(client, "cosignTx").mockResolvedValue({

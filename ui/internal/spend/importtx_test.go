@@ -104,6 +104,81 @@ func newBuildOnlyService(t *testing.T) *Service {
 	return NewService(nil, nil, nil)
 }
 
+func mutateConwayBody(t *testing.T, txHex string, mutate func(*conway.ConwayTransactionBody)) string {
+	t.Helper()
+	txBytes, err := hex.DecodeString(txHex)
+	if err != nil {
+		t.Fatalf("decode tx hex: %v", err)
+	}
+	var outer []cbor.RawMessage
+	if _, err := cbor.Decode(txBytes, &outer); err != nil {
+		t.Fatalf("decode tx array: %v", err)
+	}
+	body, err := conway.NewConwayTransactionBodyFromCbor(outer[0])
+	if err != nil {
+		t.Fatalf("decode tx body: %v", err)
+	}
+	mutate(body)
+	body.SetCbor(nil)
+	bodyBytes, err := cbor.Encode(body)
+	if err != nil {
+		t.Fatalf("encode tx body: %v", err)
+	}
+	outer[0] = cbor.RawMessage(bodyBytes)
+	newTxBytes, err := cbor.Encode(outer)
+	if err != nil {
+		t.Fatalf("encode tx: %v", err)
+	}
+	return hex.EncodeToString(newTxBytes)
+}
+
+func TestDecodeTx_CollateralEffectsResolvedAndOfflineExplicit(t *testing.T) {
+	svc, _, unsignedCbor := buildUnsignedSendFixture(t)
+	txHex := mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
+		body.TxCollateral = cbor.NewSetType(body.TxInputs.Items(), true)
+		body.TxCollateralReturn = &body.TxOutputs[0]
+		body.TxTotalCollateral = 1_000_000
+	})
+
+	got, err := svc.DecodeTx(context.Background(), txHex)
+	if err != nil {
+		t.Fatalf("DecodeTx: %v", err)
+	}
+	if len(got.CollateralInputs) != 1 || !got.CollateralInputs[0].Resolved {
+		t.Fatalf("collateral inputs = %+v, want one resolved input", got.CollateralInputs)
+	}
+	if got.CollateralInputs[0].TxHash == "" || got.CollateralInputs[0].Address == "" || got.CollateralInputs[0].Lovelace != "5000000" {
+		t.Fatalf("resolved collateral = %+v", got.CollateralInputs[0])
+	}
+	if got.CollateralReturn == nil || got.CollateralReturn.Address == "" || got.CollateralReturn.Lovelace == "" {
+		t.Fatalf("collateral return = %+v", got.CollateralReturn)
+	}
+	if got.TotalCollateral == nil || *got.TotalCollateral != "1000000" {
+		t.Fatalf("total collateral = %v, want 1000000", got.TotalCollateral)
+	}
+
+	offline, err := newBuildOnlyService(t).DecodeTx(context.Background(), txHex)
+	if err != nil {
+		t.Fatalf("offline DecodeTx: %v", err)
+	}
+	if len(offline.CollateralInputs) != 1 || offline.CollateralInputs[0].Resolved || offline.CollateralInputs[0].TxHash == "" {
+		t.Fatalf("offline collateral = %+v, want explicit unresolved ref", offline.CollateralInputs)
+	}
+	if err := offline.ValidateForSigning(); err == nil {
+		t.Fatal("ValidateForSigning accepted unresolved consumed inputs")
+	}
+}
+
+func TestTxSummaryValidateForSigningRequiresCollateralTotal(t *testing.T) {
+	summary := TxSummary{CollateralInputs: []TxSummaryInput{{
+		TxHash:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Resolved: true,
+	}}}
+	if err := summary.ValidateForSigning(); err == nil {
+		t.Fatal("ValidateForSigning accepted collateral without total collateral")
+	}
+}
+
 func TestDecodeTx_VkeySummary(t *testing.T) {
 	svc, acct, unsignedCbor := buildUnsignedSendFixture(t)
 	got, err := svc.DecodeTx(context.Background(), unsignedCbor)

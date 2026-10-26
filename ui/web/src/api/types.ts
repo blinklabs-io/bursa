@@ -928,6 +928,15 @@ export interface TxSummaryOutput {
   assets?: { unit: string; quantity: string }[];
 }
 
+export interface TxSummaryInput {
+  tx_hash: string;
+  index: number;
+  resolved: boolean;
+  address?: string;
+  lovelace?: string;
+  assets?: { unit: string; quantity: string }[];
+}
+
 export interface TxSummaryMultiSigParticipant {
   key_hash: string;
   label?: string;
@@ -948,12 +957,27 @@ export interface TxSummaryMultiSig {
 // spend.TxSummary, with the api-layer's optional multisig.TxInfo attached.
 export interface TxSummary {
   kind: "vkey" | "native_multisig";
+  inputs?: TxSummaryInput[];
   outputs: TxSummaryOutput[];
   fee: string;
   ttl?: number;
+  validity_start?: number;
   certificates?: string[];
   withdrawals?: TxSummaryOutput[];
+  mint?: { unit: string; quantity: string }[];
+  auxiliary_data_hash?: string;
+  script_data_hash?: string;
+  collateral_inputs?: TxSummaryInput[];
+  collateral_return?: TxSummaryOutput;
+  total_collateral?: string;
+  reference_inputs?: TxSummaryInput[];
+  voting_count?: number;
+  proposal_count?: number;
+  current_treasury_value?: string;
+  treasury_donation?: string;
+  unsupported_effects?: string[];
   network_id?: number;
+  required_signers?: string[];
   existing_signatures: TxSummarySigner[];
   wallet_can_add: TxSummarySigner[];
   is_complete: boolean;

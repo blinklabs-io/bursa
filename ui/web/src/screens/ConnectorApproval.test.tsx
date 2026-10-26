@@ -34,6 +34,13 @@ const makeReq = (overrides: Partial<ConnectorRequest> = {}): ConnectorRequest =>
 
 const signTxEffects = {
   kind: "vkey" as const,
+  inputs: [{
+    tx_hash: "aa".repeat(32),
+    index: 0,
+    resolved: true,
+    address: "addr_test1qspent",
+    lovelace: "5000000",
+  }],
   outputs: [
     {
       address: "addr_test1qverified",
@@ -43,8 +50,20 @@ const signTxEffects = {
   ],
   fee: "170000",
   ttl: 12345,
-  certificates: ["stake delegation"],
+  validity_start: 12000,
   withdrawals: [{ address: "stake_test1verified", lovelace: "3000000" }],
+  mint: [{ unit: "mintpolicyasset", quantity: "-2" }],
+  collateral_inputs: [{
+    tx_hash: "bb".repeat(32),
+    index: 1,
+    resolved: true,
+    address: "addr_test1qcollateral",
+    lovelace: "3000000",
+  }],
+  collateral_return: { address: "addr_test1qreturn", lovelace: "2000000" },
+  total_collateral: "1000000",
+  treasury_donation: "500000",
+  required_signers: ["cc".repeat(28)],
   network_id: 0,
   existing_signatures: [{ key_hash: "aa".repeat(28), role: "payment" }],
   wallet_can_add: [{ key_hash: "bb".repeat(28), role: "payment" }],
@@ -318,7 +337,16 @@ test("shows verified signTx effects before approval", async () => {
   expect(effects).toHaveTextContent("addr_test1qverified");
   expect(effects).toHaveTextContent("policyasset");
   expect(effects).toHaveTextContent("42");
-  expect(effects).toHaveTextContent("stake delegation");
+  expect(effects).toHaveTextContent("addr_test1qspent");
+  expect(effects).toHaveTextContent("Mint and burn");
+  expect(effects).toHaveTextContent("mintpolicyasset");
+  expect(effects).toHaveTextContent("-2");
+  expect(effects).toHaveTextContent("Collateral if script validation fails");
+  expect(effects).toHaveTextContent("addr_test1qcollateral");
+  expect(effects).toHaveTextContent("Total collateral1 ADA");
+  expect(effects).toHaveTextContent("addr_test1qreturn");
+  expect(effects).toHaveTextContent("Treasury donation0.5 ADA");
+  expect(effects).toHaveTextContent("cc".repeat(28));
   expect(effects).toHaveTextContent("stake_test1verified");
   expect(effects).toHaveTextContent("testnet (0)");
   expect(effects).toHaveTextContent("Existing signatures1");

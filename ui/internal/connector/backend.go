@@ -389,7 +389,7 @@ func (b *WalletBackend) InspectTx(ctx context.Context, txHex string) (spend.TxSu
 	if _, err := hex.DecodeString(txHex); err != nil {
 		return spend.TxSummary{}, fmt.Errorf("decode tx hex: %w", err)
 	}
-	return b.sp.DecodeTx(ctx, txHex)
+	return b.sp.InspectTx(ctx, txHex)
 }
 
 // SignTx implements CIP-30 signTx. It decodes the externally-constructed tx CBOR,
