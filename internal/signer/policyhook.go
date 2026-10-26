@@ -35,19 +35,34 @@ type HookOutput struct {
 	HasAssets bool   `json:"has_assets,omitempty"`
 }
 
+// HookVoter identifies one governance voter in an OperationSummary.
+type HookVoter struct {
+	Kind   string `json:"kind"`
+	DrepID string `json:"drep_id,omitempty"`
+}
+
 // OperationSummary is the parsed request sent to an external policy hook. It
 // contains no secrets — only the caller, the signing key, and the decoded
 // operation types/amounts/destinations.
 type OperationSummary struct {
-	Type         string       `json:"type"` // "tx"
-	Caller       string       `json:"caller"`
-	Key          string       `json:"key"`
-	TxID         string       `json:"tx_id"`
-	Fee          string       `json:"fee,omitempty"`
-	Outputs      []HookOutput `json:"outputs,omitempty"`
-	Certificates []string     `json:"certificates,omitempty"`
-	VoterKinds   []string     `json:"voter_kinds,omitempty"`
-	DrepIds      []string     `json:"drep_ids,omitempty"`
+	Type                   string       `json:"type"` // "tx"
+	Caller                 string       `json:"caller"`
+	Key                    string       `json:"key"`
+	TxID                   string       `json:"tx_id"`
+	Fee                    string       `json:"fee,omitempty"`
+	TTL                    uint64       `json:"ttl,omitempty"`
+	Outputs                []HookOutput `json:"outputs,omitempty"`
+	CertificateCount       int          `json:"certificate_count,omitempty"`
+	Certificates           []string     `json:"certificates,omitempty"`
+	HasMint                bool         `json:"has_mint,omitempty"`
+	WithdrawalCount        int          `json:"withdrawal_count,omitempty"`
+	VotingProcedureCount   int          `json:"voting_procedure_count,omitempty"`
+	Voters                 []HookVoter  `json:"voters,omitempty"`
+	ProposalProcedureCount int          `json:"proposal_procedure_count,omitempty"`
+	HasTreasuryDonation    bool         `json:"has_treasury_donation,omitempty"`
+	// VoterKinds and DrepIds preserve the original flattened hook fields.
+	VoterKinds []string `json:"voter_kinds,omitempty"`
+	DrepIds    []string `json:"drep_ids,omitempty"`
 }
 
 // PolicyHook is an optional external authorization step consulted after the
@@ -59,31 +74,58 @@ type PolicyHook interface {
 }
 
 // summarizeTx builds an OperationSummary for a tx-signing decision.
-func summarizeTx(caller, key string, insp *bursa.TxInspection, ops policy.TxOps) OperationSummary {
-	sum := OperationSummary{
-		Type:         "tx",
-		Caller:       caller,
-		Key:          key,
-		Certificates: ops.Certificates,
+func summarizeTx(caller, key string, insp *bursa.TxInspection, ops policy.TxOps) (OperationSummary, error) {
+	if insp == nil {
+		return OperationSummary{}, errors.New("policy hook: transaction inspection is unavailable")
 	}
-	if insp != nil {
-		sum.TxID = insp.TxId
-		sum.Fee = insp.Fee
-		for _, o := range insp.Outputs {
-			sum.Outputs = append(sum.Outputs, HookOutput{
-				Address:   o.Address,
-				Lovelace:  o.Lovelace,
-				HasAssets: o.HasAssets,
-			})
-		}
+	if len(ops.Certificates) != insp.CertificateCount {
+		return OperationSummary{}, fmt.Errorf(
+			"policy hook: certificate details incomplete: got %d of %d",
+			len(ops.Certificates), insp.CertificateCount,
+		)
+	}
+	if len(ops.Voters) != insp.VotingProcedureCount {
+		return OperationSummary{}, fmt.Errorf(
+			"policy hook: voter details incomplete: got %d of %d",
+			len(ops.Voters), insp.VotingProcedureCount,
+		)
+	}
+	sum := OperationSummary{
+		Type:                   "tx",
+		Caller:                 caller,
+		Key:                    key,
+		TxID:                   insp.TxId,
+		Fee:                    insp.Fee,
+		TTL:                    insp.TTL,
+		CertificateCount:       insp.CertificateCount,
+		Certificates:           ops.Certificates,
+		HasMint:                insp.HasMint,
+		WithdrawalCount:        insp.WithdrawalCount,
+		VotingProcedureCount:   insp.VotingProcedureCount,
+		ProposalProcedureCount: insp.ProposalProcedureCount,
+		HasTreasuryDonation:    insp.HasTreasuryDonation,
+	}
+	for _, o := range insp.Outputs {
+		sum.Outputs = append(sum.Outputs, HookOutput{
+			Address:   o.Address,
+			Lovelace:  o.Lovelace,
+			HasAssets: o.HasAssets,
+		})
 	}
 	for _, v := range ops.Voters {
+		if v.Kind == "" {
+			return OperationSummary{}, errors.New("policy hook: voter kind is unavailable")
+		}
+		if policy.IsDrepVoterKind(v.Kind) && v.DrepId == "" {
+			return OperationSummary{}, errors.New("policy hook: DRep voter id is unavailable")
+		}
+		sum.Voters = append(sum.Voters, HookVoter{Kind: v.Kind, DrepID: v.DrepId})
 		sum.VoterKinds = append(sum.VoterKinds, v.Kind)
 		if v.DrepId != "" {
 			sum.DrepIds = append(sum.DrepIds, v.DrepId)
 		}
 	}
-	return sum
+	return sum, nil
 }
 
 // HTTPPolicyHook POSTs the operation summary as JSON to a configured HTTPS URL

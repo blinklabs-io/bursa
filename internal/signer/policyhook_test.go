@@ -27,10 +27,15 @@ import (
 )
 
 func testSummary() OperationSummary {
-	return summarizeTx("alice", "cafe", &bursa.TxInspection{TxId: "abc", Fee: "1000000",
-		Outputs: []bursa.TxOutput{{Address: "addr1x", Lovelace: "1000000"}}},
+	sum, err := summarizeTx("alice", "cafe", &bursa.TxInspection{TxId: "abc", Fee: "1000000",
+		Outputs:          []bursa.TxOutput{{Address: "addr1x", Lovelace: "1000000"}},
+		CertificateCount: 1, VotingProcedureCount: 1},
 		policy.TxOps{Certificates: []string{policy.CertStakeDelegation},
 			Voters: []policy.VoterInfo{{Kind: policy.VoterDrepKey, DrepId: "beef"}}})
+	if err != nil {
+		panic(err)
+	}
+	return sum
 }
 
 func newTestHTTPPolicyHook(t *testing.T, srv *httptest.Server, timeout time.Duration) *HTTPPolicyHook {
@@ -44,11 +49,9 @@ func newTestHTTPPolicyHook(t *testing.T, srv *httptest.Server, timeout time.Dura
 }
 
 func TestHTTPPolicyHook_Allow(t *testing.T) {
-	var gotType string
+	var gotSummary OperationSummary
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var sum OperationSummary
-		_ = json.NewDecoder(r.Body).Decode(&sum)
-		gotType = sum.Type
+		_ = json.NewDecoder(r.Body).Decode(&gotSummary)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"allow": true}`))
 	}))
@@ -58,8 +61,12 @@ func TestHTTPPolicyHook_Allow(t *testing.T) {
 	if err := h.Authorize(context.Background(), testSummary()); err != nil {
 		t.Fatalf("expected allow, got %v", err)
 	}
-	if gotType != "tx" {
-		t.Fatalf("hook did not receive summary type; got %q", gotType)
+	if gotSummary.Type != "tx" {
+		t.Fatalf("hook did not receive summary type; got %q", gotSummary.Type)
+	}
+	if gotSummary.CertificateCount != 1 || gotSummary.VotingProcedureCount != 1 ||
+		len(gotSummary.Voters) != 1 || gotSummary.Voters[0].DrepID != "beef" {
+		t.Fatalf("hook did not receive operation details: %+v", gotSummary)
 	}
 }
 

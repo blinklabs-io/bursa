@@ -195,6 +195,14 @@ summary as JSON and signs only when the endpoint returns HTTP 200 with
 `{"allow":true}`. Transport errors, timeouts, redirects, other status codes,
 and malformed or non-allow responses deny signing.
 
+The summary includes `tx_id`, `fee`, `ttl`, `outputs` (including each
+`has_assets` flag), `certificate_count`, `certificates`, `has_mint`,
+`withdrawal_count`, `voting_procedure_count`, `voters` (paired `kind` and
+optional `drep_id` values), `proposal_procedure_count`, and
+`has_treasury_donation`. The original `voter_kinds` and `drep_ids` arrays remain
+for existing hook consumers. Bursa denies signing before calling the hook when
+the decoded certificate or voter details do not match their transaction counts.
+
 The URL must use HTTPS. Bursa verifies the endpoint certificate against the
 host's system trust store and refuses redirects, so a policy decision cannot be
 downgraded to an unauthenticated plaintext response. Install a private policy
