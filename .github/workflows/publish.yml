@@ -33,9 +33,10 @@ jobs:
       # This is a convenience guard, NOT a security control: a workflow_dispatch
       # run executes the workflow file from the dispatched ref, so anyone with
       # write access could push a branch with this step deleted and dispatch
-      # that. Confining the Apple credentials to reviewed code requires a
-      # GitHub Environment with a deployment-branch policy, which GitHub
-      # enforces outside the workflow file.
+      # that. Signing jobs use the release-signing environment. Its external
+      # deployment_branch_policy sets protected_branches false and
+      # custom_branch_policies true for main and v*.*.* tags, and
+      # can_admins_bypass is disabled.
       #
       # A tag ref is rejected outright: a manual run there would take the
       # tag-only branches all the way through, creating a second draft release
@@ -104,6 +105,7 @@ jobs:
             targets: freebsd/amd64 freebsd/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
       max-parallel: 2
     runs-on: ${{ matrix.runner }}
+    environment: release-signing
     needs: [create-draft-release]
     permissions:
       actions: write
@@ -301,6 +303,7 @@ jobs:
             arch: arm64
       max-parallel: 2
     runs-on: ${{ matrix.runner }}
+    environment: release-signing
     needs: [create-draft-release, build-binaries]
     permissions:
       actions: write
@@ -778,6 +781,7 @@ jobs:
             arch: arm64
       max-parallel: 2
     runs-on: ${{ matrix.os }}
+    environment: release-signing
     needs: [create-draft-release, build-wallet-binaries]
     permissions:
       actions: write
@@ -852,6 +856,7 @@ jobs:
     # publishes or finalises release output, so it stays on the push triggers.
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
+    environment: release-signing
     needs: [build-images]
     permissions:
       attestations: write

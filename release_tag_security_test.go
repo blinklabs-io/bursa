@@ -24,6 +24,61 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestSigningJobsUseProtectedEnvironment(t *testing.T) {
+	// The matching GitHub deployment_branch_policy has protected_branches false,
+	// custom_branch_policies true, and can_admins_bypass disabled.
+	workflowPaths, err := filepath.Glob(filepath.Join(".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	markers := []string{
+		"secrets.APPLE_",
+		"secrets.CERTIFICATE_",
+		"secrets.ANDROID_KEY",
+		"uses: actions/attest@",
+	}
+	const environment = "release-signing"
+	signingJobs := 0
+	for _, workflowPath := range workflowPaths {
+		data, err := os.ReadFile(workflowPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var workflow struct {
+			Jobs map[string]map[string]any `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(data, &workflow); err != nil {
+			t.Fatalf("parse %s: %v", workflowPath, err)
+		}
+		for jobName, job := range workflow.Jobs {
+			jobData, err := yaml.Marshal(job)
+			if err != nil {
+				t.Fatalf("render %s job %s: %v", workflowPath, jobName, err)
+			}
+			jobText := string(jobData)
+			isSigningJob := false
+			for _, marker := range markers {
+				if strings.Contains(jobText, marker) {
+					isSigningJob = true
+					break
+				}
+			}
+			if !isSigningJob {
+				continue
+			}
+
+			signingJobs++
+			if got, ok := job["environment"].(string); !ok || got != environment {
+				t.Errorf("%s job %s uses signing material without environment %q", workflowPath, jobName, environment)
+			}
+		}
+	}
+	if signingJobs == 0 {
+		t.Fatal("no signing-capable workflow jobs found")
+	}
+}
+
 func TestReleaseTagRejectedBeforeReleaseCreation(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is required for release workflow checks")
