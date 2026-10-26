@@ -1546,6 +1546,15 @@ const docTemplate = `{
                 "certificate_count": {
                     "type": "integer"
                 },
+                "collateral_inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/bursa.TxInput"
+                    }
+                },
+                "collateral_return": {
+                    "$ref": "#/definitions/bursa.TxOutput"
+                },
                 "era": {
                     "type": "string"
                 },
@@ -1587,6 +1596,9 @@ const docTemplate = `{
                 },
                 "size_bytes": {
                     "type": "integer"
+                },
+                "total_collateral": {
+                    "type": "string"
                 },
                 "ttl": {
                     "type": "integer"
