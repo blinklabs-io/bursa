@@ -59,7 +59,10 @@ const maxRequestBodyBytes = 1 << 20
 
 const maxConcurrentScriptValidations = 4
 
-var scriptValidationSlots = make(chan struct{}, maxConcurrentScriptValidations)
+var (
+	scriptValidationBodySlots = make(chan struct{}, maxConcurrentScriptValidations)
+	scriptValidationSlots     = make(chan struct{}, maxConcurrentScriptValidations)
+)
 
 // writeJSONError writes a JSON error response safely
 // nolint:unparam // statusCode currently is always a bad request in some call sites but kept for future use
@@ -974,12 +977,22 @@ func registerAPIHandlers(
 // allow an unbounded number of expensive requests to run at once.
 func boundedScriptValidation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Read the body before taking a slot. Holding one across the read let
-		// an unauthenticated client occupy every slot by sending its body
-		// slowly - or never finishing it - and turn the route into a 503 for
-		// everyone else without doing any validation work at all. The read is
-		// bounded by the same limit the handlers apply, so buffering it here
-		// costs at most that per in-flight request.
+		// Bound body readers separately from validation work. The validation
+		// slots stay available while slow bodies arrive, while the body slots
+		// cap how many complete request buffers can be allocated concurrently.
+		select {
+		case scriptValidationBodySlots <- struct{}{}:
+		default:
+			writeError(w, http.StatusServiceUnavailable, errors.New("script validation busy"))
+			return
+		}
+		bodySlotHeld := true
+		defer func() {
+			if bodySlotHeld {
+				<-scriptValidationBodySlots
+			}
+		}()
+
 		if r.Body != nil {
 			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
 			if err != nil {
@@ -992,6 +1005,10 @@ func boundedScriptValidation(next http.Handler) http.Handler {
 		}
 		select {
 		case scriptValidationSlots <- struct{}{}:
+			// Transfer admission before serving the buffered body: every retained
+			// request is covered by either a body slot or a validation slot.
+			<-scriptValidationBodySlots
+			bodySlotHeld = false
 			defer func() { <-scriptValidationSlots }()
 			next.ServeHTTP(w, r)
 		default:
