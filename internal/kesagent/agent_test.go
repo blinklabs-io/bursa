@@ -485,6 +485,47 @@ func TestSubscribeRefusesKeyBelowGuardFloor(t *testing.T) {
 	}
 }
 
+func TestSubscribeRequiresCurrentGuardAuthorization(t *testing.T) {
+	cold := newColdKey(t)
+	a := testAgent(t, ModeServeKey, cold, kes.CardanoKesDepth, atPeriod(1))
+	vkey, _ := a.GenStagedKey()
+	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 1, cold)); err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+
+	// Make the next guard write fail before it can replace the durable floor.
+	guardPath := a.guard.path
+	a.guard.path = filepath.Join(t.TempDir(), "missing", "guard.json")
+	a.now = func() time.Time { return atPeriod(2) }
+	a.Tick()
+
+	if info := a.Info(); info.ActivePeriod != 2 || info.MonotonicFloor != 1 {
+		t.Fatalf("after failed authorization: active period = %d, floor = %d; want 2 and 1",
+			info.ActivePeriod, info.MonotonicFloor)
+	}
+	id, _, current := a.subscribe()
+	if current != nil {
+		securemem.Wipe(current.KESSignKey)
+		a.unsubscribe(id)
+		t.Fatalf("subscribe released period %d after its guard persistence failed", current.Period)
+	}
+	a.unsubscribe(id)
+
+	// Restoring persistence lets the next tick authorize the already-evolved
+	// key and makes that exact period available to a new subscriber.
+	a.guard.path = guardPath
+	a.Tick()
+	id, _, current = a.subscribe()
+	defer a.unsubscribe(id)
+	if current == nil {
+		t.Fatal("subscribe returned no key after guard authorization retry succeeded")
+	}
+	defer securemem.Wipe(current.KESSignKey)
+	if current.Period != 2 {
+		t.Fatalf("subscribe returned period %d after retry, want 2", current.Period)
+	}
+}
+
 // TestQueuedPushBelowFloorIsDroppedOnRollback covers the gap between the guard
 // floor and an already-enqueued push: buildKeyPushLocked refuses to build a
 // below-floor push, but one enqueued while the key and floor still agreed sits
