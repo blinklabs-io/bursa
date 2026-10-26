@@ -79,13 +79,18 @@ func (c *autoLockController) Activity() bool {
 	if c.vault.Locked() {
 		return false
 	}
+	now := c.runtime.now()
+	if c.deadlineNs != 0 && now.UnixNano() >= c.deadlineNs {
+		c.expireLocked()
+		return false
+	}
 	minutes := c.settings.AutoLockMinutes()
 	if minutes <= 0 {
 		c.stopLocked()
 		return true
 	}
 	d := time.Duration(minutes) * time.Minute
-	c.deadlineNs = c.runtime.now().Add(d).UnixNano()
+	c.deadlineNs = now.Add(d).UnixNano()
 	if c.timer == nil {
 		c.scheduleLocked(d)
 	}

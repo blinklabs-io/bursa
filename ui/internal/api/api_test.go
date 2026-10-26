@@ -3230,6 +3230,44 @@ func TestVaultActivityReplacesServerAutoLockDeadline(t *testing.T) {
 	}
 }
 
+func TestVaultActivityCannotRenewExpiredDeadline(t *testing.T) {
+	clock := &fakeAutoLockClock{now: time.Unix(3_000, 0)}
+	fv := &fakeVault{
+		exists:  true,
+		locked:  true,
+		wallets: []vault.WalletMeta{{ID: "w1", Account: sampleAccount("preview")}},
+	}
+	fw := &fakeWallet{}
+	sp := &fakeSpender{}
+	h := NewHandler(
+		fakeStatuser{}, fv, fw, sp,
+		&fakeSettings{autoLockMinutes: 1}, &fakeContacts{}, nil,
+		&fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(),
+		withAutoLockRuntime(clock.runtime()),
+	)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/unlock", strings.NewReader(`{"password":"vault-password-xyz"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /vault/unlock = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	clock.now = clock.now.Add(time.Minute + time.Second)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/activity", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("POST /vault/activity after deadline = %d, want 409", rec.Code)
+	}
+	if !fv.Locked() {
+		t.Fatal("expired activity renewed the unlocked vault deadline")
+	}
+	if fw.set || sp.set {
+		t.Fatalf("active services remained bound after expired activity: wallet=%v spender=%v", fw.set, sp.set)
+	}
+	if len(clock.timers) != 1 {
+		t.Fatalf("expired activity created a replacement timer: got %d, want 1", len(clock.timers))
+	}
+}
+
 // TestAutoLockOptionsMatchesSettingsPackage guards against the api-layer's
 // autoLockOptions (duplicated for decoupling, see its doc comment) silently
 // drifting from settings.AutoLockOptions — the two must always accept exactly
