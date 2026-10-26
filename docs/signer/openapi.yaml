@@ -294,7 +294,15 @@ components:
           description: tx - hex CBOR or JSON envelope of the transaction.
         signers:
           type: array
-          description: tx - key hashes or addresses to witness with.
+          minItems: 1
+          maxItems: 162
+          uniqueItems: true
+          description: |
+            tx - key hashes or addresses to witness with. Every item must
+            resolve to a distinct key hash, including when the same key is
+            expressed once as a hash and once as an address. The 162-entry
+            hard limit bounds request work; a concrete transaction may fit
+            fewer witnesses within the Cardano transaction-size limit.
           items: { type: string }
         payload:
           type: string
