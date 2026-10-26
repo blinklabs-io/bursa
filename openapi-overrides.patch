@@ -15,7 +15,42 @@ diff --git a/openapi/client.go b/openapi/client.go
 index 21b554c..838a519 100644
 --- a/openapi/client.go
 +++ b/openapi/client.go
-@@ -310,3 +310,3 @@ func (c *APIClient) prepareRequest(
+@@ -22,7 +22,6 @@ import (
+ 	"log"
+ 	"mime/multipart"
+ 	"net/http"
+-	"net/http/httputil"
+ 	"net/url"
+ 	"os"
+ 	"path/filepath"
+@@ -247,24 +246,16 @@ func parameterToJson(obj interface{}) (string, error) {
+ // callAPI do the request.
+ func (c *APIClient) callAPI(request *http.Request) (*http.Response, error) {
+ 	if c.cfg.Debug {
+-		dump, err := httputil.DumpRequestOut(request, true)
+-		if err != nil {
+-			return nil, err
+-		}
+-		log.Printf("\n%s\n", string(dump))
++		log.Printf("HTTP request method=%s", request.Method)
+ 	}
+ 
+ 	resp, err := c.cfg.HTTPClient.Do(request)
+ 	if err != nil {
+ 		return resp, err
+ 	}
+ 
+ 	if c.cfg.Debug {
+-		dump, err := httputil.DumpResponse(resp, true)
+-		if err != nil {
+-			return resp, err
+-		}
+-		log.Printf("\n%s\n", string(dump))
++		log.Printf("HTTP response status=%d", resp.StatusCode)
+ 	}
+ 	return resp, err
+ }
+@@ -310,3 +301,3 @@ func (c *APIClient) prepareRequest(
  	// add form parameters and file if available.
 -	if strings.HasPrefix(headerParams["Content-Type"], "multipart/form-data") && len(formParams) > 0 || (len(formFiles) > 0) {
 +	if strings.HasPrefix(headerParams["Content-Type"], "multipart/form-data") && (len(formParams) > 0 || len(formFiles) > 0) {
