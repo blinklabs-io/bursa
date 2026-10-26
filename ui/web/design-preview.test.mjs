@@ -45,7 +45,7 @@ test('decodes a valid asset URL once', async () => {
 test('exercises first-run screens with invalid placeholder words and no persisted vault', async () => {
   const response = await fetch(`${base}/vault`, { method: 'POST', body: '{}' });
   expect(await response.json()).toEqual({ exists: true, locked: false, wallet_count: 0 });
-  const phrase = await (await fetch(`${base}/wallet/mnemonic/generate`)).json();
+  const phrase = await (await fetch(`${base}/wallet/mnemonic/generate`, { method: 'POST', cache: 'no-store' })).json();
   expect(phrase.mnemonic.split(' ')).toHaveLength(24);
   expect(new Set(phrase.mnemonic.split(' '))).toEqual(new Set(['preview']));
   expect((await (await fetch(`${base}/vault/status`)).json()).exists).toBe(false);

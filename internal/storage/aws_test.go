@@ -223,10 +223,22 @@ func TestNewStoreRejectsUnknownBackendWithGCPConfigured(t *testing.T) {
 
 func TestNewStoreUsesGCPForLegacyConfiguration(t *testing.T) {
 	store, err := NewStore(&config.Config{
-		Google: config.GoogleConfig{Project: "project", ResourceId: "resource"},
+		Google: config.GoogleConfig{Project: "project", ResourceId: "resource", Prefix: "pre-"},
 	})
 	require.NoError(t, err)
 	require.IsType(t, (*GCPStore)(nil), store)
+}
+
+func TestNewStoreGCPBackendRequiresValidPrefix(t *testing.T) {
+	for _, cfg := range []*config.Config{
+		{Storage: config.StorageConfig{Backend: "gcp"}},
+		{Google: config.GoogleConfig{Project: "project", ResourceId: "resource"}},
+		{Storage: config.StorageConfig{Backend: "gcp"}, Google: config.GoogleConfig{Prefix: "wallets/"}},
+	} {
+		store, err := NewStore(cfg)
+		require.Nil(t, store)
+		require.ErrorContains(t, err, "gcp secret prefix")
+	}
 }
 
 func TestNewStoreAWSBackend(t *testing.T) {

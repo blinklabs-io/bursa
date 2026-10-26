@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	secretmanager "cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
+	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/googleapis/gax-go/v2"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -31,6 +32,45 @@ type fakeSecretAdmin struct {
 	createErr error
 	created   []*secretmanager.CreateSecretRequest
 	got       []*secretmanager.GetSecretRequest
+}
+
+func TestWalletSecretResourceRequiresNamespace(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		prefix string
+		name   string
+	}{
+		{name: "unrelated-wallet"},
+		{prefix: "wallets/", name: "unrelated-wallet"},
+		{prefix: "wallet prefix", name: "unrelated-wallet"},
+		{prefix: "bursa-wallet-", name: "../unrelated-wallet"},
+	} {
+		resourceName, err := walletSecretResource("project", tc.prefix, tc.name)
+		require.Empty(t, resourceName)
+		require.Error(t, err)
+	}
+}
+
+func TestDeleteRejectsEmptyWalletNamespace(t *testing.T) {
+	cfg := config.GetConfig()
+	saved := *cfg
+	cfg.Google.Project = "project"
+	cfg.Google.Prefix = ""
+	t.Cleanup(func() { *cfg = saved })
+
+	err := NewGoogleWallet("unrelated-wallet").Delete(context.Background())
+	require.ErrorContains(t, err, "gcp secret prefix is required")
+}
+
+func TestWalletSecretResourceUsesNamespace(t *testing.T) {
+	t.Parallel()
+	resourceName, err := walletSecretResource("project", "bursa-wallet-", "wallet_1")
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"projects/project/secrets/bursa-wallet-wallet_1",
+		resourceName,
+	)
 }
 
 func (f *fakeSecretAdmin) GetSecret(

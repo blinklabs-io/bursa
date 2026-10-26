@@ -919,12 +919,13 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
 	})
 
-	// GET /wallet/mnemonic/generate returns a freshly generated 24-word BIP39
+	// POST /wallet/mnemonic/generate returns a freshly generated 24-word BIP39
 	// mnemonic (256-bit entropy). The phrase is generated server-side so the
-	// client never handles raw entropy. This endpoint is ungated — it needs
-	// neither a running node nor an unlocked vault, and is loopback-only so there
-	// is no risk of the phrase leaking over the network.
-	mux.HandleFunc("GET /wallet/mnemonic/generate", func(w http.ResponseWriter, _ *http.Request) {
+	// client never handles raw entropy. The endpoint is ungated because generation
+	// needs neither a running node nor an unlocked vault. Its response must remain
+	// non-cacheable because the phrase is a wallet recovery secret.
+	mux.HandleFunc("POST /wallet/mnemonic/generate", func(w http.ResponseWriter, _ *http.Request) {
+		setSecretResponseHeaders(w)
 		m, err := bursa.GenerateMnemonic()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errBody(err))
@@ -2584,6 +2585,12 @@ func serveNFT[T any](w http.ResponseWriter, v T, err error) {
 
 func errBody(err error) map[string]string {
 	return map[string]string{"error": err.Error()}
+}
+
+func setSecretResponseHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

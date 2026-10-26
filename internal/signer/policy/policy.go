@@ -388,6 +388,92 @@ func adaToLovelace(ada uint64) *big.Int {
 	return new(big.Int).Mul(new(big.Int).SetUint64(ada), big.NewInt(lovelacePerAda))
 }
 
+type txValueLimits struct {
+	networks        []string
+	allowedOutputs  []string
+	maxOutputAda    uint64
+	maxTotalOutAda  uint64
+	maxFeeAda       uint64
+	allowMultiAsset bool
+}
+
+func evaluateValuePath(
+	context string,
+	callerOverride bool,
+	chargeName string,
+	chargeText string,
+	outputs []bursa.TxOutput,
+	limits txValueLimits,
+) Decision {
+	prefix := ""
+	if context != "" {
+		prefix = context + " "
+	}
+	limitScope := ""
+	allowlistScope := ""
+	if callerOverride {
+		limitScope = "caller override "
+		allowlistScope = "caller-override "
+	}
+	charge, ok := parseLovelace(chargeText)
+	if !ok {
+		return deny("unparseable %s%s %q", prefix, chargeName, chargeText)
+	}
+	if limits.maxFeeAda > 0 && charge.Cmp(adaToLovelace(limits.maxFeeAda)) > 0 {
+		return deny(
+			"%s%s %s exceeds %smax_fee_ada",
+			prefix,
+			chargeName,
+			chargeText,
+			limitScope,
+		)
+	}
+
+	total := new(big.Int).Set(charge)
+	for _, out := range outputs {
+		if len(limits.networks) > 0 && !contains(limits.networks, networkOfAddress(out.Address)) {
+			article := "an "
+			if callerOverride {
+				article = "a caller-override "
+			}
+			return deny("%soutput address %s is not on %sallowed network", prefix, out.Address, article)
+		}
+		if len(limits.allowedOutputs) > 0 && !contains(limits.allowedOutputs, out.Address) {
+			return deny(
+				"%soutput address %s is not in the %sallowlist",
+				prefix,
+				out.Address,
+				allowlistScope,
+			)
+		}
+		if out.HasAssets && !limits.allowMultiAsset {
+			return deny("%soutput %s carries native assets", prefix, out.Address)
+		}
+		lovelace, ok := new(big.Int).SetString(out.Lovelace, 10)
+		if !ok {
+			return deny("unparseable %soutput lovelace %q", prefix, out.Lovelace)
+		}
+		if limits.maxOutputAda > 0 && lovelace.Cmp(adaToLovelace(limits.maxOutputAda)) > 0 {
+			return deny(
+				"%soutput %s lovelace exceeds %smax_output_ada",
+				prefix,
+				out.Lovelace,
+				limitScope,
+			)
+		}
+		total.Add(total, lovelace)
+	}
+	if limits.maxTotalOutAda > 0 && total.Cmp(adaToLovelace(limits.maxTotalOutAda)) > 0 {
+		return deny(
+			"%stotal outputs plus %s exceed %smax_total_out_ada",
+			prefix,
+			chargeName,
+			limitScope,
+		)
+	}
+	return allow()
+}
+
 // EvaluateTx authorizes (or denies) signing the inspected transaction with the
 // key identified by hash. Deny-by-default: absent policy denies.
 //
@@ -416,66 +502,37 @@ func (e *Engine) EvaluateTx(hash backend.KeyHash, insp *bursa.TxInspection, opts
 	}
 	tp := p.Tx
 
-	// The transaction fee is value that leaves the signer's inputs just like
-	// an output does, so it must be bounded too. Parse it up front; an
-	// unparseable fee fails closed.
-	fee := new(big.Int)
-	if insp.Fee != "" {
-		f, ok := new(big.Int).SetString(insp.Fee, 10)
-		if !ok {
-			return deny("unparseable fee %q", insp.Fee)
-		}
-		fee = f
+	limits := txValueLimits{
+		networks:        tp.Networks,
+		allowedOutputs:  tp.AllowedOutputs,
+		maxOutputAda:    tp.MaxOutputAda,
+		maxTotalOutAda:  tp.MaxTotalOutAda,
+		maxFeeAda:       tp.MaxFeeAda,
+		allowMultiAsset: tp.AllowMultiAsset,
 	}
-	if tp.MaxFeeAda > 0 {
-		maxFee := new(big.Int).Mul(
-			new(big.Int).SetUint64(tp.MaxFeeAda),
-			big.NewInt(lovelacePerAda),
-		)
-		if fee.Cmp(maxFee) > 0 {
-			return deny("fee %s exceeds max_fee_ada", insp.Fee)
-		}
+	if d := evaluateValuePath("", false, "fee", insp.Fee, insp.Outputs, limits); !d.Allow {
+		return d
 	}
-
-	total := new(big.Int)
-	// Use Mul to avoid uint64 overflow before promotion to big.Int.
-	maxOut := new(big.Int).Mul(
-		new(big.Int).SetUint64(tp.MaxOutputAda),
-		big.NewInt(lovelacePerAda),
-	)
-	for _, out := range insp.Outputs {
-		if len(tp.Networks) > 0 && !contains(tp.Networks, networkOfAddress(out.Address)) {
-			return deny("output address %s is not on an allowed network", out.Address)
+	if len(insp.CollateralInputs) > 0 {
+		// The validity flag is outside the signed body, so a caller can change
+		// it after obtaining a witness. Authorize the collateral path whenever
+		// the body supplies one, regardless of the inspected flag value.
+		if insp.TotalCollateral == "" {
+			return deny("collateral inputs require a total_collateral bound")
 		}
-		if len(tp.AllowedOutputs) > 0 && !contains(tp.AllowedOutputs, out.Address) {
-			return deny("output address %s is not in the allowlist", out.Address)
+		var collateralOutputs []bursa.TxOutput
+		if insp.CollateralReturn != nil {
+			collateralOutputs = append(collateralOutputs, *insp.CollateralReturn)
 		}
-		// Native-asset movement is unbounded by the lovelace limits, so deny it
-		// by default. Note: this is independent of minting (HasMint), which
-		// covers creating/destroying assets rather than transferring existing
-		// ones out of the signer's UTxOs.
-		if out.HasAssets && !tp.AllowMultiAsset {
-			return deny("output %s carries native assets", out.Address)
-		}
-		lov, ok := new(big.Int).SetString(out.Lovelace, 10)
-		if !ok {
-			return deny("unparseable output lovelace %q", out.Lovelace)
-		}
-		if tp.MaxOutputAda > 0 && lov.Cmp(maxOut) > 0 {
-			return deny("output %s lovelace exceeds max_output_ada", out.Lovelace)
-		}
-		total.Add(total, lov)
-	}
-	// Count the fee toward the total value leaving the signer so that
-	// max_total_out_ada cannot be bypassed by inflating the fee field.
-	total.Add(total, fee)
-	if tp.MaxTotalOutAda > 0 {
-		maxTotal := new(big.Int).Mul(
-			new(big.Int).SetUint64(tp.MaxTotalOutAda),
-			big.NewInt(lovelacePerAda),
-		)
-		if total.Cmp(maxTotal) > 0 {
-			return deny("total outputs plus fee exceed max_total_out_ada")
+		if d := evaluateValuePath(
+			"collateral",
+			false,
+			"total collateral",
+			insp.TotalCollateral,
+			collateralOutputs,
+			limits,
+		); !d.Allow {
+			return d
 		}
 	}
 	if d := gateCertificates(tp, insp, cfg.ops); !d.Allow {
@@ -574,39 +631,31 @@ func gateVoters(allowedKinds, allowedDreps []string, voters []VoterInfo) Decisio
 // subtractive: only set fields can add a denial, so the override can only
 // narrow the base decision, never widen it.
 func evalOverride(ov *CallerTxOverride, insp *bursa.TxInspection, ops TxOps) Decision {
-	if ov.MaxFeeAda > 0 {
-		fee, ok := parseLovelace(insp.Fee)
-		if !ok {
-			return deny("unparseable fee %q", insp.Fee)
-		}
-		if fee.Cmp(adaToLovelace(ov.MaxFeeAda)) > 0 {
-			return deny("fee %s exceeds caller override max_fee_ada", insp.Fee)
-		}
+	limits := txValueLimits{
+		networks:        ov.Networks,
+		allowedOutputs:  ov.AllowedOutputs,
+		maxOutputAda:    ov.MaxOutputAda,
+		maxTotalOutAda:  ov.MaxTotalOutAda,
+		maxFeeAda:       ov.MaxFeeAda,
+		allowMultiAsset: true,
 	}
-	total := new(big.Int)
-	maxOut := adaToLovelace(ov.MaxOutputAda)
-	for _, out := range insp.Outputs {
-		if len(ov.Networks) > 0 && !contains(ov.Networks, networkOfAddress(out.Address)) {
-			return deny("output address %s is not on a caller-override allowed network", out.Address)
-		}
-		if len(ov.AllowedOutputs) > 0 && !contains(ov.AllowedOutputs, out.Address) {
-			return deny("output address %s is not in the caller-override allowlist", out.Address)
-		}
-		lov, ok := parseLovelace(out.Lovelace)
-		if !ok {
-			return deny("unparseable output lovelace %q", out.Lovelace)
-		}
-		if ov.MaxOutputAda > 0 && lov.Cmp(maxOut) > 0 {
-			return deny("output %s lovelace exceeds caller override max_output_ada", out.Lovelace)
-		}
-		total.Add(total, lov)
+	if d := evaluateValuePath("", true, "fee", insp.Fee, insp.Outputs, limits); !d.Allow {
+		return d
 	}
-	if ov.MaxTotalOutAda > 0 {
-		if fee, ok := parseLovelace(insp.Fee); ok {
-			total.Add(total, fee)
+	if len(insp.CollateralInputs) > 0 {
+		var collateralOutputs []bursa.TxOutput
+		if insp.CollateralReturn != nil {
+			collateralOutputs = append(collateralOutputs, *insp.CollateralReturn)
 		}
-		if total.Cmp(adaToLovelace(ov.MaxTotalOutAda)) > 0 {
-			return deny("total outputs plus fee exceed caller override max_total_out_ada")
+		if d := evaluateValuePath(
+			"collateral",
+			true,
+			"total collateral",
+			insp.TotalCollateral,
+			collateralOutputs,
+			limits,
+		); !d.Allow {
+			return d
 		}
 	}
 	if ov.ForbidCertificates && insp.CertificateCount > 0 {

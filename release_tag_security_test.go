@@ -15,6 +15,7 @@
 package bursa
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,107 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+func TestSigningJobsUseProtectedEnvironment(t *testing.T) {
+	workflowPaths, err := filepath.Glob(filepath.Join(".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	markers := []string{
+		"secrets.APPLE_",
+		"secrets.CERTIFICATE_",
+		"secrets.ANDROID_KEY",
+		"uses: actions/attest@",
+	}
+	const environment = "release-signing"
+	signingJobs := 0
+	for _, workflowPath := range workflowPaths {
+		data, err := os.ReadFile(workflowPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var workflow struct {
+			Jobs map[string]map[string]any `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(data, &workflow); err != nil {
+			t.Fatalf("parse %s: %v", workflowPath, err)
+		}
+		for jobName, job := range workflow.Jobs {
+			jobData, err := yaml.Marshal(job)
+			if err != nil {
+				t.Fatalf("render %s job %s: %v", workflowPath, jobName, err)
+			}
+			jobText := string(jobData)
+			isSigningJob := false
+			for _, marker := range markers {
+				if strings.Contains(jobText, marker) {
+					isSigningJob = true
+					break
+				}
+			}
+			if !isSigningJob {
+				continue
+			}
+
+			signingJobs++
+			if got, ok := job["environment"].(string); !ok || got != environment {
+				t.Errorf("%s job %s uses signing material without environment %q", workflowPath, jobName, environment)
+			}
+		}
+	}
+	if signingJobs == 0 {
+		t.Fatal("no signing-capable workflow jobs found")
+	}
+}
+
+func TestReleaseSigningEnvironmentPolicy(t *testing.T) {
+	type branchPolicy struct {
+		ProtectedBranches    bool `json:"protected_branches"`
+		CustomBranchPolicies bool `json:"custom_branch_policies"`
+	}
+	type environmentPolicy struct {
+		DeploymentBranchPolicy branchPolicy `json:"deployment_branch_policy"`
+	}
+	type refPolicy struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+
+	readJSON := func(path string, dst any) {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, dst); err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+	}
+
+	var environment environmentPolicy
+	readJSON(filepath.Join(".github", "environments", "release-signing.json"), &environment)
+	if environment.DeploymentBranchPolicy.ProtectedBranches ||
+		!environment.DeploymentBranchPolicy.CustomBranchPolicies {
+		t.Fatalf("release-signing must use custom deployment branch policies: %+v", environment.DeploymentBranchPolicy)
+	}
+
+	wantPolicies := []refPolicy{
+		{Name: "main", Type: "branch"},
+		{Name: "v*.*.*", Type: "tag"},
+	}
+	policyPaths := []string{
+		filepath.Join(".github", "environments", "release-signing-main.json"),
+		filepath.Join(".github", "environments", "release-signing-tags.json"),
+	}
+	for i, path := range policyPaths {
+		var got refPolicy
+		readJSON(path, &got)
+		if got != wantPolicies[i] {
+			t.Errorf("%s policy = %+v, want %+v", path, got, wantPolicies[i])
+		}
+	}
+}
 
 func TestReleaseTagRejectedBeforeReleaseCreation(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {

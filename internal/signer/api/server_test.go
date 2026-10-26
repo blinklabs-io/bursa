@@ -20,8 +20,10 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
@@ -44,6 +46,31 @@ func (fakeCardano) Operations([]byte) (policy.TxOps, error)                { ret
 func (fakeCardano) TxID([]byte) ([]byte, error)                            { return make([]byte, 32), nil }
 func (fakeCardano) Assemble([]byte, []lcommon.VkeyWitness) ([]byte, error) { return []byte{0x9}, nil }
 
+type countingCardano struct {
+	fakeCardano
+	calls int
+}
+
+func (c *countingCardano) Inspect(tx []byte) (*bursa.TxInspection, error) {
+	c.calls++
+	return c.fakeCardano.Inspect(tx)
+}
+
+func (c *countingCardano) Operations(tx []byte) (policy.TxOps, error) {
+	c.calls++
+	return c.fakeCardano.Operations(tx)
+}
+
+func (c *countingCardano) TxID(tx []byte) ([]byte, error) {
+	c.calls++
+	return c.fakeCardano.TxID(tx)
+}
+
+func (c *countingCardano) Assemble(tx []byte, wits []lcommon.VkeyWitness) ([]byte, error) {
+	c.calls++
+	return c.fakeCardano.Assemble(tx, wits)
+}
+
 func newTestServer(t *testing.T) (*Server, backend.KeyHash) {
 	t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(nil)
@@ -63,6 +90,26 @@ func newTestServer(t *testing.T) (*Server, backend.KeyHash) {
 	return NewServer(coord, backend.NewResolver(b), eng, nil, func(string) (string, error) { return "tester", nil }), h
 }
 
+func newCountingTestServer(t *testing.T) (*Server, backend.KeyHash, *countingCardano) {
+	t.Helper()
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	b := backend.NewSoftwareBackend("software")
+	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePayment)
+	if err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	pol := policy.KeyPolicy{Hash: h.String(), AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}
+	eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
+	card := &countingCardano{fakeCardano: fakeCardano{pub: pub}}
+	coord := signer.New(signer.Deps{
+		Resolver:  backend.NewResolver(b),
+		Policy:    eng,
+		Watermark: watermark.NewMemWatermark(),
+		Cardano:   card,
+	})
+	return NewServer(coord, backend.NewResolver(b), eng, nil, func(string) (string, error) { return "tester", nil }), h, card
+}
+
 func TestHandleSignTx(t *testing.T) {
 	srv, h := newTestServer(t)
 	body, _ := json.Marshal(SignRequest{Type: "tx", Cbor: "83a0a0f5f6", Signers: []string{h.String()}})
@@ -79,6 +126,94 @@ func TestHandleSignTx(t *testing.T) {
 	}
 	if len(resp.Witnesses) != 1 || resp.TxID != "deadbeef" {
 		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestHandleSignTxRejectsInvalidSignerListsBeforeCoordinatorWork(t *testing.T) {
+	tests := []struct {
+		name        string
+		signers     func(t *testing.T, h backend.KeyHash) []string
+		wantErrPart string
+	}{
+		{
+			name: "too many",
+			signers: func(_ *testing.T, h backend.KeyHash) []string {
+				result := make([]string, signer.MaxTxSigners+1)
+				for i := range result {
+					result[i] = h.String()
+				}
+				return result
+			},
+			wantErrPart: fmt.Sprintf("at most %d signers", signer.MaxTxSigners),
+		},
+		{
+			name: "duplicate hash",
+			signers: func(_ *testing.T, h backend.KeyHash) []string {
+				return []string{h.String(), h.String()}
+			},
+			wantErrPart: "duplicate signer",
+		},
+		{
+			name: "duplicate hash and address alias",
+			signers: func(t *testing.T, h backend.KeyHash) []string {
+				addr, err := lcommon.NewAddressFromParts(
+					lcommon.AddressTypeKeyNone,
+					lcommon.AddressNetworkMainnet,
+					h[:],
+					nil,
+				)
+				if err != nil {
+					t.Fatalf("NewAddressFromParts: %v", err)
+				}
+				return []string{h.String(), addr.String()}
+			},
+			wantErrPart: "duplicate signer",
+		},
+		{
+			name: "invalid signer",
+			signers: func(_ *testing.T, _ backend.KeyHash) []string {
+				return []string{"not-a-signer"}
+			},
+			wantErrPart: "invalid signer",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, h, card := newCountingTestServer(t)
+			signers := tt.signers(t, h)
+			body, err := json.Marshal(SignRequest{
+				Type: "tx", Cbor: "83a0a0f5f6", Signers: signers,
+			})
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+			rr := httptest.NewRecorder()
+
+			srv.handleSign(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+			}
+			if card.calls != 0 {
+				t.Fatalf("coordinator Cardano work calls = %d, want 0", card.calls)
+			}
+			var resp map[string]json.RawMessage
+			if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if len(resp) != 1 {
+				t.Fatalf("response fields = %v, want only error", resp)
+			}
+			var msg string
+			if err := json.Unmarshal(resp["error"], &msg); err != nil {
+				t.Fatalf("decode error: %v", err)
+			}
+			if !strings.Contains(msg, tt.wantErrPart) {
+				t.Fatalf("error = %q, want substring %q", msg, tt.wantErrPart)
+			}
+		})
 	}
 }
 

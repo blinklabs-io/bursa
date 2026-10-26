@@ -1602,9 +1602,18 @@ func TestAddWalletInvalidMnemonicBadRequest(t *testing.T) {
 func TestGenerateMnemonic(t *testing.T) {
 	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/mnemonic/generate", nil))
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/mnemonic/generate", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /wallet/mnemonic/generate = %d, want 200", rec.Code)
+		t.Fatalf("POST /wallet/mnemonic/generate = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got := rec.Header().Get("Pragma"); got != "no-cache" {
+		t.Fatalf("Pragma = %q, want no-cache", got)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
 	}
 	var body struct {
 		Mnemonic string `json:"mnemonic"`

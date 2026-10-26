@@ -154,6 +154,42 @@ func ResolveSigner(s string) (backend.KeyHash, error) {
 	return backend.KeyHash{}, fmt.Errorf("signer %q: address has no key credential usable as a signer", s)
 }
 
+// MaxTxSigners is a hard work limit for one transaction signing request. A
+// VKey witness occupies 101 CBOR bytes, so 163 witnesses alone exceed the
+// current 16 KiB Cardano transaction envelope. Transaction body and framing
+// bytes make the usable signer count lower for each concrete transaction.
+const MaxTxSigners = 16_384 / 101
+
+// ValidateSignerList resolves a transaction's signer identifiers and rejects
+// lists that are empty, oversized, invalid, or resolve the same key more than
+// once. The returned hashes correspond positionally to signers.
+func ValidateSignerList(signers []string) ([]backend.KeyHash, error) {
+	if len(signers) == 0 {
+		return nil, errors.New("at least one signer is required")
+	}
+	if len(signers) > MaxTxSigners {
+		return nil, fmt.Errorf("request may contain at most %d signers", MaxTxSigners)
+	}
+	resolved := make([]backend.KeyHash, 0, len(signers))
+	seen := make(map[backend.KeyHash]int, len(signers))
+	for i, signerID := range signers {
+		hash, err := ResolveSigner(signerID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid signer at index %d", i)
+		}
+		if first, ok := seen[hash]; ok {
+			return nil, fmt.Errorf(
+				"duplicate signer at index %d resolves to the same key as index %d",
+				i,
+				first,
+			)
+		}
+		seen[hash] = i
+		resolved = append(resolved, hash)
+	}
+	return resolved, nil
+}
+
 // SignTx decodes, policy-checks, watermarks, signs, verifies, and assembles.
 // It returns a result (with whatever witnesses succeeded), per-signer errors,
 // and a hard error only for request-level failures (e.g. undecodable tx).
@@ -162,6 +198,10 @@ func ResolveSigner(s string) (backend.KeyHash, error) {
 // line so that all outcomes are auditable. Secrets (private keys, raw tx bytes)
 // are never logged.
 func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []string) (*TxResult, []SignerError, error) {
+	resolvedSigners, err := ValidateSignerList(signers)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
+	}
 	raw, err := bursa.ReadCborInput(cborInput)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
@@ -179,9 +219,6 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []st
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
-	if len(signers) == 0 {
-		return nil, nil, fmt.Errorf("%w: no signers specified", errBadRequest)
-	}
 	// Scope is the tx-id, making it identical to the payload being signed.
 	// Because the scope IS the txid, ErrConflict cannot fire by construction
 	// (Check/Commit on the same txid is idempotent in the mem/sqlite watermark);
@@ -194,15 +231,8 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []st
 		wits []lcommon.VkeyWitness
 		errs []SignerError
 	)
-	for _, s := range signers {
-		hash, err := ResolveSigner(s)
-		if err != nil {
-			errs = append(errs, SignerError{Signer: s, Code: CodeBadRequest, Reason: err.Error()})
-			c.deps.Logger.Info("sign", "type", "tx", "caller-key", s, "txid", insp.TxId, "result", "denied", "reason", err.Error())
-			c.deps.Metrics.observe("tx", string(CodeBadRequest))
-			c.deps.Metrics.observeDeny(string(CodeBadRequest))
-			continue
-		}
+	for i, s := range signers {
+		hash := resolvedSigners[i]
 		ref, err := c.deps.Resolver.Resolve(ctx, hash)
 		if errors.Is(err, backend.ErrKeyNotFound) {
 			errs = append(errs, SignerError{Signer: s, Code: CodeNotFound, Reason: "key not found"})

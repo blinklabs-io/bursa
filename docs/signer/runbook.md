@@ -209,6 +209,14 @@ downgraded to an unauthenticated plaintext response. Install a private policy
 service CA in the host trust store when needed. Set the request deadline with
 `signer.policy_hook_timeout_ms` (default 5 seconds).
 
+Transaction policy evaluates both possible ledger effect paths because the
+`is_valid` flag is not part of the signed transaction body. A body with
+collateral inputs must include `total_collateral`; that amount is checked
+against fee limits, while collateral return is checked against output network,
+address, amount, asset, and total-value limits. The external policy hook
+receives `collateral_inputs`, `collateral_return`, and `total_collateral` in
+addition to ordinary outputs and the fee.
+
 ## 7. Anti-double-sign watermark
 
 `signer.watermark` records the highest period/counter signed per key and refuses

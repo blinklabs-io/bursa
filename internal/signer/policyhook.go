@@ -46,21 +46,24 @@ type HookVoter struct {
 // contains no secrets — only the caller, the signing key, and the decoded
 // operation types/amounts/destinations.
 type OperationSummary struct {
-	Type                   string       `json:"type"` // "tx"
-	Caller                 string       `json:"caller"`
-	Key                    string       `json:"key"`
-	TxID                   string       `json:"tx_id"`
-	Fee                    string       `json:"fee,omitempty"`
-	TTL                    uint64       `json:"ttl,omitempty"`
-	Outputs                []HookOutput `json:"outputs,omitempty"`
-	CertificateCount       int          `json:"certificate_count,omitempty"`
-	Certificates           []string     `json:"certificates,omitempty"`
-	HasMint                bool         `json:"has_mint,omitempty"`
-	WithdrawalCount        int          `json:"withdrawal_count,omitempty"`
-	VotingProcedureCount   int          `json:"voting_procedure_count,omitempty"`
-	Voters                 []HookVoter  `json:"voters,omitempty"`
-	ProposalProcedureCount int          `json:"proposal_procedure_count,omitempty"`
-	HasTreasuryDonation    bool         `json:"has_treasury_donation,omitempty"`
+	Type                   string          `json:"type"` // "tx"
+	Caller                 string          `json:"caller"`
+	Key                    string          `json:"key"`
+	TxID                   string          `json:"tx_id"`
+	Fee                    string          `json:"fee,omitempty"`
+	TTL                    uint64          `json:"ttl,omitempty"`
+	Outputs                []HookOutput    `json:"outputs,omitempty"`
+	CertificateCount       int             `json:"certificate_count,omitempty"`
+	Certificates           []string        `json:"certificates,omitempty"`
+	HasMint                bool            `json:"has_mint,omitempty"`
+	WithdrawalCount        int             `json:"withdrawal_count,omitempty"`
+	VotingProcedureCount   int             `json:"voting_procedure_count,omitempty"`
+	Voters                 []HookVoter     `json:"voters,omitempty"`
+	ProposalProcedureCount int             `json:"proposal_procedure_count,omitempty"`
+	HasTreasuryDonation    bool            `json:"has_treasury_donation,omitempty"`
+	CollateralInputs       []bursa.TxInput `json:"collateral_inputs,omitempty"`
+	CollateralReturn       *HookOutput     `json:"collateral_return,omitempty"`
+	TotalCollateral        string          `json:"total_collateral,omitempty"`
 	// VoterKinds and DrepIds preserve the original flattened hook fields.
 	VoterKinds []string `json:"voter_kinds,omitempty"`
 	DrepIds    []string `json:"drep_ids,omitempty"`
@@ -112,6 +115,15 @@ func summarizeTx(caller, key string, insp *bursa.TxInspection, ops policy.TxOps)
 			Lovelace:  o.Lovelace,
 			HasAssets: o.HasAssets,
 		})
+	}
+	sum.CollateralInputs = insp.CollateralInputs
+	sum.TotalCollateral = insp.TotalCollateral
+	if insp.CollateralReturn != nil {
+		sum.CollateralReturn = &HookOutput{
+			Address:   insp.CollateralReturn.Address,
+			Lovelace:  insp.CollateralReturn.Lovelace,
+			HasAssets: insp.CollateralReturn.HasAssets,
+		}
 	}
 	for _, v := range ops.Voters {
 		if v.Kind == "" {
