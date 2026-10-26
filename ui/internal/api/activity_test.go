@@ -44,7 +44,7 @@ func (f *fakeActivity) Poll(context.Context) ([]activity.Event, error) {
 }
 
 func activityHandler(st Statuser, act Activity) http.Handler {
-	return NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{},
+	return NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{},
 		&fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview",
 		http.NotFoundHandler(), WithActivity(act))
 }
@@ -97,7 +97,7 @@ func TestActivityEndpointGatedOnNodeState(t *testing.T) {
 }
 
 func TestActivityEndpointNotRegisteredWithoutOption(t *testing.T) {
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{},
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{},
 		&fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/activity", nil))
@@ -124,7 +124,7 @@ func decodeNotifications(t *testing.T, body *bytes.Buffer) bool {
 func TestGetNotificationsReturnsPersistedValue(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStopped}}
 	set := &fakeSettings{notifications: true}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/notifications", nil))
 	if rec.Code != http.StatusOK {
@@ -137,7 +137,7 @@ func TestGetNotificationsReturnsPersistedValue(t *testing.T) {
 
 func TestGetNotificationsDefaultsOff(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStopped}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/notifications", nil))
 	if got := decodeNotifications(t, rec.Body); got != false {
@@ -148,7 +148,7 @@ func TestGetNotificationsDefaultsOff(t *testing.T) {
 func TestPutNotificationsPersists(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	set := &fakeSettings{}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"enabled":true}`)
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/notifications", body))
@@ -165,7 +165,7 @@ func TestPutNotificationsPersists(t *testing.T) {
 
 func TestPutNotificationsMissingEnabled(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{}`)
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/notifications", body))

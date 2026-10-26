@@ -24,6 +24,7 @@ import (
 	"context"
 	"log/slog"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/blinklabs-io/bursa/ui/internal/desktopnotify"
@@ -121,7 +122,7 @@ func awaitUI(ctx context.Context, url string, logger *slog.Logger, srvErr <-chan
 	tray.Launch()
 	defer tray.Stop()
 
-	logger.Info("opening webview window", "url", url)
+	logger.Info("opening webview window", "url", strings.SplitN(url, "#", 2)[0])
 	w.Navigate(url)
 	w.Run()
 

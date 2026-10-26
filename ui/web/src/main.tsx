@@ -4,8 +4,13 @@ import "./polyfills";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app";
+import { establishControlSession } from "./api/session";
 import "./styles/global.css";
 import "./styles/wallet.css";
 import "./styles/screens.css";
 
-createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+function renderApp() {
+  createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+}
+
+void establishControlSession().then(renderApp, renderApp);

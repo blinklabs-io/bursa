@@ -382,9 +382,11 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
                 return
             }
 
-            // app.port() is the OS-assigned loopback port the control surface bound.
+            // app.port() identifies the loopback origin; app.url() also carries
+            // the per-process session capability in its fragment.
             let port = app?.port() ?? 0
-            guard port > 0, let url = URL(string: "http://127.0.0.1:\(port)/") else {
+            let launchURL = app?.url() ?? ""
+            guard port > 0, let url = URL(string: launchURL) else {
                 Self.logger.error("wallet returned invalid port \(port)")
                 self.app = nil
                 Self.stopApp(app)

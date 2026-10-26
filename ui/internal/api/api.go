@@ -609,7 +609,8 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 	return v
 }
 
-// NewHandler returns the loopback control-surface mux. network is the network
+// NewHandler returns the authenticated loopback control-surface mux. The
+// non-empty sessionToken protects every control route; network is the network
 // the embedded node runs on; wallet requests must match it (or omit it). vlt is
 // the encrypted multi-wallet store; the API pushes the active wallet onto wl/sp
 // whenever the selection changes. settings exposes user-facing app settings
@@ -621,7 +622,7 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // the native multi-signature surface (may be nil, in which case the multi-sig
 // routes are not registered). spa is the embedded SPA, registered as the
 // catch-all so the specific API routes take precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cb Contacts, lookup NodeLookup, po PoolOps, dx DexQuoter, ms MultiSig, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cb Contacts, lookup NodeLookup, po PoolOps, dx DexQuoter, ms MultiSig, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -641,11 +642,11 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// diagnostics view must work in every node state — especially while syncing,
 	// bootstrapping, or after an error, which is exactly when a user reaches for
 	// it. It is node-local only (no external calls), so there is no
-	// external-consent gate; the sameOriginGuard wrapping the whole mux still
-	// applies. Like /status, these routes are intentionally not vault-unlock
-	// gated: they expose only node/process telemetry (never key material), and
-	// must work before/without a wallet being unlocked. Registered only when a
-	// Diagnostics provider is supplied.
+	// external-consent gate; the control-session and same-origin guards wrapping
+	// the whole mux still apply. Like /status, these routes are intentionally not
+	// vault-unlock gated: they expose only node/process telemetry (never key
+	// material), and must work before/without a wallet being unlocked. Registered
+	// only when a Diagnostics provider is supplied.
 	if cfg.diagnostics != nil {
 		diag := cfg.diagnostics
 		mux.HandleFunc("GET /diagnostics", func(w http.ResponseWriter, r *http.Request) {
@@ -1729,7 +1730,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// Wrap the whole mux in the same-origin / DNS-rebind guard. The /vault/* and
 	// /wallet/* routes register directly on the mux with no per-handler origin
 	// check, so this middleware is the single point that enforces it for them.
-	return sameOriginGuard(limitRequestBody(mux))
+	return sessionGuard(sessionToken, sameOriginGuard(limitRequestBody(mux)))
 }
 
 // limitRequestBody applies the request-body limit at the mux boundary. The
