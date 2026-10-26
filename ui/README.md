@@ -183,7 +183,9 @@ on.
 The desktop binary serves on `127.0.0.1:8090`. Wallet API routes require the
 process-local session capability carried in the launch URL. Loopback, Host, and
 Origin checks are additional browser protections and do not authorize a local
-client by themselves.
+client by themselves. The session cookie is marked `Secure` only when the
+listener itself serves TLS; on the default plain-HTTP loopback listener WebKit
+webviews would refuse to store a `Secure` cookie.
 
 ## dApp connector
 

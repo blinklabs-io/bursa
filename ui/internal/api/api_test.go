@@ -16,6 +16,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -4463,6 +4464,32 @@ func TestSessionGuardRejectsForgedLocalRequests(t *testing.T) {
 			h.ServeHTTP(rec, req)
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("%s %s with forgeable local headers = %d, want 401", tc.method, tc.path, rec.Code)
+			}
+		})
+	}
+}
+
+func TestSessionCookieSecureOnlyOverTLS(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		tls    bool
+		secure bool
+	}{
+		{"plain loopback", false, false},
+		{"direct TLS", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := sessionGuard(testSessionToken, http.NotFoundHandler())
+			req := localReq(http.MethodPost, "/session", nil)
+			if tc.tls {
+				req.TLS = &tls.ConnectionState{}
+				req.Header.Set("Origin", "https://127.0.0.1:8090")
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			cookies := rec.Result().Cookies()
+			if len(cookies) != 1 || cookies[0].Secure != tc.secure {
+				t.Fatalf("cookie = %#v, want Secure=%v", cookies, tc.secure)
 			}
 		})
 	}

@@ -87,13 +87,21 @@ func sessionGuard(token string, next http.Handler) http.Handler {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return
 			}
-			http.SetCookie(w, &http.Cookie{
+			cookie := &http.Cookie{
 				Name:     sessionCookieName,
 				Value:    token,
 				Path:     "/",
 				HttpOnly: true,
 				SameSite: http.SameSiteStrictMode,
-			})
+			}
+			// The control surface listens on plain-HTTP loopback by default, where
+			// WebKit-based webviews refuse to store a Secure cookie. Mark it Secure
+			// whenever the request arrived over TLS so it never travels in cleartext
+			// on a listener that terminates TLS itself.
+			if r.TLS != nil {
+				cookie.Secure = true
+			}
+			http.SetCookie(w, cookie)
 			w.Header().Set("Cache-Control", "no-store")
 			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 			return

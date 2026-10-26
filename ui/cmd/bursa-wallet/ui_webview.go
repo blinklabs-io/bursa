@@ -24,7 +24,6 @@ import (
 	"context"
 	"log/slog"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/blinklabs-io/bursa/ui/internal/desktopnotify"
@@ -111,18 +110,20 @@ func awaitUI(ctx context.Context, url string, logger *slog.Logger, srvErr <-chan
 	// New must run on this (main) goroutine before w.Run(): it installs the
 	// native close-interception hook, which touches the window. w.Window() is
 	// valid immediately after webview.New (the native window already exists).
+	statusURL, statusToken := desktoptray.SplitLaunchURL(url)
 	tray := desktoptray.New(desktoptray.Config{
 		Window:         w.Window(),
 		Dispatch:       w.Dispatch,
 		Terminate:      w.Terminate,
-		StatusURL:      url,
+		StatusURL:      statusURL,
+		StatusToken:    statusToken,
 		CurrentVersion: version.Version,
 		Logger:         logger,
 	})
 	tray.Launch()
 	defer tray.Stop()
 
-	logger.Info("opening webview window", "url", strings.SplitN(url, "#", 2)[0])
+	logger.Info("opening webview window", "url", statusURL)
 	w.Navigate(url)
 	w.Run()
 
