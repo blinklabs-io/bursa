@@ -36,6 +36,76 @@ type Account struct {
 	ChangeAddresses  []string `json:"change_addresses,omitempty"`
 }
 
+// OwnedAddresses filters node-discovered addresses by payment credential and
+// includes every locally derived receive and change address exactly once.
+func (a *Account) OwnedAddresses(discovered []string) []string {
+	if a == nil {
+		return nil
+	}
+	out := make([]string, 0, len(discovered)+len(a.ReceiveAddresses)+len(a.ChangeAddresses))
+	seen := make(map[string]bool, cap(out))
+	add := func(addr string) {
+		if addr == "" || seen[addr] {
+			return
+		}
+		seen[addr] = true
+		out = append(out, addr)
+	}
+	for _, addr := range a.filterOwnedAddresses(discovered) {
+		add(addr)
+	}
+	for _, addr := range appendLocalAddresses(nil, a) {
+		add(addr)
+	}
+	return out
+}
+
+func (a *Account) filterOwnedAddresses(candidates []string) []string {
+	owned := a.ownedPaymentCredentials()
+	out := make([]string, 0, len(candidates))
+	seen := make(map[string]bool, len(candidates))
+	for _, addr := range candidates {
+		credential, ok := paymentCredentialID(addr)
+		if !ok || !owned[credential] || seen[addr] {
+			continue
+		}
+		seen[addr] = true
+		out = append(out, addr)
+	}
+	return out
+}
+
+func (a *Account) ownedPaymentCredentials() map[string]bool {
+	owned := make(map[string]bool, len(a.ReceiveAddresses)+len(a.ChangeAddresses))
+	for _, addr := range appendLocalAddresses(nil, a) {
+		if credential, ok := paymentCredentialID(addr); ok {
+			owned[credential] = true
+		}
+	}
+	return owned
+}
+
+func appendLocalAddresses(dst []string, a *Account) []string {
+	dst = append(dst, a.ReceiveAddresses...)
+	return append(dst, a.ChangeAddresses...)
+}
+
+func paymentCredentialID(encoded string) (string, bool) {
+	addr, err := lcommon.NewAddress(encoded)
+	if err != nil {
+		return "", false
+	}
+	payment := addr.PaymentAddress()
+	if payment == nil {
+		return "", false
+	}
+	raw, err := payment.Bytes()
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
+}
+
 // hardenedKeyStart is the CIP-1852 hardened-key boundary. A valid account index
 // must be below it (the account component m/1852'/1815'/<account>' is hardened).
 const hardenedKeyStart = uint32(1 << 31)
