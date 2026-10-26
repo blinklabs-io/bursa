@@ -33,6 +33,25 @@ func testSummary() OperationSummary {
 			Voters: []policy.VoterInfo{{Kind: policy.VoterDrepKey, DrepId: "beef"}}})
 }
 
+func TestSummarizeTx_Collateral(t *testing.T) {
+	returnOutput := &bursa.TxOutput{Address: "addr1return", Lovelace: "4000000", HasAssets: true}
+	sum := summarizeTx("alice", "cafe", &bursa.TxInspection{
+		TxId:             "abc",
+		CollateralInputs: []bursa.TxInput{{TxId: "def", Index: 2}},
+		CollateralReturn: returnOutput,
+		TotalCollateral:  "1000000",
+	}, policy.TxOps{})
+	if len(sum.CollateralInputs) != 1 || sum.CollateralInputs[0].TxId != "def" {
+		t.Fatalf("unexpected collateral inputs: %+v", sum.CollateralInputs)
+	}
+	if sum.CollateralReturn == nil || sum.CollateralReturn.Address != "addr1return" || !sum.CollateralReturn.HasAssets {
+		t.Fatalf("unexpected collateral return: %+v", sum.CollateralReturn)
+	}
+	if sum.TotalCollateral != "1000000" {
+		t.Fatalf("total collateral = %q, want 1000000", sum.TotalCollateral)
+	}
+}
+
 func TestHTTPPolicyHook_Allow(t *testing.T) {
 	var gotType string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

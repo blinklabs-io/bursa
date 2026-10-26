@@ -186,6 +186,14 @@ entry can sign nothing). `allowed_requests` lists the permitted request kinds
 (`tx`, `cip8`, `opcert`); `tx_policy` / `cip8_policy` add typed constraints.
 Unknown policy fields fail at boot.
 
+Transaction policy evaluates both possible ledger effect paths because the
+`is_valid` flag is not part of the signed transaction body. A body with
+collateral inputs must include `total_collateral`; that amount is checked
+against fee limits, while collateral return is checked against output network,
+address, amount, asset, and total-value limits. The external policy hook
+receives `collateral_inputs`, `collateral_return`, and `total_collateral` in
+addition to ordinary outputs and the fee.
+
 ## 7. Anti-double-sign watermark
 
 `signer.watermark` records the highest period/counter signed per key and refuses

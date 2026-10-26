@@ -459,6 +459,12 @@ definitions:
     properties:
       certificate_count:
         type: integer
+      collateral_inputs:
+        items:
+          $ref: '#/definitions/bursa.TxInput'
+        type: array
+      collateral_return:
+        $ref: '#/definitions/bursa.TxOutput'
       era:
         type: string
       fee:
@@ -487,6 +493,8 @@ definitions:
         type: integer
       size_bytes:
         type: integer
+      total_collateral:
+        type: string
       ttl:
         type: integer
       tx_id:
