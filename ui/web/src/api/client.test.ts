@@ -2,6 +2,7 @@ import {
   apiDelete,
   apiGet,
   ApiError,
+  generateMnemonic,
   decodeTx,
   cosignTx,
   submitTx,
@@ -47,6 +48,16 @@ test("apiGet throws ApiError with the server message + status on failure", async
   mockFetch(409, { error: "no wallet set" });
   await expect(apiGet("/wallet/balance")).rejects.toMatchObject({ status: 409, message: "no wallet set" });
   await expect(apiGet("/wallet/balance")).rejects.toBeInstanceOf(ApiError);
+});
+
+test("generateMnemonic bypasses browser caches", async () => {
+  const fn = mockFetch(200, { mnemonic: "test mnemonic" });
+  await expect(generateMnemonic()).resolves.toBe("test mnemonic");
+  expect(fn).toHaveBeenCalledTimes(1);
+  const [url, init] = fn.mock.calls[0] as [string, RequestInit];
+  expect(url).toBe("/wallet/mnemonic/generate");
+  expect(init.method).toBe("POST");
+  expect(init.cache).toBe("no-store");
 });
 
 // --- Retry / backoff tests ---------------------------------------------------
