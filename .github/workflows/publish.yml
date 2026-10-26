@@ -35,8 +35,7 @@ jobs:
       # write access could push a branch with this step deleted and dispatch
       # that. Signing jobs use the release-signing environment. Its external
       # deployment_branch_policy sets protected_branches false and
-      # custom_branch_policies true for main and v*.*.* tags, and
-      # can_admins_bypass is disabled.
+      # custom_branch_policies true for main and v*.*.* tags.
       #
       # A tag ref is rejected outright: a manual run there would take the
       # tag-only branches all the way through, creating a second draft release

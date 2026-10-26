@@ -15,6 +15,7 @@
 package bursa
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,8 +26,6 @@ import (
 )
 
 func TestSigningJobsUseProtectedEnvironment(t *testing.T) {
-	// The matching GitHub deployment_branch_policy has protected_branches false,
-	// custom_branch_policies true, and can_admins_bypass disabled.
 	workflowPaths, err := filepath.Glob(filepath.Join(".github", "workflows", "*.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -76,6 +75,54 @@ func TestSigningJobsUseProtectedEnvironment(t *testing.T) {
 	}
 	if signingJobs == 0 {
 		t.Fatal("no signing-capable workflow jobs found")
+	}
+}
+
+func TestReleaseSigningEnvironmentPolicy(t *testing.T) {
+	type branchPolicy struct {
+		ProtectedBranches    bool `json:"protected_branches"`
+		CustomBranchPolicies bool `json:"custom_branch_policies"`
+	}
+	type environmentPolicy struct {
+		DeploymentBranchPolicy branchPolicy `json:"deployment_branch_policy"`
+	}
+	type refPolicy struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+
+	readJSON := func(path string, dst any) {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, dst); err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+	}
+
+	var environment environmentPolicy
+	readJSON(filepath.Join(".github", "environments", "release-signing.json"), &environment)
+	if environment.DeploymentBranchPolicy.ProtectedBranches ||
+		!environment.DeploymentBranchPolicy.CustomBranchPolicies {
+		t.Fatalf("release-signing must use custom deployment branch policies: %+v", environment.DeploymentBranchPolicy)
+	}
+
+	wantPolicies := []refPolicy{
+		{Name: "main", Type: "branch"},
+		{Name: "v*.*.*", Type: "tag"},
+	}
+	policyPaths := []string{
+		filepath.Join(".github", "environments", "release-signing-main.json"),
+		filepath.Join(".github", "environments", "release-signing-tags.json"),
+	}
+	for i, path := range policyPaths {
+		var got refPolicy
+		readJSON(path, &got)
+		if got != wantPolicies[i] {
+			t.Errorf("%s policy = %+v, want %+v", path, got, wantPolicies[i])
+		}
 	}
 }
 
