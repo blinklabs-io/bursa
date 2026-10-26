@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"strings"
 
 	secretmanagerclient "cloud.google.com/go/secretmanager/apiv1"
 	secretmanager "cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
@@ -32,6 +33,43 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+const maxSecretIDLength = 255
+
+var secretIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// ValidateWalletSecretPrefix validates the namespace used for GCP wallets.
+func ValidateWalletSecretPrefix(prefix string) error {
+	if prefix == "" {
+		return errors.New("gcp secret prefix is required for gcp wallet storage")
+	}
+	if len(prefix) >= maxSecretIDLength || !secretIDPattern.MatchString(prefix) {
+		return errors.New("gcp secret prefix must contain only letters, numbers, hyphens, or underscores and leave room for a wallet name")
+	}
+	return nil
+}
+
+func walletSecretID(prefix, name string) (string, error) {
+	if err := ValidateWalletSecretPrefix(prefix); err != nil {
+		return "", err
+	}
+	if name == "" || !secretIDPattern.MatchString(name) {
+		return "", errors.New("gcp wallet name must contain only letters, numbers, hyphens, or underscores")
+	}
+	secretID := prefix + name
+	if len(secretID) > maxSecretIDLength {
+		return "", errors.New("gcp wallet secret ID exceeds 255 characters")
+	}
+	return secretID, nil
+}
+
+func walletSecretResource(project, prefix, name string) (string, error) {
+	secretID, err := walletSecretID(prefix, name)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("projects/%s/secrets/%s", project, secretID), nil
+}
 
 type GoogleWallet struct {
 	items       map[string]string
@@ -60,6 +98,10 @@ func ListGoogleWallets(
 	client *secretmanagerclient.Client,
 ) ([]string, error) {
 	ret := []string{}
+	cfg := config.GetConfig()
+	if err := ValidateWalletSecretPrefix(cfg.Google.Prefix); err != nil {
+		return ret, err
+	}
 	var err error
 	if client == nil {
 		client, err = secretmanagerclient.NewClient(ctx)
@@ -69,7 +111,6 @@ func ListGoogleWallets(
 		defer client.Close()
 	}
 
-	cfg := config.GetConfig()
 	// Create our gRPC request
 	req := &secretmanager.ListSecretsRequest{
 		Parent:   "projects/" + cfg.Google.Project,
@@ -78,7 +119,6 @@ func ListGoogleWallets(
 	}
 	secrets := client.ListSecrets(ctx, req)
 
-	re := regexp.MustCompile("^.*/" + regexp.QuoteMeta(cfg.Google.Prefix))
 	// Loop through secrets
 	for {
 		secret, err := secrets.Next()
@@ -88,7 +128,11 @@ func ListGoogleWallets(
 		if err != nil {
 			return nil, err
 		}
-		name := re.ReplaceAllString(secret.GetName(), "")
+		secretID := strings.TrimPrefix(secret.GetName(), req.GetParent()+"/secrets/")
+		if !strings.HasPrefix(secretID, cfg.Google.Prefix) {
+			continue
+		}
+		name := strings.TrimPrefix(secretID, cfg.Google.Prefix)
 		ret = append(ret, name)
 	}
 	return ret, nil
@@ -196,22 +240,24 @@ func (g *GoogleWallet) PopulateTo(wallet *bursa.Wallet) error {
 }
 
 func (g *GoogleWallet) Load(ctx context.Context) error {
+	cfg := config.GetConfig()
+	resourceName, err := walletSecretResource(
+		cfg.Google.Project,
+		cfg.Google.Prefix,
+		g.name,
+	)
+	if err != nil {
+		return err
+	}
 	client, err := secretmanagerclient.NewClient(ctx)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
-	cfg := config.GetConfig()
-
 	// get latest secret version
 	contentRequest := &secretmanager.AccessSecretVersionRequest{
-		Name: fmt.Sprintf(
-			"projects/%s/secrets/%s%s/versions/latest",
-			cfg.Google.Project,
-			cfg.Google.Prefix,
-			g.name,
-		),
+		Name: resourceName + "/versions/latest",
 	}
 	contentResult, err := client.AccessSecretVersion(ctx, contentRequest)
 	if err != nil {
@@ -282,15 +328,18 @@ func ensureSecret(ctx context.Context, c secretAdmin, project, secretID string) 
 }
 
 func (g *GoogleWallet) Save(ctx context.Context) error {
+	cfg := config.GetConfig()
+	secretID, err := walletSecretID(cfg.Google.Prefix, g.name)
+	if err != nil {
+		return err
+	}
 	client, err := secretmanagerclient.NewClient(ctx)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
-	cfg := config.GetConfig()
-
-	if err := ensureSecret(ctx, client, cfg.Google.Project, cfg.Google.Prefix+g.name); err != nil {
+	if err := ensureSecret(ctx, client, cfg.Google.Project, secretID); err != nil {
 		return err
 	}
 
@@ -306,12 +355,7 @@ func (g *GoogleWallet) Save(ctx context.Context) error {
 
 	// send it
 	addRequest := &secretmanager.AddSecretVersionRequest{
-		Parent: fmt.Sprintf(
-			"projects/%s/secrets/%s%s",
-			cfg.Google.Project,
-			cfg.Google.Prefix,
-			g.name,
-		),
+		Parent: fmt.Sprintf("projects/%s/secrets/%s", cfg.Google.Project, secretID),
 		Payload: &secretmanager.SecretPayload{
 			Data: encryptData,
 		},
@@ -324,26 +368,23 @@ func (g *GoogleWallet) Save(ctx context.Context) error {
 }
 
 func (g *GoogleWallet) Delete(ctx context.Context) error {
+	cfg := config.GetConfig()
+	resourceName, err := walletSecretResource(
+		cfg.Google.Project,
+		cfg.Google.Prefix,
+		g.name,
+	)
+	if err != nil {
+		return err
+	}
 	client, err := secretmanagerclient.NewClient(ctx)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
-	cfg := config.GetConfig()
-
-	// setup request
-	deleteRequest := &secretmanager.DeleteSecretRequest{
-		Name: fmt.Sprintf(
-			"projects/%s/secrets/%s%s",
-			cfg.Google.Project,
-			cfg.Google.Prefix,
-			g.name,
-		),
-	}
-	err = client.DeleteSecret(ctx, deleteRequest)
-	if err != nil {
-		return fmt.Errorf("failed to deletesecret: %w", err)
+	if err := client.DeleteSecret(ctx, &secretmanager.DeleteSecretRequest{Name: resourceName}); err != nil {
+		return fmt.Errorf("failed to delete secret: %w", err)
 	}
 	return nil
 }
