@@ -7,6 +7,18 @@ import (
 	"testing"
 )
 
+const expectedContentSecurityPolicy = "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
+
+func requireFrameProtection(t *testing.T, header http.Header) {
+	t.Helper()
+	if got := header.Get("Content-Security-Policy"); got != expectedContentSecurityPolicy {
+		t.Errorf("CSP = %q, want %q", got, expectedContentSecurityPolicy)
+	}
+	if got := header.Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("X-Frame-Options = %q, want DENY", got)
+	}
+}
+
 func TestServesIndexWithCSP(t *testing.T) {
 	rec := httptest.NewRecorder()
 	Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -16,9 +28,7 @@ func TestServesIndexWithCSP(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Bursa Wallet") {
 		t.Fatalf("index body unexpected: %s", rec.Body.String())
 	}
-	if got := rec.Header().Get("Content-Security-Policy"); got != "default-src 'self'; img-src 'self' data:" {
-		t.Fatalf("CSP = %q, want default-src 'self'; img-src 'self' data:", got)
-	}
+	requireFrameProtection(t, rec.Header())
 }
 
 func TestSPAFallbackServesIndex(t *testing.T) {
@@ -39,13 +49,34 @@ func TestNonGetMethodNotAllowed(t *testing.T) {
 	}
 }
 
+func TestFrameProtectionHeaders(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "root", method: http.MethodGet, path: "/"},
+		{name: "direct index", method: http.MethodGet, path: "/index.html"},
+		{name: "SPA fallback", method: http.MethodGet, path: "/portfolio"},
+		{name: "head", method: http.MethodHead, path: "/"},
+		{name: "method error", method: http.MethodPost, path: "/wallet/anything"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			Handler().ServeHTTP(rec, httptest.NewRequest(test.method, test.path, nil))
+
+			requireFrameProtection(t, rec.Header())
+		})
+	}
+}
+
 func TestServesEmbeddedFileDirectly(t *testing.T) {
 	rec := httptest.NewRecorder()
 	Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/index.html", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /index.html = %d, want 200", rec.Code)
 	}
-	if got := rec.Header().Get("Content-Security-Policy"); got != "default-src 'self'; img-src 'self' data:" {
-		t.Fatalf("CSP = %q, want default-src 'self'; img-src 'self' data:", got)
-	}
+	requireFrameProtection(t, rec.Header())
 }
