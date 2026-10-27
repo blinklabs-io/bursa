@@ -87,7 +87,7 @@ bursa address info on an address.`,
 	scriptCreateCommand.Flags().
 		StringVar(&output, "output", "", "Output file path (optional)")
 	scriptCreateCommand.Flags().
-		StringVar(&network, "network", "mainnet", "Network name (mainnet, testnet, etc.)")
+		StringVar(&network, "network", "mainnet", networkFlagUsage)
 	scriptCreateCommand.Flags().
 		BoolVar(&all, "all", false, "Create all-signers-required script")
 	scriptCreateCommand.Flags().
@@ -203,7 +203,7 @@ Examples:
 	scriptAddressCommand.Flags().
 		StringVar(&scriptFile, "script", "", "Path to script file (required)")
 	scriptAddressCommand.Flags().
-		StringVar(&network, "network", "mainnet", "Network name (mainnet, testnet, etc.)")
+		StringVar(&network, "network", "mainnet", networkFlagUsage)
 
 	if err := scriptAddressCommand.MarkFlagRequired("script"); err != nil {
 		panic(err)

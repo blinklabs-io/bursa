@@ -34,8 +34,8 @@ import (
 	"sync"
 
 	"github.com/blinklabs-io/bursa/bip32"
+	"github.com/blinklabs-io/bursa/internal/network"
 	bip39 "github.com/blinklabs-io/go-bip39"
-	ouroboros "github.com/blinklabs-io/gouroboros"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/blinklabs-io/gouroboros/kes"
 	"github.com/blinklabs-io/gouroboros/ledger"
@@ -243,7 +243,7 @@ var jsonBufferPool = sync.Pool{
 // WalletConfig holds configuration options for wallet creation.
 // All index fields default to 0 and must be less than 2^31.
 type WalletConfig struct {
-	Network         string // Canonical network registry name
+	Network         string // Registry name, testnet alias, or decimal network magic
 	Password        string //nolint:gosec // G117: password field is intentional for key derivation
 	AccountID       uint32 // Account derivation index
 	PaymentID       uint32 // Payment key derivation index
@@ -262,9 +262,8 @@ type WalletConfig struct {
 // WalletOption is a functional option for configuring wallet creation
 type WalletOption func(*WalletConfig)
 
-// WithNetwork sets the network for the wallet.
-// Use a canonical network registry name, such as "mainnet", "preprod", or
-// "preview".
+// WithNetwork sets the network for the wallet using a registry name, the
+// "testnet" alias, or a decimal network magic.
 // Default: "mainnet"
 func WithNetwork(network string) WalletOption {
 	return func(c *WalletConfig) {
@@ -471,11 +470,11 @@ func NewWallet(mnemonic string, opts ...WalletOption) (*Wallet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pool cold key: %w", err)
 	}
-	network, ok := ouroboros.NetworkByName(cfg.Network)
+	networkID, ok := network.AddressID(cfg.Network)
 	if !ok {
 		return nil, fmt.Errorf("unable to get address: %w", ErrInvalidNetwork)
 	}
-	addr, err := newAddressFromKeys(paymentKey, stakeKey, network.Id)
+	addr, err := newAddressFromKeys(paymentKey, stakeKey, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get address: %w", err)
 	}
@@ -1967,7 +1966,7 @@ func GetScriptAddress(script Script, networkName string) (string, error) {
 	if networkName == "" {
 		return "", ErrInvalidNetwork
 	}
-	network, ok := ouroboros.NetworkByName(networkName)
+	networkID, ok := network.AddressID(networkName)
 	if !ok {
 		return "", ErrInvalidNetwork
 	}
@@ -1977,7 +1976,7 @@ func GetScriptAddress(script Script, networkName string) (string, error) {
 	}
 	addr, err := lcommon.NewAddressFromParts(
 		lcommon.AddressTypeScriptNone,
-		network.Id,
+		networkID,
 		scriptHash,
 		nil, // no stake part for script addresses
 	)
@@ -2230,7 +2229,7 @@ func GetAddress(
 	if networkName == "" {
 		return nil, ErrInvalidNetwork
 	}
-	network, ok := ouroboros.NetworkByName(networkName)
+	networkID, ok := network.AddressID(networkName)
 	if !ok {
 		return nil, ErrInvalidNetwork
 	}
@@ -2245,7 +2244,7 @@ func GetAddress(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stake key: %w", err)
 	}
-	return newAddressFromKeys(paymentKey, stakeKey, network.Id)
+	return newAddressFromKeys(paymentKey, stakeKey, networkID)
 }
 
 func newAddressFromKeys(
@@ -2274,7 +2273,7 @@ func GetRewardAddress(
 	if networkName == "" {
 		return nil, ErrInvalidNetwork
 	}
-	network, ok := ouroboros.NetworkByName(networkName)
+	networkID, ok := network.AddressID(networkName)
 	if !ok {
 		return nil, ErrInvalidNetwork
 	}
@@ -2297,7 +2296,7 @@ func GetRewardAddress(
 	// Create reward address (AddressTypeNoneKey with only stake key hash)
 	addr, err := lcommon.NewAddressFromParts(
 		lcommon.AddressTypeNoneKey,
-		network.Id,
+		networkID,
 		nil, // no payment part for reward addresses
 		stakeKeyPublicHash[:],
 	)

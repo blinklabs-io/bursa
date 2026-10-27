@@ -35,6 +35,7 @@ import (
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	networkutil "github.com/blinklabs-io/bursa/internal/network"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/btcsuite/btcd/btcutil/bech32"
@@ -2342,18 +2343,9 @@ func RunScriptValidate(
 
 // RunAddressBuild builds a Cardano address from verification keys
 func RunAddressBuild(paymentKey, stakeKey, network, addrType string) error {
-	// Validate network
-	var networkId uint8
-	switch network {
-	case "mainnet":
-		networkId = lcommon.AddressNetworkMainnet
-	case "testnet":
-		networkId = lcommon.AddressNetworkTestnet
-	default:
-		return fmt.Errorf(
-			"invalid network: %s (must be mainnet or testnet)",
-			network,
-		)
+	networkId, ok := networkutil.AddressID(network)
+	if !ok {
+		return fmt.Errorf("invalid network: %s", network)
 	}
 
 	// Parse keys based on address type
@@ -2431,18 +2423,9 @@ func RunAddressBuild(paymentKey, stakeKey, network, addrType string) error {
 
 // RunAddressEnterprise generates an enterprise address from a payment key
 func RunAddressEnterprise(paymentKey, paymentKeyFile, network string) error {
-	// Validate network
-	var networkId uint8
-	switch network {
-	case "mainnet":
-		networkId = lcommon.AddressNetworkMainnet
-	case "testnet":
-		networkId = lcommon.AddressNetworkTestnet
-	default:
-		return fmt.Errorf(
-			"invalid network: %s (must be mainnet or testnet)",
-			network,
-		)
+	networkId, ok := networkutil.AddressID(network)
+	if !ok {
+		return fmt.Errorf("invalid network: %s", network)
 	}
 
 	// Load payment key
