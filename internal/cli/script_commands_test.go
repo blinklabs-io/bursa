@@ -190,15 +190,59 @@ func TestRunScriptCreate_BothTimelocks(t *testing.T) {
 	hashes := []string{
 		"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c",
 	}
-	err := RunScriptCreate(
-		1, hashes, "", "mainnet",
-		false, false, 1000, 500,
-	)
-	assert.Error(t, err)
-	assert.Contains(
-		t, err.Error(),
-		"cannot specify both",
-	)
+
+	output := captureStdout(t, func() {
+		err := RunScriptCreate(
+			0, hashes, "", "mainnet",
+			true, false, 2000000, 1000000,
+		)
+		require.NoError(t, err)
+	})
+
+	var scriptData bursa.ScriptData
+	require.NoError(t, json.Unmarshal([]byte(output), &scriptData))
+	scriptJSON, err := json.Marshal(scriptData.Script)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"type": "all",
+		"scripts": [
+			{"type": "after", "slot": 1000000},
+			{"type": "before", "slot": 2000000},
+			{
+				"type": "all",
+				"scripts": [{
+					"type": "sig",
+					"keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"
+				}]
+			}
+		]
+	}`, string(scriptJSON))
+}
+
+func TestRunScriptCreate_InvalidTimelockWindow(t *testing.T) {
+	hashes := []string{
+		"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c",
+	}
+	for _, testCase := range []struct {
+		name           string
+		timelockBefore uint64
+		timelockAfter  uint64
+	}{
+		{name: "equal slots", timelockBefore: 1000, timelockAfter: 1000},
+		{name: "after beyond before", timelockBefore: 1000, timelockAfter: 1001},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := RunScriptCreate(
+				1, hashes, "", "mainnet",
+				false, false,
+				testCase.timelockBefore, testCase.timelockAfter,
+			)
+			assert.EqualError(
+				t, err,
+				"--timelock-after must be less than --timelock-before",
+			)
+		})
+	}
 }
 
 func TestRunScriptCreate_WithTimelockBefore(t *testing.T) {
