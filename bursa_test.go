@@ -1850,6 +1850,54 @@ func TestScriptRoundTrip(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestScriptNOfCardanoCLICompatibility(t *testing.T) {
+	keyHashes := [][]byte{
+		testKeyHash(),
+		bytes.Repeat([]byte{0x02}, 28),
+		bytes.Repeat([]byte{0x03}, 28),
+	}
+	script, err := NewMultiSigScript(2, keyHashes...)
+	require.NoError(t, err)
+
+	data, err := MarshalScript(script, "")
+	require.NoError(t, err)
+	assert.Equal(t, "atLeast", data.Script["type"])
+	assert.Equal(t, int64(2), data.Script["required"])
+	assert.NotContains(t, data.Script, "n")
+
+	scriptJSON := func(scriptType, requiredField string) map[string]any {
+		scripts := make([]any, len(keyHashes))
+		for i, keyHash := range keyHashes {
+			scripts[i] = map[string]any{
+				"type":    "sig",
+				"keyHash": hex.EncodeToString(keyHash),
+			}
+		}
+		return map[string]any{
+			"type":        scriptType,
+			requiredField: float64(2),
+			"scripts":     scripts,
+		}
+	}
+	for _, tt := range []struct {
+		name          string
+		scriptType    string
+		requiredField string
+	}{
+		{name: "cardano-cli atLeast", scriptType: "atLeast", requiredField: "required"},
+		{name: "legacy nOf", scriptType: "nOf", requiredField: "n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			unmarshaled, err := UnmarshalScript(&ScriptData{
+				Type:   "NativeScript",
+				Script: scriptJSON(tt.scriptType, tt.requiredField),
+			})
+			require.NoError(t, err)
+			assert.Equal(t, script.Hash(), unmarshaled.Hash())
+		})
+	}
+}
+
 func TestCIP0011StakingKeys(t *testing.T) {
 	// Test vector from CIP-0011 specification
 	// https://cips.cardano.org/cips/cip11/
