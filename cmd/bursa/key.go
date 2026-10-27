@@ -98,7 +98,6 @@ of possession as lowercase hexadecimal strings.`,
 }
 
 func keyRootCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var signingKeyFile string
@@ -113,10 +112,9 @@ Output is in bech32 format (root_xsk prefix) on standard output when --signing-k
 cardano-cli key file instead; one of the two is required.
 
 The mnemonic can be provided via:
-  1. --mnemonic flag (deprecated: visible in the process list)
-  2. MNEMONIC environment variable
-  3. --mnemonic-file flag ("-" reads standard input)
-  4. Default file "seed.txt"
+  1. MNEMONIC environment variable
+  2. --mnemonic-file flag ("-" reads standard input)
+  3. Default file "seed.txt"
 
 Examples:
   bursa key root --mnemonic-file seed.txt --signing-key-file -
@@ -124,7 +122,7 @@ Examples:
   bursa key root --signing-key-file root.skey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyRoot(
-				mnemonic,
+				"",
 				mnemonicFile,
 				password,
 				signingKeyFile,
@@ -136,7 +134,7 @@ Examples:
 		},
 	}
 
-	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&cmd, &mnemonicFile, &password)
 	cmd.Flags().StringVar(
 		&signingKeyFile,
 		"signing-key-file",
@@ -148,7 +146,6 @@ Examples:
 }
 
 func keyAccountCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var index uint32
@@ -169,7 +166,7 @@ Examples:
   bursa key account --signing-key-file account.skey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyAccount(
-				mnemonic,
+				"",
 				mnemonicFile,
 				password,
 				signingKeyFile,
@@ -185,7 +182,7 @@ Examples:
 		},
 	}
 
-	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&cmd, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(&index, "index", 0, "Account index (default: 0)")
 	cmd.Flags().StringVar(
 		&signingKeyFile,
@@ -198,7 +195,6 @@ Examples:
 }
 
 func keyPaymentCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var accountIndex uint32
@@ -222,7 +218,7 @@ Examples:
   bursa key payment --signing-key-file payment.skey --verification-key-file payment.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyPayment(
-				mnemonic,
+				"",
 				mnemonicFile,
 				password,
 				signingKeyFile,
@@ -240,7 +236,7 @@ Examples:
 		},
 	}
 
-	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&cmd, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(
 		&accountIndex,
 		"account-index",
@@ -266,7 +262,6 @@ Examples:
 }
 
 func keyStakeCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var accountIndex uint32
@@ -290,7 +285,7 @@ Examples:
   bursa key stake --signing-key-file stake.skey --verification-key-file stake.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyStake(
-				mnemonic,
+				"",
 				mnemonicFile,
 				password,
 				signingKeyFile,
@@ -308,7 +303,7 @@ Examples:
 		},
 	}
 
-	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&cmd, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(
 		&accountIndex,
 		"account-index",
@@ -334,7 +329,6 @@ Examples:
 }
 
 func keyPolicyCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var index uint32
@@ -358,7 +352,7 @@ Examples:
   bursa key policy --signing-key-file policy.skey --verification-key-file policy.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyPolicy(
-				mnemonic,
+				"",
 				mnemonicFile,
 				password,
 				signingKeyFile,
@@ -375,7 +369,7 @@ Examples:
 		},
 	}
 
-	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&cmd, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(&index, "index", 0, "Policy key index (default: 0)")
 	cmd.Flags().StringVar(
 		&signingKeyFile,
@@ -394,7 +388,6 @@ Examples:
 }
 
 func keyPoolColdCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var index uint32
@@ -418,7 +411,7 @@ Examples:
   bursa key pool-cold --signing-key-file pool-cold.skey --verification-key-file pool-cold.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyPoolCold(
-				mnemonic,
+				"",
 				mnemonicFile,
 				password,
 				signingKeyFile,
@@ -435,7 +428,7 @@ Examples:
 		},
 	}
 
-	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&cmd, &mnemonicFile, &password)
 	cmd.Flags().
 		Uint32Var(&index, "index", 0, "Pool cold key index (default: 0)")
 	cmd.Flags().StringVar(
@@ -455,7 +448,6 @@ Examples:
 }
 
 func keyCalidusCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var accountIndex uint32
@@ -486,7 +478,7 @@ Examples:
   bursa key calidus --signing-key-file calidus.skey --verification-key-file calidus.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyCalidus(
-				mnemonic,
+				"",
 				mnemonicFile,
 				password,
 				signingKeyFile,
@@ -504,7 +496,7 @@ Examples:
 		},
 	}
 
-	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&cmd, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(
 		&accountIndex,
 		"account-index",
@@ -530,7 +522,6 @@ Examples:
 }
 
 func keyVRFCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var index uint32
@@ -557,7 +548,7 @@ Examples:
   bursa key vrf --signing-key-file vrf.skey --verification-key-file vrf.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyVRF(
-				mnemonic,
+				"",
 				mnemonicFile,
 				password,
 				signingKeyFile,
@@ -574,7 +565,7 @@ Examples:
 		},
 	}
 
-	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&cmd, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(&index, "index", 0, "VRF key index (default: 0)")
 	cmd.Flags().StringVar(
 		&signingKeyFile,
@@ -593,7 +584,6 @@ Examples:
 }
 
 func keyKESCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var index uint32
@@ -623,7 +613,7 @@ Examples:
   bursa key kes --signing-key-file kes.skey --verification-key-file kes.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyKES(
-				mnemonic,
+				"",
 				mnemonicFile,
 				password,
 				signingKeyFile,
@@ -640,7 +630,7 @@ Examples:
 		},
 	}
 
-	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&cmd, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(&index, "index", 0, "KES key index (default: 0)")
 	cmd.Flags().StringVar(
 		&signingKeyFile,
@@ -659,7 +649,6 @@ Examples:
 }
 
 func keyDRepCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var accountIndex uint32
@@ -684,7 +673,7 @@ Examples:
   bursa key drep --signing-key-file drep.skey --verification-key-file drep.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyDRep(
-				mnemonic,
+				"",
 				mnemonicFile,
 				password,
 				signingKeyFile,
@@ -702,7 +691,7 @@ Examples:
 		},
 	}
 
-	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&cmd, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(
 		&accountIndex,
 		"account-index",
@@ -727,7 +716,6 @@ Examples:
 }
 
 func keyCommitteeColdCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var accountIndex uint32
@@ -752,7 +740,7 @@ Examples:
   bursa key committee-cold --signing-key-file committee-cold.skey --verification-key-file committee-cold.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyCommitteeCold(
-				mnemonic,
+				"",
 				mnemonicFile,
 				password,
 				signingKeyFile,
@@ -770,7 +758,7 @@ Examples:
 		},
 	}
 
-	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&cmd, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(
 		&accountIndex,
 		"account-index",
@@ -796,7 +784,6 @@ Examples:
 }
 
 func keyCommitteeHotCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var accountIndex uint32
@@ -821,7 +808,7 @@ Examples:
   bursa key committee-hot --signing-key-file committee-hot.skey --verification-key-file committee-hot.vkey`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunKeyCommitteeHot(
-				mnemonic,
+				"",
 				mnemonicFile,
 				password,
 				signingKeyFile,
@@ -839,7 +826,7 @@ Examples:
 		},
 	}
 
-	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&cmd, &mnemonicFile, &password)
 	cmd.Flags().Uint32Var(
 		&accountIndex,
 		"account-index",

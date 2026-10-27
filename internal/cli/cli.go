@@ -135,7 +135,7 @@ func ReadSecretFile(path string, stdin io.Reader) (string, error) {
 }
 
 // resolveMnemonic loads a mnemonic from various sources in order of precedence:
-// 1. Direct mnemonic string (--mnemonic flag)
+// 1. Direct mnemonic string
 // 2. MNEMONIC environment variable
 // 3. File specified by mnemonicFile (--mnemonic-file flag), "-" for stdin
 // 4. Default file "seed.txt" in current directory
@@ -168,7 +168,7 @@ func resolveMnemonic(mnemonic, mnemonicFile string) (string, error) {
 		}
 		// Default seed.txt not found and no other source available
 		return "", errors.New(
-			"no mnemonic provided: use --mnemonic, --mnemonic-file, " +
+			"no mnemonic provided: use --mnemonic-file, " +
 				"set MNEMONIC env var, or create seed.txt",
 		)
 	}
