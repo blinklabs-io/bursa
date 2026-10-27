@@ -199,7 +199,13 @@ The summary includes `tx_id`, `fee`, `ttl`, `outputs` (including each
 `has_assets` flag), `certificate_count`, `certificates`, `has_mint`,
 `withdrawal_count`, `voting_procedure_count`, `voters` (paired `kind` and
 optional `drep_id` values), `proposal_procedure_count`, and
-`has_treasury_donation`. The original `voter_kinds` and `drep_ids` arrays remain
+`has_treasury_donation`. Ledger value effects are reported as
+`treasury_donation`, `certificate_deposit_total`, `certificate_refund_total`,
+`proposal_deposit_total`, `unresolved_certificate_deposits`,
+`unresolved_certificate_refunds` (deposits or refunds whose amount the
+transaction does not encode), and `certificate_value_effects_complete`, which
+is false when a certificate type has no known value effect.
+The original `voter_kinds` and `drep_ids` arrays remain
 for existing hook consumers. Bursa denies signing before calling the hook when
 the decoded certificate or voter details do not match their transaction counts.
 
