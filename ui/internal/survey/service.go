@@ -59,6 +59,7 @@ type Chain interface {
 	DRep(ctx context.Context, drepID string) (chain.DRepInfo, error)
 	Pool(ctx context.Context, poolID string) (chain.PoolInfo, error)
 	Account(ctx context.Context, stakeAddr string) (chain.AccountInfo, error)
+	SurveyRoleSnapshot(ctx context.Context, endEpoch uint64, claims []chain.SurveyRoleClaim) (map[chain.SurveyRoleClaim]bool, error)
 	GovernanceAnchorDocuments(ctx context.Context) ([]chain.AnchorDocument, error)
 }
 
@@ -503,7 +504,6 @@ func (s *Service) observe(ctx context.Context, entries []entry, k *known, cl clk
 	if k.def.Mode.checkQuicknet() == nil {
 		beaconSig = s.cachedBeacon(k.def.Mode.Round)
 	}
-	verified := map[identity]string{}
 	var out []Observed
 	for _, e := range entries {
 		if e.payload.Kind != KindResponses {
@@ -528,35 +528,93 @@ func (s *Service) observe(ctx context.Context, entries []entry, k *known, cl clk
 			}
 			if !f.proves(r.Credential) {
 				o.Reject = "credential not proven by the transaction's required signers"
-			} else {
-				id := identity{r.Role, r.Credential}
-				reject, ok := verified[id]
-				if !ok {
-					var err error
-					if reject, err = s.verifyRole(ctx, r.Role, r.Credential); err != nil {
-						return nil, err
-					}
-					verified[id] = reject
-				}
-				o.Reject = reject
-			}
-			if o.Reject == "" && beaconSig != nil && len(r.Sealed) > 0 {
-				answers, uerr := UnsealAnswers(r.Sealed, k.def.Mode, beaconSig)
-				if uerr != nil {
-					o.Reject = "cannot be unsealed: " + uerr.Error()
-				}
-				o.Unsealed = answers
 			}
 			out = append(out, o)
+		}
+	}
+	verified := map[identity]string{}
+	if cl.epoch > k.def.EndEpoch {
+		claims := make([]chain.SurveyRoleClaim, 0, len(out))
+		seen := make(map[chain.SurveyRoleClaim]struct{}, len(out))
+		for _, o := range out {
+			if o.Reject != "" {
+				continue
+			}
+			claim := snapshotRoleClaim(o.Response.Role, o.Response.Credential)
+			if _, ok := seen[claim]; !ok {
+				seen[claim] = struct{}{}
+				claims = append(claims, claim)
+			}
+		}
+		eligible, err := s.chain.SurveyRoleSnapshot(ctx, k.def.EndEpoch, claims)
+		if err != nil {
+			return nil, err
+		}
+		for claim := range seen {
+			if claim.Role == chain.SurveyRoleCC {
+				verified[identityFromSnapshotClaim(claim)] = "role cannot be verified against ledger state"
+			} else if !eligible[claim] {
+				verified[identityFromSnapshotClaim(claim)] = "credential did not hold the claimed role at the survey snapshot"
+			}
+		}
+	} else {
+		for _, o := range out {
+			if o.Reject != "" {
+				continue
+			}
+			id := identity{o.Response.Role, o.Response.Credential}
+			if _, ok := verified[id]; ok {
+				continue
+			}
+			reject, err := s.verifyRole(ctx, o.Response.Role, o.Response.Credential)
+			if err != nil {
+				return nil, err
+			}
+			verified[id] = reject
+		}
+	}
+	for i := range out {
+		o := &out[i]
+		if o.Reject == "" {
+			o.Reject = verified[identity{o.Response.Role, o.Response.Credential}]
+		}
+		if o.Reject == "" && beaconSig != nil && len(o.Response.Sealed) > 0 {
+			answers, uerr := UnsealAnswers(o.Response.Sealed, k.def.Mode, beaconSig)
+			if uerr != nil {
+				o.Reject = "cannot be unsealed: " + uerr.Error()
+			}
+			o.Unsealed = answers
 		}
 	}
 	return out, nil
 }
 
-// verifyRole checks a claimed role against the node's ledger state. It returns
-// a non-empty reason when the credential does not hold the role, and an error
-// only when the node could not answer. It reflects the node's current state;
-// the end-epoch snapshot CIP-179 describes is not reconstructed.
+func snapshotRoleClaim(role Role, credential Credential) chain.SurveyRoleClaim {
+	var tag uint8
+	if credential.Script {
+		tag = 1
+	}
+	return chain.SurveyRoleClaim{
+		Role:          chain.SurveyRole(role),
+		CredentialTag: tag,
+		Credential:    credential.Hash,
+	}
+}
+
+func identityFromSnapshotClaim(claim chain.SurveyRoleClaim) identity {
+	return identity{
+		Role: Role(claim.Role),
+		Credential: Credential{
+			Script: claim.CredentialTag == 1,
+			Hash:   claim.Credential,
+		},
+	}
+}
+
+// verifyRole checks a claimed role against the node's current ledger state for
+// a survey that is still open. It returns a non-empty reason when the
+// credential does not hold the role, and an error only when the node could not
+// answer.
 func (s *Service) verifyRole(ctx context.Context, role Role, c Credential) (string, error) {
 	var err error
 	switch role {

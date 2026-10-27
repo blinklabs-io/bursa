@@ -137,6 +137,41 @@ func (f *fakeChain) Account(_ context.Context, addr string) (chain.AccountInfo, 
 	return a, nil
 }
 
+func (f *fakeChain) SurveyRoleSnapshot(
+	_ context.Context,
+	_ uint64,
+	claims []chain.SurveyRoleClaim,
+) (map[chain.SurveyRoleClaim]bool, error) {
+	if f.roleErr != nil {
+		return nil, f.roleErr
+	}
+	ret := make(map[chain.SurveyRoleClaim]bool, len(claims))
+	for _, claim := range claims {
+		switch claim.Role {
+		case chain.SurveyRoleDRep:
+			id := (&lcommon.Drep{Type: lcommon.DrepTypeAddrKeyHash, Credential: claim.Credential[:]}).String()
+			ret[claim] = f.dreps[id]
+		case chain.SurveyRoleSPO:
+			ret[claim] = f.pools[lcommon.PoolId(claim.Credential).String()]
+		case chain.SurveyRoleStakeholder:
+			stake, err := lcommon.NewAddressFromParts(
+				lcommon.AddressTypeNoneKey,
+				lcommon.AddressNetworkTestnet,
+				nil,
+				claim.Credential[:],
+			)
+			if err != nil {
+				return nil, err
+			}
+			account := f.accounts[stake.String()]
+			ret[claim] = account.Registered && account.ControlledAmount != "" && account.ControlledAmount != "0"
+		case chain.SurveyRoleKeyholder:
+			ret[claim] = true
+		}
+	}
+	return ret, nil
+}
+
 func (f *fakeChain) GovernanceAnchorDocuments(context.Context) ([]chain.AnchorDocument, error) {
 	return f.docs, nil
 }
