@@ -124,8 +124,20 @@ func GetScriptType(script Script) (int, error) {
 
 // String returns the Bech32-encoded representation of the key according to CIP-0005
 func (kf KeyFile) String() string {
+	keyType := kf.Type
+	// Policy keys use payment envelope types for cardano-cli compatibility.
+	// Their descriptions distinguish them when selecting the Bech32 prefix.
+	switch {
+	case keyType == "PaymentVerificationKeyShelley_ed25519" &&
+		kf.Description == "Policy Verification Key":
+		keyType = "PolicyVerificationKeyShelley_ed25519"
+	case keyType == "PaymentExtendedSigningKeyShelley_ed25519_bip32" &&
+		kf.Description == "Policy Extended Signing Key (BIP32)":
+		keyType = "PolicyExtendedSigningKeyShelley_ed25519_bip32"
+	}
+
 	var prefix string
-	switch kf.Type {
+	switch keyType {
 	case "RootExtendedSigningKeyShelley_ed25519_bip32":
 		prefix = "root_xsk"
 	case "AccountExtendedSigningKeyShelley_ed25519_bip32":
@@ -1161,7 +1173,7 @@ func GetPolicyVKey(policyKey bip32.XPrv) (KeyFile, error) {
 		)
 	}
 	kf := KeyFile{
-		Type:        "PolicyVerificationKeyShelley_ed25519",
+		Type:        "PaymentVerificationKeyShelley_ed25519",
 		Description: "Policy Verification Key",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
@@ -1173,7 +1185,7 @@ func GetPolicyVKey(policyKey bip32.XPrv) (KeyFile, error) {
 func GetPolicySKey(policyKey bip32.XPrv) (KeyFile, error) {
 	return getExtendedSigningKeyFile(
 		policyKey,
-		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		"Policy Extended Signing Key (BIP32)",
 	)
 }
@@ -1182,7 +1194,7 @@ func GetPolicySKey(policyKey bip32.XPrv) (KeyFile, error) {
 func GetPolicyExtendedSKey(policyKey bip32.XPrv) (KeyFile, error) {
 	return getExtendedSigningKeyFile(
 		policyKey,
-		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		"Policy Extended Signing Key (BIP32)",
 	)
 }

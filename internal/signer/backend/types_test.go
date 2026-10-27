@@ -81,7 +81,7 @@ func TestKeyTypeFromEnvelope(t *testing.T) {
 		"SomethingUnknown":                                            KeyTypePayment,
 	}
 	for in, want := range cases {
-		if got := KeyTypeFromEnvelope(in); got != want {
+		if got := KeyTypeFromEnvelope(in, ""); got != want {
 			t.Errorf("KeyTypeFromEnvelope(%q) = %q, want %q", in, got, want)
 		}
 	}
