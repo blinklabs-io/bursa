@@ -145,7 +145,37 @@ func RunTxId(txFile string) error {
 	return nil
 }
 
-func RunTxDecode(txFile, protocolParamsFile string) error {
+// Per-witness estimates include per-element witness-set framing in addition to
+// the encoded witness itself (101 bytes for vkey and 136 bytes for bootstrap).
+const (
+	vkeyWitnessSizeEstimate      = 102
+	bootstrapWitnessSizeEstimate = 139
+)
+
+func estimateMinFeeSize(sizeBytes int, witnessCount, byronWitnessCount uint) (int, error) {
+	if sizeBytes < 0 {
+		return 0, fmt.Errorf("negative transaction size %d", sizeBytes)
+	}
+	maxInt := uint64(^uint(0) >> 1)
+	estimated := uint64(sizeBytes) //nolint:gosec // checked non-negative
+	for _, adjustment := range []struct {
+		name  string
+		count uint
+		size  uint64
+	}{
+		{name: "vkey", count: witnessCount, size: vkeyWitnessSizeEstimate},
+		{name: "bootstrap", count: byronWitnessCount, size: bootstrapWitnessSizeEstimate},
+	} {
+		count := uint64(adjustment.count)
+		if count > (maxInt-estimated)/adjustment.size {
+			return 0, fmt.Errorf("%s witness count %d overflows transaction size", adjustment.name, adjustment.count)
+		}
+		estimated += count * adjustment.size
+	}
+	return int(estimated), nil //nolint:gosec // bounded by maxInt above
+}
+
+func RunTxDecode(txFile, protocolParamsFile string, witnessCount, byronWitnessCount uint) error {
 	txBytes, err := bursa.ReadCborInputFile(txFile)
 	if err != nil {
 		return err
@@ -156,7 +186,8 @@ func RunTxDecode(txFile, protocolParamsFile string) error {
 	}
 	type decodeOut struct {
 		*bursa.TxInspection
-		MinFee *uint64 `json:"min_fee,omitempty"`
+		MinFee     *uint64 `json:"min_fee,omitempty"`
+		MinFeeNote string  `json:"min_fee_note,omitempty"`
 	}
 	out := decodeOut{TxInspection: insp}
 	if protocolParamsFile != "" {
@@ -168,11 +199,23 @@ func RunTxDecode(txFile, protocolParamsFile string) error {
 		if err != nil {
 			return err
 		}
-		fee, err := bursa.MinFee(insp.SizeBytes, params)
+		estimatedSize, err := estimateMinFeeSize(insp.SizeBytes, witnessCount, byronWitnessCount)
+		if err != nil {
+			return fmt.Errorf("calculate minimum fee: %w", err)
+		}
+		fee, err := bursa.MinFee(estimatedSize, params)
 		if err != nil {
 			return fmt.Errorf("calculate minimum fee: %w", err)
 		}
 		out.MinFee = &fee
+		out.MinFeeNote = "Minimum fee for the transaction as decoded."
+		if witnessCount > 0 || byronWitnessCount > 0 {
+			out.MinFeeNote = fmt.Sprintf(
+				"Minimum fee for the transaction as decoded, adjusted for %d additional vkey witnesses and %d additional bootstrap witnesses.",
+				witnessCount,
+				byronWitnessCount,
+			)
+		}
 	}
 	enc, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {

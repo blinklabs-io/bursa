@@ -117,11 +117,12 @@ func txIdCommand() *cobra.Command {
 
 func txDecodeCommand() *cobra.Command {
 	var txFile, protocolParamsFile string
+	var witnessCount, byronWitnessCount uint
 	cmd := &cobra.Command{
 		Use:   "decode",
 		Short: "Decode and inspect a transaction (optionally estimate min fee)",
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := cli.RunTxDecode(txFile, protocolParamsFile); err != nil {
+			if err := cli.RunTxDecode(txFile, protocolParamsFile, witnessCount, byronWitnessCount); err != nil {
 				logging.GetLogger().Error("failed to decode transaction", "error", err)
 				os.Exit(1)
 			}
@@ -129,6 +130,8 @@ func txDecodeCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&txFile, "tx-file", "", "Path to the transaction (hex CBOR or JSON envelope)")
 	cmd.Flags().StringVar(&protocolParamsFile, "protocol-params", "", "cardano-cli protocol-parameters.json for min-fee estimate")
+	cmd.Flags().UintVar(&witnessCount, "witness-count", 0, "Additional vkey witnesses to include in the min-fee estimate")
+	cmd.Flags().UintVar(&byronWitnessCount, "byron-witness-count", 0, "Additional bootstrap witnesses to include in the min-fee estimate")
 	_ = cmd.MarkFlagRequired("tx-file")
 	return cmd
 }
