@@ -1096,8 +1096,7 @@ func governanceVoteTallies(ctx context.Context, db *sql.DB) (map[uint64]govVoteT
 	return tallies, nil
 }
 
-// sqliteHasTable reports whether a table exists, so a partially backfilled
-// metadata DB (no governance tables yet) reads as empty rather than erroring.
+// sqliteHasTable reports whether a table exists in Dingo's metadata database.
 func sqliteHasTable(ctx context.Context, db *sql.DB, name string) (bool, error) {
 	var exists int
 	if err := db.QueryRowContext(ctx, `
@@ -1206,9 +1205,8 @@ func (c *Client) Asset(ctx context.Context, unit string) (AssetInfo, error) {
 	return out, nil
 }
 
-// assetCIP25Metadata reads the latest label-721 entry for an asset from
-// Dingo's local metadata index. Dingo indexes transaction metadata but does not
-// currently join it into its Blockfrost-compatible asset response.
+// assetCIP25Metadata reads the initial mint transaction's label-721 entry for
+// an asset from Dingo's local metadata index.
 func (c *Client) assetCIP25Metadata(
 	ctx context.Context,
 	policyID string,
@@ -1235,19 +1233,18 @@ func (c *Client) assetCIP25Metadata(
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
-	var hasMetadataLabels int
-	err = db.QueryRowContext(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM sqlite_master
-			WHERE type = 'table' AND name = 'transaction_metadata_label'
-		)`,
-	).Scan(&hasMetadataLabels)
-	if err != nil {
-		return nil, fmt.Errorf("inspect asset CIP-25 metadata index: %w", err)
-	}
-	if hasMetadataLabels == 0 {
-		return nil, nil
+	for _, table := range []string{
+		"asset_mint_burn",
+		"transaction",
+		"transaction_metadata_label",
+	} {
+		exists, err := sqliteHasTable(ctx, db, table)
+		if err != nil {
+			return nil, fmt.Errorf("inspect asset CIP-25 metadata index: %w", err)
+		}
+		if !exists {
+			return nil, nil
+		}
 	}
 
 	policyIDBytes, err := hex.DecodeString(policyID)
@@ -1259,45 +1256,38 @@ func (c *Client) assetCIP25Metadata(
 		return nil, fmt.Errorf("decode asset metadata name %q: %w", assetNameHex, err)
 	}
 
-	// CIP-25 metadata belongs to the mint transaction. Resolve only label-721
-	// rows from transactions that produced an output containing this asset,
-	// using Dingo's indexed asset -> UTxO -> transaction relationship. Bursa
-	// runs Dingo in API mode, which retains spent output rows; block-history
-	// expiry only removes block CBOR and therefore does not break this join.
-	rows, err := db.QueryContext(ctx, `
+	// CIP-25 metadata belongs to the initial mint transaction. A transaction
+	// that merely produces an output containing the asset has no authority to
+	// replace it.
+	var labelJSONString string
+	err = db.QueryRowContext(ctx, `
 		SELECT metadata.json_value
 		FROM transaction_metadata_label AS metadata
-		WHERE metadata.label = ?
-		  AND metadata.transaction_id IN (
-			SELECT DISTINCT utxo.transaction_id
-			FROM asset
-			INNER JOIN utxo ON utxo.id = asset.utxo_id
-			WHERE asset.policy_id = ? AND asset.name = ?
-		  )
-		ORDER BY metadata.slot DESC, metadata.id DESC`,
+		INNER JOIN "transaction" AS mint_tx
+			ON mint_tx.id = metadata.transaction_id
+		WHERE metadata.label = ? AND mint_tx.hash = (
+			SELECT mint.tx_hash
+			FROM asset_mint_burn AS mint
+			WHERE mint.policy_id = ? AND mint.name = ?
+			ORDER BY mint.slot ASC, mint.tx_index ASC, mint.id ASC
+			LIMIT 1
+		)
+		LIMIT 1`,
 		cip25MetadataLabel,
 		policyIDBytes,
 		assetName,
-	)
+	).Scan(&labelJSONString)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("query asset CIP-25 metadata: %w", err)
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var labelJSONString string
-		if err := rows.Scan(&labelJSONString); err != nil {
-			return nil, fmt.Errorf("scan asset CIP-25 metadata: %w", err)
-		}
-		labelJSON := json.RawMessage(labelJSONString)
-		if metadata := extractCIP25AssetMetadata(labelJSON, policyID, assetNameHex); len(metadata) != 0 {
-			return metadata, nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate asset CIP-25 metadata: %w", err)
-	}
-	return nil, nil
+	return extractCIP25AssetMetadata(
+		json.RawMessage(labelJSONString),
+		policyID,
+		assetNameHex,
+	), nil
 }
 
 func extractCIP25AssetMetadata(
