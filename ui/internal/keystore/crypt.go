@@ -108,6 +108,14 @@ func decrypt(c Container, password []byte, kdf kdfParams) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	authFailed := false
+	if kdf == productionKDF {
+		finish, err := processUnlockBudget.begin()
+		if err != nil {
+			return nil, err
+		}
+		defer func() { finish(authFailed) }()
+	}
 	key, err := scrypt.Key(password, salt, c.N, c.R, c.P, keyLen)
 	if err != nil {
 		return nil, fmt.Errorf("scrypt: %w", err)
@@ -123,6 +131,7 @@ func decrypt(c Container, password []byte, kdf kdfParams) ([]byte, error) {
 	}
 	pt, err := gcm.Open(nil, nonce, ct, nil)
 	if err != nil {
+		authFailed = true
 		return nil, fmt.Errorf("%w: wrong password or corrupt container", ErrDecryptFailed)
 	}
 	return pt, nil

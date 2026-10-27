@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
+	"time"
 	"unicode/utf8"
 )
 
@@ -28,12 +30,65 @@ const (
 	// maxContainerLen caps Unlock's read of the keystore file. A real
 	// container is under 1 KiB; anything larger is not one of ours.
 	maxContainerLen = 64 * 1024
+
+	unlockFailureLimit  = 5
+	unlockFailureWindow = time.Minute
 )
 
-// ErrDecryptFailed is returned when the keystore ciphertext cannot be
-// authenticated with the supplied password. AES-GCM cannot distinguish a wrong
-// password from ciphertext corruption.
-var ErrDecryptFailed = errors.New("keystore decryption failed")
+var (
+	// ErrDecryptFailed is returned when the keystore ciphertext cannot be
+	// authenticated with the supplied password. AES-GCM cannot distinguish a
+	// wrong password from ciphertext corruption.
+	ErrDecryptFailed = errors.New("keystore decryption failed")
+
+	// ErrUnlockLimited is returned before starting an expensive production KDF
+	// when another derivation is active or recent authentication failures have
+	// exhausted the process-wide allowance.
+	ErrUnlockLimited = errors.New("unlock attempts temporarily limited")
+)
+
+type unlockBudget struct {
+	mu          sync.Mutex
+	active      bool
+	failures    int
+	windowStart time.Time
+}
+
+var processUnlockBudget unlockBudget
+
+func (b *unlockBudget) begin() (func(bool), error) {
+	b.mu.Lock()
+	now := time.Now()
+	b.resetExpired(now)
+	if b.active || b.failures >= unlockFailureLimit {
+		b.mu.Unlock()
+		return nil, ErrUnlockLimited
+	}
+	b.active = true
+	b.mu.Unlock()
+
+	return func(authFailed bool) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+
+		b.active = false
+		now := time.Now()
+		b.resetExpired(now)
+		if authFailed {
+			if b.windowStart.IsZero() {
+				b.windowStart = now
+			}
+			b.failures++
+		}
+	}, nil
+}
+
+func (b *unlockBudget) resetExpired(now time.Time) {
+	if !b.windowStart.IsZero() && now.Sub(b.windowStart) >= unlockFailureWindow {
+		b.failures = 0
+		b.windowStart = time.Time{}
+	}
+}
 
 // kdfParams is the scrypt cost Create writes plus the range Unlock accepts.
 // Keep the accepted range tightly bounded: the container metadata is
