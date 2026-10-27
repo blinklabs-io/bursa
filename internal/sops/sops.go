@@ -108,6 +108,11 @@ func masterKeys(cfg *config.Config) ([]skeys.MasterKey, error) {
 }
 
 func Encrypt(data []byte) ([]byte, error) {
+	return EncryptWithConfig(data, config.GetConfig())
+}
+
+// EncryptWithConfig encrypts data using the SOPS master keys in cfg.
+func EncryptWithConfig(data []byte, cfg *config.Config) ([]byte, error) {
 	input := &json.Store{}
 	output := &json.Store{}
 
@@ -126,7 +131,7 @@ func Encrypt(data []byte) ([]byte, error) {
 
 	// Resolve and validate the master keys before touching the data so a
 	// missing or malformed resource is reported as such, not as a tree error.
-	keys, err := masterKeys(config.GetConfig())
+	keys, err := masterKeys(cfg)
 	if err != nil {
 		return nil, err
 	}

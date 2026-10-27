@@ -37,17 +37,36 @@ const maxWalletFileSize = 4 << 20
 // FileStore implements the Store interface using local file system.
 // It stores wallets as JSON files in a directory structure on disk.
 type FileStore struct {
-	baseDir            string
+	baseDir string
+
+	// sopsConfig is an immutable construction-time snapshot so admission and
+	// every subsequent save use the same master-key selection.
+	sopsConfig config.Config
+
 	mu                 sync.RWMutex
 	listWalletLoadHook func()
 }
 
 // NewFileStore creates a new file-based storage backend.
 // baseDir specifies the root directory where wallets will be stored.
+// It snapshots the current process SOPS key configuration.
 func NewFileStore(baseDir string) *FileStore {
+	return newFileStore(baseDir, config.GetConfig())
+}
+
+func newFileStore(baseDir string, cfg *config.Config) *FileStore {
 	return &FileStore{
 		baseDir: baseDir,
+		sopsConfig: config.Config{
+			Google: config.GoogleConfig{ResourceId: cfg.Google.ResourceId},
+			Aws:    config.AwsConfig{KMSKeyARN: cfg.Aws.KMSKeyARN},
+			Age:    config.AgeConfig{Recipients: cfg.Age.Recipients},
+		},
 	}
+}
+
+func (s *FileStore) encryptionConfigured() bool {
+	return sops.Configured(&s.sopsConfig)
 }
 
 // validateWalletName validates that a wallet name is safe for file system operations.
@@ -410,7 +429,7 @@ func (w *fileWallet) Save(ctx context.Context) error {
 	encryptedAtRest := w.encryptedAtRest
 	w.mu.RUnlock()
 
-	encrypt := sops.Configured(config.GetConfig())
+	encrypt := w.store.encryptionConfigured()
 	if encryptedAtRest && !encrypt {
 		return fmt.Errorf("wallet encryption is required: %w", sops.ErrNoMasterKey)
 	}
@@ -427,7 +446,7 @@ func (w *fileWallet) Save(ctx context.Context) error {
 	}
 	raw = append(raw, '\n')
 	if encrypt {
-		enc, err := sops.Encrypt(raw)
+		enc, err := sops.EncryptWithConfig(raw, &w.store.sopsConfig)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt wallet at rest: %w", err)
 		}
