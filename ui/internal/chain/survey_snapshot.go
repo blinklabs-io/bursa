@@ -62,6 +62,8 @@ func (c *Client) SurveyRoleSnapshot(
 			result[claim] = true
 		case SurveyRoleDRep, SurveyRoleSPO, SurveyRoleStakeholder:
 			needsSnapshot = true
+		case SurveyRoleCC:
+			result[claim] = false
 		default:
 			result[claim] = false
 		}
@@ -91,7 +93,7 @@ func (c *Client) SurveyRoleSnapshot(
 	if err != nil {
 		return nil, fmt.Errorf("begin survey role snapshot read: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	snapshot, err := readSurveySnapshot(ctx, tx, endEpoch+1)
 	if err != nil {

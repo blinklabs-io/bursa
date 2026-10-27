@@ -540,7 +540,11 @@ func (s *Service) observe(ctx context.Context, entries []entry, k *known, cl clk
 			if o.Reject != "" {
 				continue
 			}
-			claim := snapshotRoleClaim(o.Response.Role, o.Response.Credential)
+			claim, ok := snapshotRoleClaim(o.Response.Role, o.Response.Credential)
+			if !ok {
+				verified[identity{o.Response.Role, o.Response.Credential}] = "role cannot be verified against ledger state"
+				continue
+			}
 			if _, ok := seen[claim]; !ok {
 				seen[claim] = struct{}{}
 				claims = append(claims, claim)
@@ -589,22 +593,40 @@ func (s *Service) observe(ctx context.Context, entries []entry, k *known, cl clk
 	return out, nil
 }
 
-func snapshotRoleClaim(role Role, credential Credential) chain.SurveyRoleClaim {
+// snapshotRoleClaim maps a response's role claim to the one-byte snapshot
+// encoding. It reports false for a role the snapshot does not define rather
+// than truncating it onto another role.
+func snapshotRoleClaim(role Role, credential Credential) (chain.SurveyRoleClaim, bool) {
+	var snapshotRole chain.SurveyRole
+	switch role {
+	case RoleDRep:
+		snapshotRole = chain.SurveyRoleDRep
+	case RoleSPO:
+		snapshotRole = chain.SurveyRoleSPO
+	case RoleCC:
+		snapshotRole = chain.SurveyRoleCC
+	case RoleStakeholder:
+		snapshotRole = chain.SurveyRoleStakeholder
+	case RoleKeyholder:
+		snapshotRole = chain.SurveyRoleKeyholder
+	default:
+		return chain.SurveyRoleClaim{}, false
+	}
 	var tag uint8
 	if credential.Script {
 		tag = 1
 	}
 	return chain.SurveyRoleClaim{
-		Role:          chain.SurveyRole(role),
+		Role:          snapshotRole,
 		CredentialTag: tag,
 		Credential:    credential.Hash,
-	}
+	}, true
 }
 
 func identityFromSnapshotClaim(claim chain.SurveyRoleClaim) identity {
 	return identity{
-		Role: Role(claim.Role),
-		Credential: Credential{
+		role: Role(claim.Role),
+		cred: Credential{
 			Script: claim.CredentialTag == 1,
 			Hash:   claim.Credential,
 		},

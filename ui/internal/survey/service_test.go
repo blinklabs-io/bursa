@@ -686,3 +686,18 @@ func TestLabelHistoryDropsRolledBackTransactions(t *testing.T) {
 	f.addJunk(120)
 	equal(t, []string{"survey by 2"}, titles(t, s))
 }
+
+func TestSnapshotRoleClaimRejectsRolesOutsideTheSnapshotRange(t *testing.T) {
+	t.Parallel()
+	for _, role := range []Role{RoleDRep, RoleSPO, RoleCC, RoleStakeholder, RoleKeyholder} {
+		claim, ok := snapshotRoleClaim(role, cred(false, 1))
+		if !ok {
+			t.Fatalf("role %d not mapped", role)
+		}
+		equal(t, identity{role: role, cred: cred(false, 1)}, identityFromSnapshotClaim(claim))
+	}
+	// 256 would wrap to the DRep role in the one-byte snapshot encoding.
+	if claim, ok := snapshotRoleClaim(Role(256), cred(false, 1)); ok {
+		t.Fatalf("role 256 mapped to snapshot role %d", claim.Role)
+	}
+}
