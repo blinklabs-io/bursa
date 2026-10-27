@@ -125,6 +125,7 @@ $BundleWebView2 = if ($null -ne $env:BUNDLE_WEBVIEW2) { $env:BUNDLE_WEBVIEW2 } e
 $WebView2SetupIn = $env:WEBVIEW2_SETUP
 $WebView2Url = if ($env:WEBVIEW2_URL) { $env:WEBVIEW2_URL } else { 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' }
 $WebView2Sha256 = $env:WEBVIEW2_SHA256
+$WebView2ExpectedSigner = 'Microsoft Corporation'
 
 # Resolved, staged bootstrapper path (empty => not bundled; the .wxs guards on
 # the sentinel "NONE"). Populated by Resolve-WebView2.
@@ -230,18 +231,27 @@ function Resolve-WebView2 {
         Write-Log "Verified WebView2 bootstrapper SHA-256"
     }
 
-    # Authenticode gate. The evergreen bootstrapper is unpinned by default (its
-    # hash floats), so - hash or no hash - always require that the staged exe
-    # carries a present, chain-trusted Authenticode signature before bundling
-    # it. This is the integrity guarantee when WEBVIEW2_SHA256 is unset, and a
-    # defense-in-depth check when it is set. Fail the build on anything that is
-    # not 'Valid'.
+    # Always require a valid Authenticode signature. When the live bootstrapper
+    # is not pinned by hash, also require Microsoft's publisher identity so an
+    # unrelated chain-trusted executable cannot reach the elevated installer.
     if (Get-Command Get-AuthenticodeSignature -ErrorAction SilentlyContinue) {
         $wvSig = Get-AuthenticodeSignature -FilePath $dest
         if ($wvSig.Status -ne 'Valid') {
             Die "WebView2 bootstrapper Authenticode signature is not valid (status: $($wvSig.Status)) at $dest; refusing to bundle an unsigned/untrusted bootstrapper."
         }
-        $wvSigner = if ($wvSig.SignerCertificate) { $wvSig.SignerCertificate.Subject } else { '<unknown>' }
+
+        $wvSigner = if ($wvSig.SignerCertificate) {
+            $wvSig.SignerCertificate.GetNameInfo(
+                [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+                $false
+            )
+        } else {
+            '<unknown>'
+        }
+        if ([string]::IsNullOrEmpty($WebView2Sha256) -and
+            -not [string]::Equals($wvSigner, $WebView2ExpectedSigner, [System.StringComparison]::Ordinal)) {
+            Die "WebView2 bootstrapper signer is not $WebView2ExpectedSigner (got: $wvSigner); refusing to bundle an unpinned bootstrapper."
+        }
         Write-Log "Verified WebView2 bootstrapper Authenticode signature (Valid): $wvSigner"
     } else {
         Die "Get-AuthenticodeSignature unavailable - cannot verify the WebView2 bootstrapper signature; refusing to bundle it. Set BUNDLE_WEBVIEW2=0 to skip bundling."
