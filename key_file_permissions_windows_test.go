@@ -153,9 +153,9 @@ func TestKnownNonGrantACEFormsWindows(t *testing.T) {
 	}
 }
 
-func TestWindowsAllowsCurrentUserWhenOwnerDiffers(t *testing.T) {
+func TestWindowsRejectsDifferentOwner(t *testing.T) {
 	sddl := fmt.Sprintf("O:SYD:P(A;;GA;;;%s)", bursaCurrentUserSID(t))
 	descriptor, err := windows.SecurityDescriptorFromString(sddl)
 	require.NoError(t, err)
-	assert.NoError(t, checkOpenSecurityDescriptor("test.skey", descriptor))
+	assert.ErrorIs(t, checkOpenSecurityDescriptor("test.skey", descriptor), ErrInsecureFileMode)
 }
