@@ -1898,6 +1898,40 @@ func TestScriptNOfCardanoCLICompatibility(t *testing.T) {
 	}
 }
 
+func TestParseScriptFileCardanoCLIAndEnvelope(t *testing.T) {
+	keyHashes := [][]byte{
+		testKeyHash(),
+		bytes.Repeat([]byte{0x02}, 28),
+	}
+	script, err := NewMultiSigScript(1, keyHashes...)
+	require.NoError(t, err)
+	envelope, err := MarshalScript(script, "mainnet")
+	require.NoError(t, err)
+	envelopeJSON, err := json.Marshal(envelope)
+	require.NoError(t, err)
+	bareJSON, err := json.Marshal(envelope.Script)
+	require.NoError(t, err)
+
+	for _, tt := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "cardano-cli simple script", data: bareJSON},
+		{name: "bursa envelope", data: envelopeJSON},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := ParseScriptFile(tt.data)
+			require.NoError(t, err)
+			unmarshaled, err := UnmarshalScript(parsed)
+			require.NoError(t, err)
+			assert.Equal(t, script.Hash(), unmarshaled.Hash())
+		})
+	}
+
+	_, err = ParseScriptFile([]byte("not json"))
+	assert.Error(t, err)
+}
+
 func TestCIP0011StakingKeys(t *testing.T) {
 	// Test vector from CIP-0011 specification
 	// https://cips.cardano.org/cips/cip11/

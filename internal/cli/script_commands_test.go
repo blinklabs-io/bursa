@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
@@ -36,20 +37,35 @@ func TestRunScriptCreate_NOf(t *testing.T) {
 		"02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d",
 	}
 
-	err = RunScriptCreate(
-		1, hashes, outputFile, "mainnet",
-		false, false, 0, 0,
-	)
-	require.NoError(t, err)
+	output := captureStdout(t, func() {
+		err := RunScriptCreate(
+			1, hashes, outputFile, "mainnet",
+			false, false, 0, 0,
+		)
+		require.NoError(t, err)
+	})
 
+	// The file is a cardano-cli simple script, with no Bursa envelope.
 	data, err := os.ReadFile(outputFile)
 	require.NoError(t, err)
+	var fileScript map[string]any
+	require.NoError(t, json.Unmarshal(data, &fileScript))
+	assert.Equal(t, "atLeast", fileScript["type"])
+	assert.Equal(t, float64(1), fileScript["required"])
+	assert.NotContains(t, fileScript, "address")
+	assert.NotContains(t, fileScript, "script")
 
+	// The address and hash are reported on stdout. Under test the logger
+	// also writes JSON to stdout, so the report is the last value.
 	var scriptData bursa.ScriptData
-	err = json.Unmarshal(data, &scriptData)
-	require.NoError(t, err)
+	decoder := json.NewDecoder(strings.NewReader(output))
+	for decoder.More() {
+		scriptData = bursa.ScriptData{}
+		require.NoError(t, decoder.Decode(&scriptData))
+	}
 	assert.Equal(t, "NativeScript", scriptData.Type)
 	assert.NotEmpty(t, scriptData.Address)
+	assert.NotEmpty(t, scriptData.Hash)
 }
 
 func TestRunScriptCreate_All(t *testing.T) {

@@ -2973,6 +2973,24 @@ func MarshalScript(script Script, network string) (*ScriptData, error) {
 	return data, nil
 }
 
+// ParseScriptFile reads a native script file in either supported form: a
+// cardano-cli simple-script object, or a ScriptData envelope written by
+// earlier Bursa versions.
+func ParseScriptFile(data []byte) (*ScriptData, error) {
+	var top map[string]any
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil, fmt.Errorf("failed to parse script JSON: %w", err)
+	}
+	if scriptType, _ := top["type"].(string); scriptType != "NativeScript" {
+		return &ScriptData{Type: "NativeScript", Script: top}, nil
+	}
+	var envelope ScriptData
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to parse script envelope: %w", err)
+	}
+	return &envelope, nil
+}
+
 // UnmarshalScript deserializes a script from JSON
 func UnmarshalScript(data *ScriptData) (Script, error) {
 	if data.Type != "NativeScript" {
