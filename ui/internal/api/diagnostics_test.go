@@ -49,7 +49,7 @@ func (f *fakeDiagnostics) WriteLogsZip(w io.Writer) error {
 // are the shared fakes). st drives the (deliberately absent) gate so the test
 // can confirm /diagnostics works in a non-ready state.
 func diagHandler(st Statuser, d Diagnostics) http.Handler {
-	return NewHandler(
+	return NewHandler(testSessionToken,
 		st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{},
 		nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(),
 		WithDiagnostics(d),
@@ -121,6 +121,7 @@ func TestDiagnosticsCrossOriginRefused(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/diagnostics", nil)
 	req.Host = "evil.example"
 	req.Header.Set("Origin", "http://evil.example")
+	req.Header.Set(sessionHeaderName, testSessionToken)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {

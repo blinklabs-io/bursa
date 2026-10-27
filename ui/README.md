@@ -42,8 +42,10 @@ Launch `Bursa` from your applications menu, or run the binary:
 bursa-wallet
 ```
 
-The desktop build opens a native window. The headless build serves the same
-interface at <http://127.0.0.1:8090> for you to open in a browser.
+The desktop build opens a native window. The headless build prints an authenticated
+launch URL for the interface on `127.0.0.1:8090`; open that complete URL in a
+browser. The fragment contains a process-local session capability and is removed
+from browser history after the page establishes its session.
 
 **The first launch syncs a node.** By default the wallet bootstraps from a
 [Mithril](https://mithril.network) snapshot rather than replaying the chain from
@@ -178,7 +180,12 @@ on.
 | `BURSA_LEAN` | `false` | Seeds the lean-node profile, which prunes historical chain data to keep the on-disk footprint down. |
 | `BURSA_CONNECTOR` | `false` | Enables the dApp connector backend. |
 
-The desktop binary serves on `127.0.0.1:8090`.
+The desktop binary serves on `127.0.0.1:8090`. Wallet API routes require the
+process-local session capability carried in the launch URL. Loopback, Host, and
+Origin checks are additional browser protections and do not authorize a local
+client by themselves. The session cookie is marked `Secure` only when the
+listener itself serves TLS; on the default plain-HTTP loopback listener WebKit
+webviews would refuse to store a `Secure` cookie.
 
 ## dApp connector
 
@@ -241,8 +248,8 @@ sync state, and exports the logs. They are also at
 `~/.bursa-wallet/<network>/logs/bursa-wallet.log`.
 
 **The window is blank on Linux.** The webview build needs webkit2gtk. Without
-it, use the default `make wallet` build and open <http://127.0.0.1:8090> in a
-browser.
+it, use the default `make wallet` build and open the authenticated launch URL
+printed by the process in a browser.
 
 **Disk usage is too high.** Turn on lean storage in Settings (or start with
 `BURSA_LEAN=true` on a first run) to expire historical chain data.

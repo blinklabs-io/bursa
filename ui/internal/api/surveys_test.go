@@ -74,7 +74,7 @@ func surveyHandler(st Statuser, sv Surveys) http.Handler {
 	if sv != nil {
 		opts = append(opts, WithSurveys(sv))
 	}
-	return NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil,
+	return NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil,
 		&fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), opts...)
 }
 

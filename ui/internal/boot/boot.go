@@ -221,12 +221,13 @@ type Config struct {
 // Stop. It is the shared runtime both the desktop binary and the mobile binding
 // drive.
 type App struct {
-	srv      *http.Server
-	handler  interface{ CheckAutoLock() }
-	listener net.Listener
-	sup      *supervisor.Supervisor
-	nft      *nft.Service
-	logger   *slog.Logger
+	srv          *http.Server
+	handler      interface{ CheckAutoLock() }
+	listener     net.Listener
+	sup          *supervisor.Supervisor
+	nft          *nft.Service
+	logger       *slog.Logger
+	sessionToken string
 
 	// ctx is the parent context supplied to Boot; it is forwarded to
 	// supervisor.Reconnect so the re-dial is cancelled if the app is torn down.
@@ -279,6 +280,10 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
+	}
+	sessionToken, err := api.NewSessionToken()
+	if err != nil {
+		return nil, err
 	}
 
 	netID, err := cardanonet.AddressNetworkID(cfg.Network)
@@ -514,6 +519,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		handlerOpts = append(handlerOpts, api.WithNFTs(nftSvc))
 	}
 	handler := api.NewHandler(
+		sessionToken,
 		sup, vlt, walletSvc, spendSvc,
 		&settingsController{store: settingsStore, sup: sup},
 		contactsStore,
@@ -539,15 +545,16 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	}()
 
 	return &App{
-		srv:      srv,
-		handler:  handler,
-		listener: listener,
-		sup:      sup,
-		nft:      nftSvc,
-		logger:   logger,
-		ctx:      ctx,
-		stop:     cancel,
-		srvErr:   srvErr,
+		srv:          srv,
+		handler:      handler,
+		listener:     listener,
+		sup:          sup,
+		nft:          nftSvc,
+		logger:       logger,
+		sessionToken: sessionToken,
+		ctx:          ctx,
+		stop:         cancel,
+		srvErr:       srvErr,
 	}, nil
 }
 
@@ -555,9 +562,9 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 // "127.0.0.1:0" config this is the concrete OS-assigned loopback port.
 func (a *App) Addr() string { return a.listener.Addr().String() }
 
-// URL returns the control surface base URL (http://host:port) for a WebView or
-// browser to load.
-func (a *App) URL() string { return "http://" + a.Addr() }
+// URL returns the authenticated launch URL for a WebView or browser. The
+// capability stays in the fragment, which is not included in HTTP requests.
+func (a *App) URL() string { return "http://" + a.Addr() + "/#session=" + a.sessionToken }
 
 // Port returns the control surface's bound TCP port.
 func (a *App) Port() int {

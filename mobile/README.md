@@ -25,7 +25,7 @@ needed per feature.
    │  └───────────────┘         │  • wallet / spend services       │ │
    │        ▲                    │  • api.Handler + embedded SPA    │ │
    │        │ loadUrl/load       └──────────────────────────────────┘ │
-   │        └── app.start(dataDir, "preview", lean=true); app.port()  │
+   │        └── app.start(dataDir, "preview", lean=true); app.url()   │
    └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -33,10 +33,11 @@ needed per feature.
   shared by the desktop binary (`ui/cmd/bursa-wallet`) and the mobile binding
   (`ui/mobile`) so every front end brings up an identical stack.
 - **gomobile binding** (`ui/mobile`): an opaque `App` handle with these methods —
-  `Start(dataDir, network string, lean bool) error`, `SetNodeDataDir(dir string)`, `Port() int`, `Stop() error`.
+  `Start(dataDir, network string, lean bool) error`, `SetNodeDataDir(dir string)`, `Port() int`, `URL() string`, `Stop() error`.
   Start binds the control surface on `127.0.0.1:0` (an OS-assigned loopback port),
   boots the wallet with the lean (history-expiry) profile, and serves the SPA +
-  API there; `Port()` returns the chosen port for the WebView. Only
+  API there; `URL()` returns the authenticated launch URL for the WebView and
+  `Port()` returns the chosen port for navigation checks. Only
   gomobile-marshalable types cross the boundary (bool/int/int64/float/string/
   []byte/error + the opaque `App` handle) — no maps, slices-of-structs, or
   channels.

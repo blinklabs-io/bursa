@@ -39,6 +39,9 @@ func TestNewHandleLifecycleBeforeStart(t *testing.T) {
 	if got := a.Port(); got != 0 {
 		t.Fatalf("Port before Start = %d, want 0", got)
 	}
+	if got := a.URL(); got != "" {
+		t.Fatalf("URL before Start = %q, want empty", got)
+	}
 	if err := a.Stop(); err != nil {
 		t.Fatalf("Stop before Start = %v, want nil", err)
 	}
@@ -133,6 +136,7 @@ func TestBindingSignaturesAreGomobileCompatible(t *testing.T) {
 		{"StartWithTimeout", []string{"string", "string", "bool", "int64"}, []string{"error"}},
 		{"SetNodeDataDir", []string{"string"}, nil},
 		{"Port", nil, []string{"int"}},
+		{"URL", nil, []string{"string"}},
 		{"Stop", nil, []string{"error"}},
 		{"OnNetworkChanged", nil, []string{"error"}},
 		{"OnResume", nil, []string{"error"}},
@@ -389,6 +393,7 @@ func TestStopPublishesDrainBeforeCanceledStartObservesCancellation(t *testing.T)
 type fakeRuntimeApp struct {
 	stopEntered chan struct{}
 	stopRelease chan struct{}
+	url         string
 }
 
 func (f *fakeRuntimeApp) Stop() error {
@@ -397,11 +402,20 @@ func (f *fakeRuntimeApp) Stop() error {
 	return nil
 }
 
-func (f *fakeRuntimeApp) Port() int { return 0 }
+func (f *fakeRuntimeApp) Port() int   { return 0 }
+func (f *fakeRuntimeApp) URL() string { return f.url }
 
 func (f *fakeRuntimeApp) OnNetworkChanged() error { return nil }
 
 func (f *fakeRuntimeApp) OnResume() error { return nil }
+
+func TestURLReturnsAuthenticatedRuntimeURL(t *testing.T) {
+	want := "http://127.0.0.1:12345/#session=secret"
+	a := &App{app: &fakeRuntimeApp{url: want}}
+	if got := a.URL(); got != want {
+		t.Fatalf("URL = %q, want %q", got, want)
+	}
+}
 
 // TestCleanupLateStartStopsLiveAppAndTerminates proves the node-lifecycle leak
 // guard in cleanupLateStart: when a superseded start's slow bootWallet call

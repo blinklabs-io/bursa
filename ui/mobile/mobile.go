@@ -45,9 +45,9 @@ var (
 )
 
 // App is an opaque handle to a booted in-process wallet. It is returned by New
-// and driven by the Android/iOS shells: Start boots the stack, Port reports the
-// loopback port the WebView should load, and Stop tears it down. All fields are
-// unexported so gomobile treats it as an opaque reference type.
+// and driven by the Android/iOS shells: Start boots the stack, URL reports the
+// authenticated loopback URL the WebView should load, and Stop tears it down.
+// All fields are unexported so gomobile treats it as an opaque reference type.
 type App struct {
 	mu          sync.Mutex
 	app         runtimeApp
@@ -77,6 +77,7 @@ type App struct {
 type runtimeApp interface {
 	Stop() error
 	Port() int
+	URL() string
 	OnNetworkChanged() error
 	OnResume() error
 }
@@ -297,6 +298,18 @@ func (a *App) Port() int {
 		return 0
 	}
 	return a.app.Port()
+}
+
+// URL returns the authenticated loopback URL for the system WebView. It is
+// empty before Start completes. The session capability is carried in the URL
+// fragment and never sent in the initial HTTP request.
+func (a *App) URL() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.app == nil {
+		return ""
+	}
+	return a.app.URL()
 }
 
 // OnNetworkChanged re-dials the embedded node's peers after the host network
