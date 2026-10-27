@@ -193,12 +193,12 @@ func signingKeyExporterRegistry(t *testing.T) []signingKeyExporterVector {
 		{
 			name: "GetPolicySKey", signingKey: mustSigningKey(GetPolicySKey(policy)),
 			verificationKey: policy.PublicKey(),
-			wantType:        "PolicyExtendedSigningKeyShelley_ed25519_bip32", wantMaterialBytes: 128,
+			wantType:        "PaymentExtendedSigningKeyShelley_ed25519_bip32", wantMaterialBytes: 128,
 		},
 		{
 			name: "GetPolicyExtendedSKey", signingKey: mustSigningKey(GetPolicyExtendedSKey(policy)),
 			verificationKey: policy.PublicKey(),
-			wantType:        "PolicyExtendedSigningKeyShelley_ed25519_bip32", wantMaterialBytes: 128,
+			wantType:        "PaymentExtendedSigningKeyShelley_ed25519_bip32", wantMaterialBytes: 128,
 		},
 		{
 			name: "GetVRFSKey", signingKey: mustSigningKey(GetVRFSKey(vrfSKey)),

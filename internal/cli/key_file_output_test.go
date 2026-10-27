@@ -42,8 +42,8 @@ func TestKeyFileOutput(t *testing.T) {
 		{
 			name:             "policy key",
 			runFunc:          func(skey, vkey string) error { return RunKeyPolicy(testMnemonic, "", "", skey, vkey, 0) },
-			expectedVKeyType: "PolicyVerificationKeyShelley_ed25519",
-			expectedSKeyType: "PolicyExtendedSigningKeyShelley_ed25519_bip32",
+			expectedVKeyType: "PaymentVerificationKeyShelley_ed25519",
+			expectedSKeyType: "PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		},
 		{
 			name:             "drep key",

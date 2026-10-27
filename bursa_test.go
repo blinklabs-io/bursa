@@ -2775,14 +2775,14 @@ func TestCIP1855KeyFileGeneration(t *testing.T) {
 	// Test verification key generation
 	vkey, err := GetPolicyVKey(policyKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "PolicyVerificationKeyShelley_ed25519", vkey.Type)
+	assert.Equal(t, "PaymentVerificationKeyShelley_ed25519", vkey.Type)
 	assert.Equal(t, "Policy Verification Key", vkey.Description)
 	assert.NotEmpty(t, vkey.CborHex)
 
 	// Test signing key generation
 	skey, err := GetPolicySKey(policyKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "PolicyExtendedSigningKeyShelley_ed25519_bip32", skey.Type)
+	assert.Equal(t, "PaymentExtendedSigningKeyShelley_ed25519_bip32", skey.Type)
 	assert.Equal(t, "Policy Extended Signing Key (BIP32)", skey.Description)
 	assert.NotEmpty(t, skey.CborHex)
 
@@ -2791,7 +2791,7 @@ func TestCIP1855KeyFileGeneration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(
 		t,
-		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		extendedSkey.Type,
 	)
 	assert.Equal(
@@ -2995,13 +2995,13 @@ func TestCIP1855PolicyKeyRoundTrip(t *testing.T) {
 	// Verify policy verification key
 	pvkey := keyMap["policy.vkey"]
 	assert.NotNil(t, pvkey, "policy.vkey should be loaded")
-	assert.Equal(t, "PolicyVerificationKeyShelley_ed25519", pvkey.Type)
+	assert.Equal(t, "PaymentVerificationKeyShelley_ed25519", pvkey.Type)
 	assert.Len(t, pvkey.VKey, 32, "Verification key should be 32 bytes")
 
 	// Verify policy signing key
 	pskey := keyMap["policy.skey"]
 	assert.NotNil(t, pskey, "policy.skey should be loaded")
-	assert.Equal(t, "PolicyExtendedSigningKeyShelley_ed25519_bip32", pskey.Type)
+	assert.Equal(t, "PaymentExtendedSigningKeyShelley_ed25519_bip32", pskey.Type)
 	assert.Len(t, pskey.SKey, 96, "Signing key should be 96 bytes")
 	assert.Len(t, pskey.VKey, 32, "Derived verification key should be 32 bytes")
 
@@ -3010,7 +3010,7 @@ func TestCIP1855PolicyKeyRoundTrip(t *testing.T) {
 	assert.NotNil(t, pextSkey, "policyExtended.skey should be loaded")
 	assert.Equal(
 		t,
-		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		pextSkey.Type,
 	)
 	assert.Len(
