@@ -2025,9 +2025,10 @@ func RunScriptCreate(
 	if len(keyHashes) == 0 {
 		return errors.New("must provide at least one key hash")
 	}
-	if timelockBefore > 0 && timelockAfter > 0 {
+	if timelockBefore > 0 && timelockAfter > 0 &&
+		timelockAfter >= timelockBefore {
 		return errors.New(
-			"cannot specify both --timelock-before and --timelock-after",
+			"--timelock-after must be less than --timelock-before",
 		)
 	}
 
@@ -2076,16 +2077,23 @@ func RunScriptCreate(
 	}
 
 	// Apply timelock if specified
-	if timelockBefore > 0 {
+	switch {
+	case timelockBefore > 0 && timelockAfter > 0:
+		var afterScript, beforeScript *bursa.NativeScript
+		afterScript, err = bursa.NewScriptAfter(timelockAfter)
+		if err == nil {
+			beforeScript, err = bursa.NewScriptBefore(timelockBefore)
+		}
+		if err == nil {
+			script, err = bursa.NewScriptAll(afterScript, beforeScript, script)
+		}
+	case timelockBefore > 0:
 		script, err = bursa.NewTimelockedScript(timelockBefore, true, script)
-		if err != nil {
-			return fmt.Errorf("failed to create timelocked script: %w", err)
-		}
-	} else if timelockAfter > 0 {
+	case timelockAfter > 0:
 		script, err = bursa.NewTimelockedScript(timelockAfter, false, script)
-		if err != nil {
-			return fmt.Errorf("failed to create timelocked script: %w", err)
-		}
+	}
+	if err != nil {
+		return fmt.Errorf("failed to create timelocked script: %w", err)
 	}
 
 	// Marshal script data

@@ -1702,36 +1702,38 @@ func handleScriptCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Apply timelock if specified
-	if req.TimelockBefore > 0 && req.TimelockAfter > 0 {
+	if req.TimelockBefore > 0 && req.TimelockAfter > 0 &&
+		req.TimelockAfter >= req.TimelockBefore {
 		writeJSONError(w, logger, map[string]string{
-			"error": "cannot specify both timelock_before and timelock_after",
+			"error": "timelock_after must be less than timelock_before",
 		}, http.StatusBadRequest)
 		return
 	}
-	if req.TimelockBefore > 0 {
+	switch {
+	case req.TimelockBefore > 0 && req.TimelockAfter > 0:
+		var afterScript, beforeScript *bursa.NativeScript
+		afterScript, err = bursa.NewScriptAfter(req.TimelockAfter)
+		if err == nil {
+			beforeScript, err = bursa.NewScriptBefore(req.TimelockBefore)
+		}
+		if err == nil {
+			script, err = bursa.NewScriptAll(afterScript, beforeScript, script)
+		}
+	case req.TimelockBefore > 0:
 		script, err = bursa.NewTimelockedScript(
 			req.TimelockBefore,
 			true,
 			script,
 		)
-		if err != nil {
-			logger.Error("failed to create timelocked script", "error", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write(
-				[]byte(`{"error":"Failed to create timelocked script"}`),
-			)
-			return
-		}
-	} else if req.TimelockAfter > 0 {
+	case req.TimelockAfter > 0:
 		script, err = bursa.NewTimelockedScript(req.TimelockAfter, false, script)
-		if err != nil {
-			logger.Error("failed to create timelocked script", "error", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":"Failed to create timelocked script"}`))
-			return
-		}
+	}
+	if err != nil {
+		logger.Error("failed to create timelocked script", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"Failed to create timelocked script"}`))
+		return
 	}
 
 	// Marshal script data
