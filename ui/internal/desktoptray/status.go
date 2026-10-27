@@ -57,7 +57,10 @@ func SplitLaunchURL(launchURL string) (base, token string) {
 // session capability the endpoint requires.
 func fetchNodeStatus(ctx context.Context, client *http.Client, baseURL, token string) (nodeStatus, error) {
 	var st nodeStatus
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/status", nil)
+	// The launch URL's base ends in "/"; joining it verbatim would request
+	// //status and cost a mux redirect on every poll.
+	statusURL := strings.TrimSuffix(baseURL, "/") + "/status"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statusURL, nil)
 	if err != nil {
 		return st, err
 	}

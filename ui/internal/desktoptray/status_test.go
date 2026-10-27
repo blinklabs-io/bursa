@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 )
 
@@ -58,5 +59,38 @@ func TestFetchNodeStatusAuthenticatesAgainstFragmentFreeBase(t *testing.T) {
 
 	if _, err := fetchNodeStatus(context.Background(), srv.Client(), base, ""); err == nil {
 		t.Fatal("poll without session token must fail")
+	}
+}
+
+// The launch URL from boot is "http://host:port/#session=...", so the split base
+// ends in "/". The poll must still request /status directly rather than
+// //status, which the control-surface mux answers with a redirect.
+func TestFetchNodeStatusTrailingSlashBaseRequestsStatusDirectly(t *testing.T) {
+	const token = "tray-token"
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(sessionHeader) != token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"state":"ready","caughtUp":true}`))
+	})
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		mux.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	base, tok := SplitLaunchURL(srv.URL + "/#session=" + token)
+	st, err := fetchNodeStatus(context.Background(), srv.Client(), base, tok)
+	if err != nil {
+		t.Fatalf("fetchNodeStatus: %v (paths %q)", err, paths)
+	}
+	if !st.CaughtUp {
+		t.Fatalf("unexpected status %+v", st)
+	}
+	if !slices.Equal(paths, []string{"/status"}) {
+		t.Fatalf("requested paths %q, want exactly [/status]", paths)
 	}
 }
