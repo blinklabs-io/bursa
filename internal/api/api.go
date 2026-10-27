@@ -28,6 +28,7 @@ import (
 	"net"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -915,6 +916,28 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 	return nil
 }
 
+func validateMetricsExposure(cfg *config.Config, listener net.Listener) error {
+	address := cfg.Metrics.ListenAddress
+	if listener != nil {
+		address = listener.Addr().String()
+	}
+	if !signer.IsLoopbackListenAddress(address) {
+		return fmt.Errorf(
+			"refusing metrics listener on non-loopback address %q",
+			address,
+		)
+	}
+	return nil
+}
+
+func metricsListenAddress(cfg *config.Config) string {
+	host := strings.TrimSpace(cfg.Metrics.ListenAddress)
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
+	return net.JoinHostPort(host, strconv.FormatUint(uint64(cfg.Metrics.ListenPort), 10))
+}
+
 func configureSwaggerScheme(tlsConfigured bool) {
 	if tlsConfigured {
 		docs.SwaggerInfo.Schemes = []string{"https"}
@@ -935,7 +958,6 @@ func registerAPIHandlers(
 	}
 	// Health and documentation routes do not expose wallet material.
 	mux.HandleFunc("/healthcheck", handleHealthcheck)
-	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/swagger/", httpSwagger.WrapHandler)
 
 	protected := func(next http.Handler) http.Handler {
@@ -1051,6 +1073,9 @@ func Start(
 	if err := validateAPIExposure(cfg, apiAuth); err != nil {
 		return err
 	}
+	if err := validateMetricsExposure(cfg, metricsListener); err != nil {
+		return err
+	}
 	tlsConfigured, err := apiTLSConfigured(cfg)
 	if err != nil {
 		return err
@@ -1088,11 +1113,7 @@ func Start(
 
 	metricsServer := newHTTPServer(metricsMux)
 	if metricsListener == nil {
-		metricsServer.Addr = fmt.Sprintf(
-			"%s:%d",
-			cfg.Metrics.ListenAddress,
-			cfg.Metrics.ListenPort,
-		)
+		metricsServer.Addr = metricsListenAddress(cfg)
 	}
 
 	apiServer := newHTTPServer(mainHandler)

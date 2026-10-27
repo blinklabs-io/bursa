@@ -188,7 +188,9 @@ API listeners also require TLS.
 
 The Bursa container listens on loopback by default. A Kubernetes Service must
 set `API_LISTEN_ADDRESS` to the pod address (normally `0.0.0.0`) and preserve
-the API and metrics container/Service ports of `8080` and `8081`. When Google
+the API container/Service port of `8080`. Metrics are served only on the
+dedicated loopback listener, which defaults to `127.0.0.1:8081`; scrape it with
+a collector in the same pod. When Google
 Secret Manager persistence is enabled, the deployment must inject
 `GOOGLE_PROJECT`, `GCP_KMS_RESOURCE_ID`, and `GCP_SECRET_PREFIX`, provide
 `API_JWT_SECRET` or `API_JWKS_URL`, provide at least one

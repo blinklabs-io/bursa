@@ -53,10 +53,10 @@ kes_agent:
   # KES period below the highest already served, across restarts/clock jumps.
   guard_file: "/var/lib/bursa/kes-agent/guard.json"  # env: KESAGENT_GUARD_FILE
 
-# Optional Prometheus metrics endpoint. When port is non-zero the agent serves
-# /metrics here.
+# Optional Prometheus metrics endpoint on a dedicated loopback listener. Set
+# port to 0 to disable it. Non-loopback addresses are rejected.
 metrics:
-  address: ""                      # env: METRICS_LISTEN_ADDRESS
+  address: "127.0.0.1"             # env: METRICS_LISTEN_ADDRESS
   port: 8082                       # env: METRICS_LISTEN_PORT
 
 logging:
