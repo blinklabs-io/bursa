@@ -130,6 +130,121 @@ func useTagForTxType(txType uint) bool {
 	return txType >= ledger.TxTypeConway
 }
 
+// MaxEstimatedWitnesses bounds the witness counts EstimateWitnessedTxSize
+// accepts. It is far above anything that fits in a transaction.
+const MaxEstimatedWitnesses = 1 << 16
+
+// EstimateWitnessedTxSize returns the encoded size of txCbor once vkeyCount
+// vkey witnesses and bootstrapCount bootstrap witnesses are added to its
+// witness set. It encodes placeholder witnesses of the real sizes, so the
+// result includes the witness-set map key, the tag-258 set framing used from
+// Conway on, array header growth, and any witnesses already present. The era is
+// inferred from the CBOR; CBOR that is also valid before Conway is treated as
+// Conway, which can only overstate the size. Bootstrap witnesses are sized with
+// empty address attributes.
+func EstimateWitnessedTxSize(txCbor []byte, vkeyCount, bootstrapCount uint) (int, error) {
+	if vkeyCount > MaxEstimatedWitnesses || bootstrapCount > MaxEstimatedWitnesses {
+		return 0, fmt.Errorf("witness count exceeds %d", MaxEstimatedWitnesses)
+	}
+	if vkeyCount == 0 && bootstrapCount == 0 {
+		return len(txCbor), nil
+	}
+	txType, err := ledger.DetermineTransactionType(txCbor)
+	if err != nil {
+		return 0, fmt.Errorf("failed to determine transaction era: %w", err)
+	}
+	var arr []cbor.RawMessage
+	if _, err := cbor.Decode(txCbor, &arr); err != nil {
+		return 0, fmt.Errorf("failed to decode transaction array: %w", err)
+	}
+	if len(arr) < 2 {
+		return 0, fmt.Errorf("unexpected transaction shape: %d elements", len(arr))
+	}
+	ws := map[uint64]cbor.RawMessage{}
+	if len(arr[1]) > 0 {
+		if _, err := cbor.Decode(arr[1], &ws); err != nil {
+			return 0, fmt.Errorf("failed to decode witness set: %w", err)
+		}
+	}
+	useTag := useTagForTxType(txType)
+	for _, add := range []struct {
+		key         uint64
+		count       uint
+		placeholder any
+	}{
+		{
+			key:   0,
+			count: vkeyCount,
+			placeholder: lcommon.VkeyWitness{
+				Vkey:      make([]byte, ed25519.PublicKeySize),
+				Signature: make([]byte, ed25519.SignatureSize),
+			},
+		},
+		{
+			key:   2,
+			count: bootstrapCount,
+			placeholder: lcommon.BootstrapWitness{
+				PublicKey:  make([]byte, ed25519.PublicKeySize),
+				Signature:  make([]byte, ed25519.SignatureSize),
+				ChainCode:  make([]byte, 32),
+				Attributes: []byte{},
+			},
+		},
+	} {
+		if add.count == 0 {
+			continue
+		}
+		field, err := appendWitnessPlaceholders(ws[add.key], add.placeholder, add.count, useTag)
+		if err != nil {
+			return 0, err
+		}
+		ws[add.key] = field
+	}
+	wsBytes, err := cbor.Encode(ws)
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode witness set: %w", err)
+	}
+	arr[1] = cbor.RawMessage(wsBytes)
+	out, err := cbor.Encode(arr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode witnessed transaction: %w", err)
+	}
+	return len(out), nil
+}
+
+// appendWitnessPlaceholders appends count copies of placeholder to a
+// witness-set field, keeping its tag-258 form if it already has one.
+func appendWitnessPlaceholders(raw []byte, placeholder any, count uint, useTag bool) ([]byte, error) {
+	var items []cbor.RawMessage
+	if len(raw) > 0 {
+		content := raw
+		var tag cbor.RawTag
+		if _, err := cbor.Decode(raw, &tag); err == nil {
+			if tag.Number != cbor.CborTagSet {
+				return nil, fmt.Errorf("unexpected CBOR tag %d on witnesses", tag.Number)
+			}
+			content = []byte(tag.Content)
+			useTag = true
+		}
+		if _, err := cbor.Decode(content, &items); err != nil {
+			return nil, fmt.Errorf("failed to decode witnesses: %w", err)
+		}
+	}
+	item, err := cbor.Encode(placeholder)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode placeholder witness: %w", err)
+	}
+	for range count {
+		items = append(items, cbor.RawMessage(item))
+	}
+	st := cbor.NewSetType[cbor.RawMessage](items, useTag)
+	out, err := st.MarshalCBOR()
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode witnesses: %w", err)
+	}
+	return out, nil
+}
+
 // ErrSignatureVerification indicates a freshly produced signature failed to
 // verify against its own public key. With correct key material and an intact
 // signing routine this can never happen, so it signals memory corruption, a

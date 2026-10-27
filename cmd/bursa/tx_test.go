@@ -89,13 +89,13 @@ func TestTxDecodeMinFeeWitnessEstimate(t *testing.T) {
 		{
 			name:        "additional vkey witnesses",
 			args:        []string{"--witness-count", "4"},
-			addedBytes:  4 * 102,
+			addedBytes:  5 + 4*101,
 			witnessNote: "4 additional vkey witnesses",
 		},
 		{
 			name:        "additional bootstrap witnesses",
 			args:        []string{"--byron-witness-count", "2"},
-			addedBytes:  2 * 139,
+			addedBytes:  5 + 2*136,
 			witnessNote: "2 additional bootstrap witnesses",
 		},
 	} {

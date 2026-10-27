@@ -145,36 +145,6 @@ func RunTxId(txFile string) error {
 	return nil
 }
 
-// Per-witness estimates include per-element witness-set framing in addition to
-// the encoded witness itself (101 bytes for vkey and 136 bytes for bootstrap).
-const (
-	vkeyWitnessSizeEstimate      = 102
-	bootstrapWitnessSizeEstimate = 139
-)
-
-func estimateMinFeeSize(sizeBytes int, witnessCount, byronWitnessCount uint) (int, error) {
-	if sizeBytes < 0 {
-		return 0, fmt.Errorf("negative transaction size %d", sizeBytes)
-	}
-	maxInt := uint64(^uint(0) >> 1)
-	estimated := uint64(sizeBytes) //nolint:gosec // checked non-negative
-	for _, adjustment := range []struct {
-		name  string
-		count uint
-		size  uint64
-	}{
-		{name: "vkey", count: witnessCount, size: vkeyWitnessSizeEstimate},
-		{name: "bootstrap", count: byronWitnessCount, size: bootstrapWitnessSizeEstimate},
-	} {
-		count := uint64(adjustment.count)
-		if count > (maxInt-estimated)/adjustment.size {
-			return 0, fmt.Errorf("%s witness count %d overflows transaction size", adjustment.name, adjustment.count)
-		}
-		estimated += count * adjustment.size
-	}
-	return int(estimated), nil //nolint:gosec // bounded by maxInt above
-}
-
 func RunTxDecode(txFile, protocolParamsFile string, witnessCount, byronWitnessCount uint) error {
 	txBytes, err := bursa.ReadCborInputFile(txFile)
 	if err != nil {
@@ -199,7 +169,7 @@ func RunTxDecode(txFile, protocolParamsFile string, witnessCount, byronWitnessCo
 		if err != nil {
 			return err
 		}
-		estimatedSize, err := estimateMinFeeSize(insp.SizeBytes, witnessCount, byronWitnessCount)
+		estimatedSize, err := bursa.EstimateWitnessedTxSize(txBytes, witnessCount, byronWitnessCount)
 		if err != nil {
 			return fmt.Errorf("calculate minimum fee: %w", err)
 		}
