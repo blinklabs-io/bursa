@@ -213,13 +213,14 @@ type Activity interface {
 }
 
 type handlerOptions struct {
-	legacy         LegacyKeystore
-	connector      *connector.Service
-	nfts           NFTs
-	diagnostics    Diagnostics
-	migrateScripts ScriptMigrator
-	activity       Activity
-	surveys        Surveys
+	legacy          LegacyKeystore
+	connector       *connector.Service
+	nfts            NFTs
+	diagnostics     Diagnostics
+	migrateScripts  ScriptMigrator
+	activity        Activity
+	surveys         Surveys
+	autoLockRuntime autoLockRuntime
 }
 
 // ScriptMigrator moves saved multi-signature accounts out of the standalone
@@ -277,6 +278,19 @@ func WithSurveys(sv Surveys) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.surveys = sv }
 }
 
+// Handler serves the wallet control surface and owns its server-side vault
+// idle deadline.
+type Handler struct {
+	http.Handler
+	autoLock *autoLockController
+}
+
+// CheckAutoLock expires an idle deadline that elapsed while the process was
+// suspended. Mobile lifecycle callbacks call this on foreground resume.
+func (h *Handler) CheckAutoLock() {
+	h.autoLock.Check()
+}
+
 // SettingsController is the user-facing app-settings surface. It exposes the
 // persisted lean-node (history-expiry) profile and whether a node restart is
 // still needed for the persisted value to take effect (history expiry is a
@@ -291,9 +305,9 @@ type SettingsController interface {
 	// change has not taken effect yet).
 	HistoryExpiryRestartRequired() bool
 	// AutoLockMinutes reports the persisted idle auto-lock timeout in minutes;
-	// 0 means "Off" (auto-lock disabled). It is a pure client-side/UI setting —
-	// no node behaviour depends on it — so unlike history-expiry it never needs
-	// a restart to take effect.
+	// 0 means "Off" (auto-lock disabled). The control surface owns enforcement;
+	// no node behaviour depends on it, so unlike history-expiry it never needs a
+	// restart to take effect.
 	AutoLockMinutes() int
 	// SetAutoLockMinutes persists the idle auto-lock timeout. It rejects any
 	// value outside the offered set (see settings.AutoLockOptions).
@@ -622,7 +636,7 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // the native multi-signature surface (may be nil, in which case the multi-sig
 // routes are not registered). spa is the embedded SPA, registered as the
 // catch-all so the specific API routes take precedence on the mux.
-func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cb Contacts, lookup NodeLookup, po PoolOps, dx DexQuoter, ms MultiSig, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cb Contacts, lookup NodeLookup, po PoolOps, dx DexQuoter, ms MultiSig, network string, spa http.Handler, opts ...HandlerOption) *Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -709,6 +723,11 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 			cfg.activity.SetActive("")
 		}
 	}
+	autoLockRuntime := cfg.autoLockRuntime
+	if autoLockRuntime.now == nil || autoLockRuntime.afterFunc == nil {
+		autoLockRuntime = defaultAutoLockRuntime()
+	}
+	autoLock := newAutoLockController(vlt, settings, clearActive, autoLockRuntime)
 	legacyAvailable := func() bool {
 		return !vlt.Exists() && cfg.legacy != nil && cfg.legacy.Exists()
 	}
@@ -740,6 +759,7 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 			return
 		}
 		clearActive()
+		autoLock.Arm()
 		writeJSON(w, http.StatusOK, vaultStatus{Exists: true, Locked: false, WalletCount: 0})
 	})
 
@@ -769,10 +789,22 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 		if active, err := vlt.Active(); err == nil {
 			bindActive(active)
 		}
+		autoLock.Arm()
 		writeJSON(w, http.StatusOK, walletList(wallets, vlt))
 	})
 
+	mux.HandleFunc("POST /vault/activity", func(w http.ResponseWriter, _ *http.Request) {
+		if !autoLock.Activity() {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "vault is locked"})
+			return
+		}
+		writeJSON(w, http.StatusOK, vaultStatus{
+			Exists: vlt.Exists(), Locked: vlt.Locked(), WalletCount: vlt.WalletCount(),
+		})
+	})
+
 	mux.HandleFunc("POST /vault/lock", func(w http.ResponseWriter, _ *http.Request) {
+		autoLock.Stop()
 		vlt.Lock()
 		clearActive()
 		writeJSON(w, http.StatusOK, vaultStatus{
@@ -878,6 +910,7 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 			return
 		}
 		bindActive(meta)
+		autoLock.Arm()
 		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
 	})
 
@@ -920,12 +953,13 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
 	})
 
-	// GET /wallet/mnemonic/generate returns a freshly generated 24-word BIP39
+	// POST /wallet/mnemonic/generate returns a freshly generated 24-word BIP39
 	// mnemonic (256-bit entropy). The phrase is generated server-side so the
-	// client never handles raw entropy. This endpoint is ungated — it needs
-	// neither a running node nor an unlocked vault, and is loopback-only so there
-	// is no risk of the phrase leaking over the network.
-	mux.HandleFunc("GET /wallet/mnemonic/generate", func(w http.ResponseWriter, _ *http.Request) {
+	// client never handles raw entropy. The endpoint is ungated because generation
+	// needs neither a running node nor an unlocked vault. Its response must remain
+	// non-cacheable because the phrase is a wallet recovery secret.
+	mux.HandleFunc("POST /wallet/mnemonic/generate", func(w http.ResponseWriter, _ *http.Request) {
+		setSecretResponseHeaders(w)
 		m, err := bursa.GenerateMnemonic()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errBody(err))
@@ -1303,9 +1337,9 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	})
 
 	// App settings: the idle auto-lock timeout. Ungated for the same reason as
-	// history-expiry — it is a local UI preference, not a node query. Unlike
-	// history-expiry it takes effect immediately (the frontend's idle timer
-	// reads it directly), so there is no restart_required field.
+	// history-expiry — it is a local wallet preference, not a node query. Unlike
+	// history-expiry it takes effect immediately on the server-owned deadline,
+	// so there is no restart_required field.
 	mux.HandleFunc("GET /wallet/settings/auto-lock", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]int{"minutes": settings.AutoLockMinutes()})
 	})
@@ -1329,6 +1363,7 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 			writeJSON(w, http.StatusInternalServerError, errBody(err))
 			return
 		}
+		autoLock.Arm()
 		writeJSON(w, http.StatusOK, map[string]int{"minutes": settings.AutoLockMinutes()})
 	})
 
@@ -1730,7 +1765,10 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	// Wrap the whole mux in the same-origin / DNS-rebind guard. The /vault/* and
 	// /wallet/* routes register directly on the mux with no per-handler origin
 	// check, so this middleware is the single point that enforces it for them.
-	return sessionGuard(sessionToken, sameOriginGuard(limitRequestBody(mux)))
+	return &Handler{
+		Handler:  sessionGuard(sessionToken, sameOriginGuard(limitRequestBody(mux))),
+		autoLock: autoLock,
+	}
 }
 
 // limitRequestBody applies the request-body limit at the mux boundary. The
@@ -2585,6 +2623,12 @@ func serveNFT[T any](w http.ResponseWriter, v T, err error) {
 
 func errBody(err error) map[string]string {
 	return map[string]string{"error": err.Error()}
+}
+
+func setSecretResponseHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

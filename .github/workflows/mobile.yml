@@ -23,11 +23,14 @@ jobs:
   # A tag build produces the distributable pair — a signed release APK and a
   # signed AAB — and attaches them to the draft release. Any other trigger
   # produces the unsigned debug APK, which needs no signing material.
+  # The release-signing environment permits only main and v*.*.* tags, so a
+  # branch-selected workflow cannot start this signing-capable job.
   android:
     name: android
     # Temporarily disabled: enable only when BURSA_ANDROID_ENABLED is true.
     if: ${{ vars.BURSA_ANDROID_ENABLED == 'true' }}
     runs-on: ubuntu-latest
+    environment: release-signing
     permissions:
       # attestations + id-token are what actions/attest needs; contents:write
       # is for attaching the artifacts to the draft release.

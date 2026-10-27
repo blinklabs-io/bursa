@@ -34,7 +34,7 @@ import (
 type SignRequest struct {
 	Type    string   `json:"type"`    // "tx" | "cip8" | "opcert"
 	Cbor    string   `json:"cbor"`    // tx: hex CBOR or JSON envelope
-	Signers []string `json:"signers"` // tx: key hashes / addresses
+	Signers []string `json:"signers"` // tx: distinct resolved key hashes / addresses, subject to the signer limit
 	Payload string   `json:"payload"` // cip8: hex
 	Address string   `json:"address"` // cip8: bech32
 	Key     string   `json:"key"`     // cip8 + opcert: cold/signing key hash
@@ -188,14 +188,18 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Type {
 	case "tx":
+		resolvedSigners, err := signer.ValidateSignerList(req.Signers)
+		if err != nil {
+			s.audit(r, caller, "tx", "bad_request", "audit_id", auditID, "signer_count", len(req.Signers), "error", err.Error())
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		signers := req.Signers
 		var aclDenied []signer.SignerError
 		if s.acl.Restricted() {
 			signers = make([]string, 0, len(req.Signers))
-			for _, sg := range req.Signers {
-				// Must stay consistent with the coordinator's own ResolveSigner resolution.
-				h, err := signer.ResolveSigner(sg)
-				if err == nil && !s.acl.Allows(caller, h) {
+			for i, sg := range req.Signers {
+				if !s.acl.Allows(caller, resolvedSigners[i]) {
 					// Sign-path ACL denials are counted; list/get-key filtering is view filtering, not a deny event.
 					s.coord.Metrics().ObserveDeny("acl")
 					aclDenied = append(aclDenied, signer.SignerError{
@@ -203,11 +207,10 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 					})
 					continue
 				}
-				// Unresolvable signers fall through; the coordinator reports them.
 				signers = append(signers, sg)
 			}
 			if len(signers) == 0 && len(aclDenied) > 0 {
-				s.audit(r, caller, "tx", "denied", "audit_id", auditID, "signers", req.Signers, "reason", "caller ACL")
+				s.audit(r, caller, "tx", "denied", "audit_id", auditID, "signer_count", len(req.Signers), "reason", "caller ACL")
 				writeJSON(w, http.StatusForbidden, SignTxResponse{AuditID: auditID, Errors: aclDenied})
 				return
 			}
@@ -217,7 +220,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		res, perr, err := s.coord.SignTx(signer.WithCaller(r.Context(), caller), []byte(req.Cbor), signers)
 		if err != nil {
 			if signer.IsBadRequest(err) {
-				s.audit(r, caller, "tx", "bad_request", "audit_id", auditID, "signers", req.Signers, "error", err.Error())
+				s.audit(r, caller, "tx", "bad_request", "audit_id", auditID, "signer_count", len(req.Signers), "error", err.Error())
 				writeErr(w, http.StatusBadRequest, err.Error())
 				return
 			}
@@ -227,7 +230,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 				"audit_id", auditID,
 				"error", err,
 			)
-			s.audit(r, caller, "tx", "error", "audit_id", auditID, "signers", req.Signers)
+			s.audit(r, caller, "tx", "error", "audit_id", auditID, "signer_count", len(req.Signers))
 			writeErr(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
@@ -254,7 +257,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 				"tx_id", res.TxID,
 				"errors", allErrs,
 			)
-			s.audit(r, caller, "tx", string(primary.Code), "audit_id", auditID, "tx_id", res.TxID, "signers", req.Signers, "signer_errors", len(allErrs))
+			s.audit(r, caller, "tx", string(primary.Code), "audit_id", auditID, "tx_id", res.TxID, "signer_count", len(req.Signers), "signer_errors", len(allErrs))
 			writeJSON(w, st, SignTxResponse{AuditID: auditID, TxID: res.TxID, Errors: masked})
 			return
 		}

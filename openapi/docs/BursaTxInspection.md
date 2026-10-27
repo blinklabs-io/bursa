@@ -5,6 +5,8 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **CertificateCount** | Pointer to **int32** |  | [optional]
+**CollateralInputs** | Pointer to [**[]BursaTxInput**](BursaTxInput.md) |  | [optional]
+**CollateralReturn** | Pointer to [**BursaTxOutput**](BursaTxOutput.md) |  | [optional]
 **Era** | Pointer to **string** |  | [optional]
 **Fee** | Pointer to **string** |  | [optional]
 **HasMetadata** | Pointer to **bool** |  | [optional]
@@ -17,6 +19,7 @@ Name | Type | Description | Notes
 **ProposalProcedureCount** | Pointer to **int32** |  | [optional]
 **RequiredSigners** | Pointer to **int32** |  | [optional]
 **SizeBytes** | Pointer to **int32** |  | [optional]
+**TotalCollateral** | Pointer to **string** |  | [optional]
 **Ttl** | Pointer to **int32** |  | [optional]
 **TxId** | Pointer to **string** |  | [optional]
 **ValidityIntervalStart** | Pointer to **int32** |  | [optional]
@@ -67,6 +70,56 @@ SetCertificateCount sets CertificateCount field to given value.
 `func (o *BursaTxInspection) HasCertificateCount() bool`
 
 HasCertificateCount returns a boolean if a field has been set.
+
+### GetCollateralInputs
+
+`func (o *BursaTxInspection) GetCollateralInputs() []BursaTxInput`
+
+GetCollateralInputs returns the CollateralInputs field if non-nil, zero value otherwise.
+
+### GetCollateralInputsOk
+
+`func (o *BursaTxInspection) GetCollateralInputsOk() (*[]BursaTxInput, bool)`
+
+GetCollateralInputsOk returns a tuple with the CollateralInputs field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCollateralInputs
+
+`func (o *BursaTxInspection) SetCollateralInputs(v []BursaTxInput)`
+
+SetCollateralInputs sets CollateralInputs field to given value.
+
+### HasCollateralInputs
+
+`func (o *BursaTxInspection) HasCollateralInputs() bool`
+
+HasCollateralInputs returns a boolean if a field has been set.
+
+### GetCollateralReturn
+
+`func (o *BursaTxInspection) GetCollateralReturn() BursaTxOutput`
+
+GetCollateralReturn returns the CollateralReturn field if non-nil, zero value otherwise.
+
+### GetCollateralReturnOk
+
+`func (o *BursaTxInspection) GetCollateralReturnOk() (*BursaTxOutput, bool)`
+
+GetCollateralReturnOk returns a tuple with the CollateralReturn field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCollateralReturn
+
+`func (o *BursaTxInspection) SetCollateralReturn(v BursaTxOutput)`
+
+SetCollateralReturn sets CollateralReturn field to given value.
+
+### HasCollateralReturn
+
+`func (o *BursaTxInspection) HasCollateralReturn() bool`
+
+HasCollateralReturn returns a boolean if a field has been set.
 
 ### GetEra
 
@@ -367,6 +420,31 @@ SetSizeBytes sets SizeBytes field to given value.
 `func (o *BursaTxInspection) HasSizeBytes() bool`
 
 HasSizeBytes returns a boolean if a field has been set.
+
+### GetTotalCollateral
+
+`func (o *BursaTxInspection) GetTotalCollateral() string`
+
+GetTotalCollateral returns the TotalCollateral field if non-nil, zero value otherwise.
+
+### GetTotalCollateralOk
+
+`func (o *BursaTxInspection) GetTotalCollateralOk() (*string, bool)`
+
+GetTotalCollateralOk returns a tuple with the TotalCollateral field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetTotalCollateral
+
+`func (o *BursaTxInspection) SetTotalCollateral(v string)`
+
+SetTotalCollateral sets TotalCollateral field to given value.
+
+### HasTotalCollateral
+
+`func (o *BursaTxInspection) HasTotalCollateral() bool`
+
+HasTotalCollateral returns a boolean if a field has been set.
 
 ### GetTtl
 

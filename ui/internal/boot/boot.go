@@ -222,6 +222,7 @@ type Config struct {
 // drive.
 type App struct {
 	srv          *http.Server
+	handler      interface{ CheckAutoLock() }
 	listener     net.Listener
 	sup          *supervisor.Supervisor
 	nft          *nft.Service
@@ -517,18 +518,19 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	if nftSvc != nil {
 		handlerOpts = append(handlerOpts, api.WithNFTs(nftSvc))
 	}
+	handler := api.NewHandler(
+		sessionToken,
+		sup, vlt, walletSvc, spendSvc,
+		&settingsController{store: settingsStore, sup: sup},
+		contactsStore,
+		chainClient,
+		poolSvc,
+		dexSvc,
+		multisigSvc,
+		cfg.Network, webui.Handler(), handlerOpts...,
+	)
 	srv := &http.Server{
-		Handler: api.NewHandler(
-			sessionToken,
-			sup, vlt, walletSvc, spendSvc,
-			&settingsController{store: settingsStore, sup: sup},
-			contactsStore,
-			chainClient,
-			poolSvc,
-			dexSvc,
-			multisigSvc,
-			cfg.Network, webui.Handler(), handlerOpts...,
-		),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -544,6 +546,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 
 	return &App{
 		srv:          srv,
+		handler:      handler,
 		listener:     listener,
 		sup:          sup,
 		nft:          nftSvc,
@@ -617,6 +620,12 @@ func (a *App) OnNetworkChanged() error {
 //
 // It is a safe no-op when called before Boot or after Stop.
 func (a *App) OnResume() error {
+	if a.stopped.Load() != 0 {
+		return nil
+	}
+	if a.handler != nil {
+		a.handler.CheckAutoLock()
+	}
 	return a.reconnect()
 }
 
@@ -662,8 +671,8 @@ func (c *settingsController) HistoryExpiryRestartRequired() bool {
 }
 
 // AutoLockMinutes and SetAutoLockMinutes pass straight through to the
-// persisted settings store: unlike history-expiry, the idle auto-lock timeout
-// is pure frontend behaviour with no node-construction dependency.
+// persisted settings store. The control surface applies changes immediately to
+// its server-owned idle deadline, with no node-construction dependency.
 func (c *settingsController) AutoLockMinutes() int { return c.store.AutoLockMinutes() }
 
 func (c *settingsController) SetAutoLockMinutes(minutes int) error {

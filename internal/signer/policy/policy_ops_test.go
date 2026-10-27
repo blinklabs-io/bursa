@@ -189,6 +189,24 @@ func TestEvaluateTx_CallerOverrideNarrows(t *testing.T) {
 	}
 }
 
+func TestEvaluateTx_CallerOverrideNarrowsCollateral(t *testing.T) {
+	base := KeyPolicy{
+		AllowedRequests: []string{"tx"},
+		Tx:              &TxPolicy{MaxFeeAda: 10},
+	}
+	e, h := buildEngineWithOverride(t, base, "bob", &CallerTxOverride{MaxFeeAda: 2})
+	insp := &bursa.TxInspection{
+		CollateralInputs: []bursa.TxInput{{}},
+		TotalCollateral:  "3000000",
+	}
+	if decision := e.EvaluateTx(h, insp, WithCaller("bob")); decision.Allow {
+		t.Fatal("caller override must apply max_fee_ada to total collateral")
+	}
+	if decision := e.EvaluateTx(h, insp, WithCaller("alice")); !decision.Allow {
+		t.Fatalf("base policy should allow bounded collateral: %s", decision.Reason)
+	}
+}
+
 func TestEvaluateTx_CallerOverrideCannotWiden(t *testing.T) {
 	// Base policy denies certificates entirely.
 	base := KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}}

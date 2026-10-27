@@ -3910,6 +3910,67 @@ func TestScriptValidationSlotIsNotHeldWhileReadingTheBody(t *testing.T) {
 	close(release)
 }
 
+func TestScriptValidationBodyReadsAreAdmissionLimited(t *testing.T) {
+	handler := boundedScriptValidation(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	done := make(chan int, maxConcurrentScriptValidations+1)
+	bodies := make([]*retainingBody, 0, maxConcurrentScriptValidations)
+
+	for range maxConcurrentScriptValidations {
+		body := newRetainingBody()
+		bodies = append(bodies, body)
+		go func() {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/script/validate", body))
+			done <- rec.Code
+		}()
+		select {
+		case <-body.started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("body reader did not start")
+		}
+	}
+
+	extra := newRetainingBody()
+	go func() {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/script/validate", extra))
+		done <- rec.Code
+	}()
+
+	extraRead := false
+	remaining := maxConcurrentScriptValidations
+	select {
+	case <-extra.started:
+		extraRead = true
+		remaining++
+	case status := <-done:
+		if status != http.StatusServiceUnavailable {
+			t.Fatalf("overflow status = %d, want %d", status, http.StatusServiceUnavailable)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("overflow request neither started reading nor returned")
+	}
+
+	for _, body := range bodies {
+		body.fail()
+	}
+	if extraRead {
+		extra.fail()
+	}
+	for range remaining {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("body reader did not finish")
+		}
+	}
+	if extraRead {
+		t.Fatal("a request body was read after all body admission slots were occupied")
+	}
+}
+
 // stallingBody delivers nothing until fail() is called, standing in for a
 // client that has sent headers and then stopped.
 type stallingBody struct {
@@ -3928,8 +3989,49 @@ func (b *stallingBody) Close() error { return nil }
 
 func (b *stallingBody) fail() { close(b.release) }
 
+// retainingBody delivers almost the full request limit, then blocks before
+// EOF so io.ReadAll retains the allocated buffer until fail is called.
+type retainingBody struct {
+	remaining int
+	started   chan struct{}
+	release   chan struct{}
+	startOnce sync.Once
+}
+
+func newRetainingBody() *retainingBody {
+	return &retainingBody{
+		remaining: maxRequestBodyBytes - 1,
+		started:   make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+}
+
+func (b *retainingBody) Read(p []byte) (int, error) {
+	if b.remaining > 0 {
+		n := min(len(p), b.remaining)
+		for i := range n {
+			p[i] = ' '
+		}
+		b.remaining -= n
+		return n, nil
+	}
+	b.startOnce.Do(func() { close(b.started) })
+	<-b.release
+	return 0, errors.New("client went away")
+}
+
+func (b *retainingBody) Close() error { return nil }
+
+func (b *retainingBody) fail() { close(b.release) }
+
 // A listener that fails its first Accept, so the serving goroutine reports a
 // real error rather than the closure http.Server recognises.
+//
+// failed closes on the first Close. http.Server.Serve closes its listener only
+// after it has already classified the Accept error, so closure means the
+// serving error is decided and cannot be reclassified as ErrServerClosed by a
+// Shutdown that starts afterwards. Closing from Accept instead would let a
+// cancellation land before that classification.
 type failingListener struct {
 	net.Listener
 	failed  chan struct{}
@@ -3938,8 +4040,12 @@ type failingListener struct {
 }
 
 func (l *failingListener) Accept() (net.Conn, error) {
-	l.once.Do(func() { close(l.failed) })
 	return nil, l.failErr
+}
+
+func (l *failingListener) Close() error {
+	l.once.Do(func() { close(l.failed) })
+	return l.Listener.Close()
 }
 
 // A serving error and a cancelled context can be ready at the same moment, and
@@ -3990,9 +4096,9 @@ func TestStartReportsServingErrorRacingCancellation(t *testing.T) {
 			result <- Start(ctx, cfg, apiListener, metricsListener)
 		}()
 
-		// Cancel only once the serving error is on its way, so both cases of
-		// the select are ready and the choice between them is the one under
-		// test.
+		// Cancel only once the serving error is decided, so it is either already
+		// queued or about to be, and Start must report it on either branch of
+		// its select.
 		select {
 		case <-apiListener.failed:
 		case <-time.After(5 * time.Second):

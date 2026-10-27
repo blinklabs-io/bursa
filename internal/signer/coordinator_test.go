@@ -17,6 +17,8 @@ package signer
 import (
 	"context"
 	"crypto/ed25519"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
@@ -48,6 +50,24 @@ func (f fakeCardano) Assemble([]byte, []lcommon.VkeyWitness) ([]byte, error) {
 // Verify fakeCardano implements operation.Cardano.
 var _ operation.Cardano = fakeCardano{}
 
+type panicCardano struct{}
+
+func (panicCardano) Inspect([]byte) (*bursa.TxInspection, error) {
+	panic("Inspect called for rejected signer list")
+}
+
+func (panicCardano) Operations([]byte) (policy.TxOps, error) {
+	panic("Operations called for rejected signer list")
+}
+
+func (panicCardano) TxID([]byte) ([]byte, error) {
+	panic("TxID called for rejected signer list")
+}
+
+func (panicCardano) Assemble([]byte, []lcommon.VkeyWitness) ([]byte, error) {
+	panic("Assemble called for rejected signer list")
+}
+
 type fakeKey struct {
 	pub     ed25519.PublicKey
 	priv    ed25519.PrivateKey
@@ -64,8 +84,8 @@ func (k *fakeKey) Type() backend.KeyType {
 	}
 	return backend.KeyTypePayment
 }
-func (k *fakeKey) Extended() bool               { return false }
-func (k *fakeKey) Backend() string              { return "fake" }
+func (k *fakeKey) Extended() bool  { return false }
+func (k *fakeKey) Backend() string { return "fake" }
 func (k *fakeKey) Sign(_ context.Context, d []byte) ([]byte, error) {
 	if k.signErr != nil {
 		return nil, k.signErr
@@ -278,6 +298,60 @@ func TestResolveSigner_Address(t *testing.T) {
 			t.Fatal("expected error for garbage signer string, got nil")
 		}
 	})
+}
+
+func TestValidateSignerListAcceptsCardanoEnvelopeLimit(t *testing.T) {
+	signers := make([]string, MaxTxSigners)
+	for i := range signers {
+		var hash backend.KeyHash
+		hash[len(hash)-1] = byte(i + 1)
+		signers[i] = hash.String()
+	}
+
+	resolved, err := ValidateSignerList(signers)
+	if err != nil {
+		t.Fatalf("ValidateSignerList: %v", err)
+	}
+	if len(resolved) != MaxTxSigners {
+		t.Fatalf("resolved signer count = %d, want %d", len(resolved), MaxTxSigners)
+	}
+}
+
+func TestSignTxRejectsInvalidSignerListsBeforeCardanoWork(t *testing.T) {
+	key := newFakeKey(t)
+	coord, _ := newCoordinator(
+		t,
+		key,
+		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
+		watermark.NewMemWatermark(),
+		panicCardano{},
+	)
+	oversized := make([]string, MaxTxSigners+1)
+	for i := range oversized {
+		oversized[i] = key.hash.String()
+	}
+
+	tests := []struct {
+		name        string
+		signers     []string
+		wantErrPart string
+	}{
+		{name: "too many", signers: oversized, wantErrPart: fmt.Sprintf("at most %d signers", MaxTxSigners)},
+		{name: "duplicate", signers: []string{key.hash.String(), key.hash.String()}, wantErrPart: "duplicate signer"},
+		{name: "invalid", signers: []string{"not-a-signer"}, wantErrPart: "invalid signer"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := coord.SignTx(t.Context(), []byte("not-cbor"), tt.signers)
+			if err == nil || !IsBadRequest(err) {
+				t.Fatalf("SignTx error = %v, want bad request", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantErrPart) {
+				t.Fatalf("SignTx error = %q, want substring %q", err, tt.wantErrPart)
+			}
+		})
+	}
 }
 
 // TestSignTx_WatermarkModes verifies ModeOff (watermark never consulted) and

@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	bursa "github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
@@ -453,6 +454,42 @@ type fakeSettings struct {
 	setNotificationsErr    error
 	setNotificationsCalled bool
 	setNotificationsWith   bool
+}
+
+type fakeAutoLockTimer struct {
+	stopped bool
+	f       func()
+}
+
+func (t *fakeAutoLockTimer) Stop() bool {
+	wasActive := !t.stopped
+	t.stopped = true
+	return wasActive
+}
+
+func (t *fakeAutoLockTimer) Fire() {
+	if !t.stopped {
+		t.stopped = true
+		t.f()
+	}
+}
+
+type fakeAutoLockClock struct {
+	now       time.Time
+	durations []time.Duration
+	timers    []*fakeAutoLockTimer
+}
+
+func (c *fakeAutoLockClock) runtime() autoLockRuntime {
+	return autoLockRuntime{
+		now: func() time.Time { return c.now },
+		afterFunc: func(d time.Duration, f func()) autoLockTimer {
+			timer := &fakeAutoLockTimer{f: f}
+			c.durations = append(c.durations, d)
+			c.timers = append(c.timers, timer)
+			return timer
+		},
+	}
 }
 
 func (f *fakeSettings) HistoryExpiry() bool { return f.enabled }
@@ -1606,9 +1643,18 @@ func TestAddWalletInvalidMnemonicBadRequest(t *testing.T) {
 func TestGenerateMnemonic(t *testing.T) {
 	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/mnemonic/generate", nil))
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/mnemonic/generate", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /wallet/mnemonic/generate = %d, want 200", rec.Code)
+		t.Fatalf("POST /wallet/mnemonic/generate = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got := rec.Header().Get("Pragma"); got != "no-cache" {
+		t.Fatalf("Pragma = %q, want no-cache", got)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
 	}
 	var body struct {
 		Mnemonic string `json:"mnemonic"`
@@ -3097,6 +3143,144 @@ func TestPutAutoLockPersistError(t *testing.T) {
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/auto-lock", body))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("PUT auto-lock with persist error = %d, want 500", rec.Code)
+	}
+}
+
+func TestAutoLockDeadlineSurvivesStatusReloadAndMobileSuspend(t *testing.T) {
+	clock := &fakeAutoLockClock{now: time.Unix(1_000, 0)}
+	fv := &fakeVault{
+		exists:  true,
+		locked:  true,
+		wallets: []vault.WalletMeta{{ID: "w1", Account: sampleAccount("preview")}},
+	}
+	fw := &fakeWallet{}
+	sp := &fakeSpender{}
+	set := &fakeSettings{autoLockMinutes: 1}
+	h := NewHandler(
+		testSessionToken,
+		fakeStatuser{}, fv, fw, sp, set, &fakeContacts{}, nil,
+		&fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(),
+		withAutoLockRuntime(clock.runtime()),
+	)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/unlock", strings.NewReader(`{"password":"vault-password-xyz"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /vault/unlock = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(clock.timers) != 1 || clock.durations[0] != time.Minute {
+		t.Fatalf("unlock timers = %d durations = %v, want one 1m timer", len(clock.timers), clock.durations)
+	}
+
+	// A UI reload fetches status and loses all browser timer state. It must not
+	// replace or cancel the server deadline attached to the decrypted vault.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/vault/status", nil))
+	if rec.Code != http.StatusOK || len(clock.timers) != 1 {
+		t.Fatalf("GET /vault/status = %d timers = %d, want 200 and original timer", rec.Code, len(clock.timers))
+	}
+
+	// Mobile runtimes can suspend Go timers. The foreground lifecycle check uses
+	// wall time and must expire the vault before reconnecting the node.
+	clock.now = clock.now.Add(time.Minute)
+	h.CheckAutoLock()
+	if !fv.Locked() {
+		t.Fatal("vault remained unlocked after its wall-clock idle deadline")
+	}
+	if fw.set || sp.set {
+		t.Fatalf("active services remained bound after auto-lock: wallet=%v spender=%v", fw.set, sp.set)
+	}
+}
+
+func TestVaultActivityReplacesServerAutoLockDeadline(t *testing.T) {
+	clock := &fakeAutoLockClock{now: time.Unix(2_000, 0)}
+	fv := &fakeVault{
+		exists:  true,
+		locked:  true,
+		wallets: []vault.WalletMeta{{ID: "w1", Account: sampleAccount("preview")}},
+	}
+	h := NewHandler(
+		testSessionToken,
+		fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{},
+		&fakeSettings{autoLockMinutes: 1}, &fakeContacts{}, nil,
+		&fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(),
+		withAutoLockRuntime(clock.runtime()),
+	)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/unlock", strings.NewReader(`{"password":"vault-password-xyz"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /vault/unlock = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	clock.now = clock.now.Add(30 * time.Second)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/activity", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /vault/activity = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(clock.timers) != 1 {
+		t.Fatalf("activity timers = %d, want the pending timer to be reused", len(clock.timers))
+	}
+
+	clock.now = clock.now.Add(30 * time.Second)
+	clock.timers[0].Fire()
+	if fv.Locked() {
+		t.Fatal("superseded deadline locked the active vault")
+	}
+	if len(clock.timers) != 2 || clock.durations[1] != 30*time.Second {
+		t.Fatalf("rescheduled timers = %d durations = %v, want remaining 30s", len(clock.timers), clock.durations)
+	}
+	clock.now = clock.now.Add(30 * time.Second)
+	clock.timers[1].Fire()
+	if !fv.Locked() {
+		t.Fatal("replacement deadline did not lock the inactive vault")
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/activity", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("POST /vault/activity while locked = %d, want 409", rec.Code)
+	}
+	if len(clock.timers) != 2 {
+		t.Fatalf("locked activity created a timer: got %d timers, want 2", len(clock.timers))
+	}
+}
+
+func TestVaultActivityCannotRenewExpiredDeadline(t *testing.T) {
+	clock := &fakeAutoLockClock{now: time.Unix(3_000, 0)}
+	fv := &fakeVault{
+		exists:  true,
+		locked:  true,
+		wallets: []vault.WalletMeta{{ID: "w1", Account: sampleAccount("preview")}},
+	}
+	fw := &fakeWallet{}
+	sp := &fakeSpender{}
+	h := NewHandler(
+		testSessionToken,
+		fakeStatuser{}, fv, fw, sp,
+		&fakeSettings{autoLockMinutes: 1}, &fakeContacts{}, nil,
+		&fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(),
+		withAutoLockRuntime(clock.runtime()),
+	)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/unlock", strings.NewReader(`{"password":"vault-password-xyz"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /vault/unlock = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	clock.now = clock.now.Add(time.Minute + time.Second)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/activity", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("POST /vault/activity after deadline = %d, want 409", rec.Code)
+	}
+	if !fv.Locked() {
+		t.Fatal("expired activity renewed the unlocked vault deadline")
+	}
+	if fw.set || sp.set {
+		t.Fatalf("active services remained bound after expired activity: wallet=%v spender=%v", fw.set, sp.set)
+	}
+	if len(clock.timers) != 1 {
+		t.Fatalf("expired activity created a replacement timer: got %d, want 1", len(clock.timers))
 	}
 }
 
@@ -4670,4 +4854,8 @@ func TestMultiSigCreateReportsActivationFailure(t *testing.T) {
 		t.Fatalf("response carries no wallet id, so the created wallet is unreachable: %s",
 			rec.Body.String())
 	}
+}
+
+func withAutoLockRuntime(runtime autoLockRuntime) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.autoLockRuntime = runtime }
 }

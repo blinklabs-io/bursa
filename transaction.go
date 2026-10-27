@@ -329,6 +329,9 @@ type TxInspection struct {
 	ValidityStart    uint64     `json:"validity_interval_start,omitempty"`
 	Inputs           []TxInput  `json:"inputs"`
 	Outputs          []TxOutput `json:"outputs"`
+	CollateralInputs []TxInput  `json:"collateral_inputs,omitempty"`
+	CollateralReturn *TxOutput  `json:"collateral_return,omitempty"`
+	TotalCollateral  string     `json:"total_collateral,omitempty"`
 	CertificateCount int        `json:"certificate_count"`
 	WithdrawalCount  int        `json:"withdrawal_count"`
 	HasMint          bool       `json:"has_mint"`
@@ -344,6 +347,22 @@ type TxInspection struct {
 	VotingProcedureCount   int  `json:"voting_procedure_count,omitempty"`
 	ProposalProcedureCount int  `json:"proposal_procedure_count,omitempty"`
 	HasTreasuryDonation    bool `json:"has_treasury_donation,omitempty"`
+}
+
+func inspectTxOutput(out lcommon.TransactionOutput) TxOutput {
+	lovelace := "0"
+	if amt := out.Amount(); amt != nil {
+		lovelace = amt.String()
+	}
+	hasAssets := false
+	if assets := out.Assets(); assets != nil && len(assets.Policies()) > 0 {
+		hasAssets = true
+	}
+	return TxOutput{
+		Address:   out.Address().String(),
+		Lovelace:  lovelace,
+		HasAssets: hasAssets,
+	}
 }
 
 func eraName(txType uint) string {
@@ -572,19 +591,22 @@ func InspectTransaction(txCbor []byte) (*TxInspection, error) {
 		})
 	}
 	for _, out := range tx.Outputs() {
-		lovelace := "0"
-		if amt := out.Amount(); amt != nil {
-			lovelace = amt.String()
-		}
-		hasAssets := false
-		if assets := out.Assets(); assets != nil && len(assets.Policies()) > 0 {
-			hasAssets = true
-		}
-		insp.Outputs = append(insp.Outputs, TxOutput{
-			Address:   out.Address().String(),
-			Lovelace:  lovelace,
-			HasAssets: hasAssets,
+		insp.Outputs = append(insp.Outputs, inspectTxOutput(out))
+	}
+	for _, in := range tx.Collateral() {
+		insp.CollateralInputs = append(insp.CollateralInputs, TxInput{
+			TxId:  hex.EncodeToString(in.Id().Bytes()),
+			Index: in.Index(),
 		})
+	}
+	if out := tx.CollateralReturn(); out != nil {
+		collateralReturn := inspectTxOutput(out)
+		insp.CollateralReturn = &collateralReturn
+	}
+	if lcommon.TransactionTotalCollateralPresent(tx) {
+		if total := tx.TotalCollateral(); total != nil {
+			insp.TotalCollateral = total.String()
+		}
 	}
 	insp.CertificateCount = len(tx.Certificates())
 	insp.WithdrawalCount = len(tx.Withdrawals())

@@ -218,10 +218,11 @@ const AUTO_LOCK_OPTIONS = [
 
 // AutoLockCard is the user-facing control for the idle auto-lock timeout: how
 // long the app waits with no pointer/keyboard/visibility activity before
-// re-locking the vault (see useIdleLock, wired up in app.tsx). Mirrors
+// re-locking the vault. Browser activity is reported to the server-owned
+// deadline through useIdleLock in app.tsx. Mirrors
 // LeanStorageCard's optimistic-update pattern, minus the restart-required
-// concept — this setting is a pure frontend behaviour and takes effect on the
-// very next idle check.
+// concept and takes effect immediately on both the server deadline and the
+// browser's UI timer.
 //
 // `setting` is App's useAutoLock() AsyncState, passed down rather than called
 // again here (compare TPMCard, which is handed tpmStatusQuery the same way).

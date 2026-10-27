@@ -1176,6 +1176,11 @@ components:
       type: object
     bursa.TxInspection:
       example:
+        collateral_inputs:
+        - index: 6
+          tx_id: tx_id
+        - index: 6
+          tx_id: tx_id
         outputs:
         - address: address
           has_assets: true
@@ -1192,6 +1197,11 @@ components:
           tx_id: tx_id
         fee: fee
         voting_procedure_count: 2
+        collateral_return:
+          address: address
+          has_assets: true
+          lovelace: lovelace
+        total_collateral: total_collateral
         tx_id: tx_id
         ttl: 7
         era: era
@@ -1208,6 +1218,12 @@ components:
       properties:
         certificate_count:
           type: integer
+        collateral_inputs:
+          items:
+            $ref: "#/components/schemas/bursa.TxInput"
+          type: array
+        collateral_return:
+          $ref: "#/components/schemas/bursa.TxOutput"
         era:
           type: string
         fee:
@@ -1236,6 +1252,8 @@ components:
           type: integer
         size_bytes:
           type: integer
+        total_collateral:
+          type: string
         ttl:
           type: integer
         tx_id:

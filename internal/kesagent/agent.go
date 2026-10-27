@@ -101,11 +101,9 @@ type Agent struct {
 	subs    map[int]chan KeyPush
 	nextSub int
 
-	// guardedPeriod/guardedSet track the last KES period the scheduler (Tick)
-	// successfully authorized and broadcast, so a transient guard-store
-	// failure is retried on the next tick instead of being silently dropped
-	// for the rest of the period (evolveToLocked has already advanced
-	// a.active in memory regardless of guard-store success).
+	// guardedPeriod/guardedSet track the active KES period most recently
+	// authorized for release. A transient guard-store failure leaves this at
+	// the prior period so the evolved key stays private and Tick retries.
 	guardedPeriod uint64
 	guardedSet    bool
 
@@ -510,9 +508,18 @@ func (a *Agent) evolveToLocked(targetAbs uint64) {
 	}
 }
 
+// activeAuthorizedLocked reports whether the active key's exact period passed
+// its most recent guard authorization. Caller holds a.mu.
+func (a *Agent) activeAuthorizedLocked() bool {
+	return a.active != nil && a.guardedSet && a.guardedPeriod == a.active.absPeriod()
+}
+
 // buildKeyPushLocked builds a KeyPush for the current active key. Caller holds a.mu.
 func (a *Agent) buildKeyPushLocked() (KeyPush, bool) {
-	if a.active == nil {
+	// The active key advances before Tick persists the new guard floor. Do not
+	// release that evolved key until authorization for its exact period succeeds;
+	// guardedPeriod remains at the last successful period so Tick can retry.
+	if !a.activeAuthorizedLocked() {
 		return KeyPush{}, false
 	}
 	// Never hand a producer a key for a period the guard has already moved past:
@@ -659,7 +666,7 @@ func (a *Agent) Tick() {
 	// just evolve" would mean a transient guard-store failure (e.g. a full
 	// disk) is never retried, since evolveToLocked has already advanced
 	// a.active in memory and won't advance it again for the same period.
-	if a.guardedSet && a.guardedPeriod == newAbs {
+	if a.activeAuthorizedLocked() {
 		return
 	}
 	if err := a.guard.Authorize(hex.EncodeToString(a.active.vkey), newAbs); err != nil {

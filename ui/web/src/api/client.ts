@@ -99,7 +99,7 @@ const RETRY_BACKOFF_CAP_MS = 1_000;
 // the first request succeeded server-side but the response was lost.
 const RETRYABLE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, cache?: RequestCache): Promise<T> {
   let lastNetworkError: ApiError | null = null;
   const maxAttempts = RETRYABLE_METHODS.has(method.toUpperCase()) ? RETRY_ATTEMPTS : 1;
 
@@ -119,6 +119,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
+        ...(cache ? { cache } : {}),
       });
     } catch (e) {
       clearTimeout(timer);
@@ -164,14 +165,17 @@ export const getVaultStatus = () => apiGet<VaultStatus>("/vault/status");
 export const createVault = (req: CreateVaultRequest) => apiPost<VaultStatus>("/vault", req);
 export const unlockVault = (req: UnlockVaultRequest) => apiPost<WalletView[]>("/vault/unlock", req);
 export const lockVault = () => apiPost<VaultStatus>("/vault/lock");
+export const recordVaultActivity = () => apiPost<VaultStatus>("/vault/activity");
 export const migrateLegacyKeystore = (req: MigrateLegacyKeystoreRequest) =>
   apiPost<WalletView>("/vault/migrate-legacy", req);
 
 // Wallet management.
 // generateMnemonic calls the server-side BIP39 generator (256-bit / 24 words).
-// Generating server-side keeps raw entropy inside the loopback process.
+// The request bypasses browser caches because its response is secret material.
 export const generateMnemonic = () =>
-  apiGet<{ mnemonic: string }>("/wallet/mnemonic/generate").then((r) => r.mnemonic);
+  request<{ mnemonic: string }>("POST", "/wallet/mnemonic/generate", undefined, "no-store").then(
+    (r) => r.mnemonic,
+  );
 export const addWallet = (req: AddWalletRequest) => apiPost<WalletView>("/wallet", req);
 export const addHardwareWallet = (
   name: string,
