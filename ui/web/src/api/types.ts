@@ -951,6 +951,13 @@ export interface TxSummaryCertificate {
   drep_credential?: TxSummaryCredential;
   deposit_lovelace?: string;
   refund_lovelace?: string;
+  deposit_implicit?: boolean;
+  refund_implicit?: boolean;
+  reward_account?: TxSummaryCredential;
+  pool_owners?: string[];
+  retirement_epoch?: number;
+  committee_cold_credential?: TxSummaryCredential;
+  committee_hot_credential?: TxSummaryCredential;
 }
 
 // multisig.TxInfo

@@ -205,6 +205,29 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
                     {cert.refund_lovelace != null ? (
                       <> · {formatAda(cert.refund_lovelace)} ADA refund</>
                     ) : null}
+                    {cert.deposit_implicit ? (
+                      <> · protocol key deposit (amount not in certificate)</>
+                    ) : null}
+                    {cert.refund_implicit ? (
+                      <> · protocol key deposit refund (amount not in certificate)</>
+                    ) : null}
+                    {cert.reward_account ? (
+                      <> · rewards to {cert.reward_account.type.replace("_", " ")} <code className="tx-hash">{cert.reward_account.hash}</code></>
+                    ) : null}
+                    {cert.pool_owners?.length ? (
+                      <> · owners {cert.pool_owners.map((owner, j) => (
+                        <span key={j}>{j > 0 ? ", " : null}<code className="tx-hash">{owner}</code></span>
+                      ))}</>
+                    ) : null}
+                    {cert.retirement_epoch != null ? (
+                      <> · retires at epoch {cert.retirement_epoch}</>
+                    ) : null}
+                    {cert.committee_cold_credential ? (
+                      <> · committee cold {cert.committee_cold_credential.type.replace("_", " ")} <code className="tx-hash">{cert.committee_cold_credential.hash}</code></>
+                    ) : null}
+                    {cert.committee_hot_credential ? (
+                      <> · committee hot {cert.committee_hot_credential.type.replace("_", " ")} <code className="tx-hash">{cert.committee_hot_credential.hash}</code></>
+                    ) : null}
                   </li>
                 ))}
               </ul>

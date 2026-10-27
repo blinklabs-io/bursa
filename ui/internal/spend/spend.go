@@ -147,6 +147,16 @@ type TxSummaryCertificate struct {
 	DRepCredential  *TxSummaryCredential `json:"drep_credential,omitempty"`
 	Deposit         string               `json:"deposit_lovelace,omitempty"`
 	Refund          string               `json:"refund_lovelace,omitempty"`
+	// DepositImplicit and RefundImplicit mark legacy stake certificates, whose
+	// deposit is the protocol key deposit rather than an amount in the
+	// certificate. DecodeTx has no protocol parameters to resolve it.
+	DepositImplicit         bool                 `json:"deposit_implicit,omitempty"`
+	RefundImplicit          bool                 `json:"refund_implicit,omitempty"`
+	RewardAccount           *TxSummaryCredential `json:"reward_account,omitempty"`
+	PoolOwners              []string             `json:"pool_owners,omitempty"`
+	RetirementEpoch         *uint64              `json:"retirement_epoch,omitempty"`
+	CommitteeColdCredential *TxSummaryCredential `json:"committee_cold_credential,omitempty"`
+	CommitteeHotCredential  *TxSummaryCredential `json:"committee_hot_credential,omitempty"`
 }
 
 // TxSummary is a no-password, human-readable preview of a pasted transaction,
@@ -2356,8 +2366,10 @@ func certificateSummary(c lcommon.Certificate) TxSummaryCertificate {
 	switch cert := c.(type) {
 	case *lcommon.StakeRegistrationCertificate:
 		setStake(cert.StakeCredential)
+		ret.DepositImplicit = true
 	case *lcommon.StakeDeregistrationCertificate:
 		setStake(cert.StakeCredential)
+		ret.RefundImplicit = true
 	case *lcommon.StakeDelegationCertificate:
 		if cert.StakeCredential != nil {
 			setStake(*cert.StakeCredential)
@@ -2365,8 +2377,19 @@ func certificateSummary(c lcommon.Certificate) TxSummaryCertificate {
 		setPool(cert.PoolKeyHash)
 	case *lcommon.PoolRegistrationCertificate:
 		setPool(cert.Operator)
+		ret.RewardAccount = credentialSummary(cert.RewardAccountCredential())
+		for _, owner := range cert.PoolOwners {
+			ret.PoolOwners = append(ret.PoolOwners, hex.EncodeToString(owner.Bytes()))
+		}
 	case *lcommon.PoolRetirementCertificate:
 		setPool(cert.PoolKeyHash)
+		epoch := cert.Epoch
+		ret.RetirementEpoch = &epoch
+	case *lcommon.AuthCommitteeHotCertificate:
+		ret.CommitteeColdCredential = credentialSummary(cert.ColdCredential)
+		ret.CommitteeHotCredential = credentialSummary(cert.HotCredential)
+	case *lcommon.ResignCommitteeColdCertificate:
+		ret.CommitteeColdCredential = credentialSummary(cert.ColdCredential)
 	case *lcommon.RegistrationCertificate:
 		setStake(cert.StakeCredential)
 		setDeposit(cert.Amount)
