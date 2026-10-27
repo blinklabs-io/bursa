@@ -380,7 +380,7 @@ func parseLovelace(s string) (*big.Int, bool) {
 		return new(big.Int), true
 	}
 	v, ok := new(big.Int).SetString(s, 10)
-	return v, ok
+	return v, ok && v.Sign() >= 0
 }
 
 // adaToLovelace converts an ADA bound to lovelace without uint64 overflow.
@@ -397,12 +397,57 @@ type txValueLimits struct {
 	allowMultiAsset bool
 }
 
+type txValueEffect struct {
+	name   string
+	amount string
+}
+
+func transactionValueEffects(insp *bursa.TxInspection) ([]txValueEffect, string) {
+	effects := make([]txValueEffect, 0, 3)
+	if insp.HasTreasuryDonation || insp.TreasuryDonationLovelace != "" {
+		if insp.TreasuryDonationLovelace == "" {
+			return nil, "treasury donation amount is unavailable"
+		}
+		effects = append(effects, txValueEffect{
+			name:   "treasury donation",
+			amount: insp.TreasuryDonationLovelace,
+		})
+	}
+	if insp.CertificateDepositTotal != "" {
+		effects = append(effects, txValueEffect{
+			name:   "certificate deposits",
+			amount: insp.CertificateDepositTotal,
+		})
+	}
+	if insp.UnresolvedCertificateDeposits > 0 {
+		return effects, fmt.Sprintf(
+			"%d certificate deposit amount(s) are unavailable",
+			insp.UnresolvedCertificateDeposits,
+		)
+	}
+	if insp.CertificateCount > 0 && !insp.CertificateValueEffectsComplete {
+		return effects, "certificate value effects are unavailable"
+	}
+	if insp.ProposalProcedureCount > 0 || insp.ProposalDepositTotal != "" {
+		if insp.ProposalDepositTotal == "" {
+			return effects, "governance proposal deposit amounts are unavailable"
+		}
+		effects = append(effects, txValueEffect{
+			name:   "governance proposal deposits",
+			amount: insp.ProposalDepositTotal,
+		})
+	}
+	return effects, ""
+}
+
 func evaluateValuePath(
 	context string,
 	callerOverride bool,
 	chargeName string,
 	chargeText string,
 	outputs []bursa.TxOutput,
+	effects []txValueEffect,
+	unresolvedEffects string,
 	limits txValueLimits,
 ) Decision {
 	prefix := ""
@@ -463,11 +508,23 @@ func evaluateValuePath(
 		}
 		total.Add(total, lovelace)
 	}
+	for _, effect := range effects {
+		amount, ok := parseLovelace(effect.amount)
+		if !ok {
+			return deny("unparseable %s %q", effect.name, effect.amount)
+		}
+		if effect.name == "treasury donation" && amount.Sign() == 0 {
+			return deny("treasury donation must be positive")
+		}
+		total.Add(total, amount)
+	}
+	if limits.maxTotalOutAda > 0 && unresolvedEffects != "" {
+		return deny("cannot enforce %smax_total_out_ada: %s", limitScope, unresolvedEffects)
+	}
 	if limits.maxTotalOutAda > 0 && total.Cmp(adaToLovelace(limits.maxTotalOutAda)) > 0 {
 		return deny(
-			"%stotal outputs plus %s exceed %smax_total_out_ada",
+			"%stotal value out exceeds %smax_total_out_ada",
 			prefix,
-			chargeName,
 			limitScope,
 		)
 	}
@@ -510,7 +567,11 @@ func (e *Engine) EvaluateTx(hash backend.KeyHash, insp *bursa.TxInspection, opts
 		maxFeeAda:       tp.MaxFeeAda,
 		allowMultiAsset: tp.AllowMultiAsset,
 	}
-	if d := evaluateValuePath("", false, "fee", insp.Fee, insp.Outputs, limits); !d.Allow {
+	effects, unresolvedEffects := transactionValueEffects(insp)
+	if d := evaluateValuePath(
+		"", false, "fee", insp.Fee, insp.Outputs,
+		effects, unresolvedEffects, limits,
+	); !d.Allow {
 		return d
 	}
 	if len(insp.CollateralInputs) > 0 {
@@ -530,6 +591,8 @@ func (e *Engine) EvaluateTx(hash backend.KeyHash, insp *bursa.TxInspection, opts
 			"total collateral",
 			insp.TotalCollateral,
 			collateralOutputs,
+			nil,
+			"",
 			limits,
 		); !d.Allow {
 			return d
@@ -547,10 +610,10 @@ func (e *Engine) EvaluateTx(hash backend.KeyHash, insp *bursa.TxInspection, opts
 	if d := gateVotes(tp, insp, cfg.ops); !d.Allow {
 		return d
 	}
-	if insp.ProposalProcedureCount > 0 && !tp.AllowProposals {
+	if (insp.ProposalProcedureCount > 0 || insp.ProposalDepositTotal != "") && !tp.AllowProposals {
 		return deny("transaction contains governance proposal procedures")
 	}
-	if insp.HasTreasuryDonation && !tp.AllowTreasury {
+	if (insp.HasTreasuryDonation || insp.TreasuryDonationLovelace != "") && !tp.AllowTreasury {
 		return deny("transaction contains a treasury donation")
 	}
 	if tp.RequireValidityUpperBound && insp.TTL == 0 {
@@ -639,7 +702,11 @@ func evalOverride(ov *CallerTxOverride, insp *bursa.TxInspection, ops TxOps) Dec
 		maxFeeAda:       ov.MaxFeeAda,
 		allowMultiAsset: true,
 	}
-	if d := evaluateValuePath("", true, "fee", insp.Fee, insp.Outputs, limits); !d.Allow {
+	effects, unresolvedEffects := transactionValueEffects(insp)
+	if d := evaluateValuePath(
+		"", true, "fee", insp.Fee, insp.Outputs,
+		effects, unresolvedEffects, limits,
+	); !d.Allow {
 		return d
 	}
 	if len(insp.CollateralInputs) > 0 {
@@ -653,6 +720,8 @@ func evalOverride(ov *CallerTxOverride, insp *bursa.TxInspection, ops TxOps) Dec
 			"total collateral",
 			insp.TotalCollateral,
 			collateralOutputs,
+			nil,
+			"",
 			limits,
 		); !d.Allow {
 			return d
@@ -688,10 +757,10 @@ func evalOverride(ov *CallerTxOverride, insp *bursa.TxInspection, ops TxOps) Dec
 			return d
 		}
 	}
-	if ov.ForbidProposals && insp.ProposalProcedureCount > 0 {
+	if ov.ForbidProposals && (insp.ProposalProcedureCount > 0 || insp.ProposalDepositTotal != "") {
 		return deny("caller override forbids governance proposals")
 	}
-	if ov.ForbidTreasury && insp.HasTreasuryDonation {
+	if ov.ForbidTreasury && (insp.HasTreasuryDonation || insp.TreasuryDonationLovelace != "") {
 		return deny("caller override forbids treasury donations")
 	}
 	return allow()

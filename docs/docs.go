@@ -1546,6 +1546,16 @@ const docTemplate = `{
                 "certificate_count": {
                     "type": "integer"
                 },
+                "certificate_deposit_total": {
+                    "description": "CertificateDepositTotal and CertificateRefundTotal contain the sums that\nare encoded directly in Conway certificates. Legacy stake and pool\ncertificate amounts depend on protocol parameters or ledger state; their\ncounts remain explicit so value-limited signers can fail closed.",
+                    "type": "string"
+                },
+                "certificate_refund_total": {
+                    "type": "string"
+                },
+                "certificate_value_effects_complete": {
+                    "type": "boolean"
+                },
                 "collateral_inputs": {
                     "type": "array",
                     "items": {
@@ -1588,6 +1598,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/bursa.TxOutput"
                     }
                 },
+                "proposal_deposit_total": {
+                    "type": "string"
+                },
                 "proposal_procedure_count": {
                     "type": "integer"
                 },
@@ -1600,11 +1613,20 @@ const docTemplate = `{
                 "total_collateral": {
                     "type": "string"
                 },
+                "treasury_donation_lovelace": {
+                    "type": "string"
+                },
                 "ttl": {
                     "type": "integer"
                 },
                 "tx_id": {
                     "type": "string"
+                },
+                "unresolved_certificate_deposits": {
+                    "type": "integer"
+                },
+                "unresolved_certificate_refunds": {
+                    "type": "integer"
                 },
                 "validity_interval_start": {
                     "type": "integer"

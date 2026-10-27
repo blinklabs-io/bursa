@@ -1188,7 +1188,10 @@ components:
         - address: address
           has_assets: true
           lovelace: lovelace
+        certificate_refund_total: certificate_refund_total
         size_bytes: 2
+        unresolved_certificate_refunds: 3
+        proposal_deposit_total: proposal_deposit_total
         has_mint: true
         inputs:
         - index: 6
@@ -1196,7 +1199,18 @@ components:
         - index: 6
           tx_id: tx_id
         fee: fee
-        voting_procedure_count: 2
+        treasury_donation_lovelace: treasury_donation_lovelace
+        era: era
+        required_signers: 5
+        validity_interval_start: 2
+        has_metadata: true
+        withdrawal_count: 1
+        certificate_count: 0
+        has_treasury_donation: true
+        native_scripts: 1
+        proposal_procedure_count: 5
+        certificate_deposit_total: certificate_deposit_total
+        voting_procedure_count: 7
         collateral_return:
           address: address
           has_assets: true
@@ -1204,20 +1218,24 @@ components:
         total_collateral: total_collateral
         tx_id: tx_id
         ttl: 7
-        era: era
-        required_signers: 5
-        validity_interval_start: 9
-        has_metadata: true
         is_valid: true
-        vkey_witnesses: 3
-        withdrawal_count: 4
-        certificate_count: 0
-        has_treasury_donation: true
-        native_scripts: 1
-        proposal_procedure_count: 5
+        unresolved_certificate_deposits: 9
+        vkey_witnesses: 4
+        certificate_value_effects_complete: true
       properties:
         certificate_count:
           type: integer
+        certificate_deposit_total:
+          description: |-
+            CertificateDepositTotal and CertificateRefundTotal contain the sums that
+            are encoded directly in Conway certificates. Legacy stake and pool
+            certificate amounts depend on protocol parameters or ledger state; their
+            counts remain explicit so value-limited signers can fail closed.
+          type: string
+        certificate_refund_total:
+          type: string
+        certificate_value_effects_complete:
+          type: boolean
         collateral_inputs:
           items:
             $ref: "#/components/schemas/bursa.TxInput"
@@ -1246,6 +1264,8 @@ components:
           items:
             $ref: "#/components/schemas/bursa.TxOutput"
           type: array
+        proposal_deposit_total:
+          type: string
         proposal_procedure_count:
           type: integer
         required_signers:
@@ -1254,10 +1274,16 @@ components:
           type: integer
         total_collateral:
           type: string
+        treasury_donation_lovelace:
+          type: string
         ttl:
           type: integer
         tx_id:
           type: string
+        unresolved_certificate_deposits:
+          type: integer
+        unresolved_certificate_refunds:
+          type: integer
         validity_interval_start:
           type: integer
         vkey_witnesses:
