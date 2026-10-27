@@ -933,6 +933,26 @@ export interface TxSummaryMultiSigParticipant {
   signed: boolean;
 }
 
+export interface TxSummaryCredential {
+  type: "key_hash" | "script_hash";
+  hash: string;
+}
+
+export interface TxSummaryDRep {
+  type: "key_hash" | "script_hash" | "abstain" | "no_confidence" | "unknown";
+  hash?: string;
+}
+
+export interface TxSummaryCertificate {
+  kind: string;
+  stake_credential?: TxSummaryCredential;
+  pool_id?: string;
+  drep?: TxSummaryDRep;
+  drep_credential?: TxSummaryCredential;
+  deposit_lovelace?: string;
+  refund_lovelace?: string;
+}
+
 // multisig.TxInfo
 export interface TxSummaryMultiSig {
   is_multisig: boolean;
@@ -950,7 +970,7 @@ export interface TxSummary {
   outputs: TxSummaryOutput[];
   fee: string;
   ttl?: number;
-  certificates?: string[];
+  certificates?: TxSummaryCertificate[];
   withdrawals?: TxSummaryOutput[];
   network_id?: number;
   existing_signatures: TxSummarySigner[];
