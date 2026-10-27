@@ -1,16 +1,75 @@
 package wallet
 
 import (
+	"bytes"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/btcsuite/btcd/btcutil/bech32"
 )
 
 const testMnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+
+func addressWithPaymentAndStake(
+	t *testing.T,
+	payment, stake []byte,
+) string {
+	t.Helper()
+	addr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeKeyKey,
+		lcommon.AddressNetworkTestnet,
+		payment,
+		stake,
+	)
+	if err != nil {
+		t.Fatalf("NewAddressFromParts: %v", err)
+	}
+	return addr.String()
+}
+
+func foreignPaymentAddress(t *testing.T, acct *Account) string {
+	t.Helper()
+	local, err := lcommon.NewAddress(acct.ReceiveAddresses[0])
+	if err != nil {
+		t.Fatalf("parse local address: %v", err)
+	}
+	return addressWithPaymentAndStake(
+		t,
+		bytes.Repeat([]byte{0x42}, lcommon.AddressHashSize),
+		local.StakeKeyHash().Bytes(),
+	)
+}
+
+func TestAccountOwnershipUsesPaymentCredential(t *testing.T) {
+	acct, err := Derive(testMnemonic, "preview", 2)
+	if err != nil {
+		t.Fatalf("Derive: %v", err)
+	}
+	local, err := lcommon.NewAddress(acct.ReceiveAddresses[0])
+	if err != nil {
+		t.Fatalf("parse local address: %v", err)
+	}
+	ownedWithAnotherStake := addressWithPaymentAndStake(
+		t,
+		local.PaymentKeyHash().Bytes(),
+		bytes.Repeat([]byte{0x24}, lcommon.AddressHashSize),
+	)
+	foreign := foreignPaymentAddress(t, acct)
+
+	got := acct.OwnedAddresses([]string{ownedWithAnotherStake, foreign, acct.StakeAddress})
+	if len(got) == 0 || got[0] != ownedWithAnotherStake {
+		t.Fatalf("OwnedAddresses = %v, want payment-credential alias first", got)
+	}
+	for _, addr := range got {
+		if addr == foreign || addr == acct.StakeAddress {
+			t.Fatalf("OwnedAddresses included uncontrolled address %q", addr)
+		}
+	}
+}
 
 func TestDerivePreview(t *testing.T) {
 	acct, err := Derive(testMnemonic, "preview", 5)

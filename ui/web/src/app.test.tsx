@@ -736,6 +736,11 @@ test("activity before the idle timeout elapses prevents the auto-lock", async ()
     locked: true,
     wallet_count: 1,
   });
+  const activitySpy = vi.spyOn(client, "recordVaultActivity").mockResolvedValue({
+    exists: true,
+    locked: false,
+    wallet_count: 1,
+  });
 
   render(<App />);
   fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
@@ -748,6 +753,7 @@ test("activity before the idle timeout elapses prevents the auto-lock", async ()
   act(() => {
     window.dispatchEvent(new Event("pointerdown"));
   });
+  expect(activitySpy).toHaveBeenCalledTimes(1);
   await act(async () => {
     await vi.advanceTimersByTimeAsync(50_000); // 100s total, but only 50s since activity
   });
@@ -755,6 +761,23 @@ test("activity before the idle timeout elapses prevents the auto-lock", async ()
   expect(lockSpy).not.toHaveBeenCalled();
   expect(screen.getAllByText("Main").length).toBeGreaterThan(0);
   vi.useRealTimers();
+});
+
+test("activity reconciles the UI when the server already auto-locked", async () => {
+  stubStatus("ready");
+  stubVault({ exists: true, locked: true, wallet_count: 1 });
+  stubAutoLock(1);
+  quietPortfolio();
+  vi.spyOn(client, "unlockVault").mockResolvedValue([walletA]);
+  vi.spyOn(client, "recordVaultActivity").mockRejectedValue(new client.ApiError(409, "vault is locked"));
+
+  render(<App />);
+  fireEvent.change(screen.getByLabelText(/vault password/i), { target: { value: "vault-password-xyz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+  await waitFor(() => expect(screen.getAllByText("Main").length).toBeGreaterThan(0));
+
+  fireEvent.pointerDown(window);
+  await waitFor(() => expect(screen.getByRole("button", { name: /^unlock$/i })).toBeInTheDocument());
 });
 
 // Regression test for Fix 1: App's useIdleLock and Settings' AutoLockCard used

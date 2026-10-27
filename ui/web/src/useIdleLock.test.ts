@@ -45,6 +45,21 @@ test("pointer activity resets the timer", () => {
   expect(onIdle).toHaveBeenCalledTimes(1);
 });
 
+test("pointer and keyboard activity reports are coalesced for the vault server", () => {
+  vi.useFakeTimers();
+  const onActivity = vi.fn();
+  renderHook(() => useIdleLock(1, vi.fn(), true, onActivity));
+  act(() => {
+    window.dispatchEvent(new Event("pointerdown"));
+    for (let i = 0; i < 20; i++) window.dispatchEvent(new Event("keydown"));
+  });
+  expect(onActivity).toHaveBeenCalledTimes(1);
+  act(() => {
+    vi.advanceTimersByTime(1000);
+  });
+  expect(onActivity).toHaveBeenCalledTimes(2);
+});
+
 test("keyboard activity resets the timer", () => {
   vi.useFakeTimers();
   const onIdle = vi.fn();

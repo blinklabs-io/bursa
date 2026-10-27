@@ -283,10 +283,10 @@ func BuildCallerPolicies(cfg map[string]map[string]map[string]any) (map[string]m
 }
 
 // BuildPolicyHook constructs the optional external policy hook from config.
-// Returns nil when signer.policy_hook_url is unset (hook disabled).
-func BuildPolicyHook(cfg config.SignerConfig) PolicyHook {
+// Returns nil, nil when signer.policy_hook_url is unset (hook disabled).
+func BuildPolicyHook(cfg config.SignerConfig) (PolicyHook, error) {
 	if cfg.PolicyHookURL == "" {
-		return nil
+		return nil, nil
 	}
 	// Bound the configured timeout before the signed conversion so a large
 	// value cannot overflow time.Duration (~292 years is far beyond any sane

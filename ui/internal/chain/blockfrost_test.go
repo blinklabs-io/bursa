@@ -770,7 +770,7 @@ func TestAssetNilMetadata(t *testing.T) {
 	}
 }
 
-func TestAssetEnrichesNilMetadataFromDingoCIP25Index(t *testing.T) {
+func TestAssetEnrichesNilMetadataFromInitialMint(t *testing.T) {
 	const (
 		policyID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		nameHex  = "746f6b656e"
@@ -782,18 +782,18 @@ func TestAssetEnrichesNilMetadataFromDingoCIP25Index(t *testing.T) {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	defer db.Close()
-	_, err = db.Exec(`CREATE TABLE utxo (
+	_, err = db.Exec(`CREATE TABLE "transaction" (
 		id integer PRIMARY KEY,
-		transaction_id integer,
-		deleted_slot integer NOT NULL
+		hash blob NOT NULL UNIQUE
 	);
-	CREATE TABLE asset (
+	CREATE TABLE asset_mint_burn (
 		id integer PRIMARY KEY,
-		utxo_id integer NOT NULL,
+		tx_hash blob NOT NULL,
 		policy_id blob NOT NULL,
-		name blob NOT NULL
+		name blob NOT NULL,
+		slot integer NOT NULL,
+		tx_index integer NOT NULL
 	);
-	CREATE INDEX idx_asset_policy_id ON asset(policy_id);
 	CREATE TABLE transaction_metadata_label (
 		id integer PRIMARY KEY,
 		transaction_id integer NOT NULL,
@@ -815,12 +815,18 @@ func TestAssetEnrichesNilMetadataFromDingoCIP25Index(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode asset name: %v", err)
 	}
+	mintTxHash := bytes.Repeat([]byte{0x11}, 32)
+	laterMintTxHash := bytes.Repeat([]byte{0x22}, 32)
+	holderTxHash := bytes.Repeat([]byte{0x33}, 32)
 	_, err = db.Exec(
-		`INSERT INTO utxo (id, transaction_id, deleted_slot)
-		 VALUES (1, 1, 99), (2, 2, 0);
-		 INSERT INTO asset (id, utxo_id, policy_id, name)
-		 VALUES (1, 1, ?, ?), (2, 2, ?, ?)`,
-		policyIDBytes, name,
+		`INSERT INTO "transaction" (id, hash)
+		 VALUES (1, ?), (2, ?), (3, ?);
+		 INSERT INTO asset_mint_burn
+			(id, tx_hash, policy_id, name, slot, tx_index)
+		 VALUES (1, ?, ?, ?, 10, 0), (2, ?, ?, ?, 20, 0)`,
+		mintTxHash, laterMintTxHash, holderTxHash,
+		mintTxHash, policyIDBytes, name,
+		laterMintTxHash,
 		policyIDBytes, name,
 	)
 	if err != nil {
@@ -832,12 +838,10 @@ func TestAssetEnrichesNilMetadataFromDingoCIP25Index(t *testing.T) {
 		 VALUES
 			(1, 1, 721, 10, ?),
 			(2, 2, 721, 20, ?),
-			(3, 3, 20,  30, ?),
-			(4, 4, 721, 40, ?)`,
-		`{"`+policyID+`":{"token":{"name":"Old","image":"ipfs://old"}}}`,
-		`{"`+policyID+`":{"`+nameHex+`":{"name":"Current","image":"ipfs://current"}}}`,
-		`{"`+policyID+`":{"`+nameHex+`":{"name":"Wrong label"}}}`,
-		`{"`+policyID+`":{"`+nameHex+`":{"name":"Unrelated transaction"}}}`,
+			(3, 3, 721, 30, ?)`,
+		`{"`+policyID+`":{"token":{"name":"Initial","image":"ipfs://initial"}}}`,
+		`{"`+policyID+`":{"`+nameHex+`":{"name":"Later mint","image":"ipfs://later"}}}`,
+		`{"`+policyID+`":{"`+nameHex+`":{"name":"Holder replacement","image":"ipfs://holder"}}}`,
 	)
 	if err != nil {
 		t.Fatalf("insert metadata: %v", err)
@@ -867,8 +871,8 @@ func TestAssetEnrichesNilMetadataFromDingoCIP25Index(t *testing.T) {
 	if err := json.Unmarshal(got.OnchainMetadata, &metadata); err != nil {
 		t.Fatalf("unmarshal enriched metadata: %v", err)
 	}
-	if metadata.Name != "Current" || metadata.Image != "ipfs://current" {
-		t.Fatalf("OnchainMetadata = %+v, want latest producing-transaction CIP-25 entry", metadata)
+	if metadata.Name != "Initial" || metadata.Image != "ipfs://initial" {
+		t.Fatalf("OnchainMetadata = %+v, want initial-mint CIP-25 entry", metadata)
 	}
 }
 

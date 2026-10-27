@@ -258,7 +258,14 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []st
 		// Optional external policy hook: consulted only after the static policy
 		// allows, and fail-closed (any error denies signing).
 		if c.deps.PolicyHook != nil {
-			sum := summarizeTx(caller, hash.String(), insp, ops)
+			sum, serr := summarizeTx(caller, hash.String(), insp, ops)
+			if serr != nil {
+				errs = append(errs, SignerError{Signer: s, Code: CodeDenied, Reason: serr.Error()})
+				c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "denied", "reason", serr.Error())
+				c.deps.Metrics.observe("tx", string(CodeDenied))
+				c.deps.Metrics.observeDeny(string(CodeDenied))
+				continue
+			}
 			if herr := c.deps.PolicyHook.Authorize(ctx, sum); herr != nil {
 				errs = append(errs, SignerError{Signer: s, Code: CodeDenied, Reason: herr.Error()})
 				c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "denied", "reason", "policy hook: "+herr.Error())
