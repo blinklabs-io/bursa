@@ -35,8 +35,9 @@ type Cardano interface {
 	Operations(txCbor []byte) (policy.TxOps, error)
 	// TxID returns the 32-byte transaction id (the witness signing message).
 	TxID(txCbor []byte) ([]byte, error)
-	// Assemble merges vkey witnesses into a transaction, preserving the body.
-	Assemble(txCbor []byte, wits []lcommon.VkeyWitness) ([]byte, error)
+	// Assemble merges vkey witnesses into a transaction of the given era,
+	// preserving the body.
+	Assemble(txCbor []byte, txType uint, wits []lcommon.VkeyWitness) ([]byte, error)
 }
 
 // BursaCardano is the production adapter backed by the bursa toolkit.
@@ -98,6 +99,6 @@ func (BursaCardano) TxID(txCbor []byte) ([]byte, error) {
 	return raw, nil
 }
 
-func (BursaCardano) Assemble(txCbor []byte, wits []lcommon.VkeyWitness) ([]byte, error) {
-	return bursa.AssembleTransaction(txCbor, wits)
+func (BursaCardano) Assemble(txCbor []byte, txType uint, wits []lcommon.VkeyWitness) ([]byte, error) {
+	return bursa.AssembleTransactionForEra(txCbor, txType, wits)
 }
