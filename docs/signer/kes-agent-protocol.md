@@ -24,6 +24,13 @@ Both sockets speak the same framing and handshake.
 - Maximum payload length is **1 MiB** (`1 << 20`). Larger frames are rejected.
 - A zero-length frame is a protocol error.
 - `[]byte` fields are base64-encoded (standard `encoding/json` behavior).
+- Sign and control clients must deliver each complete inbound frame within 10
+  seconds after the server starts waiting for it. The server closes idle or
+  stalled connections; clients must reconnect after such a close.
+- Clients must drain each outbound frame within 10 seconds so a blocked writer
+  cannot retain a connection slot indefinitely.
+- Serve-key clients send no inbound frames, so their long-lived subscriptions
+  are not subject to the inbound-frame deadline.
 
 ## Handshake
 
