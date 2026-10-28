@@ -1656,14 +1656,15 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	// NFT to its current holding address through the node (never an external
 	// service). A leading '$' is optional; handle.Resolve normalizes it. A
 	// name on an unsupported network or with no on-chain holder reports as a
-	// clean not-found (404), never a hard error.
+	// clean not-found (404). Conflicting holders are rejected rather than
+	// selecting a recipient.
 	mux.HandleFunc("GET /wallet/handle/{name}", gated(st, func(w http.ResponseWriter, r *http.Request) {
 		if lookup == nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "handle lookup unavailable"})
 			return
 		}
 		bare, addr, err := handle.Resolve(r.Context(), lookup, network, r.PathValue("name"))
-		serveLookup(w, handleInfo{Handle: bare, Address: addr}, err)
+		serveHandleLookup(w, handleInfo{Handle: bare, Address: addr}, err)
 	}))
 
 	// GET /wallet/assets/{unit} reads a native asset's on-chain
@@ -1893,6 +1894,19 @@ func serveLookup[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found by your node"})
 	default:
 		writeJSON(w, http.StatusBadGateway, errBody(err))
+	}
+}
+
+func serveHandleLookup(w http.ResponseWriter, v handleInfo, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, chain.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "handle not found"})
+	case errors.Is(err, handle.ErrAmbiguousHolder):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "handle holder is ambiguous"})
+	default:
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "handle lookup failed"})
 	}
 }
 
