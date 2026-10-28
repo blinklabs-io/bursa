@@ -47,6 +47,7 @@ func main() {
 		kesAgentCommand(),
 		scriptCommand(),
 		txCommand(),
+		queryCommand(),
 		signCommand(),
 	)
 
