@@ -17,7 +17,8 @@
 // existing operational certificate. It asks the device for opcert-next with
 // the chain counter one below the certificate's issue number, so the device
 // must choose that issue number and reproduce the cold signature byte for
-// byte (Ed25519 is deterministic).
+// byte (Ed25519 is deterministic). Like any opcert-next request it raises
+// the profile's floor to that chain counter; POST /provision/floor resets it.
 //
 // It reads only public inputs and binds its connections to the USB network
 // source address so requests cannot leave through another route.

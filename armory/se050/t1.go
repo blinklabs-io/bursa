@@ -220,7 +220,7 @@ func (t *T1) readFrame() (pcb byte, data []byte, err error) {
 				return 0, nil, err
 			}
 
-			deadline = time.Now().Add(t.bwt * time.Duration(data[0]))
+			deadline = time.Now().Add(t.bwt * time.Duration(max(data[0], 1)))
 			continue
 		}
 
