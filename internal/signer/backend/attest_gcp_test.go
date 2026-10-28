@@ -29,7 +29,7 @@ import (
 
 const (
 	testAudience = "https://signer.example"
-	testDigest   = "sha256:aaaa"
+	testDigest   = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
 
 type gcpFixture struct {
@@ -44,11 +44,24 @@ func newGCPFixture(t *testing.T) *gcpFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &gcpFixture{key: key, now: time.Now(), binding: []byte("binding-0123456789abcdef01234567")}
+	return &gcpFixture{
+		key:     key,
+		now:     time.Now(),
+		binding: []byte("binding-0123456789abcdef01234567"),
+	}
 }
 
 func (f *gcpFixture) jwks(context.Context) (jose.JSONWebKeySet, error) {
-	return jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &f.key.PublicKey, KeyID: "k1", Algorithm: "RS256"}}}, nil
+	return jose.JSONWebKeySet{
+		Keys: []jose.JSONWebKey{
+			{
+				Key:       &f.key.PublicKey,
+				KeyID:     "k1",
+				Algorithm: "RS256",
+				Use:       "sig",
+			},
+		},
+	}, nil
 }
 
 func (f *gcpFixture) verifier(t *testing.T) *ConfidentialSpaceVerifier {
@@ -63,14 +76,28 @@ func (f *gcpFixture) verifier(t *testing.T) *ConfidentialSpaceVerifier {
 
 // token mints an attestation token that passes verification; mutate may spoil
 // a claim, and kid names the signing key id.
-func (f *gcpFixture) token(t *testing.T, kid string, mutate func(c jwt.MapClaims)) string {
+func (f *gcpFixture) token(
+	t *testing.T,
+	kid string,
+	mutate func(c jwt.MapClaims),
+) string {
 	t.Helper()
 	c := jwt.MapClaims{
 		"iss": ConfidentialSpaceIssuer, "aud": testAudience,
-		"iat": f.now.Add(-time.Minute).Unix(), "exp": f.now.Add(time.Hour).Unix(),
+		"iat": f.now.Add(-time.Minute).
+			Unix(),
+		"nbf": f.now.Add(-time.Minute).
+			Unix(),
+		"exp":       f.now.Add(time.Hour).Unix(),
 		"eat_nonce": []string{hex.EncodeToString(f.binding)},
 		"dbgstat":   "disabled-since-boot", "swname": "CONFIDENTIAL_SPACE", "secboot": true,
-		"submods": map[string]any{"container": map[string]any{"image_digest": testDigest}},
+		"hwmodel": "GCP_AMD_SEV",
+		"submods": map[string]any{
+			"container": map[string]any{"image_digest": testDigest},
+			"confidential_space": map[string]any{
+				"support_attributes": []string{"STABLE", "USABLE"},
+			},
+		},
 	}
 	if mutate != nil {
 		mutate(c)
@@ -94,28 +121,121 @@ func TestConfidentialSpaceVerifier(t *testing.T) {
 	}{
 		{"valid", "k1", nil, false},
 		// Google issues a lone nonce as a JSON string, not a one-element array.
-		{"single nonce as a string", "k1", func(c jwt.MapClaims) { c["eat_nonce"] = c["eat_nonce"].([]string)[0] }, false},
-		{"string nonce for another binding", "k1", func(c jwt.MapClaims) { c["eat_nonce"] = "00" }, true},
-		{"wrong audience", "k1", func(c jwt.MapClaims) { c["aud"] = "https://other.example" }, true},
-		{"expired", "k1", func(c jwt.MapClaims) { c["exp"] = time.Now().Add(-time.Hour).Unix() }, true},
+		{
+			"single nonce as a string",
+			"k1",
+			func(c jwt.MapClaims) { c["eat_nonce"] = c["eat_nonce"].([]string)[0] },
+			false,
+		},
+		{
+			"string nonce for another binding",
+			"k1",
+			func(c jwt.MapClaims) { c["eat_nonce"] = "00" },
+			true,
+		},
+		{
+			"wrong audience",
+			"k1",
+			func(c jwt.MapClaims) { c["aud"] = "https://other.example" },
+			true,
+		},
+		{
+			"expired",
+			"k1",
+			func(c jwt.MapClaims) { c["exp"] = time.Now().Add(-time.Hour).Unix() },
+			true,
+		},
 		{"no expiry", "k1", func(c jwt.MapClaims) { delete(c, "exp") }, true},
-		{"wrong issuer", "k1", func(c jwt.MapClaims) { c["iss"] = "https://evil.example" }, true},
+		{
+			"not active",
+			"k1",
+			func(c jwt.MapClaims) { c["nbf"] = time.Now().Add(time.Hour).Unix() },
+			true,
+		},
+		{
+			"future issued",
+			"k1",
+			func(c jwt.MapClaims) { c["iat"] = time.Now().Add(time.Hour).Unix() },
+			true,
+		},
+		{
+			"no issued time",
+			"k1",
+			func(c jwt.MapClaims) { delete(c, "iat") },
+			true,
+		},
+		{
+			"no not-before time",
+			"k1",
+			func(c jwt.MapClaims) { delete(c, "nbf") },
+			true,
+		},
+		{
+			"wrong issuer",
+			"k1",
+			func(c jwt.MapClaims) { c["iss"] = "https://evil.example" },
+			true,
+		},
 		{"unapproved image digest", "k1", func(c jwt.MapClaims) {
-			c["submods"] = map[string]any{"container": map[string]any{"image_digest": "sha256:bbbb"}}
+			c["submods"] = map[string]any{
+				"container": map[string]any{"image_digest": "sha256:bbbb"},
+			}
 		}, true},
-		{"missing image digest", "k1", func(c jwt.MapClaims) { delete(c, "submods") }, true},
-		{"debug workload", "k1", func(c jwt.MapClaims) { c["dbgstat"] = "enabled" }, true},
-		{"not confidential space", "k1", func(c jwt.MapClaims) { c["swname"] = "OTHER" }, true},
-		{"no secure boot", "k1", func(c jwt.MapClaims) { c["secboot"] = false }, true},
-		{"nonce for another binding", "k1", func(c jwt.MapClaims) { c["eat_nonce"] = []string{"00"} }, true},
-		{"missing nonce", "k1", func(c jwt.MapClaims) { delete(c, "eat_nonce") }, true},
+		{
+			"missing image digest",
+			"k1",
+			func(c jwt.MapClaims) { delete(c, "submods") },
+			true,
+		},
+		{
+			"debug workload",
+			"k1",
+			func(c jwt.MapClaims) { c["dbgstat"] = "enabled" },
+			true,
+		},
+		{
+			"not confidential space",
+			"k1",
+			func(c jwt.MapClaims) { c["swname"] = "OTHER" },
+			true,
+		},
+		{
+			"no secure boot",
+			"k1",
+			func(c jwt.MapClaims) { c["secboot"] = false },
+			true,
+		},
+		{
+			"unknown hardware",
+			"k1",
+			func(c jwt.MapClaims) { c["hwmodel"] = "OTHER" },
+			true,
+		},
+		{"unstable image", "k1", func(c jwt.MapClaims) {
+			c["submods"].(map[string]any)["confidential_space"] = map[string]any{
+				"support_attributes": []string{"USABLE"},
+			}
+		}, true},
+		{
+			"nonce for another binding",
+			"k1",
+			func(c jwt.MapClaims) { c["eat_nonce"] = []string{"00"} },
+			true,
+		},
+		{
+			"missing nonce",
+			"k1",
+			func(c jwt.MapClaims) { delete(c, "eat_nonce") },
+			true,
+		},
 		{"unknown signing key", "other", nil, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := newGCPFixture(t)
-			err := f.verifier(t).Verify(t.Context(), []byte(f.token(t, tc.kid, tc.mutate)), f.binding)
+			err := f.verifier(t).
+				Verify(t.Context(), []byte(f.token(t, tc.kid, tc.mutate)), f.binding)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Verify error = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -137,7 +257,14 @@ func TestConfidentialSpaceVerifierRejectsUnattested(t *testing.T) {
 		t.Error("token signed by an untrusted key accepted")
 	}
 	// An HMAC token keyed with the public key bytes must not pass for RS256.
-	hs := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"iss": ConfidentialSpaceIssuer, "aud": testAudience, "exp": f.now.Add(time.Hour).Unix()})
+	hs := jwt.NewWithClaims(
+		jwt.SigningMethodHS256,
+		jwt.MapClaims{
+			"iss": ConfidentialSpaceIssuer,
+			"aud": testAudience,
+			"exp": f.now.Add(time.Hour).Unix(),
+		},
+	)
 	hs.Header["kid"] = "k1"
 	s, _ := hs.SignedString([]byte("secret"))
 	if err := v.Verify(t.Context(), []byte(s), f.binding); err == nil {
@@ -145,10 +272,17 @@ func TestConfidentialSpaceVerifierRejectsUnattested(t *testing.T) {
 	}
 	// A token signed with an RSA algorithm other than RS256.
 	rs512 := jwt.NewWithClaims(jwt.SigningMethodRS512, jwt.MapClaims{
-		"iss": ConfidentialSpaceIssuer, "aud": testAudience, "exp": f.now.Add(time.Hour).Unix(),
-		"eat_nonce": []string{hex.EncodeToString(f.binding)}, "dbgstat": "disabled-since-boot",
-		"swname": "CONFIDENTIAL_SPACE", "secboot": true,
-		"submods": map[string]any{"container": map[string]any{"image_digest": testDigest}},
+		"iss": ConfidentialSpaceIssuer, "aud": testAudience, "iat": f.now.Add(-time.Minute).Unix(), "nbf": f.now.Add(-time.Minute).Unix(), "exp": f.now.Add(time.Hour).Unix(),
+		"eat_nonce": []string{
+			hex.EncodeToString(f.binding),
+		}, "dbgstat": "disabled-since-boot",
+		"swname": "CONFIDENTIAL_SPACE", "secboot": true, "hwmodel": "GCP_AMD_SEV",
+		"submods": map[string]any{
+			"container": map[string]any{"image_digest": testDigest},
+			"confidential_space": map[string]any{
+				"support_attributes": []string{"STABLE"},
+			},
+		},
 	})
 	rs512.Header["kid"] = "k1"
 	s, _ = rs512.SignedString(f.key)
@@ -156,15 +290,26 @@ func TestConfidentialSpaceVerifierRejectsUnattested(t *testing.T) {
 		t.Error("RS512 token accepted")
 	}
 	// An unsigned token.
-	none := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{"iss": ConfidentialSpaceIssuer, "aud": testAudience, "exp": f.now.Add(time.Hour).Unix()})
+	none := jwt.NewWithClaims(
+		jwt.SigningMethodNone,
+		jwt.MapClaims{
+			"iss": ConfidentialSpaceIssuer,
+			"aud": testAudience,
+			"exp": f.now.Add(time.Hour).Unix(),
+		},
+	)
 	s, _ = none.SignedString(jwt.UnsafeAllowNoneSignatureType)
 	if err := v.Verify(t.Context(), []byte(s), f.binding); err == nil {
 		t.Error("unsigned token accepted")
 	}
 	// A key-source failure fails closed.
-	failing, err := NewConfidentialSpaceVerifier(func(context.Context) (jose.JSONWebKeySet, error) {
-		return jose.JSONWebKeySet{}, errors.New("jwks unreachable")
-	}, testAudience, testDigest)
+	failing, err := NewConfidentialSpaceVerifier(
+		func(context.Context) (jose.JSONWebKeySet, error) {
+			return jose.JSONWebKeySet{}, errors.New("jwks unreachable")
+		},
+		testAudience,
+		testDigest,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

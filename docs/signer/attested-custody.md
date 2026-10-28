@@ -158,19 +158,64 @@ The signer accepts a token only when all of these hold:
 
 - it is RS256-signed by a key in the JWKS (HTTPS, or loopback HTTP, only);
 - issuer is `https://confidentialcomputing.googleapis.com`, audience equals
-  `audience`, and `exp` is present and in the future;
+  `audience`, and `iat`, `nbf`, and `exp` are present and valid;
 - `dbgstat` is `disabled-since-boot`, `swname` is `CONFIDENTIAL_SPACE`, and
-  `secboot` is true;
+  `secboot` is true, the hardware model is supported, and the image carries
+  the `STABLE` support attribute;
 - `submods.container.image_digest` equals `image_digest`;
 - `eat_nonce` contains the inventory binding.
 
-The workload obtains the token with the signer's audience and `hex(binding)` as
-the nonce. Enclave-side controls live in Google Cloud: a Workload Identity
-Federation provider whose attribute condition requires the same image digest,
-`dbgstat`, `swname` and audience; IAM that lets only that federated principal
-call Cloud KMS `decrypt` on the key wrapping the key material; and a workload
-image published by digest. Cloud KMS then refuses an unapproved digest, a debug
-image, a wrong audience, an expired token, or missing attestation.
+### Pool cold-key workload
+
+The `bursa confidential-space-workload` command is the enclave side of the
+protocol for one pool cold key. It runs from the signer container image, obtains
+custom tokens from the Confidential Space launcher socket, and exposes only
+`/v1/inventory` and `/v1/sign`. The sign endpoint accepts only a `pool` key with
+the `opcert` purpose and the canonical 48-byte operational-certificate payload.
+It rejects reused request nonces and verifies each signature before returning
+it.
+
+The first boot generates the Ed25519 pool key and an AES-256-GCM data-encryption
+key inside the workload. Cloud KMS wraps the data-encryption key. The workload
+persists only the authenticated ciphertext, wrapped data-encryption key, and
+public metadata in the file named by `--wrapped-key-file`. The file is created
+once with mode `0600` and is never replaced. On restart, Cloud KMS must unwrap
+the same data-encryption key before the public key is served. A denial, corrupt
+envelope, mismatched KMS resource, or changed public metadata stops startup.
+
+The command requires:
+
+```text
+bursa confidential-space-workload \
+  --listen :8080 \
+  --audience https://signer.example.internal \
+  --kms-key projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY \
+  --wrapped-key-file /var/lib/bursa/pool-cold.wrapped \
+  --wif-credentials /etc/bursa/confidential-space-wif.json
+```
+
+The credential file must be a Google external-account configuration that uses
+`https://sts.googleapis.com/v1/token`, does not impersonate a service account,
+and reads its text subject token only from
+`/run/container_launcher/attestation_verifier_claims_token`. This is the
+launcher's automatically refreshed default token for the Workload Identity
+Federation provider. The custom token returned to the signer is separate: the
+workload requests it for the configured signer audience with
+`hex(InventoryBinding)` as its nonce on every inventory request.
+
+Use direct resource access for the Cloud KMS key. The Workload Identity
+Federation provider must map the container image digest and require
+`CONFIDENTIAL_SPACE`, `disabled-since-boot`, secure boot, the approved digest,
+and the production support attribute. Grant encrypt and decrypt on only the
+wrapping key to that digest-bound federated principal. The same condition makes
+Cloud KMS refuse an unapproved digest, a debug image, an expired default token,
+or a request without attestation. The signer independently verifies those
+properties on the custom inventory token before it accepts the public key.
+
+Persist the wrapped-key file across workload restarts. Losing it creates a new
+pool identity on the next boot; copying or rolling it back restores the same
+pool identity because the private key never leaves its envelope. Back up the
+wrapped file together with the Cloud KMS key's retention policy.
 
 ## KES agent in a protected workload
 

@@ -58,8 +58,13 @@ type stubEnclave struct {
 	calls []backend.AttestedRequest
 }
 
-func (e *stubEnclave) Inventory(_ context.Context, nonce []byte) (backend.AttestedInventory, error) {
-	keys := []backend.AttestedKeyInfo{{Role: e.role, PublicKey: e.priv.Public().(ed25519.PublicKey)}}
+func (e *stubEnclave) Inventory(
+	_ context.Context,
+	nonce []byte,
+) (backend.AttestedInventory, error) {
+	keys := []backend.AttestedKeyInfo{
+		{Role: e.role, PublicKey: e.priv.Public().(ed25519.PublicKey)},
+	}
 	return backend.AttestedInventory{
 		Version:     backend.AttestedProtocol,
 		Keys:        keys,
@@ -67,7 +72,10 @@ func (e *stubEnclave) Inventory(_ context.Context, nonce []byte) (backend.Attest
 	}, nil
 }
 
-func (e *stubEnclave) Sign(_ context.Context, req backend.AttestedRequest) (backend.AttestedResponse, error) {
+func (e *stubEnclave) Sign(
+	_ context.Context,
+	req backend.AttestedRequest,
+) (backend.AttestedResponse, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.calls = append(e.calls, req)
@@ -93,14 +101,22 @@ func (e *stubEnclave) purposes() []backend.Purpose {
 // evidenceIsBinding accepts evidence equal to the binding.
 type evidenceIsBinding struct{}
 
-func (evidenceIsBinding) Verify(_ context.Context, evidence, binding []byte) error {
+func (evidenceIsBinding) Verify(
+	_ context.Context,
+	evidence, binding []byte,
+) error {
 	if !bytes.Equal(evidence, binding) {
 		return backend.ErrAttestation
 	}
 	return nil
 }
 
-func newAttestedCoordinator(t *testing.T, role backend.KeyType, allowed string, card fakeCardano) (*Coordinator, *stubEnclave, backend.KeyHash, ed25519.PublicKey) {
+func newAttestedCoordinator(
+	t *testing.T,
+	role backend.KeyType,
+	allowed string,
+	card fakeCardano,
+) (*Coordinator, *stubEnclave, backend.KeyHash, ed25519.PublicKey) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -133,13 +149,26 @@ func newAttestedCoordinator(t *testing.T, role backend.KeyType, allowed string, 
 func TestAttestedKeySignsTransaction(t *testing.T) {
 	t.Parallel()
 	card := fakeCardano{
-		insp:      &bursa.TxInspection{TxId: "abc", Outputs: []bursa.TxOutput{{Address: "addr1ok", Lovelace: "1"}}},
+		insp: &bursa.TxInspection{
+			TxId:    "abc",
+			Outputs: []bursa.TxOutput{{Address: "addr1ok", Lovelace: "1"}},
+		},
 		txid:      bytes.Repeat([]byte{7}, 32),
 		assembled: []byte{1},
 	}
-	c, enc, hash, _ := newAttestedCoordinator(t, backend.KeyTypePayment, "tx", card)
+	c, enc, hash, _ := newAttestedCoordinator(
+		t,
+		backend.KeyTypePayment,
+		"tx",
+		card,
+	)
 
-	res, perr, err := c.SignTx(t.Context(), []byte(testTxCbor), testTxEra, []string{hash.String()})
+	res, perr, err := c.SignTx(
+		t.Context(),
+		[]byte(testTxCbor),
+		testTxEra,
+		[]string{hash.String()},
+	)
 	if err != nil || len(perr) != 0 || len(res.Witnesses) != 1 {
 		t.Fatalf("SignTx: res=%+v perr=%+v err=%v", res, perr, err)
 	}
@@ -153,7 +182,12 @@ func TestAttestedKeySignsTransaction(t *testing.T) {
 	// A signature that does not verify under the attested key is not a witness.
 	_, forged, _ := ed25519.GenerateKey(nil)
 	enc.forge = forged
-	res, perr, err = c.SignTx(t.Context(), []byte(testTxCbor), testTxEra, []string{hash.String()})
+	res, perr, err = c.SignTx(
+		t.Context(),
+		[]byte(testTxCbor),
+		testTxEra,
+		[]string{hash.String()},
+	)
 	if err != nil || len(perr) != 1 || perr[0].Code != CodeInternal {
 		t.Fatalf("forged signature: res=%+v perr=%+v err=%v", res, perr, err)
 	}
@@ -161,7 +195,12 @@ func TestAttestedKeySignsTransaction(t *testing.T) {
 
 func TestAttestedKeySignsOpCert(t *testing.T) {
 	t.Parallel()
-	c, enc, hash, pub := newAttestedCoordinator(t, backend.KeyTypePool, "opcert", fakeCardano{})
+	c, enc, hash, pub := newAttestedCoordinator(
+		t,
+		backend.KeyTypePool,
+		"opcert",
+		fakeCardano{},
+	)
 	kes := bytes.Repeat([]byte{9}, kesVkeySize)
 
 	res, code, err := c.SignOpCert(t.Context(), kes, 5, 100, hash.String())
@@ -169,7 +208,17 @@ func TestAttestedKeySignsOpCert(t *testing.T) {
 		t.Fatalf("SignOpCert: code=%s err=%v", code, err)
 	}
 	sig, _ := hex.DecodeString(res.SignatureHex)
-	want := append(append(append([]byte{}, kes...), 0, 0, 0, 0, 0, 0, 0, 5), 0, 0, 0, 0, 0, 0, 0, 100)
+	want := append(
+		append(append([]byte{}, kes...), 0, 0, 0, 0, 0, 0, 0, 5),
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		100,
+	)
 	if !ed25519.Verify(pub, want, sig) {
 		t.Fatal("opcert signature does not verify over the OCertSignable bytes")
 	}
@@ -179,7 +228,8 @@ func TestAttestedKeySignsOpCert(t *testing.T) {
 
 	// The counter watermark still gates the enclave: a repeated counter
 	// is refused without a second enclave call.
-	if _, code, err := c.SignOpCert(t.Context(), kes, 5, 101, hash.String()); err == nil || code != CodeConflict {
+	if _, code, err := c.SignOpCert(t.Context(), kes, 5, 101, hash.String()); err == nil ||
+		code != CodeConflict {
 		t.Fatalf("repeated counter: code=%s err=%v, want conflict", code, err)
 	}
 	if len(enc.calls) != 1 {
@@ -189,15 +239,23 @@ func TestAttestedKeySignsOpCert(t *testing.T) {
 	// A signature not made by the attested key is discarded.
 	_, forged, _ := ed25519.GenerateKey(nil)
 	enc.forge = forged
-	if res, code, err := c.SignOpCert(t.Context(), kes, 6, 100, hash.String()); err == nil || code != CodeInternal || res != nil {
+	if res, code, err := c.SignOpCert(t.Context(), kes, 6, 100, hash.String()); err == nil ||
+		code != CodeInternal ||
+		res != nil {
 		t.Fatalf("forged signature: code=%s err=%v", code, err)
 	}
 }
 
 func TestAttestedKeyOpCertRequiresPoolRole(t *testing.T) {
 	t.Parallel()
-	c, enc, hash, _ := newAttestedCoordinator(t, backend.KeyTypePayment, "opcert", fakeCardano{})
-	if _, code, err := c.SignOpCert(t.Context(), make([]byte, kesVkeySize), 1, 1, hash.String()); err == nil || code != CodeBadRequest {
+	c, enc, hash, _ := newAttestedCoordinator(
+		t,
+		backend.KeyTypePayment,
+		"opcert",
+		fakeCardano{},
+	)
+	if _, code, err := c.SignOpCert(t.Context(), make([]byte, kesVkeySize), 1, 1, hash.String()); err == nil ||
+		code != CodeBadRequest {
 		t.Fatalf("code=%s err=%v, want bad_request", code, err)
 	}
 	if len(enc.calls) != 0 {
@@ -207,10 +265,20 @@ func TestAttestedKeyOpCertRequiresPoolRole(t *testing.T) {
 
 func TestAttestedKeySignsCIP8(t *testing.T) {
 	t.Parallel()
-	c, enc, hash, pub := newAttestedCoordinator(t, backend.KeyTypePayment, "cip8", fakeCardano{})
+	c, enc, hash, pub := newAttestedCoordinator(
+		t,
+		backend.KeyTypePayment,
+		"cip8",
+		fakeCardano{},
+	)
 	addr := addrForKey(t, pub)
 
-	res, code, err := c.SignCIP8(t.Context(), []byte("hello"), addr, hash.String())
+	res, code, err := c.SignCIP8(
+		t.Context(),
+		[]byte("hello"),
+		addr,
+		hash.String(),
+	)
 	if err != nil {
 		t.Fatalf("SignCIP8: code=%s err=%v", code, err)
 	}
@@ -224,7 +292,9 @@ func TestAttestedKeySignsCIP8(t *testing.T) {
 
 	_, forged, _ := ed25519.GenerateKey(nil)
 	enc.forge = forged
-	if res, code, err := c.SignCIP8(t.Context(), []byte("hello"), addr, hash.String()); err == nil || res != nil || code != CodeBackend {
+	if res, code, err := c.SignCIP8(t.Context(), []byte("hello"), addr, hash.String()); err == nil ||
+		res != nil ||
+		code != CodeBackend {
 		t.Fatalf("forged signature: code=%s err=%v", code, err)
 	}
 }
@@ -237,31 +307,55 @@ func TestBuildBackendsConfidentialSpace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jwks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &rsaKey.PublicKey, KeyID: "k1", Algorithm: "RS256"}}})
-	}))
+	jwks := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).
+				Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &rsaKey.PublicKey, KeyID: "k1", Algorithm: "RS256", Use: "sig"}}})
+		}),
+	)
 	t.Cleanup(jwks.Close)
 
 	_, priv, _ := ed25519.GenerateKey(nil)
 	pub := priv.Public().(ed25519.PublicKey)
-	digest := "sha256:aaaa"
-	workload := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var in struct {
-			Nonce []byte `json:"nonce"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&in)
-		keys := []backend.AttestedKeyInfo{{Role: backend.KeyTypePool, PublicKey: pub}}
-		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-			"iss": backend.ConfidentialSpaceIssuer, "aud": "https://signer.example",
-			"exp":       time.Now().Add(time.Hour).Unix(),
-			"eat_nonce": []string{hex.EncodeToString(backend.InventoryBinding(in.Nonce, keys))},
-			"dbgstat":   "disabled-since-boot", "swname": "CONFIDENTIAL_SPACE", "secboot": true,
-			"submods": map[string]any{"container": map[string]any{"image_digest": digest}},
-		})
-		tok.Header["kid"] = "k1"
-		s, _ := tok.SignedString(rsaKey)
-		_ = json.NewEncoder(w).Encode(backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: []byte(s)})
-	}))
+	digest := "sha256:" + strings.Repeat("a", 64)
+	workload := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				Nonce []byte `json:"nonce"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			keys := []backend.AttestedKeyInfo{
+				{Role: backend.KeyTypePool, PublicKey: pub},
+			}
+			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+				"iss": backend.ConfidentialSpaceIssuer, "aud": "https://signer.example",
+				"iat": time.Now().
+					Add(-time.Minute).
+					Unix(),
+				"nbf": time.Now().Add(-time.Minute).Unix(),
+				"exp": time.Now().
+					Add(time.Hour).
+					Unix(),
+				"hwmodel": "GCP_AMD_SEV",
+				"eat_nonce": []string{
+					hex.EncodeToString(
+						backend.InventoryBinding(in.Nonce, keys),
+					),
+				},
+				"dbgstat": "disabled-since-boot", "swname": "CONFIDENTIAL_SPACE", "secboot": true,
+				"submods": map[string]any{
+					"container": map[string]any{"image_digest": digest},
+					"confidential_space": map[string]any{
+						"support_attributes": []string{"STABLE"},
+					},
+				},
+			})
+			tok.Header["kid"] = "k1"
+			s, _ := tok.SignedString(rsaKey)
+			_ = json.NewEncoder(w).
+				Encode(backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: []byte(s)})
+		}),
+	)
 	t.Cleanup(workload.Close)
 
 	cfg := config.SignerBackendConfig{
@@ -278,7 +372,7 @@ func TestBuildBackendsConfidentialSpace(t *testing.T) {
 
 	// A different approved image digest fails attestation, so boot fails.
 	bad := cfg
-	bad.ImageDigest = "sha256:bbbb"
+	bad.ImageDigest = "sha256:" + strings.Repeat("b", 64)
 	if _, err := BuildBackends(t.Context(), []config.SignerBackendConfig{bad}); err == nil {
 		t.Fatal("boot succeeded with a mismatched image digest")
 	}
@@ -292,11 +386,21 @@ func writeRootPEM(t *testing.T) string {
 		t.Fatal(err)
 	}
 	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test-root"},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		IsCA: true, BasicConstraintsValid: true,
+		SerialNumber: big.NewInt(
+			1,
+		), Subject: pkix.Name{CommonName: "test-root"},
+		NotBefore: time.Now().
+			Add(-time.Hour),
+		NotAfter: time.Now().Add(time.Hour),
+		IsCA:     true, BasicConstraintsValid: true,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(
+		rand.Reader,
+		tmpl,
+		tmpl,
+		&key.PublicKey,
+		key,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,6 +415,7 @@ func TestBuildAttestedBackendsRejectBadConfig(t *testing.T) {
 	t.Parallel()
 	root := writeRootPEM(t)
 	goodPCR := strings.Repeat("ab", 48)
+	goodDigest := "sha256:" + strings.Repeat("a", 64)
 	for _, tc := range []struct {
 		name string
 		cfg  config.SignerBackendConfig
@@ -324,16 +429,24 @@ func TestBuildAttestedBackendsRejectBadConfig(t *testing.T) {
 		{"nitro without address", config.SignerBackendConfig{Type: "nitro", RootCAFile: root, PCRs: map[uint]string{0: goodPCR}}, "address"},
 		{"confidential-space without audience", config.SignerBackendConfig{Type: "confidential-space", Address: "http://127.0.0.1:1", ImageDigest: "sha256:aa"}, "audience"},
 		{"confidential-space cleartext jwks", config.SignerBackendConfig{
-			Type: "confidential-space", Address: "http://127.0.0.1:1", Audience: "a", ImageDigest: "sha256:aa", JWKSURL: "http://example.com/jwks",
+			Type: "confidential-space", Address: "http://127.0.0.1:1", Audience: "a", ImageDigest: goodDigest, JWKSURL: "http://example.com/jwks",
 		}, "https"},
 		{"confidential-space without address", config.SignerBackendConfig{
-			Type: "confidential-space", Audience: "a", ImageDigest: "sha256:aa", JWKSURL: "http://127.0.0.1:1/jwks",
+			Type: "confidential-space", Audience: "a", ImageDigest: goodDigest, JWKSURL: "http://127.0.0.1:1/jwks",
 		}, "address"},
 	} {
 		tc.cfg.Name = "x"
-		_, err := BuildBackends(t.Context(), []config.SignerBackendConfig{tc.cfg})
+		_, err := BuildBackends(
+			t.Context(),
+			[]config.SignerBackendConfig{tc.cfg},
+		)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("%s: got %v, want error containing %q", tc.name, err, tc.want)
+			t.Errorf(
+				"%s: got %v, want error containing %q",
+				tc.name,
+				err,
+				tc.want,
+			)
 		}
 	}
 }
@@ -342,7 +455,9 @@ func TestBuildAttestedBackendsRejectBadConfig(t *testing.T) {
 // that does not: a redirect to cleartext would let the keys be substituted.
 func TestFetchJWKSRefusesRedirectToCleartext(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.RedirectHandler("http://192.0.2.1/jwks", http.StatusFound))
+	srv := httptest.NewServer(
+		http.RedirectHandler("http://192.0.2.1/jwks", http.StatusFound),
+	)
 	t.Cleanup(srv.Close)
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
