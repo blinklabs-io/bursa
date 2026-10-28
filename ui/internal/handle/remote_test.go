@@ -60,8 +60,7 @@ func TestAPIResolverReturnsValidatedMainnetAddress(t *testing.T) {
 	address := mainnetAddress(t)
 	resolver := remoteResolverResponse(http.StatusOK, `{
 		"name":"chris",
-		"policy":"`+PolicyID+`",
-		"utxo":"012345#0",
+		"utxo":"`+strings.Repeat("0", 64)+`#0",
 		"resolved_addresses":{"ada":"`+address+`"}
 	}`, "application/json; charset=utf-8", func(req *http.Request) {
 		if req.URL.String() != apiBaseURL+"chris" {
@@ -100,11 +99,10 @@ func TestAPIResolverRejectsAmbiguousOwnershipEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build reward address: %v", err)
 	}
-	base := `{"name":"chris","policy":"` + PolicyID + `","utxo":"012345#0","resolved_addresses":{"ada":"` + address + `"}}`
+	base := `{"name":"chris","utxo":"` + strings.Repeat("0", 64) + `#0","resolved_addresses":{"ada":"` + address + `"}}`
 	tests := []string{
 		strings.Replace(base, `"name":"chris"`, `"name":"other"`, 1),
-		strings.Replace(base, PolicyID, strings.Repeat("0", len(PolicyID)), 1),
-		strings.Replace(base, `"utxo":"012345#0"`, `"utxo":""`, 1),
+		strings.Replace(base, strings.Repeat("0", 64)+`#0`, `bad#0`, 1),
 		strings.Replace(base, address, "addr_test1invalidnetwork", 1),
 		strings.Replace(base, address, reward.String(), 1),
 		strings.Replace(base, `"name":"chris"`, `"name":"chris","name":"other"`, 1),

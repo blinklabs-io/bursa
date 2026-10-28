@@ -17,6 +17,7 @@ package handle
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -68,7 +70,7 @@ var ErrRemoteUnavailable = errors.New("handle: external lookup unavailable")
 
 // APIResolver resolves a Handle through the fixed api.handle.me endpoint. It
 // sends no credentials, follows no redirects, accepts only bounded JSON, and
-// validates that the returned name, policy, UTxO, and Cardano network agree
+// validates that the returned name, UTxO, address type, and Cardano network agree
 // before returning a recipient.
 type APIResolver struct {
 	client *http.Client
@@ -179,7 +181,6 @@ func (r *APIResolver) Resolve(ctx context.Context, network, input string) (name,
 	}
 	var result struct {
 		Name              string `json:"name"`
-		Policy            string `json:"policy"`
 		UTxO              string `json:"utxo"`
 		ResolvedAddresses struct {
 			ADA string `json:"ada"`
@@ -189,7 +190,7 @@ func (r *APIResolver) Resolve(ctx context.Context, network, input string) (name,
 	if err := decoder.Decode(&result); err != nil {
 		return name, "", fmt.Errorf("%w: invalid response", ErrRemoteUnavailable)
 	}
-	if result.Name != name || result.Policy != PolicyID || result.UTxO == "" || result.ResolvedAddresses.ADA == "" {
+	if result.Name != name || !validUTxO(result.UTxO) || result.ResolvedAddresses.ADA == "" {
 		return name, "", ErrAmbiguousHolder
 	}
 	addr, err := lcommon.NewAddress(result.ResolvedAddresses.ADA)
@@ -201,6 +202,24 @@ func (r *APIResolver) Resolve(ctx context.Context, network, input string) (name,
 		return name, "", ErrAmbiguousHolder
 	}
 	return name, result.ResolvedAddresses.ADA, nil
+}
+
+func validUTxO(input string) bool {
+	txID, index, ok := strings.Cut(input, "#")
+	if !ok || len(txID) != 64 || index == "" || strings.Contains(index, "#") {
+		return false
+	}
+	decoded, err := hex.DecodeString(txID)
+	if err != nil || len(decoded) != 32 {
+		return false
+	}
+	for _, ch := range index {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	_, err = strconv.ParseUint(index, 10, 32)
+	return err == nil
 }
 
 func normalizeRemoteName(input string) (string, error) {
