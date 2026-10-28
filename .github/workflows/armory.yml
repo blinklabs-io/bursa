@@ -2,9 +2,6 @@ name: armory
 
 on:
   pull_request:
-    paths:
-      - 'armory/**'
-      - '.github/workflows/armory.yml'
 
 permissions:
   contents: read
