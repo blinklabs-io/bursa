@@ -503,7 +503,6 @@ func makeAssetUTxO(addr string, txHashHex string, idx uint32, lovelace uint64) U
 	}
 }
 
-
 func TestRefundLegacyStakeDeregistration(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
@@ -610,7 +609,6 @@ func TestRefundMixedRegistrationAndDeregistration(t *testing.T) {
 	require.Equal(t, inSum+refunds, outSum+tx.Body.TxFee+deposits)
 }
 
-
 func TestPoolLookupError(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
@@ -665,7 +663,6 @@ func TestUnsupportedProtocolParamsEra(t *testing.T) {
 	})
 	require.Error(t, err)
 }
-
 
 func TestCoinSelectionDeterministicAndMinInputs(t *testing.T) {
 	chain := NewFakeChain()
@@ -731,7 +728,6 @@ func TestCoinSelectionDeterministicAndMinInputs(t *testing.T) {
 	require.Equal(t, built.TxCBOR, built2.TxCBOR)
 }
 
-
 func TestCoinSelectionExceedsMaxTxSize(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
@@ -755,7 +751,6 @@ func TestCoinSelectionExceedsMaxTxSize(t *testing.T) {
 	})
 	require.Error(t, err)
 }
-
 
 func TestFeeIndependentCalculationAndBoundaries(t *testing.T) {
 	chain := NewFakeChain()
@@ -814,7 +809,6 @@ func TestFeeIndependentCalculationAndBoundaries(t *testing.T) {
 	require.GreaterOrEqual(t, tx3.Body.TxFee, minFee3)
 }
 
-
 func TestChangeBelowMinUTxO(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
@@ -833,7 +827,6 @@ func TestChangeBelowMinUTxO(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "minimum")
 }
-
 
 func TestBodyWithoutWithdrawalsHasNoWithdrawalsKey(t *testing.T) {
 	chain := NewFakeChain()
@@ -865,12 +858,10 @@ func TestBodyWithoutWithdrawalsHasNoWithdrawalsKey(t *testing.T) {
 	}
 }
 
-
 func TestRunTxSubmitRejectingFake(t *testing.T) {
 	// This test is mentioned for internal/cli test per requirements, but let's also add a quick check
 	// The actual test should be in internal/cli package
 }
-
 
 func TestUnknownNetworkName(t *testing.T) {
 	// Test via N2C
