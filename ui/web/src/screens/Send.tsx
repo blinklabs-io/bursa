@@ -53,6 +53,14 @@ function isHandleInput(value: string): boolean {
   return value.trim().startsWith("$");
 }
 
+function handleLookupError(error: unknown): string {
+  if (!(error instanceof ApiError)) return errorMessage(error);
+  if (error.status === 404) return "Handle not found";
+  if (error.status === 409) return "Handle holder is ambiguous";
+  if (error.status === 0 || error.status >= 500) return "Unable to query your node";
+  return errorMessage(error);
+}
+
 // --- Compose phase ---
 
 interface ComposeProps {
@@ -101,9 +109,7 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
         })
         .catch((e: unknown) => {
           if (cancelled) return;
-          setHandleError(
-            e instanceof ApiError && e.status === 404 ? "Handle not found" : errorMessage(e),
-          );
+          setHandleError(handleLookupError(e));
         })
         .finally(() => {
           if (!cancelled) setResolvingHandle(false);
