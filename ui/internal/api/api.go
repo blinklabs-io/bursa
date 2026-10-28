@@ -363,6 +363,7 @@ type PoolOps interface {
 	BuildRegistrationAirGap(p poolops.AirGapRegistrationParams) (poolops.CertResult, error)
 	BuildRetirementCert(password, coldVKeyHex string, epoch uint64) (poolops.CertResult, error)
 	SubmitRetirement(ctx context.Context, password string, epoch uint64) (poolops.TxResult, error)
+	SubmitPoolVote(ctx context.Context, password string, v poolops.PoolVoteParams) (poolops.TxResult, error)
 }
 
 // DexQuoter is the node-local DEX surface: pool prices and best-pool swap
@@ -2175,6 +2176,29 @@ func registerPoolRoutes(mux *http.ServeMux, st Statuser, po PoolOps) {
 			return
 		}
 		v, err := po.SubmitRetirement(r.Context(), req.Password, req.Epoch)
+		serve(w, v, err)
+	}))
+
+	// Governance vote by stake pool operator (seed; needs a fully synced node).
+	mux.HandleFunc("POST /wallet/pool/vote", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password    string `json:"password"`
+			ActionTxID  string `json:"action_tx_id"`
+			ActionIndex uint32 `json:"action_index"`
+			Vote        string `json:"vote"`
+			AnchorURL   string `json:"anchor_url"`
+			AnchorHash  string `json:"anchor_hash"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := po.SubmitPoolVote(r.Context(), req.Password, poolops.PoolVoteParams{
+			ActionTxID:  req.ActionTxID,
+			ActionIndex: req.ActionIndex,
+			Vote:        req.Vote,
+			AnchorURL:   req.AnchorURL,
+			AnchorHash:  req.AnchorHash,
+		})
 		serve(w, v, err)
 	}))
 }

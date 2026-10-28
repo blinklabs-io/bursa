@@ -631,3 +631,128 @@ func TestSubmitRetirementUsesDerivedChangeAddressUTxOs(t *testing.T) {
 
 // compile-time guard: the real keystore satisfies the generic interface used here.
 var _ Keystore = (*keystore.Keystore)(nil)
+
+func TestSubmitPoolVoteBuildsTransactionWithPoolVoterAndColdWitness(t *testing.T) {
+	acct, err := wallet.Derive(testMnemonic, "preview", 2)
+	if err != nil {
+		t.Fatalf("derive account: %v", err)
+	}
+	chain := newRetirementFakeChain(acct.ReceiveAddresses[0], 5_000_000)
+	ks := &fakeKeystore{mnemonic: testMnemonic, password: "spend-password", exists: true}
+	s := NewService(chain, ks, fakeGenesis{}, fakeTip{slot: 259200})
+	s.SetAccount("wallet-a", acct)
+
+	actionTxID := strings.Repeat("ab", 32)
+	res, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+		ActionTxID:  actionTxID,
+		ActionIndex: 0,
+		Vote:        "yes",
+		AnchorURL:   "ipfs://QmTest",
+		AnchorHash:  strings.Repeat("cd", 32),
+	})
+	if err != nil {
+		t.Fatalf("SubmitPoolVote: %v", err)
+	}
+	if res.TxHash == "" {
+		t.Fatal("SubmitPoolVote returned empty tx hash")
+	}
+	if len(chain.submitCbor) == 0 {
+		t.Fatal("SubmitPoolVote did not submit transaction CBOR")
+	}
+
+	var tx conway.ConwayTransaction
+	if _, err := cbor.Decode(chain.submitCbor, &tx); err != nil {
+		t.Fatalf("decode submitted tx: %v", err)
+	}
+	if len(tx.Body.TxVotingProcedures) != 1 {
+		t.Fatalf("voting procedures count = %d, want 1", len(tx.Body.TxVotingProcedures))
+	}
+	creds, err := s.Credentials("spend-password")
+	if err != nil {
+		t.Fatalf("Credentials: %v", err)
+	}
+	for voter, votes := range tx.Body.TxVotingProcedures {
+		if voter.Type != lcommon.VoterTypeStakingPoolKeyHash {
+			t.Fatalf("voter type = %d, want staking pool key hash", voter.Type)
+		}
+		if hex.EncodeToString(voter.Hash[:]) != creds.PoolIDHex {
+			t.Fatalf("voter hash mismatch")
+		}
+		if len(votes) != 1 {
+			t.Fatalf("votes for voter = %d, want 1", len(votes))
+		}
+		for actionID, proc := range votes {
+			if hex.EncodeToString(actionID.TransactionId[:]) != actionTxID {
+				t.Fatalf("action tx id mismatch")
+			}
+			if actionID.GovActionIdx != 0 {
+				t.Fatalf("action index = %d, want 0", actionID.GovActionIdx)
+			}
+			if proc.Vote != lcommon.GovVoteYes {
+				t.Fatalf("vote = %d, want yes", proc.Vote)
+			}
+			if proc.Anchor == nil {
+				t.Fatal("expected anchor")
+			}
+			if proc.Anchor.Url != "ipfs://QmTest" {
+				t.Fatalf("anchor url = %q", proc.Anchor.Url)
+			}
+			if hex.EncodeToString(proc.Anchor.DataHash[:]) != strings.Repeat("cd", 32) {
+				t.Fatalf("anchor hash mismatch")
+			}
+		}
+	}
+	if got := len(tx.WitnessSet.VkeyWitnesses.Items()); got < 2 {
+		t.Fatalf("vkey witness count = %d, want payment + cold witnesses", got)
+	}
+}
+
+func TestSubmitPoolVoteRejectsInvalidInputs(t *testing.T) {
+	acct, err := wallet.Derive(testMnemonic, "preview", 2)
+	if err != nil {
+		t.Fatalf("derive account: %v", err)
+	}
+	chain := newRetirementFakeChain(acct.ReceiveAddresses[0], 5_000_000)
+	ks := &fakeKeystore{mnemonic: testMnemonic, password: "spend-password", exists: true}
+	s := NewService(chain, ks, fakeGenesis{}, fakeTip{slot: 259200})
+	s.SetAccount("wallet-a", acct)
+
+	if _, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+		ActionTxID: strings.Repeat("ab", 31), ActionIndex: 0, Vote: "yes",
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("short txid: %v", err)
+	}
+	if _, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+		ActionTxID: "zz" + strings.Repeat("ab", 31), ActionIndex: 0, Vote: "yes",
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("bad hex txid: %v", err)
+	}
+	if _, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+		ActionTxID: strings.Repeat("ab", 32), ActionIndex: 0, Vote: "maybe",
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("bad vote: %v", err)
+	}
+	if _, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+		ActionTxID: strings.Repeat("ab", 32), ActionIndex: 0, Vote: "yes", AnchorURL: "ipfs://x",
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("anchor url only: %v", err)
+	}
+	if _, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+		ActionTxID: strings.Repeat("ab", 32), ActionIndex: 0, Vote: "yes", AnchorHash: strings.Repeat("cd", 32),
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("anchor hash only: %v", err)
+	}
+	if _, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+		ActionTxID: strings.Repeat("ab", 32), ActionIndex: 0, Vote: "yes", AnchorURL: "ipfs://x", AnchorHash: strings.Repeat("cd", 31),
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("short anchor hash: %v", err)
+	}
+	if _, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+		ActionTxID: strings.Repeat("ab", 32), ActionIndex: 0, Vote: "yes", AnchorURL: "ipfs://x", AnchorHash: "zz" + strings.Repeat("cd", 31),
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("bad hex anchor hash: %v", err)
+	}
+	if len(chain.submitCbor) != 0 {
+		t.Fatal("should not have submitted anything for invalid inputs")
+	}
+}
