@@ -85,19 +85,19 @@ func main() {
 
 	// one lock for the SE050 session, shared by every endpoint
 	mu := &sync.Mutex{}
-	s := &signer{Mutex: mu}
+	s := &legacy
+	s.Mutex = mu
 	svc := device.New(mu, report.Logf)
 
 	go runBringup(report, s, svc)
 
-	http.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+	http.HandleFunc("/{$}", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		fmt.Fprint(w, report.String())
 	})
 
 	http.HandleFunc("/provision", s.provision)
 	http.HandleFunc("/pubkey", s.publicKey)
-	http.HandleFunc("/sign", s.sign)
 	http.Handle("/v1/", svc.Handler())
 	http.Handle("/provision/", svc.Handler())
 

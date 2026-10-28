@@ -14,8 +14,10 @@
 
 // Command opcert-check verifies a provisioned armory-signer cold key against
 // public pool material: the cold verification key, the pool id, and an
-// existing operational certificate, whose cold signature must be reproduced
-// byte for byte (Ed25519 is deterministic).
+// existing operational certificate. It asks the device for opcert-next with
+// the chain counter one below the certificate's issue number, so the device
+// must choose that issue number and reproduce the cold signature byte for
+// byte (Ed25519 is deterministic).
 //
 // It reads only public inputs and binds its connections to the USB network
 // source address so requests cannot leave through another route.
@@ -24,8 +26,10 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -35,6 +39,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blinklabs-io/bursa/armory/device"
 	"github.com/fxamacker/cbor/v2"
 	"golang.org/x/crypto/blake2b"
 )
@@ -123,6 +128,7 @@ func main() {
 	vkeyHex := flag.String("vkey", "", "cold verification key cborHex (node.vkey)")
 	certHex := flag.String("cert", "", "operational certificate cborHex (node.cert)")
 	poolID := flag.String("pool", "", "expected pool id (hex)")
+	profileName := flag.String("profile", "", "device profile holding the cold key")
 	base := flag.String("signer", "http://10.0.0.1", "armory-signer URL")
 	source := flag.String("source", "10.0.0.2", "local source address on the USB network")
 	flag.Parse()
@@ -167,12 +173,51 @@ func main() {
 	check("node.cert signature verifies under node.vkey",
 		ed25519.Verify(vkey, cert.Body.signable(), cert.Body.ColdSig))
 
-	sig, err := c.do(http.MethodPost, "/sign", hex.EncodeToString(cert.Body.signable()))
+	if cert.Body.IssueNumber == 0 {
+		log.Fatal("node.cert issue number 0 has no chain counter below it")
+	}
+
+	nonce := make([]byte, 32)
+
+	if _, err = rand.Read(nonce); err != nil {
+		log.Fatal(err)
+	}
+
+	// the chain counter is the one before this cert, so the device's
+	// choice of issue number must land on the cert's
+	payload := append([]byte{}, cert.Body.KESKey...)
+	payload = binary.BigEndian.AppendUint64(payload, cert.Body.IssueNumber-1)
+	payload = binary.BigEndian.AppendUint64(payload, cert.Body.KESPeriod)
+
+	req, _ := json.Marshal(device.SignRequest{
+		Version: device.Protocol,
+		Purpose: "opcert-next",
+		KeyHash: *poolID,
+		Role:    "pool",
+		Nonce:   nonce,
+		Payload: payload,
+		Profile: *profileName,
+	})
+
+	out, err := c.do(http.MethodPost, "/v1/sign", string(req))
 
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	check(fmt.Sprintf("signer reproduces node.cert signature (issue %d, KES period %d)",
-		cert.Body.IssueNumber, cert.Body.KESPeriod), sig == hex.EncodeToString(cert.Body.ColdSig))
+	var resp device.SignResponse
+
+	if err = json.Unmarshal([]byte(out), &resp); err != nil {
+		log.Fatal(err)
+	}
+
+	if resp.Error != "" {
+		log.Fatalf("FAIL opcert-next refused: %s", resp.Error)
+	}
+
+	check("response echoes nonce", bytes.Equal(resp.Nonce, nonce))
+	check(fmt.Sprintf("device chose issue counter %d", cert.Body.IssueNumber),
+		resp.IssueCounter != nil && *resp.IssueCounter == cert.Body.IssueNumber)
+	check(fmt.Sprintf("device reproduces node.cert signature (issue %d, KES period %d)",
+		cert.Body.IssueNumber, cert.Body.KESPeriod), bytes.Equal(resp.Signature, cert.Body.ColdSig))
 }

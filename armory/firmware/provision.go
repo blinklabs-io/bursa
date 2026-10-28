@@ -30,15 +30,14 @@ import (
 // test range so bring-up cleanup can never delete it.
 const coldKeyID uint32 = 0x20e50010
 
-// maxSignable bounds signing requests; an operational certificate body is
-// 48 bytes.
-const maxSignable = 128
-
 // cardano-cli encodes a 32-byte Ed25519 signing key as a CBOR byte string:
 // major type 2, one-byte length (0x58), length 32 (0x20).
 var cborBytes32 = []byte{0x58, 0x20}
 
 var errNotOpen = errors.New("SE050 not available")
+
+// legacy serves the cold key import and, in testnet builds, /sign.
+var legacy signer
 
 // signer serializes access to the SE050 session, which bring-up opens.
 type signer struct {
@@ -132,39 +131,4 @@ func (s *signer) publicKey(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	s.writePublicKey(w)
-}
-
-// sign returns a cold key signature over the hex request body.
-//
-// TESTNET ONLY: this endpoint is unauthenticated, anything that can reach
-// the USB network can obtain signatures.
-func (s *signer) sign(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
-
-	msg, err := readHexBody(r, maxSignable)
-
-	if err != nil || len(msg) == 0 || len(msg) > maxSignable {
-		http.Error(w, "expected hex message", http.StatusBadRequest)
-		return
-	}
-
-	s.Lock()
-	defer s.Unlock()
-
-	if s.se == nil {
-		http.Error(w, errNotOpen.Error(), http.StatusServiceUnavailable)
-		return
-	}
-
-	sig, err := s.se.SignEd25519(coldKeyID, msg)
-
-	if err != nil {
-		http.Error(w, fmt.Sprintf("sign: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	fmt.Fprintf(w, "%x\n", sig)
 }
