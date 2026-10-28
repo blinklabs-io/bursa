@@ -13,8 +13,8 @@
 // limitations under the License.
 
 // Package handle resolves an ADA Handle ($name) — an on-chain NFT — to the
-// address currently holding it. Resolution is a chain query through the
-// embedded node only (consent law: no external service is ever contacted).
+// address currently holding it. Resolve always uses the embedded node; the
+// separate APIResolver is invoked only by an explicitly consented fallback.
 package handle
 
 import (
@@ -36,6 +36,10 @@ const MainnetPolicyID = PolicyID
 // ErrInvalidName is returned when a handle input has no name left after
 // stripping its optional leading '$' and surrounding whitespace.
 var ErrInvalidName = errors.New("handle: empty name")
+
+// ErrAmbiguousHolder is returned when a resolver cannot prove one current
+// recipient. Callers must never select an address from an ambiguous result.
+var ErrAmbiguousHolder = errors.New("handle: holder is ambiguous")
 
 // Normalize strips an optional leading '$' (and surrounding whitespace) from
 // a handle input and case-folds it to lowercase — "$Chris", "CHRIS", and
@@ -114,8 +118,8 @@ func Resolve(ctx context.Context, lookup AssetLookup, network, input string) (na
 	if len(addrs) == 0 {
 		return name, "", chain.ErrNotFound
 	}
-	// An ADA Handle is a non-fungible token: exactly one address holds it. If
-	// the node ever reports more than one (e.g. transient reorg view), the
-	// current holder is still the most informative single answer.
+	if len(addrs) != 1 || addrs[0].Address == "" || addrs[0].Quantity != "1" {
+		return name, "", ErrAmbiguousHolder
+	}
 	return name, addrs[0].Address, nil
 }

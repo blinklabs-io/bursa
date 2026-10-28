@@ -114,8 +114,8 @@ type Spender interface {
 
 // NodeLookup is the node-backed verification/lookup surface the wallet uses to
 // confirm a pasted pool or DRep ID exists, resolve ADA Handles, and read native
-// asset identity/metadata. The embedded node is the only component that
-// touches the network; *chain.Client satisfies this interface.
+// asset identity/metadata. Handle fallback traffic uses the separate,
+// consent-gated ExternalHandleResolver; *chain.Client satisfies this interface.
 type NodeLookup interface {
 	Pool(ctx context.Context, poolID string) (chain.PoolInfo, error)
 	// Pools returns the node's full stake-pool directory (from
@@ -221,6 +221,7 @@ type handlerOptions struct {
 	activity        Activity
 	surveys         Surveys
 	autoLockRuntime autoLockRuntime
+	externalHandles ExternalHandleResolver
 }
 
 // ScriptMigrator moves saved multi-signature accounts out of the standalone
@@ -278,6 +279,12 @@ func WithSurveys(sv Surveys) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.surveys = sv }
 }
 
+// WithExternalHandleResolver enables the fixed-service Handle fallback. The
+// route still requires both the persisted opt-in and per-name consent.
+func WithExternalHandleResolver(resolver ExternalHandleResolver) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.externalHandles = resolver }
+}
+
 // Handler serves the wallet control surface and owns its server-side vault
 // idle deadline.
 type Handler struct {
@@ -318,6 +325,16 @@ type SettingsController interface {
 	Notifications() bool
 	// SetNotifications persists the wallet-activity notification preference.
 	SetNotifications(enabled bool) error
+	// ExternalHandleLookup controls whether the UI may offer the optional
+	// external fallback. Every disclosed name requires separate consent.
+	ExternalHandleLookup() bool
+	SetExternalHandleLookup(enabled bool) error
+}
+
+// ExternalHandleResolver is the narrow external lookup surface. Production
+// uses handle.APIResolver; tests supply a fake without network access.
+type ExternalHandleResolver interface {
+	Resolve(ctx context.Context, network, input string) (name, address string, err error)
 }
 
 // autoLockOptions are the only accepted auto-lock timeouts (minutes; 0 = Off).
@@ -471,6 +488,7 @@ type poolRegistrationAirGapRequest struct {
 type handleInfo struct {
 	Handle  string `json:"handle"`
 	Address string `json:"address"`
+	Source  string `json:"source,omitempty"`
 }
 
 // NFTs is the optional NFT discovery and media surface.
@@ -1393,6 +1411,30 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.Notifications()})
 	})
 
+	// External Handle lookup is a two-part consent: this persisted setting lets
+	// the UI offer the fallback, while every individual name disclosure must
+	// still arrive through the explicit POST route below with consent=true.
+	mux.HandleFunc("GET /wallet/settings/external-handle-lookup", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.ExternalHandleLookup()})
+	})
+	mux.HandleFunc("PUT /wallet/settings/external-handle-lookup", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if req.Enabled == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "enabled is required"})
+			return
+		}
+		if err := settings.SetExternalHandleLookup(*req.Enabled); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.ExternalHandleLookup()})
+	})
+
 	// --- Address book (local-only, no network) -------------------------------
 	// Pure on-device CRUD storage: ungated (no node needed) and never reaches
 	// out to any external service.
@@ -1663,8 +1705,47 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 			return
 		}
 		bare, addr, err := handle.Resolve(r.Context(), lookup, network, r.PathValue("name"))
-		serveLookup(w, handleInfo{Handle: bare, Address: addr}, err)
+		serveHandleLookup(w, handleInfo{Handle: bare, Address: addr, Source: "node"}, err)
 	}))
+
+	// The external fallback is POST-only because it discloses the requested
+	// Handle name. It never runs automatically: the feature must be enabled and
+	// the request must carry fresh consent for this exact disclosure. A final
+	// node lookup keeps the embedded node primary; ambiguity never falls through
+	// to a remote answer.
+	mux.HandleFunc("POST /wallet/handle/{name}/external", func(w http.ResponseWriter, r *http.Request) {
+		if !settings.ExternalHandleLookup() {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "external handle lookup is disabled"})
+			return
+		}
+		var req struct {
+			Consent *bool `json:"consent"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if req.Consent == nil || !*req.Consent {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "consent is required"})
+			return
+		}
+		if lookup != nil {
+			bare, addr, err := handle.Resolve(r.Context(), lookup, network, r.PathValue("name"))
+			switch {
+			case err == nil:
+				writeJSON(w, http.StatusOK, handleInfo{Handle: bare, Address: addr, Source: "node"})
+				return
+			case errors.Is(err, handle.ErrAmbiguousHolder):
+				serveHandleLookup(w, handleInfo{}, err)
+				return
+			}
+		}
+		if cfg.externalHandles == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "external handle lookup unavailable"})
+			return
+		}
+		bare, addr, err := cfg.externalHandles.Resolve(r.Context(), network, r.PathValue("name"))
+		serveExternalHandleLookup(w, handleInfo{Handle: bare, Address: addr, Source: "external"}, err)
+	})
 
 	// GET /wallet/assets/{unit} reads a native asset's on-chain
 	// identity/metadata (unit = policy ID + hex asset name) through the node,
@@ -1893,6 +1974,32 @@ func serveLookup[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found by your node"})
 	default:
 		writeJSON(w, http.StatusBadGateway, errBody(err))
+	}
+}
+
+func serveHandleLookup(w http.ResponseWriter, v handleInfo, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, chain.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "handle not found by your node"})
+	case errors.Is(err, handle.ErrAmbiguousHolder):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "handle holder is ambiguous"})
+	default:
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "handle lookup failed"})
+	}
+}
+
+func serveExternalHandleLookup(w http.ResponseWriter, v handleInfo, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, chain.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "handle not found"})
+	case errors.Is(err, handle.ErrAmbiguousHolder):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "handle holder is ambiguous"})
+	default:
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "external handle service unavailable"})
 	}
 }
 

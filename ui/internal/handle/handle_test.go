@@ -146,8 +146,21 @@ func TestResolveFound(t *testing.T) {
 	}
 }
 
+func TestResolveRejectsAmbiguousHolder(t *testing.T) {
+	for _, addrs := range [][]chain.AssetAddress{
+		{{Address: "addr1a", Quantity: "1"}, {Address: "addr1b", Quantity: "1"}},
+		{{Address: "", Quantity: "1"}},
+		{{Address: "addr1a", Quantity: "2"}},
+	} {
+		lk := &fakeAssetLookup{addrs: addrs}
+		if _, _, err := Resolve(context.Background(), lk, "mainnet", "$chris"); !errors.Is(err, ErrAmbiguousHolder) {
+			t.Fatalf("Resolve(%+v) error = %v, want ErrAmbiguousHolder", addrs, err)
+		}
+	}
+}
+
 func TestResolveOnTestnetUsesSharedPolicy(t *testing.T) {
-	lk := &fakeAssetLookup{addrs: []chain.AssetAddress{{Address: "addr1abc"}}}
+	lk := &fakeAssetLookup{addrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
 	name, addr, err := Resolve(context.Background(), lk, "preview", "$chris")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
@@ -165,7 +178,7 @@ func TestResolveOnTestnetUsesSharedPolicy(t *testing.T) {
 }
 
 func TestResolveNotFoundOnInvalidNetworkSkipsNodeQuery(t *testing.T) {
-	lk := &fakeAssetLookup{addrs: []chain.AssetAddress{{Address: "addr1abc"}}}
+	lk := &fakeAssetLookup{addrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
 	_, _, err := Resolve(context.Background(), lk, "mainnte", "$chris")
 	if !errors.Is(err, chain.ErrNotFound) {
 		t.Fatalf("Resolve err = %v, want chain.ErrNotFound", err)

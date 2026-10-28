@@ -33,6 +33,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
+	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
@@ -454,6 +455,10 @@ type fakeSettings struct {
 	setNotificationsErr    error
 	setNotificationsCalled bool
 	setNotificationsWith   bool
+
+	externalHandles          bool
+	setExternalHandlesErr    error
+	setExternalHandlesCalled bool
 }
 
 type fakeAutoLockTimer struct {
@@ -527,6 +532,17 @@ func (f *fakeSettings) SetNotifications(enabled bool) error {
 		return f.setNotificationsErr
 	}
 	f.notifications = enabled
+	return nil
+}
+
+func (f *fakeSettings) ExternalHandleLookup() bool { return f.externalHandles }
+
+func (f *fakeSettings) SetExternalHandleLookup(enabled bool) error {
+	f.setExternalHandlesCalled = true
+	if f.setExternalHandlesErr != nil {
+		return f.setExternalHandlesErr
+	}
+	f.externalHandles = enabled
 	return nil
 }
 
@@ -4068,6 +4084,122 @@ type fakeNodeLookup struct {
 	gotAssetUnits []string
 }
 
+type fakeExternalHandleResolver struct {
+	name    string
+	address string
+	err     error
+	calls   int
+	input   string
+	network string
+}
+
+func (f *fakeExternalHandleResolver) Resolve(_ context.Context, network, input string) (string, string, error) {
+	f.calls++
+	f.network = network
+	f.input = input
+	return f.name, f.address, f.err
+}
+
+func externalHandleHandler(settings *fakeSettings, lookup NodeLookup, resolver ExternalHandleResolver) http.Handler {
+	return NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, settings,
+		&fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler(),
+		WithExternalHandleResolver(resolver))
+}
+
+func TestExternalHandleLookupSettingDefaultsOffAndToggles(t *testing.T) {
+	settings := &fakeSettings{}
+	h := externalHandleHandler(settings, nil, &fakeExternalHandleResolver{})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/external-handle-lookup", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":false`) {
+		t.Fatalf("default setting = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/external-handle-lookup", strings.NewReader(`{"enabled":true}`)))
+	if rec.Code != http.StatusOK || !settings.externalHandles || !settings.setExternalHandlesCalled {
+		t.Fatalf("enable setting = %d %s settings=%+v", rec.Code, rec.Body.String(), settings)
+	}
+}
+
+func TestExternalHandleLookupRequiresFeatureAndPerNameConsent(t *testing.T) {
+	settings := &fakeSettings{}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	h := externalHandleHandler(settings, &fakeNodeLookup{assetErr: chain.ErrNotFound}, remote)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusForbidden || remote.calls != 0 {
+		t.Fatalf("disabled lookup = %d calls=%d", rec.Code, remote.calls)
+	}
+
+	settings.externalHandles = true
+	for _, body := range []string{`{}`, `{"consent":false}`} {
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest || remote.calls != 0 {
+			t.Fatalf("lookup body %s = %d calls=%d", body, rec.Code, remote.calls)
+		}
+	}
+}
+
+func TestExternalHandleLookupKeepsNodePrimary(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	local := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1local", Quantity: "1"}}}
+	h := externalHandleHandler(settings, local, remote)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusOK || remote.calls != 0 || !strings.Contains(rec.Body.String(), `"address":"addr1local"`) || !strings.Contains(rec.Body.String(), `"source":"node"`) {
+		t.Fatalf("node-primary lookup = %d %s remote calls=%d", rec.Code, rec.Body.String(), remote.calls)
+	}
+}
+
+func TestExternalHandleLookupFallsBackAfterNodeMiss(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	h := externalHandleHandler(settings, &fakeNodeLookup{assetErr: chain.ErrNotFound}, remote)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/$chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusOK || remote.calls != 1 || remote.input != "$chris" || remote.network != "mainnet" || !strings.Contains(rec.Body.String(), `"source":"external"`) {
+		t.Fatalf("fallback = %d %s remote=%+v", rec.Code, rec.Body.String(), remote)
+	}
+}
+
+func TestExternalHandleLookupFailsClosedOnAmbiguousNode(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	local := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{
+		{Address: "addr1a", Quantity: "1"},
+		{Address: "addr1b", Quantity: "1"},
+	}}
+	h := externalHandleHandler(settings, local, remote)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusConflict || remote.calls != 0 {
+		t.Fatalf("ambiguous node = %d %s remote calls=%d", rec.Code, rec.Body.String(), remote.calls)
+	}
+}
+
+func TestExternalHandleLookupDistinguishesMissingAndFailure(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	for _, tc := range []struct {
+		err  error
+		code int
+		body string
+	}{
+		{err: chain.ErrNotFound, code: http.StatusNotFound, body: "handle not found"},
+		{err: handle.ErrRemoteUnavailable, code: http.StatusBadGateway, body: "external handle service unavailable"},
+	} {
+		remote := &fakeExternalHandleResolver{err: tc.err}
+		h := externalHandleHandler(settings, &fakeNodeLookup{assetErr: chain.ErrNotFound}, remote)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+		if rec.Code != tc.code || !strings.Contains(rec.Body.String(), tc.body) {
+			t.Fatalf("remote error %v = %d %s", tc.err, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func (f *fakeNodeLookup) Pool(_ context.Context, _ string) (chain.PoolInfo, error) {
 	return f.pool, f.poolErr
 }
@@ -4149,7 +4281,7 @@ func TestHandleLookupResolvesOnPreview(t *testing.T) {
 }
 
 func TestHandleLookupWithoutDollarSign(t *testing.T) {
-	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc"}}}
+	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
 	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/chris", nil))
@@ -4159,7 +4291,7 @@ func TestHandleLookupWithoutDollarSign(t *testing.T) {
 }
 
 func TestHandleLookupNotFoundOnInvalidNetwork(t *testing.T) {
-	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc"}}}
+	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
 	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnte", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/$chris", nil))
@@ -4192,7 +4324,7 @@ func TestHandleLookupBadGatewayOnHardError(t *testing.T) {
 }
 
 func TestHandleLookupGatedWhileStarting(t *testing.T) {
-	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc"}}}
+	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
 	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
