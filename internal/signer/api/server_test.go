@@ -39,11 +39,11 @@ import (
 // minimal fake Cardano returning a fixed inspection/txid/assembled blob
 type fakeCardano struct{ pub ed25519.PublicKey }
 
-func (fakeCardano) Inspect([]byte) (*bursa.TxInspection, error) {
+func (fakeCardano) Inspect([]byte, uint) (*bursa.TxInspection, error) {
 	return &bursa.TxInspection{TxId: "deadbeef", TTL: 1, Outputs: []bursa.TxOutput{{Address: "addr1ok", Lovelace: "1"}}}, nil
 }
-func (fakeCardano) Operations([]byte) (policy.TxOps, error) { return policy.TxOps{}, nil }
-func (fakeCardano) TxID([]byte) ([]byte, error)             { return make([]byte, 32), nil }
+func (fakeCardano) Operations([]byte, uint) (policy.TxOps, error) { return policy.TxOps{}, nil }
+func (fakeCardano) TxID([]byte, uint) ([]byte, error)             { return make([]byte, 32), nil }
 func (fakeCardano) Assemble([]byte, uint, []lcommon.VkeyWitness) ([]byte, error) {
 	return []byte{0x9}, nil
 }
@@ -53,19 +53,19 @@ type countingCardano struct {
 	calls int
 }
 
-func (c *countingCardano) Inspect(tx []byte) (*bursa.TxInspection, error) {
+func (c *countingCardano) Inspect(tx []byte, txType uint) (*bursa.TxInspection, error) {
 	c.calls++
-	return c.fakeCardano.Inspect(tx)
+	return c.fakeCardano.Inspect(tx, txType)
 }
 
-func (c *countingCardano) Operations(tx []byte) (policy.TxOps, error) {
+func (c *countingCardano) Operations(tx []byte, txType uint) (policy.TxOps, error) {
 	c.calls++
-	return c.fakeCardano.Operations(tx)
+	return c.fakeCardano.Operations(tx, txType)
 }
 
-func (c *countingCardano) TxID(tx []byte) ([]byte, error) {
+func (c *countingCardano) TxID(tx []byte, txType uint) ([]byte, error) {
 	c.calls++
-	return c.fakeCardano.TxID(tx)
+	return c.fakeCardano.TxID(tx, txType)
 }
 
 func (c *countingCardano) Assemble(tx []byte, txType uint, wits []lcommon.VkeyWitness) ([]byte, error) {

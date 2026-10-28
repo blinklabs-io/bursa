@@ -208,16 +208,16 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
-	insp, err := c.deps.Cardano.Inspect(raw)
+	insp, err := c.deps.Cardano.Inspect(raw, txType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
-	ops, err := c.deps.Cardano.Operations(raw)
+	ops, err := c.deps.Cardano.Operations(raw, txType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
 	caller := callerFromContext(ctx)
-	txid, err := c.deps.Cardano.TxID(raw)
+	txid, err := c.deps.Cardano.TxID(raw, txType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
