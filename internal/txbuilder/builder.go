@@ -304,7 +304,7 @@ func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error
 				}
 				minChange := minUTxOForOutput(changeOut, ppConv)
 				if minChange > 0 && change < minChange {
-					return nil, errors.New("change below minimum UTxO")
+					return nil, errors.New("change below minimum UTxO: output amount too small")
 				}
 				txBody.TxOutputs = []babbage.BabbageTransactionOutput{changeOut}
 				finalTx := conway.ConwayTransaction{
@@ -363,7 +363,7 @@ func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error
 				}
 				minChange = minUTxOForOutput(changeOut, ppConv)
 				if minChange > 0 && change < minChange {
-					return nil, errors.New("change below minimum UTxO")
+					return nil, errors.New("change below minimum UTxO: output amount too small")
 				}
 				txBody.TxOutputs = []babbage.BabbageTransactionOutput{changeOut}
 				finalTx = conway.ConwayTransaction{
