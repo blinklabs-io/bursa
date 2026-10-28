@@ -142,6 +142,10 @@ the enclave image, outside the signer:
   the build output. Rotating the image changes PCR0: add the new value to the
   KMS policy and to `pcrs`, roll the signer, then remove the old value.
 
+The production workload, host proxy, provisioning/reload flow, KMS policy, and
+PCR build and rotation procedure are documented in
+[`nitro-custody.md`](nitro-custody.md).
+
 ## GCP Confidential Space
 
 ```yaml
