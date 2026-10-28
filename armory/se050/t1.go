@@ -48,6 +48,11 @@ const (
 	rBlockSeq  = 0x10
 	rBlockErr  = 0x03
 
+	rErrCRC   = 0x01
+	rErrOther = 0x02
+
+	sResyncRequest     = 0xc0
+	sResyncResponse    = 0xe0
 	sWTXRequest        = 0xc3
 	sWTXResponse       = 0xe3
 	sSoftResetRequest  = 0xcf
@@ -57,6 +62,15 @@ const (
 // ErrTimeout is returned when the SE050 does not answer within the block
 // waiting time.
 var ErrTimeout = errors.New("se050: block waiting time exceeded")
+
+// errCorrupt marks a received frame that failed NAD, length or CRC checks.
+var errCorrupt = errors.New("se050: corrupted frame")
+
+// errRetries is returned when a block exchange fails maxAttempts times.
+var errRetries = errors.New("se050: block exchange failed after retries")
+
+// maxAttempts bounds the replies tried for one block before resynchronising.
+const maxAttempts = 3
 
 // ATR is the answer to reset returned by an interface soft reset.
 type ATR struct {
@@ -79,7 +93,10 @@ type T1 struct {
 	bus   Bus
 	sleep func(time.Duration)
 
+	// sendSeq is N(S) of the next host I-block, recvSeq the N(S) expected
+	// in the next SE I-block
 	sendSeq uint8
+	recvSeq uint8
 
 	bwt  time.Duration
 	mpot time.Duration
@@ -164,14 +181,14 @@ func (t *T1) readFrame() (pcb byte, data []byte, err error) {
 		}
 
 		if hdr[0] != nadSEToHost {
-			return 0, nil, fmt.Errorf("se050: invalid NAD %#02x", hdr[0])
+			return 0, nil, fmt.Errorf("%w: invalid NAD %#02x", errCorrupt, hdr[0])
 		}
 
 		pcb = hdr[1]
 		n := int(hdr[2])
 
 		if n > maxFrameData {
-			return 0, nil, fmt.Errorf("se050: invalid frame length %d", n)
+			return 0, nil, fmt.Errorf("%w: invalid frame length %d", errCorrupt, n)
 		}
 
 		data = []byte{}
@@ -191,7 +208,7 @@ func (t *T1) readFrame() (pcb byte, data []byte, err error) {
 		crc := crc16(append(hdr, data...))
 
 		if trailer[0] != byte(crc) || trailer[1] != byte(crc>>8) {
-			return 0, nil, errors.New("se050: frame CRC mismatch")
+			return 0, nil, fmt.Errorf("%w: CRC mismatch", errCorrupt)
 		}
 
 		if pcb == sWTXRequest {
@@ -232,7 +249,7 @@ func (t *T1) SoftReset() (atr *ATR, err error) {
 		return
 	}
 
-	t.sendSeq = 0
+	t.sendSeq, t.recvSeq = 0, 0
 
 	// zero values would turn polling into a busy loop, keep the defaults
 	if atr.BWT > 0 {
@@ -302,68 +319,149 @@ func be16(b []byte) uint16 {
 	return uint16(b[0])<<8 | uint16(b[1])
 }
 
+func isIBlock(pcb byte) bool { return pcb&0x80 == 0 }
+func isRBlock(pcb byte) bool { return pcb&0xc0 == rBlock }
+
+// exchange sends block f and returns the SE's reply. A corrupted reply, a
+// timeout or an SE I-block out of sequence is answered with an R-block
+// asking for a resend; an SE R-block refusing f resends f. After
+// maxAttempts failed replies it returns errRetries.
+func (t *T1) exchange(f []byte) (pcb byte, data []byte, err error) {
+	if err = t.writeFrame(f); err != nil {
+		return
+	}
+
+	for attempt := 1; ; attempt++ {
+		pcb, data, err = t.readFrame()
+
+		code := byte(0)
+
+		switch {
+		case errors.Is(err, errCorrupt):
+			code = rErrCRC
+		case errors.Is(err, ErrTimeout):
+			code = rErrOther
+		case err != nil:
+			return
+		case isIBlock(pcb) && pcb>>6&1 != t.recvSeq:
+			code = rErrOther
+		case isRBlock(pcb) && isIBlock(f[1]) && (pcb&rBlockErr != 0 || pcb>>4&1 == f[1]>>6&1):
+			// the SE asks for f again
+		default:
+			return pcb, data, nil
+		}
+
+		if attempt == maxAttempts {
+			return 0, nil, fmt.Errorf("%w: last error %v, PCB %#02x", errRetries, err, pcb)
+		}
+
+		if code == 0 {
+			err = t.writeFrame(f)
+		} else {
+			err = t.writeFrame(frame(rBlock|t.recvSeq<<4|code, nil))
+		}
+
+		if err != nil {
+			return 0, nil, err
+		}
+	}
+}
+
+// Resync resynchronises the T=1 link, resetting both sequence counters.
+func (t *T1) Resync() error {
+	if err := t.writeFrame(frame(sResyncRequest, nil)); err != nil {
+		return err
+	}
+
+	pcb, _, err := t.readFrame()
+
+	if err != nil {
+		return err
+	}
+
+	if pcb != sResyncResponse {
+		return fmt.Errorf("se050: unexpected resync response PCB %#02x", pcb)
+	}
+
+	t.sendSeq, t.recvSeq = 0, 0
+
+	return nil
+}
+
 // Transceive sends a command APDU, chaining it across I-blocks when it
-// exceeds the frame size, and returns the reassembled response APDU.
-func (t *T1) Transceive(apdu []byte) (resp []byte, err error) {
+// exceeds the frame size, and returns the reassembled response APDU. When
+// block retries are exhausted it resynchronises the link and sends the APDU
+// once more.
+func (t *T1) Transceive(apdu []byte) ([]byte, error) {
+	resp, err := t.transceive(apdu)
+
+	if !errors.Is(err, errRetries) {
+		return resp, err
+	}
+
+	if err = t.Resync(); err != nil {
+		return nil, err
+	}
+
+	return t.transceive(apdu)
+}
+
+func (t *T1) transceive(apdu []byte) (resp []byte, err error) {
+	var (
+		pcb  byte
+		data []byte
+	)
+
 	for off := 0; ; {
 		n := min(len(apdu)-off, maxFrameData)
 		last := off+n == len(apdu)
 
-		pcb := t.sendSeq << 6
+		ipcb := t.sendSeq << 6
 
 		if !last {
-			pcb |= iBlockMore
+			ipcb |= iBlockMore
 		}
 
-		if err = t.writeFrame(frame(pcb, apdu[off:off+n])); err != nil {
+		if pcb, data, err = t.exchange(frame(ipcb, apdu[off:off+n])); err != nil {
 			return
 		}
 
-		t.sendSeq ^= 1
 		off += n
 
 		if last {
 			break
 		}
 
-		// the SE acknowledges each chained block with an R-block
-		rpcb, rdata, err := t.readFrame()
-
-		if err != nil {
-			return nil, err
+		// the SE acknowledges each chained block with an R-block naming
+		// the next sequence number
+		if !isRBlock(pcb) || pcb&rBlockErr != 0 || len(data) != 0 || pcb>>4&1 != t.sendSeq^1 {
+			return nil, fmt.Errorf("se050: expected R-block acknowledgement, got PCB %#02x", pcb)
 		}
 
-		if rpcb&rBlockMask != rBlock || len(rdata) != 0 {
-			return nil, fmt.Errorf("se050: expected R-block, got PCB %#02x", rpcb)
-		}
-
-		if rpcb&rBlockErr != 0 {
-			return nil, fmt.Errorf("se050: R-block error %d", rpcb&rBlockErr)
-		}
+		t.sendSeq ^= 1
 	}
 
+	if !isIBlock(pcb) {
+		return nil, fmt.Errorf("se050: expected I-block, got PCB %#02x", pcb)
+	}
+
+	// the SE's I-block acknowledges the last host block
+	t.sendSeq ^= 1
+
 	for {
-		pcb, data, err := t.readFrame()
-
-		if err != nil {
-			return nil, err
-		}
-
-		if pcb&iBlockMask != 0 {
-			return nil, fmt.Errorf("se050: expected I-block, got PCB %#02x", pcb)
-		}
-
+		t.recvSeq ^= 1
 		resp = append(resp, data...)
 
 		if pcb&iBlockMore == 0 {
 			return resp, nil
 		}
 
-		// acknowledge with the sequence number of the next expected block
-		next := (pcb>>6&1 ^ 1) << 4
-
-		if err = t.writeFrame(frame(rBlock|next, nil)); err != nil {
+		if pcb, data, err = t.exchange(frame(rBlock|t.recvSeq<<4, nil)); err != nil {
 			return nil, err
+		}
+
+		if !isIBlock(pcb) {
+			return nil, fmt.Errorf("se050: expected I-block, got PCB %#02x", pcb)
 		}
 	}
 }

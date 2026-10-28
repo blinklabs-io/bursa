@@ -26,6 +26,7 @@ type scriptedSE struct {
 	commands [][]byte
 	pending  []byte
 	replies  [][]byte
+	seq      byte // N(S) of the next SE I-block
 }
 
 func newScriptedSE(replies ...[]byte) (*scriptedSE, *SE050) {
@@ -55,7 +56,8 @@ func newScriptedSE(replies ...[]byte) (*scriptedSE, *SE050) {
 			reply, s.replies = s.replies[0], s.replies[1:]
 		}
 
-		s.bus.reads = append(s.bus.reads, seFrame(0x00, reply))
+		s.bus.reads = append(s.bus.reads, seFrame(s.seq<<6, reply))
+		s.seq ^= 1
 	}
 
 	return s, &SE050{t1: newTestT1(s.bus)}

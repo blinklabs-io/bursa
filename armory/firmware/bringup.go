@@ -273,7 +273,7 @@ func runBringup(r *Report, s *signer, svc *device.Service) {
 	// endpoints only get the session once bring-up is done with it
 	s.set(se)
 
-	if err := svc.SetChip(se); err != nil {
+	if err := svc.SetChip(&chip{se: se, log: r.Logf}); err != nil {
 		r.Logf("profiles: %v", err)
 		pass = false
 	}

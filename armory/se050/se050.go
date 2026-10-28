@@ -122,13 +122,23 @@ type SE050 struct {
 }
 
 // Open resets the T=1 interface and selects the SE05x applet.
-func Open(bus Bus) (se *SE050, err error) {
-	se = &SE050{
+func Open(bus Bus) (*SE050, error) {
+	se := &SE050{
 		t1: NewT1(bus),
 	}
 
+	if err := se.Reopen(); err != nil {
+		return nil, err
+	}
+
+	return se, nil
+}
+
+// Reopen soft resets the T=1 interface and selects the applet again, to
+// recover a session after a transport error.
+func (se *SE050) Reopen() (err error) {
 	if se.ATR, err = se.t1.SoftReset(); err != nil {
-		return nil, fmt.Errorf("soft reset, %w", err)
+		return fmt.Errorf("soft reset, %w", err)
 	}
 
 	apdu, err := command(claISO, 0xa4, 0x04, 0x00, appletAID, true)
@@ -140,12 +150,10 @@ func Open(bus Bus) (se *SE050, err error) {
 	res, err := se.transmit(apdu)
 
 	if err != nil {
-		return nil, fmt.Errorf("select, %w", err)
+		return fmt.Errorf("select, %w", err)
 	}
 
-	if se.Version, err = parseVersion(res); err != nil {
-		return nil, err
-	}
+	se.Version, err = parseVersion(res)
 
 	return
 }

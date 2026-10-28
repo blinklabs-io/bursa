@@ -250,3 +250,114 @@ func TestReadFrameTimesOut(t *testing.T) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
 	}
 }
+
+func corrupt(f []byte) []byte {
+	f = bytes.Clone(f)
+	f[len(f)-1] ^= 0xff
+
+	return f
+}
+
+func TestTransceiveRetransmitsOnBadCRC(t *testing.T) {
+	good := seFrame(0x00, []byte{0x90, 0x00})
+	bus := &fakeBus{reads: [][]byte{corrupt(good), good}}
+
+	res, err := newTestT1(bus).Transceive([]byte{0x00})
+
+	if err != nil || !bytes.Equal(res, []byte{0x90, 0x00}) {
+		t.Fatalf("res % x, err %v", res, err)
+	}
+
+	// R-block expecting SE sequence 0, CRC error
+	if want := frame(rBlock|0x01, nil); len(bus.writes) != 2 || !bytes.Equal(bus.writes[1], want) {
+		t.Fatalf("writes % x, want R(err) % x", bus.writes, want)
+	}
+}
+
+func TestTransceiveResendsOnSERBlock(t *testing.T) {
+	bus := &fakeBus{reads: [][]byte{
+		seFrame(rBlock|0x01, nil), // SE got our block corrupted
+		seFrame(0x00, []byte{0x90, 0x00}),
+	}}
+
+	if _, err := newTestT1(bus).Transceive([]byte{0x00}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(bus.writes) != 2 || !bytes.Equal(bus.writes[0], bus.writes[1]) {
+		t.Fatalf("I-block not retransmitted: % x", bus.writes)
+	}
+}
+
+func TestTransceiveResyncAfterRetries(t *testing.T) {
+	good := seFrame(0x00, []byte{0x90, 0x00})
+	bad := corrupt(good)
+	bus := &fakeBus{reads: [][]byte{bad, bad, bad, seFrame(sResyncResponse, nil), good}}
+	t1 := newTestT1(bus)
+	t1.sendSeq, t1.recvSeq = 1, 1
+
+	// sequence 1 so the resent block after resync visibly restarts at 0
+	bus.reads[4] = seFrame(0x00, []byte{0x90, 0x00})
+
+	res, err := t1.Transceive([]byte{0x00})
+
+	if err != nil || !bytes.Equal(res, []byte{0x90, 0x00}) {
+		t.Fatalf("res % x, err %v", res, err)
+	}
+
+	// I(1), R(err), R(err), S(RESYNCH), I(0)
+	if len(bus.writes) != 5 || !bytes.Equal(bus.writes[3], frame(sResyncRequest, nil)) || bus.writes[4][1] != 0x00 {
+		t.Fatalf("writes % x", bus.writes)
+	}
+
+	if t1.sendSeq != 1 || t1.recvSeq != 1 {
+		t.Fatalf("sequence after resync exchange: send %d recv %d", t1.sendSeq, t1.recvSeq)
+	}
+}
+
+func TestSendSeqNotToggledWithoutAck(t *testing.T) {
+	t1 := newTestT1(&fakeBus{})
+
+	if _, err := t1.Transceive([]byte{0x00}); err == nil {
+		t.Fatal("no reply accepted")
+	}
+
+	if t1.sendSeq != 0 {
+		t.Fatal("send sequence toggled for an unacknowledged block")
+	}
+}
+
+func TestTransceiveRejectsWrongSESequence(t *testing.T) {
+	// an I-block with sequence 1 when 0 is expected is never accepted
+	wrong := seFrame(iBlockSeq, []byte{0x90, 0x00})
+	bus := &fakeBus{reads: [][]byte{wrong, wrong, wrong, seFrame(sResyncResponse, nil), seFrame(0x00, []byte{0x90, 0x00})}}
+
+	if _, err := newTestT1(bus).Transceive([]byte{0x00}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(bus.writes[1], frame(rBlock|0x02, nil)) {
+		t.Fatalf("expected R(other error), got % x", bus.writes[1])
+	}
+}
+
+func TestReopenResetsAndSelects(t *testing.T) {
+	version := []byte{3, 1, 1, 0x6f, 0xff, 1, 11, 0x90, 0x00}
+	bus := &fakeBus{}
+	se := &SE050{t1: newTestT1(bus)}
+	se.t1.sendSeq, se.t1.recvSeq = 1, 1
+
+	bus.reads = [][]byte{seFrame(sSoftResetResponse, mustHex(t, testATR)), seFrame(0x00, version)}
+
+	if err := se.Reopen(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(bus.writes[0], frame(sSoftResetRequest, nil)) || bus.writes[1][1] != 0x00 {
+		t.Fatalf("writes % x", bus.writes)
+	}
+
+	if !se.Version.EdDSA() || string(se.ATR.Historical) != "JCOP4 ATPO" {
+		t.Fatalf("session not refreshed: %+v", se)
+	}
+}
