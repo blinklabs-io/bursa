@@ -142,13 +142,11 @@ func (se *SE050) Reopen() (err error) {
 	}
 
 	apdu, err := command(claISO, 0xa4, 0x04, 0x00, appletAID, true)
-
 	if err != nil {
 		return
 	}
 
 	res, err := se.transmit(apdu)
-
 	if err != nil {
 		return fmt.Errorf("select, %w", err)
 	}
@@ -160,7 +158,6 @@ func (se *SE050) Reopen() (err error) {
 
 func (se *SE050) transmit(apdu []byte) (data []byte, err error) {
 	res, err := se.t1.Transceive(apdu)
-
 	if err != nil {
 		return
 	}
@@ -182,7 +179,6 @@ func (se *SE050) transmit(apdu []byte) (data []byte, err error) {
 // if any.
 func (se *SE050) call(ins, p1, p2 byte, tlvs []byte, le bool) ([]byte, error) {
 	apdu, err := command(claSE, ins, p1, p2, tlvs, le)
-
 	if err != nil {
 		return nil, err
 	}
@@ -197,13 +193,12 @@ func (se *SE050) call(ins, p1, p2 byte, tlvs []byte, le bool) ([]byte, error) {
 }
 
 func objectID(id uint32) []byte {
-	return appendTLV(nil, tag1, []byte{byte(id >> 24), byte(id >> 16), byte(id >> 8), byte(id)})
+	return appendTLV(nil, tag1, []byte{byte(id >> 24), byte(id >> 16), byte(id >> 8), byte(id)}) //nolint:gosec // uint32 values are truncated to bytes by design
 }
 
 // GetVersion returns the applet version and configuration.
 func (se *SE050) GetVersion() (AppletVersion, error) {
 	res, err := se.call(insMgmt, p1Default, p2Version, nil, true)
-
 	if err != nil {
 		return AppletVersion{}, err
 	}
@@ -213,13 +208,12 @@ func (se *SE050) GetVersion() (AppletVersion, error) {
 
 // Random returns n bytes from the SE050 random number generator.
 func (se *SE050) Random(n uint16) ([]byte, error) {
-	return se.call(insMgmt, p1Default, p2Random, appendTLV(nil, tag1, []byte{byte(n >> 8), byte(n)}), true)
+	return se.call(insMgmt, p1Default, p2Random, appendTLV(nil, tag1, []byte{byte(n >> 8), byte(n)}), true) //nolint:gosec // uint16 values are truncated to bytes by design
 }
 
 // Exists reports whether a secure object is present.
 func (se *SE050) Exists(id uint32) (bool, error) {
 	res, err := se.call(insMgmt, p1Default, p2Exist, objectID(id), true)
-
 	if err != nil {
 		return false, err
 	}
@@ -280,7 +274,6 @@ func (se *SE050) ImportEd25519(id uint32, seed []byte, transient bool) error {
 // PublicKeyEd25519 reads the public half of an Ed25519 key pair.
 func (se *SE050) PublicKeyEd25519(id uint32) (ed25519.PublicKey, error) {
 	res, err := se.call(insRead, p1Default, p2Default, objectID(id), true)
-
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +292,6 @@ func (se *SE050) SignEd25519(id uint32, msg []byte) ([]byte, error) {
 	tlvs = appendTLV(tlvs, tag3, msg)
 
 	sig, err := se.call(insCrypto, p1Signature, p2Sign, tlvs, true)
-
 	if err != nil {
 		return nil, err
 	}

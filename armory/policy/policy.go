@@ -86,13 +86,11 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 	}
 
 	fee, err := checkRaw(p, body)
-
 	if err != nil {
 		return Decision{}, err
 	}
 
 	tx, err := ledger.NewTransactionBodyFromCbor(era, body)
-
 	if err != nil {
 		return Decision{}, fmt.Errorf("policy: decode body: %w", err)
 	}
@@ -116,7 +114,6 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 
 	for i, c := range tx.Certificates() {
 		s, pool, owner, err := checkCert(p, k, era, c)
-
 		if err != nil {
 			return Decision{}, fmt.Errorf("policy: certificate %d: %w", i, err)
 		}

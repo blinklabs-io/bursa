@@ -35,7 +35,7 @@ const (
 )
 
 func u16(v int) []byte {
-	return []byte{byte(v >> 8), byte(v)}
+	return []byte{byte(v >> 8), byte(v)} //nolint:gosec // values passed are within uint16 range
 }
 
 func beUint(b []byte) (v uint64) {
@@ -49,7 +49,6 @@ func beUint(b []byte) (v uint64) {
 // objectSize returns the size in bytes of a binary object.
 func (se *SE050) objectSize(id uint32) (int, error) {
 	res, err := se.call(insRead, p1Default, p2Size, objectID(id), true)
-
 	if err != nil {
 		return 0, err
 	}
@@ -58,7 +57,7 @@ func (se *SE050) objectSize(id uint32) (int, error) {
 		return 0, fmt.Errorf("se050: invalid size length %d", len(res))
 	}
 
-	return int(beUint(res)), nil
+	return int(beUint(res)), nil //nolint:gosec // size reported by secure element is within int range on supported platforms
 }
 
 // WriteBinary stores data in a persistent binary object, creating it or
@@ -70,7 +69,6 @@ func (se *SE050) WriteBinary(id uint32, data []byte) error {
 	}
 
 	exists, err := se.Exists(id)
-
 	if err != nil {
 		return err
 	}
@@ -79,7 +77,6 @@ func (se *SE050) WriteBinary(id uint32, data []byte) error {
 
 	if exists {
 		size, err := se.objectSize(id)
-
 		if err != nil {
 			return err
 		}
@@ -116,7 +113,6 @@ func (se *SE050) WriteBinary(id uint32, data []byte) error {
 // ReadBinary returns the contents of a binary object.
 func (se *SE050) ReadBinary(id uint32) ([]byte, error) {
 	size, err := se.objectSize(id)
-
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +127,6 @@ func (se *SE050) ReadBinary(id uint32) ([]byte, error) {
 		tlvs = appendTLV(tlvs, tag3, u16(n))
 
 		chunk, err := se.call(insRead, p1Default, p2Default, tlvs, true)
-
 		if err != nil {
 			return nil, err
 		}
@@ -150,7 +145,6 @@ func (se *SE050) ReadBinary(id uint32) ([]byte, error) {
 // by the applet.
 func (se *SE050) FreeMemory() (uint16, error) {
 	res, err := se.call(insMgmt, p1Default, p2Memory, appendTLV(nil, tag1, []byte{memPersistent}), true)
-
 	if err != nil {
 		return 0, err
 	}

@@ -186,7 +186,6 @@ func (s *Service) SetChip(chip Chip) error {
 		}
 
 		b, err := chip.ReadBinary(id)
-
 		if err != nil {
 			s.logf("profile slot %d: unreadable: %v", slot, err)
 			bad[slot] = true
@@ -194,7 +193,6 @@ func (s *Service) SetChip(chip Chip) error {
 		}
 
 		p, err := profile.Decode(b)
-
 		if err != nil {
 			s.logf("profile slot %d: invalid record: %v", slot, err)
 			bad[slot] = true
@@ -247,7 +245,6 @@ func handle[Req, Resp any](s *Service, fn func(Req) (Resp, error)) http.HandlerF
 		}
 
 		resp, err := fn(req)
-
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -271,7 +268,6 @@ func keyHash(pub []byte) [28]byte {
 // publicKey reads a key, mapping chip errors to errDevice after logging.
 func (s *Service) publicKey(id uint32) (ed25519.PublicKey, error) {
 	pub, err := s.chip.PublicKeyEd25519(id)
-
 	if err != nil {
 		s.logf("read public key %#08x: %v", id, err)
 		return nil, errDevice
@@ -313,7 +309,6 @@ func (s *Service) inventory(req InventoryRequest) (Inventory, error) {
 	}
 
 	k, err := s.keys(p)
-
 	if err != nil {
 		return Inventory{}, err
 	}
@@ -340,7 +335,6 @@ func (s *Service) sign(req SignRequest) (SignResponse, error) {
 	resp := SignResponse{Version: Protocol, Nonce: req.Nonce}
 
 	sig, issue, err := s.signRequest(req)
-
 	if err != nil {
 		s.logf("sign %q %q %q: refused: %v", clip(req.Purpose), clip(req.Role), clip(req.Profile), err)
 		resp.Error = err.Error()
@@ -374,7 +368,6 @@ func (s *Service) signRequest(req SignRequest) ([]byte, *uint64, error) {
 	}
 
 	k, err := s.keys(p)
-
 	if err != nil {
 		return nil, nil, err
 	}
@@ -422,13 +415,11 @@ func (s *Service) signTxBody(p profile.Profile, k profileKeys, role policy.Role,
 	keys := policy.Keys{Pool: keyHash(k.cold), Owner: keyHash(k.owner)}
 
 	d, err := policy.Evaluate(p, keys, role, req.Era, req.Payload)
-
 	if err != nil {
 		return nil, nil, err
 	}
 
 	sig, err := s.chip.SignEd25519(id, d.BodyHash[:])
-
 	if err != nil {
 		s.logf("sign: %v", err)
 		return nil, nil, errDevice
@@ -447,7 +438,6 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 	chain := binary.BigEndian.Uint64(payload[32:40])
 
 	issue, floor, err := nextOpCert(p.OpCertFloor, p.FloorSet, chain)
-
 	if err != nil {
 		return nil, nil, err
 	}
@@ -465,7 +455,6 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 	binary.BigEndian.PutUint64(signable[32:40], issue)
 
 	sig, err := s.chip.SignEd25519(p.ColdKeyID, signable)
-
 	if err != nil {
 		s.logf("sign: %v", err)
 		return nil, nil, errDevice
@@ -478,7 +467,6 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 
 func (s *Service) writeProfile(p profile.Profile) error {
 	b, err := profile.Encode(p)
-
 	if err != nil {
 		return err
 	}
@@ -497,7 +485,6 @@ func (s *Service) writeProfile(p profile.Profile) error {
 // a key is never overwritten.
 func (s *Service) ensureKey(id uint32) (ed25519.PublicKey, error) {
 	ok, err := s.chip.Exists(id)
-
 	if err != nil {
 		s.logf("exist check %#08x: %v", id, err)
 		return nil, errDevice
@@ -566,7 +553,6 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 	}
 
 	owner, err := s.ensureKey(p.OwnerKeyID())
-
 	if err != nil {
 		return ProvisionResponse{}, err
 	}
@@ -645,7 +631,6 @@ func clip(v string) string {
 
 func (s *Service) provisionIdentity() (IdentityResponse, error) {
 	pub, err := s.ensureKey(profile.IdentityKeyID)
-
 	if err != nil {
 		return IdentityResponse{}, err
 	}

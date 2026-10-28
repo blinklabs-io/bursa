@@ -15,6 +15,7 @@
 package se050
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -28,7 +29,10 @@ func command(cla, ins, p1, p2 byte, data []byte, le bool) ([]byte, error) {
 	apdu := []byte{cla, ins, p1, p2}
 
 	if len(data) > 0 {
-		apdu = append(apdu, byte(len(data)))
+		if len(data) > 0xff {
+			return nil, fmt.Errorf("se050: command data too long (%d bytes)", len(data))
+		}
+		apdu = append(apdu, byte(len(data))) //nolint:gosec // checked above
 		apdu = append(apdu, data...)
 	}
 
@@ -45,11 +49,11 @@ func appendTLV(b []byte, tag byte, val []byte) []byte {
 
 	switch n := len(val); {
 	case n < 0x80:
-		b = append(b, byte(n))
+		b = append(b, byte(n)) //nolint:gosec // checked above
 	case n <= 0xff:
-		b = append(b, 0x81, byte(n))
+		b = append(b, 0x81, byte(n)) //nolint:gosec // checked above
 	default:
-		b = append(b, 0x82, byte(n>>8), byte(n))
+		b = append(b, 0x82, byte(n>>8), byte(n)) //nolint:gosec // range guaranteed by default branch conditions
 	}
 
 	return append(b, val...)
@@ -59,7 +63,7 @@ func appendTLV(b []byte, tag byte, val []byte) []byte {
 func findTLV(b []byte, tag byte) ([]byte, error) {
 	for len(b) > 0 {
 		if len(b) < 2 {
-			return nil, fmt.Errorf("se050: truncated TLV")
+			return nil, errors.New("se050: truncated TLV")
 		}
 
 		t := b[0]
@@ -69,14 +73,14 @@ func findTLV(b []byte, tag byte) ([]byte, error) {
 		switch n {
 		case 0x81:
 			if len(b) < 1 {
-				return nil, fmt.Errorf("se050: truncated TLV length")
+				return nil, errors.New("se050: truncated TLV length")
 			}
 
 			n = int(b[0])
 			b = b[1:]
 		case 0x82:
 			if len(b) < 2 {
-				return nil, fmt.Errorf("se050: truncated TLV length")
+				return nil, errors.New("se050: truncated TLV length")
 			}
 
 			n = int(be16(b))
@@ -88,7 +92,7 @@ func findTLV(b []byte, tag byte) ([]byte, error) {
 		}
 
 		if len(b) < n {
-			return nil, fmt.Errorf("se050: truncated TLV value")
+			return nil, errors.New("se050: truncated TLV value")
 		}
 
 		if t == tag {

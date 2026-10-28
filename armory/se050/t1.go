@@ -136,12 +136,12 @@ func crc16(data []byte) uint16 {
 
 func frame(pcb byte, data []byte) []byte {
 	f := make([]byte, 0, 3+len(data)+2)
-	f = append(f, nadHostToSE, pcb, byte(len(data)))
+	f = append(f, nadHostToSE, pcb, byte(len(data))) //nolint:gosec // maxFrameData < 256
 	f = append(f, data...)
 	crc := crc16(f)
 
 	// the CRC is transmitted least significant byte first
-	return append(f, byte(crc), byte(crc>>8))
+	return append(f, byte(crc), byte(crc>>8)) //nolint:gosec // uint16 truncated to bytes by design
 }
 
 // writeFrame retries until the SE050 accepts the frame, as it NACKs its
@@ -152,11 +152,11 @@ func (t *T1) writeFrame(f []byte) (err error) {
 	for {
 		if err = t.bus.Write(f); err == nil {
 			t.sleep(t.segt)
-			return
+			return //nolint:nilerr // success path returns nil via named return
 		}
 
 		if time.Now().After(deadline) {
-			return fmt.Errorf("se050: write failed, %w (last error: %v)", ErrTimeout, err)
+			return fmt.Errorf("se050: write failed: %w", errors.Join(ErrTimeout, err))
 		}
 
 		t.sleep(t.mpot)
@@ -170,10 +170,9 @@ func (t *T1) readFrame() (pcb byte, data []byte, err error) {
 
 	for {
 		hdr, err := t.bus.Read(3)
-
 		if err != nil {
 			if time.Now().After(deadline) {
-				return 0, nil, fmt.Errorf("se050: read failed, %w (last error: %v)", ErrTimeout, err)
+				return 0, nil, fmt.Errorf("se050: read failed: %w", errors.Join(ErrTimeout, err))
 			}
 
 			t.sleep(t.mpot)
@@ -200,14 +199,13 @@ func (t *T1) readFrame() (pcb byte, data []byte, err error) {
 		}
 
 		trailer, err := t.bus.Read(2)
-
 		if err != nil {
 			return 0, nil, err
 		}
 
 		crc := crc16(append(hdr, data...))
 
-		if trailer[0] != byte(crc) || trailer[1] != byte(crc>>8) {
+		if trailer[0] != byte(crc) || trailer[1] != byte(crc>>8) { //nolint:gosec // uint16 truncated to bytes by design
 			return 0, nil, fmt.Errorf("%w: CRC mismatch", errCorrupt)
 		}
 
@@ -236,7 +234,6 @@ func (t *T1) SoftReset() (atr *ATR, err error) {
 	}
 
 	pcb, data, err := t.readFrame()
-
 	if err != nil {
 		return
 	}
@@ -352,7 +349,7 @@ func (t *T1) exchange(f []byte) (pcb byte, data []byte, err error) {
 		}
 
 		if attempt == maxAttempts {
-			return 0, nil, fmt.Errorf("%w: last error %v, PCB %#02x", errRetries, err, pcb)
+			return 0, nil, fmt.Errorf("%w: last error: %w, PCB %#02x", errRetries, err, pcb)
 		}
 
 		if code == 0 {
@@ -374,7 +371,6 @@ func (t *T1) Resync() error {
 	}
 
 	pcb, _, err := t.readFrame()
-
 	if err != nil {
 		return err
 	}

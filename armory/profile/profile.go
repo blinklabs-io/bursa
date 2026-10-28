@@ -78,7 +78,6 @@ func (p Profile) RewardAddress() ([]byte, bool) {
 	}
 
 	b, err := hex.DecodeString(p.RewardAccount)
-
 	if err != nil {
 		return nil, false
 	}
@@ -128,7 +127,6 @@ func Encode(p Profile) ([]byte, error) {
 	}
 
 	b, err := json.Marshal(p)
-
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +147,7 @@ func Decode(b []byte) (p Profile, err error) {
 		return Profile{}, fmt.Errorf("profile: %w", err)
 	}
 
-	if _, err = dec.Token(); err != io.EOF {
+	if _, err = dec.Token(); !errors.Is(err, io.EOF) {
 		return Profile{}, errors.New("profile: trailing data")
 	}
 
