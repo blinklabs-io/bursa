@@ -484,6 +484,9 @@ func withBootstrapWitnesses(t *testing.T, txCbor []byte, n int, attributes []byt
 	if _, err := cbor.Decode(txCbor, &arr); err != nil {
 		t.Fatalf("decode transaction: %v", err)
 	}
+	if len(arr) < 2 {
+		t.Fatalf("unexpected transaction shape: %d elements", len(arr))
+	}
 	ws := map[uint64]cbor.RawMessage{}
 	if _, err := cbor.Decode(arr[1], &ws); err != nil {
 		t.Fatalf("decode witness set: %v", err)
