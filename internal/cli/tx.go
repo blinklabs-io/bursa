@@ -200,6 +200,12 @@ func RunTxDecode(txFile, protocolParamsFile string, witnessCount, byronWitnessCo
 }
 
 func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []string, witnessCount uint, outFile string, ttlMargin uint64, timeoutSeconds int64) error {
+	if witnessCount == 0 {
+		return errors.New("--witness-count must be at least 1")
+	}
+	if ttlMargin == 0 {
+		return errors.New("--ttl-margin must be at least 1")
+	}
 	ctx := context.Background()
 	var cancel context.CancelFunc
 	if timeoutSeconds > 0 {

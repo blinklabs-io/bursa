@@ -19,6 +19,7 @@ import (
 
 	"github.com/blinklabs-io/bursa/internal/cli"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	"github.com/blinklabs-io/bursa/internal/txbuilder"
 	"github.com/spf13/cobra"
 )
 
@@ -156,11 +157,14 @@ func txBuildCommand() *cobra.Command {
 	cmd.Flags().StringVar(&network, "network", "", "Network name or magic")
 	cmd.Flags().StringVar(&changeAddress, "change-address", "", "Change address")
 	cmd.Flags().StringArrayVar(&certificateFiles, "certificate-file", nil, "Certificate file (repeatable)")
-	cmd.Flags().UintVar(&witnessCount, "witness-count", 0, "Witness count for fee estimation")
+	cmd.Flags().UintVar(&witnessCount, "witness-count", 0, "Number of keys that will sign (payment, pool cold, owner stake); sizes the fee")
 	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
-	cmd.Flags().Uint64Var(&ttlMargin, "ttl-margin", 3600, "TTL margin in slots")
+	cmd.Flags().Uint64Var(&ttlMargin, "ttl-margin", txbuilder.DefaultTTLMargin, "Slots the transaction stays valid for")
 	cmd.Flags().Int64Var(&timeout, "timeout", 60, "Timeout in seconds")
+	_ = cmd.MarkFlagRequired("socket-path")
+	_ = cmd.MarkFlagRequired("network")
 	_ = cmd.MarkFlagRequired("change-address")
+	_ = cmd.MarkFlagRequired("witness-count")
 	return cmd
 }
 
@@ -181,6 +185,8 @@ func txSubmitCommand() *cobra.Command {
 	cmd.Flags().StringVar(&network, "network", "", "Network name or magic")
 	cmd.Flags().StringVar(&txFile, "tx-file", "", "Transaction file")
 	cmd.Flags().Int64Var(&timeout, "timeout", 60, "Timeout in seconds")
+	_ = cmd.MarkFlagRequired("socket-path")
+	_ = cmd.MarkFlagRequired("network")
 	_ = cmd.MarkFlagRequired("tx-file")
 	return cmd
 }
