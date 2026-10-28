@@ -22,16 +22,26 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // MaxSlot is the highest profile slot.
 const MaxSlot = 31
 
+// MaxNameLen bounds profile names, which use [A-Za-z0-9@._-].
+const MaxNameLen = 32
+
+// RecordSize is the fixed size of an encoded profile, padded with spaces.
+// A fixed size means rewriting a record never deletes and recreates the
+// object, and it fits in a single binary write APDU.
+const RecordSize = 0xc0
+
 // IdentityKeyID holds the device identity key that signs key inventories.
 const IdentityKeyID uint32 = 0x20e50020
 
 // Object ID bases, offset by profile slot. Cold keys live at
-// 0x20e50010-0x20e5001f and are shared between profiles by reference.
+// 0x20e50010-0x20e5001f; each belongs to at most one profile, so a second
+// profile cannot re-register the pool with another owner.
 const (
 	ownerKeyBase uint32 = 0x20e50100
 	feeKeyBase   uint32 = 0x20e50200
@@ -83,6 +93,10 @@ func (p Profile) validate() error {
 	switch {
 	case p.Name == "":
 		return errors.New("profile: empty name")
+	case len(p.Name) > MaxNameLen:
+		return fmt.Errorf("profile: name longer than %d bytes", MaxNameLen)
+	case strings.TrimFunc(p.Name, nameRune) != "":
+		return errors.New("profile: name may only use A-Z a-z 0-9 @ . _ -")
 	case p.NetworkID > 1:
 		return fmt.Errorf("profile: invalid network id %d", p.NetworkID)
 	case p.Slot > MaxSlot:
@@ -92,13 +106,28 @@ func (p Profile) validate() error {
 	return nil
 }
 
-// Encode serializes a profile record.
+func nameRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+		r == '@' || r == '.' || r == '_' || r == '-'
+}
+
+// Encode serializes a profile record to exactly RecordSize bytes.
 func Encode(p Profile) ([]byte, error) {
 	if err := p.validate(); err != nil {
 		return nil, err
 	}
 
-	return json.Marshal(p)
+	b, err := json.Marshal(p)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if len(b) > RecordSize {
+		return nil, fmt.Errorf("profile: record is %d bytes, over %d", len(b), RecordSize)
+	}
+
+	return append(b, bytes.Repeat([]byte{' '}, RecordSize-len(b))...), nil
 }
 
 // Decode parses a profile record, rejecting unknown fields and trailing data.

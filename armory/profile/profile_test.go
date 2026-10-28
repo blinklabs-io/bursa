@@ -15,6 +15,7 @@
 package profile
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -100,5 +101,51 @@ func TestFeeCap(t *testing.T) {
 
 	if got := (Profile{MaxFee: 500_000}).FeeCap(); got != 500_000 {
 		t.Fatalf("fee cap = %d", got)
+	}
+}
+
+func TestEncodeFixedSize(t *testing.T) {
+	small := testProfile()
+	large := Profile{
+		Name:        strings.Repeat("n", MaxNameLen),
+		NetworkID:   1,
+		Slot:        MaxSlot,
+		ColdKeyID:   ^uint32(0),
+		FloorSet:    true,
+		OpCertFloor: ^uint64(0),
+		MaxFee:      ^uint64(0),
+	}
+
+	for _, p := range []Profile{small, large} {
+		b, err := Encode(p)
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(b) != RecordSize {
+			t.Fatalf("record is %d bytes, want %d", len(b), RecordSize)
+		}
+
+		if got, err := Decode(b); err != nil || got != p {
+			t.Fatalf("round trip %+v, %v", got, err)
+		}
+	}
+
+	// one APDU writes the whole record, so a write is never split
+	if RecordSize > 0xc0 {
+		t.Fatalf("RecordSize %d exceeds one binary write chunk", RecordSize)
+	}
+}
+
+func TestNameRules(t *testing.T) {
+	for _, name := range []string{strings.Repeat("n", MaxNameLen+1), "otg preview", "pool\"x", "ünicode"} {
+		if _, err := Encode(Profile{Name: name}); err == nil {
+			t.Errorf("name %q accepted", name)
+		}
+	}
+
+	if _, err := Encode(Profile{Name: "otg@prime-mainnet_2.x"}); err != nil {
+		t.Fatal(err)
 	}
 }
