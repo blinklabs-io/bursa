@@ -1445,6 +1445,15 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 		serveNFT(w, v, err)
 	}))
 	mux.HandleFunc("GET /wallet/nft/{asset}/image", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		// Image elements normally omit Origin. Require the browser-controlled
+		// fetch metadata in that case so a cross-site image load cannot use the
+		// response status or decodability to probe the active wallet. Requests
+		// with Origin already passed the outer same-origin guard.
+		if r.Header.Get("Origin") == "" && r.Header.Get("Sec-Fetch-Site") != "same-origin" {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Error(w, "cross-origin request refused", http.StatusForbidden)
+			return
+		}
 		if nfts == nil {
 			http.Error(w, "nft media not available", http.StatusServiceUnavailable)
 			return
@@ -1823,6 +1832,8 @@ func limitRequestBody(next http.Handler) http.Handler {
 //   - Other methods (GET/HEAD, plus the SPA's navigations and asset loads) use
 //     sameOrigin, which additionally trusts the absent-Origin case that
 //     same-origin browser GETs produce — but only over a loopback Host.
+//     Ownership-dependent subresources can require browser fetch metadata at
+//     their route before reading wallet state.
 //
 // It reuses connector.go's sameOrigin/strictSameOrigin/isLoopbackHost verbatim
 // so the SPA's own calls decide identically to the connector's SPA routes: in

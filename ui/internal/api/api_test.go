@@ -216,6 +216,44 @@ func TestNFTImageGatedWhileNodeStarts(t *testing.T) {
 	}
 }
 
+func TestNFTImageRequiresSameOriginBrowserContext(t *testing.T) {
+	nf := &fakeNFTs{enabled: true, imageBytes: []byte("PNG")}
+	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, nf)
+
+	for _, tc := range []struct {
+		name          string
+		fetchSite     string
+		wantCode      int
+		wantImageCall bool
+	}{
+		{name: "same-origin image", fetchSite: "same-origin", wantCode: http.StatusOK, wantImageCall: true},
+		{name: "cross-site image", fetchSite: "cross-site", wantCode: http.StatusForbidden},
+		{name: "missing browser context", wantCode: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nf.servedUnit = ""
+			req := httptest.NewRequest(http.MethodGet, "/wallet/nft/policyAtoken/image", nil)
+			req.Host = "127.0.0.1:8090"
+			req.Header.Set(sessionHeaderName, testSessionToken)
+			if tc.fetchSite != "" {
+				req.Header.Set("Sec-Fetch-Site", tc.fetchSite)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if got := nf.servedUnit != ""; got != tc.wantImageCall {
+				t.Fatalf("ServeImage called = %v, want %v", got, tc.wantImageCall)
+			}
+			if !tc.wantImageCall && rec.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("rejected image response must not enter the browser cache")
+			}
+		})
+	}
+}
+
 func TestNFTSettingsToggleAndValidation(t *testing.T) {
 	nf := &fakeNFTs{}
 	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, nf)
