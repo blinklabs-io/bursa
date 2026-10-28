@@ -128,7 +128,14 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).SignedString([]byte(secret))
 	require.NoError(t, err)
-	client := &http.Client{Timeout: 5 * time.Second}
+	// The client may dial a spare connection it never sends a request on.
+	// The server counts a connection that has not yet sent a request as busy
+	// for five seconds, and Start would not return until then. A dedicated
+	// connection per request leaves nothing for the client to dial speculatively.
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
 	baseURL := "http://" + apiListener.Addr().String()
 	request := func(method, path, body string) *http.Response {
 		t.Helper()
