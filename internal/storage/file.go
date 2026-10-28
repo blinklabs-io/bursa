@@ -448,21 +448,3 @@ func (w *fileWallet) Save(ctx context.Context) error {
 func (w *fileWallet) Delete(ctx context.Context) error {
 	return w.store.DeleteWallet(ctx, w.name)
 }
-
-// walletDir returns the directory path for a wallet
-func (s *FileStore) walletDir(name string) string {
-	if err := validateWalletName(name); err != nil {
-		// This should never happen if validation is done at public API boundaries
-		panic(fmt.Sprintf("invalid wallet name in walletDir: %v", err))
-	}
-	return filepath.Join(s.baseDir, "wallet-"+name)
-}
-
-// walletPath returns the file path for a wallet
-func (s *FileStore) walletPath(name string) string {
-	if err := validateWalletName(name); err != nil {
-		// This should never happen if validation is done at public API boundaries
-		panic(fmt.Sprintf("invalid wallet name in walletPath: %v", err))
-	}
-	return filepath.Join(s.walletDir(name), "wallet.json")
-}
