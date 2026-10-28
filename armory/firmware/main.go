@@ -22,6 +22,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	usbarmory "github.com/usbarmory/tamago/board/usbarmory/mk2"
@@ -29,6 +30,8 @@ import (
 
 	gnet "github.com/usbarmory/go-net"
 	usbnet "github.com/usbarmory/go-net/imx-usb"
+
+	"github.com/blinklabs-io/bursa/armory/device"
 )
 
 const (
@@ -80,9 +83,12 @@ func main() {
 		log.Fatalf("network: %v", err)
 	}
 
-	s := &signer{}
+	// one lock for the SE050 session, shared by every endpoint
+	mu := &sync.Mutex{}
+	s := &signer{Mutex: mu}
+	svc := device.New(mu, report.Logf)
 
-	go runBringup(report, s)
+	go runBringup(report, s, svc)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -92,6 +98,8 @@ func main() {
 	http.HandleFunc("/provision", s.provision)
 	http.HandleFunc("/pubkey", s.publicKey)
 	http.HandleFunc("/sign", s.sign)
+	http.Handle("/v1/", svc.Handler())
+	http.Handle("/provision/", svc.Handler())
 
 	// a cold reset returns an unflashed board to USB recovery mode, ready
 	// for the next image

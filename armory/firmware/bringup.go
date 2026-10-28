@@ -24,6 +24,7 @@ import (
 
 	usbarmory "github.com/usbarmory/tamago/board/usbarmory/mk2"
 
+	"github.com/blinklabs-io/bursa/armory/device"
 	"github.com/blinklabs-io/bursa/armory/se050"
 )
 
@@ -222,7 +223,7 @@ func testImported(r *Report, se *se050.SE050) bool {
 	return true
 }
 
-func runBringup(r *Report, s *signer) {
+func runBringup(r *Report, s *signer, svc *device.Service) {
 	_, model := usbarmory.Model()
 	r.Logf("board: %s", model)
 
@@ -262,8 +263,7 @@ func runBringup(r *Report, s *signer) {
 
 	r.Logf("random: %x", rnd)
 
-	pass := testGenerated(r, se)
-	pass = testImported(r, se) && pass
+	pass := keyTests(r, se)
 	pass = selfTestLedger(r) && pass
 
 	if exists, err := se.Exists(coldKeyID); err == nil {
@@ -272,6 +272,11 @@ func runBringup(r *Report, s *signer) {
 
 	// endpoints only get the session once bring-up is done with it
 	s.set(se)
+
+	if err := svc.SetChip(se); err != nil {
+		r.Logf("profiles: %v", err)
+		pass = false
+	}
 
 	r.finish(pass)
 }

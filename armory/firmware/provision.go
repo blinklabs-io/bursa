@@ -42,7 +42,7 @@ var errNotOpen = errors.New("SE050 not available")
 
 // signer serializes access to the SE050 session, which bring-up opens.
 type signer struct {
-	sync.Mutex
+	*sync.Mutex
 	se *se050.SE050
 }
 

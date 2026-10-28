@@ -3,12 +3,17 @@
 
 APP := armory
 TAMAGO ?= $(HOME)/tamago/usr/local/tamago-go/bin/go
+# TESTNET=1 adds the bring-up key tests
+TESTNET ?= 1
 
 # ramStart (imx6ul package) + 0x10000
 TEXT_START := 0x80010000
 
 GOENV := GOOS=tamago GOOSPKG=github.com/usbarmory/tamago GOARM=7 GOARCH=arm
 GOFLAGS := -trimpath -ldflags "-s -w -T $(TEXT_START) -R 0x1000"
+ifeq ($(TESTNET),1)
+GOFLAGS += -tags testnet
+endif
 
 .PHONY: all imx clean
 
@@ -16,7 +21,7 @@ all: $(APP)
 
 imx: $(APP).imx
 
-$(APP): *.go ../se050/*.go go.mod
+$(APP): *.go ../se050/*.go ../profile/*.go ../policy/*.go ../device/*.go go.mod
 	$(GOENV) $(TAMAGO) build $(GOFLAGS) -o $(APP)
 
 $(APP).dcd: TAMAGO_PKG=$(shell $(GOENV) $(TAMAGO) list -m -f '{{.Dir}}' github.com/usbarmory/tamago)
