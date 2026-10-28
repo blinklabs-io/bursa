@@ -687,6 +687,10 @@ func (s *Service) SubmitPoolVote(ctx context.Context, password string, v PoolVot
 		return TxResult{}, errors.New("account has no receive addresses")
 	}
 
+	if v.ActionIndex > lcommon.MaxGovActionIdx {
+		return TxResult{}, fmt.Errorf("%w: action_index must be <= %d", ErrInvalidRequest, lcommon.MaxGovActionIdx)
+	}
+
 	actionTxID := strings.TrimSpace(v.ActionTxID)
 	if len(actionTxID) != 64 {
 		return TxResult{}, fmt.Errorf("%w: action_tx_id must be 32 bytes hex", ErrInvalidRequest)
@@ -722,12 +726,20 @@ func (s *Service) SubmitPoolVote(ctx context.Context, password string, v PoolVot
 		if err != nil {
 			return TxResult{}, fmt.Errorf("%w: anchor_hash is not valid hex: %w", ErrInvalidRequest, err)
 		}
-		var ah32 [32]byte
-		copy(ah32[:], ah)
-		anchor = &lcommon.GovAnchor{
-			Url:      anchorURL,
-			DataHash: ah32,
+		if _, err := lcommon.NewGovAnchor(anchorURL, ah); err != nil {
+			if errors.Is(err, lcommon.ErrGovAnchorURLTooLong) {
+				return TxResult{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+			}
+			return TxResult{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 		}
+		ga, err := lcommon.NewGovAnchor(anchorURL, ah)
+		if err != nil {
+			if errors.Is(err, lcommon.ErrGovAnchorURLTooLong) {
+				return TxResult{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+			}
+			return TxResult{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+		}
+		anchor = &ga
 	}
 
 	root, zero, err := s.unlockRoot(walletID, password)

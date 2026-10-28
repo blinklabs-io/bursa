@@ -49,8 +49,13 @@ export function Vote() {
       return;
     }
     const actionIndexNum = parseActionIndex();
-    if (actionIndexNum === null || actionIndexNum < 0) {
-      setError("Action index must be a non-negative integer");
+    if (
+      actionIndexNum === null ||
+      !Number.isInteger(actionIndexNum) ||
+      actionIndexNum < 0 ||
+      actionIndexNum > 65535
+    ) {
+      setError("Action index must be an integer 0..65535");
       return;
     }
     if (!password) {
@@ -67,6 +72,13 @@ export function Vote() {
     if (url !== "" && !/^[0-9a-fA-F]{64}$/.test(hash)) {
       setError("Anchor hash must be 32 bytes hex");
       return;
+    }
+    if (url !== "") {
+      const encoder = new TextEncoder();
+      if (encoder.encode(url).length > 128) {
+        setError("Anchor URL must be at most 128 bytes");
+        return;
+      }
     }
 
     setLoading(true);
@@ -93,6 +105,7 @@ export function Vote() {
       setError(errorMessage(e));
     } finally {
       setLoading(false);
+      setPassword("");
     }
   }
 

@@ -637,74 +637,166 @@ func TestSubmitPoolVoteBuildsTransactionWithPoolVoterAndColdWitness(t *testing.T
 	if err != nil {
 		t.Fatalf("derive account: %v", err)
 	}
-	chain := newRetirementFakeChain(acct.ReceiveAddresses[0], 5_000_000)
-	ks := &fakeKeystore{mnemonic: testMnemonic, password: "spend-password", exists: true}
-	s := NewService(chain, ks, fakeGenesis{}, fakeTip{slot: 259200})
-	s.SetAccount("wallet-a", acct)
+	creds, err := deriveCredentials(mustRoot(t), "preview", 0, 0, 0)
+	if err != nil {
+		t.Fatalf("derive credentials: %v", err)
+	}
+	poolIDHex := creds.PoolIDHex
 
 	actionTxID := strings.Repeat("ab", 32)
-	res, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
-		ActionTxID:  actionTxID,
-		ActionIndex: 0,
-		Vote:        "yes",
-		AnchorURL:   "ipfs://QmTest",
-		AnchorHash:  strings.Repeat("cd", 32),
-	})
-	if err != nil {
-		t.Fatalf("SubmitPoolVote: %v", err)
-	}
-	if res.TxHash == "" {
-		t.Fatal("SubmitPoolVote returned empty tx hash")
-	}
-	if len(chain.submitCbor) == 0 {
-		t.Fatal("SubmitPoolVote did not submit transaction CBOR")
+	anchorURL := "ipfs://QmTest"
+	anchorHash := strings.Repeat("cd", 32)
+
+	cases := []struct {
+		name       string
+		vote       string
+		wantVote   uint8
+		withAnchor bool
+	}{
+		{name: "no", vote: "no", wantVote: lcommon.GovVoteNo, withAnchor: true},
+		{name: "yes", vote: "yes", wantVote: lcommon.GovVoteYes, withAnchor: true},
+		{name: "abstain", vote: "abstain", wantVote: lcommon.GovVoteAbstain, withAnchor: true},
 	}
 
-	var tx conway.ConwayTransaction
-	if _, err := cbor.Decode(chain.submitCbor, &tx); err != nil {
-		t.Fatalf("decode submitted tx: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chain := newRetirementFakeChain(acct.ReceiveAddresses[0], 5_000_000)
+			ks := &fakeKeystore{mnemonic: testMnemonic, password: "spend-password", exists: true}
+			s := NewService(chain, ks, fakeGenesis{}, fakeTip{slot: 259200})
+			s.SetAccount("wallet-a", acct)
+
+			params := PoolVoteParams{
+				ActionTxID:  actionTxID,
+				ActionIndex: 3,
+				Vote:        tc.vote,
+			}
+			if tc.withAnchor {
+				params.AnchorURL = anchorURL
+				params.AnchorHash = anchorHash
+			}
+
+			res, err := s.SubmitPoolVote(context.Background(), "spend-password", params)
+			if err != nil {
+				t.Fatalf("SubmitPoolVote: %v", err)
+			}
+			if res.TxHash == "" {
+				t.Fatal("SubmitPoolVote returned empty tx hash")
+			}
+			if len(chain.submitCbor) == 0 {
+				t.Fatal("SubmitPoolVote did not submit transaction CBOR")
+			}
+
+			var tx conway.ConwayTransaction
+			if _, err := cbor.Decode(chain.submitCbor, &tx); err != nil {
+				t.Fatalf("decode submitted tx: %v", err)
+			}
+			if len(tx.Body.TxVotingProcedures) != 1 {
+				t.Fatalf("voting procedures count = %d, want 1", len(tx.Body.TxVotingProcedures))
+			}
+			found := false
+			for voter, votes := range tx.Body.TxVotingProcedures {
+				if voter.Type != lcommon.VoterTypeStakingPoolKeyHash {
+					t.Fatalf("voter type = %d, want staking pool key hash", voter.Type)
+				}
+				if hex.EncodeToString(voter.Hash[:]) != poolIDHex {
+					t.Fatalf("voter hash mismatch")
+				}
+				if len(votes) != 1 {
+					t.Fatalf("votes for voter = %d, want 1", len(votes))
+				}
+				for actionID, proc := range votes {
+					if hex.EncodeToString(actionID.TransactionId[:]) != actionTxID {
+						t.Fatalf("action tx id mismatch")
+					}
+					if actionID.GovActionIdx != 3 {
+						t.Fatalf("action index = %d, want 3", actionID.GovActionIdx)
+					}
+					if proc.Vote != tc.wantVote {
+						t.Fatalf("vote = %d, want %d", proc.Vote, tc.wantVote)
+					}
+					if tc.withAnchor {
+						if proc.Anchor == nil {
+							t.Fatal("expected anchor")
+						}
+						if proc.Anchor.Url != anchorURL {
+							t.Fatalf("anchor url = %q", proc.Anchor.Url)
+						}
+						if hex.EncodeToString(proc.Anchor.DataHash[:]) != anchorHash {
+							t.Fatalf("anchor hash mismatch")
+						}
+					} else if proc.Anchor != nil {
+						t.Fatal("expected no anchor")
+					}
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("vote not found")
+			}
+			if got := len(tx.WitnessSet.VkeyWitnesses.Items()); got < 2 {
+				t.Fatalf("vkey witness count = %d, want payment + cold witnesses", got)
+			}
+
+			// one vkey witness hashes to the pool id (cold vkey)
+			coldVKey, err := hex.DecodeString(creds.Cold.VKeyHex)
+			if err != nil {
+				t.Fatalf("decode cold vkey: %v", err)
+			}
+			coldHash := lcommon.Blake2b224Hash(coldVKey)
+			poolIDBytes, err := hex.DecodeString(poolIDHex)
+			if err != nil {
+				t.Fatalf("decode pool id: %v", err)
+			}
+			var poolIDHash [28]byte
+			copy(poolIDHash[:], poolIDBytes)
+			if coldHash != poolIDHash {
+				t.Fatalf("cold vkey hash does not match pool id hash")
+			}
+
+			hasCold := false
+			for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
+				wHash := lcommon.Blake2b224Hash(w.Vkey)
+				if wHash == coldHash {
+					hasCold = true
+					break
+				}
+			}
+			if !hasCold {
+				t.Fatal("expected a vkey witness whose hash matches the pool id (cold vkey)")
+			}
+		})
 	}
-	if len(tx.Body.TxVotingProcedures) != 1 {
-		t.Fatalf("voting procedures count = %d, want 1", len(tx.Body.TxVotingProcedures))
-	}
-	creds, err := s.Credentials("spend-password")
-	if err != nil {
-		t.Fatalf("Credentials: %v", err)
-	}
-	for voter, votes := range tx.Body.TxVotingProcedures {
-		if voter.Type != lcommon.VoterTypeStakingPoolKeyHash {
-			t.Fatalf("voter type = %d, want staking pool key hash", voter.Type)
+
+	// case without an anchor
+	t.Run("no-anchor", func(t *testing.T) {
+		chain := newRetirementFakeChain(acct.ReceiveAddresses[0], 5_000_000)
+		ks := &fakeKeystore{mnemonic: testMnemonic, password: "spend-password", exists: true}
+		s := NewService(chain, ks, fakeGenesis{}, fakeTip{slot: 259200})
+		s.SetAccount("wallet-a", acct)
+
+		res, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+			ActionTxID:  actionTxID,
+			ActionIndex: 3,
+			Vote:        "yes",
+		})
+		if err != nil {
+			t.Fatalf("SubmitPoolVote: %v", err)
 		}
-		if hex.EncodeToString(voter.Hash[:]) != creds.PoolIDHex {
-			t.Fatalf("voter hash mismatch")
+		if res.TxHash == "" {
+			t.Fatal("SubmitPoolVote returned empty tx hash")
 		}
-		if len(votes) != 1 {
-			t.Fatalf("votes for voter = %d, want 1", len(votes))
+		var tx conway.ConwayTransaction
+		if _, err := cbor.Decode(chain.submitCbor, &tx); err != nil {
+			t.Fatalf("decode submitted tx: %v", err)
 		}
-		for actionID, proc := range votes {
-			if hex.EncodeToString(actionID.TransactionId[:]) != actionTxID {
-				t.Fatalf("action tx id mismatch")
-			}
-			if actionID.GovActionIdx != 0 {
-				t.Fatalf("action index = %d, want 0", actionID.GovActionIdx)
-			}
-			if proc.Vote != lcommon.GovVoteYes {
-				t.Fatalf("vote = %d, want yes", proc.Vote)
-			}
-			if proc.Anchor == nil {
-				t.Fatal("expected anchor")
-			}
-			if proc.Anchor.Url != "ipfs://QmTest" {
-				t.Fatalf("anchor url = %q", proc.Anchor.Url)
-			}
-			if hex.EncodeToString(proc.Anchor.DataHash[:]) != strings.Repeat("cd", 32) {
-				t.Fatalf("anchor hash mismatch")
+		for _, votes := range tx.Body.TxVotingProcedures {
+			for _, proc := range votes {
+				if proc.Anchor != nil {
+					t.Fatal("expected anchor to be absent in the no-anchor case")
+				}
 			}
 		}
-	}
-	if got := len(tx.WitnessSet.VkeyWitnesses.Items()); got < 2 {
-		t.Fatalf("vkey witness count = %d, want payment + cold witnesses", got)
-	}
+	})
 }
 
 func TestSubmitPoolVoteRejectsInvalidInputs(t *testing.T) {
@@ -752,7 +844,70 @@ func TestSubmitPoolVoteRejectsInvalidInputs(t *testing.T) {
 	}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("bad hex anchor hash: %v", err)
 	}
+	if _, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+		ActionTxID: strings.Repeat("ab", 32), ActionIndex: lcommon.MaxGovActionIdx + 1, Vote: "yes",
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("action index too large: %v", err)
+	}
+
+	// 129-byte anchor URL
+	longURL := "http://" + strings.Repeat("a", 122) // total > 128
+	if _, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+		ActionTxID: strings.Repeat("ab", 32), ActionIndex: 0, Vote: "yes", AnchorURL: longURL, AnchorHash: strings.Repeat("cd", 32),
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("long anchor url: %v", err)
+	}
+
 	if len(chain.submitCbor) != 0 {
 		t.Fatal("should not have submitted anything for invalid inputs")
 	}
 }
+
+func TestSubmitPoolVoteRejectsInvalidInputsNoUtxoFetch(t *testing.T) {
+	acct, err := wallet.Derive(testMnemonic, "preview", 2)
+	if err != nil {
+		t.Fatalf("derive account: %v", err)
+	}
+	ks := &fakeKeystore{mnemonic: testMnemonic, password: "spend-password", exists: true}
+	s := NewService(&noUtxoChain{}, ks, fakeGenesis{}, fakeTip{slot: 259200})
+	s.SetAccount("wallet-a", acct)
+
+	if _, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+		ActionTxID: strings.Repeat("ab", 32), ActionIndex: lcommon.MaxGovActionIdx + 1, Vote: "yes",
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("action index too large: %v", err)
+	}
+	longURL := "http://" + strings.Repeat("a", 122)
+	if _, err := s.SubmitPoolVote(context.Background(), "spend-password", PoolVoteParams{
+		ActionTxID: strings.Repeat("ab", 32), ActionIndex: 0, Vote: "yes", AnchorURL: longURL, AnchorHash: strings.Repeat("cd", 32),
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("long anchor url: %v", err)
+	}
+}
+
+type noUtxoChain struct{}
+
+func (n *noUtxoChain) ProtocolParams() (backend.ProtocolParameters, error) {
+	return backend.ProtocolParameters{MinFeeConstant: 155381, MinFeeCoefficient: 44, MaxTxSize: 16384, CoinsPerUtxoByte: "4310", KeyDeposits: "2000000", PoolDeposits: "500000000"}, nil
+}
+func (n *noUtxoChain) GenesisParams() (backend.GenesisParameters, error) {
+	return backend.GenesisParameters{NetworkMagic: 1}, nil
+}
+func (n *noUtxoChain) NetworkId() uint8              { return 0 }
+func (n *noUtxoChain) CurrentEpoch() (uint64, error) { return 500, nil }
+func (n *noUtxoChain) MaxTxFee() (uint64, error)     { return 0, nil }
+func (n *noUtxoChain) Tip() (uint64, error)          { return 10_000_000, nil }
+func (n *noUtxoChain) Utxos(lcommon.Address) ([]lcommon.Utxo, error) {
+	panic("Utxos should not be called")
+}
+func (n *noUtxoChain) SubmitTx([]byte) (lcommon.Blake2b256, error) {
+	var h lcommon.Blake2b256
+	return h, nil
+}
+func (n *noUtxoChain) EvaluateTx([]byte, []lcommon.Utxo) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
+	return nil, nil
+}
+func (n *noUtxoChain) UtxoByRef(lcommon.Blake2b256, uint32) (*lcommon.Utxo, error) {
+	return nil, nil
+}
+func (n *noUtxoChain) ScriptCbor(lcommon.Blake2b224) ([]byte, error) { return nil, nil }
