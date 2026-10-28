@@ -2984,6 +2984,24 @@ func MarshalScript(script Script, network string) (*ScriptData, error) {
 	return data, nil
 }
 
+// ParseScriptFile reads a native script file in either supported form: a
+// cardano-cli simple-script object, or a ScriptData envelope written by
+// earlier Bursa versions.
+func ParseScriptFile(data []byte) (*ScriptData, error) {
+	var top map[string]any
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil, fmt.Errorf("failed to parse script JSON: %w", err)
+	}
+	if scriptType, _ := top["type"].(string); scriptType != "NativeScript" {
+		return &ScriptData{Type: "NativeScript", Script: top}, nil
+	}
+	var envelope ScriptData
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to parse script envelope: %w", err)
+	}
+	return &envelope, nil
+}
+
 // UnmarshalScript deserializes a script from JSON
 func UnmarshalScript(data *ScriptData) (Script, error) {
 	if data.Type != "NativeScript" {
@@ -3045,9 +3063,9 @@ func scriptToMap(script Script) (map[string]any, error) {
 			scripts[i] = subMap
 		}
 		return map[string]any{
-			"type":    "nOf",
-			"n":       s.N,
-			"scripts": scripts,
+			"type":     "atLeast",
+			"required": s.N,
+			"scripts":  scripts,
 		}, nil
 	case *NativeScriptInvalidBefore:
 		return map[string]any{
@@ -3148,31 +3166,42 @@ func mapToScriptWithBudget(
 			scripts[i] = script
 		}
 		return NewScriptAny(scripts...)
-	case "nOf":
-		nFloat, ok := m["n"].(float64)
+	case "nOf", "atLeast":
+		requiredField := "n"
+		if scriptType == "atLeast" {
+			requiredField = "required"
+		}
+		nFloat, ok := m[requiredField].(float64)
 		if !ok {
-			return nil, errors.New("missing or invalid n for nOf script")
+			return nil, fmt.Errorf(
+				"missing or invalid %s for %s script",
+				requiredField,
+				scriptType,
+			)
 		}
 		// Validate integer precision and reasonable range
 		if nFloat < 1 || nFloat > 255 || nFloat != float64(int(nFloat)) {
-			return nil, errors.New(
-				"n must be an integer between 1 and 255 for nOf script",
+			return nil, fmt.Errorf(
+				"%s must be an integer between 1 and 255 for %s script",
+				requiredField,
+				scriptType,
 			)
 		}
 		n := int(nFloat)
 		scriptsInterface, ok := m["scripts"].([]any)
 		if !ok {
-			return nil, errors.New("missing or invalid scripts for nOf script")
+			return nil, fmt.Errorf("missing or invalid scripts for %s script", scriptType)
 		}
 		if n < 1 || n > len(scriptsInterface) {
 			return nil, fmt.Errorf(
-				"invalid n value %d: must be between 1 and %d",
+				"invalid %s value %d: must be between 1 and %d",
+				requiredField,
 				n,
 				len(scriptsInterface),
 			)
 		}
 		if len(scriptsInterface) > maxScriptWidth {
-			return nil, errors.New("nOf script exceeds width limit")
+			return nil, fmt.Errorf("%s script exceeds width limit", scriptType)
 		}
 		scripts := make([]Script, len(scriptsInterface))
 		for i, scriptInterface := range scriptsInterface {

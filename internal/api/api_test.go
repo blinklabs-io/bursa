@@ -1648,7 +1648,8 @@ func TestHandleScriptCreate(t *testing.T) {
 	assert.Equal(t, "NativeScript", response.Type)
 	scriptType, ok := response.Script["type"]
 	assert.True(t, ok)
-	assert.Equal(t, "nOf", scriptType)
+	assert.Equal(t, "atLeast", scriptType)
+	assert.Equal(t, float64(2), response.Script["required"])
 	assert.NotEmpty(t, response.Address)
 	assert.NotEmpty(t, response.ScriptHash)
 	assert.Contains(t, response.Address, "addr1")

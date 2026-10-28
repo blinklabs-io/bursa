@@ -2102,9 +2102,9 @@ func RunScriptCreate(
 		return fmt.Errorf("failed to marshal script: %w", err)
 	}
 
-	// Output the script
+	// The output file holds only the script, in the cardano-cli simple-script
+	// format; the address and hash are reported on stdout.
 	if output != "" {
-		// Write to file
 		file, err := os.Create(output)
 		if err != nil {
 			return fmt.Errorf(
@@ -2121,18 +2121,17 @@ func RunScriptCreate(
 
 		encoder := json.NewEncoder(file)
 		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(scriptData); err != nil {
+		if err := encoder.Encode(scriptData.Script); err != nil {
 			return fmt.Errorf("failed to write script to file: %w", err)
 		}
 
 		logger.Info("script written to file", "file", output)
-	} else {
-		// Print to stdout
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(scriptData); err != nil {
-			return fmt.Errorf("failed to encode script: %w", err)
-		}
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(scriptData); err != nil {
+		return fmt.Errorf("failed to encode script: %w", err)
 	}
 
 	return nil
@@ -2202,7 +2201,7 @@ func RunScriptValidate(
 	logger := logging.GetLogger()
 
 	// Read script file
-	file, err := os.Open(scriptFile)
+	fileData, err := os.ReadFile(scriptFile)
 	if err != nil {
 		logger.Error(
 			"failed to open script file",
@@ -2213,16 +2212,15 @@ func RunScriptValidate(
 		)
 		os.Exit(1)
 	}
-	defer file.Close()
 
-	var scriptData bursa.ScriptData
-	if err := json.NewDecoder(file).Decode(&scriptData); err != nil {
+	scriptData, err := bursa.ParseScriptFile(fileData)
+	if err != nil {
 		logger.Error("failed to parse script file", "error", err)
 		os.Exit(1)
 	}
 
 	// Unmarshal script
-	script, err := bursa.UnmarshalScript(&scriptData)
+	script, err := bursa.UnmarshalScript(scriptData)
 	if err != nil {
 		logger.Error("failed to unmarshal script", "error", err)
 		os.Exit(1)
@@ -2684,7 +2682,7 @@ func RunScriptAddress(scriptFile, network string) {
 	logger := logging.GetLogger()
 
 	// Read script file
-	file, err := os.Open(scriptFile)
+	fileData, err := os.ReadFile(scriptFile)
 	if err != nil {
 		logger.Error(
 			"failed to open script file",
@@ -2695,16 +2693,15 @@ func RunScriptAddress(scriptFile, network string) {
 		)
 		os.Exit(1)
 	}
-	defer file.Close()
 
-	var scriptData bursa.ScriptData
-	if err := json.NewDecoder(file).Decode(&scriptData); err != nil {
+	scriptData, err := bursa.ParseScriptFile(fileData)
+	if err != nil {
 		logger.Error("failed to parse script file", "error", err)
 		os.Exit(1)
 	}
 
 	// Unmarshal script
-	script, err := bursa.UnmarshalScript(&scriptData)
+	script, err := bursa.UnmarshalScript(scriptData)
 	if err != nil {
 		logger.Error("failed to unmarshal script", "error", err)
 		os.Exit(1)

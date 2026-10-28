@@ -85,7 +85,7 @@ bursa address info on an address.`,
 	scriptCreateCommand.Flags().
 		StringSliceVar(&keyHashes, "key-hashes", nil, "Comma-separated list of key hashes (hex encoded)")
 	scriptCreateCommand.Flags().
-		StringVar(&output, "output", "", "Output file path (optional)")
+		StringVar(&output, "output", "", "Write the script to this file in cardano-cli simple-script format (optional)")
 	scriptCreateCommand.Flags().
 		StringVar(&network, "network", "mainnet", networkFlagUsage)
 	scriptCreateCommand.Flags().
