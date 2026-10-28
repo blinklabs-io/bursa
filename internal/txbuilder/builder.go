@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/gouroboros/cbor"
@@ -26,7 +27,6 @@ import (
 	"github.com/blinklabs-io/gouroboros/ledger/conway"
 	"github.com/blinklabs-io/gouroboros/ledger/mary"
 	"github.com/blinklabs-io/gouroboros/ledger/shelley"
-	"sort"
 )
 
 // DefaultTTLMargin is the number of slots a transaction stays valid for when
@@ -226,7 +226,7 @@ func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error
 		need:         deposits,
 		refunds:      refunds,
 	}
-	var lastErr error = errors.New("insufficient funds")
+	lastErr := errNeedMoreInput
 	for _, u := range utxos {
 		b.inputs = append(b.inputs, shelley.ShelleyTransactionInput{
 			TxId:        u.Input.Id(),
@@ -303,6 +303,9 @@ func (b *balancer) balance() ([]byte, error) {
 		size, err := bursa.EstimateWitnessedTxSize(txCbor, b.witnessCount, 0)
 		if err != nil {
 			return nil, err
+		}
+		if size < 0 {
+			return nil, fmt.Errorf("invalid transaction size %d", size)
 		}
 		if b.extra.MaxTxSize > 0 && uint64(size) > b.extra.MaxTxSize {
 			return nil, fmt.Errorf(

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -104,9 +105,6 @@ func networkMagic(network string) (uint32, error) {
 }
 
 func (n *N2CChain) dial(ctx context.Context) (*ouroboros.Connection, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	magic, err := n.networkMagic()
 	if err != nil {
 		return nil, err
@@ -161,6 +159,9 @@ func (n *N2CChain) GetUTxOs(ctx context.Context, address string) ([]UTxO, error)
 	}
 	result := make([]UTxO, 0, len(res.Results))
 	for id, out := range res.Results {
+		if id.Idx < 0 || id.Idx > math.MaxUint32 {
+			return nil, fmt.Errorf("utxo index %d out of range", id.Idx)
+		}
 		input := shelley.ShelleyTransactionInput{
 			TxId:        id.Hash,
 			OutputIndex: uint32(id.Idx),
