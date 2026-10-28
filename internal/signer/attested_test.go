@@ -139,7 +139,7 @@ func TestAttestedKeySignsTransaction(t *testing.T) {
 	}
 	c, enc, hash, _ := newAttestedCoordinator(t, backend.KeyTypePayment, "tx", card)
 
-	res, perr, err := c.SignTx(t.Context(), []byte("11"), []string{hash.String()})
+	res, perr, err := c.SignTx(t.Context(), []byte(testTxCbor), testTxEra, []string{hash.String()})
 	if err != nil || len(perr) != 0 || len(res.Witnesses) != 1 {
 		t.Fatalf("SignTx: res=%+v perr=%+v err=%v", res, perr, err)
 	}
@@ -153,7 +153,7 @@ func TestAttestedKeySignsTransaction(t *testing.T) {
 	// A signature that does not verify under the attested key is not a witness.
 	_, forged, _ := ed25519.GenerateKey(nil)
 	enc.forge = forged
-	res, perr, err = c.SignTx(t.Context(), []byte("11"), []string{hash.String()})
+	res, perr, err = c.SignTx(t.Context(), []byte(testTxCbor), testTxEra, []string{hash.String()})
 	if err != nil || len(perr) != 1 || perr[0].Code != CodeInternal {
 		t.Fatalf("forged signature: res=%+v perr=%+v err=%v", res, perr, err)
 	}

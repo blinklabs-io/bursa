@@ -3,6 +3,7 @@ package openapi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -11,6 +12,27 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestTxInspectionValueEffectsRoundTrip(t *testing.T) {
+	raw := []byte(`{"certificate_deposit_total":"3000000","certificate_refund_total":"2000000","certificate_value_effects_complete":true,"proposal_deposit_total":"5000000","treasury_donation_lovelace":"4000000","unresolved_certificate_deposits":1,"unresolved_certificate_refunds":2}`)
+	var inspection BursaTxInspection
+	require.NoError(t, json.Unmarshal(raw, &inspection))
+	require.Equal(t, "3000000", inspection.GetCertificateDepositTotal())
+	require.Equal(t, "2000000", inspection.GetCertificateRefundTotal())
+	require.True(t, inspection.GetCertificateValueEffectsComplete())
+	require.Equal(t, "5000000", inspection.GetProposalDepositTotal())
+	require.Equal(t, "4000000", inspection.GetTreasuryDonationLovelace())
+	require.Equal(t, int32(1), inspection.GetUnresolvedCertificateDeposits())
+	require.Equal(t, int32(2), inspection.GetUnresolvedCertificateRefunds())
+
+	encoded, err := json.Marshal(inspection)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &got))
+	require.Equal(t, "3000000", got["certificate_deposit_total"])
+	require.Equal(t, "5000000", got["proposal_deposit_total"])
+	require.Equal(t, "4000000", got["treasury_donation_lovelace"])
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 

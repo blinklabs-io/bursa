@@ -8,7 +8,7 @@ import {
   useNotifications,
   useActivityNotifications,
 } from "./api/hooks";
-import { lockVault, ApiError } from "./api/client";
+import { lockVault, recordVaultActivity, ApiError } from "./api/client";
 import { getStoredDeviceKind } from "./hw/deviceKind";
 import { useIdleLock } from "./useIdleLock";
 import { Icon, BursaLogo } from "./components/Icon";
@@ -257,30 +257,47 @@ export function App() {
     setActiveId(wallet.id);
   }
 
+  function applyLocked() {
+    setLockError(null);
+    setWallets([]);
+    setActiveId(null);
+    setUnlocked(false);
+    setAddingWallet(false);
+    navigate("portfolio");
+    vaultStatus.refresh();
+  }
+
   async function handleLock() {
     setLockError(null);
     try {
       await lockVault();
-      setWallets([]);
-      setActiveId(null);
-      setUnlocked(false);
-      setAddingWallet(false);
-      navigate("portfolio");
-      vaultStatus.refresh();
+      applyLocked();
     } catch (err) {
       setLockError(err instanceof ApiError ? err.message : "Could not lock vault");
       vaultStatus.refresh();
     }
   }
 
+  async function handleActivity() {
+    try {
+      await recordVaultActivity();
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.status !== 409) return;
+      applyLocked();
+    }
+  }
+
   // Idle auto-lock: re-locks the vault after the persisted timeout elapses
   // with no pointer/keyboard/visibility activity (see useIdleLock). Only runs
   // once the vault is actually unlocked — locking an already-locked vault is
-  // harmless but pointless. Default to Off (0) only while the setting is
-  // still loading (nothing is known yet); if loading finishes and the fetch
-  // failed (autoLock.data stays null), fail SAFE by assuming the default
-  // timeout rather than fail OPEN by leaving auto-lock permanently disabled.
-  useIdleLock(autoLock.loading ? 0 : (autoLock.data?.minutes ?? 15), () => void handleLock(), unlocked);
+  // harmless but pointless. The server remains authoritative if this optional
+  // UI timer cannot load the setting.
+  useIdleLock(
+    autoLock.data?.minutes ?? 0,
+    () => void handleLock(),
+    unlocked,
+    () => void handleActivity(),
+  );
 
   // Wallet-activity notifications: poll node-local activity and raise a
   // desktop/browser notification for new incoming funds / stake rewards, but

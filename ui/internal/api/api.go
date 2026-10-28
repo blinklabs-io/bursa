@@ -37,6 +37,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
+	"github.com/blinklabs-io/bursa/ui/internal/remotesubmit"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/survey"
@@ -213,13 +214,16 @@ type Activity interface {
 }
 
 type handlerOptions struct {
-	legacy         LegacyKeystore
-	connector      *connector.Service
-	nfts           NFTs
-	diagnostics    Diagnostics
-	migrateScripts ScriptMigrator
-	activity       Activity
-	surveys        Surveys
+	legacy          LegacyKeystore
+	connector       *connector.Service
+	approvals       *connector.Service
+	remoteSubmit    *remotesubmit.Service
+	nfts            NFTs
+	diagnostics     Diagnostics
+	migrateScripts  ScriptMigrator
+	activity        Activity
+	surveys         Surveys
+	autoLockRuntime autoLockRuntime
 }
 
 // ScriptMigrator moves saved multi-signature accounts out of the standalone
@@ -246,6 +250,16 @@ func WithLegacyKeystore(ks LegacyKeystore) HandlerOption {
 func WithConnector(svc *connector.Service) HandlerOption {
 	return func(o *handlerOptions) {
 		o.connector = svc
+	}
+}
+
+// WithRemoteSubmission enables the local control routes for a separately
+// hosted, TLS-only transaction submission listener. approvals is the shared
+// consent queue used by the wallet UI.
+func WithRemoteSubmission(svc *remotesubmit.Service, approvals *connector.Service) HandlerOption {
+	return func(o *handlerOptions) {
+		o.remoteSubmit = svc
+		o.approvals = approvals
 	}
 }
 
@@ -277,6 +291,19 @@ func WithSurveys(sv Surveys) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.surveys = sv }
 }
 
+// Handler serves the wallet control surface and owns its server-side vault
+// idle deadline.
+type Handler struct {
+	http.Handler
+	autoLock *autoLockController
+}
+
+// CheckAutoLock expires an idle deadline that elapsed while the process was
+// suspended. Mobile lifecycle callbacks call this on foreground resume.
+func (h *Handler) CheckAutoLock() {
+	h.autoLock.Check()
+}
+
 // SettingsController is the user-facing app-settings surface. It exposes the
 // persisted lean-node (history-expiry) profile and whether a node restart is
 // still needed for the persisted value to take effect (history expiry is a
@@ -291,9 +318,9 @@ type SettingsController interface {
 	// change has not taken effect yet).
 	HistoryExpiryRestartRequired() bool
 	// AutoLockMinutes reports the persisted idle auto-lock timeout in minutes;
-	// 0 means "Off" (auto-lock disabled). It is a pure client-side/UI setting —
-	// no node behaviour depends on it — so unlike history-expiry it never needs
-	// a restart to take effect.
+	// 0 means "Off" (auto-lock disabled). The control surface owns enforcement;
+	// no node behaviour depends on it, so unlike history-expiry it never needs a
+	// restart to take effect.
 	AutoLockMinutes() int
 	// SetAutoLockMinutes persists the idle auto-lock timeout. It rejects any
 	// value outside the offered set (see settings.AutoLockOptions).
@@ -609,7 +636,8 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 	return v
 }
 
-// NewHandler returns the loopback control-surface mux. network is the network
+// NewHandler returns the authenticated loopback control-surface mux. The
+// non-empty sessionToken protects every control route; network is the network
 // the embedded node runs on; wallet requests must match it (or omit it). vlt is
 // the encrypted multi-wallet store; the API pushes the active wallet onto wl/sp
 // whenever the selection changes. settings exposes user-facing app settings
@@ -621,7 +649,7 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // the native multi-signature surface (may be nil, in which case the multi-sig
 // routes are not registered). spa is the embedded SPA, registered as the
 // catch-all so the specific API routes take precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cb Contacts, lookup NodeLookup, po PoolOps, dx DexQuoter, ms MultiSig, network string, spa http.Handler, opts ...HandlerOption) http.Handler {
+func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cb Contacts, lookup NodeLookup, po PoolOps, dx DexQuoter, ms MultiSig, network string, spa http.Handler, opts ...HandlerOption) *Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -641,11 +669,11 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// diagnostics view must work in every node state — especially while syncing,
 	// bootstrapping, or after an error, which is exactly when a user reaches for
 	// it. It is node-local only (no external calls), so there is no
-	// external-consent gate; the sameOriginGuard wrapping the whole mux still
-	// applies. Like /status, these routes are intentionally not vault-unlock
-	// gated: they expose only node/process telemetry (never key material), and
-	// must work before/without a wallet being unlocked. Registered only when a
-	// Diagnostics provider is supplied.
+	// external-consent gate; the control-session and same-origin guards wrapping
+	// the whole mux still apply. Like /status, these routes are intentionally not
+	// vault-unlock gated: they expose only node/process telemetry (never key
+	// material), and must work before/without a wallet being unlocked. Registered
+	// only when a Diagnostics provider is supplied.
 	if cfg.diagnostics != nil {
 		diag := cfg.diagnostics
 		mux.HandleFunc("GET /diagnostics", func(w http.ResponseWriter, r *http.Request) {
@@ -708,6 +736,11 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			cfg.activity.SetActive("")
 		}
 	}
+	autoLockRuntime := cfg.autoLockRuntime
+	if autoLockRuntime.now == nil || autoLockRuntime.afterFunc == nil {
+		autoLockRuntime = defaultAutoLockRuntime()
+	}
+	autoLock := newAutoLockController(vlt, settings, clearActive, autoLockRuntime)
 	legacyAvailable := func() bool {
 		return !vlt.Exists() && cfg.legacy != nil && cfg.legacy.Exists()
 	}
@@ -739,6 +772,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			return
 		}
 		clearActive()
+		autoLock.Arm()
 		writeJSON(w, http.StatusOK, vaultStatus{Exists: true, Locked: false, WalletCount: 0})
 	})
 
@@ -768,10 +802,22 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		if active, err := vlt.Active(); err == nil {
 			bindActive(active)
 		}
+		autoLock.Arm()
 		writeJSON(w, http.StatusOK, walletList(wallets, vlt))
 	})
 
+	mux.HandleFunc("POST /vault/activity", func(w http.ResponseWriter, _ *http.Request) {
+		if !autoLock.Activity() {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "vault is locked"})
+			return
+		}
+		writeJSON(w, http.StatusOK, vaultStatus{
+			Exists: vlt.Exists(), Locked: vlt.Locked(), WalletCount: vlt.WalletCount(),
+		})
+	})
+
 	mux.HandleFunc("POST /vault/lock", func(w http.ResponseWriter, _ *http.Request) {
+		autoLock.Stop()
 		vlt.Lock()
 		clearActive()
 		writeJSON(w, http.StatusOK, vaultStatus{
@@ -877,6 +923,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			return
 		}
 		bindActive(meta)
+		autoLock.Arm()
 		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
 	})
 
@@ -1303,9 +1350,9 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	})
 
 	// App settings: the idle auto-lock timeout. Ungated for the same reason as
-	// history-expiry — it is a local UI preference, not a node query. Unlike
-	// history-expiry it takes effect immediately (the frontend's idle timer
-	// reads it directly), so there is no restart_required field.
+	// history-expiry — it is a local wallet preference, not a node query. Unlike
+	// history-expiry it takes effect immediately on the server-owned deadline,
+	// so there is no restart_required field.
 	mux.HandleFunc("GET /wallet/settings/auto-lock", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]int{"minutes": settings.AutoLockMinutes()})
 	})
@@ -1329,6 +1376,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			writeJSON(w, http.StatusInternalServerError, errBody(err))
 			return
 		}
+		autoLock.Arm()
 		writeJSON(w, http.StatusOK, map[string]int{"minutes": settings.AutoLockMinutes()})
 	})
 
@@ -1621,14 +1669,15 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// NFT to its current holding address through the node (never an external
 	// service). A leading '$' is optional; handle.Resolve normalizes it. A
 	// name on an unsupported network or with no on-chain holder reports as a
-	// clean not-found (404), never a hard error.
+	// clean not-found (404). Conflicting holders are rejected rather than
+	// selecting a recipient.
 	mux.HandleFunc("GET /wallet/handle/{name}", gated(st, func(w http.ResponseWriter, r *http.Request) {
 		if lookup == nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "handle lookup unavailable"})
 			return
 		}
 		bare, addr, err := handle.Resolve(r.Context(), lookup, network, r.PathValue("name"))
-		serveLookup(w, handleInfo{Handle: bare, Address: addr}, err)
+		serveHandleLookup(w, handleInfo{Handle: bare, Address: addr}, err)
 	}))
 
 	// GET /wallet/assets/{unit} reads a native asset's on-chain
@@ -1721,6 +1770,11 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			cfg.connector,
 			withConnectorPairingCodeAuthorizer(authorizePairingCode),
 		)
+	} else if cfg.approvals != nil {
+		registerApprovalRoutes(mux, cfg.approvals)
+	}
+	if cfg.remoteSubmit != nil {
+		registerRemoteSubmission(mux, cfg.remoteSubmit)
 	}
 
 	// SPA catch-all: the specific API routes above take precedence on the mux;
@@ -1730,7 +1784,10 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// Wrap the whole mux in the same-origin / DNS-rebind guard. The /vault/* and
 	// /wallet/* routes register directly on the mux with no per-handler origin
 	// check, so this middleware is the single point that enforces it for them.
-	return sameOriginGuard(limitRequestBody(mux))
+	return &Handler{
+		Handler:  sessionGuard(sessionToken, sameOriginGuard(limitRequestBody(mux))),
+		autoLock: autoLock,
+	}
 }
 
 // limitRequestBody applies the request-body limit at the mux boundary. The
@@ -1855,6 +1912,19 @@ func serveLookup[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found by your node"})
 	default:
 		writeJSON(w, http.StatusBadGateway, errBody(err))
+	}
+}
+
+func serveHandleLookup(w http.ResponseWriter, v handleInfo, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, chain.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "handle not found"})
+	case errors.Is(err, handle.ErrAmbiguousHolder):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "handle holder is ambiguous"})
+	default:
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "handle lookup failed"})
 	}
 }
 
@@ -2520,6 +2590,8 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 	case errors.Is(err, contacts.ErrNotFound),
 		errors.Is(err, spend.ErrUnknownPending), errors.Is(err, multisig.ErrUnknownAccount):
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
+	case errors.Is(err, contacts.ErrPersistenceUnavailable):
+		writeJSON(w, http.StatusServiceUnavailable, errBody(err))
 	case errors.Is(err, spend.ErrExpiredPending):
 		writeJSON(w, http.StatusGone, errBody(err)) // 410
 	case errors.Is(err, spend.ErrInsufficientFunds), errors.Is(err, spend.ErrSubmitRejected),

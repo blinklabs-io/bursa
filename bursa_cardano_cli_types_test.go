@@ -23,6 +23,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestPolicyKeyFilesUseCardanoCLITypes asserts policy exports use payment
+// envelope types while legacy policy envelopes remain readable.
+func TestPolicyKeyFilesUseCardanoCLITypes(t *testing.T) {
+	t.Parallel()
+	root, err := GetRootKeyFromMnemonic(capabilityMnemonic, "")
+	require.NoError(t, err)
+	policy, err := GetPolicyKey(root, 0)
+	require.NoError(t, err)
+	vkey, err := GetPolicyVKey(policy)
+	require.NoError(t, err)
+	skey, err := GetPolicySKey(policy)
+	require.NoError(t, err)
+	xskey, err := GetPolicyExtendedSKey(policy)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name string
+		key  KeyFile
+		want string
+	}{
+		{"verification key", vkey, "PaymentVerificationKeyShelley_ed25519"},
+		{"signing key", skey, "PaymentExtendedSigningKeyShelley_ed25519_bip32"},
+		{"extended signing key", xskey, "PaymentExtendedSigningKeyShelley_ed25519_bip32"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.key.Type)
+		})
+	}
+
+	wantVKey := decodeCborBytes(t, vkey.CborHex)
+	for _, tc := range []struct {
+		name    string
+		keyType string
+		key     KeyFile
+		prefix  string
+	}{
+		{"legacy verification key", "PolicyVerificationKeyShelley_ed25519", vkey, "policy_vk"},
+		{"legacy extended signing key", "PolicyExtendedSigningKeyShelley_ed25519_bip32", xskey, "policy_xsk"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loaded, err := LoadKeyFromBytes(envelopeJSON(t, tc.keyType, tc.key.CborHex))
+			require.NoError(t, err)
+			assert.Equal(t, wantVKey, loaded.VKey)
+
+			legacy := tc.key
+			legacy.Type = tc.keyType
+			assert.Contains(t, legacy.String(), tc.prefix+"1")
+		})
+	}
+}
+
 // TestGovernanceKeyFilesUseCardanoCLITypes asserts the envelope type strings
 // written for DRep and committee keys are the ones cardano-cli expects.
 func TestGovernanceKeyFilesUseCardanoCLITypes(t *testing.T) {

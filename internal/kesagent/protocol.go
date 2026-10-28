@@ -103,12 +103,10 @@ const (
 	// maxFrameLen caps a single frame payload to guard against abuse.
 	maxFrameLen = 1 << 20 // 1 MiB
 
-	// frameBodyReadTimeout bounds how long a frame body may take to arrive
-	// once its length header has been read. It applies only to the body read
-	// (never the header read, where an idle connection legitimately blocks
-	// between requests), so a client that announces a frame then stalls the
-	// body cannot hold a connection slot and its goroutine indefinitely.
-	frameBodyReadTimeout = 10 * time.Second
+	// frameIOTimeout bounds a complete inbound or outbound frame. Inbound
+	// timing includes idle time before the length header; outbound timing starts
+	// immediately before the header write.
+	frameIOTimeout = 10 * time.Second
 )
 
 // Socket modes for the service socket.
@@ -189,8 +187,13 @@ type AgentInfo struct {
 	FloorInitialized bool   `json:"floor_initialized"` // whether the guard floor is set
 }
 
+type deadlineWriter interface {
+	io.Writer
+	SetWriteDeadline(time.Time) error
+}
+
 // writeFrame writes a single length-prefixed JSON frame.
-func writeFrame(w io.Writer, v any) error {
+func writeFrame(w deadlineWriter, v any) (retErr error) {
 	payload, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("kesagent: marshal frame: %w", err)
@@ -198,6 +201,14 @@ func writeFrame(w io.Writer, v any) error {
 	if len(payload) > maxFrameLen {
 		return fmt.Errorf("kesagent: frame too large (%d bytes)", len(payload))
 	}
+	if err := w.SetWriteDeadline(time.Now().Add(frameIOTimeout)); err != nil {
+		return fmt.Errorf("kesagent: set frame write deadline: %w", err)
+	}
+	defer func() {
+		if err := w.SetWriteDeadline(time.Time{}); retErr == nil && err != nil {
+			retErr = fmt.Errorf("kesagent: clear frame write deadline: %w", err)
+		}
+	}()
 	var hdr [4]byte
 	binary.BigEndian.PutUint32(hdr[:], uint32(len(payload))) // #nosec G115 -- bounded by maxFrameLen
 	n, err := w.Write(hdr[:])
@@ -217,8 +228,21 @@ func writeFrame(w io.Writer, v any) error {
 	return nil
 }
 
+type deadlineReader interface {
+	io.Reader
+	SetReadDeadline(time.Time) error
+}
+
 // readFrame reads a single length-prefixed JSON frame into v.
-func readFrame(r io.Reader, v any) error {
+func readFrame(r deadlineReader, v any) (retErr error) {
+	if err := r.SetReadDeadline(time.Now().Add(frameIOTimeout)); err != nil {
+		return fmt.Errorf("kesagent: set frame read deadline: %w", err)
+	}
+	defer func() {
+		if err := r.SetReadDeadline(time.Time{}); retErr == nil && err != nil {
+			retErr = fmt.Errorf("kesagent: clear frame read deadline: %w", err)
+		}
+	}()
 	var hdr [4]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return err // may be io.EOF; callers distinguish
@@ -229,16 +253,6 @@ func readFrame(r io.Reader, v any) error {
 	}
 	if n > maxFrameLen {
 		return fmt.Errorf("kesagent: frame too large (%d bytes)", n)
-	}
-	// A frame body must arrive contiguously once its header has been read, so
-	// bound the body read with a deadline (cleared afterward). This only
-	// affects readers that expose SetReadDeadline (net.Conn); in-memory
-	// readers used in tests are unaffected. The header read above is
-	// deliberately left un-deadlined so idle/long-lived connections may block
-	// there between frames.
-	if d, ok := r.(interface{ SetReadDeadline(time.Time) error }); ok {
-		_ = d.SetReadDeadline(time.Now().Add(frameBodyReadTimeout))
-		defer func() { _ = d.SetReadDeadline(time.Time{}) }()
 	}
 	// Grow the payload buffer as bytes actually arrive rather than
 	// pre-allocating the full advertised length: a client that announces a

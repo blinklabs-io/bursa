@@ -45,9 +45,9 @@ var (
 )
 
 // App is an opaque handle to a booted in-process wallet. It is returned by New
-// and driven by the Android/iOS shells: Start boots the stack, Port reports the
-// loopback port the WebView should load, and Stop tears it down. All fields are
-// unexported so gomobile treats it as an opaque reference type.
+// and driven by the Android/iOS shells: Start boots the stack, URL reports the
+// authenticated loopback URL the WebView should load, and Stop tears it down.
+// All fields are unexported so gomobile treats it as an opaque reference type.
 type App struct {
 	mu          sync.Mutex
 	app         runtimeApp
@@ -63,6 +63,10 @@ type App struct {
 	// nodeDataDir, when set, holds the node database apart from the wallet
 	// tree. Guarded by mu.
 	nodeDataDir string
+	// contactsPersistenceDisabled is set by a native shell when its data
+	// directory cannot meet the platform backup-exclusion contract. Guarded by
+	// mu and captured with nodeDataDir before boot starts.
+	contactsPersistenceDisabled bool
 	// draining is the done-channel of an in-flight (or already-finished)
 	// cleanupLateStart watching a superseded/canceled start. StartWithTimeout
 	// waits on it before rebinding boot's fixed node ports (5555/5556), so a
@@ -77,6 +81,7 @@ type App struct {
 type runtimeApp interface {
 	Stop() error
 	Port() int
+	URL() string
 	OnNetworkChanged() error
 	OnResume() error
 }
@@ -91,6 +96,15 @@ func (a *App) SetNodeDataDir(dir string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.nodeDataDir = dir
+}
+
+// SetContactsPersistenceEnabled controls whether the address book may persist
+// plaintext contact metadata. Native shells must disable it before Start when
+// their data directory is eligible for device backup.
+func (a *App) SetContactsPersistenceEnabled(enabled bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.contactsPersistenceDisabled = !enabled
 }
 
 // Start boots the wallet stack in-process and begins serving the embedded SPA +
@@ -122,7 +136,8 @@ func (a *App) StartWithTimeout(dataDir, network string, lean bool, timeoutMs int
 		startID   uint64
 		waited    <-chan struct{}
 
-		nodeDataDir string
+		nodeDataDir                 string
+		contactsPersistenceDisabled bool
 	)
 	for {
 		a.mu.Lock()
@@ -154,6 +169,7 @@ func (a *App) StartWithTimeout(dataDir, network string, lean bool, timeoutMs int
 		a.startID++
 		startID = a.startID
 		nodeDataDir = a.nodeDataDir
+		contactsPersistenceDisabled = a.contactsPersistenceDisabled
 		a.mu.Unlock()
 		break
 	}
@@ -163,12 +179,13 @@ func (a *App) StartWithTimeout(dataDir, network string, lean bool, timeoutMs int
 	result := make(chan startResult, 1)
 	go func() {
 		app, err := bootWallet(ctx, boot.Config{
-			Network:        network,
-			DataDir:        dataDir,
-			NodeDataDir:    nodeDataDir,
-			Addr:           "127.0.0.1:0", // OS-assigned loopback port for the WebView
-			MithrilEnabled: true,
-			LeanDefault:    lean,
+			Network:                     network,
+			DataDir:                     dataDir,
+			NodeDataDir:                 nodeDataDir,
+			ContactsPersistenceDisabled: contactsPersistenceDisabled,
+			Addr:                        "127.0.0.1:0", // OS-assigned loopback port for the WebView
+			MithrilEnabled:              true,
+			LeanDefault:                 lean,
 		})
 		var runtime runtimeApp
 		if app != nil {
@@ -297,6 +314,18 @@ func (a *App) Port() int {
 		return 0
 	}
 	return a.app.Port()
+}
+
+// URL returns the authenticated loopback URL for the system WebView. It is
+// empty before Start completes. The session capability is carried in the URL
+// fragment and never sent in the initial HTTP request.
+func (a *App) URL() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.app == nil {
+		return ""
+	}
+	return a.app.URL()
 }
 
 // OnNetworkChanged re-dials the embedded node's peers after the host network

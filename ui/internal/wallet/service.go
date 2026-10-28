@@ -185,46 +185,23 @@ func (s *Service) LocalAddresses() (AddressView, error) {
 	return addressView(acct, nil, false), nil
 }
 
-// scanAddresses returns the addresses to query for funds and history: the
-// node-reported account addresses (used/change addresses, available once the
-// stake key is registered on chain) unioned with the wallet's derived receive
-// addresses. The derived set is essential — a self-sovereign wallet whose stake
-// key is not yet registered on chain gets a 404 (ErrNotFound) from the node's
-// account index, but it still holds funds at its derived receive addresses. The
-// account-reported set still matters once registered: it surfaces used/change
-// addresses outside the derived receive window.
+// scanAddresses returns addresses whose payment credentials the wallet can
+// prove it controls. The node's stake-account index is only a discovery aid:
+// sharing a stake credential does not confer control over a payment credential.
 func (s *Service) scanAddresses(ctx context.Context, acct *Account) ([]string, error) {
 	// A script (multi-signature) account has no stake credential, so there is
 	// no account to discover addresses under — its addresses are exactly the
 	// script address it was created with. Asking the node to resolve an empty
 	// stake address is not a not-found, it is a malformed request.
 	if acct.StakeAddress == "" {
-		out := make([]string, 0, len(acct.ReceiveAddresses))
-		seen := make(map[string]bool, len(acct.ReceiveAddresses))
-		for _, a := range acct.ReceiveAddresses {
-			if a == "" || seen[a] {
-				continue
-			}
-			seen[a] = true
-			out = append(out, a)
-		}
-		return out, nil
+		return acct.OwnedAddresses(nil), nil
 	}
 
 	discovered, err := s.chain.AccountAddresses(ctx, acct.StakeAddress)
 	if err != nil && !errors.Is(err, chain.ErrNotFound) {
 		return nil, err
 	}
-	seen := make(map[string]bool, len(discovered)+len(acct.ReceiveAddresses))
-	out := make([]string, 0, len(discovered)+len(acct.ReceiveAddresses))
-	for _, a := range append(discovered, acct.ReceiveAddresses...) {
-		if a == "" || seen[a] {
-			continue
-		}
-		seen[a] = true
-		out = append(out, a)
-	}
-	return out, nil
+	return acct.OwnedAddresses(discovered), nil
 }
 
 // Balance aggregates the UTxO set across the active account's addresses
@@ -288,7 +265,7 @@ func (s *Service) Addresses(ctx context.Context) (AddressView, error) {
 		// response cannot establish that the receive window is unused.
 		return addressView(acct, nil, false), nil
 	}
-	return addressView(acct, used, true), nil
+	return addressView(acct, acct.filterOwnedAddresses(used), true), nil
 }
 
 // Transactions returns the merged, newest-first history across the account's
@@ -540,10 +517,7 @@ func toAddrSet(addrs []string) map[string]bool {
 // external and skew direction/net-amount for spends that touch such an
 // address.
 func ownerSet(addrs []string, acct *Account) map[string]bool {
-	owned := make([]string, 0, len(addrs)+len(acct.ChangeAddresses))
-	owned = append(owned, addrs...)
-	owned = append(owned, acct.ChangeAddresses...)
-	return toAddrSet(owned)
+	return toAddrSet(acct.OwnedAddresses(addrs))
 }
 
 // Delegation returns the current delegation/rewards summary (provisional).

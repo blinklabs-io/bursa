@@ -264,6 +264,25 @@ test("submitTx approval does not require a spending password", async () => {
   await waitFor(() => expect(decideSpy).toHaveBeenCalledWith("submit-1", true, undefined));
 });
 
+test("remote submission shows its bounded summary and requires explicit approval", async () => {
+  const decideSpy = vi.spyOn(connectorApi, "decide").mockResolvedValue(undefined);
+  render(<ConnectorApproval />);
+  emitRequest(makeReq({
+    id: "remote-submit-1",
+    origin: "Remote transaction submission",
+    method: "remoteSubmitTx",
+    params: { transaction_id: "abc", size_bytes: 321, summary: { is_complete: true } },
+  }));
+
+  await waitFor(() => expect(screen.getByText("Remote Submission Request")).toBeInTheDocument());
+  expect(screen.getByText(/fully signed transaction from another wallet/i)).toBeInTheDocument();
+  expect(screen.queryByLabelText(/spending password/i)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /approve/i }));
+  await waitFor(() =>
+    expect(decideSpy).toHaveBeenCalledWith("remote-submit-1", true, undefined),
+  );
+});
+
 test("drops stale pending requests when decide returns 404", async () => {
   vi.spyOn(connectorApi, "decide").mockRejectedValue(new ApiError(404, "unknown request id"));
 

@@ -1,4 +1,9 @@
-import type { TxSummary, TxSummaryInput, TxSummaryOutput } from "../api/types";
+import type {
+  TxSummary,
+  TxSummaryCertificate,
+  TxSummaryInput,
+  TxSummaryOutput,
+} from "../api/types";
 import { formatAda } from "../format";
 
 function AssetList({ assets }: { assets?: { unit: string; quantity: string }[] }) {
@@ -43,6 +48,47 @@ function InputEffects({ inputs }: { inputs: TxSummaryInput[] }) {
   );
 }
 
+function CertificateEffects({ certificates }: { certificates: TxSummaryCertificate[] }) {
+  return (
+    <ul className="signer-list">
+      {certificates.map((cert, index) => (
+        <li key={index}>
+          <strong>{cert.kind}</strong>
+          {cert.stake_credential ? (
+            <> · stake {cert.stake_credential.type.replace("_", " ")} <code className="tx-hash">{cert.stake_credential.hash}</code></>
+          ) : null}
+          {cert.pool_id ? <> · pool <code className="tx-hash">{cert.pool_id}</code></> : null}
+          {cert.drep ? (
+            <> · DRep {cert.drep.type.replace("_", " ")}{cert.drep.hash ? <> <code className="tx-hash">{cert.drep.hash}</code></> : null}</>
+          ) : null}
+          {cert.drep_credential ? (
+            <> · DRep {cert.drep_credential.type.replace("_", " ")} <code className="tx-hash">{cert.drep_credential.hash}</code></>
+          ) : null}
+          {cert.deposit_lovelace !== undefined ? <> · {formatAda(cert.deposit_lovelace)} ADA deposit</> : null}
+          {cert.refund_lovelace !== undefined ? <> · {formatAda(cert.refund_lovelace)} ADA refund</> : null}
+          {cert.deposit_implicit ? <> · protocol key deposit</> : null}
+          {cert.refund_implicit ? <> · protocol key deposit refund</> : null}
+          {cert.reward_account ? (
+            <> · rewards to {cert.reward_account.type.replace("_", " ")} <code className="tx-hash">{cert.reward_account.hash}</code></>
+          ) : null}
+          {cert.pool_owners?.length ? (
+            <> · owners {cert.pool_owners.map((owner, ownerIndex) => (
+              <span key={owner}>{ownerIndex > 0 ? ", " : null}<code className="tx-hash">{owner}</code></span>
+            ))}</>
+          ) : null}
+          {cert.retirement_epoch !== undefined ? <> · retires at epoch {cert.retirement_epoch}</> : null}
+          {cert.committee_cold_credential ? (
+            <> · committee cold {cert.committee_cold_credential.type.replace("_", " ")} <code className="tx-hash">{cert.committee_cold_credential.hash}</code></>
+          ) : null}
+          {cert.committee_hot_credential ? (
+            <> · committee hot {cert.committee_hot_credential.type.replace("_", " ")} <code className="tx-hash">{cert.committee_hot_credential.hash}</code></>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function TransactionEffects({
   summary,
   showSigningState = false,
@@ -69,12 +115,6 @@ export function TransactionEffects({
 			<dd>{summary.validity_start}</dd>
 		  </div>
 		) : null}
-        {summary.certificates?.length ? (
-          <div className="dl-row">
-            <dt>Certificates</dt>
-            <dd>{summary.certificates.join(", ")}</dd>
-          </div>
-        ) : null}
         {summary.network_id !== undefined ? (
           <div className="dl-row">
             <dt>Network</dt>
@@ -103,6 +143,10 @@ export function TransactionEffects({
           </>
         ) : null}
       </dl>
+
+      {summary.certificates?.length ? (
+        <><p className="field-label">Certificates</p><CertificateEffects certificates={summary.certificates} /></>
+      ) : null}
 
 	  {summary.inputs?.length ? <><p className="field-label">Inputs spent</p><InputEffects inputs={summary.inputs} /></> : null}
 

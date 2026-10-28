@@ -18,7 +18,7 @@ package desktoptray
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"runtime"
@@ -65,8 +65,11 @@ type Config struct {
 	Terminate func()
 	// StatusURL is the loopback control-surface base URL (e.g. http://127.0.0.1:8090).
 	// When set, the tray shows a live node-status line polled from StatusURL+"/status".
-	// Empty disables the poller (the line then reads a static label).
+	// Empty disables the poller (the line then reads a static label). It must
+	// not carry the launch fragment; use SplitLaunchURL to separate the two.
 	StatusURL string
+	// StatusToken is the control-session capability sent with each /status poll.
+	StatusToken string
 	// CurrentVersion is the release version embedded by the build. Empty means
 	// this is a development build, so a check reports the latest release only.
 	CurrentVersion string
@@ -81,6 +84,7 @@ type Tray struct {
 	ctrl      *Controller
 	dispatch  func(func())
 	statusURL string
+	statusTok string
 	updates   *UpdateChecker
 	logger    *slog.Logger
 
@@ -108,6 +112,7 @@ func New(cfg Config) *Tray {
 	t := &Tray{
 		dispatch:  cfg.Dispatch,
 		statusURL: cfg.StatusURL,
+		statusTok: cfg.StatusToken,
 		logger:    logger,
 		done:      make(chan struct{}),
 	}
@@ -212,12 +217,6 @@ func (t *Tray) onReady() {
 // release here (Stop already closed the click loop / poller).
 func (t *Tray) onExit() {}
 
-// nodeStatus is the subset of GET /status the tray renders.
-type nodeStatus struct {
-	State    string `json:"state"`
-	CaughtUp bool   `json:"caughtUp"`
-}
-
 // pollStatus keeps the disabled status menu item in step with the embedded
 // node. It is best-effort: a failed poll leaves the last label in place. It
 // exits when the tray is stopped.
@@ -244,18 +243,12 @@ func (t *Tray) pollStatus(item *systray.MenuItem) {
 func (t *Tray) refreshStatus(client *http.Client, item *systray.MenuItem) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.statusURL+"/status", nil)
+	st, err := fetchNodeStatus(ctx, client, t.statusURL, t.statusTok)
 	if err != nil {
-		return
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		item.SetTitle("Node: unreachable")
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-	var st nodeStatus
-	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		var unreachable *statusUnreachableError
+		if errors.As(err, &unreachable) {
+			item.SetTitle("Node: unreachable")
+		}
 		return
 	}
 	item.SetTitle("Node: " + statusLabel(st))

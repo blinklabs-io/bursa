@@ -17,6 +17,8 @@ package signer
 import (
 	"context"
 	"crypto/ed25519"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
@@ -30,6 +32,11 @@ import (
 
 // --- fakes ---
 
+const (
+	testTxCbor = "84a3008001800200a0f5f6"
+	testTxEra  = "babbage"
+)
+
 type fakeCardano struct {
 	insp      *bursa.TxInspection
 	ops       policy.TxOps
@@ -38,15 +45,33 @@ type fakeCardano struct {
 	assembled []byte
 }
 
-func (f fakeCardano) Inspect([]byte) (*bursa.TxInspection, error) { return f.insp, nil }
-func (f fakeCardano) Operations([]byte) (policy.TxOps, error)     { return f.ops, f.opsErr }
-func (f fakeCardano) TxID([]byte) ([]byte, error)                 { return f.txid, nil }
-func (f fakeCardano) Assemble([]byte, []lcommon.VkeyWitness) ([]byte, error) {
+func (f fakeCardano) Inspect([]byte, uint) (*bursa.TxInspection, error) { return f.insp, nil }
+func (f fakeCardano) Operations([]byte, uint) (policy.TxOps, error)     { return f.ops, f.opsErr }
+func (f fakeCardano) TxID([]byte, uint) ([]byte, error)                 { return f.txid, nil }
+func (f fakeCardano) Assemble([]byte, uint, []lcommon.VkeyWitness) ([]byte, error) {
 	return f.assembled, nil
 }
 
 // Verify fakeCardano implements operation.Cardano.
 var _ operation.Cardano = fakeCardano{}
+
+type panicCardano struct{}
+
+func (panicCardano) Inspect([]byte, uint) (*bursa.TxInspection, error) {
+	panic("Inspect called for rejected signer list")
+}
+
+func (panicCardano) Operations([]byte, uint) (policy.TxOps, error) {
+	panic("Operations called for rejected signer list")
+}
+
+func (panicCardano) TxID([]byte, uint) ([]byte, error) {
+	panic("TxID called for rejected signer list")
+}
+
+func (panicCardano) Assemble([]byte, uint, []lcommon.VkeyWitness) ([]byte, error) {
+	panic("Assemble called for rejected signer list")
+}
 
 type fakeKey struct {
 	pub     ed25519.PublicKey
@@ -64,8 +89,8 @@ func (k *fakeKey) Type() backend.KeyType {
 	}
 	return backend.KeyTypePayment
 }
-func (k *fakeKey) Extended() bool               { return false }
-func (k *fakeKey) Backend() string              { return "fake" }
+func (k *fakeKey) Extended() bool  { return false }
+func (k *fakeKey) Backend() string { return "fake" }
 func (k *fakeKey) Sign(_ context.Context, d []byte) ([]byte, error) {
 	if k.signErr != nil {
 		return nil, k.signErr
@@ -124,7 +149,7 @@ func TestSignTx_HappyPath(t *testing.T) {
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
 		watermark.NewMemWatermark(), card)
 
-	res, perr, err := c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
+	res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 	if err != nil {
 		t.Fatalf("SignTx: %v", err)
 	}
@@ -143,7 +168,7 @@ func TestSignTx_PolicyDeny(t *testing.T) {
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}, // certs not allowed
 		watermark.NewMemWatermark(), card)
 
-	res, perr, err := c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
+	res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 	if err != nil {
 		t.Fatalf("SignTx returned hard error: %v", err)
 	}
@@ -163,7 +188,7 @@ func TestSignTx_UnknownKey(t *testing.T) {
 		watermark.NewMemWatermark(), card)
 
 	other := newFakeKey(t)
-	_, perr, _ := c.SignTx(context.Background(), []byte("11"), []string{other.hash.String()})
+	_, perr, _ := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{other.hash.String()})
 	if len(perr) != 1 || perr[0].Code != CodeNotFound {
 		t.Fatalf("expected not-found, got %+v", perr)
 	}
@@ -176,7 +201,7 @@ func TestSignTx_ExtendedOnUnsupportedBackend(t *testing.T) {
 	c, _ := newCoordinator(t, k,
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
 		watermark.NewMemWatermark(), card)
-	_, perr, _ := c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
+	_, perr, _ := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 	if len(perr) != 1 || perr[0].Code != CodeUnsupported {
 		t.Fatalf("expected unsupported, got %+v", perr)
 	}
@@ -198,7 +223,7 @@ func TestSignTx_WatermarkConflict(t *testing.T) {
 	c, m := newCoordinator(t, k,
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
 		conflictWatermark{}, card)
-	_, perr, _ := c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
+	_, perr, _ := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 	if len(perr) != 1 || perr[0].Code != CodeConflict {
 		t.Fatalf("expected conflict, got %+v", perr)
 	}
@@ -280,6 +305,60 @@ func TestResolveSigner_Address(t *testing.T) {
 	})
 }
 
+func TestValidateSignerListAcceptsCardanoEnvelopeLimit(t *testing.T) {
+	signers := make([]string, MaxTxSigners)
+	for i := range signers {
+		var hash backend.KeyHash
+		hash[len(hash)-1] = byte(i + 1)
+		signers[i] = hash.String()
+	}
+
+	resolved, err := ValidateSignerList(signers)
+	if err != nil {
+		t.Fatalf("ValidateSignerList: %v", err)
+	}
+	if len(resolved) != MaxTxSigners {
+		t.Fatalf("resolved signer count = %d, want %d", len(resolved), MaxTxSigners)
+	}
+}
+
+func TestSignTxRejectsInvalidSignerListsBeforeCardanoWork(t *testing.T) {
+	key := newFakeKey(t)
+	coord, _ := newCoordinator(
+		t,
+		key,
+		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
+		watermark.NewMemWatermark(),
+		panicCardano{},
+	)
+	oversized := make([]string, MaxTxSigners+1)
+	for i := range oversized {
+		oversized[i] = key.hash.String()
+	}
+
+	tests := []struct {
+		name        string
+		signers     []string
+		wantErrPart string
+	}{
+		{name: "too many", signers: oversized, wantErrPart: fmt.Sprintf("at most %d signers", MaxTxSigners)},
+		{name: "duplicate", signers: []string{key.hash.String(), key.hash.String()}, wantErrPart: "duplicate signer"},
+		{name: "invalid", signers: []string{"not-a-signer"}, wantErrPart: "invalid signer"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := coord.SignTx(t.Context(), []byte("not-cbor"), testTxEra, tt.signers)
+			if err == nil || !IsBadRequest(err) {
+				t.Fatalf("SignTx error = %v, want bad request", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantErrPart) {
+				t.Fatalf("SignTx error = %q, want substring %q", err, tt.wantErrPart)
+			}
+		})
+	}
+}
+
 // TestSignTx_WatermarkModes verifies ModeOff (watermark never consulted) and
 // ModeWarn (conflict logged, signing proceeds).
 func TestSignTx_WatermarkModes(t *testing.T) {
@@ -301,7 +380,7 @@ func TestSignTx_WatermarkModes(t *testing.T) {
 			WMMode:    watermark.ModeOff,
 			Cardano:   baseCard,
 		})
-		res, perr, err := c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
+		res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 		if err != nil {
 			t.Fatalf("SignTx (ModeOff): %v", err)
 		}
@@ -325,7 +404,7 @@ func TestSignTx_WatermarkModes(t *testing.T) {
 			WMMode:    watermark.ModeWarn,
 			Cardano:   baseCard,
 		})
-		res, perr, err := c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
+		res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 		if err != nil {
 			t.Fatalf("SignTx (ModeWarn): %v", err)
 		}
@@ -362,7 +441,7 @@ func TestSignTx_VerifyFailure(t *testing.T) {
 		WMMode:    watermark.ModeEnforce,
 		Cardano:   card,
 	})
-	_, perr, err := c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
+	_, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 	if err != nil {
 		t.Fatalf("SignTx: unexpected hard error: %v", err)
 	}
@@ -398,7 +477,7 @@ func TestSignTx_PartialSuccess(t *testing.T) {
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
 		watermark.NewMemWatermark(), card)
 
-	res, perr, err := c.SignTx(context.Background(), []byte("11"),
+	res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra,
 		[]string{k.hash.String(), other.hash.String()})
 	if err != nil {
 		t.Fatalf("SignTx: unexpected hard error: %v", err)
@@ -419,7 +498,7 @@ func TestSignTx_NoSigners(t *testing.T) {
 		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
 		watermark.NewMemWatermark(), card)
 
-	_, _, err := c.SignTx(context.Background(), []byte("11"), []string{})
+	_, _, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{})
 	if err == nil {
 		t.Fatal("expected hard error for empty signers, got nil")
 	}

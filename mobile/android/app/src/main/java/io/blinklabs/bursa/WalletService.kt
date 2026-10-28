@@ -110,6 +110,10 @@ class WalletService : Service() {
             app?.port()?.toInt() ?: 0
         }
 
+        fun url(): String = synchronized(walletLock) {
+            app?.url() ?: ""
+        }
+
         // bootError returns the node boot-failure message, or null if the wallet
         // has not failed (still booting, or booted fine). The Activity checks
         // this each poll so a boot failure ends the poll loop and surfaces an

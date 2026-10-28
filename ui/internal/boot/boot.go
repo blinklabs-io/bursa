@@ -22,6 +22,7 @@ package boot
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,6 +47,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
+	"github.com/blinklabs-io/bursa/ui/internal/remotesubmit"
 	"github.com/blinklabs-io/bursa/ui/internal/settings"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/submissionctx"
@@ -190,6 +192,10 @@ type Config struct {
 	// default location by an earlier run is moved here when this directory does
 	// not exist yet.
 	NodeDataDir string
+	// ContactsPersistenceDisabled keeps the address book in memory and refuses
+	// mutations. Mobile platforms set it when they cannot guarantee that the
+	// wallet data directory is excluded from device backups.
+	ContactsPersistenceDisabled bool
 	// Addr is the control-surface listen address. Use "127.0.0.1:8090" for the
 	// fixed desktop port or "127.0.0.1:0" to let the OS assign a free loopback
 	// port (mobile); the bound port is reported by App.Addr after Start.
@@ -209,6 +215,10 @@ type Config struct {
 	// It is disabled by default so the extension-facing routes are absent unless
 	// the caller explicitly enables them.
 	ConnectorEnabled bool
+	// RemoteSubmission configures a separate TLS listener that accepts only
+	// fully signed transaction CBOR. The listener remains disabled until the
+	// user enables it in Settings.
+	RemoteSubmission RemoteSubmissionConfig
 	// LogFilePath is the file the Logger also writes to. When set, the
 	// diagnostics screen exposes it and the /diagnostics/logs endpoint can
 	// export it. Empty (the default, e.g. mobile / stderr-only) disables log
@@ -216,16 +226,29 @@ type Config struct {
 	LogFilePath string
 }
 
+// RemoteSubmissionConfig describes the explicitly configured network and TLS
+// boundary for remote transaction submission. All fields are required when
+// any field is set.
+type RemoteSubmissionConfig struct {
+	Addr        string
+	PublicURL   string
+	TLSCertFile string
+	TLSKeyFile  string
+}
+
 // App is a booted wallet stack: a running supervised node and an HTTP control
 // surface listening on a loopback port. It is returned by Boot and torn down by
 // Stop. It is the shared runtime both the desktop binary and the mobile binding
 // drive.
 type App struct {
-	srv      *http.Server
-	listener net.Listener
-	sup      *supervisor.Supervisor
-	nft      *nft.Service
-	logger   *slog.Logger
+	srv          *http.Server
+	remoteSrv    *http.Server
+	handler      interface{ CheckAutoLock() }
+	listener     net.Listener
+	sup          *supervisor.Supervisor
+	nft          *nft.Service
+	logger       *slog.Logger
+	sessionToken string
 
 	// ctx is the parent context supplied to Boot; it is forwarded to
 	// supervisor.Reconnect so the re-dial is cancelled if the app is torn down.
@@ -275,9 +298,18 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	if cfg.Addr == "" {
 		cfg.Addr = "127.0.0.1:0"
 	}
+	remoteConfigured := cfg.RemoteSubmission != (RemoteSubmissionConfig{})
+	if remoteConfigured && (cfg.RemoteSubmission.Addr == "" || cfg.RemoteSubmission.PublicURL == "" ||
+		cfg.RemoteSubmission.TLSCertFile == "" || cfg.RemoteSubmission.TLSKeyFile == "") {
+		return nil, errors.New("remote submission requires address, public URL, TLS certificate, and TLS key")
+	}
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
+	}
+	sessionToken, err := api.NewSessionToken()
+	if err != nil {
+		return nil, err
 	}
 
 	netID, err := cardanonet.AddressNetworkID(cfg.Network)
@@ -305,10 +337,14 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// The address book is local-only, per-instance storage. It is non-essential:
 	// a corrupt contacts file should not brick startup, so boot with an empty
 	// in-memory book and leave the bad file untouched for manual recovery.
-	contactsStore, contactsWarn := contacts.LoadOrEmpty(filepath.Join(cfg.DataDir, "contacts.json"))
-	if contactsWarn != nil {
-		logger.Warn("address book could not be loaded; continuing with an empty one",
-			"error", contactsWarn)
+	contactsStore := contacts.NewPersistenceDisabled()
+	if !cfg.ContactsPersistenceDisabled {
+		var contactsWarn error
+		contactsStore, contactsWarn = contacts.LoadOrEmpty(filepath.Join(cfg.DataDir, "contacts.json"))
+		if contactsWarn != nil {
+			logger.Warn("address book could not be loaded; continuing with an empty one",
+				"error", contactsWarn)
+		}
 	}
 
 	nodeDataDir, err := prepareNodeDataDir(cfg.DataDir, cfg.NodeDataDir, logger)
@@ -399,7 +435,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	}
 
 	var connectorSvc *connector.Service
-	if cfg.ConnectorEnabled {
+	if cfg.ConnectorEnabled || remoteConfigured {
 		connectorBackend := connector.NewWalletBackendWithReadiness(
 			walletSvc,
 			spendSvc,
@@ -415,6 +451,18 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			},
 		)
 		connectorSvc = connector.NewService(cfg.DataDir, connectorBackend, nil)
+	}
+	var remoteSubmitSvc *remotesubmit.Service
+	if remoteConfigured {
+		remoteSubmitSvc, err = remotesubmit.New(
+			filepath.Join(cfg.DataDir, "remote-submission.json"),
+			cfg.RemoteSubmission.PublicURL,
+			spendSvc,
+			connectorSvc,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("configure remote submission: %w", err)
+		}
 	}
 
 	// NFT discovery reads native-asset units from the active wallet and metadata
@@ -459,11 +507,37 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		}
 		return nil, fmt.Errorf("bind control surface %q: %w", cfg.Addr, err)
 	}
+	var remoteListener net.Listener
+	if remoteConfigured {
+		certificate, certErr := tls.LoadX509KeyPair(cfg.RemoteSubmission.TLSCertFile, cfg.RemoteSubmission.TLSKeyFile)
+		if certErr != nil {
+			_ = listener.Close()
+			if nftSvc != nil {
+				_ = nftSvc.Close()
+			}
+			return nil, fmt.Errorf("load remote submission TLS identity: %w", certErr)
+		}
+		plainListener, listenErr := net.Listen("tcp", cfg.RemoteSubmission.Addr)
+		if listenErr != nil {
+			_ = listener.Close()
+			if nftSvc != nil {
+				_ = nftSvc.Close()
+			}
+			return nil, fmt.Errorf("bind remote submission %q: %w", cfg.RemoteSubmission.Addr, listenErr)
+		}
+		remoteListener = tls.NewListener(plainListener, &tls.Config{
+			Certificates: []tls.Certificate{certificate},
+			MinVersion:   tls.VersionTLS12,
+		})
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	if err := sup.Start(runCtx); err != nil {
 		cancel()
 		_ = listener.Close()
+		if remoteListener != nil {
+			_ = remoteListener.Close()
+		}
 		if nftSvc != nil {
 			_ = nftSvc.Close()
 		}
@@ -480,6 +554,9 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		sup.Stop()
 		cancel()
 		_ = listener.Close()
+		if remoteListener != nil {
+			_ = remoteListener.Close()
+		}
 		if nftSvc != nil {
 			_ = nftSvc.Close()
 		}
@@ -506,23 +583,28 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		api.WithActivity(activitySvc),
 		api.WithSurveys(surveySvc),
 	}
-	if connectorSvc != nil {
+	if cfg.ConnectorEnabled {
 		handlerOpts = append(handlerOpts, api.WithConnector(connectorSvc))
+	}
+	if remoteSubmitSvc != nil {
+		handlerOpts = append(handlerOpts, api.WithRemoteSubmission(remoteSubmitSvc, connectorSvc))
 	}
 	if nftSvc != nil {
 		handlerOpts = append(handlerOpts, api.WithNFTs(nftSvc))
 	}
+	handler := api.NewHandler(
+		sessionToken,
+		sup, vlt, walletSvc, spendSvc,
+		&settingsController{store: settingsStore, sup: sup},
+		contactsStore,
+		chainClient,
+		poolSvc,
+		dexSvc,
+		multisigSvc,
+		cfg.Network, webui.Handler(), handlerOpts...,
+	)
 	srv := &http.Server{
-		Handler: api.NewHandler(
-			sup, vlt, walletSvc, spendSvc,
-			&settingsController{store: settingsStore, sup: sup},
-			contactsStore,
-			chainClient,
-			poolSvc,
-			dexSvc,
-			multisigSvc,
-			cfg.Network, webui.Handler(), handlerOpts...,
-		),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -535,16 +617,35 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			srvErr <- err
 		}
 	}()
+	var remoteSrv *http.Server
+	if remoteSubmitSvc != nil {
+		remoteSrv = &http.Server{
+			Handler:           remoteSubmitSvc,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      130 * time.Second,
+			IdleTimeout:       30 * time.Second,
+		}
+		go func() {
+			logger.Info("remote submission listener ready", "addr", remoteListener.Addr().String())
+			if err := remoteSrv.Serve(remoteListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				srvErr <- err
+			}
+		}()
+	}
 
 	return &App{
-		srv:      srv,
-		listener: listener,
-		sup:      sup,
-		nft:      nftSvc,
-		logger:   logger,
-		ctx:      ctx,
-		stop:     cancel,
-		srvErr:   srvErr,
+		srv:          srv,
+		remoteSrv:    remoteSrv,
+		handler:      handler,
+		listener:     listener,
+		sup:          sup,
+		nft:          nftSvc,
+		logger:       logger,
+		sessionToken: sessionToken,
+		ctx:          ctx,
+		stop:         cancel,
+		srvErr:       srvErr,
 	}, nil
 }
 
@@ -552,9 +653,9 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 // "127.0.0.1:0" config this is the concrete OS-assigned loopback port.
 func (a *App) Addr() string { return a.listener.Addr().String() }
 
-// URL returns the control surface base URL (http://host:port) for a WebView or
-// browser to load.
-func (a *App) URL() string { return "http://" + a.Addr() }
+// URL returns the authenticated launch URL for a WebView or browser. The
+// capability stays in the fragment, which is not included in HTTP requests.
+func (a *App) URL() string { return "http://" + a.Addr() + "/#session=" + a.sessionToken }
 
 // Port returns the control surface's bound TCP port.
 func (a *App) Port() int {
@@ -582,7 +683,11 @@ func (a *App) Stop() error {
 	// broadcast that is still bounded and about to finish.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), submissionctx.Timeout+5*time.Second)
 	defer cancel()
-	err := a.srv.Shutdown(shutdownCtx)
+	var err error
+	if a.remoteSrv != nil {
+		err = a.remoteSrv.Shutdown(shutdownCtx)
+	}
+	err = errors.Join(err, a.srv.Shutdown(shutdownCtx))
 	// Cancel the node context AFTER the control surface drains so in-flight API
 	// calls don't see the node yanked out from under them mid-request.
 	a.stop()
@@ -610,6 +715,12 @@ func (a *App) OnNetworkChanged() error {
 //
 // It is a safe no-op when called before Boot or after Stop.
 func (a *App) OnResume() error {
+	if a.stopped.Load() != 0 {
+		return nil
+	}
+	if a.handler != nil {
+		a.handler.CheckAutoLock()
+	}
 	return a.reconnect()
 }
 
@@ -655,8 +766,8 @@ func (c *settingsController) HistoryExpiryRestartRequired() bool {
 }
 
 // AutoLockMinutes and SetAutoLockMinutes pass straight through to the
-// persisted settings store: unlike history-expiry, the idle auto-lock timeout
-// is pure frontend behaviour with no node-construction dependency.
+// persisted settings store. The control surface applies changes immediately to
+// its server-owned idle deadline, with no node-construction dependency.
 func (c *settingsController) AutoLockMinutes() int { return c.store.AutoLockMinutes() }
 
 func (c *settingsController) SetAutoLockMinutes(minutes int) error {

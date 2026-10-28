@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa/ui/internal/chain"
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
 type fakeChain struct {
@@ -33,6 +35,18 @@ type fakeChain struct {
 	rewards    []chain.Reward
 	rewardsErr error
 }
+
+var (
+	serviceTestAccount = func() *Account {
+		acct, err := Derive(testMnemonic, "preview", 2)
+		if err != nil {
+			panic(err)
+		}
+		return acct
+	}()
+	serviceTestReceive    = serviceTestAccount.ReceiveAddresses[0]
+	serviceTestChange     = serviceTestAccount.ChangeAddresses[0]
+)
 
 func (f *fakeChain) Account(_ context.Context, _ string) (chain.AccountInfo, error) {
 	return f.account, f.accountErr
@@ -92,9 +106,9 @@ func TestServiceNoWallet(t *testing.T) {
 func TestServiceBalanceAndAddresses(t *testing.T) {
 	fc := &fakeChain{
 		account:   chain.AccountInfo{ControlledAmount: "3000000"},
-		addresses: []string{"addr_test1a"},
+		addresses: []string{serviceTestReceive},
 		utxos: map[string][]chain.UTxO{
-			"addr_test1a": {{Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}}},
+			serviceTestReceive: {{Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}}},
 		},
 	}
 	s := NewService(fc)
@@ -121,7 +135,7 @@ func TestServiceBalanceAndAddresses(t *testing.T) {
 	if av.Receive[0] != wantFirstReceive {
 		t.Fatalf("receive[0] = %q, want %q", av.Receive[0], wantFirstReceive)
 	}
-	if len(av.Used) != 1 || av.Used[0] != "addr_test1a" {
+	if len(av.Used) != 1 || av.Used[0] != serviceTestReceive {
 		t.Fatalf("used = %v, want [addr_test1a]", av.Used)
 	}
 	if !av.UsageKnown {
@@ -145,7 +159,7 @@ func TestServiceBalanceAndAddresses(t *testing.T) {
 	if av.Receive[0] != wantFirstReceive {
 		t.Fatalf("receive[0] after caller mutation = %q, want %q", av.Receive[0], wantFirstReceive)
 	}
-	if len(av.Used) != 1 || av.Used[0] != "addr_test1a" {
+	if len(av.Used) != 1 || av.Used[0] != serviceTestReceive {
 		t.Fatalf("used after caller mutation = %v, want [addr_test1a]", av.Used)
 	}
 	if av.NextUnused != wantNextUnused {
@@ -157,6 +171,37 @@ func TestServiceBalanceAndAddresses(t *testing.T) {
 	}
 	if bal.Lovelace != "3000000" {
 		t.Fatalf("lovelace after caller mutation = %q, want 3000000", bal.Lovelace)
+	}
+}
+
+func TestServiceExcludesForeignPaymentCredentialFromWalletViews(t *testing.T) {
+	fc := &fakeChain{}
+	s := NewService(fc)
+	acct, err := s.SetWallet(testMnemonic, "preview", 2)
+	if err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	owned := acct.ReceiveAddresses[0]
+	foreign := foreignPaymentAddress(t, acct)
+	fc.addresses = []string{foreign, owned}
+	fc.utxos = map[string][]chain.UTxO{
+		owned:   {{Address: owned, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "2000000"}}}},
+		foreign: {{Address: foreign, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "9000000"}}}},
+	}
+
+	bal, err := s.Balance(context.Background())
+	if err != nil {
+		t.Fatalf("Balance: %v", err)
+	}
+	if bal.Lovelace != "2000000" {
+		t.Fatalf("Balance lovelace = %q, want only locally controlled 2000000", bal.Lovelace)
+	}
+	view, err := s.Addresses(context.Background())
+	if err != nil {
+		t.Fatalf("Addresses: %v", err)
+	}
+	if len(view.Used) != 1 || view.Used[0] != owned {
+		t.Fatalf("Used = %v, want only locally controlled address", view.Used)
 	}
 }
 
@@ -335,19 +380,27 @@ func TestServiceRewards(t *testing.T) {
 }
 
 func TestServiceIgnoresUnusedDerivedAddressNotFound(t *testing.T) {
-	fc := &fakeChain{
-		addresses: []string{"addr_test1used"},
-		utxos: map[string][]chain.UTxO{
-			"addr_test1used": {{Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}}},
-		},
-		txs: map[string][]chain.AddressTx{
-			"addr_test1used": {{TxHash: "tx-used", BlockHeight: 42}},
-		},
-	}
+	fc := &fakeChain{}
 	s := NewService(fc)
 	acct, err := s.SetWallet(testMnemonic, "preview", 3)
 	if err != nil {
 		t.Fatalf("SetWallet: %v", err)
+	}
+	receive, err := lcommon.NewAddress(acct.ReceiveAddresses[0])
+	if err != nil {
+		t.Fatalf("parse receive address: %v", err)
+	}
+	ownedAlias := addressWithPaymentAndStake(
+		t,
+		receive.PaymentKeyHash().Bytes(),
+		bytes.Repeat([]byte{0x24}, lcommon.AddressHashSize),
+	)
+	fc.addresses = []string{ownedAlias}
+	fc.utxos = map[string][]chain.UTxO{
+		ownedAlias: {{Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}}},
+	}
+	fc.txs = map[string][]chain.AddressTx{
+		ownedAlias: {{TxHash: "tx-used", BlockHeight: 42}},
 	}
 	fc.utxoErrs = map[string]error{
 		acct.ReceiveAddresses[0]: chain.ErrNotFound,
@@ -378,9 +431,9 @@ func TestServiceIgnoresUnusedDerivedAddressNotFound(t *testing.T) {
 
 func TestServiceTransactionsEnriched(t *testing.T) {
 	fc := &fakeChain{
-		addresses: []string{"addr_test1a"},
+		addresses: []string{serviceTestReceive},
 		txs: map[string][]chain.AddressTx{
-			"addr_test1a": {{TxHash: "tx1", TxIndex: 0, BlockHeight: 90, BlockTime: 1000}},
+			serviceTestReceive: {{TxHash: "tx1", TxIndex: 0, BlockHeight: 90, BlockTime: 1000}},
 		},
 		txInfo: map[string]chain.TxInfo{
 			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "170000"},
@@ -390,7 +443,7 @@ func TestServiceTransactionsEnriched(t *testing.T) {
 				Hash:   "tx1",
 				Inputs: []chain.TxIO{{Address: "addr_test1other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
 				Outputs: []chain.TxIO{
-					{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}},
+					{Address: serviceTestReceive, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}},
 					{Address: "addr_test1other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1830000"}}},
 				},
 			},
@@ -441,7 +494,7 @@ func TestServiceTransactionsEnrichmentConcurrentAndOrdered(t *testing.T) {
 		txUTxOs[hash] = chain.TxUTxOs{
 			Hash: hash,
 			Outputs: []chain.TxIO{
-				{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1000000"}}},
+				{Address: serviceTestReceive, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1000000"}}},
 			},
 		}
 	}
@@ -456,9 +509,9 @@ func TestServiceTransactionsEnrichmentConcurrentAndOrdered(t *testing.T) {
 	}()
 
 	fc := &fakeChain{
-		addresses: []string{"addr_test1a"},
+		addresses: []string{serviceTestReceive},
 		txs: map[string][]chain.AddressTx{
-			"addr_test1a": addressTxs,
+			serviceTestReceive: addressTxs,
 		},
 		txInfo:      txInfo,
 		txUTxOs:     txUTxOs,
@@ -531,9 +584,9 @@ func TestServiceTransactionsEnrichmentNotFoundGraceful(t *testing.T) {
 	// lean-node history-expiry) must not fail the whole history — it keeps
 	// its basic (hash/block) fields with enrichment left zero-valued.
 	fc := &fakeChain{
-		addresses: []string{"addr_test1a"},
+		addresses: []string{serviceTestReceive},
 		txs: map[string][]chain.AddressTx{
-			"addr_test1a": {{TxHash: "tx-pruned", TxIndex: 0, BlockHeight: 50, BlockTime: 500}},
+			serviceTestReceive: {{TxHash: "tx-pruned", TxIndex: 0, BlockHeight: 50, BlockTime: 500}},
 		},
 		txInfoErrs:  map[string]error{"tx-pruned": chain.ErrNotFound},
 		latestBlock: chain.BlockTip{Height: 100},
@@ -565,9 +618,9 @@ func TestServiceTransactionsFeePreservedWhenUTxOsPruned(t *testing.T) {
 	// history-expiry can drop UTxO detail before the summary itself ages
 	// out). The fee must not be silently discarded in that case.
 	fc := &fakeChain{
-		addresses: []string{"addr_test1a"},
+		addresses: []string{serviceTestReceive},
 		txs: map[string][]chain.AddressTx{
-			"addr_test1a": {{TxHash: "tx1", TxIndex: 0, BlockHeight: 90, BlockTime: 1000}},
+			serviceTestReceive: {{TxHash: "tx1", TxIndex: 0, BlockHeight: 90, BlockTime: 1000}},
 		},
 		txInfo: map[string]chain.TxInfo{
 			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "170000"},
@@ -602,9 +655,9 @@ func TestServiceTransactionsFeePreservedWhenUTxOsPruned(t *testing.T) {
 // though the wallet controls it.
 func TestServiceTransactionsRecognizesChangeAddressOwnership(t *testing.T) {
 	fc := &fakeChain{
-		addresses: []string{"addr_test1a"},
+		addresses: []string{serviceTestReceive},
 		txs: map[string][]chain.AddressTx{
-			"addr_test1a": {{TxHash: "tx1", TxIndex: 0, BlockHeight: 90, BlockTime: 1000}},
+			serviceTestReceive: {{TxHash: "tx1", TxIndex: 0, BlockHeight: 90, BlockTime: 1000}},
 		},
 		txInfo: map[string]chain.TxInfo{
 			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "200000"},
@@ -627,7 +680,7 @@ func TestServiceTransactionsRecognizesChangeAddressOwnership(t *testing.T) {
 	fc.txUTxOs = map[string]chain.TxUTxOs{
 		"tx1": {
 			Hash:    "tx1",
-			Inputs:  []chain.TxIO{{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
+			Inputs:  []chain.TxIO{{Address: serviceTestReceive, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
 			Outputs: []chain.TxIO{{Address: changeAddr, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "4800000"}}}},
 		},
 	}
@@ -648,11 +701,14 @@ func TestServiceTransactionsRecognizesChangeAddressOwnership(t *testing.T) {
 
 func TestOwnerSetDoesNotMutateCallerSlice(t *testing.T) {
 	addrs := make([]string, 1, 2)
-	addrs[0] = "addr_test1a"
-	acct := &Account{ChangeAddresses: []string{"addr_test1change"}}
+	addrs[0] = serviceTestReceive
+	acct := &Account{
+		ReceiveAddresses: []string{serviceTestReceive},
+		ChangeAddresses:  []string{serviceTestChange},
+	}
 
 	set := ownerSet(addrs, acct)
-	if !set["addr_test1a"] || !set["addr_test1change"] {
+	if !set[serviceTestReceive] || !set[serviceTestChange] {
 		t.Fatalf("ownerSet = %+v, want receive and change addresses", set)
 	}
 	if got := addrs[:cap(addrs)][1]; got != "" {
@@ -662,17 +718,17 @@ func TestOwnerSetDoesNotMutateCallerSlice(t *testing.T) {
 
 func TestServiceTransactionDetail(t *testing.T) {
 	fc := &fakeChain{
-		addresses: []string{"addr_test1a"},
+		addresses: []string{serviceTestReceive},
 		txInfo: map[string]chain.TxInfo{
 			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "170000", Index: 2},
 		},
 		txUTxOs: map[string]chain.TxUTxOs{
 			"tx1": {
 				Hash:   "tx1",
-				Inputs: []chain.TxIO{{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
+				Inputs: []chain.TxIO{{Address: serviceTestReceive, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
 				Outputs: []chain.TxIO{
 					{Address: "addr_test1other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}},
-					{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1830000"}}},
+					{Address: serviceTestReceive, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1830000"}}},
 				},
 			},
 		},
@@ -728,7 +784,7 @@ func TestServiceTransactionDetail(t *testing.T) {
 
 func TestServiceTransactionDetailFeePreservedWhenUTxOsPruned(t *testing.T) {
 	fc := &fakeChain{
-		addresses: []string{"addr_test1a"},
+		addresses: []string{serviceTestReceive},
 		txInfo: map[string]chain.TxInfo{
 			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "170000", Index: 2},
 		},
@@ -782,15 +838,15 @@ func TestServiceTransactionDetailSelfTransfer(t *testing.T) {
 	// Every input and output belongs to the wallet's own addresses: a
 	// consolidation/self-transfer, not a payment to or from anyone else.
 	fc := &fakeChain{
-		addresses: []string{"addr_test1a", "addr_test1b"},
+		addresses: []string{serviceTestReceive, serviceTestChange},
 		txInfo: map[string]chain.TxInfo{
 			"tx1": {Hash: "tx1", BlockHeight: 10, Fees: "170000"},
 		},
 		txUTxOs: map[string]chain.TxUTxOs{
 			"tx1": {
 				Hash:    "tx1",
-				Inputs:  []chain.TxIO{{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
-				Outputs: []chain.TxIO{{Address: "addr_test1b", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "4830000"}}}},
+				Inputs:  []chain.TxIO{{Address: serviceTestReceive, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
+				Outputs: []chain.TxIO{{Address: serviceTestChange, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "4830000"}}}},
 			},
 		},
 		latestBlock: chain.BlockTip{Height: 10},
@@ -816,9 +872,9 @@ func TestServiceTransactionsTipLookupFailureDegradesGracefully(t *testing.T) {
 	// already-merged, already-enriched list is still valid; only the
 	// confirmation count relative to the tip is unknowable.
 	fc := &fakeChain{
-		addresses: []string{"addr_test1a"},
+		addresses: []string{serviceTestReceive},
 		txs: map[string][]chain.AddressTx{
-			"addr_test1a": {{TxHash: "tx1", TxIndex: 0, BlockHeight: 90, BlockTime: 1000}},
+			serviceTestReceive: {{TxHash: "tx1", TxIndex: 0, BlockHeight: 90, BlockTime: 1000}},
 		},
 		txInfo: map[string]chain.TxInfo{
 			"tx1": {Hash: "tx1", BlockHeight: 90, BlockTime: 1000, Fees: "170000"},
@@ -827,7 +883,7 @@ func TestServiceTransactionsTipLookupFailureDegradesGracefully(t *testing.T) {
 			"tx1": {
 				Hash: "tx1",
 				Outputs: []chain.TxIO{
-					{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}},
+					{Address: serviceTestReceive, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}},
 				},
 			},
 		},
@@ -859,14 +915,14 @@ func TestServiceTransactionDetailTipLookupFailureDoesNotNotFound(t *testing.T) {
 	// found transaction into a 404: serve() maps chain.ErrNotFound to 404,
 	// which would misreport a tx that genuinely exists.
 	fc := &fakeChain{
-		addresses: []string{"addr_test1a"},
+		addresses: []string{serviceTestReceive},
 		txInfo: map[string]chain.TxInfo{
 			"tx1": {Hash: "tx1", BlockHeight: 90, Fees: "170000"},
 		},
 		txUTxOs: map[string]chain.TxUTxOs{
 			"tx1": {
 				Hash:   "tx1",
-				Inputs: []chain.TxIO{{Address: "addr_test1a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
+				Inputs: []chain.TxIO{{Address: serviceTestReceive, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}},
 				Outputs: []chain.TxIO{
 					{Address: "addr_test1other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "4830000"}}},
 				},

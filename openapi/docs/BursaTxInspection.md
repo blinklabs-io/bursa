@@ -5,6 +5,9 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **CertificateCount** | Pointer to **int32** |  | [optional]
+**CertificateDepositTotal** | Pointer to **string** | CertificateDepositTotal and CertificateRefundTotal contain the sums that are encoded directly in Conway certificates. Legacy stake and pool certificate amounts depend on protocol parameters or ledger state; their counts remain explicit so value-limited signers can fail closed. | [optional]
+**CertificateRefundTotal** | Pointer to **string** |  | [optional]
+**CertificateValueEffectsComplete** | Pointer to **bool** |  | [optional]
 **CollateralInputs** | Pointer to [**[]BursaTxInput**](BursaTxInput.md) |  | [optional]
 **CollateralReturn** | Pointer to [**BursaTxOutput**](BursaTxOutput.md) |  | [optional]
 **Era** | Pointer to **string** |  | [optional]
@@ -16,12 +19,16 @@ Name | Type | Description | Notes
 **IsValid** | Pointer to **bool** |  | [optional]
 **NativeScripts** | Pointer to **int32** |  | [optional]
 **Outputs** | Pointer to [**[]BursaTxOutput**](BursaTxOutput.md) |  | [optional]
+**ProposalDepositTotal** | Pointer to **string** |  | [optional]
 **ProposalProcedureCount** | Pointer to **int32** |  | [optional]
 **RequiredSigners** | Pointer to **int32** |  | [optional]
 **SizeBytes** | Pointer to **int32** |  | [optional]
 **TotalCollateral** | Pointer to **string** |  | [optional]
+**TreasuryDonationLovelace** | Pointer to **string** |  | [optional]
 **Ttl** | Pointer to **int32** |  | [optional]
 **TxId** | Pointer to **string** |  | [optional]
+**UnresolvedCertificateDeposits** | Pointer to **int32** |  | [optional]
+**UnresolvedCertificateRefunds** | Pointer to **int32** |  | [optional]
 **ValidityIntervalStart** | Pointer to **int32** |  | [optional]
 **VkeyWitnesses** | Pointer to **int32** |  | [optional]
 **VotingProcedureCount** | Pointer to **int32** | Conway governance and treasury components. These authorize high-impact actions (casting DRep/committee votes, submitting governance proposals, donating to the treasury) that are independent of outputs/certificates/withdrawals, so the policy engine must inspect and gate them explicitly. | [optional]
@@ -70,6 +77,81 @@ SetCertificateCount sets CertificateCount field to given value.
 `func (o *BursaTxInspection) HasCertificateCount() bool`
 
 HasCertificateCount returns a boolean if a field has been set.
+
+### GetCertificateDepositTotal
+
+`func (o *BursaTxInspection) GetCertificateDepositTotal() string`
+
+GetCertificateDepositTotal returns the CertificateDepositTotal field if non-nil, zero value otherwise.
+
+### GetCertificateDepositTotalOk
+
+`func (o *BursaTxInspection) GetCertificateDepositTotalOk() (*string, bool)`
+
+GetCertificateDepositTotalOk returns a tuple with the CertificateDepositTotal field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCertificateDepositTotal
+
+`func (o *BursaTxInspection) SetCertificateDepositTotal(v string)`
+
+SetCertificateDepositTotal sets CertificateDepositTotal field to given value.
+
+### HasCertificateDepositTotal
+
+`func (o *BursaTxInspection) HasCertificateDepositTotal() bool`
+
+HasCertificateDepositTotal returns a boolean if a field has been set.
+
+### GetCertificateRefundTotal
+
+`func (o *BursaTxInspection) GetCertificateRefundTotal() string`
+
+GetCertificateRefundTotal returns the CertificateRefundTotal field if non-nil, zero value otherwise.
+
+### GetCertificateRefundTotalOk
+
+`func (o *BursaTxInspection) GetCertificateRefundTotalOk() (*string, bool)`
+
+GetCertificateRefundTotalOk returns a tuple with the CertificateRefundTotal field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCertificateRefundTotal
+
+`func (o *BursaTxInspection) SetCertificateRefundTotal(v string)`
+
+SetCertificateRefundTotal sets CertificateRefundTotal field to given value.
+
+### HasCertificateRefundTotal
+
+`func (o *BursaTxInspection) HasCertificateRefundTotal() bool`
+
+HasCertificateRefundTotal returns a boolean if a field has been set.
+
+### GetCertificateValueEffectsComplete
+
+`func (o *BursaTxInspection) GetCertificateValueEffectsComplete() bool`
+
+GetCertificateValueEffectsComplete returns the CertificateValueEffectsComplete field if non-nil, zero value otherwise.
+
+### GetCertificateValueEffectsCompleteOk
+
+`func (o *BursaTxInspection) GetCertificateValueEffectsCompleteOk() (*bool, bool)`
+
+GetCertificateValueEffectsCompleteOk returns a tuple with the CertificateValueEffectsComplete field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetCertificateValueEffectsComplete
+
+`func (o *BursaTxInspection) SetCertificateValueEffectsComplete(v bool)`
+
+SetCertificateValueEffectsComplete sets CertificateValueEffectsComplete field to given value.
+
+### HasCertificateValueEffectsComplete
+
+`func (o *BursaTxInspection) HasCertificateValueEffectsComplete() bool`
+
+HasCertificateValueEffectsComplete returns a boolean if a field has been set.
 
 ### GetCollateralInputs
 
@@ -346,6 +428,31 @@ SetOutputs sets Outputs field to given value.
 
 HasOutputs returns a boolean if a field has been set.
 
+### GetProposalDepositTotal
+
+`func (o *BursaTxInspection) GetProposalDepositTotal() string`
+
+GetProposalDepositTotal returns the ProposalDepositTotal field if non-nil, zero value otherwise.
+
+### GetProposalDepositTotalOk
+
+`func (o *BursaTxInspection) GetProposalDepositTotalOk() (*string, bool)`
+
+GetProposalDepositTotalOk returns a tuple with the ProposalDepositTotal field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetProposalDepositTotal
+
+`func (o *BursaTxInspection) SetProposalDepositTotal(v string)`
+
+SetProposalDepositTotal sets ProposalDepositTotal field to given value.
+
+### HasProposalDepositTotal
+
+`func (o *BursaTxInspection) HasProposalDepositTotal() bool`
+
+HasProposalDepositTotal returns a boolean if a field has been set.
+
 ### GetProposalProcedureCount
 
 `func (o *BursaTxInspection) GetProposalProcedureCount() int32`
@@ -446,6 +553,31 @@ SetTotalCollateral sets TotalCollateral field to given value.
 
 HasTotalCollateral returns a boolean if a field has been set.
 
+### GetTreasuryDonationLovelace
+
+`func (o *BursaTxInspection) GetTreasuryDonationLovelace() string`
+
+GetTreasuryDonationLovelace returns the TreasuryDonationLovelace field if non-nil, zero value otherwise.
+
+### GetTreasuryDonationLovelaceOk
+
+`func (o *BursaTxInspection) GetTreasuryDonationLovelaceOk() (*string, bool)`
+
+GetTreasuryDonationLovelaceOk returns a tuple with the TreasuryDonationLovelace field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetTreasuryDonationLovelace
+
+`func (o *BursaTxInspection) SetTreasuryDonationLovelace(v string)`
+
+SetTreasuryDonationLovelace sets TreasuryDonationLovelace field to given value.
+
+### HasTreasuryDonationLovelace
+
+`func (o *BursaTxInspection) HasTreasuryDonationLovelace() bool`
+
+HasTreasuryDonationLovelace returns a boolean if a field has been set.
+
 ### GetTtl
 
 `func (o *BursaTxInspection) GetTtl() int32`
@@ -495,6 +627,56 @@ SetTxId sets TxId field to given value.
 `func (o *BursaTxInspection) HasTxId() bool`
 
 HasTxId returns a boolean if a field has been set.
+
+### GetUnresolvedCertificateDeposits
+
+`func (o *BursaTxInspection) GetUnresolvedCertificateDeposits() int32`
+
+GetUnresolvedCertificateDeposits returns the UnresolvedCertificateDeposits field if non-nil, zero value otherwise.
+
+### GetUnresolvedCertificateDepositsOk
+
+`func (o *BursaTxInspection) GetUnresolvedCertificateDepositsOk() (*int32, bool)`
+
+GetUnresolvedCertificateDepositsOk returns a tuple with the UnresolvedCertificateDeposits field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetUnresolvedCertificateDeposits
+
+`func (o *BursaTxInspection) SetUnresolvedCertificateDeposits(v int32)`
+
+SetUnresolvedCertificateDeposits sets UnresolvedCertificateDeposits field to given value.
+
+### HasUnresolvedCertificateDeposits
+
+`func (o *BursaTxInspection) HasUnresolvedCertificateDeposits() bool`
+
+HasUnresolvedCertificateDeposits returns a boolean if a field has been set.
+
+### GetUnresolvedCertificateRefunds
+
+`func (o *BursaTxInspection) GetUnresolvedCertificateRefunds() int32`
+
+GetUnresolvedCertificateRefunds returns the UnresolvedCertificateRefunds field if non-nil, zero value otherwise.
+
+### GetUnresolvedCertificateRefundsOk
+
+`func (o *BursaTxInspection) GetUnresolvedCertificateRefundsOk() (*int32, bool)`
+
+GetUnresolvedCertificateRefundsOk returns a tuple with the UnresolvedCertificateRefunds field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetUnresolvedCertificateRefunds
+
+`func (o *BursaTxInspection) SetUnresolvedCertificateRefunds(v int32)`
+
+SetUnresolvedCertificateRefunds sets UnresolvedCertificateRefunds field to given value.
+
+### HasUnresolvedCertificateRefunds
+
+`func (o *BursaTxInspection) HasUnresolvedCertificateRefunds() bool`
+
+HasUnresolvedCertificateRefunds returns a boolean if a field has been set.
 
 ### GetValidityIntervalStart
 

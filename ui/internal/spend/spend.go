@@ -136,36 +136,72 @@ type TxSummarySigner struct {
 	Role    string `json:"role,omitempty"` // "payment"|"stake"|"drep" (only in wallet_can_add)
 }
 
+// TxSummaryCredential identifies a public ledger credential without exposing
+// any key material.
+type TxSummaryCredential struct {
+	Type string `json:"type"` // "key_hash"|"script_hash"
+	Hash string `json:"hash"`
+}
+
+// TxSummaryDRep identifies a vote-delegation destination. Hash is absent for
+// the two predefined destinations.
+type TxSummaryDRep struct {
+	Type string `json:"type"` // "key_hash"|"script_hash"|"abstain"|"no_confidence"|"unknown"
+	Hash string `json:"hash,omitempty"`
+}
+
+// TxSummaryCertificate describes the public ledger identities and value
+// affected by a transaction certificate.
+type TxSummaryCertificate struct {
+	Kind            string               `json:"kind"`
+	StakeCredential *TxSummaryCredential `json:"stake_credential,omitempty"`
+	PoolID          string               `json:"pool_id,omitempty"`
+	DRep            *TxSummaryDRep       `json:"drep,omitempty"`
+	DRepCredential  *TxSummaryCredential `json:"drep_credential,omitempty"`
+	Deposit         string               `json:"deposit_lovelace,omitempty"`
+	Refund          string               `json:"refund_lovelace,omitempty"`
+	// DepositImplicit and RefundImplicit mark legacy stake certificates, whose
+	// deposit is the protocol key deposit rather than an amount in the
+	// certificate. DecodeTx has no protocol parameters to resolve it.
+	DepositImplicit         bool                 `json:"deposit_implicit,omitempty"`
+	RefundImplicit          bool                 `json:"refund_implicit,omitempty"`
+	RewardAccount           *TxSummaryCredential `json:"reward_account,omitempty"`
+	PoolOwners              []string             `json:"pool_owners,omitempty"`
+	RetirementEpoch         *uint64              `json:"retirement_epoch,omitempty"`
+	CommitteeColdCredential *TxSummaryCredential `json:"committee_cold_credential,omitempty"`
+	CommitteeHotCredential  *TxSummaryCredential `json:"committee_hot_credential,omitempty"`
+}
+
 // TxSummary is a no-password, human-readable preview of a pasted transaction,
 // produced by DecodeTx. It classifies the transaction (vkey vs. native
 // multisig vs. already complete) and reports which of the wallet's own keys
 // could still add a required signature.
 type TxSummary struct {
-	Kind               string            `json:"kind"` // "vkey"|"native_multisig"
-	Inputs             []TxSummaryInput  `json:"inputs"`
-	Outputs            []TxSummaryOutput `json:"outputs"`
-	Fee                string            `json:"fee"`
-	TTL                uint64            `json:"ttl,omitempty"`
-	ValidityStart      uint64            `json:"validity_start,omitempty"`
-	Certificates       []string          `json:"certificates,omitempty"`
-	Withdrawals        []TxSummaryOutput `json:"withdrawals,omitempty"` // Address=reward addr
-	Mint               []Asset           `json:"mint,omitempty"`
-	AuxiliaryDataHash  string            `json:"auxiliary_data_hash,omitempty"`
-	ScriptDataHash     string            `json:"script_data_hash,omitempty"`
-	CollateralInputs   []TxSummaryInput  `json:"collateral_inputs,omitempty"`
-	CollateralReturn   *TxSummaryOutput  `json:"collateral_return,omitempty"`
-	TotalCollateral    *string           `json:"total_collateral,omitempty"`
-	ReferenceInputs    []TxSummaryInput  `json:"reference_inputs,omitempty"`
-	VotingCount        int               `json:"voting_count,omitempty"`
-	ProposalCount      int               `json:"proposal_count,omitempty"`
-	CurrentTreasury    *string           `json:"current_treasury_value,omitempty"`
-	TreasuryDonation   string            `json:"treasury_donation,omitempty"`
-	UnsupportedEffects []string          `json:"unsupported_effects,omitempty"`
-	NetworkID          *int              `json:"network_id,omitempty"`
-	RequiredSigners    []string          `json:"required_signers,omitempty"`
-	ExistingSignatures []TxSummarySigner `json:"existing_signatures"`
-	WalletCanAdd       []TxSummarySigner `json:"wallet_can_add"`
-	IsComplete         bool              `json:"is_complete"`
+	Kind               string                 `json:"kind"` // "vkey"|"native_multisig"
+	Inputs             []TxSummaryInput       `json:"inputs"`
+	Outputs            []TxSummaryOutput      `json:"outputs"`
+	Fee                string                 `json:"fee"`
+	TTL                uint64                 `json:"ttl,omitempty"`
+	ValidityStart      uint64                 `json:"validity_start,omitempty"`
+	Certificates       []TxSummaryCertificate `json:"certificates,omitempty"`
+	Withdrawals        []TxSummaryOutput      `json:"withdrawals,omitempty"` // Address=reward addr
+	Mint               []Asset                `json:"mint,omitempty"`
+	AuxiliaryDataHash  string                 `json:"auxiliary_data_hash,omitempty"`
+	ScriptDataHash     string                 `json:"script_data_hash,omitempty"`
+	CollateralInputs   []TxSummaryInput       `json:"collateral_inputs,omitempty"`
+	CollateralReturn   *TxSummaryOutput       `json:"collateral_return,omitempty"`
+	TotalCollateral    *string                `json:"total_collateral,omitempty"`
+	ReferenceInputs    []TxSummaryInput       `json:"reference_inputs,omitempty"`
+	VotingCount        int                    `json:"voting_count,omitempty"`
+	ProposalCount      int                    `json:"proposal_count,omitempty"`
+	CurrentTreasury    *string                `json:"current_treasury_value,omitempty"`
+	TreasuryDonation   string                 `json:"treasury_donation,omitempty"`
+	UnsupportedEffects []string               `json:"unsupported_effects,omitempty"`
+	NetworkID          *int                   `json:"network_id,omitempty"`
+	RequiredSigners    []string               `json:"required_signers,omitempty"`
+	ExistingSignatures []TxSummarySigner      `json:"existing_signatures"`
+	WalletCanAdd       []TxSummarySigner      `json:"wallet_can_add"`
+	IsComplete         bool                   `json:"is_complete"`
 }
 
 // ValidateForSigning rejects summaries that cannot account for every effect a
@@ -2055,10 +2091,7 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 		out.TreasuryDonation = strconv.FormatUint(tx.Body.TxDonation, 10)
 	}
 	for _, c := range tx.Body.Certificates() {
-		out.Certificates = append(out.Certificates, certLabel(c))
-	}
-	if len(out.Certificates) != 0 {
-		out.UnsupportedEffects = append(out.UnsupportedEffects, "certificate details")
+		out.Certificates = append(out.Certificates, certificateSummary(c))
 	}
 	if out.VotingCount != 0 {
 		out.UnsupportedEffects = append(out.UnsupportedEffects, "governance vote details")
@@ -2505,6 +2538,117 @@ func certLabel(c lcommon.Certificate) string {
 	default:
 		return "unknown"
 	}
+}
+
+func credentialSummary(credential lcommon.Credential) *TxSummaryCredential {
+	credentialType := "key_hash"
+	if credential.CredType == lcommon.CredentialTypeScriptHash {
+		credentialType = "script_hash"
+	}
+	return &TxSummaryCredential{
+		Type: credentialType,
+		Hash: hex.EncodeToString(credential.Credential.Bytes()),
+	}
+}
+
+func drepSummary(drep lcommon.Drep) *TxSummaryDRep {
+	ret := &TxSummaryDRep{}
+	switch drep.Type {
+	case lcommon.DrepTypeAddrKeyHash:
+		ret.Type = "key_hash"
+	case lcommon.DrepTypeScriptHash:
+		ret.Type = "script_hash"
+	case lcommon.DrepTypeAbstain:
+		ret.Type = "abstain"
+	case lcommon.DrepTypeNoConfidence:
+		ret.Type = "no_confidence"
+	default:
+		ret.Type = "unknown"
+	}
+	if drep.Type == lcommon.DrepTypeAddrKeyHash || drep.Type == lcommon.DrepTypeScriptHash {
+		ret.Hash = hex.EncodeToString(drep.Credential)
+	}
+	return ret
+}
+
+func certificateSummary(c lcommon.Certificate) TxSummaryCertificate {
+	ret := TxSummaryCertificate{Kind: certLabel(c)}
+	setStake := func(credential lcommon.Credential) {
+		ret.StakeCredential = credentialSummary(credential)
+	}
+	setPool := func(poolID lcommon.PoolKeyHash) {
+		ret.PoolID = hex.EncodeToString(poolID.Bytes())
+	}
+	setDeposit := func(amount uint64) {
+		ret.Deposit = strconv.FormatUint(amount, 10)
+	}
+	setRefund := func(amount uint64) {
+		ret.Refund = strconv.FormatUint(amount, 10)
+	}
+
+	switch cert := c.(type) {
+	case *lcommon.StakeRegistrationCertificate:
+		setStake(cert.StakeCredential)
+		ret.DepositImplicit = true
+	case *lcommon.StakeDeregistrationCertificate:
+		setStake(cert.StakeCredential)
+		ret.RefundImplicit = true
+	case *lcommon.StakeDelegationCertificate:
+		if cert.StakeCredential != nil {
+			setStake(*cert.StakeCredential)
+		}
+		setPool(cert.PoolKeyHash)
+	case *lcommon.PoolRegistrationCertificate:
+		setPool(cert.Operator)
+		ret.RewardAccount = credentialSummary(cert.RewardAccountCredential())
+		for _, owner := range cert.PoolOwners {
+			ret.PoolOwners = append(ret.PoolOwners, hex.EncodeToString(owner.Bytes()))
+		}
+	case *lcommon.PoolRetirementCertificate:
+		setPool(cert.PoolKeyHash)
+		epoch := cert.Epoch
+		ret.RetirementEpoch = &epoch
+	case *lcommon.AuthCommitteeHotCertificate:
+		ret.CommitteeColdCredential = credentialSummary(cert.ColdCredential)
+		ret.CommitteeHotCredential = credentialSummary(cert.HotCredential)
+	case *lcommon.ResignCommitteeColdCertificate:
+		ret.CommitteeColdCredential = credentialSummary(cert.ColdCredential)
+	case *lcommon.RegistrationCertificate:
+		setStake(cert.StakeCredential)
+		setDeposit(cert.Amount)
+	case *lcommon.DeregistrationCertificate:
+		setStake(cert.StakeCredential)
+		setRefund(cert.Amount)
+	case *lcommon.VoteDelegationCertificate:
+		setStake(cert.StakeCredential)
+		ret.DRep = drepSummary(cert.Drep)
+	case *lcommon.StakeVoteDelegationCertificate:
+		setStake(cert.StakeCredential)
+		setPool(cert.PoolKeyHash)
+		ret.DRep = drepSummary(cert.Drep)
+	case *lcommon.StakeRegistrationDelegationCertificate:
+		setStake(cert.StakeCredential)
+		setPool(cert.PoolKeyHash)
+		setDeposit(cert.Amount)
+	case *lcommon.VoteRegistrationDelegationCertificate:
+		setStake(cert.StakeCredential)
+		ret.DRep = drepSummary(cert.Drep)
+		setDeposit(cert.Amount)
+	case *lcommon.StakeVoteRegistrationDelegationCertificate:
+		setStake(cert.StakeCredential)
+		setPool(cert.PoolKeyHash)
+		ret.DRep = drepSummary(cert.Drep)
+		setDeposit(cert.Amount)
+	case *lcommon.RegistrationDrepCertificate:
+		ret.DRepCredential = credentialSummary(cert.DrepCredential)
+		setDeposit(cert.Amount)
+	case *lcommon.DeregistrationDrepCertificate:
+		ret.DRepCredential = credentialSummary(cert.DrepCredential)
+		setRefund(cert.Amount)
+	case *lcommon.UpdateDrepCertificate:
+		ret.DRepCredential = credentialSummary(cert.DrepCredential)
+	}
+	return ret
 }
 
 // neededKeyHashes builds the set of addr-key-hash credentials (hex-encoded)

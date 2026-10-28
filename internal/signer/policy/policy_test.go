@@ -210,6 +210,119 @@ func TestEvaluateTx_FeeCountsTowardTotal(t *testing.T) {
 	}
 }
 
+func TestEvaluateTx_MaxTotalOutAdaFailsClosedOnUnresolvedValueEffects(t *testing.T) {
+	e, h := engineWith(t, KeyPolicy{
+		AllowedRequests: []string{"tx"},
+		Tx: &TxPolicy{
+			MaxTotalOutAda:    10,
+			AllowCertificates: true,
+			AllowTreasury:     true,
+		},
+	})
+	tests := []struct {
+		name string
+		insp *bursa.TxInspection
+	}{
+		{
+			name: "treasury donation amount unavailable",
+			insp: &bursa.TxInspection{HasTreasuryDonation: true},
+		},
+		{
+			name: "certificate deposit amount unavailable",
+			insp: &bursa.TxInspection{CertificateCount: 1},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if e.EvaluateTx(h, tt.insp).Allow {
+				t.Fatal("expected unresolved value effect to be denied")
+			}
+		})
+	}
+}
+
+func TestEvaluateTx_MaxTotalOutAdaIncludesValueEffects(t *testing.T) {
+	base := KeyPolicy{
+		AllowedRequests: []string{"tx"},
+		Tx: &TxPolicy{
+			MaxTotalOutAda:    10,
+			AllowCertificates: true,
+			AllowTreasury:     true,
+		},
+	}
+	e, h := engineWith(t, base)
+	insp := &bursa.TxInspection{
+		Fee:                             "1000000",
+		Outputs:                         []bursa.TxOutput{{Address: "addr1a", Lovelace: "2000000"}},
+		CertificateCount:                1,
+		CertificateDepositTotal:         "3000000",
+		CertificateRefundTotal:          "900000000",
+		CertificateValueEffectsComplete: true,
+		HasTreasuryDonation:             true,
+		TreasuryDonationLovelace:        "4000000",
+	}
+	if decision := e.EvaluateTx(h, insp); !decision.Allow {
+		t.Fatalf("expected exact 10 ADA value out to be allowed: %s", decision.Reason)
+	}
+	insp.TreasuryDonationLovelace = "4000001"
+	if decision := e.EvaluateTx(h, insp); decision.Allow {
+		t.Fatal("expected outputs, fee, certificate deposit, and donation over cap to be denied")
+	}
+}
+
+func TestEvaluateTx_CallerMaxTotalOutAdaIncludesValueEffects(t *testing.T) {
+	base := KeyPolicy{
+		AllowedRequests: []string{"tx"},
+		Tx: &TxPolicy{
+			MaxTotalOutAda:    100,
+			AllowCertificates: true,
+			AllowTreasury:     true,
+		},
+	}
+	e, h := buildEngineWithOverride(t, base, "bob", &CallerTxOverride{MaxTotalOutAda: 5})
+	insp := &bursa.TxInspection{
+		CertificateCount:                1,
+		CertificateDepositTotal:         "3000000",
+		CertificateRefundTotal:          "0",
+		CertificateValueEffectsComplete: true,
+		HasTreasuryDonation:             true,
+		TreasuryDonationLovelace:        "2000001",
+	}
+	if decision := e.EvaluateTx(h, insp, WithCaller("bob")); decision.Allow {
+		t.Fatal("expected caller total-value override to include deposits and donation")
+	}
+	if decision := e.EvaluateTx(h, insp, WithCaller("alice")); !decision.Allow {
+		t.Fatalf("expected base policy to allow the same value effects: %s", decision.Reason)
+	}
+}
+
+func TestEvaluateTx_MaxTotalOutAdaIncludesProposalDeposits(t *testing.T) {
+	e, h := engineWith(t, KeyPolicy{
+		AllowedRequests: []string{"tx"},
+		Tx: &TxPolicy{
+			MaxTotalOutAda: 10,
+			AllowProposals: true,
+		},
+	})
+	insp := &bursa.TxInspection{
+		Fee:                    "1000000",
+		Outputs:                []bursa.TxOutput{{Address: "addr1a", Lovelace: "1000000"}},
+		ProposalProcedureCount: 1,
+		ProposalDepositTotal:   "8000001",
+	}
+	if decision := e.EvaluateTx(h, insp); decision.Allow {
+		t.Fatal("expected governance proposal deposit over total-value cap to be denied")
+	}
+	insp.ProposalDepositTotal = "8000000"
+	if decision := e.EvaluateTx(h, insp); !decision.Allow {
+		t.Fatalf("expected proposal deposit at total-value cap to be allowed: %s", decision.Reason)
+	}
+	insp.ProposalDepositTotal = ""
+	if decision := e.EvaluateTx(h, insp); decision.Allow {
+		t.Fatal("expected unavailable governance proposal deposit to be denied")
+	}
+}
+
 func TestEvaluateTx_MaxFeeAda(t *testing.T) {
 	e, h := engineWith(t, KeyPolicy{
 		AllowedRequests: []string{"tx"},

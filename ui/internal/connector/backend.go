@@ -601,32 +601,24 @@ func (b *WalletBackend) pubStakeKeyBuckets(password string) (registered, unregis
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-// allUTxOs gathers UTxOs from all scan addresses (chain-discovered union derived
-// receive window), mirroring wallet.Service.Balance's address-scanning strategy.
+// allUTxOs gathers UTxOs only from addresses whose payment credentials the
+// active wallet can prove it controls.
 func (b *WalletBackend) allUTxOs(ctx context.Context) ([]chain.UTxO, error) {
 	acct := b.account()
 	if acct == nil {
 		return nil, errors.New("no wallet account configured")
 	}
-	// Discover chain-seen addresses via the account's stake credential.
-	discovered, err := b.chain.AccountAddresses(ctx, acct.StakeAddress)
-	if err != nil && !errors.Is(err, chain.ErrNotFound) {
-		return nil, fmt.Errorf("account addresses: %w", err)
-	}
-
-	// Union chain-seen + derived receive addresses (dedup, preserve order).
-	seen := make(map[string]bool, len(discovered)+len(acct.ReceiveAddresses))
-	var addrs []string
-	for _, a := range append(discovered, acct.ReceiveAddresses...) {
-		if a == "" || seen[a] {
-			continue
+	var discovered []string
+	if acct.StakeAddress != "" {
+		var err error
+		discovered, err = b.chain.AccountAddresses(ctx, acct.StakeAddress)
+		if err != nil && !errors.Is(err, chain.ErrNotFound) {
+			return nil, fmt.Errorf("account addresses: %w", err)
 		}
-		seen[a] = true
-		addrs = append(addrs, a)
 	}
 
 	var all []chain.UTxO
-	for _, a := range addrs {
+	for _, a := range acct.OwnedAddresses(discovered) {
 		us, err := b.chain.AddressUTxOs(ctx, a)
 		if errors.Is(err, chain.ErrNotFound) {
 			continue

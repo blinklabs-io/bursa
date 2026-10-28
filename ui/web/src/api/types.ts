@@ -203,7 +203,7 @@ export interface HistoryExpirySetting {
 }
 
 // App setting: the idle auto-lock timeout, in minutes. 0 means "Off" (never
-// auto-lock). Takes effect immediately client-side — no restart_required.
+// auto-lock). Takes effect immediately — no restart_required.
 export interface AutoLockSetting {
   minutes: 0 | 1 | 5 | 15 | 30;
 }
@@ -888,6 +888,12 @@ export interface ConnectorState {
   origins: string[];
 }
 
+export interface RemoteSubmissionStatus {
+  available: boolean;
+  enabled: boolean;
+  endpoint?: string;
+}
+
 export interface ConnectorRequest {
   id: string;
   origin: string;
@@ -943,6 +949,33 @@ export interface TxSummaryMultiSigParticipant {
   signed: boolean;
 }
 
+export interface TxSummaryCredential {
+  type: "key_hash" | "script_hash";
+  hash: string;
+}
+
+export interface TxSummaryDRep {
+  type: "key_hash" | "script_hash" | "abstain" | "no_confidence" | "unknown";
+  hash?: string;
+}
+
+export interface TxSummaryCertificate {
+  kind: string;
+  stake_credential?: TxSummaryCredential;
+  pool_id?: string;
+  drep?: TxSummaryDRep;
+  drep_credential?: TxSummaryCredential;
+  deposit_lovelace?: string;
+  refund_lovelace?: string;
+  deposit_implicit?: boolean;
+  refund_implicit?: boolean;
+  reward_account?: TxSummaryCredential;
+  pool_owners?: string[];
+  retirement_epoch?: number;
+  committee_cold_credential?: TxSummaryCredential;
+  committee_hot_credential?: TxSummaryCredential;
+}
+
 // multisig.TxInfo
 export interface TxSummaryMultiSig {
   is_multisig: boolean;
@@ -962,7 +995,7 @@ export interface TxSummary {
   fee: string;
   ttl?: number;
   validity_start?: number;
-  certificates?: string[];
+  certificates?: TxSummaryCertificate[];
   withdrawals?: TxSummaryOutput[];
   mint?: { unit: string; quantity: string }[];
   auxiliary_data_hash?: string;

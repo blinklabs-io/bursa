@@ -32,6 +32,7 @@ Boot performs eager validation and exits non-zero on any of:
 - a non-loopback listen address without TLS;
 - a software/file backend on a non-loopback address without
   `allow_insecure_file_backend` (see [security.md](security.md));
+- a `signer.policy_hook_url` that is not an absolute HTTPS URL;
 - no backends configured, or the same key hash served by two backends;
 - invalid policy, watermark, or caller ACL.
 
@@ -186,6 +187,34 @@ entry can sign nothing). `allowed_requests` lists the permitted request kinds
 (`tx`, `cip8`, `opcert`); `tx_policy` / `cip8_policy` add typed constraints.
 Unknown policy fields fail at boot.
 
+### External transaction-policy hook
+
+`signer.policy_hook_url` adds an external authorization step after the static
+transaction policy allows a request. The signer sends the parsed operation
+summary as JSON and signs only when the endpoint returns HTTP 200 with
+`{"allow":true}`. Transport errors, timeouts, redirects, other status codes,
+and malformed or non-allow responses deny signing.
+
+The summary includes `tx_id`, `fee`, `ttl`, `outputs` (including each
+`has_assets` flag), `certificate_count`, `certificates`, `has_mint`,
+`withdrawal_count`, `voting_procedure_count`, `voters` (paired `kind` and
+optional `drep_id` values), `proposal_procedure_count`, and
+`has_treasury_donation`. Ledger value effects are reported as
+`treasury_donation`, `certificate_deposit_total`, `certificate_refund_total`,
+`proposal_deposit_total`, `unresolved_certificate_deposits`,
+`unresolved_certificate_refunds` (deposits or refunds whose amount the
+transaction does not encode), and `certificate_value_effects_complete`, which
+is false when a certificate type has no known value effect.
+The original `voter_kinds` and `drep_ids` arrays remain
+for existing hook consumers. Bursa denies signing before calling the hook when
+the decoded certificate or voter details do not match their transaction counts.
+
+The URL must use HTTPS. Bursa verifies the endpoint certificate against the
+host's system trust store and refuses redirects, so a policy decision cannot be
+downgraded to an unauthenticated plaintext response. Install a private policy
+service CA in the host trust store when needed. Set the request deadline with
+`signer.policy_hook_timeout_ms` (default 5 seconds).
+
 Transaction policy evaluates both possible ledger effect paths because the
 `is_valid` flag is not part of the signed transaction body. A body with
 collateral inputs must include `total_collateral`; that amount is checked
@@ -200,7 +229,10 @@ addition to ordinary outputs and the fee.
 regressions.
 
 - `type: mem` - in-memory, non-durable (lost on restart). Default type, but
-  refused unless `mode` is `warn` or `off`.
+  refused unless `mode` is `warn` or `off`. Warning mode retains the latest
+  65,536 transaction watermark scopes in FIFO order; older scopes are evicted.
+  This bound affects warning records only. Enforced watermarks use a durable,
+  non-evicting store.
 - `type: file` - SQLite file at `path`, durable across restarts (single process).
 - `type: postgres` - durable store shared by every replica; the HA-safe option.
   The connection string is set via `dsn_env` (an env var name, keeping

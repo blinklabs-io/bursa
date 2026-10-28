@@ -192,7 +192,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         val port = walletBinder?.port() ?: 0
-        if (port == 0) {
+        val url = walletBinder?.url() ?: ""
+        if (port == 0 || url.isEmpty()) {
             // Still booting (or briefly unbound) — try again shortly.
             if (bound) {
                 mainHandler.postDelayed({ loadWebViewWhenReady() }, portPollDelayMs)
@@ -205,7 +206,7 @@ class MainActivity : AppCompatActivity() {
         // embedded wallet booted and is serving", and the loopback port is not
         // observable from outside the app. Log it as the readiness signal.
         android.util.Log.i(TAG, "wallet ready on 127.0.0.1:$port")
-        webView.loadUrl("http://127.0.0.1:$port/")
+        webView.loadUrl(url)
     }
 
     // showBootError renders a minimal inline error page when the node fails to

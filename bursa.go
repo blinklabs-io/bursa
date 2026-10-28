@@ -34,8 +34,8 @@ import (
 	"sync"
 
 	"github.com/blinklabs-io/bursa/bip32"
+	"github.com/blinklabs-io/bursa/internal/network"
 	bip39 "github.com/blinklabs-io/go-bip39"
-	ouroboros "github.com/blinklabs-io/gouroboros"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/blinklabs-io/gouroboros/kes"
 	"github.com/blinklabs-io/gouroboros/ledger"
@@ -124,8 +124,20 @@ func GetScriptType(script Script) (int, error) {
 
 // String returns the Bech32-encoded representation of the key according to CIP-0005
 func (kf KeyFile) String() string {
+	keyType := kf.Type
+	// Policy keys use payment envelope types for cardano-cli compatibility.
+	// Their descriptions distinguish them when selecting the Bech32 prefix.
+	switch {
+	case keyType == "PaymentVerificationKeyShelley_ed25519" &&
+		kf.Description == "Policy Verification Key":
+		keyType = "PolicyVerificationKeyShelley_ed25519"
+	case keyType == "PaymentExtendedSigningKeyShelley_ed25519_bip32" &&
+		kf.Description == "Policy Extended Signing Key (BIP32)":
+		keyType = "PolicyExtendedSigningKeyShelley_ed25519_bip32"
+	}
+
 	var prefix string
-	switch kf.Type {
+	switch keyType {
 	case "RootExtendedSigningKeyShelley_ed25519_bip32":
 		prefix = "root_xsk"
 	case "AccountExtendedSigningKeyShelley_ed25519_bip32":
@@ -243,7 +255,7 @@ var jsonBufferPool = sync.Pool{
 // WalletConfig holds configuration options for wallet creation.
 // All index fields default to 0 and must be less than 2^31.
 type WalletConfig struct {
-	Network         string // Canonical network registry name
+	Network         string // Registry name, testnet alias, or decimal network magic
 	Password        string //nolint:gosec // G117: password field is intentional for key derivation
 	AccountID       uint32 // Account derivation index
 	PaymentID       uint32 // Payment key derivation index
@@ -262,9 +274,8 @@ type WalletConfig struct {
 // WalletOption is a functional option for configuring wallet creation
 type WalletOption func(*WalletConfig)
 
-// WithNetwork sets the network for the wallet.
-// Use a canonical network registry name, such as "mainnet", "preprod", or
-// "preview".
+// WithNetwork sets the network for the wallet using a registry name, the
+// "testnet" alias, or a decimal network magic.
 // Default: "mainnet"
 func WithNetwork(network string) WalletOption {
 	return func(c *WalletConfig) {
@@ -471,11 +482,11 @@ func NewWallet(mnemonic string, opts ...WalletOption) (*Wallet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pool cold key: %w", err)
 	}
-	network, ok := ouroboros.NetworkByName(cfg.Network)
+	networkID, ok := network.AddressID(cfg.Network)
 	if !ok {
 		return nil, fmt.Errorf("unable to get address: %w", ErrInvalidNetwork)
 	}
-	addr, err := newAddressFromKeys(paymentKey, stakeKey, network.Id)
+	addr, err := newAddressFromKeys(paymentKey, stakeKey, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get address: %w", err)
 	}
@@ -1162,7 +1173,7 @@ func GetPolicyVKey(policyKey bip32.XPrv) (KeyFile, error) {
 		)
 	}
 	kf := KeyFile{
-		Type:        "PolicyVerificationKeyShelley_ed25519",
+		Type:        "PaymentVerificationKeyShelley_ed25519",
 		Description: "Policy Verification Key",
 		CborHex:     hex.EncodeToString(keyCbor),
 	}
@@ -1174,7 +1185,7 @@ func GetPolicyVKey(policyKey bip32.XPrv) (KeyFile, error) {
 func GetPolicySKey(policyKey bip32.XPrv) (KeyFile, error) {
 	return getExtendedSigningKeyFile(
 		policyKey,
-		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		"Policy Extended Signing Key (BIP32)",
 	)
 }
@@ -1183,7 +1194,7 @@ func GetPolicySKey(policyKey bip32.XPrv) (KeyFile, error) {
 func GetPolicyExtendedSKey(policyKey bip32.XPrv) (KeyFile, error) {
 	return getExtendedSigningKeyFile(
 		policyKey,
-		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		"Policy Extended Signing Key (BIP32)",
 	)
 }
@@ -1967,7 +1978,7 @@ func GetScriptAddress(script Script, networkName string) (string, error) {
 	if networkName == "" {
 		return "", ErrInvalidNetwork
 	}
-	network, ok := ouroboros.NetworkByName(networkName)
+	networkID, ok := network.AddressID(networkName)
 	if !ok {
 		return "", ErrInvalidNetwork
 	}
@@ -1977,7 +1988,7 @@ func GetScriptAddress(script Script, networkName string) (string, error) {
 	}
 	addr, err := lcommon.NewAddressFromParts(
 		lcommon.AddressTypeScriptNone,
-		network.Id,
+		networkID,
 		scriptHash,
 		nil, // no stake part for script addresses
 	)
@@ -2230,7 +2241,7 @@ func GetAddress(
 	if networkName == "" {
 		return nil, ErrInvalidNetwork
 	}
-	network, ok := ouroboros.NetworkByName(networkName)
+	networkID, ok := network.AddressID(networkName)
 	if !ok {
 		return nil, ErrInvalidNetwork
 	}
@@ -2245,7 +2256,7 @@ func GetAddress(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stake key: %w", err)
 	}
-	return newAddressFromKeys(paymentKey, stakeKey, network.Id)
+	return newAddressFromKeys(paymentKey, stakeKey, networkID)
 }
 
 func newAddressFromKeys(
@@ -2274,7 +2285,7 @@ func GetRewardAddress(
 	if networkName == "" {
 		return nil, ErrInvalidNetwork
 	}
-	network, ok := ouroboros.NetworkByName(networkName)
+	networkID, ok := network.AddressID(networkName)
 	if !ok {
 		return nil, ErrInvalidNetwork
 	}
@@ -2297,7 +2308,7 @@ func GetRewardAddress(
 	// Create reward address (AddressTypeNoneKey with only stake key hash)
 	addr, err := lcommon.NewAddressFromParts(
 		lcommon.AddressTypeNoneKey,
-		network.Id,
+		networkID,
 		nil, // no payment part for reward addresses
 		stakeKeyPublicHash[:],
 	)
@@ -2973,6 +2984,24 @@ func MarshalScript(script Script, network string) (*ScriptData, error) {
 	return data, nil
 }
 
+// ParseScriptFile reads a native script file in either supported form: a
+// cardano-cli simple-script object, or a ScriptData envelope written by
+// earlier Bursa versions.
+func ParseScriptFile(data []byte) (*ScriptData, error) {
+	var top map[string]any
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil, fmt.Errorf("failed to parse script JSON: %w", err)
+	}
+	if scriptType, _ := top["type"].(string); scriptType != "NativeScript" {
+		return &ScriptData{Type: "NativeScript", Script: top}, nil
+	}
+	var envelope ScriptData
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to parse script envelope: %w", err)
+	}
+	return &envelope, nil
+}
+
 // UnmarshalScript deserializes a script from JSON
 func UnmarshalScript(data *ScriptData) (Script, error) {
 	if data.Type != "NativeScript" {
@@ -3034,9 +3063,9 @@ func scriptToMap(script Script) (map[string]any, error) {
 			scripts[i] = subMap
 		}
 		return map[string]any{
-			"type":    "nOf",
-			"n":       s.N,
-			"scripts": scripts,
+			"type":     "atLeast",
+			"required": s.N,
+			"scripts":  scripts,
 		}, nil
 	case *NativeScriptInvalidBefore:
 		return map[string]any{
@@ -3137,31 +3166,42 @@ func mapToScriptWithBudget(
 			scripts[i] = script
 		}
 		return NewScriptAny(scripts...)
-	case "nOf":
-		nFloat, ok := m["n"].(float64)
+	case "nOf", "atLeast":
+		requiredField := "n"
+		if scriptType == "atLeast" {
+			requiredField = "required"
+		}
+		nFloat, ok := m[requiredField].(float64)
 		if !ok {
-			return nil, errors.New("missing or invalid n for nOf script")
+			return nil, fmt.Errorf(
+				"missing or invalid %s for %s script",
+				requiredField,
+				scriptType,
+			)
 		}
 		// Validate integer precision and reasonable range
 		if nFloat < 1 || nFloat > 255 || nFloat != float64(int(nFloat)) {
-			return nil, errors.New(
-				"n must be an integer between 1 and 255 for nOf script",
+			return nil, fmt.Errorf(
+				"%s must be an integer between 1 and 255 for %s script",
+				requiredField,
+				scriptType,
 			)
 		}
 		n := int(nFloat)
 		scriptsInterface, ok := m["scripts"].([]any)
 		if !ok {
-			return nil, errors.New("missing or invalid scripts for nOf script")
+			return nil, fmt.Errorf("missing or invalid scripts for %s script", scriptType)
 		}
 		if n < 1 || n > len(scriptsInterface) {
 			return nil, fmt.Errorf(
-				"invalid n value %d: must be between 1 and %d",
+				"invalid %s value %d: must be between 1 and %d",
+				requiredField,
 				n,
 				len(scriptsInterface),
 			)
 		}
 		if len(scriptsInterface) > maxScriptWidth {
-			return nil, errors.New("nOf script exceeds width limit")
+			return nil, fmt.Errorf("%s script exceeds width limit", scriptType)
 		}
 		scripts := make([]Script, len(scriptsInterface))
 		for i, scriptInterface := range scriptsInterface {

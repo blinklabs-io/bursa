@@ -17,6 +17,10 @@ package bursa
 import (
 	"math"
 	"testing"
+
+	"github.com/blinklabs-io/gouroboros/cbor"
+	"github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/blinklabs-io/gouroboros/ledger/conway"
 )
 
 func TestTransactionID(t *testing.T) {
@@ -51,6 +55,64 @@ func TestInspectTransaction(t *testing.T) {
 	}
 	if insp.SizeBytes == 0 {
 		t.Fatalf("expected non-zero size")
+	}
+}
+
+func TestInspectTransactionValueEffects(t *testing.T) {
+	var tx conway.ConwayTransaction
+	if _, err := cbor.Decode(mustTestTx(t), &tx); err != nil {
+		t.Fatalf("decode transaction: %v", err)
+	}
+	tx.Body.TxDonation = 9_000_000
+	tx.SetCbor(nil)
+	tx.Body.SetCbor(nil)
+	raw, err := cbor.Encode(&tx)
+	if err != nil {
+		t.Fatalf("encode transaction: %v", err)
+	}
+	insp, err := InspectTransaction(raw)
+	if err != nil {
+		t.Fatalf("InspectTransaction: %v", err)
+	}
+	if !insp.HasTreasuryDonation || insp.TreasuryDonationLovelace != "9000000" {
+		t.Fatalf("unexpected treasury donation: %+v", insp)
+	}
+}
+
+func TestInspectCertificateValues(t *testing.T) {
+	certificates := []common.Certificate{
+		&common.StakeRegistrationCertificate{},
+		&common.PoolRegistrationCertificate{},
+		&common.StakeDeregistrationCertificate{},
+		&common.RegistrationCertificate{Amount: 2},
+		&common.StakeRegistrationDelegationCertificate{Amount: 3},
+		&common.VoteRegistrationDelegationCertificate{Amount: 4},
+		&common.StakeVoteRegistrationDelegationCertificate{Amount: 5},
+		&common.RegistrationDrepCertificate{Amount: 6},
+		&common.DeregistrationCertificate{Amount: 7},
+		&common.DeregistrationDrepCertificate{Amount: 8},
+	}
+	deposits, refunds, unresolvedDeposits, unresolvedRefunds, complete := inspectCertificateValues(certificates)
+	if deposits != "20" || refunds != "15" {
+		t.Fatalf("deposit/refund totals = %s/%s, want 20/15", deposits, refunds)
+	}
+	if unresolvedDeposits != 2 || unresolvedRefunds != 1 {
+		t.Fatalf(
+			"unresolved deposit/refund counts = %d/%d, want 2/1",
+			unresolvedDeposits,
+			unresolvedRefunds,
+		)
+	}
+	if !complete {
+		t.Fatal("known certificate set reported incomplete value effects")
+	}
+
+	proposalTotal, complete := inspectProposalDeposit([]common.ProposalProcedure{
+		conway.ConwayProposalProcedure{PPDeposit: 9},
+		conway.ConwayProposalProcedure{PPDeposit: 11},
+	})
+	if !complete || proposalTotal != "20" {
+		t.Fatalf("proposal deposit total = %q, complete = %v, want 20/true", proposalTotal, complete)
 	}
 }
 

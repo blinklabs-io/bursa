@@ -69,6 +69,10 @@ var ErrNotFound = errors.New("contact not found")
 // Cardano address.
 var ErrInvalidRequest = errors.New("invalid contact")
 
+// ErrPersistenceUnavailable is returned when the platform cannot guarantee
+// that contact metadata will stay out of device backups.
+var ErrPersistenceUnavailable = errors.New("contact persistence is unavailable")
+
 // Entry is one address-book contact. ID is server-generated and empty on a
 // create request; Note is optional.
 type Entry struct {
@@ -88,10 +92,21 @@ type data struct {
 // method takes the mutex, and the in-memory snapshot is the authority once
 // loaded.
 type Store struct {
-	path string
+	path                string
+	persistenceDisabled bool
 
 	mu sync.Mutex
 	d  data
+}
+
+// NewPersistenceDisabled returns an empty address book that refuses mutations.
+// It is used when a platform cannot provide storage that meets the contact
+// metadata security contract.
+func NewPersistenceDisabled() *Store {
+	return &Store{
+		persistenceDisabled: true,
+		d:                   data{Version: contactsVersion},
+	}
 }
 
 // Load opens (or initializes) the contacts store at path. A missing file is
@@ -201,6 +216,9 @@ func (s *Store) List() []Entry {
 // valid Cardano address. Note is optional and trimmed. On success the final,
 // normalized Entry is returned.
 func (s *Store) Upsert(in Entry) (Entry, error) {
+	if s.persistenceDisabled {
+		return Entry{}, ErrPersistenceUnavailable
+	}
 	name, addr, note, err := validateEntryFields(in)
 	if err != nil {
 		return Entry{}, err
@@ -273,6 +291,9 @@ func validateEntryFields(in Entry) (name string, addr string, note string, err e
 // Delete removes the contact with the given ID. Returns ErrNotFound if no
 // contact has that ID.
 func (s *Store) Delete(id string) error {
+	if s.persistenceDisabled {
+		return ErrPersistenceUnavailable
+	}
 	id = strings.TrimSpace(id)
 
 	s.mu.Lock()

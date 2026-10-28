@@ -160,8 +160,9 @@ func strictSameOrigin(r *http.Request) bool {
 // so that OPTIONS preflight requests also reach the middleware before the
 // sub-mux dispatches.
 //
-// SPA-facing routes (events, grants, grants/revoke, decide, unpair) are NOT
-// token-gated; each handler guards itself via sameOrigin()/strictSameOrigin().
+// SPA-facing routes (events, grants, grants/revoke, decide, unpair) use the
+// control-session guard around the complete mux and retain their in-handler
+// sameOrigin()/strictSameOrigin() checks.
 // grants/revoke and self-revoke both call svc.RevokeGrant — they exist
 // separately because the SPA and the extension popup reach the API under
 // different auth models (same-origin vs. bearer token).
@@ -181,13 +182,21 @@ func registerConnector(mux *http.ServeMux, svc *connector.Service, opts ...conne
 	mux.Handle("/connector/request", wrapped)
 	mux.Handle("/connector/self-revoke", wrapped)
 
-	// SPA-facing (same-origin guarded in-handler), NOT token-gated.
-	mux.HandleFunc("GET /connector/events", handleConnectorEvents(svc))
+	// SPA-facing (control-session guarded outside this mux and origin checked
+	// in-handler).
 	mux.HandleFunc("GET /connector/grants", handleConnectorGrants(svc))
 	mux.HandleFunc("POST /connector/grants/revoke", handleConnectorGrantsRevoke(svc))
-	mux.HandleFunc("POST /connector/decide", handleConnectorDecide(svc))
 	mux.HandleFunc("POST /connector/unpair", handleConnectorUnpair(svc))
 	mux.HandleFunc("POST /connector/pending-pairings", handleConnectorPendingPairings(svc, cfg.authorizePairingCode))
+	registerApprovalRoutes(mux, svc)
+}
+
+// registerApprovalRoutes exposes only the wallet-side approval stream and
+// decision endpoint. Remote transaction submission uses this subset even when
+// the browser extension connector is disabled.
+func registerApprovalRoutes(mux *http.ServeMux, svc *connector.Service) {
+	mux.HandleFunc("GET /connector/events", handleConnectorEvents(svc))
+	mux.HandleFunc("POST /connector/decide", handleConnectorDecide(svc))
 }
 
 // handleConnectorGrants handles GET /connector/grants.
@@ -302,7 +311,7 @@ func handleConnectorUnpair(svc *connector.Service) http.HandlerFunc {
 // handleConnectorSelfRevoke handles POST /connector/self-revoke.
 //
 // Extension-facing — gated by connectorMiddleware's bearer-token check (same
-// as /connector/pair and /connector/request), NOT by same-origin. This is the
+// as /connector/request), NOT by same-origin. This is the
 // token-gated counterpart available to a future extension-side grants UI.
 // (/connector/grants/revoke is the separate SPA-facing route, gated by
 // strictSameOrigin instead of a token; an extension fetch would fail that check
@@ -387,9 +396,9 @@ func handleConnectorPendingPairings(svc *connector.Service, authorizeCode func(p
 
 // handleConnectorEvents handles GET /connector/events.
 //
-// This is a Server-Sent Events (SSE) stream consumed by the Bursa SPA. It is
-// guarded by sameOrigin() and does NOT require the extension bearer token —
-// that is scoped to extension-facing routes only.
+// This is a Server-Sent Events (SSE) stream consumed by the Bursa SPA. It uses
+// the control-session cookie and sameOrigin(); the extension bearer token is
+// scoped to extension-facing routes only.
 //
 // On connect:
 //  1. Emits the current pending queue as one authoritative snapshot event.
