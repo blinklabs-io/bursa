@@ -374,7 +374,7 @@ func (s *Service) parseUTxO(
 	return st, true, nil
 }
 
-func lockedValue(amounts []chain.Amount) (map[string]uint64, error) {
+func lockedValue(amounts []chain.Amount) (map[string]uint64, bool) {
 	ret := make(map[string]uint64, len(amounts))
 	for _, amount := range amounts {
 		unit := amount.Unit
@@ -385,22 +385,22 @@ func lockedValue(amounts []chain.Amount) (map[string]uint64, error) {
 			policy, name, err := splitUnit(unit)
 			if err != nil || len(policy) != 28 || len(name) > 32 ||
 				hex.EncodeToString(policy)+hex.EncodeToString(name) != unit {
-				return nil, fmt.Errorf("invalid asset unit %q", amount.Unit)
+				return nil, false
 			}
 		}
 		qty, err := strconv.ParseUint(amount.Quantity, 10, 64)
 		if err != nil || qty == 0 {
-			return nil, fmt.Errorf("invalid quantity for %q", amount.Unit)
+			return nil, false
 		}
 		if _, exists := ret[unit]; exists {
-			return nil, fmt.Errorf("duplicate asset unit %q", amount.Unit)
+			return nil, false
 		}
 		ret[unit] = qty
 	}
 	if ret["lovelace"] == 0 {
-		return nil, errors.New("missing lovelace")
+		return nil, false
 	}
-	return ret, nil
+	return ret, true
 }
 
 func validPoolIdentity(
@@ -527,12 +527,13 @@ func inlineDatumFor(
 	u chain.UTxO,
 	cache map[string][]chain.TxOutput,
 ) (string, []chain.Amount, map[string]uint64, error) {
-	locked, err := lockedValue(u.Amount)
-	if err != nil {
+	locked, ok := lockedValue(u.Amount)
+	if !ok {
 		return "", nil, nil, nil
 	}
-	outs, ok := cache[u.TxHash]
-	if !ok {
+	outs, cached := cache[u.TxHash]
+	if !cached {
+		var err error
 		outs, err = c.TxOutputs(ctx, u.TxHash)
 		if err != nil {
 			if errors.Is(err, chain.ErrNotFound) {
@@ -558,8 +559,8 @@ func inlineDatumFor(
 		match.InlineDatum == nil || *match.InlineDatum == "" {
 		return "", nil, nil, nil
 	}
-	authoritativeLocked, err := lockedValue(match.Amount)
-	if err != nil || !equalLockedValue(locked, authoritativeLocked) {
+	authoritativeLocked, ok := lockedValue(match.Amount)
+	if !ok || !equalLockedValue(locked, authoritativeLocked) {
 		return "", nil, nil, nil
 	}
 	return *match.InlineDatum, match.Amount, authoritativeLocked, nil
