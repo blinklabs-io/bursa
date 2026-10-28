@@ -28,6 +28,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/operation"
 	"github.com/blinklabs-io/bursa/internal/signer/policy"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
+	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
@@ -225,6 +226,10 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
+	txBody, err := encodedTxBody(raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
+	}
 	// Scope is the tx-id, making it identical to the payload being signed.
 	// Because the scope IS the txid, ErrConflict cannot fire by construction
 	// (Check/Commit on the same txid is idempotent in the mem/sqlite watermark);
@@ -313,7 +318,7 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 			}
 		}
 		signStart := time.Now()
-		sig, err := backend.SignFor(ctx, ref, backend.PurposeTxHash, txid)
+		sig, err := backend.SignTxFor(ctx, ref, txBody, txType, txid)
 		// Attempt latency, including failures — not successful-sign latency.
 		c.deps.Metrics.observeSignDuration(ref.Backend(), time.Since(signStart).Seconds())
 		if err != nil {
@@ -375,6 +380,19 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 		res.SignedTx = signed
 	}
 	return res, errs, nil
+}
+
+// encodedTxBody returns the transaction body's original CBOR bytes. Re-encoding
+// could change the body hash even when the decoded transaction is equivalent.
+func encodedTxBody(tx []byte) ([]byte, error) {
+	var outer []cbor.RawMessage
+	if _, err := cbor.Decode(tx, &outer); err != nil {
+		return nil, fmt.Errorf("decode transaction body: %w", err)
+	}
+	if len(outer) == 0 || len(outer[0]) == 0 {
+		return nil, errors.New("transaction has no encoded body")
+	}
+	return []byte(outer[0]), nil
 }
 
 // Metrics returns the coordinator's metrics instance (never nil after New).

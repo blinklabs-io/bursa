@@ -118,12 +118,14 @@ signer:
     # - name: "nitro"
     #   type: "nitro"
     #   address: "unix:///run/bursa/enclave.sock"
+    #   profile: "pool@mainnet"                 # optional fixed workload profile
     #   root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
     #   pcrs:
     #     0: "<96 hex chars: PCR0 of the EIF>"
     # - name: "gcp-cs"
     #   type: "confidential-space"
     #   address: "https://workload.example.internal:8443"
+    #   profile: "pool@mainnet"                 # optional fixed workload profile
     #   audience: "https://signer.example.internal"
     #   image_digest: "sha256:<64 hex chars>"
 

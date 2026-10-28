@@ -43,13 +43,25 @@ const (
 // forwards a TCP or Unix socket onto a vsock), so no transport security is
 // assumed: attestation and signature verification carry the trust.
 type HTTPEnclave struct {
-	client *http.Client
-	base   string
+	client  *http.Client
+	base    string
+	profile string
 }
 
 // NewHTTPEnclave connects to address: an http:// or https:// URL, or
 // unix:///path/to/socket.
 func NewHTTPEnclave(address string) (*HTTPEnclave, error) {
+	return newHTTPEnclave(address, "")
+}
+
+// NewProfiledHTTPEnclave connects to an enclave and selects profile for its
+// inventory requests. The same profile is placed on signing requests by the
+// profiled attested backend.
+func NewProfiledHTTPEnclave(address, profile string) (*HTTPEnclave, error) {
+	return newHTTPEnclave(address, profile)
+}
+
+func newHTTPEnclave(address, profile string) (*HTTPEnclave, error) {
 	u, err := url.Parse(address)
 	if err != nil {
 		return nil, fmt.Errorf("invalid enclave address: %w", err)
@@ -65,7 +77,7 @@ func NewHTTPEnclave(address string) (*HTTPEnclave, error) {
 		if u.Host == "" {
 			return nil, errors.New("enclave address has no host")
 		}
-		return &HTTPEnclave{client: client, base: u.Scheme + "://" + u.Host}, nil
+		return &HTTPEnclave{client: client, base: u.Scheme + "://" + u.Host, profile: profile}, nil
 	case "unix":
 		if u.Path == "" {
 			return nil, errors.New("enclave unix address has no socket path")
@@ -77,7 +89,7 @@ func NewHTTPEnclave(address string) (*HTTPEnclave, error) {
 				return d.DialContext(ctx, "unix", path)
 			},
 		}
-		return &HTTPEnclave{client: client, base: "http://enclave"}, nil
+		return &HTTPEnclave{client: client, base: "http://enclave", profile: profile}, nil
 	default:
 		return nil, fmt.Errorf("enclave address scheme %q is not http, https, or unix", u.Scheme)
 	}
@@ -125,8 +137,9 @@ func (e *HTTPEnclave) post(ctx context.Context, path string, in, out any) error 
 func (e *HTTPEnclave) Inventory(ctx context.Context, nonce []byte) (AttestedInventory, error) {
 	var inv AttestedInventory
 	err := e.post(ctx, "/v1/inventory", struct {
-		Nonce []byte `json:"nonce"`
-	}{nonce}, &inv)
+		Nonce   []byte `json:"nonce"`
+		Profile string `json:"profile,omitempty"`
+	}{Nonce: nonce, Profile: e.profile}, &inv)
 	return inv, err
 }
 

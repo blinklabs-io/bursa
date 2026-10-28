@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+
+	"golang.org/x/crypto/blake2b"
 )
 
 // AttestedProtocol is the version string every attested-signer message
@@ -58,6 +60,9 @@ type Purpose string
 const (
 	// PurposeTxHash signs a 32-byte transaction body hash.
 	PurposeTxHash Purpose = "tx-hash"
+	// PurposeTxBody authorizes the encoded transaction body and signs its
+	// Blake2b-256 hash. The request also carries the resolved transaction era.
+	PurposeTxBody Purpose = "tx-body"
 	// PurposeOpCert signs the 48-byte OCertSignable bytes
 	// (kes_vkey || issue_counter || kes_period). Pool cold keys only.
 	PurposeOpCert Purpose = "opcert"
@@ -77,6 +82,10 @@ func (p Purpose) validate(role KeyType, payload []byte) error {
 	case PurposeTxHash:
 		if len(payload) != txHashSize {
 			return fmt.Errorf("%w: tx-hash payload must be %d bytes, got %d", ErrAttestedProtocol, txHashSize, len(payload))
+		}
+	case PurposeTxBody:
+		if len(payload) == 0 {
+			return fmt.Errorf("%w: tx-body payload is empty", ErrAttestedProtocol)
 		}
 	case PurposeOpCert:
 		if len(payload) != opCertSignableSize {
@@ -101,6 +110,12 @@ type PurposeSigner interface {
 	SignPurpose(ctx context.Context, purpose Purpose, payload []byte) ([]byte, error)
 }
 
+// TxBodySigner is implemented by key references whose custody boundary must
+// inspect an encoded transaction body before signing its hash.
+type TxBodySigner interface {
+	SignTxBody(ctx context.Context, body []byte, era uint) ([]byte, error)
+}
+
 // SignFor signs payload for purpose, using the purpose-bound path when the key
 // offers one and a plain Sign otherwise.
 func SignFor(ctx context.Context, ref KeyRef, purpose Purpose, payload []byte) ([]byte, error) {
@@ -108,6 +123,15 @@ func SignFor(ctx context.Context, ref KeyRef, purpose Purpose, payload []byte) (
 		return ps.SignPurpose(ctx, purpose, payload)
 	}
 	return ref.Sign(ctx, payload)
+}
+
+// SignTxFor sends the encoded body and resolved era to body-aware custody.
+// Other backends retain the established contract of signing txHash directly.
+func SignTxFor(ctx context.Context, ref KeyRef, body []byte, era uint, txHash []byte) ([]byte, error) {
+	if signer, ok := ref.(TxBodySigner); ok {
+		return signer.SignTxBody(ctx, body, era)
+	}
+	return SignFor(ctx, ref, PurposeTxHash, txHash)
 }
 
 // AttestedKeyInfo is one key an enclave reports holding.
@@ -133,15 +157,45 @@ type AttestedRequest struct {
 	Role    KeyType `json:"role"`
 	Nonce   []byte  `json:"nonce"`
 	Payload []byte  `json:"payload"`
+	Profile string  `json:"profile,omitempty"`
+	Era     *uint   `json:"era,omitempty"`
 }
 
 // AttestedResponse is the enclave's answer to an AttestedRequest. A non-empty
 // Error means the enclave refused.
 type AttestedResponse struct {
-	Version   string `json:"version"`
-	Nonce     []byte `json:"nonce"`
-	Signature []byte `json:"signature,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Version          string `json:"version"`
+	Nonce            []byte `json:"nonce"`
+	Signature        []byte `json:"signature,omitempty"`
+	BindingSignature []byte `json:"binding_signature,omitempty"`
+	Error            string `json:"error,omitempty"`
+}
+
+// AttestedResponseBinding is the digest a profiled workload signs alongside
+// the Cardano signature. It binds the response to the complete request so an
+// untrusted proxy cannot select another profile while reusing a valid Cardano
+// signature from the same key.
+func AttestedResponseBinding(req AttestedRequest, signature []byte) []byte {
+	h := sha256.New()
+	era := []byte(nil)
+	if req.Era != nil {
+		era = []byte(strconv.FormatUint(uint64(*req.Era), 10))
+	}
+	for _, field := range [][]byte{
+		[]byte(req.Version),
+		[]byte(req.Purpose),
+		[]byte(req.KeyHash),
+		[]byte(req.Role),
+		req.Nonce,
+		req.Payload,
+		[]byte(req.Profile),
+		era,
+		signature,
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
+	return h.Sum(nil)
 }
 
 // Enclave is the host-side view of a workload that custodies keys inside a
@@ -185,6 +239,7 @@ type attestedKey struct {
 	hash        KeyHash
 	typ         KeyType
 	backendName string
+	profile     string
 }
 
 func (k *attestedKey) Hash() KeyHash                { return k.hash }
@@ -201,6 +256,20 @@ func (k *attestedKey) Sign(context.Context, []byte) ([]byte, error) {
 // contacting the enclave and after it answers: a handle resolved before a
 // reload must not outlive the attestation that admitted it.
 func (k *attestedKey) SignPurpose(ctx context.Context, purpose Purpose, payload []byte) ([]byte, error) {
+	if purpose == PurposeTxBody {
+		return nil, fmt.Errorf("%w: tx-body requires SignTxBody with an era", ErrAttestedProtocol)
+	}
+	return k.signAttested(ctx, purpose, payload, nil, payload)
+}
+
+// SignTxBody sends the original encoded body across the custody boundary and
+// verifies that custody returned the Cardano witness signature for its hash.
+func (k *attestedKey) SignTxBody(ctx context.Context, body []byte, era uint) ([]byte, error) {
+	hash := blake2b.Sum256(body)
+	return k.signAttested(ctx, PurposeTxBody, body, &era, hash[:])
+}
+
+func (k *attestedKey) signAttested(ctx context.Context, purpose Purpose, payload []byte, era *uint, signed []byte) ([]byte, error) {
 	if err := purpose.validate(k.typ, payload); err != nil {
 		return nil, err
 	}
@@ -211,14 +280,17 @@ func (k *attestedKey) SignPurpose(ctx context.Context, purpose Purpose, payload 
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("attested nonce: %w", err)
 	}
-	resp, err := k.enclave.Sign(ctx, AttestedRequest{
+	req := AttestedRequest{
 		Version: AttestedProtocol,
 		Purpose: purpose,
 		KeyHash: k.hash.String(),
 		Role:    k.typ,
 		Nonce:   nonce,
 		Payload: payload,
-	})
+		Profile: k.profile,
+		Era:     era,
+	}
+	resp, err := k.enclave.Sign(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("attested sign: %w", err)
 	}
@@ -234,8 +306,16 @@ func (k *attestedKey) SignPurpose(ctx context.Context, purpose Purpose, payload 
 	if len(resp.Signature) != ed25519.SignatureSize {
 		return nil, fmt.Errorf("%w: signature must be %d bytes, got %d", ErrAttestedProtocol, ed25519.SignatureSize, len(resp.Signature))
 	}
-	if !ed25519.Verify(k.pub, payload, resp.Signature) {
+	if !ed25519.Verify(k.pub, signed, resp.Signature) {
 		return nil, fmt.Errorf("%w: %w", ErrAttestedProtocol, ErrInvalidSignature)
+	}
+	if k.profile != "" || len(resp.BindingSignature) > 0 {
+		if len(resp.BindingSignature) != ed25519.SignatureSize {
+			return nil, fmt.Errorf("%w: binding signature must be %d bytes, got %d", ErrAttestedProtocol, ed25519.SignatureSize, len(resp.BindingSignature))
+		}
+		if !ed25519.Verify(k.pub, AttestedResponseBinding(req, resp.Signature), resp.BindingSignature) {
+			return nil, fmt.Errorf("%w: %w", ErrAttestedProtocol, ErrInvalidSignature)
+		}
 	}
 	if !k.owner.serves(k) {
 		return nil, ErrKeyNotFound
@@ -248,6 +328,7 @@ func (k *attestedKey) SignPurpose(ctx context.Context, purpose Purpose, payload 
 // Load succeeds, and after any Load fails, the backend holds no keys.
 type AttestedBackend struct {
 	name     string
+	profile  string
 	enclave  Enclave
 	verifier AttestationVerifier
 	mu       sync.RWMutex
@@ -258,6 +339,12 @@ type AttestedBackend struct {
 // inventory passes verifier.
 func NewAttestedBackend(name string, enclave Enclave, verifier AttestationVerifier) *AttestedBackend {
 	return &AttestedBackend{name: name, enclave: enclave, verifier: verifier, keys: map[KeyHash]*attestedKey{}}
+}
+
+// NewProfiledAttestedBackend builds an attested backend whose inventory and
+// signing requests select one fixed workload profile.
+func NewProfiledAttestedBackend(name, profile string, enclave Enclave, verifier AttestationVerifier) *AttestedBackend {
+	return &AttestedBackend{name: name, profile: profile, enclave: enclave, verifier: verifier, keys: map[KeyHash]*attestedKey{}}
 }
 
 // Load attests the enclave and replaces the served key set with its verified
@@ -304,6 +391,7 @@ func (b *AttestedBackend) Load(ctx context.Context) error {
 			hash:        hash,
 			typ:         ki.Role,
 			backendName: b.name,
+			profile:     b.profile,
 		}
 	}
 	b.mu.Lock()

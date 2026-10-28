@@ -25,6 +25,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"golang.org/x/crypto/blake2b"
 )
 
 // enclaveHandler serves a fakeEnclave over the HTTPEnclave wire format.
@@ -78,6 +80,75 @@ func TestHTTPEnclaveEndToEnd(t *testing.T) {
 	}
 	if !ed25519.Verify(ref.PublicKey(), payload, sig) {
 		t.Fatal("signature does not verify")
+	}
+}
+
+func TestAttestedRequestEncodesByronEra(t *testing.T) {
+	t.Parallel()
+	byron := uint(0)
+	b, err := json.Marshal(AttestedRequest{Era: &byron})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"era":0`) {
+		t.Fatalf("request omitted Byron era: %s", b)
+	}
+}
+
+func TestProfiledHTTPEnclaveEndToEnd(t *testing.T) {
+	t.Parallel()
+	e := newFakeEnclave(t, KeyTypePayment)
+	inventoryProfiles := make(chan string, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/inventory", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Nonce   []byte `json:"nonce"`
+			Profile string `json:"profile"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		inventoryProfiles <- in.Profile
+		inv, _ := e.Inventory(r.Context(), in.Nonce)
+		_ = json.NewEncoder(w).Encode(inv)
+	})
+	mux.HandleFunc("/v1/sign", func(w http.ResponseWriter, r *http.Request) {
+		var req AttestedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp, _ := e.Sign(r.Context(), req)
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	enc, err := NewProfiledHTTPEnclave(srv.URL, "pool@preview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewProfiledAttestedBackend("enclave", "pool@preview", enc, stubVerifier{})
+	if err := b.Load(t.Context()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	ref, err := b.GetKey(t.Context(), e.hashOf(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte{0xa0}
+	hash := blake2b.Sum256(body)
+	if _, err := SignTxFor(t.Context(), ref, body, 6, hash[:]); err != nil {
+		t.Fatalf("SignTxFor: %v", err)
+	}
+	if got := <-inventoryProfiles; got != "pool@preview" {
+		t.Fatalf("inventory profile = %q, want pool@preview", got)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if got := e.requests[0].Profile; got != "pool@preview" {
+		t.Fatalf("sign profile = %q, want pool@preview", got)
 	}
 }
 
