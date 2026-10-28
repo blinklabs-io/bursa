@@ -5,6 +5,7 @@ go 1.26.10
 require (
 	cloud.google.com/go/kms v1.32.0
 	cloud.google.com/go/secretmanager v1.23.0
+	cloud.google.com/go/storage v1.63.1
 	filippo.io/age v1.3.2
 	filippo.io/edwards25519 v1.2.0
 	github.com/MicahParks/keyfunc/v3 v3.8.2
@@ -52,7 +53,6 @@ require (
 	cloud.google.com/go/iam v1.14.0 // indirect
 	cloud.google.com/go/longrunning v1.3.0 // indirect
 	cloud.google.com/go/monitoring v1.30.0 // indirect
-	cloud.google.com/go/storage v1.63.1 // indirect
 	filippo.io/hpke v0.4.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0 // indirect

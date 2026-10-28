@@ -38,8 +38,10 @@ import (
 const testKMSKey = "projects/data/locations/global/keyRings/custody/cryptoKeys/pool"
 
 type memoryStore struct {
-	mu   sync.Mutex
-	data []byte
+	mu         sync.Mutex
+	data       []byte
+	counter    uint64
+	counterSet bool
 }
 
 func (s *memoryStore) Load() ([]byte, error) {
@@ -58,6 +60,21 @@ func (s *memoryStore) Create(data []byte) error {
 		return ErrEnvelopeExists
 	}
 	s.data = append([]byte(nil), data...)
+	return nil
+}
+
+func (s *memoryStore) CheckAndAdvance(
+	_ context.Context,
+	_ backend.KeyHash,
+	counter uint64,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.counterSet && counter <= s.counter {
+		return ErrCounterRegression
+	}
+	s.counter = counter
+	s.counterSet = true
 	return nil
 }
 
@@ -156,6 +173,7 @@ func newTestWorkload(
 		Tokens:   tokens,
 		Wrapper:  wrapper,
 		Store:    store,
+		Counter:  store,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -231,8 +249,14 @@ func TestWorkloadInventorySignAndRestart(t *testing.T) {
 	}
 	req.KeyHash = restarted.hash.String()
 	req.Nonce = bytes.Repeat([]byte{0x25}, 32)
+	if replay, err := restarted.Sign(t.Context(), req); err != nil ||
+		replay.Error == "" || replay.Signature != nil {
+		t.Fatalf("restart counter replay response = %+v, err = %v", replay, err)
+	}
+	req.Payload = lcommon.OpCertSignableBytes(kesVKey, 8, 12)
+	req.Nonce = bytes.Repeat([]byte{0x26}, 32)
 	resp, err = restarted.Sign(t.Context(), req)
-	if err != nil || !ed25519.Verify(restarted.pub, payload, resp.Signature) {
+	if err != nil || !ed25519.Verify(restarted.pub, req.Payload, resp.Signature) {
 		t.Fatalf("restarted signature: response=%+v err=%v", resp, err)
 	}
 }
@@ -291,6 +315,7 @@ func TestWorkloadKMSDenialAndMissingAttestation(t *testing.T) {
 	_, err := New(t.Context(), Config{
 		Audience: "https://signer.example/pool", KMSKey: testKMSKey,
 		Tokens: &testTokens{}, Wrapper: &testWrapper{denyUnwrap: true}, Store: store,
+		Counter: store,
 	})
 	if err == nil ||
 		!bytes.Contains([]byte(err.Error()), []byte("KMS denied decrypt")) {
@@ -392,6 +417,7 @@ func TestWrappedEnvelopeRejectsTampering(t *testing.T) {
 	_, err := New(t.Context(), Config{
 		Audience: "https://signer.example/pool", KMSKey: testKMSKey,
 		Tokens: &testTokens{}, Wrapper: &testWrapper{}, Store: store,
+		Counter: store,
 	})
 	if err == nil {
 		t.Fatal("tampered envelope loaded")

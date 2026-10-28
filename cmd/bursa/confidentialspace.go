@@ -34,6 +34,8 @@ func confidentialSpaceCommand() *cobra.Command {
 		audience       string
 		kmsKey         string
 		wrappedKeyFile string
+		counterBucket  string
+		counterObject  string
 		wifCredentials string
 	)
 	cmd := &cobra.Command{
@@ -64,6 +66,16 @@ func confidentialSpaceCommand() *cobra.Command {
 				return err
 			}
 			defer wrapper.Close()
+			counter, err := confidentialspace.NewCloudCounterStore(
+				ctx,
+				counterBucket,
+				counterObject,
+				wifCredentials,
+			)
+			if err != nil {
+				return err
+			}
+			defer counter.Close()
 			store, err := confidentialspace.NewFileEnvelopeStore(wrappedKeyFile)
 			if err != nil {
 				return err
@@ -76,6 +88,7 @@ func confidentialSpaceCommand() *cobra.Command {
 					Tokens:   tokens,
 					Wrapper:  wrapper,
 					Store:    store,
+					Counter:  counter,
 				},
 			)
 			if err != nil {
@@ -127,10 +140,16 @@ func confidentialSpaceCommand() *cobra.Command {
 	cmd.Flags().
 		StringVar(&wrappedKeyFile, "wrapped-key-file", "", "absolute path for the persistent wrapped pool key")
 	cmd.Flags().
+		StringVar(&counterBucket, "counter-bucket", "", "Cloud Storage bucket for the pool issue counter")
+	cmd.Flags().
+		StringVar(&counterObject, "counter-object", "", "Cloud Storage object for the pool issue counter")
+	cmd.Flags().
 		StringVar(&wifCredentials, "wif-credentials", "", "validated external-account credential configuration")
 	_ = cmd.MarkFlagRequired("audience")
 	_ = cmd.MarkFlagRequired("kms-key")
 	_ = cmd.MarkFlagRequired("wrapped-key-file")
+	_ = cmd.MarkFlagRequired("counter-bucket")
+	_ = cmd.MarkFlagRequired("counter-object")
 	_ = cmd.MarkFlagRequired("wif-credentials")
 	return cmd
 }

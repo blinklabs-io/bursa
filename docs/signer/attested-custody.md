@@ -191,6 +191,8 @@ bursa confidential-space-workload \
   --audience https://signer.example.internal \
   --kms-key projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY \
   --wrapped-key-file /var/lib/bursa/pool-cold.wrapped \
+  --counter-bucket POOL_COUNTER_BUCKET \
+  --counter-object pool-cold/counter.json \
   --wif-credentials /etc/bursa/confidential-space-wif.json
 ```
 
@@ -203,19 +205,33 @@ Federation provider. The custom token returned to the signer is separate: the
 workload requests it for the configured signer audience with
 `hex(InventoryBinding)` as its nonce on every inventory request.
 
-Use direct resource access for the Cloud KMS key. The Workload Identity
-Federation provider must map the container image digest and require
+Use direct resource access for the Cloud KMS key and counter object. Before a
+signature is made, the workload commits the operational-certificate issue
+counter to the configured Cloud Storage object with a generation precondition.
+This makes the counter strictly increasing across restarts and concurrent
+workload replicas. Give the workload identity only `storage.objects.get`,
+`storage.objects.create`, and `storage.objects.delete` on the configured object
+name. Cloud Storage requires delete permission when a new generation replaces
+an existing object. Enable Object Versioning for recovery evidence, and do not
+expose the workload's attestation credential outside the measured image.
+
+The Workload Identity Federation provider must map the container image digest
+and require
 `CONFIDENTIAL_SPACE`, `disabled-since-boot`, secure boot, the approved digest,
 and the production support attribute. Grant encrypt and decrypt on only the
-wrapping key to that digest-bound federated principal. The same condition makes
-Cloud KMS refuse an unapproved digest, a debug image, an expired default token,
-or a request without attestation. The signer independently verifies those
-properties on the custom inventory token before it accepts the public key.
+wrapping key, and the three object permissions above on only the counter
+object, to that digest-bound federated principal. The same condition makes
+Cloud KMS and Cloud Storage refuse an unapproved digest, a debug image, an
+expired default token, or a request without attestation. The signer
+independently verifies those properties on the custom inventory token before
+it accepts the public key.
 
-Persist the wrapped-key file across workload restarts. Losing it creates a new
-pool identity on the next boot; copying or rolling it back restores the same
-pool identity because the private key never leaves its envelope. Back up the
-wrapped file together with the Cloud KMS key's retention policy.
+Persist the wrapped-key file and counter object across workload restarts.
+Losing the wrapped-key file creates a new pool identity on the next boot;
+copying or rolling it back restores the same pool identity because the private
+key never leaves its envelope. Back up the wrapped file together with the Cloud
+KMS key's retention policy. Never restore or remove the counter object for an
+existing pool key.
 
 ## KES agent in a protected workload
 

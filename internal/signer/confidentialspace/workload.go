@@ -58,6 +58,12 @@ type EnvelopeStore interface {
 	Create([]byte) error
 }
 
+// CounterStore atomically reserves strictly increasing operational-certificate
+// issue counters for one pool cold key.
+type CounterStore interface {
+	CheckAndAdvance(context.Context, backend.KeyHash, uint64) error
+}
+
 // Config contains the workload's immutable security inputs.
 type Config struct {
 	Audience string
@@ -65,6 +71,7 @@ type Config struct {
 	Tokens   TokenSource
 	Wrapper  KeyWrapper
 	Store    EnvelopeStore
+	Counter  CounterStore
 }
 
 type envelope struct {
@@ -86,11 +93,14 @@ type Workload struct {
 	pub      ed25519.PublicKey
 	priv     ed25519.PrivateKey
 	hash     backend.KeyHash
+	counter  CounterStore
 
-	mu       sync.Mutex
-	nonces   map[[32]byte]struct{}
-	closed   bool
-	signFunc func(ed25519.PrivateKey, []byte) []byte
+	mu        sync.Mutex
+	nonces    map[[32]byte]struct{}
+	nonceFIFO [][32]byte
+	nonceNext int
+	closed    bool
+	signFunc  func(ed25519.PrivateKey, []byte) []byte
 }
 
 // New creates or reloads a pool cold key. A new key is generated inside the
@@ -105,9 +115,10 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 	if cfg.KMSKey == "" || len(cfg.KMSKey) > 1024 {
 		return nil, errors.New("confidential space workload requires a KMS key")
 	}
-	if cfg.Tokens == nil || cfg.Wrapper == nil || cfg.Store == nil {
+	if cfg.Tokens == nil || cfg.Wrapper == nil || cfg.Store == nil ||
+		cfg.Counter == nil {
 		return nil, errors.New(
-			"confidential space workload requires token, KMS, and envelope providers",
+			"confidential space workload requires token, KMS, envelope, and counter providers",
 		)
 	}
 	priv, err := loadOrCreateKey(ctx, cfg)
@@ -116,13 +127,15 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 	}
 	pub := append(ed25519.PublicKey(nil), priv.Public().(ed25519.PublicKey)...)
 	return &Workload{
-		audience: cfg.Audience,
-		tokens:   cfg.Tokens,
-		pub:      pub,
-		priv:     priv,
-		hash:     backend.HashPublicKey(pub),
-		nonces:   make(map[[32]byte]struct{}),
-		signFunc: ed25519.Sign,
+		audience:  cfg.Audience,
+		tokens:    cfg.Tokens,
+		pub:       pub,
+		priv:      priv,
+		hash:      backend.HashPublicKey(pub),
+		counter:   cfg.Counter,
+		nonces:    make(map[[32]byte]struct{}),
+		nonceFIFO: make([][32]byte, 0, maxRequestNonces),
+		signFunc:  ed25519.Sign,
 	}, nil
 }
 
@@ -341,7 +354,7 @@ func (w *Workload) Inventory(
 
 // Sign permits only canonical pool operational-certificate signable bytes.
 func (w *Workload) Sign(
-	_ context.Context,
+	ctx context.Context,
 	req backend.AttestedRequest,
 ) (backend.AttestedResponse, error) {
 	resp := backend.AttestedResponse{
@@ -369,10 +382,17 @@ func (w *Workload) Sign(
 		resp.Error = "request refused"
 		return resp, nil
 	}
-	if len(w.nonces) >= maxRequestNonces {
-		return backend.AttestedResponse{}, errors.New(
-			"request nonce capacity reached",
-		)
+	issueNumber := binary.BigEndian.Uint64(req.Payload[32:40])
+	if err := w.counter.CheckAndAdvance(ctx, w.hash, issueNumber); err != nil {
+		resp.Error = "request refused"
+		return resp, nil
+	}
+	if len(w.nonceFIFO) >= maxRequestNonces {
+		delete(w.nonces, w.nonceFIFO[w.nonceNext])
+		w.nonceFIFO[w.nonceNext] = nonce
+		w.nonceNext = (w.nonceNext + 1) % maxRequestNonces
+	} else {
+		w.nonceFIFO = append(w.nonceFIFO, nonce)
 	}
 	w.nonces[nonce] = struct{}{}
 	sig := w.signFunc(w.priv, req.Payload)
