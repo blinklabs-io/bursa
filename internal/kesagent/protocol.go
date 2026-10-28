@@ -88,11 +88,13 @@ package kesagent
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/kesagent/securemem"
@@ -133,6 +135,48 @@ type KeyPush struct {
 	KESSignKey []byte `json:"kes_sign_key"`
 	KESVKey    []byte `json:"kes_vkey"`
 	OpCert     []byte `json:"opcert"`
+}
+
+// marshalFrame encodes the push as JSON identical to json.Marshal's output,
+// directly into a buffer the caller owns. encoding/json returns its working
+// buffer to a process-wide pool without clearing it, which would leave the
+// base64 signing key in memory that no caller can wipe.
+func (k KeyPush) marshalFrame() ([]byte, error) {
+	typ, err := json.Marshal(k.Type)
+	if err != nil {
+		return nil, err
+	}
+	buf := make([]byte, 0, 128+base64.StdEncoding.EncodedLen(len(k.KESSignKey)))
+	buf = append(buf, `{"type":`...)
+	buf = append(buf, typ...)
+	buf = append(buf, `,"period":`...)
+	buf = strconv.AppendUint(buf, k.Period, 10)
+	buf = append(buf, `,"depth":`...)
+	buf = strconv.AppendUint(buf, k.Depth, 10)
+	buf = append(buf, `,"kes_sign_key":`...)
+	buf = appendJSONBytes(buf, k.KESSignKey)
+	buf = append(buf, `,"kes_vkey":`...)
+	buf = appendJSONBytes(buf, k.KESVKey)
+	buf = append(buf, `,"opcert":`...)
+	buf = appendJSONBytes(buf, k.OpCert)
+	return append(buf, '}'), nil
+}
+
+// appendJSONBytes appends b as encoding/json encodes a []byte: null for nil,
+// otherwise a quoted standard base64 string.
+func appendJSONBytes(buf, b []byte) []byte {
+	if b == nil {
+		return append(buf, "null"...)
+	}
+	buf = append(buf, '"')
+	buf = base64.StdEncoding.AppendEncode(buf, b)
+	return append(buf, '"')
+}
+
+// frameMarshaler is implemented by frames that carry secrets and must not be
+// serialized through encoding/json's pooled buffers.
+type frameMarshaler interface {
+	marshalFrame() ([]byte, error)
 }
 
 // SignRequest is sent by the client in sign mode.
@@ -196,7 +240,13 @@ type deadlineWriter interface {
 
 // writeFrame writes a single length-prefixed JSON frame.
 func writeFrame(w deadlineWriter, v any) (retErr error) {
-	payload, err := json.Marshal(v)
+	var payload []byte
+	var err error
+	if m, ok := v.(frameMarshaler); ok {
+		payload, err = m.marshalFrame()
+	} else {
+		payload, err = json.Marshal(v)
+	}
 	if err != nil {
 		return fmt.Errorf("kesagent: marshal frame: %w", err)
 	}

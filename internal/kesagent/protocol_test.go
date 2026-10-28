@@ -16,11 +16,17 @@ package kesagent
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 type retainingFrameWriter struct {
@@ -104,4 +110,116 @@ func TestWriteFrameWipesKeyPushPayload(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestKeyPushMarshalFrameMatchesJSON(t *testing.T) {
+	t.Parallel()
+	for _, push := range []KeyPush{
+		{Type: "key_push", Period: 42, Depth: 6, KESSignKey: []byte{1, 2, 3}, KESVKey: []byte{4}, OpCert: []byte{5}},
+		{Type: "key_push"},
+		{Type: "a\"b<\n", Period: 1<<64 - 1, Depth: 1<<64 - 1, KESSignKey: []byte{}, KESVKey: nil, OpCert: []byte{0xff, 0xfe}},
+	} {
+		want, err := json.Marshal(push)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := push.marshalFrame()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("marshalFrame() = %s, want %s", got, want)
+		}
+	}
+}
+
+// TestWriteFrameLeavesNoSigningKeyInHeap writes a KeyPush and then searches the
+// process's writable memory for the base64 signing key, which json.Marshal
+// would leave behind in its pooled encoder buffer.
+func TestWriteFrameLeavesNoSigningKeyInHeap(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("scans /proc/self/mem")
+	}
+	secret := make([]byte, 96)
+	for i := range secret {
+		secret[i] = byte(0xa5 ^ i*7)
+	}
+	needle := base64.StdEncoding.AppendEncode(nil, secret)
+	defer clear(needle)
+	push := KeyPush{Type: "key_push", KESSignKey: secret, KESVKey: []byte{1}, OpCert: []byte{2}}
+	clear(secret)
+	secret = nil
+	// Rebuild the key inside the push from the needle so the plain secret
+	// is never kept elsewhere.
+	push.KESSignKey = make([]byte, base64.StdEncoding.DecodedLen(len(needle)))
+	if _, err := base64.StdEncoding.Decode(push.KESSignKey, needle); err != nil {
+		t.Fatal(err)
+	}
+	defer clear(push.KESSignKey)
+
+	writer := &discardFrameWriter{}
+	if err := writeFrame(writer, push); err != nil {
+		t.Fatal(err)
+	}
+	if writer.bytes == 0 {
+		t.Fatal("nothing written")
+	}
+	if n := countInHeap(t, needle, &needle[0]); n != 0 {
+		t.Fatalf("base64 signing key found %d time(s) in process memory after writeFrame", n)
+	}
+}
+
+type discardFrameWriter struct{ bytes int }
+
+func (w *discardFrameWriter) SetWriteDeadline(time.Time) error { return nil }
+func (w *discardFrameWriter) Write(p []byte) (int, error) {
+	w.bytes += len(p)
+	return len(p), nil
+}
+
+// countInHeap counts occurrences of needle in the process's writable
+// mappings, ignoring the copy at self.
+func countInHeap(t *testing.T, needle []byte, self *byte) int {
+	t.Helper()
+	maps, err := os.ReadFile("/proc/self/maps")
+	if err != nil {
+		t.Skipf("read maps: %v", err)
+	}
+	mem, err := os.Open("/proc/self/mem")
+	if err != nil {
+		t.Skipf("open mem: %v", err)
+	}
+	defer mem.Close()
+	count := 0
+	for _, line := range strings.Split(string(maps), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || !strings.HasPrefix(f[1], "rw") {
+			continue
+		}
+		if len(f) >= 6 && strings.HasPrefix(f[5], "[v") {
+			continue
+		}
+		var lo, hi uint64
+		if _, err := fmt.Sscanf(f[0], "%x-%x", &lo, &hi); err != nil {
+			continue
+		}
+		const chunk = 1 << 20
+		buf := make([]byte, chunk+len(needle))
+		for off := lo; off < hi; off += chunk {
+			n, _ := mem.ReadAt(buf[:min(uint64(len(buf)), hi-off)], int64(off))
+			for i := 0; ; {
+				j := bytes.Index(buf[i:n], needle)
+				if j < 0 {
+					break
+				}
+				addr := off + uint64(i+j)
+				if addr != uint64(uintptr(unsafe.Pointer(self))) && (addr < uint64(uintptr(unsafe.Pointer(&buf[0]))) || addr >= uint64(uintptr(unsafe.Pointer(&buf[0])))+uint64(len(buf))) {
+					count++
+				}
+				i += j + 1
+			}
+		}
+		clear(buf)
+	}
+	return count
 }
