@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	_ "net/http/pprof" // #nosec G108
+	"net/netip"
 	"os"
 	"os/signal"
 	"strconv"
@@ -35,6 +36,30 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer"
 	"github.com/spf13/cobra"
 )
+
+func isLiteralLoopbackHost(host string) bool {
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return addr.Unmap().IsLoopback()
+	}
+	if addr, err := netip.ParseAddrPort(host); err == nil {
+		return addr.Addr().Unmap().IsLoopback()
+	}
+	if len(host) > 2 && host[0] == '[' && host[len(host)-1] == ']' {
+		addr, err := netip.ParseAddr(host[1 : len(host)-1])
+		return err == nil && addr.Unmap().IsLoopback()
+	}
+	return false
+}
+
+func loopbackHostGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLiteralLoopbackHost(r.Host) {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // startDebugListener serves the pprof endpoints on a loopback address. It
 // returns nil when the listener is disabled (port 0) and refuses any address
@@ -58,7 +83,10 @@ func startDebugListener(cfg config.DebugConfig) (*http.Server, error) {
 		return nil, err
 	}
 	slog.Info("starting debug listener", "addr", addr)
-	debugger := &http.Server{ReadHeaderTimeout: 60 * time.Second}
+	debugger := &http.Server{
+		Handler:           loopbackHostGuard(http.DefaultServeMux),
+		ReadHeaderTimeout: 60 * time.Second,
+	}
 	go func() {
 		if err := debugger.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("debug listener stopped", "error", err)

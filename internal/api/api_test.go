@@ -1648,7 +1648,8 @@ func TestHandleScriptCreate(t *testing.T) {
 	assert.Equal(t, "NativeScript", response.Type)
 	scriptType, ok := response.Script["type"]
 	assert.True(t, ok)
-	assert.Equal(t, "nOf", scriptType)
+	assert.Equal(t, "atLeast", scriptType)
+	assert.Equal(t, float64(2), response.Script["required"])
 	assert.NotEmpty(t, response.Address)
 	assert.NotEmpty(t, response.ScriptHash)
 	assert.Contains(t, response.Address, "addr1")
@@ -2533,8 +2534,8 @@ func TestHandleScriptCreate_BothTimelocks(t *testing.T) {
 			"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"
 		],
 		"network": "mainnet",
-		"timelock_before": 1000000,
-		"timelock_after": 500000
+		"timelock_before": 2000000,
+		"timelock_after": 1000000
 	}`
 
 	req := httptest.NewRequest(
@@ -2549,11 +2550,70 @@ func TestHandleScriptCreate_BothTimelocks(t *testing.T) {
 
 	resp := w.Result()
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-
 	body, err := io.ReadAll(resp.Body)
-	assert.NoError(t, err)
-	assert.Contains(t, string(body), "cannot specify both")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "response body: %s", body)
+
+	var response ScriptResponse
+	require.NoError(t, json.Unmarshal(body, &response))
+	scriptJSON, err := json.Marshal(response.Script)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"type": "all",
+		"scripts": [
+			{"type": "after", "slot": 1000000},
+			{"type": "before", "slot": 2000000},
+			{
+				"type": "all",
+				"scripts": [{
+					"type": "sig",
+					"keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"
+				}]
+			}
+		]
+	}`, string(scriptJSON))
+}
+
+func TestHandleScriptCreate_InvalidTimelockWindow(t *testing.T) {
+	for _, testCase := range []struct {
+		name           string
+		timelockBefore uint64
+		timelockAfter  uint64
+	}{
+		{name: "equal slots", timelockBefore: 1000, timelockAfter: 1000},
+		{name: "after beyond before", timelockBefore: 1000, timelockAfter: 1001},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			reqBody := fmt.Sprintf(`{
+				"type": "all",
+				"key_hashes": [
+					"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"
+				],
+				"network": "mainnet",
+				"timelock_before": %d,
+				"timelock_after": %d
+			}`, testCase.timelockBefore, testCase.timelockAfter)
+
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/script/create",
+				strings.NewReader(reqBody),
+			)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			handleScriptCreate(w, req)
+
+			resp := w.Result()
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.JSONEq(t, `{
+				"error": "timelock_after must be less than timelock_before"
+			}`, string(body))
+		})
+	}
 }
 
 func TestHandleScriptCreate_CanonicalNetworks(t *testing.T) {
