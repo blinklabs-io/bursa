@@ -18,6 +18,7 @@ package profile
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,17 +35,17 @@ const MaxNameLen = 32
 // RecordSize is the fixed size of an encoded profile, padded with spaces.
 // A fixed size means rewriting a record never deletes and recreates the
 // object, and it fits in a single binary write APDU.
-const RecordSize = 0xc0
+const RecordSize = 0xe0
 
 // IdentityKeyID holds the device identity key that signs key inventories.
 const IdentityKeyID uint32 = 0x20e50020
 
 // Object ID bases, offset by profile slot. Cold keys live at
 // 0x20e50010-0x20e5001f; each belongs to at most one profile, so a second
-// profile cannot re-register the pool with another owner.
+// profile cannot re-register the pool with another owner. 0x20e50200-0x20e5021f
+// held fee wallet keys in early builds and is not reused.
 const (
 	ownerKeyBase uint32 = 0x20e50100
-	feeKeyBase   uint32 = 0x20e50200
 	recordBase   uint32 = 0x20e50300
 )
 
@@ -55,7 +56,7 @@ type Profile struct {
 	Name string `json:"name"`
 	// NetworkID is the address network bit: 0 testnet, 1 mainnet.
 	NetworkID uint8 `json:"network_id"`
-	// Slot selects this profile's owner, fee and record object IDs.
+	// Slot selects this profile's owner key and record object IDs.
 	Slot uint8 `json:"slot"`
 	// ColdKeyID is the SE050 object holding the pool cold key.
 	ColdKeyID uint32 `json:"cold_key_id"`
@@ -63,28 +64,30 @@ type Profile struct {
 	FloorSet bool `json:"floor_set"`
 	// OpCertFloor is the highest on-chain opcert counter ever reported.
 	OpCertFloor uint64 `json:"opcert_floor"`
-	// MaxFee caps the fee of any body the device signs, in lovelace. Zero
-	// selects DefaultMaxFee.
-	MaxFee uint64 `json:"max_fee,omitempty"`
+	// RewardAccount is the hex reward address every pool registration must
+	// name. It is the operator's choice, set at provisioning, so a host
+	// cannot redirect pool rewards inside a transaction. Empty refuses
+	// registrations.
+	RewardAccount string `json:"reward_account,omitempty"`
 }
 
-// DefaultMaxFee is the fee cap when a profile sets none: 2 ADA.
-const DefaultMaxFee uint64 = 2_000_000
-
-// FeeCap returns the highest fee this profile allows.
-func (p Profile) FeeCap() uint64 {
-	if p.MaxFee == 0 {
-		return DefaultMaxFee
+// RewardAddress returns the pinned 29-byte reward address, if set.
+func (p Profile) RewardAddress() ([]byte, bool) {
+	if p.RewardAccount == "" {
+		return nil, false
 	}
 
-	return p.MaxFee
+	b, err := hex.DecodeString(p.RewardAccount)
+
+	if err != nil {
+		return nil, false
+	}
+
+	return b, true
 }
 
 // OwnerKeyID returns the object holding this profile's owner stake key.
 func (p Profile) OwnerKeyID() uint32 { return ownerKeyBase + uint32(p.Slot) }
-
-// FeeKeyID returns the object holding this profile's fee wallet key.
-func (p Profile) FeeKeyID() uint32 { return feeKeyBase + uint32(p.Slot) }
 
 // RecordID returns the binary object holding this profile record.
 func (p Profile) RecordID() uint32 { return recordBase + uint32(p.Slot) }
@@ -97,6 +100,13 @@ func (p Profile) validate() error {
 		return fmt.Errorf("profile: name longer than %d bytes", MaxNameLen)
 	case strings.TrimFunc(p.Name, nameRune) != "":
 		return errors.New("profile: name may only use A-Z a-z 0-9 @ . _ -")
+	case p.RewardAccount != "":
+		b, err := hex.DecodeString(p.RewardAccount)
+
+		// reward address header: 0b111s nnnn, s = script credential
+		if err != nil || len(b) != 29 || b[0]&0xe0 != 0xe0 || b[0]&0x0f != p.NetworkID {
+			return errors.New("profile: reward account must be a reward address on the profile network")
+		}
 	case p.NetworkID > 1:
 		return fmt.Errorf("profile: invalid network id %d", p.NetworkID)
 	case p.Slot > MaxSlot:

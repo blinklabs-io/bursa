@@ -27,6 +27,8 @@ func testProfile() Profile {
 		ColdKeyID:   0x20e50010,
 		FloorSet:    true,
 		OpCertFloor: 3,
+		// testnet key-hash reward address
+		RewardAccount: "e0" + strings.Repeat("ab", 28),
 	}
 }
 
@@ -80,7 +82,7 @@ func TestObjectIDsDisjoint(t *testing.T) {
 	for slot := uint8(0); slot <= MaxSlot; slot++ {
 		p := Profile{Slot: slot}
 
-		for _, id := range []uint32{p.OwnerKeyID(), p.FeeKeyID(), p.RecordID()} {
+		for _, id := range []uint32{p.OwnerKeyID(), p.RecordID()} {
 			if what, ok := reserved[id]; ok {
 				t.Fatalf("slot %d ID %#08x collides with %s", slot, id, what)
 			}
@@ -94,26 +96,51 @@ func TestObjectIDsDisjoint(t *testing.T) {
 	}
 }
 
-func TestFeeCap(t *testing.T) {
-	if got := (Profile{}).FeeCap(); got != DefaultMaxFee || DefaultMaxFee != 2_000_000 {
-		t.Fatalf("default fee cap = %d", got)
+func TestRewardAccountRules(t *testing.T) {
+	base := testProfile()
+
+	for name, ra := range map[string]string{
+		"mainnet header on testnet": "e1" + strings.Repeat("ab", 28),
+		"payment address":           "60" + strings.Repeat("ab", 28),
+		"short":                     "e0" + strings.Repeat("ab", 27),
+		"not hex":                   "e0" + strings.Repeat("zz", 28),
+	} {
+		p := base
+		p.RewardAccount = ra
+
+		if _, err := Encode(p); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 
-	if got := (Profile{MaxFee: 500_000}).FeeCap(); got != 500_000 {
-		t.Fatalf("fee cap = %d", got)
+	for _, ra := range []string{"", "f0" + strings.Repeat("ab", 28)} {
+		p := base
+		p.RewardAccount = ra
+
+		if _, err := Encode(p); err != nil {
+			t.Errorf("reward account %q refused: %v", ra, err)
+		}
+	}
+
+	if b, ok := base.RewardAddress(); !ok || len(b) != 29 || b[0] != 0xe0 {
+		t.Fatalf("RewardAddress = % x, %v", b, ok)
+	}
+
+	if _, ok := (Profile{}).RewardAddress(); ok {
+		t.Fatal("unset reward account reported as set")
 	}
 }
 
 func TestEncodeFixedSize(t *testing.T) {
 	small := testProfile()
 	large := Profile{
-		Name:        strings.Repeat("n", MaxNameLen),
-		NetworkID:   1,
-		Slot:        MaxSlot,
-		ColdKeyID:   ^uint32(0),
-		FloorSet:    true,
-		OpCertFloor: ^uint64(0),
-		MaxFee:      ^uint64(0),
+		Name:          strings.Repeat("n", MaxNameLen),
+		NetworkID:     1,
+		Slot:          MaxSlot,
+		ColdKeyID:     ^uint32(0),
+		FloorSet:      true,
+		OpCertFloor:   ^uint64(0),
+		RewardAccount: "f1" + strings.Repeat("ff", 28),
 	}
 
 	for _, p := range []Profile{small, large} {
@@ -133,7 +160,7 @@ func TestEncodeFixedSize(t *testing.T) {
 	}
 
 	// one APDU writes the whole record, so a write is never split
-	if RecordSize > 0xc0 {
+	if RecordSize > 0xe0 {
 		t.Fatalf("RecordSize %d exceeds one binary write chunk", RecordSize)
 	}
 }

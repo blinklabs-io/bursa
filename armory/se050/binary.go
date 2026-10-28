@@ -28,9 +28,10 @@ const (
 
 	resultFailure = 0x02
 
-	// maxBinaryChunk keeps each read or write within a short APDU, with
-	// room for the object ID, offset and length TLVs.
-	maxBinaryChunk = 0xc0
+	// maxBinaryChunk keeps each read or write within a short APDU: object
+	// ID (6), offset (4), file length (4) and data (3 + 224) TLVs total 241
+	// of 255 data bytes. Records up to this size are written in one APDU.
+	maxBinaryChunk = 0xe0
 )
 
 func u16(v int) []byte {
