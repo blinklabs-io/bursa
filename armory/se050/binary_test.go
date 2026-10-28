@@ -19,6 +19,10 @@ import (
 	"testing"
 )
 
+// resultFailure is the applet's result byte for a negative check, the
+// counterpart of resultSuccess.
+const resultFailure = 0x02
+
 // scriptedSE answers each host I-block with the next queued response APDU,
 // acknowledging chained blocks with R-blocks. It records every command APDU.
 type scriptedSE struct {

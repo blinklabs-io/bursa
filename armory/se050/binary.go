@@ -26,8 +26,6 @@ const (
 
 	memPersistent = 0x01
 
-	resultFailure = 0x02
-
 	// maxBinaryChunk keeps each read or write within a short APDU: object
 	// ID (6), offset (4), file length (4) and data (3 + 224) TLVs total 241
 	// of 255 data bytes. Records up to this size are written in one APDU.
