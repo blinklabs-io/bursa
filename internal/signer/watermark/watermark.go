@@ -37,6 +37,7 @@ const (
 	readinessProbeRecordKey   = "__bursa_readiness_probe__"
 	readinessProbePayloadHash = "0000000000000000000000000000000000000000000000000000000000000000"
 	readinessProbeCounter     = "0000000000000000"
+	maxWarningRecords         = 65_536
 )
 
 // Mode controls how the coordinator applies the watermark.
@@ -121,19 +122,37 @@ func recordKey(key backend.KeyHash, scope string) string { return key.String() +
 
 func digest(payload []byte) [32]byte { return sha256.Sum256(payload) }
 
-// MemWatermark is an in-memory Watermark. It is non-durable (all records are
-// lost on process restart) and grows without bound (one entry per unique
-// (key, scope) pair, never evicted). It is suitable for testing and short-lived
-// single-process use only.
+// MemWatermark is an in-memory Watermark. It is non-durable: all records are
+// lost on process restart. NewMemWatermark retains every record so enforced
+// watermarks never lose replay protection. NewWarningMemWatermark bounds
+// payload records for warning-only operation.
 type MemWatermark struct {
-	mu       sync.Mutex
-	records  map[string][32]byte
-	counters map[string]uint64
+	mu          sync.Mutex
+	records     map[string][32]byte
+	counters    map[string]uint64
+	recordLimit int
+	recordOrder []string
+	recordHead  int
 }
 
-// NewMemWatermark builds an empty in-memory watermark.
+// NewMemWatermark builds an empty, non-evicting in-memory watermark.
 func NewMemWatermark() *MemWatermark {
-	return &MemWatermark{records: map[string][32]byte{}, counters: map[string]uint64{}}
+	return newMemWatermark(0)
+}
+
+// NewWarningMemWatermark builds an in-memory watermark for warning mode. It
+// retains the latest 65,536 first-written payload scopes in FIFO order. Counter
+// watermarks are not evicted.
+func NewWarningMemWatermark() *MemWatermark {
+	return newMemWatermark(maxWarningRecords)
+}
+
+func newMemWatermark(recordLimit int) *MemWatermark {
+	return &MemWatermark{
+		records:     map[string][32]byte{},
+		counters:    map[string]uint64{},
+		recordLimit: recordLimit,
+	}
 }
 
 func (m *MemWatermark) Check(_ context.Context, key backend.KeyHash, scope string, payload []byte) error {
@@ -156,7 +175,7 @@ func (m *MemWatermark) CheckAndCommit(_ context.Context, key backend.KeyHash, sc
 		}
 		return nil
 	}
-	m.records[k] = d
+	m.commitRecord(k, d)
 	return nil
 }
 
@@ -165,9 +184,22 @@ func (m *MemWatermark) Commit(_ context.Context, key backend.KeyHash, scope stri
 	defer m.mu.Unlock()
 	k := recordKey(key, scope)
 	if _, ok := m.records[k]; !ok {
-		m.records[k] = digest(payload)
+		m.commitRecord(k, digest(payload))
 	}
 	return nil
+}
+
+// commitRecord records a new key while m.mu is held. A positive limit uses a
+// fixed-size FIFO ring; repeated commits do not refresh an existing key's age.
+func (m *MemWatermark) commitRecord(k string, d [32]byte) {
+	if m.recordLimit > 0 && len(m.records) == m.recordLimit {
+		delete(m.records, m.recordOrder[m.recordHead])
+		m.recordOrder[m.recordHead] = k
+		m.recordHead = (m.recordHead + 1) % m.recordLimit
+	} else if m.recordLimit > 0 {
+		m.recordOrder = append(m.recordOrder, k)
+	}
+	m.records[k] = d
 }
 
 func (m *MemWatermark) CounterFor(_ context.Context, key backend.KeyHash, scope string) (uint64, bool, error) {
