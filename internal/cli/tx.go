@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -242,18 +243,23 @@ func RunTxSubmit(socketPath, network, txFile string, timeoutSeconds int64) error
 		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 	}
-	chain := txbuilder.NewN2C(socketPath, network)
+	return submitTx(ctx, txbuilder.NewN2C(socketPath, network), txFile, os.Stdout)
+}
+
+// submitTx submits the transaction in txFile and prints its id. A rejection
+// is returned with the node's reason.
+func submitTx(ctx context.Context, chain txbuilder.Chain, txFile string, w io.Writer) error {
 	txBytes, err := bursa.ReadCborInputFile(txFile)
 	if err != nil {
 		return err
 	}
+	id, err := bursa.TransactionID(txBytes)
+	if err != nil {
+		return err
+	}
 	if err := chain.SubmitTx(ctx, txBytes); err != nil {
-		return err
+		return fmt.Errorf("node rejected transaction %s: %w", id, err)
 	}
-	if id, err := bursa.TransactionID(txBytes); err != nil {
-		return err
-	} else {
-		fmt.Println(id)
-	}
-	return nil
+	_, err = fmt.Fprintln(w, id)
+	return err
 }
