@@ -44,6 +44,9 @@ func TestNewMetricsHTTPServerServesLoopbackMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMetricsHTTPServer: %v", err)
 	}
+	if server == nil {
+		t.Fatal("newMetricsHTTPServer returned nil server for a non-zero port")
+	}
 	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	response := httptest.NewRecorder()
 	server.Handler.ServeHTTP(response, request)
@@ -61,6 +64,9 @@ func TestNewMetricsHTTPServerFormatsIPv6(t *testing.T) {
 			})
 			if err != nil {
 				t.Fatalf("newMetricsHTTPServer: %v", err)
+			}
+			if server == nil {
+				t.Fatal("newMetricsHTTPServer returned nil server for a non-zero port")
 			}
 			if server.Addr != "[::1]:8081" {
 				t.Fatalf("metrics address = %q, want %q", server.Addr, "[::1]:8081")
