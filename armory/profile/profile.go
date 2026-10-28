@@ -53,6 +53,21 @@ type Profile struct {
 	FloorSet bool `json:"floor_set"`
 	// OpCertFloor is the highest on-chain opcert counter ever reported.
 	OpCertFloor uint64 `json:"opcert_floor"`
+	// MaxFee caps the fee of any body the device signs, in lovelace. Zero
+	// selects DefaultMaxFee.
+	MaxFee uint64 `json:"max_fee,omitempty"`
+}
+
+// DefaultMaxFee is the fee cap when a profile sets none: 2 ADA.
+const DefaultMaxFee uint64 = 2_000_000
+
+// FeeCap returns the highest fee this profile allows.
+func (p Profile) FeeCap() uint64 {
+	if p.MaxFee == 0 {
+		return DefaultMaxFee
+	}
+
+	return p.MaxFee
 }
 
 // OwnerKeyID returns the object holding this profile's owner stake key.

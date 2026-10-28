@@ -92,3 +92,13 @@ func TestObjectIDsDisjoint(t *testing.T) {
 		}
 	}
 }
+
+func TestFeeCap(t *testing.T) {
+	if got := (Profile{}).FeeCap(); got != DefaultMaxFee || DefaultMaxFee != 2_000_000 {
+		t.Fatalf("default fee cap = %d", got)
+	}
+
+	if got := (Profile{MaxFee: 500_000}).FeeCap(); got != 500_000 {
+		t.Fatalf("fee cap = %d", got)
+	}
+}
