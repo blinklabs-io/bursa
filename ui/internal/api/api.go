@@ -37,6 +37,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
+	"github.com/blinklabs-io/bursa/ui/internal/remotesubmit"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/survey"
@@ -215,6 +216,8 @@ type Activity interface {
 type handlerOptions struct {
 	legacy          LegacyKeystore
 	connector       *connector.Service
+	approvals       *connector.Service
+	remoteSubmit    *remotesubmit.Service
 	nfts            NFTs
 	diagnostics     Diagnostics
 	migrateScripts  ScriptMigrator
@@ -247,6 +250,16 @@ func WithLegacyKeystore(ks LegacyKeystore) HandlerOption {
 func WithConnector(svc *connector.Service) HandlerOption {
 	return func(o *handlerOptions) {
 		o.connector = svc
+	}
+}
+
+// WithRemoteSubmission enables the local control routes for a separately
+// hosted, TLS-only transaction submission listener. approvals is the shared
+// consent queue used by the wallet UI.
+func WithRemoteSubmission(svc *remotesubmit.Service, approvals *connector.Service) HandlerOption {
+	return func(o *handlerOptions) {
+		o.remoteSubmit = svc
+		o.approvals = approvals
 	}
 }
 
@@ -1756,6 +1769,11 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 			cfg.connector,
 			withConnectorPairingCodeAuthorizer(authorizePairingCode),
 		)
+	} else if cfg.approvals != nil {
+		registerApprovalRoutes(mux, cfg.approvals)
+	}
+	if cfg.remoteSubmit != nil {
+		registerRemoteSubmission(mux, cfg.remoteSubmit)
 	}
 
 	// SPA catch-all: the specific API routes above take precedence on the mux;

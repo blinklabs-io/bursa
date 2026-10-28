@@ -4731,6 +4731,8 @@ func TestSessionGuardRoutePartition(t *testing.T) {
 		{"/connector/events", false},
 		{"/connector/grants", false},
 		{"/connector/decide", false},
+		{"/remote-submission", false},
+		{"/remote-submission/enable", false},
 		{"/wallet/example/activate", false},
 		{"/wallet/account/select", false},
 	} {
