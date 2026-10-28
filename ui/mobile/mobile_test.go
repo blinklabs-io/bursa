@@ -135,6 +135,7 @@ func TestBindingSignaturesAreGomobileCompatible(t *testing.T) {
 		{"Start", []string{"string", "string", "bool"}, []string{"error"}},
 		{"StartWithTimeout", []string{"string", "string", "bool", "int64"}, []string{"error"}},
 		{"SetNodeDataDir", []string{"string"}, nil},
+		{"SetContactsPersistenceEnabled", []string{"bool"}, nil},
 		{"Port", nil, []string{"int"}},
 		{"URL", nil, []string{"string"}},
 		{"Stop", nil, []string{"error"}},
@@ -449,7 +450,7 @@ func TestCleanupLateStartStopsLiveAppAndTerminates(t *testing.T) {
 }
 
 // Not t.Parallel: swaps the package-level bootWallet seam.
-func TestStartPassesNodeDataDir(t *testing.T) {
+func TestStartPassesStoragePolicy(t *testing.T) {
 	orig := bootWallet
 	defer func() { bootWallet = orig }()
 
@@ -461,6 +462,7 @@ func TestStartPassesNodeDataDir(t *testing.T) {
 
 	a := New()
 	a.SetNodeDataDir("/node")
+	a.SetContactsPersistenceEnabled(false)
 	_ = a.Start("/wallet", "preview", true)
 	var cfg boot.Config
 	select {
@@ -468,7 +470,12 @@ func TestStartPassesNodeDataDir(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("bootWallet was not called")
 	}
-	if cfg.DataDir != "/wallet" || cfg.NodeDataDir != "/node" {
-		t.Fatalf("boot got DataDir=%q NodeDataDir=%q, want /wallet and /node", cfg.DataDir, cfg.NodeDataDir)
+	if cfg.DataDir != "/wallet" || cfg.NodeDataDir != "/node" || !cfg.ContactsPersistenceDisabled {
+		t.Fatalf(
+			"boot got DataDir=%q NodeDataDir=%q ContactsPersistenceDisabled=%t, want /wallet, /node, true",
+			cfg.DataDir,
+			cfg.NodeDataDir,
+			cfg.ContactsPersistenceDisabled,
+		)
 	}
 }

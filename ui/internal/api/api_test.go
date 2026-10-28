@@ -3414,6 +3414,20 @@ func TestContactsCreateValidationErrorReturns400(t *testing.T) {
 	}
 }
 
+func TestContactsPersistenceUnavailableReturns503(t *testing.T) {
+	cb := &fakeContacts{upsertErr: contacts.ErrPersistenceUnavailable}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"name":"Alice","address":"addr_test1alice"}`)
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/contacts", body))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("POST while persistence unavailable = %d, want 503 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), contacts.ErrPersistenceUnavailable.Error()) {
+		t.Fatalf("POST error = %s, want persistence failure", rec.Body.String())
+	}
+}
+
 func TestContactsCreateInvalidJSONReturns400(t *testing.T) {
 	cb := &fakeContacts{}
 	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())

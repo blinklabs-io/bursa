@@ -56,6 +56,20 @@ func TestLoadMissingFileYieldsEmpty(t *testing.T) {
 	}
 }
 
+func TestPersistenceDisabledStoreRefusesMutations(t *testing.T) {
+	s := NewPersistenceDisabled()
+	if got := s.List(); len(got) != 0 {
+		t.Fatalf("List() = %v, want empty", got)
+	}
+	_, err := s.Upsert(Entry{Name: "Alice", Address: validAddr(t, 1)})
+	if !errors.Is(err, ErrPersistenceUnavailable) {
+		t.Fatalf("Upsert error = %v, want ErrPersistenceUnavailable", err)
+	}
+	if err := s.Delete("contact-id"); !errors.Is(err, ErrPersistenceUnavailable) {
+		t.Fatalf("Delete error = %v, want ErrPersistenceUnavailable", err)
+	}
+}
+
 // TestLoadRejectsCorruptFile: a present-but-corrupt file is a hard error rather
 // than silently discarding the user's address book.
 func TestLoadRejectsCorruptFile(t *testing.T) {

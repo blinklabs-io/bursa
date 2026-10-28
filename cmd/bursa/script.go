@@ -52,16 +52,20 @@ func scriptCreateCommand() *cobra.Command {
 
 Examples:
   # Create a 2-of-3 multi-sig script
-  bursa script create --required 2 --key-hashes abcdef1234567890abcdef1234567890abcdef12,abcdef1234567890abcdef1234567890abcdef13,abcdef1234567890abcdef1234567890abcdef14
+  bursa script create --required 2 --key-hashes abcdef1234567890abcdef1234567890abcdef1234567890abcdef12,abcdef1234567890abcdef1234567890abcdef1234567890abcdef13,abcdef1234567890abcdef1234567890abcdef1234567890abcdef14
 
   # Create an all-signers-required script
-  bursa script create --all --key-hashes abcdef1234567890abcdef1234567890abcdef12,abcdef1234567890abcdef1234567890abcdef13
+  bursa script create --all --key-hashes abcdef1234567890abcdef1234567890abcdef1234567890abcdef12,abcdef1234567890abcdef1234567890abcdef1234567890abcdef13
 
   # Create an any-signer script
-  bursa script create --any --key-hashes abcdef1234567890abcdef1234567890abcdef12,abcdef1234567890abcdef1234567890abcdef13,abcdef1234567890abcdef1234567890abcdef14
+  bursa script create --any --key-hashes abcdef1234567890abcdef1234567890abcdef1234567890abcdef12,abcdef1234567890abcdef1234567890abcdef1234567890abcdef13,abcdef1234567890abcdef1234567890abcdef1234567890abcdef14
 
   # Create a timelocked script (valid after slot 1000000)
-  bursa script create --required 2 --key-hashes abcdef1234567890abcdef1234567890abcdef12,abcdef1234567890abcdef1234567890abcdef13 --timelock-after 1000000`,
+  bursa script create --required 2 --key-hashes abcdef1234567890abcdef1234567890abcdef1234567890abcdef12,abcdef1234567890abcdef1234567890abcdef1234567890abcdef13 --timelock-after 1000000
+
+Key hashes are 28 bytes (56 hex characters). To get one, use
+cardano-cli conway address key-hash with a verification key file, or run
+bursa address info on an address.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cli.RunScriptCreate(
 				required,
@@ -81,9 +85,9 @@ Examples:
 	scriptCreateCommand.Flags().
 		StringSliceVar(&keyHashes, "key-hashes", nil, "Comma-separated list of key hashes (hex encoded)")
 	scriptCreateCommand.Flags().
-		StringVar(&output, "output", "", "Output file path (optional)")
+		StringVar(&output, "output", "", "Write the script to this file in cardano-cli simple-script format (optional)")
 	scriptCreateCommand.Flags().
-		StringVar(&network, "network", "mainnet", "Network name (mainnet, testnet, etc.)")
+		StringVar(&network, "network", "mainnet", networkFlagUsage)
 	scriptCreateCommand.Flags().
 		BoolVar(&all, "all", false, "Create all-signers-required script")
 	scriptCreateCommand.Flags().
@@ -199,7 +203,7 @@ Examples:
 	scriptAddressCommand.Flags().
 		StringVar(&scriptFile, "script", "", "Path to script file (required)")
 	scriptAddressCommand.Flags().
-		StringVar(&network, "network", "mainnet", "Network name (mainnet, testnet, etc.)")
+		StringVar(&network, "network", "mainnet", networkFlagUsage)
 
 	if err := scriptAddressCommand.MarkFlagRequired("script"); err != nil {
 		panic(err)

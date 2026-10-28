@@ -81,8 +81,8 @@ func remap(src map[string]any, dst any) error {
 }
 
 // keyTypeFromEnvelope is a package-local alias for backend.KeyTypeFromEnvelope.
-func keyTypeFromEnvelope(envelopeType string) backend.KeyType {
-	return backend.KeyTypeFromEnvelope(envelopeType)
+func keyTypeFromEnvelope(envelopeType, description string) backend.KeyType {
+	return backend.KeyTypeFromEnvelope(envelopeType, description)
 }
 
 // sopsDecrypt is a seam over sops.Decrypt so wiring tests can inject a fake.
@@ -139,7 +139,7 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 				if err != nil {
 					return nil, fmt.Errorf("load key %q: %w", e.Name(), err)
 				}
-				kt := keyTypeFromEnvelope(lk.Type)
+				kt := keyTypeFromEnvelope(lk.Type, lk.Description)
 				if _, err := b.AddKey(lk, kt); err != nil {
 					return nil, fmt.Errorf("add key %q: %w", e.Name(), err)
 				}

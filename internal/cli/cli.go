@@ -35,6 +35,7 @@ import (
 	"github.com/blinklabs-io/bursa/bip32"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	networkutil "github.com/blinklabs-io/bursa/internal/network"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/btcsuite/btcd/btcutil/bech32"
@@ -2024,9 +2025,10 @@ func RunScriptCreate(
 	if len(keyHashes) == 0 {
 		return errors.New("must provide at least one key hash")
 	}
-	if timelockBefore > 0 && timelockAfter > 0 {
+	if timelockBefore > 0 && timelockAfter > 0 &&
+		timelockAfter >= timelockBefore {
 		return errors.New(
-			"cannot specify both --timelock-before and --timelock-after",
+			"--timelock-after must be less than --timelock-before",
 		)
 	}
 
@@ -2075,16 +2077,23 @@ func RunScriptCreate(
 	}
 
 	// Apply timelock if specified
-	if timelockBefore > 0 {
+	switch {
+	case timelockBefore > 0 && timelockAfter > 0:
+		var afterScript, beforeScript *bursa.NativeScript
+		afterScript, err = bursa.NewScriptAfter(timelockAfter)
+		if err == nil {
+			beforeScript, err = bursa.NewScriptBefore(timelockBefore)
+		}
+		if err == nil {
+			script, err = bursa.NewScriptAll(afterScript, beforeScript, script)
+		}
+	case timelockBefore > 0:
 		script, err = bursa.NewTimelockedScript(timelockBefore, true, script)
-		if err != nil {
-			return fmt.Errorf("failed to create timelocked script: %w", err)
-		}
-	} else if timelockAfter > 0 {
+	case timelockAfter > 0:
 		script, err = bursa.NewTimelockedScript(timelockAfter, false, script)
-		if err != nil {
-			return fmt.Errorf("failed to create timelocked script: %w", err)
-		}
+	}
+	if err != nil {
+		return fmt.Errorf("failed to create timelocked script: %w", err)
 	}
 
 	// Marshal script data
@@ -2093,9 +2102,9 @@ func RunScriptCreate(
 		return fmt.Errorf("failed to marshal script: %w", err)
 	}
 
-	// Output the script
+	// The output file holds only the script, in the cardano-cli simple-script
+	// format; the address and hash are reported on stdout.
 	if output != "" {
-		// Write to file
 		file, err := os.Create(output)
 		if err != nil {
 			return fmt.Errorf(
@@ -2112,18 +2121,17 @@ func RunScriptCreate(
 
 		encoder := json.NewEncoder(file)
 		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(scriptData); err != nil {
+		if err := encoder.Encode(scriptData.Script); err != nil {
 			return fmt.Errorf("failed to write script to file: %w", err)
 		}
 
 		logger.Info("script written to file", "file", output)
-	} else {
-		// Print to stdout
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(scriptData); err != nil {
-			return fmt.Errorf("failed to encode script: %w", err)
-		}
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(scriptData); err != nil {
+		return fmt.Errorf("failed to encode script: %w", err)
 	}
 
 	return nil
@@ -2193,7 +2201,7 @@ func RunScriptValidate(
 	logger := logging.GetLogger()
 
 	// Read script file
-	file, err := os.Open(scriptFile)
+	fileData, err := os.ReadFile(scriptFile)
 	if err != nil {
 		logger.Error(
 			"failed to open script file",
@@ -2204,16 +2212,15 @@ func RunScriptValidate(
 		)
 		os.Exit(1)
 	}
-	defer file.Close()
 
-	var scriptData bursa.ScriptData
-	if err := json.NewDecoder(file).Decode(&scriptData); err != nil {
+	scriptData, err := bursa.ParseScriptFile(fileData)
+	if err != nil {
 		logger.Error("failed to parse script file", "error", err)
 		os.Exit(1)
 	}
 
 	// Unmarshal script
-	script, err := bursa.UnmarshalScript(&scriptData)
+	script, err := bursa.UnmarshalScript(scriptData)
 	if err != nil {
 		logger.Error("failed to unmarshal script", "error", err)
 		os.Exit(1)
@@ -2342,18 +2349,9 @@ func RunScriptValidate(
 
 // RunAddressBuild builds a Cardano address from verification keys
 func RunAddressBuild(paymentKey, stakeKey, network, addrType string) error {
-	// Validate network
-	var networkId uint8
-	switch network {
-	case "mainnet":
-		networkId = lcommon.AddressNetworkMainnet
-	case "testnet":
-		networkId = lcommon.AddressNetworkTestnet
-	default:
-		return fmt.Errorf(
-			"invalid network: %s (must be mainnet or testnet)",
-			network,
-		)
+	networkId, ok := networkutil.AddressID(network)
+	if !ok {
+		return fmt.Errorf("invalid network: %s", network)
 	}
 
 	// Parse keys based on address type
@@ -2431,18 +2429,9 @@ func RunAddressBuild(paymentKey, stakeKey, network, addrType string) error {
 
 // RunAddressEnterprise generates an enterprise address from a payment key
 func RunAddressEnterprise(paymentKey, paymentKeyFile, network string) error {
-	// Validate network
-	var networkId uint8
-	switch network {
-	case "mainnet":
-		networkId = lcommon.AddressNetworkMainnet
-	case "testnet":
-		networkId = lcommon.AddressNetworkTestnet
-	default:
-		return fmt.Errorf(
-			"invalid network: %s (must be mainnet or testnet)",
-			network,
-		)
+	networkId, ok := networkutil.AddressID(network)
+	if !ok {
+		return fmt.Errorf("invalid network: %s", network)
 	}
 
 	// Load payment key
@@ -2693,7 +2682,7 @@ func RunScriptAddress(scriptFile, network string) {
 	logger := logging.GetLogger()
 
 	// Read script file
-	file, err := os.Open(scriptFile)
+	fileData, err := os.ReadFile(scriptFile)
 	if err != nil {
 		logger.Error(
 			"failed to open script file",
@@ -2704,16 +2693,15 @@ func RunScriptAddress(scriptFile, network string) {
 		)
 		os.Exit(1)
 	}
-	defer file.Close()
 
-	var scriptData bursa.ScriptData
-	if err := json.NewDecoder(file).Decode(&scriptData); err != nil {
+	scriptData, err := bursa.ParseScriptFile(fileData)
+	if err != nil {
 		logger.Error("failed to parse script file", "error", err)
 		os.Exit(1)
 	}
 
 	// Unmarshal script
-	script, err := bursa.UnmarshalScript(&scriptData)
+	script, err := bursa.UnmarshalScript(scriptData)
 	if err != nil {
 		logger.Error("failed to unmarshal script", "error", err)
 		os.Exit(1)

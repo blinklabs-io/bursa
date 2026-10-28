@@ -190,6 +190,10 @@ type Config struct {
 	// default location by an earlier run is moved here when this directory does
 	// not exist yet.
 	NodeDataDir string
+	// ContactsPersistenceDisabled keeps the address book in memory and refuses
+	// mutations. Mobile platforms set it when they cannot guarantee that the
+	// wallet data directory is excluded from device backups.
+	ContactsPersistenceDisabled bool
 	// Addr is the control-surface listen address. Use "127.0.0.1:8090" for the
 	// fixed desktop port or "127.0.0.1:0" to let the OS assign a free loopback
 	// port (mobile); the bound port is reported by App.Addr after Start.
@@ -311,10 +315,14 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// The address book is local-only, per-instance storage. It is non-essential:
 	// a corrupt contacts file should not brick startup, so boot with an empty
 	// in-memory book and leave the bad file untouched for manual recovery.
-	contactsStore, contactsWarn := contacts.LoadOrEmpty(filepath.Join(cfg.DataDir, "contacts.json"))
-	if contactsWarn != nil {
-		logger.Warn("address book could not be loaded; continuing with an empty one",
-			"error", contactsWarn)
+	contactsStore := contacts.NewPersistenceDisabled()
+	if !cfg.ContactsPersistenceDisabled {
+		var contactsWarn error
+		contactsStore, contactsWarn = contacts.LoadOrEmpty(filepath.Join(cfg.DataDir, "contacts.json"))
+		if contactsWarn != nil {
+			logger.Warn("address book could not be loaded; continuing with an empty one",
+				"error", contactsWarn)
+		}
 	}
 
 	nodeDataDir, err := prepareNodeDataDir(cfg.DataDir, cfg.NodeDataDir, logger)
