@@ -47,6 +47,7 @@ type FakeChain struct {
 	UtxosMap         map[string][]UTxO
 	PpFee            *bursa.ProtocolParams
 	PpExtra          *ProtocolParametersExtra
+	PpErr            error
 	SlotVal          uint64
 	PoolRegistered   map[string]bool
 	SubmitErr        error
@@ -70,6 +71,9 @@ func (f *FakeChain) GetUTxOs(ctx context.Context, address string) ([]UTxO, error
 }
 
 func (f *FakeChain) GetProtocolParameters(ctx context.Context) (*bursa.ProtocolParams, *ProtocolParametersExtra, error) {
+	if f.PpErr != nil {
+		return nil, nil, f.PpErr
+	}
 	return f.PpFee, f.PpExtra, nil
 }
 
