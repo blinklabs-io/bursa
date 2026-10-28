@@ -30,15 +30,60 @@ import (
 	"github.com/blinklabs-io/gouroboros/ledger/shelley"
 )
 
+// N2CChain queries and submits through a node's local socket. Between Open
+// and Close every query shares one connection, whose local state query
+// client stays acquired on one ledger state, so a build sees UTxOs, protocol
+// parameters, pool registrations and the slot from the same tip.
 type N2CChain struct {
 	socketPath string
 	network    string
 	conn       *ouroboros.Connection
-	era        uint16 // store era if needed
+	stop       func() bool
 }
 
 func NewN2C(socketPath, network string) *N2CChain {
 	return &N2CChain{socketPath: socketPath, network: network}
+}
+
+// Open dials the node and keeps the connection for the following queries.
+// The connection is closed when ctx ends, which unblocks a query the node
+// never answers.
+func (n *N2CChain) Open(ctx context.Context) error {
+	if n.conn != nil {
+		return errors.New("n2c: already open")
+	}
+	conn, err := n.dial(ctx)
+	if err != nil {
+		return err
+	}
+	n.conn = conn
+	n.stop = context.AfterFunc(ctx, func() { _ = conn.Close() })
+	return nil
+}
+
+// Close closes a connection made by Open.
+func (n *N2CChain) Close() error {
+	if n.conn == nil {
+		return nil
+	}
+	n.stop()
+	err := n.conn.Close()
+	n.conn, n.stop = nil, nil
+	return err
+}
+
+// session returns the open connection, or dials one for a single call when
+// Open was not used.
+func (n *N2CChain) session(ctx context.Context) (*ouroboros.Connection, func(), error) {
+	if n.conn != nil {
+		return n.conn, func() {}, nil
+	}
+	conn, err := n.dial(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	return conn, func() { stop(); _ = conn.Close() }, nil
 }
 
 func (n *N2CChain) networkMagic() (uint32, error) {
@@ -103,11 +148,11 @@ func (n *N2CChain) dial(ctx context.Context) (*ouroboros.Connection, error) {
 }
 
 func (n *N2CChain) GetUTxOs(ctx context.Context, address string) ([]UTxO, error) {
-	conn, err := n.dial(ctx)
+	conn, release, err := n.session(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	addr, err := lcommon.NewAddress(address)
 	if err != nil {
@@ -135,11 +180,11 @@ func (n *N2CChain) GetUTxOs(ctx context.Context, address string) ([]UTxO, error)
 }
 
 func (n *N2CChain) GetProtocolParameters(ctx context.Context) (*bursa.ProtocolParams, *ProtocolParametersExtra, error) {
-	conn, err := n.dial(ctx)
+	conn, release, err := n.session(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	pp, err := conn.LocalStateQuery().Client.GetCurrentProtocolParams()
 	if err != nil {
@@ -194,11 +239,11 @@ func (n *N2CChain) GetProtocolParameters(ctx context.Context) (*bursa.ProtocolPa
 }
 
 func (n *N2CChain) GetSlot(ctx context.Context) (uint64, error) {
-	conn, err := n.dial(ctx)
+	conn, release, err := n.session(ctx)
 	if err != nil {
 		return 0, err
 	}
-	defer conn.Close()
+	defer release()
 	pt, err := conn.LocalStateQuery().Client.GetChainPoint()
 	if err != nil {
 		return 0, err
@@ -210,11 +255,11 @@ func (n *N2CChain) GetSlot(ctx context.Context) (uint64, error) {
 }
 
 func (n *N2CChain) GetPoolRegistration(ctx context.Context, poolKeyHash []byte) (bool, error) {
-	conn, err := n.dial(ctx)
+	conn, release, err := n.session(ctx)
 	if err != nil {
 		return false, err
 	}
-	defer conn.Close()
+	defer release()
 	poolId := lcommon.PoolId(poolKeyHash)
 	params, err := conn.LocalStateQuery().Client.GetStakePoolParams([]lcommon.PoolId{poolId})
 	if err != nil {
@@ -229,11 +274,11 @@ func (n *N2CChain) GetPoolRegistration(ctx context.Context, poolKeyHash []byte) 
 }
 
 func (n *N2CChain) SubmitTx(ctx context.Context, tx []byte) error {
-	conn, err := n.dial(ctx)
+	conn, release, err := n.session(ctx)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 	if err := conn.LocalTxSubmission().Client.SubmitTx(uint16(ledger.TxTypeConway), tx); err != nil {
 		return err
 	}

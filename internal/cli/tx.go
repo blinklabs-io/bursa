@@ -209,6 +209,10 @@ func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []st
 		defer cancel()
 	}
 	chain := txbuilder.NewN2C(socketPath, network)
+	if err := chain.Open(ctx); err != nil {
+		return err
+	}
+	defer chain.Close()
 	built, err := txbuilder.Build(ctx, chain, txbuilder.BuildOptions{
 		ChangeAddress:    changeAddress,
 		CertificateFiles: certificateFiles,
