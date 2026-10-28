@@ -95,7 +95,7 @@ func TestTxDecodeMinFeeWitnessEstimate(t *testing.T) {
 		{
 			name:        "additional bootstrap witnesses",
 			args:        []string{"--byron-witness-count", "2"},
-			addedBytes:  5 + 2*136,
+			addedBytes:  5 + 2*144,
 			witnessNote: "2 additional bootstrap witnesses",
 		},
 	} {

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"math/bits"
 	"strings"
@@ -140,8 +141,10 @@ const MaxEstimatedWitnesses = 1 << 16
 // result includes the witness-set map key, the tag-258 set framing used from
 // Conway on, array header growth, and any witnesses already present. The era is
 // inferred from the CBOR; CBOR that is also valid before Conway is treated as
-// Conway, which can only overstate the size. Bootstrap witnesses are sized with
-// empty address attributes.
+// Conway, which can only overstate the size. Bootstrap witnesses carry the Byron
+// address attributes of a testnet address with the largest network magic, as in
+// the ledger's estimateMinFeeTx: 144 bytes each, 7 more than a mainnet witness
+// needs. A legacy derivation-path attribute is not counted.
 func EstimateWitnessedTxSize(txCbor []byte, vkeyCount, bootstrapCount uint) (int, error) {
 	if vkeyCount > MaxEstimatedWitnesses || bootstrapCount > MaxEstimatedWitnesses {
 		return 0, fmt.Errorf("witness count exceeds %d", MaxEstimatedWitnesses)
@@ -167,6 +170,13 @@ func EstimateWitnessedTxSize(txCbor []byte, vkeyCount, bootstrapCount uint) (int
 		}
 	}
 	useTag := useTagForTxType(txType)
+	maxNetworkMagic := uint32(math.MaxUint32)
+	bootstrapAttributes, err := lcommon.ByronAddressAttributes{
+		Network: &maxNetworkMagic,
+	}.MarshalCBOR()
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode placeholder address attributes: %w", err)
+	}
 	for _, add := range []struct {
 		key         uint64
 		count       uint
@@ -187,7 +197,7 @@ func EstimateWitnessedTxSize(txCbor []byte, vkeyCount, bootstrapCount uint) (int
 				PublicKey:  make([]byte, ed25519.PublicKeySize),
 				Signature:  make([]byte, ed25519.SignatureSize),
 				ChainCode:  make([]byte, 32),
-				Attributes: []byte{},
+				Attributes: bootstrapAttributes,
 			},
 		},
 	} {
