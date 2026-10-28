@@ -2560,6 +2560,8 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 	case errors.Is(err, contacts.ErrNotFound),
 		errors.Is(err, spend.ErrUnknownPending), errors.Is(err, multisig.ErrUnknownAccount):
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
+	case errors.Is(err, contacts.ErrPersistenceUnavailable):
+		writeJSON(w, http.StatusServiceUnavailable, errBody(err))
 	case errors.Is(err, spend.ErrExpiredPending):
 		writeJSON(w, http.StatusGone, errBody(err)) // 410
 	case errors.Is(err, spend.ErrInsufficientFunds), errors.Is(err, spend.ErrSubmitRejected),

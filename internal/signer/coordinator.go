@@ -120,7 +120,11 @@ func New(deps Deps) *Coordinator {
 	}
 	if deps.WMMode != watermark.ModeOff && deps.Watermark == nil {
 		deps.Logger.Warn("watermark mode requires a store; using in-memory watermark")
-		deps.Watermark = watermark.NewMemWatermark()
+		if deps.WMMode == watermark.ModeWarn {
+			deps.Watermark = watermark.NewWarningMemWatermark()
+		} else {
+			deps.Watermark = watermark.NewMemWatermark()
+		}
 	}
 	return &Coordinator{deps: deps}
 }
