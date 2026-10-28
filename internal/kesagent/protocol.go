@@ -94,6 +94,8 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/blinklabs-io/bursa/internal/kesagent/securemem"
 )
 
 const (
@@ -198,6 +200,7 @@ func writeFrame(w deadlineWriter, v any) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("kesagent: marshal frame: %w", err)
 	}
+	defer securemem.Wipe(payload)
 	if len(payload) > maxFrameLen {
 		return fmt.Errorf("kesagent: frame too large (%d bytes)", len(payload))
 	}
