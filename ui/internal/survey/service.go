@@ -551,13 +551,17 @@ func (s *Service) observe(ctx context.Context, entries []entry, k *known, cl clk
 			}
 		}
 		eligible, err := s.chain.SurveyRoleSnapshot(ctx, k.def.EndEpoch, claims)
-		if err != nil {
+		unavailable := errors.Is(err, chain.ErrSurveySnapshotUnavailable)
+		if err != nil && !unavailable {
 			return nil, err
 		}
 		for claim := range seen {
-			if claim.Role == chain.SurveyRoleCC {
+			switch {
+			case claim.Role == chain.SurveyRoleCC,
+				unavailable && claim.Role != chain.SurveyRoleKeyholder:
 				verified[identityFromSnapshotClaim(claim)] = "role cannot be verified against ledger state"
-			} else if !eligible[claim] {
+			case unavailable:
+			case !eligible[claim]:
 				verified[identityFromSnapshotClaim(claim)] = "credential did not hold the claimed role at the survey snapshot"
 			}
 		}

@@ -33,6 +33,17 @@ type SurveyRoleClaim struct {
 	Credential    [28]byte
 }
 
+// ErrSurveySnapshotUnavailable marks a survey role snapshot that cannot be
+// produced from the ledger state on hand and will not become available by
+// retrying: the mark snapshot is absent, incomplete, or does not belong to the
+// survey's end epoch. A snapshot that is still being written is not wrapped
+// in it.
+var ErrSurveySnapshotUnavailable = errors.New("survey role snapshot unavailable")
+
+func surveySnapshotUnavailable(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrSurveySnapshotUnavailable, fmt.Sprintf(format, args...))
+}
+
 type surveySnapshot struct {
 	epoch           uint64
 	ledgerEpoch     uint64
@@ -103,8 +114,8 @@ func (c *Client) SurveyRoleSnapshot(
 		return nil, err
 	}
 	if snapshot.ledgerEpoch != endEpoch {
-		return nil, fmt.Errorf(
-			"survey role snapshot epoch mismatch: captured epoch %d, survey end epoch %d",
+		return nil, surveySnapshotUnavailable(
+			"epoch mismatch: captured epoch %d, survey end epoch %d",
 			snapshot.ledgerEpoch,
 			endEpoch,
 		)
@@ -172,14 +183,14 @@ WHERE snapshot.epoch = ? AND snapshot.snapshot_type = 'mark'
 		&snapshot.totalDelegators,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return surveySnapshot{}, fmt.Errorf("survey role snapshot: authoritative mark snapshot for epoch %d is unavailable", epoch)
+		return surveySnapshot{}, surveySnapshotUnavailable("authoritative mark snapshot for epoch %d is missing", epoch)
 	}
 	if err != nil {
 		return surveySnapshot{}, fmt.Errorf("read survey role snapshot for epoch %d: %w", epoch, err)
 	}
 	if snapshot.capturedSlot == math.MaxUint64 ||
 		snapshot.boundarySlot != snapshot.capturedSlot+1 {
-		return surveySnapshot{}, fmt.Errorf("survey role snapshot for epoch %d has invalid slot boundary", epoch)
+		return surveySnapshot{}, surveySnapshotUnavailable("epoch %d has invalid slot boundary", epoch)
 	}
 	var epochID, startSlot, length int64
 	err = tx.QueryRowContext(ctx, `
@@ -189,7 +200,7 @@ WHERE start_slot <= ?
 ORDER BY start_slot DESC
 LIMIT 1`, snapshot.capturedSlot).Scan(&epochID, &startSlot, &length)
 	if errors.Is(err, sql.ErrNoRows) {
-		return surveySnapshot{}, fmt.Errorf("survey role snapshot for epoch %d has no containing epoch", epoch)
+		return surveySnapshot{}, surveySnapshotUnavailable("epoch %d has no containing epoch", epoch)
 	}
 	if err != nil {
 		return surveySnapshot{}, fmt.Errorf("read survey snapshot epoch: %w", err)
@@ -197,7 +208,7 @@ LIMIT 1`, snapshot.capturedSlot).Scan(&epochID, &startSlot, &length)
 	if epochID < 0 || startSlot < 0 || length <= 0 ||
 		startSlot > math.MaxInt64-length ||
 		snapshot.capturedSlot >= uint64(startSlot+length) {
-		return surveySnapshot{}, fmt.Errorf("survey role snapshot for epoch %d has invalid containing epoch", epoch)
+		return surveySnapshot{}, surveySnapshotUnavailable("epoch %d has invalid containing epoch", epoch)
 	}
 	snapshot.ledgerEpoch = uint64(epochID)
 	return snapshot, nil
@@ -241,7 +252,7 @@ WHERE epoch = ?`, snapshot.capturedSlot, snapshot.boundarySlot, snapshot.epoch).
 		return fmt.Errorf("verify survey stake snapshot for epoch %d: %w", snapshot.epoch, err)
 	}
 	if mismatched != 0 || count != snapshot.totalDelegators {
-		return fmt.Errorf("survey stake snapshot for epoch %d is incomplete", snapshot.epoch)
+		return surveySnapshotUnavailable("stake snapshot for epoch %d is incomplete", snapshot.epoch)
 	}
 	return nil
 }
@@ -295,32 +306,6 @@ func surveyDRepAtSlot(
 	slot uint64,
 	claim SurveyRoleClaim,
 ) (bool, error) {
-	var addedSlot uint64
-	var active bool
-	err := tx.QueryRowContext(ctx, `
-SELECT COALESCE(added_slot, 0), COALESCE(active, FALSE)
-FROM drep
-WHERE credential_tag = ? AND credential = ?`,
-		claim.CredentialTag,
-		claim.Credential[:],
-	).Scan(&addedSlot, &active)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read survey DRep candidate: %w", err)
-	}
-	var renewed bool
-	if err := tx.QueryRowContext(ctx, `
-SELECT EXISTS (
-    SELECT 1 FROM drep_expiry_history
-    WHERE credential_tag = ? AND credential = ? AND added_slot > ?
-)`, claim.CredentialTag, claim.Credential[:], slot).Scan(&renewed); err != nil {
-		return false, fmt.Errorf("read survey DRep expiry history: %w", err)
-	}
-	if addedSlot <= slot && !renewed {
-		return active, nil
-	}
 	registration, registered, err := latestSurveyDRepEvent(
 		ctx, tx, "registration_drep", claim, slot,
 	)

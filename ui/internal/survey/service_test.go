@@ -454,6 +454,25 @@ func TestGetFailsWhenTheNodeCannotVerify(t *testing.T) {
 	}
 }
 
+func TestGetMarksRolesUnverifiableWhenSnapshotIsPermanentlyUnavailable(t *testing.T) {
+	t.Parallel()
+	f := newFakeChain()
+	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(1, 45, RoleDRep, RoleKeyholder)), credHex(1))
+	f.add(t, 0xd1, 110, 0, 41, respPayload(respond(ref(0xa1, 0), RoleDRep, 10, 0)), credHex(10))
+	f.add(t, 0xd2, 111, 0, 41, respPayload(respond(ref(0xa1, 0), RoleKeyholder, 11, 0)), credHex(11))
+	f.roleErr = fmt.Errorf("%w: epoch mismatch", chain.ErrSurveySnapshotUnavailable)
+
+	got, err := NewService(f, "preview").Get(context.Background(), surveyID(0xa1, 0))
+	noErr(t, err)
+	r := reasons(*got.Tally)
+	if r[txHash(0xd1)] == "" {
+		t.Error("DRep response must be excluded as unverifiable")
+	}
+	if r[txHash(0xd2)] != "" {
+		t.Errorf("keyholder response excluded: %s", r[txHash(0xd2)])
+	}
+}
+
 func TestGetCancelledSurveyIsNotTallied(t *testing.T) {
 	t.Parallel()
 	f := newFakeChain()
