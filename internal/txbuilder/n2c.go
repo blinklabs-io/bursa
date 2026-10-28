@@ -17,16 +17,14 @@ package txbuilder
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/blinklabs-io/bursa"
 	ouroboros "github.com/blinklabs-io/gouroboros"
-	"github.com/blinklabs-io/gouroboros/ledger"
-	"github.com/blinklabs-io/gouroboros/ledger/babbage"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/blinklabs-io/gouroboros/ledger/conway"
-	"github.com/blinklabs-io/gouroboros/ledger/dijkstra"
 	"github.com/blinklabs-io/gouroboros/ledger/shelley"
 )
 
@@ -87,24 +85,22 @@ func (n *N2CChain) session(ctx context.Context) (*ouroboros.Connection, func(), 
 }
 
 func (n *N2CChain) networkMagic() (uint32, error) {
-	const mainnetMagic = 764824073
-	if n.network == "" {
-		return mainnetMagic, nil
+	return networkMagic(n.network)
+}
+
+// networkMagic resolves a network name or a numeric magic. There is no
+// default: a missing or unknown network is an error.
+func networkMagic(network string) (uint32, error) {
+	if network == "" {
+		return 0, errors.New("network required")
 	}
-	if m, err := strconv.ParseUint(n.network, 10, 32); err == nil {
+	if m, err := strconv.ParseUint(network, 10, 32); err == nil {
 		return uint32(m), nil
 	}
-	if netw, ok := ouroboros.NetworkByName(n.network); ok {
+	if netw, ok := ouroboros.NetworkByName(network); ok {
 		return netw.NetworkMagic, nil
 	}
-	if strings.EqualFold(n.network, "testnet") || n.network == "preprod" || n.network == "preview" || n.network == "sanchonet" {
-		if netw, ok := ouroboros.NetworkByName(n.network); ok {
-			return netw.NetworkMagic, nil
-		}
-		// Try common names
-	}
-	// Unknown network name is an error, never default to mainnet
-	return 0, errors.New("unknown network")
+	return 0, fmt.Errorf("unknown network %q", network)
 }
 
 func (n *N2CChain) dial(ctx context.Context) (*ouroboros.Connection, error) {
@@ -125,10 +121,8 @@ func (n *N2CChain) dial(ctx context.Context) (*ouroboros.Connection, error) {
 	var dialErr error
 	done := make(chan error, 1)
 	go func() {
-		// socketPath may be a UNIX socket path (contains "/") or a host:port for a proxy.
-		if strings.Contains(n.socketPath, "/") {
-			dialErr = conn.Dial("unix", n.socketPath)
-		} else if strings.Contains(n.socketPath, ":") {
+		// socketPath is a UNIX socket path, or host:port for a socket proxy.
+		if strings.Contains(n.socketPath, ":") && !strings.Contains(n.socketPath, "/") {
 			dialErr = conn.Dial("tcp", n.socketPath)
 		} else {
 			dialErr = conn.Dial("unix", n.socketPath)
@@ -190,52 +184,27 @@ func (n *N2CChain) GetProtocolParameters(ctx context.Context) (*bursa.ProtocolPa
 	if err != nil {
 		return nil, nil, err
 	}
+	return conwayParams(pp)
+}
 
-	switch p := pp.(type) {
-	case *conway.ConwayProtocolParameters:
-		feeA := uint64(p.MinFeeA)
-		feeB := uint64(p.MinFeeB)
-		extra := &ProtocolParametersExtra{
-			MinFeeA:          feeA,
-			MinFeeB:          feeB,
-			KeyDeposit:       uint64(p.KeyDeposit),
-			PoolDeposit:      uint64(p.PoolDeposit),
-			MaxTxSize:        uint64(p.MaxTxSize),
-			CoinsPerUTxOByte: p.AdaPerUtxoByte,
-		}
-		return &bursa.ProtocolParams{
-			TxFeePerByte: feeA,
-			TxFeeFixed:   feeB,
-		}, extra, nil
-	case *dijkstra.DijkstraProtocolParameters:
-		feeA := uint64(p.MinFeeA)
-		feeB := uint64(p.MinFeeB)
-		extra := &ProtocolParametersExtra{
-			MinFeeA:          feeA,
-			MinFeeB:          feeB,
-			KeyDeposit:       uint64(p.KeyDeposit),
-			PoolDeposit:      uint64(p.PoolDeposit),
-			MaxTxSize:        uint64(p.MaxTxSize),
-			CoinsPerUTxOByte: p.AdaPerUtxoByte,
-		}
-		return &bursa.ProtocolParams{
-			TxFeePerByte: feeA,
-			TxFeeFixed:   feeB,
-		}, extra, nil
-	case *babbage.BabbageProtocolParameters:
-		feeA := uint64(p.MinFeeA)
-		feeB := uint64(p.MinFeeB)
-		extra := &ProtocolParametersExtra{
-			MinFeeA:          feeA,
-			MinFeeB:          feeB,
-			KeyDeposit:       uint64(p.KeyDeposit),
-			PoolDeposit:      uint64(p.PoolDeposit),
-			MaxTxSize:        uint64(p.MaxTxSize),
-			CoinsPerUTxOByte: p.AdaPerUtxoByte,
-		}
-		return &bursa.ProtocolParams{TxFeePerByte: feeA, TxFeeFixed: feeB}, extra, nil
+// conwayParams converts the node's current protocol parameters. Build only
+// produces Conway transactions, so a node in any other era is an error.
+func conwayParams(pp any) (*bursa.ProtocolParams, *ProtocolParametersExtra, error) {
+	p, ok := pp.(*conway.ConwayProtocolParameters)
+	if !ok {
+		return nil, nil, fmt.Errorf("node is not in the Conway era (protocol parameters %T)", pp)
 	}
-	return nil, nil, errors.New("unsupported protocol parameters era")
+	feeA := uint64(p.MinFeeA)
+	feeB := uint64(p.MinFeeB)
+	return &bursa.ProtocolParams{TxFeePerByte: feeA, TxFeeFixed: feeB},
+		&ProtocolParametersExtra{
+			MinFeeA:          feeA,
+			MinFeeB:          feeB,
+			KeyDeposit:       uint64(p.KeyDeposit),
+			PoolDeposit:      uint64(p.PoolDeposit),
+			MaxTxSize:        uint64(p.MaxTxSize),
+			CoinsPerUTxOByte: p.AdaPerUtxoByte,
+		}, nil
 }
 
 func (n *N2CChain) GetSlot(ctx context.Context) (uint64, error) {
@@ -279,7 +248,7 @@ func (n *N2CChain) SubmitTx(ctx context.Context, tx []byte) error {
 		return err
 	}
 	defer release()
-	if err := conn.LocalTxSubmission().Client.SubmitTx(uint16(ledger.TxTypeConway), tx); err != nil {
+	if err := conn.LocalTxSubmission().Client.SubmitTx(conway.EraIdConway, tx); err != nil {
 		return err
 	}
 	return nil
