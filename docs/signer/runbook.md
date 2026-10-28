@@ -229,7 +229,10 @@ addition to ordinary outputs and the fee.
 regressions.
 
 - `type: mem` - in-memory, non-durable (lost on restart). Default type, but
-  refused unless `mode` is `warn` or `off`.
+  refused unless `mode` is `warn` or `off`. Warning mode retains the latest
+  65,536 transaction watermark scopes in FIFO order; older scopes are evicted.
+  This bound affects warning records only. Enforced watermarks use a durable,
+  non-evicting store.
 - `type: file` - SQLite file at `path`, durable across restarts (single process).
 - `type: postgres` - durable store shared by every replica; the HA-safe option.
   The connection string is set via `dsn_env` (an env var name, keeping

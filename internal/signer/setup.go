@@ -318,6 +318,9 @@ func BuildWatermark(ctx context.Context, c config.SignerWatermarkConfig) (waterm
 				mode,
 			)
 		}
+		if mode == watermark.ModeWarn {
+			return watermark.NewWarningMemWatermark(), mode, nil
+		}
 		return watermark.NewMemWatermark(), mode, nil
 	case "file":
 		if c.Path == "" {
