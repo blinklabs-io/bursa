@@ -351,6 +351,14 @@ export const poolBuildRetirementCert = (req: PoolBuildRetirementCertRequest) =>
   apiPost<PoolCertResult>("/wallet/pool/retirement/cert", req);
 export const poolSubmitRetirement = (req: { password: string; epoch: number }) =>
   apiPost<TxResult>("/wallet/pool/retirement/submit", req);
+export const poolSubmitVote = (req: {
+  password: string;
+  action_tx_id: string;
+  action_index: number;
+  vote: "yes" | "no" | "abstain";
+  anchor_url?: string;
+  anchor_hash?: string;
+}) => apiPost<TxResult>("/wallet/pool/vote", req);
 
 // TPM vault binding.
 export const getTPMStatus = () => apiGet<TPMStatus>("/vault/tpm/status");
