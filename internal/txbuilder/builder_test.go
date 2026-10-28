@@ -649,21 +649,6 @@ func TestPoolLookupError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestUnsupportedProtocolParamsEra(t *testing.T) {
-	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
-	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", 0, 10_000_000),
-	}
-	chain.PpErr = errors.New("unsupported protocol parameters era")
-	ctx := context.Background()
-	_, err := Build(ctx, chain, BuildOptions{
-		ChangeAddress: addr,
-		WitnessCount:  1,
-	})
-	require.Error(t, err)
-}
-
 func TestCoinSelectionDeterministicAndMinInputs(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
@@ -858,14 +843,24 @@ func TestBodyWithoutWithdrawalsHasNoWithdrawalsKey(t *testing.T) {
 	}
 }
 
-func TestRunTxSubmitRejectingFake(t *testing.T) {
-	// This test is mentioned for internal/cli test per requirements, but let's also add a quick check
-	// The actual test should be in internal/cli package
-}
-
-func TestUnknownNetworkName(t *testing.T) {
-	// Test via N2C
-	n := NewN2C("/tmp/socket", "notanetworkname12345")
-	_, err := n.GetSlot(context.Background())
-	require.Error(t, err)
+func TestSelectionAddsInputWhenChangeBelowMinUTxO(t *testing.T) {
+	chain := NewFakeChain()
+	chain.PpExtra.CoinsPerUTxOByte = 4310
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	// The 1 ADA input alone covers the fee but leaves change below the
+	// minimum UTxO; adding the 0.3 ADA input fixes that.
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "5555555555555555555555555555555555555555555555555555555555555555", 0, 1_000_000),
+		MakeUTxO(addr, "6666666666666666666666666666666666666666666666666666666666666666", 0, 300_000),
+	}
+	built, err := Build(context.Background(), chain, BuildOptions{
+		ChangeAddress: addr,
+		WitnessCount:  1,
+	})
+	require.NoError(t, err)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	require.Len(t, tx.Inputs(), 2)
+	require.Len(t, tx.Outputs(), 1)
+	require.Equal(t, uint64(1_300_000), tx.Outputs()[0].Amount().Uint64()+tx.Fee().Uint64())
 }

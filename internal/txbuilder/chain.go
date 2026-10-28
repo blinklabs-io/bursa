@@ -27,13 +27,12 @@ type UTxO struct {
 }
 
 type ProtocolParametersExtra struct {
-	MinFeeA                  uint64
-	MinFeeB                  uint64
-	KeyDeposit               uint64
-	PoolDeposit              uint64
-	MaxTxSize                uint64
-	PoolRetirementEpochBound uint64
-	CoinsPerUTxOByte         uint64
+	MinFeeA          uint64
+	MinFeeB          uint64
+	KeyDeposit       uint64
+	PoolDeposit      uint64
+	MaxTxSize        uint64
+	CoinsPerUTxOByte uint64
 }
 
 // Chain provides the node/ledger queries and submission needed to build and submit transactions.

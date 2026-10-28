@@ -61,8 +61,6 @@ func readCertData(data []byte) ([]byte, error) {
 	return raw, nil
 }
 
-// DecodeCertificate decodes certificate CBOR bytes into a gouroboros CertificateWrapper/Certificate
-
 // ParseCertificates reads certificate files and returns the raw certificate CBOR arrays
 // in the form expected by Conway transaction body (each certificate is CBOR encoded list)
 func ParseCertificates(paths []string) ([][]byte, error) {

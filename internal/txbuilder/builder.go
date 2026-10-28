@@ -29,12 +29,16 @@ import (
 	"sort"
 )
 
+// DefaultTTLMargin is the number of slots a transaction stays valid for when
+// BuildOptions sets neither TTL nor TTLMargin.
+const DefaultTTLMargin = 3600
+
 type BuildOptions struct {
 	ChangeAddress    string
 	CertificateFiles []string
 	WitnessCount     uint
 	TTL              uint64
-	TTLMargin        uint64 // if not set, CLI will provide; builder may use default if needed? but requirement says CLI adds --ttl-margin default 3600
+	TTLMargin        uint64 // slots added to the current slot when TTL is 0
 }
 
 type BuiltTx struct {
@@ -92,25 +96,17 @@ func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *Proto
 	return deposits, refunds, nil
 }
 
-func minUTxOForOutput(out babbage.BabbageTransactionOutput, pp *ProtocolParametersExtra) uint64 {
+// minUTxO is the Babbage minimum for an output:
+// (160 + serialized output size) * coinsPerUTxOByte.
+func minUTxO(out babbage.BabbageTransactionOutput, pp *ProtocolParametersExtra) (uint64, error) {
 	if pp == nil || pp.CoinsPerUTxOByte == 0 {
-		return 0
+		return 0, nil
 	}
-	// Try to serialize the output
-	var cborBytes []byte
-	if out.Cbor() != nil && len(out.Cbor()) > 0 {
-		cborBytes = out.Cbor()
-	} else {
-		if b, err := cbor.Encode(out); err == nil {
-			cborBytes = b
-		}
+	b, err := cbor.Encode(&out)
+	if err != nil {
+		return 0, fmt.Errorf("encode change output: %w", err)
 	}
-	if len(cborBytes) == 0 {
-		return 0
-	}
-	// Babbage rule: (160 + serialized output size) * CoinsPerUTxOByte
-	size := uint64(160 + len(cborBytes))
-	return size * pp.CoinsPerUTxOByte
+	return uint64(160+len(b)) * pp.CoinsPerUTxOByte, nil
 }
 
 func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error) {
@@ -193,232 +189,135 @@ func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error
 		return utxos[i].Input.Index() < utxos[j].Input.Index()
 	})
 
-	baseBody := &conway.ConwayTransactionBody{
-		TxInputs:       conway.NewConwayTransactionInputSet([]shelley.ShelleyTransactionInput{}),
-		TxOutputs:      []babbage.BabbageTransactionOutput{},
-		TxCertificates: []common.CertificateWrapper{},
-		TxWithdrawals:  map[*common.Address]uint64{},
-	}
-
-	witnessCount := opts.WitnessCount
-	if witnessCount == 0 {
-		witnessCount = 1
+	if opts.WitnessCount == 0 {
+		return nil, errors.New("witness count required: one per key that will sign")
 	}
 
 	ttl := opts.TTL
 	if ttl == 0 {
+		margin := opts.TTLMargin
+		if margin == 0 {
+			margin = DefaultTTLMargin
+		}
 		slot, err := chain.GetSlot(ctx)
 		if err != nil {
 			return nil, err
 		}
-		margin := uint64(3600)
-		if opts.TTLMargin != 0 {
-			margin = opts.TTLMargin
-		}
 		ttl = slot + margin
 	}
-	baseBody.Ttl = ttl
 
-	// Add certificates
+	body := conway.ConwayTransactionBody{Ttl: ttl}
 	for _, c := range certBytesList {
 		var wrapper common.CertificateWrapper
 		if _, err := cbor.Decode(c, &wrapper); err != nil {
 			return nil, fmt.Errorf("decode certificate: %w", err)
 		}
-		baseBody.TxCertificates = append(baseBody.TxCertificates, wrapper)
+		body.TxCertificates = append(body.TxCertificates, wrapper)
 	}
 
-	// If no withdrawals, leave empty map or nil - must not emit empty withdrawals maps/sets in a bad form
-	// But we need to be careful about what the body encoder emits; tests say "body without withdrawals has no withdrawals key"
-	// We'll keep it nil/empty but let us see - in gouroboros, better to not set if empty? Initialize as nil is fine if we don't add.
-	baseBody.TxWithdrawals = nil
-
-	fee := uint64(200000)
-	// Coin selection: take smallest prefix that covers outputs + fee + deposits - refunds
-	// Try to build with increasing inputs
-	selected := make([]shelley.ShelleyTransactionInput, 0, len(utxos))
-	var inputSum uint64
-	for i := 0; i < len(utxos); i++ {
-		u := utxos[i]
-		selected = append(selected, shelley.ShelleyTransactionInput{
+	// Add inputs largest first until one balances with a change output at
+	// or above the minimum UTxO.
+	b := balancer{
+		body:         body,
+		changeAddr:   changeAddr,
+		witnessCount: opts.WitnessCount,
+		pp:           ppFee,
+		extra:        ppConv,
+		need:         deposits,
+		refunds:      refunds,
+	}
+	var lastErr error = errors.New("insufficient funds")
+	for _, u := range utxos {
+		b.inputs = append(b.inputs, shelley.ShelleyTransactionInput{
 			TxId:        u.Input.Id(),
 			OutputIndex: u.Input.Index(),
 		})
 		if v := u.Output.Amount(); v != nil {
-			inputSum += v.Uint64()
+			b.inputSum += v.Uint64()
 		}
-		baseBody.TxInputs = conway.NewConwayTransactionInputSet(selected)
+		txCbor, err := b.balance()
+		if err == nil {
+			return &BuiltTx{
+				TxCBOR:         txCbor,
+				TxEnvelopeType: "Unwitnessed Tx ConwayEra",
+			}, nil
+		}
+		if !errors.Is(err, errNeedMoreInput) {
+			return nil, err
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
 
-		// Estimate fee with current inputs
-		for j := 0; j < 20; j++ {
-			if inputSum < fee+deposits-refunds && !(deposits < refunds) { // handle case where refunds cover deposits? balance: inputs + refunds = outputs + fee + deposits
-				break // need more inputs
-			}
-			// check balance with this fee
-			if inputSum+refunds < fee+deposits {
-				break
-			}
-			change := inputSum + refunds - fee - deposits
-			txBody := *baseBody
-			txBody.TxFee = fee
-			txBody.TxOutputs = []babbage.BabbageTransactionOutput{
-				{
-					OutputAddress: changeAddr,
-					OutputAmount:  mary.MaryTransactionOutputValue{Amount: change},
-				},
-			}
-			draftTx := conway.ConwayTransaction{
-				Body:       txBody,
-				WitnessSet: conway.ConwayTransactionWitnessSet{},
-				TxIsValid:  true,
-			}
-			draftCbor, err := draftTx.MarshalCBOR()
-			if err != nil {
-				return nil, err
-			}
-			if len(draftCbor) == 0 {
-				return nil, errors.New("failed to marshal transaction")
-			}
-			estSize, err := bursa.EstimateWitnessedTxSize(draftCbor, witnessCount, 0)
-			if err != nil {
-				return nil, err
-			}
-			if ppConv != nil && ppConv.MaxTxSize > 0 && uint64(estSize) > ppConv.MaxTxSize {
-				return nil, errors.New("transaction too large")
-			}
-			minFee, err := bursa.MinFee(estSize, *ppFee)
-			if err != nil {
-				return nil, err
-			}
-			if minFee <= fee {
-				// Fee is sufficient
-				txBody.TxFee = minFee
-				if inputSum+refunds < minFee+deposits {
-					break // need more inputs
-				}
-				change = inputSum + refunds - minFee - deposits
-				// Check min-UTxO for change
-				changeOut := babbage.BabbageTransactionOutput{
-					OutputAddress: changeAddr,
-					OutputAmount:  mary.MaryTransactionOutputValue{Amount: change},
-				}
-				minChange := minUTxOForOutput(changeOut, ppConv)
-				if minChange > 0 && change < minChange {
-					return nil, errors.New("change below minimum UTxO: output amount too small")
-				}
-				txBody.TxOutputs = []babbage.BabbageTransactionOutput{changeOut}
-				finalTx := conway.ConwayTransaction{
-					Body:       txBody,
-					WitnessSet: conway.ConwayTransactionWitnessSet{},
-					TxIsValid:  true,
-				}
-				finalCbor, err := finalTx.MarshalCBOR()
-				if err != nil {
-					return nil, err
-				}
-				if len(finalCbor) == 0 {
-					return nil, errors.New("failed to marshal transaction")
-				}
-				// Re-encode and re-estimate; loop until the fee is stable and fee >= minFeeA * witnessedSize + minFeeB for the FINAL body
-				// Do one more check
-				estSizeFinal, err := bursa.EstimateWitnessedTxSize(finalCbor, witnessCount, 0)
-				if err != nil {
-					return nil, err
-				}
-				if ppConv != nil && ppConv.MaxTxSize > 0 && uint64(estSizeFinal) > ppConv.MaxTxSize {
-					return nil, errors.New("transaction too large")
-				}
-				minFeeFinal, err := bursa.MinFee(estSizeFinal, *ppFee)
-				if err != nil {
-					return nil, err
-				}
-				if minFeeFinal != minFee {
-					fee = minFeeFinal
-					continue // loop again
-				}
-				// Ensure fee >= minFeeA * witnessedSize + minFeeB for the FINAL body
-				if ppConv != nil {
-					computed := ppConv.MinFeeA*uint64(estSizeFinal) + ppConv.MinFeeB
-					if minFeeFinal < computed {
-						minFeeFinal = computed
-						// redo once
-					}
-				}
-				if minFeeFinal > minFee {
-					fee = minFeeFinal
-					continue
-				}
-				if minFeeFinal < minFee {
-					// should not happen
-				}
-				// Set final fee
-				txBody.TxFee = minFeeFinal
-				if inputSum+refunds < minFeeFinal+deposits {
-					break
-				}
-				change = inputSum + refunds - minFeeFinal - deposits
-				changeOut = babbage.BabbageTransactionOutput{
-					OutputAddress: changeAddr,
-					OutputAmount:  mary.MaryTransactionOutputValue{Amount: change},
-				}
-				minChange = minUTxOForOutput(changeOut, ppConv)
-				if minChange > 0 && change < minChange {
-					return nil, errors.New("change below minimum UTxO: output amount too small")
-				}
-				txBody.TxOutputs = []babbage.BabbageTransactionOutput{changeOut}
-				finalTx = conway.ConwayTransaction{
-					Body:       txBody,
-					WitnessSet: conway.ConwayTransactionWitnessSet{},
-					TxIsValid:  true,
-				}
-				finalCbor, err = finalTx.MarshalCBOR()
-				if err != nil {
-					return nil, err
-				}
-				if len(finalCbor) == 0 {
-					return nil, errors.New("failed to marshal transaction")
-				}
-				// One more stability check
-				estSizeFinal2, err := bursa.EstimateWitnessedTxSize(finalCbor, witnessCount, 0)
-				if err != nil {
-					return nil, err
-				}
-				if ppConv != nil && ppConv.MaxTxSize > 0 && uint64(estSizeFinal2) > ppConv.MaxTxSize {
-					return nil, errors.New("transaction too large")
-				}
-				minFeeFinal2, err := bursa.MinFee(estSizeFinal2, *ppFee)
-				if err != nil {
-					return nil, err
-				}
-				if minFeeFinal2 != minFeeFinal {
-					fee = minFeeFinal2
-					continue
-				}
-				if ppConv != nil {
-					computed := ppConv.MinFeeA*uint64(estSizeFinal2) + ppConv.MinFeeB
-					if minFeeFinal2 < computed {
-						fee = computed
-						continue
-					}
-				}
-				if minFeeFinal2 > minFeeFinal {
-					fee = minFeeFinal2
-					continue
-				}
-				return &BuiltTx{
-					TxCBOR:         finalCbor,
-					TxEnvelopeType: "Unwitnessed Tx ConwayEra",
-				}, nil
-			}
-			fee = minFee
+var errNeedMoreInput = errors.New("insufficient funds")
+
+// balancer sets the fee and change for a fixed set of inputs.
+type balancer struct {
+	body         conway.ConwayTransactionBody
+	changeAddr   common.Address
+	witnessCount uint
+	pp           *bursa.ProtocolParams
+	extra        *ProtocolParametersExtra
+	inputs       []shelley.ShelleyTransactionInput
+	inputSum     uint64
+	need         uint64 // deposits
+	refunds      uint64
+}
+
+// balance returns the encoded transaction once its fee covers the minimum
+// fee of that exact encoding with its witnesses added. The fee only grows,
+// so the loop ends when an encoding needs no more than the fee it carries.
+func (b *balancer) balance() ([]byte, error) {
+	var fee uint64
+	for range 10 {
+		available := b.inputSum + b.refunds
+		if available < fee+b.need {
+			return nil, errNeedMoreInput
 		}
-		// If we broke because need more inputs, continue to add next
-		if inputSum+refunds < fee+deposits {
-			continue
+		change := babbage.BabbageTransactionOutput{
+			OutputAddress: b.changeAddr,
+			OutputAmount: mary.MaryTransactionOutputValue{
+				Amount: available - fee - b.need,
+			},
 		}
+		minChange, err := minUTxO(change, b.extra)
+		if err != nil {
+			return nil, err
+		}
+		if change.OutputAmount.Amount < minChange {
+			return nil, fmt.Errorf(
+				"%w: change %d is below the minimum UTxO %d",
+				errNeedMoreInput, change.OutputAmount.Amount, minChange,
+			)
+		}
+		body := b.body
+		body.TxInputs = conway.NewConwayTransactionInputSet(b.inputs)
+		body.TxOutputs = []babbage.BabbageTransactionOutput{change}
+		body.TxFee = fee
+		tx := conway.ConwayTransaction{Body: body, TxIsValid: true}
+		txCbor, err := tx.MarshalCBOR()
+		if err != nil {
+			return nil, fmt.Errorf("encode transaction: %w", err)
+		}
+		size, err := bursa.EstimateWitnessedTxSize(txCbor, b.witnessCount, 0)
+		if err != nil {
+			return nil, err
+		}
+		if b.extra.MaxTxSize > 0 && uint64(size) > b.extra.MaxTxSize {
+			return nil, fmt.Errorf(
+				"transaction size %d exceeds the maximum %d",
+				size, b.extra.MaxTxSize,
+			)
+		}
+		minFee, err := bursa.MinFee(size, *b.pp)
+		if err != nil {
+			return nil, err
+		}
+		if minFee <= fee {
+			return txCbor, nil
+		}
+		fee = minFee
 	}
-	if inputSum+refunds < fee+deposits {
-		return nil, errors.New("insufficient funds")
-	}
-	return nil, errors.New("failed to build transaction")
+	return nil, errors.New("fee did not converge")
 }
