@@ -39,36 +39,38 @@ import (
 // minimal fake Cardano returning a fixed inspection/txid/assembled blob
 type fakeCardano struct{ pub ed25519.PublicKey }
 
-func (fakeCardano) Inspect([]byte) (*bursa.TxInspection, error) {
+func (fakeCardano) Inspect([]byte, uint) (*bursa.TxInspection, error) {
 	return &bursa.TxInspection{TxId: "deadbeef", TTL: 1, Outputs: []bursa.TxOutput{{Address: "addr1ok", Lovelace: "1"}}}, nil
 }
-func (fakeCardano) Operations([]byte) (policy.TxOps, error)                { return policy.TxOps{}, nil }
-func (fakeCardano) TxID([]byte) ([]byte, error)                            { return make([]byte, 32), nil }
-func (fakeCardano) Assemble([]byte, []lcommon.VkeyWitness) ([]byte, error) { return []byte{0x9}, nil }
+func (fakeCardano) Operations([]byte, uint) (policy.TxOps, error) { return policy.TxOps{}, nil }
+func (fakeCardano) TxID([]byte, uint) ([]byte, error)             { return make([]byte, 32), nil }
+func (fakeCardano) Assemble([]byte, uint, []lcommon.VkeyWitness) ([]byte, error) {
+	return []byte{0x9}, nil
+}
 
 type countingCardano struct {
 	fakeCardano
 	calls int
 }
 
-func (c *countingCardano) Inspect(tx []byte) (*bursa.TxInspection, error) {
+func (c *countingCardano) Inspect(tx []byte, txType uint) (*bursa.TxInspection, error) {
 	c.calls++
-	return c.fakeCardano.Inspect(tx)
+	return c.fakeCardano.Inspect(tx, txType)
 }
 
-func (c *countingCardano) Operations(tx []byte) (policy.TxOps, error) {
+func (c *countingCardano) Operations(tx []byte, txType uint) (policy.TxOps, error) {
 	c.calls++
-	return c.fakeCardano.Operations(tx)
+	return c.fakeCardano.Operations(tx, txType)
 }
 
-func (c *countingCardano) TxID(tx []byte) ([]byte, error) {
+func (c *countingCardano) TxID(tx []byte, txType uint) ([]byte, error) {
 	c.calls++
-	return c.fakeCardano.TxID(tx)
+	return c.fakeCardano.TxID(tx, txType)
 }
 
-func (c *countingCardano) Assemble(tx []byte, wits []lcommon.VkeyWitness) ([]byte, error) {
+func (c *countingCardano) Assemble(tx []byte, txType uint, wits []lcommon.VkeyWitness) ([]byte, error) {
 	c.calls++
-	return c.fakeCardano.Assemble(tx, wits)
+	return c.fakeCardano.Assemble(tx, txType, wits)
 }
 
 func newTestServer(t *testing.T) (*Server, backend.KeyHash) {
@@ -112,7 +114,7 @@ func newCountingTestServer(t *testing.T) (*Server, backend.KeyHash, *countingCar
 
 func TestHandleSignTx(t *testing.T) {
 	srv, h := newTestServer(t)
-	body, _ := json.Marshal(SignRequest{Type: "tx", Cbor: "83a0a0f5f6", Signers: []string{h.String()}})
+	body, _ := json.Marshal(SignRequest{Type: "tx", Cbor: ambiguousBabbageTxHex, Era: "babbage", Signers: []string{h.String()}})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
 	req = req.WithContext(context.Background())
 	rr := httptest.NewRecorder()
@@ -284,7 +286,8 @@ func TestHandleSignTx_DeniedReasonSurvives(t *testing.T) {
 
 	body, _ := json.Marshal(SignRequest{
 		Type:    "tx",
-		Cbor:    "83a0a0f5f6",
+		Cbor:    ambiguousBabbageTxHex,
+		Era:     "babbage",
 		Signers: []string{unknownHash.String()},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
@@ -597,7 +600,7 @@ func TestCallerACLEnforcement(t *testing.T) {
 
 	t.Run("bob: sign tx returns 403 with denied signer error and increments deny_total", func(t *testing.T) {
 		before := gatherDenyACL(t, metricsReg)
-		body, _ := json.Marshal(SignRequest{Type: "tx", Cbor: "83a0a0f5f6", Signers: []string{h.String()}})
+		body, _ := json.Marshal(SignRequest{Type: "tx", Cbor: ambiguousBabbageTxHex, Era: "babbage", Signers: []string{h.String()}})
 		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
 		req = withCaller(req, "bob")
 		rr := httptest.NewRecorder()
@@ -727,7 +730,8 @@ func TestCallerACL_PartialAllow(t *testing.T) {
 
 	body, _ := json.Marshal(SignRequest{
 		Type:    "tx",
-		Cbor:    "83a0a0f5f6",
+		Cbor:    ambiguousBabbageTxHex,
+		Era:     "babbage",
 		Signers: []string{h.String(), deniedHash.String()},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
@@ -787,7 +791,8 @@ func TestSignTx_StatusFromCoordinatorNotACL(t *testing.T) {
 
 	body, _ := json.Marshal(SignRequest{
 		Type:    "tx",
-		Cbor:    "83a0a0f5f6",
+		Cbor:    ambiguousBabbageTxHex,
+		Era:     "babbage",
 		Signers: []string{allowedMissing.String(), deniedHash.String()},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))

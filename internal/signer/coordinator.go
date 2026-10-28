@@ -195,31 +195,33 @@ func ValidateSignerList(signers []string) ([]backend.KeyHash, error) {
 }
 
 // SignTx decodes, policy-checks, watermarks, signs, verifies, and assembles.
-// It returns a result (with whatever witnesses succeeded), per-signer errors,
-// and a hard error only for request-level failures (e.g. undecodable tx).
+// The era may be empty when the input envelope declares it or the CBOR is
+// unambiguous. It returns a result (with whatever witnesses succeeded),
+// per-signer errors, and a hard error only for request-level failures (e.g.
+// undecodable tx).
 //
 // Every signing decision (allow or deny) is emitted as a structured audit-log
 // line so that all outcomes are auditable. Secrets (private keys, raw tx bytes)
 // are never logged.
-func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []string) (*TxResult, []SignerError, error) {
+func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, signers []string) (*TxResult, []SignerError, error) {
 	resolvedSigners, err := ValidateSignerList(signers)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
-	raw, err := bursa.ReadCborInput(cborInput)
+	raw, txType, err := bursa.ReadTxInput(cborInput, era)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
-	insp, err := c.deps.Cardano.Inspect(raw)
+	insp, err := c.deps.Cardano.Inspect(raw, txType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
-	ops, err := c.deps.Cardano.Operations(raw)
+	ops, err := c.deps.Cardano.Operations(raw, txType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
 	caller := callerFromContext(ctx)
-	txid, err := c.deps.Cardano.TxID(raw)
+	txid, err := c.deps.Cardano.TxID(raw, txType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
@@ -366,7 +368,7 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []st
 		res.Witnesses = append(res.Witnesses, enc)
 	}
 	if len(wits) > 0 {
-		signed, err := c.deps.Cardano.Assemble(raw, wits)
+		signed, err := c.deps.Cardano.Assemble(raw, txType, wits)
 		if err != nil {
 			return nil, errs, fmt.Errorf("assemble tx: %w", err)
 		}

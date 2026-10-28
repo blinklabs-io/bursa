@@ -420,6 +420,12 @@ func TransactionID(txCbor []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to determine transaction era: %w", err)
 	}
+	return TransactionIDForEra(txCbor, txType)
+}
+
+// TransactionIDForEra is TransactionID for a transaction of a known era (a
+// ledger.TxType value).
+func TransactionIDForEra(txCbor []byte, txType uint) (string, error) {
 	tx, err := ledger.NewTransactionFromCbor(txType, txCbor)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode transaction: %w", err)
@@ -809,6 +815,12 @@ func InspectTransaction(txCbor []byte) (*TxInspection, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to determine transaction era: %w", err)
 	}
+	return InspectTransactionForEra(txCbor, txType)
+}
+
+// InspectTransactionForEra is InspectTransaction for a transaction of a known
+// era (a ledger.TxType value).
+func InspectTransactionForEra(txCbor []byte, txType uint) (*TxInspection, error) {
 	tx, err := ledger.NewTransactionFromCbor(txType, txCbor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode transaction: %w", err)

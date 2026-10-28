@@ -34,6 +34,7 @@ import (
 type SignRequest struct {
 	Type    string   `json:"type"`    // "tx" | "cip8" | "opcert"
 	Cbor    string   `json:"cbor"`    // tx: hex CBOR or JSON envelope
+	Era     string   `json:"era"`     // tx: optional era name; required for ambiguous raw CBOR without an era-typed envelope
 	Signers []string `json:"signers"` // tx: distinct resolved key hashes / addresses, subject to the signer limit
 	Payload string   `json:"payload"` // cip8: hex
 	Address string   `json:"address"` // cip8: bech32
@@ -217,7 +218,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		}
 		// Thread the authenticated caller so the coordinator can apply any
 		// per-caller policy override.
-		res, perr, err := s.coord.SignTx(signer.WithCaller(r.Context(), caller), []byte(req.Cbor), signers)
+		res, perr, err := s.coord.SignTx(signer.WithCaller(r.Context(), caller), []byte(req.Cbor), req.Era, signers)
 		if err != nil {
 			if signer.IsBadRequest(err) {
 				s.audit(r, caller, "tx", "bad_request", "audit_id", auditID, "signer_count", len(req.Signers), "error", err.Error())

@@ -64,7 +64,7 @@ func TestSignTx_CallerOverride(t *testing.T) {
 	c := coordForEngine(t, k, eng, card, nil)
 
 	// alice: allowed by base policy.
-	res, perr, err := c.SignTx(WithCaller(context.Background(), "alice"), []byte("11"), []string{k.hash.String()})
+	res, perr, err := c.SignTx(WithCaller(context.Background(), "alice"), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 	if err != nil {
 		t.Fatalf("SignTx(alice): %v", err)
 	}
@@ -73,7 +73,7 @@ func TestSignTx_CallerOverride(t *testing.T) {
 	}
 
 	// bob: denied by the caller override.
-	res, perr, err = c.SignTx(WithCaller(context.Background(), "bob"), []byte("11"), []string{k.hash.String()})
+	res, perr, err = c.SignTx(WithCaller(context.Background(), "bob"), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 	if err != nil {
 		t.Fatalf("SignTx(bob): %v", err)
 	}
@@ -97,7 +97,7 @@ func TestSignTx_OperationsError(t *testing.T) {
 		txid:   make([]byte, 32),
 	}
 	c := coordForEngine(t, k, eng, card, nil)
-	_, _, err = c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
+	_, _, err = c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 	if err == nil || !IsBadRequest(err) {
 		t.Fatalf("expected bad-request hard error on operations decode failure, got %v", err)
 	}
@@ -142,7 +142,7 @@ func TestSignTx_PolicyHook(t *testing.T) {
 
 	t.Run("allow", func(t *testing.T) {
 		c, k := newCoord(t, stubHook{err: nil})
-		res, perr, err := c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
+		res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 		if err != nil {
 			t.Fatalf("SignTx: %v", err)
 		}
@@ -153,7 +153,7 @@ func TestSignTx_PolicyHook(t *testing.T) {
 
 	t.Run("deny fails closed", func(t *testing.T) {
 		c, k := newCoord(t, stubHook{err: errors.New("hook says no")})
-		res, perr, err := c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
+		res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 		if err != nil {
 			t.Fatalf("SignTx: %v", err)
 		}
@@ -205,7 +205,7 @@ func TestSignTx_PolicyHookReceivesTransactionEffects(t *testing.T) {
 	hook := &recordingHook{}
 	c := coordForEngine(t, k, eng, card, hook)
 
-	res, perr, err := c.SignTx(WithCaller(context.Background(), "alice"), []byte("11"), []string{k.hash.String()})
+	res, perr, err := c.SignTx(WithCaller(context.Background(), "alice"), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 	if err != nil {
 		t.Fatalf("SignTx: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestSignTx_PolicyHookRejectsIncompleteOperations(t *testing.T) {
 	hook := &recordingHook{}
 	c := coordForEngine(t, k, eng, card, hook)
 
-	res, perr, err := c.SignTx(context.Background(), []byte("11"), []string{k.hash.String()})
+	res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
 	if err != nil {
 		t.Fatalf("SignTx: %v", err)
 	}

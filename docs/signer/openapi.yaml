@@ -68,6 +68,7 @@ paths:
                 value:
                   type: tx
                   cbor: "84a3008182582000..."
+                  era: babbage
                   signers: ["a1b2c3...e2d1"]
               cip8:
                 value:
@@ -292,6 +293,13 @@ components:
         cbor:
           type: string
           description: tx - hex CBOR or JSON envelope of the transaction.
+        era:
+          type: string
+          enum: [shelley, allegra, mary, alonzo, babbage, conway, dijkstra]
+          description: |
+            tx - transaction era name. Required for raw CBOR that decodes in
+            multiple eras unless cbor is an era-typed JSON envelope. If both
+            declare an era, they must agree.
         signers:
           type: array
           minItems: 1
