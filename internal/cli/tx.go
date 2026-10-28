@@ -15,12 +15,14 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/internal/txbuilder"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
@@ -192,5 +194,42 @@ func RunTxDecode(txFile, protocolParamsFile string, witnessCount, byronWitnessCo
 		return err
 	}
 	fmt.Println(string(enc))
+	return nil
+}
+
+func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []string, witnessCount uint, outFile string) error {
+	ctx := context.Background()
+	chain := txbuilder.NewN2C(socketPath, network)
+	built, err := txbuilder.Build(ctx, chain, txbuilder.BuildOptions{
+		ChangeAddress:    changeAddress,
+		CertificateFiles: certificateFiles,
+		WitnessCount:     witnessCount,
+	})
+	if err != nil {
+		return err
+	}
+	out, err := bursa.WriteCborEnvelope(built.TxEnvelopeType, "Unwitnessed Tx", built.TxCBOR, outFile)
+	if err != nil {
+		return err
+	}
+	if outFile == "" {
+		fmt.Print(out)
+	}
+	return nil
+}
+
+func RunTxSubmit(socketPath, network, txFile string) error {
+	ctx := context.Background()
+	chain := txbuilder.NewN2C(socketPath, network)
+	txBytes, err := bursa.ReadCborInputFile(txFile)
+	if err != nil {
+		return err
+	}
+	if err := chain.SubmitTx(ctx, txBytes); err != nil {
+		return err
+	}
+	if id, err := bursa.TransactionID(txBytes); err == nil {
+		fmt.Println(id)
+	}
 	return nil
 }

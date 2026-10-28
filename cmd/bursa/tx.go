@@ -27,7 +27,7 @@ func txCommand() *cobra.Command {
 		Use:   "tx",
 		Short: "Offline transaction operations (sign, witness, assemble)",
 	}
-	cmd.AddCommand(txSignCommand(), txWitnessCommand(), txAssembleCommand(), txIdCommand(), txDecodeCommand())
+	cmd.AddCommand(txSignCommand(), txWitnessCommand(), txAssembleCommand(), txIdCommand(), txDecodeCommand(), txBuildCommand(), txSubmitCommand())
 	return cmd
 }
 
@@ -132,6 +132,49 @@ func txDecodeCommand() *cobra.Command {
 	cmd.Flags().StringVar(&protocolParamsFile, "protocol-params", "", "cardano-cli protocol-parameters.json for min-fee estimate")
 	cmd.Flags().UintVar(&witnessCount, "witness-count", 0, "Vkey witnesses still to be added; the min-fee estimate includes their encoded size")
 	cmd.Flags().UintVar(&byronWitnessCount, "byron-witness-count", 0, "Bootstrap witnesses still to be added; the min-fee estimate includes their encoded size")
+	_ = cmd.MarkFlagRequired("tx-file")
+	return cmd
+}
+
+func txBuildCommand() *cobra.Command {
+	var socketPath, network, changeAddress, outFile string
+	var certificateFiles []string
+	var witnessCount uint
+	cmd := &cobra.Command{
+		Use:   "build",
+		Short: "Build a pool operation transaction",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunTxBuild(socketPath, network, changeAddress, certificateFiles, witnessCount, outFile); err != nil {
+				logging.GetLogger().Error("failed to build transaction", "error", err)
+				os.Exit(1)
+			}
+		},
+	}
+	cmd.Flags().StringVar(&socketPath, "socket-path", "", "Path to node socket")
+	cmd.Flags().StringVar(&network, "network", "", "Network name or magic")
+	cmd.Flags().StringVar(&changeAddress, "change-address", "", "Change address")
+	cmd.Flags().StringArrayVar(&certificateFiles, "certificate-file", nil, "Certificate file (repeatable)")
+	cmd.Flags().UintVar(&witnessCount, "witness-count", 0, "Witness count for fee estimation")
+	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
+	_ = cmd.MarkFlagRequired("change-address")
+	return cmd
+}
+
+func txSubmitCommand() *cobra.Command {
+	var socketPath, network, txFile string
+	cmd := &cobra.Command{
+		Use:   "submit",
+		Short: "Submit a transaction",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunTxSubmit(socketPath, network, txFile); err != nil {
+				logging.GetLogger().Error("failed to submit transaction", "error", err)
+				os.Exit(1)
+			}
+		},
+	}
+	cmd.Flags().StringVar(&socketPath, "socket-path", "", "Path to node socket")
+	cmd.Flags().StringVar(&network, "network", "", "Network name or magic")
+	cmd.Flags().StringVar(&txFile, "tx-file", "", "Transaction file")
 	_ = cmd.MarkFlagRequired("tx-file")
 	return cmd
 }
