@@ -192,6 +192,48 @@ test("(f) caughtUp=false does NOT show caught-up indicator", () => {
   expect(screen.queryByText(/caught.?up/i)).toBeNull();
 });
 
+test("failed sync offers a scoped recovery with deliberate confirmation", async () => {
+  mockStatus("error", 0, false);
+  const recover = vi.spyOn(client, "recoverNodeSync").mockResolvedValue({ started: true });
+  renderSettings();
+
+  expect(screen.getByText(/removes only this network's local blockchain sync data/i)).toBeInTheDocument();
+  expect(screen.getByText(/encrypted vault, wallet keys, wallets, settings, address book, logs, and NFT cache are kept/i)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /start clean sync recovery/i }));
+  const confirm = screen.getByRole("checkbox", { name: /local blockchain sync data will be deleted/i });
+  const submit = screen.getByRole("button", { name: /delete sync data and retry/i });
+  expect(submit).toBeDisabled();
+  expect(recover).not.toHaveBeenCalled();
+
+  fireEvent.click(confirm);
+  fireEvent.click(submit);
+
+  await waitFor(() => expect(recover).toHaveBeenCalledTimes(1));
+  expect(await screen.findByRole("status")).toHaveTextContent(/clean sync started/i);
+});
+
+test("sync recovery failure remains actionable", async () => {
+  mockStatus("error", 0, false);
+  vi.spyOn(client, "recoverNodeSync").mockRejectedValue(
+    new client.ApiError(500, "remove node sync data: permission denied"),
+  );
+  renderSettings();
+
+  fireEvent.click(screen.getByRole("button", { name: /start clean sync recovery/i }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /local blockchain sync data will be deleted/i }));
+  fireEvent.click(screen.getByRole("button", { name: /delete sync data and retry/i }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(/permission denied/i);
+  expect(screen.getByRole("button", { name: /delete sync data and retry/i })).toBeEnabled();
+});
+
+test("node recovery is hidden while sync has not failed", () => {
+  mockStatus("syncing", 12345, false);
+  renderSettings();
+  expect(screen.queryByText(/node sync recovery/i)).not.toBeInTheDocument();
+});
+
 test("(g) full wallet type shows spending enabled", () => {
   mockStatus("ready", 12345, true);
   renderSettings({ walletType: "full" });

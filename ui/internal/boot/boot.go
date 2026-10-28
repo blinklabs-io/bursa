@@ -332,6 +332,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	sup := supervisor.New(supervisor.Config{
 		Network:        cfg.Network,
 		DataDir:        nodeDataDir,
+		WalletDataDir:  cfg.DataDir,
 		SocketPath:     filepath.Join(cfg.DataDir, "node.socket"),
 		UtxorpcPort:    utxorpcPort,
 		BlockfrostPort: blockfrostPort,
@@ -529,7 +530,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	handler := api.NewHandler(
 		sessionToken,
 		sup, vlt, walletSvc, spendSvc,
-		&settingsController{store: settingsStore, sup: sup},
+		&settingsController{store: settingsStore, sup: sup, ctx: runCtx},
 		contactsStore,
 		chainClient,
 		poolSvc,
@@ -658,6 +659,7 @@ func (a *App) reconnect() error {
 type settingsController struct {
 	store *settings.Store
 	sup   *supervisor.Supervisor
+	ctx   context.Context
 }
 
 func (c *settingsController) HistoryExpiry() bool { return c.store.HistoryExpiry() }
@@ -694,6 +696,10 @@ func (c *settingsController) Notifications() bool { return c.store.Notifications
 
 func (c *settingsController) SetNotifications(enabled bool) error {
 	return c.store.SetNotifications(enabled)
+}
+
+func (c *settingsController) RecoverNode() error {
+	return c.sup.Recover(c.ctx)
 }
 
 // diagChain adapts the loopback Blockfrost chain client to the diagnostics

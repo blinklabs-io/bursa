@@ -318,6 +318,9 @@ type SettingsController interface {
 	Notifications() bool
 	// SetNotifications persists the wallet-activity notification preference.
 	SetNotifications(enabled bool) error
+	// RecoverNode removes only the embedded node's sync database and starts a
+	// fresh sync. The implementation owns the node lifecycle and data boundary.
+	RecoverNode() error
 }
 
 // autoLockOptions are the only accepted auto-lock timeouts (minutes; 0 = Off).
@@ -1391,6 +1394,31 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.Notifications()})
+	})
+
+	// Failed-sync recovery is available only through an explicit confirmed
+	// mutation. The controller enforces the failed-state precondition and owns
+	// the exact node-only deletion boundary.
+	mux.HandleFunc("POST /wallet/settings/node/recover", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Confirmed *bool `json:"confirmed"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if req.Confirmed == nil || !*req.Confirmed {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "confirmation is required"})
+			return
+		}
+		if err := settings.RecoverNode(); err != nil {
+			if errors.Is(err, supervisor.ErrRecoveryUnavailable) {
+				writeJSON(w, http.StatusConflict, errBody(err))
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, errBody(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"started": true})
 	})
 
 	// --- Address book (local-only, no network) -------------------------------
