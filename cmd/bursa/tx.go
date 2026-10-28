@@ -140,11 +140,13 @@ func txBuildCommand() *cobra.Command {
 	var socketPath, network, changeAddress, outFile string
 	var certificateFiles []string
 	var witnessCount uint
+	var ttlMargin uint64
+	var timeout int64
 	cmd := &cobra.Command{
 		Use:   "build",
 		Short: "Build a pool operation transaction",
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := cli.RunTxBuild(socketPath, network, changeAddress, certificateFiles, witnessCount, outFile); err != nil {
+			if err := cli.RunTxBuild(socketPath, network, changeAddress, certificateFiles, witnessCount, outFile, ttlMargin, timeout); err != nil {
 				logging.GetLogger().Error("failed to build transaction", "error", err)
 				os.Exit(1)
 			}
@@ -156,17 +158,20 @@ func txBuildCommand() *cobra.Command {
 	cmd.Flags().StringArrayVar(&certificateFiles, "certificate-file", nil, "Certificate file (repeatable)")
 	cmd.Flags().UintVar(&witnessCount, "witness-count", 0, "Witness count for fee estimation")
 	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
+	cmd.Flags().Uint64Var(&ttlMargin, "ttl-margin", 3600, "TTL margin in slots")
+	cmd.Flags().Int64Var(&timeout, "timeout", 60, "Timeout in seconds")
 	_ = cmd.MarkFlagRequired("change-address")
 	return cmd
 }
 
 func txSubmitCommand() *cobra.Command {
 	var socketPath, network, txFile string
+	var timeout int64
 	cmd := &cobra.Command{
 		Use:   "submit",
 		Short: "Submit a transaction",
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := cli.RunTxSubmit(socketPath, network, txFile); err != nil {
+			if err := cli.RunTxSubmit(socketPath, network, txFile, timeout); err != nil {
 				logging.GetLogger().Error("failed to submit transaction", "error", err)
 				os.Exit(1)
 			}
@@ -175,6 +180,7 @@ func txSubmitCommand() *cobra.Command {
 	cmd.Flags().StringVar(&socketPath, "socket-path", "", "Path to node socket")
 	cmd.Flags().StringVar(&network, "network", "", "Network name or magic")
 	cmd.Flags().StringVar(&txFile, "tx-file", "", "Transaction file")
+	cmd.Flags().Int64Var(&timeout, "timeout", 60, "Timeout in seconds")
 	_ = cmd.MarkFlagRequired("tx-file")
 	return cmd
 }

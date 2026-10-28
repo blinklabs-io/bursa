@@ -33,6 +33,7 @@ type ProtocolParametersExtra struct {
 	PoolDeposit              uint64
 	MaxTxSize                uint64
 	PoolRetirementEpochBound uint64
+	CoinsPerUTxOByte         uint64
 }
 
 // Chain provides the node/ledger queries and submission needed to build and submit transactions.

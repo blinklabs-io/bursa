@@ -17,13 +17,10 @@ package txbuilder
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
-
-	"github.com/blinklabs-io/bursa"
-	"github.com/blinklabs-io/gouroboros/cbor"
-	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
 // ReadCertificateFile reads a certificate file in cardano-cli envelope format
@@ -39,7 +36,7 @@ func ReadCertificateFile(path string) ([]byte, error) {
 func readCertData(data []byte) ([]byte, error) {
 	trimmed := strings.TrimSpace(string(data))
 	if len(trimmed) == 0 {
-		return nil, fmt.Errorf("empty certificate data")
+		return nil, errors.New("empty certificate data")
 	}
 	if strings.HasPrefix(trimmed, "{") {
 		// Try to parse as envelope
@@ -65,22 +62,6 @@ func readCertData(data []byte) ([]byte, error) {
 }
 
 // DecodeCertificate decodes certificate CBOR bytes into a gouroboros CertificateWrapper/Certificate
-func DecodeCertificate(certBytes []byte) (lcommon.Certificate, error) {
-	// CertificateWrapper can decode the full array/list form as used in tx body
-	var wrapper lcommon.CertificateWrapper
-	if _, err := cbor.Decode(certBytes, &wrapper); err == nil {
-		if wrapper.Certificate != nil {
-			return wrapper.Certificate, nil
-		}
-	}
-	// Try decoding directly as a certificate type by trying to parse as array
-	// Some forms might decode differently; try wrapper again
-	if wrapper.Certificate != nil {
-		return wrapper.Certificate, nil
-	}
-	// Fallback: try to decode using the wrapper logic by re-parsing
-	return nil, fmt.Errorf("failed to decode certificate")
-}
 
 // ParseCertificates reads certificate files and returns the raw certificate CBOR arrays
 // in the form expected by Conway transaction body (each certificate is CBOR encoded list)
@@ -95,5 +76,3 @@ func ParseCertificates(paths []string) ([][]byte, error) {
 	}
 	return certs, nil
 }
-
-var _ = bursa.ReadCborInput // keep import usage if needed

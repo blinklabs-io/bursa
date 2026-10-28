@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/txbuilder"
@@ -197,13 +198,22 @@ func RunTxDecode(txFile, protocolParamsFile string, witnessCount, byronWitnessCo
 	return nil
 }
 
-func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []string, witnessCount uint, outFile string) error {
+func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []string, witnessCount uint, outFile string, ttlMargin uint64, timeoutSeconds int64) error {
 	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeoutSeconds > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+		defer cancel()
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+	}
 	chain := txbuilder.NewN2C(socketPath, network)
 	built, err := txbuilder.Build(ctx, chain, txbuilder.BuildOptions{
 		ChangeAddress:    changeAddress,
 		CertificateFiles: certificateFiles,
 		WitnessCount:     witnessCount,
+		TTLMargin:        ttlMargin,
 	})
 	if err != nil {
 		return err
@@ -218,8 +228,16 @@ func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []st
 	return nil
 }
 
-func RunTxSubmit(socketPath, network, txFile string) error {
+func RunTxSubmit(socketPath, network, txFile string, timeoutSeconds int64) error {
 	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeoutSeconds > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+		defer cancel()
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+	}
 	chain := txbuilder.NewN2C(socketPath, network)
 	txBytes, err := bursa.ReadCborInputFile(txFile)
 	if err != nil {
@@ -228,7 +246,9 @@ func RunTxSubmit(socketPath, network, txFile string) error {
 	if err := chain.SubmitTx(ctx, txBytes); err != nil {
 		return err
 	}
-	if id, err := bursa.TransactionID(txBytes); err == nil {
+	if id, err := bursa.TransactionID(txBytes); err != nil {
+		return err
+	} else {
 		fmt.Println(id)
 	}
 	return nil

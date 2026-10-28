@@ -16,7 +16,7 @@ package txbuilder
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -33,31 +33,43 @@ import (
 type N2CChain struct {
 	socketPath string
 	network    string
+	conn       *ouroboros.Connection
+	era        uint16 // store era if needed
 }
 
 func NewN2C(socketPath, network string) *N2CChain {
 	return &N2CChain{socketPath: socketPath, network: network}
 }
 
-func (n *N2CChain) networkMagic() uint32 {
+func (n *N2CChain) networkMagic() (uint32, error) {
 	const mainnetMagic = 764824073
 	if n.network == "" {
-		return mainnetMagic
+		return mainnetMagic, nil
 	}
 	if m, err := strconv.ParseUint(n.network, 10, 32); err == nil {
-		return uint32(m)
+		return uint32(m), nil
 	}
 	if netw, ok := ouroboros.NetworkByName(n.network); ok {
-		return netw.NetworkMagic
+		return netw.NetworkMagic, nil
 	}
-	if n.network == "testnet" {
-		return 1097911063
+	if strings.EqualFold(n.network, "testnet") || n.network == "preprod" || n.network == "preview" || n.network == "sanchonet" {
+		if netw, ok := ouroboros.NetworkByName(n.network); ok {
+			return netw.NetworkMagic, nil
+		}
+		// Try common names
 	}
-	return mainnetMagic
+	// Unknown network name is an error, never default to mainnet
+	return 0, errors.New("unknown network")
 }
 
 func (n *N2CChain) dial(ctx context.Context) (*ouroboros.Connection, error) {
-	magic := n.networkMagic()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	magic, err := n.networkMagic()
+	if err != nil {
+		return nil, err
+	}
 	conn, err := ouroboros.NewConnection(
 		ouroboros.WithNetworkMagic(magic),
 		ouroboros.WithNodeToNode(false),
@@ -65,17 +77,25 @@ func (n *N2CChain) dial(ctx context.Context) (*ouroboros.Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	// socketPath may be a UNIX socket path (contains "/") or a host:port for a proxy.
-	if strings.Contains(n.socketPath, "/") {
-		if err := conn.Dial("unix", n.socketPath); err != nil {
-			return nil, err
+	var dialErr error
+	done := make(chan error, 1)
+	go func() {
+		// socketPath may be a UNIX socket path (contains "/") or a host:port for a proxy.
+		if strings.Contains(n.socketPath, "/") {
+			dialErr = conn.Dial("unix", n.socketPath)
+		} else if strings.Contains(n.socketPath, ":") {
+			dialErr = conn.Dial("tcp", n.socketPath)
+		} else {
+			dialErr = conn.Dial("unix", n.socketPath)
 		}
-	} else if strings.Contains(n.socketPath, ":") {
-		if err := conn.Dial("tcp", n.socketPath); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := conn.Dial("unix", n.socketPath); err != nil {
+		done <- dialErr
+	}()
+	select {
+	case <-ctx.Done():
+		_ = conn.Close()
+		return nil, ctx.Err()
+	case err := <-done:
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -130,42 +150,47 @@ func (n *N2CChain) GetProtocolParameters(ctx context.Context) (*bursa.ProtocolPa
 	case *conway.ConwayProtocolParameters:
 		feeA := uint64(p.MinFeeA)
 		feeB := uint64(p.MinFeeB)
+		extra := &ProtocolParametersExtra{
+			MinFeeA:          feeA,
+			MinFeeB:          feeB,
+			KeyDeposit:       uint64(p.KeyDeposit),
+			PoolDeposit:      uint64(p.PoolDeposit),
+			MaxTxSize:        uint64(p.MaxTxSize),
+			CoinsPerUTxOByte: p.AdaPerUtxoByte,
+		}
 		return &bursa.ProtocolParams{
-				TxFeePerByte: feeA,
-				TxFeeFixed:   feeB,
-			}, &ProtocolParametersExtra{
-				MinFeeA:     feeA,
-				MinFeeB:     feeB,
-				KeyDeposit:  uint64(p.KeyDeposit),
-				PoolDeposit: uint64(p.PoolDeposit),
-			}, nil
+			TxFeePerByte: feeA,
+			TxFeeFixed:   feeB,
+		}, extra, nil
 	case *dijkstra.DijkstraProtocolParameters:
 		feeA := uint64(p.MinFeeA)
 		feeB := uint64(p.MinFeeB)
+		extra := &ProtocolParametersExtra{
+			MinFeeA:          feeA,
+			MinFeeB:          feeB,
+			KeyDeposit:       uint64(p.KeyDeposit),
+			PoolDeposit:      uint64(p.PoolDeposit),
+			MaxTxSize:        uint64(p.MaxTxSize),
+			CoinsPerUTxOByte: p.AdaPerUtxoByte,
+		}
 		return &bursa.ProtocolParams{
-				TxFeePerByte: feeA,
-				TxFeeFixed:   feeB,
-			}, &ProtocolParametersExtra{
-				MinFeeA:     feeA,
-				MinFeeB:     feeB,
-				KeyDeposit:  uint64(p.KeyDeposit),
-				PoolDeposit: uint64(p.PoolDeposit),
-			}, nil
+			TxFeePerByte: feeA,
+			TxFeeFixed:   feeB,
+		}, extra, nil
 	case *babbage.BabbageProtocolParameters:
 		feeA := uint64(p.MinFeeA)
 		feeB := uint64(p.MinFeeB)
-		return &bursa.ProtocolParams{TxFeePerByte: feeA, TxFeeFixed: feeB}, &ProtocolParametersExtra{MinFeeA: feeA, MinFeeB: feeB, KeyDeposit: uint64(p.KeyDeposit), PoolDeposit: uint64(p.PoolDeposit)}, nil
-	case *ledger.AlonzoProtocolParameters:
-		feeA := uint64(p.MinFeeA)
-		feeB := uint64(p.MinFeeB)
-		return &bursa.ProtocolParams{TxFeePerByte: feeA, TxFeeFixed: feeB}, &ProtocolParametersExtra{MinFeeA: feeA, MinFeeB: feeB}, nil
-	case *shelley.ShelleyProtocolParameters:
-		feeA := uint64(p.MinFeeA)
-		feeB := uint64(p.MinFeeB)
-		return &bursa.ProtocolParams{TxFeePerByte: feeA, TxFeeFixed: feeB}, &ProtocolParametersExtra{MinFeeA: feeA, MinFeeB: feeB}, nil
+		extra := &ProtocolParametersExtra{
+			MinFeeA:          feeA,
+			MinFeeB:          feeB,
+			KeyDeposit:       uint64(p.KeyDeposit),
+			PoolDeposit:      uint64(p.PoolDeposit),
+			MaxTxSize:        uint64(p.MaxTxSize),
+			CoinsPerUTxOByte: p.AdaPerUtxoByte,
+		}
+		return &bursa.ProtocolParams{TxFeePerByte: feeA, TxFeeFixed: feeB}, extra, nil
 	}
-	// Fallback: try to extract via interface if available
-	return &bursa.ProtocolParams{}, &ProtocolParametersExtra{}, nil
+	return nil, nil, errors.New("unsupported protocol parameters era")
 }
 
 func (n *N2CChain) GetSlot(ctx context.Context) (uint64, error) {
@@ -179,7 +204,7 @@ func (n *N2CChain) GetSlot(ctx context.Context) (uint64, error) {
 		return 0, err
 	}
 	if pt == nil {
-		return 0, fmt.Errorf("no chain point")
+		return 0, errors.New("no chain point")
 	}
 	return pt.Slot, nil
 }
@@ -191,21 +216,14 @@ func (n *N2CChain) GetPoolRegistration(ctx context.Context, poolKeyHash []byte) 
 	}
 	defer conn.Close()
 	poolId := lcommon.PoolId(poolKeyHash)
-	// Prefer direct lookup
 	params, err := conn.LocalStateQuery().Client.GetStakePoolParams([]lcommon.PoolId{poolId})
-	if err == nil && params != nil {
+	if err != nil {
+		return false, err
+	}
+	if params != nil {
 		if _, ok := params.Results[poolId]; ok {
 			return true, nil
 		}
-	}
-	stakePools, err := conn.LocalStateQuery().Client.GetStakePools()
-	if err == nil && stakePools != nil {
-		for _, p := range stakePools.Results {
-			if p == poolId {
-				return true, nil
-			}
-		}
-		return false, nil
 	}
 	return false, nil
 }
