@@ -112,8 +112,24 @@ test("non-zero index passed through", async () => {
   );
 });
 
-test("validation rejects invalid anchor/index and clears password after failure", async () => {
-  const submit = vi.spyOn(client, "poolSubmitVote").mockRejectedValue(new Error("boom"));
+test("clears password after a rejected submit", async () => {
+  vi.spyOn(client, "poolSubmitVote").mockRejectedValue(new Error("boom"));
+  render(<Vote />);
+
+  fireEvent.change(screen.getByLabelText(/governance action tx id/i), {
+    target: { value: "e".repeat(64) },
+  });
+  fireEvent.change(screen.getByLabelText(/action index/i), { target: { value: "1" } });
+  const pw = screen.getByLabelText(/spending password/i);
+  fireEvent.change(pw, { target: { value: "pw" } });
+  fireEvent.click(screen.getByRole("button", { name: /submit vote/i }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+  expect(pw).toHaveValue("");
+});
+
+test("validation rejects an anchor url without a hash", () => {
+  const submit = vi.spyOn(client, "poolSubmitVote");
   render(<Vote />);
 
   // anchor url without hash
@@ -129,7 +145,6 @@ test("validation rejects invalid anchor/index and clears password after failure"
   fireEvent.click(screen.getByRole("button", { name: /submit vote/i }));
   expect(screen.getByRole("alert")).toBeInTheDocument();
   expect(submit).not.toHaveBeenCalled();
-  await waitFor(() => expect(pw).toHaveValue(""));
 });
 
 test("rejects bad hash, index 65536, and 129-byte url", () => {
@@ -161,7 +176,7 @@ test("rejects bad hash, index 65536, and 129-byte url", () => {
   expect(submit).not.toHaveBeenCalled();
 
   // 129-byte URL
-  const longUrl = "http://" + "a".repeat(121);
+  const longUrl = "http://" + "a".repeat(122);
   fireEvent.change(screen.getByLabelText(/action index/i), { target: { value: "0" } });
   fireEvent.change(screen.getByLabelText(/anchor url/i), { target: { value: longUrl } });
   fireEvent.change(screen.getByLabelText(/anchor hash/i), { target: { value: "a".repeat(64) } });
