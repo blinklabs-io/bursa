@@ -1718,6 +1718,17 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 			ErrInvalidRequest,
 		)
 	}
+	summary, err := s.DecodeTx(context.Background(), unsignedTxCBOR)
+	if err != nil {
+		return Witness{}, err
+	}
+	if err := summary.ValidateForSigning(); err != nil {
+		return Witness{}, fmt.Errorf(
+			"%w: transaction effects are incomplete: %w",
+			ErrInvalidTx,
+			err,
+		)
+	}
 
 	needed := make(map[string]bool, len(bodyRequired))
 	for _, signer := range bodyRequired {
