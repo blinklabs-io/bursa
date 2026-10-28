@@ -25,7 +25,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"sync"
 
@@ -119,6 +118,20 @@ type ProvisionResponse struct {
 	FeeKeyHash     string `json:"fee_key_hash"`
 }
 
+// FloorRequest resets a profile's opcert floor to the pool's current
+// on-chain counter, for example after a rollback or a host that reported a
+// counter too high.
+type FloorRequest struct {
+	Profile      string `json:"profile"`
+	ChainCounter uint64 `json:"chain_counter"`
+}
+
+// FloorResponse confirms the stored floor.
+type FloorResponse struct {
+	Profile     string `json:"profile"`
+	OpCertFloor uint64 `json:"opcert_floor"`
+}
+
 // IdentityResponse returns the identity public key for pinning in Bursa.
 type IdentityResponse struct {
 	PublicKey []byte `json:"public_key"`
@@ -132,6 +145,9 @@ type Service struct {
 	chip     Chip
 	profiles map[string]profile.Profile
 	nonces   nonceRing
+	// badSlots hold records that could not be read; provisioning stays
+	// refused while any exist, as one of them may own any cold key
+	badSlots map[uint8]bool
 }
 
 // New returns a service with no chip; it answers 503 until SetChip.
@@ -139,12 +155,14 @@ func New(mu sync.Locker, logf func(format string, args ...any)) *Service {
 	return &Service{mu: mu, logf: logf, profiles: map[string]profile.Profile{}}
 }
 
-// SetChip loads every profile record from chip and starts serving.
+// SetChip loads every profile record from chip and starts serving. An
+// unreadable record is logged and skipped so the other profiles stay usable.
 func (s *Service) SetChip(chip Chip) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	profiles := map[string]profile.Profile{}
+	bad := map[uint8]bool{}
 
 	for slot := uint8(0); slot <= profile.MaxSlot; slot++ {
 		id := profile.Profile{Slot: slot}.RecordID()
@@ -158,13 +176,17 @@ func (s *Service) SetChip(chip Chip) error {
 		b, err := chip.ReadBinary(id)
 
 		if err != nil {
-			return err
+			s.logf("profile slot %d: unreadable: %v", slot, err)
+			bad[slot] = true
+			continue
 		}
 
 		p, err := profile.Decode(b)
 
 		if err != nil {
-			return fmt.Errorf("slot %d: %w", slot, err)
+			s.logf("profile slot %d: invalid record: %v", slot, err)
+			bad[slot] = true
+			continue
 		}
 
 		profiles[p.Name] = p
@@ -173,6 +195,7 @@ func (s *Service) SetChip(chip Chip) error {
 
 	s.chip = chip
 	s.profiles = profiles
+	s.badSlots = bad
 
 	return nil
 }
@@ -183,6 +206,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/inventory", handle(s, s.inventory))
 	mux.HandleFunc("POST /v1/sign", handle(s, s.sign))
 	mux.HandleFunc("POST /provision/profile", handle(s, s.provisionProfile))
+	mux.HandleFunc("POST /provision/floor", handle(s, s.resetFloor))
 	mux.HandleFunc("POST /provision/identity", handle(s, func(struct{}) (IdentityResponse, error) {
 		return s.provisionIdentity()
 	}))
@@ -272,7 +296,10 @@ func (s *Service) inventory(req InventoryRequest) (Inventory, error) {
 		return Inventory{}, errUnknown
 	}
 
-	if ok, err := s.chip.Exists(profile.IdentityKeyID); err != nil || !ok {
+	if ok, err := s.chip.Exists(profile.IdentityKeyID); err != nil {
+		s.logf("exist check identity: %v", err)
+		return Inventory{}, errDevice
+	} else if !ok {
 		return Inventory{}, errors.New("identity key not provisioned")
 	}
 
@@ -307,7 +334,7 @@ func (s *Service) sign(req SignRequest) (SignResponse, error) {
 	sig, issue, err := s.signRequest(req)
 
 	if err != nil {
-		s.logf("sign %s %s %q: refused: %v", req.Purpose, req.Role, req.Profile, err)
+		s.logf("sign %q %q %q: refused: %v", clip(req.Purpose), clip(req.Role), clip(req.Profile), err)
 		resp.Error = err.Error()
 
 		return resp, nil
@@ -338,29 +365,29 @@ func (s *Service) signRequest(req SignRequest) ([]byte, *uint64, error) {
 		return nil, nil, errUnknown
 	}
 
-	var (
-		role policy.Role
-		id   uint32
-	)
-
-	switch req.Role {
-	case "pool":
-		role, id = policy.RoleCold, p.ColdKeyID
-	case "stake":
-		role, id = policy.RoleOwner, p.OwnerKeyID()
-	case "payment":
-		role, id = policy.RoleFee, p.FeeKeyID()
-	default:
-		return nil, nil, errors.New("unknown role")
-	}
-
 	k, err := s.keys(p)
 
 	if err != nil {
 		return nil, nil, err
 	}
 
-	pub, _ := s.publicKey(id)
+	var (
+		role policy.Role
+		id   uint32
+		pub  ed25519.PublicKey
+	)
+
+	switch req.Role {
+	case "pool":
+		role, id, pub = policy.RoleCold, p.ColdKeyID, k.cold
+	case "stake":
+		role, id, pub = policy.RoleOwner, p.OwnerKeyID(), k.owner
+	case "payment":
+		role, id, pub = policy.RoleFee, p.FeeKeyID(), k.fee
+	default:
+		return nil, nil, errors.New("unknown role")
+	}
+
 	h := keyHash(pub)
 
 	if want, err := hex.DecodeString(req.KeyHash); err != nil || !bytes.Equal(want, h[:]) {
@@ -497,6 +524,10 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 		return ProvisionResponse{}, err
 	}
 
+	if len(s.badSlots) > 0 {
+		return ProvisionResponse{}, errors.New("a profile record is unreadable; provisioning is refused until it is repaired")
+	}
+
 	if p.ColdKeyID < coldKeyFirst || p.ColdKeyID > coldKeyLast {
 		return ProvisionResponse{}, errors.New("cold key id outside the cold key range")
 	}
@@ -514,11 +545,17 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 		}
 	}
 
-	if ok, err := s.chip.Exists(p.RecordID()); err != nil || ok {
+	if ok, err := s.chip.Exists(p.RecordID()); err != nil {
+		s.logf("exist check %#08x: %v", p.RecordID(), err)
+		return ProvisionResponse{}, errDevice
+	} else if ok {
 		return ProvisionResponse{}, errors.New("slot in use")
 	}
 
-	if ok, err := s.chip.Exists(p.ColdKeyID); err != nil || !ok {
+	if ok, err := s.chip.Exists(p.ColdKeyID); err != nil {
+		s.logf("exist check %#08x: %v", p.ColdKeyID, err)
+		return ProvisionResponse{}, errDevice
+	} else if !ok {
 		return ProvisionResponse{}, errors.New("cold key not provisioned")
 	}
 
@@ -547,6 +584,36 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 		FeePublicKey:   fee,
 		FeeKeyHash:     hex.EncodeToString(feeHash[:]),
 	}, nil
+}
+
+// resetFloor sets the floor to the reported on-chain counter, lower or
+// higher. A floor set too low only lets the device issue a counter the chain
+// rejects, so this needs no more trust than opcert-next itself.
+func (s *Service) resetFloor(req FloorRequest) (FloorResponse, error) {
+	p, ok := s.profiles[req.Profile]
+
+	if !ok {
+		return FloorResponse{}, errUnknown
+	}
+
+	p.FloorSet, p.OpCertFloor = true, req.ChainCounter
+
+	if err := s.writeProfile(p); err != nil {
+		return FloorResponse{}, err
+	}
+
+	s.logf("floor reset %q to %d", p.Name, p.OpCertFloor)
+
+	return FloorResponse{Profile: p.Name, OpCertFloor: p.OpCertFloor}, nil
+}
+
+// clip bounds host-supplied strings before they reach the report.
+func clip(v string) string {
+	if len(v) > 64 {
+		return v[:64] + "..."
+	}
+
+	return v
 }
 
 func (s *Service) provisionIdentity() (IdentityResponse, error) {

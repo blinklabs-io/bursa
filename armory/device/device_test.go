@@ -39,6 +39,9 @@ const testColdID uint32 = 0x20e50010
 type fakeChip struct {
 	keys map[uint32]ed25519.PrivateKey
 	bins map[uint32][]byte
+
+	failWrite  bool
+	failExists bool
 }
 
 func newFakeChip() *fakeChip {
@@ -49,6 +52,10 @@ func newFakeChip() *fakeChip {
 }
 
 func (c *fakeChip) Exists(id uint32) (bool, error) {
+	if c.failExists {
+		return false, errors.New("i2c failure")
+	}
+
 	_, k := c.keys[id]
 	_, b := c.bins[id]
 
@@ -87,6 +94,10 @@ func (c *fakeChip) SignEd25519(id uint32, msg []byte) ([]byte, error) {
 }
 
 func (c *fakeChip) WriteBinary(id uint32, data []byte) error {
+	if c.failWrite {
+		return errors.New("i2c failure")
+	}
+
 	c.bins[id] = bytes.Clone(data)
 	return nil
 }
@@ -493,5 +504,106 @@ func TestNoChip(t *testing.T) {
 
 	if code, _ := post(t, s, "/v1/inventory", InventoryRequest{Nonce: nonce(1), Profile: "x"}); code != http.StatusServiceUnavailable {
 		t.Fatalf("code %d", code)
+	}
+}
+
+func TestSetChipSkipsUnreadableRecord(t *testing.T) {
+	chip := newFakeChip()
+	good := profile.Profile{Name: "good", Slot: 1, ColdKeyID: 0x20e50011}
+	rec, _ := profile.Encode(good)
+	chip.bins[good.RecordID()] = rec
+	chip.bins[profile.Profile{Slot: 0}.RecordID()] = []byte("{torn")
+	chip.keys[0x20e50011] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{8}, 32))
+	_ = chip.GenerateEd25519(good.OwnerKeyID(), false)
+	_ = chip.GenerateEd25519(good.FeeKeyID(), false)
+	_ = chip.GenerateEd25519(profile.IdentityKeyID, false)
+
+	s := New(&sync.Mutex{}, t.Logf)
+
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := post(t, s, "/v1/inventory", InventoryRequest{Nonce: nonce(1), Profile: "good"}); code != http.StatusOK {
+		t.Fatalf("readable profile not served: %d %s", code, body)
+	}
+
+	// the unreadable record may hold any cold key, so the cold key guard
+	// cannot be checked until it is repaired
+	if code, _ := post(t, s, "/provision/profile", ProvisionRequest{Name: "new", Slot: 2, ColdKeyID: testColdID}); code == http.StatusOK {
+		t.Fatal("provisioned while a record is unreadable")
+	}
+}
+
+func TestFloorReset(t *testing.T) {
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	kes := bytes.Repeat([]byte{0x4b}, 32)
+	req := func(n byte, chain uint64) SignRequest {
+		return SignRequest{
+			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
+			Nonce: nonce(n), Payload: opCertPayload(kes, chain, 1100), Profile: "otg@preview",
+		}
+	}
+
+	if r := sign(t, s, req(1, 9)); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+
+	if r := sign(t, s, req(2, 4)); r.Error == "" {
+		t.Fatal("chain below floor signed")
+	}
+
+	if code, body := post(t, s, "/provision/floor", FloorRequest{Profile: "otg@preview", ChainCounter: 4}); code != http.StatusOK {
+		t.Fatalf("floor reset: %d %s", code, body)
+	}
+
+	r := sign(t, s, req(3, 4))
+
+	if r.Error != "" || *r.IssueCounter != 5 {
+		t.Fatalf("after reset: %+v", r)
+	}
+
+	rec, _ := chip.ReadBinary(profile.Profile{Slot: 0}.RecordID())
+
+	if p, _ := profile.Decode(rec); p.OpCertFloor != 4 {
+		t.Fatalf("reset floor not persisted: %+v", p)
+	}
+
+	if code, _ := post(t, s, "/provision/floor", FloorRequest{Profile: "nope", ChainCounter: 1}); code == http.StatusOK {
+		t.Fatal("floor reset for unknown profile")
+	}
+}
+
+func TestOpCertNextFloorWriteFailure(t *testing.T) {
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+	chip.failWrite = true
+
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	r := sign(t, s, SignRequest{
+		Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
+		Nonce: nonce(1), Payload: opCertPayload(make([]byte, 32), 7, 1100), Profile: "otg@preview",
+	})
+
+	if r.Error == "" || r.Signature != nil {
+		t.Fatalf("signed without persisting the floor: %+v", r)
+	}
+
+	if s.profiles["otg@preview"].OpCertFloor != 3 {
+		t.Fatal("cached floor raised although the write failed")
+	}
+}
+
+func TestChipErrorsReportedAsDeviceErrors(t *testing.T) {
+	s, chip := newTestService(t)
+	chip.failExists = true
+
+	code, body := post(t, s, "/provision/profile", ProvisionRequest{Name: "x", Slot: 3, ColdKeyID: testColdID})
+
+	if code == http.StatusOK || !strings.Contains(string(body), "device error") {
+		t.Fatalf("got %d %q, want a device error", code, body)
 	}
 }
