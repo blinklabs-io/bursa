@@ -1,0 +1,504 @@
+// Copyright 2026 Blink Labs Software
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package txbuilder
+
+import (
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"math/big"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/gouroboros/cbor"
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/blinklabs-io/gouroboros/ledger/conway"
+	"github.com/blinklabs-io/gouroboros/ledger/shelley"
+	"github.com/blinklabs-io/plutigo/data"
+	"github.com/stretchr/testify/require"
+	utxorpc "github.com/utxorpc/go-codegen/utxorpc/v1alpha/cardano"
+)
+
+func writeEnvelopeCert(t *testing.T, dir, name string, envType string, certBytes []byte) string {
+	t.Helper()
+	env := struct {
+		Type        string `json:"type"`
+		Description string `json:"description"`
+		CborHex     string `json:"cborHex"`
+	}{
+		Type:        envType,
+		Description: "test",
+		CborHex:     hex.EncodeToString(certBytes),
+	}
+	data, err := json.Marshal(env)
+	require.NoError(t, err)
+	p := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(p, data, 0o600))
+	return p
+}
+
+func makeStakeCredential(t *testing.T, fill byte) lcommon.Credential {
+	t.Helper()
+	h := make([]byte, 28)
+	for i := range h {
+		h[i] = fill + byte(i)
+	}
+	return lcommon.Credential{
+		CredType:   lcommon.CredentialTypeAddrKeyHash,
+		Credential: lcommon.CredentialHash(h),
+	}
+}
+
+func encodeWrapper(t *testing.T, cert lcommon.Certificate, typ lcommon.CertificateType) []byte {
+	t.Helper()
+	wrapper := lcommon.CertificateWrapper{Type: uint(typ), Certificate: cert}
+	b, err := cbor.Encode(wrapper)
+	require.NoError(t, err)
+	return b
+}
+
+func TestBuildCoinSelectionAndFeeAndBalance(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000001", 0, 10_000_000),
+	}
+	ctx := context.Background()
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress: addr,
+		WitnessCount:  2,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, built)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	estSize, err := bursa.EstimateWitnessedTxSize(built.TxCBOR, 2, 0)
+	require.NoError(t, err)
+	minFee, err := bursa.MinFee(estSize, *chain.PpFee)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, tx.Body.TxFee, minFee)
+	var inSum uint64 = 10_000_000
+	var outSum uint64
+	for _, o := range tx.Body.TxOutputs {
+		outSum += o.OutputAmount.Amount
+	}
+	require.Equal(t, inSum, outSum+tx.Body.TxFee)
+	require.Equal(t, uint64(1), uint64(len(tx.Body.TxOutputs)))
+	require.Equal(t, addr, tx.Body.TxOutputs[0].OutputAddress.String())
+}
+
+func TestBuildPoolDepositChargedOnlyIfNotRegistered(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000002", 0, 10_000_000_000),
+	}
+	poolKey := make([]byte, 28)
+	for i := range poolKey {
+		poolKey[i] = byte(i)
+	}
+	vrfKey := make([]byte, 32)
+	rewardAcct := make([]byte, 28)
+	poolCert := lcommon.PoolRegistrationCertificate{
+		CertType:      uint(lcommon.CertificateTypePoolRegistration),
+		Operator:      lcommon.PoolKeyHash(poolKey),
+		VrfKeyHash:    lcommon.VrfKeyHash(vrfKey),
+		Pledge:        1000000,
+		Cost:          340000000,
+		Margin:        lcommon.GenesisRat{Rat: big.NewRat(0, 1)},
+		RewardAccount: lcommon.AddrKeyHash(rewardAcct),
+		PoolOwners:    []lcommon.AddrKeyHash{},
+		Relays:        []lcommon.PoolRelay{},
+	}
+	_ = poolCert.SetRewardAccountCredential(lcommon.Credential{
+		CredType:   lcommon.CredentialTypeAddrKeyHash,
+		Credential: lcommon.CredentialHash(rewardAcct),
+	}, 0)
+	wrapBytes := encodeWrapper(t, &poolCert, lcommon.CertificateTypePoolRegistration)
+
+	dir := t.TempDir()
+	certFile := writeEnvelopeCert(t, dir, "pool.cert", "CertificateConway", wrapBytes)
+
+	ctx := context.Background()
+	// Not registered -> should charge pool deposit
+	chain.PoolRegistered = map[string]bool{}
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{certFile},
+		WitnessCount:     1,
+	})
+	require.NoError(t, err)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	require.Len(t, tx.Body.TxCertificates, 1)
+	// Inputs sum 10B, fee + 500M deposit => change = 10B - fee - 500M
+	inSum := uint64(10_000_000_000)
+	outSum := tx.Body.TxOutputs[0].OutputAmount.Amount
+	require.Equal(t, inSum, outSum+tx.Body.TxFee+chain.PpExtra.PoolDeposit)
+
+	// Registered -> no deposit
+	chain.PoolRegistered[hex.EncodeToString(poolKey)] = true
+	built2, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{certFile},
+		WitnessCount:     1,
+	})
+	require.NoError(t, err)
+	tx2, err := conway.NewConwayTransactionFromCbor(built2.TxCBOR)
+	require.NoError(t, err)
+	outSum2 := tx2.Body.TxOutputs[0].OutputAmount.Amount
+	require.Equal(t, inSum, outSum2+tx2.Body.TxFee)
+	require.Greater(t, outSum2, outSum)
+}
+
+func TestBuildKeyDepositForLegacyStakeRegistration(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "1111111111111111111111111111111111111111111111111111111111111111", 0, 20_000_000),
+	}
+	cred := makeStakeCredential(t, 0x11)
+	cert := &lcommon.StakeRegistrationCertificate{
+		CertType:        uint(lcommon.CertificateTypeStakeRegistration),
+		StakeCredential: cred,
+	}
+	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeStakeRegistration)
+	dir := t.TempDir()
+	certFile := writeEnvelopeCert(t, dir, "stake.reg", "CertificateShelley", wrapBytes)
+	ctx := context.Background()
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{certFile},
+		WitnessCount:     1,
+	})
+	require.NoError(t, err)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	require.Len(t, tx.Body.TxCertificates, 1)
+	inSum := uint64(20_000_000)
+	outSum := tx.Body.TxOutputs[0].OutputAmount.Amount
+	require.Equal(t, inSum, outSum+tx.Body.TxFee+chain.PpExtra.KeyDeposit)
+}
+
+func TestBuildConwayRegistrationDeposit(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "2222222222222222222222222222222222222222222222222222222222222222", 0, 20_000_000),
+	}
+	cred := makeStakeCredential(t, 0x22)
+	deposit := uint64(3_000_000)
+	cert := &lcommon.RegistrationCertificate{
+		CertType:        uint(lcommon.CertificateTypeRegistration),
+		StakeCredential: cred,
+		Amount:          deposit,
+	}
+	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeRegistration)
+	dir := t.TempDir()
+	certFile := writeEnvelopeCert(t, dir, "stake.reg.conway", "CertificateConway", wrapBytes)
+	ctx := context.Background()
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{certFile},
+		WitnessCount:     1,
+	})
+	require.NoError(t, err)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	inSum := uint64(20_000_000)
+	outSum := tx.Body.TxOutputs[0].OutputAmount.Amount
+	require.Equal(t, inSum, outSum+tx.Body.TxFee+deposit)
+}
+
+func TestBuildPoolRetirementNoDeposit(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "3333333333333333333333333333333333333333333333333333333333333333", 0, 10_000_000),
+	}
+	poolKey := make([]byte, 28)
+	for i := range poolKey {
+		poolKey[i] = byte(0xab)
+	}
+	cert := &lcommon.PoolRetirementCertificate{
+		CertType:    uint(lcommon.CertificateTypePoolRetirement),
+		PoolKeyHash: lcommon.PoolKeyHash(poolKey),
+		Epoch:       500,
+	}
+	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypePoolRetirement)
+	dir := t.TempDir()
+	certFile := writeEnvelopeCert(t, dir, "pool.retire", "CertificateShelley", wrapBytes)
+	ctx := context.Background()
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{certFile},
+		WitnessCount:     1,
+	})
+	require.NoError(t, err)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	inSum := uint64(10_000_000)
+	outSum := tx.Body.TxOutputs[0].OutputAmount.Amount
+	require.Equal(t, inSum, outSum+tx.Body.TxFee)
+}
+
+func TestBuildCertificatesInBodyEqualFiles(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "4444444444444444444444444444444444444444444444444444444444444444", 0, 50_000_000),
+	}
+	cred1 := makeStakeCredential(t, 0x01)
+	cred2 := makeStakeCredential(t, 0x02)
+	cert1 := &lcommon.StakeRegistrationCertificate{
+		CertType:        uint(lcommon.CertificateTypeStakeRegistration),
+		StakeCredential: cred1,
+	}
+	// delegation cert
+	poolHash := make([]byte, 28)
+	for i := range poolHash {
+		poolHash[i] = byte(i + 10)
+	}
+	cert2 := &lcommon.StakeDelegationCertificate{
+		CertType:        uint(lcommon.CertificateTypeStakeDelegation),
+		StakeCredential: &cred2,
+		PoolKeyHash:     lcommon.PoolKeyHash(poolHash),
+	}
+	wrap1 := encodeWrapper(t, cert1, lcommon.CertificateTypeStakeRegistration)
+	wrap2 := encodeWrapper(t, cert2, lcommon.CertificateTypeStakeDelegation)
+	dir := t.TempDir()
+	f1 := writeEnvelopeCert(t, dir, "c1", "CertificateShelley", wrap1)
+	f2 := writeEnvelopeCert(t, dir, "c2", "CertificateShelley", wrap2)
+	ctx := context.Background()
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{f1, f2},
+		WitnessCount:     1,
+	})
+	require.NoError(t, err)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	require.Len(t, tx.Body.TxCertificates, 2)
+	// Compare cert bodies round-trip via CBOR
+	for i, raw := range [][]byte{wrap1, wrap2} {
+		got, err := cbor.Encode(tx.Body.TxCertificates[i])
+		require.NoError(t, err)
+		require.Equal(t, raw, got)
+	}
+}
+
+func TestBuildRoundTripsThroughSign(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "5555555555555555555555555555555555555555555555555555555555555555", 0, 30_000_000),
+	}
+	cred := makeStakeCredential(t, 0x33)
+	cert := &lcommon.StakeRegistrationCertificate{
+		CertType:        uint(lcommon.CertificateTypeStakeRegistration),
+		StakeCredential: cred,
+	}
+	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeStakeRegistration)
+	dir := t.TempDir()
+	certFile := writeEnvelopeCert(t, dir, "stake.reg", "CertificateShelley", wrapBytes)
+	ctx := context.Background()
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{certFile},
+		WitnessCount:     1,
+	})
+	require.NoError(t, err)
+	// Write envelope to temp file and sign
+	txFile := filepath.Join(dir, "tx.conway")
+	envStr, err := bursa.WriteCborEnvelope(built.TxEnvelopeType, "Unwitnessed Tx", built.TxCBOR, txFile)
+	require.NoError(t, err)
+	require.NotEmpty(t, envStr)
+	// Read back and ensure signable
+	raw, envType, err := bursa.ReadTxInput([]byte(envStr), "")
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+	require.NotEmpty(t, envType)
+	// Generate a deterministic key for signing
+	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	wallet, err := bursa.NewWallet(mnemonic, bursa.WithNetwork("preprod"))
+	require.NoError(t, err)
+	lk := &bursa.LoadedKey{
+		Type:        wallet.PaymentSKey.Type,
+		Description: wallet.PaymentSKey.Description,
+	}
+	// Load via parsing the key file bytes directly would be more involved;
+	// instead use the wallet's payment extended skey via helper that creates LoadedKey from File
+	// We can write the key to temp and load
+	paymentSkeyJSON, err := json.Marshal(wallet.PaymentSKey)
+	require.NoError(t, err)
+	skeyFile := filepath.Join(dir, "payment.skey")
+	require.NoError(t, os.WriteFile(skeyFile, paymentSkeyJSON, 0o600))
+	loaded, err := bursa.LoadSecretKeyFromFile(skeyFile)
+	require.NoError(t, err)
+	signed, err := bursa.SignTransaction(raw, []*bursa.LoadedKey{loaded})
+	require.NoError(t, err)
+	require.NotEmpty(t, signed)
+	_ = lk
+}
+
+func TestSubmitPassesBytesAndReportsRejection(t *testing.T) {
+	chain := NewFakeChain()
+	txBytes := []byte{0x84, 0x00}
+	errRejection := errors.New("rejected: missing witness")
+	chain.SubmitErr = errRejection
+	ctx := context.Background()
+	err := chain.SubmitTx(ctx, txBytes)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "rejected")
+	require.Empty(t, chain.Submitted)
+
+	chain.SubmitErr = nil
+	require.NoError(t, chain.SubmitTx(ctx, txBytes))
+	require.Len(t, chain.Submitted, 1)
+	require.Equal(t, txBytes, chain.Submitted[0])
+}
+
+func TestBuildTTLFromSlot(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "6666666666666666666666666666666666666666666666666666666666666666", 0, 10_000_000),
+	}
+	chain.SlotVal = 123456
+	ctx := context.Background()
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress: addr,
+		WitnessCount:  1,
+	})
+	require.NoError(t, err)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	require.Equal(t, uint64(123456+3600), tx.Body.Ttl)
+	// Explicit TTL
+	built2, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress: addr,
+		WitnessCount:  1,
+		TTL:           999999,
+	})
+	require.NoError(t, err)
+	tx2, err := conway.NewConwayTransactionFromCbor(built2.TxCBOR)
+	require.NoError(t, err)
+	require.Equal(t, uint64(999999), tx2.Body.Ttl)
+}
+
+func TestBuildFeeMeetsMinFeeForWitnessedSize(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "7777777777777777777777777777777777777777777777777777777777777777", 0, 100_000_000),
+	}
+	ctx := context.Background()
+	for _, wc := range []uint{1, 2, 5} {
+		built, err := Build(ctx, chain, BuildOptions{
+			ChangeAddress: addr,
+			WitnessCount:  wc,
+		})
+		require.NoError(t, err)
+		tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+		require.NoError(t, err)
+		estSize, err := bursa.EstimateWitnessedTxSize(built.TxCBOR, wc, 0)
+		require.NoError(t, err)
+		minFee, err := bursa.MinFee(estSize, *chain.PpFee)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, tx.Body.TxFee, minFee)
+	}
+}
+
+func TestBuildInsufficientFunds(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "8888888888888888888888888888888888888888888888888888888888888888", 0, 1_000_000),
+	}
+	// Legacy registration needs 2M deposit + fee > 1M => insufficient
+	cred := makeStakeCredential(t, 0x44)
+	cert := &lcommon.StakeRegistrationCertificate{
+		CertType:        uint(lcommon.CertificateTypeStakeRegistration),
+		StakeCredential: cred,
+	}
+	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeStakeRegistration)
+	dir := t.TempDir()
+	certFile := writeEnvelopeCert(t, dir, "stake.reg", "CertificateShelley", wrapBytes)
+	ctx := context.Background()
+	_, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{certFile},
+		WitnessCount:     1,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "insufficient funds")
+}
+
+func TestBuildSkipsAssetsUTxOs(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	adaUTxO := MakeUTxO(addr, "9999999999999999999999999999999999999999999999999999999999999999", 0, 10_000_000)
+	assetUTxO := makeAssetUTxO(addr, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1, 5_000_000)
+	chain.UtxosMap[addr] = []UTxO{assetUTxO, adaUTxO}
+	ctx := context.Background()
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress: addr,
+		WitnessCount:  1,
+	})
+	require.NoError(t, err)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	// Should only use adaUTxO, so inputs = 1
+	require.Len(t, tx.Body.TxInputs.Items(), 1)
+}
+
+// helper for asset UTxO
+type assetFakeOutput struct {
+	address  lcommon.Address
+	lovelace uint64
+	assets   *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput]
+}
+
+func (o *assetFakeOutput) Address() lcommon.Address                                  { return o.address }
+func (o *assetFakeOutput) Amount() *big.Int                                          { return new(big.Int).SetUint64(o.lovelace) }
+func (o *assetFakeOutput) Assets() *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput] { return o.assets }
+func (o *assetFakeOutput) Datum() *lcommon.Datum                                     { return nil }
+func (o *assetFakeOutput) DatumHash() *lcommon.Blake2b256                            { return nil }
+func (o *assetFakeOutput) Cbor() []byte                                              { return nil }
+func (o *assetFakeOutput) Utxorpc() (*utxorpc.TxOutput, error)                       { return nil, nil }
+func (o *assetFakeOutput) ScriptRef() lcommon.Script                                 { return nil }
+func (o *assetFakeOutput) ToPlutusData() data.PlutusData                             { return nil }
+func (o *assetFakeOutput) String() string                                            { return o.address.String() }
+
+func makeAssetUTxO(addr string, txHashHex string, idx uint32, lovelace uint64) UTxO {
+	var txID lcommon.Blake2b256
+	b, _ := hex.DecodeString(txHashHex)
+	copy(txID[:], b)
+	input := shelley.ShelleyTransactionInput{TxId: txID, OutputIndex: idx}
+	a, _ := lcommon.NewAddress(addr)
+	policy := lcommon.Blake2b224{1, 2, 3}
+	assetName := cbor.NewByteString([]byte("TOKEN"))
+	ma := lcommon.NewMultiAsset[lcommon.MultiAssetTypeOutput](map[lcommon.Blake2b224]map[cbor.ByteString]*big.Int{
+		policy: {assetName: big.NewInt(100)},
+	})
+	_ = ma
+	return UTxO{
+		Input:  input,
+		Output: &assetFakeOutput{address: a, lovelace: lovelace, assets: &ma},
+	}
+}
