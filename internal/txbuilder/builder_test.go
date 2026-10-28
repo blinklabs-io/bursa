@@ -864,3 +864,138 @@ func TestSelectionAddsInputWhenChangeBelowMinUTxO(t *testing.T) {
 	require.Len(t, tx.Outputs(), 1)
 	require.Equal(t, uint64(1_300_000), tx.Outputs()[0].Amount().Uint64()+tx.Fee().Uint64())
 }
+
+func TestBuildWithPoolVote(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000001", 0, 10_000_000),
+	}
+	poolKey := make([]byte, 28)
+	for i := range poolKey {
+		poolKey[i] = byte(i + 1)
+	}
+	actionTxID := make([]byte, 32)
+	for i := range actionTxID {
+		actionTxID[i] = byte(i + 2)
+	}
+
+	tests := []struct {
+		name       string
+		vote       uint8
+		index      uint32
+		withAnchor bool
+	}{
+		{"yes_index3", lcommon.GovVoteYes, 3, false},
+		{"no_index3", lcommon.GovVoteNo, 3, false},
+		{"abstain_index3", lcommon.GovVoteAbstain, 3, false},
+		{"yes_with_anchor", lcommon.GovVoteYes, 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var anchor *lcommon.GovAnchor
+			if tt.withAnchor {
+				a, err := lcommon.NewGovAnchor("https://example.com/vote.json", make([]byte, 32))
+				for i := range a.DataHash {
+					a.DataHash[i] = byte(i)
+				}
+				require.NoError(t, err)
+				anchor = &a
+			}
+			var poolKeyArr [28]byte
+			copy(poolKeyArr[:], poolKey)
+			var actionTxArr [32]byte
+			copy(actionTxArr[:], actionTxID)
+			ctx := context.Background()
+			built, err := Build(ctx, chain, BuildOptions{
+				ChangeAddress: addr,
+				WitnessCount:  1,
+				Vote: &PoolVote{
+					PoolKeyHash: poolKeyArr,
+					ActionTxId:  actionTxArr,
+					ActionIndex: tt.index,
+					Vote:        tt.vote,
+					Anchor:      anchor,
+				},
+			})
+			require.NoError(t, err)
+			tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+			require.NoError(t, err)
+			require.Len(t, tx.Body.TxVotingProcedures, 1)
+			for voter, actions := range tx.Body.TxVotingProcedures {
+				require.Equal(t, lcommon.VoterTypeStakingPoolKeyHash, voter.Type)
+				require.Equal(t, poolKeyArr, [28]byte(voter.Hash))
+				require.Len(t, actions, 1)
+				for aid, proc := range actions {
+					require.Equal(t, actionTxArr[:], aid.TransactionId[:])
+					require.Equal(t, tt.index, uint32(aid.GovActionIdx))
+					require.Equal(t, tt.vote, proc.Vote)
+					if tt.withAnchor {
+						require.NotNil(t, proc.Anchor)
+						require.Equal(t, anchor.Url, proc.Anchor.Url)
+						require.Equal(t, anchor.DataHash, proc.Anchor.DataHash)
+					} else {
+						require.Nil(t, proc.Anchor)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestBuildWithVoteAndPoolRegistration(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000003", 0, 10_000_000_000),
+	}
+	poolKey := make([]byte, 28)
+	for i := range poolKey {
+		poolKey[i] = byte(i)
+	}
+	vrfKey := make([]byte, 32)
+	rewardAcct := make([]byte, 28)
+	poolCert := lcommon.PoolRegistrationCertificate{
+		CertType:      uint(lcommon.CertificateTypePoolRegistration),
+		Operator:      lcommon.PoolKeyHash(poolKey),
+		VrfKeyHash:    lcommon.VrfKeyHash(vrfKey),
+		Pledge:        1000000,
+		Cost:          340000000,
+		Margin:        lcommon.GenesisRat{Rat: big.NewRat(0, 1)},
+		RewardAccount: lcommon.AddrKeyHash(rewardAcct),
+		PoolOwners:    []lcommon.AddrKeyHash{},
+		Relays:        []lcommon.PoolRelay{},
+	}
+	_ = poolCert.SetRewardAccountCredential(lcommon.Credential{
+		CredType:   lcommon.CredentialTypeAddrKeyHash,
+		Credential: lcommon.CredentialHash(rewardAcct),
+	}, 0)
+	wrapBytes := encodeWrapper(t, &poolCert, lcommon.CertificateTypePoolRegistration)
+	dir := t.TempDir()
+	certFile := writeEnvelopeCert(t, dir, "pool.cert", "CertificateConway", wrapBytes)
+
+	var poolKeyArr [28]byte
+	copy(poolKeyArr[:], poolKey)
+	var actionTxArr [32]byte
+	for i := range actionTxArr {
+		actionTxArr[i] = 0xaa
+	}
+	chain.PoolRegistered = map[string]bool{}
+	ctx := context.Background()
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{certFile},
+		WitnessCount:     1,
+		Vote: &PoolVote{
+			PoolKeyHash: poolKeyArr,
+			ActionTxId:  actionTxArr,
+			ActionIndex: 0,
+			Vote:        lcommon.GovVoteYes,
+		},
+	})
+	require.NoError(t, err)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	require.Len(t, tx.Body.TxCertificates, 1)
+	require.Len(t, tx.Body.TxVotingProcedures, 1)
+}

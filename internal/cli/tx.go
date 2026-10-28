@@ -16,11 +16,14 @@ package cli
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/blinklabs-io/bursa"
@@ -199,12 +202,87 @@ func RunTxDecode(txFile, protocolParamsFile string, witnessCount, byronWitnessCo
 	return nil
 }
 
-func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []string, witnessCount uint, outFile string, ttlMargin uint64, timeoutSeconds int64) error {
+// PoolVoteFlags are the tx build flags for a stake pool governance vote.
+type PoolVoteFlags struct {
+	PoolID     string
+	GovAction  string // <tx id hex>#<index>
+	Vote       string // yes, no or abstain
+	AnchorURL  string
+	AnchorHash string
+}
+
+// poolVote validates the vote flags. It returns nil when none is set.
+func (f PoolVoteFlags) poolVote() (*txbuilder.PoolVote, error) {
+	if f == (PoolVoteFlags{}) {
+		return nil, nil
+	}
+	if f.PoolID == "" || f.GovAction == "" || f.Vote == "" {
+		return nil, errors.New(
+			"a vote needs --vote-pool-id, --vote-gov-action and --vote",
+		)
+	}
+	keyHash, err := parsePoolID(f.PoolID)
+	if err != nil {
+		return nil, fmt.Errorf("--vote-pool-id: %w", err)
+	}
+	pv := &txbuilder.PoolVote{}
+	copy(pv.PoolKeyHash[:], keyHash)
+	txID, idx, ok := strings.Cut(f.GovAction, "#")
+	if !ok {
+		return nil, errors.New("--vote-gov-action: expected <tx id>#<index>")
+	}
+	txIDBytes, err := hex.DecodeString(txID)
+	if err != nil || len(txIDBytes) != len(pv.ActionTxId) {
+		return nil, errors.New("--vote-gov-action: tx id must be 32 bytes hex")
+	}
+	copy(pv.ActionTxId[:], txIDBytes)
+	index, err := strconv.ParseUint(idx, 10, 16)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"--vote-gov-action: index must be 0 to %d",
+			lcommon.MaxGovActionIdx,
+		)
+	}
+	pv.ActionIndex = uint32(index)
+	switch strings.ToLower(f.Vote) {
+	case "yes":
+		pv.Vote = lcommon.GovVoteYes
+	case "no":
+		pv.Vote = lcommon.GovVoteNo
+	case "abstain":
+		pv.Vote = lcommon.GovVoteAbstain
+	default:
+		return nil, fmt.Errorf("--vote: %q is not yes, no or abstain", f.Vote)
+	}
+	if (f.AnchorURL == "") != (f.AnchorHash == "") {
+		return nil, errors.New(
+			"--vote-anchor-url and --vote-anchor-hash go together",
+		)
+	}
+	if f.AnchorURL != "" {
+		hash, err := hex.DecodeString(f.AnchorHash)
+		if err != nil {
+			return nil, fmt.Errorf("--vote-anchor-hash: %w", err)
+		}
+		anchor, err := lcommon.NewGovAnchor(f.AnchorURL, hash)
+		if err != nil {
+			return nil, fmt.Errorf("--vote-anchor-url: %w", err)
+		}
+		pv.Anchor = &anchor
+	}
+	return pv, nil
+}
+
+func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []string, witnessCount uint, outFile string, ttlMargin uint64, timeoutSeconds int64, voteFlags PoolVoteFlags) error {
 	if witnessCount == 0 {
 		return errors.New("--witness-count must be at least 1")
 	}
 	if ttlMargin == 0 {
 		return errors.New("--ttl-margin must be at least 1")
+	}
+	vote, err := voteFlags.poolVote()
+	if err != nil {
+		return err
 	}
 	ctx := context.Background()
 	var cancel context.CancelFunc
@@ -225,6 +303,7 @@ func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []st
 		CertificateFiles: certificateFiles,
 		WitnessCount:     witnessCount,
 		TTLMargin:        ttlMargin,
+		Vote:             vote,
 	})
 	if err != nil {
 		return err

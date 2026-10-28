@@ -33,12 +33,22 @@ import (
 // BuildOptions sets neither TTL nor TTLMargin.
 const DefaultTTLMargin = 3600
 
+// PoolVote represents a stake pool governance vote.
+type PoolVote struct {
+	PoolKeyHash [28]byte
+	ActionTxId  [32]byte
+	ActionIndex uint32
+	Vote        uint8
+	Anchor      *common.GovAnchor
+}
+
 type BuildOptions struct {
 	ChangeAddress    string
 	CertificateFiles []string
 	WitnessCount     uint
 	TTL              uint64
 	TTLMargin        uint64 // slots added to the current slot when TTL is 0
+	Vote             *PoolVote
 }
 
 type BuiltTx struct {
@@ -213,6 +223,27 @@ func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error
 			return nil, fmt.Errorf("decode certificate: %w", err)
 		}
 		body.TxCertificates = append(body.TxCertificates, wrapper)
+	}
+	if opts.Vote != nil {
+		voter := common.Voter{
+			Type: common.VoterTypeStakingPoolKeyHash,
+			Hash: common.Blake2b224(opts.Vote.PoolKeyHash),
+		}
+		actionId := common.GovActionId{
+			TransactionId: common.Blake2b256(opts.Vote.ActionTxId),
+			GovActionIdx:  opts.Vote.ActionIndex,
+		}
+		procedure := common.VotingProcedure{
+			Vote: opts.Vote.Vote,
+		}
+		if opts.Vote.Anchor != nil {
+			procedure.Anchor = opts.Vote.Anchor
+		}
+		body.TxVotingProcedures = common.VotingProcedures{
+			&voter: {
+				&actionId: procedure,
+			},
+		}
 	}
 
 	// Add inputs largest first until one balances with a change output at
