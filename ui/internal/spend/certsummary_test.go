@@ -46,6 +46,9 @@ func decodeWithCertificate(t *testing.T, cert lcommon.CertificateWrapper) string
 	if _, err := cbor.Decode(txBytes, &outer); err != nil {
 		t.Fatalf("decode tx as CBOR array: %v", err)
 	}
+	if len(outer) == 0 {
+		t.Fatal("decoded tx has no elements")
+	}
 	body, err := conway.NewConwayTransactionBodyFromCbor(outer[0])
 	if err != nil {
 		t.Fatalf("decode tx body: %v", err)
