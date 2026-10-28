@@ -113,6 +113,8 @@ func main() {
 
 		go func() {
 			time.Sleep(100 * time.Millisecond)
+			// never reset in the middle of an SE050 write
+			mu.Lock()
 			usbarmory.Reset()
 		}()
 	})

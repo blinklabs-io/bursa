@@ -36,6 +36,13 @@ const (
 
 var bringupMessage = []byte("armory-signer se050 bring-up")
 
+// Report size bounds: the first reportHead lines (bring-up) are kept, then
+// the most recent lines up to maxReportLines.
+const (
+	maxReportLines = 1024
+	reportHead     = 64
+)
+
 // Report accumulates bring-up output for the HTTP endpoint.
 type Report struct {
 	sync.Mutex
@@ -48,6 +55,11 @@ func (r *Report) Logf(format string, args ...any) {
 	defer r.Unlock()
 
 	r.lines = append(r.lines, fmt.Sprintf(format, args...))
+
+	// keep the bring-up output and the most recent lines
+	if len(r.lines) > maxReportLines {
+		r.lines = append(r.lines[:reportHead:reportHead], r.lines[len(r.lines)-(maxReportLines-reportHead):]...)
+	}
 }
 
 func (r *Report) String() string {

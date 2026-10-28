@@ -3,8 +3,9 @@
 
 APP := armory
 TAMAGO ?= $(HOME)/tamago/usr/local/tamago-go/bin/go
-# TESTNET=1 adds the bring-up key tests
-TESTNET ?= 1
+# TESTNET=1 adds the bring-up key tests and the unfiltered /sign endpoint;
+# never use it for a device holding keys that matter
+TESTNET ?= 0
 
 # ramStart (imx6ul package) + 0x10000
 TEXT_START := 0x80010000
