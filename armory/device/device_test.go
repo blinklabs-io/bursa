@@ -35,6 +35,9 @@ import (
 
 const testColdID uint32 = 0x20e50010
 
+// testReward is the testnet reward address pinned in the test profile.
+var testReward = "e0" + strings.Repeat("ee", 28)
+
 // fakeChip is a software SE050: keys and binary objects by object ID.
 type fakeChip struct {
 	keys map[uint32]ed25519.PrivateKey
@@ -146,6 +149,7 @@ func provisionTestProfile(t *testing.T, s *Service) ProvisionResponse {
 	chain := uint64(3)
 	code, body := post(t, s, "/provision/profile", ProvisionRequest{
 		Name: "otg@preview", Slot: 0, ColdKeyID: testColdID, ChainCounter: &chain,
+		RewardAccount: testReward,
 	})
 
 	if code != http.StatusOK {
@@ -198,7 +202,7 @@ func TestProvisionProfile(t *testing.T) {
 
 	p := profile.Profile{Slot: 0}
 
-	for _, id := range []uint32{p.OwnerKeyID(), p.FeeKeyID(), p.RecordID()} {
+	for _, id := range []uint32{p.OwnerKeyID(), p.RecordID()} {
 		if ok, _ := chip.Exists(id); !ok {
 			t.Fatalf("object %#08x not created", id)
 		}
@@ -213,7 +217,7 @@ func TestProvisionProfile(t *testing.T) {
 	rec, _ := chip.ReadBinary(p.RecordID())
 	got, err := profile.Decode(rec)
 
-	if err != nil || !got.FloorSet || got.OpCertFloor != 3 || got.ColdKeyID != testColdID {
+	if err != nil || !got.FloorSet || got.OpCertFloor != 3 || got.ColdKeyID != testColdID || got.RewardAccount != testReward {
 		t.Fatalf("record %+v, %v", got, err)
 	}
 
@@ -223,6 +227,7 @@ func TestProvisionProfile(t *testing.T) {
 		"same cold key": {Name: "other", Slot: 1, ColdKeyID: testColdID},
 		"no cold key":   {Name: "other", Slot: 1, ColdKeyID: 0x20e50011},
 		"bad cold id":   {Name: "other", Slot: 1, ColdKeyID: 0x20e50300},
+		"bad reward":    {Name: "other", Slot: 1, ColdKeyID: 0x20e50011, RewardAccount: "e1" + strings.Repeat("ee", 28)},
 	} {
 		if code, _ := post(t, s, "/provision/profile", req); code == http.StatusOK {
 			t.Errorf("%s: provisioned", name)
@@ -286,7 +291,7 @@ func TestInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if inv.Version != Protocol || len(inv.Keys) != 3 {
+	if inv.Version != Protocol || len(inv.Keys) != 2 {
 		t.Fatalf("inventory %+v", inv)
 	}
 
@@ -295,7 +300,7 @@ func TestInventory(t *testing.T) {
 	for i, want := range []struct {
 		role string
 		id   uint32
-	}{{"pool", p.ColdKeyID}, {"stake", p.OwnerKeyID()}, {"payment", p.FeeKeyID()}} {
+	}{{"pool", p.ColdKeyID}, {"stake", p.OwnerKeyID()}} {
 		pub, _ := chip.PublicKeyEd25519(want.id)
 
 		if inv.Keys[i].Role != want.role || !bytes.Equal(inv.Keys[i].PublicKey, pub) {
@@ -327,17 +332,15 @@ func TestInventoryNeedsIdentity(t *testing.T) {
 	}
 }
 
-// feeBody spends one input back to the fee wallet.
-func feeBody(feePub []byte, fee uint64) []byte {
-	h, _ := blake2b.New(28, nil)
-	h.Write(feePub)
-
-	addr := append([]byte{0x60}, h.Sum(nil)...)
+// certBody is a testnet body paid by an off-device wallet that carries certs.
+func certBody(certs ...[]any) []byte {
+	payer := append([]byte{0x60}, bytes.Repeat([]byte{0xc3}, 28)...)
 
 	b, err := cbor.Marshal(map[uint64]any{
 		0: []any{[]any{make([]byte, 32), uint64(0)}},
-		1: []any{[]any{addr, uint64(5_000_000)}},
-		2: fee,
+		1: []any{[]any{payer, uint64(5_000_000)}},
+		2: uint64(200_000),
+		4: certs,
 	})
 
 	if err != nil {
@@ -347,41 +350,56 @@ func feeBody(feePub []byte, fee uint64) []byte {
 	return b
 }
 
+func retirement(pool [28]byte) []any { return []any{uint64(4), pool[:], uint64(900)} }
+
+func regDeleg(owner, pool [28]byte) []any {
+	return []any{uint64(11), []any{uint64(0), owner[:]}, pool[:], uint64(2_000_000)}
+}
+
 func TestSignTxBody(t *testing.T) {
 	s, chip := newTestService(t)
 	resp := provisionTestProfile(t, s)
-	body := feeBody(resp.FeePublicKey, 200_000)
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	pool, owner := keyHash(cold), keyHash(resp.OwnerPublicKey)
 
-	r := sign(t, s, SignRequest{
-		Purpose: "tx-body", KeyHash: hashHex(resp.FeePublicKey), Role: "payment",
-		Nonce: nonce(1), Payload: body, Profile: "otg@preview", Era: ledger.TxTypeConway,
-	})
+	for _, c := range []struct {
+		role string
+		pub  []byte
+		body []byte
+	}{
+		{"pool", cold, certBody(retirement(pool))},
+		{"stake", resp.OwnerPublicKey, certBody(regDeleg(owner, pool))},
+	} {
+		r := sign(t, s, SignRequest{
+			Purpose: "tx-body", KeyHash: hashHex(c.pub), Role: c.role,
+			Nonce: []byte(c.role), Payload: c.body, Profile: "otg@preview", Era: ledger.TxTypeConway,
+		})
 
-	if r.Error != "" {
-		t.Fatalf("refused: %s", r.Error)
+		if r.Error != "" {
+			t.Fatalf("%s refused: %s", c.role, r.Error)
+		}
+
+		hash := blake2b.Sum256(c.body)
+
+		if !ed25519.Verify(c.pub, hash[:], r.Signature) {
+			t.Fatalf("%s signature is not over blake2b-256(body)", c.role)
+		}
 	}
 
+	body := certBody(retirement(pool))
 	hash := blake2b.Sum256(body)
 
-	if !ed25519.Verify(resp.FeePublicKey, hash[:], r.Signature) {
-		t.Fatal("signature is not over blake2b-256(body)")
-	}
-
-	cold, _ := chip.PublicKeyEd25519(testColdID)
-
 	for name, req := range map[string]SignRequest{
-		"policy refuses": {Purpose: "tx-body", KeyHash: hashHex(resp.FeePublicKey), Role: "payment",
-			Payload: feeBody(resp.FeePublicKey, 3_000_000), Era: ledger.TxTypeConway},
-		"key hash of another role": {Purpose: "tx-body", KeyHash: hashHex(cold), Role: "payment",
+		"policy refuses": {Purpose: "tx-body", KeyHash: hashHex(cold), Role: "pool",
+			Payload: certBody(retirement([28]byte{1})), Era: ledger.TxTypeConway},
+		"key hash of another role": {Purpose: "tx-body", KeyHash: hashHex(cold), Role: "stake",
 			Payload: body, Era: ledger.TxTypeConway},
-		"unknown role": {Purpose: "tx-body", KeyHash: hashHex(resp.FeePublicKey), Role: "drep",
+		"payment role": {Purpose: "tx-body", KeyHash: hashHex(cold), Role: "payment",
 			Payload: body, Era: ledger.TxTypeConway},
-		"no era": {Purpose: "tx-body", KeyHash: hashHex(resp.FeePublicKey), Role: "payment",
-			Payload: body},
-		"tx-hash": {Purpose: "tx-hash", KeyHash: hashHex(resp.FeePublicKey), Role: "payment",
-			Payload: hash[:]},
-		"opcert": {Purpose: "opcert", KeyHash: hashHex(cold), Role: "pool", Payload: make([]byte, 48)},
-		"cip8":   {Purpose: "cip8", KeyHash: hashHex(cold), Role: "pool", Payload: []byte{1}},
+		"no era":  {Purpose: "tx-body", KeyHash: hashHex(cold), Role: "pool", Payload: body},
+		"tx-hash": {Purpose: "tx-hash", KeyHash: hashHex(cold), Role: "pool", Payload: hash[:]},
+		"opcert":  {Purpose: "opcert", KeyHash: hashHex(cold), Role: "pool", Payload: make([]byte, 48)},
+		"cip8":    {Purpose: "cip8", KeyHash: hashHex(cold), Role: "pool", Payload: []byte{1}},
 	} {
 		req.Profile = "otg@preview"
 		req.Nonce = []byte(name)
@@ -392,12 +410,43 @@ func TestSignTxBody(t *testing.T) {
 	}
 }
 
+func TestRewardAccountChange(t *testing.T) {
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+	next := "e0" + strings.Repeat("dd", 28)
+
+	if code, body := post(t, s, "/provision/reward", RewardRequest{Profile: "otg@preview", RewardAccount: next}); code != http.StatusOK {
+		t.Fatalf("change: %d %s", code, body)
+	}
+
+	rec, _ := chip.ReadBinary(profile.Profile{Slot: 0}.RecordID())
+
+	if p, _ := profile.Decode(rec); p.RewardAccount != next || p.OpCertFloor != 3 {
+		t.Fatalf("record after change: %+v", p)
+	}
+
+	if s.profiles["otg@preview"].RewardAccount != next {
+		t.Fatal("cached profile not updated")
+	}
+
+	for name, req := range map[string]RewardRequest{
+		"mainnet on testnet profile": {Profile: "otg@preview", RewardAccount: "e1" + strings.Repeat("dd", 28)},
+		"unknown profile":            {Profile: "nope", RewardAccount: next},
+		"empty":                      {Profile: "otg@preview"},
+	} {
+		if code, _ := post(t, s, "/provision/reward", req); code == http.StatusOK {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
 func TestSignRefusesReplayedNonce(t *testing.T) {
-	s, _ := newTestService(t)
-	resp := provisionTestProfile(t, s)
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+	cold, _ := chip.PublicKeyEd25519(testColdID)
 	req := SignRequest{
-		Purpose: "tx-body", KeyHash: hashHex(resp.FeePublicKey), Role: "payment",
-		Nonce: nonce(9), Payload: feeBody(resp.FeePublicKey, 200_000),
+		Purpose: "tx-body", KeyHash: hashHex(cold), Role: "pool",
+		Nonce: nonce(9), Payload: certBody(retirement(keyHash(cold))),
 		Profile: "otg@preview", Era: ledger.TxTypeConway,
 	}
 
@@ -515,7 +564,6 @@ func TestSetChipSkipsUnreadableRecord(t *testing.T) {
 	chip.bins[profile.Profile{Slot: 0}.RecordID()] = []byte("{torn")
 	chip.keys[0x20e50011] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{8}, 32))
 	_ = chip.GenerateEd25519(good.OwnerKeyID(), false)
-	_ = chip.GenerateEd25519(good.FeeKeyID(), false)
 	_ = chip.GenerateEd25519(profile.IdentityKeyID, false)
 
 	s := New(&sync.Mutex{}, t.Logf)

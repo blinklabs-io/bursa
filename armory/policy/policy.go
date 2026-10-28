@@ -13,6 +13,11 @@
 // limitations under the License.
 
 // Package policy decides which transaction bodies a device key may sign.
+//
+// The device holds a pool's cold key and owner stake key, never funds: any
+// wallet pays for the transaction and signs its own inputs. A cold or owner
+// witness authorizes certificates and votes, not spending, so the rules bound
+// what those certificates do rather than where the outputs go.
 package policy
 
 import (
@@ -34,14 +39,12 @@ type Role int
 const (
 	RoleCold Role = iota
 	RoleOwner
-	RoleFee
 )
 
 // Keys are the key hashes a profile's device keys resolve to.
 type Keys struct {
 	Pool  [28]byte // blake2b-224(cold vkey) = pool id
 	Owner [28]byte // owner stake key hash
-	Fee   [28]byte // fee payment key hash
 }
 
 // Decision is an allowed signing request.
@@ -65,8 +68,8 @@ const (
 	keyFee       = 2
 	keyNetworkID = 15
 
-	// Enterprise address header: key-hash payment credential, no stake part.
-	enterpriseHeader = 0x60
+	// byronAddressType is the first header type without a network nibble.
+	byronAddressType = 8
 )
 
 var rawDecoder, _ = cbor.DecOptions{
@@ -94,13 +97,17 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 		return Decision{}, fmt.Errorf("policy: decode body: %w", err)
 	}
 
+	// outputs belong to the paying wallet; only their network must match
 	for i, o := range tx.Outputs() {
 		addr := o.Address()
 		b, err := addr.Bytes()
 
-		if err != nil || len(b) != 29 || b[0] != enterpriseHeader|p.NetworkID ||
-			!bytes.Equal(b[1:], k.Fee[:]) {
-			return Decision{}, fmt.Errorf("policy: output %d does not pay the fee wallet", i)
+		if err != nil || len(b) == 0 {
+			return Decision{}, fmt.Errorf("policy: output %d has no address", i)
+		}
+
+		if b[0]>>4 < byronAddressType && b[0]&0x0f != p.NetworkID {
+			return Decision{}, fmt.Errorf("policy: output %d is on another network", i)
 		}
 	}
 
@@ -108,7 +115,7 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 	var poolCert, ownerCert, voted bool
 
 	for i, c := range tx.Certificates() {
-		s, pool, owner, err := checkCert(k, era, c)
+		s, pool, owner, err := checkCert(p, k, era, c)
 
 		if err != nil {
 			return Decision{}, fmt.Errorf("policy: certificate %d: %w", i, err)
@@ -133,7 +140,7 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 		return Decision{}, errors.New("policy: nothing for the cold key to authorize")
 	case role == RoleOwner && !ownerCert:
 		return Decision{}, errors.New("policy: nothing for the owner key to authorize")
-	case role < RoleCold || role > RoleFee:
+	case role < RoleCold || role > RoleOwner:
 		return Decision{}, fmt.Errorf("policy: unknown role %d", role)
 	}
 
@@ -144,7 +151,8 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 }
 
 // checkRaw applies the rules gouroboros decoding would hide: exact key set,
-// no duplicate keys, definite lengths, a capped fee and the network id.
+// no duplicate keys, definite lengths, a present fee and the network id. A
+// fee is required because a Dijkstra sub-transaction body has none.
 func checkRaw(p profile.Profile, body []byte) (fee uint64, err error) {
 	var m map[uint64]cbor.RawMessage
 
@@ -168,10 +176,6 @@ func checkRaw(p profile.Profile, body []byte) (fee uint64, err error) {
 		return 0, fmt.Errorf("policy: fee: %w", err)
 	}
 
-	if fee > p.FeeCap() {
-		return 0, fmt.Errorf("policy: fee %d above cap %d", fee, p.FeeCap())
-	}
-
 	if raw, ok = m[keyNetworkID]; ok {
 		var id uint64
 
@@ -185,7 +189,7 @@ func checkRaw(p profile.Profile, body []byte) (fee uint64, err error) {
 
 // checkCert allows only certificates for this pool and its owner. It reports
 // whether the certificate needs the cold key or the owner key.
-func checkCert(k Keys, era uint, c common.Certificate) (summary string, pool, owner bool, err error) {
+func checkCert(p profile.Profile, k Keys, era uint, c common.Certificate) (summary string, pool, owner bool, err error) {
 	ownerCred := func(cred common.Credential) bool {
 		return cred.CredType == common.CredentialTypeAddrKeyHash && [28]byte(cred.Credential) == k.Owner
 	}
@@ -198,6 +202,10 @@ func checkCert(k Keys, era uint, c common.Certificate) (summary string, pool, ow
 
 		if len(c.PoolOwners) != 1 || [28]byte(c.PoolOwners[0]) != k.Owner {
 			return "", false, false, errors.New("pool owners must be exactly the device owner")
+		}
+
+		if err := checkRewardAccount(p, c); err != nil {
+			return "", false, false, err
 		}
 
 		summary = fmt.Sprintf("pool-reg pledge=%d cost=%d margin=%s relays=%d leios=%t",
@@ -241,4 +249,30 @@ func checkCert(k Keys, era uint, c common.Certificate) (summary string, pool, ow
 	}
 
 	return "", false, false, fmt.Errorf("certificate type %T not allowed", c)
+}
+
+// checkRewardAccount requires the registration's reward account to be the
+// one pinned in the profile at provisioning, credential type and network
+// included.
+func checkRewardAccount(p profile.Profile, c *common.PoolRegistrationCertificate) error {
+	want, ok := p.RewardAddress()
+
+	if !ok {
+		return errors.New("profile has no reward account; pool registration refused")
+	}
+
+	network, known := c.RewardAccountNetworkId()
+	cred := c.RewardAccountCredential()
+
+	if !known || network > 0x0f || cred.CredType > common.CredentialTypeScriptHash {
+		return errors.New("pool registration reward account is malformed")
+	}
+
+	got := append([]byte{0xe0 | byte(cred.CredType)<<4 | byte(network)}, cred.Credential[:]...)
+
+	if !bytes.Equal(got, want) {
+		return errors.New("pool registration reward account is not the profile's reward account")
+	}
+
+	return nil
 }

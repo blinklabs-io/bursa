@@ -29,9 +29,22 @@ func fill(b byte) (h [28]byte) {
 }
 
 var (
-	testKeys = Keys{Pool: fill(0xa1), Owner: fill(0xb2), Fee: fill(0xc3)}
+	testKeys = Keys{Pool: fill(0xa1), Owner: fill(0xb2)}
 	foreign  = fill(0xdd)
+	// payer is the off-device wallet funding the transaction
+	payer      = fill(0xc3)
+	rewardHash = fill(0xee)
 )
+
+// rewardAddr is a testnet reward address for h; script sets the script bit.
+func rewardAddr(h [28]byte, script bool) []byte {
+	header := byte(0xe0)
+	if script {
+		header |= 0x10
+	}
+
+	return append([]byte{header}, h[:]...)
+}
 
 type body map[uint64]any
 
@@ -77,11 +90,11 @@ func base(net uint8, pay, stake [28]byte) []byte {
 
 func output(addr []byte) []any { return []any{addr, uint64(5_000_000)} }
 
-// baseBody spends one input back to the fee wallet on testnet.
+// baseBody spends one input of the payer back to the payer on testnet.
 func baseBody() body {
 	return body{
 		0: []any{[]any{make([]byte, 32), uint64(0)}},
-		1: []any{output(enterprise(0, testKeys.Fee))},
+		1: []any{output(base(0, payer, foreign))},
 		2: uint64(200_000),
 	}
 }
@@ -89,17 +102,16 @@ func baseBody() body {
 func keyCred(h [28]byte) []any { return []any{uint64(0), h[:]} }
 
 func poolReg(operator [28]byte, owners ...[28]byte) []any {
-	return poolRegFields(operator, nil, owners...)
+	return poolRegFields(operator, nil, rewardAddr(rewardHash, false), owners...)
 }
 
-func poolRegFields(operator [28]byte, leios []any, owners ...[28]byte) []any {
+func poolRegFields(operator [28]byte, leios []any, reward []byte, owners ...[28]byte) []any {
 	ownerList := []any{}
 
 	for _, o := range owners {
 		ownerList = append(ownerList, o[:])
 	}
 
-	reward := append([]byte{0xe0}, foreign[:]...)
 	cert := []any{uint64(3), operator[:], make([]byte, 32)}
 
 	if leios != nil {

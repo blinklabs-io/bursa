@@ -107,15 +107,27 @@ type ProvisionRequest struct {
 	Slot         uint8   `json:"slot"`
 	ColdKeyID    uint32  `json:"cold_key_id"`
 	ChainCounter *uint64 `json:"chain_counter,omitempty"`
-	MaxFee       uint64  `json:"max_fee,omitempty"`
+	// RewardAccount is the hex reward address pool registrations must name.
+	RewardAccount string `json:"reward_account,omitempty"`
 }
 
-// ProvisionResponse returns the profile's generated public keys.
+// ProvisionResponse returns the profile's generated owner key.
 type ProvisionResponse struct {
 	OwnerPublicKey []byte `json:"owner_public_key"`
 	OwnerKeyHash   string `json:"owner_key_hash"`
-	FeePublicKey   []byte `json:"fee_public_key"`
-	FeeKeyHash     string `json:"fee_key_hash"`
+}
+
+// RewardRequest changes the reward account a profile's pool registrations
+// must name.
+type RewardRequest struct {
+	Profile       string `json:"profile"`
+	RewardAccount string `json:"reward_account"`
+}
+
+// RewardResponse confirms the stored reward account.
+type RewardResponse struct {
+	Profile       string `json:"profile"`
+	RewardAccount string `json:"reward_account"`
 }
 
 // FloorRequest resets a profile's opcert floor to the pool's current
@@ -207,6 +219,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sign", handle(s, s.sign))
 	mux.HandleFunc("POST /provision/profile", handle(s, s.provisionProfile))
 	mux.HandleFunc("POST /provision/floor", handle(s, s.resetFloor))
+	mux.HandleFunc("POST /provision/reward", handle(s, s.setReward))
 	mux.HandleFunc("POST /provision/identity", handle(s, func(struct{}) (IdentityResponse, error) {
 		return s.provisionIdentity()
 	}))
@@ -268,7 +281,7 @@ func (s *Service) publicKey(id uint32) (ed25519.PublicKey, error) {
 }
 
 type profileKeys struct {
-	cold, owner, fee ed25519.PublicKey
+	cold, owner ed25519.PublicKey
 }
 
 func (s *Service) keys(p profile.Profile) (k profileKeys, err error) {
@@ -276,11 +289,7 @@ func (s *Service) keys(p profile.Profile) (k profileKeys, err error) {
 		return
 	}
 
-	if k.owner, err = s.publicKey(p.OwnerKeyID()); err != nil {
-		return
-	}
-
-	k.fee, err = s.publicKey(p.FeeKeyID())
+	k.owner, err = s.publicKey(p.OwnerKeyID())
 
 	return
 }
@@ -314,7 +323,6 @@ func (s *Service) inventory(req InventoryRequest) (Inventory, error) {
 		Keys: []KeyInfo{
 			{Role: "pool", PublicKey: k.cold},
 			{Role: "stake", PublicKey: k.owner},
-			{Role: "payment", PublicKey: k.fee},
 		},
 	}
 
@@ -382,8 +390,6 @@ func (s *Service) signRequest(req SignRequest) ([]byte, *uint64, error) {
 		role, id, pub = policy.RoleCold, p.ColdKeyID, k.cold
 	case "stake":
 		role, id, pub = policy.RoleOwner, p.OwnerKeyID(), k.owner
-	case "payment":
-		role, id, pub = policy.RoleFee, p.FeeKeyID(), k.fee
 	default:
 		return nil, nil, errors.New("unknown role")
 	}
@@ -413,7 +419,7 @@ func (s *Service) signTxBody(p profile.Profile, k profileKeys, role policy.Role,
 		return nil, nil, errors.New("invalid body size")
 	}
 
-	keys := policy.Keys{Pool: keyHash(k.cold), Owner: keyHash(k.owner), Fee: keyHash(k.fee)}
+	keys := policy.Keys{Pool: keyHash(k.cold), Owner: keyHash(k.owner)}
 
 	d, err := policy.Evaluate(p, keys, role, req.Era, req.Payload)
 
@@ -509,11 +515,11 @@ func (s *Service) ensureKey(id uint32) (ed25519.PublicKey, error) {
 
 func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, error) {
 	p := profile.Profile{
-		Name:      req.Name,
-		NetworkID: req.NetworkID,
-		Slot:      req.Slot,
-		ColdKeyID: req.ColdKeyID,
-		MaxFee:    req.MaxFee,
+		Name:          req.Name,
+		NetworkID:     req.NetworkID,
+		Slot:          req.Slot,
+		ColdKeyID:     req.ColdKeyID,
+		RewardAccount: req.RewardAccount,
 	}
 
 	if req.ChainCounter != nil {
@@ -565,24 +571,16 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 		return ProvisionResponse{}, err
 	}
 
-	fee, err := s.ensureKey(p.FeeKeyID())
-
-	if err != nil {
-		return ProvisionResponse{}, err
-	}
-
 	if err = s.writeProfile(p); err != nil {
 		return ProvisionResponse{}, err
 	}
 
-	ownerHash, feeHash := keyHash(owner), keyHash(fee)
+	ownerHash := keyHash(owner)
 	s.logf("provisioned profile %q slot %d", p.Name, p.Slot)
 
 	return ProvisionResponse{
 		OwnerPublicKey: owner,
 		OwnerKeyHash:   hex.EncodeToString(ownerHash[:]),
-		FeePublicKey:   fee,
-		FeeKeyHash:     hex.EncodeToString(feeHash[:]),
 	}, nil
 }
 
@@ -605,6 +603,35 @@ func (s *Service) resetFloor(req FloorRequest) (FloorResponse, error) {
 	s.logf("floor reset %q to %d", p.Name, p.OpCertFloor)
 
 	return FloorResponse{Profile: p.Name, OpCertFloor: p.OpCertFloor}, nil
+}
+
+// setReward changes the reward account pool registrations must name. It is a
+// deliberate provisioning action, so the account cannot be changed from inside
+// a transaction.
+func (s *Service) setReward(req RewardRequest) (RewardResponse, error) {
+	p, ok := s.profiles[req.Profile]
+
+	if !ok {
+		return RewardResponse{}, errUnknown
+	}
+
+	if req.RewardAccount == "" {
+		return RewardResponse{}, errors.New("reward account required")
+	}
+
+	p.RewardAccount = req.RewardAccount
+
+	if _, err := profile.Encode(p); err != nil {
+		return RewardResponse{}, err
+	}
+
+	if err := s.writeProfile(p); err != nil {
+		return RewardResponse{}, err
+	}
+
+	s.logf("reward account %q set to %s", p.Name, p.RewardAccount)
+
+	return RewardResponse{Profile: p.Name, RewardAccount: p.RewardAccount}, nil
 }
 
 // clip bounds host-supplied strings before they reach the report.
