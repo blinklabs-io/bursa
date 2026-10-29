@@ -569,6 +569,41 @@ func TestRefundConwayDeregistration(t *testing.T) {
 	require.Equal(t, inSum+deregAmt, outSum+tx.Body.TxFee+uint64(0))
 }
 
+func TestRefundDrepDeregistration(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddd0001", 0, 20_000_000),
+	}
+	cred := makeStakeCredential(t, 0x60)
+	refundAmt := uint64(5_000_000)
+	cert := &lcommon.DeregistrationDrepCertificate{
+		CertType:       uint(lcommon.CertificateTypeDeregistrationDrep),
+		DrepCredential: cred,
+		Amount:         refundAmt,
+	}
+	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeDeregistrationDrep)
+	dir := t.TempDir()
+	certFile := writeEnvelopeCert(t, dir, "drep.dereg", "CertificateConway", wrapBytes)
+	ctx := context.Background()
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{certFile},
+		WitnessCount:     1,
+	})
+	require.NoError(t, err)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	inSum := uint64(20_000_000)
+	var outSum uint64
+	for _, o := range tx.Body.TxOutputs {
+		outSum += o.OutputAmount.Amount
+	}
+	// The DRep deposit refund counts on the consumed side:
+	// sum(inputs) + refund == sum(outputs) + fee
+	require.Equal(t, inSum+refundAmt, outSum+tx.Body.TxFee)
+}
+
 func TestRefundMixedRegistrationAndDeregistration(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"

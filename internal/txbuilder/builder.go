@@ -100,6 +100,11 @@ func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *Proto
 			}
 		case *common.DeregistrationCertificate:
 			refunds += cert.Amount
+		case *common.DeregistrationDrepCertificate:
+			// UnRegDRepTxCert carries its refund explicitly; it
+			// counts on the consumed side like a stake
+			// deregistration refund.
+			refunds += cert.Amount
 		default:
 		}
 	}
