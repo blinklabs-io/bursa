@@ -128,6 +128,11 @@ signer:
     #   profile: "pool@mainnet"                 # optional fixed workload profile
     #   audience: "https://signer.example.internal"
     #   image_digest: "sha256:<64 hex chars>"
+    # - name: "armory"
+    #   type: "armory"
+    #   address: "http://10.0.0.1"
+    #   profile: "pool@preview"                 # required device profile
+    #   identity_public_key: "<64 hex chars>"   # device identity key, pinned
 
     # SOPS-encrypted secrets pulled from GCP Secret Manager and decrypted
     # in-process at boot. Requires the top-level `google.project`.
