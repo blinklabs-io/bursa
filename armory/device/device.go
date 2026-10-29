@@ -112,6 +112,9 @@ type ProvisionRequest struct {
 	ChainCounter *uint64 `json:"chain_counter,omitempty"`
 	// RewardAccount is the hex reward address pool registrations must name.
 	RewardAccount string `json:"reward_account,omitempty"`
+	// OwnerSigningKey is the cborHex of the owner's Ed25519 signing key.
+	// When empty the owner key is generated in the chip.
+	OwnerSigningKey string `json:"owner_signing_key,omitempty"`
 }
 
 // ProvisionResponse returns the profile's generated owner key.
@@ -548,6 +551,19 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 		p.FloorSet, p.OpCertFloor = true, *req.ChainCounter
 	}
 
+	var ownerSeed []byte
+
+	if req.OwnerSigningKey != "" {
+		key, err := parseSigningKey(req.OwnerSigningKey)
+		defer clear(key)
+
+		if err != nil {
+			return ProvisionResponse{}, err
+		}
+
+		ownerSeed = key[len(coldKeyCBORPrefix):]
+	}
+
 	if _, err := profile.Encode(p); err != nil {
 		return ProvisionResponse{}, err
 	}
@@ -587,7 +603,20 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 		return ProvisionResponse{}, errors.New("cold key not provisioned")
 	}
 
-	owner, err := s.ensureKey(p.OwnerKeyID())
+	var (
+		owner ed25519.PublicKey
+		err   error
+	)
+
+	if ownerSeed != nil {
+		owner, err = s.importKey(p.OwnerKeyID(), ownerSeed)
+		if errors.Is(err, errKeyExists) {
+			return ProvisionResponse{}, errors.New("owner key object already exists with a different key")
+		}
+	} else {
+		owner, err = s.ensureKey(p.OwnerKeyID())
+	}
+
 	if err != nil {
 		return ProvisionResponse{}, err
 	}
@@ -670,6 +699,61 @@ var coldKeyCBORPrefix = []byte{0x58, 0x20}
 
 var errMalformedKey = errors.New("malformed signing key: expected cborHex of a 32-byte Ed25519 signing key")
 
+var errKeyExists = errors.New("key object already exists with a different key")
+
+// parseSigningKey decodes the cborHex of a 32-byte Ed25519 signing key. The
+// caller clears the returned bytes.
+func parseSigningKey(cborHex string) ([]byte, error) {
+	key, err := hex.DecodeString(cborHex)
+	if err != nil || len(key) != len(coldKeyCBORPrefix)+ed25519.SeedSize || !bytes.HasPrefix(key, coldKeyCBORPrefix) {
+		clear(key)
+		return nil, errMalformedKey
+	}
+
+	return key, nil
+}
+
+// importKey stores the key of seed in object id. An existing object is never
+// written: holding this same key, it confirms an earlier import whose answer
+// was lost, and holding another key it is errKeyExists.
+func (s *Service) importKey(id uint32, seed []byte) (ed25519.PublicKey, error) {
+	want := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+
+	exists, err := s.chip.Exists(id)
+	if err != nil {
+		s.logf("exist check %#08x: %v", id, err)
+		return nil, errDevice
+	}
+
+	if !exists {
+		if err = s.chip.ImportEd25519(id, seed, false); err != nil {
+			s.logf("import %#08x: %v", id, err)
+
+			// the chip may have stored the key before its reply was lost
+			if ok, xerr := s.chip.Exists(id); xerr != nil || !ok {
+				return nil, errDevice
+			}
+		}
+	}
+
+	pub, err := s.publicKey(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if !bytes.Equal(pub, want) {
+		if exists {
+			return nil, errKeyExists
+		}
+
+		s.logf("import %#08x: chip public key does not match the seed", id)
+
+		return nil, errDevice
+	}
+
+	return pub, nil
+}
+
 // provisionCold imports a cold signing key into a free cold key object. The
 // seed is never logged or echoed, and an existing object is never replaced.
 func (s *Service) provisionCold(req ColdRequest) (ColdResponse, error) {
@@ -677,48 +761,18 @@ func (s *Service) provisionCold(req ColdRequest) (ColdResponse, error) {
 		return ColdResponse{}, errors.New("cold key id outside the cold key range")
 	}
 
-	key, err := hex.DecodeString(req.SigningKey)
+	key, err := parseSigningKey(req.SigningKey)
 	defer clear(key)
 
-	if err != nil || len(key) != len(coldKeyCBORPrefix)+ed25519.SeedSize || !bytes.HasPrefix(key, coldKeyCBORPrefix) {
-		return ColdResponse{}, errMalformedKey
-	}
-
-	seed := key[len(coldKeyCBORPrefix):]
-	want := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
-
-	exists, err := s.chip.Exists(req.ColdKeyID)
-	if err != nil {
-		s.logf("exist check %#08x: %v", req.ColdKeyID, err)
-		return ColdResponse{}, errDevice
-	}
-
-	// An existing object is never written. Holding this same key, it
-	// confirms an earlier import whose answer was lost.
-	if !exists {
-		if err = s.chip.ImportEd25519(req.ColdKeyID, seed, false); err != nil {
-			s.logf("import %#08x: %v", req.ColdKeyID, err)
-
-			// the chip may have stored the key before its reply was lost
-			if ok, xerr := s.chip.Exists(req.ColdKeyID); xerr != nil || !ok {
-				return ColdResponse{}, errDevice
-			}
-		}
-	}
-
-	pub, err := s.publicKey(req.ColdKeyID)
 	if err != nil {
 		return ColdResponse{}, err
 	}
 
-	if !bytes.Equal(pub, want) {
-		if exists {
-			return ColdResponse{}, errors.New("cold key object already exists with a different key")
-		}
-
-		s.logf("import %#08x: chip public key does not match the seed", req.ColdKeyID)
-
-		return ColdResponse{}, errDevice
+	pub, err := s.importKey(req.ColdKeyID, key[len(coldKeyCBORPrefix):])
+	if errors.Is(err, errKeyExists) {
+		return ColdResponse{}, errors.New("cold key object already exists with a different key")
+	} else if err != nil {
+		return ColdResponse{}, err
 	}
 
 	h := keyHash(pub)
