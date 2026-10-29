@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -206,5 +207,35 @@ func TestProvisionProfileOwnerImportFails(t *testing.T) {
 
 	if ok, _ := chip.Exists(profile.Profile{Slot: 0}.RecordID()); ok {
 		t.Fatal("profile record written after a failed import")
+	}
+}
+
+// A request with a misspelled field or trailing data is refused before the
+// chip is touched: a misspelled owner_signing_key would otherwise generate an
+// owner key that no backup can restore.
+func TestRequestStrictJSON(t *testing.T) {
+	t.Parallel()
+
+	good := `{"name":"otg@preview","slot":0,"cold_key_id":551878672,"reward_account":"` + testReward + `"`
+
+	for name, body := range map[string]string{
+		"unknown field": good + `,"owner_signing_keys":"` + coldKeyHex(ownerSeed) + `"}`,
+		"trailing data": good + `} {}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s, chip := newTestService(t)
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/provision/profile", strings.NewReader(body)))
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("got %d %s, want 400", w.Code, w.Body)
+			}
+
+			if ok, _ := chip.Exists(profile.Profile{Slot: 0}.OwnerKeyID()); ok {
+				t.Fatal("owner key generated for a refused request")
+			}
+		})
 	}
 }

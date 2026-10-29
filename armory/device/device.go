@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"sync"
 
@@ -253,7 +254,11 @@ func handle[Req, Resp any](s *Service, fn func(Req) (Resp, error)) http.HandlerF
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req Req
 
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequest)).Decode(&req); err != nil {
+		// unknown fields are refused, so a misspelled field is not ignored
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequest))
+		dec.DisallowUnknownFields()
+
+		if err := dec.Decode(&req); err != nil || dec.Decode(&struct{}{}) != io.EOF {
 			http.Error(w, "malformed request", http.StatusBadRequest)
 			return
 		}
