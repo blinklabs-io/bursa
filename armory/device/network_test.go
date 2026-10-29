@@ -70,8 +70,10 @@ func TestFixedNetworkRefusesOtherNetworkProfiles(t *testing.T) {
 		t.Error("inventory served for a testnet profile on a mainnet build")
 	}
 
+	// a request every other check accepts, so only the network check refuses
+	cold := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{8}, 32)).Public().(ed25519.PublicKey)
 	code, body := post(t, s, "/v1/sign", SignRequest{
-		Version: Protocol, Purpose: "opcert-next", Role: "pool", Nonce: nonce(2),
+		Version: Protocol, Purpose: "opcert-next", Role: "pool", KeyHash: hashHex(cold), Nonce: nonce(2),
 		Profile: "otg@preview", Payload: opCertPayload(make([]byte, 32), 0, 1),
 	})
 	var resp SignResponse
