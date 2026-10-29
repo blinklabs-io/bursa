@@ -22,6 +22,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
@@ -318,7 +319,51 @@ func TestBuildBackendsConfidentialSpace(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(nil)
 	pub := priv.Public().(ed25519.PublicKey)
 	digest := "sha256:" + strings.Repeat("a", 64)
-	workload := httptest.NewServer(
+	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(2),
+		Subject:               pkix.Name{CommonName: "signer"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	clientDER, err := x509.CreateCertificate(
+		rand.Reader,
+		clientTemplate,
+		clientTemplate,
+		&clientKey.PublicKey,
+		clientKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientKeyDER, err := x509.MarshalECPrivateKey(clientKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	clientCertFile := filepath.Join(dir, "client.crt")
+	clientKeyFile := filepath.Join(dir, "client.key")
+	clientCertPEM := pem.EncodeToMemory(&pem.Block{
+		Type: "CERTIFICATE", Bytes: clientDER,
+	})
+	if err := os.WriteFile(clientCertFile, clientCertPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(clientKeyFile, pem.EncodeToMemory(&pem.Block{
+		Type: "EC PRIVATE KEY", Bytes: clientKeyDER,
+	}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clientCAs := x509.NewCertPool()
+	clientCAs.AppendCertsFromPEM(clientCertPEM)
+	workload := httptest.NewUnstartedServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
 				Nonce []byte `json:"nonce"`
@@ -356,11 +401,24 @@ func TestBuildBackendsConfidentialSpace(t *testing.T) {
 				Encode(backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: []byte(s)})
 		}),
 	)
+	workload.TLS = &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		ClientCAs:  clientCAs,
+		ClientAuth: tls.RequireAndVerifyClientCert,
+	}
+	workload.StartTLS()
 	t.Cleanup(workload.Close)
+	serverCAFile := filepath.Join(dir, "server-ca.crt")
+	if err := os.WriteFile(serverCAFile, pem.EncodeToMemory(&pem.Block{
+		Type: "CERTIFICATE", Bytes: workload.Certificate().Raw,
+	}), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg := config.SignerBackendConfig{
 		Name: "gcp", Type: "confidential-space", Address: workload.URL,
 		Audience: "https://signer.example", ImageDigest: digest, JWKSURL: jwks.URL,
+		TLSCAFile: serverCAFile, TLSClientCertFile: clientCertFile, TLSClientKeyFile: clientKeyFile,
 	}
 	bs, err := BuildBackends(t.Context(), []config.SignerBackendConfig{cfg})
 	if err != nil {
@@ -434,6 +492,9 @@ func TestBuildAttestedBackendsRejectBadConfig(t *testing.T) {
 		{"confidential-space without address", config.SignerBackendConfig{
 			Type: "confidential-space", Audience: "a", ImageDigest: goodDigest, JWKSURL: "http://127.0.0.1:1/jwks",
 		}, "address"},
+		{"confidential-space without mTLS identity", config.SignerBackendConfig{
+			Type: "confidential-space", Address: "https://127.0.0.1:1", Audience: "a", ImageDigest: goodDigest, JWKSURL: "http://127.0.0.1:1/jwks",
+		}, "tls_client_cert_file"},
 	} {
 		tc.cfg.Name = "x"
 		_, err := BuildBackends(

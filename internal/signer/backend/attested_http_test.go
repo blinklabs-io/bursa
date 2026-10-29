@@ -175,4 +175,12 @@ func TestNewHTTPEnclaveValidatesAddress(t *testing.T) {
 			t.Errorf("address %q accepted", addr)
 		}
 	}
+	if _, err := NewMTLSHTTPEnclave(
+		"http://127.0.0.1:8080",
+		"unused-ca",
+		"unused-cert",
+		"unused-key",
+	); err == nil {
+		t.Fatal("authenticated enclave accepted a plaintext address")
+	}
 }

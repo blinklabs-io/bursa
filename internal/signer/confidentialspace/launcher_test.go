@@ -136,6 +136,19 @@ func TestFileEnvelopeStore(t *testing.T) {
 	if err != nil || string(got) != "wrapped" {
 		t.Fatalf("load = %q, %v", got, err)
 	}
+	if err := store.Replace(
+		[]byte("other"),
+		[]byte("active"),
+	); !errors.Is(err, ErrEnvelopeChanged) {
+		t.Fatalf("stale replace error = %v", err)
+	}
+	if err := store.Replace(got, []byte("active")); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	got, err = store.Load()
+	if err != nil || string(got) != "active" {
+		t.Fatalf("load after replace = %q, %v", got, err)
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)

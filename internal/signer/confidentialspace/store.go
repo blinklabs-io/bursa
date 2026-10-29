@@ -15,6 +15,7 @@
 package confidentialspace
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,9 @@ var (
 	ErrEnvelopeNotFound = errors.New("wrapped key not found")
 	// ErrEnvelopeExists indicates that another workload created the key first.
 	ErrEnvelopeExists = errors.New("wrapped key already exists")
+	// ErrEnvelopeChanged indicates that another workload replaced the expected
+	// bootstrap envelope.
+	ErrEnvelopeChanged = errors.New("wrapped key changed")
 )
 
 // FileEnvelopeStore persists one wrapped key with restrictive permissions and
@@ -77,41 +81,81 @@ func (s *FileEnvelopeStore) Load() ([]byte, error) {
 
 // Create atomically publishes a new wrapped key and refuses replacement.
 func (s *FileEnvelopeStore) Create(data []byte) error {
-	if len(data) == 0 || len(data) > maxRequestBody {
-		return errors.New("wrapped key has invalid size")
-	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".bursa-wrapped-key-*")
+	tmpName, err := s.writeTemp(data)
 	if err != nil {
 		return err
 	}
-	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
 	if err := os.Link(tmpName, s.path); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return ErrEnvelopeExists
 		}
 		return fmt.Errorf("publish wrapped key: %w", err)
 	}
-	d, err := os.Open(dir)
+	return syncDirectory(filepath.Dir(s.path))
+}
+
+// Replace atomically activates a bootstrap envelope only when its expected
+// contents still identify the file being replaced.
+func (s *FileEnvelopeStore) Replace(expected, data []byte) error {
+	current, err := s.Load()
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current, expected) {
+		return ErrEnvelopeChanged
+	}
+	tmpName, err := s.writeTemp(data)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmpName)
+	if err := os.Rename(tmpName, s.path); err != nil {
+		return fmt.Errorf("replace wrapped key: %w", err)
+	}
+	return syncDirectory(filepath.Dir(s.path))
+}
+
+func (s *FileEnvelopeStore) writeTemp(data []byte) (string, error) {
+	if len(data) == 0 || len(data) > maxRequestBody {
+		return "", errors.New("wrapped key has invalid size")
+	}
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(dir, ".bursa-wrapped-key-*")
+	if err != nil {
+		return "", err
+	}
+	tmpName := tmp.Name()
+	remove := true
+	defer func() {
+		if remove {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	remove = false
+	return tmpName, nil
+}
+
+func syncDirectory(path string) error {
+	d, err := os.Open(path)
 	if err != nil {
 		return err
 	}

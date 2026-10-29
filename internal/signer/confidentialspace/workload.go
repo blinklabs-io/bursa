@@ -35,9 +35,12 @@ import (
 )
 
 const (
-	envelopeVersion  = "bursa-confidential-space-key/1"
-	maxRequestBody   = 64 << 10
-	maxRequestNonces = 4096
+	envelopeVersionV1 = "bursa-confidential-space-key/1"
+	envelopeVersion   = "bursa-confidential-space-key/2"
+	envelopePending   = "counter-pending"
+	envelopeActive    = "active"
+	maxRequestBody    = 64 << 10
+	maxRequestNonces  = 4096
 )
 
 // TokenSource requests a custom-audience attestation token from the
@@ -56,11 +59,13 @@ type KeyWrapper interface {
 type EnvelopeStore interface {
 	Load() ([]byte, error)
 	Create([]byte) error
+	Replace([]byte, []byte) error
 }
 
-// CounterStore atomically reserves strictly increasing operational-certificate
-// issue counters for one pool cold key.
+// CounterStore binds durable state to one pool cold key and atomically reserves
+// sequential operational-certificate issue counters.
 type CounterStore interface {
+	Prepare(context.Context, backend.KeyHash, bool) error
 	CheckAndAdvance(context.Context, backend.KeyHash, uint64) error
 }
 
@@ -76,12 +81,20 @@ type Config struct {
 
 type envelope struct {
 	Version    string          `json:"version"`
+	Phase      string          `json:"phase,omitempty"`
 	Role       backend.KeyType `json:"role"`
 	KMSKey     string          `json:"kms_key"`
 	PublicKey  []byte          `json:"public_key"`
 	Nonce      []byte          `json:"nonce"`
 	Ciphertext []byte          `json:"ciphertext"`
 	WrappedDEK []byte          `json:"wrapped_dek"`
+}
+
+type keyMaterial struct {
+	priv    ed25519.PrivateKey
+	stored  []byte
+	active  []byte
+	pending bool
 }
 
 // Workload implements the enclave side of the attested signer protocol for a
@@ -121,17 +134,28 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 			"confidential space workload requires token, KMS, envelope, and counter providers",
 		)
 	}
-	priv, err := loadOrCreateKey(ctx, cfg)
+	key, err := loadOrCreateKey(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	pub := append(ed25519.PublicKey(nil), priv.Public().(ed25519.PublicKey)...)
+	pub := append(ed25519.PublicKey(nil), key.priv.Public().(ed25519.PublicKey)...)
+	hash := backend.HashPublicKey(pub)
+	if err := cfg.Counter.Prepare(ctx, hash, key.pending); err != nil {
+		wipe(key.priv)
+		return nil, fmt.Errorf("prepare counter state: %w", err)
+	}
+	if key.pending {
+		if err := activateEnvelope(ctx, cfg, key, pub); err != nil {
+			wipe(key.priv)
+			return nil, fmt.Errorf("activate wrapped key: %w", err)
+		}
+	}
 	return &Workload{
 		audience:  cfg.Audience,
 		tokens:    cfg.Tokens,
 		pub:       pub,
-		priv:      priv,
-		hash:      backend.HashPublicKey(pub),
+		priv:      key.priv,
+		hash:      hash,
 		counter:   cfg.Counter,
 		nonces:    make(map[[32]byte]struct{}),
 		nonceFIFO: make([][32]byte, 0, maxRequestNonces),
@@ -142,7 +166,7 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 func loadOrCreateKey(
 	ctx context.Context,
 	cfg Config,
-) (ed25519.PrivateKey, error) {
+) (*keyMaterial, error) {
 	data, err := cfg.Store.Load()
 	switch {
 	case err == nil:
@@ -151,20 +175,20 @@ func loadOrCreateKey(
 		return nil, fmt.Errorf("load wrapped key: %w", err)
 	}
 
-	data, priv, err := createEnvelope(ctx, cfg)
+	key, err := createEnvelope(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	if err := cfg.Store.Create(data); err == nil {
-		return priv, nil
+	if err := cfg.Store.Create(key.stored); err == nil {
+		return key, nil
 	} else if !errors.Is(err, ErrEnvelopeExists) {
-		wipe(priv)
+		wipe(key.priv)
 		return nil, fmt.Errorf("persist wrapped key: %w", err)
 	}
 
 	// Another workload won the create race. Discard this key and load the
 	// published envelope so all replicas expose the same public identity.
-	wipe(priv)
+	wipe(key.priv)
 	data, err = cfg.Store.Load()
 	if err != nil {
 		return nil, fmt.Errorf("load concurrently created wrapped key: %w", err)
@@ -175,10 +199,10 @@ func loadOrCreateKey(
 func createEnvelope(
 	ctx context.Context,
 	cfg Config,
-) ([]byte, ed25519.PrivateKey, error) {
+) (*keyMaterial, error) {
 	seed := make([]byte, ed25519.SeedSize)
 	if _, err := io.ReadFull(rand.Reader, seed); err != nil {
-		return nil, nil, fmt.Errorf("generate pool key: %w", err)
+		return nil, fmt.Errorf("generate pool key: %w", err)
 	}
 	defer wipe(seed)
 	priv := ed25519.NewKeyFromSeed(seed)
@@ -187,51 +211,75 @@ func createEnvelope(
 	dek := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
 		wipe(priv)
-		return nil, nil, fmt.Errorf("generate data-encryption key: %w", err)
+		return nil, fmt.Errorf("generate data-encryption key: %w", err)
 	}
 	defer wipe(dek)
 	block, err := aes.NewCipher(dek)
 	if err != nil {
 		wipe(priv)
-		return nil, nil, fmt.Errorf("initialize envelope cipher: %w", err)
+		return nil, fmt.Errorf("initialize envelope cipher: %w", err)
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		wipe(priv)
-		return nil, nil, fmt.Errorf("initialize envelope AEAD: %w", err)
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		wipe(priv)
-		return nil, nil, fmt.Errorf("generate envelope nonce: %w", err)
+		return nil, fmt.Errorf("initialize envelope AEAD: %w", err)
 	}
 	e := envelope{
 		Version:   envelopeVersion,
+		Phase:     envelopePending,
 		Role:      backend.KeyTypePool,
 		KMSKey:    cfg.KMSKey,
 		PublicKey: pub,
-		Nonce:     nonce,
+	}
+	data, err := encodeEnvelope(ctx, cfg, e, seed, dek, gcm)
+	if err != nil {
+		wipe(priv)
+		return nil, err
+	}
+	e.Phase = envelopeActive
+	active, err := encodeEnvelope(ctx, cfg, e, seed, dek, gcm)
+	if err != nil {
+		wipe(priv)
+		return nil, err
+	}
+	return &keyMaterial{
+		priv:    priv,
+		stored:  data,
+		active:  active,
+		pending: true,
+	}, nil
+}
+
+func encodeEnvelope(
+	ctx context.Context,
+	cfg Config,
+	e envelope,
+	seed, dek []byte,
+	gcm cipher.AEAD,
+) ([]byte, error) {
+	e.Nonce = make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, e.Nonce); err != nil {
+		return nil, fmt.Errorf("generate envelope nonce: %w", err)
 	}
 	aad := envelopeAAD(e)
-	e.Ciphertext = gcm.Seal(nil, nonce, seed, aad)
-	e.WrappedDEK, err = cfg.Wrapper.Wrap(ctx, dek, aad)
+	e.Ciphertext = gcm.Seal(nil, e.Nonce, seed, aad)
+	wrapped, err := cfg.Wrapper.Wrap(ctx, dek, aad)
 	if err != nil {
-		wipe(priv)
-		return nil, nil, fmt.Errorf("wrap data-encryption key: %w", err)
+		return nil, fmt.Errorf("wrap data-encryption key: %w", err)
 	}
+	e.WrappedDEK = wrapped
 	data, err := json.Marshal(e)
 	if err != nil {
-		wipe(priv)
-		return nil, nil, fmt.Errorf("encode wrapped key: %w", err)
+		return nil, fmt.Errorf("encode wrapped key: %w", err)
 	}
-	return data, priv, nil
+	return data, nil
 }
 
 func openEnvelope(
 	ctx context.Context,
 	cfg Config,
 	data []byte,
-) (ed25519.PrivateKey, error) {
+) (*keyMaterial, error) {
 	var e envelope
 	if len(data) > maxRequestBody {
 		return nil, errors.New("wrapped key exceeds size limit")
@@ -244,7 +292,7 @@ func openEnvelope(
 	if err := requireJSONEOF(dec); err != nil {
 		return nil, fmt.Errorf("decode wrapped key: %w", err)
 	}
-	if e.Version != envelopeVersion || e.Role != backend.KeyTypePool ||
+	if !validEnvelopePhase(e) || e.Role != backend.KeyTypePool ||
 		e.KMSKey != cfg.KMSKey {
 		return nil, errors.New(
 			"wrapped key metadata does not match workload configuration",
@@ -293,7 +341,32 @@ func openEnvelope(
 			"wrapped key public key does not match plaintext",
 		)
 	}
-	return priv, nil
+	key := &keyMaterial{
+		priv:    priv,
+		stored:  append([]byte(nil), data...),
+		pending: e.Version == envelopeVersion && e.Phase == envelopePending,
+	}
+	if key.pending {
+		e.Phase = envelopeActive
+		active, err := encodeEnvelope(ctx, cfg, e, seed, dek, gcm)
+		if err != nil {
+			wipe(priv)
+			return nil, err
+		}
+		key.active = active
+	}
+	return key, nil
+}
+
+func validEnvelopePhase(e envelope) bool {
+	switch e.Version {
+	case envelopeVersionV1:
+		return e.Phase == ""
+	case envelopeVersion:
+		return e.Phase == envelopePending || e.Phase == envelopeActive
+	default:
+		return false
+	}
 }
 
 func envelopeAAD(e envelope) []byte {
@@ -302,7 +375,11 @@ func envelopeAAD(e envelope) []byte {
 		0,
 		len(e.Version)+len(e.Role)+len(e.KMSKey)+len(e.PublicKey)+16,
 	)
-	for _, part := range [][]byte{[]byte(e.Version), []byte(e.Role), []byte(e.KMSKey), e.PublicKey} {
+	parts := [][]byte{[]byte(e.Version), []byte(e.Role), []byte(e.KMSKey), e.PublicKey}
+	if e.Version == envelopeVersion {
+		parts = append(parts, []byte(e.Phase))
+	}
+	for _, part := range parts {
 		var size [4]byte
 		binary.BigEndian.PutUint32(
 			size[:],
@@ -312,6 +389,43 @@ func envelopeAAD(e envelope) []byte {
 		buf = append(buf, part...)
 	}
 	return buf
+}
+
+func activateEnvelope(
+	ctx context.Context,
+	cfg Config,
+	key *keyMaterial,
+	publicKey ed25519.PublicKey,
+) error {
+	for range maxCounterCASRetries {
+		if err := cfg.Store.Replace(key.stored, key.active); err == nil {
+			return nil
+		} else if !errors.Is(err, ErrEnvelopeChanged) {
+			return err
+		}
+		data, err := cfg.Store.Load()
+		if err != nil {
+			return err
+		}
+		current, err := openEnvelope(ctx, cfg, data)
+		if err != nil {
+			return err
+		}
+		currentPublicKey := append(
+			ed25519.PublicKey(nil),
+			current.priv.Public().(ed25519.PublicKey)...,
+		)
+		wipe(current.priv)
+		if !ed25519.PublicKey(publicKey).Equal(currentPublicKey) {
+			return ErrEnvelopeChanged
+		}
+		if !current.pending {
+			return nil
+		}
+		key.stored = current.stored
+		key.active = current.active
+	}
+	return errors.New("wrapped key changed too often")
 }
 
 // Inventory returns the public key and a custom token bound to the caller's
@@ -413,7 +527,14 @@ func (w *Workload) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/inventory", w.handleInventory)
 	mux.HandleFunc("POST /v1/sign", w.handleSign)
-	return mux
+	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 ||
+			len(r.TLS.VerifiedChains) == 0 {
+			http.Error(rw, "client certificate required", http.StatusUnauthorized)
+			return
+		}
+		mux.ServeHTTP(rw, r)
+	})
 }
 
 func (w *Workload) handleInventory(rw http.ResponseWriter, r *http.Request) {

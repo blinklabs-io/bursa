@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 
@@ -33,28 +34,78 @@ import (
 )
 
 const (
-	counterStateVersion  = "bursa-confidential-space-counter/1"
-	maxCounterStateSize  = 4096
-	maxCounterCASRetries = 8
+	counterStateVersionV1 = "bursa-confidential-space-counter/1"
+	counterStateVersion   = "bursa-confidential-space-counter/2"
+	maxCounterStateSize   = 4096
+	maxCounterCASRetries  = 8
 )
 
-// ErrCounterRegression indicates that an issue counter was already reserved.
+// ErrCounterRegression indicates that an issue counter is not the next value
+// in the sequence.
 var ErrCounterRegression = errors.New(
-	"operational-certificate issue counter did not advance",
+	"operational-certificate issue counter is out of sequence",
 )
 
 type counterState struct {
-	Version     string `json:"version"`
-	KeyHash     string `json:"key_hash"`
-	IssueNumber uint64 `json:"issue_number"`
+	Version         string `json:"version"`
+	KeyHash         string `json:"key_hash"`
+	NextIssueNumber uint64 `json:"next_issue_number"`
+}
+
+type counterStateWire struct {
+	Version         string  `json:"version"`
+	KeyHash         string  `json:"key_hash"`
+	IssueNumber     *uint64 `json:"issue_number,omitempty"`
+	NextIssueNumber *uint64 `json:"next_issue_number,omitempty"`
+}
+
+type counterObject interface {
+	Load(context.Context) ([]byte, int64, bool, error)
+	Store(context.Context, []byte, int64, bool) error
+}
+
+type cloudCounterObject struct {
+	object *storage.ObjectHandle
 }
 
 // CloudCounterStore reserves issue counters in one Cloud Storage object. The
 // object generation precondition provides a compare-and-swap across workload
 // replicas.
 type CloudCounterStore struct {
-	object *storage.ObjectHandle
+	object counterObject
 	client *storage.Client
+}
+
+// Prepare binds the counter object to key. A missing object is created only
+// while the wrapped key identity is being created.
+func (s *CloudCounterStore) Prepare(
+	ctx context.Context,
+	key backend.KeyHash,
+	allowCreate bool,
+) error {
+	keyHash := key.String()
+	for range maxCounterCASRetries {
+		_, _, exists, err := s.loadCurrent(ctx, keyHash)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
+		if !allowCreate {
+			return errors.New("counter state is missing for the pool cold key")
+		}
+		initial := counterState{
+			Version: counterStateVersion,
+			KeyHash: keyHash,
+		}
+		if err := s.store(ctx, initial, 0, false); err == nil {
+			return nil
+		} else if !isPreconditionFailure(err) {
+			return err
+		}
+	}
+	return errors.New("counter state changed too often")
 }
 
 // NewCloudCounterStore creates a counter store using the measured workload's
@@ -78,13 +129,15 @@ func NewCloudCounterStore(
 		return nil, fmt.Errorf("create Cloud Storage client: %w", err)
 	}
 	return &CloudCounterStore{
-		object: client.Bucket(bucket).Object(object),
+		object: &cloudCounterObject{
+			object: client.Bucket(bucket).Object(object),
+		},
 		client: client,
 	}, nil
 }
 
-// CheckAndAdvance commits issueNumber only when it is greater than the last
-// committed value for key.
+// CheckAndAdvance commits issueNumber only when it is the next sequential
+// value for key.
 func (s *CloudCounterStore) CheckAndAdvance(
 	ctx context.Context,
 	key backend.KeyHash,
@@ -92,25 +145,23 @@ func (s *CloudCounterStore) CheckAndAdvance(
 ) error {
 	keyHash := key.String()
 	for range maxCounterCASRetries {
-		current, generation, exists, err := s.load(ctx)
+		current, generation, exists, err := s.loadCurrent(ctx, keyHash)
 		if err != nil {
 			return err
 		}
-		if exists {
-			if current.Version != counterStateVersion ||
-				current.KeyHash != keyHash {
-				return errors.New(
-					"counter state does not match the pool cold key",
-				)
-			}
-			if issueNumber <= current.IssueNumber {
-				return ErrCounterRegression
-			}
+		if !exists {
+			return errors.New("counter state is missing for the pool cold key")
+		}
+		if err := checkCounterSequence(
+			current.NextIssueNumber,
+			issueNumber,
+		); err != nil {
+			return err
 		}
 		next := counterState{
-			Version:     counterStateVersion,
-			KeyHash:     keyHash,
-			IssueNumber: issueNumber,
+			Version:         counterStateVersion,
+			KeyHash:         keyHash,
+			NextIssueNumber: issueNumber + 1,
 		}
 		if err := s.store(ctx, next, generation, exists); err == nil {
 			return nil
@@ -121,48 +172,103 @@ func (s *CloudCounterStore) CheckAndAdvance(
 	return errors.New("counter state changed too often")
 }
 
+func checkCounterSequence(expected, next uint64) error {
+	if next == math.MaxUint64 || next != expected {
+		return ErrCounterRegression
+	}
+	return nil
+}
+
+func (s *CloudCounterStore) loadCurrent(
+	ctx context.Context,
+	keyHash string,
+) (counterState, int64, bool, error) {
+	for range maxCounterCASRetries {
+		wire, generation, exists, err := s.load(ctx)
+		if err != nil || !exists {
+			return counterState{}, generation, exists, err
+		}
+		state, migrate, err := normalizeCounterState(wire, keyHash)
+		if err != nil {
+			return counterState{}, 0, false, err
+		}
+		if !migrate {
+			return state, generation, true, nil
+		}
+		if err := s.store(ctx, state, generation, true); err == nil {
+			continue
+		} else if !isPreconditionFailure(err) {
+			return counterState{}, 0, false, err
+		}
+	}
+	return counterState{}, 0, false, errors.New(
+		"counter state changed too often",
+	)
+}
+
 func (s *CloudCounterStore) load(
 	ctx context.Context,
-) (counterState, int64, bool, error) {
-	r, err := s.object.NewReader(ctx)
-	if errors.Is(err, storage.ErrObjectNotExist) {
-		return counterState{}, 0, false, nil
+) (counterStateWire, int64, bool, error) {
+	data, generation, exists, err := s.object.Load(ctx)
+	if err != nil || !exists {
+		return counterStateWire{}, generation, exists, err
 	}
-	if err != nil {
-		return counterState{}, 0, false, fmt.Errorf(
-			"read counter state: %w",
-			err,
-		)
-	}
-	defer r.Close()
-	data, err := io.ReadAll(io.LimitReader(r, maxCounterStateSize+1))
-	if err != nil {
-		return counterState{}, 0, false, fmt.Errorf(
-			"read counter state: %w",
-			err,
-		)
-	}
-	if len(data) > maxCounterStateSize {
-		return counterState{}, 0, false, errors.New(
-			"counter state exceeds size limit",
-		)
-	}
-	var state counterState
+	var state counterStateWire
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&state); err != nil {
-		return counterState{}, 0, false, fmt.Errorf(
+		return counterStateWire{}, 0, false, fmt.Errorf(
 			"decode counter state: %w",
 			err,
 		)
 	}
 	if err := requireJSONEOF(dec); err != nil {
-		return counterState{}, 0, false, fmt.Errorf(
+		return counterStateWire{}, 0, false, fmt.Errorf(
 			"decode counter state: %w",
 			err,
 		)
 	}
-	return state, r.Attrs.Generation, true, nil
+	return state, generation, true, nil
+}
+
+func normalizeCounterState(
+	wire counterStateWire,
+	keyHash string,
+) (counterState, bool, error) {
+	if wire.KeyHash != keyHash {
+		return counterState{}, false, errors.New(
+			"counter state does not match the pool cold key",
+		)
+	}
+	switch wire.Version {
+	case counterStateVersion:
+		if wire.NextIssueNumber == nil || wire.IssueNumber != nil {
+			return counterState{}, false, errors.New(
+				"counter state is incomplete",
+			)
+		}
+		return counterState{
+			Version:         counterStateVersion,
+			KeyHash:         keyHash,
+			NextIssueNumber: *wire.NextIssueNumber,
+		}, false, nil
+	case counterStateVersionV1:
+		if wire.IssueNumber == nil || wire.NextIssueNumber != nil ||
+			*wire.IssueNumber == math.MaxUint64 {
+			return counterState{}, false, errors.New(
+				"legacy counter state cannot be migrated",
+			)
+		}
+		return counterState{
+			Version:         counterStateVersion,
+			KeyHash:         keyHash,
+			NextIssueNumber: *wire.IssueNumber + 1,
+		}, true, nil
+	default:
+		return counterState{}, false, errors.New(
+			"counter state has an unsupported version",
+		)
+	}
 }
 
 func (s *CloudCounterStore) store(
@@ -175,14 +281,46 @@ func (s *CloudCounterStore) store(
 	if err != nil {
 		return fmt.Errorf("encode counter state: %w", err)
 	}
+	return s.object.Store(ctx, data, generation, exists)
+}
+
+func (s *cloudCounterObject) Load(
+	ctx context.Context,
+) ([]byte, int64, bool, error) {
+	r, err := s.object.NewReader(ctx)
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return nil, 0, false, nil
+	}
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("read counter state: %w", err)
+	}
+	defer r.Close()
+	data, err := io.ReadAll(io.LimitReader(r, maxCounterStateSize+1))
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("read counter state: %w", err)
+	}
+	if len(data) > maxCounterStateSize {
+		return nil, 0, false, errors.New("counter state exceeds size limit")
+	}
+	return data, r.Attrs.Generation, true, nil
+}
+
+func (s *cloudCounterObject) Store(
+	ctx context.Context,
+	data []byte,
+	generation int64,
+	exists bool,
+) error {
 	conditions := storage.Conditions{DoesNotExist: true}
 	if exists {
 		conditions = storage.Conditions{GenerationMatch: generation}
 	}
-	w := s.object.If(conditions).NewWriter(ctx)
+	writeCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	w := s.object.If(conditions).NewWriter(writeCtx)
 	w.ContentType = "application/json"
 	if _, err := w.Write(data); err != nil {
-		_ = w.CloseWithError(err)
+		cancel()
 		return fmt.Errorf("write counter state: %w", err)
 	}
 	if err := w.Close(); err != nil {

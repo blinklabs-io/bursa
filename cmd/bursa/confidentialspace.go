@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/logging"
+	signerapi "github.com/blinklabs-io/bursa/internal/signer/api"
 	"github.com/blinklabs-io/bursa/internal/signer/confidentialspace"
 	"github.com/spf13/cobra"
 )
@@ -37,6 +39,9 @@ func confidentialSpaceCommand() *cobra.Command {
 		counterBucket  string
 		counterObject  string
 		wifCredentials string
+		tlsCertFile    string
+		tlsKeyFile     string
+		clientCAFile   string
 	)
 	cmd := &cobra.Command{
 		Use:   "confidential-space-workload",
@@ -44,6 +49,14 @@ func confidentialSpaceCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			logging.ConfigureJSON()
+			tlsConfig, err := confidentialSpaceTLSConfig(
+				tlsCertFile,
+				tlsKeyFile,
+				clientCAFile,
+			)
+			if err != nil {
+				return err
+			}
 			ctx, stop := signal.NotifyContext(
 				context.Background(),
 				syscall.SIGINT,
@@ -104,10 +117,11 @@ func confidentialSpaceCommand() *cobra.Command {
 				WriteTimeout:      30 * time.Second,
 				IdleTimeout:       60 * time.Second,
 				MaxHeaderBytes:    16 << 10,
+				TLSConfig:         tlsConfig,
 			}
 			errCh := make(chan error, 1)
 			go func() {
-				errCh <- server.ListenAndServe()
+				errCh <- server.ListenAndServeTLS("", "")
 			}()
 			select {
 			case err := <-errCh:
@@ -145,11 +159,39 @@ func confidentialSpaceCommand() *cobra.Command {
 		StringVar(&counterObject, "counter-object", "", "Cloud Storage object for the pool issue counter")
 	cmd.Flags().
 		StringVar(&wifCredentials, "wif-credentials", "", "validated external-account credential configuration")
+	cmd.Flags().
+		StringVar(&tlsCertFile, "tls-cert-file", "", "PEM workload HTTPS certificate")
+	cmd.Flags().
+		StringVar(&tlsKeyFile, "tls-key-file", "", "PEM private key for the workload HTTPS certificate")
+	cmd.Flags().
+		StringVar(&clientCAFile, "client-ca-file", "", "PEM CA trusted to authenticate the signer client")
 	_ = cmd.MarkFlagRequired("audience")
 	_ = cmd.MarkFlagRequired("kms-key")
 	_ = cmd.MarkFlagRequired("wrapped-key-file")
 	_ = cmd.MarkFlagRequired("counter-bucket")
 	_ = cmd.MarkFlagRequired("counter-object")
 	_ = cmd.MarkFlagRequired("wif-credentials")
+	_ = cmd.MarkFlagRequired("tls-cert-file")
+	_ = cmd.MarkFlagRequired("tls-key-file")
+	_ = cmd.MarkFlagRequired("client-ca-file")
 	return cmd
+}
+
+func confidentialSpaceTLSConfig(
+	certFile, keyFile, clientCAFile string,
+) (*tls.Config, error) {
+	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load workload TLS certificate: %w", err)
+	}
+	clientCAs, err := signerapi.LoadClientCAPool(clientCAFile)
+	if err != nil {
+		return nil, fmt.Errorf("load workload client CA: %w", err)
+	}
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{certificate},
+		ClientCAs:    clientCAs,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+	}, nil
 }
