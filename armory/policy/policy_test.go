@@ -35,6 +35,10 @@ func TestEvaluate(t *testing.T) {
 	dijkstra := uint(ledger.TxTypeDijkstra)
 	reg := func(c ...[]any) []byte { return baseBody().with(4, certs(c...)).cbor() }
 
+	// a second registration with other parameters would win on chain
+	otherPledge := append([]any(nil), poolReg(k.Pool, k.Owner)...)
+	otherPledge[3] = uint64(999_999_999)
+
 	type tc struct {
 		name  string
 		role  Role
@@ -68,6 +72,8 @@ func TestEvaluate(t *testing.T) {
 			reg(poolRegFields(k.Pool, nil, rewardAddr(rewardHash, true), k.Owner)), false},
 		{"pool reg with mainnet reward account", RoleOwner, conway,
 			reg(poolRegFields(k.Pool, nil, append([]byte{0xe1}, rewardHash[:]...), k.Owner)), false},
+		{"two pool registrations, cold", RoleCold, conway, reg(poolReg(k.Pool, k.Owner), otherPledge), false},
+		{"two pool registrations, owner", RoleOwner, conway, reg(poolReg(k.Pool, k.Owner), otherPledge), false},
 		{"pool reg with second owner", RoleCold, conway, reg(poolReg(k.Pool, k.Owner, foreign)), false},
 		{"pool reg with no owner", RoleCold, conway, reg(poolReg(k.Pool)), false},
 		{"pool reg with foreign operator", RoleCold, conway, reg(poolReg(foreign, k.Owner)), false},

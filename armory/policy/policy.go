@@ -56,8 +56,9 @@ type Decision struct {
 }
 
 // Body map keys: inputs, outputs, fee, ttl, certificates, auxiliary data
-// hash, validity start, required signers, network id, reference inputs and
-// voting procedures. Everything else (withdrawals, mint, collateral,
+// hash, validity start, required signers (guards under Dijkstra, which only
+// add signature obligations), network id, reference inputs and voting
+// procedures. Everything else (withdrawals, mint, collateral,
 // proposals, donations, Dijkstra sub-transactions) is refused.
 var allowedKeys = map[uint64]bool{
 	0: true, 1: true, 2: true, 3: true, 4: true, 7: true,
@@ -112,10 +113,20 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 	summary := []string{fmt.Sprintf("fee=%d", fee)}
 	var poolCert, ownerCert, voted bool
 
+	// The ledger applies certificates in order, so a second registration
+	// would replace the parameters of the first.
+	registrations := 0
+
 	for i, c := range tx.Certificates() {
 		s, pool, owner, err := checkCert(p, k, era, c)
 		if err != nil {
 			return Decision{}, fmt.Errorf("policy: certificate %d: %w", i, err)
+		}
+
+		if _, ok := c.(*common.PoolRegistrationCertificate); ok {
+			if registrations++; registrations > 1 {
+				return Decision{}, fmt.Errorf("policy: certificate %d: a second pool registration in one body", i)
+			}
 		}
 
 		poolCert = poolCert || pool
