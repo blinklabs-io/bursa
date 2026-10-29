@@ -23,9 +23,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
-	"time"
 
-	usbarmory "github.com/usbarmory/tamago/board/usbarmory/mk2"
 	"github.com/usbarmory/tamago/soc/nxp/imx6ul"
 
 	gnet "github.com/usbarmory/go-net"
@@ -88,6 +86,7 @@ func main() {
 	s := &legacy
 	s.Mutex = mu
 	svc := device.New(mu, report.Logf)
+	report.Logf("%s", buildMode)
 
 	go runBringup(report, s, svc)
 
@@ -96,28 +95,8 @@ func main() {
 		fmt.Fprint(w, report.String())
 	})
 
-	http.HandleFunc("/provision", s.provision)
 	http.HandleFunc("/pubkey", s.publicKey)
-	http.Handle("/v1/", svc.Handler())
-	http.Handle("/provision/", svc.Handler())
-
-	// a cold reset returns an unflashed board to USB recovery mode, ready
-	// for the next image
-	http.HandleFunc("/reset", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "POST required", http.StatusMethodNotAllowed)
-			return
-		}
-
-		fmt.Fprintln(w, "resetting")
-
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			// never reset in the middle of an SE050 write
-			mu.Lock()
-			usbarmory.Reset()
-		}()
-	})
+	routes(svc, s, mu)
 
 	l, err := net.Listen("tcp4", ":80")
 

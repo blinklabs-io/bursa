@@ -2,18 +2,33 @@
 #   source ~/tamago/env.sh && make imx
 
 APP := armory
+empty :=
+space := $(empty) $(empty)
+comma := ,
 TAMAGO ?= $(HOME)/tamago/usr/local/tamago-go/bin/go
 # TESTNET=1 adds the bring-up key tests and the unfiltered /sign endpoint;
 # never use it for a device holding keys that matter
 TESTNET ?= 0
+# PROVISION=1 builds the provisioning image: key import, profiles, the reward
+# account, the opcert floor and reset, and no signing. The default image
+# signs and serves no provisioning endpoint.
+PROVISION ?= 0
 
 # ramStart (imx6ul package) + 0x10000
 TEXT_START := 0x80010000
 
 GOENV := GOOS=tamago GOOSPKG=github.com/usbarmory/tamago GOARM=7 GOARCH=arm
 GOFLAGS := -trimpath -ldflags "-s -w -T $(TEXT_START) -R 0x1000"
+TAGS :=
 ifeq ($(TESTNET),1)
-GOFLAGS += -tags testnet
+TAGS += testnet
+endif
+ifeq ($(PROVISION),1)
+TAGS += provision
+APP := armory-provision
+endif
+ifneq ($(strip $(TAGS)),)
+GOFLAGS += -tags $(subst $(space),$(comma),$(strip $(TAGS)))
 endif
 
 .PHONY: all imx clean

@@ -232,11 +232,40 @@ func (s *Service) SetChip(chip Chip) error {
 	return nil
 }
 
-// Handler returns the HTTP endpoints.
+// Handler returns every endpoint, signing and provisioning.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
+	s.signingRoutes(mux)
+	s.provisioningRoutes(mux)
+
+	return mux
+}
+
+// SigningHandler serves only inventory and signing. The signing firmware
+// serves this alone, so a process on the host cannot change a profile, the
+// opcert floor or the key objects.
+func (s *Service) SigningHandler() http.Handler {
+	mux := http.NewServeMux()
+	s.signingRoutes(mux)
+
+	return mux
+}
+
+// ProvisioningHandler serves only the provisioning endpoints, for the
+// provisioning firmware.
+func (s *Service) ProvisioningHandler() http.Handler {
+	mux := http.NewServeMux()
+	s.provisioningRoutes(mux)
+
+	return mux
+}
+
+func (s *Service) signingRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/inventory", handle(s, s.inventory))
 	mux.HandleFunc("POST /v1/sign", handle(s, s.sign))
+}
+
+func (s *Service) provisioningRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /provision/profile", handle(s, s.provisionProfile))
 	mux.HandleFunc("POST /provision/floor", handle(s, s.resetFloor))
 	mux.HandleFunc("POST /provision/reward", handle(s, s.setReward))
@@ -244,8 +273,6 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST /provision/identity", handle(s, func(struct{}) (IdentityResponse, error) {
 		return s.provisionIdentity()
 	}))
-
-	return mux
 }
 
 // handle decodes a bounded JSON request, runs fn holding the chip lock and
