@@ -1656,8 +1656,8 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 	if tx == nil {
 		return Witness{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
 	}
-	if err := rejectImportedAuxiliaryData(&tx.Body); err != nil {
-		return Witness{}, err
+	if err := txwitness.RejectImportedAuxiliaryData(&tx.Body); err != nil {
+		return Witness{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
 	}
 	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
 
@@ -2140,8 +2140,8 @@ func (s *Service) CosignTx(
 	if _, err := cbor.Decode(txBytes, &tx); err != nil {
 		return CosignResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
 	}
-	if err := rejectImportedAuxiliaryData(&tx.Body); err != nil {
-		return CosignResult{}, err
+	if err := txwitness.RejectImportedAuxiliaryData(&tx.Body); err != nil {
+		return CosignResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
 	}
 
 	// Best-effort input-address resolution (needs a node; non-fatal without one
@@ -2574,10 +2574,6 @@ func (s *Service) WitnessTx(
 	if _, err := cbor.Decode(txBodyCbor, &txBody); err != nil {
 		return nil, fmt.Errorf("%w: decode transaction body: %w", ErrInvalidTx, err)
 	}
-	if err := rejectImportedAuxiliaryData(&txBody); err != nil {
-		return nil, err
-	}
-
 	// Unlock the active wallet's seed (walletID-bound), not merely the active
 	// vault default, so the witnesses are produced from the same account whose
 	// address window was used to resolve which keys to sign with.
@@ -2640,17 +2636,6 @@ func (s *Service) WitnessTx(
 		return nil, fmt.Errorf("encode witness set: %w", err)
 	}
 	return wsCbor, nil
-}
-
-// rejectImportedAuxiliaryData keeps general transaction-import signing from
-// authorizing opaque metadata. Bursa's metadata flows are built and reviewed
-// as structured content, then signed through their pending transaction in
-// Confirm; an imported body has no equivalent trusted construction record.
-func rejectImportedAuxiliaryData(body *conway.ConwayTransactionBody) error {
-	if body.TxAuxDataHash != nil {
-		return fmt.Errorf("%w: imported transactions with auxiliary data are unsupported", ErrInvalidTx)
-	}
-	return nil
 }
 
 // deriveWitnesses derives the vkey witnesses this wallet can provide for a
