@@ -57,6 +57,17 @@ export CARDANO_NETWORK=$NET
 : "${SOCKET:?}" "${PAYER_SKEY:?}" "${PAYER_VKEY:?}" "${PAYER_ADDR:?}"
 : "${IDENTITY:?}" "${COLD_KEY_ID:?}" "${SLOT:?}"
 
+# the script works inside $WORK, so resolve every path it was given first
+abs() { case $1 in */*) realpath "$1" ;; *) command -v "$1" ;; esac; }
+SOCKET=$(realpath "$SOCKET")
+PAYER_SKEY=$(realpath "$PAYER_SKEY")
+PAYER_VKEY=$(realpath "$PAYER_VKEY")
+BURSA=$(abs "$BURSA")
+ARMORY_POOL=$(abs "$ARMORY_POOL")
+if [ -n "${OPCERT_CHECK:-}" ]; then OPCERT_CHECK=$(abs "$OPCERT_CHECK"); fi
+mkdir -p "$WORK"
+WORK=$(realpath "$WORK")
+
 step() { printf '\n== %s\n' "$*"; }
 pass() { printf 'PASS %s\n' "$*"; }
 fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
@@ -72,9 +83,12 @@ submit() {
 
 	for c in $certs; do args+=(--certificate-file "$c"); done
 
-	"$BURSA" tx build --socket-path "$SOCKET" --network $NET \
+	if ! "$BURSA" tx build --socket-path "$SOCKET" --network $NET \
 		--change-address "$CHANGE_ADDR" "${args[@]}" \
-		--out-file "$WORK/$name.tx" 2> "$WORK/$name.witnesses"
+		--out-file "$WORK/$name.tx" 2> "$WORK/$name.witnesses"; then
+		cat "$WORK/$name.witnesses" >&2
+		fail "tx build $name"
+	fi
 	cat "$WORK/$name.witnesses"
 
 	for k in $skeys; do
@@ -123,7 +137,7 @@ pass "payer funded"
 CHANGE_ADDR=$PAYER_ADDR
 
 step "Pool mnemonic and keys"
-if [ -f pool/seed.txt ]; then
+if [ -s pool/seed.txt ] && [ -s pool-cold.vkey ] && [ -s vrf.skey ] && [ -s kes.skey ] && [ -s reward.skey ]; then
 	pass "keys exist from an earlier run"
 else
 "$BURSA" wallet create --output pool > /dev/null
@@ -139,15 +153,17 @@ pass "keys derived"
 fi
 
 step "Import the cold key into object $COLD_KEY_ID"
-if [ -f cold.json ]; then
+if jq -e '.pool_id | length == 56' cold.json > /dev/null 2>&1; then
 	pass "cold key imported in an earlier run"
 else
 jq -n --argjson id "$COLD_KEY_ID" --arg key "$(jq -r .cborHex pool-cold.skey)" \
 	'{cold_key_id: $id, signing_key: $key}' |
-	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/cold" --data-binary @- | tee cold.json
+	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/cold" --data-binary @- > cold.json.new
+cat cold.json.new
+mv cold.json.new cold.json
+fi
 check "device public key matches pool-cold.vkey" \
 	test "5820$(jq -r .public_key cold.json)" = "$(jq -r .cborHex pool-cold.vkey)"
-fi
 rm -f pool-cold.skey
 POOL_HEX=$(jq -r .pool_id cold.json)
 
@@ -164,12 +180,14 @@ fi
 wait_for "reward account registered" '.registered == true' stake-address --address "$REWARD_ADDR"
 
 step "Provision profile $PROFILE in slot $SLOT"
-if [ -f profile.json ]; then
+if jq -e '.owner_key_hash | length == 56' profile.json > /dev/null 2>&1; then
 	pass "profile provisioned in an earlier run"
 else
 jq -n --arg name "$PROFILE" --argjson slot "$SLOT" --argjson id "$COLD_KEY_ID" --arg reward "$REWARD_HEX" \
 	'{name: $name, network_id: 0, slot: $slot, cold_key_id: $id, reward_account: $reward}' |
-	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/profile" --data-binary @- | tee profile.json
+	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/profile" --data-binary @- > profile.json.new
+cat profile.json.new
+mv profile.json.new profile.json
 fi
 OWNER_HASH=$(jq -r .owner_key_hash profile.json)
 
@@ -229,7 +247,7 @@ if armory witness -role pool -tx-file bad-reg.tx -out bad-reg.wit 2> bad-reg.err
 	fail "device signed a registration with another reward account"
 fi
 cat bad-reg.err
-pass "device refused another reward account"
+check "device refused another reward account" grep -q "device refused: policy: .*reward account" bad-reg.err
 
 step "First opcert from the armory"
 KES_PERIOD=$(jq -r .kes.current_kes_period pool.json)
