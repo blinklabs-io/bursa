@@ -103,7 +103,12 @@ submit() {
 	done
 
 	"$BURSA" tx assemble --tx-file "$WORK/$name.tx" "${wits[@]}" --out-file "$WORK/$name.signed"
-	"$BURSA" tx submit --socket-path "$SOCKET" --network $NET --tx-file "$WORK/$name.signed"
+	local id
+	id=$("$BURSA" tx submit --socket-path "$SOCKET" --network $NET --tx-file "$WORK/$name.signed")
+	echo "$name submitted: $id"
+
+	# its change output appears at the change address once it is on chain
+	wait_for "$name on chain" "any(.[]; .tx_id == \"$id\")" utxo --address "$CHANGE_ADDR"
 }
 
 # wait_for polls a jq predicate over a query until it holds, up to 10 minutes.
