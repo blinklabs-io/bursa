@@ -13,17 +13,32 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/stretchr/testify/require"
 )
 
 type fakeSecrets struct {
-	value []byte
+	value       []byte
+	getErr      error
+	describe    *secretsmanager.DescribeSecretOutput
+	describeErr error
 }
 
 func (s *fakeSecrets) GetSecretValue(context.Context, *secretsmanager.GetSecretValueInput, ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
 	return &secretsmanager.GetSecretValueOutput{SecretBinary: s.value}, nil
+}
+
+func (s *fakeSecrets) DescribeSecret(context.Context, *secretsmanager.DescribeSecretInput, ...func(*secretsmanager.Options)) (*secretsmanager.DescribeSecretOutput, error) {
+	if s.describeErr != nil {
+		return nil, s.describeErr
+	}
+	return s.describe, nil
 }
 
 func (s *fakeSecrets) PutSecretValue(_ context.Context, input *secretsmanager.PutSecretValueInput, _ ...func(*secretsmanager.Options)) (*secretsmanager.PutSecretValueOutput, error) {
@@ -69,6 +84,36 @@ func TestSecretStoreRejectsUnknownAndTrailingFields(t *testing.T) {
 			client.value = value
 			_, err := store.Load(context.Background())
 			require.ErrorIs(t, err, ErrEnvelope)
+		})
+	}
+}
+
+func TestSecretStoreLoadDistinguishesVersionlessSecret(t *testing.T) {
+	notFound := &types.ResourceNotFoundException{Message: aws.String("not found")}
+	for name, tc := range map[string]struct {
+		client *fakeSecrets
+		want   error
+	}{
+		"versionless secret": {
+			client: &fakeSecrets{getErr: notFound, describe: &secretsmanager.DescribeSecretOutput{}},
+			want:   ErrNoEnvelope,
+		},
+		"missing secret": {
+			client: &fakeSecrets{getErr: notFound, describeErr: notFound},
+			want:   ErrEnvelope,
+		},
+		"current version unreadable": {
+			client: &fakeSecrets{getErr: notFound, describe: &secretsmanager.DescribeSecretOutput{
+				VersionIdsToStages: map[string][]string{"v1": {"AWSCURRENT"}},
+			}},
+			want: ErrEnvelope,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, err := NewSecretStore(tc.client, "pool-cold")
+			require.NoError(t, err)
+			_, err = store.Load(context.Background())
+			require.ErrorIs(t, err, tc.want)
 		})
 	}
 }

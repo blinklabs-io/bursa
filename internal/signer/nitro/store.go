@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
@@ -26,6 +27,7 @@ const maxEnvelopeSize = 64 << 10
 type secretsAPI interface {
 	GetSecretValue(context.Context, *secretsmanager.GetSecretValueInput, ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error)
 	PutSecretValue(context.Context, *secretsmanager.PutSecretValueInput, ...func(*secretsmanager.Options)) (*secretsmanager.PutSecretValueOutput, error)
+	DescribeSecret(context.Context, *secretsmanager.DescribeSecretInput, ...func(*secretsmanager.Options)) (*secretsmanager.DescribeSecretOutput, error)
 }
 
 // SecretStore persists exactly one wrapped envelope in an existing Secrets
@@ -49,7 +51,7 @@ func (s *SecretStore) Load(ctx context.Context) (Envelope, error) {
 	if err != nil {
 		var missing *types.ResourceNotFoundException
 		if errors.As(err, &missing) {
-			return Envelope{}, fmt.Errorf("%w: secret does not exist", ErrEnvelope)
+			return Envelope{}, s.classifyMissingValue(ctx)
 		}
 		return Envelope{}, fmt.Errorf("read wrapped key: %w", err)
 	}
@@ -81,6 +83,26 @@ func (s *SecretStore) Load(ctx context.Context) (Envelope, error) {
 		return Envelope{}, err
 	}
 	return env, nil
+}
+
+// classifyMissingValue separates a secret that has no AWSCURRENT value yet,
+// which GetSecretValue also reports as ResourceNotFoundException, from a
+// secret that does not exist.
+func (s *SecretStore) classifyMissingValue(ctx context.Context) error {
+	described, err := s.client.DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{SecretId: aws.String(s.secretID)})
+	if err != nil {
+		var missing *types.ResourceNotFoundException
+		if errors.As(err, &missing) {
+			return fmt.Errorf("%w: secret does not exist", ErrEnvelope)
+		}
+		return fmt.Errorf("describe wrapped key secret: %w", err)
+	}
+	for _, stages := range described.VersionIdsToStages {
+		if slices.Contains(stages, "AWSCURRENT") {
+			return fmt.Errorf("%w: current secret value is unreadable", ErrEnvelope)
+		}
+	}
+	return ErrNoEnvelope
 }
 
 // Save writes a validated wrapped envelope as a new value of an existing

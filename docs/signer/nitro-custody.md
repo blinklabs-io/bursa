@@ -65,7 +65,9 @@ bursa nitro proxy --enclave-cid <cid> --region <region> \
 The proxy reads the wrapped envelope and calls `Reload`. It fails before
 opening the signer socket if Secrets Manager, KMS recipient decryption,
 envelope authentication, the expected public key, or enclave initialization
-fails. A process or enclave restart repeats that complete recovery path.
+fails. The proxy reloads only at startup, so restart it after every enclave
+restart; a restarted enclave holds no key, and the proxy returns errors until
+its own restart repeats that recovery path.
 
 Provisioning is explicit and writes only an existing empty secret. The proxy
 refuses to replace an existing wrapped pool-cold key:
@@ -111,7 +113,9 @@ measurement. The enclave additionally refuses absent PCR0 and the all-zero PCR0
 AWS emits for debug mode. The signer independently verifies the inventory's
 NSM document, certificate chain, PCRs, nonce binding, and non-debug state.
 
-The parent role needs `secretsmanager:GetSecretValue`. Grant
+The parent role needs `secretsmanager:GetSecretValue` and
+`secretsmanager:DescribeSecret`; the latter distinguishes an existing secret
+with no value from a missing secret. Grant
 `secretsmanager:PutSecretValue` only during explicit provisioning. It does not
 need permission to decrypt a data key without recipient attestation.
 
