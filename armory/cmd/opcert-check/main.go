@@ -47,7 +47,6 @@ import (
 
 func decodeCBORHex(s string, v any) error {
 	b, err := hex.DecodeString(strings.TrimSpace(s))
-
 	if err != nil {
 		return err
 	}
@@ -99,13 +98,11 @@ func newClient(base, source string) *client {
 
 func (c *client) do(method, path, body string) (string, error) {
 	req, err := http.NewRequest(method, c.base+path, strings.NewReader(body))
-
 	if err != nil {
 		return "", err
 	}
 
 	res, err := c.http.Do(req)
-
 	if err != nil {
 		return "", err
 	}
@@ -113,7 +110,6 @@ func (c *client) do(method, path, body string) (string, error) {
 	defer res.Body.Close()
 
 	b, err := io.ReadAll(res.Body)
-
 	if err != nil {
 		return "", err
 	}
@@ -197,7 +193,6 @@ func main() {
 	}
 
 	out, err := c.do(http.MethodPost, "/v1/sign", string(req))
-
 	if err != nil {
 		log.Fatal(err)
 	}
