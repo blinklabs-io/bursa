@@ -270,6 +270,9 @@ cat bad-reg.err
 check "device refused another reward account" grep -q "device refused: policy: .*reward account" bad-reg.err
 
 step "First opcert from the armory"
+# a missing field must fail here, not read as a pool that never forged
+check "query reports the KES period and the opcert counter" \
+	jq -e '(.kes.current_kes_period | type == "number") and (.opcert | has("on_chain_counter"))' pool.json
 KES_PERIOD=$(jq -r .kes.current_kes_period pool.json)
 CHAIN=$(jq -r '.opcert.on_chain_counter // "none"' pool.json)
 # a pool that never forged has no counter; the device treats it as 0
