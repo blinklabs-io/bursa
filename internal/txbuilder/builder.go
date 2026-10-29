@@ -156,6 +156,10 @@ func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *Proto
 			// counts on the consumed side like a stake
 			// deregistration refund.
 			refunds += cert.Amount
+		case *common.GenesisKeyDelegationCertificate:
+			return 0, 0, errors.New("certificate type 5 (genesis key delegation) is no longer supported")
+		case *common.MoveInstantaneousRewardsCertificate:
+			return 0, 0, errors.New("certificate type 6 (move instantaneous rewards) is no longer supported")
 		default:
 		}
 	}
