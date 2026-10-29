@@ -110,9 +110,9 @@ private key, and exactly one of these API trust sources is configured:
 `api.jwt_audience` optionally constrain accepted bearer tokens. The secret,
 signing, and mnemonic/address-derivation endpoints require an
 `Authorization: Bearer <JWT>` header whenever API authentication is configured.
-When Google Secret Manager persistence is enabled, the wallet
-`list`, `get`, `update`, and `delete` endpoints use the same authentication
-requirement and additionally require a subject listed in
+When wallet persistence is enabled, the wallet `create`, `restore`, `list`,
+`get`, `update`, and `delete` endpoints use the same authentication requirement
+and additionally require a subject listed in
 `API_JWT_ADMIN_SUBJECTS` / `api.jwt_admin_subjects`. This is an explicit
 global-administrator model; wallet names are not caller ownership boundaries.
 Wallet creation is `POST /api/wallet/create`; wallet responses are marked
