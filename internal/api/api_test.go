@@ -767,7 +767,10 @@ func TestRegisterAPIHandlersProtectsSensitiveRoutes(t *testing.T) {
 
 func TestRegisterAPIHandlersRequiresStorageAdminToPersistWallets(t *testing.T) {
 	const secret = "01234567890123456789012345678901"
-	const restoreBody = `{"mnemonic":"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art"}`
+	mnemonic, err := bursa.GenerateMnemonic()
+	require.NoError(t, err)
+	restoreBody, err := json.Marshal(WalletRestoreRequest{Mnemonic: mnemonic})
+	require.NoError(t, err)
 	cfg := config.GetConfig()
 	original := *cfg
 	t.Cleanup(func() { *cfg = original })
@@ -791,7 +794,7 @@ func TestRegisterAPIHandlersRequiresStorageAdminToPersistWallets(t *testing.T) {
 		body string
 	}{
 		{name: "create", path: "/api/wallet/create"},
-		{name: "restore", path: "/api/wallet/restore", body: restoreBody},
+		{name: "restore", path: "/api/wallet/restore", body: string(restoreBody)},
 	} {
 		t.Run(request.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
