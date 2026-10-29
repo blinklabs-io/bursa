@@ -149,6 +149,28 @@ func TestRunKeyPoolOwner_RejectsSameKeyPaths(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "no key file is written")
 }
 
+// A relative path, an absolute path and a path through a symlinked
+// directory all name the same file.
+func TestRunKeyPoolOwner_RejectsEquivalentKeyPaths(t *testing.T) {
+	// Not t.Parallel: t.Chdir changes the process working directory.
+	dir := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(dir, link))
+	t.Chdir(dir)
+
+	for name, vkey := range map[string]string{
+		"relative and absolute": filepath.Join(dir, "owner.skey"),
+		"symlinked directory":   filepath.Join(link, "owner.skey"),
+	} {
+		err := RunKeyPoolOwner(testKeyMnemonic, "", "", "owner.skey", vkey, 0, 0)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), "same file", name)
+
+		_, statErr := os.Stat(filepath.Join(dir, "owner.skey"))
+		assert.True(t, os.IsNotExist(statErr), "%s: no key file is written", name)
+	}
+}
+
 func TestRunKeyPoolOwner_RequiresDestination(t *testing.T) {
 	t.Parallel()
 	err := RunKeyPoolOwner(testKeyMnemonic, "", "", "", "", 0, 0)

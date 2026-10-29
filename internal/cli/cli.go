@@ -630,6 +630,33 @@ func RunKeyPoolCold(
 
 // RunKeyPoolOwner derives the plain Ed25519 form of a CIP-1852 stake key
 // (k_L as the RFC 8032 seed). With "-" it prints the plain stake_sk bech32.
+// sameDestination reports whether two output paths name the same file:
+// equal once absolute with their directories' symlinks resolved, or the same
+// existing file.
+func sameDestination(a, b string) bool {
+	if resolveDestination(a) == resolveDestination(b) {
+		return true
+	}
+
+	ia, errA := os.Stat(a)
+	ib, errB := os.Stat(b)
+
+	return errA == nil && errB == nil && os.SameFile(ia, ib)
+}
+
+func resolveDestination(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+
+	if dir, err := filepath.EvalSymlinks(filepath.Dir(abs)); err == nil {
+		return filepath.Join(dir, filepath.Base(abs))
+	}
+
+	return abs
+}
+
 func RunKeyPoolOwner(
 	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
 	accountIndex, index uint32,
@@ -640,7 +667,7 @@ func RunKeyPoolOwner(
 	}
 	// the verification key would overwrite the signing key
 	if signingKeyFile != "" && verificationKeyFile != "" &&
-		filepath.Clean(signingKeyFile) == filepath.Clean(verificationKeyFile) {
+		sameDestination(signingKeyFile, verificationKeyFile) {
 		return errors.New("signing and verification key files are the same file")
 	}
 
