@@ -628,6 +628,102 @@ func RunKeyPoolCold(
 	return nil
 }
 
+// RunKeyPoolOwner derives the plain Ed25519 form of a CIP-1852 stake key
+// (k_L as the RFC 8032 seed). With "-" it prints the plain stake_sk bech32.
+// sameDestination reports whether two output paths name the same file:
+// equal once absolute with their directories' symlinks resolved, or the same
+// existing file.
+func sameDestination(a, b string) bool {
+	if resolveDestination(a) == resolveDestination(b) {
+		return true
+	}
+
+	ia, errA := os.Stat(a)
+	ib, errB := os.Stat(b)
+
+	return errA == nil && errB == nil && os.SameFile(ia, ib)
+}
+
+func resolveDestination(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+
+	if dir, err := filepath.EvalSymlinks(filepath.Dir(abs)); err == nil {
+		return filepath.Join(dir, filepath.Base(abs))
+	}
+
+	return abs
+}
+
+func RunKeyPoolOwner(
+	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
+	accountIndex, index uint32,
+) error {
+	toStdout, err := keyDestination(signingKeyFile, verificationKeyFile)
+	if err != nil {
+		return err
+	}
+	// the verification key would overwrite the signing key
+	if signingKeyFile != "" && verificationKeyFile != "" &&
+		sameDestination(signingKeyFile, verificationKeyFile) {
+		return errors.New("signing and verification key files are the same file")
+	}
+
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	accountKey, err := bursa.GetAccountKey(rootKey, accountIndex)
+	if err != nil {
+		return fmt.Errorf("failed to derive account key: %w", err)
+	}
+
+	stakeKey, err := bursa.GetStakeKey(accountKey, index)
+	if err != nil {
+		return fmt.Errorf("failed to derive stake key: %w", err)
+	}
+
+	skey, err := bursa.GetStakePlainSKey(stakeKey)
+	if err != nil {
+		return fmt.Errorf("failed to create pool owner signing key file: %w", err)
+	}
+
+	if toStdout {
+		// KeyFile.String bech32-encodes the 32-byte seed with the CIP-5
+		// stake_sk prefix; it falls back to cborHex only on malformed input.
+		encoded := skey.String()
+		if !strings.HasPrefix(encoded, "stake_sk1") {
+			return errors.New("failed to encode pool owner key")
+		}
+		fmt.Println(encoded)
+		return nil
+	}
+
+	if signingKeyFile != "" {
+		if err := writeKeyFile(skey, signingKeyFile); err != nil {
+			return err
+		}
+	}
+	if verificationKeyFile != "" {
+		vkey, err := bursa.GetStakePlainVKey(stakeKey)
+		if err != nil {
+			return fmt.Errorf("failed to create pool owner verification key file: %w", err)
+		}
+		if err := writeKeyFile(vkey, verificationKeyFile); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // RunKeyBLS generates a Dijkstra-era BLS signing key and registration material.
 func RunKeyBLS(signingKeyFile, verificationKeyFile, outputFile string) error {
 	if signingKeyFile == "" {
