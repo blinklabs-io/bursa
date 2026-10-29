@@ -119,6 +119,16 @@ func TestProvisionStoresOnlyWrappedMaterial(t *testing.T) {
 	require.NotContains(t, encoded, bytes.Repeat([]byte{0x5a}, dataKeySize))
 }
 
+func TestProvisionRejectsKMSAliasBeforeKMS(t *testing.T) {
+	service, kms, _ := newTestService(t, testEvidence(t, 1))
+	_, err := service.Provision(context.Background(), &ProvisionRequest{
+		Version: Protocol, Region: "us-east-1", Credentials: testCredentials,
+		KMSKeyID: "arn:aws:kms:us-east-1:123456789012:alias/pool-cold", Role: backend.KeyTypePool,
+	})
+	require.ErrorIs(t, err, ErrProtocol)
+	require.Zero(t, kms.calls)
+}
+
 func TestProvisionRejectsDebugAttestationBeforeKMS(t *testing.T) {
 	service, kms, _ := newTestService(t, testEvidence(t, 0))
 	_, err := service.Provision(context.Background(), &ProvisionRequest{

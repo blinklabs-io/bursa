@@ -16,6 +16,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
@@ -63,6 +64,11 @@ func validateKMSRequest(region, keyID string, credentials Credentials) error {
 	}
 	if parsed.Partition != "aws" || parsed.Service != "kms" || parsed.Region != region || parsed.Resource == "" {
 		return errors.New("KMS key ARN must be an AWS KMS resource in the configured region")
+	}
+	// The envelope authenticates the key ID, so an alias that is later
+	// repointed would make the stored data key undecryptable.
+	if !strings.HasPrefix(parsed.Resource, "key/") || len(parsed.Resource) == len("key/") {
+		return errors.New("KMS key ID must be a key ARN, not an alias")
 	}
 	return nil
 }
