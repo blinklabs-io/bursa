@@ -20,6 +20,7 @@ import (
 	"crypto/rsa"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,14 +178,16 @@ func TestConfidentialSpaceVerifier(t *testing.T) {
 			true,
 		},
 		{"unapproved image digest", "k1", func(c jwt.MapClaims) {
-			c["submods"] = map[string]any{
-				"container": map[string]any{"image_digest": "sha256:bbbb"},
+			c["submods"].(map[string]any)["container"] = map[string]any{
+				"image_digest": "sha256:" + strings.Repeat("b", 64),
 			}
 		}, true},
 		{
 			"missing image digest",
 			"k1",
-			func(c jwt.MapClaims) { delete(c, "submods") },
+			func(c jwt.MapClaims) {
+				delete(c["submods"].(map[string]any), "container")
+			},
 			true,
 		},
 		{
