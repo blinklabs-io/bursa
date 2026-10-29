@@ -22,6 +22,11 @@
 # Preview and test funds only. Each run creates a new pool and uses a new cold
 # key object and profile slot on the device; both are permanent.
 #
+# The device must run the provisioning image (make imx PROVISION=1) for the
+# cold key and profile steps, and the signing image for the rest. With
+# SIGNING_IMX set, the script resets the provisioning image and loads the
+# signing image itself; going back needs the board unplugged.
+#
 # Required environment:
 #   SOCKET        node-to-client socket of a synced Preview node that answers
 #                 the GetPoolState query (cardano-node, or Dingo after v0.89.0)
@@ -37,6 +42,8 @@
 #   PLEDGE (1000000000), COST (170000000), MARGIN (0.02),
 #   RETIRE (0; 1 retires the pool at the next epoch),
 #   OPCERT_CHECK (path to opcert-check; when set, the opcert is re-verified)
+#   SIGNING_IMX (signing image to load after provisioning),
+#   ARMORY_BOOT (armory-boot-usb)
 
 set -euo pipefail
 
@@ -72,6 +79,31 @@ step() { printf '\n== %s\n' "$*"; }
 pass() { printf 'PASS %s\n' "$*"; }
 fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
 check() { local what=$1; shift; if "$@" > /dev/null; then pass "$what"; else fail "$what"; fi; }
+
+# device_build prints the running image's mode from the bring-up report.
+device_build() {
+	curl -sf -m 5 --interface "$SOURCE" "$SIGNER/" | grep -oE '(signing|provisioning) build' | head -n 1 | cut -d' ' -f1
+}
+
+# need_build makes sure the device runs the provisioning or signing image.
+need_build() {
+	local want=$1 have
+	have=$(device_build || true)
+	[ "$have" = "$want" ] && return 0
+	if [ "$want" = provisioning ]; then
+		fail "device runs the ${have:-unknown} image; unplug it, load the provisioning image and rerun"
+	fi
+	[ "$have" = provisioning ] || fail "device runs the ${have:-unknown} image, not the provisioning image"
+	[ -n "${SIGNING_IMX:-}" ] || fail "device runs the provisioning image; set SIGNING_IMX or load the signing image and rerun"
+	curl -sf -m 5 --interface "$SOURCE" -X POST "$SIGNER/reset" > /dev/null || true
+	sleep 3
+	"${ARMORY_BOOT:-armory-boot-usb}" -i "$SIGNING_IMX"
+	for _ in $(seq 1 60); do
+		[ "$(device_build || true)" = signing ] && { pass "signing image loaded"; return 0; }
+		sleep 2
+	done
+	fail "device did not come back with the signing image"
+}
 
 q() { "$BURSA" query "$@" --socket-path "$SOCKET" --network $NET; }
 armory() { "$ARMORY_POOL" -signer "$SIGNER" -source "$SOURCE" -identity "$IDENTITY" -profile "$PROFILE" "$@"; }
@@ -167,6 +199,7 @@ step "Import the cold key into object $COLD_KEY_ID"
 if jq -e '.pool_id | length == 56' cold.json > /dev/null 2>&1; then
 	pass "cold key imported in an earlier run"
 else
+need_build provisioning
 jq -n --argjson id "$COLD_KEY_ID" --arg key "$(jq -r .cborHex pool-cold.skey)" \
 	'{cold_key_id: $id, signing_key: $key}' |
 	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/cold" --data-binary @- > cold.json.new
@@ -195,6 +228,7 @@ if jq -e '.owner_key_hash | length == 56' profile.json > /dev/null 2>&1; then
 	pass "profile provisioned in an earlier run"
 else
 [ -s owner.skey ] || fail "owner.skey missing: derive it again from pool/seed.txt"
+need_build provisioning
 jq -n --arg name "$PROFILE" --argjson slot "$SLOT" --argjson id "$COLD_KEY_ID" --arg reward "$REWARD_HEX" \
 	--arg owner "$(jq -r .cborHex owner.skey)" \
 	'{name: $name, network_id: 0, slot: $slot, cold_key_id: $id, reward_account: $reward, owner_signing_key: $owner}' |
@@ -212,6 +246,7 @@ echo "owner key generated on the device in an earlier run"
 fi
 
 step "Device inventory"
+need_build signing
 mkdir -p device
 armory keys -out-dir device | tee keys.txt
 check "inventory pool key matches pool-cold.vkey" \
