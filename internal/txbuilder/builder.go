@@ -272,6 +272,9 @@ func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error
 		if err != nil {
 			return nil, err
 		}
+		if margin > ^uint64(0)-slot {
+			return nil, errors.New("ttl margin overflows slot + margin")
+		}
 		ttl = slot + margin
 	}
 
