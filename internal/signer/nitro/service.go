@@ -72,7 +72,6 @@ func validateKMSRequest(region, keyID string, credentials Credentials) error {
 func (s *Service) Provision(ctx context.Context, req *ProvisionRequest) (*ProvisionResponse, error) {
 	s.initMu.Lock()
 	defer s.initMu.Unlock()
-	s.drop()
 	if req == nil || req.Version != Protocol {
 		return nil, fmt.Errorf("%w: invalid provision version", ErrProtocol)
 	}
@@ -127,11 +126,11 @@ func (s *Service) Provision(ctx context.Context, req *ProvisionRequest) (*Provis
 }
 
 // Reload recovers a wrapped key through recipient-attested KMS and atomically
-// replaces the active key. Failed reloads leave no key available.
+// replaces the active key. Failed reloads preserve the active key and its
+// replay and counter state.
 func (s *Service) Reload(ctx context.Context, req *ReloadRequest) (*ReloadResponse, error) {
 	s.initMu.Lock()
 	defer s.initMu.Unlock()
-	s.drop()
 	if req == nil || req.Version != Protocol {
 		return nil, fmt.Errorf("%w: invalid reload version", ErrProtocol)
 	}
@@ -237,21 +236,13 @@ func (s *Service) Sign(_ context.Context, req *backend.AttestedRequest) (*backen
 func (s *Service) install(key ed25519.PrivateKey, pub ed25519.PublicKey) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	sameKey := bytes.Equal(s.pub, pub)
 	clear(s.key)
 	s.key = bytes.Clone(key)
 	s.pub = bytes.Clone(pub)
-	s.seen = make(map[[requestNonceSize]byte]struct{})
-	s.counter = 0
-	s.hasCounter = false
-}
-
-func (s *Service) drop() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	clear(s.key)
-	s.key = nil
-	s.pub = nil
-	s.seen = make(map[[requestNonceSize]byte]struct{})
-	s.counter = 0
-	s.hasCounter = false
+	if !sameKey {
+		s.seen = make(map[[requestNonceSize]byte]struct{})
+		s.counter = 0
+		s.hasCounter = false
+	}
 }

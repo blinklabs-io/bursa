@@ -11,12 +11,18 @@ package nitro
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"runtime"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/encoding"
 )
 
@@ -44,14 +50,106 @@ func init() {
 	encoding.RegisterCodec(nitroCodec)
 }
 
-// RPCServerOptions returns the required server codec option.
-func RPCServerOptions() []grpc.ServerOption {
-	return []grpc.ServerOption{grpc.ForceServerCodec(nitroCodec)}
+// RPCServerTLSConfig identifies the enclave server certificate and the
+// dedicated CA authorized to issue proxy client certificates.
+type RPCServerTLSConfig struct {
+	CertificateFile string
+	KeyFile         string
+	ClientCAFile    string
 }
 
-// RPCDialOptions returns the required client codec option.
-func RPCDialOptions() []grpc.DialOption {
-	return []grpc.DialOption{grpc.WithDefaultCallOptions(grpc.ForceCodec(nitroCodec))}
+// RPCClientTLSConfig identifies the proxy client certificate and the CA and
+// DNS name used to authenticate the enclave server.
+type RPCClientTLSConfig struct {
+	CertificateFile string
+	KeyFile         string
+	RootCAFile      string
+	ServerName      string
+}
+
+func loadRPCKeyPair(certFile, keyFile string) (tls.Certificate, error) {
+	if certFile == "" || keyFile == "" {
+		return tls.Certificate{}, errors.New("RPC certificate and key files are required")
+	}
+	info, err := os.Stat(keyFile)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("stat RPC private key: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return tls.Certificate{}, errors.New("RPC private key must be a regular file")
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return tls.Certificate{}, fmt.Errorf("RPC private key mode %04o grants group or other access", info.Mode().Perm())
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("load RPC certificate: %w", err)
+	}
+	return cert, nil
+}
+
+func loadRPCCertPool(path string) (*x509.CertPool, error) {
+	if path == "" {
+		return nil, errors.New("RPC CA file is required")
+	}
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read RPC CA file: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, errors.New("RPC CA file contains no certificates")
+	}
+	return pool, nil
+}
+
+// RPCServerOptions returns fail-closed mutual-TLS and codec options for the
+// enclave server. Only certificates from ClientCAFile may invoke any RPC.
+func RPCServerOptions(config RPCServerTLSConfig) ([]grpc.ServerOption, error) {
+	cert, err := loadRPCKeyPair(config.CertificateFile, config.KeyFile)
+	if err != nil {
+		return nil, err
+	}
+	clientCAs, err := loadRPCCertPool(config.ClientCAFile)
+	if err != nil {
+		return nil, err
+	}
+	transport := credentials.NewTLS(&tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		ClientCAs:    clientCAs,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+	})
+	return []grpc.ServerOption{
+		grpc.Creds(transport),
+		grpc.ForceServerCodec(nitroCodec),
+	}, nil
+}
+
+// RPCDialOptions returns fail-closed mutual-TLS and codec options for the host
+// proxy. ServerName must match the enclave certificate.
+func RPCDialOptions(config RPCClientTLSConfig) ([]grpc.DialOption, error) {
+	if config.ServerName == "" {
+		return nil, errors.New("RPC server name is required")
+	}
+	cert, err := loadRPCKeyPair(config.CertificateFile, config.KeyFile)
+	if err != nil {
+		return nil, err
+	}
+	roots, err := loadRPCCertPool(config.RootCAFile)
+	if err != nil {
+		return nil, err
+	}
+	transport := credentials.NewTLS(&tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      roots,
+		ServerName:   config.ServerName,
+	})
+	return []grpc.DialOption{
+		grpc.WithTransportCredentials(transport),
+		grpc.WithDefaultCallOptions(grpc.ForceCodec(nitroCodec)),
+	}, nil
 }
 
 // RegisterRPCServer exposes service over a gRPC server.

@@ -14,7 +14,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,27 +21,7 @@ import (
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/test/bufconn"
 )
-
-func testRPCClient(t *testing.T, service *Service) (*rpcClient, *grpc.ClientConn) {
-	t.Helper()
-	listener := bufconn.Listen(1 << 20)
-	server := grpc.NewServer(RPCServerOptions()...)
-	RegisterRPCServer(server, service)
-	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(server.Stop)
-	options := append([]grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }),
-	}, RPCDialOptions()...)
-	conn, err := grpc.NewClient("passthrough:///test", options...)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-	return NewRPCClient(conn), conn
-}
 
 func TestRPCProvisionReloadAndSign(t *testing.T) {
 	service, _, _ := newTestService(t, testEvidence(t, 6))

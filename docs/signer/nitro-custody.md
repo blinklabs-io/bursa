@@ -15,8 +15,8 @@ operation remain in the enclave.
 | Component | Responsibilities | Secret material available |
 |-----------|------------------|---------------------------|
 | `bursa signer` | caller authentication, policy, opcert counter watermark, response signature verification | none |
-| `bursa nitro proxy` on the parent instance | read/write one existing Secrets Manager secret, fetch temporary role credentials, bridge the signer socket to enclave gRPC, forward opaque KMS TLS bytes to the configured regional endpoint | temporary AWS credentials and wrapped envelope |
-| `bursa nitro enclave` in the EIF | create recipient attestation, call KMS, unwrap the data key, decrypt the cold-key seed, attest inventory, validate and sign opcert requests | data key and cold key in enclave memory |
+| `bursa nitro proxy` on the parent instance | authenticate to enclave gRPC with a dedicated client certificate, read/write one existing Secrets Manager secret, fetch temporary role credentials, bridge the signer socket to enclave gRPC, forward opaque KMS TLS bytes to the configured regional endpoint | proxy client key, temporary AWS credentials and wrapped envelope |
+| `bursa nitro enclave` in the EIF | require a client certificate from the proxy CA, create recipient attestation, call KMS, unwrap the data key, decrypt the cold-key seed, attest inventory, validate and sign opcert requests | RPC server key, data key and cold key in enclave memory |
 
 The host proxy has no operation that returns a plaintext key. The envelope in
 Secrets Manager contains the pool role, public key, KMS key ARN, KMS
@@ -37,11 +37,29 @@ backends:
       0: "<96 lowercase hex characters from the production EIF>"
 ```
 
-Run `bursa nitro enclave` as the EIF entry point. On the parent instance run:
+Create a dedicated CA for the proxy identity. Put the CA certificate and the
+enclave server certificate and owner-only key in the EIF. Install the proxy
+client certificate, its owner-only key, and the enclave server CA on the parent
+for the dedicated proxy service user.
+
+Run `bursa nitro enclave` as the EIF entry point:
+
+```text
+bursa nitro enclave \
+  --server-cert-file /etc/bursa/nitro/server.pem \
+  --server-key-file /etc/bursa/nitro/server-key.pem \
+  --client-ca-file /etc/bursa/nitro/proxy-ca.pem
+```
+
+On the parent instance run:
 
 ```text
 bursa nitro proxy --enclave-cid <cid> --region <region> \
-  --secret-id <existing-secret-id> --socket /run/bursa/nitro.sock
+  --secret-id <existing-secret-id> --socket /run/bursa/nitro.sock \
+  --enclave-ca-file /etc/bursa/nitro/enclave-ca.pem \
+  --enclave-server-name nitro-enclave.internal \
+  --client-cert-file /etc/bursa/nitro/proxy.pem \
+  --client-key-file /etc/bursa/nitro/proxy-key.pem
 ```
 
 The proxy reads the wrapped envelope and calls `Reload`. It fails before
@@ -54,7 +72,11 @@ refuses to replace an existing wrapped pool-cold key:
 
 ```text
 bursa nitro proxy --provision --enclave-cid <cid> --region <region> \
-  --kms-key-id <kms-key-arn> --secret-id <existing-empty-secret-id>
+  --kms-key-id <kms-key-arn> --secret-id <existing-empty-secret-id> \
+  --enclave-ca-file /etc/bursa/nitro/enclave-ca.pem \
+  --enclave-server-name nitro-enclave.internal \
+  --client-cert-file /etc/bursa/nitro/proxy.pem \
+  --client-key-file /etc/bursa/nitro/proxy-key.pem
 ```
 
 Create the secret, KMS key, role, policies, EC2 instance, and enclave outside
@@ -95,10 +117,20 @@ need permission to decrypt a data key without recipient attestation.
 
 ## Protocol and signing rules
 
-The host/enclave gRPC protocol is `bursa-nitro-custody/1`. JSON-encoded gRPC
-messages reject unknown fields and trailing values. The signer-facing protocol
-remains `bursa-attested-signer/1`, so the existing `KeyRef` path retains caller
-ACL, policy, watermark, attestation, and returned-signature checks.
+The host/enclave gRPC protocol is `bursa-nitro-custody/1`. Every RPC requires
+TLS 1.3 and a proxy client certificate from the enclave's dedicated client CA;
+there is no plaintext or anonymous mode. Both RPC private-key files must deny
+group and other access. JSON-encoded gRPC messages reject unknown fields and
+trailing values. The signer-facing protocol remains
+`bursa-attested-signer/1`, so the existing `KeyRef` path retains caller ACL,
+policy, watermark, attestation, and returned-signature checks.
+
+The host OS and proxy client key are the RPC authorization boundary. A process
+without that key cannot invoke provisioning, reload, inventory, or signing.
+Host root or proxy-key compromise permits RPC calls, but does not expose the
+enclave-held cold key. The enclave independently restricts signing to canonical
+pool-cold operational-certificate payloads and maintains its nonce and issue
+counter guards while the key remains loaded.
 
 The enclave accepts only the `pool` role and `opcert` purpose. It signs the
 canonical 48-byte `OCertSignable` value:
@@ -125,8 +157,8 @@ CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags=-buildid= \
 
 Pin the base image by digest, normalize file ownership, permissions, and
 timestamps, and keep the EIF kernel and bootstrap inputs pinned. Build on the
-target architecture without embedding credentials, configuration, or the AWS
-Nitro root certificate. Record together:
+target architecture without embedding AWS credentials, proxy client keys,
+deployment configuration, or the AWS Nitro root certificate. Record together:
 
 - source commit and clean-tree status;
 - Go toolchain version and module checksum file;

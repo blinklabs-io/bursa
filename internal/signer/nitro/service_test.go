@@ -179,16 +179,49 @@ func TestReloadAndCanonicalOpCertSigning(t *testing.T) {
 	require.Equal(t, backend.InventoryBinding(bytes.Repeat([]byte{9}, 32), inv.Keys), recipient.attested[0])
 }
 
-func TestReloadDropsKeyOnMalformedEnvelope(t *testing.T) {
+func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
 	service, _, _ := newTestService(t, testEvidence(t, 4))
 	env := provisionTestKey(t, service)
+	payload := make([]byte, 48)
+	binary.BigEndian.PutUint64(payload[32:40], 1)
+	request := &backend.AttestedRequest{
+		Version: backend.AttestedProtocol, Purpose: backend.PurposeOpCert,
+		KeyHash: backend.HashPublicKey(env.PublicKey).String(), Role: backend.KeyTypePool,
+		Nonce: bytes.Repeat([]byte{1}, requestNonceSize), Payload: payload,
+	}
+	_, err := service.Sign(context.Background(), request)
+	require.NoError(t, err)
+
+	malformedProvision := ProvisionRequest{Version: "invalid"}
+	_, err = service.Provision(context.Background(), &malformedProvision)
+	require.ErrorIs(t, err, ErrProtocol)
+
 	env.Ciphertext[0] ^= 0xff
-	_, err := service.Reload(context.Background(), &ReloadRequest{
+	_, err = service.Reload(context.Background(), &ReloadRequest{
 		Version: Protocol, Region: "us-east-1", Credentials: testCredentials, Envelope: env,
 	})
 	require.ErrorIs(t, err, ErrEnvelope)
-	_, err = service.Inventory(context.Background(), &InventoryRequest{Version: Protocol, Nonce: make([]byte, 32)})
-	require.ErrorIs(t, err, ErrNotLoaded)
+
+	inventory, err := service.Inventory(context.Background(), &InventoryRequest{Version: Protocol, Nonce: make([]byte, 32)})
+	require.NoError(t, err)
+	require.Equal(t, env.PublicKey, inventory.Keys[0].PublicKey)
+	_, err = service.Sign(context.Background(), request)
+	require.ErrorContains(t, err, "nonce replay")
+	request.Nonce = bytes.Repeat([]byte{2}, requestNonceSize)
+	_, err = service.Sign(context.Background(), request)
+	require.ErrorContains(t, err, "issue counter is not increasing")
+
+	env.Ciphertext[0] ^= 0xff
+	_, err = service.Reload(context.Background(), &ReloadRequest{
+		Version: Protocol, Region: "us-east-1", Credentials: testCredentials, Envelope: env,
+	})
+	require.NoError(t, err)
+	request.Nonce = bytes.Repeat([]byte{1}, requestNonceSize)
+	_, err = service.Sign(context.Background(), request)
+	require.ErrorContains(t, err, "nonce replay")
+	request.Nonce = bytes.Repeat([]byte{3}, requestNonceSize)
+	_, err = service.Sign(context.Background(), request)
+	require.ErrorContains(t, err, "issue counter is not increasing")
 }
 
 func TestReloadRejectsOversizedEnvelopeBeforeKMS(t *testing.T) {
