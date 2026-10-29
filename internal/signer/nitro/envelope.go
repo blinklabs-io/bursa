@@ -35,8 +35,12 @@ func validateEnvelope(env Envelope) error {
 		return fmt.Errorf("%w: public key must be %d bytes", ErrEnvelope, ed25519.PublicKeySize)
 	case len(env.EncryptedDataKey) == 0:
 		return fmt.Errorf("%w: missing encrypted data key", ErrEnvelope)
+	case len(env.EncryptedDataKey) > maxEnvelopeSize:
+		return fmt.Errorf("%w: encrypted data key exceeds %d bytes", ErrEnvelope, maxEnvelopeSize)
 	case len(env.Ciphertext) == 0:
 		return fmt.Errorf("%w: missing private-key ciphertext", ErrEnvelope)
+	case len(env.Ciphertext) > maxEnvelopeSize:
+		return fmt.Errorf("%w: private-key ciphertext exceeds %d bytes", ErrEnvelope, maxEnvelopeSize)
 	case len(env.Nonce) != 12:
 		return fmt.Errorf("%w: nonce must be 12 bytes", ErrEnvelope)
 	}

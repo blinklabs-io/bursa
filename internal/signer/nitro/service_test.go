@@ -191,6 +191,30 @@ func TestReloadDropsKeyOnMalformedEnvelope(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotLoaded)
 }
 
+func TestReloadRejectsOversizedEnvelopeBeforeKMS(t *testing.T) {
+	for name, mutate := range map[string]func(*Envelope){
+		"encrypted data key": func(env *Envelope) {
+			env.EncryptedDataKey = make([]byte, maxEnvelopeSize+1)
+		},
+		"private-key ciphertext": func(env *Envelope) {
+			env.Ciphertext = make([]byte, maxEnvelopeSize+1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			service, kms, _ := newTestService(t, testEvidence(t, 4))
+			env := provisionTestKey(t, service)
+			kms.calls = 0
+			mutate(&env)
+
+			_, err := service.Reload(context.Background(), &ReloadRequest{
+				Version: Protocol, Region: "us-east-1", Credentials: testCredentials, Envelope: env,
+			})
+			require.ErrorIs(t, err, ErrEnvelope)
+			require.Zero(t, kms.calls)
+		})
+	}
+}
+
 func TestServiceRejectsMalformedSignRequests(t *testing.T) {
 	service, _, _ := newTestService(t, testEvidence(t, 5))
 	env := provisionTestKey(t, service)
