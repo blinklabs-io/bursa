@@ -21,6 +21,7 @@ import (
 	"math"
 	"math/big"
 	"sort"
+	"strconv"
 	"strings"
 
 	ouroboros "github.com/blinklabs-io/gouroboros"
@@ -175,7 +176,9 @@ func formatMarginDecimal(rat *big.Rat) string {
 		rem.Mul(rem, ten)
 		var digit *big.Int
 		digit, rem = new(big.Int).QuoRem(rem, den, new(big.Int))
-		digits = append(digits, byte('0'+digit.Int64()))
+		// rem < den, so the digit is 0 to 9 and AppendInt writes one
+		// ASCII character.
+		digits = strconv.AppendInt(digits, digit.Int64(), 10)
 	}
 	for len(digits) > 0 && digits[len(digits)-1] == '0' {
 		digits = digits[:len(digits)-1]

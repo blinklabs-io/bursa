@@ -26,10 +26,12 @@ import (
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
-type queryPoolRunner func(ctx context.Context, socketPath, network string, poolID lcommon.PoolId) (*txbuilder.PoolQueryResult, error)
-type queryStakeRunner func(ctx context.Context, socketPath, network, address string) (*txbuilder.StakeAddressQueryResult, error)
-type queryUtxoRunner func(ctx context.Context, socketPath, network, address string) ([]txbuilder.UTxOQueryResult, error)
-type queryTipRunner func(ctx context.Context, socketPath, network string) (*txbuilder.TipQueryResult, error)
+type (
+	queryPoolRunner  func(ctx context.Context, socketPath, network string, poolID lcommon.PoolId) (*txbuilder.PoolQueryResult, error)
+	queryStakeRunner func(ctx context.Context, socketPath, network, address string) (*txbuilder.StakeAddressQueryResult, error)
+	queryUtxoRunner  func(ctx context.Context, socketPath, network, address string) ([]txbuilder.UTxOQueryResult, error)
+	queryTipRunner   func(ctx context.Context, socketPath, network string) (*txbuilder.TipQueryResult, error)
+)
 
 func defaultQueryPool(ctx context.Context, socketPath, network string, poolID lcommon.PoolId) (*txbuilder.PoolQueryResult, error) {
 	chain := txbuilder.NewN2C(socketPath, network)
