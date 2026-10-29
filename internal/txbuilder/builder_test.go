@@ -510,6 +510,7 @@ func TestRefundLegacyStakeDeregistration(t *testing.T) {
 		MakeUTxO(addr, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0, 20_000_000),
 	}
 	cred := makeStakeCredential(t, 0x55)
+	chain.StakeDelegDeposits[StakeCredentialKeyFrom(cred)] = chain.PpExtra.KeyDeposit
 	cert := &lcommon.StakeDeregistrationCertificate{
 		CertType:        uint(lcommon.CertificateTypeStakeDeregistration),
 		StakeCredential: cred,
@@ -534,6 +535,38 @@ func TestRefundLegacyStakeDeregistration(t *testing.T) {
 	refund := chain.PpExtra.KeyDeposit
 	// sum(inputs) + refunds == sum(outputs) + fee + deposits
 	require.Equal(t, inSum+refund, outSum+tx.Body.TxFee+uint64(0))
+}
+
+func TestRefundLegacyStakeDeregistrationUsesRecordedDeposit(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0, 20_000_000),
+	}
+	cred := makeStakeCredential(t, 0x5a)
+	recorded := uint64(7_000_000)
+	require.NotEqual(t, chain.PpExtra.KeyDeposit, recorded)
+	chain.StakeDelegDeposits[StakeCredentialKeyFrom(cred)] = recorded
+	cert := &lcommon.StakeDeregistrationCertificate{
+		CertType:        uint(lcommon.CertificateTypeStakeDeregistration),
+		StakeCredential: cred,
+	}
+	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeStakeDeregistration)
+	dir := t.TempDir()
+	certFile := writeEnvelopeCert(t, dir, "stake.dereg", "CertificateShelley", wrapBytes)
+	built, err := Build(context.Background(), chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{certFile},
+	})
+	require.NoError(t, err)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	inSum := uint64(20_000_000)
+	var outSum uint64
+	for _, o := range tx.Body.TxOutputs {
+		outSum += o.OutputAmount.Amount
+	}
+	require.Equal(t, inSum+recorded, outSum+tx.Body.TxFee)
 }
 
 func TestRefundConwayDeregistration(t *testing.T) {
@@ -612,6 +645,7 @@ func TestRefundMixedRegistrationAndDeregistration(t *testing.T) {
 	}
 	credReg := makeStakeCredential(t, 0x57)
 	credDereg := makeStakeCredential(t, 0x58)
+	chain.StakeDelegDeposits[StakeCredentialKeyFrom(credDereg)] = chain.PpExtra.KeyDeposit
 	regCert := &lcommon.StakeRegistrationCertificate{
 		CertType:        uint(lcommon.CertificateTypeStakeRegistration),
 		StakeCredential: credReg,

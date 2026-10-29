@@ -35,11 +35,24 @@ type ProtocolParametersExtra struct {
 	CoinsPerUTxOByte uint64
 }
 
+// StakeCredentialKey identifies a stake credential in ledger deposit
+// lookups. It is comparable, unlike lcommon.Credential.
+type StakeCredentialKey struct {
+	Type uint
+	Hash [28]byte
+}
+
+// StakeCredentialKeyFrom returns the lookup key for a credential.
+func StakeCredentialKeyFrom(cred lcommon.Credential) StakeCredentialKey {
+	return StakeCredentialKey{Type: cred.CredType, Hash: [28]byte(cred.Credential)}
+}
+
 // Chain provides the node/ledger queries and submission needed to build and submit transactions.
 type Chain interface {
 	GetUTxOs(ctx context.Context, address string) ([]UTxO, error)
 	GetProtocolParameters(ctx context.Context) (*bursa.ProtocolParams, *ProtocolParametersExtra, error)
 	GetSlot(ctx context.Context) (uint64, error)
 	GetPoolRegistration(ctx context.Context, poolKeyHash []byte) (bool, error)
+	GetStakeDelegDeposits(ctx context.Context, creds []lcommon.Credential) (map[StakeCredentialKey]uint64, error)
 	SubmitTx(ctx context.Context, tx []byte) error
 }

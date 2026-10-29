@@ -27,6 +27,7 @@ import (
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/blinklabs-io/gouroboros/ledger/conway"
 	"github.com/blinklabs-io/gouroboros/ledger/shelley"
+	"github.com/blinklabs-io/gouroboros/protocol/localstatequery"
 )
 
 // N2CChain queries and submits through a node's local socket. Between Open
@@ -241,6 +242,38 @@ func (n *N2CChain) GetPoolRegistration(ctx context.Context, poolKeyHash []byte) 
 		}
 	}
 	return false, nil
+}
+
+func (n *N2CChain) GetStakeDelegDeposits(ctx context.Context, creds []lcommon.Credential) (map[StakeCredentialKey]uint64, error) {
+	if len(creds) == 0 {
+		return map[StakeCredentialKey]uint64{}, nil
+	}
+	conn, release, err := n.session(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	queryCreds := make([]localstatequery.StakeCredential, 0, len(creds))
+	for _, c := range creds {
+		queryCreds = append(queryCreds, localstatequery.StakeCredential{
+			Tag:   uint64(c.CredType),
+			Bytes: c.Credential,
+		})
+	}
+	res, err := conn.LocalStateQuery().Client.GetStakeDelegDeposits(queryCreds)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[StakeCredentialKey]uint64, len(creds))
+	if res != nil {
+		for queryCred, deposit := range *res {
+			out[StakeCredentialKey{
+				Type: uint(queryCred.Tag),
+				Hash: [28]byte(queryCred.Bytes),
+			}] = deposit
+		}
+	}
+	return out, nil
 }
 
 func (n *N2CChain) SubmitTx(ctx context.Context, tx []byte) error {

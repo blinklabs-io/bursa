@@ -44,25 +44,27 @@ func (o *fakeOutput) ToPlutusData() data.PlutusData                             
 func (o *fakeOutput) String() string                                            { return o.address.String() }
 
 type FakeChain struct {
-	UtxosMap         map[string][]UTxO
-	PpFee            *bursa.ProtocolParams
-	PpExtra          *ProtocolParametersExtra
-	PpErr            error
-	SlotVal          uint64
-	PoolRegistered   map[string]bool
-	SubmitErr        error
-	Submitted        [][]byte
-	PoolRegistration func(poolKeyHash []byte) (bool, error)
+	UtxosMap           map[string][]UTxO
+	PpFee              *bursa.ProtocolParams
+	PpExtra            *ProtocolParametersExtra
+	PpErr              error
+	SlotVal            uint64
+	PoolRegistered     map[string]bool
+	StakeDelegDeposits map[StakeCredentialKey]uint64
+	SubmitErr          error
+	Submitted          [][]byte
+	PoolRegistration   func(poolKeyHash []byte) (bool, error)
 }
 
 func NewFakeChain() *FakeChain {
 	return &FakeChain{
-		UtxosMap:       map[string][]UTxO{},
-		PpFee:          &bursa.ProtocolParams{TxFeePerByte: 44, TxFeeFixed: 155381},
-		PpExtra:        &ProtocolParametersExtra{MinFeeA: 44, MinFeeB: 155381, KeyDeposit: 2000000, PoolDeposit: 500000000},
-		SlotVal:        1000000,
-		PoolRegistered: map[string]bool{},
-		Submitted:      [][]byte{},
+		UtxosMap:           map[string][]UTxO{},
+		PpFee:              &bursa.ProtocolParams{TxFeePerByte: 44, TxFeeFixed: 155381},
+		PpExtra:            &ProtocolParametersExtra{MinFeeA: 44, MinFeeB: 155381, KeyDeposit: 2000000, PoolDeposit: 500000000},
+		SlotVal:            1000000,
+		PoolRegistered:     map[string]bool{},
+		StakeDelegDeposits: map[StakeCredentialKey]uint64{},
+		Submitted:          [][]byte{},
 	}
 }
 
@@ -90,6 +92,17 @@ func (f *FakeChain) GetPoolRegistration(ctx context.Context, poolKeyHash []byte)
 		return v, nil
 	}
 	return false, nil
+}
+
+func (f *FakeChain) GetStakeDelegDeposits(ctx context.Context, creds []lcommon.Credential) (map[StakeCredentialKey]uint64, error) {
+	out := make(map[StakeCredentialKey]uint64, len(creds))
+	for _, c := range creds {
+		key := StakeCredentialKeyFrom(c)
+		if deposit, ok := f.StakeDelegDeposits[key]; ok {
+			out[key] = deposit
+		}
+	}
+	return out, nil
 }
 
 func (f *FakeChain) SubmitTx(ctx context.Context, tx []byte) error {

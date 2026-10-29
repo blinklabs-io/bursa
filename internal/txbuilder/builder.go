@@ -62,13 +62,55 @@ func (b *BuiltTx) Enveloped() (string, error) {
 }
 
 func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *ProtocolParametersExtra) (uint64, uint64, error) {
-	var deposits uint64
-	var refunds uint64
+	wrappers := make([]common.CertificateWrapper, 0, len(certs))
 	for _, c := range certs {
 		var wrapper common.CertificateWrapper
 		if _, err := cbor.Decode(c, &wrapper); err != nil {
 			return 0, 0, fmt.Errorf("decode certificate: %w", err)
 		}
+		wrappers = append(wrappers, wrapper)
+	}
+
+	// A credential registered in this transaction pays the current
+	// protocol deposit, so a legacy deregistration of it refunds that.
+	registered := map[StakeCredentialKey]bool{}
+	for _, wrapper := range wrappers {
+		switch cert := wrapper.Certificate.(type) {
+		case *common.StakeRegistrationCertificate:
+			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
+		case *common.RegistrationCertificate:
+			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
+		case *common.StakeRegistrationDelegationCertificate:
+			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
+		case *common.VoteRegistrationDelegationCertificate:
+			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
+		case *common.StakeVoteRegistrationDelegationCertificate:
+			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
+		}
+	}
+
+	// A legacy deregistration refunds the deposit recorded when the
+	// credential registered, not the current protocol parameter.
+	var legacyDeregCreds []common.Credential
+	for _, wrapper := range wrappers {
+		if cert, ok := wrapper.Certificate.(*common.StakeDeregistrationCertificate); ok {
+			if !registered[StakeCredentialKeyFrom(cert.StakeCredential)] {
+				legacyDeregCreds = append(legacyDeregCreds, cert.StakeCredential)
+			}
+		}
+	}
+	recordedDeposits := map[StakeCredentialKey]uint64{}
+	if len(legacyDeregCreds) > 0 {
+		var err error
+		recordedDeposits, err = chain.GetStakeDelegDeposits(ctx, legacyDeregCreds)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+
+	var deposits uint64
+	var refunds uint64
+	for _, wrapper := range wrappers {
 		switch cert := wrapper.Certificate.(type) {
 		case *common.StakeRegistrationCertificate:
 			if pp != nil {
@@ -86,18 +128,23 @@ func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *Proto
 			deposits += cert.Amount
 		case *common.PoolRegistrationCertificate:
 			poolId := cert.Operator.Bytes()
-			registered, err := chain.GetPoolRegistration(ctx, poolId)
+			poolRegistered, err := chain.GetPoolRegistration(ctx, poolId)
 			if err != nil {
 				return 0, 0, err
 			}
-			if !registered && pp != nil {
+			if !poolRegistered && pp != nil {
 				deposits += pp.PoolDeposit
 			}
 		case *common.PoolRetirementCertificate:
 			// Pool retirement refunds nothing in the tx
 		case *common.StakeDeregistrationCertificate:
-			if pp != nil {
-				refunds += pp.KeyDeposit
+			key := StakeCredentialKeyFrom(cert.StakeCredential)
+			if registered[key] {
+				if pp != nil {
+					refunds += pp.KeyDeposit
+				}
+			} else {
+				refunds += recordedDeposits[key]
 			}
 		case *common.DeregistrationCertificate:
 			refunds += cert.Amount
