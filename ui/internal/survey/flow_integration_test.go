@@ -188,6 +188,20 @@ func (f *flowChain) GovernanceAnchorDocuments(context.Context) ([]chain.AnchorDo
 	return nil, nil
 }
 
+// SurveyRoleSnapshot matches the live role lookups above: no credential holds
+// a governance role, and keyholder claims need no ledger state.
+func (f *flowChain) SurveyRoleSnapshot(
+	_ context.Context,
+	_ uint64,
+	claims []chain.SurveyRoleClaim,
+) (map[chain.SurveyRoleClaim]bool, error) {
+	ret := make(map[chain.SurveyRoleClaim]bool, len(claims))
+	for _, claim := range claims {
+		ret[claim] = claim.Role == chain.SurveyRoleKeyholder
+	}
+	return ret, nil
+}
+
 func TestCreateRespondCancelRoundTripsThroughSignedTransactions(t *testing.T) {
 	ctx := context.Background()
 	password := "integration-password"
