@@ -973,7 +973,8 @@ paths:
       summary: Produce a transaction witness
   /api/wallet/create:
     post:
-      description: Create a wallet and return details
+      description: Create a wallet and return details. When persistent storage is
+        configured, requires an authenticated wallet storage administrator.
       produces:
       - application/json
       responses:
@@ -981,6 +982,14 @@ paths:
           description: Ok
           schema:
             $ref: '#/definitions/bursa.Wallet'
+        "401":
+          description: Authentication required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Wallet storage administrator access required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Create a wallet
@@ -1099,7 +1108,8 @@ paths:
       consumes:
       - application/json
       description: Restores a wallet using the provided mnemonic seed phrase and optional
-        password and returns wallet details.
+        password and returns wallet details. When persistent storage is configured,
+        requires an authenticated wallet storage administrator.
       parameters:
       - description: Wallet Restore Request
         in: body
@@ -1116,6 +1126,14 @@ paths:
             $ref: '#/definitions/bursa.Wallet'
         "400":
           description: Invalid request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Authentication required
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Wallet storage administrator access required
           schema:
             $ref: '#/definitions/api.ErrorResponse'
         "500":

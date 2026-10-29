@@ -37,6 +37,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
+	"github.com/blinklabs-io/bursa/ui/internal/remotesubmit"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/survey"
@@ -215,6 +216,8 @@ type Activity interface {
 type handlerOptions struct {
 	legacy          LegacyKeystore
 	connector       *connector.Service
+	approvals       *connector.Service
+	remoteSubmit    *remotesubmit.Service
 	nfts            NFTs
 	diagnostics     Diagnostics
 	migrateScripts  ScriptMigrator
@@ -247,6 +250,16 @@ func WithLegacyKeystore(ks LegacyKeystore) HandlerOption {
 func WithConnector(svc *connector.Service) HandlerOption {
 	return func(o *handlerOptions) {
 		o.connector = svc
+	}
+}
+
+// WithRemoteSubmission enables the local control routes for a separately
+// hosted, TLS-only transaction submission listener. approvals is the shared
+// consent queue used by the wallet UI.
+func WithRemoteSubmission(svc *remotesubmit.Service, approvals *connector.Service) HandlerOption {
+	return func(o *handlerOptions) {
+		o.remoteSubmit = svc
+		o.approvals = approvals
 	}
 }
 
@@ -1656,14 +1669,15 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	// NFT to its current holding address through the node (never an external
 	// service). A leading '$' is optional; handle.Resolve normalizes it. A
 	// name on an unsupported network or with no on-chain holder reports as a
-	// clean not-found (404), never a hard error.
+	// clean not-found (404). Conflicting holders are rejected rather than
+	// selecting a recipient.
 	mux.HandleFunc("GET /wallet/handle/{name}", gated(st, func(w http.ResponseWriter, r *http.Request) {
 		if lookup == nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "handle lookup unavailable"})
 			return
 		}
 		bare, addr, err := handle.Resolve(r.Context(), lookup, network, r.PathValue("name"))
-		serveLookup(w, handleInfo{Handle: bare, Address: addr}, err)
+		serveHandleLookup(w, handleInfo{Handle: bare, Address: addr}, err)
 	}))
 
 	// GET /wallet/assets/{unit} reads a native asset's on-chain
@@ -1756,6 +1770,11 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 			cfg.connector,
 			withConnectorPairingCodeAuthorizer(authorizePairingCode),
 		)
+	} else if cfg.approvals != nil {
+		registerApprovalRoutes(mux, cfg.approvals)
+	}
+	if cfg.remoteSubmit != nil {
+		registerRemoteSubmission(mux, cfg.remoteSubmit)
 	}
 
 	// SPA catch-all: the specific API routes above take precedence on the mux;
@@ -1893,6 +1912,19 @@ func serveLookup[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found by your node"})
 	default:
 		writeJSON(w, http.StatusBadGateway, errBody(err))
+	}
+}
+
+func serveHandleLookup(w http.ResponseWriter, v handleInfo, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, chain.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "handle not found"})
+	case errors.Is(err, handle.ErrAmbiguousHolder):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "handle holder is ambiguous"})
+	default:
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "handle lookup failed"})
 	}
 }
 

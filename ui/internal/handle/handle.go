@@ -30,12 +30,20 @@ import (
 // PolicyID is the ADA Handle root policy used on mainnet and supported testnets.
 const PolicyID = "f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a"
 
+// cip68UserTokenPrefix is the CIP-67 encoding of label 222 used by CIP-68
+// user tokens: 0 + 00de + CRC-8(00de) + 0.
+const cip68UserTokenPrefix = "000de140"
+
 // MainnetPolicyID is kept as a compatibility alias for PolicyID.
 const MainnetPolicyID = PolicyID
 
 // ErrInvalidName is returned when a handle input has no name left after
 // stripping its optional leading '$' and surrounding whitespace.
 var ErrInvalidName = errors.New("handle: empty name")
+
+// ErrAmbiguousHolder is returned when the node's asset view cannot identify
+// one safe recipient for a handle.
+var ErrAmbiguousHolder = errors.New("handle: holder is ambiguous")
 
 // Normalize strips an optional leading '$' (and surrounding whitespace) from
 // a handle input and case-folds it to lowercase — "$Chris", "CHRIS", and
@@ -72,11 +80,19 @@ func PolicyForNetwork(network string) (policyID string, ok bool) {
 // with the hex-encoded asset name) identifying handle name on network, or
 // ok=false when network is unsupported.
 func AssetUnit(network, name string) (unit string, ok bool) {
+	return assetUnit(network, name, "")
+}
+
+func assetUnit(network, name, prefix string) (unit string, ok bool) {
 	policy, ok := PolicyForNetwork(network)
 	if !ok {
 		return "", false
 	}
-	return policy + AssetNameHex(name), true
+	return policy + prefix + AssetNameHex(name), true
+}
+
+func cip68AssetUnit(network, name string) (unit string, ok bool) {
+	return assetUnit(network, name, cip68UserTokenPrefix)
 }
 
 // AssetLookup is the node-backed surface Resolve needs: the current holder
@@ -90,32 +106,44 @@ type AssetLookup interface {
 // and is matched case-insensitively — see Normalize) to its current holding
 // address by querying lookup for the handle NFT's holder on network. It
 // returns the normalized (lowercased, '$'-stripped) name alongside the
-// address, so callers don't need to normalize the input a second time. It
-// returns chain.ErrNotFound — never a hard error — for every "not found"
-// case: an empty/invalid name, an unsupported network, the node not having
-// seen the asset, or the asset having no current holder. Any other lookup
-// error is returned as-is.
+// address, so callers don't need to normalize the input a second time. Both
+// the classic asset and CIP-68 label-222 user token are checked. A result is
+// accepted only when every present form identifies the same single holder.
+// Missing assets return chain.ErrNotFound; node failures remain hard errors.
 func Resolve(ctx context.Context, lookup AssetLookup, network, input string) (name, address string, err error) {
 	name, err = Normalize(input)
 	if err != nil {
 		return "", "", chain.ErrNotFound
 	}
-	unit, ok := AssetUnit(network, name)
+	classicUnit, ok := AssetUnit(network, name)
 	if !ok {
 		return name, "", chain.ErrNotFound
 	}
 	if lookup == nil {
 		return name, "", chain.ErrNotFound
 	}
-	addrs, err := lookup.AssetAddresses(ctx, unit)
-	if err != nil {
-		return name, "", err
+	cip68Unit, _ := cip68AssetUnit(network, name)
+	for _, unit := range []string{classicUnit, cip68Unit} {
+		addrs, lookupErr := lookup.AssetAddresses(ctx, unit)
+		if errors.Is(lookupErr, chain.ErrNotFound) {
+			continue
+		}
+		if lookupErr != nil {
+			return name, "", lookupErr
+		}
+		if len(addrs) == 0 {
+			continue
+		}
+		if len(addrs) != 1 || addrs[0].Address == "" || addrs[0].Quantity != "1" {
+			return name, "", ErrAmbiguousHolder
+		}
+		if address != "" && address != addrs[0].Address {
+			return name, "", ErrAmbiguousHolder
+		}
+		address = addrs[0].Address
 	}
-	if len(addrs) == 0 {
+	if address == "" {
 		return name, "", chain.ErrNotFound
 	}
-	// An ADA Handle is a non-fungible token: exactly one address holds it. If
-	// the node ever reports more than one (e.g. transient reorg view), the
-	// current holder is still the most informative single answer.
-	return name, addrs[0].Address, nil
+	return name, address, nil
 }

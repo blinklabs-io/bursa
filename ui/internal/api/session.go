@@ -67,6 +67,7 @@ func isControlRoute(path string) bool {
 		strings.HasPrefix(path, "/diagnostics") ||
 		strings.HasPrefix(path, "/vault") ||
 		strings.HasPrefix(path, "/wallet") ||
+		strings.HasPrefix(path, "/remote-submission") ||
 		strings.HasPrefix(path, "/connector/")
 }
 

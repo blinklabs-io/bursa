@@ -888,6 +888,12 @@ export interface ConnectorState {
   origins: string[];
 }
 
+export interface RemoteSubmissionStatus {
+  available: boolean;
+  enabled: boolean;
+  endpoint?: string;
+}
+
 export interface ConnectorRequest {
   id: string;
   origin: string;
