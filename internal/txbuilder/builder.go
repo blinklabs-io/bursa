@@ -108,6 +108,7 @@ func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *Proto
 		}
 	}
 
+	seenPools := map[string]bool{}
 	var deposits uint64
 	var refunds uint64
 	for _, wrapper := range wrappers {
@@ -132,9 +133,11 @@ func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *Proto
 			if err != nil {
 				return 0, 0, err
 			}
-			if !poolRegistered && pp != nil {
+			key := string(poolId)
+			if !poolRegistered && !seenPools[key] && pp != nil {
 				deposits += pp.PoolDeposit
 			}
+			seenPools[key] = true
 		case *common.PoolRetirementCertificate:
 			// Pool retirement refunds nothing in the tx
 		case *common.StakeDeregistrationCertificate:
