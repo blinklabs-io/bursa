@@ -152,8 +152,17 @@ func (k KeyPush) marshalFrame() ([]byte, error) {
 		maxUintLen = 20
 		fixedLen   = len(`{"type":,"period":,"depth":,"kes_sign_key":,"kes_vkey":,"opcert":}`)
 	)
+	// Bounding every term first keeps the sum from overflowing, and rejects an
+	// oversized push before the signing key is encoded at all.
+	if len(typ) > maxFrameLen || len(k.KESSignKey) > maxFrameLen ||
+		len(k.KESVKey) > maxFrameLen || len(k.OpCert) > maxFrameLen {
+		return nil, errFrameTooLarge
+	}
 	size := fixedLen + len(typ) + 2*maxUintLen +
 		jsonBytesLen(k.KESSignKey) + jsonBytesLen(k.KESVKey) + jsonBytesLen(k.OpCert)
+	if size > maxFrameLen {
+		return nil, errFrameTooLarge
+	}
 	buf := make([]byte, 0, size)
 	buf = append(buf, `{"type":`...)
 	buf = append(buf, typ...)
@@ -169,6 +178,8 @@ func (k KeyPush) marshalFrame() ([]byte, error) {
 	buf = appendJSONBytes(buf, k.OpCert)
 	return append(buf, '}'), nil
 }
+
+var errFrameTooLarge = fmt.Errorf("frame exceeds %d bytes", maxFrameLen)
 
 // jsonBytesLen is the length appendJSONBytes appends for b.
 func jsonBytesLen(b []byte) int {

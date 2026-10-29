@@ -133,6 +133,21 @@ func TestKeyPushMarshalFrameMatchesJSON(t *testing.T) {
 	}
 }
 
+func TestKeyPushMarshalFrameRejectsOversizedPush(t *testing.T) {
+	t.Parallel()
+	big := make([]byte, maxFrameLen)
+	for _, push := range []KeyPush{
+		{Type: strings.Repeat("t", maxFrameLen+1)},
+		{Type: "key_push", KESSignKey: big},
+		{Type: "key_push", KESVKey: big},
+		{Type: "key_push", OpCert: big},
+	} {
+		if got, err := push.marshalFrame(); err == nil {
+			t.Fatalf("marshalFrame() returned %d bytes, want frame-size error", len(got))
+		}
+	}
+}
+
 // TestWriteFrameLeavesNoSigningKeyInHeap writes a KeyPush and then searches the
 // process's writable memory for the base64 signing key, which json.Marshal
 // would leave behind in its pooled encoder buffer.
