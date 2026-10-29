@@ -127,8 +127,26 @@ func TestRunKeyPoolOwner_VerificationKeyOnly(t *testing.T) {
 }
 
 func TestRunKeyPoolOwner_MissingMnemonic(t *testing.T) {
+	// Not t.Parallel: t.Setenv cannot run in a parallel test. MNEMONIC is
+	// read before the mnemonic file, so it is cleared here.
+	t.Setenv("MNEMONIC", "")
+	missing := filepath.Join(t.TempDir(), "seed.txt")
+	assert.Error(t, RunKeyPoolOwner("", missing, "", "-", "", 0, 0))
+}
+
+func TestRunKeyPoolOwner_RejectsSameKeyPaths(t *testing.T) {
 	t.Parallel()
-	assert.Error(t, RunKeyPoolOwner("", "", "", "-", "", 0, 0))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "owner.skey")
+
+	err := RunKeyPoolOwner(
+		testKeyMnemonic, "", "", path, filepath.Join(dir, ".", "owner.skey"), 0, 0,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "same file")
+
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr), "no key file is written")
 }
 
 func TestRunKeyPoolOwner_RequiresDestination(t *testing.T) {

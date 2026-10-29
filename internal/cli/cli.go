@@ -638,6 +638,11 @@ func RunKeyPoolOwner(
 	if err != nil {
 		return err
 	}
+	// the verification key would overwrite the signing key
+	if signingKeyFile != "" && verificationKeyFile != "" &&
+		filepath.Clean(signingKeyFile) == filepath.Clean(verificationKeyFile) {
+		return errors.New("signing and verification key files are the same file")
+	}
 
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
