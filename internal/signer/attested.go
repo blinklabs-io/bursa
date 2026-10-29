@@ -87,11 +87,11 @@ func loadAttestedBackend(ctx context.Context, c config.SignerBackendConfig, veri
 	if c.Address == "" {
 		return nil, fmt.Errorf("%s backend requires address", c.Type)
 	}
-	enclave, err := backend.NewHTTPEnclave(c.Address)
+	enclave, err := backend.NewProfiledHTTPEnclave(c.Address, c.Profile)
 	if err != nil {
 		return nil, err
 	}
-	b := backend.NewAttestedBackend(c.Name, enclave, verifier)
+	b := backend.NewProfiledAttestedBackend(c.Name, c.Profile, enclave, verifier)
 	loadCtx, cancel := context.WithTimeout(ctx, attestedLoadTimeout)
 	defer cancel()
 	if err := b.Load(loadCtx); err != nil {

@@ -43,8 +43,10 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/blinklabs-io/bursa/internal/signer/policy"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
+	"github.com/blinklabs-io/gouroboros/ledger"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/blake2b"
 )
 
 // stubEnclave holds one key. When forge is set it signs with that key instead,
@@ -75,8 +77,13 @@ func (e *stubEnclave) Sign(_ context.Context, req backend.AttestedRequest) (back
 	if e.forge != nil {
 		key = e.forge
 	}
+	payload := req.Payload
+	if req.Purpose == backend.PurposeTxBody {
+		hash := blake2b.Sum256(req.Payload)
+		payload = hash[:]
+	}
 	return backend.AttestedResponse{
-		Version: backend.AttestedProtocol, Nonce: req.Nonce, Signature: ed25519.Sign(key, req.Payload),
+		Version: backend.AttestedProtocol, Nonce: req.Nonce, Signature: ed25519.Sign(key, payload),
 	}, nil
 }
 
@@ -132,28 +139,39 @@ func newAttestedCoordinator(t *testing.T, role backend.KeyType, allowed string, 
 
 func TestAttestedKeySignsTransaction(t *testing.T) {
 	t.Parallel()
+	// An indefinite map is semantically equivalent to the usual definite map,
+	// but re-encoding it changes the body hash.
+	txCBOR := "84bf008001800200ffa0f5f6"
+	body, err := hex.DecodeString("bf008001800200ff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	txid := blake2b.Sum256(body)
 	card := fakeCardano{
 		insp:      &bursa.TxInspection{TxId: "abc", Outputs: []bursa.TxOutput{{Address: "addr1ok", Lovelace: "1"}}},
-		txid:      bytes.Repeat([]byte{7}, 32),
+		txid:      txid[:],
 		assembled: []byte{1},
 	}
 	c, enc, hash, _ := newAttestedCoordinator(t, backend.KeyTypePayment, "tx", card)
 
-	res, perr, err := c.SignTx(t.Context(), []byte(testTxCbor), testTxEra, []string{hash.String()})
+	res, perr, err := c.SignTx(t.Context(), []byte(txCBOR), testTxEra, []string{hash.String()})
 	if err != nil || len(perr) != 0 || len(res.Witnesses) != 1 {
 		t.Fatalf("SignTx: res=%+v perr=%+v err=%v", res, perr, err)
 	}
-	if got := enc.purposes(); len(got) != 1 || got[0] != backend.PurposeTxHash {
-		t.Fatalf("enclave purposes = %v, want [tx-hash]", got)
+	if got := enc.purposes(); len(got) != 1 || got[0] != backend.PurposeTxBody {
+		t.Fatalf("enclave purposes = %v, want [tx-body]", got)
 	}
-	if !bytes.Equal(enc.calls[0].Payload, card.txid) {
-		t.Fatal("enclave was not asked to sign the tx id")
+	if !bytes.Equal(enc.calls[0].Payload, body) {
+		t.Fatalf("enclave payload = %x, want raw body %x", enc.calls[0].Payload, body)
+	}
+	if enc.calls[0].Era == nil || *enc.calls[0].Era != ledger.TxTypeBabbage {
+		t.Fatalf("enclave era = %v, want %d", enc.calls[0].Era, ledger.TxTypeBabbage)
 	}
 
 	// A signature that does not verify under the attested key is not a witness.
 	_, forged, _ := ed25519.GenerateKey(nil)
 	enc.forge = forged
-	res, perr, err = c.SignTx(t.Context(), []byte(testTxCbor), testTxEra, []string{hash.String()})
+	res, perr, err = c.SignTx(t.Context(), []byte(txCBOR), testTxEra, []string{hash.String()})
 	if err != nil || len(perr) != 1 || perr[0].Code != CodeInternal {
 		t.Fatalf("forged signature: res=%+v perr=%+v err=%v", res, perr, err)
 	}
@@ -245,11 +263,14 @@ func TestBuildBackendsConfidentialSpace(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(nil)
 	pub := priv.Public().(ed25519.PublicKey)
 	digest := "sha256:aaaa"
+	profiles := make(chan string, 2)
 	workload := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Nonce []byte `json:"nonce"`
+			Nonce   []byte `json:"nonce"`
+			Profile string `json:"profile"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
+		profiles <- in.Profile
 		keys := []backend.AttestedKeyInfo{{Role: backend.KeyTypePool, PublicKey: pub}}
 		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 			"iss": backend.ConfidentialSpaceIssuer, "aud": "https://signer.example",
@@ -267,6 +288,7 @@ func TestBuildBackendsConfidentialSpace(t *testing.T) {
 	cfg := config.SignerBackendConfig{
 		Name: "gcp", Type: "confidential-space", Address: workload.URL,
 		Audience: "https://signer.example", ImageDigest: digest, JWKSURL: jwks.URL,
+		Profile: "pool@mainnet",
 	}
 	bs, err := BuildBackends(t.Context(), []config.SignerBackendConfig{cfg})
 	if err != nil {
@@ -274,6 +296,9 @@ func TestBuildBackendsConfidentialSpace(t *testing.T) {
 	}
 	if _, err := bs[0].GetKey(t.Context(), backend.HashPublicKey(pub)); err != nil {
 		t.Fatalf("attested key not resolvable after boot: %v", err)
+	}
+	if got := <-profiles; got != cfg.Profile {
+		t.Fatalf("inventory profile = %q, want %q", got, cfg.Profile)
 	}
 
 	// A different approved image digest fails attestation, so boot fails.
