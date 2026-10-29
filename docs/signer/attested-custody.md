@@ -87,7 +87,7 @@ a failed load leaves the backend serving no keys.
  "payload": "<bytes>", "profile": "<optional string>", "era": "<optional uint>"}
 ```
 
-and returns `{"version", "nonce", "signature", "binding_signature"}` or
+and returns `{"version", "nonce", "signature", "binding_signature", "issue_counter"}` or
 `{"version", "nonce", "error"}`. `binding_signature` is required when the
 backend has a profile and omitted for compatibility when it does not.
 
@@ -96,6 +96,7 @@ backend has a profile and omitted for compatibility when it does not.
 | `tx-body` | Exact encoded transaction body | Resolved `era` | any |
 | `tx-hash` | 32-byte transaction body hash (legacy) | - | any |
 | `opcert` | 48-byte OCertSignable: KES vkey, issue counter, KES period | - | `pool` only |
+| `opcert-next` | 48-byte payload: KES vkey, on-chain opcert counter, KES period | - | `pool` only |
 | `cip8` | COSE Sig_structure for CIP-8 data signing | - | any |
 
 For `tx-body`, the workload evaluates the body, computes its Blake2b-256 hash,
@@ -103,6 +104,20 @@ and signs that hash. Bursa independently extracts the original body bytes from
 the transaction, verifies the returned signature against their hash, and
 refuses a response for a body substituted by the proxy. It does not re-encode
 the body before sending or hashing it.
+
+For `opcert-next`, the payload carries the counter currently on chain, not the
+number to issue. The enclave keeps its own floor and chooses the issue number:
+the chain counter plus one, or higher when its floor requires. It returns that
+number as the JSON number `issue_counter` and signs `kes_vkey || issue || period`
+(issue and period as 8-byte big-endian). The binding signature covers the
+request as sent, so its payload still holds the chain counter. Bursa never
+picks the issue number. It refuses the response unless `issue_counter` is
+present and greater than the chain counter, and the signature verifies under
+the pool key over the reconstructed bytes. The method is
+`SignOpCertNext(ctx, kesVKey, chainCounter, kesPeriod)` on attested pool keys
+(`OpCertNextSigner`); the plain `SignPurpose` path refuses this purpose because
+it cannot return the issue number. The signer's `opcert` request, where the
+caller supplies the counter, is unchanged.
 
 The binding signature is Ed25519 over the SHA-256 digest of the request fields
 and Cardano signature. Each field is framed as its decimal byte length, `:`,
