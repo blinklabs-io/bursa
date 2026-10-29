@@ -71,30 +71,16 @@ func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *Proto
 		wrappers = append(wrappers, wrapper)
 	}
 
-	// A credential registered in this transaction pays the current
-	// protocol deposit, so a legacy deregistration of it refunds that.
-	registered := map[StakeCredentialKey]bool{}
-	for _, wrapper := range wrappers {
-		switch cert := wrapper.Certificate.(type) {
-		case *common.StakeRegistrationCertificate:
-			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
-		case *common.RegistrationCertificate:
-			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
-		case *common.StakeRegistrationDelegationCertificate:
-			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
-		case *common.VoteRegistrationDelegationCertificate:
-			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
-		case *common.StakeVoteRegistrationDelegationCertificate:
-			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
-		}
-	}
-
 	// A legacy deregistration refunds the deposit recorded when the
-	// credential registered, not the current protocol parameter.
+	// credential registered, not the current protocol parameter. Look up
+	// every credential a legacy deregistration names, once each.
 	var legacyDeregCreds []common.Credential
+	queried := map[StakeCredentialKey]bool{}
 	for _, wrapper := range wrappers {
 		if cert, ok := wrapper.Certificate.(*common.StakeDeregistrationCertificate); ok {
-			if !registered[StakeCredentialKeyFrom(cert.StakeCredential)] {
+			key := StakeCredentialKeyFrom(cert.StakeCredential)
+			if !queried[key] {
+				queried[key] = true
 				legacyDeregCreds = append(legacyDeregCreds, cert.StakeCredential)
 			}
 		}
@@ -108,22 +94,31 @@ func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *Proto
 		}
 	}
 
+	// The ledger applies certificates in order, so a credential counts as
+	// registered in this transaction only from its registration onwards.
+	// Its deposit then is the current key deposit.
+	registered := map[StakeCredentialKey]bool{}
 	seenPools := map[string]bool{}
 	var deposits uint64
 	var refunds uint64
 	for _, wrapper := range wrappers {
 		switch cert := wrapper.Certificate.(type) {
 		case *common.StakeRegistrationCertificate:
+			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
 			if pp != nil {
 				deposits += pp.KeyDeposit
 			}
 		case *common.RegistrationCertificate:
+			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
 			deposits += cert.Amount
 		case *common.StakeRegistrationDelegationCertificate:
+			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
 			deposits += cert.Amount
 		case *common.VoteRegistrationDelegationCertificate:
+			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
 			deposits += cert.Amount
 		case *common.StakeVoteRegistrationDelegationCertificate:
+			registered[StakeCredentialKeyFrom(cert.StakeCredential)] = true
 			deposits += cert.Amount
 		case *common.RegistrationDrepCertificate:
 			deposits += cert.Amount
@@ -142,13 +137,23 @@ func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *Proto
 			// Pool retirement refunds nothing in the tx
 		case *common.StakeDeregistrationCertificate:
 			key := StakeCredentialKeyFrom(cert.StakeCredential)
-			if registered[key] {
+			switch deposit, onChain := recordedDeposits[key]; {
+			case registered[key]:
 				if pp != nil {
 					refunds += pp.KeyDeposit
 				}
-			} else {
-				refunds += recordedDeposits[key]
+			case onChain:
+				refunds += deposit
+			default:
+				return 0, 0, fmt.Errorf(
+					"stake credential %x is not registered, so it cannot be deregistered",
+					cert.StakeCredential.Credential[:],
+				)
 			}
+			// A deregistered credential is no longer registered for a
+			// later certificate in the same transaction.
+			delete(registered, key)
+			delete(recordedDeposits, key)
 		case *common.DeregistrationCertificate:
 			refunds += cert.Amount
 		case *common.DeregistrationDrepCertificate:
@@ -217,6 +222,9 @@ func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error
 	changeAddr, err := common.NewAddress(opts.ChangeAddress)
 	if err != nil {
 		return nil, err
+	}
+	if changeAddr.Type() == common.AddressTypeByron {
+		return nil, errors.New("change address must be a Shelley address: Byron inputs need bootstrap witnesses")
 	}
 	if _, ok := changeAddr.PayloadPayload().(common.AddressPayloadScriptHash); ok {
 		return nil, errors.New("change address payment credential must be a key, not a script")
