@@ -69,6 +69,18 @@ func defaultQueryTip(ctx context.Context, socketPath, network string) (*txbuilde
 	return chain.QueryTip(ctx)
 }
 
+// queryContext bounds a query command by --timeout, which must be positive.
+func queryContext(timeoutSeconds int64) (context.Context, context.CancelFunc, error) {
+	if timeoutSeconds <= 0 {
+		return nil, nil, fmt.Errorf("--timeout must be positive, got %d", timeoutSeconds)
+	}
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		time.Duration(timeoutSeconds)*time.Second,
+	)
+	return ctx, cancel, nil
+}
+
 func writeJSONOutput(data interface{}, outFile string) error {
 	enc, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -104,15 +116,11 @@ func runQueryPool(socketPath, network, poolID, outFile string, timeoutSeconds in
 	var poolId lcommon.PoolId
 	copy(poolId[:], keyHash)
 
-	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeoutSeconds > 0 {
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
-		defer cancel()
-	} else {
-		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
-		defer cancel()
+	ctx, cancel, err := queryContext(timeoutSeconds)
+	if err != nil {
+		return err
 	}
+	defer cancel()
 
 	res, err := runner(ctx, socketPath, network, poolId)
 	if err != nil {
@@ -141,15 +149,11 @@ func runQueryStakeAddress(socketPath, network, address, outFile string, timeoutS
 		return fmt.Errorf("--address: %w", err)
 	}
 
-	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeoutSeconds > 0 {
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
-		defer cancel()
-	} else {
-		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
-		defer cancel()
+	ctx, cancel, err := queryContext(timeoutSeconds)
+	if err != nil {
+		return err
 	}
+	defer cancel()
 
 	res, err := runner(ctx, socketPath, network, address)
 	if err != nil {
@@ -172,19 +176,17 @@ func runQueryUtxo(socketPath, network, address, outFile string, timeoutSeconds i
 	if address == "" {
 		return errors.New("--address required")
 	}
-	if _, err := lcommon.NewAddress(address); err != nil {
+	// Only a payment address on the --network holds UTxOs; validate before
+	// dialing.
+	if _, err := txbuilder.ParsePaymentAddress(address, network); err != nil {
 		return fmt.Errorf("--address: %w", err)
 	}
 
-	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeoutSeconds > 0 {
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
-		defer cancel()
-	} else {
-		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
-		defer cancel()
+	ctx, cancel, err := queryContext(timeoutSeconds)
+	if err != nil {
+		return err
 	}
+	defer cancel()
 
 	res, err := runner(ctx, socketPath, network, address)
 	if err != nil {
@@ -205,15 +207,11 @@ func runQueryTip(socketPath, network, outFile string, timeoutSeconds int64, runn
 		return errors.New("--network required")
 	}
 
-	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeoutSeconds > 0 {
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
-		defer cancel()
-	} else {
-		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
-		defer cancel()
+	ctx, cancel, err := queryContext(timeoutSeconds)
+	if err != nil {
+		return err
 	}
+	defer cancel()
 
 	res, err := runner(ctx, socketPath, network)
 	if err != nil {

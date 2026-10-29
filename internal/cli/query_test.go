@@ -15,9 +15,16 @@
 package cli
 
 import (
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/blinklabs-io/bursa/internal/txbuilder"
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -142,4 +149,81 @@ func TestRunQueryUtxoAcceptsAddressBeforeDialing(t *testing.T) {
 	err := RunQueryUtxo(socket, "preprod", testQueryPaymentAddr, "", 5)
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "--address")
+}
+
+func TestRunQueryRejectsNonpositiveTimeout(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), testQueryMissingSocket)
+	for _, timeout := range []int64{0, -5} {
+		require.ErrorContains(t, RunQueryTip(socket, "preprod", "", timeout), "--timeout")
+		require.ErrorContains(
+			t,
+			RunQueryPool(socket, "preprod", testQueryPoolHex, "", timeout),
+			"--timeout",
+		)
+		require.ErrorContains(
+			t,
+			RunQueryStakeAddress(socket, "preprod", testQueryStakeTestnet, "", timeout),
+			"--timeout",
+		)
+		require.ErrorContains(
+			t,
+			RunQueryUtxo(socket, "preprod", testQueryPaymentAddr, "", timeout),
+			"--timeout",
+		)
+	}
+}
+
+func TestRunQueryUtxoRejectsWrongNetworkBeforeDialing(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), testQueryMissingSocket)
+	err := RunQueryUtxo(socket, "mainnet", testQueryPaymentAddr, "", 5)
+	require.ErrorContains(t, err, "--address")
+	err = RunQueryUtxo(socket, "preprod", testQueryStakeTestnet, "", 5)
+	require.ErrorContains(t, err, "--address")
+}
+
+func TestRunQueryTipWritesOutFile(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "tip.json")
+	var gotNetwork string
+	runner := func(
+		ctx context.Context, socketPath, network string,
+	) (*txbuilder.TipQueryResult, error) {
+		_, hasDeadline := ctx.Deadline()
+		require.True(t, hasDeadline)
+		gotNetwork = network
+		return &txbuilder.TipQueryResult{Era: "Conway", Epoch: 7, Slot: 42}, nil
+	}
+	require.NoError(t, runQueryTip("node.socket", "preview", out, 5, runner))
+	require.Equal(t, "preview", gotNetwork)
+	info, err := os.Stat(out)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	data, err := os.ReadFile(out)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Equal(t, "Conway", got["era"])
+	require.InDelta(t, 42, got["slot"], 0)
+}
+
+func TestRunQueryPoolPassesParsedPoolID(t *testing.T) {
+	var got lcommon.PoolId
+	runner := func(
+		_ context.Context, _, _ string, poolID lcommon.PoolId,
+	) (*txbuilder.PoolQueryResult, error) {
+		got = poolID
+		return &txbuilder.PoolQueryResult{}, nil
+	}
+	out := filepath.Join(t.TempDir(), "pool.json")
+	require.NoError(t, runQueryPool("node.socket", "preview", testQueryPoolBech32, out, 5, runner))
+	require.Equal(t, testQueryPoolHex, hex.EncodeToString(got[:]))
+}
+
+func TestRunQueryReportsRunnerError(t *testing.T) {
+	runner := func(
+		context.Context, string, string,
+	) (*txbuilder.TipQueryResult, error) {
+		return nil, errors.New("acquire failed")
+	}
+	err := runQueryTip("node.socket", "preview", "", 5, runner)
+	require.ErrorContains(t, err, "acquire failed")
 }
