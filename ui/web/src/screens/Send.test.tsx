@@ -534,6 +534,29 @@ test("ambiguous node ownership never offers the external fallback", async () => 
   expect(external).not.toHaveBeenCalled();
 });
 
+test("node lookup failure is distinct from a missing $handle", async () => {
+  vi.spyOn(client, "resolveHandle").mockRejectedValue(new client.ApiError(502, "handle lookup failed"));
+
+  render(<Send />);
+  fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "$chris" } });
+
+  expect(await screen.findByText("Unable to query your node")).toBeInTheDocument();
+  expect(screen.queryByText("Handle not found")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /review/i })).toBeDisabled();
+});
+
+test("ambiguous $handle ownership is never selected as a recipient", async () => {
+  vi.spyOn(client, "resolveHandle").mockRejectedValue(new client.ApiError(409, "handle holder is ambiguous"));
+  const buildSend = vi.spyOn(client, "buildSend");
+
+  render(<Send />);
+  fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "$chris" } });
+
+  expect(await screen.findByText("Handle holder is ambiguous")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /review/i })).toBeDisabled();
+  expect(buildSend).not.toHaveBeenCalled();
+});
+
 test("(m) Review is disabled while a $handle is still resolving", async () => {
   let resolveLookup: (info: HandleInfo) => void = () => {};
   vi.spyOn(client, "resolveHandle").mockReturnValue(

@@ -128,7 +128,14 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).SignedString([]byte(secret))
 	require.NoError(t, err)
-	client := &http.Client{Timeout: 5 * time.Second}
+	// The client may dial a spare connection it never sends a request on.
+	// The server counts a connection that has not yet sent a request as busy
+	// for five seconds, and Start would not return until then. A dedicated
+	// connection per request leaves nothing for the client to dial speculatively.
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
 	baseURL := "http://" + apiListener.Addr().String()
 	request := func(method, path, body string) *http.Response {
 		t.Helper()
@@ -341,11 +348,30 @@ func mockWalletResponseJSON(t *testing.T) []byte {
 }
 
 type fakeLegacyWalletStore struct {
-	listErr       error
-	wallets       map[string]*bursa.Wallet
-	descriptions  map[string]string
-	updatedWallet string
-	deletedWallet string
+	listErr        error
+	wallets        map[string]*bursa.Wallet
+	descriptions   map[string]string
+	createdWallets int
+	updatedWallet  string
+	deletedWallet  string
+}
+
+func (f *fakeLegacyWalletStore) Create(
+	_ context.Context,
+	name string,
+	wallet *bursa.Wallet,
+	description string,
+) error {
+	if f.wallets == nil {
+		f.wallets = make(map[string]*bursa.Wallet)
+	}
+	if f.descriptions == nil {
+		f.descriptions = make(map[string]string)
+	}
+	f.wallets[name] = wallet
+	f.descriptions[name] = description
+	f.createdWallets++
+	return nil
 }
 
 func (f *fakeLegacyWalletStore) List(context.Context) ([]string, error) {
@@ -750,11 +776,71 @@ func TestRegisterAPIHandlersProtectsSensitiveRoutes(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/wallet/restore", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	mux.ServeHTTP(w, req)
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 
 	public := httptest.NewRecorder()
 	mux.ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/healthcheck", nil))
 	assert.Equal(t, http.StatusOK, public.Code)
+}
+
+func TestRegisterAPIHandlersRequiresStorageAdminToPersistWallets(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	mnemonic, err := bursa.GenerateMnemonic()
+	require.NoError(t, err)
+	restoreBody, err := json.Marshal(WalletRestoreRequest{Mnemonic: mnemonic})
+	require.NoError(t, err)
+	cfg := config.GetConfig()
+	original := *cfg
+	t.Cleanup(func() { *cfg = original })
+	*cfg = config.Config{
+		Network: "preprod",
+		Storage: config.StorageConfig{Backend: "aws"},
+		Api:     config.ApiConfig{JWTAdminSubjects: []string{"wallet-admin"}},
+	}
+	store := &fakeLegacyWalletStore{}
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, cfg, signerapi.HS256Validator([]byte(secret), "", ""), store)
+	nonAdminToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "wallet-user",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	require.NoError(t, err)
+
+	for _, request := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "create", path: "/api/wallet/create"},
+		{name: "restore", path: "/api/wallet/restore", body: string(restoreBody)},
+	} {
+		t.Run(request.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, request.path, strings.NewReader(request.body))
+			req.Header.Set("Authorization", "Bearer "+nonAdminToken)
+			mux.ServeHTTP(recorder, req)
+
+			assert.Equal(t, http.StatusForbidden, recorder.Code)
+		})
+	}
+	assert.Zero(t, store.createdWallets)
+}
+
+func TestRegisterAPIHandlersKeepsEphemeralWalletRestoreAvailable(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, &config.Config{}, signerapi.HS256Validator([]byte(secret), "", ""))
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "wallet-user",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/wallet/restore", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	mux.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
 func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {

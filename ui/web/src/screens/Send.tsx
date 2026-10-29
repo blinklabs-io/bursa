@@ -55,6 +55,14 @@ function isHandleInput(value: string): boolean {
   return value.trim().startsWith("$");
 }
 
+function handleLookupError(error: unknown): string {
+  if (!(error instanceof ApiError)) return errorMessage(error);
+  if (error.status === 404) return "Handle not found by your node";
+  if (error.status === 409) return "Handle holder is ambiguous";
+  if (error.status === 0 || error.status >= 500) return "Unable to query your node";
+  return errorMessage(error);
+}
+
 // --- Compose phase ---
 
 interface ComposeProps {
@@ -109,14 +117,8 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
         })
         .catch((e: unknown) => {
           if (cancelled) return;
-          if (e instanceof ApiError && e.status === 404) {
-            setHandleError("Handle not found by your node");
-          } else if (e instanceof ApiError && e.status === 409) {
-            setHandleError("Handle holder is ambiguous");
-            return;
-          } else {
-            setHandleError("Unable to query your node");
-          }
+          setHandleError(handleLookupError(e));
+          if (e instanceof ApiError && e.status === 409) return;
           void getExternalHandleLookup()
             .then((setting) => {
               if (!cancelled) setExternalLookupOffered(setting.enabled);

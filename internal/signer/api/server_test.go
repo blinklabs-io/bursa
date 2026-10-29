@@ -431,6 +431,51 @@ func TestHandleSignOpCert_Valid(t *testing.T) {
 	}
 }
 
+// TestHandleSignOpCert_ChainCounter: with chain_counter the signer chooses the
+// issue number (on-chain counter + 1), returns it, and refuses a chain counter
+// below one already reported.
+func TestHandleSignOpCert_ChainCounter(t *testing.T) {
+	srv, h, coldPub := newOpCertServer(t, []string{"opcert"}, nil)
+	kesVkey := bytes.Repeat([]byte{0xAB}, 32)
+	const kesPeriod = uint64(42)
+
+	post := func(chain uint64) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(SignRequest{
+			Type:         "opcert",
+			Key:          h.String(),
+			KesVkey:      hex.EncodeToString(kesVkey),
+			ChainCounter: &chain,
+			KesPeriod:    kesPeriod,
+		})
+		rr := httptest.NewRecorder()
+		srv.handleSign(rr, httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body)))
+		return rr
+	}
+
+	rr := post(6)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp SignOpCertResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.IssueCounter != 7 {
+		t.Fatalf("issue_counter = %d, want 7", resp.IssueCounter)
+	}
+	sig, _ := hex.DecodeString(resp.Signature)
+	if !ed25519.Verify(coldPub, lcommon.OpCertSignableBytes(kesVkey, 7, kesPeriod), sig) {
+		t.Fatal("signature does not verify over issue 7")
+	}
+
+	if rr := post(6); rr.Code != http.StatusOK {
+		t.Fatalf("reissue at chain 6: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if rr := post(5); rr.Code != http.StatusConflict {
+		t.Fatalf("chain 5 after 6: expected 409, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 // TestHandleSignOpCert_MalformedInput rejects bad KES vkey hex and wrong-length
 // KES vkeys with 400.
 func TestHandleSignOpCert_MalformedInput(t *testing.T) {

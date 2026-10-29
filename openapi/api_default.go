@@ -206,7 +206,7 @@ type DefaultAPI interface {
 	/*
 		ApiWalletCreatePost Create a wallet
 
-		Create a wallet and return details
+		Create a wallet and return details. When persistent storage is configured, requires an authenticated wallet storage administrator.
 
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiWalletCreatePostRequest
@@ -262,7 +262,7 @@ type DefaultAPI interface {
 	/*
 		ApiWalletRestorePost Restore a wallet using a mnemonic seed phrase
 
-		Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details.
+		Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details. When persistent storage is configured, requires an authenticated wallet storage administrator.
 
 		@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 		@return DefaultAPIApiWalletRestorePostRequest
@@ -2055,7 +2055,7 @@ func (r DefaultAPIApiWalletCreatePostRequest) Execute() (*BursaWallet, *http.Res
 /*
 ApiWalletCreatePost Create a wallet
 
-Create a wallet and return details
+Create a wallet and return details. When persistent storage is configured, requires an authenticated wallet storage administrator.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiWalletCreatePostRequest
@@ -2141,6 +2141,27 @@ func (a *DefaultAPIService) ApiWalletCreatePostExecute(r DefaultAPIApiWalletCrea
 		newErr := &GenericOpenAPIError{
 			body:  localVarBody,
 			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 401 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 403 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
 		}
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}
@@ -2671,7 +2692,7 @@ func (r DefaultAPIApiWalletRestorePostRequest) Execute() (*BursaWallet, *http.Re
 /*
 ApiWalletRestorePost Restore a wallet using a mnemonic seed phrase
 
-Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details.
+Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details. When persistent storage is configured, requires an authenticated wallet storage administrator.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return DefaultAPIApiWalletRestorePostRequest
@@ -2764,6 +2785,28 @@ func (a *DefaultAPIService) ApiWalletRestorePostExecute(r DefaultAPIApiWalletRes
 			error: localVarHTTPResponse.Status,
 		}
 		if localVarHTTPResponse.StatusCode == 400 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 401 {
+			var v ApiErrorResponse
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		if localVarHTTPResponse.StatusCode == 403 {
 			var v ApiErrorResponse
 			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
 			if err != nil {

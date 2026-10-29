@@ -594,7 +594,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Create a wallet and return details",
+                "description": "Create a wallet and return details. When persistent storage is configured, requires an authenticated wallet storage administrator.",
                 "produces": [
                     "application/json"
                 ],
@@ -604,6 +604,18 @@ const docTemplate = `{
                         "description": "Ok",
                         "schema": {
                             "$ref": "#/definitions/bursa.Wallet"
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Wallet storage administrator access required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     }
                 }
@@ -785,7 +797,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details.",
+                "description": "Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details. When persistent storage is configured, requires an authenticated wallet storage administrator.",
                 "consumes": [
                     "application/json"
                 ],
@@ -813,6 +825,18 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Wallet storage administrator access required",
                         "schema": {
                             "$ref": "#/definitions/api.ErrorResponse"
                         }

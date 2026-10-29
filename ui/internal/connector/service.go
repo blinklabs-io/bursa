@@ -659,3 +659,36 @@ func (s *Service) enqueueAndAwait(
 	}
 	return fn(d)
 }
+
+// ApproveSubmission places an already-validated, fully signed transaction in
+// the wallet's approval queue and runs submit only after an explicit approval.
+// This narrow entry point is for Bursa's remote submission listener: it grants
+// no wallet identity, read access, signing operation, or key capability.
+func (s *Service) ApproveSubmission(
+	ctx context.Context,
+	origin string,
+	params json.RawMessage,
+	submit func(context.Context) (string, error),
+) (string, error) {
+	if submit == nil {
+		return "", ErrRefused
+	}
+	result, err := s.enqueueAndAwait(ctx, origin, "remoteSubmitTx", params, func(d Decision) (json.RawMessage, error) {
+		if !d.Approved {
+			return nil, ErrUserDeclined
+		}
+		hash, err := submit(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(hash)
+	})
+	if err != nil {
+		return "", err
+	}
+	var hash string
+	if err := json.Unmarshal(result, &hash); err != nil {
+		return "", err
+	}
+	return hash, nil
+}
