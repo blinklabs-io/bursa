@@ -255,10 +255,7 @@ func (n *N2CChain) GetStakeDelegDeposits(ctx context.Context, creds []lcommon.Cr
 	defer release()
 	queryCreds := make([]localstatequery.StakeCredential, 0, len(creds))
 	for _, c := range creds {
-		queryCreds = append(queryCreds, localstatequery.StakeCredential{
-			Tag:   uint64(c.CredType),
-			Bytes: c.Credential,
-		})
+		queryCreds = append(queryCreds, stakeCredentialFrom(c))
 	}
 	res, err := conn.LocalStateQuery().Client.GetStakeDelegDeposits(queryCreds)
 	if err != nil {

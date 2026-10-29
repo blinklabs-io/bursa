@@ -40,21 +40,12 @@ type RequiredWitness struct {
 	Role string
 }
 
-// requiredWitnesses returns the deduplicated key hashes a transaction with
-// the given body and selected inputs needs vkey witnesses for: the payment
-// key of every input, the per-certificate witnesses of the Conway ledger
-// rules, and the voter of every voting procedure.
-func requiredWitnesses(body conway.ConwayTransactionBody, inputs []UTxO) [][28]byte {
-	reqs := requiredWitnessSet(body, inputs)
-	hashes := make([][28]byte, 0, len(reqs))
-	for _, r := range reqs {
-		hashes = append(hashes, r.Hash)
-	}
-	return hashes
-}
-
-// requiredWitnessSet is requiredWitnesses with roles. Hashes are
-// deduplicated, keeping the role of their first occurrence.
+// requiredWitnessSet returns the key hashes a transaction with the given
+// body and selected inputs needs vkey witnesses for, with the role that
+// requires each: the payment key of every input, the per-certificate
+// witnesses of the Conway ledger rules, and the voter of every voting
+// procedure. Hashes are deduplicated, keeping the role of their first
+// occurrence.
 func requiredWitnessSet(body conway.ConwayTransactionBody, inputs []UTxO) []RequiredWitness {
 	var out []RequiredWitness
 	seen := map[[28]byte]bool{}

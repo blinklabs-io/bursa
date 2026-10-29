@@ -1148,6 +1148,7 @@ func TestRequiredWitnessesStakeRegistration(t *testing.T) {
 	require.NoError(t, err)
 	byRole := witnessHashesByRole(built2.RequiredWitnesses)
 	require.Len(t, built2.RequiredWitnesses, 2)
+	require.Len(t, byRole["stake"], 1)
 	require.Equal(t, stakeHash, byRole["stake"][0])
 }
 
@@ -1174,6 +1175,7 @@ func TestRequiredWitnessesVote(t *testing.T) {
 	require.NoError(t, err)
 	byRole := witnessHashesByRole(built.RequiredWitnesses)
 	require.Len(t, built.RequiredWitnesses, 2)
+	require.Len(t, byRole["voter"], 1)
 	require.Equal(t, poolKeyArr, byRole["voter"][0])
 }
 
