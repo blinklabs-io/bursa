@@ -41,7 +41,11 @@ func TestSigningHandlerServesNoProvisioning(t *testing.T) {
 	s, _ := newTestService(t)
 	h := s.SigningHandler()
 
-	for _, path := range provisioningPaths {
+	// any other path, including future provisioning endpoints, is not served
+	others := append([]string{"/provision", "/provision/other", "/v1/provision/reward", "/v1/other", "/reset"},
+		provisioningPaths...)
+
+	for _, path := range others {
 		if code := serve(h, path, "{}"); code != http.StatusNotFound {
 			t.Errorf("%s: got %d, want 404", path, code)
 		}
