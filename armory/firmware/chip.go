@@ -57,6 +57,11 @@ func (c *chip) GenerateEd25519(id uint32, transient bool) error {
 	return err
 }
 
+func (c *chip) ImportEd25519(id uint32, seed []byte, transient bool) error {
+	_, err := retry(c, func() (struct{}, error) { return struct{}{}, c.se.ImportEd25519(id, seed, transient) })
+	return err
+}
+
 func (c *chip) PublicKeyEd25519(id uint32) (ed25519.PublicKey, error) {
 	return retry(c, func() (ed25519.PublicKey, error) { return c.se.PublicKeyEd25519(id) })
 }

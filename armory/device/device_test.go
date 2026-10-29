@@ -45,6 +45,7 @@ type fakeChip struct {
 
 	failWrite  bool
 	failExists bool
+	failImport bool
 }
 
 func newFakeChip() *fakeChip {
@@ -72,6 +73,20 @@ func (c *fakeChip) GenerateEd25519(id uint32, _ bool) error {
 
 	_, priv, _ := ed25519.GenerateKey(nil)
 	c.keys[id] = priv
+
+	return nil
+}
+
+func (c *fakeChip) ImportEd25519(id uint32, seed []byte, _ bool) error {
+	if c.failImport {
+		return errors.New("i2c failure")
+	}
+
+	if ok, _ := c.Exists(id); ok {
+		return errors.New("object exists")
+	}
+
+	c.keys[id] = ed25519.NewKeyFromSeed(seed)
 
 	return nil
 }

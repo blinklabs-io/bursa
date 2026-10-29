@@ -59,6 +59,7 @@ var (
 type Chip interface {
 	Exists(id uint32) (bool, error)
 	GenerateEd25519(id uint32, transient bool) error
+	ImportEd25519(id uint32, seed []byte, transient bool) error
 	PublicKeyEd25519(id uint32) (ed25519.PublicKey, error)
 	SignEd25519(id uint32, msg []byte) ([]byte, error)
 	WriteBinary(id uint32, data []byte) error
@@ -146,6 +147,21 @@ type FloorResponse struct {
 	OpCertFloor uint64 `json:"opcert_floor"`
 }
 
+// ColdRequest imports a cold signing key into a chosen cold key object.
+// SigningKey is the hex cborHex of a StakePoolSigningKey_ed25519: 5820
+// followed by the 32-byte seed.
+type ColdRequest struct {
+	ColdKeyID  uint32 `json:"cold_key_id"`
+	SigningKey string `json:"signing_key"`
+}
+
+// ColdResponse returns the imported key's public key and pool id, both hex.
+type ColdResponse struct {
+	ColdKeyID uint32 `json:"cold_key_id"`
+	PublicKey string `json:"public_key"`
+	PoolID    string `json:"pool_id"`
+}
+
 // IdentityResponse returns the identity public key for pinning in Bursa.
 type IdentityResponse struct {
 	PublicKey []byte `json:"public_key"`
@@ -220,6 +236,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST /provision/profile", handle(s, s.provisionProfile))
 	mux.HandleFunc("POST /provision/floor", handle(s, s.resetFloor))
 	mux.HandleFunc("POST /provision/reward", handle(s, s.setReward))
+	mux.HandleFunc("POST /provision/cold", handle(s, s.provisionCold))
 	mux.HandleFunc("POST /provision/identity", handle(s, func(struct{}) (IdentityResponse, error) {
 		return s.provisionIdentity()
 	}))
@@ -645,6 +662,60 @@ func clip(v string) string {
 	}
 
 	return v
+}
+
+// coldKeyCBORPrefix heads a cardano-cli Ed25519 signing key: a CBOR byte
+// string of length 32.
+var coldKeyCBORPrefix = []byte{0x58, 0x20}
+
+var errMalformedKey = errors.New("malformed signing key: expected cborHex of a 32-byte Ed25519 signing key")
+
+// provisionCold imports a cold signing key into a free cold key object. The
+// seed is never logged or echoed, and an existing object is never replaced.
+func (s *Service) provisionCold(req ColdRequest) (ColdResponse, error) {
+	if req.ColdKeyID < coldKeyFirst || req.ColdKeyID > coldKeyLast {
+		return ColdResponse{}, errors.New("cold key id outside the cold key range")
+	}
+
+	key, err := hex.DecodeString(req.SigningKey)
+	defer clear(key)
+
+	if err != nil || len(key) != len(coldKeyCBORPrefix)+ed25519.SeedSize || !bytes.HasPrefix(key, coldKeyCBORPrefix) {
+		return ColdResponse{}, errMalformedKey
+	}
+
+	seed := key[len(coldKeyCBORPrefix):]
+
+	if ok, err := s.chip.Exists(req.ColdKeyID); err != nil {
+		s.logf("exist check %#08x: %v", req.ColdKeyID, err)
+		return ColdResponse{}, errDevice
+	} else if ok {
+		return ColdResponse{}, errors.New("cold key object already exists")
+	}
+
+	if err = s.chip.ImportEd25519(req.ColdKeyID, seed, false); err != nil {
+		s.logf("import %#08x: %v", req.ColdKeyID, err)
+		return ColdResponse{}, errDevice
+	}
+
+	pub, err := s.publicKey(req.ColdKeyID)
+	if err != nil {
+		return ColdResponse{}, err
+	}
+
+	if !bytes.Equal(pub, ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)) {
+		s.logf("import %#08x: chip public key does not match the seed", req.ColdKeyID)
+		return ColdResponse{}, errDevice
+	}
+
+	h := keyHash(pub)
+	s.logf("imported cold key %#08x pool %x", req.ColdKeyID, h)
+
+	return ColdResponse{
+		ColdKeyID: req.ColdKeyID,
+		PublicKey: hex.EncodeToString(pub),
+		PoolID:    hex.EncodeToString(h[:]),
+	}, nil
 }
 
 func (s *Service) provisionIdentity() (IdentityResponse, error) {
