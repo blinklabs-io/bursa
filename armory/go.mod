@@ -13,7 +13,7 @@ require (
 	github.com/bits-and-blooms/bitset v1.25.0 // indirect
 	github.com/blinklabs-io/plutigo v0.9.7 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.5.0 // indirect
-	github.com/btcsuite/btcd/btcutil v1.2.0 // indirect
+	github.com/btcsuite/btcd/btcutil v1.2.0
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.2.0 // indirect
 	github.com/btcsuite/btcd/chainhash/v2 v2.0.0 // indirect
 	github.com/consensys/gnark-crypto v0.22.0 // indirect
