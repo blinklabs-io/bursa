@@ -46,6 +46,9 @@ type fakeChip struct {
 	failWrite  bool
 	failExists bool
 	failImport bool
+	// lostImportReply stores an imported key but reports a transport
+	// error, as when the chip's answer is lost after the write
+	lostImportReply bool
 }
 
 func newFakeChip() *fakeChip {
@@ -87,6 +90,10 @@ func (c *fakeChip) ImportEd25519(id uint32, seed []byte, _ bool) error {
 	}
 
 	c.keys[id] = ed25519.NewKeyFromSeed(seed)
+
+	if c.lostImportReply {
+		return errors.New("i2c failure after write")
+	}
 
 	return nil
 }

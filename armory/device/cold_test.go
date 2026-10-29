@@ -202,3 +202,57 @@ func TestProvisionColdNeverOverwrites(t *testing.T) {
 		t.Fatal("key was overwritten")
 	}
 }
+
+// A retry of an import that reached the chip, with the same key, confirms it
+// instead of leaving the object unusable; a different key is still refused.
+func TestProvisionColdRetryWithSameKey(t *testing.T) {
+	t.Parallel()
+
+	s, chip, _ := newLoggedService(t)
+	req := map[string]any{"cold_key_id": freeColdID, "signing_key": coldKeyHex(coldSeed)}
+
+	code, first := post(t, s, "/provision/cold", req)
+	if code != http.StatusOK {
+		t.Fatalf("first import: %d %s", code, first)
+	}
+
+	code, again := post(t, s, "/provision/cold", req)
+	if code != http.StatusOK || !bytes.Equal(first, again) {
+		t.Fatalf("retry with the same key: %d %s, want %s", code, again, first)
+	}
+
+	pub, _ := chip.PublicKeyEd25519(freeColdID)
+	if !bytes.Equal(pub, ed25519.NewKeyFromSeed(coldSeed).Public().(ed25519.PublicKey)) {
+		t.Fatal("stored key changed")
+	}
+}
+
+// When the chip stores the key but its reply is lost, the import still
+// reports the stored key rather than a failure.
+func TestProvisionColdLostImportReply(t *testing.T) {
+	t.Parallel()
+
+	s, chip, logs := newLoggedService(t)
+	chip.lostImportReply = true
+
+	code, body := post(t, s, "/provision/cold", map[string]any{
+		"cold_key_id": freeColdID, "signing_key": coldKeyHex(coldSeed),
+	})
+	if code != http.StatusOK {
+		t.Fatalf("got %d %s, want the stored key confirmed", code, body)
+	}
+
+	var resp ColdResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	want := ed25519.NewKeyFromSeed(coldSeed).Public().(ed25519.PublicKey)
+	if resp.PublicKey != hex.EncodeToString(want) {
+		t.Fatalf("public key %s, want %x", resp.PublicKey, want)
+	}
+
+	if strings.Contains(string(body)+logs(), hex.EncodeToString(coldSeed)) {
+		t.Fatal("seed leaked into the response or log")
+	}
+}

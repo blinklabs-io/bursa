@@ -685,17 +685,25 @@ func (s *Service) provisionCold(req ColdRequest) (ColdResponse, error) {
 	}
 
 	seed := key[len(coldKeyCBORPrefix):]
+	want := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
 
-	if ok, err := s.chip.Exists(req.ColdKeyID); err != nil {
+	exists, err := s.chip.Exists(req.ColdKeyID)
+	if err != nil {
 		s.logf("exist check %#08x: %v", req.ColdKeyID, err)
 		return ColdResponse{}, errDevice
-	} else if ok {
-		return ColdResponse{}, errors.New("cold key object already exists")
 	}
 
-	if err = s.chip.ImportEd25519(req.ColdKeyID, seed, false); err != nil {
-		s.logf("import %#08x: %v", req.ColdKeyID, err)
-		return ColdResponse{}, errDevice
+	// An existing object is never written. Holding this same key, it
+	// confirms an earlier import whose answer was lost.
+	if !exists {
+		if err = s.chip.ImportEd25519(req.ColdKeyID, seed, false); err != nil {
+			s.logf("import %#08x: %v", req.ColdKeyID, err)
+
+			// the chip may have stored the key before its reply was lost
+			if ok, xerr := s.chip.Exists(req.ColdKeyID); xerr != nil || !ok {
+				return ColdResponse{}, errDevice
+			}
+		}
 	}
 
 	pub, err := s.publicKey(req.ColdKeyID)
@@ -703,8 +711,13 @@ func (s *Service) provisionCold(req ColdRequest) (ColdResponse, error) {
 		return ColdResponse{}, err
 	}
 
-	if !bytes.Equal(pub, ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)) {
+	if !bytes.Equal(pub, want) {
+		if exists {
+			return ColdResponse{}, errors.New("cold key object already exists with a different key")
+		}
+
 		s.logf("import %#08x: chip public key does not match the seed", req.ColdKeyID)
+
 		return ColdResponse{}, errDevice
 	}
 
