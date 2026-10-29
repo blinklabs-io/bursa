@@ -186,6 +186,7 @@ type SignerBackendConfig struct {
 	JWKSURL           string                   `yaml:"jwks_url"`            // confidential-space: token signing keys (default: Google's published set)
 	Profile           string                   `yaml:"profile"`             // nitro, confidential-space: optional workload signing profile; armory: required device profile
 	IdentityPublicKey string                   `yaml:"identity_public_key"` // armory: device identity public key (hex), pinned
+	HostKeyFile       string                   `yaml:"host_key_file"`       // armory: optional host signing key file (armory-pool host-key) authenticating signing requests
 }
 
 // SignerBackendKeyConfig names a remote key and its Cardano key type. For vault

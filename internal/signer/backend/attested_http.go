@@ -17,6 +17,7 @@ package backend
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,6 +47,9 @@ type HTTPEnclave struct {
 	client  *http.Client
 	base    string
 	profile string
+	// hostKey, when set, authenticates every signing request with a
+	// challenge from the device.
+	hostKey ed25519.PrivateKey
 }
 
 // NewHTTPEnclave connects to address: an http:// or https:// URL, or
@@ -59,6 +63,21 @@ func NewHTTPEnclave(address string) (*HTTPEnclave, error) {
 // profiled attested backend.
 func NewProfiledHTTPEnclave(address, profile string) (*HTTPEnclave, error) {
 	return newHTTPEnclave(address, profile)
+}
+
+// NewHostKeyHTTPEnclave is a profiled enclave that authenticates every
+// signing request with hostKey: it fetches a one-time challenge from
+// /v1/challenge and signs AttestedRequestBinding over the request and it.
+func NewHostKeyHTTPEnclave(address, profile string, hostKey ed25519.PrivateKey) (*HTTPEnclave, error) {
+	if len(hostKey) != ed25519.PrivateKeySize {
+		return nil, errors.New("host key must be an Ed25519 private key")
+	}
+	e, err := newHTTPEnclave(address, profile)
+	if err != nil {
+		return nil, err
+	}
+	e.hostKey = hostKey
+	return e, nil
 }
 
 func newHTTPEnclave(address, profile string) (*HTTPEnclave, error) {
@@ -143,8 +162,26 @@ func (e *HTTPEnclave) Inventory(ctx context.Context, nonce []byte) (AttestedInve
 	return inv, err
 }
 
+// attestedChallengeSize is the length of a device's one-time challenge.
+const attestedChallengeSize = 32
+
 // Sign implements Enclave.
 func (e *HTTPEnclave) Sign(ctx context.Context, req AttestedRequest) (AttestedResponse, error) {
+	if e.hostKey != nil {
+		var ch struct {
+			Version   string `json:"version"`
+			Challenge []byte `json:"challenge"`
+		}
+		if err := e.post(ctx, "/v1/challenge", struct{}{}, &ch); err != nil {
+			return AttestedResponse{}, fmt.Errorf("challenge: %w", err)
+		}
+		if ch.Version != AttestedProtocol || len(ch.Challenge) != attestedChallengeSize {
+			return AttestedResponse{}, fmt.Errorf("%w: challenge response version %q with %d bytes", ErrAttestedProtocol, ch.Version, len(ch.Challenge))
+		}
+		req.Challenge = ch.Challenge
+		req.HostKey = e.hostKey.Public().(ed25519.PublicKey)
+		req.HostSignature = ed25519.Sign(e.hostKey, AttestedRequestBinding(req))
+	}
 	var resp AttestedResponse
 	err := e.post(ctx, "/v1/sign", req, &resp)
 	return resp, err

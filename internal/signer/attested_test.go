@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -420,6 +421,100 @@ func TestBuildBackendsArmory(t *testing.T) {
 	bad.IdentityPublicKey = hex.EncodeToString(other)
 	if _, err := BuildBackends(t.Context(), []config.SignerBackendConfig{bad}); err == nil {
 		t.Fatal("boot succeeded with another identity key pinned")
+	}
+}
+
+// writeHostKeyFile writes an armory-pool host key envelope with mode.
+func writeHostKeyFile(t *testing.T, typ, cborHex string, mode os.FileMode) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "host.skey")
+	body := fmt.Sprintf("{\n    \"type\": %q,\n    \"description\": \"\",\n    \"cborHex\": %q\n}\n", typ, cborHex)
+	if err := os.WriteFile(path, []byte(body), mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestBuildBackendsArmoryHostKey: with host_key_file set, every signing
+// request carries a challenge from the device and a host signature over it.
+func TestBuildBackendsArmoryHostKey(t *testing.T) {
+	t.Parallel()
+	identity, identityPriv, _ := ed25519.GenerateKey(nil)
+	pool, poolPriv, _ := ed25519.GenerateKey(nil)
+	host, hostPriv, _ := ed25519.GenerateKey(nil)
+	var mu sync.Mutex
+	var challenges [][]byte
+	device := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/v1/inventory":
+			var in struct {
+				Nonce   []byte `json:"nonce"`
+				Profile string `json:"profile"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			keys := []backend.AttestedKeyInfo{{Role: backend.KeyTypePool, PublicKey: pool}}
+			att := ed25519.Sign(identityPriv, backend.InventoryBinding(in.Nonce, keys))
+			_ = json.NewEncoder(w).Encode(backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: att})
+		case "/v1/challenge":
+			c := bytes.Repeat([]byte{byte(len(challenges) + 1)}, 32)
+			challenges = append(challenges, c)
+			_ = json.NewEncoder(w).Encode(map[string]any{"version": backend.AttestedProtocol, "challenge": c})
+		case "/v1/sign":
+			var req backend.AttestedRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			resp := backend.AttestedResponse{Version: backend.AttestedProtocol, Nonce: req.Nonce}
+			if !bytes.Equal(req.HostKey, host) || len(challenges) == 0 ||
+				!bytes.Equal(req.Challenge, challenges[len(challenges)-1]) ||
+				!ed25519.Verify(host, backend.AttestedRequestBinding(req), req.HostSignature) {
+				resp.Error = "host authentication failed"
+			} else {
+				hash := blake2b.Sum256(req.Payload)
+				resp.Signature = ed25519.Sign(poolPriv, hash[:])
+				resp.BindingSignature = ed25519.Sign(poolPriv, backend.AttestedResponseBinding(req, resp.Signature))
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	t.Cleanup(device.Close)
+
+	cfg := config.SignerBackendConfig{
+		Name: "armory", Type: "armory", Address: device.URL, Profile: "pool@preview",
+		IdentityPublicKey: hex.EncodeToString(identity),
+		HostKeyFile:       writeHostKeyFile(t, "ArmoryHostSigningKey_ed25519", "5820"+hex.EncodeToString(hostPriv.Seed()), 0o600),
+	}
+	bs, err := BuildBackends(t.Context(), []config.SignerBackendConfig{cfg})
+	if err != nil {
+		t.Fatalf("BuildBackends: %v", err)
+	}
+	ref, err := bs[0].GetKey(t.Context(), backend.HashPublicKey(pool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte{0xa0}
+	if _, err := backend.SignTxFor(t.Context(), ref, body, 6, nil); err != nil {
+		t.Fatalf("authenticated sign: %v", err)
+	}
+	if len(challenges) != 1 {
+		t.Fatalf("challenges = %d, want 1", len(challenges))
+	}
+
+	seed := hex.EncodeToString(hostPriv.Seed())
+	for name, path := range map[string]string{
+		"missing file":       filepath.Join(t.TempDir(), "none"),
+		"readable by others": writeHostKeyFile(t, "ArmoryHostSigningKey_ed25519", "5820"+seed, 0o644),
+		"other key type":     writeHostKeyFile(t, "PaymentSigningKeyShelley_ed25519", "5820"+seed, 0o600),
+		"short key":          writeHostKeyFile(t, "ArmoryHostSigningKey_ed25519", "581f"+seed[:62], 0o600),
+	} {
+		bad := cfg
+		bad.HostKeyFile = path
+		if _, err := BuildBackends(t.Context(), []config.SignerBackendConfig{bad}); err == nil || !strings.Contains(err.Error(), "host_key_file") {
+			t.Errorf("%s: got %v, want a host_key_file error", name, err)
+		}
 	}
 }
 
