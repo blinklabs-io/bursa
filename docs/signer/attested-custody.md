@@ -106,14 +106,17 @@ refuses a response for a body substituted by the proxy. It does not re-encode
 the body before sending or hashing it.
 
 For `opcert-next`, the payload carries the counter currently on chain, not the
-number to issue. The enclave keeps its own floor and chooses the issue number:
-the chain counter plus one, or higher when its floor requires. It returns that
+number to issue. The enclave keeps its own floor on the chain counter and
+issues the chain counter plus one, or refuses a chain counter below its floor;
+a higher number would leave a gap nodes reject. It returns that
 number as the JSON number `issue_counter` and signs `kes_vkey || issue || period`
 (issue and period as 8-byte big-endian). The binding signature covers the
 request as sent, so its payload still holds the chain counter. Bursa never
 picks the issue number. It refuses the response unless `issue_counter` is
 present and greater than the chain counter, and the signature verifies under
-the pool key over the reconstructed bytes. The method is
+the pool key over the reconstructed bytes. The coordinator's
+`SignOpCertFromChain` uses this purpose for attested pool keys and also
+refuses any `issue_counter` other than the chain counter plus one. The method is
 `SignOpCertNext(ctx, kesVKey, chainCounter, kesPeriod)` on attested pool keys
 (`OpCertNextSigner`); the plain `SignPurpose` path refuses this purpose because
 it cannot return the issue number. The signer's `opcert` request, where the

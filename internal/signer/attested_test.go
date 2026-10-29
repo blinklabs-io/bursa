@@ -24,6 +24,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -58,6 +59,10 @@ type stubEnclave struct {
 	role  backend.KeyType
 	forge ed25519.PrivateKey
 	calls []backend.AttestedRequest
+	// issueSkew is added to the opcert-next issue number, and omitIssue
+	// leaves it out, modelling custody that misreports the counter.
+	issueSkew uint64
+	omitIssue bool
 }
 
 func (e *stubEnclave) Inventory(_ context.Context, nonce []byte) (backend.AttestedInventory, error) {
@@ -78,12 +83,21 @@ func (e *stubEnclave) Sign(_ context.Context, req backend.AttestedRequest) (back
 		key = e.forge
 	}
 	payload := req.Payload
-	if req.Purpose == backend.PurposeTxBody {
+	var issue *uint64
+	switch req.Purpose {
+	case backend.PurposeTxBody:
 		hash := blake2b.Sum256(req.Payload)
 		payload = hash[:]
+	case backend.PurposeOpCertNext:
+		n := binary.BigEndian.Uint64(req.Payload[kesVkeySize:]) + 1 + e.issueSkew
+		payload = binary.BigEndian.AppendUint64(append([]byte(nil), req.Payload[:kesVkeySize]...), n)
+		payload = append(payload, req.Payload[kesVkeySize+8:]...)
+		if !e.omitIssue {
+			issue = &n
+		}
 	}
 	return backend.AttestedResponse{
-		Version: backend.AttestedProtocol, Nonce: req.Nonce, Signature: ed25519.Sign(key, payload),
+		Version: backend.AttestedProtocol, Nonce: req.Nonce, Signature: ed25519.Sign(key, payload), IssueCounter: issue,
 	}, nil
 }
 
@@ -209,6 +223,60 @@ func TestAttestedKeySignsOpCert(t *testing.T) {
 	enc.forge = forged
 	if res, code, err := c.SignOpCert(t.Context(), kes, 6, 100, hash.String()); err == nil || code != CodeInternal || res != nil {
 		t.Fatalf("forged signature: code=%s err=%v", code, err)
+	}
+}
+
+// TestAttestedKeySignsOpCertFromChain: an attested key issues opcerts from the
+// on-chain counter through opcert-next, so custody chooses the issue number,
+// and Bursa accepts only chain counter + 1 under a verified signature.
+func TestAttestedKeySignsOpCertFromChain(t *testing.T) {
+	t.Parallel()
+	c, enc, hash, pub := newAttestedCoordinator(t, backend.KeyTypePool, "opcert", fakeCardano{})
+	kes := bytes.Repeat([]byte{9}, kesVkeySize)
+	signable := func(issue, period uint64) []byte {
+		b := binary.BigEndian.AppendUint64(append([]byte(nil), kes...), issue)
+		return binary.BigEndian.AppendUint64(b, period)
+	}
+
+	res, code, err := c.SignOpCertFromChain(t.Context(), kes, 4, 100, hash.String())
+	if err != nil {
+		t.Fatalf("SignOpCertFromChain: code=%s err=%v", code, err)
+	}
+	sig, _ := hex.DecodeString(res.SignatureHex)
+	if res.IssueCounter != 5 || !ed25519.Verify(pub, signable(5, 100), sig) {
+		t.Fatalf("result %+v does not verify at issue 5", res)
+	}
+	if got := enc.purposes(); len(got) != 1 || got[0] != backend.PurposeOpCertNext {
+		t.Fatalf("enclave purposes = %v, want [opcert-next]", got)
+	}
+	if !bytes.Equal(enc.calls[0].Payload, signable(4, 100)) {
+		t.Fatalf("enclave payload = %x, want kes || chain 4 || period 100", enc.calls[0].Payload)
+	}
+
+	// a chain counter below the recorded floor never reaches custody
+	if _, code, err := c.SignOpCertFromChain(t.Context(), kes, 3, 100, hash.String()); err == nil || code != CodeConflict {
+		t.Fatalf("stale chain counter: code=%s err=%v, want conflict", code, err)
+	}
+	if len(enc.calls) != 1 {
+		t.Fatalf("enclave contacted %d times, want 1", len(enc.calls))
+	}
+
+	for name, misbehave := range map[string]func(){
+		"issue above chain + 1": func() { enc.issueSkew = 2 },
+		"no issue counter":      func() { enc.omitIssue = true },
+		"forged signature":      func() { _, enc.forge, _ = ed25519.GenerateKey(nil) },
+	} {
+		enc.issueSkew, enc.omitIssue, enc.forge = 0, false, nil
+		misbehave()
+		if res, _, err := c.SignOpCertFromChain(t.Context(), kes, 6, 100, hash.String()); err == nil || res != nil {
+			t.Fatalf("%s: accepted %+v", name, res)
+		}
+	}
+
+	// refusals did not raise the floor past chain counter 4
+	enc.issueSkew, enc.omitIssue, enc.forge = 0, false, nil
+	if _, code, err := c.SignOpCertFromChain(t.Context(), kes, 5, 100, hash.String()); err != nil {
+		t.Fatalf("after refusals: code=%s err=%v", code, err)
 	}
 }
 

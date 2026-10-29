@@ -218,8 +218,19 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 	// to cardano-node / cardano-ledger and to Part A's canonical envelope.
 	signable := lcommon.OpCertSignableBytes(kesVkey, issueCounter, kesPeriod)
 
+	// Custody that chooses the issue number itself (opcert-next) gets the chain
+	// counter, never an issue number; its choice must be chainCounter + 1.
 	signStart := time.Now()
-	sig, err := backend.SignFor(ctx, ref, backend.PurposeOpCert, signable)
+	var sig []byte
+	if next, ok := ref.(backend.OpCertNextSigner); ok && rule.floor {
+		var issue uint64
+		sig, issue, err = next.SignOpCertNext(ctx, kesVkey, rule.value, kesPeriod)
+		if err == nil && issue != issueCounter {
+			err = fmt.Errorf("%w: custody issued counter %d, want %d", backend.ErrAttestedProtocol, issue, issueCounter)
+		}
+	} else {
+		sig, err = backend.SignFor(ctx, ref, backend.PurposeOpCert, signable)
+	}
 	// Attempt latency, including failures — not successful-sign latency.
 	c.deps.Metrics.observeSignDuration(ref.Backend(), time.Since(signStart).Seconds())
 	if err != nil {
