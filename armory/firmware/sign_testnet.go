@@ -27,6 +27,7 @@ const maxSignable = 128
 
 func init() {
 	http.HandleFunc("/sign", (&legacy).sign)
+	http.HandleFunc("/pubkey", (&legacy).publicKey)
 }
 
 // sign returns a cold key signature over the hex request body.

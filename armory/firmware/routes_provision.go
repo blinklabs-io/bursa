@@ -30,9 +30,11 @@ import (
 const buildMode = "provisioning build: signing endpoints are not served"
 
 // routes serves provisioning only: key import, profiles, the reward account,
-// the opcert floor and reset.
+// the opcert floor and reset. /pubkey returns the key the legacy /provision
+// imported, not the identity key.
 func routes(svc *device.Service, s *signer, mu *sync.Mutex) {
 	http.HandleFunc("/provision", s.provision)
+	http.HandleFunc("/pubkey", s.publicKey)
 	http.Handle("/provision/", svc.ProvisioningHandler())
 
 	// a cold reset returns an unflashed board to USB recovery mode, ready

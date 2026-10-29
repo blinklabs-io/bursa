@@ -95,7 +95,6 @@ func main() {
 		fmt.Fprint(w, report.String())
 	})
 
-	http.HandleFunc("/pubkey", s.publicKey)
 	routes(svc, s, mu)
 
 	l, err := net.Listen("tcp4", ":80")
