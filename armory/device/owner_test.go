@@ -160,3 +160,51 @@ func TestProvisionProfileOwnerLostImportReply(t *testing.T) {
 		t.Fatal("response owner key is not the imported key")
 	}
 }
+
+// A profile refused for any other reason imports no owner key.
+func TestProvisionProfileRefusalImportsNoOwnerKey(t *testing.T) {
+	t.Parallel()
+
+	for name, req := range map[string]ProvisionRequest{
+		"same slot":     {Name: "other", Slot: 0, ColdKeyID: 0x20e50011},
+		"same name":     {Name: "otg@preview", Slot: 1, ColdKeyID: 0x20e50011},
+		"same cold key": {Name: "other", Slot: 1, ColdKeyID: testColdID},
+		"no cold key":   {Name: "other", Slot: 1, ColdKeyID: 0x20e50012},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s, chip := newTestService(t)
+			provisionTestProfile(t, s)
+			_ = chip.ImportEd25519(0x20e50011, coldSeed, false)
+
+			req.OwnerSigningKey = coldKeyHex(ownerSeed)
+			if code, _ := post(t, s, "/provision/profile", req); code == http.StatusOK {
+				t.Fatal("provisioned")
+			}
+
+			if ok, _ := chip.Exists(profile.Profile{Slot: req.Slot}.OwnerKeyID()); ok && req.Slot != 0 {
+				t.Fatal("owner key imported for a refused profile")
+			}
+
+			if pub, _ := chip.PublicKeyEd25519(profile.Profile{Slot: 0}.OwnerKeyID()); bytes.Equal(pub, ed25519.NewKeyFromSeed(ownerSeed).Public().(ed25519.PublicKey)) {
+				t.Fatal("slot 0 owner key replaced")
+			}
+		})
+	}
+}
+
+func TestProvisionProfileOwnerImportFails(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	chip.failImport = true
+
+	if code, _ := post(t, s, "/provision/profile", ownerProfileRequest(ownerSeed)); code == http.StatusOK {
+		t.Fatal("provisioned after a failed import")
+	}
+
+	if ok, _ := chip.Exists(profile.Profile{Slot: 0}.RecordID()); ok {
+		t.Fatal("profile record written after a failed import")
+	}
+}
