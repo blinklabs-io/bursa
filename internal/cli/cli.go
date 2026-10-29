@@ -1415,6 +1415,12 @@ func parsePoolRelays(f PoolRelayFlags) ([]lcommon.PoolRelay, error) {
 		if host == "" {
 			return nil, fmt.Errorf("invalid relay host %q: empty name", v)
 		}
+		if len(host) > 128 {
+			return nil, fmt.Errorf(
+				"--relay-host must be at most 128 bytes, got %d",
+				len(host),
+			)
+		}
 		relay := lcommon.PoolRelay{
 			Type:     lcommon.PoolRelayTypeSingleHostName,
 			Hostname: &host,
@@ -1431,6 +1437,12 @@ func parsePoolRelays(f PoolRelayFlags) ([]lcommon.PoolRelay, error) {
 	for _, v := range f.MultiHosts {
 		if v == "" {
 			return nil, errors.New("invalid relay multi-host: empty name")
+		}
+		if len(v) > 128 {
+			return nil, fmt.Errorf(
+				"--relay-multi-host must be at most 128 bytes, got %d",
+				len(v),
+			)
 		}
 		host := v
 		relays = append(relays, lcommon.PoolRelay{
@@ -1486,6 +1498,12 @@ func RunCertPoolRegistration(
 		return errors.New(
 			"--metadata-url and --metadata-hash " +
 				"must be provided together",
+		)
+	}
+	if len(metadataURL) > 128 {
+		return fmt.Errorf(
+			"--metadata-url must be at most 128 bytes, got %d",
+			len(metadataURL),
 		)
 	}
 

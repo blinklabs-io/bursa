@@ -181,6 +181,64 @@ func TestRunCertPoolRegistration_MetadataPairing(t *testing.T) {
 	assert.Contains(t, err.Error(), "metadata")
 }
 
+func TestRunCertPoolRegistration_RejectsLongMetadataURL(t *testing.T) {
+	tmpDir := t.TempDir()
+	coldVkey := createTestVkeyFile(
+		t, tmpDir, "cold.vkey",
+		"StakePoolVerificationKey_ed25519",
+		"Stake Pool Operator Verification Key",
+		testColdVKeyCborHex,
+	)
+	vrfVkey := createTestVkeyFile(
+		t, tmpDir, "vrf.vkey",
+		"VrfVerificationKey_PraosVRF",
+		"VRF Verification Key",
+		testVRFVKeyCborHex,
+	)
+	url := "https://example.com/" + strings.Repeat("a", 120)
+	require.Greater(t, len(url), 128)
+	err := RunCertPoolRegistration(
+		coldVkey, vrfVkey, goldenStakeAddr, "",
+		1, 1, 0.03, url, strings.Repeat("ab", 32), nil, PoolRelayFlags{},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--metadata-url")
+}
+
+func TestRunCertPoolRegistration_RejectsLongRelayNames(t *testing.T) {
+	tmpDir := t.TempDir()
+	coldVkey := createTestVkeyFile(
+		t, tmpDir, "cold.vkey",
+		"StakePoolVerificationKey_ed25519",
+		"Stake Pool Operator Verification Key",
+		testColdVKeyCborHex,
+	)
+	vrfVkey := createTestVkeyFile(
+		t, tmpDir, "vrf.vkey",
+		"VrfVerificationKey_PraosVRF",
+		"VRF Verification Key",
+		testVRFVKeyCborHex,
+	)
+	longName := strings.Repeat("a", 129)
+	for _, tc := range []struct {
+		name string
+		flag PoolRelayFlags
+		want string
+	}{
+		{"relay host", PoolRelayFlags{Hosts: []string{longName}}, "--relay-host"},
+		{"relay multi host", PoolRelayFlags{MultiHosts: []string{longName}}, "--relay-multi-host"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := RunCertPoolRegistration(
+				coldVkey, vrfVkey, goldenStakeAddr, "",
+				1, 1, 0.03, "", "", nil, tc.flag,
+			)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
 func TestRunCertPoolRegistration_MissingColdVkey(t *testing.T) {
 	err := RunCertPoolRegistration(
 		filepath.Join(t.TempDir(), "nope.vkey"), "vrf.vkey",
