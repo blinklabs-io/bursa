@@ -65,6 +65,7 @@ func TestPoolVoteFlags(t *testing.T) {
 			Vote:      tc.vote,
 		}.poolVote()
 		require.NoError(t, err, tc.vote)
+		require.NotNil(t, pv, tc.vote)
 		require.Equal(t, votePoolHash, pv.PoolKeyHash[:])
 		require.Equal(t, voteTxID, hex.EncodeToString(pv.ActionTxId[:]))
 		require.Equal(t, tc.idx, pv.ActionIndex)
@@ -83,6 +84,7 @@ func TestPoolVoteFlagsAnchor(t *testing.T) {
 		AnchorHash: voteAnchor,
 	}.poolVote()
 	require.NoError(t, err)
+	require.NotNil(t, pv)
 	require.NotNil(t, pv.Anchor)
 	require.Equal(t, url, pv.Anchor.Url)
 	require.Equal(t, voteAnchor, hex.EncodeToString(pv.Anchor.DataHash[:]))

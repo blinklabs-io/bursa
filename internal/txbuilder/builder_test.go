@@ -664,7 +664,7 @@ func TestCoinSelectionDeterministicAndMinInputs(t *testing.T) {
 	chain.UtxosMap[addr] = utxos
 	// Make each UTxO small so need multiple
 	// recreate with smaller amounts
-	utxos = nil
+	utxos = make([]UTxO, 0, 20)
 	for i := 0; i < 20; i++ {
 		txh := make([]byte, 32)
 		for j := range txh {
