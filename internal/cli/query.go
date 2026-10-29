@@ -16,24 +16,22 @@ package cli
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/txbuilder"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
-type queryPoolRunner func(ctx context.Context, socketPath, network, poolID string) (*txbuilder.PoolQueryResult, error)
+type queryPoolRunner func(ctx context.Context, socketPath, network string, poolID lcommon.PoolId) (*txbuilder.PoolQueryResult, error)
 type queryStakeRunner func(ctx context.Context, socketPath, network, address string) (*txbuilder.StakeAddressQueryResult, error)
 type queryUtxoRunner func(ctx context.Context, socketPath, network, address string) ([]txbuilder.UTxOQueryResult, error)
 type queryTipRunner func(ctx context.Context, socketPath, network string) (*txbuilder.TipQueryResult, error)
 
-func defaultQueryPool(ctx context.Context, socketPath, network, poolID string) (*txbuilder.PoolQueryResult, error) {
+func defaultQueryPool(ctx context.Context, socketPath, network string, poolID lcommon.PoolId) (*txbuilder.PoolQueryResult, error) {
 	chain := txbuilder.NewN2C(socketPath, network)
 	if err := chain.Open(ctx); err != nil {
 		return nil, err
@@ -48,7 +46,7 @@ func defaultQueryStake(ctx context.Context, socketPath, network, address string)
 		return nil, err
 	}
 	defer chain.Close()
-	return chain.QueryStakeAddress(ctx, address)
+	return chain.QueryStakeAddress(ctx, address, network)
 }
 
 func defaultQueryUtxo(ctx context.Context, socketPath, network, address string) ([]txbuilder.UTxOQueryResult, error) {
@@ -95,18 +93,14 @@ func runQueryPool(socketPath, network, poolID, outFile string, timeoutSeconds in
 	if poolID == "" {
 		return errors.New("--pool-id required")
 	}
-	// Validate pool id
-	if len(poolID) == 56 {
-		if _, err := hex.DecodeString(poolID); err != nil {
-			return fmt.Errorf("bad pool id: %w", err)
-		}
-	} else if len(poolID) > 5 && poolID[:5] == "pool1" {
-		if _, err := lcommon.NewPoolIdFromBech32(poolID); err != nil {
-			return fmt.Errorf("bad pool id: %w", err)
-		}
-	} else {
-		return errors.New("bad pool id")
+	// Parse the pool id before dialing; parsing lives with the other pool
+	// id parsing in cert.go.
+	keyHash, err := parsePoolID(poolID)
+	if err != nil {
+		return fmt.Errorf("--pool-id: %w", err)
 	}
+	var poolId lcommon.PoolId
+	copy(poolId[:], keyHash)
 
 	ctx := context.Background()
 	var cancel context.CancelFunc
@@ -118,7 +112,7 @@ func runQueryPool(socketPath, network, poolID, outFile string, timeoutSeconds in
 		defer cancel()
 	}
 
-	res, err := runner(ctx, socketPath, network, poolID)
+	res, err := runner(ctx, socketPath, network, poolId)
 	if err != nil {
 		return err
 	}
@@ -139,16 +133,10 @@ func runQueryStakeAddress(socketPath, network, address, outFile string, timeoutS
 	if address == "" {
 		return errors.New("--address required")
 	}
-	// Validate stake address
-	if !(strings.HasPrefix(address, "stake1") || strings.HasPrefix(address, "stake_test1")) {
-		// Try to parse
-		if _, err := lcommon.NewAddress(address); err != nil {
-			return fmt.Errorf("bad address: %w", err)
-		}
-	} else {
-		if _, err := lcommon.NewAddress(address); err != nil {
-			return fmt.Errorf("bad address: %w", err)
-		}
+	// Only a reward (stake) address on the --network answers the right
+	// query; validate before dialing.
+	if _, err := txbuilder.ParseRewardAddress(address, network); err != nil {
+		return fmt.Errorf("--address: %w", err)
 	}
 
 	ctx := context.Background()
@@ -183,7 +171,7 @@ func runQueryUtxo(socketPath, network, address, outFile string, timeoutSeconds i
 		return errors.New("--address required")
 	}
 	if _, err := lcommon.NewAddress(address); err != nil {
-		return fmt.Errorf("bad address: %w", err)
+		return fmt.Errorf("--address: %w", err)
 	}
 
 	ctx := context.Background()
