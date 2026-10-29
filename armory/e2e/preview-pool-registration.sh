@@ -14,8 +14,8 @@
 # limitations under the License.
 
 # Registers a new Preview stake pool end to end with Bursa and a USB armory:
-# a new pool mnemonic, the cold key imported into the armory, a profile with a
-# pinned reward account, the reward account registered by its own key, the
+# a new pool mnemonic, the cold key and owner key imported into the armory, a
+# profile with a pinned reward account, the reward account registered by its own key, the
 # owner and pool registered with armory witnesses, and the first opcert issued
 # by the armory. Every step is checked against the chain.
 #
@@ -32,7 +32,7 @@
 #   COLD_KEY_ID   free cold key object, 551878672..551878687
 #   SLOT          free profile slot, 0..31
 # Optional:
-#   BURSA (bursa), ARMORY_POOL (armory-pool), SIGNER (http://10.0.0.1),
+#   BURSA (bursa; needs key pool-owner and tx build), ARMORY_POOL (armory-pool), SIGNER (http://10.0.0.1),
 #   SOURCE (10.0.0.2), PROFILE (e2e<slot>@preview), WORK (new temp dir),
 #   PLEDGE (1000000000), COST (170000000), MARGIN (0.02),
 #   RETIRE (0; 1 retires the pool at the next epoch),
@@ -156,6 +156,12 @@ else
 	--signing-key-file reward.skey --verification-key-file reward.vkey
 pass "keys derived"
 fi
+# a work directory from before owner key import keeps its device-generated owner
+if [ ! -s profile.json ] && [ ! -s owner.vkey ]; then
+"$BURSA" key pool-owner --mnemonic-file pool/seed.txt \
+	--signing-key-file owner.skey --verification-key-file owner.vkey
+pass "owner key derived"
+fi
 
 step "Import the cold key into object $COLD_KEY_ID"
 if jq -e '.pool_id | length == 56' cold.json > /dev/null 2>&1; then
@@ -188,13 +194,22 @@ step "Provision profile $PROFILE in slot $SLOT"
 if jq -e '.owner_key_hash | length == 56' profile.json > /dev/null 2>&1; then
 	pass "profile provisioned in an earlier run"
 else
+[ -s owner.skey ] || fail "owner.skey missing: derive it again from pool/seed.txt"
 jq -n --arg name "$PROFILE" --argjson slot "$SLOT" --argjson id "$COLD_KEY_ID" --arg reward "$REWARD_HEX" \
-	'{name: $name, network_id: 0, slot: $slot, cold_key_id: $id, reward_account: $reward}' |
+	--arg owner "$(jq -r .cborHex owner.skey)" \
+	'{name: $name, network_id: 0, slot: $slot, cold_key_id: $id, reward_account: $reward, owner_signing_key: $owner}' |
 	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/profile" --data-binary @- > profile.json.new
 cat profile.json.new
 mv profile.json.new profile.json
 fi
 OWNER_HASH=$(jq -r .owner_key_hash profile.json)
+if [ -s owner.vkey ]; then
+check "device owner key matches owner.vkey" \
+	test "5820$(jq -r .owner_public_key profile.json | base64 -d | od -An -tx1 -v | tr -d ' \n')" = "$(jq -r .cborHex owner.vkey)"
+rm -f owner.skey
+else
+echo "owner key generated on the device in an earlier run"
+fi
 
 step "Device inventory"
 mkdir -p device
