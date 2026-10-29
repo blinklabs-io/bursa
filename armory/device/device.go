@@ -65,6 +65,7 @@ type Chip interface {
 	SignEd25519(id uint32, msg []byte) ([]byte, error)
 	WriteBinary(id uint32, data []byte) error
 	ReadBinary(id uint32) ([]byte, error)
+	Delete(id uint32) error
 }
 
 // InventoryRequest asks for a profile's keys.

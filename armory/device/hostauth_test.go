@@ -340,3 +340,43 @@ func TestHostKeyWriteFailureRefusesSigning(t *testing.T) {
 		})
 	}
 }
+
+// TestRevokeLastHostKeyDeletesList checks revoking the last host key frees
+// the key list object and returns to serving unauthenticated requests.
+func TestRevokeLastHostKeyDeletesList(t *testing.T) {
+	s, chip := newHostAuthService(t)
+
+	if code, body := post(t, s, "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey)}); code != http.StatusOK {
+		t.Fatalf("revoke: %d %s", code, body)
+	}
+
+	if _, ok := chip.bins[hostKeysID]; ok {
+		t.Fatal("empty host key list left on the chip")
+	}
+
+	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error != "" {
+		t.Fatalf("unauthenticated request refused with no host key left: %+v", r)
+	}
+
+	s2 := New(&sync.Mutex{}, t.Logf)
+	if err := s2.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(s2.hostKeys) != 0 || s2.hostKeysBad {
+		t.Fatalf("reloaded keys %d bad %v", len(s2.hostKeys), s2.hostKeysBad)
+	}
+}
+
+func TestRevokeLastHostKeyDeleteFailureRefusesSigning(t *testing.T) {
+	s, chip := newHostAuthService(t)
+	chip.failDelete = true
+
+	if code, _ := post(t, s, "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey)}); code == http.StatusOK {
+		t.Fatal("failed delete reported success")
+	}
+
+	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error == "" {
+		t.Fatal("signed unauthenticated after a failed delete")
+	}
+}

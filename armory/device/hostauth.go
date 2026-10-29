@@ -205,22 +205,28 @@ func (s *Service) revokeHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 	return s.writeHostKeys(keys)
 }
 
-// writeHostKeys writes keys and serves them once the write reads back.
-// Writing a list replaces an unreadable one; a failed write leaves the
-// stored list unknown, so signing is refused until a write reads back.
+// writeHostKeys writes keys and serves them once the write reads back; an
+// empty list deletes the object. Writing a list replaces an unreadable one;
+// a failed write leaves the stored list unknown, so signing is refused until
+// a write reads back.
 func (s *Service) writeHostKeys(keys [][]byte) (HostKeyResponse, error) {
-	b := make([]byte, hostKeysLen)
+	var err error
 
-	for i, k := range keys {
-		copy(b[i*ed25519.PublicKeySize:], k)
-	}
+	if len(keys) == 0 {
+		err = s.deleteHostKeys()
+	} else {
+		b := make([]byte, hostKeysLen)
 
-	err := s.chip.WriteBinary(hostKeysID, b)
-	if err == nil {
-		var got []byte
+		for i, k := range keys {
+			copy(b[i*ed25519.PublicKeySize:], k)
+		}
 
-		if got, err = s.chip.ReadBinary(hostKeysID); err == nil && !bytes.Equal(got, b) {
-			err = errors.New("read back differs")
+		if err = s.chip.WriteBinary(hostKeysID, b); err == nil {
+			var got []byte
+
+			if got, err = s.chip.ReadBinary(hostKeysID); err == nil && !bytes.Equal(got, b) {
+				err = errors.New("read back differs")
+			}
 		}
 	}
 
@@ -238,4 +244,25 @@ func (s *Service) writeHostKeys(keys [][]byte) (HostKeyResponse, error) {
 	}
 
 	return HostKeyResponse{HostKeys: keys}, nil
+}
+
+// deleteHostKeys removes the key list object and checks it is gone, so a
+// delete whose reply was lost still counts.
+func (s *Service) deleteHostKeys() error {
+	delErr := s.chip.Delete(hostKeysID)
+
+	ok, err := s.chip.Exists(hostKeysID)
+	if err != nil {
+		return err
+	}
+
+	if ok {
+		if delErr == nil {
+			delErr = errors.New("object still exists")
+		}
+
+		return delErr
+	}
+
+	return nil
 }

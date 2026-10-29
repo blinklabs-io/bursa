@@ -53,6 +53,8 @@ type fakeChip struct {
 	signs int
 	// tornWrite stores only half of a binary write and reports success
 	tornWrite bool
+	// failDelete refuses deletes and keeps the object
+	failDelete bool
 }
 
 func newFakeChip() *fakeChip {
@@ -134,6 +136,17 @@ func (c *fakeChip) WriteBinary(id uint32, data []byte) error {
 	}
 
 	c.bins[id] = bytes.Clone(data)
+	return nil
+}
+
+func (c *fakeChip) Delete(id uint32) error {
+	if c.failDelete {
+		return errors.New("i2c failure")
+	}
+
+	delete(c.bins, id)
+	delete(c.keys, id)
+
 	return nil
 }
 
