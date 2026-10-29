@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -115,8 +116,19 @@ func TestProvisionStoresOnlyWrappedMaterial(t *testing.T) {
 	defer clear(seed)
 	encoded, err := json.Marshal(env)
 	require.NoError(t, err)
-	require.NotContains(t, encoded, seed)
-	require.NotContains(t, encoded, bytes.Repeat([]byte{0x5a}, dataKeySize))
+	var decoded Envelope
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	dataKey := bytes.Repeat([]byte{0x5a}, dataKeySize)
+	for name, secret := range map[string][]byte{"seed": seed, "data key": dataKey} {
+		require.False(t, bytes.Contains(encoded, secret), "envelope JSON contains raw %s", name)
+		require.False(t, bytes.Contains(encoded, []byte(base64.StdEncoding.EncodeToString(secret))), "envelope JSON contains base64 %s", name)
+		for field, value := range map[string][]byte{
+			"public key": decoded.PublicKey, "encrypted data key": decoded.EncryptedDataKey,
+			"ciphertext": decoded.Ciphertext, "nonce": decoded.Nonce,
+		} {
+			require.False(t, bytes.Contains(value, secret), "envelope %s contains %s", field, name)
+		}
+	}
 }
 
 func TestProvisionRejectsKMSAliasBeforeKMS(t *testing.T) {
