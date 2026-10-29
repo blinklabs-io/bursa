@@ -83,6 +83,27 @@ func buildConfidentialSpaceBackend(ctx context.Context, c config.SignerBackendCo
 	return loadAttestedBackend(ctx, c, verifier)
 }
 
+// buildArmoryBackend wires a USB armory custody backend. The device answers
+// for one profile and signs its inventory with an identity key pinned here,
+// with the same fail-closed boot as buildNitroBackend.
+func buildArmoryBackend(ctx context.Context, c config.SignerBackendConfig) (backend.Backend, error) {
+	if c.IdentityPublicKey == "" {
+		return nil, errors.New("armory backend requires identity_public_key")
+	}
+	identity, err := hex.DecodeString(c.IdentityPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("identity_public_key: %w", err)
+	}
+	verifier, err := backend.NewArmoryVerifier(identity)
+	if err != nil {
+		return nil, fmt.Errorf("identity_public_key: %w", err)
+	}
+	if c.Profile == "" {
+		return nil, errors.New("armory backend requires profile")
+	}
+	return loadAttestedBackend(ctx, c, verifier)
+}
+
 func loadAttestedBackend(ctx context.Context, c config.SignerBackendConfig, verifier backend.AttestationVerifier) (backend.Backend, error) {
 	if c.Address == "" {
 		return nil, fmt.Errorf("%s backend requires address", c.Type)

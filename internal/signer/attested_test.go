@@ -309,6 +309,52 @@ func TestBuildBackendsConfidentialSpace(t *testing.T) {
 	}
 }
 
+func TestBuildBackendsArmory(t *testing.T) {
+	t.Parallel()
+	identity, identityPriv, _ := ed25519.GenerateKey(nil)
+	pool, _, _ := ed25519.GenerateKey(nil)
+	stake, _, _ := ed25519.GenerateKey(nil)
+	profiles := make(chan string, 2)
+	device := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Nonce   []byte `json:"nonce"`
+			Profile string `json:"profile"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		profiles <- in.Profile
+		keys := []backend.AttestedKeyInfo{{Role: backend.KeyTypePool, PublicKey: pool}, {Role: backend.KeyTypeStake, PublicKey: stake}}
+		att := ed25519.Sign(identityPriv, backend.InventoryBinding(in.Nonce, keys))
+		_ = json.NewEncoder(w).Encode(backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: att})
+	}))
+	t.Cleanup(device.Close)
+
+	cfg := config.SignerBackendConfig{
+		Name: "armory", Type: "armory", Address: device.URL,
+		Profile: "pool@preview", IdentityPublicKey: hex.EncodeToString(identity),
+	}
+	bs, err := BuildBackends(t.Context(), []config.SignerBackendConfig{cfg})
+	if err != nil {
+		t.Fatalf("BuildBackends: %v", err)
+	}
+	for _, k := range []ed25519.PublicKey{pool, stake} {
+		if _, err := bs[0].GetKey(t.Context(), backend.HashPublicKey(k)); err != nil {
+			t.Fatalf("armory key not resolvable after boot: %v", err)
+		}
+	}
+	if got := <-profiles; got != cfg.Profile {
+		t.Fatalf("inventory profile = %q, want %q", got, cfg.Profile)
+	}
+
+	// Evidence from a device whose identity key is not the pinned one fails
+	// attestation, so boot fails.
+	other, _, _ := ed25519.GenerateKey(nil)
+	bad := cfg
+	bad.IdentityPublicKey = hex.EncodeToString(other)
+	if _, err := BuildBackends(t.Context(), []config.SignerBackendConfig{bad}); err == nil {
+		t.Fatal("boot succeeded with another identity key pinned")
+	}
+}
+
 // writeRootPEM writes a self-signed certificate and returns its path.
 func writeRootPEM(t *testing.T) string {
 	t.Helper()
@@ -353,6 +399,19 @@ func TestBuildAttestedBackendsRejectBadConfig(t *testing.T) {
 		}, "https"},
 		{"confidential-space without address", config.SignerBackendConfig{
 			Type: "confidential-space", Audience: "a", ImageDigest: "sha256:aa", JWKSURL: "http://127.0.0.1:1/jwks",
+		}, "address"},
+		{"armory without identity key", config.SignerBackendConfig{Type: "armory", Address: "http://127.0.0.1:1", Profile: "p@preview"}, "identity_public_key"},
+		{"armory non-hex identity key", config.SignerBackendConfig{
+			Type: "armory", Address: "http://127.0.0.1:1", Profile: "p@preview", IdentityPublicKey: strings.Repeat("zz", 32),
+		}, "identity_public_key"},
+		{"armory short identity key", config.SignerBackendConfig{
+			Type: "armory", Address: "http://127.0.0.1:1", Profile: "p@preview", IdentityPublicKey: strings.Repeat("ab", 31),
+		}, "identity_public_key"},
+		{"armory without profile", config.SignerBackendConfig{
+			Type: "armory", Address: "http://127.0.0.1:1", IdentityPublicKey: strings.Repeat("ab", 32),
+		}, "profile"},
+		{"armory without address", config.SignerBackendConfig{
+			Type: "armory", Profile: "p@preview", IdentityPublicKey: strings.Repeat("ab", 32),
 		}, "address"},
 	} {
 		tc.cfg.Name = "x"

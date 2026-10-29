@@ -5,12 +5,13 @@ An attested backend holds private keys inside a trusted execution environment
 signer process never holds key material; it trusts a key only after verifying
 platform attestation evidence, and it verifies every signature before use.
 
-Two platform verifiers ship in the signer:
+Three verifiers ship in the signer:
 
 | Backend `type` | Platform | Evidence | Verified against |
 |----------------|----------|----------|------------------|
 | `nitro` | AWS Nitro Enclaves | COSE_Sign1 attestation document | pinned AWS Nitro root certificate, expected PCR values |
 | `confidential-space` | GCP Confidential Space | Google Cloud Attestation OIDC token | Google's published token signing keys, audience, container image digest |
+| `armory` | USB armory Mk II with an SE050 | Ed25519 signature by the device identity key | pinned identity public key |
 
 ## Trust boundaries
 
@@ -192,6 +193,32 @@ Federation provider whose attribute condition requires the same image digest,
 call Cloud KMS `decrypt` on the key wrapping the key material; and a workload
 image published by digest. Cloud KMS then refuses an unapproved digest, a debug
 image, a wrong audience, an expired token, or missing attestation.
+
+## USB armory
+
+```yaml
+backends:
+  - name: "armory"
+    type: "armory"
+    address: "http://10.0.0.1"                  # the device on its USB network link
+    profile: "pool@preview"                     # required: the device profile holding the keys
+    identity_public_key: "<64 hex>"             # the device identity key, pinned
+```
+
+The USB armory Mk II holds the pool cold key and the owner stake key in its
+SE050 secure element, one profile per pool and network. Its signing firmware
+serves this protocol at `/v1/inventory` and `/v1/sign`.
+
+The evidence is the device identity key's Ed25519 signature over the inventory
+binding. The signer accepts the inventory only when that signature verifies
+under `identity_public_key`. This proves the inventory came from a device
+holding the identity key. It is not a measurement of the firmware: the board
+boots unsigned images, so anyone holding the device can run other firmware.
+Record the identity key when the device is provisioned; the device's legacy
+`/pubkey` endpoint returns a different key.
+
+Profiled responses carry the second signature described above, so the signer
+also refuses a response produced for another profile.
 
 ## KES agent in a protected workload
 
