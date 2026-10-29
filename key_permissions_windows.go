@@ -147,8 +147,10 @@ func restrictSecretKeyFilePermissions(file *os.File) error {
 	if existingOwner == nil {
 		return fmt.Errorf("file %q has no owner", file.Name())
 	}
-	securityInformation := windows.DACL_SECURITY_INFORMATION |
-		windows.PROTECTED_DACL_SECURITY_INFORMATION
+	securityInformation := windows.SECURITY_INFORMATION(
+		windows.DACL_SECURITY_INFORMATION |
+			windows.PROTECTED_DACL_SECURITY_INFORMATION,
+	)
 	var newOwner *windows.SID
 	securityHandle := windows.Handle(file.Fd())
 	if !existingOwner.Equals(owner) {
