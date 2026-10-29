@@ -64,10 +64,16 @@ function CertificateEffects({ certificates }: { certificates: TxSummaryCertifica
           {cert.drep_credential ? (
             <> · DRep {cert.drep_credential.type.replace("_", " ")} <code className="tx-hash">{cert.drep_credential.hash}</code></>
           ) : null}
-          {cert.deposit_lovelace !== undefined ? <> · {formatAda(cert.deposit_lovelace)} ADA deposit</> : null}
-          {cert.refund_lovelace !== undefined ? <> · {formatAda(cert.refund_lovelace)} ADA refund</> : null}
-          {cert.deposit_implicit ? <> · protocol key deposit</> : null}
-          {cert.refund_implicit ? <> · protocol key deposit refund</> : null}
+          {cert.deposit_lovelace !== undefined ? (
+            <> · {formatAda(cert.deposit_lovelace)} ADA deposit</>
+          ) : cert.deposit_implicit ? (
+            <> · protocol key deposit (amount not in certificate)</>
+          ) : null}
+          {cert.refund_lovelace !== undefined ? (
+            <> · {formatAda(cert.refund_lovelace)} ADA refund</>
+          ) : cert.refund_implicit ? (
+            <> · protocol key deposit refund (amount not in certificate)</>
+          ) : null}
           {cert.reward_account ? (
             <> · rewards to {cert.reward_account.type.replace("_", " ")} <code className="tx-hash">{cert.reward_account.hash}</code></>
           ) : null}
