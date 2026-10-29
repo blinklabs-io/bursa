@@ -138,6 +138,10 @@ func (s *session) keys(outDir, network string, out io.Writer) error {
 
 	pool, owner := keys["pool"], keys["stake"]
 
+	if err = os.MkdirAll(outDir, 0o700); err != nil {
+		return err
+	}
+
 	for _, f := range []struct {
 		name, typ, desc string
 		pub             []byte

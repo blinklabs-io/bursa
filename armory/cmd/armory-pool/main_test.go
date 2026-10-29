@@ -23,6 +23,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -711,5 +712,20 @@ func TestRunRequiresPinnedIdentity(t *testing.T) {
 
 	if err := run([]string{"-profile", "p", "keys", "-out-dir", t.TempDir()}, &bytes.Buffer{}); err == nil {
 		t.Fatal("keys ran without -identity")
+	}
+}
+
+func TestKeysCreatesOutDir(t *testing.T) {
+	t.Parallel()
+
+	r := newRig(t)
+	dir := filepath.Join(t.TempDir(), "device")
+
+	if err := r.s.keys(dir, "preview", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "owner.vkey")); err != nil {
+		t.Fatal(err)
 	}
 }
