@@ -10,6 +10,7 @@ package nitro
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/kms"
@@ -65,4 +66,19 @@ func TestKMSEndpointIsFixed(t *testing.T) {
 		_, err := KMSEndpoint(region)
 		require.Error(t, err)
 	}
+}
+
+func TestKMSProxyHTTPClientIgnoresEnvironmentProxy(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+	client := NewKMSProxyHTTPClient(DefaultKMSProxyPort)
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok)
+	if transport.Proxy == nil {
+		return
+	}
+	request, err := http.NewRequest(http.MethodPost, "https://kms.us-east-1.amazonaws.com/", nil)
+	require.NoError(t, err)
+	proxy, err := transport.Proxy(request)
+	require.NoError(t, err)
+	require.Nil(t, proxy)
 }

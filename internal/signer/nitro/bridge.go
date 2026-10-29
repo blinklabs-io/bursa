@@ -43,6 +43,9 @@ func KMSEndpoint(region string) (string, error) {
 // vsock proxy. TLS still terminates at AWS KMS.
 func NewKMSProxyHTTPClient(port uint32) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// An environment proxy would send a CONNECT request into the raw vsock
+	// byte bridge, which KMS cannot answer.
+	transport.Proxy = nil
 	transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return DialVsockContext(ctx, parentCID, port)
 	}
