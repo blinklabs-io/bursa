@@ -131,6 +131,21 @@ func TestRewardAccountRules(t *testing.T) {
 	}
 }
 
+func TestBoundsCheckedWithRewardAccount(t *testing.T) {
+	slot := testProfile()
+	slot.Slot = MaxSlot + 1
+
+	network := testProfile()
+	network.NetworkID = 2
+	network.RewardAccount = "e2" + strings.Repeat("ab", 28)
+
+	for name, p := range map[string]Profile{"slot": slot, "network": network} {
+		if _, err := Encode(p); err == nil {
+			t.Errorf("%s out of range accepted with a reward account", name)
+		}
+	}
+}
+
 func TestEncodeFixedSize(t *testing.T) {
 	small := testProfile()
 	large := Profile{

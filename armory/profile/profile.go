@@ -99,6 +99,10 @@ func (p Profile) validate() error {
 		return fmt.Errorf("profile: name longer than %d bytes", MaxNameLen)
 	case strings.TrimFunc(p.Name, nameRune) != "":
 		return errors.New("profile: name may only use A-Z a-z 0-9 @ . _ -")
+	case p.NetworkID > 1:
+		return fmt.Errorf("profile: invalid network id %d", p.NetworkID)
+	case p.Slot > MaxSlot:
+		return fmt.Errorf("profile: invalid slot %d", p.Slot)
 	case p.RewardAccount != "":
 		b, err := hex.DecodeString(p.RewardAccount)
 
@@ -106,10 +110,6 @@ func (p Profile) validate() error {
 		if err != nil || len(b) != 29 || b[0]&0xe0 != 0xe0 || b[0]&0x0f != p.NetworkID {
 			return errors.New("profile: reward account must be a reward address on the profile network")
 		}
-	case p.NetworkID > 1:
-		return fmt.Errorf("profile: invalid network id %d", p.NetworkID)
-	case p.Slot > MaxSlot:
-		return fmt.Errorf("profile: invalid slot %d", p.Slot)
 	}
 
 	return nil
