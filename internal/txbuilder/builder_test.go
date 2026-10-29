@@ -74,7 +74,7 @@ func encodeWrapper(t *testing.T, cert lcommon.Certificate, typ lcommon.Certifica
 
 func TestBuildCoinSelectionAndFeeAndBalance(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000001", 0, 10_000_000),
 	}
@@ -104,7 +104,7 @@ func TestBuildCoinSelectionAndFeeAndBalance(t *testing.T) {
 
 func TestBuildPoolDepositChargedOnlyIfNotRegistered(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000002", 0, 10_000_000_000),
 	}
@@ -140,7 +140,7 @@ func TestBuildPoolDepositChargedOnlyIfNotRegistered(t *testing.T) {
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -156,7 +156,7 @@ func TestBuildPoolDepositChargedOnlyIfNotRegistered(t *testing.T) {
 	built2, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	tx2, err := conway.NewConwayTransactionFromCbor(built2.TxCBOR)
@@ -168,7 +168,7 @@ func TestBuildPoolDepositChargedOnlyIfNotRegistered(t *testing.T) {
 
 func TestBuildKeyDepositForLegacyStakeRegistration(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "1111111111111111111111111111111111111111111111111111111111111111", 0, 20_000_000),
 	}
@@ -184,7 +184,7 @@ func TestBuildKeyDepositForLegacyStakeRegistration(t *testing.T) {
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -197,7 +197,7 @@ func TestBuildKeyDepositForLegacyStakeRegistration(t *testing.T) {
 
 func TestBuildConwayRegistrationDeposit(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "2222222222222222222222222222222222222222222222222222222222222222", 0, 20_000_000),
 	}
@@ -215,7 +215,7 @@ func TestBuildConwayRegistrationDeposit(t *testing.T) {
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -227,7 +227,7 @@ func TestBuildConwayRegistrationDeposit(t *testing.T) {
 
 func TestBuildPoolRetirementNoDeposit(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "3333333333333333333333333333333333333333333333333333333333333333", 0, 10_000_000),
 	}
@@ -247,7 +247,7 @@ func TestBuildPoolRetirementNoDeposit(t *testing.T) {
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -259,7 +259,7 @@ func TestBuildPoolRetirementNoDeposit(t *testing.T) {
 
 func TestBuildCertificatesInBodyEqualFiles(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "4444444444444444444444444444444444444444444444444444444444444444", 0, 50_000_000),
 	}
@@ -288,7 +288,7 @@ func TestBuildCertificatesInBodyEqualFiles(t *testing.T) {
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{f1, f2},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -304,7 +304,7 @@ func TestBuildCertificatesInBodyEqualFiles(t *testing.T) {
 
 func TestBuildRoundTripsThroughSign(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "5555555555555555555555555555555555555555555555555555555555555555", 0, 30_000_000),
 	}
@@ -320,7 +320,7 @@ func TestBuildRoundTripsThroughSign(t *testing.T) {
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	// Write envelope to temp file and sign
@@ -375,7 +375,7 @@ func TestSubmitPassesBytesAndReportsRejection(t *testing.T) {
 
 func TestBuildTTLFromSlot(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "6666666666666666666666666666666666666666666666666666666666666666", 0, 10_000_000),
 	}
@@ -383,7 +383,7 @@ func TestBuildTTLFromSlot(t *testing.T) {
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress: addr,
-		WitnessCount:  1,
+		WitnessCount:  0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -392,7 +392,7 @@ func TestBuildTTLFromSlot(t *testing.T) {
 	// Explicit TTL
 	built2, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress: addr,
-		WitnessCount:  1,
+		WitnessCount:  0,
 		TTL:           999999,
 	})
 	require.NoError(t, err)
@@ -403,7 +403,7 @@ func TestBuildTTLFromSlot(t *testing.T) {
 
 func TestBuildFeeMeetsMinFeeForWitnessedSize(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "7777777777777777777777777777777777777777777777777777777777777777", 0, 100_000_000),
 	}
@@ -426,7 +426,7 @@ func TestBuildFeeMeetsMinFeeForWitnessedSize(t *testing.T) {
 
 func TestBuildInsufficientFunds(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "8888888888888888888888888888888888888888888888888888888888888888", 0, 1_000_000),
 	}
@@ -443,7 +443,7 @@ func TestBuildInsufficientFunds(t *testing.T) {
 	_, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "insufficient funds")
@@ -451,14 +451,14 @@ func TestBuildInsufficientFunds(t *testing.T) {
 
 func TestBuildSkipsAssetsUTxOs(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	adaUTxO := MakeUTxO(addr, "9999999999999999999999999999999999999999999999999999999999999999", 0, 10_000_000)
 	assetUTxO := makeAssetUTxO(addr, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1, 5_000_000)
 	chain.UtxosMap[addr] = []UTxO{assetUTxO, adaUTxO}
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress: addr,
-		WitnessCount:  1,
+		WitnessCount:  0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -505,7 +505,7 @@ func makeAssetUTxO(addr string, txHashHex string, idx uint32, lovelace uint64) U
 
 func TestRefundLegacyStakeDeregistration(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0, 20_000_000),
 	}
@@ -521,7 +521,7 @@ func TestRefundLegacyStakeDeregistration(t *testing.T) {
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -538,7 +538,7 @@ func TestRefundLegacyStakeDeregistration(t *testing.T) {
 
 func TestRefundConwayDeregistration(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 0, 20_000_000),
 	}
@@ -556,7 +556,7 @@ func TestRefundConwayDeregistration(t *testing.T) {
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -571,7 +571,7 @@ func TestRefundConwayDeregistration(t *testing.T) {
 
 func TestRefundDrepDeregistration(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddd0001", 0, 20_000_000),
 	}
@@ -589,7 +589,7 @@ func TestRefundDrepDeregistration(t *testing.T) {
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -606,7 +606,7 @@ func TestRefundDrepDeregistration(t *testing.T) {
 
 func TestRefundMixedRegistrationAndDeregistration(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", 0, 50_000_000),
 	}
@@ -629,7 +629,7 @@ func TestRefundMixedRegistrationAndDeregistration(t *testing.T) {
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{f1, f2},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -646,7 +646,7 @@ func TestRefundMixedRegistrationAndDeregistration(t *testing.T) {
 
 func TestPoolLookupError(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", 0, 10_000_000_000),
 	}
@@ -679,14 +679,14 @@ func TestPoolLookupError(t *testing.T) {
 	_, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.Error(t, err)
 }
 
 func TestCoinSelectionDeterministicAndMinInputs(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	// 20 UTxOs of 5 ADA each
 	var utxos []UTxO
 	for i := 0; i < 20; i++ {
@@ -722,7 +722,7 @@ func TestCoinSelectionDeterministicAndMinInputs(t *testing.T) {
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -742,7 +742,7 @@ func TestCoinSelectionDeterministicAndMinInputs(t *testing.T) {
 	built2, err := Build(ctx, chain2, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 	})
 	require.NoError(t, err)
 	require.Equal(t, built.TxCBOR, built2.TxCBOR)
@@ -750,7 +750,7 @@ func TestCoinSelectionDeterministicAndMinInputs(t *testing.T) {
 
 func TestCoinSelectionExceedsMaxTxSize(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	// Make many large inputs
 	var utxos []UTxO
 	for i := 0; i < 200; i++ {
@@ -774,7 +774,7 @@ func TestCoinSelectionExceedsMaxTxSize(t *testing.T) {
 
 func TestFeeIndependentCalculationAndBoundaries(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "1111111111111111111111111111111111111111111111111111111111111112", 0, 100_000_000),
 	}
@@ -800,7 +800,7 @@ func TestFeeIndependentCalculationAndBoundaries(t *testing.T) {
 	}
 	built2, err := Build(ctx, chain2, BuildOptions{
 		ChangeAddress: addr,
-		WitnessCount:  1,
+		WitnessCount:  0,
 	})
 	// might be insufficient depending; try to make change cross 65536
 	if err == nil {
@@ -819,7 +819,7 @@ func TestFeeIndependentCalculationAndBoundaries(t *testing.T) {
 	}
 	built3, err := Build(ctx, chain3, BuildOptions{
 		ChangeAddress: addr,
-		WitnessCount:  1,
+		WitnessCount:  0,
 	})
 	require.NoError(t, err)
 	tx3, err := conway.NewConwayTransactionFromCbor(built3.TxCBOR)
@@ -831,7 +831,7 @@ func TestFeeIndependentCalculationAndBoundaries(t *testing.T) {
 
 func TestChangeBelowMinUTxO(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	// Small UTxO that would leave change below min UTxO
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "4444444444444444444444444444444444444444444444444444444444444445", 0, 1_000_000),
@@ -842,7 +842,7 @@ func TestChangeBelowMinUTxO(t *testing.T) {
 	ctx := context.Background()
 	_, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress: addr,
-		WitnessCount:  1,
+		WitnessCount:  0,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "minimum")
@@ -850,14 +850,14 @@ func TestChangeBelowMinUTxO(t *testing.T) {
 
 func TestBodyWithoutWithdrawalsHasNoWithdrawalsKey(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "5555555555555555555555555555555555555555555555555555555555555556", 0, 10_000_000),
 	}
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress: addr,
-		WitnessCount:  1,
+		WitnessCount:  0,
 	})
 	require.NoError(t, err)
 	// Decode the body map and check keys
@@ -881,7 +881,7 @@ func TestBodyWithoutWithdrawalsHasNoWithdrawalsKey(t *testing.T) {
 func TestSelectionAddsInputWhenChangeBelowMinUTxO(t *testing.T) {
 	chain := NewFakeChain()
 	chain.PpExtra.CoinsPerUTxOByte = 4310
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	// The 1 ADA input alone covers the fee but leaves change below the
 	// minimum UTxO; adding the 0.3 ADA input fixes that.
 	chain.UtxosMap[addr] = []UTxO{
@@ -890,7 +890,7 @@ func TestSelectionAddsInputWhenChangeBelowMinUTxO(t *testing.T) {
 	}
 	built, err := Build(context.Background(), chain, BuildOptions{
 		ChangeAddress: addr,
-		WitnessCount:  1,
+		WitnessCount:  0,
 	})
 	require.NoError(t, err)
 	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
@@ -902,7 +902,7 @@ func TestSelectionAddsInputWhenChangeBelowMinUTxO(t *testing.T) {
 
 func TestBuildWithPoolVote(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000001", 0, 10_000_000),
 	}
@@ -944,7 +944,7 @@ func TestBuildWithPoolVote(t *testing.T) {
 			ctx := context.Background()
 			built, err := Build(ctx, chain, BuildOptions{
 				ChangeAddress: addr,
-				WitnessCount:  1,
+				WitnessCount:  0,
 				Vote: &PoolVote{
 					PoolKeyHash: poolKeyArr,
 					ActionTxId:  actionTxArr,
@@ -978,9 +978,226 @@ func TestBuildWithPoolVote(t *testing.T) {
 	}
 }
 
+func poolRegWrapWithOwners(t *testing.T, operatorFill byte, ownerFills ...byte) []byte {
+	t.Helper()
+	poolKey := make([]byte, 28)
+	for i := range poolKey {
+		poolKey[i] = operatorFill + byte(i)
+	}
+	owners := make([]lcommon.AddrKeyHash, 0, len(ownerFills))
+	for _, fill := range ownerFills {
+		o := make([]byte, 28)
+		for i := range o {
+			o[i] = fill + byte(i)
+		}
+		owners = append(owners, lcommon.AddrKeyHash(o))
+	}
+	rewardAcct := make([]byte, 28)
+	poolCert := lcommon.PoolRegistrationCertificate{
+		CertType:      uint(lcommon.CertificateTypePoolRegistration),
+		Operator:      lcommon.PoolKeyHash(poolKey),
+		VrfKeyHash:    lcommon.VrfKeyHash(make([]byte, 32)),
+		Pledge:        1000000,
+		Cost:          340000000,
+		Margin:        lcommon.GenesisRat{Rat: big.NewRat(0, 1)},
+		RewardAccount: lcommon.AddrKeyHash(rewardAcct),
+		PoolOwners:    owners,
+		Relays:        []lcommon.PoolRelay{},
+	}
+	_ = poolCert.SetRewardAccountCredential(lcommon.Credential{
+		CredType:   lcommon.CredentialTypeAddrKeyHash,
+		Credential: lcommon.CredentialHash(rewardAcct),
+	}, 0)
+	return encodeWrapper(t, &poolCert, lcommon.CertificateTypePoolRegistration)
+}
+
+func witnessHashesByRole(ws []RequiredWitness) map[string][][28]byte {
+	out := map[string][][28]byte{}
+	for _, w := range ws {
+		out[w.Role] = append(out[w.Role], w.Hash)
+	}
+	return out
+}
+
+func TestRequiredWitnessesPoolRegistration(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000010", 0, 10_000_000_000),
+	}
+	wrapBytes := poolRegWrapWithOwners(t, 0x10, 0xa0, 0xb0)
+	dir := t.TempDir()
+	certFile := writeEnvelopeCert(t, dir, "pool.cert", "CertificateConway", wrapBytes)
+	ctx := context.Background()
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{certFile},
+	})
+	require.NoError(t, err)
+	// cold key + 2 owners + 1 payment input
+	require.Len(t, built.RequiredWitnesses, 4)
+	byRole := witnessHashesByRole(built.RequiredWitnesses)
+	require.Len(t, byRole["payment"], 1)
+	require.Len(t, byRole["pool cold"], 1)
+	require.Len(t, byRole["pool owner"], 2)
+	payAddr, err := lcommon.NewAddress(addr)
+	require.NoError(t, err)
+	require.Equal(t, [28]byte(payAddr.PaymentKeyHash()), byRole["payment"][0])
+	cold := make([]byte, 28)
+	for i := range cold {
+		cold[i] = 0x10 + byte(i)
+	}
+	require.Equal(t, [28]byte(lcommon.PoolKeyHash(cold)), byRole["pool cold"][0])
+	// The fee must be sized for the computed count
+	estSize, err := bursa.EstimateWitnessedTxSize(built.TxCBOR, 4, 0)
+	require.NoError(t, err)
+	minFee, err := bursa.MinFee(estSize, *chain.PpFee)
+	require.NoError(t, err)
+	tx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, tx.Body.TxFee, minFee)
+}
+
+func TestRequiredWitnessesStakeRegistration(t *testing.T) {
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
+	ctx := context.Background()
+	cred := makeStakeCredential(t, 0x70)
+	stakeHash := [28]byte(cred.Credential)
+
+	// Legacy type 0 adds no witness: only the payment key remains
+	chain := NewFakeChain()
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000011", 0, 20_000_000),
+	}
+	cert0 := &lcommon.StakeRegistrationCertificate{
+		CertType:        uint(lcommon.CertificateTypeStakeRegistration),
+		StakeCredential: cred,
+	}
+	dir := t.TempDir()
+	f0 := writeEnvelopeCert(t, dir, "stake.reg", "CertificateShelley",
+		encodeWrapper(t, cert0, lcommon.CertificateTypeStakeRegistration))
+	built, err := Build(ctx, chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{f0},
+	})
+	require.NoError(t, err)
+	require.Len(t, built.RequiredWitnesses, 1)
+	require.Equal(t, "payment", built.RequiredWitnesses[0].Role)
+
+	// Conway type 7 adds the stake credential
+	chain2 := NewFakeChain()
+	chain2.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000012", 0, 20_000_000),
+	}
+	cert7 := &lcommon.RegistrationCertificate{
+		CertType:        uint(lcommon.CertificateTypeRegistration),
+		StakeCredential: cred,
+		Amount:          2_000_000,
+	}
+	f7 := writeEnvelopeCert(t, dir, "stake.reg.conway", "CertificateConway",
+		encodeWrapper(t, cert7, lcommon.CertificateTypeRegistration))
+	built2, err := Build(ctx, chain2, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{f7},
+	})
+	require.NoError(t, err)
+	byRole := witnessHashesByRole(built2.RequiredWitnesses)
+	require.Len(t, built2.RequiredWitnesses, 2)
+	require.Equal(t, stakeHash, byRole["stake"][0])
+}
+
+func TestRequiredWitnessesVote(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000013", 0, 10_000_000),
+	}
+	var poolKeyArr [28]byte
+	for i := range poolKeyArr {
+		poolKeyArr[i] = 0xc0 + byte(i)
+	}
+	var actionTxArr [32]byte
+	built, err := Build(context.Background(), chain, BuildOptions{
+		ChangeAddress: addr,
+		Vote: &PoolVote{
+			PoolKeyHash: poolKeyArr,
+			ActionTxId:  actionTxArr,
+			ActionIndex: 0,
+			Vote:        lcommon.GovVoteYes,
+		},
+	})
+	require.NoError(t, err)
+	byRole := witnessHashesByRole(built.RequiredWitnesses)
+	require.Len(t, built.RequiredWitnesses, 2)
+	require.Equal(t, poolKeyArr, byRole["voter"][0])
+}
+
+func TestRequiredWitnessesOverlapCountedOnce(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000014", 0, 10_000_000_000),
+	}
+	// The pool owner and the stake credential of the type-7 cert are the
+	// same key: it must be counted once.
+	owner := make([]byte, 28)
+	for i := range owner {
+		owner[i] = 0xd0 + byte(i)
+	}
+	poolWrap := poolRegWrapWithOwners(t, 0x20, 0xd0)
+	cred := lcommon.Credential{
+		CredType:   lcommon.CredentialTypeAddrKeyHash,
+		Credential: lcommon.CredentialHash(owner),
+	}
+	cert7 := &lcommon.RegistrationCertificate{
+		CertType:        uint(lcommon.CertificateTypeRegistration),
+		StakeCredential: cred,
+		Amount:          2_000_000,
+	}
+	stakeWrap := encodeWrapper(t, cert7, lcommon.CertificateTypeRegistration)
+	dir := t.TempDir()
+	fPool := writeEnvelopeCert(t, dir, "pool.cert", "CertificateConway", poolWrap)
+	fStake := writeEnvelopeCert(t, dir, "stake.reg", "CertificateConway", stakeWrap)
+	built, err := Build(context.Background(), chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{fPool, fStake},
+	})
+	require.NoError(t, err)
+	// payment + cold + the shared owner/stake key, once
+	require.Len(t, built.RequiredWitnesses, 3)
+	var shared [28]byte
+	copy(shared[:], owner)
+	count := 0
+	for _, w := range built.RequiredWitnesses {
+		if w.Hash == shared {
+			count++
+		}
+	}
+	require.Equal(t, 1, count)
+}
+
+func TestWitnessCountBelowRequiredErrors(t *testing.T) {
+	chain := NewFakeChain()
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
+	chain.UtxosMap[addr] = []UTxO{
+		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000015", 0, 10_000_000_000),
+	}
+	wrapBytes := poolRegWrapWithOwners(t, 0x30, 0xa0, 0xb0)
+	dir := t.TempDir()
+	certFile := writeEnvelopeCert(t, dir, "pool.cert", "CertificateConway", wrapBytes)
+	_, err := Build(context.Background(), chain, BuildOptions{
+		ChangeAddress:    addr,
+		CertificateFiles: []string{certFile},
+		WitnessCount:     2,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "2")
+	require.Contains(t, err.Error(), "4")
+}
+
 func TestBuildWithVoteAndPoolRegistration(t *testing.T) {
 	chain := NewFakeChain()
-	addr := "addr_test1wzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07s7prw5e"
+	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
 		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000003", 0, 10_000_000_000),
 	}
@@ -1020,7 +1237,7 @@ func TestBuildWithVoteAndPoolRegistration(t *testing.T) {
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
-		WitnessCount:     1,
+		WitnessCount:     0,
 		Vote: &PoolVote{
 			PoolKeyHash: poolKeyArr,
 			ActionTxId:  actionTxArr,

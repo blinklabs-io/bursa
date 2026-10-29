@@ -158,7 +158,7 @@ func txBuildCommand() *cobra.Command {
 	cmd.Flags().StringVar(&network, "network", "", "Network name or magic")
 	cmd.Flags().StringVar(&changeAddress, "change-address", "", "Change address")
 	cmd.Flags().StringArrayVar(&certificateFiles, "certificate-file", nil, "Certificate file (repeatable)")
-	cmd.Flags().UintVar(&witnessCount, "witness-count", 0, "Number of keys that will sign (payment, pool cold, owner stake); sizes the fee")
+	cmd.Flags().UintVar(&witnessCount, "witness-count", 0, "Number of keys that will sign; computed from the inputs, certificates and votes when omitted or 0")
 	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
 	cmd.Flags().Uint64Var(&ttlMargin, "ttl-margin", txbuilder.DefaultTTLMargin, "Slots the transaction stays valid for")
 	cmd.Flags().Int64Var(&timeout, "timeout", 60, "Timeout in seconds")
@@ -170,7 +170,6 @@ func txBuildCommand() *cobra.Command {
 	_ = cmd.MarkFlagRequired("socket-path")
 	_ = cmd.MarkFlagRequired("network")
 	_ = cmd.MarkFlagRequired("change-address")
-	_ = cmd.MarkFlagRequired("witness-count")
 	return cmd
 }
 

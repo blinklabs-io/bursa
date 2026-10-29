@@ -52,8 +52,9 @@ type BuildOptions struct {
 }
 
 type BuiltTx struct {
-	TxCBOR         []byte
-	TxEnvelopeType string // e.g. "Unwitnessed Tx ConwayEra"
+	TxCBOR            []byte
+	TxEnvelopeType    string // e.g. "Unwitnessed Tx ConwayEra"
+	RequiredWitnesses []RequiredWitness
 }
 
 func (b *BuiltTx) Enveloped() (string, error) {
@@ -204,10 +205,6 @@ func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error
 		return utxos[i].Input.Index() < utxos[j].Input.Index()
 	})
 
-	if opts.WitnessCount == 0 {
-		return nil, errors.New("witness count required: one per key that will sign")
-	}
-
 	ttl := opts.TTL
 	if ttl == 0 {
 		margin := opts.TTLMargin
@@ -263,6 +260,7 @@ func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error
 		refunds:      refunds,
 	}
 	lastErr := errNeedMoreInput
+	var selected []UTxO
 	for _, u := range utxos {
 		b.inputs = append(b.inputs, shelley.ShelleyTransactionInput{
 			TxId:        u.Input.Id(),
@@ -271,11 +269,28 @@ func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error
 		if v := u.Output.Amount(); v != nil {
 			b.inputSum += v.Uint64()
 		}
+		selected = append(selected, u)
+		// The witness count sizes the fee, so it depends on the inputs
+		// selected so far. Recompute it for each candidate set.
+		required := requiredWitnessSet(body, selected)
+		if opts.WitnessCount > 0 && opts.WitnessCount < uint(len(required)) {
+			return nil, fmt.Errorf(
+				"--witness-count %d is below the %d required witnesses",
+				opts.WitnessCount,
+				len(required),
+			)
+		}
+		if opts.WitnessCount > 0 {
+			b.witnessCount = opts.WitnessCount
+		} else {
+			b.witnessCount = uint(len(required))
+		}
 		txCbor, err := b.balance()
 		if err == nil {
 			return &BuiltTx{
-				TxCBOR:         txCbor,
-				TxEnvelopeType: "Unwitnessed Tx ConwayEra",
+				TxCBOR:            txCbor,
+				TxEnvelopeType:    "Unwitnessed Tx ConwayEra",
+				RequiredWitnesses: required,
 			}, nil
 		}
 		if !errors.Is(err, errNeedMoreInput) {

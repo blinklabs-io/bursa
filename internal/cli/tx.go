@@ -275,9 +275,6 @@ func (f PoolVoteFlags) poolVote() (*txbuilder.PoolVote, error) {
 }
 
 func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []string, witnessCount uint, outFile string, ttlMargin uint64, timeoutSeconds int64, voteFlags PoolVoteFlags) error {
-	if witnessCount == 0 {
-		return errors.New("--witness-count must be at least 1")
-	}
 	if ttlMargin == 0 {
 		return errors.New("--ttl-margin must be at least 1")
 	}
@@ -308,6 +305,9 @@ func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []st
 	})
 	if err != nil {
 		return err
+	}
+	for _, w := range built.RequiredWitnesses {
+		fmt.Fprintf(os.Stderr, "%s %x\n", w.Role, w.Hash)
 	}
 	out, err := bursa.WriteCborEnvelope(built.TxEnvelopeType, "Unwitnessed Tx", built.TxCBOR, outFile)
 	if err != nil {
