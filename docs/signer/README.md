@@ -21,6 +21,7 @@ Operator documentation for the two bursa signing daemons:
 | [`attested-custody.md`](attested-custody.md) | Attested TEE key custody: protocol, AWS Nitro and GCP Confidential Space backends, trust boundaries |
 | [`security.md`](security.md) | Threat model, custody guarantees, dev-only file backend |
 | [`kes-agent.md`](kes-agent.md) | KES agent daemon operation |
+| [`embedded-block-production.md`](embedded-block-production.md) | Dingo custody split, supported backends, rotation and failures |
 | [`openapi.yaml`](openapi.yaml) | OpenAPI 3 spec for the signer `/v1` HTTP API |
 | [`kes-agent-protocol.md`](kes-agent-protocol.md) | KES agent Unix-socket wire protocol |
 | [`signer.example.yaml`](signer.example.yaml) | Annotated signer config |
