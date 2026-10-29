@@ -218,6 +218,9 @@ func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error
 	if err != nil {
 		return nil, err
 	}
+	if _, ok := changeAddr.PayloadPayload().(common.AddressPayloadScriptHash); ok {
+		return nil, errors.New("change address payment credential must be a key, not a script")
+	}
 
 	// Filter to ada-only UTxOs for coin selection. Assets are not needed
 	// for pool operations and would require multi-asset change handling.
