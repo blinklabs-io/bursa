@@ -11,7 +11,6 @@ import {
   MAX_DROPDOWN_ENTRIES,
   ROLE_LABELS,
   WALLET_ROLES,
-  answerableHere,
   answersFor,
   emptyDraft,
   indexToPosition,
@@ -58,14 +57,27 @@ function QuestionInput({ q, index, draft, error, onChange }: QuestionInputProps)
         <input
           type="checkbox"
           checked={draft.answered}
-          disabled={q.required === true || q.kind === 0}
+          disabled={q.required === true}
           onChange={(e) => set({ answered: e.target.checked })}
         />{" "}
         Answer this question (leave off to abstain)
       </label>
 
       {draft.answered && q.kind === 0 && (
-        <p className="helper-text">This question uses a custom method this wallet cannot answer.</p>
+        <>
+          <p className="helper-text">
+            Follow the method schema at <code>{q.anchor?.uri}</code>, then paste the resulting Cardano transaction
+            metadatum CBOR.
+          </p>
+          <label htmlFor={`${id}-custom`}>Custom answer CBOR (hex)</label>
+          <textarea
+            id={`${id}-custom`}
+            className="field"
+            rows={4}
+            value={draft.customCbor}
+            onChange={(e) => set({ customCbor: e.target.value })}
+          />
+        </>
       )}
 
       {draft.answered && q.kind === 1 &&
@@ -228,16 +240,6 @@ export function SurveyRespond({ survey, onPreview }: SurveyRespondProps) {
   const [errors, setErrors] = useState<Record<number, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  if (!answerableHere(def)) {
-    return (
-      <Card title="Respond">
-        <p className="helper-text">
-          This survey has a required question that uses a custom method, which this wallet cannot answer.
-        </p>
-      </Card>
-    );
-  }
 
   if (roles.length === 0 || role === null) {
     return (

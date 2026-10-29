@@ -219,6 +219,8 @@ export const getHistoryExpiry = () =>
   apiGet<HistoryExpirySetting>("/wallet/settings/history-expiry");
 export const setHistoryExpiry = (enabled: boolean) =>
   apiPut<HistoryExpirySetting>("/wallet/settings/history-expiry", { enabled });
+export const recoverNodeSync = () =>
+  apiPost<{ started: boolean }>("/wallet/settings/node/recover", { confirmed: true });
 export const getAutoLock = () => apiGet<AutoLockSetting>("/wallet/settings/auto-lock");
 export const setAutoLock = (minutes: AutoLockSetting["minutes"]) =>
   apiPut<AutoLockSetting>("/wallet/settings/auto-lock", { minutes });

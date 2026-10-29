@@ -28,6 +28,7 @@ import type { AsyncState, NotificationsState } from "../api/hooks";
 import {
   setHistoryExpiry as putHistoryExpiry,
   setAutoLock as putAutoLock,
+  recoverNodeSync,
   ApiError,
   enableTPM,
   disableTPM,
@@ -84,6 +85,85 @@ function walletTypeStatus(walletType: WalletType): string {
     case "hardware":
       return "Hardware wallet · On-device signing";
   }
+}
+
+function NodeRecoveryCard({ onStarted }: { onStarted: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleRecovery() {
+    if (!acknowledged || recovering) return;
+    setRecovering(true);
+    setError(null);
+    try {
+      await recoverNodeSync();
+      setStarted(true);
+      onStarted();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "An unexpected error occurred");
+    } finally {
+      setRecovering(false);
+    }
+  }
+
+  return (
+    <Card title="Node sync recovery">
+      <p>
+        The embedded node reported a sync failure. A clean retry removes only
+        this network&apos;s local blockchain sync data.
+      </p>
+      <p>
+        Your encrypted vault, wallet keys, wallets, settings, address book,
+        logs, and NFT cache are kept.
+      </p>
+
+      {started ? (
+        <p role="status" className="setting-restart-note">
+          Clean sync started.
+        </p>
+      ) : confirming ? (
+        <>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={acknowledged}
+              disabled={recovering}
+              onChange={(e) => setAcknowledged(e.target.checked)}
+            />{" "}
+            I understand that local blockchain sync data will be deleted and rebuilt.
+          </label>
+          <div className="row-actions">
+            <Button
+              onClick={() => void handleRecovery()}
+              disabled={!acknowledged || recovering}
+            >
+              {recovering ? "Starting clean sync…" : "Delete sync data and retry"}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={recovering}
+              onClick={() => {
+                setConfirming(false);
+                setAcknowledged(false);
+                setError(null);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </>
+      ) : (
+        <Button variant="ghost" onClick={() => setConfirming(true)}>
+          Start clean sync recovery
+        </Button>
+      )}
+
+      {error && <p role="alert" className="error-text">{error}</p>}
+    </Card>
+  );
 }
 
 // LeanStorageCard is the user-facing control for the lean-node (history-expiry)
@@ -772,6 +852,10 @@ function GeneralSettings({
       </Card>
 
       </div>
+
+      {status.data?.state === "error" && (
+        <NodeRecoveryCard onStarted={status.refresh} />
+      )}
       <LeanStorageCard />
 
       <AutoLockCard setting={autoLock} />

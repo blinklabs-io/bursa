@@ -22,7 +22,7 @@ Two platform verifiers ship in the signer:
 | Host proxy (vsock or socket forwarder) | - | everything: it can drop, delay, replay, or rewrite messages |
 | Signer process | caller authentication, per-key policy, Cardano operation validation, watermarks, signature verification | key custody |
 
-Because the proxy is untrusted, correctness rests on three checks the signer
+Because the proxy is untrusted, correctness rests on four checks the signer
 performs itself:
 
 1. The key inventory is accepted only when its attestation evidence verifies and
@@ -34,6 +34,9 @@ performs itself:
 3. Every signature is verified against the attested public key before it is
    returned or used (`SignTx`, `SignOpCert` and `SignCIP8` all verify). A
    signature from any other key is discarded.
+4. A backend configured with a profile requires a second signature over the
+   complete request and Cardano signature. This prevents a proxy from selecting
+   a different profile while replaying a valid signature from the same key.
 
 ### Authorization when the host proxy is untrusted
 
@@ -55,10 +58,11 @@ Anything the enclave does not enforce is only as strong as the host.
 
 The protocol version is `bursa-attested-signer/1`. The inventory response and
 both sign messages carry it, and a peer answering with another version is
-refused; the inventory request carries only the nonce. Messages are JSON; `[]byte` fields
-are base64.
+refused. The inventory request carries the nonce and optional profile. Messages
+are JSON; `[]byte` fields are base64.
 
-`POST /v1/inventory` takes `{"nonce": <32 bytes>}` and returns:
+`POST /v1/inventory` takes `{"nonce": <32 bytes>, "profile": <optional string>}`
+and returns:
 
 ```json
 {"version": "bursa-attested-signer/1",
@@ -79,16 +83,31 @@ a failed load leaves the backend serving no keys.
 
 ```json
 {"version": "bursa-attested-signer/1", "purpose": "opcert",
- "key_hash": "<56 hex>", "role": "pool", "nonce": "<32 bytes>", "payload": "<bytes>"}
+ "key_hash": "<56 hex>", "role": "pool", "nonce": "<32 bytes>",
+ "payload": "<bytes>", "profile": "<optional string>", "era": "<optional uint>"}
 ```
 
-and returns `{"version", "nonce", "signature"}` or `{"version", "nonce", "error"}`.
+and returns `{"version", "nonce", "signature", "binding_signature"}` or
+`{"version", "nonce", "error"}`. `binding_signature` is required when the
+backend has a profile and omitted for compatibility when it does not.
 
-| Purpose | Payload | Key role |
-|---------|---------|----------|
-| `tx-hash` | 32-byte transaction body hash | any |
-| `opcert` | 48-byte OCertSignable: KES vkey, issue counter, KES period | `pool` only |
-| `cip8` | COSE Sig_structure for CIP-8 data signing | any |
+| Purpose | Payload | Additional field | Key role |
+|---------|---------|------------------|----------|
+| `tx-body` | Exact encoded transaction body | Resolved `era` | any |
+| `tx-hash` | 32-byte transaction body hash (legacy) | - | any |
+| `opcert` | 48-byte OCertSignable: KES vkey, issue counter, KES period | - | `pool` only |
+| `cip8` | COSE Sig_structure for CIP-8 data signing | - | any |
+
+For `tx-body`, the workload evaluates the body, computes its Blake2b-256 hash,
+and signs that hash. Bursa independently extracts the original body bytes from
+the transaction, verifies the returned signature against their hash, and
+refuses a response for a body substituted by the proxy. It does not re-encode
+the body before sending or hashing it.
+
+The binding signature is Ed25519 over the SHA-256 digest of the request fields
+and Cardano signature. Each field is framed as its decimal byte length, `:`,
+then its bytes, in this order: version, purpose, key hash, role, nonce, payload,
+profile, decimal era, signature. Bursa verifies it with the requested key.
 
 The signer refuses a request whose payload shape or key role does not fit its
 purpose before contacting the enclave. KES header signing is not carried here:
@@ -112,6 +131,7 @@ backends:
   - name: "nitro"
     type: "nitro"
     address: "unix:///run/bursa/enclave.sock"   # host proxy to the enclave vsock
+    profile: "pool@mainnet"                     # optional fixed workload profile
     root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
     pcrs:
       0: "<96 hex: image measurement from the built EIF>"
@@ -149,6 +169,7 @@ backends:
   - name: "gcp-cs"
     type: "confidential-space"
     address: "https://workload.example.internal:8443"
+    profile: "pool@mainnet"                     # optional fixed workload profile
     audience: "https://signer.example.internal"
     image_digest: "sha256:<64 hex>"
     # jwks_url: defaults to Google's published token signing keys

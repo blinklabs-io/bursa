@@ -184,6 +184,7 @@ type SignerBackendConfig struct {
 	Audience      string                   `yaml:"audience"`       // confidential-space: audience the attestation token must carry
 	ImageDigest   string                   `yaml:"image_digest"`   // confidential-space: required container image digest (sha256:...)
 	JWKSURL       string                   `yaml:"jwks_url"`       // confidential-space: token signing keys (default: Google's published set)
+	Profile       string                   `yaml:"profile"`        // nitro, confidential-space: optional workload signing profile
 }
 
 // SignerBackendKeyConfig names a remote key and its Cardano key type. For vault

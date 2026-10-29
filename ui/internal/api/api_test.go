@@ -460,6 +460,9 @@ type fakeSettings struct {
 	externalHandles          bool
 	setExternalHandlesErr    error
 	setExternalHandlesCalled bool
+
+	recoverCalled bool
+	recoverErr    error
 }
 
 type fakeAutoLockTimer struct {
@@ -545,6 +548,11 @@ func (f *fakeSettings) SetExternalHandleLookup(enabled bool) error {
 	}
 	f.externalHandles = enabled
 	return nil
+}
+
+func (f *fakeSettings) RecoverNode() error {
+	f.recoverCalled = true
+	return f.recoverErr
 }
 
 // fakeContacts is an in-memory Contacts controller for handler tests. It
@@ -3040,6 +3048,54 @@ func TestPutHistoryExpiryPersistError(t *testing.T) {
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/history-expiry", body))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("PUT history-expiry with persist error = %d, want 500", rec.Code)
+	}
+}
+
+func TestRecoverNodeRequiresDeliberateConfirmation(t *testing.T) {
+	set := &fakeSettings{}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	for _, body := range []string{`{}`, `{"confirmed":false}`} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/settings/node/recover", strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("POST recovery with %s = %d, want 400", body, rec.Code)
+		}
+	}
+	if set.recoverCalled {
+		t.Fatal("RecoverNode called without confirmation")
+	}
+}
+
+func TestRecoverNodeStartsConfirmedRecovery(t *testing.T) {
+	set := &fakeSettings{}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/settings/node/recover", strings.NewReader(`{"confirmed":true}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST recovery = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !set.recoverCalled {
+		t.Fatal("RecoverNode was not called")
+	}
+}
+
+func TestRecoverNodeReportsLifecycleFailure(t *testing.T) {
+	set := &fakeSettings{recoverErr: errors.New("remove node sync data: permission denied")}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/settings/node/recover", strings.NewReader(`{"confirmed":true}`)))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("POST recovery failure = %d, want 500", rec.Code)
+	}
+}
+
+func TestRecoverNodeRejectsNonFailedNode(t *testing.T) {
+	set := &fakeSettings{recoverErr: supervisor.ErrRecoveryUnavailable}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/settings/node/recover", strings.NewReader(`{"confirmed":true}`)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("POST unavailable recovery = %d, want 409", rec.Code)
 	}
 }
 
