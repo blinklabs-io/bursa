@@ -16,6 +16,7 @@ package txbuilder
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -353,6 +354,16 @@ func TestBuildRoundTripsThroughSign(t *testing.T) {
 	signed, err := bursa.SignTransaction(raw, []*bursa.LoadedKey{loaded})
 	require.NoError(t, err)
 	require.NotEmpty(t, signed)
+	unsignedTx, err := conway.NewConwayTransactionFromCbor(built.TxCBOR)
+	require.NoError(t, err)
+	signedTx, err := conway.NewConwayTransactionFromCbor(signed)
+	require.NoError(t, err)
+	require.Equal(t, unsignedTx.Hash(), signedTx.Hash())
+	bodyHash := signedTx.Hash().Bytes()
+	require.NotEmpty(t, signedTx.WitnessSet.VkeyWitnesses.Items())
+	for _, w := range signedTx.WitnessSet.VkeyWitnesses.Items() {
+		require.True(t, ed25519.Verify(ed25519.PublicKey(w.Vkey), bodyHash, w.Signature))
+	}
 	_ = lk
 }
 
@@ -453,7 +464,7 @@ func TestBuildSkipsAssetsUTxOs(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	adaUTxO := MakeUTxO(addr, "9999999999999999999999999999999999999999999999999999999999999999", 0, 10_000_000)
-	assetUTxO := makeAssetUTxO(addr, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1, 5_000_000)
+	assetUTxO := makeAssetUTxO(addr, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1, 20_000_000)
 	chain.UtxosMap[addr] = []UTxO{assetUTxO, adaUTxO}
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{

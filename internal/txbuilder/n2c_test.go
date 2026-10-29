@@ -30,6 +30,7 @@ func TestNetworkMagic(t *testing.T) {
 		{"preprod", 1},
 		{"preview", 2},
 		{"mainnet", 764824073},
+		{"sanchonet", 4},
 		{"42", 42},
 	} {
 		got, err := networkMagic(tc.network)
