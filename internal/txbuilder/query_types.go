@@ -15,13 +15,13 @@
 package txbuilder
 
 import (
-	"math/big"
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
 // PoolQueryResult is the result of querying pool information
 type PoolQueryResult struct {
 	Registered    bool        `json:"registered"`
-	Params        *PoolParams `json:"params,omitempty"`
+	Params        *PoolParams `json:"params"`
 	PendingParams *PoolParams `json:"pending_params,omitempty"`
 	RetiringEpoch *uint64     `json:"retiring_epoch,omitempty"`
 	Deposit       uint64      `json:"deposit"`
@@ -32,16 +32,16 @@ type PoolQueryResult struct {
 
 // PoolParams contains stake pool parameters
 type PoolParams struct {
-	Operator      string        `json:"operator"`
-	VrfKeyHash    string        `json:"vrf_key_hash"`
-	Pledge        uint64        `json:"pledge"`
-	Cost          uint64        `json:"cost"`
-	Margin        string        `json:"margin"`
-	RewardAccount string        `json:"reward_account"`
-	Owners        []string      `json:"owners"`
-	Relays        []interface{} `json:"relays"`
-	MetadataURL   string        `json:"metadata_url,omitempty"`
-	MetadataHash  string        `json:"metadata_hash,omitempty"`
+	Operator      string              `json:"operator"`
+	VrfKeyHash    string              `json:"vrf_key_hash"`
+	Pledge        uint64              `json:"pledge"`
+	Cost          uint64              `json:"cost"`
+	Margin        string              `json:"margin"`
+	RewardAccount string              `json:"reward_account"`
+	Owners        []string            `json:"owners"`
+	Relays        []lcommon.PoolRelay `json:"relays"`
+	MetadataURL   string              `json:"metadata_url,omitempty"`
+	MetadataHash  string              `json:"metadata_hash,omitempty"`
 }
 
 // OpCertInfo contains operational certificate information
@@ -82,22 +82,4 @@ type TipQueryResult struct {
 	Slot        uint64 `json:"slot"`
 	BlockNumber int64  `json:"block_number"`
 	KESPeriod   uint64 `json:"kes_period"`
-}
-
-// Helper to format margin as decimal string
-func formatMarginAsDecimalString(marginNum, marginDenom int64) string {
-	if marginDenom == 0 {
-		return "0"
-	}
-	r := new(big.Rat).SetFrac64(marginNum, marginDenom)
-	// Use string representation - Rat.String() gives "a/b" format, we need decimal
-	// For JSON we need decimal string
-	if r.Sign() == 0 {
-		return "0"
-	}
-	// Try to format as decimal
-	f := new(big.Float).SetRat(r)
-	// Convert to string without too many decimals
-	s := f.Text('f', -1)
-	return s
 }
