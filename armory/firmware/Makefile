@@ -13,13 +13,34 @@ TESTNET ?= 0
 # account, the opcert floor and reset, and no signing. The default image
 # signs and serves no provisioning endpoint.
 PROVISION ?= 0
+# NETWORK fixes the one network whose profiles the image provisions and
+# serves: testnet (network id 0, the default, every testnet) or mainnet
+# (network id 1). A mainnet image also needs CHAIN, the one chain whose
+# profiles ("name@<chain>-mainnet") it serves: cardano or prime.
+NETWORK ?= testnet
+CHAIN ?=
 
 # ramStart (imx6ul package) + 0x10000
 TEXT_START := 0x80010000
 
 GOENV := GOOS=tamago GOOSPKG=github.com/usbarmory/tamago GOARM=7 GOARCH=arm
-GOFLAGS := -trimpath -ldflags "-s -w -T $(TEXT_START) -R 0x1000"
+LDFLAGS := -s -w -T $(TEXT_START) -R 0x1000
+GOFLAGS = -trimpath -ldflags "$(LDFLAGS)"
 TAGS :=
+ifeq ($(NETWORK),mainnet)
+ifeq ($(TESTNET),1)
+$(error TESTNET=1 adds bring-up key tests and an unfiltered /sign endpoint; a mainnet image must not)
+endif
+ifeq ($(filter $(CHAIN),cardano prime),)
+$(error NETWORK=mainnet needs CHAIN=cardano or CHAIN=prime)
+endif
+TAGS += mainnet
+LDFLAGS += -X main.chain=$(CHAIN)-mainnet
+else ifneq ($(NETWORK),testnet)
+$(error NETWORK must be testnet or mainnet)
+else ifneq ($(CHAIN),)
+$(error CHAIN applies only to NETWORK=mainnet; a testnet image serves every testnet)
+endif
 ifeq ($(TESTNET),1)
 TAGS += testnet
 endif
@@ -30,13 +51,16 @@ endif
 TAGS += provision
 APP := armory-provision
 endif
+ifeq ($(NETWORK),mainnet)
+APP := $(APP)-$(CHAIN)-mainnet
+endif
 ifneq ($(strip $(TAGS)),)
 GOFLAGS += -tags $(subst $(space),$(comma),$(strip $(TAGS)))
 endif
 
 # FORCE runs the Go build every time: the targets do not depend on the
-# build flags, so a TESTNET or PROVISION change would leave an old image in
-# place. The Go build cache keeps an unchanged build fast.
+# build flags, so a TESTNET, PROVISION or NETWORK change would leave an old
+# image in place. The Go build cache keeps an unchanged build fast.
 .PHONY: all imx clean FORCE
 
 all: $(APP)
@@ -62,4 +86,4 @@ $(APP).imx: $(APP).bin $(APP).dcd
 	dd if=$(APP) of=$(APP).imx bs=1 count=4 skip=24 seek=4 conv=notrunc
 
 clean:
-	rm -f $(foreach a,armory armory-provision,$(a) $(a).bin $(a).dcd $(a).imx)
+	rm -f $(foreach a,armory armory-provision $(foreach c,cardano prime,armory-$(c)-mainnet armory-provision-$(c)-mainnet),$(a) $(a).bin $(a).dcd $(a).imx)
