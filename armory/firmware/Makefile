@@ -24,6 +24,9 @@ ifeq ($(TESTNET),1)
 TAGS += testnet
 endif
 ifeq ($(PROVISION),1)
+ifeq ($(TESTNET),1)
+$(error TESTNET=1 adds an unfiltered /sign endpoint; the provisioning image must not sign)
+endif
 TAGS += provision
 APP := armory-provision
 endif
@@ -31,13 +34,16 @@ ifneq ($(strip $(TAGS)),)
 GOFLAGS += -tags $(subst $(space),$(comma),$(strip $(TAGS)))
 endif
 
-.PHONY: all imx clean
+# FORCE runs the Go build every time: the targets do not depend on the
+# build flags, so a TESTNET or PROVISION change would leave an old image in
+# place. The Go build cache keeps an unchanged build fast.
+.PHONY: all imx clean FORCE
 
 all: $(APP)
 
 imx: $(APP).imx
 
-$(APP): *.go ../se050/*.go ../profile/*.go ../policy/*.go ../device/*.go go.mod
+$(APP): FORCE
 	$(GOENV) $(TAMAGO) build $(GOFLAGS) -o $(APP)
 
 $(APP).dcd: TAMAGO_PKG=$(shell $(GOENV) $(TAMAGO) list -m -f '{{.Dir}}' github.com/usbarmory/tamago)
@@ -56,4 +62,4 @@ $(APP).imx: $(APP).bin $(APP).dcd
 	dd if=$(APP) of=$(APP).imx bs=1 count=4 skip=24 seek=4 conv=notrunc
 
 clean:
-	rm -f $(APP) $(APP).bin $(APP).dcd $(APP).imx
+	rm -f $(foreach a,armory armory-provision,$(a) $(a).bin $(a).dcd $(a).imx)
