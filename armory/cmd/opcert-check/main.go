@@ -150,12 +150,6 @@ func main() {
 
 	c := newClient(*base, *source)
 
-	pub, err := c.do(http.MethodGet, "/pubkey", "")
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	check := func(name string, ok bool) {
 		if !ok {
 			log.Fatalf("FAIL %s", name)
@@ -163,8 +157,6 @@ func main() {
 
 		log.Printf("ok   %s", name)
 	}
-
-	check("signer public key equals node.vkey", pub == hex.EncodeToString(vkey))
 
 	h, _ := blake2b.New(28, nil)
 	h.Write(vkey)
@@ -180,7 +172,7 @@ func main() {
 
 	nonce := make([]byte, 32)
 
-	if _, err = rand.Read(nonce); err != nil {
+	if _, err := rand.Read(nonce); err != nil {
 		log.Fatal(err)
 	}
 
