@@ -372,7 +372,7 @@ func TestSignTxBody(t *testing.T) {
 	} {
 		r := sign(t, s, SignRequest{
 			Purpose: "tx-body", KeyHash: hashHex(c.pub), Role: c.role,
-			Nonce: []byte(c.role), Payload: c.body, Profile: "otg@preview", Era: ledger.TxTypeConway,
+			Nonce: []byte(c.role), Payload: c.body, Profile: "otg@preview", Era: conwayEra(),
 		})
 
 		if r.Error != "" {
@@ -391,11 +391,11 @@ func TestSignTxBody(t *testing.T) {
 
 	for name, req := range map[string]SignRequest{
 		"policy refuses": {Purpose: "tx-body", KeyHash: hashHex(cold), Role: "pool",
-			Payload: certBody(retirement([28]byte{1})), Era: ledger.TxTypeConway},
+			Payload: certBody(retirement([28]byte{1})), Era: conwayEra()},
 		"key hash of another role": {Purpose: "tx-body", KeyHash: hashHex(cold), Role: "stake",
-			Payload: body, Era: ledger.TxTypeConway},
+			Payload: body, Era: conwayEra()},
 		"payment role": {Purpose: "tx-body", KeyHash: hashHex(cold), Role: "payment",
-			Payload: body, Era: ledger.TxTypeConway},
+			Payload: body, Era: conwayEra()},
 		"no era":  {Purpose: "tx-body", KeyHash: hashHex(cold), Role: "pool", Payload: body},
 		"tx-hash": {Purpose: "tx-hash", KeyHash: hashHex(cold), Role: "pool", Payload: hash[:]},
 		"opcert":  {Purpose: "opcert", KeyHash: hashHex(cold), Role: "pool", Payload: make([]byte, 48)},
@@ -447,7 +447,7 @@ func TestSignRefusesReplayedNonce(t *testing.T) {
 	req := SignRequest{
 		Purpose: "tx-body", KeyHash: hashHex(cold), Role: "pool",
 		Nonce: nonce(9), Payload: certBody(retirement(keyHash(cold))),
-		Profile: "otg@preview", Era: ledger.TxTypeConway,
+		Profile: "otg@preview", Era: conwayEra(),
 	}
 
 	if r := sign(t, s, req); r.Error != "" {
@@ -653,5 +653,86 @@ func TestChipErrorsReportedAsDeviceErrors(t *testing.T) {
 
 	if code == http.StatusOK || !strings.Contains(string(body), "device error") {
 		t.Fatalf("got %d %q, want a device error", code, body)
+	}
+}
+
+func conwayEra() *uint {
+	era := uint(ledger.TxTypeConway)
+	return &era
+}
+
+// TestResponseBindingMatchesBursa checks ResponseBinding against vectors from
+// Bursa's backend.AttestedResponseBinding, with and without an era.
+func TestResponseBindingMatchesBursa(t *testing.T) {
+	sig := make([]byte, 64)
+	for i := range sig {
+		sig[i] = byte(i)
+	}
+
+	era := uint(6)
+	req := SignRequest{
+		Version: Protocol, Purpose: "tx-body", KeyHash: "ab12", Role: "pool",
+		Nonce: []byte{1, 2, 3}, Payload: []byte{0xa0, 0xff}, Profile: "otg@preview", Era: &era,
+	}
+
+	if got := hex.EncodeToString(ResponseBinding(req, sig)); got != "0c01c305ffe8ff31572a4a84655dff50ab2e79354ce185b2f55166451b21e74e" {
+		t.Errorf("with era: %s", got)
+	}
+
+	req.Era, req.Purpose = nil, "opcert-next"
+
+	if got := hex.EncodeToString(ResponseBinding(req, sig)); got != "c7bb01b9f9a9ddcc251b13cda8f4c25f2913c290157b39d8565543992fd63e93" {
+		t.Errorf("without era: %s", got)
+	}
+}
+
+// TestSignResponseBindsRequest checks every signature comes with a binding
+// signature from the same key over the complete request, so a proxy cannot
+// pair a response with another nonce or profile.
+func TestSignResponseBindsRequest(t *testing.T) {
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	pool := keyHash(cold)
+
+	for _, req := range []SignRequest{
+		{Purpose: "tx-body", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(1),
+			Payload: certBody(retirement(pool)), Profile: "otg@preview", Era: conwayEra()},
+		{Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(2),
+			Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 3, 1100), Profile: "otg@preview"},
+	} {
+		r := sign(t, s, req)
+		if r.Error != "" {
+			t.Fatalf("%s refused: %s", req.Purpose, r.Error)
+		}
+
+		req.Version = Protocol
+
+		if !ed25519.Verify(cold, ResponseBinding(req, r.Signature), r.BindingSignature) {
+			t.Fatalf("%s: binding signature does not cover the request", req.Purpose)
+		}
+
+		other := req
+		other.Profile = "other@preview"
+
+		if ed25519.Verify(cold, ResponseBinding(other, r.Signature), r.BindingSignature) {
+			t.Errorf("%s: binding signature accepts another profile", req.Purpose)
+		}
+
+		other = req
+		other.Nonce = nonce(9)
+
+		if ed25519.Verify(cold, ResponseBinding(other, r.Signature), r.BindingSignature) {
+			t.Errorf("%s: binding signature accepts another nonce", req.Purpose)
+		}
+	}
+
+	r := sign(t, s, SignRequest{
+		Purpose: "tx-body", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(3),
+		Payload: certBody(retirement([28]byte{1})), Profile: "otg@preview", Era: conwayEra(),
+	})
+
+	if r.Error == "" || r.BindingSignature != nil {
+		t.Fatalf("refusal carries a binding signature: %+v", r)
 	}
 }

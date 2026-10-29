@@ -190,7 +190,7 @@ func main() {
 	payload = binary.BigEndian.AppendUint64(payload, cert.Body.IssueNumber-1)
 	payload = binary.BigEndian.AppendUint64(payload, cert.Body.KESPeriod)
 
-	req, _ := json.Marshal(device.SignRequest{
+	sr := device.SignRequest{
 		Version: device.Protocol,
 		Purpose: "opcert-next",
 		KeyHash: *poolID,
@@ -198,7 +198,11 @@ func main() {
 		Nonce:   nonce,
 		Payload: payload,
 		Profile: *profileName,
-	})
+	}
+	req, err := json.Marshal(sr)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	out, err := c.do(http.MethodPost, "/v1/sign", string(req))
 
@@ -221,4 +225,6 @@ func main() {
 		resp.IssueCounter != nil && *resp.IssueCounter == cert.Body.IssueNumber)
 	check(fmt.Sprintf("device reproduces node.cert signature (issue %d, KES period %d)",
 		cert.Body.IssueNumber, cert.Body.KESPeriod), bytes.Equal(resp.Signature, cert.Body.ColdSig))
+	check("binding signature covers the request under node.vkey",
+		ed25519.Verify(vkey, device.ResponseBinding(sr, resp.Signature), resp.BindingSignature))
 }

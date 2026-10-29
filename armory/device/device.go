@@ -87,16 +87,18 @@ type SignRequest struct {
 	Nonce   []byte `json:"nonce"`
 	Payload []byte `json:"payload"`
 	Profile string `json:"profile"`
-	Era     uint   `json:"era,omitempty"`
+	Era     *uint  `json:"era,omitempty"`
 }
 
 // SignResponse is Bursa's AttestedResponse with the opcert-next counter.
+// BindingSignature is the selected key's signature over ResponseBinding.
 type SignResponse struct {
-	Version      string  `json:"version"`
-	Nonce        []byte  `json:"nonce"`
-	Signature    []byte  `json:"signature,omitempty"`
-	IssueCounter *uint64 `json:"issue_counter,omitempty"`
-	Error        string  `json:"error,omitempty"`
+	Version          string  `json:"version"`
+	Nonce            []byte  `json:"nonce"`
+	Signature        []byte  `json:"signature,omitempty"`
+	BindingSignature []byte  `json:"binding_signature,omitempty"`
+	IssueCounter     *uint64 `json:"issue_counter,omitempty"`
+	Error            string  `json:"error,omitempty"`
 }
 
 // ProvisionRequest creates a profile. ChainCounter, when set, is the pool's
@@ -330,11 +332,20 @@ func (s *Service) inventory(req InventoryRequest) (Inventory, error) {
 }
 
 // sign answers every well-formed request with a SignResponse; refusals are
-// carried in its Error field so the nonce is still echoed.
+// carried in its Error field so the nonce is still echoed. A signature is
+// returned only with the same key's signature over the complete request.
 func (s *Service) sign(req SignRequest) (SignResponse, error) {
 	resp := SignResponse{Version: Protocol, Nonce: req.Nonce}
 
-	sig, issue, err := s.signRequest(req)
+	id, sig, issue, err := s.signRequest(req)
+	if err == nil {
+		resp.BindingSignature, err = s.chip.SignEd25519(id, ResponseBinding(req, sig))
+		if err != nil {
+			s.logf("sign binding: %v", err)
+			err = errDevice
+		}
+	}
+
 	if err != nil {
 		s.logf("sign %q %q %q: refused: %v", clip(req.Purpose), clip(req.Role), clip(req.Profile), err)
 		resp.Error = err.Error()
@@ -348,28 +359,29 @@ func (s *Service) sign(req SignRequest) (SignResponse, error) {
 	return resp, nil
 }
 
-func (s *Service) signRequest(req SignRequest) ([]byte, *uint64, error) {
+// signRequest returns the selected key's object ID with its signature.
+func (s *Service) signRequest(req SignRequest) (uint32, []byte, *uint64, error) {
 	if req.Version != Protocol {
-		return nil, nil, errors.New("unsupported protocol version")
+		return 0, nil, nil, errors.New("unsupported protocol version")
 	}
 
 	if len(req.Nonce) == 0 || len(req.Nonce) > maxNonce {
-		return nil, nil, errors.New("invalid nonce")
+		return 0, nil, nil, errors.New("invalid nonce")
 	}
 
 	if !s.nonces.add(req.Nonce) {
-		return nil, nil, errors.New("nonce replayed")
+		return 0, nil, nil, errors.New("nonce replayed")
 	}
 
 	p, ok := s.profiles[req.Profile]
 
 	if !ok {
-		return nil, nil, errUnknown
+		return 0, nil, nil, errUnknown
 	}
 
 	k, err := s.keys(p)
 	if err != nil {
-		return nil, nil, err
+		return 0, nil, nil, err
 	}
 
 	var (
@@ -384,50 +396,56 @@ func (s *Service) signRequest(req SignRequest) ([]byte, *uint64, error) {
 	case "stake":
 		role, id, pub = policy.RoleOwner, p.OwnerKeyID(), k.owner
 	default:
-		return nil, nil, errors.New("unknown role")
+		return 0, nil, nil, errors.New("unknown role")
 	}
 
 	h := keyHash(pub)
 
 	if want, err := hex.DecodeString(req.KeyHash); err != nil || !bytes.Equal(want, h[:]) {
-		return nil, nil, errors.New("key hash does not match the profile key for this role")
+		return 0, nil, nil, errors.New("key hash does not match the profile key for this role")
 	}
 
 	switch req.Purpose {
 	case "tx-body":
-		return s.signTxBody(p, k, role, id, req)
+		sig, err := s.signTxBody(p, k, role, id, req)
+		return id, sig, nil, err
 	case "opcert-next":
 		if role != policy.RoleCold {
-			return nil, nil, errors.New("opcert-next requires the pool key")
+			return 0, nil, nil, errors.New("opcert-next requires the pool key")
 		}
 
-		return s.signOpCertNext(p, req.Payload)
+		sig, issue, err := s.signOpCertNext(p, req.Payload)
+		return id, sig, issue, err
 	}
 
-	return nil, nil, errUnsupported
+	return 0, nil, nil, errUnsupported
 }
 
-func (s *Service) signTxBody(p profile.Profile, k profileKeys, role policy.Role, id uint32, req SignRequest) ([]byte, *uint64, error) {
+func (s *Service) signTxBody(p profile.Profile, k profileKeys, role policy.Role, id uint32, req SignRequest) ([]byte, error) {
 	if len(req.Payload) == 0 || len(req.Payload) > maxTxBody {
-		return nil, nil, errors.New("invalid body size")
+		return nil, errors.New("invalid body size")
+	}
+
+	if req.Era == nil {
+		return nil, errors.New("tx-body requires an era")
 	}
 
 	keys := policy.Keys{Pool: keyHash(k.cold), Owner: keyHash(k.owner)}
 
-	d, err := policy.Evaluate(p, keys, role, req.Era, req.Payload)
+	d, err := policy.Evaluate(p, keys, role, *req.Era, req.Payload)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	sig, err := s.chip.SignEd25519(id, d.BodyHash[:])
 	if err != nil {
 		s.logf("sign: %v", err)
-		return nil, nil, errDevice
+		return nil, errDevice
 	}
 
 	s.logf("tx-body %q %s body %x: %s", p.Name, req.Role, d.BodyHash, d.Summary)
 
-	return sig, nil, nil
+	return sig, nil
 }
 
 func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *uint64, error) {
