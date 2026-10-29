@@ -963,8 +963,14 @@ func registerAPIHandlers(
 	protected := func(next http.Handler) http.Handler {
 		return protectAPIHandler(auth, next)
 	}
-	mux.Handle("/api/wallet/create", protected(withLegacyStore(store, http.HandlerFunc(handleWalletCreate))))
-	mux.Handle("/api/wallet/restore", protected(withLegacyStore(store, http.HandlerFunc(handleWalletRestore))))
+	walletAccess := func(next http.Handler) http.Handler {
+		if walletStorageConfigured(cfg) {
+			return withLegacyStore(store, protectWalletStorageHandler(auth, cfg.Api.JWTAdminSubjects, next))
+		}
+		return protected(withLegacyStore(store, next))
+	}
+	mux.Handle("/api/wallet/create", walletAccess(http.HandlerFunc(handleWalletCreate)))
+	mux.Handle("/api/wallet/restore", walletAccess(http.HandlerFunc(handleWalletRestore)))
 
 	mux.HandleFunc("/api/script/create", handleScriptCreate)
 	mux.Handle("/api/script/validate", boundedScriptValidation(http.HandlerFunc(handleScriptValidate)))
@@ -984,13 +990,10 @@ func registerAPIHandlers(
 	mux.HandleFunc("/api/sign/verify", handleVerifyData)
 
 	if walletStorageConfigured(cfg) {
-		walletStorage := func(next http.Handler) http.Handler {
-			return withLegacyStore(store, protectWalletStorageHandler(auth, cfg.Api.JWTAdminSubjects, next))
-		}
-		mux.Handle("/api/wallet/list", walletStorage(http.HandlerFunc(handleWalletList)))
-		mux.Handle("/api/wallet/get", walletStorage(http.HandlerFunc(handleWalletGet)))
-		mux.Handle("/api/wallet/update", walletStorage(http.HandlerFunc(handleWalletUpdate)))
-		mux.Handle("/api/wallet/delete", walletStorage(http.HandlerFunc(handleWalletDelete)))
+		mux.Handle("/api/wallet/list", walletAccess(http.HandlerFunc(handleWalletList)))
+		mux.Handle("/api/wallet/get", walletAccess(http.HandlerFunc(handleWalletGet)))
+		mux.Handle("/api/wallet/update", walletAccess(http.HandlerFunc(handleWalletUpdate)))
+		mux.Handle("/api/wallet/delete", walletAccess(http.HandlerFunc(handleWalletDelete)))
 	}
 }
 
@@ -1264,9 +1267,11 @@ func handleHealthcheck(w http.ResponseWriter, r *http.Request) {
 // handleWalletCreate godoc
 //
 //	@Summary		Create a wallet
-//	@Description	Create a wallet and return details
+//	@Description	Create a wallet and return details. When persistent storage is configured, requires an authenticated wallet storage administrator.
 //	@Produce		json
 //	@Success		200	{object}	bursa.Wallet	"Ok"
+//	@Failure		401	{object}	ErrorResponse	"Authentication required"
+//	@Failure		403	{object}	ErrorResponse	"Wallet storage administrator access required"
 //	@Security		BearerAuth
 //	@Router			/api/wallet/create [post]
 func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
@@ -1344,12 +1349,14 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 // handleWalletRestore handles the wallet restoration request.
 //
 //	@Summary		Restore a wallet using a mnemonic seed phrase
-//	@Description	Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details.
+//	@Description	Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details. When persistent storage is configured, requires an authenticated wallet storage administrator.
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WalletRestoreRequest	true	"Wallet Restore Request"
 //	@Success		200		{object}	bursa.Wallet			"Wallet successfully restored"
 //	@Failure		400		{object}	ErrorResponse			"Invalid request"
+//	@Failure		401		{object}	ErrorResponse			"Authentication required"
+//	@Failure		403		{object}	ErrorResponse			"Wallet storage administrator access required"
 //	@Failure		500		{object}	ErrorResponse			"Internal server error"
 //	@Security		BearerAuth
 //	@Router			/api/wallet/restore [post]

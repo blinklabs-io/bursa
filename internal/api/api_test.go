@@ -44,6 +44,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/config"
 	signerapi "github.com/blinklabs-io/bursa/internal/signer/api"
 	"github.com/blinklabs-io/bursa/internal/storage"
+	bip39 "github.com/blinklabs-io/go-bip39"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
@@ -127,7 +128,14 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).SignedString([]byte(secret))
 	require.NoError(t, err)
-	client := &http.Client{Timeout: 5 * time.Second}
+	// The client may dial a spare connection it never sends a request on.
+	// The server counts a connection that has not yet sent a request as busy
+	// for five seconds, and Start would not return until then. A dedicated
+	// connection per request leaves nothing for the client to dial speculatively.
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
 	baseURL := "http://" + apiListener.Addr().String()
 	request := func(method, path, body string) *http.Response {
 		t.Helper()
@@ -302,39 +310,68 @@ func TestStartStopsServersOnContextCancellation(t *testing.T) {
 	}
 }
 
-// Mock JSON data for successful wallet restoration
-var mockWalletResponseJSON = `{
-  "mnemonic": "depth kitchen crystal history rabbit brief harbor palace tent frog city charge inflict tiger negative young furnace solid august educate bounce canal someone erode",
-  "payment_address": "addr1qxwqkfd3qz5pdwmemtv2llmetegdyku4ffxuldjcfrs05nfjtw33ktf3j6amgxsgnj9u3fa5nrle79nv2g24npnth0esk2dy7q",
-  "stake_address": "stake1uye9hgcm95cedwa5rgyfez7g576f3lulzek9y92ese4mhucu439t0",
-  "payment_vkey": {
-      "type": "PaymentVerificationKeyShelley_ed25519",
-      "description": "Payment Verification Key",
-      "cborHex": "582040c99562052dc67d0e265bf183d2e376905972346a11eec2dbb714600bb28911"
-  },
-  "payment_skey": {
-      "type": "PaymentExtendedSigningKeyShelley_ed25519_bip32",
-      "description": "Payment Signing Key",
-      "cborHex": "5880d8f05d500419f363eb81d5ed832f7264b24cb529e6e2cb643a495e82c3aa6c4203089cdb6ed0f2d0db817b5a90e9f5b689a6e4da1f1c2157b463dd6690bee72840c99562052dc67d0e265bf183d2e376905972346a11eec2dbb714600bb28911c938975e7bec39ea8e57613558571b72eb4f399ab7967e985174a23c6e767840"
-  },
-  "stake_vkey": {
-      "type": "StakeVerificationKeyShelley_ed25519",
-      "description": "Stake Verification Key",
-      "cborHex": "58202a786a251854a5f459a856e7ae8f9289be9a3a7a1bf421e35bfaab815868e0fd"
-  },
-  "stake_skey": {
-      "type": "StakeExtendedSigningKeyShelley_ed25519_bip32",
-      "description": "Stake Signing Key",
-      "cborHex": "5880b0a9a8bcddc391c2cc79dbbac792e21f21fa8a3572e8591235bdc802c9aa6c4210eee620765fb6f569ab6b2916001cdd6d289067b022847d62ea19160463bcf72a786a251854a5f459a856e7ae8f9289be9a3a7a1bf421e35bfaab815868e0fd258df1a6eb6b51f6769afcdf4634594b13dba6433ec3670ea9ea742a09e8711e"
-  }
-}`
+func deterministicAPITestMnemonic(t *testing.T) string {
+	t.Helper()
+	entropy := make([]byte, 32)
+	for i := range entropy {
+		entropy[i] = byte(i)
+	}
+	mnemonic, err := bip39.NewMnemonic(entropy)
+	require.NoError(t, err)
+	return mnemonic
+}
+
+func mockWalletResponseJSON(t *testing.T) []byte {
+	t.Helper()
+	wallet, err := bursa.NewWallet(deterministicAPITestMnemonic(t))
+	require.NoError(t, err)
+	response := struct {
+		Mnemonic       string        `json:"mnemonic"`
+		PaymentAddress string        `json:"payment_address"`
+		StakeAddress   string        `json:"stake_address"`
+		PaymentVKey    bursa.KeyFile `json:"payment_vkey"`
+		PaymentSKey    bursa.KeyFile `json:"payment_skey"`
+		StakeVKey      bursa.KeyFile `json:"stake_vkey"`
+		StakeSKey      bursa.KeyFile `json:"stake_skey"`
+	}{
+		Mnemonic:       wallet.Mnemonic,
+		PaymentAddress: wallet.PaymentAddress,
+		StakeAddress:   wallet.StakeAddress,
+		PaymentVKey:    wallet.PaymentVKey,
+		PaymentSKey:    wallet.PaymentExtendedSKey,
+		StakeVKey:      wallet.StakeVKey,
+		StakeSKey:      wallet.StakeExtendedSKey,
+	}
+	data, err := json.Marshal(response)
+	require.NoError(t, err)
+	return data
+}
 
 type fakeLegacyWalletStore struct {
-	listErr       error
-	wallets       map[string]*bursa.Wallet
-	descriptions  map[string]string
-	updatedWallet string
-	deletedWallet string
+	listErr        error
+	wallets        map[string]*bursa.Wallet
+	descriptions   map[string]string
+	createdWallets int
+	updatedWallet  string
+	deletedWallet  string
+}
+
+func (f *fakeLegacyWalletStore) Create(
+	_ context.Context,
+	name string,
+	wallet *bursa.Wallet,
+	description string,
+) error {
+	if f.wallets == nil {
+		f.wallets = make(map[string]*bursa.Wallet)
+	}
+	if f.descriptions == nil {
+		f.descriptions = make(map[string]string)
+	}
+	f.wallets[name] = wallet
+	f.descriptions[name] = description
+	f.createdWallets++
+	return nil
 }
 
 func (f *fakeLegacyWalletStore) List(context.Context) ([]string, error) {
@@ -739,11 +776,71 @@ func TestRegisterAPIHandlersProtectsSensitiveRoutes(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/wallet/restore", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	mux.ServeHTTP(w, req)
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 
 	public := httptest.NewRecorder()
 	mux.ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/healthcheck", nil))
 	assert.Equal(t, http.StatusOK, public.Code)
+}
+
+func TestRegisterAPIHandlersRequiresStorageAdminToPersistWallets(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	mnemonic, err := bursa.GenerateMnemonic()
+	require.NoError(t, err)
+	restoreBody, err := json.Marshal(WalletRestoreRequest{Mnemonic: mnemonic})
+	require.NoError(t, err)
+	cfg := config.GetConfig()
+	original := *cfg
+	t.Cleanup(func() { *cfg = original })
+	*cfg = config.Config{
+		Network: "preprod",
+		Storage: config.StorageConfig{Backend: "aws"},
+		Api:     config.ApiConfig{JWTAdminSubjects: []string{"wallet-admin"}},
+	}
+	store := &fakeLegacyWalletStore{}
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, cfg, signerapi.HS256Validator([]byte(secret), "", ""), store)
+	nonAdminToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "wallet-user",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	require.NoError(t, err)
+
+	for _, request := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "create", path: "/api/wallet/create"},
+		{name: "restore", path: "/api/wallet/restore", body: string(restoreBody)},
+	} {
+		t.Run(request.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, request.path, strings.NewReader(request.body))
+			req.Header.Set("Authorization", "Bearer "+nonAdminToken)
+			mux.ServeHTTP(recorder, req)
+
+			assert.Equal(t, http.StatusForbidden, recorder.Code)
+		})
+	}
+	assert.Zero(t, store.createdWallets)
+}
+
+func TestRegisterAPIHandlersKeepsEphemeralWalletRestoreAvailable(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, &config.Config{}, signerapi.HS256Validator([]byte(secret), "", ""))
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "wallet-user",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/wallet/restore", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	mux.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
 func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {
@@ -1151,6 +1248,8 @@ func TestMetricsRegistered(t *testing.T) {
 func TestRestoreWallet(t *testing.T) {
 	t.Run("Successful Wallet Restoration", func(t *testing.T) {
 		t.Parallel()
+		mockResponse := mockWalletResponseJSON(t)
+		mnemonic := deterministicAPITestMnemonic(t)
 
 		// Create a mock server
 		server := httptest.NewServer(
@@ -1164,7 +1263,7 @@ func TestRestoreWallet(t *testing.T) {
 
 					// Respond with the mock wallet JSON data
 					w.WriteHeader(http.StatusOK)
-					_, err := w.Write([]byte(mockWalletResponseJSON))
+					_, err := w.Write(mockResponse)
 					if err != nil {
 						t.Fatalf("Failed to write response: %v", err)
 					}
@@ -1178,7 +1277,7 @@ func TestRestoreWallet(t *testing.T) {
 
 		// Prepare the request body
 		requestBody, _ := json.Marshal(WalletRestoreRequest{
-			Mnemonic: "depth kitchen crystal history rabbit brief harbor palace tent frog city charge inflict tiger negative young furnace solid august educate bounce canal someone erode",
+			Mnemonic: mnemonic,
 		})
 
 		resp, err := http.Post(
@@ -1198,7 +1297,7 @@ func TestRestoreWallet(t *testing.T) {
 
 		var expectedResponse, actualResponse map[string]any
 
-		if err := json.Unmarshal([]byte(mockWalletResponseJSON), &expectedResponse); err != nil {
+		if err := json.Unmarshal(mockResponse, &expectedResponse); err != nil {
 			t.Fatalf("Failed to unmarshal expected response: %v", err)
 		}
 		if err := json.Unmarshal(responseBody, &actualResponse); err != nil {
@@ -1682,7 +1781,8 @@ func TestHandleScriptCreate(t *testing.T) {
 	assert.Equal(t, "NativeScript", response.Type)
 	scriptType, ok := response.Script["type"]
 	assert.True(t, ok)
-	assert.Equal(t, "nOf", scriptType)
+	assert.Equal(t, "atLeast", scriptType)
+	assert.Equal(t, float64(2), response.Script["required"])
 	assert.NotEmpty(t, response.Address)
 	assert.NotEmpty(t, response.ScriptHash)
 	assert.Contains(t, response.Address, "addr1")
@@ -2189,10 +2289,7 @@ func TestHandleAddressBuildInvalidKey(t *testing.T) {
 // --- Additional tests for increased coverage ---
 
 func TestHandleWalletRestore_ValidMnemonic(t *testing.T) {
-	mnemonic := "depth kitchen crystal history rabbit brief " +
-		"harbor palace tent frog city charge inflict tiger " +
-		"negative young furnace solid august educate bounce " +
-		"canal someone erode"
+	mnemonic := deterministicAPITestMnemonic(t)
 	reqBody, _ := json.Marshal(WalletRestoreRequest{
 		Mnemonic: mnemonic,
 	})
@@ -2303,10 +2400,7 @@ func TestHandleWalletRestore_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleWalletRestore_WithPassword(t *testing.T) {
-	mnemonic := "depth kitchen crystal history rabbit brief " +
-		"harbor palace tent frog city charge inflict tiger " +
-		"negative young furnace solid august educate bounce " +
-		"canal someone erode"
+	mnemonic := deterministicAPITestMnemonic(t)
 	reqBody, _ := json.Marshal(WalletRestoreRequest{
 		Mnemonic: mnemonic,
 		Password: "testpassword",
@@ -2328,10 +2422,7 @@ func TestHandleWalletRestore_WithPassword(t *testing.T) {
 }
 
 func TestHandleWalletRestore_WithDerivationIndices(t *testing.T) {
-	mnemonic := "depth kitchen crystal history rabbit brief " +
-		"harbor palace tent frog city charge inflict tiger " +
-		"negative young furnace solid august educate bounce " +
-		"canal someone erode"
+	mnemonic := deterministicAPITestMnemonic(t)
 	reqBody, _ := json.Marshal(WalletRestoreRequest{
 		Mnemonic:  mnemonic,
 		AccountId: 1,

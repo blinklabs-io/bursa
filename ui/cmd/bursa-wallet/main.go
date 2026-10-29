@@ -88,7 +88,13 @@ func run() error {
 		// (default off) is the source of truth thereafter.
 		LeanDefault:      envBool("BURSA_LEAN", false),
 		ConnectorEnabled: envBool("BURSA_CONNECTOR", false),
-		LogFilePath:      logFilePath,
+		RemoteSubmission: boot.RemoteSubmissionConfig{
+			Addr:        os.Getenv("BURSA_REMOTE_SUBMIT_ADDR"),
+			PublicURL:   os.Getenv("BURSA_REMOTE_SUBMIT_URL"),
+			TLSCertFile: os.Getenv("BURSA_REMOTE_SUBMIT_TLS_CERT"),
+			TLSKeyFile:  os.Getenv("BURSA_REMOTE_SUBMIT_TLS_KEY"),
+		},
+		LogFilePath: logFilePath,
 	})
 	if err != nil {
 		return err

@@ -184,6 +184,14 @@ cloud boundary:
 | Unix socket permissions (or an authenticated forwarder to it) | who may submit header bodies |
 | Cold-key custody (separate backend) | the pool cold key; the agent holds only the cold verification key |
 
+For a remote Dingo producer, `bursa-attested-kes/1` applies two independent
+checks: TLS client certificates authenticate Dingo to the workload, and fresh
+nonce-bound platform evidence authenticates the measured workload and its
+active public KES state to Dingo. The AWS adapter places the protocol binding
+in Nitro `user_data`. The GCP adapter places its hex encoding in Confidential
+Space `eat_nonce`. Dingo applies the same pinned PCR, image digest, debug-state,
+issuer, audience, expiry, and secure-boot rules used by the attested signer.
+
 - Sign mode accepts only a Praos header body whose slot lies in the requested
   period and whose issuer key, KES key, issue counter, certificate period and
   cold-key signature match the installed operational certificate.
@@ -196,6 +204,8 @@ cloud boundary:
   mount that same guard state, or be given a freshly staged key and a new
   operational certificate; never start a second agent with a copy of an older
   guard file.
-- A restarted enclave has no key until one is staged and installed again (key
-  material is wrapped by the cloud KMS and unwrapped only for the measured
-  workload).
+- A restarted workload has no key until one is staged and installed again. The
+  guard survives on workload-private durable storage; wrapped recovery material
+  may be released only to the approved measurement. If the provider adapter,
+  attestation service, KMS release, durable guard, or operational-certificate
+  check fails, the workload exposes no signing service.

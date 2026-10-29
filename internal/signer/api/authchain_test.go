@@ -87,7 +87,7 @@ func certWithCN(cn string) *tls.ConnectionState {
 // signTxBody returns the /v1/sign body for a tx signed by the test key.
 func signTxBody(t *testing.T, h backend.KeyHash) []byte {
 	t.Helper()
-	body, err := json.Marshal(SignRequest{Type: "tx", Cbor: "83a0a0f5f6", Signers: []string{h.String()}})
+	body, err := json.Marshal(SignRequest{Type: "tx", Cbor: ambiguousBabbageTxHex, Era: "babbage", Signers: []string{h.String()}})
 	if err != nil {
 		t.Fatal(err)
 	}

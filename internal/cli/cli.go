@@ -628,6 +628,102 @@ func RunKeyPoolCold(
 	return nil
 }
 
+// RunKeyPoolOwner derives the plain Ed25519 form of a CIP-1852 stake key
+// (k_L as the RFC 8032 seed). With "-" it prints the plain stake_sk bech32.
+// sameDestination reports whether two output paths name the same file:
+// equal once absolute with their directories' symlinks resolved, or the same
+// existing file.
+func sameDestination(a, b string) bool {
+	if resolveDestination(a) == resolveDestination(b) {
+		return true
+	}
+
+	ia, errA := os.Stat(a)
+	ib, errB := os.Stat(b)
+
+	return errA == nil && errB == nil && os.SameFile(ia, ib)
+}
+
+func resolveDestination(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+
+	if dir, err := filepath.EvalSymlinks(filepath.Dir(abs)); err == nil {
+		return filepath.Join(dir, filepath.Base(abs))
+	}
+
+	return abs
+}
+
+func RunKeyPoolOwner(
+	mnemonic, mnemonicFile, password, signingKeyFile, verificationKeyFile string,
+	accountIndex, index uint32,
+) error {
+	toStdout, err := keyDestination(signingKeyFile, verificationKeyFile)
+	if err != nil {
+		return err
+	}
+	// the verification key would overwrite the signing key
+	if signingKeyFile != "" && verificationKeyFile != "" &&
+		sameDestination(signingKeyFile, verificationKeyFile) {
+		return errors.New("signing and verification key files are the same file")
+	}
+
+	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+	if err != nil {
+		return err
+	}
+
+	rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+	if err != nil {
+		return fmt.Errorf("failed to derive root key: %w", err)
+	}
+
+	accountKey, err := bursa.GetAccountKey(rootKey, accountIndex)
+	if err != nil {
+		return fmt.Errorf("failed to derive account key: %w", err)
+	}
+
+	stakeKey, err := bursa.GetStakeKey(accountKey, index)
+	if err != nil {
+		return fmt.Errorf("failed to derive stake key: %w", err)
+	}
+
+	skey, err := bursa.GetStakePlainSKey(stakeKey)
+	if err != nil {
+		return fmt.Errorf("failed to create pool owner signing key file: %w", err)
+	}
+
+	if toStdout {
+		// KeyFile.String bech32-encodes the 32-byte seed with the CIP-5
+		// stake_sk prefix; it falls back to cborHex only on malformed input.
+		encoded := skey.String()
+		if !strings.HasPrefix(encoded, "stake_sk1") {
+			return errors.New("failed to encode pool owner key")
+		}
+		fmt.Println(encoded)
+		return nil
+	}
+
+	if signingKeyFile != "" {
+		if err := writeKeyFile(skey, signingKeyFile); err != nil {
+			return err
+		}
+	}
+	if verificationKeyFile != "" {
+		vkey, err := bursa.GetStakePlainVKey(stakeKey)
+		if err != nil {
+			return fmt.Errorf("failed to create pool owner verification key file: %w", err)
+		}
+		if err := writeKeyFile(vkey, verificationKeyFile); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // RunKeyBLS generates a Dijkstra-era BLS signing key and registration material.
 func RunKeyBLS(signingKeyFile, verificationKeyFile, outputFile string) error {
 	if signingKeyFile == "" {
@@ -1415,6 +1511,12 @@ func parsePoolRelays(f PoolRelayFlags) ([]lcommon.PoolRelay, error) {
 		if host == "" {
 			return nil, fmt.Errorf("invalid relay host %q: empty name", v)
 		}
+		if len(host) > 128 {
+			return nil, fmt.Errorf(
+				"--relay-host must be at most 128 bytes, got %d",
+				len(host),
+			)
+		}
 		relay := lcommon.PoolRelay{
 			Type:     lcommon.PoolRelayTypeSingleHostName,
 			Hostname: &host,
@@ -1431,6 +1533,12 @@ func parsePoolRelays(f PoolRelayFlags) ([]lcommon.PoolRelay, error) {
 	for _, v := range f.MultiHosts {
 		if v == "" {
 			return nil, errors.New("invalid relay multi-host: empty name")
+		}
+		if len(v) > 128 {
+			return nil, fmt.Errorf(
+				"--relay-multi-host must be at most 128 bytes, got %d",
+				len(v),
+			)
 		}
 		host := v
 		relays = append(relays, lcommon.PoolRelay{
@@ -1486,6 +1594,12 @@ func RunCertPoolRegistration(
 		return errors.New(
 			"--metadata-url and --metadata-hash " +
 				"must be provided together",
+		)
+	}
+	if len(metadataURL) > 128 {
+		return fmt.Errorf(
+			"--metadata-url must be at most 128 bytes, got %d",
+			len(metadataURL),
 		)
 	}
 
@@ -2102,9 +2216,9 @@ func RunScriptCreate(
 		return fmt.Errorf("failed to marshal script: %w", err)
 	}
 
-	// Output the script
+	// The output file holds only the script, in the cardano-cli simple-script
+	// format; the address and hash are reported on stdout.
 	if output != "" {
-		// Write to file
 		file, err := os.Create(output)
 		if err != nil {
 			return fmt.Errorf(
@@ -2121,18 +2235,17 @@ func RunScriptCreate(
 
 		encoder := json.NewEncoder(file)
 		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(scriptData); err != nil {
+		if err := encoder.Encode(scriptData.Script); err != nil {
 			return fmt.Errorf("failed to write script to file: %w", err)
 		}
 
 		logger.Info("script written to file", "file", output)
-	} else {
-		// Print to stdout
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(scriptData); err != nil {
-			return fmt.Errorf("failed to encode script: %w", err)
-		}
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(scriptData); err != nil {
+		return fmt.Errorf("failed to encode script: %w", err)
 	}
 
 	return nil
@@ -2202,7 +2315,7 @@ func RunScriptValidate(
 	logger := logging.GetLogger()
 
 	// Read script file
-	file, err := os.Open(scriptFile)
+	fileData, err := os.ReadFile(scriptFile)
 	if err != nil {
 		logger.Error(
 			"failed to open script file",
@@ -2213,16 +2326,15 @@ func RunScriptValidate(
 		)
 		os.Exit(1)
 	}
-	defer file.Close()
 
-	var scriptData bursa.ScriptData
-	if err := json.NewDecoder(file).Decode(&scriptData); err != nil {
+	scriptData, err := bursa.ParseScriptFile(fileData)
+	if err != nil {
 		logger.Error("failed to parse script file", "error", err)
 		os.Exit(1)
 	}
 
 	// Unmarshal script
-	script, err := bursa.UnmarshalScript(&scriptData)
+	script, err := bursa.UnmarshalScript(scriptData)
 	if err != nil {
 		logger.Error("failed to unmarshal script", "error", err)
 		os.Exit(1)
@@ -2684,7 +2796,7 @@ func RunScriptAddress(scriptFile, network string) {
 	logger := logging.GetLogger()
 
 	// Read script file
-	file, err := os.Open(scriptFile)
+	fileData, err := os.ReadFile(scriptFile)
 	if err != nil {
 		logger.Error(
 			"failed to open script file",
@@ -2695,16 +2807,15 @@ func RunScriptAddress(scriptFile, network string) {
 		)
 		os.Exit(1)
 	}
-	defer file.Close()
 
-	var scriptData bursa.ScriptData
-	if err := json.NewDecoder(file).Decode(&scriptData); err != nil {
+	scriptData, err := bursa.ParseScriptFile(fileData)
+	if err != nil {
 		logger.Error("failed to parse script file", "error", err)
 		os.Exit(1)
 	}
 
 	// Unmarshal script
-	script, err := bursa.UnmarshalScript(&scriptData)
+	script, err := bursa.UnmarshalScript(scriptData)
 	if err != nil {
 		logger.Error("failed to unmarshal script", "error", err)
 		os.Exit(1)

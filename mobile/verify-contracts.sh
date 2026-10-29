@@ -70,7 +70,7 @@ printf '%s\n' "$presenter" | rg -U -q 'present\(alert, animated: true\)'
 # Every exclusion call has to route its failure to that report, so a new call
 # site cannot reintroduce the log-only path.
 exclusion_calls=$(rg -c 'Self\.excludeFromBackup\(' "$ios")
-reported_calls=$(rg -c 'noteBackupExclusionFailure\(Self\.excludeFromBackup\(' "$ios")
+reported_calls=$(rg -c '^\s*noteBackupExclusionFailure\(' "$ios")
 if [ "$exclusion_calls" != "$reported_calls" ]; then
     printf '%s\n' 'every Self.excludeFromBackup call must report its failure' >&2
     exit 1
@@ -80,6 +80,17 @@ fi
 migration_catch=$(sed -n '/wallet data migration failed/,/^    }/p' "$ios")
 printf '%s\n' "$migration_catch" | rg -U -q 'Self\.excludeFromBackup\('
 printf '%s\n' "$migration_catch" | rg -U -q 'migrationFailureDetail = '
+
+# Plaintext contacts may only be persisted while the selected wallet tree is
+# excluded from backup. A failed exclusion keeps the wallet available but the
+# binding must receive the fail-closed contact-persistence setting before boot.
+rg -q 'private var contactsPersistenceEnabled = true' "$ios"
+backup_failure=$(sed -n '/private func noteBackupExclusionFailure(/,/^    }/p' "$ios")
+printf '%s\n' "$backup_failure" | rg -U -q 'disablesContactPersistence[\s\S]*contactsPersistenceEnabled = false'
+printf '%s\n' "$create_branch" | rg -U -q 'Self\.excludeFromBackup\(dataDir\)[\s\S]*disablesContactPersistence: true'
+printf '%s\n' "$migration_catch" | rg -U -q 'Self\.excludeFromBackup\(fallback\)[\s\S]*disablesContactPersistence: true'
+start_fn=$(sed -n '/private func startWallet(/,/^    }/p' "$ios")
+printf '%s\n' "$start_fn" | rg -U -q 'setContactsPersistenceEnabled\(contactsPersistenceEnabled\)[\s\S]*app\?\.start\('
 
 # Android's cloud backup is off at the application level; nothing under
 # mobile/android may re-enable it.

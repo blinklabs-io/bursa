@@ -73,6 +73,17 @@ type KESAgentConfig struct {
 	EvolveInterval string `yaml:"evolve_interval" envconfig:"KESAGENT_EVOLVE_INTERVAL"`
 	// GuardFile is the required durable monotonic-period store path.
 	GuardFile string `yaml:"guard_file" envconfig:"KESAGENT_GUARD_FILE"`
+	// AttestedListenAddress optionally exposes sign mode to a remote producer.
+	// The listener always requires a verified TLS client certificate.
+	AttestedListenAddress string `yaml:"attested_listen_address" envconfig:"KESAGENT_ATTESTED_LISTEN_ADDRESS"`
+	AttestedTLSCertFile   string `yaml:"attested_tls_cert_file" envconfig:"KESAGENT_ATTESTED_TLS_CERT_FILE"`
+	AttestedTLSKeyFile    string `yaml:"attested_tls_key_file" envconfig:"KESAGENT_ATTESTED_TLS_KEY_FILE"`
+	AttestedClientCAFile  string `yaml:"attested_client_ca_file" envconfig:"KESAGENT_ATTESTED_CLIENT_CA_FILE"`
+	// AttestationProvider identifies the verifier the producer must use.
+	AttestationProvider string `yaml:"attestation_provider" envconfig:"KESAGENT_ATTESTATION_PROVIDER"`
+	// AttesterAddress is an HTTPS, loopback HTTP, or Unix-socket provider adapter
+	// inside the protected workload that produces nonce-bound evidence.
+	AttesterAddress string `yaml:"attester_address" envconfig:"KESAGENT_ATTESTER_ADDRESS"`
 }
 
 // SignerConfig holds configuration for the bursa signer daemon.

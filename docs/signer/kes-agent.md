@@ -54,6 +54,28 @@ Never apply the same widening to `control_socket_mode` - doing so would let
 the producer's group drop or install KES keys. Keep it at the owner-only
 default `0600` regardless of how `service_socket_mode` is configured.
 
+## Attested remote signing
+
+Sign mode can additionally listen on `attested_listen_address` for a remote
+Dingo producer. This listener speaks `bursa-attested-kes/1` and requires TLS
+1.3 with a client certificate issued by `attested_client_ca_file`. It never
+offers serve-key mode or control commands. The local control socket remains the
+only route for staging, installing, or dropping keys.
+
+Before accepting a header request, Dingo sends a fresh 32-byte challenge. The
+agent asks its workload-local provider adapter for evidence that commits to the
+challenge, pool cold verification key, active KES verification key, installed
+operational certificate, and active period. Dingo verifies that evidence with
+the pinned Nitro PCR policy or Confidential Space image policy described in
+[`attested-custody.md`](attested-custody.md). Provider failure, a wrong nonce or
+provider, a failed measurement, or a failed client certificate closes the
+connection before signing is available.
+
+The provider adapter is configured by `attester_address`. It accepts the
+protocol binding at `POST /v1/attest` over HTTPS, loopback HTTP, or a Unix
+socket. Static evidence is insufficient because every connection has a fresh
+challenge.
+
 ## Key lifecycle (control socket)
 
 1. **`gen-staged-key`** - the agent generates a fresh staged KES key pair and
@@ -81,6 +103,12 @@ The floor is persisted to `guard_file` via an atomic temp-file + rename write.
 `guard_file` is required; the daemon refuses to start without a durable path.
 In `sign` mode, requests for a period later than the agent's wall-clock current
 period are rejected before key evolution or guard persistence.
+
+For restart recovery, preserve the guard on durable storage available only to
+the approved workload measurement, then stage and install a key whose current
+period is at or above that floor. A replacement workload must use that same
+floor or a newly certified KES key. Do not run active and standby agents from
+independent guard copies.
 
 ## Locked memory
 

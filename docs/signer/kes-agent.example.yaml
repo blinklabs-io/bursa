@@ -53,6 +53,18 @@ kes_agent:
   # KES period below the highest already served, across restarts/clock jumps.
   guard_file: "/var/lib/bursa/kes-agent/guard.json"  # env: KESAGENT_GUARD_FILE
 
+  # Optional remote sign service for Dingo. This is available only in sign
+  # mode and always requires a client certificate issued by the configured CA.
+  # attested_listen_address: ":9443"
+  # attested_tls_cert_file: "/run/secrets/kes-agent/tls.crt"
+  # attested_tls_key_file: "/run/secrets/kes-agent/tls.key"
+  # attested_client_ca_file: "/run/secrets/kes-agent/dingo-ca.pem"
+
+  # The provider adapter runs inside the measured workload and produces fresh,
+  # binding-specific evidence over a local Unix socket.
+  # attestation_provider: "nitro"  # or "confidential-space"
+  # attester_address: "unix:///run/bursa/attester.sock"
+
 # Optional Prometheus metrics endpoint on a dedicated loopback listener. Set
 # port to 0 to disable it. Non-loopback addresses are rejected.
 metrics:

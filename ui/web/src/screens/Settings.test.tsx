@@ -4,6 +4,7 @@ import * as hooks from "../api/hooks";
 import type { AsyncState, NotificationsState } from "../api/hooks";
 import * as client from "../api/client";
 import * as connectorApi from "../api/connector";
+import * as remoteSubmissionApi from "../api/remoteSubmission";
 import type {
   Account,
   HistoryExpirySetting,
@@ -130,6 +131,10 @@ beforeEach(() => {
   mockNotifications();
   mockTPMStatus(tpmUnavailable);
   mockConnector();
+  vi.spyOn(remoteSubmissionApi, "getRemoteSubmission").mockResolvedValue({
+    available: true,
+    enabled: false,
+  });
   vi.spyOn(hooks, "useNftMedia").mockReturnValue({
     enabled: false,
     loading: false,
@@ -631,6 +636,49 @@ test("connector card recovers after a transient missing endpoint", async () => {
   await waitFor(() =>
     expect(screen.getByText("dApp Connector")).toBeInTheDocument(),
   );
+});
+
+test("remote submission is disabled until the user opts in", async () => {
+  mockStatus("ready", 12345, true);
+  const enable = vi.spyOn(remoteSubmissionApi, "enableRemoteSubmission").mockResolvedValue({
+    available: true,
+    enabled: true,
+    endpoint: "https://wallet.example:8091/redacted/api/submit/tx",
+  });
+
+  renderSettings();
+  fireEvent.click(await screen.findByRole("button", { name: /enable access/i }));
+
+  await waitFor(() => expect(enable).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText(/wallet\.example:8091/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /disable access/i })).toBeInTheDocument();
+});
+
+test("remote submission can replace and revoke its capability", async () => {
+  mockStatus("ready", 12345, true);
+  vi.mocked(remoteSubmissionApi.getRemoteSubmission).mockResolvedValue({
+    available: true,
+    enabled: true,
+    endpoint: "https://wallet.example:8091/old/api/submit/tx",
+  });
+  const rotate = vi.spyOn(remoteSubmissionApi, "rotateRemoteSubmission").mockResolvedValue({
+    available: true,
+    enabled: true,
+    endpoint: "https://wallet.example:8091/new/api/submit/tx",
+  });
+  const disable = vi.spyOn(remoteSubmissionApi, "disableRemoteSubmission").mockResolvedValue({
+    available: true,
+    enabled: false,
+  });
+
+  renderSettings();
+  fireEvent.click(await screen.findByRole("button", { name: /replace URL/i }));
+  await waitFor(() => expect(rotate).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText(/\/new\/api\/submit\/tx/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /disable access/i }));
+  await waitFor(() => expect(disable).toHaveBeenCalledTimes(1));
+  expect(await screen.findByRole("button", { name: /enable access/i })).toBeInTheDocument();
 });
 
 test("NFT media is off by default and requires an explicit opt-in", () => {
