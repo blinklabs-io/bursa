@@ -49,6 +49,10 @@ type fakeChip struct {
 	// lostImportReply stores an imported key but reports a transport
 	// error, as when the chip's answer is lost after the write
 	lostImportReply bool
+	// signs counts signatures made
+	signs int
+	// tornWrite stores only half of a binary write and reports success
+	tornWrite bool
 }
 
 func newFakeChip() *fakeChip {
@@ -115,12 +119,18 @@ func (c *fakeChip) SignEd25519(id uint32, msg []byte) ([]byte, error) {
 		return nil, errors.New("no key")
 	}
 
+	c.signs++
+
 	return ed25519.Sign(k, msg), nil
 }
 
 func (c *fakeChip) WriteBinary(id uint32, data []byte) error {
 	if c.failWrite {
 		return errors.New("i2c failure")
+	}
+
+	if c.tornWrite {
+		data = data[:len(data)/2]
 	}
 
 	c.bins[id] = bytes.Clone(data)
