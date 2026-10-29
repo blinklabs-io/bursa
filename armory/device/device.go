@@ -25,8 +25,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/blinklabs-io/bursa/armory/policy"
@@ -182,11 +184,66 @@ type Service struct {
 	// badSlots hold records that could not be read; provisioning stays
 	// refused while any exist, as one of them may own any cold key
 	badSlots map[uint8]bool
+	// network, when fixed, is the only network id whose profiles this
+	// build provisions and serves; chain, when set, is the only profile name
+	// suffix ("name@chain") it accepts
+	network      uint8
+	networkFixed bool
+	chain        string
 }
 
 // New returns a service with no chip; it answers 503 until SetChip.
 func New(mu sync.Locker, logf func(format string, args ...any)) *Service {
 	return &Service{mu: mu, logf: logf, profiles: map[string]profile.Profile{}}
+}
+
+// SetNetwork fixes the network id this build serves and, when chain is not
+// empty, the chain label every profile name must end with ("name@chain").
+// The device cannot tell chains that share a network id apart, so the label
+// keeps one chain's profiles per device. Profiles for another network or
+// chain are refused at provisioning, inventory, signing, floor reset and
+// reward changes. Call it before SetChip.
+func (s *Service) SetNetwork(id uint8, chain string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.network, s.networkFixed, s.chain = id, true, chain
+}
+
+// serves reports why this build does not serve a profile on network id
+// with name, or nil if it does.
+func (s *Service) serves(network uint8, name string) error {
+	if !s.networkFixed {
+		return nil
+	}
+
+	if network != s.network {
+		return fmt.Errorf("profile %q is for network %d; this build serves network %d", name, network, s.network)
+	}
+
+	if s.chain != "" {
+		if i := strings.LastIndexByte(name, '@'); i < 0 || name[i+1:] != s.chain {
+			return fmt.Errorf("profile %q is not for chain %s, the only chain this build serves", name, s.chain)
+		}
+	}
+
+	return nil
+}
+
+// profileFor returns the named profile if this build serves its network and
+// chain.
+func (s *Service) profileFor(name string) (profile.Profile, error) {
+	p, ok := s.profiles[name]
+
+	if !ok {
+		return profile.Profile{}, errUnknown
+	}
+
+	if err := s.serves(p.NetworkID, name); err != nil {
+		return profile.Profile{}, err
+	}
+
+	return p, nil
 }
 
 // SetChip loads every profile record from chip and starts serving. An
@@ -223,6 +280,10 @@ func (s *Service) SetChip(chip Chip) error {
 
 		profiles[p.Name] = p
 		s.logf("profile %q slot %d floor %d (set %v)", p.Name, p.Slot, p.OpCertFloor, p.FloorSet)
+
+		if err := s.serves(p.NetworkID, p.Name); err != nil {
+			s.logf("not served by this build: %v", err)
+		}
 	}
 
 	s.chip = chip
@@ -349,10 +410,9 @@ func (s *Service) inventory(req InventoryRequest) (Inventory, error) {
 		return Inventory{}, errors.New("invalid nonce")
 	}
 
-	p, ok := s.profiles[req.Profile]
-
-	if !ok {
-		return Inventory{}, errUnknown
+	p, err := s.profileFor(req.Profile)
+	if err != nil {
+		return Inventory{}, err
 	}
 
 	if ok, err := s.chip.Exists(profile.IdentityKeyID); err != nil {
@@ -425,10 +485,9 @@ func (s *Service) signRequest(req SignRequest) (uint32, []byte, *uint64, error) 
 		return 0, nil, nil, errors.New("nonce replayed")
 	}
 
-	p, ok := s.profiles[req.Profile]
-
-	if !ok {
-		return 0, nil, nil, errUnknown
+	p, err := s.profileFor(req.Profile)
+	if err != nil {
+		return 0, nil, nil, err
 	}
 
 	k, err := s.keys(p)
@@ -571,6 +630,10 @@ func (s *Service) ensureKey(id uint32) (ed25519.PublicKey, error) {
 }
 
 func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, error) {
+	if err := s.serves(req.NetworkID, req.Name); err != nil {
+		return ProvisionResponse{}, err
+	}
+
 	p := profile.Profile{
 		Name:          req.Name,
 		NetworkID:     req.NetworkID,
@@ -670,10 +733,9 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 // higher. A floor set too low only lets the device issue a counter the chain
 // rejects, so this needs no more trust than opcert-next itself.
 func (s *Service) resetFloor(req FloorRequest) (FloorResponse, error) {
-	p, ok := s.profiles[req.Profile]
-
-	if !ok {
-		return FloorResponse{}, errUnknown
+	p, err := s.profileFor(req.Profile)
+	if err != nil {
+		return FloorResponse{}, err
 	}
 
 	p.FloorSet, p.OpCertFloor = true, req.ChainCounter
@@ -691,10 +753,9 @@ func (s *Service) resetFloor(req FloorRequest) (FloorResponse, error) {
 // deliberate provisioning action, so the account cannot be changed from inside
 // a transaction.
 func (s *Service) setReward(req RewardRequest) (RewardResponse, error) {
-	p, ok := s.profiles[req.Profile]
-
-	if !ok {
-		return RewardResponse{}, errUnknown
+	p, err := s.profileFor(req.Profile)
+	if err != nil {
+		return RewardResponse{}, err
 	}
 
 	if req.RewardAccount == "" {

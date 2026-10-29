@@ -86,7 +86,22 @@ func main() {
 	s := &legacy
 	s.Mutex = mu
 	svc := device.New(mu, report.Logf)
+	if network != 0 && chain == "" {
+		log.Fatal("a mainnet build needs a chain label")
+	}
+
+	svc.SetNetwork(network, chain)
 	report.Logf("%s", buildMode)
+
+	if chain == "" {
+		report.Logf("network: %s (id %d); other networks' profiles are refused", networkName, network)
+	} else {
+		report.Logf("network: %s (id %d), chain %s; other chains' profiles are refused", networkName, network, chain)
+	}
+
+	if testnetSign != "" {
+		report.Logf("%s", testnetSign)
+	}
 
 	go runBringup(report, s, svc)
 

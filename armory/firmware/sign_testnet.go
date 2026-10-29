@@ -25,6 +25,10 @@ import (
 // 48 bytes.
 const maxSignable = 128
 
+// testnetSign is reported at startup, so the build is never mistaken for a
+// signing image fit for keys that matter.
+const testnetSign = "testnet bring-up build: unauthenticated /sign is served; never use it with keys that matter"
+
 func init() {
 	http.HandleFunc("/sign", (&legacy).sign)
 	http.HandleFunc("/pubkey", (&legacy).publicKey)
