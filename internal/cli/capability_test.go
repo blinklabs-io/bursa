@@ -393,3 +393,30 @@ func TestRunAddressList_MissingMnemonic(t *testing.T) {
 	err := RunAddressList("", "", "", "mainnet", 0, 0, 1)
 	assert.Error(t, err)
 }
+
+func TestRunCertPoolRegistration_AcceptsNamesAtTheLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	coldVkey := createTestVkeyFile(
+		t, tmpDir, "cold.vkey",
+		"StakePoolVerificationKey_ed25519",
+		"Stake Pool Operator Verification Key",
+		testColdVKeyCborHex,
+	)
+	vrfVkey := createTestVkeyFile(
+		t, tmpDir, "vrf.vkey",
+		"VrfVerificationKey_PraosVRF",
+		"VRF Verification Key",
+		testVRFVKeyCborHex,
+	)
+	url := "https://example.com/" + strings.Repeat("a", 108)
+	require.Len(t, url, 128)
+	host := strings.Repeat("a", 128)
+	captureStdout(t, func() {
+		err := RunCertPoolRegistration(
+			coldVkey, vrfVkey, goldenStakeAddr, "",
+			1, 1, 0.03, url, strings.Repeat("ab", 32), nil,
+			PoolRelayFlags{Hosts: []string{host}, MultiHosts: []string{host}},
+		)
+		require.NoError(t, err)
+	})
+}
