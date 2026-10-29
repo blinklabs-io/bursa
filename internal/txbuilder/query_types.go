@@ -37,6 +37,7 @@ type PoolParams struct {
 	Pledge        uint64              `json:"pledge"`
 	Cost          uint64              `json:"cost"`
 	Margin        string              `json:"margin"`
+	MarginRatio   string              `json:"margin_ratio"`
 	RewardAccount string              `json:"reward_account"`
 	Owners        []string            `json:"owners"`
 	Relays        []lcommon.PoolRelay `json:"relays"`

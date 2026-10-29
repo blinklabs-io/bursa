@@ -45,13 +45,17 @@ func poolQueryFromState(
 	network string,
 ) (*PoolQueryResult, error) {
 	keyHash := lcommon.Blake2b224(poolID)
+	kesPeriod, err := calculateKESPeriod(slot, slotsPerKESPeriod)
+	if err != nil {
+		return nil, err
+	}
 	result := &PoolQueryResult{
 		Epoch: epoch,
 		KES: KESInfo{
 			CurrentSlot:       slot,
 			SlotsPerKESPeriod: slotsPerKESPeriod,
 			MaxKESEvolutions:  maxKESEvolutions,
-			CurrentKESPeriod:  calculateKESPeriod(slot, slotsPerKESPeriod),
+			CurrentKESPeriod:  kesPeriod,
 		},
 	}
 	if ps != nil {
@@ -116,9 +120,8 @@ func poolParamsFromState(
 	if err != nil {
 		return nil, fmt.Errorf("pool reward account: %w", err)
 	}
-	margin := "0"
-	if params.Margin != nil && params.Margin.Rat != nil {
-		margin = formatMarginDecimal(params.Margin.Rat)
+	if params.Margin == nil || params.Margin.Rat == nil {
+		return nil, errors.New("pool parameters have no margin")
 	}
 	owners := make([]string, 0, len(params.PoolOwners))
 	for _, owner := range params.PoolOwners {
@@ -131,7 +134,8 @@ func poolParamsFromState(
 		VrfKeyHash:    hex.EncodeToString(params.VrfKeyHash[:]),
 		Pledge:        params.Pledge,
 		Cost:          params.Cost,
-		Margin:        margin,
+		Margin:        formatMarginDecimal(params.Margin.Rat),
+		MarginRatio:   params.Margin.String(),
 		RewardAccount: rewardAccount.String(),
 		Owners:        owners,
 		Relays:        relays,
@@ -191,13 +195,21 @@ func formatMarginDecimal(rat *big.Rat) string {
 }
 
 // calculateKESPeriod returns the KES period containing currentSlot. A
-// nonpositive slots-per-period yields 0: it never comes from a node, and
-// dividing by it or wrapping it to a huge unsigned value would be worse.
-func calculateKESPeriod(currentSlot uint64, slotsPerKESPeriod int) uint64 {
+// nonpositive slots-per-period is an error rather than a plausible period 0.
+func calculateKESPeriod(currentSlot uint64, slotsPerKESPeriod int) (uint64, error) {
 	if slotsPerKESPeriod <= 0 {
-		return 0
+		return 0, fmt.Errorf("invalid slots per KES period %d", slotsPerKESPeriod)
 	}
-	return currentSlot / uint64(slotsPerKESPeriod)
+	return currentSlot / uint64(slotsPerKESPeriod), nil
+}
+
+// stakeCredentialFrom converts a ledger credential to the local-state-query
+// key: tag 0 for a key hash, 1 for a script hash, as the node encodes it.
+func stakeCredentialFrom(cred lcommon.Credential) localstatequery.StakeCredential {
+	return localstatequery.StakeCredential{
+		Tag:   uint64(cred.CredType),
+		Bytes: cred.Credential,
+	}
 }
 
 // stakeQueryFrom builds the stake address query result from the
@@ -295,12 +307,16 @@ func tipQueryFrom(
 	if era == lcommon.EraInvalid {
 		return nil, fmt.Errorf("unknown era id %d", eraID)
 	}
+	kesPeriod, err := calculateKESPeriod(slot, slotsPerKESPeriod)
+	if err != nil {
+		return nil, err
+	}
 	return &TipQueryResult{
 		Era:         era.Name,
 		Epoch:       epoch,
 		Slot:        slot,
 		BlockNumber: blockNumber,
-		KESPeriod:   calculateKESPeriod(slot, slotsPerKESPeriod),
+		KESPeriod:   kesPeriod,
 	}, nil
 }
 
@@ -340,6 +356,33 @@ func ParseRewardAddress(address, network string) (lcommon.Address, error) {
 	if addr.NetworkId() != uint(networkID) {
 		return lcommon.Address{}, fmt.Errorf(
 			"stake address network id %d does not match network %q (id %d)",
+			addr.NetworkId(),
+			network,
+			networkID,
+		)
+	}
+	return addr, nil
+}
+
+// ParsePaymentAddress parses an address that can hold UTxOs and checks it
+// belongs to network. A reward (stake) address holds none and is an error.
+func ParsePaymentAddress(address, network string) (lcommon.Address, error) {
+	addr, err := lcommon.NewAddress(address)
+	if err != nil {
+		return lcommon.Address{}, fmt.Errorf("invalid address: %w", err)
+	}
+	if _, err := addr.RewardAccountCredential(); err == nil {
+		return lcommon.Address{}, errors.New(
+			"address is a stake (reward) address, which holds no UTxOs",
+		)
+	}
+	networkID, err := networkAddressId(network)
+	if err != nil {
+		return lcommon.Address{}, err
+	}
+	if addr.NetworkId() != uint(networkID) {
+		return lcommon.Address{}, fmt.Errorf(
+			"address network id %d does not match network %q (id %d)",
 			addr.NetworkId(),
 			network,
 			networkID,

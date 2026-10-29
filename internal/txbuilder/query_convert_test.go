@@ -119,6 +119,7 @@ func TestPoolQueryFromStateRegistered(t *testing.T) {
 			"pledge": 1000000000,
 			"cost": 340000000,
 			"margin": "0.05",
+			"margin_ratio": "1/20",
 			"reward_account": "stake_test1uqg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygxtxu2s",
 			"owners": [
 				"` + testQueryHex(0xcc, 28) + `",
@@ -315,13 +316,86 @@ func TestPoolQueryFromStateOpCertCounter(t *testing.T) {
 }
 
 func TestCalculateKESPeriod(t *testing.T) {
-	require.Equal(t, uint64(5), calculateKESPeriod(129600*5+7, 129600))
-	require.Equal(t, uint64(5), calculateKESPeriod(129600*5, 129600))
-	require.Equal(t, uint64(0), calculateKESPeriod(7, 129600))
-	// A nonpositive period must not divide by zero or wrap to a huge
-	// unsigned value.
-	require.Equal(t, uint64(0), calculateKESPeriod(100, 0))
-	require.Equal(t, uint64(0), calculateKESPeriod(100, -5))
+	for _, tc := range []struct {
+		slot     uint64
+		perKES   int
+		expected uint64
+	}{
+		{129600*5 + 7, 129600, 5},
+		{129600 * 5, 129600, 5},
+		{7, 129600, 0},
+	} {
+		period, err := calculateKESPeriod(tc.slot, tc.perKES)
+		require.NoError(t, err)
+		require.Equal(t, tc.expected, period)
+	}
+	// A nonpositive period is an error, not a plausible period 0.
+	for _, perKES := range []int{0, -5} {
+		_, err := calculateKESPeriod(100, perKES)
+		require.Error(t, err, perKES)
+	}
+}
+
+func TestPoolQueryFromStateRejectsZeroKESPeriod(t *testing.T) {
+	_, err := poolQueryFromState(
+		testQueryPoolID(), nil, nil, 100, 0, 62, 5, "preview",
+	)
+	require.Error(t, err)
+}
+
+func TestPoolParamsMarginRatio(t *testing.T) {
+	params := testQueryPoolParams(t)
+	params.Margin = &cbor.Rat{Rat: big.NewRat(1, 3)}
+	res, err := poolParamsFromState(params, "preview")
+	require.NoError(t, err)
+	// The decimal is truncated; the ratio is exact.
+	require.Equal(t, "0.33333333333333333333", res.Margin)
+	require.Equal(t, "1/3", res.MarginRatio)
+}
+
+func TestPoolParamsNilMarginErrors(t *testing.T) {
+	params := testQueryPoolParams(t)
+	params.Margin = nil
+	_, err := poolParamsFromState(params, "preview")
+	require.ErrorContains(t, err, "margin")
+}
+
+func TestStakeCredentialFrom(t *testing.T) {
+	hash := testQueryHash(0x42)
+	for _, tc := range []struct {
+		credType uint
+		tag      uint64
+	}{
+		{lcommon.CredentialTypeAddrKeyHash, 0},
+		{lcommon.CredentialTypeScriptHash, 1},
+	} {
+		got := stakeCredentialFrom(lcommon.Credential{
+			CredType:   tc.credType,
+			Credential: lcommon.CredentialHash(hash),
+		})
+		require.Equal(t, tc.tag, got.Tag)
+		require.Equal(t, hash, got.Bytes)
+	}
+}
+
+func TestParsePaymentAddress(t *testing.T) {
+	cred := bytes.Repeat([]byte{0x33}, 28)
+	enterprise := func(networkID uint8) string {
+		addr, err := lcommon.NewAddressFromParts(
+			lcommon.AddressTypeKeyNone, networkID, cred, nil,
+		)
+		require.NoError(t, err)
+		return addr.String()
+	}
+	_, err := ParsePaymentAddress(enterprise(lcommon.AddressNetworkTestnet), "preview")
+	require.NoError(t, err)
+	_, err = ParsePaymentAddress(enterprise(lcommon.AddressNetworkMainnet), "preview")
+	require.ErrorContains(t, err, "network")
+	reward := testQueryRewardAddress(
+		t, lcommon.AddressTypeNoneKey, lcommon.AddressNetworkTestnet, cred,
+	)
+	_, err = ParsePaymentAddress(reward.String(), "preview")
+	require.ErrorContains(t, err, "stake")
 }
 
 func TestFormatMarginDecimal(t *testing.T) {
@@ -349,7 +423,6 @@ func TestFormatMarginDecimal(t *testing.T) {
 			tc.den,
 		)
 	}
-	require.Equal(t, "0", formatMarginDecimal(nil))
 }
 
 func testQueryStakeCred() localstatequery.StakeCredential {

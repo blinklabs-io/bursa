@@ -95,10 +95,7 @@ func (n *N2CChain) QueryStakeAddress(
 	}
 	defer release()
 	client := conn.LocalStateQuery().Client
-	lsCred := localstatequery.StakeCredential{
-		Tag:   uint64(cred.CredType),
-		Bytes: cred.Credential,
-	}
+	lsCred := stakeCredentialFrom(cred)
 	deposits, err := client.GetStakeDelegDeposits(
 		[]localstatequery.StakeCredential{lsCred},
 	)
