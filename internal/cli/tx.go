@@ -29,6 +29,7 @@ import (
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/txbuilder"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/blinklabs-io/gouroboros/protocol/localtxsubmission"
 )
 
 // readTxFile reads a transaction file and resolves its era from era (the
@@ -343,7 +344,20 @@ func submitTx(ctx context.Context, chain txbuilder.Chain, txFile string, w io.Wr
 		return err
 	}
 	if err := chain.SubmitTx(ctx, txBytes); err != nil {
-		return fmt.Errorf("node rejected transaction %s: %w", id, err)
+		var rejected localtxsubmission.TransactionRejectedError
+		if errors.As(err, &rejected) {
+			if rejected.Reason != nil {
+				return fmt.Errorf("node rejected transaction %s: %w", id, rejected.Reason)
+			}
+			return fmt.Errorf("node rejected transaction %s: %w", id, err)
+		}
+		// Anything else (a dropped connection, a timeout) leaves the outcome
+		// unknown: the node may have accepted the transaction.
+		return fmt.Errorf(
+			"submitting transaction %s failed; it may have reached the node: %w",
+			id,
+			err,
+		)
 	}
 	_, err = fmt.Fprintln(w, id)
 	return err

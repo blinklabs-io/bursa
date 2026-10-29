@@ -23,6 +23,7 @@ import (
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/txbuilder"
+	"github.com/blinklabs-io/gouroboros/protocol/localtxsubmission"
 )
 
 // submitChain records submitted transactions and fails with err when set.
@@ -66,7 +67,7 @@ func TestSubmitTxPrintsID(t *testing.T) {
 
 func TestSubmitTxReportsRejection(t *testing.T) {
 	reason := errors.New("ValueNotConservedUTxO")
-	chain := &submitChain{err: reason}
+	chain := &submitChain{err: localtxsubmission.TransactionRejectedError{Reason: reason}}
 	var out bytes.Buffer
 	err := submitTx(context.Background(), chain, submitFixture, &out)
 	if !errors.Is(err, reason) {
@@ -77,5 +78,35 @@ func TestSubmitTxReportsRejection(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Fatalf("printed %q on rejection", out.String())
+	}
+}
+
+// A failure that is not the node's rejection (a dropped connection, a
+// timeout) must not claim the node rejected the transaction: it may have
+// been accepted.
+func TestSubmitTxReportsUnresolvedFailure(t *testing.T) {
+	cause := errors.New("connection reset by peer")
+	chain := &submitChain{err: cause}
+	var out bytes.Buffer
+	err := submitTx(context.Background(), chain, submitFixture, &out)
+	if !errors.Is(err, cause) {
+		t.Fatalf("error %v does not carry the cause", err)
+	}
+	if strings.Contains(err.Error(), "rejected") {
+		t.Fatalf("error %q claims a rejection", err)
+	}
+	if !strings.Contains(err.Error(), "may have reached the node") {
+		t.Fatalf("error %q does not warn the transaction may have been accepted", err)
+	}
+	raw, rerr := bursa.ReadCborInputFile(submitFixture)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	id, rerr := bursa.TransactionID(raw)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(err.Error(), id) {
+		t.Fatalf("error %q does not name the transaction", err)
 	}
 }
