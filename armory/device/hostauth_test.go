@@ -380,3 +380,29 @@ func TestRevokeLastHostKeyDeleteFailureRefusesSigning(t *testing.T) {
 		t.Fatal("signed unauthenticated after a failed delete")
 	}
 }
+
+// TestHostKeysAllZeroRefusesSigning checks a present list with no key is
+// refused: revoking the last key deletes the object, so an all-zero object
+// is not a valid empty list.
+func TestHostKeysAllZeroRefusesSigning(t *testing.T) {
+	chip := newFakeChip()
+	chip.bins[hostKeysID] = make([]byte, hostKeysLen)
+
+	s := New(&sync.Mutex{}, t.Logf)
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	provisionTestProfile(t, s)
+
+	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error == "" {
+		t.Fatal("signed unauthenticated with an all-zero host key list present")
+	}
+
+	// registering a key replaces the list
+	registerHostKey(t, s, hostPub(testHostKey))
+
+	if r := postSign(t, s, authenticate(opcertRequest(t, s, chip, 2), testHostKey, challenge(t, s))); r.Error != "" {
+		t.Fatalf("not recovered by registering a key: %+v", r)
+	}
+}

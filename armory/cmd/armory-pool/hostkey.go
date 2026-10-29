@@ -43,12 +43,17 @@ func newHostKey(file string, out io.Writer) error {
 		return err
 	}
 
+	// O_EXCL means this call created file, so a failed write removes it
 	if _, err = f.Write(marshalEnvelope(hostKeyType, hostKeyDesc, vkeyCBOR(priv.Seed()))); err != nil {
 		f.Close()
+		_ = os.Remove(file)
+
 		return err
 	}
 
 	if err = f.Close(); err != nil {
+		_ = os.Remove(file)
+
 		return err
 	}
 
