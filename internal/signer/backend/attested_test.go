@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"sync"
@@ -34,9 +35,11 @@ type fakeEnclave struct {
 	keys []fakeEnclaveKey
 	// seen holds request nonces already served; a repeat is refused, as a
 	// real enclave must.
-	seen        map[string]bool
-	signCalls   int
-	requests    []AttestedRequest
+	seen      map[string]bool
+	signCalls int
+	requests  []AttestedRequest
+	// opcertFloor models the device's persisted opcert-next floor.
+	opcertFloor uint64
 	tamperInv   func(nonce []byte, inv *AttestedInventory)
 	tamperResp  func(req AttestedRequest, resp *AttestedResponse)
 	inventoryFn func(ctx context.Context, nonce []byte) (AttestedInventory, error)
@@ -121,6 +124,24 @@ func (e *fakeEnclave) signLocked(req AttestedRequest, resp AttestedResponse) Att
 		}
 		if req.Purpose == PurposeOpCert && k.role != KeyTypePool {
 			resp.Error = "opcert requires a pool key"
+			return resp
+		}
+		if req.Purpose == PurposeOpCertNext {
+			if k.role != KeyTypePool || len(req.Payload) != opCertSignableSize {
+				resp.Error = "opcert-next requires a pool key and 48 bytes"
+				return resp
+			}
+			issue := binary.BigEndian.Uint64(req.Payload[32:40]) + 1
+			if issue < e.opcertFloor {
+				issue = e.opcertFloor
+			}
+			signable := bytes.Clone(req.Payload)
+			binary.BigEndian.PutUint64(signable[32:40], issue)
+			resp.Signature = ed25519.Sign(k.priv, signable)
+			resp.IssueCounter = &issue
+			if req.Profile != "" {
+				resp.BindingSignature = ed25519.Sign(k.priv, AttestedResponseBinding(req, resp.Signature))
+			}
 			return resp
 		}
 		signed := req.Payload
