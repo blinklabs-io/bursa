@@ -146,7 +146,15 @@ func (k KeyPush) marshalFrame() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	buf := make([]byte, 0, 128+base64.StdEncoding.EncodedLen(len(k.KESSignKey)))
+	// Size the buffer for the whole frame: if append outgrew it, the copy would
+	// move the signing key to a new array and leave the old one unwiped.
+	const (
+		maxUintLen = 20
+		fixedLen   = len(`{"type":,"period":,"depth":,"kes_sign_key":,"kes_vkey":,"opcert":}`)
+	)
+	size := fixedLen + len(typ) + 2*maxUintLen +
+		jsonBytesLen(k.KESSignKey) + jsonBytesLen(k.KESVKey) + jsonBytesLen(k.OpCert)
+	buf := make([]byte, 0, size)
 	buf = append(buf, `{"type":`...)
 	buf = append(buf, typ...)
 	buf = append(buf, `,"period":`...)
@@ -160,6 +168,14 @@ func (k KeyPush) marshalFrame() ([]byte, error) {
 	buf = append(buf, `,"opcert":`...)
 	buf = appendJSONBytes(buf, k.OpCert)
 	return append(buf, '}'), nil
+}
+
+// jsonBytesLen is the length appendJSONBytes appends for b.
+func jsonBytesLen(b []byte) int {
+	if b == nil {
+		return len("null")
+	}
+	return 2 + base64.StdEncoding.EncodedLen(len(b))
 }
 
 // appendJSONBytes appends b as encoding/json encodes a []byte: null for nil,

@@ -223,3 +223,35 @@ func countInHeap(t *testing.T, needle []byte, self *byte) int {
 	}
 	return count
 }
+
+// TestWriteFrameLeavesNoSigningKeyInHeapWithFullSizeFields uses production
+// field sizes: a Sum6 signing key, a 32-byte verification key, and opcert
+// CBOR. Fields that outgrow the frame buffer force append to copy the signing
+// key into a new array and abandon the old one unwiped.
+func TestWriteFrameLeavesNoSigningKeyInHeapWithFullSizeFields(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("scans /proc/self/mem")
+	}
+	push := KeyPush{
+		Type:       "key_push",
+		Period:     1234,
+		Depth:      6,
+		KESSignKey: make([]byte, 608),
+		KESVKey:    bytes.Repeat([]byte{0x2a}, 32),
+		OpCert:     bytes.Repeat([]byte{0x3b}, 140),
+	}
+	for i := range push.KESSignKey {
+		push.KESSignKey[i] = byte(0x5c ^ i*13)
+	}
+	defer clear(push.KESSignKey)
+	needle := base64.StdEncoding.AppendEncode(nil, push.KESSignKey)
+	defer clear(needle)
+
+	writer := &discardFrameWriter{}
+	if err := writeFrame(writer, push); err != nil {
+		t.Fatal(err)
+	}
+	if n := countInHeap(t, needle, &needle[0]); n != 0 {
+		t.Fatalf("base64 signing key found %d time(s) in process memory after writeFrame", n)
+	}
+}
