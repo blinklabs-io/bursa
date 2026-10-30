@@ -317,3 +317,74 @@ func TestWipeProfileRetriesAfterFailure(t *testing.T) {
 		t.Fatalf("profile objects left after retry: %v", left)
 	}
 }
+
+// storeRecord writes a profile record and its owner key straight to the
+// chip, as a record written outside provisioning would be found.
+func storeRecord(t *testing.T, c *fakeChip, p profile.Profile) {
+	t.Helper()
+
+	rec, err := profile.Encode(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.bins[p.RecordID()] = rec
+
+	if err = c.GenerateEd25519(p.OwnerKeyID(), false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestWipeProfileRefusesForeignColdKey checks a record naming a cold key
+// outside the cold key range is refused before anything is deleted.
+func TestWipeProfileRefusesForeignColdKey(t *testing.T) {
+	s, chip := newTestService(t)
+	id := identityHex(t, s)
+	p := profile.Profile{Name: "odd@preview", Slot: 0, ColdKeyID: outsideIDs[0]}
+	storeRecord(t, chip, p)
+	plant(chip, outsideIDs...)
+
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := s.profiles[p.Name]; !ok {
+		t.Fatal("record not loaded")
+	}
+
+	if code, _ := wipePost(t, s, "/wipe/profile", WipeProfileRequest{IdentityPublicKey: id, Profile: p.Name}); code == http.StatusOK {
+		t.Error("wipe accepted a record naming an object outside the cold key range")
+	}
+
+	left := objectIDs(chip)
+	for _, o := range []uint32{p.ColdKeyID, p.OwnerKeyID(), p.RecordID()} {
+		if !left[o] {
+			t.Errorf("object %#x deleted", o)
+		}
+	}
+}
+
+// TestWipeProfileRefusesWhileRecordUnreadable checks a profile is not
+// removed while an unreadable record may name the same cold key.
+func TestWipeProfileRefusesWhileRecordUnreadable(t *testing.T) {
+	s, chip := newTestService(t)
+	id := identityHex(t, s)
+	p := profile.Profile{Name: "good@preview", Slot: 1, ColdKeyID: testColdID}
+	storeRecord(t, chip, p)
+	chip.bins[profile.Profile{Slot: 0}.RecordID()] = []byte("{torn")
+
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, _ := wipePost(t, s, "/wipe/profile", WipeProfileRequest{IdentityPublicKey: id, Profile: p.Name}); code == http.StatusOK {
+		t.Error("wipe accepted while a record is unreadable")
+	}
+
+	left := objectIDs(chip)
+	for _, o := range []uint32{p.ColdKeyID, p.OwnerKeyID(), p.RecordID()} {
+		if !left[o] {
+			t.Errorf("object %#x deleted", o)
+		}
+	}
+}

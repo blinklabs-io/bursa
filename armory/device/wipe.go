@@ -212,6 +212,17 @@ func (s *Service) wipeProfile(req WipeProfileRequest) (WipeResponse, error) {
 		return WipeResponse{}, errUnknown
 	}
 
+	// an unreadable record may name the same cold key, so whether this
+	// profile owns its cold key alone cannot be established
+	if len(s.badSlots) > 0 {
+		return WipeResponse{}, errors.New("a profile record is unreadable; wipe the device instead")
+	}
+
+	// a stored record may name any object; delete only an armory cold key
+	if p.ColdKeyID < coldKeyFirst || p.ColdKeyID > coldKeyLast {
+		return WipeResponse{}, errors.New("profile cold key id outside the cold key range; wipe the device instead")
+	}
+
 	ids := []uint32{p.OwnerKeyID()}
 	shared := false
 
