@@ -14,6 +14,10 @@ The agent exposes two sockets:
 
 Both sockets speak the same framing and handshake.
 
+An optional remote sign listener uses the same framing over mutually
+authenticated TLS 1.3. It speaks the attested extension below and exposes
+neither control commands nor serve-key mode.
+
 ## Framing
 
     frame   = uint32(len, big-endian) || payload
@@ -102,6 +106,62 @@ the guard and key untouched, unless:
 `error` is non-empty (and `signature` absent) when signing is refused, e.g. a
 message that is not a matching header body, a period rollback, or an exhausted
 key. Header bodies of the pre-Babbage (TPraos) eras are refused.
+
+The `type` field is mandatory and must equal `sign_request`. A frame with a
+different or missing type is refused even when its other fields form a valid
+header request.
+
+## Attested remote sign extension
+
+The remote server hello uses protocol `bursa-attested-kes/1` and mode `sign`.
+After TLS client-certificate authentication, Dingo sends one challenge before
+any sign request:
+
+```json
+{ "type": "attestation_request", "protocol": "bursa-attested-kes/1",
+  "nonce": "<32 fresh random bytes>" }
+```
+
+The workload answers:
+
+```json
+{ "type": "attestation_response", "protocol": "bursa-attested-kes/1",
+  "nonce": "<same 32 bytes>", "provider": "nitro",
+  "kes_vkey": "<32 bytes>", "opcert": "<CBOR operational certificate>",
+  "period": 512, "attestation": "<provider evidence>" }
+```
+
+The evidence commits to:
+
+```text
+sha256("bursa-attested-kes/1" ||
+       len(nonce) || nonce ||
+       len(cold_vkey) || cold_vkey ||
+       len(kes_vkey) || kes_vkey ||
+       len(opcert) || opcert ||
+       uint64_be(period))
+```
+
+Lengths are unsigned 64-bit big-endian values. Dingo admits the service only
+after the nonce and configured provider match, the operational certificate is
+the expected certificate, and the corresponding Nitro or Confidential Space
+verifier accepts the evidence and binding. A failure response sets `error`,
+omits evidence, and is followed by connection close. Successful attestation is
+valid only for that TLS connection.
+
+After admission, the connection accepts the ordinary typed `sign_request`
+frames above. KES private state, evolution, period authorization, operational
+certificate validation, and header signing stay inside the workload.
+
+The workload-local provider adapter accepts:
+
+```json
+POST /v1/attest
+{ "protocol": "bursa-attested-kes/1", "binding": "<32 bytes>" }
+```
+
+It returns the same protocol and binding plus `attestation`. Static or replayed
+evidence fails because each Dingo connection supplies a fresh nonce.
 
 ## Control socket
 

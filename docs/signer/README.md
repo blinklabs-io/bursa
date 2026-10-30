@@ -22,6 +22,7 @@ Operator documentation for the two bursa signing daemons:
 | [`nitro-custody.md`](nitro-custody.md) | AWS Nitro enclave workload, host proxy, KMS recipient policy, reproducible EIF and PCR rotation |
 | [`security.md`](security.md) | Threat model, custody guarantees, dev-only file backend |
 | [`kes-agent.md`](kes-agent.md) | KES agent daemon operation |
+| [`embedded-block-production.md`](embedded-block-production.md) | Dingo custody split, supported backends, rotation and failures |
 | [`openapi.yaml`](openapi.yaml) | OpenAPI 3 spec for the signer `/v1` HTTP API |
 | [`kes-agent-protocol.md`](kes-agent-protocol.md) | KES agent Unix-socket wire protocol |
 | [`signer.example.yaml`](signer.example.yaml) | Annotated signer config |

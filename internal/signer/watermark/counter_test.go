@@ -100,6 +100,48 @@ func runCounterPerKeyIsolation(t *testing.T, wm counterStore) {
 	}
 }
 
+// runRaiseFloor checks the on-chain floor: equal values are accepted (an
+// opcert is reissued while the pool has not forged), lower ones are refused.
+func runRaiseFloor(t *testing.T, wm counterStore) {
+	t.Helper()
+	ctx := context.Background()
+	var key backend.KeyHash
+	key[0] = 0xBB
+	scope := "opcert-chain-floor"
+
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 4); err != nil {
+		t.Fatalf("first raise at 4: %v", err)
+	}
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 4); err != nil {
+		t.Fatalf("equal raise at 4: %v", err)
+	}
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 3); !errors.Is(err, ErrCounterRegression) {
+		t.Fatalf("raise at 3: expected ErrCounterRegression, got %v", err)
+	}
+	if v, ok, err := wm.CounterFor(ctx, key, scope); err != nil || !ok || v != 4 {
+		t.Fatalf("after rejected raise: got (v=%d, ok=%v, err=%v), want 4", v, ok, err)
+	}
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 7); err != nil {
+		t.Fatalf("raise at 7: %v", err)
+	}
+	if v, _, _ := wm.CounterFor(ctx, key, scope); v != 7 {
+		t.Fatalf("after raise: got %d, want 7", v)
+	}
+}
+
+func TestMemWatermark_RaiseFloor(t *testing.T) {
+	runRaiseFloor(t, NewMemWatermark())
+}
+
+func TestSqliteWatermark_RaiseFloor(t *testing.T) {
+	wm, err := NewSqliteWatermark(filepath.Join(t.TempDir(), "wm.db"))
+	if err != nil {
+		t.Fatalf("NewSqliteWatermark: %v", err)
+	}
+	defer wm.Close()
+	runRaiseFloor(t, wm)
+}
+
 func TestMemWatermark_CounterMonotonicity(t *testing.T) {
 	runCounterMonotonicity(t, NewMemWatermark())
 }

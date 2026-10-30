@@ -32,7 +32,7 @@ Keys are derived following Cardano CIP standards and output in bech32 format
 suitable for use with cardano-cli and other tools.
 
 Derivation paths by key type:
-  CIP-1852: root, account, payment, stake (m/1852'/1815'/...)
+  CIP-1852: root, account, payment, stake, pool-owner (m/1852'/1815'/...)
   CIP-1853: pool-cold (m/1853'/1815'/...)
   CIP-1855: policy (m/1855'/1815'/...)
   CIP-0105: drep, committee-cold, committee-hot (m/1852'/1815'/account'/role/...)
@@ -45,6 +45,7 @@ Examples:
   bursa key payment --mnemonic-file seed.txt --signing-key-file -
   bursa key stake --mnemonic-file seed.txt --signing-key-file -
   bursa key pool-cold --mnemonic-file seed.txt --signing-key-file -
+  bursa key pool-owner --mnemonic-file seed.txt --signing-key-file owner.skey
   bursa key policy --mnemonic-file seed.txt --signing-key-file -
   bursa key calidus --mnemonic-file seed.txt --signing-key-file -
   bursa key drep --mnemonic-file seed.txt --signing-key-file -
@@ -60,6 +61,7 @@ Examples:
 		keyStakeCommand(),
 		keyPolicyCommand(),
 		keyPoolColdCommand(),
+		keyPoolOwnerCommand(),
 		keyCalidusCommand(),
 		keyVRFCommand(),
 		keyKESCommand(),
@@ -438,6 +440,80 @@ Examples:
 	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
 	cmd.Flags().
 		Uint32Var(&index, "index", 0, "Pool cold key index (default: 0)")
+	cmd.Flags().StringVar(
+		&signingKeyFile,
+		"signing-key-file",
+		"",
+		`Destination for the signing key: a path for cardano-cli compatible JSON, or "-" for standard output`,
+	)
+	cmd.Flags().StringVar(
+		&verificationKeyFile,
+		"verification-key-file",
+		"",
+		"Path to write verification key in cardano-cli compatible JSON format",
+	)
+
+	return &cmd
+}
+
+func keyPoolOwnerCommand() *cobra.Command {
+	var mnemonic string
+	var mnemonicFile string
+	var password string
+	var accountIndex uint32
+	var index uint32
+	var signingKeyFile string
+	var verificationKeyFile string
+
+	cmd := cobra.Command{
+		Use:   "pool-owner",
+		Short: "Derive plain Ed25519 pool owner (stake) key from mnemonic",
+		Long: `Derives the plain Ed25519 form of the stake key from a BIP-39 mnemonic.
+
+This is the plain form of the stake key, for hardware that holds plain Ed25519
+keys (for example the SE050). Its public key differs from the one written by
+"bursa key stake" for the same path.
+
+The key follows the CIP-1852 stake path m/1852'/1815'/account'/2/index. The
+derived key's first 32 bytes (k_L) are used as the RFC 8032 seed. Paths write
+StakeSigningKeyShelley_ed25519 and StakeVerificationKeyShelley_ed25519
+cardano-cli key files. With --signing-key-file "-" the plain 32-byte signing
+key is printed as bech32 with the stake_sk prefix. A signing key destination
+is required unless only --verification-key-file is given.
+
+Examples:
+  bursa key pool-owner --mnemonic-file seed.txt --signing-key-file -
+  bursa key pool-owner --mnemonic-file seed.txt --account-index 0 --index 0 --signing-key-file -
+  bursa key pool-owner --signing-key-file owner.skey --verification-key-file owner.vkey`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := cli.RunKeyPoolOwner(
+				mnemonic,
+				mnemonicFile,
+				password,
+				signingKeyFile,
+				verificationKeyFile,
+				accountIndex,
+				index,
+			); err != nil {
+				logging.GetLogger().Error(
+					"failed to derive pool owner key",
+					"error",
+					err,
+				)
+				os.Exit(1)
+			}
+		},
+	}
+
+	addSecretFlags(&cmd, &mnemonic, &mnemonicFile, &password)
+	cmd.Flags().Uint32Var(
+		&accountIndex,
+		"account-index",
+		0,
+		"Account index (default: 0)",
+	)
+	cmd.Flags().
+		Uint32Var(&index, "index", 0, "Stake key index (default: 0)")
 	cmd.Flags().StringVar(
 		&signingKeyFile,
 		"signing-key-file",

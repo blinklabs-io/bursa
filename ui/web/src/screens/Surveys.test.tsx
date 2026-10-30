@@ -319,8 +319,7 @@ describe("respond", () => {
 
     const toggles = screen.getAllByLabelText(/answer this question/i);
     expect(toggles).toHaveLength(7);
-    expect(toggles[6]).toBeDisabled(); // custom questions can only be abstained from
-    for (const t of toggles.slice(0, 6)) fireEvent.click(t);
+    for (const t of toggles) fireEvent.click(t);
 
     fireEvent.click(within(screen.getByRole("group", { name: /1\. Fund it/ })).getByRole("radio", { name: "Yes" }));
     const multi = within(screen.getByRole("group", { name: /2\. Pick some/ }));
@@ -332,6 +331,7 @@ describe("respond", () => {
     fireEvent.change(screen.getByLabelText("a points"), { target: { value: "70" } });
     fireEvent.change(screen.getByLabelText("b points"), { target: { value: "30" } });
     fireEvent.change(screen.getByLabelText("a rating"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Custom answer CBOR (hex)"), { target: { value: "826178182a" } });
 
     fireEvent.click(screen.getByRole("button", { name: /review response/i }));
     await waitFor(() => expect(respond).toHaveBeenCalled());
@@ -345,6 +345,7 @@ describe("respond", () => {
         { kind: 4, question: 3, number: "35" },
         { kind: 5, question: 4, pairs: [{ option: 0, value: 70 }, { option: 1, value: 30 }] },
         { kind: 6, question: 5, pairs: [{ option: 0, value: "1" }] },
+        { kind: 0, question: 6, custom_cbor: "826178182a" },
       ],
     });
     expect(await screen.findByText("Content to publish")).toBeInTheDocument();
@@ -577,6 +578,9 @@ describe("create", () => {
 
     // Type-specific controls.
     const kinds = screen.getAllByLabelText("Type");
+    fireEvent.change(kinds[0], { target: { value: "0" } });
+    expect(screen.getByLabelText("Method schema URI")).toBeInTheDocument();
+    expect(screen.getByLabelText("Method schema Blake2b-256 hash")).toBeInTheDocument();
     fireEvent.change(kinds[0], { target: { value: "2" } });
     expect(screen.getByLabelText("Minimum selections")).toBeInTheDocument();
     fireEvent.change(kinds[0], { target: { value: "4" } });
@@ -653,12 +657,12 @@ describe("large and unusual definitions", () => {
     );
   });
 
-  test("a survey with a required custom question says it cannot be answered here", async () => {
+  test("a survey with a required custom question collects its method CBOR", async () => {
     await openSurvey(
       detail({}, [YES_NO, { kind: 0, prompt: "Custom", required: true, anchor: { uri: "ipfs://x", hash: "00".repeat(32) } }]),
     );
-    expect(screen.getByText(/required question that uses a custom method/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /review response/i })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Custom answer CBOR (hex)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /review response/i })).toBeInTheDocument();
   });
 
   test("a role whose responses are all still sealed shows no zero results", async () => {

@@ -192,3 +192,26 @@ func (s *SqliteWatermark) CheckAndCommitCounter(ctx context.Context, key backend
 	}
 	return nil
 }
+
+func (s *SqliteWatermark) CheckAndRaiseFloor(ctx context.Context, key backend.KeyHash, scope string, value uint64) error {
+	// The same single-statement upsert as CheckAndCommitCounter, with the
+	// guard relaxed to >= so an unchanged floor is accepted.
+	want := counterEncode(value)
+	var have string
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO counter_watermark (record_key, counter) VALUES (?, ?)
+		 ON CONFLICT(record_key) DO UPDATE SET counter = excluded.counter, updated_at = strftime('%s','now')
+		 WHERE excluded.counter >= counter_watermark.counter
+		 RETURNING counter`,
+		recordKey(key, scope), want).Scan(&have)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrCounterRegression
+	}
+	if err != nil {
+		return fmt.Errorf("counter watermark raise floor: %w", err)
+	}
+	if have != want {
+		return ErrCounterRegression
+	}
+	return nil
+}

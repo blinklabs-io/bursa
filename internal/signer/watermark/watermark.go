@@ -79,6 +79,11 @@ type CounterWatermark interface {
 	// single atomic operation so that two concurrent callers with the same
 	// counter cannot both succeed.
 	CheckAndCommitCounter(ctx context.Context, key backend.KeyHash, scope string, counter uint64) error
+	// CheckAndRaiseFloor atomically records value for (key, scope) if no
+	// record exists or value is at least the recorded one. It returns
+	// ErrCounterRegression, recording nothing, when value is lower. Equal
+	// values succeed, so a floor can be reported again unchanged.
+	CheckAndRaiseFloor(ctx context.Context, key backend.KeyHash, scope string, value uint64) error
 }
 
 // Pinger is an optional interface a Watermark store implements when it has a
@@ -217,5 +222,16 @@ func (m *MemWatermark) CheckAndCommitCounter(_ context.Context, key backend.KeyH
 		return ErrCounterRegression
 	}
 	m.counters[k] = counter
+	return nil
+}
+
+func (m *MemWatermark) CheckAndRaiseFloor(_ context.Context, key backend.KeyHash, scope string, value uint64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := recordKey(key, scope)
+	if prev, ok := m.counters[k]; ok && value < prev {
+		return ErrCounterRegression
+	}
+	m.counters[k] = value
 	return nil
 }

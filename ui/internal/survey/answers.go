@@ -127,6 +127,9 @@ func (q Question) checkAnswer(a Answer) error {
 		}
 	case KindCustom:
 		// Interpreted by the schema at the question's anchor, which is off-chain.
+		if a.Custom == nil {
+			return invalidf("custom answer has no value")
+		}
 	}
 	return nil
 }

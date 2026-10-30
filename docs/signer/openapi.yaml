@@ -83,6 +83,13 @@ paths:
                   kes_vkey: "0f0e0d...aabb"
                   issue_counter: 3
                   kes_period: 512
+              opcert-from-chain:
+                value:
+                  type: opcert
+                  key: "a1b2c3...e2d1"
+                  kes_vkey: "0f0e0d...aabb"
+                  chain_counter: 2
+                  kes_period: 512
       responses:
         '200':
           description: Signed. Body shape depends on the request type.
@@ -327,7 +334,20 @@ components:
         issue_counter:
           type: integer
           format: int64
-          description: opcert - operational certificate issue counter.
+          description: |
+            opcert - operational certificate issue counter. Must be greater
+            than every counter already signed for the key. Ignored when
+            chain_counter is set.
+        chain_counter:
+          type: integer
+          format: int64
+          description: |
+            opcert - the pool's on-chain opcert counter (the counter of the
+            last block it forged, 0 if none). When set, the signer issues the
+            certificate at chain_counter + 1 and returns that number in
+            issue_counter. The same chain counter may be sent again while the
+            pool has not forged with the new certificate; a lower one than
+            already reported is refused with 409.
         kes_period:
           type: integer
           format: int64
@@ -374,6 +394,10 @@ components:
         key:
           type: string
           description: Hex-encoded cold key hash that signed.
+        issue_counter:
+          type: integer
+          format: int64
+          description: The issue counter the signature covers.
     SignerError:
       type: object
       properties:
