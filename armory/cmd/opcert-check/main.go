@@ -181,6 +181,11 @@ func run(args []string, out io.Writer) error {
 	hostKeyFile := fs.String("host-key", "", "host signing key file authenticating the signing request")
 
 	if err := fs.Parse(args); err != nil {
+		// a help request printed the usage and succeeds, as flag.Parse exits 0
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+
 		return err
 	}
 

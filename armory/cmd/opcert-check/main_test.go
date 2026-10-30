@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -322,5 +323,15 @@ func TestHostKeyWrongEnvelopeRejected(t *testing.T) {
 
 	if _, err := newRig(t, nil).check("-host-key", file); err == nil || !strings.Contains(err.Error(), "envelope type") {
 		t.Fatalf("err = %v, want envelope type error", err)
+	}
+}
+
+func TestHelpSucceeds(t *testing.T) {
+	t.Parallel()
+
+	for _, arg := range []string{"-h", "-help"} {
+		if err := run([]string{arg}, io.Discard); err != nil {
+			t.Fatalf("%s: err = %v, want nil", arg, err)
+		}
 	}
 }
