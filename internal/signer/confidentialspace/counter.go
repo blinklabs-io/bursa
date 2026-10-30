@@ -173,7 +173,7 @@ func (s *CloudCounterStore) CheckAndAdvance(
 }
 
 func checkCounterSequence(expected, next uint64) error {
-	if next == math.MaxUint64 || next != expected {
+	if next >= math.MaxUint64-1 || next != expected {
 		return ErrCounterRegression
 	}
 	return nil

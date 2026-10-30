@@ -83,6 +83,7 @@ func TestCounterSequence(t *testing.T) {
 			name:     "near maximum sequential",
 			expected: math.MaxUint64 - 1,
 			next:     math.MaxUint64 - 1,
+			wantErr:  true,
 		},
 		{
 			name:     "maximum request",
