@@ -120,7 +120,19 @@ func TestConfidentialSpaceVerifier(t *testing.T) {
 		mutate  func(c jwt.MapClaims)
 		wantErr bool
 	}{
-		{"valid", "k1", nil, false},
+		{"AMD SEV", "k1", nil, false},
+		{
+			"AMD SEV ES",
+			"k1",
+			func(c jwt.MapClaims) { c["hwmodel"] = "GCP_AMD_SEV_ES" },
+			false,
+		},
+		{
+			"Intel TDX",
+			"k1",
+			func(c jwt.MapClaims) { c["hwmodel"] = "GCP_INTEL_TDX" },
+			false,
+		},
 		// Google issues a lone nonce as a JSON string, not a one-element array.
 		{
 			"single nonce as a string",
@@ -206,6 +218,12 @@ func TestConfidentialSpaceVerifier(t *testing.T) {
 			"no secure boot",
 			"k1",
 			func(c jwt.MapClaims) { c["secboot"] = false },
+			true,
+		},
+		{
+			"Shielded VM",
+			"k1",
+			func(c jwt.MapClaims) { c["hwmodel"] = "GCP_SHIELDED_VM" },
 			true,
 		},
 		{

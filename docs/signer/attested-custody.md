@@ -212,10 +212,20 @@ The signer accepts a token only when all of these hold:
 - issuer is `https://confidentialcomputing.googleapis.com`, audience equals
   `audience`, and `iat`, `nbf`, and `exp` are present and valid;
 - `dbgstat` is `disabled-since-boot`, `swname` is `CONFIDENTIAL_SPACE`, and
-  `secboot` is true, the hardware model is supported, and the image carries
-  the `STABLE` support attribute;
+  `secboot` is true, `hwmodel` is `GCP_AMD_SEV`, `GCP_AMD_SEV_ES`, or
+  `GCP_INTEL_TDX`, and the image carries the `STABLE` support attribute;
 - `submods.container.image_digest` equals `image_digest`;
 - `eat_nonce` contains the inventory binding.
+
+The Workload Identity Pool provider that authorizes access to Cloud KMS and
+Cloud Storage must enforce the same hardware boundary in its
+[attestation policy](https://cloud.google.com/confidential-computing/confidential-space/docs/create-grant-access-confidential-resources#create-an-attestation-policy).
+Use `assertion.hwmodel == "GCP_AMD_SEV"` for AMD or
+`assertion.hwmodel == "INTEL_TDX"` for Intel, matching Google's documented
+[Workload Identity attestation assertion values](https://cloud.google.com/confidential-computing/confidential-space/docs/reference/attestation-assertions#vm-assertions),
+and combine that condition with the software name, `STABLE` support attribute,
+and container image digest conditions. The custom OIDC token verified by Bursa
+uses `GCP_INTEL_TDX` for Intel. Neither policy admits `GCP_SHIELDED_VM`.
 
 ### Pool cold-key workload
 

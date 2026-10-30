@@ -162,7 +162,7 @@ func (v *ConfidentialSpaceVerifier) Verify(
 		)
 	}
 	switch claims.HWModel {
-	case "GCP_AMD_SEV", "GCP_AMD_SEV_ES", "GCP_SHIELDED_VM", "GCP_INTEL_TDX":
+	case "GCP_AMD_SEV", "GCP_AMD_SEV_ES", "GCP_INTEL_TDX":
 	default:
 		return fmt.Errorf(
 			"confidential space token hwmodel is %q",

@@ -28,6 +28,8 @@ import (
 	"net/url"
 	"os"
 	"time"
+
+	"github.com/blinklabs-io/bursa"
 )
 
 const (
@@ -89,7 +91,16 @@ func NewProfiledMTLSHTTPEnclave(
 	if !roots.AppendCertsFromPEM(rootPEM) {
 		return nil, errors.New("tls_ca_file contains no certificates")
 	}
-	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return nil, fmt.Errorf("read TLS client certificate: %w", err)
+	}
+	keyPEM, err := bursa.ReadSecretKeyFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("read TLS client private key: %w", err)
+	}
+	defer clear(keyPEM)
+	certificate, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("load TLS client certificate: %w", err)
 	}

@@ -20,10 +20,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	bursa "github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/logging"
 	signerapi "github.com/blinklabs-io/bursa/internal/signer/api"
 	"github.com/blinklabs-io/bursa/internal/signer/confidentialspace"
@@ -180,7 +182,16 @@ func confidentialSpaceCommand() *cobra.Command {
 func confidentialSpaceTLSConfig(
 	certFile, keyFile, clientCAFile string,
 ) (*tls.Config, error) {
-	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return nil, fmt.Errorf("read workload TLS certificate: %w", err)
+	}
+	keyPEM, err := bursa.ReadSecretKeyFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("read workload TLS private key: %w", err)
+	}
+	defer clear(keyPEM)
+	certificate, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("load workload TLS certificate: %w", err)
 	}

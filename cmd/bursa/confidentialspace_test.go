@@ -31,6 +31,21 @@ import (
 
 func TestConfidentialSpaceTLSConfigRequiresVerifiedClients(t *testing.T) {
 	t.Parallel()
+	certFile, keyFile := writeConfidentialSpaceTLSFixture(t)
+
+	config, err := confidentialSpaceTLSConfig(certFile, keyFile, certFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.MinVersion != tls.VersionTLS13 ||
+		config.ClientAuth != tls.RequireAndVerifyClientCert ||
+		config.ClientCAs == nil || len(config.Certificates) != 1 {
+		t.Fatalf("TLS config does not require TLS 1.3 mTLS: %+v", config)
+	}
+}
+
+func writeConfidentialSpaceTLSFixture(t *testing.T) (string, string) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -76,13 +91,5 @@ func TestConfidentialSpaceTLSConfigRequiresVerifiedClients(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	config, err := confidentialSpaceTLSConfig(certFile, keyFile, certFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.MinVersion != tls.VersionTLS13 ||
-		config.ClientAuth != tls.RequireAndVerifyClientCert ||
-		config.ClientCAs == nil || len(config.Certificates) != 1 {
-		t.Fatalf("TLS config does not require TLS 1.3 mTLS: %+v", config)
-	}
+	return certFile, keyFile
 }
