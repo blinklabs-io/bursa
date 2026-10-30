@@ -53,7 +53,14 @@ of the signer:
 - any transaction policy the operator relies on when the host is not trusted;
 - refusal of a repeated request nonce.
 
-Anything the enclave does not enforce is only as strong as the host.
+The Confidential Space workload also requires TLS 1.3 mutual authentication
+for both protocol endpoints. This prevents network clients without the
+signer's certificate from requesting inventory or signatures. The client
+private key resides on the signer host, so compromise of that host also
+compromises this caller credential. The workload's payload and durable counter
+checks remain the limits on what that credential can request.
+
+Anything else the enclave does not enforce is only as strong as the host.
 
 ## Protocol
 
@@ -138,10 +145,12 @@ Cardano operation validation, watermarks, role guard for operational
 certificates, and signature verification all run in the signer before and after
 the enclave call. A plain `Sign` on an attested key is refused.
 
-The signer can reach the enclave at an `http://`, `https://` or `unix:///path`
-address. Forwarding that address onto the platform's vsock (Nitro) or onto the
-workload's port (Confidential Space) is the deployment's job; the channel needs
-no confidentiality or integrity guarantee from the signer's point of view.
+The Nitro signer can reach its enclave through an `http://`, `https://` or
+`unix:///path` address because attestation and response verification protect
+that protocol across the host proxy. Confidential Space requires an `https://`
+address, a pinned server CA, and a signer client certificate. Forwarding the
+address onto the platform's vsock or workload port remains the deployment's
+job.
 
 ## AWS Nitro Enclaves
 
@@ -191,6 +200,9 @@ backends:
     profile: "pool@mainnet"                     # optional fixed workload profile
     audience: "https://signer.example.internal"
     image_digest: "sha256:<64 hex>"
+    tls_ca_file: "/etc/bursa/confidential-space-ca.pem"
+    tls_client_cert_file: "/etc/bursa/confidential-space-client.pem"
+    tls_client_key_file: "/etc/bursa/confidential-space-client-key.pem"
     # jwks_url: defaults to Google's published token signing keys
 ```
 
@@ -198,19 +210,112 @@ The signer accepts a token only when all of these hold:
 
 - it is RS256-signed by a key in the JWKS (HTTPS, or loopback HTTP, only);
 - issuer is `https://confidentialcomputing.googleapis.com`, audience equals
-  `audience`, and `exp` is present and in the future;
+  `audience`, and `iat`, `nbf`, and `exp` are present and valid;
 - `dbgstat` is `disabled-since-boot`, `swname` is `CONFIDENTIAL_SPACE`, and
-  `secboot` is true;
+  `secboot` is true, `hwmodel` is `GCP_AMD_SEV`, `GCP_AMD_SEV_ES`, or
+  `GCP_INTEL_TDX`, and the image carries the `STABLE` support attribute;
 - `submods.container.image_digest` equals `image_digest`;
 - `eat_nonce` contains the inventory binding.
 
-The workload obtains the token with the signer's audience and `hex(binding)` as
-the nonce. Enclave-side controls live in Google Cloud: a Workload Identity
-Federation provider whose attribute condition requires the same image digest,
-`dbgstat`, `swname` and audience; IAM that lets only that federated principal
-call Cloud KMS `decrypt` on the key wrapping the key material; and a workload
-image published by digest. Cloud KMS then refuses an unapproved digest, a debug
-image, a wrong audience, an expired token, or missing attestation.
+The Workload Identity Pool provider that authorizes access to Cloud KMS and
+Cloud Storage must enforce the same hardware boundary in its
+[attestation policy](https://cloud.google.com/confidential-computing/confidential-space/docs/create-grant-access-confidential-resources#create-an-attestation-policy).
+Use `assertion.hwmodel == "GCP_AMD_SEV"` for AMD or
+`assertion.hwmodel == "INTEL_TDX"` for Intel, matching Google's documented
+[Workload Identity attestation assertion values](https://cloud.google.com/confidential-computing/confidential-space/docs/reference/attestation-assertions#vm-assertions),
+and combine that condition with the software name, `STABLE` support attribute,
+and container image digest conditions. The custom OIDC token verified by Bursa
+uses `GCP_INTEL_TDX` for Intel. Neither policy admits `GCP_SHIELDED_VM`.
+
+### Pool cold-key workload
+
+The `bursa confidential-space-workload` command is the enclave side of the
+protocol for one pool cold key. It runs from the signer container image, obtains
+custom tokens from the Confidential Space launcher socket, and exposes only
+`/v1/inventory` and `/v1/sign` over TLS 1.3. Both endpoints require a client
+certificate signed by `--client-ca-file`. The sign endpoint accepts only a
+`pool` key with the `opcert` purpose and the canonical 48-byte
+operational-certificate payload. It rejects reused request nonces and verifies
+each signature before returning it.
+
+The first boot generates the Ed25519 pool key and an AES-256-GCM data-encryption
+key inside the workload. Cloud KMS wraps the data-encryption key. The workload
+persists only authenticated ciphertext, the wrapped data-encryption key, and
+public metadata in the file named by `--wrapped-key-file`. It first publishes a
+`counter-pending` envelope with mode `0600`, creates the matching counter
+object, and atomically replaces the envelope with an authenticated `active`
+form before serving. A restart can finish an interrupted pending bootstrap with
+the same pool identity. An active envelope never recreates a missing counter.
+Cloud KMS must unwrap the same data-encryption key before the public key is
+served. A denial, corrupt envelope, mismatched KMS resource, or changed public
+metadata stops startup.
+
+The command requires:
+
+```text
+bursa confidential-space-workload \
+  --listen :8080 \
+  --audience https://signer.example.internal \
+  --kms-key projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY \
+  --wrapped-key-file /var/lib/bursa/pool-cold.wrapped \
+  --counter-bucket POOL_COUNTER_BUCKET \
+  --counter-object pool-cold/counter.json \
+  --wif-credentials /etc/bursa/confidential-space-wif.json \
+  --tls-cert-file /etc/bursa/confidential-space-server.pem \
+  --tls-key-file /etc/bursa/confidential-space-server-key.pem \
+  --client-ca-file /etc/bursa/confidential-space-client-ca.pem
+```
+
+Configure `tls_ca_file` on the signer with the CA that issued the workload
+server certificate. Configure `tls_client_cert_file` and
+`tls_client_key_file` with a client identity issued by the CA passed to
+`--client-ca-file`. The workload has no plaintext or optional-client-certificate
+mode.
+
+The credential file must be a Google external-account configuration that uses
+`https://sts.googleapis.com/v1/token`, does not impersonate a service account,
+and reads its text subject token only from
+`/run/container_launcher/attestation_verifier_claims_token`. This is the
+launcher's automatically refreshed default token for the Workload Identity
+Federation provider. The custom token returned to the signer is separate: the
+workload requests it for the configured signer audience with
+`hex(InventoryBinding)` as its nonce on every inventory request.
+
+Use direct resource access for the Cloud KMS key and counter object. Before a
+signature is made, the workload commits the operational-certificate issue
+counter to the configured Cloud Storage object with a generation precondition.
+The first counter must be `0`, and every later counter must be exactly one
+greater than the committed value. The maximum `uint64` value is refused. This
+keeps the counter sequential across restarts and concurrent workload replicas
+without allowing one request to exhaust the counter range. Give the workload
+identity only `storage.objects.get`,
+`storage.objects.create`, and `storage.objects.delete` on the configured object
+name. Cloud Storage requires delete permission when a new generation replaces
+an existing object. Enable Object Versioning for recovery evidence, and do not
+expose the workload's attestation credential outside the measured image.
+Counter objects written with `bursa-confidential-space-counter/1` migrate once
+with a generation precondition: `next_issue_number` becomes the stored
+`issue_number` plus one. A legacy maximum value, malformed state, or a key-hash
+mismatch stops startup.
+
+The Workload Identity Federation provider must map the container image digest
+and require
+`CONFIDENTIAL_SPACE`, `disabled-since-boot`, secure boot, the approved digest,
+and the production support attribute. Grant encrypt and decrypt on only the
+wrapping key, and the three object permissions above on only the counter
+object, to that digest-bound federated principal. The same condition makes
+Cloud KMS and Cloud Storage refuse an unapproved digest, a debug image, an
+expired default token, or a request without attestation. The signer
+independently verifies those properties on the custom inventory token before
+it accepts the public key.
+
+Persist the wrapped-key file and counter object across workload restarts.
+Losing the wrapped-key file creates a new pool identity on the next boot;
+copying or rolling it back restores the same pool identity because the private
+key never leaves its envelope. Back up the wrapped file together with the Cloud
+KMS key's retention policy. The counter object is created with a new wrapped
+identity; startup fails if that identity later has no matching counter object.
+Never restore or remove the counter object for an existing pool key.
 
 ## USB armory
 

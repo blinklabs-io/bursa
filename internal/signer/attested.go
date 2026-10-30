@@ -152,7 +152,27 @@ func loadAttestedBackend(ctx context.Context, c config.SignerBackendConfig, veri
 	if c.Address == "" {
 		return nil, fmt.Errorf("%s backend requires address", c.Type)
 	}
-	enclave, err := backend.NewProfiledHTTPEnclave(c.Address, c.Profile)
+	var (
+		enclave *backend.HTTPEnclave
+		err     error
+	)
+	if c.Type == "confidential-space" {
+		if c.TLSCAFile == "" || c.TLSClientCertFile == "" ||
+			c.TLSClientKeyFile == "" {
+			return nil, errors.New(
+				"confidential-space backend requires tls_ca_file, tls_client_cert_file, and tls_client_key_file",
+			)
+		}
+		enclave, err = backend.NewProfiledMTLSHTTPEnclave(
+			c.Address,
+			c.Profile,
+			c.TLSCAFile,
+			c.TLSClientCertFile,
+			c.TLSClientKeyFile,
+		)
+	} else {
+		enclave, err = backend.NewProfiledHTTPEnclave(c.Address, c.Profile)
+	}
 	if err != nil {
 		return nil, err
 	}
