@@ -253,14 +253,13 @@ step "Register host key $HOST_KEY"
 if [ ! -s "$HOST_KEY" ]; then
 	"$ARMORY_POOL" host-key -out "$HOST_KEY" > host-key.pub
 fi
-[ -s host-key.pub ] || fail "host-key.pub missing: it holds the public key printed when $HOST_KEY was created"
-HOST_PUB=$(printf '%b' "$(sed 's/../\\x&/g' host-key.pub | tr -d '\n')" | base64 -w0)
+[ -s host-key.pub ] || fail "host-key.pub missing: it holds the request printed when $HOST_KEY was created"
+HOST_PUB=$(jq -er .public_key host-key.pub) || fail "host-key.pub is not the host-key request armory-pool host-key prints"
 if jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json > /dev/null 2>&1; then
 	pass "host key registered in an earlier run"
 else
 need_build provisioning
-jq -n --arg k "$HOST_PUB" '{public_key: $k}' |
-	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/host-key" --data-binary @- > host-key.json.new
+curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/host-key" --data-binary @host-key.pub > host-key.json.new
 mv host-key.json.new host-key.json
 fi
 check "host key registered" jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json

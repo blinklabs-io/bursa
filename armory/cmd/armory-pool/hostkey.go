@@ -17,6 +17,7 @@ package main
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -31,7 +32,8 @@ const (
 )
 
 // newHostKey writes a new host signing key to file, which must not exist,
-// and prints its public key in hex for /provision/host-key.
+// and prints the /provision/host-key request body for its public key, which
+// /provision/host-key/revoke takes as well.
 func newHostKey(file string, out io.Writer) error {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -57,7 +59,12 @@ func newHostKey(file string, out io.Writer) error {
 		return err
 	}
 
-	_, err = fmt.Fprintf(out, "%x\n", pub)
+	req, err := json.Marshal(device.HostKeyRequest{PublicKey: pub})
+	if err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(out, "%s\n", req)
 
 	return err
 }
