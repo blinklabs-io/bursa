@@ -663,6 +663,201 @@ type TxResult struct {
 	TxHash string `json:"tx_hash"`
 }
 
+// PoolVoteParams configures a stake pool vote on a governance action.
+type PoolVoteParams struct {
+	ActionTxID  string `json:"action_tx_id"`
+	ActionIndex uint32 `json:"action_index"`
+	Vote        string `json:"vote"`
+	AnchorURL   string `json:"anchor_url"`
+	AnchorHash  string `json:"anchor_hash"`
+}
+
+// SubmitPoolVote builds, signs (with the wallet's payment key(s) for fees and
+// the pool cold key as the SPO voter witness), and submits a governance vote
+// transaction as the stake pool operator.
+func (s *Service) SubmitPoolVote(ctx context.Context, password string, v PoolVoteParams) (TxResult, error) {
+	walletID, acct := s.currentBinding()
+	if acct == nil {
+		return TxResult{}, ErrNoWallet
+	}
+	if s.chain == nil {
+		return TxResult{}, errors.New("no chain context configured")
+	}
+	if len(acct.ReceiveAddresses) == 0 {
+		return TxResult{}, errors.New("account has no receive addresses")
+	}
+
+	if v.ActionIndex > lcommon.MaxGovActionIdx {
+		return TxResult{}, fmt.Errorf("%w: action_index must be <= %d", ErrInvalidRequest, lcommon.MaxGovActionIdx)
+	}
+
+	actionTxID := strings.TrimSpace(v.ActionTxID)
+	if len(actionTxID) != 64 {
+		return TxResult{}, fmt.Errorf("%w: action_tx_id must be 32 bytes hex", ErrInvalidRequest)
+	}
+	if _, err := hex.DecodeString(actionTxID); err != nil {
+		return TxResult{}, fmt.Errorf("%w: action_tx_id is not valid hex: %w", ErrInvalidRequest, err)
+	}
+
+	vote := strings.ToLower(strings.TrimSpace(v.Vote))
+	var govVote uint8
+	switch vote {
+	case "yes":
+		govVote = lcommon.GovVoteYes
+	case "no":
+		govVote = lcommon.GovVoteNo
+	case "abstain":
+		govVote = lcommon.GovVoteAbstain
+	default:
+		return TxResult{}, fmt.Errorf("%w: vote must be yes, no, or abstain", ErrInvalidRequest)
+	}
+
+	anchorURL := strings.TrimSpace(v.AnchorURL)
+	anchorHash := strings.TrimSpace(v.AnchorHash)
+	if (anchorURL == "") != (anchorHash == "") {
+		return TxResult{}, fmt.Errorf("%w: anchor_url and anchor_hash must be provided together or omitted", ErrInvalidRequest)
+	}
+	var anchor *lcommon.GovAnchor
+	if anchorURL != "" {
+		if len(anchorHash) != 64 {
+			return TxResult{}, fmt.Errorf("%w: anchor_hash must be 32 bytes hex", ErrInvalidRequest)
+		}
+		ah, err := hex.DecodeString(anchorHash)
+		if err != nil {
+			return TxResult{}, fmt.Errorf("%w: anchor_hash is not valid hex: %w", ErrInvalidRequest, err)
+		}
+		ga, err := lcommon.NewGovAnchor(anchorURL, ah)
+		if err != nil {
+			return TxResult{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+		}
+		anchor = &ga
+	}
+
+	root, zero, err := s.unlockRoot(walletID, password)
+	if err != nil {
+		return TxResult{}, err
+	}
+	defer zero()
+	cold, err := deriveCold(root, defaultColdIndex)
+	if err != nil {
+		return TxResult{}, err
+	}
+	defer cold.zero()
+	operator := poolIDFromVKey(cold.vkey)
+
+	acctKey, err := bursa.GetAccountKey(root, acct.AccountIndex)
+	if err != nil {
+		return TxResult{}, fmt.Errorf("account key: %w", err)
+	}
+	defer zeroBytes(acctKey)
+
+	changeAddr, err := lcommon.NewAddress(acct.ReceiveAddresses[0])
+	if err != nil {
+		return TxResult{}, fmt.Errorf("change address: %w", err)
+	}
+	a := apollo.New(s.chain).
+		SetWallet(apollo.NewExternalWallet(changeAddr)).
+		SetChangeAddress(changeAddr).
+		SetFeePadding(retirementFeePaddingLovelace).
+		SetTransactionBodySetTagPolicy(apollo.TransactionBodySetTagPolicyUntagged)
+
+	fundingAddrs, err := retirementFundingAddresses(acct, acctKey)
+	if err != nil {
+		return TxResult{}, err
+	}
+	utxoAddr := make(map[string]ownedPaymentAddress)
+	for _, owner := range fundingAddrs {
+		addrStr := owner.address
+		addr, err := lcommon.NewAddress(addrStr)
+		if err != nil {
+			return TxResult{}, fmt.Errorf("address %q: %w", addrStr, err)
+		}
+		utxos, err := backend.UtxosContext(ctx, s.chain, addr)
+		if err != nil {
+			return TxResult{}, fmt.Errorf("utxos for %s: %w", addrStr, err)
+		}
+		if len(utxos) > 0 {
+			a = a.AddLoadedUTxOs(utxos...)
+			for _, u := range utxos {
+				ref := hex.EncodeToString(u.Id.Id().Bytes()) + "#" + strconv.FormatUint(uint64(u.Id.Index()), 10)
+				utxoAddr[ref] = owner
+			}
+		}
+	}
+
+	var txID [32]byte
+	txIDBytes, _ := hex.DecodeString(actionTxID)
+	copy(txID[:], txIDBytes)
+	actionID := lcommon.GovActionId{
+		TransactionId: txID,
+		GovActionIdx:  v.ActionIndex,
+	}
+	voter := lcommon.Voter{
+		Type: lcommon.VoterTypeStakingPoolKeyHash,
+		Hash: operator,
+	}
+	procedure := lcommon.VotingProcedure{
+		Vote:   govVote,
+		Anchor: anchor,
+	}
+	a = a.AddVote(voter, actionID, procedure).AddRequiredSigner(operator)
+
+	a, err = a.WithContext(ctx).Complete()
+	if err != nil {
+		return TxResult{}, fmt.Errorf("complete transaction: %w", err)
+	}
+
+	tx := a.GetTx()
+	if tx == nil {
+		return TxResult{}, errors.New("transaction not built")
+	}
+	seen := map[string]bool{}
+	for _, inp := range tx.Body.TxInputs.Items() {
+		ref := hex.EncodeToString(inp.TxId.Bytes()) + "#" + strconv.FormatUint(uint64(inp.OutputIndex), 10)
+		owner, ok := utxoAddr[ref]
+		if !ok || seen[owner.address] {
+			continue
+		}
+		seen[owner.address] = true
+		payKey, err := deriveOwnedPaymentKey(acctKey, owner)
+		if err != nil {
+			return TxResult{}, fmt.Errorf("%s payment key idx %d: %w", owner.role, owner.index, err)
+		}
+		if err := func() error {
+			defer zeroBytes(payKey)
+			addr, err := lcommon.NewAddress(owner.address)
+			if err != nil {
+				return fmt.Errorf("parse address %s: %w", owner.address, err)
+			}
+			kw, err := apollo.NewKeyPairWallet(addr, payKey)
+			if err != nil {
+				return fmt.Errorf("key pair wallet %s idx %d: %w", owner.role, owner.index, err)
+			}
+			a = a.SetWallet(kw)
+			a, err = a.Sign()
+			if err != nil {
+				return fmt.Errorf("sign %s idx %d: %w", owner.role, owner.index, err)
+			}
+			return nil
+		}(); err != nil {
+			return TxResult{}, err
+		}
+	}
+	a, err = a.SignWithSkey(cold.seed)
+	cold.zero()
+	if err != nil {
+		return TxResult{}, fmt.Errorf("cold-key witness: %w", err)
+	}
+
+	submissionContext, cancel := submissionctx.New(ctx)
+	defer cancel()
+	txHash, err := a.WithContext(submissionContext).Submit()
+	if err != nil {
+		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
+	}
+	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
+}
+
 // SubmitRetirement builds, signs (with the wallet's first receive-address key
 // for fees + the cold key as the pool witness), and submits a pool retirement
 // transaction to the embedded node. It requires the spending password and a

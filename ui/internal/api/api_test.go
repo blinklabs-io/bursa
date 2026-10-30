@@ -2198,6 +2198,7 @@ type fakePoolOps struct {
 	retireEpoch      uint64
 	submitPassword   string
 	submitEpoch      uint64
+	submitVote       poolops.PoolVoteParams
 }
 
 func (f *fakePoolOps) SetAccount(_ string, _ *wallet.Account) { f.setAccountCalled = true }
@@ -2274,6 +2275,12 @@ func (f *fakePoolOps) BuildRetirementCert(password, coldVKeyHex string, epoch ui
 func (f *fakePoolOps) SubmitRetirement(_ context.Context, password string, epoch uint64) (poolops.TxResult, error) {
 	f.submitPassword = password
 	f.submitEpoch = epoch
+	return f.tx, f.submitErr
+}
+
+func (f *fakePoolOps) SubmitPoolVote(_ context.Context, password string, v poolops.PoolVoteParams) (poolops.TxResult, error) {
+	f.submitPassword = password
+	f.submitVote = v
 	return f.tx, f.submitErr
 }
 
@@ -4953,4 +4960,43 @@ func TestMultiSigCreateReportsActivationFailure(t *testing.T) {
 
 func withAutoLockRuntime(runtime autoLockRuntime) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.autoLockRuntime = runtime }
+}
+
+func TestPoolVoteGatedWhileSyncing(t *testing.T) {
+	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"pw","action_tx_id":"` + strings.Repeat("ab", 32) + `","action_index":0,"vote":"yes"}`)
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/vote", body))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("pool vote while syncing = %d, want 503", rec.Code)
+	}
+}
+
+func TestPoolVoteReady(t *testing.T) {
+	po := &fakePoolOps{tx: poolops.TxResult{TxHash: "beefcafe"}}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"pw","action_tx_id":"` + strings.Repeat("ab", 32) + `","action_index":1,"vote":"no","anchor_url":"ipfs://x","anchor_hash":"` + strings.Repeat("cd", 32) + `"}`)
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/vote", body))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "beefcafe") {
+		t.Fatalf("pool vote ready = %d body %s", rec.Code, rec.Body.String())
+	}
+	if po.submitPassword != "pw" {
+		t.Fatalf("submit password = %q", po.submitPassword)
+	}
+	if po.submitVote.ActionTxID != strings.Repeat("ab", 32) || po.submitVote.ActionIndex != 1 || po.submitVote.Vote != "no" || po.submitVote.AnchorURL != "ipfs://x" || po.submitVote.AnchorHash != strings.Repeat("cd", 32) {
+		t.Fatalf("vote params = %+v", po.submitVote)
+	}
+}
+
+func TestPoolVoteRejected422(t *testing.T) {
+	po := &fakePoolOps{submitErr: fmt.Errorf("%w: ledger rule X", poolops.ErrSubmitRejected)}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"pw","action_tx_id":"` + strings.Repeat("ab", 32) + `","action_index":0,"vote":"yes"}`)
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/vote", body))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("pool vote rejected = %d, want 422", rec.Code)
+	}
 }
