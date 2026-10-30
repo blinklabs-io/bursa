@@ -218,12 +218,19 @@ func New(mu sync.Locker, logf func(format string, args ...any)) *Service {
 // The device cannot tell chains that share a network id apart, so the label
 // keeps one chain's profiles per device. Profiles for another network or
 // chain are refused at provisioning, inventory, signing, floor reset and
-// reward changes. Call it before SetChip.
+// reward changes. A mainnet build (id 1) also refuses to sign until a host
+// key is registered (RequireHostAuth). Call it before SetChip.
 func (s *Service) SetNetwork(id uint8, chain string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.network, s.networkFixed, s.chain = id, true, chain
+
+	// a mainnet build signs only for a registered host key
+	if id == 1 {
+		s.requireHostAuth = true
+		s.logf("signing requires a registered host key")
+	}
 }
 
 // serves reports why this build does not serve a profile on network id

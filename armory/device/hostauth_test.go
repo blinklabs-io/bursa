@@ -406,3 +406,27 @@ func TestHostKeysAllZeroRefusesSigning(t *testing.T) {
 		t.Fatalf("not recovered by registering a key: %+v", r)
 	}
 }
+
+// TestMainnetRequiresHostAuth checks a mainnet build refuses to sign until a
+// host key is registered, and signs once one authenticates the request.
+func TestMainnetRequiresHostAuth(t *testing.T) {
+	s := newChainService(t, "prime-mainnet", "pool@prime-mainnet")
+	chip := s.chip.(*fakeChip)
+	cold, _ := chip.PublicKeyEd25519(0x20e50011)
+	req := func(n byte) SignRequest {
+		return SignRequest{
+			Version: Protocol, Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
+			Nonce: nonce(n), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 0, 1100), Profile: "pool@prime-mainnet",
+		}
+	}
+
+	if r := postSign(t, s, req(1)); r.Error == "" || len(r.Signature) != 0 {
+		t.Fatalf("mainnet build signed with no host key registered: %+v", r)
+	}
+
+	registerHostKey(t, s, hostPub(testHostKey))
+
+	if r := postSign(t, s, authenticate(req(2), testHostKey, challenge(t, s))); r.Error != "" {
+		t.Fatalf("authenticated request refused on a mainnet build: %+v", r)
+	}
+}
