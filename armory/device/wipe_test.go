@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/armory/profile"
@@ -112,7 +113,7 @@ func TestWipeDeviceDeletesEveryArmoryObject(t *testing.T) {
 	registerHostKey(t, s, hostPub(testHostKey))
 
 	last := profile.Profile{Slot: profile.MaxSlot}
-	plant(chip, 0x20e50001, 0x20e50002, coldKeyLast, last.OwnerKeyID(), 0x20e50200, 0x20e5021f)
+	plant(chip, 0x20e50001, 0x20e50008, 0x20e5000f, coldKeyLast, last.OwnerKeyID(), 0x20e50200, 0x20e50210, 0x20e5021f)
 	chip.bins[last.RecordID()] = []byte("unreadable")
 	plant(chip, outsideIDs...)
 
@@ -221,8 +222,13 @@ func TestWipeDeviceRetriesAfterFailure(t *testing.T) {
 
 	chip.deletes, chip.failDeleteAfter = 0, 2
 
-	if code, _ := wipePost(t, s, "/wipe/device", WipeDeviceRequest{IdentityPublicKey: id}); code == http.StatusOK {
+	code, body := wipePost(t, s, "/wipe/device", WipeDeviceRequest{IdentityPublicKey: id})
+	if code == http.StatusOK {
 		t.Fatal("wipe reported success after a failed delete")
+	}
+
+	if !strings.Contains(string(body), "send the request again") {
+		t.Errorf("error body %q does not ask for a retry", body)
 	}
 
 	if _, ok := chip.keys[profile.IdentityKeyID]; !ok {
@@ -385,6 +391,36 @@ func TestWipeProfileRefusesWhileRecordUnreadable(t *testing.T) {
 	for _, o := range []uint32{p.ColdKeyID, p.OwnerKeyID(), p.RecordID()} {
 		if !left[o] {
 			t.Errorf("object %#x deleted", o)
+		}
+	}
+}
+
+// TestWipeProfileKeepsSharedColdKey checks a wipe keeps a cold key another
+// stored profile still names.
+func TestWipeProfileKeepsSharedColdKey(t *testing.T) {
+	s, chip := newTestService(t)
+	id := identityHex(t, s)
+	gone := profile.Profile{Name: "gone@preview", Slot: 0, ColdKeyID: testColdID}
+	kept := profile.Profile{Name: "kept@preview", Slot: 1, ColdKeyID: testColdID}
+	storeRecord(t, chip, gone)
+	storeRecord(t, chip, kept)
+
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := wipePost(t, s, "/wipe/profile", WipeProfileRequest{IdentityPublicKey: id, Profile: gone.Name}); code != http.StatusOK {
+		t.Fatalf("wipe profile: %d %s", code, body)
+	}
+
+	left := objectIDs(chip)
+	if left[gone.OwnerKeyID()] || left[gone.RecordID()] {
+		t.Error("removed profile's owner key or record remains")
+	}
+
+	for _, o := range []uint32{testColdID, kept.OwnerKeyID(), kept.RecordID()} {
+		if !left[o] {
+			t.Errorf("object %#x still named by a profile was deleted", o)
 		}
 	}
 }
