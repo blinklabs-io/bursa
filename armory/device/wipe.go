@@ -57,7 +57,11 @@ type WipeResponse struct {
 }
 
 // WipeHandler serves only the wipe endpoints, for the wipe firmware. Neither
-// the signing nor the provisioning firmware serves them.
+// the signing nor the provisioning firmware serves them. As with the
+// provisioning endpoints, requests are not host-key authenticated: the wipe
+// image must be loaded onto the board, and the identity public key only
+// confirms which device is meant. A wipe that fails reports no partial list;
+// the request is sent again, and /wipe/objects lists what remains.
 func (s *Service) WipeHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /wipe/objects", handle(s, func(struct{}) (WipeResponse, error) {
@@ -156,7 +160,7 @@ func (s *Service) remove(ids []uint32) ([]uint32, error) {
 		ok, err := s.chip.Exists(id)
 		if err != nil {
 			s.logf("exist check %#08x: %v", id, err)
-			return deleted, errDevice
+			return nil, errDevice
 		}
 
 		if !ok {
@@ -165,7 +169,7 @@ func (s *Service) remove(ids []uint32) ([]uint32, error) {
 
 		if err = s.chip.Delete(id); err != nil {
 			s.logf("wipe: delete %#08x: %v", id, err)
-			return deleted, fmt.Errorf("%w: deleting %#08x; send the request again", errDevice, id)
+			return nil, fmt.Errorf("%w: deleting %#08x; send the request again", errDevice, id)
 		}
 
 		s.logf("wipe: deleted %#08x", id)
@@ -189,7 +193,7 @@ func (s *Service) wipeDevice(req WipeDeviceRequest) (WipeResponse, error) {
 
 	deleted, err := s.remove(ids)
 	if err != nil {
-		return WipeResponse{Deleted: hexIDs(deleted)}, err
+		return WipeResponse{}, err
 	}
 
 	s.profiles = map[string]profile.Profile{}
@@ -238,7 +242,7 @@ func (s *Service) wipeProfile(req WipeProfileRequest) (WipeResponse, error) {
 
 	deleted, err := s.remove(append(ids, p.RecordID()))
 	if err != nil {
-		return WipeResponse{Deleted: hexIDs(deleted)}, err
+		return WipeResponse{}, err
 	}
 
 	delete(s.profiles, p.Name)
