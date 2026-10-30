@@ -198,18 +198,14 @@ type AttestedResponse struct {
 	// IssueCounter is the opcert issue number the enclave chose for an
 	// opcert-next request.
 	IssueCounter *uint64 `json:"issue_counter,omitempty"`
-	// Summary describes a signed transaction body, as the enclave's policy
-	// saw it. It is covered by BindingSignature.
-	Summary string `json:"summary,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Error        string  `json:"error,omitempty"`
 }
 
 // AttestedResponseBinding is the digest a profiled workload signs alongside
 // the Cardano signature. It binds the response to the complete request so an
 // untrusted proxy cannot select another profile while reusing a valid Cardano
-// signature from the same key. A non-empty summary of a signed transaction body
-// is one more field; an empty one adds none.
-func AttestedResponseBinding(req AttestedRequest, signature []byte, summary string) []byte {
+// signature from the same key.
+func AttestedResponseBinding(req AttestedRequest, signature []byte) []byte {
 	h := sha256.New()
 	era := []byte(nil)
 	if req.Era != nil {
@@ -228,9 +224,6 @@ func AttestedResponseBinding(req AttestedRequest, signature []byte, summary stri
 	} {
 		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
 		h.Write(field)
-	}
-	if summary != "" {
-		h.Write([]byte(strconv.Itoa(len(summary)) + ":" + summary))
 	}
 	return h.Sum(nil)
 }
@@ -439,7 +432,7 @@ func (k *attestedKey) exchange(ctx context.Context, purpose Purpose, payload []b
 		if len(resp.BindingSignature) != ed25519.SignatureSize {
 			return AttestedResponse{}, fmt.Errorf("%w: binding signature must be %d bytes, got %d", ErrAttestedProtocol, ed25519.SignatureSize, len(resp.BindingSignature))
 		}
-		if !ed25519.Verify(k.pub, AttestedResponseBinding(req, resp.Signature, resp.Summary), resp.BindingSignature) {
+		if !ed25519.Verify(k.pub, AttestedResponseBinding(req, resp.Signature), resp.BindingSignature) {
 			return AttestedResponse{}, fmt.Errorf("%w: %w", ErrAttestedProtocol, ErrInvalidSignature)
 		}
 	}

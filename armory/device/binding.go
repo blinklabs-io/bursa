@@ -22,6 +22,11 @@ import (
 // Protocol is the attested-signer protocol version Bursa speaks.
 const Protocol = "bursa-attested-signer/1"
 
+// ProtocolSummary is the sign request version that asks for the signing
+// policy's summary in the reply, bound by the binding signature. Inventory
+// stays at Protocol.
+const ProtocolSummary = "bursa-attested-signer/2"
+
 // KeyInfo is one key in an inventory.
 type KeyInfo struct {
 	Role      string `json:"role"`
@@ -45,11 +50,12 @@ func InventoryBinding(nonce []byte, keys []KeyInfo) []byte {
 }
 
 // ResponseBinding is the digest the selected key signs alongside the Cardano
-// signature. It matches Bursa's backend.AttestedResponseBinding: each request
-// field and the signature, length-prefixed, so a response cannot be paired
-// with another nonce, profile or payload. An absent era is an empty field. A
-// non-empty summary is one more field; an empty one adds none, so responses
-// without a summary keep their binding.
+// signature: each request field and the signature, length-prefixed, so a
+// response cannot be paired with another nonce, profile or payload. An absent
+// era is an empty field. For Protocol it matches Bursa's
+// backend.AttestedResponseBinding. Under ProtocolSummary the summary is one
+// more field, present even when empty. A version-1 reply carries no summary;
+// a summary on one does not verify.
 func ResponseBinding(req SignRequest, signature []byte, summary string) []byte {
 	h := sha256.New()
 
@@ -73,7 +79,7 @@ func ResponseBinding(req SignRequest, signature []byte, summary string) []byte {
 		h.Write(field)
 	}
 
-	if summary != "" {
+	if req.Version == ProtocolSummary || summary != "" {
 		h.Write([]byte(strconv.Itoa(len(summary)) + ":" + summary))
 	}
 

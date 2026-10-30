@@ -614,7 +614,7 @@ func TestBuildBackendsArmoryHostKey(t *testing.T) {
 			} else {
 				hash := blake2b.Sum256(req.Payload)
 				resp.Signature = ed25519.Sign(poolPriv, hash[:])
-				resp.BindingSignature = ed25519.Sign(poolPriv, backend.AttestedResponseBinding(req, resp.Signature, ""))
+				resp.BindingSignature = ed25519.Sign(poolPriv, backend.AttestedResponseBinding(req, resp.Signature))
 			}
 			_ = json.NewEncoder(w).Encode(resp)
 		}

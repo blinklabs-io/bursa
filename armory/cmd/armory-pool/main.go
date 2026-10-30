@@ -230,8 +230,8 @@ func (s *session) witness(role, txFile, outFile string, out io.Writer) error {
 		return err
 	}
 
-	// the summary is covered by the binding signature checked above; firmware
-	// that predates it sends none
+	// the request negotiated device.ProtocolSummary, so the summary is covered
+	// by the binding signature checked above
 	if resp.Summary != "" {
 		_, err = fmt.Fprintf(out, "device signed: %s\n", resp.Summary)
 	}

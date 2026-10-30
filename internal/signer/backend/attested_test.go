@@ -40,8 +40,6 @@ type fakeEnclave struct {
 	requests  []AttestedRequest
 	// opcertFloor models the device's persisted opcert-next floor.
 	opcertFloor uint64
-	// summary is returned, and bound, with every tx-body signature.
-	summary     string
 	tamperInv   func(nonce []byte, inv *AttestedInventory)
 	tamperResp  func(req AttestedRequest, resp *AttestedResponse)
 	inventoryFn func(ctx context.Context, nonce []byte) (AttestedInventory, error)
@@ -142,7 +140,7 @@ func (e *fakeEnclave) signLocked(req AttestedRequest, resp AttestedResponse) Att
 			resp.Signature = ed25519.Sign(k.priv, signable)
 			resp.IssueCounter = &issue
 			if req.Profile != "" {
-				resp.BindingSignature = ed25519.Sign(k.priv, AttestedResponseBinding(req, resp.Signature, ""))
+				resp.BindingSignature = ed25519.Sign(k.priv, AttestedResponseBinding(req, resp.Signature))
 			}
 			return resp
 		}
@@ -152,11 +150,8 @@ func (e *fakeEnclave) signLocked(req AttestedRequest, resp AttestedResponse) Att
 			signed = hash[:]
 		}
 		resp.Signature = ed25519.Sign(k.priv, signed)
-		if req.Purpose == PurposeTxBody {
-			resp.Summary = e.summary
-		}
 		if req.Profile != "" {
-			resp.BindingSignature = ed25519.Sign(k.priv, AttestedResponseBinding(req, resp.Signature, resp.Summary))
+			resp.BindingSignature = ed25519.Sign(k.priv, AttestedResponseBinding(req, resp.Signature))
 		}
 		return resp
 	}
@@ -380,7 +375,7 @@ func TestAttestedKeySignsEncodedTxBody(t *testing.T) {
 	e.mu.Lock()
 	e.tamperResp = func(req AttestedRequest, resp *AttestedResponse) {
 		req.Profile = "substituted-profile"
-		resp.BindingSignature = ed25519.Sign(e.keys[0].priv, AttestedResponseBinding(req, resp.Signature, ""))
+		resp.BindingSignature = ed25519.Sign(e.keys[0].priv, AttestedResponseBinding(req, resp.Signature))
 	}
 	e.mu.Unlock()
 	if _, err := SignTxFor(ctx, ref, body, 6, hash[:]); !errors.Is(err, ErrInvalidSignature) {
@@ -427,61 +422,6 @@ func TestAttestedKeySendsFixedProfileAndEra(t *testing.T) {
 	}
 	if got := e.requests[0].Era; got == nil || *got != 6 {
 		t.Fatalf("era = %v, want 6", got)
-	}
-}
-
-// TestAttestedResponseBindingMatchesDevice checks AttestedResponseBinding
-// against the vectors the armory's device.ResponseBinding is tested with: an
-// empty summary adds no field, a summary adds one.
-func TestAttestedResponseBindingMatchesDevice(t *testing.T) {
-	t.Parallel()
-	sig := make([]byte, 64)
-	for i := range sig {
-		sig[i] = byte(i)
-	}
-	era := uint(6)
-	req := AttestedRequest{
-		Version: AttestedProtocol, Purpose: PurposeTxBody, KeyHash: "ab12", Role: KeyTypePool,
-		Nonce: []byte{1, 2, 3}, Payload: []byte{0xa0, 0xff}, Profile: "otg@preview", Era: &era,
-	}
-	if got := hex.EncodeToString(AttestedResponseBinding(req, sig, "")); got != "0c01c305ffe8ff31572a4a84655dff50ab2e79354ce185b2f55166451b21e74e" {
-		t.Errorf("without summary: %s", got)
-	}
-	summary := "fee=170000 pool-reg pledge=100000000000 cost=170000000 margin=1/100 relays=1 leios=false"
-	if got := hex.EncodeToString(AttestedResponseBinding(req, sig, summary)); got != "8176d7580ce6644042e0dd18291f999cd9bb9fcaf8da7de59c45fc2c0b532b7c" {
-		t.Errorf("with summary: %s", got)
-	}
-}
-
-// TestProfiledAttestedKeyBindsSummary checks a tx-body summary is verified
-// under the binding signature, so a proxy can neither alter nor drop it.
-func TestProfiledAttestedKeyBindsSummary(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		tamper func(*AttestedResponse)
-		want   error
-	}{
-		{"intact", func(*AttestedResponse) {}, nil},
-		{"altered", func(resp *AttestedResponse) { resp.Summary = "fee=2" }, ErrInvalidSignature},
-		{"dropped", func(resp *AttestedResponse) { resp.Summary = "" }, ErrInvalidSignature},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			e := newFakeEnclave(t, KeyTypePool)
-			e.summary = "fee=1"
-			e.tamperResp = func(_ AttestedRequest, resp *AttestedResponse) { tc.tamper(resp) }
-			b := NewProfiledAttestedBackend("enclave", "pool@preview", e, stubVerifier{})
-			if err := b.Load(t.Context()); err != nil {
-				t.Fatalf("Load: %v", err)
-			}
-			body := []byte{0xa0}
-			hash := blake2b.Sum256(body)
-			_, err := SignTxFor(t.Context(), mustKey(t, b, e.hashOf(0)), body, 6, hash[:])
-			if !errors.Is(err, tc.want) {
-				t.Fatalf("got %v, want %v", err, tc.want)
-			}
-		})
 	}
 }
 

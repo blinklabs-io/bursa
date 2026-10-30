@@ -110,7 +110,8 @@ type SignResponse struct {
 	BindingSignature []byte  `json:"binding_signature,omitempty"`
 	IssueCounter     *uint64 `json:"issue_counter,omitempty"`
 	// Summary describes a signed transaction body, as the signing policy saw
-	// it. It is covered by BindingSignature.
+	// it. It is returned only for a ProtocolSummary request and is covered by
+	// BindingSignature.
 	Summary string `json:"summary,omitempty"`
 	Error   string `json:"error,omitempty"`
 }
@@ -478,12 +479,21 @@ func (s *Service) inventory(req InventoryRequest) (Inventory, error) {
 // returned only with the same key's signature over the complete request.
 func (s *Service) sign(req SignRequest) (SignResponse, error) {
 	resp := SignResponse{Version: Protocol, Nonce: req.Nonce}
+	if req.Version == ProtocolSummary {
+		resp.Version = ProtocolSummary
+	}
 
 	var out signed
 
 	err := s.authenticate(req)
 	if err == nil {
 		out, err = s.signRequest(req)
+	}
+
+	// the summary is returned only when the request negotiated it, so a
+	// version-1 reply is unchanged
+	if req.Version != ProtocolSummary {
+		out.summary = ""
 	}
 
 	if err == nil {
@@ -519,7 +529,7 @@ type signed struct {
 
 // signRequest returns the selected key's object ID with its signature.
 func (s *Service) signRequest(req SignRequest) (signed, error) {
-	if req.Version != Protocol {
+	if req.Version != Protocol && req.Version != ProtocolSummary {
 		return signed{}, errors.New("unsupported protocol version")
 	}
 

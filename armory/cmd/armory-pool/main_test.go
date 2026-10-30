@@ -458,7 +458,7 @@ func TestCheckTxBodyRefusals(t *testing.T) {
 		sig := ed25519.Sign(priv, hash[:])
 
 		return device.SignResponse{
-			Version: device.Protocol, Nonce: nonce, Signature: sig, Summary: "fee=1",
+			Version: device.ProtocolSummary, Nonce: nonce, Signature: sig, Summary: "fee=1",
 			BindingSignature: ed25519.Sign(priv, device.ResponseBinding(req, sig, "fee=1")),
 		}
 	}
@@ -479,6 +479,13 @@ func TestCheckTxBodyRefusals(t *testing.T) {
 		"missing binding": func(r *device.SignResponse) { r.BindingSignature = nil },
 		"summary":         func(r *device.SignResponse) { r.Summary = "fee=2" },
 		"summary dropped": func(r *device.SignResponse) { r.Summary = "" },
+		// a version-1 reply with its own valid binding but no summary
+		"version 1 reply": func(r *device.SignResponse) {
+			v1 := req
+			v1.Version = device.Protocol
+			r.Version, r.Summary = device.Protocol, ""
+			r.BindingSignature = ed25519.Sign(priv, device.ResponseBinding(v1, r.Signature, ""))
+		},
 	} {
 		resp := good()
 		mutate(&resp)
