@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path"
 	"sync"
 	"time"
@@ -34,8 +35,12 @@ import (
 
 // Config configures the embedded node. All network endpoints bind to loopback.
 type Config struct {
-	Network        string // "preview" | "preprod" | "mainnet"
-	DataDir        string
+	Network string // "preview" | "preprod" | "mainnet"
+	DataDir string
+	// WalletDataDir contains the vault, keys, wallet settings, contacts, logs,
+	// and caches. Recovery refuses to remove DataDir when it could contain this
+	// directory.
+	WalletDataDir  string
 	SocketPath     string // N2C unix socket (for adder/oracle in later phases)
 	UtxorpcPort    uint
 	BlockfrostPort uint
@@ -85,7 +90,11 @@ type Supervisor struct {
 	cfg     Config
 	cancel  context.CancelFunc
 	runDone chan struct{}
-	runID   uint64
+	// failedRunDone retains the completion signal after a run publishes an
+	// error. Recovery must wait for every writer from that run to exit before it
+	// removes the node database.
+	failedRunDone chan struct{}
+	runID         uint64
 
 	lifecycleMu sync.Mutex
 	mu          sync.RWMutex
@@ -111,6 +120,7 @@ type Supervisor struct {
 	now          func() time.Time // injectable clock for tests
 	bootstrapper Bootstrapper     // injectable for tests
 	nodeFactory  NodeFactory      // injectable for tests
+	removeAll    func(string) error
 }
 
 func New(cfg Config) *Supervisor {
@@ -126,6 +136,7 @@ func New(cfg Config) *Supervisor {
 		now:          time.Now,
 		bootstrapper: mithrilBootstrapper{logger: cfg.Logger},
 		nodeFactory:  dingoNodeFactory{},
+		removeAll:    os.RemoveAll,
 	}
 }
 
@@ -236,6 +247,12 @@ func (s *Supervisor) Start(ctx context.Context) error {
 }
 
 func (s *Supervisor) start(ctx context.Context) error {
+	s.mu.Lock()
+	failedRunDone := s.failedRunDone
+	s.failedRunDone = nil
+	s.mu.Unlock()
+	s.waitForRunExit(failedRunDone)
+
 	// Guard against double-start: reserve s.cancel atomically so a second Start
 	// can't overwrite (and orphan) the first node and poll loop.
 	s.mu.Lock()
@@ -255,6 +272,8 @@ func (s *Supervisor) start(ctx context.Context) error {
 	runID := s.runID
 	s.cancel = cancel
 	s.runDone = runDone
+	s.failedRunDone = nil
+	s.status.Err = ""
 	s.mu.Unlock()
 
 	// fail releases the reservation so Start can be retried if we error out
@@ -517,11 +536,15 @@ func (s *Supervisor) stop() <-chan struct{} {
 	s.mu.Lock()
 	cancel := s.cancel
 	runDone := s.runDone
+	if runDone == nil {
+		runDone = s.failedRunDone
+	}
 	// Clear the start guard so the supervisor can be started again after being
 	// stopped, and record the terminal state under the same lock so a late poll
 	// can't race between the unlock and the state write.
 	s.cancel = nil
 	s.runDone = nil
+	s.failedRunDone = nil
 	s.setStateLocked(StateStopped)
 	s.status.Bootstrap = nil // a clean shutdown is not a diagnostic failure
 	s.status.BootstrapPhases = nil
@@ -586,6 +609,7 @@ func (s *Supervisor) setErrorForRun(runID uint64, err error) {
 		return
 	}
 	cancel := s.cancel
+	s.failedRunDone = s.runDone
 	s.cancel = nil
 	s.runDone = nil
 	s.setStateLocked(StateError)

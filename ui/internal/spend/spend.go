@@ -1735,6 +1735,9 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 	if tx == nil {
 		return Witness{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
 	}
+	if err := txwitness.RejectImportedAuxiliaryData(&tx.Body); err != nil {
+		return Witness{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
 	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
 
 	bodyRequired := tx.Body.RequiredSigners()
@@ -2318,6 +2321,9 @@ func (s *Service) CosignTx(
 	if _, err := cbor.Decode(txBytes, &tx); err != nil {
 		return CosignResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
 	}
+	if err := txwitness.RejectImportedAuxiliaryData(&tx.Body); err != nil {
+		return CosignResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
 
 	// Resolve and validate the exact transaction summary before unlocking the
 	// keystore. A cosignature must not authorize effects the preview cannot
@@ -2791,7 +2797,6 @@ func (s *Service) WitnessTx(
 	if _, err := cbor.Decode(txBodyCbor, &txBody); err != nil {
 		return nil, fmt.Errorf("%w: decode transaction body: %w", ErrInvalidTx, err)
 	}
-
 	// Unlock the active wallet's seed (walletID-bound), not merely the active
 	// vault default, so the witnesses are produced from the same account whose
 	// address window was used to resolve which keys to sign with.

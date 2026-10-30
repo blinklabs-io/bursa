@@ -195,6 +195,13 @@ Required inputs:
   --margin          Pool margin (0.0 to 1.0)
   --reward-account  Reward account address (bech32 stake address)
 
+The reward account can be the stake address of any wallet you want pool
+rewards paid to, in Bursa or another wallet. That wallet withdraws the
+rewards and makes the DRep delegation a withdrawal requires (the
+always-abstain option is enough). Pass --owner-stake-vkey for the owner
+keys you control; otherwise the reward account's stake key becomes the
+owner and must sign the registration.
+
 Optional inputs:
   --metadata-url    Pool metadata URL
   --metadata-hash   Pool metadata hash (hex)

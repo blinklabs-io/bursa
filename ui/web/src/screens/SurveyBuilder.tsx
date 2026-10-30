@@ -31,7 +31,7 @@ interface QuestionEditorProps {
 function QuestionEditor({ n, q, count, onChange, onMove, onRemove }: QuestionEditorProps) {
   const id = `builder-q${n}`;
   const set = (patch: Partial<BuilderQuestion>) => onChange({ ...q, ...patch });
-  const hasOptions = q.kind !== 4;
+  const hasOptions = q.kind !== 0 && q.kind !== 4;
   return (
     <fieldset className="survey-question">
       <legend>Question {n + 1}</legend>
@@ -44,6 +44,16 @@ function QuestionEditor({ n, q, count, onChange, onMove, onRemove }: QuestionEdi
       />
       <label htmlFor={`${id}-prompt`}>Prompt</label>
       <Input id={`${id}-prompt`} value={q.prompt} onChange={(e) => set({ prompt: e.target.value })} />
+
+      {q.kind === 0 && (
+        <>
+          <label htmlFor={`${id}-custom-uri`}>Method schema URI</label>
+          <Input id={`${id}-custom-uri`} value={q.customUri} onChange={(e) => set({ customUri: e.target.value })} />
+          <label htmlFor={`${id}-custom-hash`}>Method schema Blake2b-256 hash</label>
+          <Input id={`${id}-custom-hash`} value={q.customHash} onChange={(e) => set({ customHash: e.target.value })} />
+          <p className="helper-text">The hash is 64 hexadecimal characters and commits to the schema bytes at the URI.</p>
+        </>
+      )}
 
       {hasOptions && (
         <>
@@ -147,7 +157,7 @@ interface SurveyBuilderProps {
   onPreview: (preview: Preview, summary: string, signedContent: string) => void;
 }
 
-// SurveyBuilder writes a new survey: questions of the six built-in types, who
+// SurveyBuilder writes a new survey: all seven CIP-179 question types, who
 // may respond, when it ends, and optionally a sealed reveal time.
 export function SurveyBuilder({ onBack, onPreview }: SurveyBuilderProps) {
   const [draft, setDraft] = useState<BuilderDraft>(emptyBuilderDraft);

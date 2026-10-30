@@ -205,24 +205,26 @@ func TestSurveyBuildRoutes(t *testing.T) {
 	h := surveyHandler(readyStatuser(), fs)
 
 	rec := serveSurveyReq(h, http.MethodPost, "/wallet/surveys/respond",
-		`{"survey":"abc:0","role":0,"answers":[{"kind":1,"question":0,"choice":1},{"kind":4,"question":1,"number":"9223372036854775807"}]}`)
+		`{"survey":"abc:0","role":0,"answers":[{"kind":1,"question":0,"choice":1},{"kind":4,"question":1,"number":"9223372036854775807"},{"kind":0,"question":2,"custom_cbor":"826178182a"}]}`)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"pending_id":"p-respond"`) {
 		t.Fatalf("respond = %d %s", rec.Code, rec.Body.String())
 	}
 	if fs.respond.Survey != "abc:0" || fs.respond.Role != survey.RoleDRep ||
-		len(fs.respond.Answers) != 2 || fs.respond.Answers[0].Choice != 1 || fs.respond.Answers[0].Kind != survey.KindSingleChoice ||
-		fs.respond.Answers[1].Number != 9223372036854775807 || fs.respond.Answers[1].Kind != survey.KindNumericRange {
+		len(fs.respond.Answers) != 3 || fs.respond.Answers[0].Choice != 1 || fs.respond.Answers[0].Kind != survey.KindSingleChoice ||
+		fs.respond.Answers[1].Number != 9223372036854775807 || fs.respond.Answers[1].Kind != survey.KindNumericRange ||
+		fs.respond.Answers[2].Custom == nil || fs.respond.Answers[2].Custom.TypeName() != "list" {
 		t.Fatalf("respond request = %+v", fs.respond)
 	}
 
 	rec = serveSurveyReq(h, http.MethodPost, "/wallet/surveys/create",
-		`{"title":"T","description":"D","roles":[0,3],"end_epoch":9,"questions":[{"kind":1,"prompt":"p","options":["a","b"]},{"kind":4,"prompt":"n","range":{"min":"-9223372036854775808","max":"9223372036854775807","step":"18446744073709551615"}}]}`)
+		`{"title":"T","description":"D","roles":[0,3],"end_epoch":9,"questions":[{"kind":0,"prompt":"c","anchor":{"uri":"ipfs://schema","hash":"abababababababababababababababababababababababababababababababab"}},{"kind":1,"prompt":"p","options":["a","b"]},{"kind":4,"prompt":"n","range":{"min":"-9223372036854775808","max":"9223372036854775807","step":"18446744073709551615"}}]}`)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"pending_id":"p-create"`) {
 		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
 	}
-	if fs.create.Title != "T" || fs.create.EndEpoch != 9 || len(fs.create.Questions) != 2 || fs.create.Questions[0].Options[1] != "b" ||
-		fs.create.Questions[1].Range == nil || fs.create.Questions[1].Range.Min != -9223372036854775808 ||
-		fs.create.Questions[1].Range.Max != 9223372036854775807 || fs.create.Questions[1].Range.Step != 18446744073709551615 {
+	if fs.create.Title != "T" || fs.create.EndEpoch != 9 || len(fs.create.Questions) != 3 || fs.create.Questions[0].Anchor == nil ||
+		fs.create.Questions[0].Anchor.URI != "ipfs://schema" || fs.create.Questions[1].Options[1] != "b" ||
+		fs.create.Questions[2].Range == nil || fs.create.Questions[2].Range.Min != -9223372036854775808 ||
+		fs.create.Questions[2].Range.Max != 9223372036854775807 || fs.create.Questions[2].Range.Step != 18446744073709551615 {
 		t.Fatalf("create request = %+v", fs.create)
 	}
 

@@ -939,6 +939,39 @@ func GetStakeSKey(stakeKey bip32.XPrv) (KeyFile, error) {
 	)
 }
 
+// GetStakePlainSKey creates a plain StakeSigningKeyShelley_ed25519 file from a
+// CIP-1852 stake key. The derived key's k_L is used as the RFC 8032 seed, so
+// the matching public key is GetStakePlainVKey's, not the BIP32 public key.
+func GetStakePlainSKey(stakeKey bip32.XPrv) (KeyFile, error) {
+	return getNonExtendedSigningKeyFile(
+		stakeKey,
+		"StakeSigningKeyShelley_ed25519",
+		"Stake Signing Key",
+	)
+}
+
+// GetStakePlainVKey creates the verification key file for GetStakePlainSKey.
+// It is computed with crypto/ed25519 from the k_L seed and differs from
+// GetStakeVKey, which exports the BIP32 extended public key.
+func GetStakePlainVKey(stakeKey bip32.XPrv) (KeyFile, error) {
+	seed := stakeKey.PrivateKey()[:ed25519.SeedSize]
+	vkey := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	keyCbor, err := cbor.Encode([]byte(vkey))
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode plain stake verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "StakeVerificationKeyShelley_ed25519",
+		Description: "Stake Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
 func GetStakeExtendedSKey(stakeKey bip32.XPrv) (KeyFile, error) {
 	return getExtendedSigningKeyFile(
 		stakeKey,

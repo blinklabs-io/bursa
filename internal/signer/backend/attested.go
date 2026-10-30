@@ -20,10 +20,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strconv"
 	"sync"
+
+	"golang.org/x/crypto/blake2b"
 )
 
 // AttestedProtocol is the version string every attested-signer message
@@ -58,9 +61,17 @@ type Purpose string
 const (
 	// PurposeTxHash signs a 32-byte transaction body hash.
 	PurposeTxHash Purpose = "tx-hash"
+	// PurposeTxBody authorizes the encoded transaction body and signs its
+	// Blake2b-256 hash. The request also carries the resolved transaction era.
+	PurposeTxBody Purpose = "tx-body"
 	// PurposeOpCert signs the 48-byte OCertSignable bytes
 	// (kes_vkey || issue_counter || kes_period). Pool cold keys only.
 	PurposeOpCert Purpose = "opcert"
+	// PurposeOpCertNext asks the enclave to issue the next operational
+	// certificate signature. The 48-byte payload is kes_vkey || on-chain
+	// counter || KES period; the enclave picks the issue number (above the
+	// chain counter) and returns it as IssueCounter. Pool cold keys only.
+	PurposeOpCertNext Purpose = "opcert-next"
 	// PurposeCIP8 signs a COSE Sig_structure built for CIP-8 data signing.
 	PurposeCIP8 Purpose = "cip8"
 )
@@ -69,6 +80,8 @@ const (
 	txHashSize = 32
 	// opCertSignableSize is kes_vkey (32) + issue counter (8) + KES period (8).
 	opCertSignableSize = 48
+	// opCertKESVKeySize is the leading KES verification key in the payload.
+	opCertKESVKeySize = 32
 )
 
 // validate checks payload shape and key role for the purpose.
@@ -78,12 +91,23 @@ func (p Purpose) validate(role KeyType, payload []byte) error {
 		if len(payload) != txHashSize {
 			return fmt.Errorf("%w: tx-hash payload must be %d bytes, got %d", ErrAttestedProtocol, txHashSize, len(payload))
 		}
+	case PurposeTxBody:
+		if len(payload) == 0 {
+			return fmt.Errorf("%w: tx-body payload is empty", ErrAttestedProtocol)
+		}
 	case PurposeOpCert:
 		if len(payload) != opCertSignableSize {
 			return fmt.Errorf("%w: opcert payload must be %d bytes, got %d", ErrAttestedProtocol, opCertSignableSize, len(payload))
 		}
 		if role != KeyTypePool {
 			return fmt.Errorf("%w: opcert requires a %q key, got %q", ErrAttestedProtocol, KeyTypePool, role)
+		}
+	case PurposeOpCertNext:
+		if len(payload) != opCertSignableSize {
+			return fmt.Errorf("%w: opcert-next payload must be %d bytes, got %d", ErrAttestedProtocol, opCertSignableSize, len(payload))
+		}
+		if role != KeyTypePool {
+			return fmt.Errorf("%w: opcert-next requires a %q key, got %q", ErrAttestedProtocol, KeyTypePool, role)
 		}
 	case PurposeCIP8:
 		if len(payload) == 0 {
@@ -101,6 +125,18 @@ type PurposeSigner interface {
 	SignPurpose(ctx context.Context, purpose Purpose, payload []byte) ([]byte, error)
 }
 
+// TxBodySigner is implemented by key references whose custody boundary must
+// inspect an encoded transaction body before signing its hash.
+type TxBodySigner interface {
+	SignTxBody(ctx context.Context, body []byte, era uint) ([]byte, error)
+}
+
+// OpCertNextSigner is implemented by key references whose custody boundary
+// chooses the operational certificate issue number itself.
+type OpCertNextSigner interface {
+	SignOpCertNext(ctx context.Context, kesVKey []byte, chainCounter, kesPeriod uint64) (sig []byte, issue uint64, err error)
+}
+
 // SignFor signs payload for purpose, using the purpose-bound path when the key
 // offers one and a plain Sign otherwise.
 func SignFor(ctx context.Context, ref KeyRef, purpose Purpose, payload []byte) ([]byte, error) {
@@ -108,6 +144,15 @@ func SignFor(ctx context.Context, ref KeyRef, purpose Purpose, payload []byte) (
 		return ps.SignPurpose(ctx, purpose, payload)
 	}
 	return ref.Sign(ctx, payload)
+}
+
+// SignTxFor sends the encoded body and resolved era to body-aware custody.
+// Other backends retain the established contract of signing txHash directly.
+func SignTxFor(ctx context.Context, ref KeyRef, body []byte, era uint, txHash []byte) ([]byte, error) {
+	if signer, ok := ref.(TxBodySigner); ok {
+		return signer.SignTxBody(ctx, body, era)
+	}
+	return SignFor(ctx, ref, PurposeTxHash, txHash)
 }
 
 // AttestedKeyInfo is one key an enclave reports holding.
@@ -133,15 +178,48 @@ type AttestedRequest struct {
 	Role    KeyType `json:"role"`
 	Nonce   []byte  `json:"nonce"`
 	Payload []byte  `json:"payload"`
+	Profile string  `json:"profile,omitempty"`
+	Era     *uint   `json:"era,omitempty"`
 }
 
 // AttestedResponse is the enclave's answer to an AttestedRequest. A non-empty
 // Error means the enclave refused.
 type AttestedResponse struct {
-	Version   string `json:"version"`
-	Nonce     []byte `json:"nonce"`
-	Signature []byte `json:"signature,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Version          string `json:"version"`
+	Nonce            []byte `json:"nonce"`
+	Signature        []byte `json:"signature,omitempty"`
+	BindingSignature []byte `json:"binding_signature,omitempty"`
+	// IssueCounter is the opcert issue number the enclave chose for an
+	// opcert-next request.
+	IssueCounter *uint64 `json:"issue_counter,omitempty"`
+	Error        string  `json:"error,omitempty"`
+}
+
+// AttestedResponseBinding is the digest a profiled workload signs alongside
+// the Cardano signature. It binds the response to the complete request so an
+// untrusted proxy cannot select another profile while reusing a valid Cardano
+// signature from the same key.
+func AttestedResponseBinding(req AttestedRequest, signature []byte) []byte {
+	h := sha256.New()
+	era := []byte(nil)
+	if req.Era != nil {
+		era = []byte(strconv.FormatUint(uint64(*req.Era), 10))
+	}
+	for _, field := range [][]byte{
+		[]byte(req.Version),
+		[]byte(req.Purpose),
+		[]byte(req.KeyHash),
+		[]byte(req.Role),
+		req.Nonce,
+		req.Payload,
+		[]byte(req.Profile),
+		era,
+		signature,
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
+	return h.Sum(nil)
 }
 
 // Enclave is the host-side view of a workload that custodies keys inside a
@@ -185,6 +263,7 @@ type attestedKey struct {
 	hash        KeyHash
 	typ         KeyType
 	backendName string
+	profile     string
 }
 
 func (k *attestedKey) Hash() KeyHash                { return k.hash }
@@ -201,46 +280,128 @@ func (k *attestedKey) Sign(context.Context, []byte) ([]byte, error) {
 // contacting the enclave and after it answers: a handle resolved before a
 // reload must not outlive the attestation that admitted it.
 func (k *attestedKey) SignPurpose(ctx context.Context, purpose Purpose, payload []byte) ([]byte, error) {
-	if err := purpose.validate(k.typ, payload); err != nil {
+	if purpose == PurposeTxBody {
+		return nil, fmt.Errorf("%w: tx-body requires SignTxBody with an era", ErrAttestedProtocol)
+	}
+	if purpose == PurposeOpCertNext {
+		return nil, fmt.Errorf("%w: opcert-next requires SignOpCertNext, which returns the issue counter", ErrAttestedProtocol)
+	}
+	return k.signAttested(ctx, purpose, payload, nil, payload)
+}
+
+// SignTxBody sends the original encoded body across the custody boundary and
+// verifies that custody returned the Cardano witness signature for its hash.
+func (k *attestedKey) SignTxBody(ctx context.Context, body []byte, era uint) ([]byte, error) {
+	hash := blake2b.Sum256(body)
+	return k.signAttested(ctx, PurposeTxBody, body, &era, hash[:])
+}
+
+// SignOpCertNext asks custody to issue the next opcert signature. The host
+// sends the on-chain counter and never picks the issue number: custody returns
+// it, and Bursa accepts it only when it exceeds chainCounter and the signature
+// verifies under the key over kes_vkey || issue || period.
+func (k *attestedKey) SignOpCertNext(ctx context.Context, kesVKey []byte, chainCounter, kesPeriod uint64) ([]byte, uint64, error) {
+	if len(kesVKey) != opCertKESVKeySize {
+		return nil, 0, fmt.Errorf("%w: KES vkey must be %d bytes, got %d", ErrAttestedProtocol, opCertKESVKeySize, len(kesVKey))
+	}
+	payload := make([]byte, 0, opCertSignableSize)
+	payload = append(payload, kesVKey...)
+	payload = binary.BigEndian.AppendUint64(payload, chainCounter)
+	payload = binary.BigEndian.AppendUint64(payload, kesPeriod)
+
+	var issue uint64
+	resp, err := k.exchange(ctx, PurposeOpCertNext, payload, nil, func(resp AttestedResponse) error {
+		if resp.IssueCounter == nil {
+			return fmt.Errorf("%w: opcert-next response has no issue_counter", ErrAttestedProtocol)
+		}
+		issue = *resp.IssueCounter
+		if issue <= chainCounter {
+			return fmt.Errorf("%w: issue counter %d is not above chain counter %d", ErrAttestedProtocol, issue, chainCounter)
+		}
+		signed := binary.BigEndian.AppendUint64(append([]byte(nil), kesVKey...), issue)
+		signed = binary.BigEndian.AppendUint64(signed, kesPeriod)
+		return k.verifyCardano(signed, resp.Signature)
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return resp.Signature, issue, nil
+}
+
+// verifyCardano checks sig is a well-formed Ed25519 signature by k over signed.
+func (k *attestedKey) verifyCardano(signed, sig []byte) error {
+	if len(sig) != ed25519.SignatureSize {
+		return fmt.Errorf("%w: signature must be %d bytes, got %d", ErrAttestedProtocol, ed25519.SignatureSize, len(sig))
+	}
+	if !ed25519.Verify(k.pub, signed, sig) {
+		return fmt.Errorf("%w: %w", ErrAttestedProtocol, ErrInvalidSignature)
+	}
+	return nil
+}
+
+func (k *attestedKey) signAttested(ctx context.Context, purpose Purpose, payload []byte, era *uint, signed []byte) ([]byte, error) {
+	resp, err := k.exchange(ctx, purpose, payload, era, func(resp AttestedResponse) error {
+		return k.verifyCardano(signed, resp.Signature)
+	})
+	if err != nil {
 		return nil, err
 	}
+	return resp.Signature, nil
+}
+
+// exchange sends one request and applies the checks common to every purpose:
+// version, nonce, enclave refusal, the purpose's own verify of the response
+// (including the Cardano signature), the binding signature, and that k is still
+// served.
+func (k *attestedKey) exchange(ctx context.Context, purpose Purpose, payload []byte, era *uint, verify func(AttestedResponse) error) (AttestedResponse, error) {
+	if err := purpose.validate(k.typ, payload); err != nil {
+		return AttestedResponse{}, err
+	}
 	if !k.owner.serves(k) {
-		return nil, ErrKeyNotFound
+		return AttestedResponse{}, ErrKeyNotFound
 	}
 	nonce := make([]byte, attestedNonceSize)
 	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("attested nonce: %w", err)
+		return AttestedResponse{}, fmt.Errorf("attested nonce: %w", err)
 	}
-	resp, err := k.enclave.Sign(ctx, AttestedRequest{
+	req := AttestedRequest{
 		Version: AttestedProtocol,
 		Purpose: purpose,
 		KeyHash: k.hash.String(),
 		Role:    k.typ,
 		Nonce:   nonce,
 		Payload: payload,
-	})
+		Profile: k.profile,
+		Era:     era,
+	}
+	resp, err := k.enclave.Sign(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("attested sign: %w", err)
+		return AttestedResponse{}, fmt.Errorf("attested sign: %w", err)
 	}
 	if resp.Version != AttestedProtocol {
-		return nil, fmt.Errorf("%w: response version %q", ErrAttestedProtocol, resp.Version)
+		return AttestedResponse{}, fmt.Errorf("%w: response version %q", ErrAttestedProtocol, resp.Version)
 	}
 	if subtle.ConstantTimeCompare(resp.Nonce, nonce) != 1 {
-		return nil, fmt.Errorf("%w: response nonce does not match request", ErrAttestedProtocol)
+		return AttestedResponse{}, fmt.Errorf("%w: response nonce does not match request", ErrAttestedProtocol)
 	}
 	if resp.Error != "" {
-		return nil, fmt.Errorf("attested sign: enclave refused: %s", resp.Error)
+		return AttestedResponse{}, fmt.Errorf("attested sign: enclave refused: %s", resp.Error)
 	}
-	if len(resp.Signature) != ed25519.SignatureSize {
-		return nil, fmt.Errorf("%w: signature must be %d bytes, got %d", ErrAttestedProtocol, ed25519.SignatureSize, len(resp.Signature))
+	if err := verify(resp); err != nil {
+		return AttestedResponse{}, err
 	}
-	if !ed25519.Verify(k.pub, payload, resp.Signature) {
-		return nil, fmt.Errorf("%w: %w", ErrAttestedProtocol, ErrInvalidSignature)
+	if k.profile != "" || len(resp.BindingSignature) > 0 {
+		if len(resp.BindingSignature) != ed25519.SignatureSize {
+			return AttestedResponse{}, fmt.Errorf("%w: binding signature must be %d bytes, got %d", ErrAttestedProtocol, ed25519.SignatureSize, len(resp.BindingSignature))
+		}
+		if !ed25519.Verify(k.pub, AttestedResponseBinding(req, resp.Signature), resp.BindingSignature) {
+			return AttestedResponse{}, fmt.Errorf("%w: %w", ErrAttestedProtocol, ErrInvalidSignature)
+		}
 	}
 	if !k.owner.serves(k) {
-		return nil, ErrKeyNotFound
+		return AttestedResponse{}, ErrKeyNotFound
 	}
-	return resp.Signature, nil
+	return resp, nil
 }
 
 // AttestedBackend serves keys held by an attested enclave. Keys are resolved
@@ -248,6 +409,7 @@ func (k *attestedKey) SignPurpose(ctx context.Context, purpose Purpose, payload 
 // Load succeeds, and after any Load fails, the backend holds no keys.
 type AttestedBackend struct {
 	name     string
+	profile  string
 	enclave  Enclave
 	verifier AttestationVerifier
 	mu       sync.RWMutex
@@ -258,6 +420,12 @@ type AttestedBackend struct {
 // inventory passes verifier.
 func NewAttestedBackend(name string, enclave Enclave, verifier AttestationVerifier) *AttestedBackend {
 	return &AttestedBackend{name: name, enclave: enclave, verifier: verifier, keys: map[KeyHash]*attestedKey{}}
+}
+
+// NewProfiledAttestedBackend builds an attested backend whose inventory and
+// signing requests select one fixed workload profile.
+func NewProfiledAttestedBackend(name, profile string, enclave Enclave, verifier AttestationVerifier) *AttestedBackend {
+	return &AttestedBackend{name: name, profile: profile, enclave: enclave, verifier: verifier, keys: map[KeyHash]*attestedKey{}}
 }
 
 // Load attests the enclave and replaces the served key set with its verified
@@ -304,6 +472,7 @@ func (b *AttestedBackend) Load(ctx context.Context) error {
 			hash:        hash,
 			typ:         ki.Role,
 			backendName: b.name,
+			profile:     b.profile,
 		}
 	}
 	b.mu.Lock()

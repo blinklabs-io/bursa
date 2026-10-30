@@ -422,7 +422,12 @@ func (b *WalletBackend) SignTx(ctx context.Context, txHex string, partialSign bo
 	if _, err := gocbor.Decode(txBytes, &tx); err != nil {
 		return "", fmt.Errorf("decode tx CBOR: %w", err)
 	}
-
+	// CIP-30 supplies the complete transaction, and the approval dialog shows
+	// those exact bytes. Validate that any included auxiliary data is the value
+	// committed to by the body before deriving a witness for that body.
+	if err := shelley.UtxoValidateMetadata(&tx, 0, nil, nil); err != nil {
+		return "", fmt.Errorf("validate transaction auxiliary data: %w", err)
+	}
 	// Extract the body CBOR by slicing the OUTER transaction CBOR array, taking
 	// element [0] (the body) byte-for-byte. The transaction id (and therefore the
 	// signing target) is blake2b-256 of these exact body bytes; re-encoding the

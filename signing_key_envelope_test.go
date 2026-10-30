@@ -106,6 +106,8 @@ func signingKeyExporterRegistry(t *testing.T) []signingKeyExporterVector {
 	kesSKey, kesVKey, err := GetKESKeyPair(kesSeed)
 	require.NoError(t, err)
 
+	stakeSeed := stake.PrivateKey()[:ed25519.SeedSize]
+	stakePlainVKey := ed25519.NewKeyFromSeed(stakeSeed).Public().(ed25519.PublicKey)
 	poolSeed := poolCold.PrivateKey()[:ed25519.SeedSize]
 	poolVKey := ed25519.NewKeyFromSeed(poolSeed).Public().(ed25519.PublicKey)
 
@@ -199,6 +201,11 @@ func signingKeyExporterRegistry(t *testing.T) []signingKeyExporterVector {
 			name: "GetPolicyExtendedSKey", signingKey: mustSigningKey(GetPolicyExtendedSKey(policy)),
 			verificationKey: policy.PublicKey(),
 			wantType:        "PaymentExtendedSigningKeyShelley_ed25519_bip32", wantMaterialBytes: 128,
+		},
+		{
+			name: "GetStakePlainSKey", signingKey: mustSigningKey(GetStakePlainSKey(stake)),
+			verificationKey: stakePlainVKey,
+			wantType:        "StakeSigningKeyShelley_ed25519", wantMaterialBytes: 32,
 		},
 		{
 			name: "GetVRFSKey", signingKey: mustSigningKey(GetVRFSKey(vrfSKey)),
