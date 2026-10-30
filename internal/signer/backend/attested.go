@@ -180,6 +180,12 @@ type AttestedRequest struct {
 	Payload []byte  `json:"payload"`
 	Profile string  `json:"profile,omitempty"`
 	Era     *uint   `json:"era,omitempty"`
+	// Challenge, HostKey and HostSignature authenticate the request to a
+	// device that registers host keys: HostKey signs AttestedRequestBinding
+	// over the request and a one-time Challenge from the device.
+	Challenge     []byte `json:"challenge,omitempty"`
+	HostKey       []byte `json:"host_key,omitempty"`
+	HostSignature []byte `json:"host_signature,omitempty"`
 }
 
 // AttestedResponse is the enclave's answer to an AttestedRequest. A non-empty
@@ -215,6 +221,38 @@ func AttestedResponseBinding(req AttestedRequest, signature []byte) []byte {
 		[]byte(req.Profile),
 		era,
 		signature,
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
+	return h.Sum(nil)
+}
+
+// attestedRequestDomain separates host signatures over requests from every
+// other signature a host key could make.
+const attestedRequestDomain = "bursa-armory-request/1"
+
+// AttestedRequestBinding is the digest a host key signs to authenticate a
+// request: the domain string, then the request fields and the challenge,
+// length-prefixed as in AttestedResponseBinding. An absent era is an empty
+// field.
+func AttestedRequestBinding(req AttestedRequest) []byte {
+	h := sha256.New()
+	era := []byte(nil)
+	if req.Era != nil {
+		era = []byte(strconv.FormatUint(uint64(*req.Era), 10))
+	}
+	for _, field := range [][]byte{
+		[]byte(attestedRequestDomain),
+		[]byte(req.Version),
+		[]byte(req.Purpose),
+		[]byte(req.KeyHash),
+		[]byte(req.Role),
+		req.Nonce,
+		req.Payload,
+		[]byte(req.Profile),
+		era,
+		req.Challenge,
 	} {
 		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
 		h.Write(field)

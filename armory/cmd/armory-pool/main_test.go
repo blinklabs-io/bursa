@@ -88,6 +88,13 @@ func (c *fakeChip) WriteBinary(id uint32, data []byte) error {
 	return nil
 }
 
+func (c *fakeChip) Delete(id uint32) error {
+	delete(c.bins, id)
+	delete(c.keys, id)
+
+	return nil
+}
+
 func (c *fakeChip) ReadBinary(id uint32) ([]byte, error) {
 	b, ok := c.bins[id]
 	if !ok {

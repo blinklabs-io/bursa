@@ -326,6 +326,7 @@ backends:
     address: "http://10.0.0.1"                  # the device on its USB network link
     profile: "pool@preview"                     # required: the device profile holding the keys
     identity_public_key: "<64 hex>"             # the device identity key, pinned
+    host_key_file: "/etc/bursa/armory-host.skey" # optional: authenticates signing requests
 ```
 
 The USB armory Mk II holds the pool cold key and the owner stake key in its
@@ -342,6 +343,16 @@ Record the identity key when the device is provisioned; the device's legacy
 
 Profiled responses carry the second signature described above, so the signer
 also refuses a response produced for another profile.
+
+`host_key_file` holds a host signing key written by `armory-pool host-key`
+and registered on the device. With it set, the signer fetches a one-time
+challenge from `/v1/challenge` before each signature and adds `challenge`,
+`host_key` and `host_signature` to the request: an Ed25519 signature over
+`AttestedRequestBinding`, the domain `bursa-armory-request/1` followed by the
+request fields and the challenge, length-prefixed as in the response binding.
+A device with a registered host key refuses requests without it. The file
+must not be readable by group or others, and an unreadable or malformed file
+fails startup.
 
 ## KES agent in a protected workload
 
