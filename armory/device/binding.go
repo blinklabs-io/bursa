@@ -47,8 +47,10 @@ func InventoryBinding(nonce []byte, keys []KeyInfo) []byte {
 // ResponseBinding is the digest the selected key signs alongside the Cardano
 // signature. It matches Bursa's backend.AttestedResponseBinding: each request
 // field and the signature, length-prefixed, so a response cannot be paired
-// with another nonce, profile or payload. An absent era is an empty field.
-func ResponseBinding(req SignRequest, signature []byte) []byte {
+// with another nonce, profile or payload. An absent era is an empty field. A
+// non-empty summary is one more field; an empty one adds none, so responses
+// without a summary keep their binding.
+func ResponseBinding(req SignRequest, signature []byte, summary string) []byte {
 	h := sha256.New()
 
 	var era []byte
@@ -69,6 +71,10 @@ func ResponseBinding(req SignRequest, signature []byte) []byte {
 	} {
 		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
 		h.Write(field)
+	}
+
+	if summary != "" {
+		h.Write([]byte(strconv.Itoa(len(summary)) + ":" + summary))
 	}
 
 	return h.Sum(nil)

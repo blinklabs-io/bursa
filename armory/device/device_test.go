@@ -720,16 +720,24 @@ func TestResponseBindingMatchesBursa(t *testing.T) {
 		Nonce: []byte{1, 2, 3}, Payload: []byte{0xa0, 0xff}, Profile: "otg@preview", Era: &era,
 	}
 
-	if got := hex.EncodeToString(ResponseBinding(req, sig)); got != "0c01c305ffe8ff31572a4a84655dff50ab2e79354ce185b2f55166451b21e74e" {
+	if got := hex.EncodeToString(ResponseBinding(req, sig, "")); got != "0c01c305ffe8ff31572a4a84655dff50ab2e79354ce185b2f55166451b21e74e" {
 		t.Errorf("with era: %s", got)
+	}
+
+	// a summary is one more field; without one the digest is unchanged
+	if got := hex.EncodeToString(ResponseBinding(req, sig, bindingSummary)); got != "8176d7580ce6644042e0dd18291f999cd9bb9fcaf8da7de59c45fc2c0b532b7c" {
+		t.Errorf("with summary: %s", got)
 	}
 
 	req.Era, req.Purpose = nil, "opcert-next"
 
-	if got := hex.EncodeToString(ResponseBinding(req, sig)); got != "c7bb01b9f9a9ddcc251b13cda8f4c25f2913c290157b39d8565543992fd63e93" {
+	if got := hex.EncodeToString(ResponseBinding(req, sig, "")); got != "c7bb01b9f9a9ddcc251b13cda8f4c25f2913c290157b39d8565543992fd63e93" {
 		t.Errorf("without era: %s", got)
 	}
 }
+
+// bindingSummary is the summary in the binding vectors shared with Bursa.
+const bindingSummary = "fee=170000 pool-reg pledge=100000000000 cost=170000000 margin=1/100 relays=1 leios=false"
 
 // TestSignResponseBindsRequest checks every signature comes with a binding
 // signature from the same key over the complete request, so a proxy cannot
@@ -753,22 +761,32 @@ func TestSignResponseBindsRequest(t *testing.T) {
 
 		req.Version = Protocol
 
-		if !ed25519.Verify(cold, ResponseBinding(req, r.Signature), r.BindingSignature) {
+		// a transaction body is answered with the policy summary, an opcert
+		// with none
+		if wantSummary := req.Purpose == "tx-body"; (r.Summary != "") != wantSummary {
+			t.Fatalf("%s: summary %q", req.Purpose, r.Summary)
+		}
+
+		if !ed25519.Verify(cold, ResponseBinding(req, r.Signature, r.Summary), r.BindingSignature) {
 			t.Fatalf("%s: binding signature does not cover the request", req.Purpose)
 		}
 
 		other := req
 		other.Profile = "other@preview"
 
-		if ed25519.Verify(cold, ResponseBinding(other, r.Signature), r.BindingSignature) {
+		if ed25519.Verify(cold, ResponseBinding(other, r.Signature, r.Summary), r.BindingSignature) {
 			t.Errorf("%s: binding signature accepts another profile", req.Purpose)
 		}
 
 		other = req
 		other.Nonce = nonce(9)
 
-		if ed25519.Verify(cold, ResponseBinding(other, r.Signature), r.BindingSignature) {
+		if ed25519.Verify(cold, ResponseBinding(other, r.Signature, r.Summary), r.BindingSignature) {
 			t.Errorf("%s: binding signature accepts another nonce", req.Purpose)
+		}
+
+		if ed25519.Verify(cold, ResponseBinding(req, r.Signature, r.Summary+" pledge=1"), r.BindingSignature) {
+			t.Errorf("%s: binding signature accepts another summary", req.Purpose)
 		}
 	}
 

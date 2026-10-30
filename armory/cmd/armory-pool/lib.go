@@ -294,7 +294,7 @@ func verifySignResponse(req device.SignRequest, resp device.SignResponse, pub ed
 		return errors.New("response has no signature")
 	}
 
-	if !ed25519.Verify(pub, device.ResponseBinding(req, resp.Signature), resp.BindingSignature) {
+	if !ed25519.Verify(pub, device.ResponseBinding(req, resp.Signature, resp.Summary), resp.BindingSignature) {
 		return errors.New("binding signature does not verify under the device key")
 	}
 
