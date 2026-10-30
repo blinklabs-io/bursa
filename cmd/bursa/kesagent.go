@@ -284,7 +284,16 @@ func listenAttestedKES(
 			"attested KES listener requires TLS certificate, key, and client CA files",
 		)
 	}
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return nil, fmt.Errorf("read attested KES certificate: %w", err)
+	}
+	keyPEM, err := bursa.ReadSecretKeyFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("read attested KES private key: %w", err)
+	}
+	defer clear(keyPEM)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("load attested KES certificate: %w", err)
 	}
