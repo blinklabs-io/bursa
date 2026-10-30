@@ -45,6 +45,7 @@ func main() {
 		apiCommand(),
 		signerCommand(),
 		nitroCommand(),
+		confidentialSpaceCommand(),
 		kesAgentCommand(),
 		scriptCommand(),
 		txCommand(),

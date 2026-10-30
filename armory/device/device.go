@@ -67,6 +67,7 @@ type Chip interface {
 	SignEd25519(id uint32, msg []byte) ([]byte, error)
 	WriteBinary(id uint32, data []byte) error
 	ReadBinary(id uint32) ([]byte, error)
+	Delete(id uint32) error
 }
 
 // InventoryRequest asks for a profile's keys.
@@ -92,6 +93,12 @@ type SignRequest struct {
 	Payload []byte `json:"payload"`
 	Profile string `json:"profile"`
 	Era     *uint  `json:"era,omitempty"`
+	// Challenge, HostKey and HostSignature authenticate the request: the
+	// host key signs RequestBinding over the request and a challenge from
+	// /v1/challenge.
+	Challenge     []byte `json:"challenge,omitempty"`
+	HostKey       []byte `json:"host_key,omitempty"`
+	HostSignature []byte `json:"host_signature,omitempty"`
 }
 
 // SignResponse is Bursa's AttestedResponse with the opcert-next counter.
@@ -184,6 +191,12 @@ type Service struct {
 	// badSlots hold records that could not be read; provisioning stays
 	// refused while any exist, as one of them may own any cold key
 	badSlots map[uint8]bool
+	// hostKeys authenticate signing requests; hostKeysBad refuses signing
+	// while the stored list is unreadable
+	hostKeys        [][]byte
+	hostKeysBad     bool
+	requireHostAuth bool
+	challenges      [][]byte
 	// network, when fixed, is the only network id whose profiles this
 	// build provisions and serves; chain, when set, is the only profile name
 	// suffix ("name@chain") it accepts
@@ -202,12 +215,19 @@ func New(mu sync.Locker, logf func(format string, args ...any)) *Service {
 // The device cannot tell chains that share a network id apart, so the label
 // keeps one chain's profiles per device. Profiles for another network or
 // chain are refused at provisioning, inventory, signing, floor reset and
-// reward changes. Call it before SetChip.
+// reward changes. A mainnet build (id 1) also refuses to sign until a host
+// key is registered (RequireHostAuth). Call it before SetChip.
 func (s *Service) SetNetwork(id uint8, chain string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.network, s.networkFixed, s.chain = id, true, chain
+
+	// a mainnet build signs only for a registered host key
+	if id == 1 {
+		s.requireHostAuth = true
+		s.logf("signing requires a registered host key")
+	}
 }
 
 // serves reports why this build does not serve a profile on network id
@@ -286,6 +306,10 @@ func (s *Service) SetChip(chip Chip) error {
 		}
 	}
 
+	if err := s.loadHostKeys(chip); err != nil {
+		return err
+	}
+
 	s.chip = chip
 	s.profiles = profiles
 	s.badSlots = bad
@@ -323,6 +347,7 @@ func (s *Service) ProvisioningHandler() http.Handler {
 
 func (s *Service) signingRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/inventory", handle(s, s.inventory))
+	mux.HandleFunc("POST /v1/challenge", handle(s, s.challenge))
 	mux.HandleFunc("POST /v1/sign", handle(s, s.sign))
 }
 
@@ -331,6 +356,8 @@ func (s *Service) provisioningRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /provision/floor", handle(s, s.resetFloor))
 	mux.HandleFunc("POST /provision/reward", handle(s, s.setReward))
 	mux.HandleFunc("POST /provision/cold", handle(s, s.provisionCold))
+	mux.HandleFunc("POST /provision/host-key", handle(s, s.addHostKey))
+	mux.HandleFunc("POST /provision/host-key/revoke", handle(s, s.revokeHostKey))
 	mux.HandleFunc("POST /provision/identity", handle(s, func(struct{}) (IdentityResponse, error) {
 		return s.provisionIdentity()
 	}))
@@ -449,7 +476,17 @@ func (s *Service) inventory(req InventoryRequest) (Inventory, error) {
 func (s *Service) sign(req SignRequest) (SignResponse, error) {
 	resp := SignResponse{Version: Protocol, Nonce: req.Nonce}
 
-	id, sig, issue, err := s.signRequest(req)
+	var (
+		id    uint32
+		sig   []byte
+		issue *uint64
+	)
+
+	err := s.authenticate(req)
+	if err == nil {
+		id, sig, issue, err = s.signRequest(req)
+	}
+
 	if err == nil {
 		resp.BindingSignature, err = s.chip.SignEd25519(id, ResponseBinding(req, sig))
 		if err != nil {

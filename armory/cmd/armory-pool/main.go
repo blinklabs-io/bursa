@@ -100,6 +100,8 @@ type session struct {
 	c        *client
 	identity ed25519.PublicKey
 	profile  string
+	// hostKey authenticates signing requests when set
+	hostKey ed25519.PrivateKey
 }
 
 func randomNonce() ([]byte, error) {
@@ -215,7 +217,7 @@ func (s *session) witness(role, txFile, outFile string) error {
 
 	var resp device.SignResponse
 
-	if err = s.c.post("/v1/sign", req, &resp); err != nil {
+	if err = s.sign(req, &resp); err != nil {
 		return err
 	}
 
@@ -269,7 +271,7 @@ func (s *session) opcert(kesFile string, period uint64, chainArg, outFile string
 
 	var resp device.SignResponse
 
-	if err = s.c.post("/v1/sign", req, &resp); err != nil {
+	if err = s.sign(req, &resp); err != nil {
 		return err
 	}
 
@@ -339,13 +341,14 @@ func run(args []string, stdout io.Writer) error {
 	source := fs.String("source", "10.0.0.2", "local source address on the USB network")
 	identityHex := fs.String("identity", "", "device identity public key (hex), pinned")
 	profileName := fs.String("profile", "", "device profile holding the pool keys")
+	hostKeyFile := fs.String("host-key", "", "host signing key file authenticating signing requests")
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	if fs.NArg() == 0 {
-		return errors.New("subcommand required: keys, witness, opcert, reward-hex, address")
+		return errors.New("subcommand required: keys, witness, opcert, reward-hex, address, host-key")
 	}
 
 	sub, rest := fs.Arg(0), fs.Args()[1:]
@@ -361,7 +364,15 @@ func run(args []string, stdout io.Writer) error {
 			return nil, errors.New("-profile is required")
 		}
 
-		return &session{c: newClient(*base, *source), identity: id, profile: *profileName}, nil
+		s := &session{c: newClient(*base, *source), identity: id, profile: *profileName}
+
+		if *hostKeyFile != "" {
+			if s.hostKey, err = readHostKey(*hostKeyFile); err != nil {
+				return nil, err
+			}
+		}
+
+		return s, nil
 	}
 
 	switch sub {
@@ -422,6 +433,18 @@ func run(args []string, stdout io.Writer) error {
 		}
 
 		return s.opcert(*kes, *period, *chain, *out, stdout)
+	case "host-key":
+		out := sf.String("out", "", "host signing key file to create")
+
+		if err := sf.Parse(rest); err != nil {
+			return err
+		}
+
+		if *out == "" {
+			return errors.New("-out is required")
+		}
+
+		return newHostKey(*out, stdout)
 	case "reward-hex":
 		if len(rest) != 1 {
 			return errors.New("usage: reward-hex <stake_test1...>")

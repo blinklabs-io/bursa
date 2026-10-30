@@ -75,6 +75,10 @@ func (c *chip) WriteBinary(id uint32, data []byte) error {
 	return err
 }
 
+func (c *chip) Delete(id uint32) error {
+	return c.se.Delete(id)
+}
+
 func (c *chip) ReadBinary(id uint32) ([]byte, error) {
 	return retry(c, func() ([]byte, error) { return c.se.ReadBinary(id) })
 }
