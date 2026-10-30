@@ -43,6 +43,8 @@
 #   RETIRE (0; 1 retires the pool at the next epoch),
 #   OPCERT_CHECK (path to opcert-check; when set, the opcert is re-verified)
 #   SIGNING_IMX (signing image to load after provisioning),
+#   HOST_KEY (host signing key file; created if missing, registered on the
+#   device and used to authenticate every signing request),
 #   ARMORY_BOOT (armory-boot-usb)
 
 set -euo pipefail
@@ -69,6 +71,7 @@ abs() { case $1 in */*) realpath "$1" ;; *) command -v "$1" ;; esac; }
 SOCKET=$(realpath "$SOCKET")
 PAYER_SKEY=$(realpath "$PAYER_SKEY")
 PAYER_VKEY=$(realpath "$PAYER_VKEY")
+[ -z "${HOST_KEY:-}" ] || HOST_KEY=$(realpath -m "$HOST_KEY")
 BURSA=$(abs "$BURSA")
 ARMORY_POOL=$(abs "$ARMORY_POOL")
 if [ -n "${OPCERT_CHECK:-}" ]; then OPCERT_CHECK=$(abs "$OPCERT_CHECK"); fi
@@ -106,7 +109,7 @@ need_build() {
 }
 
 q() { "$BURSA" query "$@" --socket-path "$SOCKET" --network $NET; }
-armory() { "$ARMORY_POOL" -signer "$SIGNER" -source "$SOURCE" -identity "$IDENTITY" -profile "$PROFILE" "$@"; }
+armory() { "$ARMORY_POOL" -signer "$SIGNER" -source "$SOURCE" -identity "$IDENTITY" -profile "$PROFILE" ${HOST_KEY:+-host-key "$HOST_KEY"} "$@"; }
 
 # submit builds, witnesses, assembles and submits one transaction.
 # Usage: submit NAME "CERT..." "LOCAL_SKEY..." "ARMORY_ROLE..."
@@ -243,6 +246,24 @@ check "device owner key matches owner.vkey" \
 rm -f owner.skey
 else
 echo "owner key generated on the device in an earlier run"
+fi
+
+if [ -n "${HOST_KEY:-}" ]; then
+step "Register host key $HOST_KEY"
+if [ ! -s "$HOST_KEY" ]; then
+	"$ARMORY_POOL" host-key -out "$HOST_KEY" > host-key.pub
+fi
+[ -s host-key.pub ] || fail "host-key.pub missing: it holds the public key printed when $HOST_KEY was created"
+HOST_PUB=$(printf '%b' "$(sed 's/../\\x&/g' host-key.pub | tr -d '\n')" | base64 -w0)
+if jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json > /dev/null 2>&1; then
+	pass "host key registered in an earlier run"
+else
+need_build provisioning
+jq -n --arg k "$HOST_PUB" '{public_key: $k}' |
+	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/host-key" --data-binary @- > host-key.json.new
+mv host-key.json.new host-key.json
+fi
+check "host key registered" jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json
 fi
 
 step "Device inventory"

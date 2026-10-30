@@ -73,3 +73,37 @@ func ResponseBinding(req SignRequest, signature []byte) []byte {
 
 	return h.Sum(nil)
 }
+
+// requestDomain separates host signatures over requests from every other
+// signature the host key could make.
+const requestDomain = "bursa-armory-request/1"
+
+// RequestBinding is the digest a host key signs to authenticate a signing
+// request: the domain string, then each request field and the challenge,
+// length-prefixed as in ResponseBinding. An absent era is an empty field.
+func RequestBinding(req SignRequest) []byte {
+	h := sha256.New()
+
+	var era []byte
+	if req.Era != nil {
+		era = []byte(strconv.FormatUint(uint64(*req.Era), 10))
+	}
+
+	for _, field := range [][]byte{
+		[]byte(requestDomain),
+		[]byte(req.Version),
+		[]byte(req.Purpose),
+		[]byte(req.KeyHash),
+		[]byte(req.Role),
+		req.Nonce,
+		req.Payload,
+		[]byte(req.Profile),
+		era,
+		req.Challenge,
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
+
+	return h.Sum(nil)
+}
