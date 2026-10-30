@@ -888,6 +888,12 @@ export interface ConnectorState {
   origins: string[];
 }
 
+export interface RemoteSubmissionStatus {
+  available: boolean;
+  enabled: boolean;
+  endpoint?: string;
+}
+
 export interface ConnectorRequest {
   id: string;
   origin: string;
@@ -1174,8 +1180,9 @@ export interface SurveyAnswerPair {
   value: number | string;
 }
 
-// SurveyAnswer holds the value field its kind uses: choice (single-choice),
-// indices (multi-select, ranking), number (numeric), pairs (points, rating).
+// SurveyAnswer holds the value field its kind uses: custom_cbor (custom),
+// choice (single-choice), indices (multi-select, ranking), number (numeric),
+// pairs (points, rating).
 export interface SurveyAnswer {
   kind: SurveyKind;
   question: number;
@@ -1183,6 +1190,7 @@ export interface SurveyAnswer {
   indices?: number[];
   number?: number | string;
   pairs?: SurveyAnswerPair[];
+  custom_cbor?: string;
 }
 
 export interface SurveyOptionTally {

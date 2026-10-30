@@ -4,6 +4,7 @@ import * as hooks from "../api/hooks";
 import type { AsyncState, NotificationsState } from "../api/hooks";
 import * as client from "../api/client";
 import * as connectorApi from "../api/connector";
+import * as remoteSubmissionApi from "../api/remoteSubmission";
 import type {
   Account,
   HistoryExpirySetting,
@@ -130,6 +131,10 @@ beforeEach(() => {
   mockNotifications();
   mockTPMStatus(tpmUnavailable);
   mockConnector();
+  vi.spyOn(remoteSubmissionApi, "getRemoteSubmission").mockResolvedValue({
+    available: true,
+    enabled: false,
+  });
   vi.spyOn(hooks, "useNftMedia").mockReturnValue({
     enabled: false,
     loading: false,
@@ -190,6 +195,48 @@ test("(f) caughtUp=false does NOT show caught-up indicator", () => {
   mockStatus("syncing", 12345, false);
   renderSettings();
   expect(screen.queryByText(/caught.?up/i)).toBeNull();
+});
+
+test("failed sync offers a scoped recovery with deliberate confirmation", async () => {
+  mockStatus("error", 0, false);
+  const recover = vi.spyOn(client, "recoverNodeSync").mockResolvedValue({ started: true });
+  renderSettings();
+
+  expect(screen.getByText(/removes only this network's local blockchain sync data/i)).toBeInTheDocument();
+  expect(screen.getByText(/encrypted vault, wallet keys, wallets, settings, address book, logs, and NFT cache are kept/i)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /start clean sync recovery/i }));
+  const confirm = screen.getByRole("checkbox", { name: /local blockchain sync data will be deleted/i });
+  const submit = screen.getByRole("button", { name: /delete sync data and retry/i });
+  expect(submit).toBeDisabled();
+  expect(recover).not.toHaveBeenCalled();
+
+  fireEvent.click(confirm);
+  fireEvent.click(submit);
+
+  await waitFor(() => expect(recover).toHaveBeenCalledTimes(1));
+  expect(await screen.findByRole("status")).toHaveTextContent(/clean sync started/i);
+});
+
+test("sync recovery failure remains actionable", async () => {
+  mockStatus("error", 0, false);
+  vi.spyOn(client, "recoverNodeSync").mockRejectedValue(
+    new client.ApiError(500, "remove node sync data: permission denied"),
+  );
+  renderSettings();
+
+  fireEvent.click(screen.getByRole("button", { name: /start clean sync recovery/i }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /local blockchain sync data will be deleted/i }));
+  fireEvent.click(screen.getByRole("button", { name: /delete sync data and retry/i }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(/permission denied/i);
+  expect(screen.getByRole("button", { name: /delete sync data and retry/i })).toBeEnabled();
+});
+
+test("node recovery is hidden while sync has not failed", () => {
+  mockStatus("syncing", 12345, false);
+  renderSettings();
+  expect(screen.queryByText(/node sync recovery/i)).not.toBeInTheDocument();
 });
 
 test("(g) full wallet type shows spending enabled", () => {
@@ -631,6 +678,49 @@ test("connector card recovers after a transient missing endpoint", async () => {
   await waitFor(() =>
     expect(screen.getByText("dApp Connector")).toBeInTheDocument(),
   );
+});
+
+test("remote submission is disabled until the user opts in", async () => {
+  mockStatus("ready", 12345, true);
+  const enable = vi.spyOn(remoteSubmissionApi, "enableRemoteSubmission").mockResolvedValue({
+    available: true,
+    enabled: true,
+    endpoint: "https://wallet.example:8091/redacted/api/submit/tx",
+  });
+
+  renderSettings();
+  fireEvent.click(await screen.findByRole("button", { name: /enable access/i }));
+
+  await waitFor(() => expect(enable).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText(/wallet\.example:8091/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /disable access/i })).toBeInTheDocument();
+});
+
+test("remote submission can replace and revoke its capability", async () => {
+  mockStatus("ready", 12345, true);
+  vi.mocked(remoteSubmissionApi.getRemoteSubmission).mockResolvedValue({
+    available: true,
+    enabled: true,
+    endpoint: "https://wallet.example:8091/old/api/submit/tx",
+  });
+  const rotate = vi.spyOn(remoteSubmissionApi, "rotateRemoteSubmission").mockResolvedValue({
+    available: true,
+    enabled: true,
+    endpoint: "https://wallet.example:8091/new/api/submit/tx",
+  });
+  const disable = vi.spyOn(remoteSubmissionApi, "disableRemoteSubmission").mockResolvedValue({
+    available: true,
+    enabled: false,
+  });
+
+  renderSettings();
+  fireEvent.click(await screen.findByRole("button", { name: /replace URL/i }));
+  await waitFor(() => expect(rotate).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText(/\/new\/api\/submit\/tx/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /disable access/i }));
+  await waitFor(() => expect(disable).toHaveBeenCalledTimes(1));
+  expect(await screen.findByRole("button", { name: /enable access/i })).toBeInTheDocument();
 });
 
 test("NFT media is off by default and requires an explicit opt-in", () => {

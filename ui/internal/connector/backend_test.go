@@ -1368,6 +1368,72 @@ func TestWalletBackendSignTx(t *testing.T) {
 	}
 }
 
+func TestWalletBackendSignTxValidatesAuxiliaryData(t *testing.T) {
+	acct := mustDeriveBackendSigningAccount(t)
+	sp := spend.NewService(
+		&fakeSpendChain{},
+		fakeTestKeystore{mnemonic: backendTestMnemonic},
+		acct,
+	)
+	fc := &fakeConnectorChain{addressErr: chain.ErrNotFound}
+	wl := wallet.NewService(&walletChainBridge{f: fc})
+	if _, err := wl.SetWallet(backendTestMnemonic, "preview", 5); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	be := NewWalletBackend(wl, sp, acct, "preview", fc)
+
+	metadata, err := lcommon.DecodeMetadatumRaw([]byte{0xa1, 0x01, 0x61, 0x61})
+	if err != nil {
+		t.Fatalf("decode metadata fixture: %v", err)
+	}
+	wantHash := lcommon.Blake2b256Hash(metadata.Cbor())
+	wrongHash := lcommon.Blake2b256Hash([]byte("different auxiliary data"))
+	vkeyHash := lcommon.Blake2b224Hash(derivedPaymentVkey(t, 0))
+
+	encode := func(t *testing.T, hash *lcommon.Blake2b256) string {
+		t.Helper()
+		var txID lcommon.Blake2b256
+		txID[0] = 1
+		raw, err := gocbor.Encode(&conway.ConwayTransaction{
+			Body: conway.ConwayTransactionBody{
+				TxInputs: conway.NewConwayTransactionInputSet([]shelley.ShelleyTransactionInput{{
+					TxId: txID,
+				}}),
+				TxFee:             200000,
+				TxRequiredSigners: gocbor.NewSetType([]lcommon.Blake2b224{vkeyHash}, true),
+				TxAuxDataHash:     hash,
+			},
+			WitnessSet: conway.ConwayTransactionWitnessSet{},
+			TxIsValid:  true,
+			TxMetadata: metadata,
+		})
+		if err != nil {
+			t.Fatalf("encode transaction: %v", err)
+		}
+		return hex.EncodeToString(raw)
+	}
+
+	t.Run("matching hash", func(t *testing.T) {
+		if _, err := be.SignTx(context.Background(), encode(t, &wantHash), false, "anypassword"); err != nil {
+			t.Fatalf("SignTx: %v", err)
+		}
+	})
+	t.Run("missing hash", func(t *testing.T) {
+		_, err := be.SignTx(context.Background(), encode(t, nil), false, "anypassword")
+		var target lcommon.MissingTransactionAuxiliaryDataHashError
+		if !errors.As(err, &target) {
+			t.Fatalf("SignTx error = %v, want MissingTransactionAuxiliaryDataHashError", err)
+		}
+	})
+	t.Run("conflicting hash", func(t *testing.T) {
+		_, err := be.SignTx(context.Background(), encode(t, &wrongHash), false, "anypassword")
+		var target lcommon.ConflictingMetadataHashError
+		if !errors.As(err, &target) {
+			t.Fatalf("SignTx error = %v, want ConflictingMetadataHashError", err)
+		}
+	})
+}
+
 func TestWalletBackendSignTxChangeAddressInput(t *testing.T) {
 	acct := mustDeriveBackendSigningAccount(t)
 	sp := spend.NewService(

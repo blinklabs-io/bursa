@@ -118,17 +118,24 @@ signer:
     # - name: "nitro"
     #   type: "nitro"
     #   address: "unix:///run/bursa/enclave.sock"
+    #   profile: "pool@mainnet"                 # optional fixed workload profile
     #   root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
     #   pcrs:
     #     0: "<96 hex chars: PCR0 of the EIF>"
     # - name: "gcp-cs"
     #   type: "confidential-space"
     #   address: "https://workload.example.internal:8443"
+    #   profile: "pool@mainnet"                 # optional fixed workload profile
     #   audience: "https://signer.example.internal"
     #   image_digest: "sha256:<64 hex chars>"
     #   tls_ca_file: "/etc/bursa/confidential-space-ca.pem"
     #   tls_client_cert_file: "/etc/bursa/confidential-space-client.pem"
     #   tls_client_key_file: "/etc/bursa/confidential-space-client-key.pem"
+    # - name: "armory"
+    #   type: "armory"
+    #   address: "http://10.0.0.1"
+    #   profile: "pool@preview"                 # required device profile
+    #   identity_public_key: "<64 hex chars>"   # device identity key, pinned
 
     # SOPS-encrypted secrets pulled from GCP Secret Manager and decrypted
     # in-process at boot. Requires the top-level `google.project`.

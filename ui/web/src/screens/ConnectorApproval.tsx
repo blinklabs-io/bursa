@@ -55,6 +55,8 @@ function methodSummary(req: ConnectorRequest): string {
       return "Sign a data payload (CIP-8)";
     case "submitTx":
       return "Submit a transaction";
+    case "remoteSubmitTx":
+      return "Submit a fully signed transaction from another wallet";
     case "getPubDRepKey":
     case "cip95.getPubDRepKey":
       return "Reveal DRep public key (CIP-95)";
@@ -266,7 +268,9 @@ export function ConnectorApproval() {
         tabIndex={-1}
         style={{ width: "100%", maxWidth: "420px" }}
       >
-        <Card title="dApp Request">
+        <Card
+          title={current.method === "remoteSubmitTx" ? "Remote Submission Request" : "dApp Request"}
+        >
           {degraded && (
             <div
               style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.75rem" }}

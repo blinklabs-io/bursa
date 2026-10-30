@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -454,6 +455,9 @@ type fakeSettings struct {
 	setNotificationsErr    error
 	setNotificationsCalled bool
 	setNotificationsWith   bool
+
+	recoverCalled bool
+	recoverErr    error
 }
 
 type fakeAutoLockTimer struct {
@@ -528,6 +532,11 @@ func (f *fakeSettings) SetNotifications(enabled bool) error {
 	}
 	f.notifications = enabled
 	return nil
+}
+
+func (f *fakeSettings) RecoverNode() error {
+	f.recoverCalled = true
+	return f.recoverErr
 }
 
 // fakeContacts is an in-memory Contacts controller for handler tests. It
@@ -3026,6 +3035,54 @@ func TestPutHistoryExpiryPersistError(t *testing.T) {
 	}
 }
 
+func TestRecoverNodeRequiresDeliberateConfirmation(t *testing.T) {
+	set := &fakeSettings{}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	for _, body := range []string{`{}`, `{"confirmed":false}`} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/settings/node/recover", strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("POST recovery with %s = %d, want 400", body, rec.Code)
+		}
+	}
+	if set.recoverCalled {
+		t.Fatal("RecoverNode called without confirmation")
+	}
+}
+
+func TestRecoverNodeStartsConfirmedRecovery(t *testing.T) {
+	set := &fakeSettings{}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/settings/node/recover", strings.NewReader(`{"confirmed":true}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST recovery = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !set.recoverCalled {
+		t.Fatal("RecoverNode was not called")
+	}
+}
+
+func TestRecoverNodeReportsLifecycleFailure(t *testing.T) {
+	set := &fakeSettings{recoverErr: errors.New("remove node sync data: permission denied")}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/settings/node/recover", strings.NewReader(`{"confirmed":true}`)))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("POST recovery failure = %d, want 500", rec.Code)
+	}
+}
+
+func TestRecoverNodeRejectsNonFailedNode(t *testing.T) {
+	set := &fakeSettings{recoverErr: supervisor.ErrRecoveryUnavailable}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/settings/node/recover", strings.NewReader(`{"confirmed":true}`)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("POST unavailable recovery = %d, want 409", rec.Code)
+	}
+}
+
 func decodeAutoLock(t *testing.T, body *bytes.Buffer) int {
 	t.Helper()
 	var got struct {
@@ -4121,9 +4178,12 @@ func TestHandleLookupResolvesOnMainnet(t *testing.T) {
 	if got.Handle != "chris" || got.Address != "addr1abc" {
 		t.Fatalf("unexpected handle info: %+v", got)
 	}
-	wantUnit := "f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "6368726973"
-	if len(lk.gotAssetUnits) != 1 || lk.gotAssetUnits[0] != wantUnit {
-		t.Fatalf("queried asset unit = %v, want [%s]", lk.gotAssetUnits, wantUnit)
+	wantUnits := []string{
+		"f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "6368726973",
+		"f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "000de1406368726973",
+	}
+	if !slices.Equal(lk.gotAssetUnits, wantUnits) {
+		t.Fatalf("queried asset units = %v, want %v", lk.gotAssetUnits, wantUnits)
 	}
 }
 
@@ -4142,14 +4202,17 @@ func TestHandleLookupResolvesOnPreview(t *testing.T) {
 	if got.Handle != "chris" || got.Address != "addr_test1abc" {
 		t.Fatalf("unexpected handle info: %+v", got)
 	}
-	wantUnit := "f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "6368726973"
-	if len(lk.gotAssetUnits) != 1 || lk.gotAssetUnits[0] != wantUnit {
-		t.Fatalf("queried asset unit = %v, want [%s]", lk.gotAssetUnits, wantUnit)
+	wantUnits := []string{
+		"f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "6368726973",
+		"f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "000de1406368726973",
+	}
+	if !slices.Equal(lk.gotAssetUnits, wantUnits) {
+		t.Fatalf("queried asset units = %v, want %v", lk.gotAssetUnits, wantUnits)
 	}
 }
 
 func TestHandleLookupWithoutDollarSign(t *testing.T) {
-	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc"}}}
+	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
 	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/chris", nil))
@@ -4188,6 +4251,22 @@ func TestHandleLookupBadGatewayOnHardError(t *testing.T) {
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/$chris", nil))
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("GET /wallet/handle/$chris hard error = %d, want 502", rec.Code)
+	}
+	if got := rec.Body.String(); !strings.Contains(got, `"error":"handle lookup failed"`) || strings.Contains(got, "node exploded") {
+		t.Fatalf("hard-error response = %q", got)
+	}
+}
+
+func TestHandleLookupRejectsAmbiguousHolder(t *testing.T) {
+	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{
+		{Address: "addr1first", Quantity: "1"},
+		{Address: "addr1second", Quantity: "1"},
+	}}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/$chris", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("GET /wallet/handle/$chris ambiguous holder = %d, want 409", rec.Code)
 	}
 }
 
@@ -4731,6 +4810,8 @@ func TestSessionGuardRoutePartition(t *testing.T) {
 		{"/connector/events", false},
 		{"/connector/grants", false},
 		{"/connector/decide", false},
+		{"/remote-submission", false},
+		{"/remote-submission/enable", false},
 		{"/wallet/example/activate", false},
 		{"/wallet/account/select", false},
 	} {

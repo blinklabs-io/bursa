@@ -240,6 +240,33 @@ func TestBuildMetadataStaysUnsignableOnHardware(t *testing.T) {
 	}
 }
 
+func TestImportedMetadataStaysOutsideGeneralSigningPaths(t *testing.T) {
+	t.Parallel()
+	acct := mustDeriveConfirmAccount(t)
+	s := NewService(
+		newFakeChain(10_000_000, acct.ReceiveAddresses[0]),
+		fakeKeystore{mnemonic: testMnemonic},
+		acct,
+	)
+	pv, err := s.BuildMetadata(context.Background(), MetadataRequest{
+		Label: 17, Value: metaValue(), Signer: SignerPayment,
+		ExpectedSignerCredential: expectedCredential(t, acct, SignerPayment),
+	})
+	if err != nil {
+		t.Fatalf("BuildMetadata: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+	if _, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw", unsigned.RequiredSigners); !errors.Is(err, ErrInvalidTx) {
+		t.Fatalf("SignTx imported metadata err = %v, want ErrInvalidTx", err)
+	}
+	if _, err := s.CosignTx(context.Background(), unsigned.UnsignedTxCBOR, "pw", true); !errors.Is(err, ErrInvalidTx) {
+		t.Fatalf("CosignTx imported metadata err = %v, want ErrInvalidTx", err)
+	}
+}
+
 func TestBuildMetadataRejectsChangedWalletCredential(t *testing.T) {
 	t.Parallel()
 	acct := mustDeriveConfirmAccount(t)

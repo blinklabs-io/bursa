@@ -179,6 +179,10 @@ on.
 | `BURSA_SYNC` | `mithril` | `genesis` replays the chain from the start instead of bootstrapping from a Mithril snapshot. |
 | `BURSA_LEAN` | `false` | Seeds the lean-node profile, which prunes historical chain data to keep the on-disk footprint down. |
 | `BURSA_CONNECTOR` | `false` | Enables the dApp connector backend. |
+| `BURSA_REMOTE_SUBMIT_ADDR` | unset | Listen address for the optional remote submission endpoint, such as `0.0.0.0:8091`. Requires the other remote submission variables. |
+| `BURSA_REMOTE_SUBMIT_URL` | unset | Public HTTPS origin clients use for the remote submission listener. |
+| `BURSA_REMOTE_SUBMIT_TLS_CERT` | unset | TLS certificate chain for the remote submission listener. |
+| `BURSA_REMOTE_SUBMIT_TLS_KEY` | unset | Private key for the remote submission listener certificate. |
 
 The desktop binary serves on `127.0.0.1:8090`. Wallet API routes require the
 process-local session capability carried in the launch URL. Loopback, Host, and
@@ -186,6 +190,22 @@ Origin checks are additional browser protections and do not authorize a local
 client by themselves. The session cookie is marked `Secure` only when the
 listener itself serves TLS; on the default plain-HTTP loopback listener WebKit
 webviews would refuse to store a `Secure` cookie.
+
+### Remote transaction submission
+
+Bursa can expose the standard `POST /api/submit/tx` contract to another wallet
+without exposing its control API or any signing capability. Configure all four
+`BURSA_REMOTE_SUBMIT_*` variables, restart Bursa, then enable **Remote
+transaction submission** in Settings. The Settings card supplies the complete
+capability URL to enter in the other wallet.
+
+The listener accepts only `application/cbor` over TLS. Bursa validates that the
+transaction is complete, bounds request size and admission rate, rejects
+duplicates, and displays each transaction for approval before broadcasting it.
+Disabling access or replacing the URL revokes the current capability
+immediately. Keep the URL private: it authenticates clients that do not support
+separate credentials. The URL grants submission access only; it cannot read the
+wallet, sign transactions, or use keys.
 
 ## dApp connector
 

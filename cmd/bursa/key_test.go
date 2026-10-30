@@ -19,3 +19,30 @@ func TestBLSCommandRequiresSigningKeyFile(t *testing.T) {
 		t.Fatalf("Execute error = %v, want required signing-key-file", err)
 	}
 }
+
+func TestPoolOwnerCommandFlags(t *testing.T) {
+	t.Parallel()
+	cmd := keyPoolOwnerCommand()
+	for _, name := range []string{
+		"mnemonic-file", "password-file", "signing-key-file",
+		"verification-key-file", "account-index", "index",
+	} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("pool-owner is missing --%s", name)
+		}
+	}
+	for _, name := range []string{"account-index", "index"} {
+		if got := cmd.Flags().Lookup(name).DefValue; got != "0" {
+			t.Errorf("--%s default = %q, want 0", name, got)
+		}
+	}
+	registered := false
+	for _, c := range keyCommand().Commands() {
+		if c.Name() == "pool-owner" {
+			registered = true
+		}
+	}
+	if !registered {
+		t.Error("pool-owner is not registered under key")
+	}
+}

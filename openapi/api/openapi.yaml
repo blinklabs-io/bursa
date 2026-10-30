@@ -411,7 +411,8 @@ paths:
       x-codegen-request-body-name: request
   /api/wallet/create:
     post:
-      description: Create a wallet and return details
+      description: "Create a wallet and return details. When persistent storage is\
+        \ configured, requires an authenticated wallet storage administrator."
       responses:
         "200":
           content:
@@ -419,6 +420,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/bursa.Wallet"
           description: Ok
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Authentication required
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Wallet storage administrator access required
       security:
       - BearerAuth: []
       summary: Create a wallet
@@ -556,8 +569,9 @@ paths:
       summary: Lists wallets
   /api/wallet/restore:
     post:
-      description: Restores a wallet using the provided mnemonic seed phrase and optional
-        password and returns wallet details.
+      description: "Restores a wallet using the provided mnemonic seed phrase and\
+        \ optional password and returns wallet details. When persistent storage is\
+        \ configured, requires an authenticated wallet storage administrator."
       requestBody:
         content:
           application/json:
@@ -578,6 +592,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/api.ErrorResponse"
           description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Authentication required
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/api.ErrorResponse"
+          description: Wallet storage administrator access required
         "500":
           content:
             application/json:

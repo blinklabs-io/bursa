@@ -46,20 +46,36 @@ const (
 // that rely on the transport for authorization must use a constructor that
 // configures authenticated TLS.
 type HTTPEnclave struct {
-	client *http.Client
-	base   string
+	client  *http.Client
+	base    string
+	profile string
 }
 
 // NewHTTPEnclave connects to address: an http:// or https:// URL, or
 // unix:///path/to/socket.
 func NewHTTPEnclave(address string) (*HTTPEnclave, error) {
-	return newHTTPEnclave(address, nil)
+	return newHTTPEnclave(address, "", nil)
+}
+
+// NewProfiledHTTPEnclave connects to an enclave and selects profile for its
+// inventory requests. The same profile is placed on signing requests by the
+// profiled attested backend.
+func NewProfiledHTTPEnclave(address, profile string) (*HTTPEnclave, error) {
+	return newHTTPEnclave(address, profile, nil)
 }
 
 // NewMTLSHTTPEnclave connects to an HTTPS workload using TLS 1.3, a pinned
 // server CA, and a mandatory client certificate.
 func NewMTLSHTTPEnclave(
 	address, caFile, certFile, keyFile string,
+) (*HTTPEnclave, error) {
+	return NewProfiledMTLSHTTPEnclave(address, "", caFile, certFile, keyFile)
+}
+
+// NewProfiledMTLSHTTPEnclave is NewMTLSHTTPEnclave with a workload profile,
+// as NewProfiledHTTPEnclave is to NewHTTPEnclave.
+func NewProfiledMTLSHTTPEnclave(
+	address, profile, caFile, certFile, keyFile string,
 ) (*HTTPEnclave, error) {
 	u, err := url.Parse(address)
 	if err != nil || u.Scheme != "https" || u.Host == "" {
@@ -77,7 +93,7 @@ func NewMTLSHTTPEnclave(
 	if err != nil {
 		return nil, fmt.Errorf("load TLS client certificate: %w", err)
 	}
-	return newHTTPEnclave(address, &tls.Config{
+	return newHTTPEnclave(address, profile, &tls.Config{
 		MinVersion:   tls.VersionTLS13,
 		RootCAs:      roots,
 		Certificates: []tls.Certificate{certificate},
@@ -85,7 +101,7 @@ func NewMTLSHTTPEnclave(
 }
 
 func newHTTPEnclave(
-	address string,
+	address, profile string,
 	tlsConfig *tls.Config,
 ) (*HTTPEnclave, error) {
 	u, err := url.Parse(address)
@@ -109,7 +125,7 @@ func newHTTPEnclave(
 			}
 			client.Transport = &http.Transport{TLSClientConfig: tlsConfig.Clone()}
 		}
-		return &HTTPEnclave{client: client, base: u.Scheme + "://" + u.Host}, nil
+		return &HTTPEnclave{client: client, base: u.Scheme + "://" + u.Host, profile: profile}, nil
 	case "unix":
 		if tlsConfig != nil {
 			return nil, errors.New("authenticated enclave address must use https")
@@ -124,7 +140,7 @@ func newHTTPEnclave(
 				return d.DialContext(ctx, "unix", path)
 			},
 		}
-		return &HTTPEnclave{client: client, base: "http://enclave"}, nil
+		return &HTTPEnclave{client: client, base: "http://enclave", profile: profile}, nil
 	default:
 		return nil, fmt.Errorf("enclave address scheme %q is not http, https, or unix", u.Scheme)
 	}
@@ -172,8 +188,9 @@ func (e *HTTPEnclave) post(ctx context.Context, path string, in, out any) error 
 func (e *HTTPEnclave) Inventory(ctx context.Context, nonce []byte) (AttestedInventory, error) {
 	var inv AttestedInventory
 	err := e.post(ctx, "/v1/inventory", struct {
-		Nonce []byte `json:"nonce"`
-	}{nonce}, &inv)
+		Nonce   []byte `json:"nonce"`
+		Profile string `json:"profile,omitempty"`
+	}{Nonce: nonce, Profile: e.profile}, &inv)
 	return inv, err
 }
 

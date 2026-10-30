@@ -10,6 +10,7 @@ import (
 
 	apollo "github.com/Salvionied/apollo/v2"
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/ui/internal/txwitness"
 	gcbor "github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/blinklabs-io/gouroboros/ledger/conway"
@@ -792,6 +793,73 @@ func TestCosignImported_AddsAndMerges(t *testing.T) {
 	}
 	if res2.SignedCount != 1 {
 		t.Errorf("SignedCount after re-cosign = %d, want 1", res2.SignedCount)
+	}
+}
+
+func TestCosignImportedRejectsAuxiliaryData(t *testing.T) {
+	fc := newFakeChain()
+	svc := NewService(fc, newTestKeystore(t, mnemonicA), &memAccounts{})
+	mk, err := svc.MyKey("test-password-123")
+	if err != nil {
+		t.Fatalf("MyKey: %v", err)
+	}
+	acct, err := createForTest(svc, CreateRequest{
+		Label:   "solo",
+		Network: "preview",
+		Policy:  Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: mk.KeyHashHex}}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fc.addUTxO(acct.ScriptAddress, strings.Repeat("22", 32), 0, 10_000_000)
+	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{
+		To: externalAddr(t), Lovelace: "1000000",
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	raw, err := hex.DecodeString(built.UnsignedTxCBOR)
+	if err != nil {
+		t.Fatalf("decode transaction hex: %v", err)
+	}
+	var parts []gcbor.RawMessage
+	if _, err := gcbor.Decode(raw, &parts); err != nil || len(parts) != 4 {
+		t.Fatalf("decode transaction: %v", err)
+	}
+	metadata, err := lcommon.DecodeMetadatumRaw([]byte{0xa1, 0x01, 0x61, 0x61})
+	if err != nil {
+		t.Fatalf("decode metadata fixture: %v", err)
+	}
+	hash := lcommon.Blake2b256Hash(metadata.Cbor())
+	var body map[uint64]gcbor.RawMessage
+	if _, err := gcbor.Decode(parts[0], &body); err != nil {
+		t.Fatalf("decode transaction body: %v", err)
+	}
+	if body == nil {
+		t.Fatal("decode transaction body: nil map")
+	}
+	body[7], err = gcbor.Encode(hash)
+	if err != nil {
+		t.Fatalf("encode auxiliary data hash: %v", err)
+	}
+	bodyRaw, err := gcbor.Encode(body)
+	if err != nil {
+		t.Fatalf("encode transaction body: %v", err)
+	}
+	raw, err = gcbor.Encode([]gcbor.RawMessage{
+		bodyRaw,
+		parts[1],
+		parts[2],
+		metadata.Cbor(),
+	})
+	if err != nil {
+		t.Fatalf("encode transaction with metadata: %v", err)
+	}
+
+	_, err = svc.CosignImported(hex.EncodeToString(raw), "test-password-123")
+	if !errors.Is(err, ErrInvalidTx) || !errors.Is(err, txwitness.ErrImportedAuxiliaryData) {
+		t.Fatalf("CosignImported error = %v, want ErrInvalidTx and ErrImportedAuxiliaryData", err)
 	}
 }
 
