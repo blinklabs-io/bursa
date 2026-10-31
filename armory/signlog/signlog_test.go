@@ -1087,6 +1087,54 @@ func TestTruncationIsRecordedAndSigned(t *testing.T) {
 	}
 }
 
+func rawRecord(n byte) Record {
+	return Record{
+		Purpose: PurposeRaw, Role: "cold", BodyHash: bytes.Repeat([]byte{n}, 32),
+		Summary: "unfiltered testnet signing",
+	}
+}
+
+func TestRawPurposeRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 4)
+	w := f.open(t)
+
+	e, err := w.Append(rawRecord(5))
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	log, err := f.verify(t, f.pub)
+	if err != nil || len(log.Entries) != 1 {
+		t.Fatalf("verify: %v", err)
+	}
+
+	got := log.Entries[0]
+	if got.Purpose != PurposeRaw || !bytes.Equal(got.BodyHash, e.BodyHash) || got.Summary != "unfiltered testnet signing" {
+		t.Fatalf("entry %+v", got)
+	}
+
+	if line := FormatEntry(got); !strings.Contains(line, PurposeRaw) || !strings.Contains(line, "body=0505") {
+		t.Fatalf("line %q", line)
+	}
+
+	// a raw record carries a body hash and no opcert fields
+	for name, mut := range map[string]func(*Record){
+		"no hash":      func(r *Record) { r.BodyHash = nil },
+		"short hash":   func(r *Record) { r.BodyHash = []byte{1} },
+		"issue":        func(r *Record) { r.IssueCounter = 1 },
+		"kes key hash": func(r *Record) { r.KESKeyHash = bytes.Repeat([]byte{1}, 32) },
+	} {
+		rec := rawRecord(1)
+		mut(&rec)
+
+		if _, err := w.Append(rec); !errors.Is(err, ErrInvalidRecord) {
+			t.Errorf("%s: %v, want ErrInvalidRecord", name, err)
+		}
+	}
+}
+
 func TestConcurrentAppendsSerialise(t *testing.T) {
 	t.Parallel()
 

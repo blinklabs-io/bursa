@@ -69,9 +69,14 @@ const (
 	// HashSize is the size of the chain hash and the body hash.
 	HashSize = 32
 
-	// PurposeTxBody and PurposeOpCertNext are the purposes the device signs.
+	// PurposeTxBody and PurposeOpCertNext are the purposes the device signs,
+	// PurposeRaw the one only testnet bring-up builds sign.
 	PurposeTxBody     = "tx-body"
 	PurposeOpCertNext = "opcert-next"
+	// PurposeRaw is a signature over caller-chosen bytes with no policy
+	// applied. Only the unfiltered signing endpoint of a testnet bring-up
+	// build issues it; BodyHash is the blake2b-256 of the bytes signed.
+	PurposeRaw = "raw-unfiltered"
 )
 
 var (

@@ -326,3 +326,34 @@ func TestSigningThroughRealLog(t *testing.T) {
 		t.Fatal("chip signed for a request the full log refused")
 	}
 }
+
+func TestRecordRaw(t *testing.T) {
+	t.Parallel()
+
+	s, chip, l, _ := loggedService(t)
+	msg := []byte("raw message")
+
+	if err := s.RecordRaw(msg); err != nil {
+		t.Fatal(err)
+	}
+
+	hash := blake2b.Sum256(msg)
+
+	if len(l.records) != 1 || l.records[0].Purpose != signlog.PurposeRaw || !bytes.Equal(l.records[0].BodyHash, hash[:]) ||
+		!strings.Contains(l.records[0].Summary, "unfiltered testnet signing") || l.signsAtAppend[0] != chip.signs {
+		t.Fatalf("records %+v", l.records)
+	}
+
+	l.err = signlog.ErrFull
+	if err := s.RecordRaw(msg); err == nil || !strings.Contains(err.Error(), "full") {
+		t.Fatalf("append failure: %v", err)
+	}
+
+	// a required log that is not installed refuses
+	s2, _ := newTestService(t)
+	s2.RequireSigningLog()
+
+	if err := s2.RecordRaw(msg); err == nil || !strings.Contains(err.Error(), "signing log") {
+		t.Fatalf("no log: %v", err)
+	}
+}

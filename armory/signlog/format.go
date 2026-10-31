@@ -137,9 +137,9 @@ func normalize(rec Record) (Record, error) {
 	}
 
 	switch rec.Purpose {
-	case PurposeTxBody:
+	case PurposeTxBody, PurposeRaw:
 		if len(rec.BodyHash) != HashSize || rec.IssueCounter != 0 || rec.KESPeriod != 0 || rec.KESKeyHash != nil {
-			return rec, fmt.Errorf("%w: tx-body needs a %d-byte body hash and no opcert fields", ErrInvalidRecord, HashSize)
+			return rec, fmt.Errorf("%w: %s needs a %d-byte body hash and no opcert fields", ErrInvalidRecord, rec.Purpose, HashSize)
 		}
 	case PurposeOpCertNext:
 		if len(rec.KESKeyHash) != HashSize || rec.BodyHash != nil {

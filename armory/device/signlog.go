@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/blinklabs-io/bursa/armory/signlog"
+	"golang.org/x/crypto/blake2b"
 )
 
 // SigningLog is the durable record the service appends to before it releases
@@ -167,4 +168,17 @@ func (s *Service) signLogRead(req SignLogRequest) (SignLogResponse, error) {
 	}
 
 	return resp, nil
+}
+
+// RecordRaw logs an unfiltered signature over msg, for the testnet bring-up
+// build's /sign endpoint, and returns an error when the signature must be
+// refused. The caller holds the lock it shares with the service and signs
+// only when RecordRaw returns nil.
+func (s *Service) RecordRaw(msg []byte) error {
+	hash := blake2b.Sum256(msg)
+
+	return s.appendLog(signlog.Record{
+		Role: "cold", Purpose: signlog.PurposeRaw, BodyHash: hash[:],
+		Summary: "unfiltered testnet signing",
+	})
 }
