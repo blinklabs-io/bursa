@@ -359,9 +359,9 @@ The signer sends version 1 unless the backend sets `protocol`:
 - `"negotiate"`: `tx-body` requests go out at version 2 and the signer verifies
   the summary under the key's binding signature. If the device answers
   `unsupported protocol version` (version 1 firmware), the signer repeats the
-  request at version 1 with a new nonce and a new challenge, and remembers
-  version 1 until it next loads the inventory or a request fails to reach the
-  device.
+  request at version 1 with a new nonce (and, with `host_key_file`, a new
+  challenge), and keeps sending version 1 until it restarts or a request fails
+  to reach the device.
 - `"2"`: as `negotiate`, but a device that does not support version 2 is an
   error.
 
