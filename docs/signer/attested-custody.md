@@ -407,9 +407,13 @@ or an unreadable head object, leaves the device refusing to sign.
 The first start with an all-zero card and an unset head object formats the
 card for the device identity key; it holds up to 32768 entries. A new card
 usually carries a partition table, which is refused, so write zeros over the
-whole card first (for example with `dd if=/dev/zero`); erasing it is not
-enough, since some cards read erased blocks as `0xff`. A card formatted for
-another identity is refused.
+whole card first, for example with
+`dd if=/dev/zero of=/dev/sdX bs=4M conv=fsync`, where `/dev/sdX` is the
+card's whole device (check it with `lsblk`; `dd` overwrites whatever it is
+given). Erasing it is not enough, since some cards read erased blocks as
+`0xff`. A card formatted for another identity is refused. A card with data
+after the last entry, beyond one incomplete final record, is refused at
+startup as it is by `signlog-verify`.
 
 Read the log from the device with `armory-pool -identity HEX signlog`, which
 verifies every signature and the chain under the pinned identity key and
