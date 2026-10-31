@@ -430,3 +430,31 @@ func TestMainnetRequiresHostAuth(t *testing.T) {
 		t.Fatalf("authenticated request refused on a mainnet build: %+v", r)
 	}
 }
+
+// TestResponseBindingSummaryVector pins the response binding bytes, which
+// Bursa's signer computes too (backend TestAttestedSummaryBindingVector). The
+// digests were computed independently of ResponseBinding.
+func TestResponseBindingSummaryVector(t *testing.T) {
+	t.Parallel()
+
+	era := uint(6)
+	req := SignRequest{
+		Version: ProtocolSummary, Purpose: "tx-body", KeyHash: strings.Repeat("ab", 28), Role: "pool",
+		Nonce: bytes.Repeat([]byte{1}, 32), Payload: bytes.Repeat([]byte{2}, 48), Profile: "otg@preview", Era: &era,
+	}
+	sig := bytes.Repeat([]byte{4}, 64)
+
+	if got := hex.EncodeToString(ResponseBinding(req, sig, "pledge 1")); got != "b60325204c042b454e43758b76753047c7a7cc94329a4dfe6c0bc671b34d4c45" {
+		t.Fatalf("summary binding = %s", got)
+	}
+
+	if got := hex.EncodeToString(ResponseBinding(req, sig, "")); got != "3c3c52985f23d4b5f9be422dac4cb8a6ebf96062e8bfb8e82324833b05fb8599" {
+		t.Fatalf("empty summary binding = %s", got)
+	}
+
+	req.Version = Protocol
+
+	if got := hex.EncodeToString(ResponseBinding(req, sig, "")); got != "f32cdc04026da1b47e82bc0af6c5b39b2aa53fe265bc595e7d0ff5fbd057e70b" {
+		t.Fatalf("version 1 binding = %s", got)
+	}
+}

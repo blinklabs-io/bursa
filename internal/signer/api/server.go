@@ -21,6 +21,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/logging"
@@ -279,13 +280,17 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		if len(res.SignedTx) > 0 {
 			resp.SignedTx = hex.EncodeToString(res.SignedTx)
 		}
-		s.audit(r, caller, "tx", "signed",
+		auditArgs := []any{
 			"audit_id", auditID,
 			"tx_id", res.TxID,
 			"witnesses", len(resp.Witnesses),
 			"signer_errors", len(perr),
 			"signers", req.Signers,
-		)
+		}
+		if len(res.Summaries) > 0 {
+			auditArgs = append(auditArgs, "summary", strings.Join(res.Summaries, "; "))
+		}
+		s.audit(r, caller, "tx", "signed", auditArgs...)
 		writeJSON(w, http.StatusOK, resp)
 	case "cip8":
 		payload, err := hex.DecodeString(req.Payload)
