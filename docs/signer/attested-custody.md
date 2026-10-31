@@ -381,9 +381,8 @@ response and in the startup report; inventory and health are still served. A
 card that is full stays full: the device never overwrites an entry. The log is
 opened once at startup, so a card inserted later takes effect after a restart.
 
-Nothing resets the head object yet. A lost, failed or full card, or an
-unreadable head object, leaves the device refusing to sign until a recovery
-path exists.
+Nothing on the device resets the head object, so a lost, failed or full card,
+or an unreadable head object, leaves the device refusing to sign.
 
 The first start with an all-zero card and an unset head object formats the
 card for the device identity key; it holds up to 32768 entries. A new card
