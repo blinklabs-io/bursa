@@ -215,9 +215,13 @@ func (s *Service) Inventory(_ context.Context, req *InventoryRequest) (*backend.
 	return &backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: evidence}, nil
 }
 
-// Sign accepts only canonical pool-cold operational-certificate signables.
+// Sign accepts only canonical pool-cold operational-certificate signables with
+// an explicit issue counter. It refuses opcert-next, which would let the host
+// re-issue an existing number for a new KES key, and profiled requests, whose
+// binding signature this enclave does not produce.
 func (s *Service) Sign(_ context.Context, req *backend.AttestedRequest) (*backend.AttestedResponse, error) {
 	if req == nil || req.Version != backend.AttestedProtocol || req.Purpose != backend.PurposeOpCert ||
+		req.Profile != "" ||
 		req.Role != backend.KeyTypePool || len(req.Payload) != 48 || len(req.Nonce) != requestNonceSize {
 		return nil, fmt.Errorf("%w: invalid opcert request", ErrProtocol)
 	}
