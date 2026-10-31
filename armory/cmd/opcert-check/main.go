@@ -20,7 +20,11 @@
 // byte (Ed25519 is deterministic). Like any opcert-next request it raises
 // the profile's floor to that chain counter; POST /provision/floor resets it.
 //
-// It reads only public inputs and binds its connections to the USB network
+// With -host-key it authenticates the request with a host signing key
+// registered on the device, as armory-pool -host-key does; a device with
+// registered host keys refuses an unauthenticated request.
+//
+// It reads only public inputs (and the host key, if given) and binds its connections to the USB network
 // source address so requests cannot leave through another route.
 package main
 
@@ -31,16 +35,19 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/blinklabs-io/bursa/armory/device"
+	"github.com/blinklabs-io/bursa/armory/hostkey"
 	"github.com/fxamacker/cbor/v2"
 	"golang.org/x/crypto/blake2b"
 )
@@ -121,55 +128,127 @@ func (c *client) do(method, path, body string) (string, error) {
 	return strings.TrimSpace(string(b)), nil
 }
 
-func main() {
-	vkeyHex := flag.String("vkey", "", "cold verification key cborHex (node.vkey)")
-	certHex := flag.String("cert", "", "operational certificate cborHex (node.cert)")
-	poolID := flag.String("pool", "", "expected pool id (hex)")
-	profileName := flag.String("profile", "", "device profile holding the cold key")
-	base := flag.String("signer", "http://10.0.0.1", "armory-signer URL")
-	source := flag.String("source", "10.0.0.2", "local source address on the USB network")
-	flag.Parse()
+// sign posts sr to /v1/sign and decodes the response. With a host key it
+// first fetches a challenge and authenticates the request sent; the response
+// binding is still over sr, since it does not cover the host fields.
+func (c *client) sign(sr device.SignRequest, hostKey ed25519.PrivateKey, resp *device.SignResponse) error {
+	if hostKey != nil {
+		out, err := c.do(http.MethodPost, "/v1/challenge", "{}")
+		if err != nil {
+			return err
+		}
 
+		var ch device.ChallengeResponse
+
+		if err = json.Unmarshal([]byte(out), &ch); err != nil {
+			return err
+		}
+
+		sr = hostkey.Authenticate(sr, hostKey, ch.Challenge)
+	}
+
+	req, err := json.Marshal(sr)
+	if err != nil {
+		return err
+	}
+
+	out, err := c.do(http.MethodPost, "/v1/sign", string(req))
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal([]byte(out), resp)
+}
+
+func main() {
 	log.SetFlags(0)
+
+	if err := run(os.Args[1:], log.Writer()); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run verifies the cert and reports each passed check to out. It returns an
+// error for the first failed check.
+func run(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("opcert-check", flag.ContinueOnError)
+	vkeyHex := fs.String("vkey", "", "cold verification key cborHex (node.vkey)")
+	certHex := fs.String("cert", "", "operational certificate cborHex (node.cert)")
+	poolID := fs.String("pool", "", "expected pool id (hex)")
+	profileName := fs.String("profile", "", "device profile holding the cold key")
+	base := fs.String("signer", "http://10.0.0.1", "armory-signer URL")
+	source := fs.String("source", "10.0.0.2", "local source address on the USB network")
+	hostKeyFile := fs.String("host-key", "", "host signing key file authenticating the signing request")
+
+	if err := fs.Parse(args); err != nil {
+		// a help request printed the usage and succeeds, as flag.Parse exits 0
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+
+		return err
+	}
 
 	var vkey []byte
 
-	if err := decodeCBORHex(*vkeyHex, &vkey); err != nil || len(vkey) != ed25519.PublicKeySize {
-		log.Fatalf("invalid -vkey: %v", err)
+	if err := decodeCBORHex(*vkeyHex, &vkey); err != nil {
+		return fmt.Errorf("invalid -vkey: %w", err)
+	}
+
+	if len(vkey) != ed25519.PublicKeySize {
+		return fmt.Errorf("invalid -vkey: %d bytes, want %d", len(vkey), ed25519.PublicKeySize)
 	}
 
 	var cert opCert
 
 	if err := decodeCBORHex(*certHex, &cert); err != nil {
-		log.Fatalf("invalid -cert: %v", err)
+		return fmt.Errorf("invalid -cert: %w", err)
+	}
+
+	var hostKey ed25519.PrivateKey
+
+	if *hostKeyFile != "" {
+		var err error
+
+		if hostKey, err = hostkey.Read(*hostKeyFile); err != nil {
+			return fmt.Errorf("invalid -host-key: %w", err)
+		}
 	}
 
 	c := newClient(*base, *source)
 
-	check := func(name string, ok bool) {
+	var failed error
+
+	check := func(name string, ok bool) bool {
 		if !ok {
-			log.Fatalf("FAIL %s", name)
+			failed = fmt.Errorf("FAIL %s", name)
+
+			return false
 		}
 
-		log.Printf("ok   %s", name)
+		_, _ = fmt.Fprintf(out, "ok   %s\n", name)
+
+		return true
 	}
 
 	h, _ := blake2b.New(28, nil)
 	h.Write(vkey)
-	check("blake2b-224(node.vkey) equals pool id", hex.EncodeToString(h.Sum(nil)) == strings.ToLower(*poolID))
 
-	check("node.cert cold key equals node.vkey", bytes.Equal(cert.ColdKey, vkey))
-	check("node.cert signature verifies under node.vkey",
-		ed25519.Verify(vkey, cert.Body.signable(), cert.Body.ColdSig))
+	if !check("blake2b-224(node.vkey) equals pool id", hex.EncodeToString(h.Sum(nil)) == strings.ToLower(*poolID)) ||
+		!check("node.cert cold key equals node.vkey", bytes.Equal(cert.ColdKey, vkey)) ||
+		!check("node.cert signature verifies under node.vkey",
+			ed25519.Verify(vkey, cert.Body.signable(), cert.Body.ColdSig)) {
+		return failed
+	}
 
 	if cert.Body.IssueNumber == 0 {
-		log.Fatal("node.cert issue number 0 has no chain counter below it")
+		return errors.New("node.cert issue number 0 has no chain counter below it")
 	}
 
 	nonce := make([]byte, 32)
 
 	if _, err := rand.Read(nonce); err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// the chain counter is the one before this cert, so the device's
@@ -187,31 +266,26 @@ func main() {
 		Payload: payload,
 		Profile: *profileName,
 	}
-	req, err := json.Marshal(sr)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	out, err := c.do(http.MethodPost, "/v1/sign", string(req))
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	var resp device.SignResponse
 
-	if err = json.Unmarshal([]byte(out), &resp); err != nil {
-		log.Fatal(err)
+	if err := c.sign(sr, hostKey, &resp); err != nil {
+		return err
 	}
 
 	if resp.Error != "" {
-		log.Fatalf("FAIL opcert-next refused: %s", resp.Error)
+		return fmt.Errorf("FAIL opcert-next refused: %s", resp.Error)
 	}
 
-	check("response echoes nonce", bytes.Equal(resp.Nonce, nonce))
-	check(fmt.Sprintf("device chose issue counter %d", cert.Body.IssueNumber),
-		resp.IssueCounter != nil && *resp.IssueCounter == cert.Body.IssueNumber)
-	check(fmt.Sprintf("device reproduces node.cert signature (issue %d, KES period %d)",
-		cert.Body.IssueNumber, cert.Body.KESPeriod), bytes.Equal(resp.Signature, cert.Body.ColdSig))
-	check("binding signature covers the request under node.vkey",
-		ed25519.Verify(vkey, device.ResponseBinding(sr, resp.Signature, resp.Summary), resp.BindingSignature))
+	if !check("response echoes nonce", bytes.Equal(resp.Nonce, nonce)) ||
+		!check(fmt.Sprintf("device chose issue counter %d", cert.Body.IssueNumber),
+			resp.IssueCounter != nil && *resp.IssueCounter == cert.Body.IssueNumber) ||
+		!check(fmt.Sprintf("device reproduces node.cert signature (issue %d, KES period %d)",
+			cert.Body.IssueNumber, cert.Body.KESPeriod), bytes.Equal(resp.Signature, cert.Body.ColdSig)) ||
+		!check("binding signature covers the request under node.vkey",
+			ed25519.Verify(vkey, device.ResponseBinding(sr, resp.Signature, resp.Summary), resp.BindingSignature)) {
+		return failed
+	}
+
+	return nil
 }
