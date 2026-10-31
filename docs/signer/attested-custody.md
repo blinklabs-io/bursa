@@ -362,6 +362,26 @@ A device with a registered host key refuses requests without it. The file
 must not be readable by group or others, and an unreadable or malformed file
 fails startup.
 
+### Bluetooth module
+
+The board carries a u-blox ANNA-B112 Bluetooth LE module. Left alone it runs
+its factory software and advertises as `ANNA-B1-<id>`. Every firmware image
+(signing, provisioning, wipe and the testnet build) drives the module's
+active-low reset line (BT_RESET, GPIO1_IO09) low as its first step, before
+bring-up and the network, and holds it there for as long as the firmware runs.
+The firmware then reads the pad back; the startup report shows
+`bluetooth: module held in reset` when it reads low. If it reads high, the
+report says so and the result is `RESULT: FAIL`; the firmware keeps running.
+
+The limits:
+
+- The module can advertise from power-on until the firmware reaches that step,
+  and whenever the board runs other firmware or a bootloader.
+- The hold depends on the firmware. Other firmware on the board can release the
+  module, and the board boots unsigned images.
+- Holding the module in reset is not removal. For a mainnet device, physically
+  removing the module is the stronger control.
+
 ## KES agent in a protected workload
 
 The KES agent's `sign` mode already keeps the KES key inside the agent. Running

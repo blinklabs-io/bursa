@@ -48,6 +48,9 @@ type Report struct {
 	sync.Mutex
 	lines []string
 	done  bool
+
+	// failed makes the result FAIL whatever bring-up reports
+	failed bool
 }
 
 func (r *Report) Logf(format string, args ...any) {
@@ -75,7 +78,18 @@ func (r *Report) String() string {
 	return s
 }
 
+// fail marks the run failed before bring-up reports its result.
+func (r *Report) fail() {
+	r.Lock()
+	r.failed = true
+	r.Unlock()
+}
+
 func (r *Report) finish(pass bool) {
+	r.Lock()
+	pass = pass && !r.failed
+	r.Unlock()
+
 	if pass {
 		r.Logf("RESULT: PASS")
 	} else {
