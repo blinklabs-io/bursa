@@ -137,6 +137,7 @@ signer:
     #   profile: "pool@preview"                 # required device profile
     #   identity_public_key: "<64 hex chars>"   # device identity key, pinned
     #   host_key_file: "/etc/bursa/armory-host.skey"  # optional host key (armory-pool host-key)
+    #   protocol: "negotiate"                   # optional: "1" (default), "negotiate", or "2" (requires the summary)
 
     # SOPS-encrypted secrets pulled from GCP Secret Manager and decrypted
     # in-process at boot. Requires the top-level `google.project`.
