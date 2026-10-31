@@ -27,6 +27,8 @@ import (
 // when the head object in the SE050 is not yet set.
 func requireSigningLog(*device.Service) {}
 
-func openSigningLog(r *Report, _ sync.Locker, _ *device.Service, _ *chip) {
+func openSigningLog(r *Report, _ sync.Locker, _ *device.Service, _ *chip) bool {
 	r.Logf("signing log: not used by the provisioning image")
+
+	return true
 }

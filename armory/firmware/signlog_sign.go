@@ -53,19 +53,22 @@ func requireSigningLog(svc *device.Service) { svc.RequireSigningLog() }
 // card, a card that does not match the head) leaves the device refusing to
 // sign with the reason, while inventory and health are still served.
 // lock is the SE050 session lock the endpoints share.
-func openSigningLog(r *Report, lock sync.Locker, svc *device.Service, c *chip) {
+// It reports whether the log is open, so the startup result can fail.
+func openSigningLog(r *Report, lock sync.Locker, svc *device.Service, c *chip) bool {
 	w, m, err := openLog(lock, c)
 	if err != nil {
 		r.Logf("signing log: NOT OPEN, signing is refused: %v", err)
 		svc.SigningLogFailed(err)
 
-		return
+		return false
 	}
 
 	svc.SetSigningLog(w, m)
 
 	head := w.Head()
 	r.Logf("signing log: open on a %d-block card, head entry %d %x", m.NumBlocks(), head.Seq, head.Hash)
+
+	return true
 }
 
 func openLog(lock sync.Locker, c *chip) (*signlog.Writer, *sdmedium.Medium, error) {

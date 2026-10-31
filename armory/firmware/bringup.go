@@ -294,7 +294,10 @@ func runBringup(r *Report, s *signer, svc *device.Service) {
 
 	// the signing log needs the chip, so it opens after it; until it does
 	// the signing image refuses to sign
-	openSigningLog(r, s, svc, c)
+	// a device that will refuse to sign must not report PASS
+	if !openSigningLog(r, s, svc, c) {
+		pass = false
+	}
 
 	r.finish(pass)
 }
