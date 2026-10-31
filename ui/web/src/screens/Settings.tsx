@@ -21,6 +21,7 @@ import {
   useHistoryExpiry,
   useTPMStatus,
   useNftMedia,
+  useExternalHandleLookup,
   useAsync,
 } from "../api/hooks";
 import type { AsyncState, NotificationsState } from "../api/hooks";
@@ -808,6 +809,7 @@ function GeneralSettings({
     }
   }
   const nftMedia = useNftMedia();
+  const externalHandles = useExternalHandleLookup();
   const remoteSubmissionState = remoteSubmission.data;
 
   return (
@@ -859,6 +861,34 @@ function GeneralSettings({
       <AutoLockCard setting={autoLock} />
 
       <NotificationsCard notifications={notifications} />
+
+      <Card title="External ADA Handle lookup">
+        <p className="helper-text">
+          Allows Send to offer api.handle.me when the embedded node cannot resolve a Handle.
+          The service is never contacted automatically: every Handle name requires a separate
+          approval before it is disclosed.
+        </p>
+        <StatusPill tone={externalHandles.enabled ? "ok" : "muted"}>
+          {externalHandles.enabled ? "On" : "Off"}
+        </StatusPill>
+        {externalHandles.error && (
+          <p role="alert" className="error-text">{externalHandles.error.message}</p>
+        )}
+        <div className="preview-actions">
+          <Button
+            variant={externalHandles.enabled ? "ghost" : "primary"}
+            disabled={externalHandles.loading || externalHandles.saving}
+            aria-pressed={externalHandles.enabled}
+            onClick={() => void externalHandles.setEnabled(!externalHandles.enabled)}
+          >
+            {externalHandles.saving
+              ? "Saving…"
+              : externalHandles.enabled
+                ? "Turn off external lookup"
+                : "Turn on external lookup"}
+          </Button>
+        </div>
+      </Card>
 
       <Card title="NFT Media">
         {nftMedia.available === false && <p className="helper-text">This build does not include NFT images. Install a Bursa build with NFT media support to enable them.</p>}

@@ -379,6 +379,27 @@ func TestNotificationsDefaultsOffWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestExternalHandleLookupDefaultsOffAndPersists(t *testing.T) {
+	path := tmpPath(t)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.ExternalHandleLookup() {
+		t.Fatal("external Handle lookup must default off")
+	}
+	if err := s.SetExternalHandleLookup(true); err != nil {
+		t.Fatalf("SetExternalHandleLookup: %v", err)
+	}
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !reloaded.ExternalHandleLookup() {
+		t.Fatal("external Handle lookup did not persist")
+	}
+}
+
 // TestNotificationsSetPersistsRoundTrip: on → reload → off → reload.
 func TestNotificationsSetPersistsRoundTrip(t *testing.T) {
 	path := tmpPath(t)

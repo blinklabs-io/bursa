@@ -74,6 +74,7 @@ type data struct {
 	HistoryExpiry   *bool `json:"history_expiry,omitempty"`
 	AutoLockMinutes *int  `json:"auto_lock_minutes,omitempty"`
 	Notifications   *bool `json:"notifications,omitempty"`
+	ExternalHandles *bool `json:"external_handle_lookup,omitempty"`
 }
 
 // Store is a settings file at Path. It is safe for concurrent use: every method
@@ -212,6 +213,32 @@ func (s *Store) SetNotifications(enabled bool) error {
 	old := s.d
 	v := enabled
 	s.d.Notifications = &v
+	if committed, err := s.writeLocked(); err != nil {
+		if !committed {
+			s.d = old
+		}
+		return err
+	}
+	return nil
+}
+
+// ExternalHandleLookup reports whether the user has enabled the optional
+// api.handle.me fallback. It defaults off; enabling it never grants standing
+// permission to disclose a name, because each lookup has a separate consent.
+func (s *Store) ExternalHandleLookup() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.d.ExternalHandles != nil && *s.d.ExternalHandles
+}
+
+// SetExternalHandleLookup persists whether the optional fallback may be
+// offered. Individual names still require explicit per-request consent.
+func (s *Store) SetExternalHandleLookup(enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.d
+	v := enabled
+	s.d.ExternalHandles = &v
 	if committed, err := s.writeLocked(); err != nil {
 		if !committed {
 			s.d = old
