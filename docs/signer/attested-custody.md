@@ -370,17 +370,27 @@ the card read back before the signature leaves the device.
 With no card, an unreadable card, a card that does not match the head, a full
 card or a failed write, the device refuses to sign and says why in the
 response and in the startup report; inventory and health are still served. A
-card that is full stays full: the device never overwrites an entry.
+card that is full stays full: the device never overwrites an entry. The log is
+opened once at startup, so a card inserted later takes effect after a restart.
 
-The first start with a blank card and an unset head object formats the card
-for the device identity key. A card formatted for another identity is refused.
+Nothing resets the head object yet. A lost, failed or full card, or an
+unreadable head object, leaves the device refusing to sign until a recovery
+path exists.
+
+The first start with an all-zero card and an unset head object formats the
+card for the device identity key; it holds up to 32768 entries. A new card
+usually carries a partition table, which is refused, so write zeros over the
+whole card first (for example with `dd if=/dev/zero`); erasing it is not
+enough, since some cards read erased blocks as `0xff`. A card formatted for
+another identity is refused.
 
 Read the log from the device with `armory-pool -identity HEX signlog`, which
 verifies every signature and the chain under the pinned identity key and
 prints one line per entry. `-head-seq N -head-hash HEX` pins the latest entry
 the operator expects; the device's own head cannot tell a replaced card from
 the original. The endpoint, `POST /v1/signlog`, needs the same host key
-authentication as a signing request. A card removed from the device is checked
+authentication as a signing request, and serves only the header, the entries
+and the slot after the latest one. A card removed from the device is checked
 with `signlog-verify -identity HEX -image FILE`.
 
 ## KES agent in a protected workload
