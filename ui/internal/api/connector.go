@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
+	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 )
 
 // connectorTokenVerifier is the minimal surface of connector.Service that the
@@ -491,6 +492,8 @@ func connectorErrorCode(method string, err error) (httpStatus int, code int, inf
 		return http.StatusRequestTimeout, -3, "request timed out"
 	case errors.Is(err, connector.ErrQueueFull):
 		return http.StatusTooManyRequests, -3, err.Error()
+	case errors.Is(err, keystore.ErrUnlockLimited):
+		return http.StatusTooManyRequests, -3, keystore.ErrUnlockLimited.Error()
 	case errors.Is(err, connector.ErrUserDeclined):
 		switch method {
 		case "signData":

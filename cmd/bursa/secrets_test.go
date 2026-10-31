@@ -23,13 +23,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newSecretFlagsCommand() (cmd *cobra.Command, mnemonic, mnemonicFile, password *string) {
-	mnemonic, mnemonicFile, password = new(string), new(string), new(string)
+func newSecretFlagsCommand() (cmd *cobra.Command, mnemonicFile, password *string) {
+	mnemonicFile, password = new(string), new(string)
 	cmd = &cobra.Command{Use: "x", Run: func(*cobra.Command, []string) {}}
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	addSecretFlags(cmd, mnemonic, mnemonicFile, password)
-	return cmd, mnemonic, mnemonicFile, password
+	addSecretFlags(cmd, mnemonicFile, password)
+	return cmd, mnemonicFile, password
 }
 
 func TestSecretFlagsReadPasswordFile(t *testing.T) {
@@ -38,7 +38,7 @@ func TestSecretFlagsReadPasswordFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("s3 cret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd, _, _, password := newSecretFlagsCommand()
+	cmd, _, password := newSecretFlagsCommand()
 	cmd.SetArgs([]string{"--password-file", path})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -51,10 +51,10 @@ func TestSecretFlagsReadPasswordFile(t *testing.T) {
 func TestSecretFlagsRejectConflictingInputs(t *testing.T) {
 	t.Parallel()
 	for name, args := range map[string][]string{
-		"password and password-file": {"--password", "a", "--password-file", "b"},
-		"both read stdin":            {"--mnemonic-file", "-", "--password-file", "-"},
+		"password argument": {"--password", "a"},
+		"both read stdin":   {"--mnemonic-file", "-", "--password-file", "-"},
 	} {
-		cmd, _, _, _ := newSecretFlagsCommand()
+		cmd, _, _ := newSecretFlagsCommand()
 		cmd.SetArgs(args)
 		if err := cmd.Execute(); err == nil {
 			t.Errorf("%s: expected error", name)
@@ -62,31 +62,22 @@ func TestSecretFlagsRejectConflictingInputs(t *testing.T) {
 	}
 }
 
-// TestDerivationCommandsOfferSecretFiles checks every command that accepts a
-// password or mnemonic argument also offers the file form and flags the
-// argument as deprecated.
+// TestDerivationCommandsOfferSecretFiles checks that derivation commands
+// expose file inputs without exposing secret values as command arguments.
 func TestDerivationCommandsOfferSecretFiles(t *testing.T) {
 	t.Parallel()
 	seen := 0
 	var walk func(*cobra.Command)
 	walk = func(c *cobra.Command) {
 		for _, name := range []string{"mnemonic", "password"} {
-			f := c.Flags().Lookup(name)
-			if f == nil {
-				continue
-			}
-			seen++
-			if f.Deprecated == "" {
-				t.Errorf("%s --%s is not deprecated", c.CommandPath(), name)
+			if c.Flags().Lookup(name) != nil {
+				t.Errorf("%s exposes secret value as --%s", c.CommandPath(), name)
 			}
 		}
-		if c.Flags().Lookup("password") != nil &&
-			c.Flags().Lookup("password-file") == nil {
-			t.Errorf("%s has --password but no --password-file", c.CommandPath())
-		}
-		if c.Flags().Lookup("mnemonic") != nil &&
-			c.Flags().Lookup("mnemonic-file") == nil {
-			t.Errorf("%s has --mnemonic but no --mnemonic-file", c.CommandPath())
+		for _, name := range []string{"mnemonic-file", "password-file"} {
+			if c.Flags().Lookup(name) != nil {
+				seen++
+			}
 		}
 		for _, sub := range c.Commands() {
 			walk(sub)

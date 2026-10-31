@@ -18,6 +18,144 @@ on:
 
 concurrency: ${{ github.ref }}
 
+env:
+  MACOS_SECRET_EXPECT: |
+    set timeout 60
+    foreach name {SECRET_INPUT SECRET_ACTION SECRET_KEYCHAIN} {
+        if {![info exists env($name)]} {
+            puts stderr "$name is required"
+            exit 1
+        }
+    }
+    set secret $env(SECRET_INPUT)
+    set action $env(SECRET_ACTION)
+    set keychain $env(SECRET_KEYCHAIN)
+    unset env(SECRET_INPUT)
+    set supplied 0
+    log_user 0
+    switch -- $action {
+        create {
+            spawn -noecho security create-keychain $keychain
+        }
+        unlock {
+            spawn -noecho security unlock-keychain $keychain
+        }
+        partition-cli {
+            spawn -noecho security set-key-partition-list -S apple-tool:,apple:,codesign: -s $keychain
+        }
+        partition-wallet {
+            spawn -noecho security set-key-partition-list -S apple-tool:,apple:,codesign:,productsign: -s $keychain
+        }
+        notary {
+            foreach name {SECRET_PROFILE NOTARY_APPLE_ID NOTARY_TEAM_ID} {
+                if {![info exists env($name)]} {
+                    puts stderr "$name is required"
+                    exit 1
+                }
+            }
+            spawn -noecho xcrun notarytool store-credentials $env(SECRET_PROFILE) --apple-id $env(NOTARY_APPLE_ID) --team-id $env(NOTARY_TEAM_ID)
+        }
+        default {
+            puts stderr "unsupported secret command"
+            exit 1
+        }
+    }
+    expect {
+        -re {(?i)(password|passphrase)[^:\r\n]*:} {
+            set supplied 1
+            send -- "$secret\r"
+            exp_continue
+        }
+        eof
+        timeout {
+            puts stderr "$action timed out waiting for a secret prompt"
+            exit 1
+        }
+    }
+    if {!$supplied} {
+        puts stderr "$action did not request its secret"
+        exit 1
+    }
+    set result [wait]
+    if {[lindex $result 2] != 0} {
+        puts stderr "$action could not be started"
+        exit 1
+    }
+    set exit_code [lindex $result 3]
+    if {$exit_code != 0} {
+        puts stderr "$action failed with exit status $exit_code"
+    }
+    exit $exit_code
+  MACOS_P12_IMPORT_SWIFT: |
+    import Darwin
+    import Foundation
+    import Security
+
+    func fail(_ operation: String, _ status: OSStatus? = nil) -> Never {
+        var message = operation
+        if let status = status {
+            let detail = SecCopyErrorMessageString(status, nil) as String? ?? "unknown error"
+            message += ": \(detail) (\(status))"
+        }
+        FileHandle.standardError.write(Data("\(message)\n".utf8))
+        exit(EXIT_FAILURE)
+    }
+
+    let environment = ProcessInfo.processInfo.environment
+    guard let password = environment["P12_PASSWORD"],
+          let path = environment["P12_PATH"],
+          let trustedPath = environment["TRUSTED_APPLICATION"] else {
+        fail("PKCS#12 import environment is incomplete")
+    }
+
+    let data: Data
+    do {
+        data = try Data(contentsOf: URL(fileURLWithPath: path))
+    } catch {
+        fail("could not read PKCS#12 file: \(error.localizedDescription)")
+    }
+
+    var keychain: SecKeychain?
+    var status = SecKeychainCopyDefault(&keychain)
+    guard status == errSecSuccess, let keychain = keychain else {
+        fail("could not open the default keychain", status)
+    }
+
+    var trustedApplication: SecTrustedApplication?
+    status = trustedPath.withCString {
+        SecTrustedApplicationCreateFromPath($0, &trustedApplication)
+    }
+    guard status == errSecSuccess, let trustedApplication = trustedApplication else {
+        fail("could not create signing access", status)
+    }
+
+    var access: SecAccess?
+    status = SecAccessCreate(
+        "Bursa release signing" as CFString,
+        [trustedApplication] as CFArray,
+        &access
+    )
+    guard status == errSecSuccess, let access = access else {
+        fail("could not create signing access", status)
+    }
+
+    let options: [String: Any] = [
+        kSecImportExportPassphrase as String: password,
+        kSecImportExportKeychain as String: keychain,
+        kSecImportExportAccess as String: access,
+    ]
+    var importedItems: CFArray?
+    status = SecPKCS12Import(data as CFData, options as CFDictionary, &importedItems)
+    guard status == errSecSuccess else {
+        fail("could not import PKCS#12 identity", status)
+    }
+    guard let importedItems = importedItems as? [[String: Any]],
+          importedItems.contains(where: {
+              $0[kSecImportItemIdentity as String] is SecIdentity
+          }) else {
+        fail("PKCS#12 import returned no identities")
+    }
+
 jobs:
   create-draft-release:
     runs-on: ubuntu-latest
@@ -169,10 +307,11 @@ jobs:
           set +x
           ACCESS_TOKEN=$(gcloud auth print-access-token)
           echo "::add-mask::$ACCESS_TOKEN"
+          export JSIGN_STOREPASS="$ACCESS_TOKEN"
           for _filename in build/windows-*/bursa; do
             java -jar jsign.jar \
               --storetype ${{ secrets.CERTIFICATE_STORE_TYPE }} \
-              --storepass "$ACCESS_TOKEN" \
+              --storepass env:JSIGN_STOREPASS \
               --keystore ${{ secrets.CERTIFICATE_KEYSTORE }} \
               --alias ${{ secrets.CERTIFICATE_KEY_NAME }} \
               --certfile codesign-chain.pem \
@@ -181,7 +320,7 @@ jobs:
               "${_filename}"
             echo "Signed Windows binary: ${_filename}"
           done
-          unset ACCESS_TOKEN
+          unset JSIGN_STOREPASS ACCESS_TOKEN
           set -x
           echo "Cleaning up certificate chain"
           rm -f codesign-chain.pem
@@ -190,19 +329,55 @@ jobs:
 
       - name: Sign macos binary
         if: ${{ startsWith(github.ref, 'refs/tags/') && contains(matrix.targets, 'darwin/') }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          set -euo pipefail
+          apple_certificate="${APPLE_CERTIFICATE}"
+          apple_certificate_password="${APPLE_CERTIFICATE_PASSWORD}"
+          apple_keychain_password="${APPLE_KEYCHAIN_PASSWORD}"
+          apple_id="${APPLE_ID}"
+          apple_app_specific_password="${APPLE_APP_SPECIFIC_PASSWORD}"
+          apple_team_id="${APPLE_TEAM_ID}"
+          unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
+            APPLE_KEYCHAIN_PASSWORD APPLE_ID \
+            APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          umask 077
+          trap 'rm -f apple_certificate.p12' EXIT
           echo "Decoding and importing Apple certificate..."
-          echo -n "${{ secrets.APPLE_CERTIFICATE }}" | base64 --decode -o apple_certificate.p12
-          security create-keychain -p "${{ secrets.APPLE_KEYCHAIN_PASSWORD }}" build.keychain
+          printf '%s' "${apple_certificate}" | base64 --decode -o apple_certificate.p12
+          apple_certificate=''
+          SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=create \
+            SECRET_KEYCHAIN=build.keychain \
+            /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
           security default-keychain -s build.keychain
           security set-keychain-settings -lut 21600 build.keychain
-          security unlock-keychain -p "${{ secrets.APPLE_KEYCHAIN_PASSWORD }}" build.keychain
-          security import apple_certificate.p12 -k build.keychain -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${{ secrets.APPLE_KEYCHAIN_PASSWORD }}" build.keychain
-          xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_ID }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" --password "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}"
+          SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=unlock \
+            SECRET_KEYCHAIN=build.keychain \
+            /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
+          P12_PASSWORD="${apple_certificate_password}" \
+            P12_PATH=apple_certificate.p12 \
+            TRUSTED_APPLICATION=/usr/bin/codesign \
+            xcrun swift - <<< "${MACOS_P12_IMPORT_SWIFT}"
+          rm -f apple_certificate.p12
+          apple_certificate_password=''
+          SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=partition-cli \
+            SECRET_KEYCHAIN=build.keychain \
+            /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
+          apple_keychain_password=''
+          SECRET_INPUT="${apple_app_specific_password}" SECRET_ACTION=notary \
+            SECRET_KEYCHAIN=build.keychain SECRET_PROFILE=notarytool-profile \
+            NOTARY_APPLE_ID="${apple_id}" NOTARY_TEAM_ID="${apple_team_id}" \
+            /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
+          apple_app_specific_password=''
           for _dir in build/darwin-*; do
             _arch="${_dir#build/darwin-}"
-            /usr/bin/codesign --force -s "Developer ID Application: Blink Labs Software (${{ secrets.APPLE_TEAM_ID }})" --timestamp --options runtime -i com.blinklabssoftware.bursa "${_dir}/bursa" -v
+            /usr/bin/codesign --force -s "Developer ID Application: Blink Labs Software (${apple_team_id})" --timestamp --options runtime -i com.blinklabssoftware.bursa "${_dir}/bursa" -v
             _filename="bursa-${RELEASE_TAG}-darwin-${_arch}.zip"
             (cd "${_dir}" && zip -r "${GITHUB_WORKSPACE}/${_filename}" bursa)
             xcrun notarytool submit "${_filename}" --keychain-profile "notarytool-profile" --wait
@@ -392,45 +567,72 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          apple_certificate="${APPLE_CERTIFICATE}"
+          apple_certificate_password="${APPLE_CERTIFICATE_PASSWORD}"
+          apple_installer_certificate="${APPLE_INSTALLER_CERTIFICATE}"
+          apple_installer_certificate_password="${APPLE_INSTALLER_CERTIFICATE_PASSWORD}"
+          apple_keychain_password="${APPLE_KEYCHAIN_PASSWORD}"
+          apple_id="${APPLE_ID}"
+          apple_app_specific_password="${APPLE_APP_SPECIFIC_PASSWORD}"
+          apple_team_id="${APPLE_TEAM_ID}"
+          unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
+            APPLE_INSTALLER_CERTIFICATE APPLE_INSTALLER_CERTIFICATE_PASSWORD \
+            APPLE_KEYCHAIN_PASSWORD APPLE_ID \
+            APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          umask 077
+          trap 'rm -f apple_app.p12 apple_installer.p12' EXIT
 
-          if [ "${IS_SIGNED_RUN}" = "true" ] && [ -n "${APPLE_CERTIFICATE}" ]; then
+          if [ "${IS_SIGNED_RUN}" = "true" ] && [ -n "${apple_certificate}" ]; then
             echo "::group::Import Apple Developer ID certificate(s)"
-            echo -n "${APPLE_CERTIFICATE}" | base64 --decode -o apple_app.p12
+            printf '%s' "${apple_certificate}" | base64 --decode -o apple_app.p12
+            apple_certificate=''
 
-            security create-keychain  -p "${APPLE_KEYCHAIN_PASSWORD}" build.keychain
+            SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=create \
+              SECRET_KEYCHAIN=build.keychain \
+              /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
             security default-keychain -s build.keychain
             security set-keychain-settings -lut 21600 build.keychain
-            security unlock-keychain  -p "${APPLE_KEYCHAIN_PASSWORD}" build.keychain
+            SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=unlock \
+              SECRET_KEYCHAIN=build.keychain \
+              /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
 
             # Application cert signs the binary / .app.
-            security import apple_app.p12 -k build.keychain -P "${APPLE_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign
-            export SIGNING_IDENTITY="Developer ID Application: Blink Labs Software (${APPLE_TEAM_ID})"
+            P12_PASSWORD="${apple_certificate_password}" P12_PATH=apple_app.p12 \
+              TRUSTED_APPLICATION=/usr/bin/codesign \
+              xcrun swift - <<< "${MACOS_P12_IMPORT_SWIFT}"
+            rm -f apple_app.p12
+            apple_certificate_password=''
+            export SIGNING_IDENTITY="Developer ID Application: Blink Labs Software (${apple_team_id})"
 
             # Installer cert (NEW, optional) signs the .pkg. Absent => unsigned pkg.
-            if [ -n "${APPLE_INSTALLER_CERTIFICATE}" ]; then
-              echo -n "${APPLE_INSTALLER_CERTIFICATE}" | base64 --decode -o apple_installer.p12
-              security import apple_installer.p12 -k build.keychain -P "${APPLE_INSTALLER_CERTIFICATE_PASSWORD}" -T /usr/bin/productsign
-              export INSTALLER_IDENTITY="Developer ID Installer: Blink Labs Software (${APPLE_TEAM_ID})"
+            if [ -n "${apple_installer_certificate}" ]; then
+              printf '%s' "${apple_installer_certificate}" | base64 --decode -o apple_installer.p12
+              apple_installer_certificate=''
+              P12_PASSWORD="${apple_installer_certificate_password}" \
+                P12_PATH=apple_installer.p12 \
+                TRUSTED_APPLICATION=/usr/bin/productsign \
+                xcrun swift - <<< "${MACOS_P12_IMPORT_SWIFT}"
+              rm -f apple_installer.p12
+              export INSTALLER_IDENTITY="Developer ID Installer: Blink Labs Software (${apple_team_id})"
             else
               echo "APPLE_INSTALLER_CERTIFICATE not set - the .pkg will be UNSIGNED (add the secret to sign it)."
             fi
+            apple_installer_certificate_password=''
 
-            security set-key-partition-list -S apple-tool:,apple:,codesign:,productsign: -s -k "${APPLE_KEYCHAIN_PASSWORD}" build.keychain
-            rm -f apple_app.p12 apple_installer.p12
+            SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=partition-wallet \
+              SECRET_KEYCHAIN=build.keychain \
+              /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
+            apple_keychain_password=''
             echo "::endgroup::"
 
             echo "::group::Store notarytool credentials"
-            xcrun notarytool store-credentials "bursa-notary" \
-              --apple-id "${APPLE_ID}" \
-              --team-id  "${APPLE_TEAM_ID}" \
-              --password "${APPLE_APP_SPECIFIC_PASSWORD}"
-            # The password is now persisted in the keychain profile; drop it
-            # from the environment so nothing downstream can read it (mirrors
-            # the Windows path null-clearing JSIGN_STOREPASS after use).
-            unset APPLE_APP_SPECIFIC_PASSWORD
+            SECRET_INPUT="${apple_app_specific_password}" SECRET_ACTION=notary \
+              SECRET_KEYCHAIN=build.keychain SECRET_PROFILE=bursa-notary \
+              NOTARY_APPLE_ID="${apple_id}" NOTARY_TEAM_ID="${apple_team_id}" \
+              /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
+            apple_app_specific_password=''
             echo "::endgroup::"
 
-            export TEAM_ID="${APPLE_TEAM_ID}"
             export NOTARY_PROFILE="bursa-notary"
             # A manual exercise run has no tag; let build-pkg.sh derive the
             # version from git describe rather than naming the pkg after an
@@ -571,12 +773,13 @@ jobs:
           [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${{ secrets.CERTIFICATE_CHAIN }}")) | Out-File -FilePath "codesign-chain.pem" -Encoding utf8
           $ACCESS_TOKEN = & gcloud auth print-access-token
           Write-Host "::add-mask::$ACCESS_TOKEN"
+          $env:JSIGN_STOREPASS = $ACCESS_TOKEN
           $filename = "bursa-wallet.exe"
           if (-not (Test-Path $filename)) { Write-Error "Expected binary not found: $filename"; exit 1 }
           Write-Host "Signing $filename"
           java -jar jsign.jar `
             --storetype ${{ secrets.CERTIFICATE_STORE_TYPE }} `
-            --storepass "$ACCESS_TOKEN" `
+            --storepass "env:JSIGN_STOREPASS" `
             --keystore ${{ secrets.CERTIFICATE_KEYSTORE }} `
             --alias ${{ secrets.CERTIFICATE_KEY_NAME }} `
             --certfile "codesign-chain.pem" `
@@ -593,6 +796,7 @@ jobs:
           if ($sig.Status -ne 'Valid') { Write-Error "signature not valid for ${filename}: $($sig.Status)"; exit 1 }
           if ($null -eq $sig.TimeStamperCertificate) { Write-Error "signature for ${filename} is not timestamped"; exit 1 }
           Write-Host "Signed + verified: $filename"
+          $env:JSIGN_STOREPASS = $null
           $ACCESS_TOKEN = $null
           # jsign.jar and codesign-chain.pem are kept for the MSI-sign step.
 
