@@ -167,13 +167,20 @@ func TestSignTx_SummaryLogIsEscaped(t *testing.T) {
 			if _, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()}); err != nil || len(perr) != 0 {
 				t.Fatalf("SignTx: %v %+v", err, perr)
 			}
+			summaryLines := 0
 			for _, line := range logs.lines() {
+				if bytes.Contains(line, []byte("pledge 1")) {
+					summaryLines++
+				}
 				if bytes.Contains(line, []byte("forged")) && !bytes.Contains(line, []byte("pledge 1")) {
 					t.Fatalf("summary text began its own log line: %q", line)
 				}
 				if bytes.IndexByte(line, 0x1b) >= 0 {
 					t.Fatalf("raw control character in log line: %q", line)
 				}
+			}
+			if summaryLines == 0 {
+				t.Fatal("no log line carries the summary")
 			}
 		})
 	}
