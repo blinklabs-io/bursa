@@ -33,6 +33,8 @@ type fakeCard struct {
 	detects   int
 
 	detectErr error
+	// onDetect runs on every Detect, as when a card is swapped
+	onDetect func(*fakeCard)
 	// busyReads is how many reads fail after a write, as while programming
 	busyReads int
 	busy      int
@@ -52,6 +54,10 @@ func newFakeCard(blocks int) *fakeCard {
 
 func (c *fakeCard) Detect() error {
 	c.detects++
+
+	if c.onDetect != nil {
+		c.onDetect(c)
+	}
 
 	return c.detectErr
 }
@@ -392,5 +398,48 @@ func TestAppendRecoversAfterFailedSync(t *testing.T) {
 
 	if _, err = w.Append(rec); err != nil {
 		t.Fatalf("append after the card recovered: %v", err)
+	}
+}
+
+// A write that only succeeded after the card was re-detected may have gone
+// to a different card than the one the writer checked, so Sync fails and the
+// head stays where it was.
+func TestRedetectedWriteFailsSync(t *testing.T) {
+	t.Parallel()
+
+	c := newFakeCard(1 + 8*signlog.RecordBlocks)
+	m := open(t, c)
+	id := newIdentity(t)
+	heads := signlog.NewMemHeadStore(signlog.Head{})
+
+	w, err := signlog.Open(m, heads, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = w.Append(record()); err != nil {
+		t.Fatal(err)
+	}
+
+	before := w.Head()
+
+	// the next write fails once and the card is swapped for a blank one
+	c.failWrites = 1
+	c.onDetect = func(c *fakeCard) {
+		c.img = make([]byte, len(c.img))
+		c.onDetect = nil
+	}
+
+	if _, err = w.Append(record()); err == nil {
+		t.Fatal("append succeeded on a card swapped during the write")
+	}
+
+	if stored, _ := heads.Load(); stored != before || w.Head() != before {
+		t.Fatalf("head moved to %+v", stored)
+	}
+
+	// the swapped card is caught before the next write
+	if _, err = w.Append(record()); err == nil {
+		t.Fatal("append succeeded on the swapped card")
 	}
 }

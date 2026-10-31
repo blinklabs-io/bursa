@@ -46,6 +46,9 @@ var (
 	// ErrVerify is returned by Sync when a block reads back different from
 	// what was written.
 	ErrVerify = errors.New("sdmedium: block reads back differently from what was written")
+	// ErrRedetected is returned by Sync when a write since the previous Sync
+	// succeeded only after the card was re-detected.
+	ErrRedetected = errors.New("sdmedium: card was re-detected during a write")
 )
 
 const (
@@ -78,7 +81,10 @@ type Medium struct {
 	card    Card
 	blocks  uint64
 	pending []pending
-	sleep   func(time.Duration)
+	// redetected is set when a write succeeded only after a re-detect, so it
+	// may have reached a card the writer never checked
+	redetected bool
+	sleep      func(time.Duration)
 }
 
 // Open detects the card and returns a medium over it. A nil card (a board
@@ -113,18 +119,23 @@ func (m *Medium) check(lba uint64, n int) error {
 
 // once runs op and, if it fails, re-detects the card and runs it once more,
 // so a card that was reseated or glitched does not wedge the device until
-// reboot. Reads and writes of whole blocks are idempotent.
-func (m *Medium) once(op func() error) error {
+// reboot. Reads and writes of whole blocks are idempotent. It reports
+// whether op succeeded only after a re-detect.
+func (m *Medium) once(op func() error) (bool, error) {
 	err := op()
 	if err == nil {
-		return nil
+		return false, nil
 	}
 
 	if derr := m.card.Detect(); derr != nil {
-		return fmt.Errorf("%w; redetect: %w", err, derr)
+		return false, fmt.Errorf("%w; redetect: %w", err, derr)
 	}
 
-	return op()
+	if err = op(); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 // ReadBlocks implements signlog.Medium.
@@ -140,10 +151,14 @@ func (m *Medium) ReadBlocks(lba uint64, p []byte) error {
 		return nil
 	}
 
-	return m.once(func() error { return m.card.ReadBlocks(int(lba), p) }) //nolint:gosec // lba is below the card's block count
+	_, err := m.once(func() error { return m.card.ReadBlocks(int(lba), p) }) //nolint:gosec // lba is below the card's block count
+
+	return err
 }
 
 // WriteBlocks implements signlog.Medium. The data is durable only after Sync.
+// A write that succeeds only after a re-detect makes the next Sync fail: the
+// card now in the slot may not be the one the writer checked.
 func (m *Medium) WriteBlocks(lba uint64, p []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -156,9 +171,12 @@ func (m *Medium) WriteBlocks(lba uint64, p []byte) error {
 		return nil
 	}
 
-	if err := m.once(func() error { return m.card.WriteBlocks(int(lba), p) }); err != nil { //nolint:gosec // lba is below the card's block count
+	redetected, err := m.once(func() error { return m.card.WriteBlocks(int(lba), p) }) //nolint:gosec // lba is below the card's block count
+	if err != nil {
 		return err
 	}
+
+	m.redetected = m.redetected || redetected
 
 	m.pending = append(m.pending, pending{lba: lba, data: bytes.Clone(p)})
 
@@ -167,7 +185,8 @@ func (m *Medium) WriteBlocks(lba uint64, p []byte) error {
 
 // Sync implements signlog.Medium: it reads back what was written since the
 // last Sync, waiting for a card that is still programming, and fails if any
-// block differs.
+// block differs. It also fails when a write since the previous Sync needed a
+// re-detect.
 //
 // Pending writes are dropped whatever the outcome: after a failure the
 // writer rewrites the slot before it syncs again, so a stale copy would
@@ -176,7 +195,11 @@ func (m *Medium) Sync() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	defer func() { m.pending = nil }()
+	defer func() { m.pending, m.redetected = nil, false }()
+
+	if m.redetected {
+		return ErrRedetected
+	}
 
 	for len(m.pending) > 0 {
 		w := m.pending[0]
