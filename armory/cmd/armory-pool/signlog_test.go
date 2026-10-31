@@ -19,6 +19,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -104,7 +105,7 @@ func (r *logRig) witnessN(t *testing.T, n int) {
 	txFile := txEnvelope(t, dir, conwayBody(retirement(hash224(r.pool))))
 
 	for i := range n {
-		if err := r.s.witness("pool", txFile, filepath.Join(dir, "w")); err != nil {
+		if err := r.s.witness("pool", txFile, filepath.Join(dir, "w"), io.Discard); err != nil {
 			t.Fatalf("witness %d: %v", i, err)
 		}
 	}

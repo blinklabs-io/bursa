@@ -344,6 +344,14 @@ Record the identity key when the device is provisioned; the device's legacy
 Profiled responses carry the second signature described above, so the signer
 also refuses a response produced for another profile.
 
+The firmware also answers sign requests at version `bursa-attested-signer/2`,
+which `armory-pool witness` sends for `tx-body`. The reply echoes that version
+and adds `summary`, the signing policy's description of the body (for a pool
+registration: pledge, cost, margin, relays). Its binding appends the summary as
+one more length-prefixed field after the signature, present even when empty. A
+version-1 request gets the version-1 reply and binding, without `summary`. The
+signer sends version 1; inventory and challenge replies stay at version 1.
+
 `host_key_file` holds a host signing key written by `armory-pool host-key`
 and registered on the device. With it set, the signer fetches a one-time
 challenge from `/v1/challenge` before each signature and adds `challenge`,
