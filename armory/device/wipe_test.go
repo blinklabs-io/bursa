@@ -115,6 +115,7 @@ func TestWipeDeviceDeletesEveryArmoryObject(t *testing.T) {
 	last := profile.Profile{Slot: profile.MaxSlot}
 	plant(chip, 0x20e50001, 0x20e50008, 0x20e5000f, coldKeyLast, last.OwnerKeyID(), 0x20e50200, 0x20e50210, 0x20e5021f)
 	chip.bins[last.RecordID()] = []byte("unreadable")
+	chip.bins[profile.SignLogHeadID] = []byte("head")
 	plant(chip, outsideIDs...)
 
 	code, body := wipePost(t, s, "/wipe/objects", struct{}{})
@@ -262,6 +263,7 @@ func TestWipeProfileFreesItsSlot(t *testing.T) {
 	}
 
 	gone, kept := s.profiles["otg@preview"], s.profiles["keep@preview"]
+	chip.bins[profile.SignLogHeadID] = []byte("head")
 
 	code, body := wipePost(t, s, "/wipe/profile", WipeProfileRequest{IdentityPublicKey: id, Profile: "otg@preview"})
 	if code != http.StatusOK {
@@ -275,7 +277,7 @@ func TestWipeProfileFreesItsSlot(t *testing.T) {
 		}
 	}
 
-	for _, o := range []uint32{kept.OwnerKeyID(), kept.ColdKeyID, kept.RecordID(), profile.IdentityKeyID} {
+	for _, o := range []uint32{kept.OwnerKeyID(), kept.ColdKeyID, kept.RecordID(), profile.SignLogHeadID, profile.IdentityKeyID} {
 		if !left[o] {
 			t.Errorf("object %#x outside the removed profile was deleted", o)
 		}
