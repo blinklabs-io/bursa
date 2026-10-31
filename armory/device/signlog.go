@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/blinklabs-io/bursa/armory/profile"
 	"github.com/blinklabs-io/bursa/armory/signlog"
 	"golang.org/x/crypto/blake2b"
 )
@@ -41,6 +42,7 @@ const MaxLogBlocks = 128
 type SignLogRequest struct {
 	From          uint64 `json:"from"`
 	Count         uint32 `json:"count"`
+	Nonce         []byte `json:"nonce"`
 	Challenge     []byte `json:"challenge,omitempty"`
 	HostKey       []byte `json:"host_key,omitempty"`
 	HostSignature []byte `json:"host_signature,omitempty"`
@@ -57,6 +59,9 @@ type SignLogResponse struct {
 	NumBlocks uint64 `json:"num_blocks"`
 	From      uint64 `json:"from"`
 	Blocks    []byte `json:"blocks"`
+	// Attestation is present on metadata reads (Count == 0). The device
+	// identity key binds the fresh request nonce to this log snapshot.
+	Attestation []byte `json:"attestation,omitempty"`
 }
 
 var (
@@ -134,6 +139,10 @@ func (s *Service) appendLog(rec signlog.Record) error {
 // signLogRead serves a range of the log medium. Reads and appends share the
 // service lock, so the blocks and the head are one consistent view.
 func (s *Service) signLogRead(req SignLogRequest) (SignLogResponse, error) {
+	if len(req.Nonce) == 0 || len(req.Nonce) > maxNonce {
+		return SignLogResponse{}, errors.New("invalid nonce")
+	}
+
 	if err := s.authenticateHost(req.HostKey, req.HostSignature, req.Challenge, SignLogBinding(req)); err != nil {
 		return SignLogResponse{}, err
 	}
@@ -168,6 +177,18 @@ func (s *Service) signLogRead(req SignLogRequest) (SignLogResponse, error) {
 	if req.Count > 0 {
 		if err := s.logMedium.ReadBlocks(req.From, resp.Blocks); err != nil {
 			s.logf("signing log: read blocks %d+%d: %v", req.From, req.Count, err)
+			return SignLogResponse{}, errDevice
+		}
+	}
+
+	if req.Count == 0 {
+		var err error
+		resp.Attestation, err = s.chip.SignEd25519(
+			profile.IdentityKeyID,
+			SignLogResponseBinding(req, resp),
+		)
+		if err != nil {
+			s.logf("attest signing log: %v", err)
 			return SignLogResponse{}, errDevice
 		}
 	}

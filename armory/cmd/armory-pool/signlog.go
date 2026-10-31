@@ -28,7 +28,12 @@ import (
 // readLog posts one signing log read, authenticating it with the host key
 // when the session has one.
 func (s *session) readLog(from uint64, count uint32) (device.SignLogResponse, error) {
-	req := device.SignLogRequest{From: from, Count: count}
+	nonce, err := randomNonce()
+	if err != nil {
+		return device.SignLogResponse{}, err
+	}
+
+	req := device.SignLogRequest{From: from, Count: count, Nonce: nonce}
 
 	if s.hostKey != nil {
 		var ch device.ChallengeResponse
@@ -46,6 +51,11 @@ func (s *session) readLog(from uint64, count uint32) (device.SignLogResponse, er
 
 	if err := s.c.post("/v1/signlog", req, &resp); err != nil {
 		return resp, err
+	}
+
+	if count == 0 && (len(resp.Attestation) != ed25519.SignatureSize ||
+		!ed25519.Verify(s.identity, device.SignLogResponseBinding(req, resp), resp.Attestation)) {
+		return resp, errors.New("signing log snapshot attestation does not verify under the pinned identity key")
 	}
 
 	if resp.Version != device.Protocol {
@@ -80,21 +90,20 @@ func (s *session) fetchLog() (*signlog.Log, error) {
 
 	var prefix []byte
 
-	last := first
-
 	for uint64(len(prefix))/signlog.BlockSize < want {
 		from := uint64(len(prefix)) / signlog.BlockSize
 		count := uint32(min(uint64(device.MaxLogBlocks), want-from)) //nolint:gosec // bounded by MaxLogBlocks
 
-		if last, err = s.readLog(from, count); err != nil {
+		part, err := s.readLog(from, count)
+		if err != nil {
 			return nil, err
 		}
 
-		if last.NumBlocks != first.NumBlocks {
+		if part.NumBlocks != first.NumBlocks {
 			return nil, errors.New("device changed its signing log medium during the read")
 		}
 
-		prefix = append(prefix, last.Blocks...)
+		prefix = append(prefix, part.Blocks...)
 	}
 
 	m, err := signlog.NewSparseMedium(first.NumBlocks, prefix)
@@ -108,9 +117,9 @@ func (s *session) fetchLog() (*signlog.Log, error) {
 	}
 
 	head := log.Head()
-	if head.Seq != last.HeadSeq || !bytes.Equal(head.Hash[:], last.HeadHash) {
+	if head.Seq != first.HeadSeq || !bytes.Equal(head.Hash[:], first.HeadHash) {
 		return nil, fmt.Errorf("log ends at entry %d %x but the device reports %d %x (retry if it signed meanwhile)",
-			head.Seq, head.Hash, last.HeadSeq, last.HeadHash)
+			head.Seq, head.Hash, first.HeadSeq, first.HeadHash)
 	}
 
 	return log, nil

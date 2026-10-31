@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -215,7 +216,7 @@ func TestSignLogRefusesOtherIdentity(t *testing.T) {
 	other, _, _ := ed25519.GenerateKey(nil)
 
 	err := run([]string{"-signer", r.srv.URL, "-source", "", "-identity", hex.EncodeToString(other), "signlog"}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "different device identity") {
+	if err == nil || !strings.Contains(err.Error(), "pinned identity key") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -288,5 +289,55 @@ func TestSignLogRefusesHeadThatDiffersFromLog(t *testing.T) {
 
 	if err := run(r.args("signlog"), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "device reports") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSignLogRefusesReplayedSnapshot(t *testing.T) {
+	r := newLogRig(t, 8)
+	r.witnessN(t, 1)
+
+	oldReq := device.SignLogRequest{
+		Nonce: bytes.Repeat([]byte{0x61}, 32),
+	}
+	var old device.SignLogResponse
+	devicePost(t, r.srv, "/v1/signlog", oldReq, &old)
+
+	used := 1 + (old.HeadSeq+1)*signlog.RecordBlocks
+	oldBlocks := make([]byte, int(used)*signlog.BlockSize)
+	if err := r.medium.ReadBlocks(0, oldBlocks); err != nil {
+		t.Fatal(err)
+	}
+
+	r.witnessN(t, 1)
+
+	replay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var read device.SignLogRequest
+		if err := json.NewDecoder(req.Body).Decode(&read); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		resp := old
+		if read.Count > 0 {
+			start := int(read.From) * signlog.BlockSize
+			end := start + int(read.Count)*signlog.BlockSize
+			resp.Attestation = nil
+			resp.From = read.From
+			resp.Blocks = bytes.Clone(oldBlocks[start:end])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(replay.Close)
+
+	s := session{c: newClient(replay.URL, ""), identity: r.identity}
+	var out bytes.Buffer
+	err := s.signLog(-1, nil, &out)
+	if err == nil || !strings.Contains(err.Error(), "snapshot attestation") {
+		t.Fatalf("got %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("printed replayed log: %s", out.String())
 	}
 }

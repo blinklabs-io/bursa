@@ -420,12 +420,15 @@ startup as it is by `signlog-verify`.
 
 Read the log from the device with `armory-pool -identity HEX signlog`, which
 verifies every signature and the chain under the pinned identity key and
-prints one line per entry. `-head-seq N -head-hash HEX` pins the latest entry
-the operator expects; the device's own head cannot tell a replaced card from
-the original. The endpoint, `POST /v1/signlog`, needs the same host key
-authentication as a signing request, and serves only the header, the entries
-and the slot after the latest one. A card removed from the device is checked
-with `signlog-verify -identity HEX -image FILE`.
+prints one line per entry. The host sends a fresh nonce and refuses the read
+unless the pinned device identity attests the current head and card size for
+that nonce. The signed head anchors the subsequently verified log blocks, so a
+party on the HTTP path cannot substitute an older valid prefix. `-head-seq N
+-head-hash HEX` additionally pins the latest entry the operator expects. The
+endpoint, `POST /v1/signlog`, needs the same host key authentication as a
+signing request, and serves only the header, the entries and the slot after the
+latest one. A card removed from the device is checked with `signlog-verify
+-identity HEX -image FILE`.
 
 ### Bluetooth module
 

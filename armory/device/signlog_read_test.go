@@ -28,11 +28,12 @@ import (
 
 // logRig is a service signing into a real log on an in-memory card.
 type logRig struct {
-	s    *Service
-	chip *fakeChip
-	w    *signlog.Writer
-	m    *signlog.MemMedium
-	pub  ed25519.PublicKey
+	s        *Service
+	chip     *fakeChip
+	w        *signlog.Writer
+	m        *signlog.MemMedium
+	pub      ed25519.PublicKey
+	identity ed25519.PublicKey
 }
 
 func newLogRig(t *testing.T, slots uint64) *logRig {
@@ -40,6 +41,11 @@ func newLogRig(t *testing.T, slots uint64) *logRig {
 
 	s, chip := newTestService(t)
 	provisionTestProfile(t, s)
+
+	identity, err := s.provisionIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	m := signlog.NewMemMedium(1 + slots*signlog.RecordBlocks)
@@ -52,7 +58,10 @@ func newLogRig(t *testing.T, slots uint64) *logRig {
 	s.RequireSigningLog()
 	s.SetSigningLog(w, m)
 
-	return &logRig{s: s, chip: chip, w: w, m: m, pub: pub}
+	return &logRig{
+		s: s, chip: chip, w: w, m: m, pub: pub,
+		identity: identity.PublicKey,
+	}
 }
 
 func (r *logRig) signN(t *testing.T, n int) {
@@ -67,6 +76,9 @@ func (r *logRig) signN(t *testing.T, n int) {
 
 func readLog(t *testing.T, s *Service, req SignLogRequest) (int, SignLogResponse, string) {
 	t.Helper()
+	if len(req.Nonce) == 0 {
+		req.Nonce = nonce(0x51)
+	}
 
 	code, body := post(t, s, "/v1/signlog", req)
 
@@ -81,11 +93,74 @@ func readLog(t *testing.T, s *Service, req SignLogRequest) (int, SignLogResponse
 }
 
 func authLogRead(req SignLogRequest, k ed25519.PrivateKey, ch []byte) SignLogRequest {
+	if len(req.Nonce) == 0 {
+		req.Nonce = nonce(0x52)
+	}
 	req.Challenge = ch
 	req.HostKey = hostPub(k)
 	req.HostSignature = ed25519.Sign(k, SignLogBinding(req))
 
 	return req
+}
+
+func TestSignLogReadAttestsSnapshot(t *testing.T) {
+	t.Parallel()
+
+	r := newLogRig(t, 8)
+	r.signN(t, 2)
+	req := SignLogRequest{Nonce: nonce(0x53)}
+	code, resp, body := readLog(t, r.s, req)
+	if code != http.StatusOK {
+		t.Fatalf("snapshot: %d %s", code, body)
+	}
+
+	if !ed25519.Verify(
+		r.identity,
+		SignLogResponseBinding(req, resp),
+		resp.Attestation,
+	) {
+		t.Fatal("snapshot attestation does not verify")
+	}
+
+	for name, mutate := range map[string]func(*SignLogRequest, *SignLogResponse){
+		"nonce": func(req *SignLogRequest, _ *SignLogResponse) {
+			req.Nonce[0] ^= 1
+		},
+		"request range": func(req *SignLogRequest, _ *SignLogResponse) {
+			req.From++
+		},
+		"version": func(_ *SignLogRequest, resp *SignLogResponse) {
+			resp.Version += "x"
+		},
+		"head sequence": func(_ *SignLogRequest, resp *SignLogResponse) {
+			resp.HeadSeq++
+		},
+		"head hash": func(_ *SignLogRequest, resp *SignLogResponse) {
+			resp.HeadHash[0] ^= 1
+		},
+		"medium size": func(_ *SignLogRequest, resp *SignLogResponse) {
+			resp.NumBlocks++
+		},
+		"response range": func(_ *SignLogRequest, resp *SignLogResponse) {
+			resp.From++
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changedReq := req
+			changedReq.Nonce = bytes.Clone(req.Nonce)
+			changedResp := resp
+			changedResp.HeadHash = bytes.Clone(resp.HeadHash)
+			mutate(&changedReq, &changedResp)
+
+			if ed25519.Verify(
+				r.identity,
+				SignLogResponseBinding(changedReq, changedResp),
+				resp.Attestation,
+			) {
+				t.Fatal("snapshot attestation accepts changed data")
+			}
+		})
+	}
 }
 
 // The blocks the endpoint serves, with its head, are what a host verifies.
@@ -222,6 +297,15 @@ func TestSignLogReadHostAuth(t *testing.T) {
 
 	if code, _, _ := readLog(t, r.s, forged); code == http.StatusOK {
 		t.Fatal("read served with a signature over another range")
+	}
+
+	// the request signature also covers the freshness nonce
+	ch = challenge(t, r.s)
+	forged = authLogRead(req, testHostKey, ch)
+	forged.Nonce[0] ^= 1
+
+	if code, _, _ := readLog(t, r.s, forged); code == http.StatusOK {
+		t.Fatal("read served with a signature over another nonce")
 	}
 
 	// a signing request signature cannot be replayed as a read
