@@ -139,7 +139,7 @@ func TestProfiledHTTPEnclaveEndToEnd(t *testing.T) {
 	}
 	body := []byte{0xa0}
 	hash := blake2b.Sum256(body)
-	if _, err := SignTxFor(t.Context(), ref, body, 6, hash[:]); err != nil {
+	if _, _, err := SignTxFor(t.Context(), ref, body, 6, hash[:]); err != nil {
 		t.Fatalf("SignTxFor: %v", err)
 	}
 	if got := <-inventoryProfiles; got != "pool@preview" {

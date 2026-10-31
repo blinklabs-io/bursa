@@ -13,6 +13,9 @@ TESTNET ?= 0
 # account, the opcert floor and reset, and no signing. The default image
 # signs and serves no provisioning endpoint.
 PROVISION ?= 0
+# WIPE=1 builds the wipe image: it removes a profile and its keys, or every
+# key and profile, on request, and neither signs nor provisions.
+WIPE ?= 0
 # NETWORK fixes the one network whose profiles the image provisions and
 # serves: testnet (network id 0, the default, every testnet) or mainnet
 # (network id 1). A mainnet image also needs CHAIN, the one chain whose
@@ -51,6 +54,13 @@ endif
 TAGS += provision
 APP := armory-provision
 endif
+ifeq ($(WIPE),1)
+ifneq ($(PROVISION)$(TESTNET),00)
+$(error WIPE=1 builds an image that only deletes; it takes neither PROVISION=1 nor TESTNET=1)
+endif
+TAGS += wipe
+APP := armory-wipe
+endif
 ifeq ($(NETWORK),mainnet)
 APP := $(APP)-$(CHAIN)-mainnet
 endif
@@ -86,4 +96,4 @@ $(APP).imx: $(APP).bin $(APP).dcd
 	dd if=$(APP) of=$(APP).imx bs=1 count=4 skip=24 seek=4 conv=notrunc
 
 clean:
-	rm -f $(foreach a,armory armory-provision $(foreach c,cardano prime,armory-$(c)-mainnet armory-provision-$(c)-mainnet),$(a) $(a).bin $(a).dcd $(a).imx)
+	rm -f $(foreach a,armory armory-provision armory-wipe $(foreach c,cardano prime,armory-$(c)-mainnet armory-provision-$(c)-mainnet armory-wipe-$(c)-mainnet),$(a) $(a).bin $(a).dcd $(a).imx)

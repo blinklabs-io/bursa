@@ -140,7 +140,7 @@ func (e *fakeEnclave) signLocked(req AttestedRequest, resp AttestedResponse) Att
 			resp.Signature = ed25519.Sign(k.priv, signable)
 			resp.IssueCounter = &issue
 			if req.Profile != "" {
-				resp.BindingSignature = ed25519.Sign(k.priv, AttestedResponseBinding(req, resp.Signature))
+				resp.BindingSignature = ed25519.Sign(k.priv, AttestedResponseBinding(req, resp.Signature, ""))
 			}
 			return resp
 		}
@@ -151,7 +151,7 @@ func (e *fakeEnclave) signLocked(req AttestedRequest, resp AttestedResponse) Att
 		}
 		resp.Signature = ed25519.Sign(k.priv, signed)
 		if req.Profile != "" {
-			resp.BindingSignature = ed25519.Sign(k.priv, AttestedResponseBinding(req, resp.Signature))
+			resp.BindingSignature = ed25519.Sign(k.priv, AttestedResponseBinding(req, resp.Signature, ""))
 		}
 		return resp
 	}
@@ -361,7 +361,7 @@ func TestAttestedKeySignsEncodedTxBody(t *testing.T) {
 	body := []byte{0xa1, 0x00, 0x80}
 	hash := blake2b.Sum256(body)
 
-	sig, err := SignTxFor(ctx, ref, body, 6, hash[:])
+	sig, _, err := SignTxFor(ctx, ref, body, 6, hash[:])
 	if err != nil {
 		t.Fatalf("SignTxFor: %v", err)
 	}
@@ -375,10 +375,10 @@ func TestAttestedKeySignsEncodedTxBody(t *testing.T) {
 	e.mu.Lock()
 	e.tamperResp = func(req AttestedRequest, resp *AttestedResponse) {
 		req.Profile = "substituted-profile"
-		resp.BindingSignature = ed25519.Sign(e.keys[0].priv, AttestedResponseBinding(req, resp.Signature))
+		resp.BindingSignature = ed25519.Sign(e.keys[0].priv, AttestedResponseBinding(req, resp.Signature, ""))
 	}
 	e.mu.Unlock()
-	if _, err := SignTxFor(ctx, ref, body, 6, hash[:]); !errors.Is(err, ErrInvalidSignature) {
+	if _, _, err := SignTxFor(ctx, ref, body, 6, hash[:]); !errors.Is(err, ErrInvalidSignature) {
 		t.Fatalf("substituted profile: got %v, want ErrInvalidSignature", err)
 	}
 
@@ -388,7 +388,7 @@ func TestAttestedKeySignsEncodedTxBody(t *testing.T) {
 		resp.Signature = ed25519.Sign(e.keys[0].priv, other[:])
 	}
 	e.mu.Unlock()
-	if _, err := SignTxFor(ctx, ref, body, 6, hash[:]); !errors.Is(err, ErrInvalidSignature) {
+	if _, _, err := SignTxFor(ctx, ref, body, 6, hash[:]); !errors.Is(err, ErrInvalidSignature) {
 		t.Fatalf("substituted body: got %v, want ErrInvalidSignature", err)
 	}
 
@@ -409,7 +409,7 @@ func TestAttestedKeySendsFixedProfileAndEra(t *testing.T) {
 	ref := mustKey(t, b, e.hashOf(0))
 	body := []byte{0xa0}
 	hash := blake2b.Sum256(body)
-	if _, err := SignTxFor(t.Context(), ref, body, 6, hash[:]); err != nil {
+	if _, _, err := SignTxFor(t.Context(), ref, body, 6, hash[:]); err != nil {
 		t.Fatalf("SignTxFor: %v", err)
 	}
 
@@ -454,7 +454,7 @@ func TestAttestedKeyRefusesBeforeContactingEnclave(t *testing.T) {
 	if e.signCalls != 0 {
 		t.Fatalf("enclave was contacted %d times for refused requests", e.signCalls)
 	}
-	if _, err := pay.(TxBodySigner).SignTxBody(ctx, nil, 6); !errors.Is(err, ErrAttestedProtocol) {
+	if _, _, err := pay.(TxBodySigner).SignTxBody(ctx, nil, 6); !errors.Is(err, ErrAttestedProtocol) {
 		t.Fatalf("empty tx body: got %v, want ErrAttestedProtocol", err)
 	}
 	if e.signCalls != 0 {
@@ -549,7 +549,7 @@ func TestSignFor(t *testing.T) {
 		t.Fatalf("SignFor plain key did not fall back to Sign: %v", err)
 	}
 	txHash := bytes.Repeat([]byte{7}, txHashSize)
-	if _, err := SignTxFor(ctx, plain, []byte("body"), 6, txHash); err != nil {
+	if _, _, err := SignTxFor(ctx, plain, []byte("body"), 6, txHash); err != nil {
 		t.Fatalf("SignTxFor plain key: %v", err)
 	}
 	if !bytes.Equal(plain.payload, txHash) {

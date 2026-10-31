@@ -41,7 +41,8 @@
 #   SOURCE (10.0.0.2), PROFILE (e2e<slot>@preview), WORK (new temp dir),
 #   PLEDGE (1000000000), COST (170000000), MARGIN (0.02),
 #   RETIRE (0; 1 retires the pool at the next epoch),
-#   OPCERT_CHECK (path to opcert-check; when set, the opcert is re-verified)
+#   OPCERT_CHECK (path to opcert-check; when set, the opcert is re-verified,
+#   authenticated with HOST_KEY if set),
 #   SIGNING_IMX (signing image to load after provisioning),
 #   HOST_KEY (host signing key file; created if missing, registered on the
 #   device and used to authenticate every signing request),
@@ -338,7 +339,7 @@ check "issue counter is the on-chain counter plus one" grep -qx "issue counter $
 check "opcert written" test -s node.cert
 if [ -n "${OPCERT_CHECK:-}" ]; then
 	"$OPCERT_CHECK" -vkey "$(jq -r .cborHex pool-cold.vkey)" -cert "$(jq -r .cborHex node.cert)" \
-		-pool "$POOL_HEX" -profile "$PROFILE" -signer "$SIGNER" -source "$SOURCE"
+		-pool "$POOL_HEX" -profile "$PROFILE" -signer "$SIGNER" -source "$SOURCE" ${HOST_KEY:+-host-key "$HOST_KEY"}
 	pass "opcert-check reproduced the certificate"
 fi
 

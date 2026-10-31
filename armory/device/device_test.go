@@ -55,6 +55,10 @@ type fakeChip struct {
 	tornWrite bool
 	// failDelete refuses deletes and keeps the object
 	failDelete bool
+	// failDeleteAfter, when non-zero, lets that many deletes succeed and
+	// refuses the next one
+	failDeleteAfter int
+	deletes         int
 }
 
 func newFakeChip() *fakeChip {
@@ -140,9 +144,11 @@ func (c *fakeChip) WriteBinary(id uint32, data []byte) error {
 }
 
 func (c *fakeChip) Delete(id uint32) error {
-	if c.failDelete {
+	if c.failDelete || c.failDeleteAfter != 0 && c.deletes >= c.failDeleteAfter {
 		return errors.New("i2c failure")
 	}
+
+	c.deletes++
 
 	delete(c.bins, id)
 	delete(c.keys, id)
