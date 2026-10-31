@@ -70,6 +70,8 @@ type v2Device struct {
 	inventory  int
 	tamperWith string
 	failSign   bool
+	// beforeSign, when set, runs before a sign request takes the lock
+	beforeSign func()
 }
 
 // behaviors:
@@ -85,6 +87,9 @@ type v2Device struct {
 //
 // failSign makes the sign endpoint answer 500 before reading the request.
 func (d *v2Device) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/v1/sign" && d.beforeSign != nil {
+		d.beforeSign()
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	switch r.URL.Path {
@@ -403,7 +408,8 @@ func TestAttestedNegotiateReprobesAfterFailedRoundTrip(t *testing.T) {
 // -race.
 func TestAttestedVersionCacheConcurrent(t *testing.T) {
 	t.Parallel()
-	_, b, _ := newV2Backend(t, "supported", AttestedNegotiate)
+	_, b, signer := newV2Backend(t, "supported", AttestedNegotiate)
+	k := signer.(*attestedKey)
 	var wg sync.WaitGroup
 	for i := range 8 {
 		wg.Add(1)
@@ -412,7 +418,7 @@ func TestAttestedVersionCacheConcurrent(t *testing.T) {
 			for range 50 {
 				switch i % 4 {
 				case 0:
-					b.pinVersion1()
+					_ = b.pinVersion1(k)
 				case 1:
 					b.unpinVersion()
 				case 2:
@@ -440,5 +446,24 @@ func TestClipSummary(t *testing.T) {
 	want := strings.Repeat("a", attestedMaxSummary-1) + "..."
 	if got := clipSummary(long); got != want {
 		t.Fatalf("clipped to %d bytes ending %q, want %d bytes", len(got), got[len(got)-8:], len(want))
+	}
+}
+
+// An unsupported-version reply that arrives after Load replaced the key does
+// not pin version 1 for the reloaded backend.
+func TestAttestedNegotiateLateReplyAfterLoadDoesNotPin(t *testing.T) {
+	t.Parallel()
+	dev, b, signer := newV2Backend(t, "v1only", AttestedNegotiate)
+	dev.beforeSign = func() {
+		dev.beforeSign = nil
+		if err := b.Load(t.Context()); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, _, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6); !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("error = %v, want ErrKeyNotFound", err)
+	}
+	if v := b.requestVersion(); v != AttestedProtocolSummary {
+		t.Fatalf("after reload the backend starts at %q, want %q", v, AttestedProtocolSummary)
 	}
 }

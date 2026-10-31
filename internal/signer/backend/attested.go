@@ -481,7 +481,9 @@ func (k *attestedKey) exchange(ctx context.Context, purpose Purpose, payload []b
 	}
 	resp, unsupported, err := k.exchangeAt(ctx, version, purpose, payload, era, verify)
 	if unsupported {
-		k.owner.pinVersion1()
+		if !k.owner.pinVersion1(k) {
+			return AttestedResponse{}, ErrKeyNotFound
+		}
 		resp, _, err = k.exchangeAt(ctx, AttestedProtocol, purpose, payload, era, verify)
 	}
 	return resp, err
@@ -584,12 +586,22 @@ func (b *AttestedBackend) requestVersion() string {
 	return AttestedProtocolSummary
 }
 
-func (b *AttestedBackend) pinVersion1()  { b.setVersion1(true) }
-func (b *AttestedBackend) unpinVersion() { b.setVersion1(false) }
-
-func (b *AttestedBackend) setVersion1(v bool) {
+// pinVersion1 caches version 1 when k is still served, so a reply that
+// arrives after Load replaced the keys cannot restore a pin Load cleared. It
+// reports whether k is served.
+func (b *AttestedBackend) pinVersion1(k *attestedKey) bool {
 	b.mu.Lock()
-	b.version1 = v
+	defer b.mu.Unlock()
+	if b.keys[k.hash] != k {
+		return false
+	}
+	b.version1 = true
+	return true
+}
+
+func (b *AttestedBackend) unpinVersion() {
+	b.mu.Lock()
+	b.version1 = false
 	b.mu.Unlock()
 }
 
