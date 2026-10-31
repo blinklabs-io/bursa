@@ -285,10 +285,16 @@ func runBringup(r *Report, s *signer, svc *device.Service) {
 	// endpoints only get the session once bring-up is done with it
 	s.set(se)
 
-	if err := svc.SetChip(&chip{se: se, log: r.Logf}); err != nil {
+	c := &chip{se: se, log: r.Logf}
+
+	if err := svc.SetChip(c); err != nil {
 		r.Logf("profiles: %v", err)
 		pass = false
 	}
+
+	// the signing log needs the chip, so it opens after it; until it does
+	// the signing image refuses to sign
+	openSigningLog(r, s, svc, c)
 
 	r.finish(pass)
 }

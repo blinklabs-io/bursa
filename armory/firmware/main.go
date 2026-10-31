@@ -91,6 +91,7 @@ func main() {
 	}
 
 	svc.SetNetwork(network, chain)
+	requireSigningLog(svc)
 	report.Logf("%s", buildMode)
 
 	if chain == "" {
