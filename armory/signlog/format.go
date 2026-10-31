@@ -88,6 +88,7 @@ type payload struct {
 	IssueCounter uint64
 	KESPeriod    uint64
 	KESKeyHash   []byte
+	Truncated    bool
 }
 
 func isZero(b []byte) bool {
@@ -124,7 +125,10 @@ func truncate(s string, n int) string {
 // normalize validates rec for its purpose and cuts the summary.
 func normalize(rec Record) (Record, error) {
 	rec.BodyHash, rec.KESKeyHash = orNil(rec.BodyHash), orNil(rec.KESKeyHash)
-	rec.Summary = truncate(rec.Summary, MaxSummary)
+
+	if cut := truncate(rec.Summary, MaxSummary); len(cut) < len(rec.Summary) {
+		rec.Summary, rec.SummaryTruncated = cut, true
+	}
 
 	for _, s := range []string{rec.Profile, rec.Role, rec.Purpose} {
 		if len(s) > maxName {
@@ -153,6 +157,7 @@ func (e Entry) payload() payload {
 		Seq: e.Seq, Prev: e.Prev[:], Profile: e.Profile, Role: e.Role,
 		Purpose: e.Purpose, BodyHash: orNil(e.BodyHash), Summary: e.Summary,
 		IssueCounter: e.IssueCounter, KESPeriod: e.KESPeriod, KESKeyHash: orNil(e.KESKeyHash),
+		Truncated: e.SummaryTruncated,
 	}
 }
 
@@ -253,7 +258,7 @@ func decodeRecord(slot []byte) (Entry, error) {
 			Profile: p.Profile, Role: p.Role, Purpose: p.Purpose,
 			BodyHash: orNil(p.BodyHash), Summary: p.Summary,
 			IssueCounter: p.IssueCounter, KESPeriod: p.KESPeriod,
-			KESKeyHash: orNil(p.KESKeyHash),
+			KESKeyHash: orNil(p.KESKeyHash), SummaryTruncated: p.Truncated,
 		},
 		Seq:       p.Seq,
 		Signature: bytes.Clone(slot[recSigOff:recSumOff]),

@@ -63,7 +63,8 @@ const (
 	// DefaultMaxEntries bounds the record slots a freshly formatted medium
 	// gets, so a large card does not make every open scan gigabytes.
 	DefaultMaxEntries = 1 << 15
-	// MaxSummary bounds Record.Summary; longer summaries are cut.
+	// MaxSummary bounds Record.Summary; longer summaries are cut and the
+	// entry is flagged SummaryTruncated.
 	MaxSummary = 1024
 	// HashSize is the size of the chain hash and the body hash.
 	HashSize = 32
@@ -162,6 +163,8 @@ type Record struct {
 	IssueCounter uint64
 	KESPeriod    uint64
 	KESKeyHash   []byte
+	// SummaryTruncated is set when Summary was cut to MaxSummary bytes.
+	SummaryTruncated bool
 }
 
 // Entry is a Record as logged.

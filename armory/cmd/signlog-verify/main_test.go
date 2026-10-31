@@ -229,3 +229,30 @@ func TestHelperMain(t *testing.T) {
 	os.Args = append([]string{"signlog-verify"}, strings.Fields(os.Getenv("SIGNLOG_VERIFY_ARGS"))...)
 	main()
 }
+
+func TestVerifyShowsTruncatedSummary(t *testing.T) {
+	t.Parallel()
+
+	path, id, _, w, m := card(t, 1)
+
+	if _, err := w.Append(signlog.Record{
+		Profile: "otg@preview", Role: "stake", Purpose: signlog.PurposeTxBody,
+		BodyHash: bytes.Repeat([]byte{9}, 32), Summary: strings.Repeat("x", signlog.MaxSummary+1),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(path, m.Image(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := run([]string{"-identity", id, "-image", path}, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if strings.Contains(lines[0], "truncated") || !strings.Contains(lines[1], "[summary truncated]") {
+		t.Errorf("truncation marks wrong:\n%s", out.String())
+	}
+}

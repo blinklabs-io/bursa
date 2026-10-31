@@ -39,6 +39,10 @@ import (
 )
 
 func printEntry(w io.Writer, e signlog.Entry) {
+	if e.SummaryTruncated {
+		e.Summary += " [summary truncated]"
+	}
+
 	switch e.Purpose {
 	case signlog.PurposeOpCertNext:
 		fmt.Fprintf(w, "%d %s %s %s issue=%d kes-period=%d kes-vkey-hash=%x %s\n",

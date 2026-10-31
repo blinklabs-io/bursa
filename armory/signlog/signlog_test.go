@@ -1036,6 +1036,57 @@ func TestLongSummaryIsCutOnARuneBoundary(t *testing.T) {
 	}
 }
 
+func TestTruncationIsRecordedAndSigned(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 8)
+	w := f.open(t)
+
+	short := bodyRecord(1)
+
+	long := bodyRecord(2)
+	long.Summary = strings.Repeat("x", MaxSummary+1)
+
+	exact := bodyRecord(3)
+	exact.Summary = strings.Repeat("x", MaxSummary)
+
+	var got []Entry
+
+	for _, rec := range []Record{short, long, exact} {
+		e, err := w.Append(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got = append(got, e)
+	}
+
+	for i, want := range []bool{false, true, false} {
+		if got[i].SummaryTruncated != want {
+			t.Errorf("entry %d: SummaryTruncated=%v, want %v", i+1, got[i].SummaryTruncated, want)
+		}
+	}
+
+	log, err := f.verify(t, f.pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i, want := range []bool{false, true, false} {
+		if log.Entries[i].SummaryTruncated != want {
+			t.Errorf("verified entry %d: SummaryTruncated=%v, want %v", i+1, log.Entries[i].SummaryTruncated, want)
+		}
+	}
+
+	// the flag is covered by the signature: clearing it must not verify
+	forged := log.Entries[1]
+	forged.SummaryTruncated = false
+
+	if err := verifyEntry(forged, f.pub); !errors.Is(err, ErrBadSignature) {
+		t.Fatalf("flag cleared: %v, want ErrBadSignature", err)
+	}
+}
+
 func TestConcurrentAppendsSerialise(t *testing.T) {
 	t.Parallel()
 
