@@ -136,3 +136,45 @@ func TestSignTx_NoSummaryForPlainKey(t *testing.T) {
 		t.Fatalf("summaries = %q", res.Summaries)
 	}
 }
+
+// The summary is device-supplied text. Under both log formats a newline or
+// control character in it stays inside the one sign line.
+func TestSignTx_SummaryLogIsEscaped(t *testing.T) {
+	t.Parallel()
+	const summary = "pledge 1\nlevel=ERROR msg=forged\x1b[31m"
+	for name, newHandler := range map[string]func(*syncBuffer) slog.Handler{
+		"json": func(w *syncBuffer) slog.Handler { return slog.NewJSONHandler(w, nil) },
+		"text": func(w *syncBuffer) slog.Handler { return slog.NewTextHandler(w, nil) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			k := &summaryKey{fakeKey: newFakeKey(t), summary: summary}
+			eng, err := policy.NewEngine([]policy.KeyPolicy{{Hash: k.hash.String(), AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			logs := &syncBuffer{}
+			c := New(Deps{
+				Resolver:  backend.NewResolver(summaryBackend{key: k}),
+				Policy:    eng,
+				Watermark: watermark.NewMemWatermark(),
+				Cardano: fakeCardano{
+					insp: &bursa.TxInspection{TxId: "abc", TTL: 10}, txid: make([]byte, 32), assembled: []byte{1},
+				},
+				Metrics: NewMetrics(),
+				Logger:  slog.New(newHandler(logs)),
+			})
+			if _, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()}); err != nil || len(perr) != 0 {
+				t.Fatalf("SignTx: %v %+v", err, perr)
+			}
+			for _, line := range logs.lines() {
+				if bytes.Contains(line, []byte("forged")) && !bytes.Contains(line, []byte("pledge 1")) {
+					t.Fatalf("summary text began its own log line: %q", line)
+				}
+				if bytes.IndexByte(line, 0x1b) >= 0 {
+					t.Fatalf("raw control character in log line: %q", line)
+				}
+			}
+		})
+	}
+}

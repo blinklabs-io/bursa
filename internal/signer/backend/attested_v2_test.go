@@ -69,6 +69,7 @@ type v2Device struct {
 	nonces     [][]byte
 	inventory  int
 	tamperWith string
+	failSign   bool
 }
 
 // behaviors:
@@ -80,6 +81,9 @@ type v2Device struct {
 //	tampered   as supported, but the summary differs from the bound one
 //	otherError refuses v2 with an error that is not the unsupported-version one
 //	forgedOK   refuses v2 as unsupported but also carries a signature
+//	v1Summary  answers v1 with a summary covered by the binding signature
+//
+// failSign makes the sign endpoint answer 500 before reading the request.
 func (d *v2Device) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -100,6 +104,10 @@ func (d *v2Device) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		d.issued = append(d.issued, c)
 		_ = json.NewEncoder(w).Encode(map[string]any{"version": AttestedProtocol, "challenge": c})
 	case "/v1/sign":
+		if d.failSign {
+			http.Error(w, "unavailable", http.StatusInternalServerError)
+			return
+		}
 		var req AttestedRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		d.versions = append(d.versions, req.Version)
@@ -129,6 +137,11 @@ func (d *v2Device) answer(req AttestedRequest) AttestedResponse {
 		resp.BindingSignature = ed25519.Sign(d.pool, AttestedResponseBinding(req, resp.Signature, summary))
 	}
 	switch {
+	case d.behavior == "v1Summary":
+		hash := blake2b.Sum256(req.Payload)
+		resp.Signature = ed25519.Sign(d.pool, hash[:])
+		resp.Summary = testDeviceSummary
+		resp.BindingSignature = ed25519.Sign(d.pool, AttestedResponseBinding(req, resp.Signature, resp.Summary))
 	case d.behavior == "echoV2":
 		sign(AttestedProtocolSummary)
 	case d.behavior == "echoV1" && req.Version == AttestedProtocolSummary:
@@ -343,5 +356,89 @@ func TestAttestedRefusesTamperedSummary(t *testing.T) {
 	}
 	if summary != "" {
 		t.Fatalf("returned the unverified summary %q", summary)
+	}
+}
+
+// A version-1 reply carrying a summary is refused even when the binding
+// signature covers it: only a version-2 request may return one.
+func TestAttestedRefusesSummaryOnVersion1Reply(t *testing.T) {
+	t.Parallel()
+	_, _, signer := newV2Backend(t, "v1Summary", AttestedVersion1)
+	_, summary, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6)
+	if !errors.Is(err, ErrAttestedProtocol) {
+		t.Fatalf("error = %v, want ErrAttestedProtocol", err)
+	}
+	if summary != "" {
+		t.Fatalf("returned summary %q from a version 1 reply", summary)
+	}
+}
+
+// A failed round trip clears the cached version 1, so the next request probes
+// version 2 again.
+func TestAttestedNegotiateReprobesAfterFailedRoundTrip(t *testing.T) {
+	t.Parallel()
+	dev, _, signer := newV2Backend(t, "v1only", AttestedNegotiate)
+	if _, _, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6); err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	dev.mu.Lock()
+	dev.failSign = true
+	dev.mu.Unlock()
+	if _, _, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6); err == nil {
+		t.Fatal("signed through a failing device")
+	}
+	dev.mu.Lock()
+	dev.failSign = false
+	dev.mu.Unlock()
+	if _, _, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6); err != nil {
+		t.Fatalf("sign after recovery: %v", err)
+	}
+	want := []string{AttestedProtocolSummary, AttestedProtocol, AttestedProtocolSummary, AttestedProtocol}
+	if versions, _, _ := dev.seen(); !sameStrings(versions, want) {
+		t.Fatalf("sign requests at %v, want %v", versions, want)
+	}
+}
+
+// The cached version is shared by every request on the backend; run with
+// -race.
+func TestAttestedVersionCacheConcurrent(t *testing.T) {
+	t.Parallel()
+	_, b, _ := newV2Backend(t, "supported", AttestedNegotiate)
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 50 {
+				switch i % 4 {
+				case 0:
+					b.pinVersion1()
+				case 1:
+					b.unpinVersion()
+				case 2:
+					_ = b.requestVersion()
+				default:
+					if err := b.Load(t.Context()); err != nil {
+						t.Error(err)
+						return
+					}
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestClipSummary(t *testing.T) {
+	t.Parallel()
+	exact := strings.Repeat("a", attestedMaxSummary)
+	if got := clipSummary(exact); got != exact {
+		t.Fatalf("clipped a summary of exactly %d bytes", attestedMaxSummary)
+	}
+	// the cut falls inside the two-byte rune, which is dropped
+	long := strings.Repeat("a", attestedMaxSummary-1) + "\u00e9" + "tail"
+	want := strings.Repeat("a", attestedMaxSummary-1) + "..."
+	if got := clipSummary(long); got != want {
+		t.Fatalf("clipped to %d bytes ending %q, want %d bytes", len(got), got[len(got)-8:], len(want))
 	}
 }
