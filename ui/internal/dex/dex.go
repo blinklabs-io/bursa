@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"sort"
 	"strconv"
@@ -27,6 +28,7 @@ import (
 	"github.com/blinklabs-io/gouroboros/ledger/mary"
 	shaicommon "github.com/blinklabs-io/shai/common"
 	shaidex "github.com/blinklabs-io/shai/dex"
+	"github.com/blinklabs-io/shai/dex/sundaeswap"
 )
 
 // ErrNotMainnet is returned when a quote/pools request is made against a node
@@ -45,6 +47,15 @@ var ErrInvalidRequest = errors.New("dex: invalid request")
 // node. Pools change every few blocks; a short cache keeps prices fresh while
 // avoiding a full re-scan on every request.
 const cacheTTL = 15 * time.Second
+
+const (
+	// The deployed Minswap pool scripts require one MINSWAP factory marker in
+	// every pool output. Its policy and name are fixed by the deployment.
+	minswapPoolMarkerUnit = "13aa2accf2e1561723aa26871e071fdf32c867cff7e7d50ad470d62f4d494e53574150"
+	// Minswap V2 records the tradeable lovelace reserve in its datum; the pool
+	// output also carries this fixed minimum lovelace balance.
+	minswapV2PoolOil = uint64(2_000_000)
+)
 
 // chainQuerier is the slice of the chain client the service needs (satisfied by
 // *chain.Client); it exists so tests can supply a fake.
@@ -85,7 +96,15 @@ const (
 type protocolDef struct {
 	parser   parser
 	encoding valueEncoding
+	identity poolIdentity
 }
+
+type poolIdentity int
+
+const (
+	identityMinswap poolIdentity = iota
+	identitySundaeV3
+)
 
 // Pool is the node-derived view of a single liquidity pool.
 type Pool struct {
@@ -140,18 +159,16 @@ func NewService(c chainQuerier, network string) *Service {
 	}
 }
 
-// defaultProtocols returns the supported shai parsers paired with their value
-// encoding. Each parser's pool addresses come from shaidex.PoolAddresses.
+// defaultProtocols returns the parsers whose pool identity can be authenticated
+// from the output. Each parser's pool addresses come from
+// shaidex.PoolAddresses. A protocol must not be added without a verified
+// identity rule; a script address and parseable datum alone do not prove that
+// an output is a spendable protocol pool.
 func defaultProtocols() []protocolDef {
 	return []protocolDef{
-		{parser: shaidex.NewMinswapV1Parser(), encoding: valueTxOut},
-		{parser: shaidex.NewMinswapV2Parser(), encoding: valueTxOut},
-		{parser: shaidex.NewSundaeSwapV1Parser(), encoding: valueTxOut},
-		{parser: shaidex.NewSundaeSwapV3Parser(), encoding: valueTxOut},
-		{parser: shaidex.NewSplashV1Parser(), encoding: valueTxOut},
-		{parser: shaidex.NewWingRidersV2Parser(), encoding: valueTxOut},
-		{parser: shaidex.NewCSwapParser(), encoding: valueTxOut},
-		{parser: shaidex.NewVyFiParser(), encoding: valueAssetMap},
+		{parser: shaidex.NewMinswapV1Parser(), encoding: valueTxOut, identity: identityMinswap},
+		{parser: shaidex.NewMinswapV2Parser(), encoding: valueTxOut, identity: identityMinswap},
+		{parser: shaidex.NewSundaeSwapV3Parser(), encoding: valueTxOut, identity: identitySundaeV3},
 	}
 }
 
@@ -285,6 +302,9 @@ func (s *Service) scan(ctx context.Context) ([]*shaidex.PoolState, error) {
 				return nil, fmt.Errorf("query pool address %s: %w", addr, err)
 			}
 			for _, u := range utxos {
+				if u.Address != addr {
+					continue
+				}
 				st, ok, err := s.parseUTxO(ctx, def, u, datumCache)
 				if err != nil {
 					return nil, fmt.Errorf("parse pool utxo %s#%d: %w", u.TxHash, u.OutputIndex, err)
@@ -310,7 +330,7 @@ func (s *Service) parseUTxO(
 	u chain.UTxO,
 	datumCache map[string][]chain.TxOutput,
 ) (*shaidex.PoolState, bool, error) {
-	datumHex, err := inlineDatumFor(ctx, s.chain, u, datumCache)
+	datumHex, amounts, locked, err := inlineDatumFor(ctx, s.chain, u, datumCache)
 	if err != nil {
 		return nil, false, err
 	}
@@ -323,58 +343,239 @@ func (s *Service) parseUTxO(
 		// understands, not a node/transport failure -- deliberately swallowed.
 		return nil, false, nil //nolint:nilerr // see parseUTxO doc comment
 	}
-	value, err := encodeValue(def.encoding, u.Amount)
+	if !validPoolIdentity(def.identity, datum, u.Address, locked) {
+		return nil, false, nil
+	}
+	if u.OutputIndex < 0 || uint64(u.OutputIndex) > math.MaxUint32 {
+		return nil, false, nil
+	}
+	value, err := encodeValue(def.encoding, amounts)
 	if err != nil {
 		// Same as above: a value the encoder can't build (bad quantity string)
 		// means this isn't a well-formed pool UTxO, not a transport failure.
 		return nil, false, nil //nolint:nilerr // see parseUTxO doc comment
 	}
 	st, err := def.parser.ParsePoolDatum(
-		datum, value, u.TxHash, uint32(u.OutputIndex), 0, time.Time{}, //nolint:gosec // OutputIndex is a bounded tx-output index that always fits uint32
+		datum,
+		value,
+		u.TxHash,
+		uint32(u.OutputIndex),
+		0,
+		time.Time{}, //nolint:gosec // range checked above
 	)
 	if err != nil || st == nil {
 		// The parser rejecting the datum shape means this isn't a pool this
 		// protocol's parser recognizes, not a transport failure.
 		return nil, false, nil //nolint:nilerr // see parseUTxO doc comment
 	}
+	if !reservesMatchLocked(def.parser.Protocol(), st, locked) {
+		return nil, false, nil
+	}
 	return st, true, nil
 }
 
-// inlineDatumFor returns the inline datum hex for a UTxO. The address-utxos
-// endpoint never populates the inline datum, so we always recover it from the
-// transaction's outputs (tx-utxos endpoint), matching by output index. A
-// tx-utxos lookup that reports the transaction doesn't exist (chain.ErrNotFound)
-// yields "" so the stray UTxO is skipped, same as before; any other error is a
-// transport failure and is propagated (and left out of the cache, so a later
-// pool UTxO in the same tx retries rather than assuming permanent absence).
+func lockedValue(amounts []chain.Amount) (map[string]uint64, bool) {
+	ret := make(map[string]uint64, len(amounts))
+	for _, amount := range amounts {
+		unit := amount.Unit
+		if unit == "" {
+			unit = "lovelace"
+		}
+		if unit != "lovelace" {
+			policy, name, err := splitUnit(unit)
+			if err != nil || len(policy) != 28 || len(name) > 32 ||
+				hex.EncodeToString(policy)+hex.EncodeToString(name) != unit {
+				return nil, false
+			}
+		}
+		qty, err := strconv.ParseUint(amount.Quantity, 10, 64)
+		if err != nil || qty == 0 {
+			return nil, false
+		}
+		if _, exists := ret[unit]; exists {
+			return nil, false
+		}
+		ret[unit] = qty
+	}
+	if ret["lovelace"] == 0 {
+		return nil, false
+	}
+	return ret, true
+}
+
+func validPoolIdentity(
+	kind poolIdentity,
+	datum []byte,
+	address string,
+	locked map[string]uint64,
+) bool {
+	switch kind {
+	case identityMinswap:
+		return locked[minswapPoolMarkerUnit] == 1
+	case identitySundaeV3:
+		var poolDatum sundaeswap.V3PoolDatum
+		if _, err := cbor.Decode(datum, &poolDatum); err != nil ||
+			len(poolDatum.Identifier) != 28 ||
+			!validSundaeV3Fees(poolDatum) {
+			return false
+		}
+		addr, err := lcommon.NewAddress(address)
+		if err != nil || addr.Type()&lcommon.AddressTypeScriptBit == 0 {
+			return false
+		}
+		policy := addr.PaymentKeyHash()
+		unit := hex.EncodeToString(policy[:]) + "000de140" + hex.EncodeToString(poolDatum.Identifier)
+		return locked[unit] == 1
+	default:
+		return false
+	}
+}
+
+func validSundaeV3Fees(datum sundaeswap.V3PoolDatum) bool {
+	bidNum := datum.BidFeesPer10Thousand.Numerator
+	bidDen := datum.BidFeesPer10Thousand.Denominator
+	askNum := datum.AskFeesPer10Thousand.Numerator
+	askDen := datum.AskFeesPer10Thousand.Denominator
+	if bidDen == 0 || askDen == 0 {
+		return false
+	}
+
+	bidTerm, ok := checkedMul(bidNum, askDen)
+	if !ok {
+		return false
+	}
+	askTerm, ok := checkedMul(askNum, bidDen)
+	if !ok {
+		return false
+	}
+	avgNum, ok := checkedAdd(bidTerm, askTerm)
+	if !ok {
+		return false
+	}
+	twiceBidDen, ok := checkedMul(2, bidDen)
+	if !ok {
+		return false
+	}
+	avgDen, ok := checkedMul(twiceBidDen, askDen)
+	if !ok || avgDen == 0 || avgNum > avgDen {
+		return false
+	}
+	scaledFee, ok := checkedMul(sundaeswap.FeeDenom, avgDen-avgNum)
+	if !ok {
+		return false
+	}
+	effectiveFee := scaledFee / avgDen
+	return effectiveFee > 0 && effectiveFee <= sundaeswap.FeeDenom
+}
+
+func checkedMul(a, b uint64) (uint64, bool) {
+	if a != 0 && b > math.MaxUint64/a {
+		return 0, false
+	}
+	return a * b, true
+}
+
+func checkedAdd(a, b uint64) (uint64, bool) {
+	if a > math.MaxUint64-b {
+		return 0, false
+	}
+	return a + b, true
+}
+
+func reservesMatchLocked(protocol string, state *shaidex.PoolState, locked map[string]uint64) bool {
+	if state.AssetX.Amount == 0 || state.AssetY.Amount == 0 ||
+		bytes.Equal(state.AssetX.Class.PolicyId, state.AssetY.Class.PolicyId) &&
+			bytes.Equal(state.AssetX.Class.Name, state.AssetY.Class.Name) {
+		return false
+	}
+	if protocol == "minswap-v2" &&
+		!state.AssetX.IsLovelace() && !state.AssetY.IsLovelace() &&
+		locked["lovelace"] != minswapV2PoolOil {
+		return false
+	}
+	return reserveMatches(protocol, state.AssetX, locked) &&
+		reserveMatches(protocol, state.AssetY, locked)
+}
+
+func reserveMatches(
+	protocol string,
+	reserve shaicommon.AssetAmount,
+	locked map[string]uint64,
+) bool {
+	unit := hex.EncodeToString(reserve.Class.PolicyId) + hex.EncodeToString(reserve.Class.Name)
+	if reserve.IsLovelace() {
+		unit = "lovelace"
+	}
+	want := reserve.Amount
+	if protocol == "minswap-v2" && reserve.IsLovelace() {
+		if want > math.MaxUint64-minswapV2PoolOil {
+			return false
+		}
+		want += minswapV2PoolOil
+	}
+	return locked[unit] == want
+}
+
+// inlineDatumFor returns the authoritative inline datum and value for a UTxO.
+// The transaction output must match the address UTxO's index, address, and
+// canonical value before its datum is trusted. A tx-utxos lookup that reports
+// the transaction doesn't exist (chain.ErrNotFound) yields "" so the stray
+// UTxO is skipped; any other error is propagated and left out of the cache.
 func inlineDatumFor(
 	ctx context.Context,
 	c chainQuerier,
 	u chain.UTxO,
 	cache map[string][]chain.TxOutput,
-) (string, error) {
-	if u.InlineDatum != nil && *u.InlineDatum != "" {
-		return *u.InlineDatum, nil
-	}
-	outs, ok := cache[u.TxHash]
+) (string, []chain.Amount, map[string]uint64, error) {
+	locked, ok := lockedValue(u.Amount)
 	if !ok {
+		return "", nil, nil, nil
+	}
+	outs, cached := cache[u.TxHash]
+	if !cached {
 		var err error
 		outs, err = c.TxOutputs(ctx, u.TxHash)
 		if err != nil {
 			if errors.Is(err, chain.ErrNotFound) {
 				cache[u.TxHash] = nil // negative-cache: no such tx; don't retry in this scan
-				return "", nil
+				return "", nil, nil, nil
 			}
-			return "", fmt.Errorf("query tx outputs for %s: %w", u.TxHash, err)
+			return "", nil, nil, fmt.Errorf("query tx outputs for %s: %w", u.TxHash, err)
 		}
 		cache[u.TxHash] = outs
 	}
-	for _, o := range outs {
-		if o.OutputIndex == u.OutputIndex && o.InlineDatum != nil {
-			return *o.InlineDatum, nil
+	var match *chain.TxOutput
+	for i := range outs {
+		o := &outs[i]
+		if o.OutputIndex != u.OutputIndex {
+			continue
+		}
+		if match != nil {
+			return "", nil, nil, nil
+		}
+		match = o
+	}
+	if match == nil || match.Address != u.Address ||
+		match.InlineDatum == nil || *match.InlineDatum == "" {
+		return "", nil, nil, nil
+	}
+	authoritativeLocked, ok := lockedValue(match.Amount)
+	if !ok || !equalLockedValue(locked, authoritativeLocked) {
+		return "", nil, nil, nil
+	}
+	return *match.InlineDatum, match.Amount, authoritativeLocked, nil
+}
+
+func equalLockedValue(a, b map[string]uint64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for unit, quantity := range a {
+		if b[unit] != quantity {
+			return false
 		}
 	}
-	return "", nil
+	return true
 }
 
 // encodeValue reconstructs the CBOR UTxO value a shai parser expects from the

@@ -162,16 +162,18 @@ func TestEncodeAssetMapShape(t *testing.T) {
 func newServiceWithPool(t *testing.T, lovelace, token uint64) (*Service, *fakeChain) {
 	t.Helper()
 	datumHex := hex.EncodeToString(minswapV1Datum())
+	amounts := []chain.Amount{
+		{Unit: "lovelace", Quantity: strconv.FormatUint(lovelace, 10)},
+		{Unit: tokenUnit(), Quantity: strconv.FormatUint(token, 10)},
+		{Unit: minswapPoolMarkerUnit, Quantity: "1"},
+	}
 	fc := &fakeChain{
 		utxosByAddr: map[string][]chain.UTxO{
 			minswapV1Addr: {{
 				Address:     minswapV1Addr,
 				TxHash:      "pooltx",
 				OutputIndex: 0,
-				Amount: []chain.Amount{
-					{Unit: "lovelace", Quantity: strconv.FormatUint(lovelace, 10)},
-					{Unit: tokenUnit(), Quantity: strconv.FormatUint(token, 10)},
-				},
+				Amount:      amounts,
 				// address-utxos does not carry the inline datum (matches dingo).
 				InlineDatum: nil,
 			}},
@@ -180,6 +182,7 @@ func newServiceWithPool(t *testing.T, lovelace, token uint64) (*Service, *fakeCh
 			"pooltx": {{
 				Address:     minswapV1Addr,
 				OutputIndex: 0,
+				Amount:      amounts,
 				InlineDatum: &datumHex,
 			}},
 		},
