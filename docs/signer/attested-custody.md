@@ -19,12 +19,12 @@ Three verifiers ship in the signer:
 |-----------|-------------|-----------------|
 | Enclave workload (measured image) | holding keys, enforcing its own signing policy | nothing beyond its measurement |
 | Cloud attestation service / KMS | issuing evidence; releasing wrapped key material only to the measured workload | - |
-| Host or VM that runs the signer and the proxy | - | confidentiality of keys (it never sees them), request integrity, availability |
-| Host proxy (vsock or socket forwarder) | - | everything: it can drop, delay, replay, or rewrite messages |
+| Host OS and Nitro proxy client identity | restricting enclave RPC access to the dedicated proxy process | confidentiality of custody keys, availability |
+| Host proxy (vsock or socket forwarder) | presenting the authorized RPC client identity | custody-key confidentiality; it can drop, delay, replay, or rewrite messages |
 | Signer process | caller authentication, per-key policy, Cardano operation validation, watermarks, signature verification | key custody |
 
-Because the proxy is untrusted, correctness rests on four checks the signer
-performs itself:
+Because the proxy remains untrusted for response integrity, correctness rests
+on four checks the signer performs itself:
 
 1. The key inventory is accepted only when its attestation evidence verifies and
    commits to the signer's fresh nonce and to the exact key list
@@ -39,19 +39,26 @@ performs itself:
    complete request and Cardano signature. This prevents a proxy from selecting
    a different profile while replaying a valid signature from the same key.
 
-### Authorization when the host proxy is untrusted
+### Authorization boundary
 
-The signer authenticates callers and applies per-key policy, but that happens on
-the host. A host that is compromised can bypass the signer and talk to the
-enclave directly, so the signer's policy is not an authorization boundary for
-the enclave. The enclave must enforce, inside the measured image and independent
-of the signer:
+The Nitro host/enclave gRPC channel requires mutual TLS. The enclave trusts only
+client certificates issued by its dedicated proxy CA, and the proxy client key
+must be owner-only. This makes the host kernel, filesystem isolation, and proxy
+client identity part of the request-authorization boundary. A root compromise
+or disclosure of that client key permits enclave RPC calls; enclave/KMS custody
+still prevents extraction of the private cold key.
+
+The enclave also enforces, inside the measured image:
 
 - the purpose, role and payload-shape rules below;
-- a durable, monotonic operational-certificate issue counter per cold key (the
-  signer's watermark protects only requests that pass through the signer);
+- a monotonic operational-certificate issue counter for the lifetime of each
+  loaded cold key;
 - any transaction policy the operator relies on when the host is not trusted;
 - refusal of a repeated request nonce.
+
+Reloading the same key preserves the in-memory nonce and counter guards. A new
+key or enclave restart resets them, so the signer's durable watermark remains
+required.
 
 The Confidential Space workload also requires TLS 1.3 mutual authentication
 for both protocol endpoints. This prevents network clients without the
@@ -60,7 +67,8 @@ private key resides on the signer host, so compromise of that host also
 compromises this caller credential. The workload's payload and durable counter
 checks remain the limits on what that credential can request.
 
-Anything else the enclave does not enforce is only as strong as the host.
+Anything else the enclave does not enforce is only as strong as the host
+authorization boundary.
 
 ## Protocol
 
@@ -147,7 +155,8 @@ the enclave call. A plain `Sign` on an attested key is refused.
 
 The Nitro signer can reach its enclave through an `http://`, `https://` or
 `unix:///path` address because attestation and response verification protect
-that protocol across the host proxy. Confidential Space requires an `https://`
+that protocol across the host proxy; the proxy-to-enclave gRPC hop uses mutual
+TLS for proxy authorization. Confidential Space requires an `https://`
 address, a pinned server CA, and a signer client certificate. Forwarding the
 address onto the platform's vsock or workload port remains the deployment's
 job.
@@ -189,6 +198,10 @@ the enclave image, outside the signer:
 - Build the EIF reproducibly from pinned inputs and record its PCR values from
   the build output. Rotating the image changes PCR0: add the new value to the
   KMS policy and to `pcrs`, roll the signer, then remove the old value.
+
+The production workload, host proxy, provisioning/reload flow, KMS policy, and
+PCR build and rotation procedure are documented in
+[`nitro-custody.md`](nitro-custody.md).
 
 ## GCP Confidential Space
 
