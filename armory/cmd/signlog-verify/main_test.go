@@ -144,6 +144,7 @@ func TestVerifyRefusals(t *testing.T) {
 		"head hash wrong": {"-identity", id, "-image", path, "-head-seq", "3", "-head-hash", strings.Repeat("00", 32)},
 		// a positional token stops flag parsing; the pin after it must not vanish
 		"pin after argument": {"-identity", id, "-image", path, "unexpected", "-head-seq", "4", "-head-hash", strings.Repeat("00", 32)},
+		"negative head":      {"-identity", id, "-image", path, "-head-seq", "-5"},
 	} {
 		var out bytes.Buffer
 		if err := run(args, &out); err == nil {
@@ -187,6 +188,16 @@ func TestVerifyHeadPin(t *testing.T) {
 		"-head-seq", "3", "-head-hash", hex.EncodeToString(head.Hash[:]),
 	}, &out); err != nil {
 		t.Fatalf("run: %v", err)
+	}
+
+	// a pin that does not match prints no entries
+	out.Reset()
+
+	if err := run([]string{
+		"-identity", id, "-image", path,
+		"-head-seq", "2", "-head-hash", hex.EncodeToString(head.Hash[:]),
+	}, &out); err == nil || out.Len() != 0 {
+		t.Fatalf("stale pin: err %v, output:\n%s", err, out.String())
 	}
 }
 

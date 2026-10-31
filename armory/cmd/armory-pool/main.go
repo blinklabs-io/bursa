@@ -462,7 +462,7 @@ func run(args []string, stdout io.Writer) error {
 
 		var wantHash []byte
 
-		if *seq >= 0 || *hash != "" {
+		if *seq != -1 || *hash != "" {
 			var err error
 
 			if wantHash, err = hex.DecodeString(*hash); err != nil || len(wantHash) != signlog.HashSize || *seq < 0 {

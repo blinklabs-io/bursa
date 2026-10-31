@@ -149,6 +149,10 @@ func TestSignLogFetchesAndVerifies(t *testing.T) {
 		t.Fatal("a head number without a hash accepted")
 	}
 
+	if err := run(r.args("signlog", "-head-seq", "-5"), &bytes.Buffer{}); err == nil {
+		t.Fatal("a negative head number accepted")
+	}
+
 	// a positional token stops flag parsing; the pin after it must not vanish
 	pin = []string{"signlog", "unexpected", "-head-seq", "1", "-head-hash", head[len(head)-1]}
 	if err := run(r.args(pin...), &bytes.Buffer{}); err == nil {
@@ -254,6 +258,25 @@ func (s staleHead) Head() signlog.Head {
 	h.Seq--
 
 	return h
+}
+
+// hugeHead reports a head beyond any log the device formats.
+type hugeHead struct{ *signlog.Writer }
+
+func (hugeHead) Head() signlog.Head { return signlog.Head{Seq: signlog.DefaultMaxEntries + 1} }
+
+// TestSignLogBoundsTheRead checks the host does not let the head a device
+// reports set how much it reads.
+func TestSignLogBoundsTheRead(t *testing.T) {
+	t.Parallel()
+
+	r := newLogRig(t, 8)
+	r.witnessN(t, 1)
+	r.svc.SetSigningLog(hugeHead{r.w}, r.medium)
+
+	if err := run(r.args("signlog"), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "capacity") {
+		t.Fatalf("got %v", err)
+	}
 }
 
 func TestSignLogRefusesHeadThatDiffersFromLog(t *testing.T) {

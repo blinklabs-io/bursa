@@ -71,7 +71,7 @@ func run(args []string, stdout io.Writer) error {
 
 	var wantHash []byte
 
-	if *headSeq >= 0 || *headHash != "" {
+	if *headSeq != -1 || *headHash != "" {
 		if wantHash, err = hex.DecodeString(*headHash); err != nil || len(wantHash) != signlog.HashSize || *headSeq < 0 {
 			return errors.New("-head-seq and a 32-byte hex -head-hash must be given together")
 		}
@@ -96,14 +96,14 @@ func run(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	for _, e := range log.Entries {
-		printEntry(stdout, e)
-	}
-
 	head := log.Head()
 
 	if wantHash != nil && (head.Seq != uint64(*headSeq) || head.Hash != [signlog.HashSize]byte(wantHash)) { //nolint:gosec // headSeq is non-negative here
 		return fmt.Errorf("latest entry is %d %x, expected %d %x", head.Seq, head.Hash, *headSeq, wantHash)
+	}
+
+	for _, e := range log.Entries {
+		printEntry(stdout, e)
 	}
 
 	fmt.Fprintf(stdout, "ok: %d entries, head %d %x\n", len(log.Entries), head.Seq, head.Hash)

@@ -69,6 +69,11 @@ func (s *session) fetchLog() (*signlog.Log, error) {
 		return nil, err
 	}
 
+	// the device reports the head; bound the read by what a device formats
+	if first.HeadSeq > signlog.DefaultMaxEntries {
+		return nil, fmt.Errorf("device reports entry %d, beyond the log's capacity of %d", first.HeadSeq, signlog.DefaultMaxEntries)
+	}
+
 	// one slot beyond the head shows an entry written but not yet headed
 	slots := first.HeadSeq + 1
 	want := min(first.NumBlocks, 1+slots*signlog.RecordBlocks)
