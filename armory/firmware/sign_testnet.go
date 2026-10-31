@@ -59,6 +59,12 @@ func (s *signer) sign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// the entry is logged before the signature is made
+	if err = s.record(msg); err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
 	sig, err := s.se.SignEd25519(coldKeyID, msg)
 
 	if err != nil {

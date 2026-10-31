@@ -90,11 +90,13 @@ func main() {
 	s := &legacy
 	s.Mutex = mu
 	svc := device.New(mu, report.Logf)
+	s.record = svc.RecordRaw
 	if network != 0 && chain == "" {
 		log.Fatal("a mainnet build needs a chain label")
 	}
 
 	svc.SetNetwork(network, chain)
+	requireSigningLog(svc)
 	report.Logf("%s", buildMode)
 
 	if chain == "" {

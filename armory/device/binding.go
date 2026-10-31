@@ -119,3 +119,58 @@ func RequestBinding(req SignRequest) []byte {
 
 	return h.Sum(nil)
 }
+
+// signLogDomain separates host signatures over signing log reads from every
+// other signature the host key could make.
+const signLogDomain = "bursa-armory-signlog-read/1"
+
+// signLogResponseDomain separates device attestations over signing log
+// snapshots from every other identity-key signature.
+const signLogResponseDomain = "bursa-armory-signlog-response/1"
+
+// SignLogBinding is the digest a host key signs to authenticate a signing log
+// read: the domain string, the first block, the block count and the
+// challenge, length-prefixed as in RequestBinding.
+func SignLogBinding(req SignLogRequest) []byte {
+	h := sha256.New()
+
+	for _, field := range [][]byte{
+		[]byte(signLogDomain),
+		[]byte(strconv.FormatUint(req.From, 10)),
+		[]byte(strconv.FormatUint(uint64(req.Count), 10)),
+		req.Nonce,
+		req.Challenge,
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
+
+	return h.Sum(nil)
+}
+
+// SignLogResponseBinding is the digest the device identity key signs for a
+// signing log snapshot. The fresh client nonce makes a recorded snapshot
+// unusable in a later request. The range and response fields are included so
+// none can be substituted before the host verifies the log against the signed
+// head.
+func SignLogResponseBinding(req SignLogRequest, resp SignLogResponse) []byte {
+	h := sha256.New()
+
+	for _, field := range [][]byte{
+		[]byte(signLogResponseDomain),
+		req.Nonce,
+		[]byte(strconv.FormatUint(req.From, 10)),
+		[]byte(strconv.FormatUint(uint64(req.Count), 10)),
+		[]byte(resp.Version),
+		[]byte(strconv.FormatUint(resp.HeadSeq, 10)),
+		resp.HeadHash,
+		[]byte(strconv.FormatUint(resp.NumBlocks, 10)),
+		[]byte(strconv.FormatUint(resp.From, 10)),
+		resp.Blocks,
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
+
+	return h.Sum(nil)
+}

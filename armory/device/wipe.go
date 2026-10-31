@@ -100,7 +100,8 @@ func armoryIDs() []uint32 {
 		ids = append(ids, profile.Profile{Slot: slot}.RecordID())
 	}
 
-	return append(ids, profile.IdentityKeyID)
+	// the signing log head is chained to the identity key, so it goes with it
+	return append(ids, profile.SignLogHeadID, profile.IdentityKeyID)
 }
 
 // armoryObjects returns the armory objects present on the chip.
@@ -179,8 +180,9 @@ func (s *Service) remove(ids []uint32) ([]uint32, error) {
 	return deleted, nil
 }
 
-// wipeDevice deletes every armory object: keys, profiles, host keys and the
-// identity key. Objects outside the armory ranges are left alone.
+// wipeDevice deletes every armory object: keys, profiles, host keys, the
+// signing log head and the identity key. Objects outside the armory ranges
+// are left alone.
 func (s *Service) wipeDevice(req WipeDeviceRequest) (WipeResponse, error) {
 	if err := s.confirm(req.IdentityPublicKey); err != nil {
 		return WipeResponse{}, err

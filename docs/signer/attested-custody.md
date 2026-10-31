@@ -382,6 +382,54 @@ A device with a registered host key refuses requests without it. The file
 must not be readable by group or others, and an unreadable or malformed file
 fails startup.
 
+### Signing log
+
+The signing firmware records every signature and opcert it issues in a log on
+a microSD card in the device, and refuses to sign when it cannot. An entry
+holds the profile, role and purpose, the body hash (or the issue counter, KES
+period and KES key hash for an opcert) and the parameter summary the device
+computed, cut to 1024 bytes with a flag when it was cut. Entries are chained
+by hash and each is signed by the device identity key. The SE050 keeps the
+number and hash of the latest entry (object `0x20e50022`), and the device
+checks the card against it at boot and before every write, so an older copy of
+the card, a blank card or a truncated log is refused. The entry is written and
+the card read back before the signature leaves the device.
+
+With no card, an unreadable card, a card that does not match the head, a full
+card or a failed write, the device refuses to sign and says why in the
+response and in the startup report; inventory and health are still served. A
+card that is full stays full: the device never overwrites an entry. The log is
+opened once at startup, so a card inserted later takes effect after a restart.
+
+The signing and provisioning firmware never reset the head object, so a lost,
+failed or full card, or an unreadable head object, leaves the device refusing
+to sign. A device wipe deletes the head object with the identity key; after a
+new identity is provisioned, the signing firmware formats a zeroed card and
+starts a new log.
+
+The first start with an all-zero card and an unset head object formats the
+card for the device identity key; it holds up to 32768 entries. A new card
+usually carries a partition table, which is refused, so write zeros over the
+whole card first, for example with
+`dd if=/dev/zero of=/dev/sdX bs=4M conv=fsync`, where `/dev/sdX` is the
+card's whole device (check it with `lsblk`; `dd` overwrites whatever it is
+given). Erasing it is not enough, since some cards read erased blocks as
+`0xff`. A card formatted for another identity is refused. A card with data
+after the last entry, beyond one incomplete final record, is refused at
+startup as it is by `signlog-verify`.
+
+Read the log from the device with `armory-pool -identity HEX signlog`, which
+verifies every signature and the chain under the pinned identity key and
+prints one line per entry. The host sends a fresh nonce and refuses the read
+unless the pinned device identity attests the current head and card size for
+that nonce. The signed head anchors the subsequently verified log blocks, so a
+party on the HTTP path cannot substitute an older valid prefix. `-head-seq N
+-head-hash HEX` additionally pins the latest entry the operator expects. The
+endpoint, `POST /v1/signlog`, needs the same host key authentication as a
+signing request, and serves only the header, the entries and the slot after the
+latest one. A card removed from the device is checked with `signlog-verify
+-identity HEX -image FILE`.
+
 ### Bluetooth module
 
 The board carries a u-blox ANNA-B112 Bluetooth LE module. Left alone it runs
