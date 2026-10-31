@@ -43,6 +43,9 @@ var legacy signer
 type signer struct {
 	*sync.Mutex
 	se *se050.SE050
+	// record logs a signature before it is made; /sign in testnet builds
+	// signs only when it returns nil
+	record func(msg []byte) error
 }
 
 func (s *signer) set(se *se050.SE050) {
