@@ -168,7 +168,7 @@ backends:
   - name: "nitro"
     type: "nitro"
     address: "unix:///run/bursa/enclave.sock"   # host proxy to the enclave vsock
-    profile: "pool@mainnet"                     # optional fixed workload profile
+    profile: "pool@mainnet"                     # optional; unset for `bursa nitro enclave`
     root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
     pcrs:
       0: "<96 hex: image measurement from the built EIF>"
@@ -201,7 +201,8 @@ the enclave image, outside the signer:
 
 The production workload, host proxy, provisioning/reload flow, KMS policy, and
 PCR build and rotation procedure are documented in
-[`nitro-custody.md`](nitro-custody.md).
+[`nitro-custody.md`](nitro-custody.md). That enclave signs only `opcert`
+requests with an explicit issue counter and implements no profile.
 
 ## GCP Confidential Space
 

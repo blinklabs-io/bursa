@@ -154,8 +154,8 @@ cannot authorize a different KMS key. The enclave independently restricts
 signing to canonical pool-cold operational-certificate payloads and maintains
 its nonce and issue counter guards while the key remains loaded.
 
-The enclave accepts only the `pool` role and `opcert` purpose. It signs the
-canonical 48-byte `OCertSignable` value:
+The enclave accepts only the `pool` role and `opcert` purpose, without a
+workload profile. It signs the canonical 48-byte `OCertSignable` value:
 
 ```text
 KES verification key (32 bytes) || issue counter (uint64 big endian) ||
@@ -166,6 +166,17 @@ Requests require a fresh 32-byte nonce. The enclave rejects nonce replay,
 non-increasing counters, a wrong key hash or role, malformed payloads, and
 unsupported protocol versions. The signer verifies the returned Ed25519
 signature before constructing the operational certificate.
+
+Two signer features are refused by design:
+
+- `chain_counter` requests. The signer sends these as `opcert-next`, which
+  accepts the same chain counter again so a KES rotation can reuse an issue
+  number. The enclave's counter only increases, so it never signs a second
+  certificate at an issue number it has already used. Send `issue_counter`
+  instead.
+- A backend `profile`. The enclave signs no profile binding, so leave
+  `profile` unset on a `nitro` backend; with it set, the inventory request is
+  refused and the backend does not load.
 
 ## Reproducible EIF and PCR rotation
 
