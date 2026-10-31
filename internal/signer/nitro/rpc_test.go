@@ -26,10 +26,7 @@ import (
 func TestRPCProvisionReloadAndSign(t *testing.T) {
 	service, _, _ := newTestService(t, testEvidence(t, 6))
 	client, _ := testRPCClient(t, service)
-	provisioned, err := client.Provision(context.Background(), ProvisionRequest{
-		Version: Protocol, Region: "us-east-1", Credentials: testCredentials,
-		KMSKeyID: testKMSKey, Role: backend.KeyTypePool,
-	})
+	provisioned, err := client.Provision(context.Background(), testProvisionRequest())
 	require.NoError(t, err)
 	loaded, err := client.Reload(context.Background(), ReloadRequest{
 		Version: Protocol, Region: "us-east-1", Credentials: testCredentials,

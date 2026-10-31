@@ -19,7 +19,9 @@ package nitro
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"strconv"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 )
@@ -78,11 +80,31 @@ type Envelope struct {
 
 // ProvisionRequest asks the enclave to generate and wrap one pool cold key.
 type ProvisionRequest struct {
-	Version     string          `json:"version"`
-	Region      string          `json:"region"`
-	Credentials Credentials     `json:"credentials"`
-	KMSKeyID    string          `json:"kms_key_id"`
-	Role        backend.KeyType `json:"role"`
+	Version       string          `json:"version"`
+	Region        string          `json:"region"`
+	Credentials   Credentials     `json:"credentials"`
+	KMSKeyID      string          `json:"kms_key_id"`
+	Role          backend.KeyType `json:"role"`
+	Authorization []byte          `json:"authorization"`
+}
+
+const provisionAuthorizationDomain = "bursa-nitro-provision/1"
+
+// ProvisionAuthorizationBinding is the digest an offline provisioning
+// authority signs to permit one exact KMS key, account, region, and key role.
+func ProvisionAuthorizationBinding(req ProvisionRequest) []byte {
+	h := sha256.New()
+	for _, field := range [][]byte{
+		[]byte(provisionAuthorizationDomain),
+		[]byte(req.Version),
+		[]byte(req.Region),
+		[]byte(req.KMSKeyID),
+		[]byte(req.Role),
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
+	return h.Sum(nil)
 }
 
 // ProvisionResponse returns only wrapped material and public metadata.

@@ -14,6 +14,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -26,6 +27,8 @@ import (
 const testKMSKey = "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000001"
 
 var testCredentials = Credentials{AccessKeyID: "ASIATEST", SecretAccessKey: "secret", SessionToken: "session"}
+
+var testProvisionAuthority = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x42}, ed25519.SeedSize))
 
 func testEvidence(t *testing.T, measurement byte) []byte {
 	t.Helper()
@@ -91,20 +94,48 @@ func newTestService(t *testing.T, evidence []byte) (*Service, *fakeKMS, *fakeRec
 		require.Equal(t, "us-east-1", region)
 		require.Equal(t, testCredentials, credentials)
 		return kms, nil
-	})
+	}, testProvisionAuthority.Public().(ed25519.PublicKey))
 	require.NoError(t, err)
 	return service, kms, recipient
 }
 
 func provisionTestKey(t *testing.T, service *Service) Envelope {
 	t.Helper()
-	response, err := service.Provision(context.Background(), &ProvisionRequest{
+	request := ProvisionRequest{
 		Version: Protocol, Region: "us-east-1", Credentials: testCredentials,
 		KMSKeyID: testKMSKey, Role: backend.KeyTypePool,
-	})
+	}
+	request.Authorization = ed25519.Sign(testProvisionAuthority, ProvisionAuthorizationBinding(request))
+	response, err := service.Provision(context.Background(), &request)
 	require.NoError(t, err)
 	require.Equal(t, Protocol, response.Version)
 	return response.Envelope
+}
+
+func TestProvisionAuthorizationBindingVector(t *testing.T) {
+	request := testProvisionRequest()
+	const want = "29a530cedf100bbf01e3a095b156337059334b08c00274ac7ef93fb7eea87922"
+	if got := hex.EncodeToString(ProvisionAuthorizationBinding(request)); got != want {
+		t.Fatalf("ProvisionAuthorizationBinding() = %s, want %s", got, want)
+	}
+
+	for name, mutate := range map[string]func(*ProvisionRequest){
+		"protocol": func(r *ProvisionRequest) { r.Version = "other/1" },
+		"region":   func(r *ProvisionRequest) { r.Region = "us-west-2" },
+		"account": func(r *ProvisionRequest) {
+			r.KMSKeyID = "arn:aws:kms:us-east-1:999999999999:key/00000000-0000-0000-0000-000000000001"
+		},
+		"key": func(r *ProvisionRequest) {
+			r.KMSKeyID = "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000002"
+		},
+		"role": func(r *ProvisionRequest) { r.Role = backend.KeyTypePayment },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := request
+			mutate(&changed)
+			require.NotEqual(t, want, hex.EncodeToString(ProvisionAuthorizationBinding(changed)))
+		})
+	}
 }
 
 func TestProvisionStoresOnlyWrappedMaterial(t *testing.T) {
@@ -141,12 +172,34 @@ func TestProvisionRejectsKMSAliasBeforeKMS(t *testing.T) {
 	require.Zero(t, kms.calls)
 }
 
+func TestProvisionRejectsUnapprovedRequestBeforeKMS(t *testing.T) {
+	for name, mutate := range map[string]func(*ProvisionRequest){
+		"KMS account and key": func(r *ProvisionRequest) {
+			r.KMSKeyID = "arn:aws:kms:us-east-1:999999999999:key/00000000-0000-0000-0000-000000000002"
+		},
+		"region": func(r *ProvisionRequest) {
+			r.Region = "us-west-2"
+			r.KMSKeyID = "arn:aws:kms:us-west-2:123456789012:key/00000000-0000-0000-0000-000000000001"
+		},
+		"missing authorization": func(r *ProvisionRequest) { r.Authorization = nil },
+		"authorization":         func(r *ProvisionRequest) { r.Authorization[0] ^= 0xff },
+	} {
+		t.Run(name, func(t *testing.T) {
+			service, kms, _ := newTestService(t, testEvidence(t, 1))
+			request := testProvisionRequest()
+			request.Authorization = bytes.Clone(request.Authorization)
+			mutate(&request)
+			_, err := service.Provision(context.Background(), &request)
+			require.ErrorIs(t, err, ErrProtocol)
+			require.Zero(t, kms.calls)
+		})
+	}
+}
+
 func TestProvisionRejectsDebugAttestationBeforeKMS(t *testing.T) {
 	service, kms, _ := newTestService(t, testEvidence(t, 0))
-	_, err := service.Provision(context.Background(), &ProvisionRequest{
-		Version: Protocol, Region: "us-east-1", Credentials: testCredentials,
-		KMSKeyID: testKMSKey, Role: backend.KeyTypePool,
-	})
+	request := testProvisionRequest()
+	_, err := service.Provision(context.Background(), &request)
 	require.ErrorIs(t, err, ErrMeasurement)
 	require.Zero(t, kms.calls)
 }
@@ -155,10 +208,8 @@ func TestProvisionFailsClosedOnKMSMeasurementDenial(t *testing.T) {
 	evidence := testEvidence(t, 1)
 	service, kms, _ := newTestService(t, evidence)
 	kms.expectedEvidence = testEvidence(t, 2)
-	_, err := service.Provision(context.Background(), &ProvisionRequest{
-		Version: Protocol, Region: "us-east-1", Credentials: testCredentials,
-		KMSKeyID: testKMSKey, Role: backend.KeyTypePool,
-	})
+	request := testProvisionRequest()
+	_, err := service.Provision(context.Background(), &request)
 	require.ErrorContains(t, err, "measurement mismatch")
 	_, err = service.Inventory(context.Background(), &InventoryRequest{Version: Protocol, Nonce: make([]byte, 32)})
 	require.ErrorIs(t, err, ErrNotLoaded)

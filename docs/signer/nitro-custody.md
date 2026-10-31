@@ -15,8 +15,8 @@ operation remain in the enclave.
 | Component | Responsibilities | Secret material available |
 |-----------|------------------|---------------------------|
 | `bursa signer` | caller authentication, policy, opcert counter watermark, response signature verification | none |
-| `bursa nitro proxy` on the parent instance | authenticate to enclave gRPC with a dedicated client certificate, read/write one existing Secrets Manager secret, fetch temporary role credentials, bridge the signer socket to enclave gRPC, forward opaque KMS TLS bytes to the configured regional endpoint | proxy client key, temporary AWS credentials and wrapped envelope |
-| `bursa nitro enclave` in the EIF | require a client certificate from the proxy CA, create recipient attestation, call KMS, unwrap the data key, decrypt the cold-key seed, attest inventory, validate and sign opcert requests | RPC server key, data key and cold key in enclave memory |
+| `bursa nitro proxy` on the parent instance | authenticate to enclave gRPC with a dedicated client certificate, read/write one existing Secrets Manager secret, fetch temporary role credentials, relay an offline provisioning authorization, bridge the signer socket to enclave gRPC, forward opaque KMS TLS bytes to the configured regional endpoint | proxy client key, temporary AWS credentials, provisioning signature and wrapped envelope |
+| `bursa nitro enclave` in the EIF | require a client certificate from the proxy CA, verify provisioning against the measured image's authority key, create recipient attestation, call KMS, unwrap the data key, decrypt the cold-key seed, attest inventory, validate and sign opcert requests | RPC server key, provisioning authority public key, data key and cold key in enclave memory |
 
 The host proxy has no operation that returns a plaintext key. The envelope in
 Secrets Manager contains the pool role, public key, KMS key ARN, KMS
@@ -37,10 +37,13 @@ backends:
       0: "<96 lowercase hex characters from the production EIF>"
 ```
 
-Create a dedicated CA for the proxy identity. Put the CA certificate and the
-enclave server certificate and owner-only key in the EIF. Install the proxy
-client certificate, its owner-only key, and the enclave server CA on the parent
-for the dedicated proxy service user.
+Create a dedicated CA for the proxy identity. Create an offline Ed25519
+provisioning authority and put only its 32-byte lowercase-hex public key in the
+EIF. The authority private key must remain outside both the EIF and parent
+instance. Put the CA certificate and the enclave server certificate and
+owner-only key in the EIF. Install the proxy client certificate, its owner-only
+key, and the enclave server CA on the parent for the dedicated proxy service
+user.
 
 Run `bursa nitro enclave` as the EIF entry point:
 
@@ -48,7 +51,8 @@ Run `bursa nitro enclave` as the EIF entry point:
 bursa nitro enclave \
   --server-cert-file /etc/bursa/nitro/server.pem \
   --server-key-file /etc/bursa/nitro/server-key.pem \
-  --client-ca-file /etc/bursa/nitro/proxy-ca.pem
+  --client-ca-file /etc/bursa/nitro/proxy-ca.pem \
+  --provision-authority-file /etc/bursa/nitro/provision-authority.hex
 ```
 
 On the parent instance run:
@@ -70,11 +74,15 @@ restart; a restarted enclave holds no key, and the proxy returns errors until
 its own restart repeats that recovery path.
 
 Provisioning is explicit and writes only an existing empty secret. The proxy
-refuses to replace an existing wrapped pool-cold key:
+refuses to replace an existing wrapped pool-cold key. Before provisioning,
+the offline authority must sign `ProvisionAuthorizationBinding` for the exact
+protocol version, region, KMS key ARN, and `pool` role. Store the 64-byte
+signature as lowercase hex on the parent:
 
 ```text
 bursa nitro proxy --provision --enclave-cid <cid> --region <region> \
   --kms-key-id <kms-key-arn> --secret-id <existing-empty-secret-id> \
+  --provision-authorization-file /etc/bursa/nitro/provision-authorization.hex \
   --enclave-ca-file /etc/bursa/nitro/enclave-ca.pem \
   --enclave-server-name nitro-enclave.internal \
   --client-cert-file /etc/bursa/nitro/proxy.pem \
@@ -83,6 +91,15 @@ bursa nitro proxy --provision --enclave-cid <cid> --region <region> \
 
 Create the secret, KMS key, role, policies, EC2 instance, and enclave outside
 Bursa. Bursa does not create cloud or infrastructure resources.
+
+The signed binding is SHA-256 over these byte strings in order:
+`bursa-nitro-provision/1`, `bursa-nitro-custody/1`, the AWS region, the full
+KMS key ARN, and `pool`. Each field is preceded by its decimal byte length and
+a colon. The account is part of the signed ARN. The enclave verifies the
+Ed25519 signature before creating a KMS client, so changing the key, account,
+region, role, or protocol fails before any KMS operation. A deployment can use
+the same measured authority public key for multiple explicitly signed KMS keys
+without making the host or its AWS credentials an authorization source.
 
 ## KMS recipient policy
 
@@ -129,12 +146,13 @@ trailing values. The signer-facing protocol remains
 `bursa-attested-signer/1`, so the existing `KeyRef` path retains caller ACL,
 policy, watermark, attestation, and returned-signature checks.
 
-The host OS and proxy client key are the RPC authorization boundary. A process
-without that key cannot invoke provisioning, reload, inventory, or signing.
-Host root or proxy-key compromise permits RPC calls, but does not expose the
-enclave-held cold key. The enclave independently restricts signing to canonical
-pool-cold operational-certificate payloads and maintains its nonce and issue
-counter guards while the key remains loaded.
+The host OS and proxy client key are the RPC access boundary. A process without
+that key cannot invoke provisioning, reload, inventory, or signing. Provisioning
+also requires a signature from the authority whose public key is part of the
+measured EIF. Host root, proxy-key, or AWS credential compromise therefore
+cannot authorize a different KMS key. The enclave independently restricts
+signing to canonical pool-cold operational-certificate payloads and maintains
+its nonce and issue counter guards while the key remains loaded.
 
 The enclave accepts only the `pool` role and `opcert` purpose. It signs the
 canonical 48-byte `OCertSignable` value:
@@ -167,6 +185,7 @@ deployment configuration, or the AWS Nitro root certificate. Record together:
 - source commit and clean-tree status;
 - Go toolchain version and module checksum file;
 - base image digest and EIF build inputs;
+- provisioning authority public key;
 - binary SHA-256;
 - EIF SHA-384 and PCR0, PCR1, PCR2, and PCR8 values emitted by
   `nitro-cli build-enclave`.

@@ -11,6 +11,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -18,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,11 +44,19 @@ func nitroCommand() *cobra.Command {
 
 func nitroEnclaveCommand() *cobra.Command {
 	var signerPort, kmsProxyPort uint32
-	var serverCertFile, serverKeyFile, clientCAFile string
+	var serverCertFile, serverKeyFile, clientCAFile, provisionAuthorityFile string
 	command := &cobra.Command{
 		Use:   "enclave",
 		Short: "Run the measured pool-cold signing workload",
 		RunE: func(command *cobra.Command, _ []string) error {
+			provisionAuthority, err := readFixedHexFile(
+				provisionAuthorityFile,
+				"provisioning authority public key",
+				ed25519.PublicKeySize,
+			)
+			if err != nil {
+				return err
+			}
 			serverOptions, err := nitro.RPCServerOptions(nitro.RPCServerTLSConfig{
 				CertificateFile: serverCertFile,
 				KeyFile:         serverKeyFile,
@@ -60,7 +71,11 @@ func nitroEnclaveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			service, err := nitro.NewService(recipient, nitro.NewAWSKMSFactory(nitro.NewKMSProxyHTTPClient(kmsProxyPort)))
+			service, err := nitro.NewService(
+				recipient,
+				nitro.NewAWSKMSFactory(nitro.NewKMSProxyHTTPClient(kmsProxyPort)),
+				ed25519.PublicKey(provisionAuthority),
+			)
 			if err != nil {
 				return err
 			}
@@ -87,6 +102,8 @@ func nitroEnclaveCommand() *cobra.Command {
 	command.Flags().StringVar(&serverCertFile, "server-cert-file", "", "enclave RPC server certificate PEM")
 	command.Flags().StringVar(&serverKeyFile, "server-key-file", "", "owner-only enclave RPC server key PEM")
 	command.Flags().StringVar(&clientCAFile, "client-ca-file", "", "CA PEM authorized to issue proxy client certificates")
+	command.Flags().StringVar(&provisionAuthorityFile, "provision-authority-file", "", "hex Ed25519 public key authorized to approve provisioning")
+	_ = command.MarkFlagRequired("provision-authority-file")
 	return command
 }
 
@@ -96,6 +113,7 @@ func nitroProxyCommand() *cobra.Command {
 		region, kmsKeyID, secretID           string
 		enclaveCAFile, clientCertFile        string
 		clientKeyFile, enclaveServerName     string
+		provisionAuthorizationFile           string
 		enclaveCID, signerPort, kmsProxyPort uint32
 		provision                            bool
 	)
@@ -105,8 +123,21 @@ func nitroProxyCommand() *cobra.Command {
 		RunE: func(command *cobra.Command, _ []string) error {
 			ctx, stop := signal.NotifyContext(command.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
-			if !filepath.IsAbs(socket) || region == "" || secretID == "" || enclaveCID == 0 || (provision && kmsKeyID == "") {
-				return errors.New("absolute --socket, --region, --secret-id, and provisioning --kms-key-id are required")
+			if !filepath.IsAbs(socket) || region == "" || secretID == "" || enclaveCID == 0 ||
+				(provision && (kmsKeyID == "" || provisionAuthorizationFile == "")) {
+				return errors.New("absolute --socket, --region, --secret-id, and provisioning --kms-key-id and --provision-authorization-file are required")
+			}
+			var provisionAuthorization []byte
+			if provision {
+				authorization, err := readFixedHexFile(
+					provisionAuthorizationFile,
+					"provisioning authorization",
+					ed25519.SignatureSize,
+				)
+				if err != nil {
+					return err
+				}
+				provisionAuthorization = authorization
 			}
 			dialOptions, err := nitro.RPCDialOptions(nitro.RPCClientTLSConfig{
 				CertificateFile: clientCertFile,
@@ -161,6 +192,7 @@ func nitroProxyCommand() *cobra.Command {
 				response, err := client.Provision(ctx, nitro.ProvisionRequest{
 					Version: nitro.Protocol, Region: region, Credentials: credentials,
 					KMSKeyID: kmsKeyID, Role: backend.KeyTypePool,
+					Authorization: provisionAuthorization,
 				})
 				if err != nil {
 					return fmt.Errorf("provision enclave key: %w", err)
@@ -227,6 +259,7 @@ func nitroProxyCommand() *cobra.Command {
 	command.Flags().StringVar(&region, "region", "", "AWS region")
 	command.Flags().StringVar(&secretID, "secret-id", "", "existing Secrets Manager secret containing the wrapped envelope")
 	command.Flags().StringVar(&kmsKeyID, "kms-key-id", "", "KMS key ARN (not an alias) used only with --provision")
+	command.Flags().StringVar(&provisionAuthorizationFile, "provision-authorization-file", "", "hex Ed25519 authorization for the exact provisioning request")
 	command.Flags().Uint32Var(&enclaveCID, "enclave-cid", 0, "running enclave CID")
 	command.Flags().Uint32Var(&signerPort, "signer-port", nitro.DefaultSignerPort, "enclave gRPC vsock port")
 	command.Flags().Uint32Var(&kmsProxyPort, "kms-proxy-port", nitro.DefaultKMSProxyPort, "host KMS proxy vsock port")
@@ -237,6 +270,21 @@ func nitroProxyCommand() *cobra.Command {
 	command.Flags().BoolVar(&provision, "provision", false, "generate a new key in an existing empty secret")
 	_ = command.MarkFlagRequired("enclave-cid")
 	return command
+}
+
+func readFixedHexFile(path, label string, size int) ([]byte, error) {
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", label, err)
+	}
+	raw, err := hex.DecodeString(strings.TrimSpace(string(encoded)))
+	if err != nil {
+		return nil, fmt.Errorf("decode %s: %w", label, err)
+	}
+	if len(raw) != size {
+		return nil, fmt.Errorf("%s must be %d bytes, got %d", label, size, len(raw))
+	}
+	return raw, nil
 }
 
 func listenPrivateUnix(path string) (net.Listener, error) {

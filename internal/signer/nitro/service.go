@@ -31,24 +31,30 @@ const (
 // Service owns the active plaintext key and performs every cryptographic
 // operation. It is intended to run only in the measured enclave image.
 type Service struct {
-	initMu     sync.Mutex
-	mu         sync.Mutex
-	recipient  Recipient
-	kms        KMSFactory
-	key        ed25519.PrivateKey
-	pub        ed25519.PublicKey
-	seen       map[[requestNonceSize]byte]struct{}
-	counter    uint64
-	hasCounter bool
+	initMu             sync.Mutex
+	mu                 sync.Mutex
+	recipient          Recipient
+	kms                KMSFactory
+	provisionAuthority ed25519.PublicKey
+	key                ed25519.PrivateKey
+	pub                ed25519.PublicKey
+	seen               map[[requestNonceSize]byte]struct{}
+	counter            uint64
+	hasCounter         bool
 }
 
-// NewService constructs an enclave service from the NSM recipient and an
-// enclave-side KMS client factory.
-func NewService(recipient Recipient, kms KMSFactory) (*Service, error) {
-	if recipient == nil || kms == nil {
-		return nil, errors.New("nitro recipient and KMS factory are required")
+// NewService constructs an enclave service from the NSM recipient, an
+// enclave-side KMS client factory, and a measured provisioning authority.
+func NewService(recipient Recipient, kms KMSFactory, provisionAuthority ed25519.PublicKey) (*Service, error) {
+	if recipient == nil || kms == nil || len(provisionAuthority) != ed25519.PublicKeySize ||
+		bytes.Equal(provisionAuthority, make([]byte, ed25519.PublicKeySize)) {
+		return nil, errors.New("nitro recipient, KMS factory, and provisioning authority are required")
 	}
-	return &Service{recipient: recipient, kms: kms, seen: make(map[[requestNonceSize]byte]struct{})}, nil
+	return &Service{
+		recipient: recipient, kms: kms,
+		provisionAuthority: bytes.Clone(provisionAuthority),
+		seen:               make(map[[requestNonceSize]byte]struct{}),
+	}, nil
 }
 
 func validateKMSRequest(region, keyID string, credentials Credentials) error {
@@ -86,6 +92,10 @@ func (s *Service) Provision(ctx context.Context, req *ProvisionRequest) (*Provis
 	}
 	if err := validateKMSRequest(req.Region, req.KMSKeyID, req.Credentials); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrProtocol, err)
+	}
+	if len(req.Authorization) != ed25519.SignatureSize ||
+		!ed25519.Verify(s.provisionAuthority, ProvisionAuthorizationBinding(*req), req.Authorization) {
+		return nil, fmt.Errorf("%w: provisioning authorization invalid", ErrProtocol)
 	}
 	kms, err := s.kms(req.Region, req.Credentials)
 	if err != nil {

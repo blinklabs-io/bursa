@@ -227,10 +227,12 @@ func TestRPCRejectsUntrustedClientCertificate(t *testing.T) {
 }
 
 func testProvisionRequest() ProvisionRequest {
-	return ProvisionRequest{
+	request := ProvisionRequest{
 		Version: Protocol, Region: "us-east-1", Credentials: testCredentials,
 		KMSKeyID: testKMSKey, Role: backend.KeyTypePool,
 	}
+	request.Authorization = ed25519.Sign(testProvisionAuthority, ProvisionAuthorizationBinding(request))
+	return request
 }
 
 func testSignRequest(publicKey ed25519.PublicKey) backend.AttestedRequest {
