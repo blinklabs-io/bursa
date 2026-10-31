@@ -50,7 +50,7 @@ func (k *summaryKey) Sign(context.Context, []byte) ([]byte, error) {
 	return ed25519.Sign(k.priv, make([]byte, 32)), nil
 }
 
-func (k *summaryKey) SignTxBodySummary(ctx context.Context, _ []byte, _ uint) ([]byte, string, error) {
+func (k *summaryKey) SignTxBody(ctx context.Context, _ []byte, _ uint) ([]byte, string, error) {
 	sig, err := k.Sign(ctx, nil)
 	return sig, k.summary, err
 }

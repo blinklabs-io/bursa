@@ -69,7 +69,7 @@ func newArmoryProtocolDevice(t *testing.T, v1Only bool) (config.SignerBackendCon
 				if req.Version == backend.AttestedProtocolSummary {
 					resp.Summary = "custody summary"
 				}
-				resp.BindingSignature = ed25519.Sign(poolPriv, backend.AttestedSummaryResponseBinding(req, resp.Signature, resp.Summary))
+				resp.BindingSignature = ed25519.Sign(poolPriv, backend.AttestedResponseBinding(req, resp.Signature, resp.Summary))
 			default:
 				resp.Error = "unsupported protocol version"
 			}
@@ -124,7 +124,7 @@ func TestBuildBackendsArmoryProtocol(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, summary, err := backend.SignTxSummaryFor(t.Context(), ref, []byte{0xa0}, 6, nil)
+			_, summary, err := backend.SignTxFor(t.Context(), ref, []byte{0xa0}, 6, nil)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("sign error = %v, want error %v", err, tc.wantErr)
 			}

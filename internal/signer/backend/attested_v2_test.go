@@ -40,16 +40,16 @@ func TestAttestedSummaryBindingVector(t *testing.T) {
 	}
 	sig := bytes.Repeat([]byte{4}, 64)
 	const want = "b60325204c042b454e43758b76753047c7a7cc94329a4dfe6c0bc671b34d4c45"
-	if got := hex.EncodeToString(AttestedSummaryResponseBinding(req, sig, "pledge 1")); got != want {
+	if got := hex.EncodeToString(AttestedResponseBinding(req, sig, "pledge 1")); got != want {
 		t.Fatalf("summary binding = %s, want %s", got, want)
 	}
 	const wantEmpty = "3c3c52985f23d4b5f9be422dac4cb8a6ebf96062e8bfb8e82324833b05fb8599"
-	if got := hex.EncodeToString(AttestedSummaryResponseBinding(req, sig, "")); got != wantEmpty {
+	if got := hex.EncodeToString(AttestedResponseBinding(req, sig, "")); got != wantEmpty {
 		t.Fatalf("empty summary binding = %s, want %s", got, wantEmpty)
 	}
 	req.Version = AttestedProtocol
 	const wantV1 = "f32cdc04026da1b47e82bc0af6c5b39b2aa53fe265bc595e7d0ff5fbd057e70b"
-	if got := hex.EncodeToString(AttestedResponseBinding(req, sig)); got != wantV1 {
+	if got := hex.EncodeToString(AttestedResponseBinding(req, sig, "")); got != wantV1 {
 		t.Fatalf("version 1 binding = %s, want %s", got, wantV1)
 	}
 }
@@ -126,7 +126,7 @@ func (d *v2Device) answer(req AttestedRequest) AttestedResponse {
 			summary = testDeviceSummary
 		}
 		resp.Summary = summary
-		resp.BindingSignature = ed25519.Sign(d.pool, AttestedSummaryResponseBinding(req, resp.Signature, summary))
+		resp.BindingSignature = ed25519.Sign(d.pool, AttestedResponseBinding(req, resp.Signature, summary))
 	}
 	switch {
 	case d.behavior == "echoV2":
@@ -153,7 +153,7 @@ func (d *v2Device) answer(req AttestedRequest) AttestedResponse {
 
 // newV2Backend loads an attested backend over a host-key HTTP enclave served
 // by a v2Device with the given behavior.
-func newV2Backend(t *testing.T, behavior string, mode AttestedProtocolMode) (*v2Device, *AttestedBackend, TxBodySummarySigner) {
+func newV2Backend(t *testing.T, behavior string, mode AttestedProtocolMode) (*v2Device, *AttestedBackend, TxBodySigner) {
 	t.Helper()
 	_, identity, _ := ed25519.GenerateKey(nil)
 	_, pool, _ := ed25519.GenerateKey(nil)
@@ -177,9 +177,9 @@ func newV2Backend(t *testing.T, behavior string, mode AttestedProtocolMode) (*v2
 	if err != nil {
 		t.Fatal(err)
 	}
-	signer, ok := ref.(TxBodySummarySigner)
+	signer, ok := ref.(TxBodySigner)
 	if !ok {
-		t.Fatal("attested key does not implement TxBodySummarySigner")
+		t.Fatal("attested key does not implement TxBodySigner")
 	}
 	return dev, b, signer
 }
@@ -200,7 +200,7 @@ func TestAttestedV2ReturnsBoundSummary(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dev, _, signer := newV2Backend(t, "supported", mode)
-			sig, summary, err := signer.SignTxBodySummary(t.Context(), []byte{0xa0}, 6)
+			sig, summary, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6)
 			if err != nil {
 				t.Fatalf("sign: %v", err)
 			}
@@ -221,7 +221,7 @@ func TestAttestedV2ReturnsBoundSummary(t *testing.T) {
 func TestAttestedVersion1ModeSendsVersion1(t *testing.T) {
 	t.Parallel()
 	dev, _, signer := newV2Backend(t, "supported", AttestedVersion1)
-	_, summary, err := signer.SignTxBodySummary(t.Context(), []byte{0xa0}, 6)
+	_, summary, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestAttestedVersion1ModeSendsVersion1(t *testing.T) {
 func TestAttestedNegotiateFallsBackToVersion1(t *testing.T) {
 	t.Parallel()
 	dev, b, signer := newV2Backend(t, "v1only", AttestedNegotiate)
-	sig, summary, err := signer.SignTxBodySummary(t.Context(), []byte{0xa0}, 6)
+	sig, summary, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6)
 	if err != nil {
 		t.Fatalf("sign against version 1 firmware: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestAttestedNegotiateFallsBackToVersion1(t *testing.T) {
 	}
 
 	// the negotiated version is cached: the next request skips the failed probe
-	if _, _, err := signer.SignTxBodySummary(t.Context(), []byte{0xa0}, 6); err != nil {
+	if _, _, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6); err != nil {
 		t.Fatalf("second sign: %v", err)
 	}
 	if versions, _, _ := dev.seen(); !sameStrings(versions, []string{AttestedProtocolSummary, AttestedProtocol, AttestedProtocol}) {
@@ -270,7 +270,7 @@ func TestAttestedNegotiateFallsBackToVersion1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := ref.(TxBodySummarySigner).SignTxBodySummary(t.Context(), []byte{0xa0}, 6); err != nil {
+	if _, _, err := ref.(TxBodySigner).SignTxBody(t.Context(), []byte{0xa0}, 6); err != nil {
 		t.Fatalf("sign after reload: %v", err)
 	}
 	versions, _, _ = dev.seen()
@@ -282,7 +282,7 @@ func TestAttestedNegotiateFallsBackToVersion1(t *testing.T) {
 func TestAttestedRequireVersion2RefusesFallback(t *testing.T) {
 	t.Parallel()
 	dev, _, signer := newV2Backend(t, "v1only", AttestedRequireVersion2)
-	_, _, err := signer.SignTxBodySummary(t.Context(), []byte{0xa0}, 6)
+	_, _, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6)
 	if err == nil {
 		t.Fatal("signed against version 1 firmware with version 2 required")
 	}
@@ -307,7 +307,7 @@ func TestAttestedRefusesReplyAtAnotherVersion(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dev, _, signer := newV2Backend(t, tc.behavior, tc.mode)
-			_, _, err := signer.SignTxBodySummary(t.Context(), []byte{0xa0}, 6)
+			_, _, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6)
 			if err == nil || !errors.Is(err, ErrAttestedProtocol) {
 				t.Fatalf("error = %v, want ErrAttestedProtocol", err)
 			}
@@ -324,7 +324,7 @@ func TestAttestedNegotiateFallsBackOnlyOnUnsupportedVersion(t *testing.T) {
 		t.Run(behavior, func(t *testing.T) {
 			t.Parallel()
 			dev, _, signer := newV2Backend(t, behavior, AttestedNegotiate)
-			if _, _, err := signer.SignTxBodySummary(t.Context(), []byte{0xa0}, 6); err == nil {
+			if _, _, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6); err == nil {
 				t.Fatal("signed")
 			}
 			if versions, _, _ := dev.seen(); len(versions) != 1 {
@@ -337,7 +337,7 @@ func TestAttestedNegotiateFallsBackOnlyOnUnsupportedVersion(t *testing.T) {
 func TestAttestedRefusesTamperedSummary(t *testing.T) {
 	t.Parallel()
 	_, _, signer := newV2Backend(t, "tampered", AttestedNegotiate)
-	_, summary, err := signer.SignTxBodySummary(t.Context(), []byte{0xa0}, 6)
+	_, summary, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6)
 	if !errors.Is(err, ErrInvalidSignature) {
 		t.Fatalf("error = %v, want ErrInvalidSignature", err)
 	}

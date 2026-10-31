@@ -35,7 +35,7 @@ type summaryKey struct {
 	summary string
 }
 
-func (k *summaryKey) SignTxBodySummary(context.Context, []byte, uint) ([]byte, string, error) {
+func (k *summaryKey) SignTxBody(context.Context, []byte, uint) ([]byte, string, error) {
 	// fakeCardano reports an all-zero tx id, which the coordinator verifies
 	sig, err := k.Sign(context.Background(), make([]byte, 32))
 	return sig, k.summary, err

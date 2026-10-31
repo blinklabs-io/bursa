@@ -323,7 +323,7 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 			}
 		}
 		signStart := time.Now()
-		sig, summary, err := backend.SignTxSummaryFor(ctx, ref, txBody, txType, txid)
+		sig, summary, err := backend.SignTxFor(ctx, ref, txBody, txType, txid)
 		// Attempt latency, including failures — not successful-sign latency.
 		c.deps.Metrics.observeSignDuration(ref.Backend(), time.Since(signStart).Seconds())
 		if err != nil {

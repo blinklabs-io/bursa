@@ -169,15 +169,10 @@ type PurposeSigner interface {
 }
 
 // TxBodySigner is implemented by key references whose custody boundary must
-// inspect an encoded transaction body before signing its hash.
+// inspect an encoded transaction body before signing its hash. It also returns
+// the boundary's summary of the body, empty when the boundary gave none.
 type TxBodySigner interface {
-	SignTxBody(ctx context.Context, body []byte, era uint) ([]byte, error)
-}
-
-// TxBodySummarySigner is a TxBodySigner that also returns the custody
-// boundary's summary of the body it signed, empty when the boundary gave none.
-type TxBodySummarySigner interface {
-	SignTxBodySummary(ctx context.Context, body []byte, era uint) (sig []byte, summary string, err error)
+	SignTxBody(ctx context.Context, body []byte, era uint) (sig []byte, summary string, err error)
 }
 
 // OpCertNextSigner is implemented by key references whose custody boundary
@@ -195,22 +190,15 @@ func SignFor(ctx context.Context, ref KeyRef, purpose Purpose, payload []byte) (
 	return ref.Sign(ctx, payload)
 }
 
-// SignTxFor sends the encoded body and resolved era to body-aware custody.
-// Other backends retain the established contract of signing txHash directly.
-func SignTxFor(ctx context.Context, ref KeyRef, body []byte, era uint, txHash []byte) ([]byte, error) {
+// SignTxFor sends the encoded body and resolved era to body-aware custody and
+// returns the custody boundary's summary of the body with the signature.
+// Other backends retain the established contract of signing txHash directly,
+// with no summary.
+func SignTxFor(ctx context.Context, ref KeyRef, body []byte, era uint, txHash []byte) (sig []byte, summary string, err error) {
 	if signer, ok := ref.(TxBodySigner); ok {
 		return signer.SignTxBody(ctx, body, era)
 	}
-	return SignFor(ctx, ref, PurposeTxHash, txHash)
-}
-
-// SignTxSummaryFor is SignTxFor that also returns the custody boundary's
-// summary of the signed body, when the key offers one.
-func SignTxSummaryFor(ctx context.Context, ref KeyRef, body []byte, era uint, txHash []byte) ([]byte, string, error) {
-	if signer, ok := ref.(TxBodySummarySigner); ok {
-		return signer.SignTxBodySummary(ctx, body, era)
-	}
-	sig, err := SignTxFor(ctx, ref, body, era, txHash)
+	sig, err = SignFor(ctx, ref, PurposeTxHash, txHash)
 	return sig, "", err
 }
 
@@ -267,19 +255,13 @@ type AttestedResponse struct {
 // AttestedResponseBinding is the digest a profiled workload signs alongside
 // the Cardano signature. It binds the response to the complete request so an
 // untrusted proxy cannot select another profile while reusing a valid Cardano
-// signature from the same key. It is the binding with no summary; for a
-// AttestedProtocolSummary request the summary is one more field, present even
-// when empty.
-func AttestedResponseBinding(req AttestedRequest, signature []byte) []byte {
-	return AttestedSummaryResponseBinding(req, signature, "")
-}
-
-// AttestedSummaryResponseBinding is AttestedResponseBinding with the reply's
-// summary. It mirrors armory/device.ResponseBinding, which the root module
-// cannot import; TestAttestedSummaryBindingVector pins both to one digest.
-// The summary field is appended for an AttestedProtocolSummary request or when
-// a summary is present, so a summary on a version-1 reply never verifies.
-func AttestedSummaryResponseBinding(req AttestedRequest, signature []byte, summary string) []byte {
+// signature from the same key. For an AttestedProtocolSummary request the
+// reply's summary is one more field, present even when empty; a non-empty
+// summary is appended at any version, so one added to a reply after signing
+// does not verify. It mirrors armory/device.ResponseBinding, which the root
+// module cannot import; TestAttestedSummaryBindingVector pins both to one
+// digest.
+func AttestedResponseBinding(req AttestedRequest, signature []byte, summary string) []byte {
 	h := sha256.New()
 	era := []byte(nil)
 	if req.Era != nil {
@@ -406,14 +388,9 @@ func (k *attestedKey) SignPurpose(ctx context.Context, purpose Purpose, payload 
 
 // SignTxBody sends the original encoded body across the custody boundary and
 // verifies that custody returned the Cardano witness signature for its hash.
-func (k *attestedKey) SignTxBody(ctx context.Context, body []byte, era uint) ([]byte, error) {
-	sig, _, err := k.SignTxBodySummary(ctx, body, era)
-	return sig, err
-}
-
-// SignTxBodySummary is SignTxBody that also returns the summary the enclave
-// bound to its reply. The summary is empty unless version 2 was negotiated.
-func (k *attestedKey) SignTxBodySummary(ctx context.Context, body []byte, era uint) ([]byte, string, error) {
+// It also returns the summary the enclave bound to its reply, empty unless
+// version 2 was negotiated.
+func (k *attestedKey) SignTxBody(ctx context.Context, body []byte, era uint) ([]byte, string, error) {
 	hash := blake2b.Sum256(body)
 	resp, err := k.exchange(ctx, PurposeTxBody, body, &era, func(resp AttestedResponse) error {
 		return k.verifyCardano(hash[:], resp.Signature)
@@ -561,7 +538,7 @@ func (k *attestedKey) exchangeAt(ctx context.Context, version string, purpose Pu
 		if len(resp.BindingSignature) != ed25519.SignatureSize {
 			return AttestedResponse{}, false, fmt.Errorf("%w: binding signature must be %d bytes, got %d", ErrAttestedProtocol, ed25519.SignatureSize, len(resp.BindingSignature))
 		}
-		if !ed25519.Verify(k.pub, AttestedSummaryResponseBinding(req, resp.Signature, resp.Summary), resp.BindingSignature) {
+		if !ed25519.Verify(k.pub, AttestedResponseBinding(req, resp.Signature, resp.Summary), resp.BindingSignature) {
 			return AttestedResponse{}, false, fmt.Errorf("%w: %w", ErrAttestedProtocol, ErrInvalidSignature)
 		}
 	}
