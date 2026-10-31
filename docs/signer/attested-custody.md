@@ -354,6 +354,35 @@ A device with a registered host key refuses requests without it. The file
 must not be readable by group or others, and an unreadable or malformed file
 fails startup.
 
+### Signing log
+
+The signing firmware records every signature and opcert it issues in a log on
+a microSD card in the device, and refuses to sign when it cannot. An entry
+holds the profile, role and purpose, the body hash (or the issue counter, KES
+period and KES key hash for an opcert) and the parameter summary the device
+computed, cut to 1024 bytes with a flag when it was cut. Entries are chained
+by hash and each is signed by the device identity key. The SE050 keeps the
+number and hash of the latest entry (object `0x20e50022`), and the device
+checks the card against it at boot and before every write, so an older copy of
+the card, a blank card or a truncated log is refused. The entry is written and
+the card read back before the signature leaves the device.
+
+With no card, an unreadable card, a card that does not match the head, a full
+card or a failed write, the device refuses to sign and says why in the
+response and in the startup report; inventory and health are still served. A
+card that is full stays full: the device never overwrites an entry.
+
+The first start with a blank card and an unset head object formats the card
+for the device identity key. A card formatted for another identity is refused.
+
+Read the log from the device with `armory-pool -identity HEX signlog`, which
+verifies every signature and the chain under the pinned identity key and
+prints one line per entry. `-head-seq N -head-hash HEX` pins the latest entry
+the operator expects; the device's own head cannot tell a replaced card from
+the original. The endpoint, `POST /v1/signlog`, needs the same host key
+authentication as a signing request. A card removed from the device is checked
+with `signlog-verify -identity HEX -image FILE`.
+
 ## KES agent in a protected workload
 
 The KES agent's `sign` mode already keeps the KES key inside the agent. Running
