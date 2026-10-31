@@ -32,6 +32,44 @@ const makeReq = (overrides: Partial<ConnectorRequest> = {}): ConnectorRequest =>
   ...overrides,
 });
 
+const signTxEffects = {
+  kind: "vkey" as const,
+  inputs: [{
+    tx_hash: "aa".repeat(32),
+    index: 0,
+    resolved: true,
+    address: "addr_test1qspent",
+    lovelace: "5000000",
+  }],
+  outputs: [
+    {
+      address: "addr_test1qverified",
+      lovelace: "2000000",
+      assets: [{ unit: "policyasset", quantity: "42" }],
+    },
+  ],
+  fee: "170000",
+  ttl: 12345,
+  validity_start: 12000,
+  withdrawals: [{ address: "stake_test1verified", lovelace: "3000000" }],
+  mint: [{ unit: "mintpolicyasset", quantity: "-2" }],
+  collateral_inputs: [{
+    tx_hash: "bb".repeat(32),
+    index: 1,
+    resolved: true,
+    address: "addr_test1qcollateral",
+    lovelace: "3000000",
+  }],
+  collateral_return: { address: "addr_test1qreturn", lovelace: "2000000" },
+  total_collateral: "1000000",
+  treasury_donation: "500000",
+  required_signers: ["cc".repeat(28)],
+  network_id: 0,
+  existing_signatures: [{ key_hash: "aa".repeat(28), role: "payment" }],
+  wallet_can_add: [{ key_hash: "bb".repeat(28), role: "payment" }],
+  is_complete: false,
+};
+
 let restoreEventSource: (() => void) | undefined;
 let emittedRequests: ConnectorRequest[] = [];
 
@@ -149,7 +187,7 @@ test("moves focus into non-password dialogs and traps Tab navigation", async () 
 
 test("Approve calls decide(id, true, password) for a signing method", async () => {
   const decideSpy = vi.spyOn(connectorApi, "decide").mockResolvedValue(undefined);
-  const req = makeReq({ id: "sign-1", method: "signTx" });
+  const req = makeReq({ id: "sign-1", method: "signTx", effects: signTxEffects });
 
   render(<ConnectorApproval />);
   emitRequest(req);
@@ -281,18 +319,76 @@ test("shows request params before approval", async () => {
   expect(screen.getByText(/"addr": "addr_test1qpz\.\.\."/)).toBeInTheDocument();
 });
 
-test("signing methods show a raw-contents warning; enable does not", async () => {
+test("signData shows a raw-contents warning while verified signTx does not", async () => {
   render(<ConnectorApproval />);
-  emitRequest(makeReq({ id: "sign-warn", method: "signTx", params: { tx: "deadbeef" } }));
+  emitRequest(makeReq({
+    id: "sign-warn",
+    method: "signData",
+    params: { addr: "addr_test1", payload: "deadbeef" },
+  }));
 
   await waitFor(() => expect(screen.getByText(/contents unverified/i)).toBeInTheDocument());
 
-  // Swapping to a plain enable clears the warning.
-  emitSnapshot([makeReq({ id: "enable-nowarn", method: "enable", origin: "https://x.example" })]);
+  emitSnapshot([makeReq({
+    id: "signTx-nowarn",
+    method: "signTx",
+    origin: "https://x.example",
+    params: { tx: "deadbeef" },
+    effects: signTxEffects,
+  })]);
   await waitFor(() =>
     expect(screen.getByText("https://x.example")).toBeInTheDocument(),
   );
   expect(screen.queryByText(/contents unverified/i)).toBeNull();
+});
+
+test("shows verified signTx effects before approval", async () => {
+  render(<ConnectorApproval />);
+  emitRequest(makeReq({
+    id: "sign-effects",
+    method: "signTx",
+    params: { tx: "deadbeef", partialSign: true },
+    effects: signTxEffects,
+  }));
+
+  const effects = await screen.findByRole("region", { name: /transaction effects/i });
+  expect(effects).toHaveTextContent("0.17 ADA");
+  expect(effects).toHaveTextContent("addr_test1qverified");
+  expect(effects).toHaveTextContent("policyasset");
+  expect(effects).toHaveTextContent("42");
+  expect(effects).toHaveTextContent("addr_test1qspent");
+  expect(effects).toHaveTextContent("Mint and burn");
+  expect(effects).toHaveTextContent("mintpolicyasset");
+  expect(effects).toHaveTextContent("-2");
+  expect(effects).toHaveTextContent("Collateral if script validation fails");
+  expect(effects).toHaveTextContent("addr_test1qcollateral");
+  expect(effects).toHaveTextContent("Total collateral1 ADA");
+  expect(effects).toHaveTextContent("addr_test1qreturn");
+  expect(effects).toHaveTextContent("Treasury donation0.5 ADA");
+  expect(effects).toHaveTextContent("cc".repeat(28));
+  expect(effects).toHaveTextContent("stake_test1verified");
+  expect(effects).toHaveTextContent("testnet (0)");
+  expect(effects).toHaveTextContent("Existing signatures1");
+  expect(effects).toHaveTextContent("Wallet signatures available1");
+  expect(effects).toHaveTextContent("CompleteNo");
+  expect(screen.queryByText(/contents unverified/i)).toBeNull();
+});
+
+test("refuses approval when a signTx snapshot has no verified effects", async () => {
+  const decideSpy = vi.spyOn(connectorApi, "decide").mockResolvedValue(undefined);
+  render(<ConnectorApproval />);
+  emitRequest(makeReq({
+    id: "sign-missing-effects",
+    method: "signTx",
+    params: { tx: "deadbeef" },
+  }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(/effects are unavailable/i);
+  const approve = screen.getByRole("button", { name: /approve/i });
+  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "pw" } });
+  expect(approve).toBeDisabled();
+  fireEvent.click(approve);
+  expect(decideSpy).not.toHaveBeenCalled();
 });
 
 test("a substituted head request forces re-review before Approve", async () => {
