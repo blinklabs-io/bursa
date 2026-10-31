@@ -43,7 +43,10 @@ func (f *fakeLine) GPIOMode() { f.calls = append(f.calls, "gpio-mode") }
 
 func (f *fakeLine) Out() { f.calls = append(f.calls, "out") }
 
-func (f *fakeLine) ReadsHigh() bool { return f.stuckHigh }
+func (f *fakeLine) ReadsHigh() bool {
+	f.calls = append(f.calls, "read")
+	return f.stuckHigh
+}
 
 func TestHoldInResetSequence(t *testing.T) {
 	t.Parallel()
@@ -55,8 +58,8 @@ func TestHoldInResetSequence(t *testing.T) {
 	}
 
 	// the level is latched low before the pin drives, so the line never
-	// glitches high when it becomes an output
-	want := []string{"claim", "low", "gpio-mode", "out"}
+	// glitches high when it becomes an output; the pad is read once it drives
+	want := []string{"claim", "low", "gpio-mode", "out", "read"}
 
 	if !slices.Equal(f.calls, want) {
 		t.Fatalf("calls = %v, want %v", f.calls, want)
