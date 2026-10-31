@@ -168,9 +168,15 @@ func (m *Medium) WriteBlocks(lba uint64, p []byte) error {
 // Sync implements signlog.Medium: it reads back what was written since the
 // last Sync, waiting for a card that is still programming, and fails if any
 // block differs.
+//
+// Pending writes are dropped whatever the outcome: after a failure the
+// writer rewrites the slot before it syncs again, so a stale copy would
+// otherwise fail every later Sync.
 func (m *Medium) Sync() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	defer func() { m.pending = nil }()
 
 	for len(m.pending) > 0 {
 		w := m.pending[0]

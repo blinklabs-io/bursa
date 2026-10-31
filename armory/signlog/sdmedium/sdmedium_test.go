@@ -336,3 +336,61 @@ func TestDroppedWriteRefusesAppend(t *testing.T) {
 		t.Fatalf("head moved to %+v", stored)
 	}
 }
+
+// A failed Sync does not leave its writes pending: once the card recovers,
+// the slot rewritten with other data syncs.
+func TestSyncRecoversAfterFailure(t *testing.T) {
+	t.Parallel()
+
+	c := newFakeCard(16)
+	m := open(t, c)
+
+	if err := m.WriteBlocks(1, bytes.Repeat([]byte{1}, signlog.BlockSize)); err != nil {
+		t.Fatal(err)
+	}
+
+	c.failReads = true
+
+	if err := m.Sync(); err == nil {
+		t.Fatal("sync succeeded on a card that cannot be read")
+	}
+
+	c.failReads = false
+
+	if err := m.WriteBlocks(1, bytes.Repeat([]byte{2}, signlog.BlockSize)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Sync(); err != nil {
+		t.Fatalf("sync after the card recovered: %v", err)
+	}
+}
+
+// After a failed Sync the writer can append again once the card recovers.
+func TestAppendRecoversAfterFailedSync(t *testing.T) {
+	t.Parallel()
+
+	c := newFakeCard(1 + 8*signlog.RecordBlocks)
+	m := open(t, c)
+	id := newIdentity(t)
+	heads := signlog.NewMemHeadStore(signlog.Head{})
+
+	w, err := signlog.Open(m, heads, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.dropWrites = true
+
+	if _, err = w.Append(record()); err == nil {
+		t.Fatal("append succeeded on a card that dropped the write")
+	}
+
+	c.dropWrites = false
+	rec := record()
+	rec.BodyHash = bytes.Repeat([]byte{8}, 32)
+
+	if _, err = w.Append(rec); err != nil {
+		t.Fatalf("append after the card recovered: %v", err)
+	}
+}
