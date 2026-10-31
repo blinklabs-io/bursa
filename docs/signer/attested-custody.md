@@ -327,6 +327,7 @@ backends:
     profile: "pool@preview"                     # required: the device profile holding the keys
     identity_public_key: "<64 hex>"             # the device identity key, pinned
     host_key_file: "/etc/bursa/armory-host.skey" # optional: authenticates signing requests
+    protocol: "negotiate"                       # optional: "1" (default), "negotiate", or "2"
 ```
 
 The USB armory Mk II holds the pool cold key and the owner stake key in its
@@ -349,8 +350,27 @@ which `armory-pool witness` sends for `tx-body`. The reply echoes that version
 and adds `summary`, the signing policy's description of the body (for a pool
 registration: pledge, cost, margin, relays). Its binding appends the summary as
 one more length-prefixed field after the signature, present even when empty. A
-version-1 request gets the version-1 reply and binding, without `summary`. The
-signer sends version 1; inventory and challenge replies stay at version 1.
+version-1 request gets the version-1 reply and binding, without `summary`.
+Inventory and challenge replies stay at version 1.
+
+The signer sends version 1 unless the backend sets `protocol`:
+
+- `"1"` or unset: version 1 only. The reply carries no summary.
+- `"negotiate"`: `tx-body` requests go out at version 2 and the signer verifies
+  the summary under the key's binding signature. If the device answers
+  `unsupported protocol version` (version 1 firmware), the signer repeats the
+  request at version 1 with a new nonce (and, with `host_key_file`, a new
+  challenge), and keeps sending version 1 until it restarts or a request fails
+  to reach the device.
+- `"2"`: as `negotiate`, but a device that does not support version 2 is an
+  error.
+
+A reply at any version other than the one requested is refused. The
+unsupported-version answer is not signed, so a party on the path to the device
+can forge it and keep a `negotiate` signer on version 1; that loses the summary
+and no signature check. Use `"2"` where the summary is required. The signer
+writes the summary in the `summary` field of the `sign request` audit line for
+a signed transaction; it is not part of the API response.
 
 `host_key_file` holds a host signing key written by `armory-pool host-key`
 and registered on the device. With it set, the signer fetches a one-time
