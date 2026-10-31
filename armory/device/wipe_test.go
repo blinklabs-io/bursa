@@ -424,3 +424,63 @@ func TestWipeProfileKeepsSharedColdKey(t *testing.T) {
 		}
 	}
 }
+
+// TestWipeProfileRefusesMisplacedRecord checks a record whose stored slot is
+// not the slot it was read from is refused before anything is deleted, so
+// the profile in the claimed slot keeps its owner key and record.
+func TestWipeProfileRefusesMisplacedRecord(t *testing.T) {
+	s, chip := newTestService(t)
+	id := identityHex(t, s)
+	plant(chip, freeColdID)
+	other := profile.Profile{Name: "other@preview", Slot: 1, ColdKeyID: freeColdID}
+	storeRecord(t, chip, other)
+
+	moved := profile.Profile{Name: "moved@preview", Slot: 1, ColdKeyID: testColdID}
+	rec, err := profile.Encode(moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chip.bins[profile.Profile{Slot: 0}.RecordID()] = rec
+
+	if err = s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	before := objectIDs(chip)
+
+	for _, name := range []string{moved.Name, other.Name} {
+		if code, _ := wipePost(t, s, "/wipe/profile", WipeProfileRequest{IdentityPublicKey: id, Profile: name}); code == http.StatusOK {
+			t.Errorf("%s: wipe accepted while a record names another slot", name)
+		}
+	}
+
+	if left := objectIDs(chip); len(left) != len(before) {
+		t.Errorf("objects deleted: before %v, after %v", before, left)
+	}
+}
+
+// TestWipeProfileRefusesDuplicateNames checks two records with one name are
+// treated as ambiguous: neither is removed and their shared cold key stays.
+func TestWipeProfileRefusesDuplicateNames(t *testing.T) {
+	s, chip := newTestService(t)
+	id := identityHex(t, s)
+	first := profile.Profile{Name: "twin@preview", Slot: 0, ColdKeyID: testColdID}
+	second := profile.Profile{Name: "twin@preview", Slot: 1, ColdKeyID: testColdID}
+	storeRecord(t, chip, first)
+	storeRecord(t, chip, second)
+
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	before := objectIDs(chip)
+
+	if code, _ := wipePost(t, s, "/wipe/profile", WipeProfileRequest{IdentityPublicKey: id, Profile: first.Name}); code == http.StatusOK {
+		t.Error("wipe accepted while two records share a name")
+	}
+
+	if left := objectIDs(chip); len(left) != len(before) {
+		t.Errorf("objects deleted: before %v, after %v", before, left)
+	}
+}

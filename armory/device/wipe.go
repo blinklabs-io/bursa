@@ -216,10 +216,10 @@ func (s *Service) wipeProfile(req WipeProfileRequest) (WipeResponse, error) {
 		return WipeResponse{}, errUnknown
 	}
 
-	// an unreadable record may name the same cold key, so whether this
-	// profile owns its cold key alone cannot be established
+	// an unreadable, misplaced or duplicate record may name the same cold
+	// key or this profile's objects, so ownership cannot be established
 	if len(s.badSlots) > 0 {
-		return WipeResponse{}, errors.New("a profile record is unreadable; wipe the device instead")
+		return WipeResponse{}, errors.New("a profile record is unreadable or inconsistent; wipe the device instead")
 	}
 
 	// a stored record may name any object; delete only an armory cold key
