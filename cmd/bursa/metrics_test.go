@@ -36,6 +36,20 @@ func TestNewMetricsHTTPServerRequiresLoopback(t *testing.T) {
 	}
 }
 
+func TestNewMetricsHTTPServerRejectsAddressWithPort(t *testing.T) {
+	for _, address := range []string{"127.0.0.1:9000", "[::1]:9000", "localhost:9000"} {
+		t.Run(address, func(t *testing.T) {
+			server, err := newMetricsHTTPServer(config.MetricsConfig{
+				ListenAddress: address,
+				ListenPort:    8081,
+			})
+			if err == nil {
+				t.Fatalf("newMetricsHTTPServer(%q) returned server %v without an error", address, server)
+			}
+		})
+	}
+}
+
 func TestNewMetricsHTTPServerServesLoopbackMetrics(t *testing.T) {
 	server, err := newMetricsHTTPServer(config.MetricsConfig{
 		ListenAddress: "127.0.0.1",

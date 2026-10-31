@@ -1205,6 +1205,28 @@ func TestValidateMetricsExposureRejectsNonLoopback(t *testing.T) {
 	}
 }
 
+func TestValidateMetricsExposureRejectsAddressWithPort(t *testing.T) {
+	for _, address := range []string{"127.0.0.1:9000", "[::1]:9000", "localhost:9000"} {
+		t.Run(address, func(t *testing.T) {
+			cfg := &config.Config{Metrics: config.MetricsConfig{ListenAddress: address, ListenPort: 8081}}
+			require.Error(t, validateMetricsExposure(cfg, nil))
+		})
+	}
+}
+
+type addrOnlyListener struct {
+	net.Listener
+	addr net.Addr
+}
+
+func (l addrOnlyListener) Addr() net.Addr { return l.addr }
+
+func TestValidateMetricsExposureChecksSuppliedListener(t *testing.T) {
+	cfg := &config.Config{Metrics: config.MetricsConfig{ListenAddress: "127.0.0.1", ListenPort: 8081}}
+	listener := addrOnlyListener{addr: &net.TCPAddr{IP: net.IPv4zero, Port: 8081}}
+	require.Error(t, validateMetricsExposure(cfg, listener))
+}
+
 func TestMetricsListenAddressFormatsIPv6(t *testing.T) {
 	for _, address := range []string{"::1", "[::1]"} {
 		t.Run(address, func(t *testing.T) {

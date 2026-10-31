@@ -285,7 +285,8 @@ Unauthenticated endpoints on the signer's listener:
   dependency and is always ready after startup.
 
 Prometheus exposition is available at `/metrics` on the dedicated metrics
-listener. The listener accepts only a loopback address and defaults to
+listener. The listener accepts only a loopback host, with the port set by
+`metrics.port`, and defaults to
 `127.0.0.1:8081`; set `metrics.port` to zero to disable it. A local collector
 can scrape the endpoint without exposing signer activity on the service
 listener.

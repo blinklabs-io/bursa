@@ -16,10 +16,7 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/config"
@@ -31,23 +28,14 @@ func newMetricsHTTPServer(cfg config.MetricsConfig) (*http.Server, error) {
 	if cfg.ListenPort == 0 {
 		return nil, nil
 	}
-	if !signer.IsLoopbackListenAddress(cfg.ListenAddress) {
-		return nil, fmt.Errorf(
-			"refusing metrics listener on non-loopback address %q",
-			cfg.ListenAddress,
-		)
+	addr, err := signer.LoopbackBindAddress(cfg.ListenAddress, cfg.ListenPort)
+	if err != nil {
+		return nil, fmt.Errorf("metrics listener: %w", err)
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
-	host := strings.TrimSpace(cfg.ListenAddress)
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-	}
 	return &http.Server{
-		Addr: net.JoinHostPort(
-			host,
-			strconv.FormatUint(uint64(cfg.ListenPort), 10),
-		),
+		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}, nil

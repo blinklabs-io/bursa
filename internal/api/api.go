@@ -28,7 +28,6 @@ import (
 	"net"
 	"net/http"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -917,10 +916,11 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 }
 
 func validateMetricsExposure(cfg *config.Config, listener net.Listener) error {
-	address := cfg.Metrics.ListenAddress
-	if listener != nil {
-		address = listener.Addr().String()
+	if listener == nil {
+		_, err := metricsBindAddress(cfg)
+		return err
 	}
+	address := listener.Addr().String()
 	if !signer.IsLoopbackListenAddress(address) {
 		return fmt.Errorf(
 			"refusing metrics listener on non-loopback address %q",
@@ -930,12 +930,22 @@ func validateMetricsExposure(cfg *config.Config, listener net.Listener) error {
 	return nil
 }
 
-func metricsListenAddress(cfg *config.Config) string {
-	host := strings.TrimSpace(cfg.Metrics.ListenAddress)
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+func metricsBindAddress(cfg *config.Config) (string, error) {
+	addr, err := signer.LoopbackBindAddress(
+		cfg.Metrics.ListenAddress,
+		cfg.Metrics.ListenPort,
+	)
+	if err != nil {
+		return "", fmt.Errorf("metrics listener: %w", err)
 	}
-	return net.JoinHostPort(host, strconv.FormatUint(uint64(cfg.Metrics.ListenPort), 10))
+	return addr, nil
+}
+
+// metricsListenAddress returns the metrics bind address. Callers must run
+// validateMetricsExposure first; an invalid address yields "".
+func metricsListenAddress(cfg *config.Config) string {
+	addr, _ := metricsBindAddress(cfg)
+	return addr
 }
 
 func configureSwaggerScheme(tlsConfigured bool) {

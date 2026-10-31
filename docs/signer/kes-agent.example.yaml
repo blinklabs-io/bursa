@@ -66,7 +66,8 @@ kes_agent:
   # attester_address: "unix:///run/bursa/attester.sock"
 
 # Optional Prometheus metrics endpoint on a dedicated loopback listener. Set
-# port to 0 to disable it. Non-loopback addresses are rejected.
+# port to 0 to disable it. Non-loopback addresses and addresses that carry a
+# port are rejected.
 metrics:
   address: "127.0.0.1"             # env: METRICS_LISTEN_ADDRESS
   port: 8082                       # env: METRICS_LISTEN_PORT

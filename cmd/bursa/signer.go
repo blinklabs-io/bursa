@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -39,6 +40,24 @@ import (
 )
 
 const signerReadTimeout = 30 * time.Second
+
+func shutdownSignerServers(
+	ctx context.Context,
+	logger *slog.Logger,
+	signerServer, metricsServer *http.Server,
+) error {
+	if err := signerServer.Shutdown(ctx); err != nil {
+		return err
+	}
+	// Metrics are drained after the signer and never fail the shutdown: a
+	// stalled scrape must not cut off in-flight signing requests.
+	if metricsServer != nil {
+		if err := metricsServer.Shutdown(ctx); err != nil {
+			logger.Error("metrics shutdown failed", "error", err)
+		}
+	}
+	return nil
+}
 
 func newSignerHTTPServer(addr string, handler http.Handler) *http.Server {
 	return &http.Server{
@@ -353,13 +372,7 @@ key.`,
 				logger.Info("shutdown signal received; draining connections")
 				shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				if metricsServer != nil {
-					if err := metricsServer.Shutdown(shutdownCtx); err != nil {
-						logger.Error("metrics shutdown failed", "error", err)
-						os.Exit(1)
-					}
-				}
-				if err := httpServer.Shutdown(shutdownCtx); err != nil {
+				if err := shutdownSignerServers(shutdownCtx, logger, httpServer, metricsServer); err != nil {
 					logger.Error("graceful shutdown failed", "error", err)
 					os.Exit(1)
 				}
