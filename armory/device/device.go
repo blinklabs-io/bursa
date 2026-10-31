@@ -33,6 +33,7 @@ import (
 
 	"github.com/blinklabs-io/bursa/armory/policy"
 	"github.com/blinklabs-io/bursa/armory/profile"
+	"github.com/blinklabs-io/bursa/armory/signlog"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -203,6 +204,12 @@ type Service struct {
 	network      uint8
 	networkFixed bool
 	chain        string
+	// log records every signature before it is released; logRequired
+	// refuses signing while it is not installed
+	log         SigningLog
+	logMedium   signlog.Medium
+	logErr      error
+	logRequired bool
 }
 
 // New returns a service with no chip; it answers 503 until SetChip.
@@ -484,6 +491,10 @@ func (s *Service) sign(req SignRequest) (SignResponse, error) {
 
 	err := s.authenticate(req)
 	if err == nil {
+		err = s.logReady()
+	}
+
+	if err == nil {
 		id, sig, issue, err = s.signRequest(req)
 	}
 
@@ -585,6 +596,14 @@ func (s *Service) signTxBody(p profile.Profile, k profileKeys, role policy.Role,
 		return nil, err
 	}
 
+	// the entry is on the card and the head advanced before the chip signs
+	if err = s.appendLog(signlog.Record{
+		Profile: p.Name, Role: req.Role, Purpose: signlog.PurposeTxBody,
+		BodyHash: d.BodyHash[:], Summary: d.Summary,
+	}); err != nil {
+		return nil, err
+	}
+
 	sig, err := s.chip.SignEd25519(id, d.BodyHash[:])
 	if err != nil {
 		s.logf("sign: %v", err)
@@ -605,6 +624,19 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 
 	issue, floor, err := nextOpCert(p.OpCertFloor, p.FloorSet, chain)
 	if err != nil {
+		return nil, nil, err
+	}
+
+	// the entry is logged before the floor moves, so a refusal leaves the
+	// counter where it was
+	kesHash := blake2b.Sum256(payload[:32])
+	period := binary.BigEndian.Uint64(payload[40:])
+
+	if err = s.appendLog(signlog.Record{
+		Profile: p.Name, Role: "pool", Purpose: signlog.PurposeOpCertNext,
+		Summary:      fmt.Sprintf("chain %d issue %d period %d", chain, issue, period),
+		IssueCounter: issue, KESPeriod: period, KESKeyHash: kesHash[:],
+	}); err != nil {
 		return nil, nil, err
 	}
 
