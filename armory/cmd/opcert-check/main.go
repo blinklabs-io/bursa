@@ -283,7 +283,7 @@ func run(args []string, out io.Writer) error {
 		!check(fmt.Sprintf("device reproduces node.cert signature (issue %d, KES period %d)",
 			cert.Body.IssueNumber, cert.Body.KESPeriod), bytes.Equal(resp.Signature, cert.Body.ColdSig)) ||
 		!check("binding signature covers the request under node.vkey",
-			ed25519.Verify(vkey, device.ResponseBinding(sr, resp.Signature), resp.BindingSignature)) {
+			ed25519.Verify(vkey, device.ResponseBinding(sr, resp.Signature, resp.Summary), resp.BindingSignature)) {
 		return failed
 	}
 

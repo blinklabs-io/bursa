@@ -21,9 +21,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -342,8 +342,15 @@ func TestWitness(t *testing.T) {
 	txFile := txEnvelope(t, dir, body)
 	out := filepath.Join(dir, "pool.witness")
 
-	if err := r.s.witness("pool", txFile, out); err != nil {
+	var printed bytes.Buffer
+
+	if err := r.s.witness("pool", txFile, out, &printed); err != nil {
 		t.Fatal(err)
+	}
+
+	// the device's summary of what it signed is printed on the host
+	if got := printed.String(); !strings.Contains(got, "pool-retire epoch=") {
+		t.Fatalf("printed %q, want the device summary", got)
 	}
 
 	b, _ := os.ReadFile(out)
@@ -374,7 +381,7 @@ func TestWitness(t *testing.T) {
 	ownerBody := conwayBody([]any{uint64(11), []any{uint64(0), func() []byte { h := hash224(r.owner); return h[:] }()},
 		func() []byte { h := hash224(r.pool); return h[:] }(), uint64(2_000_000)})
 
-	if err = r.s.witness("stake", txEnvelope(t, dir, ownerBody), filepath.Join(dir, "owner.witness")); err != nil {
+	if err = r.s.witness("stake", txEnvelope(t, dir, ownerBody), filepath.Join(dir, "owner.witness"), io.Discard); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -387,7 +394,7 @@ func TestWitnessRefusal(t *testing.T) {
 	out := filepath.Join(dir, "pool.witness")
 
 	// a retirement of another pool is refused by the device policy
-	err := r.s.witness("pool", txEnvelope(t, dir, conwayBody(retirement([28]byte{1}))), out)
+	err := r.s.witness("pool", txEnvelope(t, dir, conwayBody(retirement([28]byte{1}))), out, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "device refused") {
 		t.Fatalf("err = %v, want a device refusal", err)
 	}
@@ -451,8 +458,8 @@ func TestCheckTxBodyRefusals(t *testing.T) {
 		sig := ed25519.Sign(priv, hash[:])
 
 		return device.SignResponse{
-			Version: device.Protocol, Nonce: nonce, Signature: sig,
-			BindingSignature: ed25519.Sign(priv, device.ResponseBinding(req, sig)),
+			Version: device.ProtocolSummary, Nonce: nonce, Signature: sig, Summary: "fee=1",
+			BindingSignature: ed25519.Sign(priv, device.ResponseBinding(req, sig, "fee=1")),
 		}
 	}
 
@@ -470,6 +477,15 @@ func TestCheckTxBodyRefusals(t *testing.T) {
 			r.BindingSignature[0] ^= 1
 		},
 		"missing binding": func(r *device.SignResponse) { r.BindingSignature = nil },
+		"summary":         func(r *device.SignResponse) { r.Summary = "fee=2" },
+		"summary dropped": func(r *device.SignResponse) { r.Summary = "" },
+		// a version-1 reply with its own valid binding but no summary
+		"version 1 reply": func(r *device.SignResponse) {
+			v1 := req
+			v1.Version = device.Protocol
+			r.Version, r.Summary = device.Protocol, ""
+			r.BindingSignature = ed25519.Sign(priv, device.ResponseBinding(v1, r.Signature, ""))
+		},
 	} {
 		resp := good()
 		mutate(&resp)
@@ -557,7 +573,7 @@ func TestCheckOpCertIssueCounter(t *testing.T) {
 
 		return device.SignResponse{
 			Version: device.Protocol, Nonce: nonce, Signature: sig, IssueCounter: issue,
-			BindingSignature: ed25519.Sign(priv, device.ResponseBinding(req, sig)),
+			BindingSignature: ed25519.Sign(priv, device.ResponseBinding(req, sig, "")),
 		}
 	}
 	u := func(v uint64) *uint64 { return &v }
