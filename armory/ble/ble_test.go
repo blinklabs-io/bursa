@@ -22,11 +22,10 @@ import (
 	"github.com/blinklabs-io/bursa/armory/ble"
 )
 
-// fakeLine records the calls HoldInReset makes. It has no High method, so a
-// regression that drives the line high cannot compile against ble.Line.
+// fakeLine records the calls HoldInReset makes. ble.Line has no method that
+// drives the line high, so the fake has none either.
 type fakeLine struct {
 	calls     []string
-	level     bool
 	claimErr  error
 	stuckHigh bool
 }
@@ -38,14 +37,13 @@ func (f *fakeLine) Claim() error {
 
 func (f *fakeLine) Low() {
 	f.calls = append(f.calls, "low")
-	f.level = false
 }
 
 func (f *fakeLine) GPIOMode() { f.calls = append(f.calls, "gpio-mode") }
 
 func (f *fakeLine) Out() { f.calls = append(f.calls, "out") }
 
-func (f *fakeLine) High() bool { return f.stuckHigh }
+func (f *fakeLine) ReadsHigh() bool { return f.stuckHigh }
 
 func TestHoldInResetSequence(t *testing.T) {
 	t.Parallel()

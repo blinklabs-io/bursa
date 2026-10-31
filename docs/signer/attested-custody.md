@@ -369,8 +369,9 @@ its factory software and advertises as `ANNA-B1-<id>`. Every firmware image
 (signing, provisioning, wipe and the testnet build) drives the module's
 active-low reset line (BT_RESET, GPIO1_IO09) low as its first step, before
 bring-up and the network, and holds it there for as long as the firmware runs.
-The startup report shows `bluetooth: module held in reset`. If the line cannot
-be configured, the report says so and the result is `RESULT: FAIL`.
+The firmware then reads the pad back; the startup report shows
+`bluetooth: module held in reset` when it reads low. If it reads high, the
+report says so and the result is `RESULT: FAIL`; the firmware keeps running.
 
 The limits:
 

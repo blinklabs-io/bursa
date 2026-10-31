@@ -31,14 +31,15 @@ type Line interface {
 	GPIOMode()
 	// Out makes the pin an output, which drives the latched level.
 	Out()
-	// High reports whether the line reads high.
-	High() bool
+	// ReadsHigh reports whether the pad reads high, as the pin's input sees
+	// it rather than the latched output level.
+	ReadsHigh() bool
 }
 
 // HoldInReset drives the line low, which holds the module in reset.
 //
 // The level is latched before the pin becomes an output so the line never
-// glitches high. It returns an error if the line does not read low.
+// glitches high. It returns an error if the pad does not read low.
 func HoldInReset(l Line) error {
 	if err := l.Claim(); err != nil {
 		return fmt.Errorf("claim BT_RESET: %w", err)
@@ -48,7 +49,7 @@ func HoldInReset(l Line) error {
 	l.GPIOMode()
 	l.Out()
 
-	if l.High() {
+	if l.ReadsHigh() {
 		return errors.New("BT_RESET reads high")
 	}
 
