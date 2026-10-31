@@ -67,8 +67,8 @@ func createWindowsSecretKeyFile(path string) (*os.File, error) {
 	}
 	handle, err := windows.CreateFile(
 		windows.StringToUTF16Ptr(path),
-		windows.GENERIC_WRITE|windows.READ_CONTROL|windows.WRITE_DAC,
-		0,
+		windows.GENERIC_WRITE|windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		securityAttributes,
 		windows.CREATE_NEW,
 		windows.FILE_ATTRIBUTE_NORMAL,

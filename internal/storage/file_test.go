@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -474,4 +475,22 @@ func TestFileStoreEncryptsAtRestWithAgeRecipient(t *testing.T) {
 	item, err := got.GetItem("mnemonic")
 	require.NoError(t, err)
 	assert.Equal(t, "secret seed phrase", item)
+}
+
+// walletDir returns the directory path for a wallet
+func (s *FileStore) walletDir(name string) string {
+	if err := validateWalletName(name); err != nil {
+		// This should never happen if validation is done at public API boundaries
+		panic(fmt.Sprintf("invalid wallet name in walletDir: %v", err))
+	}
+	return filepath.Join(s.baseDir, "wallet-"+name)
+}
+
+// walletPath returns the file path for a wallet
+func (s *FileStore) walletPath(name string) string {
+	if err := validateWalletName(name); err != nil {
+		// This should never happen if validation is done at public API boundaries
+		panic(fmt.Sprintf("invalid wallet name in walletPath: %v", err))
+	}
+	return filepath.Join(s.walletDir(name), "wallet.json")
 }
