@@ -192,8 +192,10 @@ type Service struct {
 	chip     Chip
 	profiles map[string]profile.Profile
 	nonces   nonceRing
-	// badSlots hold records that could not be read; provisioning stays
-	// refused while any exist, as one of them may own any cold key
+	// badSlots hold records that could not be read, that name a slot other
+	// than their own, or that share a name with another record; provisioning
+	// and profile wipes stay refused while any exist, as one of them may own
+	// any cold key
 	badSlots map[uint8]bool
 	// hostKeys authenticate signing requests; hostKeysBad refuses signing
 	// while the stored list is unreadable
@@ -278,6 +280,8 @@ func (s *Service) SetChip(chip Chip) error {
 
 	profiles := map[string]profile.Profile{}
 	bad := map[uint8]bool{}
+	// slots maps each name to the slot its record was read from
+	slots := map[string]uint8{}
 
 	for slot := uint8(0); slot <= profile.MaxSlot; slot++ {
 		id := profile.Profile{Slot: slot}.RecordID()
@@ -302,6 +306,19 @@ func (s *Service) SetChip(chip Chip) error {
 			continue
 		}
 
+		// such records are still served as before; they only block
+		// provisioning and profile wipes, which need ownership established
+		if p.Slot != slot {
+			s.logf("profile slot %d: record names slot %d", slot, p.Slot)
+			bad[slot] = true
+		}
+
+		if prev, dup := slots[p.Name]; dup {
+			s.logf("profile slot %d: name %q also in slot %d", slot, p.Name, prev)
+			bad[prev], bad[slot] = true, true
+		}
+
+		slots[p.Name] = slot
 		profiles[p.Name] = p
 		s.logf("profile %q slot %d floor %d (set %v)", p.Name, p.Slot, p.OpCertFloor, p.FloorSet)
 
@@ -720,7 +737,7 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 	}
 
 	if len(s.badSlots) > 0 {
-		return ProvisionResponse{}, errors.New("a profile record is unreadable; provisioning is refused until it is repaired")
+		return ProvisionResponse{}, errors.New("a profile record is unreadable or inconsistent; provisioning is refused until it is repaired")
 	}
 
 	if p.ColdKeyID < coldKeyFirst || p.ColdKeyID > coldKeyLast {
