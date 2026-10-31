@@ -40,6 +40,10 @@ const RecordSize = 0xe0
 // IdentityKeyID holds the device identity key that signs key inventories.
 const IdentityKeyID uint32 = 0x20e50020
 
+// SignLogHeadID holds the number and hash of the latest signing log entry:
+// 0x20e50020 is the identity key, 0x20e50021 the host key list.
+const SignLogHeadID uint32 = 0x20e50022
+
 // Object ID bases, offset by profile slot. Cold keys live at
 // 0x20e50010-0x20e5001f; each belongs to at most one profile, so a second
 // profile cannot re-register the pool with another owner. 0x20e50200-0x20e5021f
