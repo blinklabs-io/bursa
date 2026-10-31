@@ -672,6 +672,28 @@ func newFaultFixture(t *testing.T, slots int) (*fixture, *faultMedium, *faultHea
 	return f, fm, fh
 }
 
+// TestDataAfterTheEndRefusedAtOpen checks Open refuses a medium that Verify
+// would reject for data past the first blank slot, so signing does not
+// resume on a card that cannot be verified.
+func TestDataAfterTheEndRefusedAtOpen(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 8)
+	f.fill(t, f.open(t), 1)
+	f.mutate(t, func(img []byte) { img[slotOffset(3)] = 1 })
+
+	if _, err := Open(f.medium, f.heads, f.id); !errors.Is(err, ErrTrailing) {
+		t.Fatalf("got %v, want ErrTrailing", err)
+	}
+
+	f.mutate(t, func(img []byte) { img[slotOffset(3)] = 0 })
+	f.mutate(t, func(img []byte) { img[slotOffset(8)+RecordSize-1] = 1 })
+
+	if _, err := Open(f.medium, f.heads, f.id); !errors.Is(err, ErrTrailing) {
+		t.Fatalf("last slot: got %v, want ErrTrailing", err)
+	}
+}
+
 func TestTornFinalWrite(t *testing.T) {
 	t.Parallel()
 

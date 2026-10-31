@@ -44,8 +44,9 @@ type Writer struct {
 // remnant of a crash between medium write and head update and is accepted
 // when that entry chains from the head, after which the head is repaired;
 // any other medium ahead of the head is ErrAhead. An uninitialised head
-// accepts only a medium without entries. Open checks the chain and the last
-// entry's signature; Verify checks every signature.
+// accepts only a medium without entries. Data after the entries, beyond one
+// torn record directly after them, is ErrTrailing. Open checks the chain and
+// the last entry's signature; Verify checks every signature.
 func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
 	head, err := hs.Load()
 	if err != nil {
@@ -67,9 +68,22 @@ func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
 		return nil, ErrWrongDevice
 	}
 
-	entries, _, err := scan(m, hdr, false, false)
+	entries, torn, err := scan(m, hdr, false, false)
 	if err != nil {
 		return nil, err
+	}
+
+	// as Verify requires, only zeros follow the entries and a torn record
+	// directly after them
+	from := uint64(len(entries)) + 1
+	if torn {
+		from++
+	}
+
+	if from <= hdr.Entries {
+		if err = checkBlank(m, slotLBA(from), slotLBA(hdr.Entries)+RecordBlocks, ErrTrailing); err != nil {
+			return nil, err
+		}
 	}
 
 	w.hdr = hdr
@@ -128,7 +142,7 @@ func (w *Writer) format(head Head) (*Writer, error) {
 		return nil, fmt.Errorf("%w: %d blocks hold no entry", ErrMedium, w.medium.NumBlocks())
 	}
 
-	if err := checkBlank(w.medium, 1+slots*RecordBlocks); err != nil {
+	if err := checkBlank(w.medium, 0, 1+slots*RecordBlocks, ErrNotBlank); err != nil {
 		return nil, err
 	}
 
@@ -155,19 +169,20 @@ func (w *Writer) format(head Head) (*Writer, error) {
 // blankChunk is the number of blocks checkBlank reads at once.
 const blankChunk = 256
 
-// checkBlank confirms the first n blocks of m are all zero, so nothing but
-// zeros follows the entries the writer will add, as Verify requires.
-func checkBlank(m Medium, n uint64) error {
+// checkBlank confirms blocks from up to end of m are all zero, so nothing but
+// zeros follows the entries the writer will add, as Verify requires; data
+// is reported as notBlank.
+func checkBlank(m Medium, from, end uint64, notBlank error) error {
 	buf := make([]byte, blankChunk*BlockSize)
 
-	for lba := uint64(0); lba < n; lba += blankChunk {
-		p := buf[:min(blankChunk, n-lba)*BlockSize]
+	for lba := from; lba < end; lba += blankChunk {
+		p := buf[:min(blankChunk, end-lba)*BlockSize]
 		if err := m.ReadBlocks(lba, p); err != nil {
 			return fmt.Errorf("%w: read block %d: %w", ErrMedium, lba, err)
 		}
 
 		if !isZero(p) {
-			return fmt.Errorf("%w: data in blocks %d+%d", ErrNotBlank, lba, len(p)/BlockSize)
+			return fmt.Errorf("%w: data in blocks %d+%d", notBlank, lba, len(p)/BlockSize)
 		}
 	}
 
