@@ -17,17 +17,16 @@
 // Card is the subset of TamaGo's soc/nxp/usdhc USDHC the adapter uses, so
 // the adapter runs against a fake card on the host.
 //
-// Sync semantics. usdhc.WriteBlocks returns once the controller reports
-// transfer complete for CMD25 with automatic CMD12; it does not wait for
-// the card to finish programming, and it has no flush call. The driver
+// Sync semantics. usdhc.WriteBlocks waits for the controller's transfer
+// complete for CMD25 with automatic CMD12 and has no flush call. The driver
 // polls the card state (CMD13, one millisecond budget) only at the start of
-// the next transfer. Sync therefore reads back every block written since the
-// previous Sync and compares it with what was written. A read cannot start
-// until the card is back in its transfer state, so a matching read means the
-// card finished programming and holds the data. It does not force the
-// card's internal cache to flash: the SD interface offers no portable flush,
-// so the guarantee is that the card acknowledged and returned the data, not
-// that it survives a power loss in the next microsecond.
+// the next transfer. The driver does not say whether transfer complete also
+// waits for the card's programming busy phase, so Sync does not assume it:
+// it reads back every block written since the previous Sync, retrying while
+// the card is not ready, and compares with what was written. A read cannot
+// start until the card is back in its transfer state, so a matching read
+// means the card acknowledged and returned the data. It does not force the
+// card's internal cache to flash: the SD interface offers no portable flush.
 package sdmedium
 
 import (
