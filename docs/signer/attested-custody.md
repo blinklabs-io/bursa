@@ -401,8 +401,11 @@ response and in the startup report; inventory and health are still served. A
 card that is full stays full: the device never overwrites an entry. The log is
 opened once at startup, so a card inserted later takes effect after a restart.
 
-Nothing on the device resets the head object, so a lost, failed or full card,
-or an unreadable head object, leaves the device refusing to sign.
+The signing and provisioning firmware never reset the head object, so a lost,
+failed or full card, or an unreadable head object, leaves the device refusing
+to sign. A device wipe deletes the head object with the identity key; after a
+new identity is provisioned, the signing firmware formats a zeroed card and
+starts a new log.
 
 The first start with an all-zero card and an unset head object formats the
 card for the device identity key; it holds up to 32768 entries. A new card
