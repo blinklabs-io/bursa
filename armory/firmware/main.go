@@ -77,6 +77,10 @@ func main() {
 
 	report := &Report{}
 
+	// first, before bring-up and the network: the module advertises until
+	// held in reset
+	holdBluetooth(report)
+
 	if err := startNetwork(); err != nil {
 		log.Fatalf("network: %v", err)
 	}
