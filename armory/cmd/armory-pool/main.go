@@ -455,6 +455,11 @@ func run(args []string, stdout io.Writer) error {
 			return err
 		}
 
+		// parsing stops at the first argument; flags after it would be ignored
+		if sf.NArg() > 0 {
+			return fmt.Errorf("unexpected argument %q", sf.Arg(0))
+		}
+
 		var wantHash []byte
 
 		if *seq >= 0 || *hash != "" {

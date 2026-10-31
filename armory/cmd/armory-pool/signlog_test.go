@@ -148,6 +148,12 @@ func TestSignLogFetchesAndVerifies(t *testing.T) {
 	if err := run(r.args("signlog", "-head-seq", "2"), &bytes.Buffer{}); err == nil {
 		t.Fatal("a head number without a hash accepted")
 	}
+
+	// a positional token stops flag parsing; the pin after it must not vanish
+	pin = []string{"signlog", "unexpected", "-head-seq", "1", "-head-hash", head[len(head)-1]}
+	if err := run(r.args(pin...), &bytes.Buffer{}); err == nil {
+		t.Fatal("a head pin after a positional argument was ignored")
+	}
 }
 
 // A log longer than one read is fetched in several and still verifies.

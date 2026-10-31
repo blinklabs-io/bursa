@@ -55,6 +55,11 @@ func run(args []string, stdout io.Writer) error {
 		return err
 	}
 
+	// parsing stops at the first argument; flags after it would be ignored
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+
 	identity, err := hex.DecodeString(*identityHex)
 	if err != nil || len(identity) != ed25519.PublicKeySize {
 		return errors.New("-identity must be the 32-byte identity public key in hex")

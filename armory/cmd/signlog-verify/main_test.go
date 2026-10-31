@@ -142,6 +142,8 @@ func TestVerifyRefusals(t *testing.T) {
 		"no image":        {"-identity", id},
 		"head too old":    {"-identity", id, "-image", path, "-head-seq", "4", "-head-hash", strings.Repeat("00", 32)},
 		"head hash wrong": {"-identity", id, "-image", path, "-head-seq", "3", "-head-hash", strings.Repeat("00", 32)},
+		// a positional token stops flag parsing; the pin after it must not vanish
+		"pin after argument": {"-identity", id, "-image", path, "unexpected", "-head-seq", "4", "-head-hash", strings.Repeat("00", 32)},
 	} {
 		var out bytes.Buffer
 		if err := run(args, &out); err == nil {
