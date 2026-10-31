@@ -170,9 +170,10 @@ signer:
 google:
   project: "my-gcp-project"     # env: GOOGLE_PROJECT
 
-# Optional Prometheus metrics endpoint (also served on the signer's /metrics).
+# Optional Prometheus metrics endpoint on a dedicated loopback listener.
+# Set port to 0 to disable it. Non-loopback addresses are rejected.
 metrics:
-  address: ""                   # env: METRICS_LISTEN_ADDRESS
+  address: "127.0.0.1"          # env: METRICS_LISTEN_ADDRESS
   port: 8081                    # env: METRICS_LISTEN_PORT
 
 logging:

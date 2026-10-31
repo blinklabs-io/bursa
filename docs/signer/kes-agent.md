@@ -129,7 +129,9 @@ periods advance.
 ## Metrics
 
 When `metrics.port` is non-zero the agent serves Prometheus metrics at
-`/metrics`:
+`/metrics` on the dedicated metrics listener. The configured address must be
+loopback; it defaults to `127.0.0.1` so a local collector can scrape it without
+exposing KES activity on a network interface.
 
 | Metric | Meaning |
 |--------|---------|

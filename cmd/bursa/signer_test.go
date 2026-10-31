@@ -16,6 +16,7 @@ package main
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/internal/signer"
@@ -28,6 +29,16 @@ func TestNewSignerHTTPServerReadTimeout(t *testing.T) {
 	}
 	if srv.ReadTimeout != signerReadTimeout {
 		t.Fatalf("ReadTimeout = %s, want %s", srv.ReadTimeout, signerReadTimeout)
+	}
+}
+
+func TestSignerMuxDoesNotExposeMetrics(t *testing.T) {
+	mux := newSignerMux(http.NotFoundHandler(), http.NotFoundHandler())
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("GET /metrics status = %d, want %d", response.Code, http.StatusNotFound)
 	}
 }
 

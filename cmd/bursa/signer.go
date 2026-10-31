@@ -35,7 +35,6 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/policy"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 )
 
@@ -51,6 +50,13 @@ func newSignerHTTPServer(addr string, handler http.Handler) *http.Server {
 		// the headers have been received.
 		ReadTimeout: signerReadTimeout,
 	}
+}
+
+func newSignerMux(signerHandler, healthHandler http.Handler) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle("/v1/", signerHandler)
+	mux.Handle("/", healthHandler)
+	return mux
 }
 
 // maxRequestSignSkewSeconds bounds signer.request_sign_skew_seconds. It also
@@ -109,6 +115,11 @@ key.`,
 			hasJWKS := cfg.Signer.JWKSURL != ""
 			if hasSecret && hasJWKS {
 				logger.Error("at most one of signer.jwt_secret and signer.jwks_url may be set")
+				os.Exit(1)
+			}
+			metricsServer, err := newMetricsHTTPServer(cfg.Metrics)
+			if err != nil {
+				logger.Error("invalid metrics listener", "error", err)
 				os.Exit(1)
 			}
 			hasJWT := hasSecret || hasJWKS
@@ -274,10 +285,7 @@ key.`,
 				return nil
 			}
 
-			mux := http.NewServeMux()
-			mux.Handle("/v1/", srv.Handler())
-			mux.Handle("/", api.HealthHandler(readyCheck))
-			mux.Handle("/metrics", promhttp.Handler())
+			mux := newSignerMux(srv.Handler(), api.HealthHandler(readyCheck))
 
 			addr := fmt.Sprintf("%s:%d", cfg.Signer.ListenAddress, cfg.Signer.ListenPort)
 			tlsConfigured := cfg.Signer.TLSCertFile != "" || cfg.Signer.TLSKeyFile != ""
@@ -320,7 +328,7 @@ key.`,
 			logger.Info("starting bursa signer", "address", addr, "tls", tlsConfigured)
 
 			// Serve in a goroutine so we can listen for shutdown signals.
-			serveErr := make(chan error, 1)
+			serveErr := make(chan error, 2)
 			go func() {
 				if tlsConfigured {
 					serveErr <- httpServer.ListenAndServeTLS(cfg.Signer.TLSCertFile, cfg.Signer.TLSKeyFile)
@@ -328,6 +336,12 @@ key.`,
 				}
 				serveErr <- httpServer.ListenAndServe()
 			}()
+			if metricsServer != nil {
+				logger.Info("starting metrics listener", "address", metricsServer.Addr)
+				go func() {
+					serveErr <- metricsServer.ListenAndServe()
+				}()
+			}
 
 			select {
 			case err := <-serveErr:
@@ -339,6 +353,12 @@ key.`,
 				logger.Info("shutdown signal received; draining connections")
 				shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
+				if metricsServer != nil {
+					if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+						logger.Error("metrics shutdown failed", "error", err)
+						os.Exit(1)
+					}
+				}
 				if err := httpServer.Shutdown(shutdownCtx); err != nil {
 					logger.Error("graceful shutdown failed", "error", err)
 					os.Exit(1)
