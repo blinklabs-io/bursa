@@ -18,17 +18,17 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/blinklabs-io/bursa/armory/device"
+	"github.com/blinklabs-io/bursa/armory/hostkey"
 )
 
 const (
-	hostKeyType = "ArmoryHostSigningKey_ed25519"
-	hostKeyDesc = "Armory host signing key"
+	hostKeyType = hostkey.Type
+	hostKeyDesc = hostkey.Description
 )
 
 // newHostKey writes a new host signing key to file, which must not exist,
@@ -70,36 +70,7 @@ func newHostKey(file string, out io.Writer) error {
 }
 
 // readHostKey reads a host signing key file, refusing one others can read.
-func readHostKey(file string) (ed25519.PrivateKey, error) {
-	fi, err := os.Stat(file)
-	if err != nil {
-		return nil, err
-	}
-
-	if fi.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("host key file %s is readable by others; chmod 600 it", file)
-	}
-
-	data, err := os.ReadFile(file)
-	if err != nil {
-		return nil, err
-	}
-
-	env, raw, err := readEnvelope(data)
-	if err != nil {
-		return nil, err
-	}
-
-	if env.Type != hostKeyType {
-		return nil, fmt.Errorf("envelope type %q, want %q", env.Type, hostKeyType)
-	}
-
-	if len(raw) != 34 || raw[0] != 0x58 || raw[1] != 0x20 {
-		return nil, errors.New("host key cborHex is not a 32-byte seed")
-	}
-
-	return ed25519.NewKeyFromSeed(raw[2:]), nil
-}
+func readHostKey(file string) (ed25519.PrivateKey, error) { return hostkey.Read(file) }
 
 // sign posts a signing request, first authenticating it with the host key
 // when the session has one.
@@ -111,9 +82,7 @@ func (s *session) sign(req device.SignRequest, resp *device.SignResponse) error 
 			return err
 		}
 
-		req.Challenge = ch.Challenge
-		req.HostKey = s.hostKey.Public().(ed25519.PublicKey)
-		req.HostSignature = ed25519.Sign(s.hostKey, device.RequestBinding(req))
+		req = hostkey.Authenticate(req, s.hostKey, ch.Challenge)
 	}
 
 	return s.c.post("/v1/sign", req, resp)
