@@ -713,7 +713,8 @@ func conwayEra() *uint {
 }
 
 // TestResponseBindingMatchesBursa checks ResponseBinding against vectors from
-// Bursa's backend.AttestedResponseBinding, with and without an era.
+// Bursa's backend.AttestedResponseBinding, with and without an era, and pins
+// the ProtocolSummary binding, which Bursa does not request.
 func TestResponseBindingMatchesBursa(t *testing.T) {
 	sig := make([]byte, 64)
 	for i := range sig {
@@ -726,16 +727,94 @@ func TestResponseBindingMatchesBursa(t *testing.T) {
 		Nonce: []byte{1, 2, 3}, Payload: []byte{0xa0, 0xff}, Profile: "otg@preview", Era: &era,
 	}
 
-	if got := hex.EncodeToString(ResponseBinding(req, sig)); got != "0c01c305ffe8ff31572a4a84655dff50ab2e79354ce185b2f55166451b21e74e" {
+	if got := hex.EncodeToString(ResponseBinding(req, sig, "")); got != "0c01c305ffe8ff31572a4a84655dff50ab2e79354ce185b2f55166451b21e74e" {
 		t.Errorf("with era: %s", got)
 	}
 
+	// under ProtocolSummary the summary is one more field, even when empty
+	req.Version = ProtocolSummary
+
+	if got := hex.EncodeToString(ResponseBinding(req, sig, bindingSummary)); got != "6ab76583323a170aa60568ea957da0106db5fd0fee07b7eb6e44e349d60ead5a" {
+		t.Errorf("with summary: %s", got)
+	}
+
+	if got := hex.EncodeToString(ResponseBinding(req, sig, "")); got != "26ed8ac0ce67ec8b80b5c50eb6e778b8ce85443c681262e4f7c1bbd086437110" {
+		t.Errorf("with empty summary: %s", got)
+	}
+
+	req.Version = Protocol
+
 	req.Era, req.Purpose = nil, "opcert-next"
 
-	if got := hex.EncodeToString(ResponseBinding(req, sig)); got != "c7bb01b9f9a9ddcc251b13cda8f4c25f2913c290157b39d8565543992fd63e93" {
+	if got := hex.EncodeToString(ResponseBinding(req, sig, "")); got != "c7bb01b9f9a9ddcc251b13cda8f4c25f2913c290157b39d8565543992fd63e93" {
 		t.Errorf("without era: %s", got)
 	}
 }
+
+// TestSignSummaryNegotiated checks a version-1 tx-body reply is unchanged: no
+// summary field and the version-1 binding. Only a request for
+// ProtocolSummary gets the summary back, bound by the binding signature.
+func TestSignSummaryNegotiated(t *testing.T) {
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	pool := keyHash(cold)
+
+	for i, version := range []string{Protocol, ProtocolSummary} {
+		req := SignRequest{
+			Version: version, Purpose: "tx-body", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(byte(20 + i)),
+			Payload: certBody(retirement(pool)), Profile: "otg@preview", Era: conwayEra(),
+		}
+
+		code, body := post(t, s, "/v1/sign", req)
+		if code != http.StatusOK {
+			t.Fatalf("%s: %d %s", version, code, body)
+		}
+
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Fatal(err)
+		}
+
+		var r SignResponse
+		if err := json.Unmarshal(body, &r); err != nil {
+			t.Fatal(err)
+		}
+
+		if r.Error != "" || r.Version != version {
+			t.Fatalf("%s: version %q error %q", version, r.Version, r.Error)
+		}
+
+		_, hasSummary := raw["summary"]
+
+		if version == Protocol {
+			if hasSummary {
+				t.Fatalf("version 1 reply carries a summary: %s", body)
+			}
+
+			if !ed25519.Verify(cold, ResponseBinding(req, r.Signature, ""), r.BindingSignature) {
+				t.Fatal("version 1 reply does not carry the version 1 binding")
+			}
+
+			continue
+		}
+
+		if !hasSummary || r.Summary == "" {
+			t.Fatalf("summary reply carries no summary: %s", body)
+		}
+
+		if !ed25519.Verify(cold, ResponseBinding(req, r.Signature, r.Summary), r.BindingSignature) {
+			t.Fatal("binding signature does not cover the summary")
+		}
+
+		if ed25519.Verify(cold, ResponseBinding(req, r.Signature, ""), r.BindingSignature) {
+			t.Error("binding signature accepts a dropped summary")
+		}
+	}
+}
+
+// bindingSummary is the summary in the ProtocolSummary binding vector.
+const bindingSummary = "fee=170000 pool-reg pledge=100000000000 cost=170000000 margin=1/100 relays=1 leios=false"
 
 // TestSignResponseBindsRequest checks every signature comes with a binding
 // signature from the same key over the complete request, so a proxy cannot
@@ -759,22 +838,32 @@ func TestSignResponseBindsRequest(t *testing.T) {
 
 		req.Version = Protocol
 
-		if !ed25519.Verify(cold, ResponseBinding(req, r.Signature), r.BindingSignature) {
+		// a version-1 reply carries no summary; TestSignSummaryNegotiated
+		// covers the negotiated one
+		if r.Summary != "" {
+			t.Fatalf("%s: summary %q", req.Purpose, r.Summary)
+		}
+
+		if !ed25519.Verify(cold, ResponseBinding(req, r.Signature, r.Summary), r.BindingSignature) {
 			t.Fatalf("%s: binding signature does not cover the request", req.Purpose)
 		}
 
 		other := req
 		other.Profile = "other@preview"
 
-		if ed25519.Verify(cold, ResponseBinding(other, r.Signature), r.BindingSignature) {
+		if ed25519.Verify(cold, ResponseBinding(other, r.Signature, r.Summary), r.BindingSignature) {
 			t.Errorf("%s: binding signature accepts another profile", req.Purpose)
 		}
 
 		other = req
 		other.Nonce = nonce(9)
 
-		if ed25519.Verify(cold, ResponseBinding(other, r.Signature), r.BindingSignature) {
+		if ed25519.Verify(cold, ResponseBinding(other, r.Signature, r.Summary), r.BindingSignature) {
 			t.Errorf("%s: binding signature accepts another nonce", req.Purpose)
+		}
+
+		if ed25519.Verify(cold, ResponseBinding(req, r.Signature, r.Summary+" pledge=1"), r.BindingSignature) {
+			t.Errorf("%s: binding signature accepts another summary", req.Purpose)
 		}
 	}
 

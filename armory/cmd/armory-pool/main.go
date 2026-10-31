@@ -182,7 +182,7 @@ func (s *session) keys(outDir, network string, out io.Writer) error {
 	return nil
 }
 
-func (s *session) witness(role, txFile, outFile string) error {
+func (s *session) witness(role, txFile, outFile string, out io.Writer) error {
 	if role != "pool" && role != "stake" {
 		return fmt.Errorf("unknown role %q (pool or stake)", role)
 	}
@@ -226,7 +226,17 @@ func (s *session) witness(role, txFile, outFile string) error {
 		return err
 	}
 
-	return os.WriteFile(outFile, marshalEnvelope(witnessType, witnessDesc, wit), 0o600)
+	if err = os.WriteFile(outFile, marshalEnvelope(witnessType, witnessDesc, wit), 0o600); err != nil {
+		return err
+	}
+
+	// the request negotiated device.ProtocolSummary, so the summary is covered
+	// by the binding signature checked above
+	if resp.Summary != "" {
+		_, err = fmt.Fprintf(out, "device signed: %s\n", resp.Summary)
+	}
+
+	return err
 }
 
 func (s *session) opcert(kesFile string, period uint64, chainArg, outFile string, out io.Writer) error {
@@ -412,7 +422,7 @@ func run(args []string, stdout io.Writer) error {
 			return err
 		}
 
-		return s.witness(*role, *txFile, *out)
+		return s.witness(*role, *txFile, *out, stdout)
 	case "opcert":
 		kes := sf.String("kes-vkey", "", "KES verification key envelope")
 		period := sf.Uint64("kes-period", 0, "KES period")

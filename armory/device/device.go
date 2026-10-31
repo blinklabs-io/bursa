@@ -109,7 +109,11 @@ type SignResponse struct {
 	Signature        []byte  `json:"signature,omitempty"`
 	BindingSignature []byte  `json:"binding_signature,omitempty"`
 	IssueCounter     *uint64 `json:"issue_counter,omitempty"`
-	Error            string  `json:"error,omitempty"`
+	// Summary describes a signed transaction body, as the signing policy saw
+	// it. It is returned only for a ProtocolSummary request and is covered by
+	// BindingSignature.
+	Summary string `json:"summary,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // ProvisionRequest creates a profile. ChainCounter, when set, is the pool's
@@ -215,12 +219,19 @@ func New(mu sync.Locker, logf func(format string, args ...any)) *Service {
 // The device cannot tell chains that share a network id apart, so the label
 // keeps one chain's profiles per device. Profiles for another network or
 // chain are refused at provisioning, inventory, signing, floor reset and
-// reward changes. Call it before SetChip.
+// reward changes. A mainnet build (id 1) also refuses to sign until a host
+// key is registered (RequireHostAuth). Call it before SetChip.
 func (s *Service) SetNetwork(id uint8, chain string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.network, s.networkFixed, s.chain = id, true, chain
+
+	// a mainnet build signs only for a registered host key
+	if id == 1 {
+		s.requireHostAuth = true
+		s.logf("signing requires a registered host key")
+	}
 }
 
 // serves reports why this build does not serve a profile on network id
@@ -468,20 +479,25 @@ func (s *Service) inventory(req InventoryRequest) (Inventory, error) {
 // returned only with the same key's signature over the complete request.
 func (s *Service) sign(req SignRequest) (SignResponse, error) {
 	resp := SignResponse{Version: Protocol, Nonce: req.Nonce}
+	if req.Version == ProtocolSummary {
+		resp.Version = ProtocolSummary
+	}
 
-	var (
-		id    uint32
-		sig   []byte
-		issue *uint64
-	)
+	var out signed
 
 	err := s.authenticate(req)
 	if err == nil {
-		id, sig, issue, err = s.signRequest(req)
+		out, err = s.signRequest(req)
+	}
+
+	// the summary is returned only when the request negotiated it, so a
+	// version-1 reply is unchanged
+	if req.Version != ProtocolSummary {
+		out.summary = ""
 	}
 
 	if err == nil {
-		resp.BindingSignature, err = s.chip.SignEd25519(id, ResponseBinding(req, sig))
+		resp.BindingSignature, err = s.chip.SignEd25519(out.id, ResponseBinding(req, out.sig, out.summary))
 		if err != nil {
 			s.logf("sign binding: %v", err)
 			err = errDevice
@@ -495,34 +511,44 @@ func (s *Service) sign(req SignRequest) (SignResponse, error) {
 		return resp, nil
 	}
 
-	resp.Signature = sig
-	resp.IssueCounter = issue
+	resp.Signature = out.sig
+	resp.IssueCounter = out.issue
+	resp.Summary = out.summary
 
 	return resp, nil
 }
 
+// signed is what signRequest produced: the selected key's object ID, its
+// signature, the opcert issue counter and the transaction body summary.
+type signed struct {
+	id      uint32
+	sig     []byte
+	issue   *uint64
+	summary string
+}
+
 // signRequest returns the selected key's object ID with its signature.
-func (s *Service) signRequest(req SignRequest) (uint32, []byte, *uint64, error) {
-	if req.Version != Protocol {
-		return 0, nil, nil, errors.New("unsupported protocol version")
+func (s *Service) signRequest(req SignRequest) (signed, error) {
+	if req.Version != Protocol && req.Version != ProtocolSummary {
+		return signed{}, errors.New("unsupported protocol version")
 	}
 
 	if len(req.Nonce) == 0 || len(req.Nonce) > maxNonce {
-		return 0, nil, nil, errors.New("invalid nonce")
+		return signed{}, errors.New("invalid nonce")
 	}
 
 	if !s.nonces.add(req.Nonce) {
-		return 0, nil, nil, errors.New("nonce replayed")
+		return signed{}, errors.New("nonce replayed")
 	}
 
 	p, err := s.profileFor(req.Profile)
 	if err != nil {
-		return 0, nil, nil, err
+		return signed{}, err
 	}
 
 	k, err := s.keys(p)
 	if err != nil {
-		return 0, nil, nil, err
+		return signed{}, err
 	}
 
 	var (
@@ -537,56 +563,56 @@ func (s *Service) signRequest(req SignRequest) (uint32, []byte, *uint64, error) 
 	case "stake":
 		role, id, pub = policy.RoleOwner, p.OwnerKeyID(), k.owner
 	default:
-		return 0, nil, nil, errors.New("unknown role")
+		return signed{}, errors.New("unknown role")
 	}
 
 	h := keyHash(pub)
 
 	if want, err := hex.DecodeString(req.KeyHash); err != nil || !bytes.Equal(want, h[:]) {
-		return 0, nil, nil, errors.New("key hash does not match the profile key for this role")
+		return signed{}, errors.New("key hash does not match the profile key for this role")
 	}
 
 	switch req.Purpose {
 	case "tx-body":
-		sig, err := s.signTxBody(p, k, role, id, req)
-		return id, sig, nil, err
+		sig, summary, err := s.signTxBody(p, k, role, id, req)
+		return signed{id: id, sig: sig, summary: summary}, err
 	case "opcert-next":
 		if role != policy.RoleCold {
-			return 0, nil, nil, errors.New("opcert-next requires the pool key")
+			return signed{}, errors.New("opcert-next requires the pool key")
 		}
 
 		sig, issue, err := s.signOpCertNext(p, req.Payload)
-		return id, sig, issue, err
+		return signed{id: id, sig: sig, issue: issue}, err
 	}
 
-	return 0, nil, nil, errUnsupported
+	return signed{}, errUnsupported
 }
 
-func (s *Service) signTxBody(p profile.Profile, k profileKeys, role policy.Role, id uint32, req SignRequest) ([]byte, error) {
+func (s *Service) signTxBody(p profile.Profile, k profileKeys, role policy.Role, id uint32, req SignRequest) ([]byte, string, error) {
 	if len(req.Payload) == 0 || len(req.Payload) > maxTxBody {
-		return nil, errors.New("invalid body size")
+		return nil, "", errors.New("invalid body size")
 	}
 
 	if req.Era == nil {
-		return nil, errors.New("tx-body requires an era")
+		return nil, "", errors.New("tx-body requires an era")
 	}
 
 	keys := policy.Keys{Pool: keyHash(k.cold), Owner: keyHash(k.owner)}
 
 	d, err := policy.Evaluate(p, keys, role, *req.Era, req.Payload)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	sig, err := s.chip.SignEd25519(id, d.BodyHash[:])
 	if err != nil {
 		s.logf("sign: %v", err)
-		return nil, errDevice
+		return nil, "", errDevice
 	}
 
 	s.logf("tx-body %q %s body %x: %s", p.Name, req.Role, d.BodyHash, d.Summary)
 
-	return sig, nil
+	return sig, d.Summary, nil
 }
 
 func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *uint64, error) {

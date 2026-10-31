@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,8 +47,11 @@ func TestHostKeyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := strings.TrimSpace(out.String()); got != hex.EncodeToString(key.Public().(ed25519.PublicKey)) {
-		t.Fatalf("printed %q, not the public key", got)
+	// the printed line is the /provision/host-key request body, as is
+	var req device.HostKeyRequest
+
+	if err := json.Unmarshal(out.Bytes(), &req); err != nil || !bytes.Equal(req.PublicKey, key.Public().(ed25519.PublicKey)) {
+		t.Fatalf("printed %q, not the host-key request for the public key: %v", out.String(), err)
 	}
 
 	if err := run([]string{"host-key", "-out", file}, &out); err == nil {
@@ -76,11 +80,14 @@ func TestHostKeyAuthenticatesSigning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pub, _ := hex.DecodeString(strings.TrimSpace(out.String()))
-
 	var keys device.HostKeyResponse
 
-	devicePost(t, r.srv, "/provision/host-key", device.HostKeyRequest{PublicKey: pub}, &keys)
+	// the printed request registers the key unchanged
+	devicePost(t, r.srv, "/provision/host-key", json.RawMessage(out.Bytes()), &keys)
+
+	if len(keys.HostKeys) != 1 {
+		t.Fatalf("host keys after registering the printed request: %d", len(keys.HostKeys))
+	}
 
 	kesFile := filepath.Join(dir, "kes.vkey")
 	if err := os.WriteFile(kesFile, marshalEnvelope("KesVerificationKey_ed25519_kes_2^6", "", vkeyCBOR(bytes.Repeat([]byte{0x5a}, 32))), 0o600); err != nil {
