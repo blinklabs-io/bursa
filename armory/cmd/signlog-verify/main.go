@@ -23,7 +23,8 @@
 // exits nonzero on any failure, including an incomplete final record unless
 // -allow-torn-tail is given. A card cannot be told from an older copy of
 // itself by the card alone: -head-seq and -head-hash pin the latest entry
-// the operator expects.
+// the operator expects. `armory-pool signlog` does the same over the host
+// transport, reading the log from the running device.
 package main
 
 import (
@@ -39,17 +40,7 @@ import (
 )
 
 func printEntry(w io.Writer, e signlog.Entry) {
-	if e.SummaryTruncated {
-		e.Summary += " [summary truncated]"
-	}
-
-	switch e.Purpose {
-	case signlog.PurposeOpCertNext:
-		fmt.Fprintf(w, "%d %s %s %s issue=%d kes-period=%d kes-vkey-hash=%x %s\n",
-			e.Seq, e.Purpose, e.Profile, e.Role, e.IssueCounter, e.KESPeriod, e.KESKeyHash, e.Summary)
-	default:
-		fmt.Fprintf(w, "%d %s %s %s body=%x %s\n", e.Seq, e.Purpose, e.Profile, e.Role, e.BodyHash, e.Summary)
-	}
+	fmt.Fprintln(w, signlog.FormatEntry(e))
 }
 
 func run(args []string, stdout io.Writer) error {

@@ -22,6 +22,7 @@
 //	armory-pool -identity HEX -profile NAME keys -out-dir DIR [-network preview]
 //	armory-pool -identity HEX -profile NAME witness -role pool|stake -tx-file F -out W
 //	armory-pool -identity HEX -profile NAME opcert -kes-vkey F -kes-period N -chain-counter N|none -out F
+//	armory-pool -identity HEX signlog [-head-seq N -head-hash HEX]
 //	armory-pool reward-hex stake_test1...
 //	armory-pool address -stake-vkey F [-payment-vkey F] [-type base|reward] [-network preview]
 package main
@@ -45,6 +46,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa/armory/device"
+	"github.com/blinklabs-io/bursa/armory/signlog"
 )
 
 type client struct {
@@ -348,11 +350,13 @@ func run(args []string, stdout io.Writer) error {
 	}
 
 	if fs.NArg() == 0 {
-		return errors.New("subcommand required: keys, witness, opcert, reward-hex, address, host-key")
+		return errors.New("subcommand required: keys, witness, opcert, signlog, reward-hex, address, host-key")
 	}
 
 	sub, rest := fs.Arg(0), fs.Args()[1:]
 	sf := flag.NewFlagSet(sub, flag.ContinueOnError)
+
+	profileOptional := false
 
 	connect := func() (*session, error) {
 		id, err := hex.DecodeString(*identityHex)
@@ -360,7 +364,7 @@ func run(args []string, stdout io.Writer) error {
 			return nil, errors.New("-identity must be the 32-byte identity public key in hex")
 		}
 
-		if *profileName == "" {
+		if *profileName == "" && !profileOptional {
 			return nil, errors.New("-profile is required")
 		}
 
@@ -433,6 +437,33 @@ func run(args []string, stdout io.Writer) error {
 		}
 
 		return s.opcert(*kes, *period, *chain, *out, stdout)
+	case "signlog":
+		seq := sf.Int64("head-seq", -1, "expected number of the latest entry")
+		hash := sf.String("head-hash", "", "expected hash of the latest entry (hex)")
+
+		if err := sf.Parse(rest); err != nil {
+			return err
+		}
+
+		var wantHash []byte
+
+		if *seq >= 0 || *hash != "" {
+			var err error
+
+			if wantHash, err = hex.DecodeString(*hash); err != nil || len(wantHash) != signlog.HashSize || *seq < 0 {
+				return errors.New("-head-seq and a 32-byte hex -head-hash must be given together")
+			}
+		}
+
+		// the log is the device's, not a profile's
+		profileOptional = true
+
+		s, err := connect()
+		if err != nil {
+			return err
+		}
+
+		return s.signLog(*seq, wantHash, stdout)
 	case "host-key":
 		out := sf.String("out", "", "host signing key file to create")
 
