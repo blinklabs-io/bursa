@@ -107,3 +107,26 @@ func RequestBinding(req SignRequest) []byte {
 
 	return h.Sum(nil)
 }
+
+// signLogDomain separates host signatures over signing log reads from every
+// other signature the host key could make.
+const signLogDomain = "bursa-armory-signlog-read/1"
+
+// SignLogBinding is the digest a host key signs to authenticate a signing log
+// read: the domain string, the first block, the block count and the
+// challenge, length-prefixed as in RequestBinding.
+func SignLogBinding(req SignLogRequest) []byte {
+	h := sha256.New()
+
+	for _, field := range [][]byte{
+		[]byte(signLogDomain),
+		[]byte(strconv.FormatUint(req.From, 10)),
+		[]byte(strconv.FormatUint(uint64(req.Count), 10)),
+		req.Challenge,
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
+
+	return h.Sum(nil)
+}

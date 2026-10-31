@@ -128,6 +128,14 @@ func (s *Service) challenge(struct{}) (ChallengeResponse, error) {
 // the challenge is outstanding. The challenge is burned only after the
 // signature verifies, so a forged request cannot use up a real one.
 func (s *Service) authenticate(req SignRequest) error {
+	return s.authenticateHost(req.HostKey, req.HostSignature, req.Challenge, RequestBinding(req))
+}
+
+// authenticateHost checks that hostKey is registered, that sig is its
+// signature over binding, and that challenge is outstanding, burning it. With
+// no host key registered it refuses when host authentication is required and
+// accepts otherwise.
+func (s *Service) authenticateHost(hostKey, sig, challenge, binding []byte) error {
 	if s.hostKeysBad {
 		return errHostKeysBad
 	}
@@ -143,7 +151,7 @@ func (s *Service) authenticate(req SignRequest) error {
 	registered := false
 
 	for _, k := range s.hostKeys {
-		if bytes.Equal(k, req.HostKey) {
+		if bytes.Equal(k, hostKey) {
 			registered = true
 			break
 		}
@@ -153,13 +161,12 @@ func (s *Service) authenticate(req SignRequest) error {
 		return errHostKeyUnknown
 	}
 
-	if len(req.HostSignature) != ed25519.SignatureSize ||
-		!ed25519.Verify(req.HostKey, RequestBinding(req), req.HostSignature) {
+	if len(sig) != ed25519.SignatureSize || !ed25519.Verify(hostKey, binding, sig) {
 		return errors.New("host signature does not verify")
 	}
 
 	for i, c := range s.challenges {
-		if bytes.Equal(c, req.Challenge) {
+		if bytes.Equal(c, challenge) {
 			s.challenges = append(s.challenges[:i], s.challenges[i+1:]...)
 			return nil
 		}

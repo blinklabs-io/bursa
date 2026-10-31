@@ -356,6 +356,7 @@ func (s *Service) signingRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/inventory", handle(s, s.inventory))
 	mux.HandleFunc("POST /v1/challenge", handle(s, s.challenge))
 	mux.HandleFunc("POST /v1/sign", handle(s, s.sign))
+	mux.HandleFunc("POST /v1/signlog", handle(s, s.signLogRead))
 }
 
 func (s *Service) provisioningRoutes(mux *http.ServeMux) {

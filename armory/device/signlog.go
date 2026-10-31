@@ -28,6 +28,35 @@ type SigningLog interface {
 	Head() signlog.Head
 }
 
+// MaxLogBlocks bounds the blocks one signing log read returns.
+const MaxLogBlocks = 128
+
+// SignLogRequest reads Count blocks of the signing log medium from block
+// From. The medium is the raw card: block 0 is the header and each entry
+// follows in a slot of signlog.RecordBlocks blocks. It is authenticated like a
+// signing request: the host key signs SignLogBinding over the request and a
+// challenge from /v1/challenge.
+type SignLogRequest struct {
+	From          uint64 `json:"from"`
+	Count         uint32 `json:"count"`
+	Challenge     []byte `json:"challenge,omitempty"`
+	HostKey       []byte `json:"host_key,omitempty"`
+	HostSignature []byte `json:"host_signature,omitempty"`
+}
+
+// SignLogResponse returns the blocks with the device's current head and the
+// medium's size in blocks. The head is the pin: a host verifies the blocks
+// with signlog.Verify under the pinned identity key and compares the log's
+// head with this one.
+type SignLogResponse struct {
+	Version   string `json:"version"`
+	HeadSeq   uint64 `json:"head_seq"`
+	HeadHash  []byte `json:"head_hash"`
+	NumBlocks uint64 `json:"num_blocks"`
+	From      uint64 `json:"from"`
+	Blocks    []byte `json:"blocks"`
+}
+
 var (
 	errLogUnavailable = errors.New("signing log unavailable")
 	errLogFull        = errors.New("signing log is full; the device refuses to sign")
@@ -98,4 +127,44 @@ func (s *Service) appendLog(rec signlog.Record) error {
 	}
 
 	return nil
+}
+
+// signLogRead serves a range of the log medium. Reads and appends share the
+// service lock, so the blocks and the head are one consistent view.
+func (s *Service) signLogRead(req SignLogRequest) (SignLogResponse, error) {
+	if err := s.authenticateHost(req.HostKey, req.HostSignature, req.Challenge, SignLogBinding(req)); err != nil {
+		return SignLogResponse{}, err
+	}
+
+	if s.log == nil || s.logMedium == nil {
+		if err := s.logReady(); err != nil {
+			return SignLogResponse{}, err
+		}
+
+		return SignLogResponse{}, fmt.Errorf("%w: none installed", errLogUnavailable)
+	}
+
+	n := s.logMedium.NumBlocks()
+
+	if req.Count > MaxLogBlocks {
+		return SignLogResponse{}, fmt.Errorf("at most %d blocks per read", MaxLogBlocks)
+	}
+
+	if req.From > n || uint64(req.Count) > n-req.From {
+		return SignLogResponse{}, fmt.Errorf("blocks %d+%d are outside the %d-block medium", req.From, req.Count, n)
+	}
+
+	resp := SignLogResponse{Version: Protocol, NumBlocks: n, From: req.From}
+	head := s.log.Head()
+	resp.HeadSeq, resp.HeadHash = head.Seq, head.Hash[:]
+	resp.Blocks = make([]byte, int(req.Count)*signlog.BlockSize)
+
+	if req.Count > 0 {
+		if err := s.logMedium.ReadBlocks(req.From, resp.Blocks); err != nil {
+			s.logf("signing log: read blocks %d+%d: %v", req.From, req.Count, err)
+			return SignLogResponse{}, errDevice
+		}
+	}
+
+	return resp, nil
 }
