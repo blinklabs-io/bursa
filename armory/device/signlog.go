@@ -34,7 +34,8 @@ const MaxLogBlocks = 128
 
 // SignLogRequest reads Count blocks of the signing log medium from block
 // From. The medium is the raw card: block 0 is the header and each entry
-// follows in a slot of signlog.RecordBlocks blocks. It is authenticated like a
+// follows in a slot of signlog.RecordBlocks blocks. Only blocks up to the end
+// of the slot after the head are served. It is authenticated like a
 // signing request: the host key signs SignLogBinding over the request and a
 // challenge from /v1/challenge.
 type SignLogRequest struct {
@@ -151,12 +152,16 @@ func (s *Service) signLogRead(req SignLogRequest) (SignLogResponse, error) {
 		return SignLogResponse{}, fmt.Errorf("at most %d blocks per read", MaxLogBlocks)
 	}
 
-	if req.From > n || uint64(req.Count) > n-req.From {
-		return SignLogResponse{}, fmt.Errorf("blocks %d+%d are outside the %d-block medium", req.From, req.Count, n)
+	// only the header, the entries and the slot after the head are served:
+	// the rest of the card holds no entry
+	head := s.log.Head()
+	limit := min(n, 1+(head.Seq+1)*signlog.RecordBlocks)
+
+	if req.From > limit || uint64(req.Count) > limit-req.From {
+		return SignLogResponse{}, fmt.Errorf("blocks %d+%d are outside the %d blocks the log uses", req.From, req.Count, limit)
 	}
 
 	resp := SignLogResponse{Version: Protocol, NumBlocks: n, From: req.From}
-	head := s.log.Head()
 	resp.HeadSeq, resp.HeadHash = head.Seq, head.Hash[:]
 	resp.Blocks = make([]byte, int(req.Count)*signlog.BlockSize)
 

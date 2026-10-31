@@ -259,3 +259,33 @@ func TestSigningHandlerServesSignLog(t *testing.T) {
 		t.Errorf("provisioning handler serves /v1/signlog: %d", code)
 	}
 }
+
+// Reads stop at the slot after the head: the rest of the card holds no entry
+// and is not served.
+func TestSignLogReadStopsAfterNextSlot(t *testing.T) {
+	t.Parallel()
+
+	r := newLogRig(t, 8)
+	r.signN(t, 2)
+
+	end := uint64(1 + 3*signlog.RecordBlocks)
+
+	if code, _, body := readLog(t, r.s, SignLogRequest{From: 0, Count: uint32(end)}); code != http.StatusOK {
+		t.Fatalf("used blocks and the next slot: %d %s", code, body)
+	}
+
+	for name, req := range map[string]SignLogRequest{
+		"one block beyond": {From: 0, Count: uint32(end) + 1},
+		"later slot":       {From: end, Count: 1},
+		"last block":       {From: r.m.NumBlocks() - 1, Count: 1},
+	} {
+		if code, _, _ := readLog(t, r.s, req); code == http.StatusOK {
+			t.Errorf("%s: served", name)
+		}
+	}
+
+	// the head alone is still served from any position inside the bound
+	if code, _, body := readLog(t, r.s, SignLogRequest{From: end}); code != http.StatusOK {
+		t.Fatalf("head only at the bound: %d %s", code, body)
+	}
+}
