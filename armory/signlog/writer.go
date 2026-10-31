@@ -35,7 +35,8 @@ type Writer struct {
 // Open checks the medium against the head store and returns a writer.
 //
 // A blank medium is formatted with a header for id when the head store is
-// uninitialised (the zero Head), and refused otherwise. Otherwise the
+// uninitialised (the zero Head), and refused otherwise; its record slots
+// must be all zero too (ErrNotBlank). Otherwise the
 // header must name id, and the latest entry on the medium is compared with
 // the head: equal is accepted; a medium behind the head (an older copy, a
 // truncated or torn latest record) is ErrRollback; a differing hash with the
@@ -127,6 +128,10 @@ func (w *Writer) format(head Head) (*Writer, error) {
 		return nil, fmt.Errorf("%w: %d blocks hold no entry", ErrMedium, w.medium.NumBlocks())
 	}
 
+	if err := checkBlank(w.medium, 1+slots*RecordBlocks); err != nil {
+		return nil, err
+	}
+
 	block, err := formatHeader(w.id, slots)
 	if err != nil {
 		return nil, err
@@ -145,6 +150,28 @@ func (w *Writer) format(head Head) (*Writer, error) {
 	}
 
 	return w, w.repair(Head{Hash: sha256.Sum256(block)})
+}
+
+// blankChunk is the number of blocks checkBlank reads at once.
+const blankChunk = 256
+
+// checkBlank confirms the first n blocks of m are all zero, so nothing but
+// zeros follows the entries the writer will add, as Verify requires.
+func checkBlank(m Medium, n uint64) error {
+	buf := make([]byte, blankChunk*BlockSize)
+
+	for lba := uint64(0); lba < n; lba += blankChunk {
+		p := buf[:min(blankChunk, n-lba)*BlockSize]
+		if err := m.ReadBlocks(lba, p); err != nil {
+			return fmt.Errorf("%w: read block %d: %w", ErrMedium, lba, err)
+		}
+
+		if !isZero(p) {
+			return fmt.Errorf("%w: data in blocks %d+%d", ErrNotBlank, lba, len(p)/BlockSize)
+		}
+	}
+
+	return nil
 }
 
 // Head returns the latest entry the writer has logged.

@@ -83,6 +83,9 @@ var (
 	// ErrBlank is returned for a blank medium when the head store says
 	// entries or a header exist.
 	ErrBlank = errors.New("signlog: blank medium but the head store is initialised")
+	// ErrNotBlank is returned when a medium with a blank header holds data
+	// in its record slots: Open formats only an all-zero medium.
+	ErrNotBlank = errors.New("signlog: medium to format is not all zero")
 	// ErrCorrupt is returned for a header or record that is malformed or
 	// fails its checksum where one was required to be valid.
 	ErrCorrupt = errors.New("signlog: corrupt medium")

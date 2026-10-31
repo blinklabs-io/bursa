@@ -1179,3 +1179,42 @@ func TestUndersizedMediumRefused(t *testing.T) {
 		t.Fatalf("open: got %v, want ErrMedium", err)
 	}
 }
+
+// A card with a blank header but data in its slot region is not formatted:
+// the leftover data would sit after the entries the device writes, where
+// Verify refuses it.
+func TestFormatRefusesUnzeroedSlots(t *testing.T) {
+	t.Parallel()
+
+	for _, seq := range []int{1, 4} {
+		f := newFixture(t, 4)
+		f.mutate(t, func(img []byte) { img[slotOffset(seq)+RecordSize-1] = 0xff })
+
+		if _, err := Open(f.medium, f.heads, f.id); !errors.Is(err, ErrNotBlank) {
+			t.Fatalf("slot %d: got %v, want ErrNotBlank", seq, err)
+		}
+
+		if head, _ := f.heads.Load(); head != (Head{}) {
+			t.Fatalf("slot %d: head store set to %+v", seq, head)
+		}
+
+		if !isZero(f.medium.Image()[:BlockSize]) {
+			t.Fatalf("slot %d: header written", seq)
+		}
+	}
+}
+
+// Data beyond the declared slots does not stop formatting; Verify never
+// reads it.
+func TestFormatIgnoresBlocksBeyondSlots(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 4)
+	f.medium = NewMemMedium(testBlocks(4) + 1)
+	f.mutate(t, func(img []byte) { img[len(img)-1] = 0xff })
+	f.fill(t, f.open(t), 2)
+
+	if _, err := f.verify(t, f.pub); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+}
