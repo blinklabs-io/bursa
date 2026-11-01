@@ -407,9 +407,13 @@ to sign. A device wipe deletes the head object with the identity key; after a
 new identity is provisioned, the signing firmware formats a zeroed card and
 starts a new log. To start a new log under the same identity, the wipe
 firmware's `POST /wipe/signlog`, confirmed with the device identity public key
-as `identity_public_key`, deletes only the head object; the signing firmware
-then formats a zeroed card at its next start, with entries numbered from 1
-again. The old card's entries stay verifiable with `signlog-verify -image`.
+as `identity_public_key`, deletes only the head object. Like the other wipe
+endpoints it is not host-key authenticated: the identity key only confirms
+which device is meant, and the wipe image must be loaded onto the board. The
+old card is refused once the head is gone, so image it if its entries are
+wanted, then zero it or insert a zeroed card; the signing firmware formats it
+at its next start, with entries numbered from 1 again. The old card's entries
+stay verifiable from its image with `signlog-verify -identity HEX -image FILE`.
 
 The first start with an all-zero card and an unset head object formats the
 card for the device identity key; it holds up to 32768 entries. A new card
