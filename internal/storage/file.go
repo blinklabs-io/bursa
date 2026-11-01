@@ -90,6 +90,41 @@ func validateWalletName(name string) error {
 	return nil
 }
 
+func inspectWalletPath(baseDir, name string) error {
+	if !inspectWalletPathsByName {
+		return nil
+	}
+	walletDir := filepath.Join(baseDir, "wallet-"+name)
+	dirInfo, err := os.Lstat(walletDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to inspect wallet directory: %w", err)
+	}
+	if dirInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("wallet %s directory is a symlink", name)
+	}
+	if !dirInfo.IsDir() {
+		return fmt.Errorf("wallet %s path is not a directory", name)
+	}
+	walletPath := filepath.Join(walletDir, "wallet.json")
+	fileInfo, err := os.Lstat(walletPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to inspect wallet file: %w", err)
+	}
+	if fileInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("wallet %s file is a symlink", name)
+	}
+	if !fileInfo.Mode().IsRegular() {
+		return fmt.Errorf("wallet %s path is not a regular file", name)
+	}
+	return nil
+}
+
 // GetWallet retrieves a wallet from the file system.
 // The wallet is loaded from a JSON file in the base directory.
 func (s *FileStore) GetWallet(
@@ -102,42 +137,10 @@ func (s *FileStore) GetWallet(
 	if err := validateWalletName(name); err != nil {
 		return nil, fmt.Errorf("invalid wallet name: %w", err)
 	}
-
-	walletDir := s.walletDir(name)
-	dirInfo, err := os.Lstat(walletDir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to inspect wallet directory: %w", err)
-	}
-	if dirInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("wallet %s directory is a symlink", name)
-	}
-	if !dirInfo.IsDir() {
-		return nil, fmt.Errorf("wallet %s path is not a directory", name)
+	if err := inspectWalletPath(s.baseDir, name); err != nil {
+		return nil, err
 	}
 
-	walletPath := s.walletPath(name)
-	fileInfo, err := os.Lstat(walletPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to inspect wallet file: %w", err)
-	}
-	if fileInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("wallet %s file is a symlink", name)
-	}
-	if !fileInfo.Mode().IsRegular() {
-		return nil, fmt.Errorf("wallet %s path is not a regular file", name)
-	}
-
-	// The checks above described the path a moment ago, not the file this
-	// opens: between the two, what the path names can be replaced. Opening
-	// without following a final symlink and without blocking on a special file
-	// closes the substitution, and re-checking the open handle below is what
-	// makes the regular-file guarantee hold for the descriptor actually read.
 	file, err := openWalletFileForRead(s.baseDir, name)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -192,7 +195,7 @@ func (s *FileStore) GetWallet(
 // It scans the base directory for wallet subdirectories.
 func (s *FileStore) ListWallets(ctx context.Context) ([]Wallet, error) {
 	s.mu.RLock()
-	entries, err := os.ReadDir(s.baseDir)
+	entries, err := readWalletDirectory(s.baseDir)
 	s.mu.RUnlock()
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -245,13 +248,13 @@ func (s *FileStore) DeleteWallet(ctx context.Context, name string) error {
 		return fmt.Errorf("invalid wallet name: %w", err)
 	}
 
-	walletDir := s.walletDir(name)
-	if _, err := os.Lstat(walletDir); errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
-	} else if err != nil {
-		return fmt.Errorf("failed to inspect wallet directory: %w", err)
+	if err := deleteWallet(s.baseDir, name); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("wallet %s: %w", name, ErrWalletNotFound)
+		}
+		return fmt.Errorf("failed to delete wallet: %w", err)
 	}
-	return os.RemoveAll(walletDir)
+	return nil
 }
 
 // fileWallet implements the Wallet interface for file-based storage
@@ -415,12 +418,6 @@ func (w *fileWallet) Save(ctx context.Context) error {
 		return fmt.Errorf("wallet encryption is required: %w", sops.ErrNoMasterKey)
 	}
 
-	// Ensure directory exists with secure permissions (0700)
-	walletDir := w.store.walletDir(w.name)
-	if err := os.MkdirAll(walletDir, 0o700); err != nil {
-		return fmt.Errorf("failed to create wallet directory: %w", err)
-	}
-
 	raw, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to encode wallet data: %w", err)
@@ -436,7 +433,7 @@ func (w *fileWallet) Save(ctx context.Context) error {
 	if len(raw) > maxWalletFileSize {
 		return fmt.Errorf("wallet file exceeds %d bytes", maxWalletFileSize)
 	}
-	if err := writeSecretFileAtomic(w.store.walletPath(w.name), raw, 0o600); err != nil {
+	if err := writeWalletFile(w.store.baseDir, w.name, raw); err != nil {
 		return fmt.Errorf("failed to write wallet file: %w", err)
 	}
 	w.mu.Lock()
@@ -447,60 +444,4 @@ func (w *fileWallet) Save(ctx context.Context) error {
 
 func (w *fileWallet) Delete(ctx context.Context) error {
 	return w.store.DeleteWallet(ctx, w.name)
-}
-
-// walletDir returns the directory path for a wallet
-func (s *FileStore) walletDir(name string) string {
-	if err := validateWalletName(name); err != nil {
-		// This should never happen if validation is done at public API boundaries
-		panic(fmt.Sprintf("invalid wallet name in walletDir: %v", err))
-	}
-	return filepath.Join(s.baseDir, "wallet-"+name)
-}
-
-// walletPath returns the file path for a wallet
-func (s *FileStore) walletPath(name string) string {
-	if err := validateWalletName(name); err != nil {
-		// This should never happen if validation is done at public API boundaries
-		panic(fmt.Sprintf("invalid wallet name in walletPath: %v", err))
-	}
-	return filepath.Join(s.walletDir(name), "wallet.json")
-}
-
-func writeSecretFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	removeTmp := true
-	defer func() {
-		if removeTmp {
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return err
-	}
-	if err := syncDirectory(dir); err != nil {
-		return err
-	}
-	removeTmp = false
-	return nil
 }

@@ -2823,6 +2823,11 @@ func CreateSecretKeyFile(path string) (*os.File, error) {
 		_ = os.Remove(path)
 		return nil, err
 	}
+	if err := checkOpenFilePermissions(file); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return nil, err
+	}
 	return file, nil
 }
 
@@ -2842,6 +2847,11 @@ func CreateSecretKeyTempFile(dir, pattern string) (*os.File, error) {
 				_ = os.Remove(path)
 				return nil, err
 			}
+			if err := checkOpenFilePermissions(file); err != nil {
+				_ = file.Close()
+				_ = os.Remove(path)
+				return nil, err
+			}
 			return file, nil
 		}
 		if errors.Is(err, fs.ErrExist) {
@@ -2857,6 +2867,13 @@ func CreateSecretKeyTempFile(dir, pattern string) (*os.File, error) {
 // atomic temporary-file workflow before renaming the file into place.
 func RestrictSecretKeyFilePermissions(file *os.File) error {
 	return restrictSecretKeyFilePermissions(file)
+}
+
+// CheckSecretFilePermissions verifies that an opened secret-bearing file or
+// directory is accessible only to the identities allowed by the platform's
+// secret-file policy.
+func CheckSecretFilePermissions(file *os.File) error {
+	return checkOpenFilePermissions(file)
 }
 
 // LoadSecretKeyFromFile loads a secret key from a file after checking the

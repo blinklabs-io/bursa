@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -474,4 +475,45 @@ func TestFileStoreEncryptsAtRestWithAgeRecipient(t *testing.T) {
 	item, err := got.GetItem("mnemonic")
 	require.NoError(t, err)
 	assert.Equal(t, "secret seed phrase", item)
+}
+
+// walletDir returns the directory path for a wallet
+func (s *FileStore) walletDir(name string) string {
+	if err := validateWalletName(name); err != nil {
+		// This should never happen if validation is done at public API boundaries
+		panic(fmt.Sprintf("invalid wallet name in walletDir: %v", err))
+	}
+	return filepath.Join(s.baseDir, "wallet-"+name)
+}
+
+// walletPath returns the file path for a wallet
+func (s *FileStore) walletPath(name string) string {
+	if err := validateWalletName(name); err != nil {
+		// This should never happen if validation is done at public API boundaries
+		panic(fmt.Sprintf("invalid wallet name in walletPath: %v", err))
+	}
+	return filepath.Join(s.walletDir(name), "wallet.json")
+}
+
+func TestFileStoreListWalletsSkipsUnloadableWallets(t *testing.T) {
+	store := NewFileStore(t.TempDir())
+	good, err := store.CreateWallet("good")
+	require.NoError(t, err)
+	require.NoError(t, good.Save(context.Background()))
+
+	malformed := store.walletDir("malformed")
+	require.NoError(t, os.Mkdir(malformed, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(malformed, "wallet.json"),
+		[]byte("{"),
+		0o600,
+	))
+	// A wallet directory without its file is what a concurrent delete leaves
+	// behind between the directory scan and the load.
+	require.NoError(t, os.Mkdir(store.walletDir("missing"), 0o700))
+
+	wallets, err := store.ListWallets(context.Background())
+	require.NoError(t, err)
+	require.Len(t, wallets, 1)
+	assert.Equal(t, "good", wallets[0].Name())
 }
