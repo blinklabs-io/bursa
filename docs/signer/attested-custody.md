@@ -197,7 +197,7 @@ backends:
   - name: "gcp-cs"
     type: "confidential-space"
     address: "https://workload.example.internal:8443"
-    profile: "pool@mainnet"                     # optional fixed workload profile
+    profile: "pool@mainnet"                     # optional; unset for `bursa confidential-space-workload`
     audience: "https://signer.example.internal"
     image_digest: "sha256:<64 hex>"
     tls_ca_file: "/etc/bursa/confidential-space-ca.pem"
@@ -237,6 +237,17 @@ certificate signed by `--client-ca-file`. The sign endpoint accepts only a
 `pool` key with the `opcert` purpose and the canonical 48-byte
 operational-certificate payload. It rejects reused request nonces and verifies
 each signature before returning it.
+
+Two signer features are refused by design:
+
+- `chain_counter` requests. The signer sends these as `opcert-next`, which
+  accepts the same chain counter again so a KES rotation can reuse an issue
+  number. The workload's durable counter only advances, so it never signs a
+  second certificate at an issue number it has already used. Send
+  `issue_counter` instead.
+- A backend `profile`. The workload signs no profile binding, so leave
+  `profile` unset on its `confidential-space` backend; with it set, the
+  inventory request is refused and the backend does not load.
 
 The first boot generates the Ed25519 pool key and an AES-256-GCM data-encryption
 key inside the workload. Cloud KMS wraps the data-encryption key. The workload
