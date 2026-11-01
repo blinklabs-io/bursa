@@ -1222,6 +1222,9 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	if cfg.activity != nil {
 		act := cfg.activity
 		mux.HandleFunc("GET /wallet/activity", gated(st, func(w http.ResponseWriter, r *http.Request) {
+			if !requireSameOriginBrowserContext(w, r) {
+				return
+			}
 			events, err := act.Poll(r.Context())
 			if err != nil {
 				serve(w, struct{}{}, err)
@@ -1486,6 +1489,9 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 		serveNFT(w, v, err)
 	}))
 	mux.HandleFunc("GET /wallet/nft/{asset}/image", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if !requireSameOriginBrowserContext(w, r) {
+			return
+		}
 		if nfts == nil {
 			http.Error(w, "nft media not available", http.StatusServiceUnavailable)
 			return
@@ -1870,6 +1876,8 @@ func limitRequestBody(next http.Handler) http.Handler {
 //   - Other methods (GET/HEAD, plus the SPA's navigations and asset loads) use
 //     sameOrigin, which additionally trusts the absent-Origin case that
 //     same-origin browser GETs produce — but only over a loopback Host.
+//     Ownership-dependent or state-consuming GETs require browser fetch
+//     metadata at their route before reading wallet state.
 //
 // It reuses connector.go's sameOrigin/strictSameOrigin/isLoopbackHost verbatim
 // so the SPA's own calls decide identically to the connector's SPA routes: in
@@ -1900,6 +1908,25 @@ func sameOriginGuard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireSameOriginBrowserContext rejects subresource-capable GET requests
+// unless they carry either a matching Origin or browser-controlled same-origin
+// fetch metadata. Callers use it before reading or advancing private wallet
+// state that a cross-site page could otherwise probe or consume.
+func requireSameOriginBrowserContext(w http.ResponseWriter, r *http.Request) bool {
+	allowed := false
+	if r.Header.Get("Origin") != "" {
+		allowed = sameOrigin(r)
+	} else {
+		allowed = isLoopbackHost(r.Host) && r.Header.Get("Sec-Fetch-Site") == "same-origin"
+	}
+	if allowed {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+	return false
 }
 
 // walletList maps vault metadata to the client-facing wallet views, marking the
