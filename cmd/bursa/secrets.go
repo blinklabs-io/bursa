@@ -21,34 +21,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// addSecretFlags registers the mnemonic and password inputs shared by every
-// derivation command. --mnemonic and --password stay for compatibility but are
-// deprecated because process arguments are visible to other local users; the
-// file flags accept "-" to read standard input.
+// addSecretFlags registers the file-based mnemonic and password inputs shared
+// by every derivation command. Both flags accept "-" to read standard input.
 func addSecretFlags(
 	cmd *cobra.Command,
-	mnemonic, mnemonicFile, password *string,
+	mnemonicFile, password *string,
 ) {
 	var passwordFile string
 	flags := cmd.Flags()
-	flags.StringVar(mnemonic, "mnemonic", "", "BIP-39 mnemonic phrase")
 	flags.StringVar(
 		mnemonicFile,
 		"mnemonic-file",
 		"",
 		`Path to file containing mnemonic, or "-" for standard input (default: seed.txt)`,
 	)
-	flags.StringVar(password, "password", "", "Optional password for key derivation")
 	flags.StringVar(
 		&passwordFile,
 		"password-file",
 		"",
 		`Path to file containing the derivation password, or "-" for standard input`,
 	)
-	_ = flags.MarkDeprecated("mnemonic", "process arguments are visible to other users; use --mnemonic-file")
-	_ = flags.MarkDeprecated("password", "process arguments are visible to other users; use --password-file")
-	cmd.MarkFlagsMutuallyExclusive("password", "password-file")
-
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
 		if passwordFile == "" {
 			return nil

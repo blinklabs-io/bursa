@@ -159,20 +159,20 @@ Examples:
 }
 
 func addressListCommand() *cobra.Command {
-	var mnemonic, mnemonicFile, password, network string
+	var mnemonicFile, password, network string
 	var account, start, count uint32
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "Enumerate derived addresses for a wallet",
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := cli.RunAddressList(mnemonic, mnemonicFile, password, network, account, start, count); err != nil {
+			if err := cli.RunAddressList("", mnemonicFile, password, network, account, start, count); err != nil {
 				logging.GetLogger().Error("failed to list addresses", "error", err)
 				os.Exit(1)
 			}
 		},
 	}
-	addSecretFlags(cmd, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(cmd, &mnemonicFile, &password)
 	cmd.Flags().StringVar(&network, "network", "mainnet", networkFlagUsage)
 	cmd.Flags().Uint32Var(&account, "account", 0, "Account index")
 	cmd.Flags().Uint32Var(&start, "start", 0, "Starting address index")
