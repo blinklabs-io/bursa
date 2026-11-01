@@ -221,6 +221,141 @@ func TestPoolsParsesNodeUTxO(t *testing.T) {
 	}
 }
 
+func TestPoolsRejectsMinswapV1PoolWithoutMarker(t *testing.T) {
+	svc, fc := newServiceWithPool(t, 100000000, 200000000)
+	amounts := []chain.Amount{
+		{Unit: "lovelace", Quantity: "100000000"},
+		{Unit: tokenUnit(), Quantity: "200000000"},
+	}
+	fc.utxosByAddr[minswapV1Addr][0].Amount = amounts
+	fc.outsByTx["pooltx"][0].Amount = append([]chain.Amount(nil), amounts...)
+
+	pools, err := svc.Pools(context.Background())
+	if err != nil {
+		t.Fatalf("Pools: %v", err)
+	}
+	if len(pools) != 0 {
+		t.Fatalf("got %d pools, want 0", len(pools))
+	}
+}
+
+// The Minswap V2 cases below use two mainnet pool outputs: their values as
+// they sit on chain and the reserves from their inline datums. The ADA/CHONG
+// pool holds more CHONG than its datum reserve (accrued fee sharing), which
+// the pool script permits.
+const (
+	minswapV2ValidityUnit = "f5808c2c990d86da54bfc97d89cee6efa20cd8461616359478d96b4c4d5350"
+	chongUnit             = "a156cc0fa2501d2ba45d1d6506f0ac5dbd08b79294610721426e089543484f4e47"
+	wmtxUnit              = "09847e90c045539b069edb977e3eccae19dfc8a0f311faf921a563a9574d5458"
+	dramaUnit             = "c8e4a73d9e38eb89b7587ca4fa334cf89162d4b1a994f509a328bba2244452414d41"
+)
+
+func minswapV2AdaChongValue() map[string]uint64 {
+	return map[string]uint64{
+		"lovelace":            9306511,
+		chongUnit:             124956,
+		minswapV2ValidityUnit: 1,
+		"f5808c2c990d86da54bfc97d89cee6efa20cd8461616359478d96b4cea87c6fd773653b5baa944dd51f81120f072c9ae626f394d0c61f2bd7e7ec8e3": 9223372036854001211,
+	}
+}
+
+func minswapV2TokenPairValue() map[string]uint64 {
+	return map[string]uint64{
+		"lovelace":            4500000,
+		wmtxUnit:              69420420,
+		dramaUnit:             420420420,
+		minswapV2ValidityUnit: 1,
+		"f5808c2c990d86da54bfc97d89cee6efa20cd8461616359478d96b4c38407e39c58055fcf76d3d85e1ccdc9b38145c24d12740e8b88cf62823c53042": 9223372036683937407,
+	}
+}
+
+func assetAmount(t *testing.T, unit string, amount uint64) shaicommon.AssetAmount {
+	t.Helper()
+	if unit == "lovelace" {
+		return shaicommon.AssetAmount{Amount: amount}
+	}
+	policy, name, err := splitUnit(unit)
+	if err != nil {
+		t.Fatalf("splitUnit(%s): %v", unit, err)
+	}
+	return shaicommon.AssetAmount{
+		Class:  shaicommon.AssetClass{PolicyId: policy, Name: name},
+		Amount: amount,
+	}
+}
+
+func minswapV2State(t *testing.T, unitX string, reserveX uint64, unitY string, reserveY uint64) *shaidex.PoolState {
+	t.Helper()
+	return &shaidex.PoolState{
+		Protocol: "minswap-v2",
+		AssetX:   assetAmount(t, unitX, reserveX),
+		AssetY:   assetAmount(t, unitY, reserveY),
+	}
+}
+
+func acceptsMinswapV2(state *shaidex.PoolState, locked map[string]uint64) bool {
+	return validPoolIdentity(identityMinswapV2, nil, "", locked) &&
+		reservesMatchLocked("minswap-v2", state, locked)
+}
+
+func TestDefaultProtocolsUseMinswapV2Identity(t *testing.T) {
+	for _, def := range defaultProtocols() {
+		if def.parser.Protocol() == "minswap-v2" && def.identity != identityMinswapV2 {
+			t.Fatalf("minswap-v2 identity = %d, want identityMinswapV2", def.identity)
+		}
+	}
+}
+
+func TestMinswapV2AcceptsMainnetPoolOutputs(t *testing.T) {
+	cases := []struct {
+		name   string
+		state  *shaidex.PoolState
+		locked map[string]uint64
+	}{
+		{"ADA pair with accrued fee sharing", minswapV2State(t, "lovelace", 4806511, chongUnit, 124875), minswapV2AdaChongValue()},
+		{"token pair", minswapV2State(t, wmtxUnit, 69420420, dramaUnit, 420420420), minswapV2TokenPairValue()},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if !acceptsMinswapV2(c.state, c.locked) {
+				t.Fatal("mainnet Minswap V2 pool output rejected")
+			}
+		})
+	}
+}
+
+func TestMinswapV2RejectsInvalidPoolOutputs(t *testing.T) {
+	with := func(locked map[string]uint64, edit func(map[string]uint64)) map[string]uint64 {
+		edit(locked)
+		return locked
+	}
+	adaChong := func() *shaidex.PoolState { return minswapV2State(t, "lovelace", 4806511, chongUnit, 124875) }
+	tokenPair := func() *shaidex.PoolState { return minswapV2State(t, wmtxUnit, 69420420, dramaUnit, 420420420) }
+	cases := []struct {
+		name   string
+		state  *shaidex.PoolState
+		locked map[string]uint64
+	}{
+		{"V1 marker instead of validity asset", adaChong(), with(minswapV2AdaChongValue(), func(m map[string]uint64) {
+			delete(m, minswapV2ValidityUnit)
+			m[minswapPoolMarkerUnit] = 1
+		})},
+		{"two validity assets", adaChong(), with(minswapV2AdaChongValue(), func(m map[string]uint64) { m[minswapV2ValidityUnit] = 2 })},
+		{"token below datum reserve", adaChong(), with(minswapV2AdaChongValue(), func(m map[string]uint64) { m[chongUnit] = 124874 })},
+		{"lovelace below datum reserve plus pool minimum", adaChong(), with(minswapV2AdaChongValue(), func(m map[string]uint64) { m["lovelace"] = 9306510 })},
+		{"lovelace below pool minimum", adaChong(), with(minswapV2AdaChongValue(), func(m map[string]uint64) { m["lovelace"] = 4499999 })},
+		{"token pair with extra lovelace", tokenPair(), with(minswapV2TokenPairValue(), func(m map[string]uint64) { m["lovelace"] = 4500001 })},
+		{"token pair below pool minimum", tokenPair(), with(minswapV2TokenPairValue(), func(m map[string]uint64) { m["lovelace"] = 2000000 })},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if acceptsMinswapV2(c.state, c.locked) {
+				t.Fatal("invalid Minswap V2 pool output accepted")
+			}
+		})
+	}
+}
+
 func TestPoolsCachesScan(t *testing.T) {
 	svc, fc := newServiceWithPool(t, 100000000, 200000000)
 	if _, err := svc.Pools(context.Background()); err != nil {

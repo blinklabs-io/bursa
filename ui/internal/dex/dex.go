@@ -52,9 +52,12 @@ const (
 	// The deployed Minswap pool scripts require one MINSWAP factory marker in
 	// every pool output. Its policy and name are fixed by the deployment.
 	minswapPoolMarkerUnit = "13aa2accf2e1561723aa26871e071fdf32c867cff7e7d50ad470d62f4d494e53574150"
-	// Minswap V2 records the tradeable lovelace reserve in its datum; the pool
-	// output also carries this fixed minimum lovelace balance.
-	minswapV2PoolOil = uint64(2_000_000)
+	// The Minswap V2 authen policy mints exactly one MSP pool validity asset
+	// into each pool output, and the pool script keeps it there.
+	minswapV2PoolValidityUnit = "f5808c2c990d86da54bfc97d89cee6efa20cd8461616359478d96b4c4d5350"
+	// Every Minswap V2 pool output holds this lovelace on top of any ADA
+	// reserve (min_pool_ada in the pool script).
+	minswapV2MinPoolLovelace = uint64(4_500_000)
 )
 
 // chainQuerier is the slice of the chain client the service needs (satisfied by
@@ -103,6 +106,7 @@ type poolIdentity int
 
 const (
 	identityMinswap poolIdentity = iota
+	identityMinswapV2
 	identitySundaeV3
 )
 
@@ -167,7 +171,7 @@ func NewService(c chainQuerier, network string) *Service {
 func defaultProtocols() []protocolDef {
 	return []protocolDef{
 		{parser: shaidex.NewMinswapV1Parser(), encoding: valueTxOut, identity: identityMinswap},
-		{parser: shaidex.NewMinswapV2Parser(), encoding: valueTxOut, identity: identityMinswap},
+		{parser: shaidex.NewMinswapV2Parser(), encoding: valueTxOut, identity: identityMinswapV2},
 		{parser: shaidex.NewSundaeSwapV3Parser(), encoding: valueTxOut, identity: identitySundaeV3},
 	}
 }
@@ -412,6 +416,8 @@ func validPoolIdentity(
 	switch kind {
 	case identityMinswap:
 		return locked[minswapPoolMarkerUnit] == 1
+	case identityMinswapV2:
+		return locked[minswapV2PoolValidityUnit] == 1
 	case identitySundaeV3:
 		var poolDatum sundaeswap.V3PoolDatum
 		if _, err := cbor.Decode(datum, &poolDatum); err != nil ||
@@ -490,13 +496,17 @@ func reservesMatchLocked(protocol string, state *shaidex.PoolState, locked map[s
 	}
 	if protocol == "minswap-v2" &&
 		!state.AssetX.IsLovelace() && !state.AssetY.IsLovelace() &&
-		locked["lovelace"] != minswapV2PoolOil {
+		locked["lovelace"] != minswapV2MinPoolLovelace {
 		return false
 	}
 	return reserveMatches(protocol, state.AssetX, locked) &&
 		reserveMatches(protocol, state.AssetY, locked)
 }
 
+// reserveMatches reports whether the locked value backs a parsed reserve.
+// Parsers that read reserves from the value must match it exactly. Minswap V2
+// prices from datum reserves, and its pool script lets the value exceed them
+// by the fee-sharing amount accrued since the last withdrawal.
 func reserveMatches(
 	protocol string,
 	reserve shaicommon.AssetAmount,
@@ -506,14 +516,17 @@ func reserveMatches(
 	if reserve.IsLovelace() {
 		unit = "lovelace"
 	}
-	want := reserve.Amount
-	if protocol == "minswap-v2" && reserve.IsLovelace() {
-		if want > math.MaxUint64-minswapV2PoolOil {
+	if protocol != "minswap-v2" {
+		return locked[unit] == reserve.Amount
+	}
+	held := locked[unit]
+	if reserve.IsLovelace() {
+		if held < minswapV2MinPoolLovelace {
 			return false
 		}
-		want += minswapV2PoolOil
+		held -= minswapV2MinPoolLovelace
 	}
-	return locked[unit] == want
+	return held >= reserve.Amount
 }
 
 // inlineDatumFor returns the authoritative inline datum and value for a UTxO.
