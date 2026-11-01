@@ -296,7 +296,7 @@ func minswapV2State(t *testing.T, unitX string, reserveX uint64, unitY string, r
 }
 
 func acceptsMinswapV2(state *shaidex.PoolState, locked map[string]uint64) bool {
-	return validPoolIdentity(identityMinswapV2, nil, "", locked) &&
+	return validPoolIdentity(identityMinswapV2, locked) &&
 		reservesMatchLocked("minswap-v2", state, locked)
 }
 
