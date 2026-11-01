@@ -89,7 +89,7 @@ func TestWipeRoutesOnlyInWipeHandler(t *testing.T) {
 	for name, h := range map[string]http.Handler{
 		"signing": s.SigningHandler(), "provisioning": s.ProvisioningHandler(), "combined": s.Handler(),
 	} {
-		for _, path := range []string{"/wipe/objects", "/wipe/profile", "/wipe/device"} {
+		for _, path := range []string{"/wipe/objects", "/wipe/profile", "/wipe/device", "/wipe/signlog"} {
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte("{}"))))
 
@@ -484,5 +484,55 @@ func TestWipeProfileRefusesDuplicateNames(t *testing.T) {
 
 	if left := objectIDs(chip); len(left) != len(before) {
 		t.Errorf("objects deleted: before %v, after %v", before, left)
+	}
+}
+
+// TestWipeSignLogDeletesOnlyTheHead checks /wipe/signlog deletes the signing
+// log head and nothing else, and only with the identity key confirmation.
+func TestWipeSignLogDeletesOnlyTheHead(t *testing.T) {
+	s, chip := newTestService(t)
+	id := identityHex(t, s)
+	provisionTestProfile(t, s)
+	chip.bins[profile.SignLogHeadID] = []byte("head")
+	before := len(objectIDs(chip))
+
+	other := hex.EncodeToString(bytes.Repeat([]byte{1}, 32))
+	for _, confirm := range []string{"", other} {
+		if code, _ := wipePost(t, s, "/wipe/signlog", WipeDeviceRequest{IdentityPublicKey: confirm}); code == http.StatusOK {
+			t.Errorf("confirmation %q: accepted", confirm)
+		}
+	}
+
+	if got := len(objectIDs(chip)); got != before {
+		t.Fatalf("refused requests deleted objects: %d, want %d", got, before)
+	}
+
+	code, body := wipePost(t, s, "/wipe/signlog", WipeDeviceRequest{IdentityPublicKey: id})
+	if code != http.StatusOK {
+		t.Fatalf("wipe signlog: %d %s", code, body)
+	}
+
+	var resp WipeResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(resp.Deleted) != 1 || resp.Deleted[0] != "0x20e50022" {
+		t.Errorf("deleted %v, want only the head", resp.Deleted)
+	}
+
+	left := objectIDs(chip)
+	if left[profile.SignLogHeadID] || len(left) != before-1 {
+		t.Errorf("objects left: %v", left)
+	}
+
+	if _, ok := s.profiles["otg@preview"]; !ok {
+		t.Error("profile no longer served")
+	}
+
+	// a device with no head deletes nothing and succeeds, so a retry is safe
+	code, body = wipePost(t, s, "/wipe/signlog", WipeDeviceRequest{IdentityPublicKey: id})
+	if code != http.StatusOK || strings.Contains(string(body), "0x20e50022") {
+		t.Errorf("retry: %d %s", code, body)
 	}
 }

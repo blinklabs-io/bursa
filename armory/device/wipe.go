@@ -70,6 +70,7 @@ func (s *Service) WipeHandler() http.Handler {
 	}))
 	mux.HandleFunc("POST /wipe/device", handle(s, s.wipeDevice))
 	mux.HandleFunc("POST /wipe/profile", handle(s, s.wipeProfile))
+	mux.HandleFunc("POST /wipe/signlog", handle(s, s.wipeSignLog))
 
 	return mux
 }
@@ -201,6 +202,24 @@ func (s *Service) wipeDevice(req WipeDeviceRequest) (WipeResponse, error) {
 	s.profiles = map[string]profile.Profile{}
 	s.hostKeys, s.hostKeysBad = nil, false
 	s.logf("wipe: device wiped, %d objects deleted", len(deleted))
+
+	return WipeResponse{Deleted: hexIDs(deleted)}, nil
+}
+
+// wipeSignLog deletes only the signing log head, so the signing firmware
+// starts a new log on a zeroed card under the same identity key. Every entry
+// on the old card stays verifiable with signlog-verify -image.
+func (s *Service) wipeSignLog(req WipeDeviceRequest) (WipeResponse, error) {
+	if err := s.confirm(req.IdentityPublicKey); err != nil {
+		return WipeResponse{}, err
+	}
+
+	deleted, err := s.remove([]uint32{profile.SignLogHeadID})
+	if err != nil {
+		return WipeResponse{}, err
+	}
+
+	s.logf("wipe: signing log head reset")
 
 	return WipeResponse{Deleted: hexIDs(deleted)}, nil
 }
