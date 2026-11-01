@@ -5,8 +5,10 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 
 	apollo "github.com/Salvionied/apollo/v2"
@@ -664,5 +666,24 @@ func TestDecodeTx_Malformed(t *testing.T) {
 				t.Errorf("err = %v, want it to wrap ErrInvalidTx", err)
 			}
 		})
+	}
+}
+
+func TestDecodeTx_NoOutputsSerializesEmptyList(t *testing.T) {
+	svc, _, unsignedCbor := buildUnsignedSendFixture(t)
+	txHex := mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
+		body.TxOutputs = nil
+	})
+
+	got, err := svc.DecodeTx(context.Background(), txHex)
+	if err != nil {
+		t.Fatalf("DecodeTx: %v", err)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	if !strings.Contains(string(raw), `"outputs":[]`) {
+		t.Fatalf("summary JSON = %s, want outputs as an empty list", raw)
 	}
 }

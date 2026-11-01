@@ -2033,6 +2033,7 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	out := TxSummary{
 		Kind:               "vkey",
 		Fee:                strconv.FormatUint(tx.Body.TxFee, 10),
+		Outputs:            []TxSummaryOutput{},
 		ExistingSignatures: []TxSummarySigner{},
 		WalletCanAdd:       []TxSummarySigner{},
 	}
