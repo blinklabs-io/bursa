@@ -18,10 +18,32 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 
 	"github.com/blinklabs-io/bursa/internal/config"
 )
+
+// LoopbackBindAddress joins host and port into a listen address that binds
+// only the loopback interface. host must be a bare host name or IP literal,
+// optionally bracketed. A host that already carries a port is rejected rather
+// than combined with port into an address that cannot bind.
+func LoopbackBindAddress(host string, port uint) (string, error) {
+	trimmed := strings.TrimSpace(host)
+	if _, _, err := net.SplitHostPort(trimmed); err == nil {
+		return "", fmt.Errorf(
+			"listen address %q must be a host without a port; set the port separately",
+			host,
+		)
+	}
+	if !IsLoopbackListenAddress(trimmed) {
+		return "", fmt.Errorf("refusing listener on non-loopback address %q", host)
+	}
+	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+		trimmed = strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]")
+	}
+	return net.JoinHostPort(trimmed, strconv.FormatUint(uint64(port), 10)), nil
+}
 
 // IsLoopbackListenAddress reports whether addr binds only the loopback
 // interface (localhost / 127.0.0.0-8 / ::1). An empty address binds all

@@ -1171,7 +1171,7 @@ func waitForServer(apiBaseURL string) {
 
 func TestMetricsEndpoint(t *testing.T) {
 	// Start the API
-	_, metricsBaseURL, cleanup := startAPI(t)
+	apiBaseURL, metricsBaseURL, cleanup := startAPI(t)
 	defer cleanup()
 
 	// Test the /metrics endpoint
@@ -1179,6 +1179,62 @@ func TestMetricsEndpoint(t *testing.T) {
 	assert.NotEqual(t, resp, nil)
 	assert.NoError(t, err, "failed to call metrics endpoint")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	apiResp, err := http.Get(fmt.Sprintf("%s/metrics", apiBaseURL))
+	require.NoError(t, err, "failed to call API listener")
+	defer apiResp.Body.Close()
+	require.Equal(t, http.StatusNotFound, apiResp.StatusCode)
+}
+
+func TestRegisterAPIHandlersDoesNotExposeMetrics(t *testing.T) {
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, &config.Config{}, nil)
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	require.Equal(t, http.StatusNotFound, response.Code)
+}
+
+func TestValidateMetricsExposureRejectsNonLoopback(t *testing.T) {
+	for _, address := range []string{"", "0.0.0.0", "::", "192.0.2.1"} {
+		t.Run(address, func(t *testing.T) {
+			cfg := &config.Config{Metrics: config.MetricsConfig{ListenAddress: address, ListenPort: 8081}}
+			require.Error(t, validateMetricsExposure(cfg, nil))
+		})
+	}
+}
+
+func TestValidateMetricsExposureRejectsAddressWithPort(t *testing.T) {
+	for _, address := range []string{"127.0.0.1:9000", "[::1]:9000", "localhost:9000"} {
+		t.Run(address, func(t *testing.T) {
+			cfg := &config.Config{Metrics: config.MetricsConfig{ListenAddress: address, ListenPort: 8081}}
+			require.Error(t, validateMetricsExposure(cfg, nil))
+		})
+	}
+}
+
+type addrOnlyListener struct {
+	net.Listener
+	addr net.Addr
+}
+
+func (l addrOnlyListener) Addr() net.Addr { return l.addr }
+
+func TestValidateMetricsExposureChecksSuppliedListener(t *testing.T) {
+	cfg := &config.Config{Metrics: config.MetricsConfig{ListenAddress: "127.0.0.1", ListenPort: 8081}}
+	listener := addrOnlyListener{addr: &net.TCPAddr{IP: net.IPv4zero, Port: 8081}}
+	require.Error(t, validateMetricsExposure(cfg, listener))
+}
+
+func TestMetricsListenAddressFormatsIPv6(t *testing.T) {
+	for _, address := range []string{"::1", "[::1]"} {
+		t.Run(address, func(t *testing.T) {
+			cfg := &config.Config{Metrics: config.MetricsConfig{ListenAddress: address, ListenPort: 8081}}
+			require.NoError(t, validateMetricsExposure(cfg, nil))
+			require.Equal(t, "[::1]:8081", metricsListenAddress(cfg))
+		})
+	}
 }
 
 func TestMetricsRegistered(t *testing.T) {

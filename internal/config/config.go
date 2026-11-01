@@ -295,7 +295,7 @@ func defaultConfig() Config {
 			ListenPort:    0,
 		},
 		Metrics: MetricsConfig{
-			ListenAddress: "",
+			ListenAddress: "127.0.0.1",
 			ListenPort:    8081,
 		},
 		Mnemonic: "",
