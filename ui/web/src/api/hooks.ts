@@ -278,6 +278,15 @@ export function useExternalHandleLookup(): ExternalHandleLookupState {
       setEnabledState(setting.enabled);
     } catch (err) {
       setError(err as Error);
+      // A save can fail after the new value is already on disk (the directory
+      // sync runs after the rename), so show what the server now holds. The
+      // re-read stays inside `saving` so no second save can race it.
+      try {
+        const current = await getExternalHandleLookup();
+        setEnabledState(current.enabled);
+      } catch {
+        // Keep the save error when the server state cannot be read.
+      }
     } finally {
       setSaving(false);
     }
