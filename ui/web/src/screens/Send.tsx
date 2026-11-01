@@ -156,6 +156,11 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
         setHandleError("Handle not found");
       } else if (e instanceof ApiError && e.status === 409) {
         setHandleError("Handle holder is ambiguous");
+      } else if (e instanceof ApiError && e.status === 403) {
+        // The setting was turned off after the offer appeared; a retry is
+        // refused the same way, so withdraw the offer.
+        setHandleError("External Handle lookup is disabled");
+        setExternalLookupOffered(false);
       } else {
         setHandleError("External Handle service unavailable");
       }

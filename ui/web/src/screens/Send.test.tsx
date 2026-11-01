@@ -519,6 +519,24 @@ test("external Handle fallback distinguishes a missing name from service failure
   expect(external).toHaveBeenCalledTimes(2);
 });
 
+test("external Handle fallback withdraws the offer once the setting is disabled", async () => {
+  vi.mocked(client.getExternalHandleLookup).mockResolvedValue({ enabled: true });
+  vi.spyOn(client, "resolveHandle").mockRejectedValue(
+    new client.ApiError(404, "handle not found by your node"),
+  );
+  const external = vi.spyOn(client, "resolveHandleExternal")
+    .mockRejectedValue(new client.ApiError(403, "external handle lookup is disabled"));
+
+  render(<Send />);
+  fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "$chris" } });
+  fireEvent.click(await screen.findByRole("button", { name: /send \$chris to api\.handle\.me/i }));
+
+  expect(await screen.findByText(/^External Handle lookup is disabled$/)).toBeInTheDocument();
+  expect(screen.queryByText(/external handle service unavailable/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /api\.handle\.me/i })).not.toBeInTheDocument();
+  expect(external).toHaveBeenCalledTimes(1);
+});
+
 test("external Handle fallback is not offered where the service is unavailable", async () => {
   vi.mocked(client.getExternalHandleLookup).mockResolvedValue({ enabled: true, available: false });
   vi.spyOn(client, "resolveHandle").mockRejectedValue(
