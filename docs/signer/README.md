@@ -77,17 +77,19 @@ SIGNER_DEV_KEYS="$SIGNER_DEV_DIR/keys"
 #   - change `watermark.type` to `mem` and `watermark.mode` to `warn` (drops
 #     the requirement for a pre-existing `/var/lib/bursa/signer` directory;
 #     non-durable, which is fine for development)
-set -a
-. "$SIGNER_DEV_DIR/auth.env"
-set +a
-bursa signer --config "$SIGNER_DEV_CONFIG"
+(
+  set -a
+  . "$SIGNER_DEV_DIR/auth.env"
+  exec bursa signer --config "$SIGNER_DEV_CONFIG"
+)
 ```
 
 This boots with no external dependencies. It can't sign anything until you
 load a real key into `$SIGNER_DEV_KEYS` and add back a matching `keys:` policy
 entry - see the [runbook](runbook.md). The helper applies `umask 077`; its
 directory and key directory remain mode `0700`, and the copied configuration
-and generated authentication environment file remain mode `0600`.
+and generated authentication environment file remain mode `0600`. The
+subshell confines the exported `SIGNER_JWT_SECRET` to the signer process.
 
 For anything exposed off-host, follow the [runbook](runbook.md) to configure
 TLS, JWKS, and a Vault or SOPS backend.

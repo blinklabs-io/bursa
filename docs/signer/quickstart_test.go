@@ -17,6 +17,7 @@
 package signer_test
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,6 +52,47 @@ func TestPrepareQuickstartOwnerOnly(t *testing.T) {
 	}
 	if !regexp.MustCompile(`^SIGNER_JWT_SECRET=[0-9a-f]{64}\n$`).Match(auth) {
 		t.Fatal("authentication environment does not contain one generated 32-byte hex secret")
+	}
+}
+
+func TestQuickstartLaunchKeepsSecretOutOfShell(t *testing.T) {
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+	section := readme[bytes.Index(readme, []byte("## Quick start (development)")):]
+	block := regexp.MustCompile("(?s)```sh\n(.*?)```").FindSubmatch(section)
+	if block == nil {
+		t.Fatal("quick start section has no sh block")
+	}
+
+	binDir := t.TempDir()
+	stub := "#!/bin/sh\n[ -n \"$SIGNER_JWT_SECRET\" ] || exit 3\necho signer-started\n"
+	if err := os.WriteFile(filepath.Join(binDir, "bursa"), []byte(stub), 0o700); err != nil {
+		t.Fatalf("write bursa stub: %v", err)
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repository root: %v", err)
+	}
+
+	// The block runs in the same shell as the check that follows it, as it
+	// would when pasted into an interactive shell.
+	script := "set -e\n" + string(block[1]) +
+		"if [ -n \"${SIGNER_JWT_SECRET-}\" ]; then echo secret-retained; exit 9; fi\n"
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(),
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"TMPDIR="+t.TempDir(),
+		"SIGNER_JWT_SECRET=",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("quick start block: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "signer-started") {
+		t.Fatalf("quick start block did not start the signer:\n%s", output)
 	}
 }
 
