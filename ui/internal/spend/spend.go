@@ -114,6 +114,19 @@ type TxSummaryOutput struct {
 	Assets   []Asset `json:"assets,omitempty"`
 }
 
+// TxSummaryInput identifies a consumed input and includes its chain value when
+// resolution succeeds. Resolved remains false when DecodeTx is used offline or
+// the referenced UTxO is unavailable, so callers never mistake a bare reference
+// for a verified value.
+type TxSummaryInput struct {
+	TxHash   string  `json:"tx_hash"`
+	Index    uint32  `json:"index"`
+	Resolved bool    `json:"resolved"`
+	Address  string  `json:"address,omitempty"`
+	Lovelace string  `json:"lovelace,omitempty"`
+	Assets   []Asset `json:"assets,omitempty"`
+}
+
 // TxSummarySigner identifies a vkey witness (present or still needed) by its
 // Blake2b-224 key hash. Role is only populated in WalletCanAdd, where it tells
 // the caller which of the wallet's own keys (payment/stake/drep) would
@@ -165,15 +178,81 @@ type TxSummaryCertificate struct {
 // could still add a required signature.
 type TxSummary struct {
 	Kind               string                 `json:"kind"` // "vkey"|"native_multisig"
+	Inputs             []TxSummaryInput       `json:"inputs"`
 	Outputs            []TxSummaryOutput      `json:"outputs"`
 	Fee                string                 `json:"fee"`
 	TTL                uint64                 `json:"ttl,omitempty"`
+	ValidityStart      uint64                 `json:"validity_start,omitempty"`
 	Certificates       []TxSummaryCertificate `json:"certificates,omitempty"`
 	Withdrawals        []TxSummaryOutput      `json:"withdrawals,omitempty"` // Address=reward addr
+	Mint               []Asset                `json:"mint,omitempty"`
+	AuxiliaryDataHash  string                 `json:"auxiliary_data_hash,omitempty"`
+	ScriptDataHash     string                 `json:"script_data_hash,omitempty"`
+	CollateralInputs   []TxSummaryInput       `json:"collateral_inputs,omitempty"`
+	CollateralReturn   *TxSummaryOutput       `json:"collateral_return,omitempty"`
+	TotalCollateral    *string                `json:"total_collateral,omitempty"`
+	ReferenceInputs    []TxSummaryInput       `json:"reference_inputs,omitempty"`
+	VotingCount        int                    `json:"voting_count,omitempty"`
+	ProposalCount      int                    `json:"proposal_count,omitempty"`
+	CurrentTreasury    *string                `json:"current_treasury_value,omitempty"`
+	TreasuryDonation   string                 `json:"treasury_donation,omitempty"`
+	UnsupportedEffects []string               `json:"unsupported_effects,omitempty"`
 	NetworkID          *int                   `json:"network_id,omitempty"`
+	RequiredSigners    []string               `json:"required_signers,omitempty"`
 	ExistingSignatures []TxSummarySigner      `json:"existing_signatures"`
 	WalletCanAdd       []TxSummarySigner      `json:"wallet_can_add"`
 	IsComplete         bool                   `json:"is_complete"`
+}
+
+// ValidateForSigning rejects summaries that cannot account for every effect a
+// wallet approval must authorize. DecodeTx itself remains usable offline and
+// represents unavailable UTxOs as unresolved references.
+func (s TxSummary) ValidateForSigning() error {
+	for _, input := range s.Inputs {
+		if !input.Resolved {
+			return fmt.Errorf("input %s#%d could not be resolved", input.TxHash, input.Index)
+		}
+	}
+	for _, input := range s.CollateralInputs {
+		if !input.Resolved {
+			return fmt.Errorf("collateral input %s#%d could not be resolved", input.TxHash, input.Index)
+		}
+	}
+	if len(s.CollateralInputs) != 0 && s.TotalCollateral == nil {
+		return errors.New("collateral inputs have no total collateral bound")
+	}
+	if len(s.UnsupportedEffects) != 0 {
+		return fmt.Errorf("unsupported transaction effects: %s", strings.Join(s.UnsupportedEffects, ", "))
+	}
+	return nil
+}
+
+// InspectTx decodes a transaction for an interactive signing approval. It
+// applies the live ledger transaction-size limit before any per-input chain
+// lookups, then requires a complete effect summary.
+func (s *Service) InspectTx(ctx context.Context, txCbor string) (TxSummary, error) {
+	txBytes, err := hex.DecodeString(txCbor)
+	if err != nil {
+		return TxSummary{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
+	}
+	pp, err := backend.ProtocolParamsContext(ctx, s.chain)
+	if err != nil {
+		return TxSummary{}, fmt.Errorf("protocol params: %w", err)
+	}
+	if pp.MaxTxSize <= 0 {
+		return TxSummary{}, errors.New("protocol params: invalid max transaction size")
+	}
+	if len(txBytes) > pp.MaxTxSize {
+		return TxSummary{}, fmt.Errorf("transaction size %d exceeds ledger maximum %d", len(txBytes), pp.MaxTxSize)
+	}
+	summary, err := s.DecodeTx(ctx, txCbor)
+	if err != nil {
+		return TxSummary{}, err
+	}
+	if err := summary.ValidateForSigning(); err != nil {
+		return TxSummary{}, fmt.Errorf("transaction effects are incomplete: %w", err)
+	}
+	return summary, nil
 }
 
 // UnsignedTx is returned from ExportUnsigned: the completed-but-unsigned
@@ -1678,6 +1757,17 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 			ErrInvalidRequest,
 		)
 	}
+	summary, err := s.DecodeTx(context.Background(), unsignedTxCBOR)
+	if err != nil {
+		return Witness{}, err
+	}
+	if err := summary.ValidateForSigning(); err != nil {
+		return Witness{}, fmt.Errorf(
+			"%w: transaction effects are incomplete: %w",
+			ErrInvalidTx,
+			err,
+		)
+	}
 
 	needed := make(map[string]bool, len(bodyRequired))
 	for _, signer := range bodyRequired {
@@ -1922,10 +2012,6 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	if err != nil {
 		return TxSummary{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
 	}
-	var tx conway.ConwayTransaction
-	if _, err := cbor.Decode(txBytes, &tx); err != nil {
-		return TxSummary{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
-	}
 	// The witnesses sign blake2b-256 of the raw body element, preserved exactly
 	// as supplied (see extractTxBodyCbor). We need it to verify existing
 	// witnesses below so a malformed signature is not counted as covering a
@@ -1935,29 +2021,87 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 		return TxSummary{}, err
 	}
 	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
+	var bodyFields map[uint64]cbor.RawMessage
+	if _, err := cbor.Decode(bodyCbor, &bodyFields); err != nil {
+		return TxSummary{}, fmt.Errorf("%w: decode transaction body fields: %w", ErrInvalidTx, err)
+	}
+	var tx conway.ConwayTransaction
+	if _, err := cbor.Decode(txBytes, &tx); err != nil {
+		return TxSummary{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
 
 	out := TxSummary{
 		Kind:               "vkey",
 		Fee:                strconv.FormatUint(tx.Body.TxFee, 10),
+		Outputs:            []TxSummaryOutput{},
 		ExistingSignatures: []TxSummarySigner{},
 		WalletCanAdd:       []TxSummarySigner{},
+	}
+	if !tx.TxIsValid {
+		out.UnsupportedEffects = append(out.UnsupportedEffects, "transaction marked invalid (collateral path)")
+	}
+	knownBodyFields := map[uint64]bool{
+		0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 7: true,
+		8: true, 9: true, 11: true, 13: true, 14: true, 15: true,
+		16: true, 17: true, 18: true, 19: true, 20: true, 21: true, 22: true,
+	}
+	for field := range bodyFields {
+		if field == 6 {
+			out.UnsupportedEffects = append(out.UnsupportedEffects, "protocol parameter update")
+		} else if !knownBodyFields[field] {
+			out.UnsupportedEffects = append(out.UnsupportedEffects, fmt.Sprintf("transaction body field %d", field))
+		}
 	}
 	if ttl := tx.Body.TTL(); ttl != 0 {
 		out.TTL = ttl
 	}
+	out.ValidityStart = tx.Body.TxValidityIntervalStart
 	if nid := tx.Body.NetworkId(); nid != nil {
 		v := int(*nid)
 		out.NetworkID = &v
 	}
-	for _, o := range tx.Body.Outputs() {
+	for _, signer := range tx.Body.RequiredSigners() {
+		out.RequiredSigners = append(out.RequiredSigners, hex.EncodeToString(signer.Bytes()))
+	}
+	sort.Strings(out.RequiredSigners)
+	for i, o := range tx.Body.Outputs() {
 		out.Outputs = append(out.Outputs, TxSummaryOutput{
 			Address:  o.Address().String(),
 			Lovelace: o.Amount().String(),
 			Assets:   assetsFromOutput(o),
 		})
+		out.UnsupportedEffects = appendUnsupportedOutputEffects(
+			out.UnsupportedEffects,
+			o,
+			fmt.Sprintf("output %d", i),
+		)
+	}
+	if tx.Body.TxAuxDataHash != nil {
+		out.AuxiliaryDataHash = hex.EncodeToString(tx.Body.TxAuxDataHash.Bytes())
+	}
+	if tx.Body.TxScriptDataHash != nil {
+		out.ScriptDataHash = hex.EncodeToString(tx.Body.TxScriptDataHash.Bytes())
+	}
+	out.Mint = assetsFromMint(tx.Body.TxMint)
+	for _, procedures := range tx.Body.TxVotingProcedures {
+		out.VotingCount += len(procedures)
+	}
+	out.ProposalCount = len(tx.Body.TxProposalProcedures)
+	if _, ok := bodyFields[21]; ok {
+		value := strconv.FormatUint(tx.Body.TxCurrentTreasuryValue, 10)
+		out.CurrentTreasury = &value
+	}
+	if _, ok := bodyFields[22]; ok {
+		out.TreasuryDonation = strconv.FormatUint(tx.Body.TxDonation, 10)
 	}
 	for _, c := range tx.Body.Certificates() {
 		out.Certificates = append(out.Certificates, certificateSummary(c))
+	}
+	if out.VotingCount != 0 {
+		out.UnsupportedEffects = append(out.UnsupportedEffects, "governance vote details")
+	}
+	if out.ProposalCount != 0 {
+		out.UnsupportedEffects = append(out.UnsupportedEffects, "governance proposal details")
 	}
 	// TxWithdrawals is a Go map (randomized iteration); collect then sort by
 	// reward address so out.Withdrawals is deterministic.
@@ -1997,7 +2141,27 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	// unsigned ordinary spend would look complete.
 	_, acct, _ := s.currentBinding()
 	needed := neededKeyHashes(&tx)
-	resolvedAllInputs := s.addInputKeyHashes(ctx, &tx, needed)
+	var resolvedAllInputs bool
+	out.Inputs, resolvedAllInputs = s.resolveSummaryInputs(ctx, tx.Body.Inputs(), needed)
+	out.CollateralInputs, _ = s.resolveSummaryInputs(ctx, tx.Body.Collateral(), nil)
+	out.ReferenceInputs, _ = s.resolveSummaryInputs(ctx, tx.Body.ReferenceInputs(), nil)
+	if collateralReturn := tx.Body.CollateralReturn(); collateralReturn != nil {
+		out.CollateralReturn = &TxSummaryOutput{
+			Address:  collateralReturn.Address().String(),
+			Lovelace: collateralReturn.Amount().String(),
+			Assets:   assetsFromOutput(collateralReturn),
+		}
+		out.UnsupportedEffects = appendUnsupportedOutputEffects(
+			out.UnsupportedEffects,
+			collateralReturn,
+			"collateral return",
+		)
+	}
+	if _, ok := bodyFields[17]; ok {
+		value := strconv.FormatUint(tx.Body.TxTotalCollateral, 10)
+		out.TotalCollateral = &value
+	}
+	sort.Strings(out.UnsupportedEffects)
 	if acct != nil {
 		seen := map[string]bool{}
 		addCanAdd := func(khHex, role string) {
@@ -2034,33 +2198,51 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	return out, nil
 }
 
-// addInputKeyHashes resolves tx's inputs (best-effort, via the chain) and adds
-// each key-hash-locked input's payment credential to needed. It returns whether
-// every input was resolved: a script-locked input needs no vkey witness and
-// still counts as resolved, but an input the chain cannot return leaves the
-// tx's witness requirements only partially known. Without a chain, inputs are
-// unresolvable and completeness must stay unknown.
-func (s *Service) addInputKeyHashes(ctx context.Context, tx *conway.ConwayTransaction, needed map[string]bool) bool {
-	inputs := tx.Body.Inputs()
+// resolveSummaryInputs resolves inputs (best-effort, via the chain) and, when
+// needed is non-nil, adds each key-hash-locked input's payment credential to
+// it. It returns whether every input was resolved: a script-locked input needs
+// no vkey witness and still counts as resolved, but an input the chain cannot
+// return leaves the tx's witness requirements only partially known. Without a
+// chain, inputs are unresolvable and completeness must stay unknown.
+func (s *Service) resolveSummaryInputs(ctx context.Context, inputs []lcommon.TransactionInput, needed map[string]bool) ([]TxSummaryInput, bool) {
 	if len(inputs) == 0 {
-		return true
+		return nil, true
 	}
-	if s.chain == nil {
-		return false
-	}
+	ret := summaryInputRefs(inputs)
 	resolvedAll := true
-	for _, inp := range inputs {
+	for i, inp := range inputs {
+		if s.chain == nil {
+			resolvedAll = false
+			continue
+		}
 		u, err := backend.UtxoByRefContext(ctx, s.chain, inp.Id(), inp.Index())
 		if err != nil || u == nil || u.Output == nil {
 			resolvedAll = false
 			continue
 		}
+		ret[i].Resolved = true
+		ret[i].Address = u.Output.Address().String()
+		ret[i].Lovelace = u.Output.Amount().String()
+		ret[i].Assets = assetsFromOutput(u.Output)
 		addr := u.Output.Address()
-		if p, ok := addr.PayloadPayload().(lcommon.AddressPayloadKeyHash); ok {
-			needed[hex.EncodeToString(p.Hash.Bytes())] = true
+		if needed != nil {
+			if p, ok := addr.PayloadPayload().(lcommon.AddressPayloadKeyHash); ok {
+				needed[hex.EncodeToString(p.Hash.Bytes())] = true
+			}
 		}
 	}
-	return resolvedAll
+	return ret, resolvedAll
+}
+
+func summaryInputRefs(inputs []lcommon.TransactionInput) []TxSummaryInput {
+	ret := make([]TxSummaryInput, len(inputs))
+	for i, inp := range inputs {
+		ret[i] = TxSummaryInput{
+			TxHash: hex.EncodeToString(inp.Id().Bytes()),
+			Index:  inp.Index(),
+		}
+	}
+	return ret
 }
 
 // ExtractTxBodyCbor returns the raw CBOR bytes of the transaction body (element
@@ -2144,15 +2326,22 @@ func (s *Service) CosignTx(
 		return CosignResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
 	}
 
-	// Best-effort input-address resolution (needs a node; non-fatal without one
-	// -- required-signer and cert credentials still match without it).
+	// Resolve and validate the exact transaction summary before unlocking the
+	// keystore. A cosignature must not authorize effects the preview cannot
+	// account for, including unresolved inputs and collateral.
+	summary, err := s.DecodeTx(ctx, trimmed)
+	if err != nil {
+		return CosignResult{}, err
+	}
+	if err := summary.ValidateForSigning(); err != nil {
+		return CosignResult{}, fmt.Errorf("%w: transaction effects are incomplete: %w", ErrInvalidTx, err)
+	}
+
 	var inputAddrs []string
-	for _, inp := range tx.Body.Inputs() {
-		u, err := backend.UtxoByRefContext(ctx, s.chain, inp.Id(), inp.Index())
-		if err != nil || u == nil || u.Output == nil {
-			continue
+	for _, input := range summary.Inputs {
+		if input.Address != "" {
+			inputAddrs = append(inputAddrs, input.Address)
 		}
-		inputAddrs = append(inputAddrs, u.Output.Address().String())
 	}
 
 	// Unlock + derive account key (zeroing on exit), same pattern as WitnessTx.
@@ -2247,11 +2436,25 @@ func (s *Service) CosignTx(
 		return CosignResult{}, fmt.Errorf("encode merged tx: %w", err)
 	}
 	mergedHex := hex.EncodeToString(mergedBytes)
-	summary, err := s.DecodeTx(ctx, mergedHex)
+	summary, err = s.DecodeTx(ctx, mergedHex)
 	if err != nil {
 		return CosignResult{}, err
 	}
 	return CosignResult{TxCBOR: mergedHex, Added: added, Summary: summary}, nil
+}
+
+func appendUnsupportedOutputEffects(
+	effects []string,
+	output lcommon.TransactionOutput,
+	label string,
+) []string {
+	if output.DatumHash() != nil {
+		effects = append(effects, label+" datum")
+	}
+	if output.ScriptRef() != nil {
+		effects = append(effects, label+" reference script")
+	}
+	return effects
 }
 
 // assetsFromOutput enumerates a transaction output's native assets as decimal
@@ -2273,6 +2476,27 @@ func assetsFromOutput(o lcommon.TransactionOutput) []Asset {
 			}
 		}
 	}
+	sort.Slice(assets, func(i, j int) bool { return assets[i].Unit < assets[j].Unit })
+	return assets
+}
+
+func assetsFromMint(ma *lcommon.MultiAsset[lcommon.MultiAssetTypeMint]) []Asset {
+	if ma == nil {
+		return nil
+	}
+	var assets []Asset
+	for _, pol := range ma.Policies() {
+		for _, name := range ma.Assets(pol) {
+			qty := ma.Asset(pol, name)
+			if qty != nil && qty.Sign() != 0 {
+				assets = append(assets, Asset{
+					Unit:     hex.EncodeToString(pol.Bytes()) + hex.EncodeToString(name),
+					Quantity: qty.String(),
+				})
+			}
+		}
+	}
+	sort.Slice(assets, func(i, j int) bool { return assets[i].Unit < assets[j].Unit })
 	return assets
 }
 

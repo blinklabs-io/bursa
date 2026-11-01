@@ -46,10 +46,10 @@ type txUnspentOutput struct {
 }
 
 // WalletBackend implements the connector.Backend interface over the wallet and
-// chain services. It holds no private keys; signing methods are stubs.
+// chain services.
 type WalletBackend struct {
 	wl      *wallet.Service
-	sp      *spend.Service // reserved for Tasks 12-13
+	sp      *spend.Service
 	chain   chainFetcher
 	network string
 	// usageAuthoritative reports whether the node has a complete chain view.
@@ -75,7 +75,8 @@ type ReadinessSnapshot struct {
 }
 
 // NewWalletBackend constructs a WalletBackend.
-// wl provides address views; sp is reserved for Tasks 12-13 (may be nil for read-only use).
+// wl provides address views; sp provides transaction inspection and signing
+// (it may be nil for read-only use).
 // acct is the active derived account; network is "mainnet", "preview", or "preprod".
 // cf is the chain querier (typically *chain.Client).
 func NewWalletBackend(
@@ -375,8 +376,21 @@ func (b *WalletBackend) Collateral(ctx context.Context, amount string) ([]string
 }
 
 // ---------------------------------------------------------------------------
-// Signing and submission methods — Task 12
+// Signing and submission methods
 // ---------------------------------------------------------------------------
+
+// InspectTx returns the shared transaction summary used by wallet approval
+// flows. It first accepts only the exact hex representation SignTx accepts, so
+// inspection cannot succeed for bytes the signing path would parse differently.
+func (b *WalletBackend) InspectTx(ctx context.Context, txHex string) (spend.TxSummary, error) {
+	if b.sp == nil {
+		return spend.TxSummary{}, errors.New("signing service not configured")
+	}
+	if _, err := hex.DecodeString(txHex); err != nil {
+		return spend.TxSummary{}, fmt.Errorf("decode tx hex: %w", err)
+	}
+	return b.sp.InspectTx(ctx, txHex)
+}
 
 // SignTx implements CIP-30 signTx. It decodes the externally-constructed tx CBOR,
 // identifies which of the wallet's keys are needed (matching required-signers and
