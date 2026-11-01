@@ -161,12 +161,17 @@ func TestEncodeAssetMapShape(t *testing.T) {
 
 func newServiceWithPool(t *testing.T, lovelace, token uint64) (*Service, *fakeChain) {
 	t.Helper()
-	datumHex := hex.EncodeToString(minswapV1Datum())
-	amounts := []chain.Amount{
+	return newServiceWithAmounts(t, []chain.Amount{
 		{Unit: "lovelace", Quantity: strconv.FormatUint(lovelace, 10)},
 		{Unit: tokenUnit(), Quantity: strconv.FormatUint(token, 10)},
 		{Unit: minswapPoolMarkerUnit, Quantity: "1"},
-	}
+	})
+}
+
+// newServiceWithAmounts serves one Minswap V1 pool output holding amounts.
+func newServiceWithAmounts(t *testing.T, amounts []chain.Amount) (*Service, *fakeChain) {
+	t.Helper()
+	datumHex := hex.EncodeToString(minswapV1Datum())
 	fc := &fakeChain{
 		utxosByAddr: map[string][]chain.UTxO{
 			minswapV1Addr: {{
@@ -222,13 +227,10 @@ func TestPoolsParsesNodeUTxO(t *testing.T) {
 }
 
 func TestPoolsRejectsMinswapV1PoolWithoutMarker(t *testing.T) {
-	svc, fc := newServiceWithPool(t, 100000000, 200000000)
-	amounts := []chain.Amount{
+	svc, _ := newServiceWithAmounts(t, []chain.Amount{
 		{Unit: "lovelace", Quantity: "100000000"},
 		{Unit: tokenUnit(), Quantity: "200000000"},
-	}
-	fc.utxosByAddr[minswapV1Addr][0].Amount = amounts
-	fc.outsByTx["pooltx"][0].Amount = append([]chain.Amount(nil), amounts...)
+	})
 
 	pools, err := svc.Pools(context.Background())
 	if err != nil {
