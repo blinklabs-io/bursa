@@ -29,8 +29,9 @@ import (
 
 const buildMode = "wipe build: deletes profiles and keys on request; signing and provisioning endpoints are not served"
 
-// routes serves only the wipe endpoints and reset. Removing a profile or
-// wiping the device needs this image, loaded over USB recovery boot.
+// routes serves only the wipe endpoints and reset. Removing a profile,
+// resetting the signing log head or wiping the device needs this image,
+// loaded over USB recovery boot.
 func routes(svc *device.Service, _ *signer, mu *sync.Mutex) {
 	http.Handle("/wipe/", svc.WipeHandler())
 

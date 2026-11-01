@@ -405,7 +405,11 @@ The signing and provisioning firmware never reset the head object, so a lost,
 failed or full card, or an unreadable head object, leaves the device refusing
 to sign. A device wipe deletes the head object with the identity key; after a
 new identity is provisioned, the signing firmware formats a zeroed card and
-starts a new log.
+starts a new log. To start a new log under the same identity, the wipe
+firmware's `POST /wipe/signlog`, confirmed with the device identity public key
+as `identity_public_key`, deletes only the head object; the signing firmware
+then formats a zeroed card at its next start, with entries numbered from 1
+again. The old card's entries stay verifiable with `signlog-verify -image`.
 
 The first start with an all-zero card and an unset head object formats the
 card for the device identity key; it holds up to 32768 entries. A new card

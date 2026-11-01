@@ -13,8 +13,9 @@ TESTNET ?= 0
 # account, the opcert floor and reset, and no signing. The default image
 # signs and serves no provisioning endpoint.
 PROVISION ?= 0
-# WIPE=1 builds the wipe image: it removes a profile and its keys, or every
-# key and profile, on request, and neither signs nor provisions.
+# WIPE=1 builds the wipe image: it removes a profile and its keys, every key
+# and profile, or the signing log head, on request, and neither signs nor
+# provisions.
 WIPE ?= 0
 # NETWORK fixes the one network whose profiles the image provisions and
 # serves: testnet (network id 0, the default, every testnet) or mainnet
