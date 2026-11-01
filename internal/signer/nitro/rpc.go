@@ -28,6 +28,12 @@ import (
 
 const rpcServiceName = "bursa.signer.nitro.v1.Custody"
 
+// maxRPCMessageSize caps what the enclave decodes before validation. The
+// largest valid message is a Reload carrying two maxEnvelopeSize fields, which
+// JSON base64 expands by 4/3 to about 175 KiB; gRPC's 4 MiB default would let
+// the host force allocations well past the envelope bounds.
+const maxRPCMessageSize = 4 * maxEnvelopeSize
+
 type strictJSONCodec struct{}
 
 func (strictJSONCodec) Name() string                      { return "bursa-nitro-json" }
@@ -123,6 +129,7 @@ func RPCServerOptions(config RPCServerTLSConfig) ([]grpc.ServerOption, error) {
 	return []grpc.ServerOption{
 		grpc.Creds(transport),
 		grpc.ForceServerCodec(nitroCodec),
+		grpc.MaxRecvMsgSize(maxRPCMessageSize),
 	}, nil
 }
 

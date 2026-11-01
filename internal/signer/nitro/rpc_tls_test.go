@@ -34,7 +34,9 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -316,4 +318,31 @@ func TestRPCAuthorizedProxyRoundTrip(t *testing.T) {
 	var signed backend.AttestedResponse
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &signed))
 	require.True(t, ed25519.Verify(provisioned.Envelope.PublicKey, signRequest.Payload, signed.Signature))
+}
+
+func TestRPCServerBoundsReceivedMessageSize(t *testing.T) {
+	service, kms, _ := newTestService(t, testEvidence(t, 11))
+	client, _ := testRPCClient(t, service)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	provisioned, err := client.Provision(ctx, testProvisionRequest())
+	require.NoError(t, err)
+
+	atLimit := provisioned.Envelope
+	atLimit.EncryptedDataKey = bytes.Repeat([]byte{1}, maxEnvelopeSize)
+	atLimit.Ciphertext = bytes.Repeat([]byte{2}, maxEnvelopeSize)
+	_, err = client.Reload(ctx, ReloadRequest{
+		Version: Protocol, Region: "us-east-1", Credentials: testCredentials, Envelope: atLimit,
+	})
+	require.NotEqual(t, codes.ResourceExhausted, status.Code(err), "largest valid envelope was refused by the transport")
+	require.ErrorContains(t, err, "KMS decrypt data key", "largest valid envelope did not reach KMS")
+
+	oversized := provisioned.Envelope
+	oversized.Ciphertext = make([]byte, 1<<20)
+	kms.calls = 0
+	_, err = client.Reload(ctx, ReloadRequest{
+		Version: Protocol, Region: "us-east-1", Credentials: testCredentials, Envelope: oversized,
+	})
+	require.Equal(t, codes.ResourceExhausted, status.Code(err), "oversized message was decoded: %v", err)
+	require.Zero(t, kms.calls)
 }
