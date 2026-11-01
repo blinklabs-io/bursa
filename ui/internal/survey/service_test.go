@@ -137,6 +137,41 @@ func (f *fakeChain) Account(_ context.Context, addr string) (chain.AccountInfo, 
 	return a, nil
 }
 
+func (f *fakeChain) SurveyRoleSnapshot(
+	_ context.Context,
+	_ uint64,
+	claims []chain.SurveyRoleClaim,
+) (map[chain.SurveyRoleClaim]bool, error) {
+	if f.roleErr != nil {
+		return nil, f.roleErr
+	}
+	ret := make(map[chain.SurveyRoleClaim]bool, len(claims))
+	for _, claim := range claims {
+		switch claim.Role {
+		case chain.SurveyRoleDRep:
+			id := (&lcommon.Drep{Type: lcommon.DrepTypeAddrKeyHash, Credential: claim.Credential[:]}).String()
+			ret[claim] = f.dreps[id]
+		case chain.SurveyRoleSPO:
+			ret[claim] = f.pools[lcommon.PoolId(claim.Credential).String()]
+		case chain.SurveyRoleStakeholder:
+			stake, err := lcommon.NewAddressFromParts(
+				lcommon.AddressTypeNoneKey,
+				lcommon.AddressNetworkTestnet,
+				nil,
+				claim.Credential[:],
+			)
+			if err != nil {
+				return nil, err
+			}
+			account := f.accounts[stake.String()]
+			ret[claim] = account.Registered && account.ControlledAmount != "" && account.ControlledAmount != "0"
+		case chain.SurveyRoleKeyholder:
+			ret[claim] = true
+		}
+	}
+	return ret, nil
+}
+
 func (f *fakeChain) GovernanceAnchorDocuments(context.Context) ([]chain.AnchorDocument, error) {
 	return f.docs, nil
 }
@@ -419,6 +454,25 @@ func TestGetFailsWhenTheNodeCannotVerify(t *testing.T) {
 	}
 }
 
+func TestGetMarksRolesUnverifiableWhenSnapshotIsPermanentlyUnavailable(t *testing.T) {
+	t.Parallel()
+	f := newFakeChain()
+	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(1, 45, RoleDRep, RoleKeyholder)), credHex(1))
+	f.add(t, 0xd1, 110, 0, 41, respPayload(respond(ref(0xa1, 0), RoleDRep, 10, 0)), credHex(10))
+	f.add(t, 0xd2, 111, 0, 41, respPayload(respond(ref(0xa1, 0), RoleKeyholder, 11, 0)), credHex(11))
+	f.roleErr = fmt.Errorf("%w: epoch mismatch", chain.ErrSurveySnapshotUnavailable)
+
+	got, err := NewService(f, "preview").Get(context.Background(), surveyID(0xa1, 0))
+	noErr(t, err)
+	r := reasons(*got.Tally)
+	if r[txHash(0xd1)] == "" {
+		t.Error("DRep response must be excluded as unverifiable")
+	}
+	if r[txHash(0xd2)] != "" {
+		t.Errorf("keyholder response excluded: %s", r[txHash(0xd2)])
+	}
+}
+
 func TestGetCancelledSurveyIsNotTallied(t *testing.T) {
 	t.Parallel()
 	f := newFakeChain()
@@ -650,4 +704,19 @@ func TestLabelHistoryDropsRolledBackTransactions(t *testing.T) {
 	f.add(t, 0xa2, 101, 0, 40, defPayload(simple(2, 60)), credHex(2))
 	f.addJunk(120)
 	equal(t, []string{"survey by 2"}, titles(t, s))
+}
+
+func TestSnapshotRoleClaimRejectsRolesOutsideTheSnapshotRange(t *testing.T) {
+	t.Parallel()
+	for _, role := range []Role{RoleDRep, RoleSPO, RoleCC, RoleStakeholder, RoleKeyholder} {
+		claim, ok := snapshotRoleClaim(role, cred(false, 1))
+		if !ok {
+			t.Fatalf("role %d not mapped", role)
+		}
+		equal(t, identity{role: role, cred: cred(false, 1)}, identityFromSnapshotClaim(claim))
+	}
+	// 256 would wrap to the DRep role in the one-byte snapshot encoding.
+	if claim, ok := snapshotRoleClaim(Role(256), cred(false, 1)); ok {
+		t.Fatalf("role 256 mapped to snapshot role %d", claim.Role)
+	}
 }

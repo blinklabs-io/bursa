@@ -101,5 +101,6 @@ anything that can read the process memory or the key directory.
   per-instance stores. Require verified TLS for remote database connections and
   configure failover so every acknowledged watermark row survives promotion.
 - Restrict the config file, TLS key, and any key files to the service user.
-- Scrape `/metrics`; alert on `bursa_signer_watermark_conflicts_total` and
+- Scrape `/metrics` from the dedicated loopback listener; alert on
+  `bursa_signer_watermark_conflicts_total` and
   `bursa_signer_backend_errors_total`.

@@ -104,3 +104,29 @@ func TestCheckFileBackendGuard_NoFileBackend_Silent(t *testing.T) {
 		t.Errorf("expected no warning for a vault-only backend, got %q", warn)
 	}
 }
+
+func TestLoopbackBindAddress(t *testing.T) {
+	valid := map[string]string{
+		"127.0.0.1":   "127.0.0.1:8081",
+		" localhost ": "localhost:8081",
+		"::1":         "[::1]:8081",
+		"[::1]":       "[::1]:8081",
+	}
+	for host, want := range valid {
+		got, err := LoopbackBindAddress(host, 8081)
+		if err != nil {
+			t.Fatalf("LoopbackBindAddress(%q): %v", host, err)
+		}
+		if got != want {
+			t.Fatalf("LoopbackBindAddress(%q) = %q, want %q", host, got, want)
+		}
+	}
+	for _, host := range []string{
+		"", "0.0.0.0", "::", "192.0.2.1",
+		"127.0.0.1:9000", "[::1]:9000", "localhost:9000",
+	} {
+		if got, err := LoopbackBindAddress(host, 8081); err == nil {
+			t.Fatalf("LoopbackBindAddress(%q) = %q, want an error", host, got)
+		}
+	}
+}

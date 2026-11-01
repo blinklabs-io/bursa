@@ -3,6 +3,12 @@
 Deployment artifacts for `bursa signer` and `bursa kes-agent`. Operator docs are
 in [`docs/signer/`](../../docs/signer/).
 
+The same image also packages `bursa confidential-space-workload`, the GCP
+Confidential Space pool cold-key workload. Its wrapped key file needs a
+persistent writable mount; the binary obtains attestation and WIF tokens only
+from the Confidential Space launcher. See
+[`attested-custody.md`](../../docs/signer/attested-custody.md#gcp-confidential-space).
+
 ## Contents
 
 | File | Purpose |

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/blinklabs-io/bursa"
@@ -28,6 +29,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/operation"
 	"github.com/blinklabs-io/bursa/internal/signer/policy"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
+	"github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
@@ -56,6 +58,9 @@ type TxResult struct {
 	TxID      string   `json:"tx_id"`
 	Witnesses [][]byte `json:"-"` // CBOR per signer; hex-encoded by the API layer
 	SignedTx  []byte   `json:"-"`
+	// Summaries are the custody boundary's descriptions of the signed body,
+	// one per distinct text, for the audit log. The API does not return them.
+	Summaries []string `json:"-"`
 }
 
 // CIP8Result is the outcome of a data-signing request.
@@ -195,31 +200,37 @@ func ValidateSignerList(signers []string) ([]backend.KeyHash, error) {
 }
 
 // SignTx decodes, policy-checks, watermarks, signs, verifies, and assembles.
-// It returns a result (with whatever witnesses succeeded), per-signer errors,
-// and a hard error only for request-level failures (e.g. undecodable tx).
+// The era may be empty when the input envelope declares it or the CBOR is
+// unambiguous. It returns a result (with whatever witnesses succeeded),
+// per-signer errors, and a hard error only for request-level failures (e.g.
+// undecodable tx).
 //
 // Every signing decision (allow or deny) is emitted as a structured audit-log
 // line so that all outcomes are auditable. Secrets (private keys, raw tx bytes)
 // are never logged.
-func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []string) (*TxResult, []SignerError, error) {
+func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, signers []string) (*TxResult, []SignerError, error) {
 	resolvedSigners, err := ValidateSignerList(signers)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
-	raw, err := bursa.ReadCborInput(cborInput)
+	raw, txType, err := bursa.ReadTxInput(cborInput, era)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
-	insp, err := c.deps.Cardano.Inspect(raw)
+	insp, err := c.deps.Cardano.Inspect(raw, txType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
-	ops, err := c.deps.Cardano.Operations(raw)
+	ops, err := c.deps.Cardano.Operations(raw, txType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
 	caller := callerFromContext(ctx)
-	txid, err := c.deps.Cardano.TxID(raw)
+	txid, err := c.deps.Cardano.TxID(raw, txType)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
+	}
+	txBody, err := encodedTxBody(raw)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
@@ -232,8 +243,9 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []st
 	scope := "tx:" + hex.EncodeToString(txid)
 
 	var (
-		wits []lcommon.VkeyWitness
-		errs []SignerError
+		wits      []lcommon.VkeyWitness
+		errs      []SignerError
+		summaries []string
 	)
 	for i, s := range signers {
 		hash := resolvedSigners[i]
@@ -311,7 +323,7 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []st
 			}
 		}
 		signStart := time.Now()
-		sig, err := backend.SignFor(ctx, ref, backend.PurposeTxHash, txid)
+		sig, summary, err := backend.SignTxFor(ctx, ref, txBody, txType, txid)
 		// Attempt latency, including failures — not successful-sign latency.
 		c.deps.Metrics.observeSignDuration(ref.Backend(), time.Since(signStart).Seconds())
 		if err != nil {
@@ -353,11 +365,18 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []st
 			}
 		}
 		wits = append(wits, lcommon.VkeyWitness{Vkey: pub, Signature: sig})
-		c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "signed")
+		logArgs := []any{"type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "signed"}
+		if summary != "" {
+			logArgs = append(logArgs, "summary", summary)
+			if !slices.Contains(summaries, summary) {
+				summaries = append(summaries, summary)
+			}
+		}
+		c.deps.Logger.Info("sign", logArgs...)
 		c.deps.Metrics.observe("tx", "signed")
 	}
 
-	res := &TxResult{TxID: insp.TxId}
+	res := &TxResult{TxID: insp.TxId, Summaries: summaries}
 	for _, w := range wits {
 		enc, err := bursa.EncodeWitness(w)
 		if err != nil {
@@ -366,13 +385,26 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, signers []st
 		res.Witnesses = append(res.Witnesses, enc)
 	}
 	if len(wits) > 0 {
-		signed, err := c.deps.Cardano.Assemble(raw, wits)
+		signed, err := c.deps.Cardano.Assemble(raw, txType, wits)
 		if err != nil {
 			return nil, errs, fmt.Errorf("assemble tx: %w", err)
 		}
 		res.SignedTx = signed
 	}
 	return res, errs, nil
+}
+
+// encodedTxBody returns the transaction body's original CBOR bytes. Re-encoding
+// could change the body hash even when the decoded transaction is equivalent.
+func encodedTxBody(tx []byte) ([]byte, error) {
+	var outer []cbor.RawMessage
+	if _, err := cbor.Decode(tx, &outer); err != nil {
+		return nil, fmt.Errorf("decode transaction body: %w", err)
+	}
+	if len(outer) == 0 || len(outer[0]) == 0 {
+		return nil, errors.New("transaction has no encoded body")
+	}
+	return []byte(outer[0]), nil
 }
 
 // Metrics returns the coordinator's metrics instance (never nil after New).

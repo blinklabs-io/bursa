@@ -73,6 +73,17 @@ type KESAgentConfig struct {
 	EvolveInterval string `yaml:"evolve_interval" envconfig:"KESAGENT_EVOLVE_INTERVAL"`
 	// GuardFile is the required durable monotonic-period store path.
 	GuardFile string `yaml:"guard_file" envconfig:"KESAGENT_GUARD_FILE"`
+	// AttestedListenAddress optionally exposes sign mode to a remote producer.
+	// The listener always requires a verified TLS client certificate.
+	AttestedListenAddress string `yaml:"attested_listen_address" envconfig:"KESAGENT_ATTESTED_LISTEN_ADDRESS"`
+	AttestedTLSCertFile   string `yaml:"attested_tls_cert_file" envconfig:"KESAGENT_ATTESTED_TLS_CERT_FILE"`
+	AttestedTLSKeyFile    string `yaml:"attested_tls_key_file" envconfig:"KESAGENT_ATTESTED_TLS_KEY_FILE"`
+	AttestedClientCAFile  string `yaml:"attested_client_ca_file" envconfig:"KESAGENT_ATTESTED_CLIENT_CA_FILE"`
+	// AttestationProvider identifies the verifier the producer must use.
+	AttestationProvider string `yaml:"attestation_provider" envconfig:"KESAGENT_ATTESTATION_PROVIDER"`
+	// AttesterAddress is an HTTPS, loopback HTTP, or Unix-socket provider adapter
+	// inside the protected workload that produces nonce-bound evidence.
+	AttesterAddress string `yaml:"attester_address" envconfig:"KESAGENT_ATTESTER_ADDRESS"`
 }
 
 // SignerConfig holds configuration for the bursa signer daemon.
@@ -155,24 +166,31 @@ type SignerWatermarkConfig struct {
 
 // SignerBackendConfig configures a key-custody backend.
 type SignerBackendConfig struct {
-	Name          string                   `yaml:"name"`
-	Type          string                   `yaml:"type"`           // "software" | "sops" | "vault" | "pkcs11" | "nitro" | "confidential-space"
-	Path          string                   `yaml:"path"`           // software: key dir
-	PassphraseEnv string                   `yaml:"passphrase_env"` // software: env var holding the key-file passphrase
-	SecretPrefix  string                   `yaml:"secret_prefix"`  // sops: secret short-name prefix within google.project
-	Address       string                   `yaml:"address"`        // vault: server URL; nitro, confidential-space: enclave URL (http, https, or unix:///socket)
-	TransitMount  string                   `yaml:"transit_mount"`  // vault
-	TokenEnv      string                   `yaml:"token_env"`      // vault: env var holding the token (default VAULT_TOKEN)
-	Module        string                   `yaml:"module"`         // pkcs11: path to the PKCS#11 module (.so)
-	TokenLabel    string                   `yaml:"token_label"`    // pkcs11: token label used to select the slot
-	Slot          *uint                    `yaml:"slot"`           // pkcs11: explicit slot id (alternative to token_label)
-	PINEnv        string                   `yaml:"pin_env"`        // pkcs11: env var holding the user PIN (never stored in config)
-	Keys          []SignerBackendKeyConfig `yaml:"keys"`           // vault: explicit transit key list; pkcs11: optional CKA_LABEL filter + key type
-	RootCAFile    string                   `yaml:"root_ca_file"`   // nitro: PEM file with the AWS Nitro Enclaves root certificate
-	PCRs          map[uint]string          `yaml:"pcrs"`           // nitro: expected PCR index -> hex value; PCR0 is required
-	Audience      string                   `yaml:"audience"`       // confidential-space: audience the attestation token must carry
-	ImageDigest   string                   `yaml:"image_digest"`   // confidential-space: required container image digest (sha256:...)
-	JWKSURL       string                   `yaml:"jwks_url"`       // confidential-space: token signing keys (default: Google's published set)
+	Name              string                   `yaml:"name"`
+	Type              string                   `yaml:"type"`                 // "software" | "sops" | "vault" | "pkcs11" | "nitro" | "confidential-space" | "armory"
+	Path              string                   `yaml:"path"`                 // software: key dir
+	PassphraseEnv     string                   `yaml:"passphrase_env"`       // software: env var holding the key-file passphrase
+	SecretPrefix      string                   `yaml:"secret_prefix"`        // sops: secret short-name prefix within google.project
+	Address           string                   `yaml:"address"`              // vault: server URL; nitro, confidential-space, armory: enclave URL (http, https, or unix:///socket)
+	TransitMount      string                   `yaml:"transit_mount"`        // vault
+	TokenEnv          string                   `yaml:"token_env"`            // vault: env var holding the token (default VAULT_TOKEN)
+	Module            string                   `yaml:"module"`               // pkcs11: path to the PKCS#11 module (.so)
+	TokenLabel        string                   `yaml:"token_label"`          // pkcs11: token label used to select the slot
+	Slot              *uint                    `yaml:"slot"`                 // pkcs11: explicit slot id (alternative to token_label)
+	PINEnv            string                   `yaml:"pin_env"`              // pkcs11: env var holding the user PIN (never stored in config)
+	Keys              []SignerBackendKeyConfig `yaml:"keys"`                 // vault: explicit transit key list; pkcs11: optional CKA_LABEL filter + key type
+	RootCAFile        string                   `yaml:"root_ca_file"`         // nitro: PEM file with the AWS Nitro Enclaves root certificate
+	PCRs              map[uint]string          `yaml:"pcrs"`                 // nitro: expected PCR index -> hex value; PCR0 is required
+	Audience          string                   `yaml:"audience"`             // confidential-space: audience the attestation token must carry
+	ImageDigest       string                   `yaml:"image_digest"`         // confidential-space: required container image digest (sha256:...)
+	JWKSURL           string                   `yaml:"jwks_url"`             // confidential-space: token signing keys (default: Google's published set)
+	TLSCAFile         string                   `yaml:"tls_ca_file"`          // confidential-space: PEM CA for the workload HTTPS certificate
+	TLSClientCertFile string                   `yaml:"tls_client_cert_file"` // confidential-space: PEM client certificate presented to the workload
+	TLSClientKeyFile  string                   `yaml:"tls_client_key_file"`  // confidential-space: PEM private key for tls_client_cert_file
+	Profile           string                   `yaml:"profile"`              // nitro, confidential-space: optional workload signing profile; armory: required device profile
+	IdentityPublicKey string                   `yaml:"identity_public_key"`  // armory: device identity public key (hex), pinned
+	HostKeyFile       string                   `yaml:"host_key_file"`        // armory: optional host signing key file (armory-pool host-key) authenticating signing requests
+	Protocol          string                   `yaml:"protocol"`             // armory: sign protocol for transaction bodies: "1" (default), "negotiate" (version 2, falling back to 1), or "2" (version 2 only)
 }
 
 // SignerBackendKeyConfig names a remote key and its Cardano key type. For vault
@@ -277,7 +295,7 @@ func defaultConfig() Config {
 			ListenPort:    0,
 		},
 		Metrics: MetricsConfig{
-			ListenAddress: "",
+			ListenAddress: "127.0.0.1",
 			ListenPort:    8081,
 		},
 		Mnemonic: "",

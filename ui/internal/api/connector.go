@@ -185,12 +185,19 @@ func registerConnector(mux *http.ServeMux, svc *connector.Service, opts ...conne
 
 	// SPA-facing (control-session guarded outside this mux and origin checked
 	// in-handler).
-	mux.HandleFunc("GET /connector/events", handleConnectorEvents(svc))
 	mux.HandleFunc("GET /connector/grants", handleConnectorGrants(svc))
 	mux.HandleFunc("POST /connector/grants/revoke", handleConnectorGrantsRevoke(svc))
-	mux.HandleFunc("POST /connector/decide", handleConnectorDecide(svc))
 	mux.HandleFunc("POST /connector/unpair", handleConnectorUnpair(svc))
 	mux.HandleFunc("POST /connector/pending-pairings", handleConnectorPendingPairings(svc, cfg.authorizePairingCode))
+	registerApprovalRoutes(mux, svc)
+}
+
+// registerApprovalRoutes exposes only the wallet-side approval stream and
+// decision endpoint. Remote transaction submission uses this subset even when
+// the browser extension connector is disabled.
+func registerApprovalRoutes(mux *http.ServeMux, svc *connector.Service) {
+	mux.HandleFunc("GET /connector/events", handleConnectorEvents(svc))
+	mux.HandleFunc("POST /connector/decide", handleConnectorDecide(svc))
 }
 
 // handleConnectorGrants handles GET /connector/grants.

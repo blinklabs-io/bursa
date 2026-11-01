@@ -243,6 +243,16 @@ regressions.
 - `mode: off | warn | enforce` - `enforce` (default) rejects a conflicting sign
   with HTTP 409; `warn` logs and allows; `off` disables the check.
 
+Operational certificates have two counter rules. A request with
+`issue_counter` must be strictly greater than every counter already signed
+for the cold key. A request with `chain_counter` (the pool's on-chain opcert
+counter) is issued at `chain_counter + 1` and records the chain counter as a
+floor: the same value is accepted again, because a pool that rotates KES
+without forging a block in between needs the same issue number, and only a
+lower value is refused. Use `chain_counter` for small pools; a strictly
+increasing counter would otherwise run two ahead of the chain, which nodes
+reject.
+
 ### High availability
 
 For a single active instance, a durable `file` (SQLite) watermark is sufficient.
@@ -273,7 +283,13 @@ Unauthenticated endpoints on the signer's listener:
   with a three-second timeout. It returns 503 while that dependency is
   unreachable and 200 for a healthy store. The in-memory store has no external
   dependency and is always ready after startup.
-- `GET /metrics` - Prometheus exposition.
+
+Prometheus exposition is available at `/metrics` on the dedicated metrics
+listener. The listener accepts only a loopback host, with the port set by
+`metrics.port`, and defaults to
+`127.0.0.1:8081`; set `metrics.port` to zero to disable it. A local collector
+can scrape the endpoint without exposing signer activity on the service
+listener.
 
 Use `/readyz` as the HA load-balancer readiness gate so a replica whose shared
 watermark store is unavailable is removed from rotation. Custody backends are

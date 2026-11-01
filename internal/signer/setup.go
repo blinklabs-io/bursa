@@ -99,6 +99,10 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 	// success path; an empty config yields an empty, not nil, slice.
 	backends := make([]backend.Backend, 0, len(cfgs))
 	for _, c := range cfgs {
+		// protocol selects the armory sign protocol; no other backend has one
+		if c.Protocol != "" && c.Type != "armory" {
+			return nil, fmt.Errorf("%s backend %q: protocol applies only to armory backends", c.Type, c.Name)
+		}
 		switch c.Type {
 		case "software":
 			b := backend.NewSoftwareBackend(c.Name)
@@ -185,6 +189,12 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 			b, err := build(ctx, c)
 			if err != nil {
 				return nil, fmt.Errorf("%s backend %q: %w", c.Type, c.Name, err)
+			}
+			backends = append(backends, b)
+		case "armory":
+			b, err := buildArmoryBackend(ctx, c)
+			if err != nil {
+				return nil, fmt.Errorf("armory backend %q: %w", c.Name, err)
 			}
 			backends = append(backends, b)
 		default:

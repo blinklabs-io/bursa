@@ -16,6 +16,7 @@ package signer
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/go-jose/go-jose/v4"
@@ -83,15 +85,106 @@ func buildConfidentialSpaceBackend(ctx context.Context, c config.SignerBackendCo
 	return loadAttestedBackend(ctx, c, verifier)
 }
 
+// buildArmoryBackend wires a USB armory custody backend. The device answers
+// for one profile and signs its inventory with an identity key pinned here,
+// with the same fail-closed boot as buildNitroBackend.
+func buildArmoryBackend(ctx context.Context, c config.SignerBackendConfig) (backend.Backend, error) {
+	if c.IdentityPublicKey == "" {
+		return nil, errors.New("armory backend requires identity_public_key")
+	}
+	identity, err := hex.DecodeString(c.IdentityPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("identity_public_key: %w", err)
+	}
+	verifier, err := backend.NewArmoryVerifier(identity)
+	if err != nil {
+		return nil, fmt.Errorf("identity_public_key: %w", err)
+	}
+	if c.Profile == "" {
+		return nil, errors.New("armory backend requires profile")
+	}
+	if c.HostKeyFile == "" {
+		return loadAttestedBackend(ctx, c, verifier)
+	}
+	hostKey, err := readArmoryHostKey(c.HostKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("host_key_file: %w", err)
+	}
+	if c.Address == "" {
+		return nil, fmt.Errorf("%s backend requires address", c.Type)
+	}
+	enclave, err := backend.NewHostKeyHTTPEnclave(c.Address, c.Profile, hostKey)
+	if err != nil {
+		return nil, err
+	}
+	return loadAttestedEnclave(ctx, c, enclave, verifier)
+}
+
+// armoryHostKeyType is the envelope type armory-pool host-key writes.
+const armoryHostKeyType = "ArmoryHostSigningKey_ed25519"
+
+// readArmoryHostKey reads a host signing key file written by armory-pool
+// host-key: a text envelope whose cborHex is a CBOR byte string holding the
+// 32-byte Ed25519 seed. The file must not be readable by others.
+func readArmoryHostKey(path string) (ed25519.PrivateKey, error) {
+	data, err := bursa.ReadSecretKeyFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var env struct {
+		Type    string `json:"type"`
+		CborHex string `json:"cborHex"`
+	}
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil, fmt.Errorf("not a text envelope: %w", err)
+	}
+	if env.Type != armoryHostKeyType {
+		return nil, fmt.Errorf("envelope type %q, want %q", env.Type, armoryHostKeyType)
+	}
+	raw, err := hex.DecodeString(env.CborHex)
+	if err != nil || len(raw) != 2+ed25519.SeedSize || raw[0] != 0x58 || raw[1] != ed25519.SeedSize {
+		return nil, errors.New("cborHex is not a 32-byte seed")
+	}
+	return ed25519.NewKeyFromSeed(raw[2:]), nil
+}
+
 func loadAttestedBackend(ctx context.Context, c config.SignerBackendConfig, verifier backend.AttestationVerifier) (backend.Backend, error) {
 	if c.Address == "" {
 		return nil, fmt.Errorf("%s backend requires address", c.Type)
 	}
-	enclave, err := backend.NewHTTPEnclave(c.Address)
+	var (
+		enclave *backend.HTTPEnclave
+		err     error
+	)
+	if c.Type == "confidential-space" {
+		if c.TLSCAFile == "" || c.TLSClientCertFile == "" ||
+			c.TLSClientKeyFile == "" {
+			return nil, errors.New(
+				"confidential-space backend requires tls_ca_file, tls_client_cert_file, and tls_client_key_file",
+			)
+		}
+		enclave, err = backend.NewProfiledMTLSHTTPEnclave(
+			c.Address,
+			c.Profile,
+			c.TLSCAFile,
+			c.TLSClientCertFile,
+			c.TLSClientKeyFile,
+		)
+	} else {
+		enclave, err = backend.NewProfiledHTTPEnclave(c.Address, c.Profile)
+	}
 	if err != nil {
 		return nil, err
 	}
-	b := backend.NewAttestedBackend(c.Name, enclave, verifier)
+	return loadAttestedEnclave(ctx, c, enclave, verifier)
+}
+
+func loadAttestedEnclave(ctx context.Context, c config.SignerBackendConfig, enclave backend.Enclave, verifier backend.AttestationVerifier) (backend.Backend, error) {
+	mode, err := backend.ParseAttestedProtocolMode(c.Protocol)
+	if err != nil {
+		return nil, err
+	}
+	b := backend.NewProfiledAttestedBackend(c.Name, c.Profile, enclave, verifier).WithProtocolMode(mode)
 	loadCtx, cancel := context.WithTimeout(ctx, attestedLoadTimeout)
 	defer cancel()
 	if err := b.Load(loadCtx); err != nil {

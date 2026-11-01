@@ -5,12 +5,13 @@ An attested backend holds private keys inside a trusted execution environment
 signer process never holds key material; it trusts a key only after verifying
 platform attestation evidence, and it verifies every signature before use.
 
-Two platform verifiers ship in the signer:
+Three verifiers ship in the signer:
 
 | Backend `type` | Platform | Evidence | Verified against |
 |----------------|----------|----------|------------------|
 | `nitro` | AWS Nitro Enclaves | COSE_Sign1 attestation document | pinned AWS Nitro root certificate, expected PCR values |
 | `confidential-space` | GCP Confidential Space | Google Cloud Attestation OIDC token | Google's published token signing keys, audience, container image digest |
+| `armory` | USB armory Mk II with an SE050 | Ed25519 signature by the device identity key | pinned identity public key |
 
 ## Trust boundaries
 
@@ -22,7 +23,7 @@ Two platform verifiers ship in the signer:
 | Host proxy (vsock or socket forwarder) | - | everything: it can drop, delay, replay, or rewrite messages |
 | Signer process | caller authentication, per-key policy, Cardano operation validation, watermarks, signature verification | key custody |
 
-Because the proxy is untrusted, correctness rests on three checks the signer
+Because the proxy is untrusted, correctness rests on four checks the signer
 performs itself:
 
 1. The key inventory is accepted only when its attestation evidence verifies and
@@ -34,6 +35,9 @@ performs itself:
 3. Every signature is verified against the attested public key before it is
    returned or used (`SignTx`, `SignOpCert` and `SignCIP8` all verify). A
    signature from any other key is discarded.
+4. A backend configured with a profile requires a second signature over the
+   complete request and Cardano signature. This prevents a proxy from selecting
+   a different profile while replaying a valid signature from the same key.
 
 ### Authorization when the host proxy is untrusted
 
@@ -49,16 +53,24 @@ of the signer:
 - any transaction policy the operator relies on when the host is not trusted;
 - refusal of a repeated request nonce.
 
-Anything the enclave does not enforce is only as strong as the host.
+The Confidential Space workload also requires TLS 1.3 mutual authentication
+for both protocol endpoints. This prevents network clients without the
+signer's certificate from requesting inventory or signatures. The client
+private key resides on the signer host, so compromise of that host also
+compromises this caller credential. The workload's payload and durable counter
+checks remain the limits on what that credential can request.
+
+Anything else the enclave does not enforce is only as strong as the host.
 
 ## Protocol
 
 The protocol version is `bursa-attested-signer/1`. The inventory response and
 both sign messages carry it, and a peer answering with another version is
-refused; the inventory request carries only the nonce. Messages are JSON; `[]byte` fields
-are base64.
+refused. The inventory request carries the nonce and optional profile. Messages
+are JSON; `[]byte` fields are base64.
 
-`POST /v1/inventory` takes `{"nonce": <32 bytes>}` and returns:
+`POST /v1/inventory` takes `{"nonce": <32 bytes>, "profile": <optional string>}`
+and returns:
 
 ```json
 {"version": "bursa-attested-signer/1",
@@ -79,16 +91,49 @@ a failed load leaves the backend serving no keys.
 
 ```json
 {"version": "bursa-attested-signer/1", "purpose": "opcert",
- "key_hash": "<56 hex>", "role": "pool", "nonce": "<32 bytes>", "payload": "<bytes>"}
+ "key_hash": "<56 hex>", "role": "pool", "nonce": "<32 bytes>",
+ "payload": "<bytes>", "profile": "<optional string>", "era": "<optional uint>"}
 ```
 
-and returns `{"version", "nonce", "signature"}` or `{"version", "nonce", "error"}`.
+and returns `{"version", "nonce", "signature", "binding_signature", "issue_counter"}` or
+`{"version", "nonce", "error"}`. `binding_signature` is required when the
+backend has a profile and omitted for compatibility when it does not.
 
-| Purpose | Payload | Key role |
-|---------|---------|----------|
-| `tx-hash` | 32-byte transaction body hash | any |
-| `opcert` | 48-byte OCertSignable: KES vkey, issue counter, KES period | `pool` only |
-| `cip8` | COSE Sig_structure for CIP-8 data signing | any |
+| Purpose | Payload | Additional field | Key role |
+|---------|---------|------------------|----------|
+| `tx-body` | Exact encoded transaction body | Resolved `era` | any |
+| `tx-hash` | 32-byte transaction body hash (legacy) | - | any |
+| `opcert` | 48-byte OCertSignable: KES vkey, issue counter, KES period | - | `pool` only |
+| `opcert-next` | 48-byte payload: KES vkey, on-chain opcert counter, KES period | - | `pool` only |
+| `cip8` | COSE Sig_structure for CIP-8 data signing | - | any |
+
+For `tx-body`, the workload evaluates the body, computes its Blake2b-256 hash,
+and signs that hash. Bursa independently extracts the original body bytes from
+the transaction, verifies the returned signature against their hash, and
+refuses a response for a body substituted by the proxy. It does not re-encode
+the body before sending or hashing it.
+
+For `opcert-next`, the payload carries the counter currently on chain, not the
+number to issue. The enclave keeps its own floor on the chain counter and
+issues the chain counter plus one, or refuses a chain counter below its floor;
+a higher number would leave a gap nodes reject. It returns that
+number as the JSON number `issue_counter` and signs `kes_vkey || issue || period`
+(issue and period as 8-byte big-endian). The binding signature covers the
+request as sent, so its payload still holds the chain counter. Bursa never
+picks the issue number. It refuses the response unless `issue_counter` is
+present and greater than the chain counter, and the signature verifies under
+the pool key over the reconstructed bytes. The coordinator's
+`SignOpCertFromChain` uses this purpose for attested pool keys and also
+refuses any `issue_counter` other than the chain counter plus one. The method is
+`SignOpCertNext(ctx, kesVKey, chainCounter, kesPeriod)` on attested pool keys
+(`OpCertNextSigner`); the plain `SignPurpose` path refuses this purpose because
+it cannot return the issue number. The signer's `opcert` request, where the
+caller supplies the counter, is unchanged.
+
+The binding signature is Ed25519 over the SHA-256 digest of the request fields
+and Cardano signature. Each field is framed as its decimal byte length, `:`,
+then its bytes, in this order: version, purpose, key hash, role, nonce, payload,
+profile, decimal era, signature. Bursa verifies it with the requested key.
 
 The signer refuses a request whose payload shape or key role does not fit its
 purpose before contacting the enclave. KES header signing is not carried here:
@@ -100,10 +145,12 @@ Cardano operation validation, watermarks, role guard for operational
 certificates, and signature verification all run in the signer before and after
 the enclave call. A plain `Sign` on an attested key is refused.
 
-The signer can reach the enclave at an `http://`, `https://` or `unix:///path`
-address. Forwarding that address onto the platform's vsock (Nitro) or onto the
-workload's port (Confidential Space) is the deployment's job; the channel needs
-no confidentiality or integrity guarantee from the signer's point of view.
+The Nitro signer can reach its enclave through an `http://`, `https://` or
+`unix:///path` address because attestation and response verification protect
+that protocol across the host proxy. Confidential Space requires an `https://`
+address, a pinned server CA, and a signer client certificate. Forwarding the
+address onto the platform's vsock or workload port remains the deployment's
+job.
 
 ## AWS Nitro Enclaves
 
@@ -112,6 +159,7 @@ backends:
   - name: "nitro"
     type: "nitro"
     address: "unix:///run/bursa/enclave.sock"   # host proxy to the enclave vsock
+    profile: "pool@mainnet"                     # optional fixed workload profile
     root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
     pcrs:
       0: "<96 hex: image measurement from the built EIF>"
@@ -149,8 +197,12 @@ backends:
   - name: "gcp-cs"
     type: "confidential-space"
     address: "https://workload.example.internal:8443"
+    profile: "pool@mainnet"                     # optional fixed workload profile
     audience: "https://signer.example.internal"
     image_digest: "sha256:<64 hex>"
+    tls_ca_file: "/etc/bursa/confidential-space-ca.pem"
+    tls_client_cert_file: "/etc/bursa/confidential-space-client.pem"
+    tls_client_key_file: "/etc/bursa/confidential-space-client-key.pem"
     # jwks_url: defaults to Google's published token signing keys
 ```
 
@@ -158,19 +210,253 @@ The signer accepts a token only when all of these hold:
 
 - it is RS256-signed by a key in the JWKS (HTTPS, or loopback HTTP, only);
 - issuer is `https://confidentialcomputing.googleapis.com`, audience equals
-  `audience`, and `exp` is present and in the future;
+  `audience`, and `iat`, `nbf`, and `exp` are present and valid;
 - `dbgstat` is `disabled-since-boot`, `swname` is `CONFIDENTIAL_SPACE`, and
-  `secboot` is true;
+  `secboot` is true, `hwmodel` is `GCP_AMD_SEV`, `GCP_AMD_SEV_ES`, or
+  `GCP_INTEL_TDX`, and the image carries the `STABLE` support attribute;
 - `submods.container.image_digest` equals `image_digest`;
 - `eat_nonce` contains the inventory binding.
 
-The workload obtains the token with the signer's audience and `hex(binding)` as
-the nonce. Enclave-side controls live in Google Cloud: a Workload Identity
-Federation provider whose attribute condition requires the same image digest,
-`dbgstat`, `swname` and audience; IAM that lets only that federated principal
-call Cloud KMS `decrypt` on the key wrapping the key material; and a workload
-image published by digest. Cloud KMS then refuses an unapproved digest, a debug
-image, a wrong audience, an expired token, or missing attestation.
+The Workload Identity Pool provider that authorizes access to Cloud KMS and
+Cloud Storage must enforce the same hardware boundary in its
+[attestation policy](https://cloud.google.com/confidential-computing/confidential-space/docs/create-grant-access-confidential-resources#create-an-attestation-policy).
+Use `assertion.hwmodel == "GCP_AMD_SEV"` for AMD or
+`assertion.hwmodel == "INTEL_TDX"` for Intel, matching Google's documented
+[Workload Identity attestation assertion values](https://cloud.google.com/confidential-computing/confidential-space/docs/reference/attestation-assertions#vm-assertions),
+and combine that condition with the software name, `STABLE` support attribute,
+and container image digest conditions. The custom OIDC token verified by Bursa
+uses `GCP_INTEL_TDX` for Intel. Neither policy admits `GCP_SHIELDED_VM`.
+
+### Pool cold-key workload
+
+The `bursa confidential-space-workload` command is the enclave side of the
+protocol for one pool cold key. It runs from the signer container image, obtains
+custom tokens from the Confidential Space launcher socket, and exposes only
+`/v1/inventory` and `/v1/sign` over TLS 1.3. Both endpoints require a client
+certificate signed by `--client-ca-file`. The sign endpoint accepts only a
+`pool` key with the `opcert` purpose and the canonical 48-byte
+operational-certificate payload. It rejects reused request nonces and verifies
+each signature before returning it.
+
+The first boot generates the Ed25519 pool key and an AES-256-GCM data-encryption
+key inside the workload. Cloud KMS wraps the data-encryption key. The workload
+persists only authenticated ciphertext, the wrapped data-encryption key, and
+public metadata in the file named by `--wrapped-key-file`. It first publishes a
+`counter-pending` envelope with mode `0600`, creates the matching counter
+object, and atomically replaces the envelope with an authenticated `active`
+form before serving. A restart can finish an interrupted pending bootstrap with
+the same pool identity. An active envelope never recreates a missing counter.
+Cloud KMS must unwrap the same data-encryption key before the public key is
+served. A denial, corrupt envelope, mismatched KMS resource, or changed public
+metadata stops startup.
+
+The command requires:
+
+```text
+bursa confidential-space-workload \
+  --listen :8080 \
+  --audience https://signer.example.internal \
+  --kms-key projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY \
+  --wrapped-key-file /var/lib/bursa/pool-cold.wrapped \
+  --counter-bucket POOL_COUNTER_BUCKET \
+  --counter-object pool-cold/counter.json \
+  --wif-credentials /etc/bursa/confidential-space-wif.json \
+  --tls-cert-file /etc/bursa/confidential-space-server.pem \
+  --tls-key-file /etc/bursa/confidential-space-server-key.pem \
+  --client-ca-file /etc/bursa/confidential-space-client-ca.pem
+```
+
+Configure `tls_ca_file` on the signer with the CA that issued the workload
+server certificate. Configure `tls_client_cert_file` and
+`tls_client_key_file` with a client identity issued by the CA passed to
+`--client-ca-file`. The workload has no plaintext or optional-client-certificate
+mode.
+
+The credential file must be a Google external-account configuration that uses
+`https://sts.googleapis.com/v1/token`, does not impersonate a service account,
+and reads its text subject token only from
+`/run/container_launcher/attestation_verifier_claims_token`. This is the
+launcher's automatically refreshed default token for the Workload Identity
+Federation provider. The custom token returned to the signer is separate: the
+workload requests it for the configured signer audience with
+`hex(InventoryBinding)` as its nonce on every inventory request.
+
+Use direct resource access for the Cloud KMS key and counter object. Before a
+signature is made, the workload commits the operational-certificate issue
+counter to the configured Cloud Storage object with a generation precondition.
+The first counter must be `0`, and every later counter must be exactly one
+greater than the committed value. The maximum `uint64` value is refused. This
+keeps the counter sequential across restarts and concurrent workload replicas
+without allowing one request to exhaust the counter range. Give the workload
+identity only `storage.objects.get`,
+`storage.objects.create`, and `storage.objects.delete` on the configured object
+name. Cloud Storage requires delete permission when a new generation replaces
+an existing object. Enable Object Versioning for recovery evidence, and do not
+expose the workload's attestation credential outside the measured image.
+Counter objects written with `bursa-confidential-space-counter/1` migrate once
+with a generation precondition: `next_issue_number` becomes the stored
+`issue_number` plus one. A legacy maximum value, malformed state, or a key-hash
+mismatch stops startup.
+
+The Workload Identity Federation provider must map the container image digest
+and require
+`CONFIDENTIAL_SPACE`, `disabled-since-boot`, secure boot, the approved digest,
+and the production support attribute. Grant encrypt and decrypt on only the
+wrapping key, and the three object permissions above on only the counter
+object, to that digest-bound federated principal. The same condition makes
+Cloud KMS and Cloud Storage refuse an unapproved digest, a debug image, an
+expired default token, or a request without attestation. The signer
+independently verifies those properties on the custom inventory token before
+it accepts the public key.
+
+Persist the wrapped-key file and counter object across workload restarts.
+Losing the wrapped-key file creates a new pool identity on the next boot;
+copying or rolling it back restores the same pool identity because the private
+key never leaves its envelope. Back up the wrapped file together with the Cloud
+KMS key's retention policy. The counter object is created with a new wrapped
+identity; startup fails if that identity later has no matching counter object.
+Never restore or remove the counter object for an existing pool key.
+
+## USB armory
+
+```yaml
+backends:
+  - name: "armory"
+    type: "armory"
+    address: "http://10.0.0.1"                  # the device on its USB network link
+    profile: "pool@preview"                     # required: the device profile holding the keys
+    identity_public_key: "<64 hex>"             # the device identity key, pinned
+    host_key_file: "/etc/bursa/armory-host.skey" # optional: authenticates signing requests
+    protocol: "negotiate"                       # optional: "1" (default), "negotiate", or "2"
+```
+
+The USB armory Mk II holds the pool cold key and the owner stake key in its
+SE050 secure element, one profile per pool and network. Its signing firmware
+serves this protocol at `/v1/inventory` and `/v1/sign`.
+
+The evidence is the device identity key's Ed25519 signature over the inventory
+binding. The signer accepts the inventory only when that signature verifies
+under `identity_public_key`. This proves the inventory came from a device
+holding the identity key. It is not a measurement of the firmware: the board
+boots unsigned images, so anyone holding the device can run other firmware.
+Record the identity key when the device is provisioned; the device's legacy
+`/pubkey` endpoint returns a different key.
+
+Profiled responses carry the second signature described above, so the signer
+also refuses a response produced for another profile.
+
+The firmware also answers sign requests at version `bursa-attested-signer/2`,
+which `armory-pool witness` sends for `tx-body`. The reply echoes that version
+and adds `summary`, the signing policy's description of the body (for a pool
+registration: pledge, cost, margin, relays). Its binding appends the summary as
+one more length-prefixed field after the signature, present even when empty. A
+version-1 request gets the version-1 reply and binding, without `summary`.
+Inventory and challenge replies stay at version 1.
+
+The signer sends version 1 unless the backend sets `protocol`:
+
+- `"1"` or unset: version 1 only. The reply carries no summary.
+- `"negotiate"`: `tx-body` requests go out at version 2 and the signer verifies
+  the summary under the key's binding signature. If the device answers
+  `unsupported protocol version` (version 1 firmware), the signer repeats the
+  request at version 1 with a new nonce (and, with `host_key_file`, a new
+  challenge), and keeps sending version 1 until it restarts or a request fails
+  to reach the device.
+- `"2"`: as `negotiate`, but a device that does not support version 2 is an
+  error.
+
+A reply at any version other than the one requested is refused. The
+unsupported-version answer is not signed, so a party on the path to the device
+can forge it and keep a `negotiate` signer on version 1; that loses the summary
+and no signature check. Use `"2"` where the summary is required. The signer
+writes the summary in the `summary` field of the `sign request` audit line for
+a signed transaction; it is not part of the API response.
+
+`host_key_file` holds a host signing key written by `armory-pool host-key`
+and registered on the device. With it set, the signer fetches a one-time
+challenge from `/v1/challenge` before each signature and adds `challenge`,
+`host_key` and `host_signature` to the request: an Ed25519 signature over
+`AttestedRequestBinding`, the domain `bursa-armory-request/1` followed by the
+request fields and the challenge, length-prefixed as in the response binding.
+A device with a registered host key refuses requests without it. The file
+must not be readable by group or others, and an unreadable or malformed file
+fails startup.
+
+### Signing log
+
+The signing firmware records every signature and opcert it issues in a log on
+a microSD card in the device, and refuses to sign when it cannot. An entry
+holds the profile, role and purpose, the body hash (or the issue counter, KES
+period and KES key hash for an opcert) and the parameter summary the device
+computed, cut to 1024 bytes with a flag when it was cut. Entries are chained
+by hash and each is signed by the device identity key. The SE050 keeps the
+number and hash of the latest entry (object `0x20e50022`), and the device
+checks the card against it at boot and before every write, so an older copy of
+the card, a blank card or a truncated log is refused. The entry is written and
+the card read back before the signature leaves the device.
+
+With no card, an unreadable card, a card that does not match the head, a full
+card or a failed write, the device refuses to sign and says why in the
+response and in the startup report; inventory and health are still served. A
+card that is full stays full: the device never overwrites an entry. The log is
+opened once at startup, so a card inserted later takes effect after a restart.
+
+The signing and provisioning firmware never reset the head object, so a lost,
+failed or full card, or an unreadable head object, leaves the device refusing
+to sign. A device wipe deletes the head object with the identity key; after a
+new identity is provisioned, the signing firmware formats a zeroed card and
+starts a new log. To start a new log under the same identity, the wipe
+firmware's `POST /wipe/signlog`, confirmed with the device identity public key
+as `identity_public_key`, deletes only the head object. Like the other wipe
+endpoints it is not host-key authenticated: the identity key only confirms
+which device is meant, and the wipe image must be loaded onto the board. The
+old card is refused once the head is gone, so image it if its entries are
+wanted, then zero it or insert a zeroed card; the signing firmware formats it
+at its next start, with entries numbered from 1 again. The old card's entries
+stay verifiable from its image with `signlog-verify -identity HEX -image FILE`.
+
+The first start with an all-zero card and an unset head object formats the
+card for the device identity key; it holds up to 32768 entries. A new card
+usually carries a partition table, which is refused, so write zeros over the
+whole card first, for example with
+`dd if=/dev/zero of=/dev/sdX bs=4M conv=fsync`, where `/dev/sdX` is the
+card's whole device (check it with `lsblk`; `dd` overwrites whatever it is
+given). Erasing it is not enough, since some cards read erased blocks as
+`0xff`. A card formatted for another identity is refused. A card with data
+after the last entry, beyond one incomplete final record, is refused at
+startup as it is by `signlog-verify`.
+
+Read the log from the device with `armory-pool -identity HEX signlog`, which
+verifies every signature and the chain under the pinned identity key and
+prints one line per entry. The host sends a fresh nonce and refuses the read
+unless the pinned device identity attests the current head and card size for
+that nonce. The signed head anchors the subsequently verified log blocks, so a
+party on the HTTP path cannot substitute an older valid prefix. `-head-seq N
+-head-hash HEX` additionally pins the latest entry the operator expects. The
+endpoint, `POST /v1/signlog`, needs the same host key authentication as a
+signing request, and serves only the header, the entries and the slot after the
+latest one. A card removed from the device is checked with `signlog-verify
+-identity HEX -image FILE`.
+
+### Bluetooth module
+
+The board carries a u-blox ANNA-B112 Bluetooth LE module. Left alone it runs
+its factory software and advertises as `ANNA-B1-<id>`. Every firmware image
+(signing, provisioning, wipe and the testnet build) drives the module's
+active-low reset line (BT_RESET, GPIO1_IO09) low as its first step, before
+bring-up and the network, and holds it there for as long as the firmware runs.
+The firmware then reads the pad back; the startup report shows
+`bluetooth: module held in reset` when it reads low. If it reads high, the
+report says so and the result is `RESULT: FAIL`; the firmware keeps running.
+
+The limits:
+
+- The module can advertise from power-on until the firmware reaches that step,
+  and whenever the board runs other firmware or a bootloader.
+- The hold depends on the firmware. Other firmware on the board can release the
+  module, and the board boots unsigned images.
+- Holding the module in reset is not removal. For a mainnet device, physically
+  removing the module is the stronger control.
 
 ## KES agent in a protected workload
 
@@ -184,6 +470,14 @@ cloud boundary:
 | Unix socket permissions (or an authenticated forwarder to it) | who may submit header bodies |
 | Cold-key custody (separate backend) | the pool cold key; the agent holds only the cold verification key |
 
+For a remote Dingo producer, `bursa-attested-kes/1` applies two independent
+checks: TLS client certificates authenticate Dingo to the workload, and fresh
+nonce-bound platform evidence authenticates the measured workload and its
+active public KES state to Dingo. The AWS adapter places the protocol binding
+in Nitro `user_data`. The GCP adapter places its hex encoding in Confidential
+Space `eat_nonce`. Dingo applies the same pinned PCR, image digest, debug-state,
+issuer, audience, expiry, and secure-boot rules used by the attested signer.
+
 - Sign mode accepts only a Praos header body whose slot lies in the requested
   period and whose issuer key, KES key, issue counter, certificate period and
   cold-key signature match the installed operational certificate.
@@ -196,6 +490,8 @@ cloud boundary:
   mount that same guard state, or be given a freshly staged key and a new
   operational certificate; never start a second agent with a copy of an older
   guard file.
-- A restarted enclave has no key until one is staged and installed again (key
-  material is wrapped by the cloud KMS and unwrapped only for the measured
-  workload).
+- A restarted workload has no key until one is staged and installed again. The
+  guard survives on workload-private durable storage; wrapped recovery material
+  may be released only to the approved measurement. If the provider adapter,
+  attestation service, KMS release, durable guard, or operational-certificate
+  check fails, the workload exposes no signing service.

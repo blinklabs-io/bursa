@@ -915,6 +915,39 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 	return nil
 }
 
+func validateMetricsExposure(cfg *config.Config, listener net.Listener) error {
+	if listener == nil {
+		_, err := metricsBindAddress(cfg)
+		return err
+	}
+	address := listener.Addr().String()
+	if !signer.IsLoopbackListenAddress(address) {
+		return fmt.Errorf(
+			"refusing metrics listener on non-loopback address %q",
+			address,
+		)
+	}
+	return nil
+}
+
+func metricsBindAddress(cfg *config.Config) (string, error) {
+	addr, err := signer.LoopbackBindAddress(
+		cfg.Metrics.ListenAddress,
+		cfg.Metrics.ListenPort,
+	)
+	if err != nil {
+		return "", fmt.Errorf("metrics listener: %w", err)
+	}
+	return addr, nil
+}
+
+// metricsListenAddress returns the metrics bind address. Callers must run
+// validateMetricsExposure first; an invalid address yields "".
+func metricsListenAddress(cfg *config.Config) string {
+	addr, _ := metricsBindAddress(cfg)
+	return addr
+}
+
 func configureSwaggerScheme(tlsConfigured bool) {
 	if tlsConfigured {
 		docs.SwaggerInfo.Schemes = []string{"https"}
@@ -935,14 +968,19 @@ func registerAPIHandlers(
 	}
 	// Health and documentation routes do not expose wallet material.
 	mux.HandleFunc("/healthcheck", handleHealthcheck)
-	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/swagger/", httpSwagger.WrapHandler)
 
 	protected := func(next http.Handler) http.Handler {
 		return protectAPIHandler(auth, next)
 	}
-	mux.Handle("/api/wallet/create", protected(withLegacyStore(store, http.HandlerFunc(handleWalletCreate))))
-	mux.Handle("/api/wallet/restore", protected(withLegacyStore(store, http.HandlerFunc(handleWalletRestore))))
+	walletAccess := func(next http.Handler) http.Handler {
+		if walletStorageConfigured(cfg) {
+			return withLegacyStore(store, protectWalletStorageHandler(auth, cfg.Api.JWTAdminSubjects, next))
+		}
+		return protected(withLegacyStore(store, next))
+	}
+	mux.Handle("/api/wallet/create", walletAccess(http.HandlerFunc(handleWalletCreate)))
+	mux.Handle("/api/wallet/restore", walletAccess(http.HandlerFunc(handleWalletRestore)))
 
 	mux.HandleFunc("/api/script/create", handleScriptCreate)
 	mux.Handle("/api/script/validate", boundedScriptValidation(http.HandlerFunc(handleScriptValidate)))
@@ -962,13 +1000,10 @@ func registerAPIHandlers(
 	mux.HandleFunc("/api/sign/verify", handleVerifyData)
 
 	if walletStorageConfigured(cfg) {
-		walletStorage := func(next http.Handler) http.Handler {
-			return withLegacyStore(store, protectWalletStorageHandler(auth, cfg.Api.JWTAdminSubjects, next))
-		}
-		mux.Handle("/api/wallet/list", walletStorage(http.HandlerFunc(handleWalletList)))
-		mux.Handle("/api/wallet/get", walletStorage(http.HandlerFunc(handleWalletGet)))
-		mux.Handle("/api/wallet/update", walletStorage(http.HandlerFunc(handleWalletUpdate)))
-		mux.Handle("/api/wallet/delete", walletStorage(http.HandlerFunc(handleWalletDelete)))
+		mux.Handle("/api/wallet/list", walletAccess(http.HandlerFunc(handleWalletList)))
+		mux.Handle("/api/wallet/get", walletAccess(http.HandlerFunc(handleWalletGet)))
+		mux.Handle("/api/wallet/update", walletAccess(http.HandlerFunc(handleWalletUpdate)))
+		mux.Handle("/api/wallet/delete", walletAccess(http.HandlerFunc(handleWalletDelete)))
 	}
 }
 
@@ -1051,6 +1086,9 @@ func Start(
 	if err := validateAPIExposure(cfg, apiAuth); err != nil {
 		return err
 	}
+	if err := validateMetricsExposure(cfg, metricsListener); err != nil {
+		return err
+	}
 	tlsConfigured, err := apiTLSConfigured(cfg)
 	if err != nil {
 		return err
@@ -1088,11 +1126,7 @@ func Start(
 
 	metricsServer := newHTTPServer(metricsMux)
 	if metricsListener == nil {
-		metricsServer.Addr = fmt.Sprintf(
-			"%s:%d",
-			cfg.Metrics.ListenAddress,
-			cfg.Metrics.ListenPort,
-		)
+		metricsServer.Addr = metricsListenAddress(cfg)
 	}
 
 	apiServer := newHTTPServer(mainHandler)
@@ -1243,9 +1277,11 @@ func handleHealthcheck(w http.ResponseWriter, r *http.Request) {
 // handleWalletCreate godoc
 //
 //	@Summary		Create a wallet
-//	@Description	Create a wallet and return details
+//	@Description	Create a wallet and return details. When persistent storage is configured, requires an authenticated wallet storage administrator.
 //	@Produce		json
 //	@Success		200	{object}	bursa.Wallet	"Ok"
+//	@Failure		401	{object}	ErrorResponse	"Authentication required"
+//	@Failure		403	{object}	ErrorResponse	"Wallet storage administrator access required"
 //	@Security		BearerAuth
 //	@Router			/api/wallet/create [post]
 func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
@@ -1323,12 +1359,14 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 // handleWalletRestore handles the wallet restoration request.
 //
 //	@Summary		Restore a wallet using a mnemonic seed phrase
-//	@Description	Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details.
+//	@Description	Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details. When persistent storage is configured, requires an authenticated wallet storage administrator.
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WalletRestoreRequest	true	"Wallet Restore Request"
 //	@Success		200		{object}	bursa.Wallet			"Wallet successfully restored"
 //	@Failure		400		{object}	ErrorResponse			"Invalid request"
+//	@Failure		401		{object}	ErrorResponse			"Authentication required"
+//	@Failure		403		{object}	ErrorResponse			"Wallet storage administrator access required"
 //	@Failure		500		{object}	ErrorResponse			"Internal server error"
 //	@Security		BearerAuth
 //	@Router			/api/wallet/restore [post]

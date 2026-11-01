@@ -44,9 +44,11 @@ func main() {
 		hashCommand(),
 		apiCommand(),
 		signerCommand(),
+		confidentialSpaceCommand(),
 		kesAgentCommand(),
 		scriptCommand(),
 		txCommand(),
+		queryCommand(),
 		signCommand(),
 	)
 

@@ -21,6 +21,7 @@ Operator documentation for the two bursa signing daemons:
 | [`attested-custody.md`](attested-custody.md) | Attested TEE key custody: protocol, AWS Nitro and GCP Confidential Space backends, trust boundaries |
 | [`security.md`](security.md) | Threat model, custody guarantees, dev-only file backend |
 | [`kes-agent.md`](kes-agent.md) | KES agent daemon operation |
+| [`embedded-block-production.md`](embedded-block-production.md) | Dingo custody split, supported backends, rotation and failures |
 | [`openapi.yaml`](openapi.yaml) | OpenAPI 3 spec for the signer `/v1` HTTP API |
 | [`kes-agent-protocol.md`](kes-agent-protocol.md) | KES agent Unix-socket wire protocol |
 | [`signer.example.yaml`](signer.example.yaml) | Annotated signer config |
@@ -38,7 +39,7 @@ Systemd units, an `EnvironmentFile` example, and a Dockerfile live in
 | Custody backends | `nitro` and `confidential-space` (keys held in an attested TEE), `vault` (Transit, remote signing), `pkcs11` (HSM, keys never leave the token; CGO, `-tags pkcs11`), `sops` (GCP Secret Manager + SOPS), `software`/`file` (in-process plaintext, dev-only) |
 | Operations | `tx`, `cip8`, `opcert` signing; key list/detail with effective policy |
 | Anti-double-sign | Watermark store: `mem` (non-durable; only with `warn` or `off`), `file` (SQLite), or shared HA-safe `postgres`; modes off/warn/enforce |
-| Observability | Static liveness on `/healthz`, dependency-aware readiness on `/readyz`, Prometheus `/metrics` |
+| Observability | Static liveness on `/healthz`, dependency-aware readiness on `/readyz`, Prometheus `/metrics` on a dedicated loopback listener |
 
 ## Quick start (development)
 
