@@ -142,6 +142,13 @@ beforeEach(() => {
     error: null,
     setEnabled: vi.fn(),
   });
+  vi.spyOn(hooks, "useExternalHandleLookup").mockReturnValue({
+    enabled: false,
+    loading: false,
+    saving: false,
+    error: null,
+    setEnabled: vi.fn(async () => undefined),
+  });
 });
 
 afterEach(() => {
@@ -153,6 +160,22 @@ test("(a) renders network from account prop", () => {
   mockStatus("ready", 12345, true);
   renderSettings();
   expect(screen.getByText("preview")).toBeInTheDocument();
+});
+
+test("external Handle lookup is off by default and explains per-name consent", async () => {
+  mockStatus("ready", 12345, true);
+  const setEnabled = vi.fn(async () => undefined);
+  vi.mocked(hooks.useExternalHandleLookup).mockReturnValue({
+    enabled: false,
+    loading: false,
+    saving: false,
+    error: null,
+    setEnabled,
+  });
+  renderSettings();
+  expect(screen.getByText(/never contacted automatically/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /turn on external lookup/i }));
+  expect(setEnabled).toHaveBeenCalledWith(true);
 });
 
 test("(b) renders stake address in monospace and a CopyButton for it", async () => {

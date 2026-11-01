@@ -43,6 +43,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/diagnostics"
+	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
@@ -583,6 +584,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		api.WithScriptMigration(migrateScripts),
 		api.WithActivity(activitySvc),
 		api.WithSurveys(surveySvc),
+		api.WithExternalHandleResolver(handle.NewAPIResolver()),
 	}
 	if cfg.ConnectorEnabled {
 		handlerOpts = append(handlerOpts, api.WithConnector(connectorSvc))
@@ -783,6 +785,14 @@ func (c *settingsController) Notifications() bool { return c.store.Notifications
 
 func (c *settingsController) SetNotifications(enabled bool) error {
 	return c.store.SetNotifications(enabled)
+}
+
+func (c *settingsController) ExternalHandleLookup() bool {
+	return c.store.ExternalHandleLookup()
+}
+
+func (c *settingsController) SetExternalHandleLookup(enabled bool) error {
+	return c.store.SetExternalHandleLookup(enabled)
 }
 
 func (c *settingsController) RecoverNode() error {

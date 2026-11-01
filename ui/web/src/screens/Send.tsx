@@ -1,5 +1,5 @@
 import { BursaLogo, Icon } from "../components/Icon";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Preview, TxResult, SendAsset, UnsignedTx, HandleInfo } from "../api/types";
 import {
@@ -7,6 +7,8 @@ import {
   confirmSend,
   exportUnsigned,
   resolveHandle,
+  resolveHandleExternal,
+  getExternalHandleLookup,
   getHardwareSignRequest,
   submitHardware,
   ApiError,
@@ -55,7 +57,7 @@ function isHandleInput(value: string): boolean {
 
 function handleLookupError(error: unknown): string {
   if (!(error instanceof ApiError)) return errorMessage(error);
-  if (error.status === 404) return "Handle not found";
+  if (error.status === 404) return "Handle not found by your node";
   if (error.status === 409) return "Handle holder is ambiguous";
   if (error.status === 0 || error.status >= 500) return "Unable to query your node";
   return errorMessage(error);
@@ -90,12 +92,18 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
   const [resolvedHandle, setResolvedHandle] = useState<HandleInfo | null>(null);
   const [handleError, setHandleError] = useState<string | null>(null);
   const [resolvingHandle, setResolvingHandle] = useState(false);
+  const [externalLookupOffered, setExternalLookupOffered] = useState(false);
+  const [resolvingExternally, setResolvingExternally] = useState(false);
+  const externalRequest = useRef(0);
   const handleInput = isHandleInput(to);
   const trimmedTo = to.trim();
 
   useEffect(() => {
     setResolvedHandle(null);
     setHandleError(null);
+    setExternalLookupOffered(false);
+    setResolvingExternally(false);
+    externalRequest.current++;
     if (!handleInput) {
       setResolvingHandle(false);
       return;
@@ -110,6 +118,17 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
         .catch((e: unknown) => {
           if (cancelled) return;
           setHandleError(handleLookupError(e));
+          if (e instanceof ApiError && e.status === 409) return;
+          void getExternalHandleLookup()
+            .then((setting) => {
+              // The server refuses unsupported networks before any request
+              // leaves the wallet, so do not ask for consent it cannot use.
+              if (!cancelled) setExternalLookupOffered(setting.enabled && setting.available !== false);
+            })
+            .catch(() => {
+              // Fail closed: if the opt-in setting cannot be read, do not offer
+              // a path that would disclose the Handle name.
+            });
         })
         .finally(() => {
           if (!cancelled) setResolvingHandle(false);
@@ -120,6 +139,35 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
       clearTimeout(timer);
     };
   }, [trimmedTo, handleInput]);
+
+  async function handleExternalLookup() {
+    const request = ++externalRequest.current;
+    setResolvingExternally(true);
+    setHandleError(null);
+    try {
+      const info = await resolveHandleExternal(trimmedTo);
+      if (request === externalRequest.current) {
+        setResolvedHandle(info);
+        setExternalLookupOffered(false);
+      }
+    } catch (e) {
+      if (request !== externalRequest.current) return;
+      if (e instanceof ApiError && e.status === 404) {
+        setHandleError("Handle not found");
+      } else if (e instanceof ApiError && e.status === 409) {
+        setHandleError("Handle holder is ambiguous");
+      } else if (e instanceof ApiError && e.status === 403) {
+        // The setting was turned off after the offer appeared; a retry is
+        // refused the same way, so withdraw the offer.
+        setHandleError("External Handle lookup is disabled");
+        setExternalLookupOffered(false);
+      } else {
+        setHandleError("External Handle service unavailable");
+      }
+    } finally {
+      if (request === externalRequest.current) setResolvingExternally(false);
+    }
+  }
 
   function addAssetRow() {
     setAssetRows((prev) => [...prev, { unit: "", quantity: "" }]);
@@ -142,7 +190,7 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
     // send; use the node-verified address, never the raw handle text.
     let resolvedTo = trimmedTo;
     if (handleInput) {
-      if (resolvingHandle) {
+      if (resolvingHandle || resolvingExternally) {
         setError("Still resolving the handle — try again in a moment.");
         return;
       }
@@ -255,7 +303,9 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
         )}
         {handleInput && resolvedHandle && (
           <p className="verified-readout">
-            <span className="verified-tick">✓ Resolved by your node</span>
+            <span className="verified-tick">
+              ✓ {resolvedHandle.source === "external" ? "Resolved by api.handle.me with your consent" : "Resolved by your node"}
+            </span>
             {" · "}${resolvedHandle.handle} → {resolvedHandle.address}
           </p>
         )}
@@ -263,6 +313,21 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
           <p role="alert" className="error-text">
             {handleError}
           </p>
+        )}
+        {handleInput && externalLookupOffered && !resolvedHandle && (
+          <div className="setting-copy">
+            <p>
+              api.handle.me can try this lookup. Continuing sends only {trimmedTo} to that
+              service; approval applies to this lookup only.
+            </p>
+            <Button
+              variant="ghost"
+              disabled={resolvingExternally || loading}
+              onClick={() => void handleExternalLookup()}
+            >
+              {resolvingExternally ? "Querying api.handle.me…" : `Send ${trimmedTo} to api.handle.me`}
+            </Button>
+          </div>
         )}
 
         </div>
@@ -325,7 +390,7 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
             loading ||
             !to.trim() ||
             !adaAmount.trim() ||
-            (handleInput && (resolvingHandle || !resolvedHandle))
+            (handleInput && (resolvingHandle || resolvingExternally || !resolvedHandle))
           }
         >
           {loading ? "Building…" : "Review"}

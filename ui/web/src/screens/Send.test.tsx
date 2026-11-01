@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { Send } from "./Send";
 import * as client from "../api/client";
 import { mockContacts } from "../test/mockContacts";
@@ -38,6 +38,7 @@ const MOCK_TX_RESULT: TxResult = {
 
 beforeEach(() => {
   mockContacts([]);
+  vi.spyOn(client, "getExternalHandleLookup").mockResolvedValue({ enabled: false });
 });
 
 afterEach(() => {
@@ -473,6 +474,99 @@ test("(l) unresolved $handle shows 'Handle not found' and disables Review", asyn
 
   fireEvent.click(screen.getByRole("button", { name: /review/i }));
   expect(buildSend).not.toHaveBeenCalled();
+});
+
+test("external Handle fallback discloses a name only after the per-lookup approval", async () => {
+  vi.mocked(client.getExternalHandleLookup).mockResolvedValue({ enabled: true });
+  vi.spyOn(client, "resolveHandle").mockRejectedValue(
+    new client.ApiError(404, "handle not found by your node"),
+  );
+  const external = vi.spyOn(client, "resolveHandleExternal").mockResolvedValue({
+    handle: "chris",
+    address: "addr1external",
+    source: "external",
+  });
+
+  render(<Send />);
+  fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "$chris" } });
+
+  const approve = await screen.findByRole("button", { name: /send \$chris to api\.handle\.me/i });
+  expect(external).not.toHaveBeenCalled();
+  expect(screen.getByText(/approval applies to this lookup only/i)).toBeInTheDocument();
+
+  fireEvent.click(approve);
+  expect(await screen.findByText(/resolved by api\.handle\.me with your consent/i)).toBeInTheDocument();
+  expect(external).toHaveBeenCalledWith("$chris");
+});
+
+test("external Handle fallback distinguishes a missing name from service failure", async () => {
+  vi.mocked(client.getExternalHandleLookup).mockResolvedValue({ enabled: true });
+  vi.spyOn(client, "resolveHandle").mockRejectedValue(
+    new client.ApiError(502, "handle lookup failed"),
+  );
+  const external = vi.spyOn(client, "resolveHandleExternal")
+    .mockRejectedValueOnce(new client.ApiError(404, "handle not found"))
+    .mockRejectedValueOnce(new client.ApiError(502, "external handle service unavailable"));
+
+  render(<Send />);
+  fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "$chris" } });
+  const approve = await screen.findByRole("button", { name: /send \$chris to api\.handle\.me/i });
+  fireEvent.click(approve);
+  expect(await screen.findByText(/^Handle not found$/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /send \$chris to api\.handle\.me/i }));
+  expect(await screen.findByText(/external handle service unavailable/i)).toBeInTheDocument();
+  expect(external).toHaveBeenCalledTimes(2);
+});
+
+test("external Handle fallback withdraws the offer once the setting is disabled", async () => {
+  vi.mocked(client.getExternalHandleLookup).mockResolvedValue({ enabled: true });
+  vi.spyOn(client, "resolveHandle").mockRejectedValue(
+    new client.ApiError(404, "handle not found by your node"),
+  );
+  const external = vi.spyOn(client, "resolveHandleExternal")
+    .mockRejectedValue(new client.ApiError(403, "external handle lookup is disabled"));
+
+  render(<Send />);
+  fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "$chris" } });
+  fireEvent.click(await screen.findByRole("button", { name: /send \$chris to api\.handle\.me/i }));
+
+  expect(await screen.findByText(/^External Handle lookup is disabled$/)).toBeInTheDocument();
+  expect(screen.queryByText(/external handle service unavailable/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /api\.handle\.me/i })).not.toBeInTheDocument();
+  expect(external).toHaveBeenCalledTimes(1);
+});
+
+test("external Handle fallback is not offered where the service is unavailable", async () => {
+  vi.mocked(client.getExternalHandleLookup).mockResolvedValue({ enabled: true, available: false });
+  vi.spyOn(client, "resolveHandle").mockRejectedValue(
+    new client.ApiError(404, "handle not found by your node"),
+  );
+  const external = vi.spyOn(client, "resolveHandleExternal");
+
+  render(<Send />);
+  fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "$chris" } });
+
+  expect(await screen.findByText(/handle not found/i)).toBeInTheDocument();
+  await waitFor(() => expect(client.getExternalHandleLookup).toHaveBeenCalled());
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.queryByRole("button", { name: /api\.handle\.me/i })).not.toBeInTheDocument();
+  expect(external).not.toHaveBeenCalled();
+});
+
+test("ambiguous node ownership never offers the external fallback", async () => {
+  vi.mocked(client.getExternalHandleLookup).mockResolvedValue({ enabled: true });
+  vi.spyOn(client, "resolveHandle").mockRejectedValue(
+    new client.ApiError(409, "handle holder is ambiguous"),
+  );
+  const external = vi.spyOn(client, "resolveHandleExternal");
+
+  render(<Send />);
+  fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "$chris" } });
+
+  expect(await screen.findByText(/handle holder is ambiguous/i)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /api\.handle\.me/i })).not.toBeInTheDocument();
+  expect(external).not.toHaveBeenCalled();
 });
 
 test("node lookup failure is distinct from a missing $handle", async () => {
