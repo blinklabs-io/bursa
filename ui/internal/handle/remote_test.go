@@ -115,6 +115,30 @@ func TestAPIResolverRejectsAmbiguousOwnershipEvidence(t *testing.T) {
 	}
 }
 
+func TestAPIResolverRejectsCaseFoldedDuplicateKeys(t *testing.T) {
+	address := mainnetAddress(t)
+	otherHash := make([]byte, lcommon.AddressHashSize)
+	otherHash[0] = 2
+	other, err := lcommon.NewAddressFromParts(lcommon.AddressTypeKeyNone, lcommon.AddressNetworkMainnet, otherHash, nil)
+	if err != nil {
+		t.Fatalf("build address: %v", err)
+	}
+	utxo := `"utxo":"` + strings.Repeat("0", 64) + `#0"`
+	tests := map[string]string{
+		"top-level case variant": `{"NAME":"other","name":"chris",` + utxo + `,"resolved_addresses":{"ada":"` + address + `"}}`,
+		"nested case variant":    `{"name":"chris",` + utxo + `,"resolved_addresses":{"ada":"` + address + `","ADA":"` + other.String() + `"}}`,
+		"unicode fold variant":   `{"name":"chris",` + utxo + `,"resolved_addresses":{"ada":"` + address + `"},"reſolved_addresses":{"ada":"` + other.String() + `"}}`,
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			resolver := remoteResolverResponse(http.StatusOK, body, "application/json", nil)
+			if _, got, err := resolver.Resolve(context.Background(), "mainnet", "chris"); !errors.Is(err, ErrRemoteUnavailable) {
+				t.Fatalf("Resolve = (%q, %v), want ErrRemoteUnavailable", got, err)
+			}
+		})
+	}
+}
+
 func TestAPIResolverBoundsNameResponseAndNetwork(t *testing.T) {
 	called := false
 	resolver := remoteResolverResponse(http.StatusOK, strings.Repeat(" ", maxRemoteBodyBytes+1), "application/json", func(*http.Request) { called = true })

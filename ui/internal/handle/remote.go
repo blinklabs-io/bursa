@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/blinklabs-io/bursa/ui/internal/cardanonet"
@@ -258,6 +259,26 @@ func rejectDuplicateJSONKeys(body []byte) error {
 	return nil
 }
 
+// foldJSONKey maps key to a canonical form shared by every key that
+// encoding/json would match to the same struct field. The decoder matches
+// field names case-insensitively under Unicode simple folding (so "ADA" and
+// "ada", or "\u017F" and "s", select the same field and the last one wins);
+// an exact-string comparison would let such keys through as distinct.
+func foldJSONKey(key string) string {
+	var b strings.Builder
+	b.Grow(len(key))
+	for _, r := range key {
+		lowest := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < lowest {
+				lowest = f
+			}
+		}
+		b.WriteRune(lowest)
+	}
+	return b.String()
+}
+
 func consumeJSONValue(decoder *json.Decoder) error {
 	token, err := decoder.Token()
 	if err != nil {
@@ -279,10 +300,11 @@ func consumeJSONValue(decoder *json.Decoder) error {
 			if !ok {
 				return errors.New("non-string object key")
 			}
-			if _, exists := seen[key]; exists {
+			folded := foldJSONKey(key)
+			if _, exists := seen[folded]; exists {
 				return errors.New("duplicate object key")
 			}
-			seen[key] = struct{}{}
+			seen[folded] = struct{}{}
 			if err := consumeJSONValue(decoder); err != nil {
 				return err
 			}
