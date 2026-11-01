@@ -137,6 +137,12 @@ func publicIP(ip netip.Addr) bool {
 	return true
 }
 
+// Supports reports whether api.handle.me can answer for network. The hosted
+// service indexes mainnet only.
+func (r *APIResolver) Supports(network string) bool {
+	return network == "mainnet"
+}
+
 // Resolve looks up input on api.handle.me. The hosted service is a mainnet
 // index, so test networks fail closed instead of accepting a mainnet address.
 func (r *APIResolver) Resolve(ctx context.Context, network, input string) (name, address string, err error) {
@@ -144,7 +150,7 @@ func (r *APIResolver) Resolve(ctx context.Context, network, input string) (name,
 	if err != nil {
 		return "", "", chain.ErrNotFound
 	}
-	if network != "mainnet" {
+	if !r.Supports(network) {
 		return name, "", ErrRemoteUnavailable
 	}
 	if r == nil || r.client == nil {

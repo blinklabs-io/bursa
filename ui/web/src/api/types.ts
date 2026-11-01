@@ -174,6 +174,8 @@ export interface HandleInfo {
 
 export interface ExternalHandleLookupSetting {
   enabled: boolean;
+  // False when the service cannot answer for the wallet's network.
+  available?: boolean;
 }
 
 // CIP-8/CIP-30 signData: sign an arbitrary message with a wallet address's key.

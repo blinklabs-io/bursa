@@ -350,6 +350,9 @@ type SettingsController interface {
 // ExternalHandleResolver is the narrow external lookup surface. Production
 // uses handle.APIResolver; tests supply a fake without network access.
 type ExternalHandleResolver interface {
+	// Supports reports whether the service can answer for network, so the UI
+	// never asks for consent to a lookup that is refused before it is sent.
+	Supports(network string) bool
 	Resolve(ctx context.Context, network, input string) (name, address string, err error)
 }
 
@@ -1430,8 +1433,9 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	// External Handle lookup is a two-part consent: this persisted setting lets
 	// the UI offer the fallback, while every individual name disclosure must
 	// still arrive through the explicit POST route below with consent=true.
+	externalHandlesAvailable := cfg.externalHandles != nil && cfg.externalHandles.Supports(network)
 	mux.HandleFunc("GET /wallet/settings/external-handle-lookup", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.ExternalHandleLookup()})
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.ExternalHandleLookup(), "available": externalHandlesAvailable})
 	})
 	mux.HandleFunc("PUT /wallet/settings/external-handle-lookup", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -1448,7 +1452,7 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 			writeJSON(w, http.StatusInternalServerError, errBody(err))
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.ExternalHandleLookup()})
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.ExternalHandleLookup(), "available": externalHandlesAvailable})
 	})
 
 	// Failed-sync recovery is available only through an explicit confirmed
@@ -1781,7 +1785,7 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 				return
 			}
 		}
-		if cfg.externalHandles == nil {
+		if !externalHandlesAvailable {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "external handle lookup unavailable"})
 			return
 		}

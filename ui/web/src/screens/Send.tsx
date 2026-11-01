@@ -121,7 +121,9 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
           if (e instanceof ApiError && e.status === 409) return;
           void getExternalHandleLookup()
             .then((setting) => {
-              if (!cancelled) setExternalLookupOffered(setting.enabled);
+              // The server refuses unsupported networks before any request
+              // leaves the wallet, so do not ask for consent it cannot use.
+              if (!cancelled) setExternalLookupOffered(setting.enabled && setting.available !== false);
             })
             .catch(() => {
               // Fail closed: if the opt-in setting cannot be read, do not offer

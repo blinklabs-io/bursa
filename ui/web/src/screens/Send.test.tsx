@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { Send } from "./Send";
 import * as client from "../api/client";
 import { mockContacts } from "../test/mockContacts";
@@ -517,6 +517,23 @@ test("external Handle fallback distinguishes a missing name from service failure
   fireEvent.click(screen.getByRole("button", { name: /send \$chris to api\.handle\.me/i }));
   expect(await screen.findByText(/external handle service unavailable/i)).toBeInTheDocument();
   expect(external).toHaveBeenCalledTimes(2);
+});
+
+test("external Handle fallback is not offered where the service is unavailable", async () => {
+  vi.mocked(client.getExternalHandleLookup).mockResolvedValue({ enabled: true, available: false });
+  vi.spyOn(client, "resolveHandle").mockRejectedValue(
+    new client.ApiError(404, "handle not found by your node"),
+  );
+  const external = vi.spyOn(client, "resolveHandleExternal");
+
+  render(<Send />);
+  fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "$chris" } });
+
+  expect(await screen.findByText(/handle not found/i)).toBeInTheDocument();
+  await waitFor(() => expect(client.getExternalHandleLookup).toHaveBeenCalled());
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.queryByRole("button", { name: /api\.handle\.me/i })).not.toBeInTheDocument();
+  expect(external).not.toHaveBeenCalled();
 });
 
 test("ambiguous node ownership never offers the external fallback", async () => {

@@ -4150,6 +4150,8 @@ type fakeExternalHandleResolver struct {
 	network string
 }
 
+func (f *fakeExternalHandleResolver) Supports(network string) bool { return network == "mainnet" }
+
 func (f *fakeExternalHandleResolver) Resolve(_ context.Context, network, input string) (string, string, error) {
 	f.calls++
 	f.network = network
@@ -4175,6 +4177,32 @@ func TestExternalHandleLookupSettingDefaultsOffAndToggles(t *testing.T) {
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/external-handle-lookup", strings.NewReader(`{"enabled":true}`)))
 	if rec.Code != http.StatusOK || !settings.externalHandles || !settings.setExternalHandlesCalled {
 		t.Fatalf("enable setting = %d %s settings=%+v", rec.Code, rec.Body.String(), settings)
+	}
+}
+
+func TestExternalHandleLookupUnavailableOffMainnet(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, settings,
+		&fakeContacts{}, &fakeNodeLookup{assetErr: chain.ErrNotFound}, &fakePoolOps{}, nil, &fakeMultiSig{}, "preprod", http.NotFoundHandler(),
+		WithExternalHandleResolver(remote))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/external-handle-lookup", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":true`) || !strings.Contains(rec.Body.String(), `"available":false`) {
+		t.Fatalf("preprod setting = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusServiceUnavailable || remote.calls != 0 {
+		t.Fatalf("preprod lookup = %d %s remote calls=%d", rec.Code, rec.Body.String(), remote.calls)
+	}
+
+	mainnet := externalHandleHandler(settings, nil, remote)
+	rec = httptest.NewRecorder()
+	mainnet.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/external-handle-lookup", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"available":true`) {
+		t.Fatalf("mainnet setting = %d %s", rec.Code, rec.Body.String())
 	}
 }
 
