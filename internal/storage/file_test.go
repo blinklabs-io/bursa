@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/stretchr/testify/assert"
@@ -474,4 +475,112 @@ func TestFileStoreEncryptsAtRestWithAgeRecipient(t *testing.T) {
 	item, err := got.GetItem("mnemonic")
 	require.NoError(t, err)
 	assert.Equal(t, "secret seed phrase", item)
+}
+
+// clearProcessSOPSKeys empties the process configuration's master keys so a
+// test can tell them apart from the configuration passed to NewStore.
+func clearProcessSOPSKeys(t *testing.T) *config.Config {
+	t.Helper()
+	cfg := config.GetConfig()
+	previousGoogle := cfg.Google.ResourceId
+	previousAws := cfg.Aws.KMSKeyARN
+	previousAge := cfg.Age.Recipients
+	cfg.Google.ResourceId = ""
+	cfg.Aws.KMSKeyARN = ""
+	cfg.Age.Recipients = ""
+	t.Cleanup(func() {
+		cfg.Google.ResourceId = previousGoogle
+		cfg.Aws.KMSKeyARN = previousAws
+		cfg.Age.Recipients = previousAge
+	})
+	return cfg
+}
+
+func TestNewStoreFileEncryptsWithConfiguredKeyOnly(t *testing.T) {
+	// Not t.Parallel: mutates the process configuration.
+	clearProcessSOPSKeys(t)
+	id, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	t.Setenv("SOPS_AGE_KEY", id.String())
+
+	store, err := NewStore(&config.Config{
+		Storage: config.StorageConfig{Backend: "file", Dir: t.TempDir()},
+		Age:     config.AgeConfig{Recipients: id.Recipient().String()},
+	})
+	require.NoError(t, err)
+	fileStore, ok := store.(*FileStore)
+	require.True(t, ok)
+
+	ctx := context.Background()
+	w, err := store.CreateWallet("cfg-age-wallet")
+	require.NoError(t, err)
+	w.PutItem("mnemonic", "secret seed phrase")
+	require.NoError(t, w.Save(ctx))
+
+	onDisk, err := os.ReadFile(fileStore.walletPath("cfg-age-wallet"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(onDisk), "secret seed phrase")
+
+	got, err := store.GetWallet(ctx, "cfg-age-wallet")
+	require.NoError(t, err)
+	item, err := got.GetItem("mnemonic")
+	require.NoError(t, err)
+	assert.Equal(t, "secret seed phrase", item)
+}
+
+func TestNewStoreFileIgnoresProcessKeyWhenConfigHasNone(t *testing.T) {
+	// Not t.Parallel: see useAgeRecipient.
+	useAgeRecipient(t)
+
+	store, err := NewStore(&config.Config{
+		Storage: config.StorageConfig{
+			Backend:                       "file",
+			Dir:                           t.TempDir(),
+			AllowUnencryptedWalletStorage: true,
+		},
+	})
+	require.NoError(t, err)
+	fileStore, ok := store.(*FileStore)
+	require.True(t, ok)
+
+	w, err := store.CreateWallet("plain-wallet")
+	require.NoError(t, err)
+	w.PutItem("mnemonic", "secret seed phrase")
+	require.NoError(t, w.Save(context.Background()))
+
+	onDisk, err := os.ReadFile(fileStore.walletPath("plain-wallet"))
+	require.NoError(t, err)
+	assert.Contains(t, string(onDisk), "secret seed phrase")
+	assert.NotContains(t, string(onDisk), `"sops"`)
+}
+
+func TestNewStoreFileRejectsWhenOnlyProcessHasKey(t *testing.T) {
+	// Not t.Parallel: see useAgeRecipient.
+	useAgeRecipient(t)
+
+	store, err := NewStore(&config.Config{
+		Storage: config.StorageConfig{Backend: "file", Dir: t.TempDir()},
+	})
+	require.Error(t, err)
+	assert.Nil(t, store)
+	assert.Contains(t, err.Error(), "requires a SOPS master key")
+}
+
+func TestFileStoreKeySelectionIsFixedAtConstruction(t *testing.T) {
+	// Not t.Parallel: mutates the process configuration.
+	cfg := clearProcessSOPSKeys(t)
+	store := NewFileStore(t.TempDir())
+
+	id, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	cfg.Age.Recipients = id.Recipient().String()
+
+	w, err := store.CreateWallet("snapshot-wallet")
+	require.NoError(t, err)
+	w.PutItem("mnemonic", "secret seed phrase")
+	require.NoError(t, w.Save(context.Background()))
+
+	onDisk, err := os.ReadFile(store.walletPath("snapshot-wallet"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(onDisk), `"sops"`)
 }
