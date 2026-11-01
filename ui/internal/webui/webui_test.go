@@ -80,3 +80,17 @@ func TestServesEmbeddedFileDirectly(t *testing.T) {
 	}
 	requireFrameProtection(t, rec.Header())
 }
+
+// Bursa releases before NFT images were marked no-store served them as
+// immutable for a year; every SPA entry response clears that cache.
+func TestIndexClearsBrowserCache(t *testing.T) {
+	for _, path := range []string{"/", "/index.html", "/portfolio"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if got := rec.Header().Get("Clear-Site-Data"); got != `"cache"` {
+				t.Fatalf("Clear-Site-Data = %q, want %q", got, `"cache"`)
+			}
+		})
+	}
+}
