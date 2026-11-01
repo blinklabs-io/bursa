@@ -391,6 +391,24 @@ test("refuses approval when a signTx snapshot has no verified effects", async ()
   expect(decideSpy).not.toHaveBeenCalled();
 });
 
+test("refuses approval when a signTx snapshot carries null effects", async () => {
+  const decideSpy = vi.spyOn(connectorApi, "decide").mockResolvedValue(undefined);
+  render(<ConnectorApproval />);
+  emitRequest(makeReq({
+    id: "sign-null-effects",
+    method: "signTx",
+    params: { tx: "deadbeef" },
+    effects: null as unknown as undefined,
+  }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(/effects are unavailable/i);
+  const approve = screen.getByRole("button", { name: /approve/i });
+  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "pw" } });
+  expect(approve).toBeDisabled();
+  fireEvent.click(approve);
+  expect(decideSpy).not.toHaveBeenCalled();
+});
+
 test("a substituted head request forces re-review before Approve", async () => {
   render(<ConnectorApproval />);
   emitRequest(makeReq({ id: "orig", method: "enable", origin: "https://orig.example" }));

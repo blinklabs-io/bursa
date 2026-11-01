@@ -242,7 +242,7 @@ export function ConnectorApproval() {
   }
 
   const requiresPassword = needsPassword(current.method);
-  const missingEffects = current.method === "signTx" && current.effects === undefined;
+  const missingEffects = current.method === "signTx" && !current.effects;
   // signData carries raw hex without a human-readable interpretation.
   const isRawSigning = current.method === "signData";
 
@@ -289,7 +289,7 @@ export function ConnectorApproval() {
             </dd>
             <dt>Action</dt>
             <dd>{methodSummary(current)}</dd>
-            {current.method === "signTx" && current.effects !== undefined && (
+            {current.method === "signTx" && current.effects && (
               <>
                 <dt>Effects</dt>
                 <dd>
