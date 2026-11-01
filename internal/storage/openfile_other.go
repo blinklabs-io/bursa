@@ -23,10 +23,7 @@ import (
 	"github.com/blinklabs-io/bursa"
 )
 
-const (
-	inspectWalletPathsByName  = true
-	walletListSkipsLoadErrors = true
-)
+const inspectWalletPathsByName = true
 
 // openRegularFileForRead opens path for reading.
 //

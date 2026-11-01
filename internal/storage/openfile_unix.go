@@ -25,10 +25,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const (
-	inspectWalletPathsByName  = true
-	walletListSkipsLoadErrors = true
-)
+const inspectWalletPathsByName = true
 
 // openWalletFileForRead walks the wallet path from stable directory
 // descriptors so replacing the wallet directory cannot redirect the read.

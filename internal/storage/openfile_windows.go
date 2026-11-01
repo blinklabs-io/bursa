@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,10 +70,7 @@ type walletFileBasicInformation struct {
 	_              uint32
 }
 
-const (
-	inspectWalletPathsByName  = false
-	walletListSkipsLoadErrors = false
-)
+const inspectWalletPathsByName = false
 
 func walletNTPath(path string) (string, error) {
 	fullPath, err := windows.FullPath(path)
@@ -92,22 +90,23 @@ func walletNTPath(path string) (string, error) {
 }
 
 func walletNTError(err error) error {
-	status, ok := err.(windows.NTStatus)
-	if !ok {
+	var status windows.NTStatus
+	if !errors.As(err, &status) {
 		return err
 	}
-	switch status {
-	case windows.STATUS_REPARSE_POINT_ENCOUNTERED:
-		return syscall.ELOOP
-	case windows.STATUS_OBJECT_NAME_COLLISION:
-		return syscall.EEXIST
-	case windows.STATUS_NOT_A_DIRECTORY:
-		return syscall.ENOTDIR
-	case windows.STATUS_FILE_IS_A_DIRECTORY:
-		return syscall.EISDIR
-	default:
-		return status.Errno()
+	if errno, ok := walletNTErrnos[status]; ok {
+		return errno
 	}
+	return status.Errno()
+}
+
+// walletNTErrnos maps the statuses callers test with errors.Is to the errno
+// values the portable storage code expects.
+var walletNTErrnos = map[windows.NTStatus]syscall.Errno{
+	windows.STATUS_REPARSE_POINT_ENCOUNTERED: syscall.ELOOP,
+	windows.STATUS_OBJECT_NAME_COLLISION:     syscall.EEXIST,
+	windows.STATUS_NOT_A_DIRECTORY:           syscall.ENOTDIR,
+	windows.STATUS_FILE_IS_A_DIRECTORY:       syscall.EISDIR,
 }
 
 func isNormalizedWalletVolumeRoot(path string) bool {
@@ -183,8 +182,7 @@ func openWalletObject(
 	volumeRootFallback := root == 0 && directory &&
 		disposition == windows.FILE_OPEN &&
 		isNormalizedWalletVolumeRoot(name)
-	if status, ok := err.(windows.NTStatus); ok &&
-		status == windows.STATUS_INVALID_PARAMETER &&
+	if errors.Is(err, windows.STATUS_INVALID_PARAMETER) &&
 		(relativeFallback || volumeRootFallback) {
 		// Windows releases without OBJ_DONT_REPARSE support can still reject a
 		// single relative component or normalized volume root by opening the
@@ -376,29 +374,10 @@ func readWalletDirectory(baseDir string) ([]os.DirEntry, error) {
 		return nil, err
 	}
 	defer base.Close()
-	entries, err := base.ReadDir(-1)
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), "wallet-") {
-			continue
-		}
-		probe, err := openWalletObject(
-			windows.Handle(base.Fd()),
-			entry.Name(),
-			windows.FILE_READ_ATTRIBUTES,
-			windows.FILE_OPEN,
-			entry.IsDir(),
-		)
-		if err != nil {
-			return nil, err
-		}
-		if err := probe.Close(); err != nil {
-			return nil, err
-		}
-	}
-	return entries, nil
+	// Each listed wallet is opened through openWalletDirectory, which refuses
+	// reparse points, so one unusable entry is skipped by ListWallets rather
+	// than failing the whole listing here.
+	return base.ReadDir(-1)
 }
 
 func createWalletTempFile(walletDir *os.File) (*os.File, error) {
@@ -438,18 +417,22 @@ func renameOpenWalletFile(file, walletDir *os.File, name string) error {
 	}
 	nameLength := (len(nameUTF16) - 1) * 2
 	var layout walletFileRenameInformation
-	buffer := make([]byte, int(unsafe.Offsetof(layout.FileName))+nameLength)
+	bufferLength := int(unsafe.Offsetof(layout.FileName)) + nameLength
+	if bufferLength > math.MaxUint32 {
+		return fmt.Errorf("wallet file name %q is too long", name)
+	}
+	buffer := make([]byte, bufferLength)
 	info := (*walletFileRenameInformation)(unsafe.Pointer(&buffer[0]))
 	info.ReplaceIfExists = 1
 	info.RootDirectory = windows.Handle(walletDir.Fd())
-	info.FileNameLength = uint32(nameLength)
+	info.FileNameLength = uint32(nameLength) // #nosec G115 -- nameLength < bufferLength
 	destination := unsafe.Slice(&info.FileName[0], len(nameUTF16)-1)
 	copy(destination, nameUTF16[:len(nameUTF16)-1])
 	err = windows.NtSetInformationFile(
 		windows.Handle(file.Fd()),
 		&windows.IO_STATUS_BLOCK{},
 		&buffer[0],
-		uint32(len(buffer)),
+		uint32(bufferLength), // #nosec G115 -- bounded by math.MaxUint32 above
 		windows.FileRenameInformation,
 	)
 	return walletNTError(err)
@@ -483,10 +466,13 @@ func writeWalletFile(baseDir, name string, data []byte) error {
 	if err := file.Sync(); err != nil {
 		return err
 	}
-	if err := renameOpenWalletFile(file, walletDir, "wallet.json"); err != nil {
+	// Check before the rename: once it succeeds the handle names the committed
+	// wallet.json and the previous file is gone, so a failure after that point
+	// must not mark the handle for deletion.
+	if err := bursa.CheckSecretFilePermissions(file); err != nil {
 		return err
 	}
-	if err := bursa.CheckSecretFilePermissions(file); err != nil {
+	if err := renameOpenWalletFile(file, walletDir, "wallet.json"); err != nil {
 		return err
 	}
 	removeTemp = false
@@ -510,10 +496,9 @@ func markWalletObjectForDeletion(file *os.File) error {
 	if err == nil {
 		return nil
 	}
-	status, ok := err.(windows.NTStatus)
-	if !ok || (status != windows.STATUS_INVALID_INFO_CLASS &&
-		status != windows.STATUS_INVALID_PARAMETER &&
-		status != windows.STATUS_NOT_SUPPORTED) {
+	if !errors.Is(err, windows.STATUS_INVALID_INFO_CLASS) &&
+		!errors.Is(err, windows.STATUS_INVALID_PARAMETER) &&
+		!errors.Is(err, windows.STATUS_NOT_SUPPORTED) {
 		return walletNTError(err)
 	}
 	var fileInfo windows.ByHandleFileInformation

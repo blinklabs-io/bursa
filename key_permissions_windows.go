@@ -17,6 +17,7 @@
 package bursa
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -51,13 +52,14 @@ func openForOwnershipAdoption(file *os.File) (windows.Handle, error) {
 		)
 	}
 	err := open()
-	if status, ok := err.(windows.NTStatus); ok && status == windows.STATUS_INVALID_PARAMETER {
+	if errors.Is(err, windows.STATUS_INVALID_PARAMETER) {
 		attrs.Attributes &^= windows.OBJ_DONT_REPARSE
 		handle = 0
 		err = open()
 	}
 	if err != nil {
-		if status, ok := err.(windows.NTStatus); ok {
+		var status windows.NTStatus
+		if errors.As(err, &status) {
 			err = status.Errno()
 		}
 		return 0, fmt.Errorf("failed to open %q for ownership adoption: %w", file.Name(), err)
@@ -160,7 +162,7 @@ func restrictSecretKeyFilePermissions(file *os.File) error {
 		if err != nil {
 			return err
 		}
-		defer windows.CloseHandle(securityHandle)
+		defer func() { _ = windows.CloseHandle(securityHandle) }()
 	}
 	if err := windows.SetSecurityInfo(
 		securityHandle,

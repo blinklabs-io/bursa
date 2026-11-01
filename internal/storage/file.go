@@ -213,9 +213,6 @@ func (s *FileStore) ListWallets(ctx context.Context) ([]Wallet, error) {
 			}
 			wallet, err := s.GetWallet(ctx, name)
 			if err != nil {
-				if !walletListSkipsLoadErrors {
-					return nil, fmt.Errorf("failed to load wallet %q: %w", name, err)
-				}
 				logging.GetLogger().
 					Debug("skipping corrupted wallet during list", "wallet", name, "error", err)
 				continue // Skip corrupted wallets
