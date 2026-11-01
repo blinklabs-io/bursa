@@ -2901,6 +2901,20 @@ func TestServeCommittedWriteStatus(t *testing.T) {
 	}
 }
 
+func TestUnlockLimitedStatus(t *testing.T) {
+	err := fmt.Errorf("open vault: %w", keystore.ErrUnlockLimited)
+	rec := httptest.NewRecorder()
+	serve(rec, struct{}{}, err)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("serve status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+	status, code, info := connectorErrorCode("signTx", err)
+	if status != http.StatusTooManyRequests || code != -3 || info != keystore.ErrUnlockLimited.Error() {
+		t.Fatalf("connectorErrorCode = (%d, %d, %q), want (%d, -3, %q)",
+			status, code, info, http.StatusTooManyRequests, keystore.ErrUnlockLimited.Error())
+	}
+}
+
 type historyExpiryResponse struct {
 	Enabled         bool
 	RestartRequired bool
