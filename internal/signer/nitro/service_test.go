@@ -1,0 +1,351 @@
+// Copyright 2026 Blink Labs Software
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+
+package nitro
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"testing"
+
+	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/fxamacker/cbor/v2"
+	"github.com/stretchr/testify/require"
+)
+
+const testKMSKey = "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000001"
+
+var testCredentials = Credentials{AccessKeyID: "ASIATEST", SecretAccessKey: "secret", SessionToken: "session"}
+
+var testProvisionAuthority = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x42}, ed25519.SeedSize))
+
+func testEvidence(t *testing.T, measurement byte) []byte {
+	t.Helper()
+	pcr := bytes.Repeat([]byte{measurement}, nitroPCRSize)
+	payload, err := cbor.Marshal(attestationPayload{PCRs: map[uint][]byte{0: pcr}})
+	require.NoError(t, err)
+	evidence, err := cbor.Marshal(sign1Document{Payload: payload, Signature: []byte{1}})
+	require.NoError(t, err)
+	return evidence
+}
+
+type fakeRecipient struct {
+	evidence []byte
+	attested [][]byte
+}
+
+func (r *fakeRecipient) KMSAttestation() ([]byte, error) { return bytes.Clone(r.evidence), nil }
+func (r *fakeRecipient) DecryptKMSRecipient(value []byte) ([]byte, error) {
+	return bytes.Clone(value), nil
+}
+
+func (r *fakeRecipient) Attest(value []byte) ([]byte, error) {
+	r.attested = append(r.attested, bytes.Clone(value))
+	return bytes.Clone(r.evidence), nil
+}
+
+type fakeKMS struct {
+	dataKey          []byte
+	expectedEvidence []byte
+	calls            int
+}
+
+func (k *fakeKMS) check(recipient []byte) error {
+	k.calls++
+	if !bytes.Equal(recipient, k.expectedEvidence) {
+		return errors.New("AccessDeniedException: recipient measurement mismatch")
+	}
+	return nil
+}
+
+func (k *fakeKMS) GenerateDataKey(_ context.Context, _ string, recipient []byte) ([]byte, []byte, error) {
+	if err := k.check(recipient); err != nil {
+		return nil, nil, err
+	}
+	return []byte("kms-ciphertext"), bytes.Clone(k.dataKey), nil
+}
+
+func (k *fakeKMS) Decrypt(_ context.Context, _ string, ciphertext, recipient []byte) ([]byte, error) {
+	if !bytes.Equal(ciphertext, []byte("kms-ciphertext")) {
+		return nil, errors.New("unknown KMS ciphertext")
+	}
+	if err := k.check(recipient); err != nil {
+		return nil, err
+	}
+	return bytes.Clone(k.dataKey), nil
+}
+
+func newTestService(t *testing.T, evidence []byte) (*Service, *fakeKMS, *fakeRecipient) {
+	t.Helper()
+	recipient := &fakeRecipient{evidence: evidence}
+	kms := &fakeKMS{dataKey: bytes.Repeat([]byte{0x5a}, dataKeySize), expectedEvidence: evidence}
+	service, err := NewService(recipient, func(region string, credentials Credentials) (KMS, error) {
+		require.Equal(t, "us-east-1", region)
+		require.Equal(t, testCredentials, credentials)
+		return kms, nil
+	}, testProvisionAuthority.Public().(ed25519.PublicKey))
+	require.NoError(t, err)
+	return service, kms, recipient
+}
+
+func provisionTestKey(t *testing.T, service *Service) Envelope {
+	t.Helper()
+	request := ProvisionRequest{
+		Version: Protocol, Region: "us-east-1", Credentials: testCredentials,
+		KMSKeyID: testKMSKey, Role: backend.KeyTypePool,
+	}
+	request.Authorization = ed25519.Sign(testProvisionAuthority, ProvisionAuthorizationBinding(request))
+	response, err := service.Provision(context.Background(), &request)
+	require.NoError(t, err)
+	require.Equal(t, Protocol, response.Version)
+	return response.Envelope
+}
+
+func TestProvisionAuthorizationBindingVector(t *testing.T) {
+	request := testProvisionRequest()
+	const want = "29a530cedf100bbf01e3a095b156337059334b08c00274ac7ef93fb7eea87922"
+	if got := hex.EncodeToString(ProvisionAuthorizationBinding(request)); got != want {
+		t.Fatalf("ProvisionAuthorizationBinding() = %s, want %s", got, want)
+	}
+
+	for name, mutate := range map[string]func(*ProvisionRequest){
+		"protocol": func(r *ProvisionRequest) { r.Version = "other/1" },
+		"region":   func(r *ProvisionRequest) { r.Region = "us-west-2" },
+		"account": func(r *ProvisionRequest) {
+			r.KMSKeyID = "arn:aws:kms:us-east-1:999999999999:key/00000000-0000-0000-0000-000000000001"
+		},
+		"key": func(r *ProvisionRequest) {
+			r.KMSKeyID = "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000002"
+		},
+		"role": func(r *ProvisionRequest) { r.Role = backend.KeyTypePayment },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := request
+			mutate(&changed)
+			require.NotEqual(t, want, hex.EncodeToString(ProvisionAuthorizationBinding(changed)))
+		})
+	}
+}
+
+func TestProvisionStoresOnlyWrappedMaterial(t *testing.T) {
+	service, _, _ := newTestService(t, testEvidence(t, 1))
+	env := provisionTestKey(t, service)
+	require.NoError(t, validateEnvelope(env))
+	seed, err := openSeed(bytes.Repeat([]byte{0x5a}, dataKeySize), env)
+	require.NoError(t, err)
+	defer clear(seed)
+	encoded, err := json.Marshal(env)
+	require.NoError(t, err)
+	var decoded Envelope
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	dataKey := bytes.Repeat([]byte{0x5a}, dataKeySize)
+	for name, secret := range map[string][]byte{"seed": seed, "data key": dataKey} {
+		require.False(t, bytes.Contains(encoded, secret), "envelope JSON contains raw %s", name)
+		require.False(t, bytes.Contains(encoded, []byte(base64.StdEncoding.EncodeToString(secret))), "envelope JSON contains base64 %s", name)
+		for field, value := range map[string][]byte{
+			"public key": decoded.PublicKey, "encrypted data key": decoded.EncryptedDataKey,
+			"ciphertext": decoded.Ciphertext, "nonce": decoded.Nonce,
+		} {
+			require.False(t, bytes.Contains(value, secret), "envelope %s contains %s", field, name)
+		}
+	}
+}
+
+func TestProvisionRejectsKMSAliasBeforeKMS(t *testing.T) {
+	service, kms, _ := newTestService(t, testEvidence(t, 1))
+	_, err := service.Provision(context.Background(), &ProvisionRequest{
+		Version: Protocol, Region: "us-east-1", Credentials: testCredentials,
+		KMSKeyID: "arn:aws:kms:us-east-1:123456789012:alias/pool-cold", Role: backend.KeyTypePool,
+	})
+	require.ErrorIs(t, err, ErrProtocol)
+	require.Zero(t, kms.calls)
+}
+
+func TestProvisionRejectsUnapprovedRequestBeforeKMS(t *testing.T) {
+	for name, mutate := range map[string]func(*ProvisionRequest){
+		"KMS account and key": func(r *ProvisionRequest) {
+			r.KMSKeyID = "arn:aws:kms:us-east-1:999999999999:key/00000000-0000-0000-0000-000000000002"
+		},
+		"region": func(r *ProvisionRequest) {
+			r.Region = "us-west-2"
+			r.KMSKeyID = "arn:aws:kms:us-west-2:123456789012:key/00000000-0000-0000-0000-000000000001"
+		},
+		"missing authorization": func(r *ProvisionRequest) { r.Authorization = nil },
+		"authorization":         func(r *ProvisionRequest) { r.Authorization[0] ^= 0xff },
+	} {
+		t.Run(name, func(t *testing.T) {
+			service, kms, _ := newTestService(t, testEvidence(t, 1))
+			request := testProvisionRequest()
+			request.Authorization = bytes.Clone(request.Authorization)
+			mutate(&request)
+			_, err := service.Provision(context.Background(), &request)
+			require.ErrorIs(t, err, ErrProtocol)
+			require.Zero(t, kms.calls)
+		})
+	}
+}
+
+func TestProvisionRejectsDebugAttestationBeforeKMS(t *testing.T) {
+	service, kms, _ := newTestService(t, testEvidence(t, 0))
+	request := testProvisionRequest()
+	_, err := service.Provision(context.Background(), &request)
+	require.ErrorIs(t, err, ErrMeasurement)
+	require.Zero(t, kms.calls)
+}
+
+func TestProvisionFailsClosedOnKMSMeasurementDenial(t *testing.T) {
+	evidence := testEvidence(t, 1)
+	service, kms, _ := newTestService(t, evidence)
+	kms.expectedEvidence = testEvidence(t, 2)
+	request := testProvisionRequest()
+	_, err := service.Provision(context.Background(), &request)
+	require.ErrorContains(t, err, "measurement mismatch")
+	_, err = service.Inventory(context.Background(), &InventoryRequest{Version: Protocol, Nonce: make([]byte, 32)})
+	require.ErrorIs(t, err, ErrNotLoaded)
+}
+
+func TestReloadAndCanonicalOpCertSigning(t *testing.T) {
+	evidence := testEvidence(t, 3)
+	service, _, _ := newTestService(t, evidence)
+	env := provisionTestKey(t, service)
+
+	restarted, _, recipient := newTestService(t, evidence)
+	response, err := restarted.Reload(context.Background(), &ReloadRequest{
+		Version: Protocol, Region: "us-east-1", Credentials: testCredentials, Envelope: env,
+	})
+	require.NoError(t, err)
+	require.Equal(t, env.PublicKey, response.PublicKey)
+
+	nonce := bytes.Repeat([]byte{7}, requestNonceSize)
+	payload := make([]byte, 48)
+	copy(payload[:32], bytes.Repeat([]byte{4}, 32))
+	binary.BigEndian.PutUint64(payload[32:40], 5)
+	binary.BigEndian.PutUint64(payload[40:48], 120)
+	request := &backend.AttestedRequest{
+		Version: backend.AttestedProtocol, Purpose: backend.PurposeOpCert,
+		KeyHash: backend.HashPublicKey(env.PublicKey).String(), Role: backend.KeyTypePool,
+		Nonce: nonce, Payload: payload,
+	}
+	signed, err := restarted.Sign(context.Background(), request)
+	require.NoError(t, err)
+	require.True(t, ed25519.Verify(env.PublicKey, payload, signed.Signature))
+
+	_, err = restarted.Sign(context.Background(), request)
+	require.ErrorContains(t, err, "nonce replay")
+	request.Nonce = bytes.Repeat([]byte{8}, requestNonceSize)
+	_, err = restarted.Sign(context.Background(), request)
+	require.ErrorContains(t, err, "issue counter is not increasing")
+
+	inv, err := restarted.Inventory(context.Background(), &InventoryRequest{Version: Protocol, Nonce: bytes.Repeat([]byte{9}, 32)})
+	require.NoError(t, err)
+	require.Equal(t, backend.InventoryBinding(bytes.Repeat([]byte{9}, 32), inv.Keys), recipient.attested[0])
+}
+
+func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
+	service, _, _ := newTestService(t, testEvidence(t, 4))
+	env := provisionTestKey(t, service)
+	payload := make([]byte, 48)
+	binary.BigEndian.PutUint64(payload[32:40], 1)
+	request := &backend.AttestedRequest{
+		Version: backend.AttestedProtocol, Purpose: backend.PurposeOpCert,
+		KeyHash: backend.HashPublicKey(env.PublicKey).String(), Role: backend.KeyTypePool,
+		Nonce: bytes.Repeat([]byte{1}, requestNonceSize), Payload: payload,
+	}
+	_, err := service.Sign(context.Background(), request)
+	require.NoError(t, err)
+
+	malformedProvision := ProvisionRequest{Version: "invalid"}
+	_, err = service.Provision(context.Background(), &malformedProvision)
+	require.ErrorIs(t, err, ErrProtocol)
+
+	env.Ciphertext[0] ^= 0xff
+	_, err = service.Reload(context.Background(), &ReloadRequest{
+		Version: Protocol, Region: "us-east-1", Credentials: testCredentials, Envelope: env,
+	})
+	require.ErrorIs(t, err, ErrEnvelope)
+
+	inventory, err := service.Inventory(context.Background(), &InventoryRequest{Version: Protocol, Nonce: make([]byte, 32)})
+	require.NoError(t, err)
+	require.Equal(t, env.PublicKey, inventory.Keys[0].PublicKey)
+	_, err = service.Sign(context.Background(), request)
+	require.ErrorContains(t, err, "nonce replay")
+	request.Nonce = bytes.Repeat([]byte{2}, requestNonceSize)
+	_, err = service.Sign(context.Background(), request)
+	require.ErrorContains(t, err, "issue counter is not increasing")
+
+	env.Ciphertext[0] ^= 0xff
+	_, err = service.Reload(context.Background(), &ReloadRequest{
+		Version: Protocol, Region: "us-east-1", Credentials: testCredentials, Envelope: env,
+	})
+	require.NoError(t, err)
+	request.Nonce = bytes.Repeat([]byte{1}, requestNonceSize)
+	_, err = service.Sign(context.Background(), request)
+	require.ErrorContains(t, err, "nonce replay")
+	request.Nonce = bytes.Repeat([]byte{3}, requestNonceSize)
+	_, err = service.Sign(context.Background(), request)
+	require.ErrorContains(t, err, "issue counter is not increasing")
+}
+
+func TestReloadRejectsOversizedEnvelopeBeforeKMS(t *testing.T) {
+	for name, mutate := range map[string]func(*Envelope){
+		"encrypted data key": func(env *Envelope) {
+			env.EncryptedDataKey = make([]byte, maxEnvelopeSize+1)
+		},
+		"private-key ciphertext": func(env *Envelope) {
+			env.Ciphertext = make([]byte, maxEnvelopeSize+1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			service, kms, _ := newTestService(t, testEvidence(t, 4))
+			env := provisionTestKey(t, service)
+			kms.calls = 0
+			mutate(&env)
+
+			_, err := service.Reload(context.Background(), &ReloadRequest{
+				Version: Protocol, Region: "us-east-1", Credentials: testCredentials, Envelope: env,
+			})
+			require.ErrorIs(t, err, ErrEnvelope)
+			require.Zero(t, kms.calls)
+		})
+	}
+}
+
+func TestServiceRejectsMalformedSignRequests(t *testing.T) {
+	service, _, _ := newTestService(t, testEvidence(t, 5))
+	env := provisionTestKey(t, service)
+	valid := backend.AttestedRequest{
+		Version: backend.AttestedProtocol, Purpose: backend.PurposeOpCert,
+		KeyHash: backend.HashPublicKey(env.PublicKey).String(), Role: backend.KeyTypePool,
+		Nonce: make([]byte, 32), Payload: make([]byte, 48),
+	}
+	for name, mutate := range map[string]func(*backend.AttestedRequest){
+		"version": func(r *backend.AttestedRequest) { r.Version = "other" },
+		"purpose": func(r *backend.AttestedRequest) { r.Purpose = backend.PurposeTxHash },
+		"role":    func(r *backend.AttestedRequest) { r.Role = backend.KeyTypePayment },
+		"payload": func(r *backend.AttestedRequest) { r.Payload = r.Payload[:47] },
+		"nonce":   func(r *backend.AttestedRequest) { r.Nonce = r.Nonce[:31] },
+		"hash": func(r *backend.AttestedRequest) {
+			r.KeyHash = "00000000000000000000000000000000000000000000000000000000"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := valid
+			request.Payload = bytes.Clone(valid.Payload)
+			request.Nonce = bytes.Clone(valid.Nonce)
+			mutate(&request)
+			_, err := service.Sign(context.Background(), &request)
+			require.Error(t, err)
+		})
+	}
+}
