@@ -80,7 +80,8 @@ signer:
     # config file.
     #   type: "postgres"
     #   dsn_env: "SIGNER_WATERMARK_DSN"   # env var holding the Postgres DSN/URL
-    #   # dsn: "postgres://user:pass@host:5432/bursa"  # plaintext fallback (env: SIGNER_WATERMARK_DSN)
+    #   # Plaintext config fallback (env: SIGNER_WATERMARK_DSN):
+    #   # dsn: "postgres://user:pass@host:5432/bursa?sslmode=verify-full&sslrootcert=/etc/bursa/signer/postgres-ca.pem"
     #   mode: "enforce"
 
   # --- Key-custody backends (one or more) ---

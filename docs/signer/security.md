@@ -98,8 +98,9 @@ anything that can read the process memory or the key directory.
 - Run the watermark in `enforce` mode with a durable `file` (SQLite) store for
   one active signer. Multiple replicas for the same keys require one shared
   `postgres` store; never point active replicas at independent databases or
-  per-instance stores. Require verified TLS for remote database connections and
-  configure failover so every acknowledged watermark row survives promotion.
+  per-instance stores. Bursa requires hostname-verified TLS for remote database
+  connections; configure failover so every acknowledged watermark row survives
+  promotion.
 - Restrict the config file, TLS key, and any key files to the service user.
 - Scrape `/metrics` from the dedicated loopback listener; alert on
   `bursa_signer_watermark_conflicts_total` and

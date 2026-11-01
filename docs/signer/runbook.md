@@ -237,8 +237,10 @@ regressions.
 - `type: postgres` - durable store shared by every replica; the HA-safe option.
   The connection string is set via `dsn_env` (an env var name, keeping
   credentials out of the config file) in preference to the plaintext `dsn`
-  fallback. Remote connections should use `sslmode=verify-full` with a trusted
-  CA. The database role needs permission to create the two watermark tables on
+  fallback. Remote connections must use `sslmode=verify-full` with a trusted
+  CA; Bursa refuses remote connections that do not verify the server hostname.
+  Unix sockets, `localhost`, and loopback addresses may connect without TLS.
+  The database role needs permission to create the two watermark tables on
   first startup and to read and write them thereafter.
 - `mode: off | warn | enforce` - `enforce` (default) rejects a conflicting sign
   with HTTP 409; `warn` logs and allows; `off` disables the check.

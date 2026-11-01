@@ -70,12 +70,15 @@ signer:
     dsn_env: BURSA_SIGNER_WATERMARK_POSTGRES_DSN
 ```
 
-Set the named environment variable to a pgx/libpq connection string. Remote
-connections should require server identity verification, for example:
+Set the named environment variable to a pgx/libpq connection string. Bursa
+requires remote connections to verify the server hostname, for example:
 
 ```text
 postgres://bursa@postgres.example/bursa?sslmode=verify-full&sslrootcert=/etc/bursa/postgres-ca.pem
 ```
+
+Unix sockets, `localhost`, and loopback addresses may connect without TLS for
+local development.
 
 Supply the password through the process environment or another pgx-supported
 credential mechanism; do not store credentials in the YAML file. The database
