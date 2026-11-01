@@ -213,6 +213,32 @@ func TestDecodeTx_CollateralEffectsResolvedAndOfflineExplicit(t *testing.T) {
 	}
 }
 
+func TestDecodeTx_ReferenceInputsResolvedAndOfflineExplicit(t *testing.T) {
+	svc, _, unsignedCbor := buildUnsignedSendFixture(t)
+	txHex := mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
+		body.TxReferenceInputs = cbor.NewSetType(body.TxInputs.Items(), true)
+	})
+
+	got, err := svc.DecodeTx(context.Background(), txHex)
+	if err != nil {
+		t.Fatalf("DecodeTx: %v", err)
+	}
+	if len(got.ReferenceInputs) != 1 || !got.ReferenceInputs[0].Resolved {
+		t.Fatalf("reference inputs = %+v, want one resolved input", got.ReferenceInputs)
+	}
+	if got.ReferenceInputs[0].TxHash == "" || got.ReferenceInputs[0].Address == "" || got.ReferenceInputs[0].Lovelace != "5000000" {
+		t.Fatalf("resolved reference input = %+v", got.ReferenceInputs[0])
+	}
+
+	offline, err := newBuildOnlyService(t).DecodeTx(context.Background(), txHex)
+	if err != nil {
+		t.Fatalf("offline DecodeTx: %v", err)
+	}
+	if len(offline.ReferenceInputs) != 1 || offline.ReferenceInputs[0].Resolved || offline.ReferenceInputs[0].TxHash == "" {
+		t.Fatalf("offline reference inputs = %+v, want explicit unresolved ref", offline.ReferenceInputs)
+	}
+}
+
 func TestTxSummaryValidateForSigningRequiresCollateralTotal(t *testing.T) {
 	summary := TxSummary{CollateralInputs: []TxSummaryInput{{
 		TxHash:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

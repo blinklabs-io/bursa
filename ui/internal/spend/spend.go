@@ -2143,7 +2143,7 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	var resolvedAllInputs bool
 	out.Inputs, resolvedAllInputs = s.resolveSummaryInputs(ctx, tx.Body.Inputs(), needed)
 	out.CollateralInputs, _ = s.resolveSummaryInputs(ctx, tx.Body.Collateral(), nil)
-	out.ReferenceInputs = summaryInputRefs(tx.Body.ReferenceInputs())
+	out.ReferenceInputs, _ = s.resolveSummaryInputs(ctx, tx.Body.ReferenceInputs(), nil)
 	if collateralReturn := tx.Body.CollateralReturn(); collateralReturn != nil {
 		out.CollateralReturn = &TxSummaryOutput{
 			Address:  collateralReturn.Address().String(),
@@ -2197,12 +2197,12 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	return out, nil
 }
 
-// addInputKeyHashes resolves tx's inputs (best-effort, via the chain) and adds
-// each key-hash-locked input's payment credential to needed. It returns whether
-// every input was resolved: a script-locked input needs no vkey witness and
-// still counts as resolved, but an input the chain cannot return leaves the
-// tx's witness requirements only partially known. Without a chain, inputs are
-// unresolvable and completeness must stay unknown.
+// resolveSummaryInputs resolves inputs (best-effort, via the chain) and, when
+// needed is non-nil, adds each key-hash-locked input's payment credential to
+// it. It returns whether every input was resolved: a script-locked input needs
+// no vkey witness and still counts as resolved, but an input the chain cannot
+// return leaves the tx's witness requirements only partially known. Without a
+// chain, inputs are unresolvable and completeness must stay unknown.
 func (s *Service) resolveSummaryInputs(ctx context.Context, inputs []lcommon.TransactionInput, needed map[string]bool) ([]TxSummaryInput, bool) {
 	if len(inputs) == 0 {
 		return nil, true
