@@ -56,10 +56,6 @@ func allowed(w http.ResponseWriter, r *http.Request, host string) bool {
 	return true
 }
 
-// SetHost changes the Host header the service's handlers accept from
-// Address, for a test server on a loopback address. Call it before serving.
-func (s *Service) SetHost(host string) { s.host = host }
-
 func hostIs(got, want string) bool {
 	if h, port, err := net.SplitHostPort(got); err == nil && port == "80" {
 		got = h

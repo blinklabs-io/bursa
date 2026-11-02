@@ -52,9 +52,12 @@ func newLogRig(t *testing.T, slots uint64) *logRig {
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(svc.Handler())
-	// the device answers only to its own address
-	svc.SetHost(srv.Listener.Addr().String())
+	// the device answers only to its own address, not the loopback one
+	dev := svc.Handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Host = device.Address
+		dev.ServeHTTP(w, r)
+	}))
 	t.Cleanup(srv.Close)
 
 	var id device.IdentityResponse

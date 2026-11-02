@@ -188,9 +188,7 @@ type IdentityResponse struct {
 // Service holds the chip session and profile cache. Every chip access holds
 // mu, which the caller shares with anything else using the session.
 type Service struct {
-	mu sync.Locker
-	// host is the Host header the handlers accept
-	host     string
+	mu       sync.Locker
 	logf     func(format string, args ...any)
 	chip     Chip
 	profiles map[string]profile.Profile
@@ -222,7 +220,7 @@ type Service struct {
 
 // New returns a service with no chip; it answers 503 until SetChip.
 func New(mu sync.Locker, logf func(format string, args ...any)) *Service {
-	return &Service{mu: mu, logf: logf, host: Address, profiles: map[string]profile.Profile{}}
+	return &Service{mu: mu, logf: logf, profiles: map[string]profile.Profile{}}
 }
 
 // SetNetwork fixes the network id this build serves and, when chain is not
@@ -399,7 +397,7 @@ func (s *Service) provisioningRoutes(mux *http.ServeMux) {
 func handle[Req, Resp any](s *Service, fn func(Req) (Resp, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// before the body is read or the chip touched
-		if !allowed(w, r, s.host) {
+		if !allowed(w, r, Address) {
 			return
 		}
 
