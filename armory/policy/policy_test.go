@@ -88,6 +88,12 @@ func TestEvaluate(t *testing.T) {
 		{"mint", RoleCold, conway, baseBody().with(9, map[string]uint64{}).with(4, certs(retire(k.Pool))).cbor(), false},
 		{"proposal procedure", RoleCold, conway, baseBody().with(20, []any{}).with(4, certs(retire(k.Pool))).cbor(), false},
 		{"donation", RoleCold, conway, baseBody().with(22, uint64(1)).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"no ttl", RoleCold, conway, baseBody().without(3).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"no ttl under dijkstra", RoleCold, dijkstra, baseBody().without(3).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"validity start without ttl", RoleCold, conway,
+			baseBody().without(3).with(8, uint64(1)).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"ttl with validity start", RoleCold, conway,
+			baseBody().with(8, uint64(1)).with(4, certs(retire(k.Pool))).cbor(), true},
 		{"no fee key", RoleCold, dijkstra, baseBody().without(2).with(4, certs(retire(k.Pool))).cbor(), false},
 		{"key 23", RoleCold, dijkstra, baseBody().with(23, []any{}).with(4, certs(retire(k.Pool))).cbor(), false},
 		{"unknown key 99", RoleCold, conway, baseBody().with(99, uint64(1)).cbor(), false},
@@ -139,6 +145,36 @@ func TestEvaluateSummary(t *testing.T) {
 	}
 
 	for _, want := range []string{"pool-reg", "pledge=500000000", "cost=170000000", "relays=1"} {
+		if !strings.Contains(d.Summary, want) {
+			t.Errorf("summary %q lacks %q", d.Summary, want)
+		}
+	}
+}
+
+func TestEvaluateSummaryValidity(t *testing.T) {
+	t.Parallel()
+
+	retirement := baseBody().with(4, certs(retire(testKeys.Pool)))
+
+	d, err := Evaluate(testProfile, testKeys, RoleCold, uint(ledger.TxTypeConway), retirement.cbor())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(d.Summary, "ttl=90000000") {
+		t.Errorf("summary %q lacks the ttl", d.Summary)
+	}
+
+	if strings.Contains(d.Summary, "valid-from") {
+		t.Errorf("summary %q names a validity start the body lacks", d.Summary)
+	}
+
+	d, err = Evaluate(testProfile, testKeys, RoleCold, uint(ledger.TxTypeConway), retirement.with(8, uint64(80_000_000)).cbor())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{"ttl=90000000", "valid-from=80000000"} {
 		if !strings.Contains(d.Summary, want) {
 			t.Errorf("summary %q lacks %q", d.Summary, want)
 		}
