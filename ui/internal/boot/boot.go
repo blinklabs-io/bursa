@@ -839,11 +839,13 @@ func (g genesisAdapter) Genesis(ctx context.Context) (poolops.Genesis, error) {
 }
 
 // poolRegistryAdapter tells the SPO toolkit whether the node already knows a
-// pool, so registration submits lock the pool deposit only for a new pool.
+// pool, so registration submits lock the pool deposit only for a new pool. It
+// reads the node directly rather than the cached pool list, which can miss a
+// pool registered within the cache lifetime and so add a deposit to an update.
 type poolRegistryAdapter struct{ c *chain.Client }
 
 func (p poolRegistryAdapter) PoolRegistered(ctx context.Context, poolID string) (bool, error) {
-	_, err := p.c.Pool(ctx, poolID)
+	_, err := p.c.PoolUncached(ctx, poolID)
 	if errors.Is(err, chain.ErrNotFound) {
 		return false, nil
 	}
