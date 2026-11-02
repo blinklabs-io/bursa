@@ -19,9 +19,11 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/armory/profile"
@@ -400,31 +402,41 @@ func TestAdminRefusesUnreadableHostKeys(t *testing.T) {
 }
 
 // The unsigned cold key import the firmware serves is open only while the
-// device is in the bootstrap state.
-func TestProvisioningOpen(t *testing.T) {
+// device is in the bootstrap state, and the refusal names the state.
+func TestUnsignedProvisioningLocked(t *testing.T) {
 	t.Parallel()
 
+	open := func(s *Service) error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		return s.UnsignedProvisioningLocked()
+	}
+
+	if err := open(New(&sync.Mutex{}, t.Logf)); !errors.Is(err, errNoChip) {
+		t.Fatalf("no chip: %v", err)
+	}
+
 	s, chip := newTestService(t)
-	if !s.ProvisioningOpen() {
-		t.Fatal("closed with no host key")
+	if err := open(s); err != nil {
+		t.Fatalf("closed with no host key: %v", err)
 	}
 
 	registerHostKey(t, s, hostPub(testHostKey))
 
-	if s.ProvisioningOpen() {
-		t.Fatal("open with a host key registered")
+	if err := open(s); !errors.Is(err, errProvisioningClosed) {
+		t.Fatalf("with a host key registered: %v", err)
 	}
 
 	// a key of another scope closes it too
-	other := imageOn(t, chip, 1, "")
-	if other.ProvisioningOpen() {
-		t.Fatal("open beside a key of another scope")
+	if err := open(imageOn(t, chip, 1, "")); !errors.Is(err, errProvisioningClosed) {
+		t.Fatalf("beside a key of another scope: %v", err)
 	}
 
 	chip.bins[hostKeysID] = []byte("torn")
 
-	if bad := imageOn(t, chip, 0, ""); bad.ProvisioningOpen() {
-		t.Fatal("open over an unreadable host key list")
+	if err := open(imageOn(t, chip, 0, "")); !errors.Is(err, errHostKeysBad) {
+		t.Fatalf("over an unreadable host key list: %v", err)
 	}
 }
 

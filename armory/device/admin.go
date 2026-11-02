@@ -19,6 +19,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -175,15 +176,27 @@ func handleAdmin[Req any, P interface {
 	})
 }
 
-// ProvisioningOpen reports whether provisioning requests are taken unsigned:
-// no host key of any network or chain is registered and the stored list is
-// readable. The firmware's unsigned cold key import (/provision) is served
-// only then.
-func (s *Service) ProvisioningOpen() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// errProvisioningClosed refuses the firmware's unsigned cold key import once
+// a host key is registered.
+var errProvisioningClosed = errors.New("a host key is registered: send a signed /provision/cold request")
 
-	return s.chip != nil && !s.hostKeysBad && len(s.hostEntries) == 0
+// UnsignedProvisioningLocked reports why provisioning requests cannot be taken
+// unsigned, or nil when they can: no host key of any network or chain is
+// registered and the stored list is readable. The firmware's unsigned cold
+// key import (/provision) is served only then. The caller holds the lock
+// passed to New across this check and the import, so a host key registered
+// in between cannot let the import through.
+func (s *Service) UnsignedProvisioningLocked() error {
+	switch {
+	case s.chip == nil:
+		return errNoChip
+	case s.hostKeysBad:
+		return errHostKeysBad
+	case len(s.hostEntries) > 0:
+		return errProvisioningClosed
+	}
+
+	return nil
 }
 
 // authorizeAdmin checks req's host authentication for route.
