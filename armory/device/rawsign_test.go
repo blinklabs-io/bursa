@@ -67,8 +67,9 @@ func TestSignRawNeverUsesColdKey(t *testing.T) {
 	}
 }
 
-// The raw key is wiped with the bring-up objects and disjoint from every
-// other armory object.
+// The raw key lies in the bring-up range wiped with the bring-up objects and
+// differs from the two bring-up test objects, whose IDs are copied from
+// generatedID and importedID in firmware/bringup.go.
 func TestRawSignKeyIsBringupObject(t *testing.T) {
 	t.Parallel()
 
