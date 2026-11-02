@@ -118,15 +118,15 @@ func readAdminRequest(in io.Reader) ([]byte, error) {
 // request goes unsigned, which a device accepts only while it holds no host
 // key, and always for /wipe/device and /wipe/objects.
 func adminRequest(c *client, route, hostKeyFile string, in io.Reader, out io.Writer) error {
-	body, err := readAdminRequest(in)
-	if err != nil {
-		return err
-	}
-
 	signed := device.AdminRoutes()[route]
 
 	if !signed && route != "/wipe/device" && route != "/wipe/objects" {
 		return fmt.Errorf("unknown route %s", route)
+	}
+
+	body, err := readAdminRequest(in)
+	if err != nil {
+		return err
 	}
 
 	// the device wipe and the object listing are never signed

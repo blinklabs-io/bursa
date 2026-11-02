@@ -111,3 +111,24 @@ func TestProvisionAndWipeSubcommandsSign(t *testing.T) {
 		t.Fatal("unknown route accepted")
 	}
 }
+
+// failReader fails the test if it is read.
+type failReader struct{ t *testing.T }
+
+func (r failReader) Read([]byte) (int, error) {
+	r.t.Fatal("request read before the route was checked")
+	return 0, nil
+}
+
+// An unknown route is refused before the request is read, so it does not
+// wait on standard input.
+func TestAdminRequestChecksRouteFirst(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	err := adminRequest(&client{}, "/provision/nonsense", "", failReader{t}, &out)
+	if err == nil || !strings.Contains(err.Error(), "unknown route") {
+		t.Fatalf("err = %v", err)
+	}
+}
