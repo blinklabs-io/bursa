@@ -201,12 +201,58 @@ test("a negative margin numerator is rejected", () => {
 
 // --- hand-off / error handling ---
 
-test("documents that in-app submission is not yet wired (cert build + hand-off only)", () => {
+test("seed mode submits a registration transaction and shows the tx hash", async () => {
+  const submit = vi
+    .spyOn(client, "poolSubmitRegistration")
+    .mockResolvedValue({ tx_hash: "feedface", update: false });
+  const build = vi.spyOn(client, "poolBuildRegistration");
   renderReg();
-  expect(screen.getByText(/submitting a registration transaction in-app is not yet wired/i))
-    .toBeInTheDocument();
-  // There is no submit-transaction control on this screen — only a build.
+
+  fillSeedMinimum("100000000", "pw");
+  fireEvent.click(screen.getByRole("button", { name: /build & submit registration/i }));
+
+  await waitFor(() => expect(submit).toHaveBeenCalled());
+  const call = submit.mock.calls[0][0];
+  expect(call.password).toBe("pw");
+  expect(call.pledge).toBe("100000000");
+  expect(call.cost).toBe("340000000");
+  expect(build).not.toHaveBeenCalled();
+  expect(await screen.findByText(/pool registration transaction submitted/i)).toBeInTheDocument();
+  expect(screen.getByText("feedface")).toBeInTheDocument();
+});
+
+test("an update of an already-registered pool is reported as an update", async () => {
+  vi.spyOn(client, "poolSubmitRegistration").mockResolvedValue({ tx_hash: "cafe", update: true });
+  renderReg();
+
+  fillSeedMinimum();
+  fireEvent.click(screen.getByRole("button", { name: /build & submit registration/i }));
+
+  expect(await screen.findByText(/pool update transaction submitted/i)).toBeInTheDocument();
+});
+
+test("submit is validated like a build and surfaces a rejected submission", async () => {
+  const submit = vi
+    .spyOn(client, "poolSubmitRegistration")
+    .mockRejectedValue(new client.ApiError(422, "ledger rule X"));
+  renderReg();
+
+  // No pledge: validation fails client-side and nothing is submitted.
+  fireEvent.change(screen.getByLabelText(/spending password/i), { target: { value: "pw" } });
+  fireEvent.click(screen.getByRole("button", { name: /build & submit registration/i }));
+  expect(screen.getByRole("alert")).toHaveTextContent(/pledge and cost are required/i);
+  expect(submit).not.toHaveBeenCalled();
+
+  fillSeedMinimum();
+  fireEvent.click(screen.getByRole("button", { name: /build & submit registration/i }));
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/ledger rule X/i));
+});
+
+test("air-gap mode offers no in-app submit", () => {
+  renderReg();
+  fireEvent.click(screen.getByRole("button", { name: /air-gap/i }));
   expect(screen.queryByRole("button", { name: /submit/i })).toBeNull();
+  expect(screen.getByRole("button", { name: /build certificate/i })).toBeInTheDocument();
 });
 
 test("surfaces an ApiError from a failed build", async () => {

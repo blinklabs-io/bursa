@@ -97,6 +97,7 @@ type Service struct {
 	mu       sync.Mutex
 	walletID string
 	account  *wallet.Account
+	registry PoolRegistry // on-chain pool lookup for registration/update submit
 }
 
 // NewService constructs a Service. cc/ks may be nil when only the offline
@@ -560,8 +561,7 @@ func (s *Service) buildRegistration(coldVKey, vrfHash []byte, p RegistrationPara
 // BuildRegistrationFromSeed builds the registration/update certificate using the
 // active wallet's seed-derived cold + VRF keys. It requires the spending
 // password. The returned cert is the canonical CBOR (correct 29-byte reward
-// account) — submission is handled separately (see SubmitRetirement and the
-// package-level TODO about registration tx submission).
+// account); SubmitRegistration places it in a transaction and submits it.
 func (s *Service) BuildRegistrationFromSeed(password string, p RegistrationParams) (CertResult, error) {
 	walletID, acct := s.currentBinding()
 	if acct == nil {
@@ -572,6 +572,12 @@ func (s *Service) BuildRegistrationFromSeed(password string, p RegistrationParam
 		return CertResult{}, err
 	}
 	defer zero()
+	return s.buildRegistrationFromRoot(root, p, acct)
+}
+
+// buildRegistrationFromRoot derives the cold and VRF keys from root and builds
+// the registration/update certificate. The caller owns root and its zeroizer.
+func (s *Service) buildRegistrationFromRoot(root bip32.XPrv, p RegistrationParams, acct *wallet.Account) (CertResult, error) {
 	cold, err := deriveCold(root, defaultColdIndex)
 	if err != nil {
 		return CertResult{}, err
@@ -691,19 +697,54 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 	defer cold.zero()
 	operator := poolIDFromVKey(cold.vkey)
 
+	hash, err := s.submitPoolTx(ctx, root, acct, &cold, poolTxPlan{
+		addCerts: func(a *apollo.Apollo) (*apollo.Apollo, error) {
+			return a.DeregisterPool(operator, epoch), nil
+		},
+	})
+	if err != nil {
+		return TxResult{}, err
+	}
+	return TxResult{TxHash: hash}, nil
+}
+
+// poolTxPlan is what differs between pool transactions: the certificates they
+// carry, the chain context they are built against, and whether the wallet's
+// stake key must also witness.
+type poolTxPlan struct {
+	// chain overrides the service chain context for building and submitting.
+	chain backend.ChainContext
+	// addCerts attaches the transaction's certificates.
+	addCerts func(a *apollo.Apollo) (*apollo.Apollo, error)
+	// stakeSigners are stake key hashes that must witness (pool owners). The
+	// wallet's stake key signs for them.
+	stakeSigners []lcommon.Blake2b224
+}
+
+// submitPoolTx builds a transaction funded from the active account, signs it
+// with the wallet payment keys that own the selected inputs, the pool cold key
+// and, when plan.stakeSigners is set, the account stake key, and submits it. The
+// caller owns root and cold and their zeroizers.
+func (s *Service) submitPoolTx(ctx context.Context, root bip32.XPrv, acct *wallet.Account, cold *coldKeyMaterial, plan poolTxPlan) (string, error) {
+	cc := s.chain
+	if plan.chain != nil {
+		cc = plan.chain
+	}
+	operator := poolIDFromVKey(cold.vkey)
+
 	// Fee-paying payment key is derived at the active account's index so pool
-	// retirement is funded from the account the wallet is currently bound to.
+	// transactions are funded from the account the wallet is currently bound to.
 	acctKey, err := bursa.GetAccountKey(root, acct.AccountIndex)
 	if err != nil {
-		return TxResult{}, fmt.Errorf("account key: %w", err)
+		return "", fmt.Errorf("account key: %w", err)
 	}
 	defer zeroBytes(acctKey)
 
 	changeAddr, err := lcommon.NewAddress(acct.ReceiveAddresses[0])
 	if err != nil {
-		return TxResult{}, fmt.Errorf("change address: %w", err)
+		return "", fmt.Errorf("change address: %w", err)
 	}
-	a := apollo.New(s.chain).
+	a := apollo.New(cc).
 		SetWallet(apollo.NewExternalWallet(changeAddr)).
 		SetChangeAddress(changeAddr).
 		SetFeePadding(retirementFeePaddingLovelace).
@@ -711,18 +752,18 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 
 	fundingAddrs, err := retirementFundingAddresses(acct, acctKey)
 	if err != nil {
-		return TxResult{}, err
+		return "", err
 	}
 	utxoAddr := make(map[string]ownedPaymentAddress)
 	for _, owner := range fundingAddrs {
 		addrStr := owner.address
 		addr, err := lcommon.NewAddress(addrStr)
 		if err != nil {
-			return TxResult{}, fmt.Errorf("address %q: %w", addrStr, err)
+			return "", fmt.Errorf("address %q: %w", addrStr, err)
 		}
-		utxos, err := backend.UtxosContext(ctx, s.chain, addr)
+		utxos, err := backend.UtxosContext(ctx, cc, addr)
 		if err != nil {
-			return TxResult{}, fmt.Errorf("utxos for %s: %w", addrStr, err)
+			return "", fmt.Errorf("utxos for %s: %w", addrStr, err)
 		}
 		if len(utxos) > 0 {
 			a = a.AddLoadedUTxOs(utxos...)
@@ -733,20 +774,26 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 		}
 	}
 
-	// Retirement certificate; the cold key must witness the tx.
-	a = a.DeregisterPool(operator, epoch).
-		AddRequiredSigner(operator)
+	// The certificates; the cold key (and any owner stake key) must witness.
+	a, err = plan.addCerts(a)
+	if err != nil {
+		return "", err
+	}
+	a = a.AddRequiredSigner(operator)
+	for _, h := range plan.stakeSigners {
+		a = a.AddRequiredSigner(h)
+	}
 
 	a, err = a.WithContext(ctx).Complete()
 	if err != nil {
-		return TxResult{}, fmt.Errorf("complete transaction: %w", err)
+		return "", fmt.Errorf("complete transaction: %w", err)
 	}
 
 	// Sign for fee inputs with the wallet payment keys, then add the cold-key
 	// witness. Apollo's Sign() APPENDs a witness per SetWallet+Sign call.
 	tx := a.GetTx()
 	if tx == nil {
-		return TxResult{}, errors.New("transaction not built")
+		return "", errors.New("transaction not built")
 	}
 	seen := map[string]bool{}
 	for _, inp := range tx.Body.TxInputs.Items() {
@@ -758,7 +805,7 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 		seen[owner.address] = true
 		payKey, err := deriveOwnedPaymentKey(acctKey, owner)
 		if err != nil {
-			return TxResult{}, fmt.Errorf("%s payment key idx %d: %w", owner.role, owner.index, err)
+			return "", fmt.Errorf("%s payment key idx %d: %w", owner.role, owner.index, err)
 		}
 		if err := func() error {
 			defer zeroBytes(payKey)
@@ -777,16 +824,28 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 			}
 			return nil
 		}(); err != nil {
-			return TxResult{}, err
+			return "", err
+		}
+	}
+	// Owner stake-key witness (registration/update certificates).
+	if len(plan.stakeSigners) > 0 {
+		stakeKey, err := bursa.GetStakeKey(acctKey, 0)
+		if err != nil {
+			return "", fmt.Errorf("stake key: %w", err)
+		}
+		a, err = a.SignWithSkey([]byte(stakeKey))
+		zeroBytes(stakeKey)
+		if err != nil {
+			return "", fmt.Errorf("owner stake-key witness: %w", err)
 		}
 	}
 	// Cold-key witness: SignWithSkey accepts the 32-byte Ed25519 seed and adds a
 	// vkey witness whose key is the standard Ed25519 cold vkey — matching the
-	// operator hash in the retirement certificate.
+	// operator hash in the pool certificate.
 	a, err = a.SignWithSkey(cold.seed)
 	cold.zero()
 	if err != nil {
-		return TxResult{}, fmt.Errorf("cold-key witness: %w", err)
+		return "", fmt.Errorf("cold-key witness: %w", err)
 	}
 
 	// Submit passes this context to backend.SubmitTxContext, so detach from the
@@ -796,9 +855,9 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
+		return "", submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
 	}
-	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
+	return hex.EncodeToString(txHash.Bytes()), nil
 }
 
 func (r paymentKeyRole) String() string {
