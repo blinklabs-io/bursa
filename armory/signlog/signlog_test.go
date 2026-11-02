@@ -1297,3 +1297,67 @@ func TestWriterLastSkipsUnstoredHead(t *testing.T) {
 		t.Fatalf("last after a stored head: %+v %v", got, ok)
 	}
 }
+
+// Check fails without writing when the card no longer holds the head, the
+// head store moved, or the latest head is not yet stored.
+func TestWriterCheck(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 8)
+	w := f.open(t)
+
+	if err := w.Check(); err != nil {
+		t.Fatalf("empty log: %v", err)
+	}
+
+	f.fill(t, w, 2)
+
+	if err := w.Check(); err != nil {
+		t.Fatalf("after append: %v", err)
+	}
+
+	img := f.medium.Image()
+
+	f.mutate(t, func(b []byte) { clear(b[slotOffset(2) : slotOffset(2)+RecordSize]) })
+
+	if err := w.Check(); err == nil {
+		t.Fatal("check passed with the latest entry gone")
+	}
+
+	f.mutate(t, func(b []byte) { copy(b, img) })
+
+	if err := w.Check(); err != nil {
+		t.Fatalf("restored card: %v", err)
+	}
+
+	if err := f.heads.Store(Head{Seq: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := w.Check(); !errors.Is(err, ErrHeadStore) {
+		t.Fatalf("moved head: got %v, want ErrHeadStore", err)
+	}
+
+	if !bytes.Equal(f.medium.Image(), img) {
+		t.Fatal("check wrote to the medium")
+	}
+
+	g, _, fh := newFaultFixture(t, 8)
+
+	w, err := Open(g.medium, fh, g.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fh.setFail(true)
+
+	if _, err = w.Append(opcertRecord(5)); !errors.Is(err, errInjected) {
+		t.Fatalf("got %v, want the injected failure", err)
+	}
+
+	fh.setFail(false)
+
+	if err = w.Check(); !errors.Is(err, ErrHeadStore) {
+		t.Fatalf("unstored head: got %v, want ErrHeadStore", err)
+	}
+}

@@ -31,6 +31,9 @@ type SigningLog interface {
 	Head() signlog.Head
 	// Last is the latest entry, false when the log holds none.
 	Last() (signlog.Entry, bool)
+	// Check confirms the medium and the head store still match the log,
+	// without writing.
+	Check() error
 }
 
 // MaxLogBlocks bounds the blocks one signing log read returns.
@@ -71,6 +74,7 @@ var (
 	errLogUnavailable = errors.New("signing log unavailable")
 	errLogFull        = errors.New("signing log is full; the device refuses to sign")
 	errLogWrite       = errors.New("signing log write failed; the device refuses to sign")
+	errLogCheck       = errors.New("signing log check failed; the device refuses to sign")
 )
 
 // RequireSigningLog makes the service refuse every signing request until
@@ -134,6 +138,26 @@ func (s *Service) appendLog(rec signlog.Record) error {
 		}
 
 		return errLogWrite
+	}
+
+	return nil
+}
+
+// checkLog confirms, without writing, that the log a repeat is answered from
+// is still the card and head it was written to. Any error refuses the request.
+func (s *Service) checkLog() error {
+	if err := s.logReady(); err != nil {
+		return err
+	}
+
+	if s.log == nil {
+		return nil
+	}
+
+	if err := s.log.Check(); err != nil {
+		s.logf("signing log: check: %v", err)
+
+		return errLogCheck
 	}
 
 	return nil

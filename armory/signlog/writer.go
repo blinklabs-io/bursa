@@ -218,6 +218,20 @@ func (w *Writer) Last() (Entry, bool) {
 	return *w.last, true
 }
 
+// Check confirms, without writing, that the head store holds the writer's
+// head and the medium's latest entry matches it: the checks Append makes
+// before a write. A head not yet stored fails with ErrHeadStore.
+func (w *Writer) Check() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.pending != nil {
+		return ErrHeadStore
+	}
+
+	return w.recheck()
+}
+
 // Append logs rec and returns the entry. The entry is on the medium, synced,
 // and the head store updated before it returns; only then may the caller
 // release the signature. On any error nothing may be released. A medium

@@ -685,11 +685,16 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 	}
 
 	// the counter was already issued and the latest entry records this exact
-	// request: signing it again adds nothing to account for
-	if p.LastIssued != issue || !s.lastOpCertRepeat(rec) {
-		if err = s.appendLog(rec); err != nil {
-			return nil, nil, err
-		}
+	// request: signing it again adds nothing to account for, once the card
+	// and head are confirmed to still hold that entry
+	if p.LastIssued == issue && s.lastOpCertRepeat(rec) {
+		err = s.checkLog()
+	} else {
+		err = s.appendLog(rec)
+	}
+
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// the floor and the issued counter are persisted together before any

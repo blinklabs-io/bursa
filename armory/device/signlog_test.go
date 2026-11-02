@@ -54,6 +54,8 @@ func (l *fakeLog) Append(rec signlog.Record) (signlog.Entry, error) {
 
 func (l *fakeLog) Head() signlog.Head { return l.head }
 
+func (l *fakeLog) Check() error { return l.err }
+
 func (l *fakeLog) Last() (signlog.Entry, bool) {
 	if len(l.records) == 0 {
 		return signlog.Entry{}, false
@@ -563,5 +565,82 @@ func TestOpCertNextRetryAfterHeadFailureIsLogged(t *testing.T) {
 
 	if head, _ := hs.Load(); head.Seq < 2 {
 		t.Fatalf("signature released with the head store at entry %d", head.Seq)
+	}
+}
+
+// removableMedium is a log medium whose card can be pulled.
+type removableMedium struct {
+	*signlog.MemMedium
+	removed bool
+}
+
+func (m *removableMedium) ReadBlocks(lba uint64, p []byte) error {
+	if m.removed {
+		return errors.New("no card")
+	}
+
+	return m.MemMedium.ReadBlocks(lba, p)
+}
+
+// A repeat of the last opcert-next is refused, as an append would be, when
+// the card is removed, replaced or no longer matches the stored head.
+func TestOpCertNextRepeatChecksLog(t *testing.T) {
+	t.Parallel()
+
+	for name, breakLog := range map[string]func(*removableMedium, *signlog.MemHeadStore){
+		"card removed": func(m *removableMedium, _ *signlog.MemHeadStore) { m.removed = true },
+		"card replaced": func(m *removableMedium, _ *signlog.MemHeadStore) {
+			_ = m.WriteBlocks(1, make([]byte, signlog.RecordSize))
+		},
+		"head moved": func(_ *removableMedium, hs *signlog.MemHeadStore) {
+			_ = hs.Store(signlog.Head{Seq: 1, Hash: [signlog.HashSize]byte{1}})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s, chip := newTestService(t)
+			provisionTestProfile(t, s)
+
+			_, priv, _ := ed25519.GenerateKey(nil)
+			m := &removableMedium{MemMedium: signlog.NewMemMedium(1 + 3*signlog.RecordBlocks)}
+			hs := signlog.NewMemHeadStore(signlog.Head{})
+
+			w, err := signlog.Open(m, hs, signlog.NewKeySigner(priv))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			s.RequireSigningLog()
+			s.SetSigningLog(w, m)
+
+			cold, _ := chip.PublicKeyEd25519(testColdID)
+			req := func(n byte) SignRequest {
+				return SignRequest{
+					Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(n),
+					Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 3, 1100), Profile: "otg@preview",
+				}
+			}
+
+			if r := sign(t, s, req(1)); r.Error != "" || len(r.Signature) == 0 {
+				t.Fatalf("first: %+v", r)
+			}
+
+			breakLog(m, hs)
+			before := chip.signs
+
+			r := sign(t, s, req(2))
+			if r.Error == "" || !strings.Contains(r.Error, "signing log") {
+				t.Fatalf("repeat: error %q does not name the signing log", r.Error)
+			}
+
+			if r.Signature != nil || r.IssueCounter != nil {
+				t.Fatalf("repeat released %+v", r)
+			}
+
+			if chip.signs != before {
+				t.Fatalf("chip made %d signatures", chip.signs-before)
+			}
+		})
 	}
 }
