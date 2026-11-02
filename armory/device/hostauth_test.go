@@ -135,6 +135,10 @@ func TestHostAuthRefusals(t *testing.T) {
 			s.now = func() time.Time { return time.Now().Add(challengeTTL) }
 			return authenticate(req, testHostKey, ch)
 		},
+		"future-dated challenge": func(_ *testing.T, s *Service, req SignRequest, ch []byte) SignRequest {
+			s.now = func() time.Time { return time.Now().Add(-time.Second) }
+			return authenticate(req, testHostKey, ch)
+		},
 	}
 
 	// a signature over one field's value does not cover another value
