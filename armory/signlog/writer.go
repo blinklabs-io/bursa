@@ -15,6 +15,7 @@
 package signlog
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"sync"
@@ -28,6 +29,8 @@ type Writer struct {
 	id     Identity
 	hdr    Header
 	head   Head
+	// last is the latest entry, when there is one
+	last *Entry
 	// pending is a head that reached the medium but not yet the head store
 	pending *Head
 }
@@ -88,6 +91,11 @@ func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
 
 	w.hdr = hdr
 	last := headOf(hdr, entries)
+
+	if n := len(entries); n > 0 {
+		e := cloneEntry(entries[n-1])
+		w.last = &e
+	}
 
 	switch {
 	case head == (Head{}):
@@ -197,6 +205,43 @@ func (w *Writer) Head() Head {
 	return w.head
 }
 
+// Last returns the latest entry the writer has logged, or false when the log
+// holds none or the head store does not yet hold the latest entry, which an
+// Append that returned an error leaves unconfirmed.
+func (w *Writer) Last() (Entry, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.last == nil || w.pending != nil {
+		return Entry{}, false
+	}
+
+	return cloneEntry(*w.last), true
+}
+
+// cloneEntry copies e so the copy shares no byte slice with it.
+func cloneEntry(e Entry) Entry {
+	e.BodyHash = bytes.Clone(e.BodyHash)
+	e.KESKeyHash = bytes.Clone(e.KESKeyHash)
+	e.Signature = bytes.Clone(e.Signature)
+
+	return e
+}
+
+// Check confirms, without writing, that the head store holds the writer's
+// head and the medium's latest entry matches it: the checks Append makes
+// before a write. A head not yet stored fails with ErrHeadStore.
+func (w *Writer) Check() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.pending != nil {
+		return ErrHeadStore
+	}
+
+	return w.recheck()
+}
+
 // Append logs rec and returns the entry. The entry is on the medium, synced,
 // and the head store updated before it returns; only then may the caller
 // release the signature. On any error nothing may be released. A medium
@@ -251,7 +296,8 @@ func (w *Writer) Append(rec Record) (Entry, error) {
 	}
 
 	next := Head{Seq: e.Seq, Hash: e.Hash}
-	w.head, w.pending = next, &next
+	last := cloneEntry(e)
+	w.head, w.pending, w.last = next, &next, &last
 
 	if err = w.heads.Store(next); err != nil {
 		return Entry{}, fmt.Errorf("signlog: store head: %w", err)
