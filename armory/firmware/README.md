@@ -30,10 +30,11 @@ separate, rehearsed procedure; nothing here writes OTP.
 ### Tools
 
 ```
-go install github.com/usbarmory/crucible/cmd/habtool@latest
+go install github.com/usbarmory/crucible/cmd/habtool@v2025.05.28
 ```
 
-`habtool` must be on `PATH`, or set `HABTOOL=<path>`.
+`habtool` must be on `PATH`, or set `HABTOOL=<path>`. The flags used here
+are those of crucible `v2025.05.28`.
 
 ### Keys
 
@@ -42,14 +43,20 @@ serves anything, and keep them out of this checkout (`.gitignore` excludes
 `*.pem` as a backstop, not a control).
 
 ```
-umask 077; mkdir -m 0700 hab-keys; cd hab-keys
+(
+set -e; umask 077
+mkdir -m 0700 hab-keys; cd hab-keys
 for i in 1 2 3 4; do habtool -C SRK_${i}_key.pem -c SRK_${i}_crt.pem; done
 habtool -1 SRK_1_crt.pem -2 SRK_2_crt.pem -3 SRK_3_crt.pem -4 SRK_4_crt.pem \
         -t SRK_1_2_3_4_table.bin -o SRK_1_2_3_4_fuse.bin
 habtool -C SRK_1_key.pem -c SRK_1_crt.pem \
         -A CSF_1_key.pem -a CSF_1_crt.pem \
         -B IMG_1_key.pem -b IMG_1_crt.pem
+)
 ```
+
+The subshell stops at the first failure, so an existing `hab-keys` directory
+is never written into.
 
 `SRK_1_2_3_4_fuse.bin` is the 32-byte hash that would be fused; it is public.
 Back up the SRK private keys and the whole directory offline: a lost key
@@ -57,6 +64,12 @@ leaves a fused board unable to run new firmware. Use a throwaway directory for
 unfused test boards and never fuse its hash.
 
 ### Signing
+
+`HAB_KEYS` signs on the build host, so it is for keys that may live there,
+such as throwaway keys for unfused test boards. With production keys, build
+the unsigned image, copy it to the offline machine and sign it there with
+`habtool`, as in "Signing offline" below; the build host never holds the
+keys.
 
 Set `HAB_KEYS` to the key directory. Every variant is signed, and the unsigned
 image is still built:
@@ -84,11 +97,26 @@ given, and then warns and writes `armory-testnet-signed.imx`, a name the
 signed signing image never takes. Use that only with a throwaway key on a
 board holding no keys that matter.
 
+### Signing offline
+
+Copy the unsigned image to the offline machine and, with `K` the key
+directory, sign it there the way the Makefile does:
+
+```
+habtool -A $K/CSF_1_key.pem -a $K/CSF_1_crt.pem -B $K/IMG_1_key.pem \
+        -b $K/IMG_1_crt.pem -t $K/SRK_1_2_3_4_table.bin -x 1 \
+        -i armory.imx -o armory-signed.csf
+cat armory.imx armory-signed.csf > armory-signed.imx
+```
+
+Add `-s` to sign for USB recovery loading (as `HAB_SDP=1` does); without it
+the image is signed for the internal flash and memory cards.
+
 ### Flashing image
 
 Writing the internal flash uses the upstream `armory-ums` image, which this
 repository does not build. The boot ROM checks it like any other image, so
-sign it with the same key before loading it over USB:
+sign it offline with the same key, for loading over USB:
 
 ```
 habtool -A $K/CSF_1_key.pem -a $K/CSF_1_crt.pem -B $K/IMG_1_key.pem \
@@ -96,9 +124,6 @@ habtool -A $K/CSF_1_key.pem -a $K/CSF_1_crt.pem -B $K/IMG_1_key.pem \
         -i armory-ums.imx -o armory-ums.csf
 cat armory-ums.imx armory-ums.csf > armory-ums-signed.imx
 ```
-
-`-s` is for USB recovery loading (as for `HAB_SDP=1`); omit it for an image
-that is booted from a card.
 
 ### Checking a signed image on an unfused board
 

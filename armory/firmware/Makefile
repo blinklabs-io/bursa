@@ -28,10 +28,11 @@ CHAIN ?=
 # <image>-signed.imx; unset, the build and its output are unchanged. The
 # directory holds the keys made by habtool, see README.md: CSF_<n>_key.pem,
 # CSF_<n>_crt.pem, IMG_<n>_key.pem, IMG_<n>_crt.pem and SRK_1_2_3_4_table.bin,
-# n being HAB_SRK_INDEX. Keep the production keys offline; this Makefile only
-# reads them.
+# n being HAB_SRK_INDEX. The keys are read on the build host, so use this
+# only with keys that may live there; README.md signs production images
+# offline.
 HAB_KEYS ?=
-# HABTOOL is crucible's habtool: go install github.com/usbarmory/crucible/cmd/habtool@latest
+# HABTOOL is crucible's habtool: go install github.com/usbarmory/crucible/cmd/habtool@v2025.05.28
 HABTOOL ?= habtool
 # HAB_SRK_INDEX picks which of the four SRK table keys (1-4) issued the CSF
 # and IMG certificates; their files carry the same number.
