@@ -78,8 +78,9 @@ func (h secretHex) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON decodes the string straight from the request bytes, without
-// a string copy of the key. A key decoded earlier into h, as from a repeated
-// or case-variant field name, is zeroed first.
+// a string copy of the key. A hex digit sent as a \u escape is unescaped into
+// a byte buffer that is zeroed after decoding. A key decoded earlier into h,
+// as from a repeated or case-variant field name, is zeroed first.
 func (h *secretHex) UnmarshalJSON(data []byte) error {
 	clear(*h)
 	*h = nil
@@ -93,6 +94,18 @@ func (h *secretHex) UnmarshalJSON(data []byte) error {
 	}
 
 	src := data[1 : len(data)-1]
+
+	if bytes.IndexByte(src, '\\') >= 0 {
+		un, err := unescapeHexDigits(src)
+		defer clear(un)
+
+		if err != nil {
+			return err
+		}
+
+		src = un
+	}
+
 	dst := make([]byte, hex.DecodedLen(len(src)))
 
 	if _, err := hex.Decode(dst, src); err != nil {
@@ -103,6 +116,42 @@ func (h *secretHex) UnmarshalJSON(data []byte) error {
 	*h = dst
 
 	return nil
+}
+
+// unescapeHexDigits returns the JSON string contents src with each \u escape
+// of a hex digit replaced by the digit. Any other escape cannot be part of a
+// hex key and is refused, as is an escape cut short.
+func unescapeHexDigits(src []byte) ([]byte, error) {
+	out := make([]byte, 0, len(src))
+
+	for i := 0; i < len(src); i++ {
+		if src[i] != '\\' {
+			out = append(out, src[i])
+			continue
+		}
+
+		// a hex digit is \u0030-\u0039, \u0041-\u0046 or \u0061-\u0066
+		if i+6 > len(src) || src[i+1] != 'u' || src[i+2] != '0' || src[i+3] != '0' {
+			return out, errMalformedKey
+		}
+
+		var c [1]byte
+
+		_, err := hex.Decode(c[:], src[i+4:i+6])
+		if err != nil || !isHexDigit(c[0]) {
+			return out, errMalformedKey
+		}
+
+		out = append(out, c[0])
+		clear(c[:])
+		i += 5
+	}
+
+	return out, nil
+}
+
+func isHexDigit(c byte) bool {
+	return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
 }
 
 // secretRequest is a request that carries key material. Its body is read into

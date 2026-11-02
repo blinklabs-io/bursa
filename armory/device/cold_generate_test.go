@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -564,5 +566,84 @@ func TestProvisionColdTornOriginRecord(t *testing.T) {
 				t.Fatalf("retry: %d %s, want origin %s", code, body, tc.origin)
 			}
 		})
+	}
+}
+
+// escapeHex returns s as a JSON string body with every hex digit at an even
+// index sent as a \u escape, alternating the case of the escape's digits.
+func escapeHex(s string) string {
+	var b strings.Builder
+
+	for i, c := range s {
+		switch {
+		case i%4 == 0:
+			fmt.Fprintf(&b, `\u%04x`, c)
+		case i%4 == 2:
+			fmt.Fprintf(&b, `\u%04X`, c)
+		default:
+			b.WriteRune(c)
+		}
+	}
+
+	return b.String()
+}
+
+// The key fields are JSON strings, so a hex digit sent as an escape decodes as
+// the digit itself.
+func TestSecretHexDecodesEscapes(t *testing.T) {
+	t.Parallel()
+
+	key := coldKeyHex(coldSeed)
+
+	var h secretHex
+	if err := h.UnmarshalJSON([]byte(`"` + escapeHex(key) + `"`)); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := hex.EncodeToString(h); got != key {
+		t.Fatalf("decoded %s, want %s", got, key)
+	}
+
+	s, _, _ := newLoggedService(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/provision/cold", strings.NewReader(
+		`{"cold_key_id":551878673,"signing_key":"`+escapeHex(key)+`"}`))
+	setDeviceHeaders(req)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+
+	var res coldResult
+	if err := json.Unmarshal(w.Body.Bytes(), &res); w.Code != http.StatusOK || err != nil || res.Origin != "imported" {
+		t.Fatalf("escaped key: %d %s", w.Code, w.Body)
+	}
+
+	if _, plain, body := postCold(t, s, "/provision/cold", map[string]any{"cold_key_id": freeColdID, "signing_key": key}); plain != res {
+		t.Fatalf("plain key %s, want the escaped import %+v", body, res)
+	}
+}
+
+// An escape that is not a hex digit, or is cut short, is a malformed key.
+func TestSecretHexRefusesNonHexEscapes(t *testing.T) {
+	t.Parallel()
+
+	for _, in := range []string{
+		`"\n5820"`,
+		`"é5820"`,
+		`"g"`,
+		`"😀5820"`,
+		`"5820\u003"`,
+		`"5820\u"`,
+		`"5820\"`,
+		`"\/5820"`,
+	} {
+		var h secretHex
+		if err := h.UnmarshalJSON([]byte(in)); !errors.Is(err, errMalformedKey) {
+			t.Errorf("%s: got %v, want %v", in, err, errMalformedKey)
+		}
+
+		if h != nil {
+			t.Errorf("%s: left %x, want no key", in, []byte(h))
+		}
 	}
 }
