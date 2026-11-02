@@ -34,6 +34,7 @@ const buildMode = "wipe build: deletes profiles and keys on request; signing and
 // loaded over USB recovery boot.
 func routes(svc *device.Service, _ *signer, mu *sync.Mutex) {
 	http.Handle("/wipe/", svc.WipeHandler())
+	http.Handle("/v1/challenge", svc.WipeHandler())
 
 	// a cold reset returns an unflashed board to USB recovery mode, ready
 	// for the next image

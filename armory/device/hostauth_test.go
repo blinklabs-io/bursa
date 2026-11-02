@@ -227,11 +227,21 @@ func TestHostKeyProvisioning(t *testing.T) {
 		keys[i] = hostPub(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{byte(0x60 + i)}, 32)))
 	}
 
-	for _, k := range keys[:maxHostKeys] {
-		registerHostKey(t, s, k)
+	// the first key is added unsigned, the others are signed by it
+	registerHostKey(t, s, keys[0])
+
+	signer := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x60}, 32))
+
+	for _, k := range keys[1:maxHostKeys] {
+		if code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key", HostKeyRequest{PublicKey: k}, signer); code != http.StatusOK {
+			t.Fatalf("register host key: %d %s", code, body)
+		}
 	}
 
-	registerHostKey(t, s, keys[0]) // a duplicate is not an error
+	// a duplicate is not an error
+	if code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key", HostKeyRequest{PublicKey: keys[0]}, signer); code != http.StatusOK {
+		t.Fatalf("duplicate host key: %d %s", code, body)
+	}
 
 	stored := string(chip.bins[hostKeysID])
 
@@ -244,7 +254,7 @@ func TestHostKeyProvisioning(t *testing.T) {
 		"all-zero key":   {"/provision/host-key", make([]byte, 32)},
 		"revoke unknown": {"/provision/host-key/revoke", keys[maxHostKeys]},
 	} {
-		if code, _ := post(t, s, req.path, HostKeyRequest{PublicKey: req.key}); code == http.StatusOK {
+		if code, _ := postAs(t, s.ProvisioningHandler(), req.path, HostKeyRequest{PublicKey: req.key}, signer); code == http.StatusOK {
 			t.Errorf("%s accepted", name)
 		}
 	}
@@ -253,7 +263,7 @@ func TestHostKeyProvisioning(t *testing.T) {
 		t.Fatal("host key list written on a refused request")
 	}
 
-	if code, body := post(t, s, "/provision/host-key/revoke", HostKeyRequest{PublicKey: keys[1]}); code != http.StatusOK {
+	if code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: keys[1]}, signer); code != http.StatusOK {
 		t.Fatalf("revoke: %d %s", code, body)
 	}
 
@@ -275,15 +285,17 @@ func TestHostKeyProvisioning(t *testing.T) {
 }
 
 func TestHostKeysUnreadableRefusesSigning(t *testing.T) {
-	chip := newFakeChip()
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	// the profile is provisioned first: provisioning is refused over an
+	// unreadable list
 	chip.bins[hostKeysID] = []byte("torn")
 
-	s := New(&sync.Mutex{}, t.Logf)
+	s = New(&sync.Mutex{}, t.Logf)
 	if err := s.SetChip(chip); err != nil {
 		t.Fatal(err)
 	}
-
-	provisionTestProfile(t, s)
 
 	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error == "" {
 		t.Fatal("signed while the host key list is unreadable")
@@ -321,7 +333,7 @@ func TestHostKeyWriteFailureRefusesSigning(t *testing.T) {
 			s, chip := newHostAuthService(t)
 			fail(chip)
 
-			if code, _ := post(t, s, "/provision/host-key", HostKeyRequest{PublicKey: other}); code == http.StatusOK {
+			if code, _ := postAs(t, s.ProvisioningHandler(), "/provision/host-key", HostKeyRequest{PublicKey: other}, testHostKey); code == http.StatusOK {
 				t.Fatal("failed host key write reported success")
 			}
 
@@ -331,11 +343,20 @@ func TestHostKeyWriteFailureRefusesSigning(t *testing.T) {
 				t.Fatal("signed after a failed host key write")
 			}
 
-			// writing the list again recovers
+			// the list is unknown, so no key can sign for a write; the device
+			// wipe, confirmed by the identity key alone, is the way out
+			if code, _ := postAs(t, s.ProvisioningHandler(), "/provision/host-key", HostKeyRequest{PublicKey: hostPub(testHostKey)}, testHostKey); code == http.StatusOK {
+				t.Fatal("host key list rewritten while the stored list is unknown")
+			}
+
+			if code, body := rawPost(s.WipeHandler(), "/wipe/device", []byte(`{"identity_public_key":""}`)); code != http.StatusOK {
+				t.Fatalf("device wipe: %d %s", code, body)
+			}
+
 			registerHostKey(t, s, hostPub(testHostKey))
 
-			if r := postSign(t, s, authenticate(opcertRequest(t, s, chip, 2), testHostKey, challenge(t, s))); r.Error != "" {
-				t.Fatalf("not recovered by a good write: %+v", r)
+			if code, body := postAs(t, s.ProvisioningHandler(), "/provision/identity", IdentityRequest{}, testHostKey); code != http.StatusOK {
+				t.Fatalf("not recovered by the wipe and a good write: %d %s", code, body)
 			}
 		})
 	}
@@ -346,7 +367,7 @@ func TestHostKeyWriteFailureRefusesSigning(t *testing.T) {
 func TestRevokeLastHostKeyDeletesList(t *testing.T) {
 	s, chip := newHostAuthService(t)
 
-	if code, body := post(t, s, "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey)}); code != http.StatusOK {
+	if code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey)}, testHostKey); code != http.StatusOK {
 		t.Fatalf("revoke: %d %s", code, body)
 	}
 
@@ -372,7 +393,7 @@ func TestRevokeLastHostKeyDeleteFailureRefusesSigning(t *testing.T) {
 	s, chip := newHostAuthService(t)
 	chip.failDelete = true
 
-	if code, _ := post(t, s, "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey)}); code == http.StatusOK {
+	if code, _ := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey)}, testHostKey); code == http.StatusOK {
 		t.Fatal("failed delete reported success")
 	}
 
@@ -385,26 +406,33 @@ func TestRevokeLastHostKeyDeleteFailureRefusesSigning(t *testing.T) {
 // refused: revoking the last key deletes the object, so an all-zero object
 // is not a valid empty list.
 func TestHostKeysAllZeroRefusesSigning(t *testing.T) {
-	chip := newFakeChip()
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	// the profile is provisioned first: provisioning is refused over an
+	// unreadable list
 	chip.bins[hostKeysID] = make([]byte, hostKeysLen)
 
-	s := New(&sync.Mutex{}, t.Logf)
+	s = New(&sync.Mutex{}, t.Logf)
 	if err := s.SetChip(chip); err != nil {
 		t.Fatal(err)
 	}
-
-	provisionTestProfile(t, s)
 
 	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error == "" {
 		t.Fatal("signed unauthenticated with an all-zero host key list present")
 	}
 
-	// registering a key replaces the list
-	registerHostKey(t, s, hostPub(testHostKey))
-
-	if r := postSign(t, s, authenticate(opcertRequest(t, s, chip, 2), testHostKey, challenge(t, s))); r.Error != "" {
-		t.Fatalf("not recovered by registering a key: %+v", r)
+	// registering a key is refused over a list nothing can sign for; the
+	// device wipe resets it
+	if code, _ := post(t, s, "/provision/host-key", HostKeyRequest{PublicKey: hostPub(testHostKey)}); code == http.StatusOK {
+		t.Fatal("host key registered over an all-zero list")
 	}
+
+	if code, body := rawPost(s.WipeHandler(), "/wipe/device", []byte(`{"identity_public_key":""}`)); code != http.StatusOK {
+		t.Fatalf("device wipe: %d %s", code, body)
+	}
+
+	registerHostKey(t, s, hostPub(testHostKey))
 }
 
 // TestMainnetRequiresHostAuth checks a mainnet build refuses to sign until a

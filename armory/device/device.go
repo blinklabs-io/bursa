@@ -120,6 +120,7 @@ type SignResponse struct {
 // ProvisionRequest creates a profile. ChainCounter, when set, is the pool's
 // current on-chain opcert counter and initialises the floor.
 type ProvisionRequest struct {
+	HostAuth
 	Name         string  `json:"name"`
 	NetworkID    uint8   `json:"network_id"`
 	Slot         uint8   `json:"slot"`
@@ -141,6 +142,7 @@ type ProvisionResponse struct {
 // RewardRequest changes the reward account a profile's pool registrations
 // must name.
 type RewardRequest struct {
+	HostAuth
 	Profile       string `json:"profile"`
 	RewardAccount string `json:"reward_account"`
 }
@@ -155,6 +157,7 @@ type RewardResponse struct {
 // on-chain counter, for example after a rollback or a host that reported a
 // counter too high.
 type FloorRequest struct {
+	HostAuth
 	Profile      string `json:"profile"`
 	ChainCounter uint64 `json:"chain_counter"`
 }
@@ -169,6 +172,7 @@ type FloorResponse struct {
 // SigningKey is the hex cborHex of a StakePoolSigningKey_ed25519: 5820
 // followed by the 32-byte seed.
 type ColdRequest struct {
+	HostAuth
 	ColdKeyID  uint32 `json:"cold_key_id"`
 	SigningKey string `json:"signing_key"`
 }
@@ -368,9 +372,14 @@ func (s *Service) SigningHandler() http.Handler {
 }
 
 // ProvisioningHandler serves only the provisioning endpoints, for the
-// provisioning firmware.
+// provisioning firmware, and the challenge endpoint their host
+// authentication needs. Once a host key is registered every provisioning
+// endpoint requires a request signed by a host key of this build's network and
+// chain; before that the endpoints take unsigned requests, so a fresh device
+// can be set up.
 func (s *Service) ProvisioningHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/challenge", handle(s, s.challenge))
 	s.provisioningRoutes(mux)
 
 	return mux
@@ -384,13 +393,13 @@ func (s *Service) signingRoutes(mux *http.ServeMux) {
 }
 
 func (s *Service) provisioningRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /provision/profile", handle(s, s.provisionProfile))
-	mux.HandleFunc("POST /provision/floor", handle(s, s.resetFloor))
-	mux.HandleFunc("POST /provision/reward", handle(s, s.setReward))
-	mux.HandleFunc("POST /provision/cold", handle(s, s.provisionCold))
-	mux.HandleFunc("POST /provision/host-key", handle(s, s.addHostKey))
-	mux.HandleFunc("POST /provision/host-key/revoke", handle(s, s.revokeHostKey))
-	mux.HandleFunc("POST /provision/identity", handle(s, func(struct{}) (IdentityResponse, error) {
+	mux.HandleFunc("POST "+RouteProvisionProfile, handleAdmin(s, RouteProvisionProfile, s.provisionProfile))
+	mux.HandleFunc("POST "+RouteProvisionFloor, handleAdmin(s, RouteProvisionFloor, s.resetFloor))
+	mux.HandleFunc("POST "+RouteProvisionReward, handleAdmin(s, RouteProvisionReward, s.setReward))
+	mux.HandleFunc("POST "+RouteProvisionCold, handleAdmin(s, RouteProvisionCold, s.provisionCold))
+	mux.HandleFunc("POST "+RouteProvisionHostKey, handleAdmin(s, RouteProvisionHostKey, s.addHostKey))
+	mux.HandleFunc("POST "+RouteProvisionHostRevoke, handleAdmin(s, RouteProvisionHostRevoke, s.revokeHostKey))
+	mux.HandleFunc("POST "+RouteProvisionIdentity, handleAdmin(s, RouteProvisionIdentity, func(IdentityRequest) (IdentityResponse, error) {
 		return s.provisionIdentity()
 	}))
 }

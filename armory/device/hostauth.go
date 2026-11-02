@@ -58,6 +58,7 @@ type ChallengeResponse struct {
 
 // HostKeyRequest adds or revokes a host public key.
 type HostKeyRequest struct {
+	HostAuth
 	PublicKey []byte `json:"public_key"`
 }
 
@@ -68,7 +69,7 @@ type HostKeyResponse struct {
 
 var (
 	errHostKeyUnknown  = errors.New("host key not registered")
-	errHostKeysBad     = errors.New("host key list unreadable; register the host keys again")
+	errHostKeysBad     = errors.New("host key list unreadable; wipe the device to reset it")
 	errHostAuthMissing = errors.New("signing requires host authentication")
 )
 

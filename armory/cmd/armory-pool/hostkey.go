@@ -15,9 +15,11 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -86,4 +88,72 @@ func (s *session) sign(req device.SignRequest, resp *device.SignResponse) error 
 	}
 
 	return s.c.post("/v1/sign", req, resp)
+}
+
+// maxAdminRequest bounds a provisioning or wipe request read from stdin; the
+// device refuses a larger one.
+const maxAdminRequest = 64 << 10
+
+// readAdminRequest reads a JSON request, taking an empty input as {}.
+func readAdminRequest(in io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(in, maxAdminRequest+1))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(body) > maxAdminRequest {
+		return nil, errors.New("request is larger than the device accepts")
+	}
+
+	if len(bytes.TrimSpace(body)) == 0 {
+		return []byte("{}"), nil
+	}
+
+	return body, nil
+}
+
+// adminRequest posts the JSON request on in to a provisioning or wipe route
+// and prints the device's answer. With a host key it fetches a challenge and
+// signs the request, as a device holding a host key requires; without one the
+// request goes unsigned, which a device accepts only while it holds no host
+// key, and always for /wipe/device and /wipe/objects.
+func adminRequest(c *client, route, hostKeyFile string, in io.Reader, out io.Writer) error {
+	body, err := readAdminRequest(in)
+	if err != nil {
+		return err
+	}
+
+	signed := device.AdminRoutes()[route]
+
+	if !signed && route != "/wipe/device" && route != "/wipe/objects" {
+		return fmt.Errorf("unknown route %s", route)
+	}
+
+	// the device wipe and the object listing are never signed
+	if hostKeyFile != "" && signed {
+		key, err := readHostKey(hostKeyFile)
+		if err != nil {
+			return err
+		}
+
+		var ch device.ChallengeResponse
+
+		if err = c.post("/v1/challenge", struct{}{}, &ch); err != nil {
+			return err
+		}
+
+		if body, err = device.SignAdminRequest(route, body, key, ch.Challenge); err != nil {
+			return err
+		}
+	}
+
+	var resp json.RawMessage
+
+	if err = c.post(route, json.RawMessage(body), &resp); err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(out, "%s\n", bytes.TrimSpace(resp))
+
+	return err
 }

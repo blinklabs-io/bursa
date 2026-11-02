@@ -33,9 +33,21 @@ const buildMode = "provisioning build: signing endpoints are not served"
 // the opcert floor and reset. /pubkey returns the key the legacy /provision
 // imported, not the identity key.
 func routes(svc *device.Service, s *signer, mu *sync.Mutex) {
-	http.HandleFunc("/provision", s.provision)
+	// the unsigned cold key import cannot carry a host signature, so it is
+	// closed once a host key is registered; /provision/cold takes its place
+	http.HandleFunc("/provision", func(w http.ResponseWriter, r *http.Request) {
+		if !svc.ProvisioningOpen() {
+			http.Error(w, "a host key is registered: send a signed /provision/cold request", http.StatusForbidden)
+			return
+		}
+
+		s.provision(w, r)
+	})
 	http.HandleFunc("/pubkey", s.publicKey)
+	// the provisioning requests are signed by a host key once one is
+	// registered; /v1/challenge issues their challenges
 	http.Handle("/provision/", svc.ProvisioningHandler())
+	http.Handle("/v1/challenge", svc.ProvisioningHandler())
 
 	// a cold reset returns an unflashed board to USB recovery mode, ready
 	// for the next image
