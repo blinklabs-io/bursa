@@ -40,6 +40,13 @@ type coldResult struct {
 // key list and signing log head and below the owner keys.
 func originObject(id uint32) uint32 { return id + 0x30 }
 
+// setDeviceHeaders makes r a request the device's host clients send: to the
+// device's address, with a JSON body.
+func setDeviceHeaders(r *http.Request) {
+	r.Host = "10.0.0.1"
+	r.Header.Set("Content-Type", "application/json")
+}
+
 func postCold(t *testing.T, s *Service, path string, req any) (int, coldResult, string) {
 	t.Helper()
 
@@ -312,6 +319,7 @@ func TestProvisioningZeroesRequestBody(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodPost, tc.path, nil)
 			req.Body = body
+			setDeviceHeaders(req)
 			s.Handler().ServeHTTP(httptest.NewRecorder(), req)
 
 			if len(body.bufs) == 0 {
@@ -372,9 +380,12 @@ func TestProvisioningZeroesDecodedKeys(t *testing.T) {
 			return s.provisionCold(req)
 		}))
 
+		req := httptest.NewRequest(http.MethodPost, "/c", strings.NewReader(
+			`{"cold_key_id":551878673,"signing_key":"`+coldKeyHex(coldSeed)+`"}`))
+		setDeviceHeaders(req)
+
 		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/c", strings.NewReader(
-			`{"cold_key_id":551878673,"signing_key":"`+coldKeyHex(coldSeed)+`"}`)))
+		mux.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("%d %s", w.Code, w.Body)
@@ -402,9 +413,12 @@ func TestProvisioningZeroesDecodedKeys(t *testing.T) {
 			return s.provisionProfile(req)
 		}))
 
+		req := httptest.NewRequest(http.MethodPost, "/p", strings.NewReader(
+			`{"name":"a@preview","slot":1,"cold_key_id":`+"551878672"+`,"reward_account":"`+testReward+`","owner_signing_key":"`+coldKeyHex(coldSeed)+`"}`))
+		setDeviceHeaders(req)
+
 		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/p", strings.NewReader(
-			`{"name":"a@preview","slot":1,"cold_key_id":`+"551878672"+`,"reward_account":"`+testReward+`","owner_signing_key":"`+coldKeyHex(coldSeed)+`"}`)))
+		mux.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("%d %s", w.Code, w.Body)
