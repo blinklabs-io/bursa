@@ -405,7 +405,8 @@ a key with its seed records it as `imported`, after which it no longer
 reports `unknown`. A wipe deletes the record with
 the key. The origin is not part of the attested inventory and is not signed:
 it is read from the provisioning firmware, which is not host-key
-authenticated.
+authenticated. A reported `generated` is therefore not proof that the key
+cannot be exported, and tools must not present it as such.
 
 A generated cold key has no backup. Its private key cannot leave the SE050, so
 losing, wiping or breaking the device loses the pool: its id, registration and

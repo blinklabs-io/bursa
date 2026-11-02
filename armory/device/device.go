@@ -178,7 +178,8 @@ type ColdRequest struct {
 
 // ColdResponse returns a cold key's public key and pool id, both hex, and
 // its origin: generated in the chip, imported, or unknown for a key with no
-// origin record.
+// origin record. The origin is an unsigned record, not proof that the key
+// never left the chip.
 type ColdResponse struct {
 	ColdKeyID uint32 `json:"cold_key_id"`
 	PublicKey string `json:"public_key"`
