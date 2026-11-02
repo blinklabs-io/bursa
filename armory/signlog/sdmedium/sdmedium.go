@@ -58,6 +58,12 @@ const (
 	syncPause    = 10 * time.Millisecond
 )
 
+// MaxTransferBlocks bounds the blocks one card transfer moves. The uSDHC
+// driver allocates each transfer's buffer from the DMA region, on the i.MX6
+// 128 KiB of on-chip RAM shared with the USB controller, and panics when
+// the buffer does not fit.
+const MaxTransferBlocks = 16
+
 // Card is an initialised SD card driver.
 type Card interface {
 	// Detect initialises the card; it is cheap when the card is already
@@ -117,6 +123,21 @@ func (m *Medium) check(lba uint64, n int) error {
 	return nil
 }
 
+// split runs a card transfer of p from block lba in pieces of at most
+// MaxTransferBlocks.
+func split(op func(lba int, buf []byte) error, lba uint64, p []byte) error {
+	const chunk = MaxTransferBlocks * signlog.BlockSize
+
+	for off := 0; off < len(p); off += chunk {
+		end := min(off+chunk, len(p))
+		if err := op(int(lba)+off/signlog.BlockSize, p[off:end]); err != nil { //nolint:gosec // lba is below the card's block count
+			return err
+		}
+	}
+
+	return nil
+}
+
 // once runs op and, if it fails, re-detects the card and runs it once more,
 // so a card that was reseated or glitched does not wedge the device until
 // reboot. Reads and writes of whole blocks are idempotent. It reports
@@ -151,7 +172,7 @@ func (m *Medium) ReadBlocks(lba uint64, p []byte) error {
 		return nil
 	}
 
-	_, err := m.once(func() error { return m.card.ReadBlocks(int(lba), p) }) //nolint:gosec // lba is below the card's block count
+	_, err := m.once(func() error { return split(m.card.ReadBlocks, lba, p) })
 
 	return err
 }
@@ -171,7 +192,7 @@ func (m *Medium) WriteBlocks(lba uint64, p []byte) error {
 		return nil
 	}
 
-	redetected, err := m.once(func() error { return m.card.WriteBlocks(int(lba), p) }) //nolint:gosec // lba is below the card's block count
+	redetected, err := m.once(func() error { return split(m.card.WriteBlocks, lba, p) })
 	if err != nil {
 		return err
 	}
@@ -212,7 +233,7 @@ func (m *Medium) Sync() error {
 				m.sleep(syncPause)
 			}
 
-			if err = m.card.ReadBlocks(int(w.lba), got); err == nil { //nolint:gosec // lba was bounds-checked at write
+			if err = split(m.card.ReadBlocks, w.lba, got); err == nil {
 				break
 			}
 		}

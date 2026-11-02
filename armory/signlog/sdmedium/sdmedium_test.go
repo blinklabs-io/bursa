@@ -46,6 +46,8 @@ type fakeCard struct {
 	failReads bool
 	reads     int
 	writes    int
+	// largest is the largest transfer in bytes
+	largest int
 }
 
 func newFakeCard(blocks int) *fakeCard {
@@ -68,6 +70,7 @@ func (c *fakeCard) Geometry() (int, uint64) {
 
 func (c *fakeCard) ReadBlocks(lba int, buf []byte) error {
 	c.reads++
+	c.largest = max(c.largest, len(buf))
 
 	if c.failReads {
 		return errors.New("read failed")
@@ -86,6 +89,7 @@ func (c *fakeCard) ReadBlocks(lba int, buf []byte) error {
 
 func (c *fakeCard) WriteBlocks(lba int, buf []byte) error {
 	c.writes++
+	c.largest = max(c.largest, len(buf))
 
 	if c.failWrites > 0 {
 		c.failWrites--
@@ -173,6 +177,36 @@ func TestReadWriteAndBounds(t *testing.T) {
 		if err := fn(); !errors.Is(err, signlog.ErrMedium) {
 			t.Errorf("%s: %v, want ErrMedium", name, err)
 		}
+	}
+}
+
+func TestTransfersAreSplit(t *testing.T) {
+	t.Parallel()
+
+	// the controller's DMA buffers come from a small on-chip region, so a
+	// large transfer must reach the card in pieces
+	c := newFakeCard(1024)
+	m := open(t, c)
+	data := make([]byte, 300*signlog.BlockSize)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.WriteBlocks(5, data); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Sync(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := make([]byte, len(data))
+	if err := m.ReadBlocks(5, got); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("read back: %v", err)
+	}
+
+	if want := MaxTransferBlocks * signlog.BlockSize; c.largest > want {
+		t.Fatalf("largest transfer %d bytes, want at most %d", c.largest, want)
 	}
 }
 
@@ -313,6 +347,22 @@ func TestSignlogOverSDMedium(t *testing.T) {
 	// a reopened writer accepts the card
 	if _, err = signlog.Open(open(t, c), heads, id); err != nil {
 		t.Fatalf("reopen: %v", err)
+	}
+}
+
+func TestFormatSplitsTransfers(t *testing.T) {
+	t.Parallel()
+
+	// formatting checks the record slots are blank in large reads
+	c := newFakeCard(1 + 300*signlog.RecordBlocks)
+	m := open(t, c)
+
+	if _, err := signlog.Open(m, signlog.NewMemHeadStore(signlog.Head{}), newIdentity(t)); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := MaxTransferBlocks * signlog.BlockSize; c.largest > want {
+		t.Fatalf("largest transfer %d bytes, want at most %d", c.largest, want)
 	}
 }
 
