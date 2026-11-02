@@ -22,7 +22,7 @@ import (
 )
 
 var provisioningPaths = []string{
-	"/provision/identity", "/provision/cold", "/provision/profile",
+	"/provision/identity", "/provision/cold", "/provision/cold/info", "/provision/profile",
 	"/provision/reward", "/provision/floor",
 }
 
