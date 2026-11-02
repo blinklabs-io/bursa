@@ -705,7 +705,18 @@ func (c *Client) Pool(ctx context.Context, poolID string) (PoolInfo, error) {
 		}
 		return PoolInfo{}, ErrNotFound
 	}
+	return c.scanPools(ctx, poolID)
+}
 
+// PoolUncached looks poolID up in the node's current pool list without
+// consulting the short-lived index Pool answers from, so a pool registered
+// since that index was filled is found. It refreshes the index with the pages
+// it reads. Use it where a stale answer would change what a transaction pays.
+func (c *Client) PoolUncached(ctx context.Context, poolID string) (PoolInfo, error) {
+	return c.scanPools(ctx, poolID)
+}
+
+func (c *Client) scanPools(ctx context.Context, poolID string) (PoolInfo, error) {
 	for page := 1; page <= maxPages; page++ {
 		var rows []PoolInfo
 		paged := fmt.Sprintf("/api/v0/pools/extended?count=%d&page=%d", pageSize, page)

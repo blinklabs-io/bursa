@@ -45,6 +45,7 @@ import type {
   PoolMetadataInput,
   PoolMetadataResult,
   PoolRegistrationParams,
+  PoolRegistrationTxResult,
   PoolCertResult,
   PoolIDResult,
   TPMStatus,
@@ -346,6 +347,8 @@ export const poolIDFromColdVKey = (cold_vkey_hex: string) =>
   apiPost<PoolIDResult>("/wallet/pool/id", { cold_vkey_hex });
 export const poolBuildRegistration = (req: PoolRegistrationParams & { password: string }) =>
   apiPost<PoolCertResult>("/wallet/pool/registration", req);
+export const poolSubmitRegistration = (req: PoolRegistrationParams & { password: string }) =>
+  apiPost<PoolRegistrationTxResult>("/wallet/pool/registration/submit", req);
 export type PoolRegistrationAirGapRequest = PoolRegistrationParams & {
   cold_vkey_hex: string;
   vrf_key_hash_hex: string;

@@ -381,7 +381,7 @@ type Contacts interface {
 // generation and seed-derived certificate/opcert building need the active
 // wallet + spending password; the air-gap builders (pool ID, opcert payload /
 // assembly, metadata, air-gap registration cert) need neither. Submission
-// (retirement) needs a synced node. It operates on the active wallet.
+// (registration, update, retirement) needs a synced node. It operates on the active wallet.
 type PoolOps interface {
 	// SetAccount binds the active wallet (both its ID and its read-only account)
 	// so pool operations always derive credentials from the same wallet whose
@@ -399,6 +399,7 @@ type PoolOps interface {
 	BuildRegistrationAirGap(p poolops.AirGapRegistrationParams) (poolops.CertResult, error)
 	BuildRetirementCert(password, coldVKeyHex string, epoch uint64) (poolops.CertResult, error)
 	SubmitRetirement(ctx context.Context, password string, epoch uint64) (poolops.TxResult, error)
+	SubmitRegistration(ctx context.Context, password string, p poolops.RegistrationParams) (poolops.RegistrationTxResult, error)
 }
 
 // DexQuoter is the node-local DEX surface: pool prices and best-pool swap
@@ -2335,6 +2336,17 @@ func registerPoolRoutes(mux *http.ServeMux, st Statuser, po PoolOps) {
 		})
 		serve(w, v, err)
 	})
+
+	// 3/4. Registration / update transaction submission (seed; needs a fully
+	// synced node). Locks the pool deposit only for a pool not yet registered.
+	mux.HandleFunc("POST /wallet/pool/registration/submit", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+		var req poolRegistrationSeedRequest
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		v, err := po.SubmitRegistration(r.Context(), req.Password, req.params())
+		serve(w, v, err)
+	}))
 
 	// 5. Retirement certificate (seed or air-gap cold vkey).
 	mux.HandleFunc("POST /wallet/pool/retirement/cert", func(w http.ResponseWriter, r *http.Request) {

@@ -5,8 +5,14 @@ import { Input } from "../../components/Input";
 import { Select } from "../../components/Select";
 import { Button } from "../../components/Button";
 import { CopyButton } from "../../components/CopyButton";
-import { poolBuildRegistration, poolBuildRegistrationAirGap } from "../../api/client";
-import type { Account, PoolCertResult, PoolRegistrationParams, PoolRelayInput } from "../../api/types";
+import { poolBuildRegistration, poolBuildRegistrationAirGap, poolSubmitRegistration } from "../../api/client";
+import type {
+  Account,
+  PoolCertResult,
+  PoolRegistrationParams,
+  PoolRegistrationTxResult,
+  PoolRelayInput,
+} from "../../api/types";
 import { errorMessage } from "./shared";
 
 type Mode = "seed" | "airgap";
@@ -86,8 +92,9 @@ function validateRelays(rows: RelayRow[]): string | null {
 // Registration builds a pool registration (or update — same certificate with
 // new params) from pledge/cost/margin, the reward account, owners, relays, and
 // optional metadata. It works from the wallet seed or an air-gapped cold vkey
-// (plus VRF key hash). The certificate is the canonical CBOR an operator submits
-// or hands to an offline cold-key signer.
+// (plus VRF key hash). From the wallet seed the certificate can be submitted in
+// a transaction in-app; otherwise it is the canonical CBOR an operator hands to
+// an offline cold-key signer.
 export function Registration({ account }: { account: Account }) {
   const [mode, setMode] = useState<Mode>("seed");
 
@@ -108,6 +115,7 @@ export function Registration({ account }: { account: Account }) {
   const [vrfHash, setVrfHash] = useState("");
 
   const [result, setResult] = useState<PoolCertResult | null>(null);
+  const [tx, setTx] = useState<PoolRegistrationTxResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -140,25 +148,31 @@ export function Registration({ account }: { account: Account }) {
     };
   }
 
-  async function handleBuild() {
+  // validated returns the request params, or sets the error and returns null.
+  function validated(): PoolRegistrationParams | null {
     setError(null);
     setResult(null);
+    setTx(null);
     if (!pledge.trim() || !cost.trim()) {
       setError("Pledge and cost are required");
-      return;
+      return null;
     }
     const relayErr = validateRelays(relays);
     if (relayErr) {
       setError(relayErr);
-      return;
+      return null;
     }
-    let params: PoolRegistrationParams;
     try {
-      params = commonParams();
+      return commonParams();
     } catch (e) {
       setError(errorMessage(e));
-      return;
+      return null;
     }
+  }
+
+  async function handleBuild() {
+    const params = validated();
+    if (!params) return;
     setLoading(true);
     try {
       if (mode === "seed") {
@@ -172,6 +186,19 @@ export function Registration({ account }: { account: Account }) {
           }),
         );
       }
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSubmit() {
+    const params = validated();
+    if (!params) return;
+    setLoading(true);
+    try {
+      setTx(await poolSubmitRegistration({ password, ...params }));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -335,21 +362,30 @@ export function Registration({ account }: { account: Account }) {
           </p>
         )}
 
-        <Button
-          onClick={handleBuild}
-          disabled={
-            loading ||
-            (mode === "seed" ? !password : !coldVKey.trim() || !vrfHash.trim())
-          }
-        >
-          {loading ? "Building…" : "Build certificate"}
-        </Button>
+        <div className="preview-actions">
+          <Button
+            variant="ghost"
+            onClick={handleBuild}
+            disabled={
+              loading ||
+              (mode === "seed" ? !password : !coldVKey.trim() || !vrfHash.trim())
+            }
+          >
+            {loading ? "Working…" : "Build certificate"}
+          </Button>
+          {mode === "seed" && (
+            <Button onClick={handleSubmit} disabled={loading || !password}>
+              {loading ? "Submitting…" : "Build & submit registration"}
+            </Button>
+          )}
+        </div>
 
         <p className="helper-text">
-          Note: building produces the registration certificate (CBOR). Submitting
-          a registration transaction in-app is not yet wired (see the in-repo TODO
-          on the pool-registration tx path); hand the certificate to your stake-pool
-          tooling, or export it for offline cold-key signing.
+          Submitting broadcasts a registration transaction signed by the payment,
+          owner stake and cold keys (needs a synced node). A new pool locks the
+          pool deposit; an already-registered pool is updated with no deposit. In-app
+          submission needs this wallet as the only owner; for other owners or an
+          external cold key, build the certificate and sign it offline.
         </p>
 
         {result && (
@@ -363,6 +399,17 @@ export function Registration({ account }: { account: Account }) {
             <div className="tx-hash-row">
               <code className="tx-hash">{result.cbor_hex}</code>
               <CopyButton value={result.cbor_hex} ariaLabel="Copy certificate CBOR" />
+            </div>
+          </div>
+        )}
+
+        {tx && (
+          <div className="done-details">
+            <p>{tx.update ? "Pool update transaction submitted." : "Pool registration transaction submitted."}</p>
+            <p className="field-label">Transaction hash</p>
+            <div className="tx-hash-row">
+              <code className="tx-hash">{tx.tx_hash}</code>
+              <CopyButton value={tx.tx_hash} ariaLabel="Copy registration transaction hash" />
             </div>
           </div>
         )}

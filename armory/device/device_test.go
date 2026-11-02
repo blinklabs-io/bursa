@@ -391,6 +391,7 @@ func certBody(certs ...[]any) []byte {
 		0: []any{[]any{make([]byte, 32), uint64(0)}},
 		1: []any{[]any{payer, uint64(5_000_000)}},
 		2: uint64(200_000),
+		3: uint64(90_000_000),
 		4: certs,
 	})
 
@@ -557,9 +558,19 @@ func TestOpCertNext(t *testing.T) {
 		t.Fatal("signature is not over kes_vkey || issue || period")
 	}
 
+	// the pool forged with the counter the device issued
 	r = sign(t, s, SignRequest{
 		Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-		Nonce: nonce(2), Payload: opCertPayload(kes, 5, 1100), Profile: "otg@preview",
+		Nonce: nonce(2), Payload: opCertPayload(kes, 4, 1100), Profile: "otg@preview",
+	})
+
+	if r.Error != "" || *r.IssueCounter != 5 {
+		t.Fatalf("response %+v", r)
+	}
+
+	r = sign(t, s, SignRequest{
+		Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
+		Nonce: nonce(3), Payload: opCertPayload(kes, 5, 1100), Profile: "otg@preview",
 	})
 
 	if r.Error != "" || *r.IssueCounter != 6 {
@@ -568,8 +579,8 @@ func TestOpCertNext(t *testing.T) {
 
 	rec, _ := chip.ReadBinary(profile.Profile{Slot: 0}.RecordID())
 
-	if p, _ := profile.Decode(rec); p.OpCertFloor != 5 {
-		t.Fatalf("floor not persisted: %+v", p)
+	if p, _ := profile.Decode(rec); p.OpCertFloor != 5 || p.LastIssued != 6 {
+		t.Fatalf("floor and issued counter not persisted: %+v", p)
 	}
 
 	for name, req := range map[string]SignRequest{
@@ -584,6 +595,121 @@ func TestOpCertNext(t *testing.T) {
 		if r := sign(t, s, req); r.Error == "" {
 			t.Errorf("%s: signed", name)
 		}
+	}
+}
+
+func TestOpCertNextRefusesChainAboveIssued(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	kes := bytes.Repeat([]byte{0x4b}, 32)
+	req := func(n byte, chain uint64) SignRequest {
+		return SignRequest{
+			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
+			Nonce: nonce(n), Payload: opCertPayload(kes, chain, 1100), Profile: "otg@preview",
+		}
+	}
+	record := func() profile.Profile {
+		rec, _ := chip.ReadBinary(profile.Profile{Slot: 0}.RecordID())
+		p, err := profile.Decode(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return p
+	}
+
+	// the provisioned floor is 3 and nothing is issued yet: no bound
+	if r := sign(t, s, req(1, 3)); r.Error != "" || *r.IssueCounter != 4 {
+		t.Fatalf("first issue: %+v", r)
+	}
+
+	before := record()
+
+	// the ledger only has counters the device issued, so 5 is not on chain
+	r := sign(t, s, req(2, 5))
+
+	if r.Error == "" || r.Signature != nil || r.IssueCounter != nil {
+		t.Fatalf("chain above the issued counter signed: %+v", r)
+	}
+
+	if after := record(); after != before {
+		t.Fatalf("refusal changed the record: %+v -> %+v", before, after)
+	}
+
+	if r = sign(t, s, req(3, 4)); r.Error != "" || *r.IssueCounter != 5 {
+		t.Fatalf("chain at the issued counter: %+v", r)
+	}
+}
+
+func TestOpCertNextOldRecordUnbounded(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	kes := bytes.Repeat([]byte{0x4b}, 32)
+
+	// a record written before the issued counter existed carries only the floor
+	rec, _ := chip.ReadBinary(profile.Profile{Slot: 0}.RecordID())
+	p, err := profile.Decode(rec)
+
+	if err != nil || p.LastIssued != 0 || !p.FloorSet {
+		t.Fatalf("provisioned record %+v, %v", p, err)
+	}
+
+	r := sign(t, s, SignRequest{
+		Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
+		Nonce: nonce(1), Payload: opCertPayload(kes, 50, 1100), Profile: "otg@preview",
+	})
+
+	if r.Error != "" || *r.IssueCounter != 51 {
+		t.Fatalf("unset issued counter bounded the chain counter: %+v", r)
+	}
+
+	rec, _ = chip.ReadBinary(profile.Profile{Slot: 0}.RecordID())
+
+	if p, _ = profile.Decode(rec); p.LastIssued != 51 || p.OpCertFloor != 50 {
+		t.Fatalf("first opcert-next did not set the issued counter: %+v", p)
+	}
+}
+
+func TestFloorResetClearsIssued(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	kes := bytes.Repeat([]byte{0x4b}, 32)
+	req := func(n byte, chain uint64) SignRequest {
+		return SignRequest{
+			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
+			Nonce: nonce(n), Payload: opCertPayload(kes, chain, 1100), Profile: "otg@preview",
+		}
+	}
+
+	if r := sign(t, s, req(1, 9)); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+
+	if code, body := post(t, s, "/provision/floor", FloorRequest{Profile: "otg@preview", ChainCounter: 20}); code != http.StatusOK {
+		t.Fatalf("floor reset: %d %s", code, body)
+	}
+
+	rec, _ := chip.ReadBinary(profile.Profile{Slot: 0}.RecordID())
+
+	if p, _ := profile.Decode(rec); p.OpCertFloor != 20 || p.LastIssued != 0 {
+		t.Fatalf("reset left %+v", p)
+	}
+
+	// after the reset the operator's counter is what the device works from
+	if r := sign(t, s, req(2, 20)); r.Error != "" || *r.IssueCounter != 21 {
+		t.Fatalf("after reset: %+v", r)
 	}
 }
 
