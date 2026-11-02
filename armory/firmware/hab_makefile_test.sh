@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Dry-run checks of the HAB signing support in the Makefile. They need only
-# make; no TamaGo toolchain, signing tool or key is used, and nothing is built.
+# Checks of the HAB signing support in the Makefile. They need only make: the
+# dry runs build nothing, and the signing recipe runs in a temporary directory
+# against a stub habtool, empty key files and a placeholder unsigned image.
 set -u
 cd "$(dirname "$0")"
 
@@ -70,5 +71,43 @@ out=$(dry imx TESTNET=1 HAB_KEYS=/keys HAB_ALLOW_TESTNET=1 HAB_SDP=1)
 has "$out" 'armory-testnet-signed-sdp.imx'; check "signed TESTNET=1 HAB_SDP=1 image is named armory-testnet-signed-sdp.imx" $?
 out=$(dry imx TESTNET=1); rc=$?
 [ $rc -eq 0 ] && ! has "$out" habtool; check "unsigned TESTNET=1 build is unaffected" $?
+
+
+# The signing recipe itself, with the unsigned image taken as built (-o).
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+mkdir "$tmp/keys" "$tmp/work"
+for f in CSF_1_key.pem CSF_1_crt.pem IMG_1_key.pem IMG_1_crt.pem SRK_1_2_3_4_table.bin; do
+	: >"$tmp/keys/$f"
+done
+cat >"$tmp/habtool" <<'STUB'
+#!/bin/sh
+# Stub habtool: record the call and write a CSF to the -o file.
+echo ran >"${0%/*}/habtool.ran"
+while [ $# -gt 0 ]; do
+	if [ "$1" = -o ]; then printf CSF >"$2"; fi
+	shift
+done
+STUB
+chmod +x "$tmp/habtool"
+cp Makefile "$tmp/work/"
+printf IMX >"$tmp/work/armory.imx"
+sign() { make -s -C "$tmp/work" -o armory.imx armory-signed.imx "$@" 2>&1; }
+
+rm -f "$tmp/habtool.ran"
+out=$(sign HAB_KEYS="$tmp/keys" HABTOOL="$tmp/habtool"); rc=$?
+[ $rc -eq 0 ] && [ "$(cat "$tmp/work/armory-signed.imx" 2>/dev/null)" = IMXCSF ]
+check "signing appends the CSF to the unsigned image" $?
+
+rm -f "$tmp/habtool.ran" "$tmp/work/armory-signed.imx"
+mv "$tmp/keys/IMG_1_key.pem" "$tmp/IMG_1_key.pem"
+out=$(sign HAB_KEYS="$tmp/keys" HABTOOL="$tmp/habtool"); rc=$?
+[ $rc -ne 0 ] && has "$out" "missing $tmp/keys/IMG_1_key.pem" && [ ! -e "$tmp/habtool.ran" ] && [ ! -e "$tmp/work/armory-signed.imx" ]
+check "a missing key file stops signing before habtool" $?
+mv "$tmp/IMG_1_key.pem" "$tmp/keys/IMG_1_key.pem"
+
+out=$(sign HAB_KEYS="$tmp/keys" HABTOOL="$tmp/no-habtool"); rc=$?
+[ $rc -ne 0 ] && has "$out" "no-habtool not found" && [ ! -e "$tmp/work/armory-signed.imx" ]
+check "a missing habtool stops signing" $?
 
 exit $fail

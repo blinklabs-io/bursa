@@ -13,7 +13,8 @@ make imx TESTNET=1                        # bring-up image, unfiltered /sign
 ```
 
 The Makefile header documents each variable. `./hab_makefile_test.sh` dry-runs
-the HAB targets below and needs only `make`.
+the HAB targets below, and runs the signing step against a stub `habtool`; it
+needs only `make`.
 
 ## Secure boot (HABv4)
 
