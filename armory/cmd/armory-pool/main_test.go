@@ -150,6 +150,8 @@ func newRig(t *testing.T) *rig {
 	}
 
 	srv := httptest.NewServer(svc.Handler())
+	// the device answers only to its own address
+	svc.SetHost(srv.Listener.Addr().String())
 	t.Cleanup(srv.Close)
 
 	var id device.IdentityResponse

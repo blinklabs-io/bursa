@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	deviceIP  = "10.0.0.1/24"
+	deviceIP  = device.Address + "/24"
 	hostIP    = "10.0.0.2"
 	deviceMAC = "1a:55:89:a2:69:41"
 	hostMAC   = "1a:55:89:a2:69:42"
@@ -124,5 +124,6 @@ func main() {
 		log.Fatalf("listen: %v", err)
 	}
 
-	log.Fatal(http.Serve(l, nil))
+	// the legacy routes are not JSON handlers, so the whole mux is guarded
+	log.Fatal(http.Serve(l, device.Guard(device.Address, http.DefaultServeMux)))
 }

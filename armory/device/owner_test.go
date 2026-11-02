@@ -227,7 +227,7 @@ func TestRequestStrictJSON(t *testing.T) {
 
 			s, chip := newTestService(t)
 			w := httptest.NewRecorder()
-			s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/provision/profile", strings.NewReader(body)))
+			s.Handler().ServeHTTP(w, jsonRequest("/provision/profile", strings.NewReader(body)))
 
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("got %d %s, want 400", w.Code, w.Body)

@@ -189,7 +189,7 @@ func post(t *testing.T, s *Service, path string, req any) (int, []byte) {
 	}
 
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, bytes.NewReader(b)))
+	s.Handler().ServeHTTP(w, jsonRequest(path, bytes.NewReader(b)))
 
 	return w.Code, w.Body.Bytes()
 }
@@ -592,7 +592,7 @@ func TestRequestBodyLimit(t *testing.T) {
 	big := `{"nonce":"` + strings.Repeat("A", maxRequest) + `"}`
 
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/inventory", strings.NewReader(big)))
+	s.Handler().ServeHTTP(w, jsonRequest("/v1/inventory", strings.NewReader(big)))
 
 	if w.Code == http.StatusOK {
 		t.Fatal("oversized request accepted")

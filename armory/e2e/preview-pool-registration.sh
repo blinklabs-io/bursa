@@ -99,7 +99,7 @@ need_build() {
 	fi
 	[ "$have" = provisioning ] || fail "device runs the ${have:-unknown} image, not the provisioning image"
 	[ -n "${SIGNING_IMX:-}" ] || fail "device runs the provisioning image; set SIGNING_IMX or load the signing image and rerun"
-	curl -sf -m 5 --interface "$SOURCE" -X POST "$SIGNER/reset" > /dev/null || true
+	curl -sf -m 5 --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/reset" > /dev/null || true
 	sleep 3
 	"${ARMORY_BOOT:-armory-boot-usb}" -i "$SIGNING_IMX"
 	for _ in $(seq 1 60); do
@@ -206,7 +206,7 @@ else
 need_build provisioning
 jq -n --argjson id "$COLD_KEY_ID" --arg key "$(jq -r .cborHex pool-cold.skey)" \
 	'{cold_key_id: $id, signing_key: $key}' |
-	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/cold" --data-binary @- > cold.json.new
+	curl -sf --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/provision/cold" --data-binary @- > cold.json.new
 cat cold.json.new
 mv cold.json.new cold.json
 fi
@@ -236,7 +236,7 @@ need_build provisioning
 jq -n --arg name "$PROFILE" --argjson slot "$SLOT" --argjson id "$COLD_KEY_ID" --arg reward "$REWARD_HEX" \
 	--arg owner "$(jq -r .cborHex owner.skey)" \
 	'{name: $name, network_id: 0, slot: $slot, cold_key_id: $id, reward_account: $reward, owner_signing_key: $owner}' |
-	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/profile" --data-binary @- > profile.json.new
+	curl -sf --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/provision/profile" --data-binary @- > profile.json.new
 cat profile.json.new
 mv profile.json.new profile.json
 fi
@@ -260,7 +260,7 @@ if jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json > /dev/null 
 	pass "host key registered in an earlier run"
 else
 need_build provisioning
-curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/host-key" --data-binary @host-key.pub > host-key.json.new
+curl -sf --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/provision/host-key" --data-binary @host-key.pub > host-key.json.new
 mv host-key.json.new host-key.json
 fi
 check "host key registered" jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json
