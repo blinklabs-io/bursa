@@ -348,10 +348,11 @@ also refuses a response produced for another profile.
 The firmware also answers sign requests at version `bursa-attested-signer/2`,
 which `armory-pool witness` sends for `tx-body`. The reply echoes that version
 and adds `summary`, the signing policy's description of the body (for a pool
-registration: pledge, cost, margin, relays, and the first four bytes of the VRF
-key hash and metadata hash as `vrf=` and `meta=`, `meta=none` without
-metadata). Its binding appends the summary as one more length-prefixed field
-after the signature, present even when empty. A
+registration: pledge, cost, margin, relays, the first four bytes of the VRF
+key hash as `vrf=`, and up to the first four bytes of the metadata hash as
+`meta=`, a shorter hash whole and `meta=none` without metadata). Its binding
+appends the summary as one more length-prefixed field after the signature,
+present even when empty. A
 version-1 request gets the version-1 reply and binding, without `summary`.
 Inventory and challenge replies stay at version 1.
 
