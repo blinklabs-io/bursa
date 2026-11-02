@@ -133,7 +133,8 @@ func (s *Service) challengeMAC(body []byte) []byte {
 // challenge issues a one-time challenge. It is stateless: the challenge
 // carries its issue time and a MAC under a key generated at boot, so no
 // number of unauthenticated requests can evict or exhaust a challenge the
-// host holds. Challenges expire after challengeTTL.
+// host holds. Challenges expire after challengeTTL. Each request also forgets
+// used challenges that have expired.
 func (s *Service) challenge(struct{}) (ChallengeResponse, error) {
 	if len(s.challengeKey) == 0 {
 		k := make([]byte, 32)
@@ -153,7 +154,10 @@ func (s *Service) challenge(struct{}) (ChallengeResponse, error) {
 		return ChallengeResponse{}, errDevice
 	}
 
-	binary.BigEndian.PutUint64(c, uint64(s.clock().UnixNano())) //nolint:gosec // post-epoch time
+	now := s.clock()
+	s.purgeUsed(now)
+
+	binary.BigEndian.PutUint64(c, uint64(now.UnixNano())) //nolint:gosec // post-epoch time
 	copy(c[challengeBody:], s.challengeMAC(c[:challengeBody]))
 
 	return ChallengeResponse{Version: Protocol, Challenge: c}, nil
@@ -178,11 +182,7 @@ func (s *Service) takeChallenge(ch []byte) error {
 		return errBad
 	}
 
-	for k, t := range s.usedChallenges {
-		if now.Sub(t) >= challengeTTL {
-			delete(s.usedChallenges, k)
-		}
-	}
+	s.purgeUsed(now)
 
 	var key [challengeSize]byte
 
@@ -193,12 +193,38 @@ func (s *Service) takeChallenge(ch []byte) error {
 	}
 
 	if s.usedChallenges == nil {
-		s.usedChallenges = map[[challengeSize]byte]time.Time{}
+		s.usedChallenges = map[[challengeSize]byte]struct{}{}
 	}
 
-	s.usedChallenges[key] = issued
+	s.usedChallenges[key] = struct{}{}
+	s.usedOrder = append(s.usedOrder, usedChallenge{expires: now.Add(challengeTTL), key: key})
 
 	return nil
+}
+
+// usedChallenge is a burned challenge and when it may be forgotten.
+type usedChallenge struct {
+	expires time.Time
+	key     [challengeSize]byte
+}
+
+// purgeUsed forgets used challenges that have expired. The queue is in use
+// order and each entry expires challengeTTL after its use, never before its
+// issue time plus challengeTTL, so the front expires first and the purge
+// visits only the entries it drops.
+func (s *Service) purgeUsed(now time.Time) {
+	n := 0
+
+	for n < len(s.usedOrder) && !now.Before(s.usedOrder[n].expires) {
+		delete(s.usedChallenges, s.usedOrder[n].key)
+		n++
+	}
+
+	if n == len(s.usedOrder) {
+		s.usedOrder = nil
+	} else {
+		s.usedOrder = s.usedOrder[n:]
+	}
 }
 
 // authenticate checks a signing request against the registered host keys:

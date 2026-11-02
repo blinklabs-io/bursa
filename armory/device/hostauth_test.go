@@ -558,3 +558,62 @@ func TestChallengeUsedSetAgesOut(t *testing.T) {
 		t.Fatalf("used set holds %d entries after expiry", len(s.usedChallenges))
 	}
 }
+
+// A challenge request drops used entries that have expired, so a burst of
+// signatures is not held until the next authenticated sign.
+func TestChallengeRequestPurgesExpiredUsed(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newHostAuthService(t)
+	now := time.Now()
+	s.now = func() time.Time { return now }
+
+	for i := range 5 {
+		if r := postSign(t, s, authenticate(opcertRequest(t, s, chip, byte(i+1)), testHostKey, challenge(t, s))); r.Error != "" {
+			t.Fatalf("sign %d refused: %s", i, r.Error)
+		}
+	}
+
+	now = now.Add(challengeTTL)
+	challenge(t, s)
+
+	if len(s.usedChallenges) != 0 {
+		t.Fatalf("used set holds %d entries after expiry", len(s.usedChallenges))
+	}
+}
+
+// Challenges used out of issue order stay burned until they expire: when the
+// older one expires, the newer one is still refused on replay.
+func TestChallengeOutOfOrderReplayRefused(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newHostAuthService(t)
+	t0 := time.Now()
+	now := t0
+	s.now = func() time.Time { return now }
+
+	older := challenge(t, s)
+	now = t0.Add(50 * time.Second)
+	newer := challenge(t, s)
+
+	if r := postSign(t, s, authenticate(opcertRequest(t, s, chip, 1), testHostKey, newer)); r.Error != "" {
+		t.Fatalf("newer refused: %s", r.Error)
+	}
+
+	now = t0.Add(55 * time.Second)
+
+	if r := postSign(t, s, authenticate(opcertRequest(t, s, chip, 2), testHostKey, older)); r.Error != "" {
+		t.Fatalf("older refused: %s", r.Error)
+	}
+
+	now = t0.Add(challengeTTL + 5*time.Second)
+
+	if r := postSign(t, s, authenticate(opcertRequest(t, s, chip, 3), testHostKey, newer)); !strings.Contains(r.Error, "challenge") {
+		t.Fatalf("replayed newer challenge: %+v", r)
+	}
+
+	// control: a fresh challenge at the same time signs
+	if r := postSign(t, s, authenticate(opcertRequest(t, s, chip, 4), testHostKey, challenge(t, s))); r.Error != "" {
+		t.Fatalf("fresh challenge refused: %s", r.Error)
+	}
+}

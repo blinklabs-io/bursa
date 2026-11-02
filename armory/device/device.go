@@ -205,9 +205,10 @@ type Service struct {
 	hostKeysBad     bool
 	requireHostAuth bool
 	// challengeKey MACs issued challenges; usedChallenges holds burned ones
-	// until they would expire
+	// until they would expire, and usedOrder queues them for expiry
 	challengeKey   []byte
-	usedChallenges map[[challengeSize]byte]time.Time
+	usedChallenges map[[challengeSize]byte]struct{}
+	usedOrder      []usedChallenge
 	// now replaces time.Now in tests
 	now func() time.Time
 	// network, when fixed, is the only network id whose profiles this
