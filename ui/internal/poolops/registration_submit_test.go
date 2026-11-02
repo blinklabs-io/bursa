@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
@@ -209,6 +210,7 @@ func TestSubmitRegistrationRefusals(t *testing.T) {
 		funds   uint64
 		setup   func(f *registrationFixture, p *RegistrationParams)
 		wantErr error
+		wantMsg string
 	}{
 		{
 			name:  "owner not controlled by wallet",
@@ -232,6 +234,7 @@ func TestSubmitRegistrationRefusals(t *testing.T) {
 			setup: func(f *registrationFixture, _ *RegistrationParams) {
 				f.reg.err = errors.New("node unavailable")
 			},
+			wantMsg: "check pool registration: node unavailable",
 		},
 		{
 			name:  "no registry configured",
@@ -239,10 +242,12 @@ func TestSubmitRegistrationRefusals(t *testing.T) {
 			setup: func(f *registrationFixture, _ *RegistrationParams) {
 				f.svc.SetPoolRegistry(nil)
 			},
+			wantMsg: "no pool registry configured",
 		},
 		{
-			name:  "new registration cannot cover deposit",
-			funds: 5_000_000,
+			name:    "new registration cannot cover deposit",
+			funds:   5_000_000,
+			wantMsg: "insufficient UTxOs to cover required value",
 		},
 	}
 	for _, tc := range cases {
@@ -259,6 +264,9 @@ func TestSubmitRegistrationRefusals(t *testing.T) {
 			}
 			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantMsg != "" && !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.wantMsg)
 			}
 			if len(f.chain.submitCbor) != 0 {
 				t.Fatal("a transaction was submitted despite the refusal")
