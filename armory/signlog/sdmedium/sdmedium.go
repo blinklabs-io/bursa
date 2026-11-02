@@ -118,9 +118,12 @@ func (m *Medium) check(lba uint64, n int) error {
 }
 
 // once runs op and, if it fails, re-detects the card and runs it once more,
-// so a card that was reseated or glitched does not wedge the device until
-// reboot. Reads and writes of whole blocks are idempotent. It reports
-// whether op succeeded only after a re-detect.
+// so a transient transfer error does not wedge the device. It does not bring
+// back a card that was pulled and reinserted: usdhc.Detect re-initialises
+// only after the controller latched a card removal, which it does not on the
+// Mk II, so a reseated card keeps failing until the device restarts. Reads
+// and writes of whole blocks are idempotent. It reports whether op succeeded
+// only after a re-detect.
 func (m *Medium) once(op func() error) (bool, error) {
 	err := op()
 	if err == nil {
