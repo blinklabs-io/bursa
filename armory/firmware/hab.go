@@ -49,21 +49,25 @@ func habEvent() []byte {
 }
 
 // habStackGuard grows the goroutine stack ahead of the ROM calls, which run
-// on it without the runtime's stack checks.
+// on it without the runtime's stack checks. The loop keeps the compiler from
+// folding pad away, so the 4 KiB frame and its stack check stay in the
+// function.
 //
 //go:noinline
-func habStackGuard() byte {
+func habStackGuard(fill byte) byte {
 	var pad [4096]byte
 
-	pad[0] = 1
+	for i := range pad {
+		pad[i] = fill
+	}
 
-	return pad[len(pad)-1] + pad[0]
+	return pad[len(pad)-1]
 }
 
 // romCall grows the stack and calls the ROM with nothing in between that
 // could let the runtime shrink it again.
 func romCall(fn, r0, r1, r2, r3 uint32) uint32 {
-	habStackGuard()
+	habStackGuard(1)
 
 	return habCall(fn, r0, r1, r2, r3)
 }
