@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/blinklabs-io/bursa/armory/policy"
 	"github.com/blinklabs-io/bursa/armory/profile"
@@ -203,7 +204,13 @@ type Service struct {
 	hostKeys        [][]byte
 	hostKeysBad     bool
 	requireHostAuth bool
-	challenges      [][]byte
+	// challengeKey MACs issued challenges; usedChallenges holds burned ones
+	// until they would expire, and usedOrder queues them for expiry
+	challengeKey   []byte
+	usedChallenges map[[challengeSize]byte]struct{}
+	usedOrder      []usedChallenge
+	// now replaces time.Now in tests
+	now func() time.Time
 	// network, when fixed, is the only network id whose profiles this
 	// build provisions and serves; chain, when set, is the only profile name
 	// suffix ("name@chain") it accepts
