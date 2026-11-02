@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,17 +96,59 @@ func AdminRoutes() map[string]bool {
 	return routes
 }
 
-// canonicalRequest is the JSON of req with its authentication fields empty:
-// what the host key signs a digest of.
+// secretHolder is a request that carries private keys.
+type secretHolder interface {
+	secrets() []*string
+}
+
+// secrets returns the cborHex signing key of the request.
+func (r *ColdRequest) secrets() []*string { return []*string{&r.SigningKey} }
+
+// secrets returns the cborHex owner signing key of the request.
+func (r *ProvisionRequest) secrets() []*string { return []*string{&r.OwnerSigningKey} }
+
+// keyDigest is the hex SHA-256 of the bytes a cborHex private key decodes to:
+// the canonical request binds the key by it, so the key itself never passes
+// through encoding/json, whose pooled buffers are not cleared. The decoded key
+// and the raw digest are cleared once encoded.
+func keyDigest(cborHex string) string {
+	key, err := hex.DecodeString(cborHex)
+	if err != nil {
+		key = []byte(cborHex)
+	}
+
+	defer clear(key)
+
+	sum := sha256.Sum256(key)
+	defer clear(sum[:])
+
+	return hex.EncodeToString(sum[:])
+}
+
+// canonicalRequest is the JSON of req with its authentication fields empty
+// and each private key replaced by its keyDigest: what the host key signs a
+// digest of.
 func canonicalRequest(req hostAuthed) ([]byte, error) {
 	a := req.hostAuth()
 	saved := *a
 	*a = HostAuth{}
 
-	b, err := json.Marshal(req)
-	*a = saved
+	defer func() { *a = saved }()
 
-	return b, err
+	if h, ok := req.(secretHolder); ok {
+		for _, p := range h.secrets() {
+			if *p == "" {
+				continue
+			}
+
+			key := *p
+			*p = keyDigest(key)
+
+			defer func() { *p = key }()
+		}
+	}
+
+	return json.Marshal(req)
 }
 
 // AdminBinding is the digest a host key signs to authenticate a request to

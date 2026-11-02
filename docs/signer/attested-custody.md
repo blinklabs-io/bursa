@@ -404,8 +404,12 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   refused too; use a signed `/provision/cold`.
 - The signature is an Ed25519 signature over `AdminBinding`: the domain
   `bursa-armory-admin/1`, the route, the request as the device's Go types
-  encode it with the three fields empty, and the challenge, each
-  length-prefixed as in the request binding. The challenge is one-time.
+  encode it with the three fields empty and each private key (`signing_key`
+  of `/provision/cold`, `owner_signing_key` of `/provision/profile`) replaced
+  by the hex SHA-256 of its decoded bytes, and the challenge, each
+  length-prefixed as in the request binding. The signature thus binds the
+  exact key while the key never passes through the JSON encoder used for the
+  binding. The challenge is one-time.
 - A host key list the device cannot read refuses every authenticated route,
   because no key is left to check a signature against.
 - `POST /wipe/device` stays confirmed by the identity public key alone and
