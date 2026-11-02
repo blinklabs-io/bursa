@@ -53,6 +53,9 @@
 
 set -euo pipefail
 
+# everything the script creates, keys included, is private to this user
+umask 077
+
 BURSA=${BURSA:-bursa}
 ARMORY_POOL=${ARMORY_POOL:-armory-pool}
 SIGNER=${SIGNER:-http://10.0.0.1}
@@ -80,6 +83,7 @@ BURSA=$(abs "$BURSA")
 ARMORY_POOL=$(abs "$ARMORY_POOL")
 if [ -n "${OPCERT_CHECK:-}" ]; then OPCERT_CHECK=$(abs "$OPCERT_CHECK"); fi
 mkdir -p "$WORK"
+chmod 700 "$WORK"
 WORK=$(realpath "$WORK")
 
 step() { printf '\n== %s\n' "$*"; }
@@ -201,6 +205,13 @@ wait_for() {
 echo "work directory: $WORK"
 cd "$WORK"
 
+# pool-cold.skey and owner.skey are derived from pool/seed.txt again when a
+# rerun needs them, so no exit path leaves them behind. The seed, vrf.skey,
+# kes.skey and reward.skey stay: a rerun needs them and the seed is the only
+# record of a pool whose cold key is already on the device. They live in $WORK,
+# which is mode 0700.
+trap 'rm -f pool-cold.skey owner.skey' EXIT
+
 step "Preflight"
 q tip | tee tip.json
 check "node is in Conway" jq -e '.era | ascii_downcase == "conway"' tip.json
@@ -240,8 +251,11 @@ if jq -e '.pool_id | length == 56' cold.json > /dev/null 2>&1; then
 	pass "cold key imported in an earlier run"
 else
 need_build provisioning
-jq -n --argjson id "$COLD_KEY_ID" --arg key "$(jq -r .cborHex pool-cold.skey)" \
-	'{cold_key_id: $id, signing_key: $key}' |
+[ -s pool-cold.skey ] || "$BURSA" key pool-cold --mnemonic-file pool/seed.txt \
+	--signing-key-file pool-cold.skey --verification-key-file pool-cold.vkey
+# the key is read from a file: an argument would show in the process list
+jq -n --argjson id "$COLD_KEY_ID" --slurpfile key pool-cold.skey \
+	'{cold_key_id: $id, signing_key: $key[0].cborHex}' |
 	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/cold" --data-binary @- > cold.json.new
 cat cold.json.new
 mv cold.json.new cold.json
@@ -267,11 +281,13 @@ step "Provision profile $PROFILE in slot $SLOT"
 if jq -e '.owner_key_hash | length == 56' profile.json > /dev/null 2>&1; then
 	pass "profile provisioned in an earlier run"
 else
-[ -s owner.skey ] || fail "owner.skey missing: derive it again from pool/seed.txt"
+[ -s owner.vkey ] || fail "owner.vkey missing: the owner key was generated on the device"
 need_build provisioning
+[ -s owner.skey ] || "$BURSA" key pool-owner --mnemonic-file pool/seed.txt \
+	--signing-key-file owner.skey --verification-key-file owner.vkey
 jq -n --arg name "$PROFILE" --argjson slot "$SLOT" --argjson id "$COLD_KEY_ID" --arg reward "$REWARD_HEX" \
-	--arg owner "$(jq -r .cborHex owner.skey)" \
-	'{name: $name, network_id: 0, slot: $slot, cold_key_id: $id, reward_account: $reward, owner_signing_key: $owner}' |
+	--slurpfile owner owner.skey \
+	'{name: $name, network_id: 0, slot: $slot, cold_key_id: $id, reward_account: $reward, owner_signing_key: $owner[0].cborHex}' |
 	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/profile" --data-binary @- > profile.json.new
 cat profile.json.new
 mv profile.json.new profile.json
