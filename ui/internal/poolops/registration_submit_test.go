@@ -17,6 +17,7 @@ package poolops
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
 	"math/big"
@@ -159,6 +160,13 @@ func assertRegistrationTx(t *testing.T, f registrationFixture, res RegistrationT
 	}
 	if n := len(tx.WitnessSet.VkeyWitnesses.Items()); n != 3 {
 		t.Errorf("vkey witness count = %d, want 3", n)
+	}
+	// Every witness signs the submitted transaction body.
+	bodyHash := lcommon.Blake2b256Hash(tx.Body.Cbor())
+	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
+		if !ed25519.Verify(ed25519.PublicKey(w.Vkey), bodyHash.Bytes(), w.Signature) {
+			t.Errorf("witness %s does not verify over the transaction body", lcommon.Blake2b224Hash(w.Vkey))
+		}
 	}
 }
 
