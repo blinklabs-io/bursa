@@ -25,7 +25,10 @@
 # The device must run the provisioning image (make imx PROVISION=1) for the
 # cold key and profile steps, and the signing image for the rest. With
 # SIGNING_IMX set, the script resets the provisioning image and loads the
-# signing image itself; going back needs the board unplugged.
+# signing image itself; going back needs the board unplugged. The signing
+# image refuses to sign without its log card, and USB recovery mode needs the
+# slot empty, so the script waits for the card to be inserted after the reset,
+# before it loads the signing image.
 #
 # Required environment:
 #   SOCKET        node-to-client socket of a synced Preview node that answers
@@ -89,21 +92,50 @@ device_build() {
 	curl -sf -m 5 --interface "$SOURCE" "$SIGNER/" | grep -oE '(signing|provisioning) build' | head -n 1 | cut -d' ' -f1
 }
 
+# log_open waits for the signing image to finish starting and checks that
+# it opened its signing log.
+log_open() {
+	local report="" line
+	for _ in $(seq 1 30); do
+		report=$(curl -sf -m 5 --interface "$SOURCE" "$SIGNER/" || true)
+		grep -q '^RESULT:' <<< "$report" && break
+		sleep 2
+	done
+	line=$(grep -m 1 '^signing log:' <<< "$report" || true)
+	case $line in
+	"signing log: open"*) return 0 ;;
+	esac
+	fail "the signing image has no signing log (${line:-no signing log line}); insert the log card in USB recovery mode, before the signing image starts"
+}
+
 # need_build makes sure the device runs the provisioning or signing image.
 need_build() {
 	local want=$1 have
 	have=$(device_build || true)
-	[ "$have" = "$want" ] && return 0
+	if [ "$have" = "$want" ]; then
+		[ "$want" = signing ] && log_open
+		return 0
+	fi
 	if [ "$want" = provisioning ]; then
 		fail "device runs the ${have:-unknown} image; unplug it, load the provisioning image and rerun"
 	fi
 	[ "$have" = provisioning ] || fail "device runs the ${have:-unknown} image, not the provisioning image"
-	[ -n "${SIGNING_IMX:-}" ] || fail "device runs the provisioning image; set SIGNING_IMX or load the signing image and rerun"
+	[ -n "${SIGNING_IMX:-}" ] || fail "device runs the provisioning image; set SIGNING_IMX, or load the signing image with the log card in and rerun"
 	curl -sf -m 5 --interface "$SOURCE" -X POST "$SIGNER/reset" > /dev/null || true
 	sleep 3
+	# the board now waits in USB recovery mode, which a card in the slot
+	# would have blocked at power-up; the signing image reads the card when
+	# it starts
+	(: < /dev/tty) 2> /dev/null || fail "no terminal to wait for the signing log card; load the signing image with the card in and rerun"
+	printf 'Insert the signing log card into the board, then press Enter: ' > /dev/tty
+	read -r _ < /dev/tty
 	"${ARMORY_BOOT:-armory-boot-usb}" -i "$SIGNING_IMX"
 	for _ in $(seq 1 60); do
-		[ "$(device_build || true)" = signing ] && { pass "signing image loaded"; return 0; }
+		if [ "$(device_build || true)" = signing ]; then
+			log_open
+			pass "signing image loaded with its signing log"
+			return 0
+		fi
 		sleep 2
 	done
 	fail "device did not come back with the signing image"
