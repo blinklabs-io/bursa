@@ -382,6 +382,38 @@ A device with a registered host key refuses requests without it. The file
 must not be readable by group or others, and an unreadable or malformed file
 fails startup.
 
+### Cold key provisioning
+
+The provisioning firmware's `POST /provision/cold` puts a cold key in a free
+cold key object (`0x20e50010`-`0x20e5001f`) in one of two ways. An existing
+object is never replaced.
+
+- Import: `{"cold_key_id": N, "signing_key": "<cborHex>"}` stores the key given
+  as the cardano-cli `cborHex` (`5820` and the 32-byte seed). Repeating the
+  request with the same key confirms the earlier import.
+- Generate: `{"cold_key_id": N, "generate": true}`, with no `signing_key`,
+  creates the key inside the SE050. A request with both is refused.
+
+Both return `public_key`, `pool_id` and `origin`, which is `generated` or
+`imported`. The origin is recorded on the device when the key is created, in a
+binary object at the cold key's object ID plus `0x30`
+(`0x20e50040`-`0x20e5004f`), because the driver reads no SE050 object
+attributes. `POST /provision/cold/info` with `{"cold_key_id": N}` returns the
+same fields for an existing key; a key with no record, such as one provisioned
+before origins were recorded, reports `unknown`. A wipe deletes the record with
+the key. The origin is not part of the attested inventory and is not signed:
+it is read from the provisioning firmware, which is not host-key
+authenticated.
+
+A generated cold key has no backup. Its private key cannot leave the SE050, so
+losing, wiping or breaking the device loses the pool: its id, registration and
+stake cannot move to another key. Import a key held elsewhere when the pool
+must outlive the device.
+
+An imported key travels in the request body, and the device zeroes the request
+buffer and the decoded key once the request is done. Copies held by the host
+and the transport, and by the host tool that sent it, are outside that.
+
 ### Signing log
 
 The signing firmware records every signature and opcert it issues in a log on

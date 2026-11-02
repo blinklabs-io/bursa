@@ -49,6 +49,9 @@ type fakeChip struct {
 	// lostImportReply stores an imported key but reports a transport
 	// error, as when the chip's answer is lost after the write
 	lostImportReply bool
+	// lostGenerateReply stores a generated key but reports a transport
+	// error, as when the chip's answer is lost after the generation
+	lostGenerateReply bool
 	// signs counts signatures made
 	signs int
 	// tornWrite stores only half of a binary write and reports success
@@ -86,6 +89,10 @@ func (c *fakeChip) GenerateEd25519(id uint32, _ bool) error {
 
 	_, priv, _ := ed25519.GenerateKey(nil)
 	c.keys[id] = priv
+
+	if c.lostGenerateReply {
+		return errors.New("i2c failure after generate")
+	}
 
 	return nil
 }

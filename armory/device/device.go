@@ -26,7 +26,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -127,9 +126,9 @@ type ProvisionRequest struct {
 	ChainCounter *uint64 `json:"chain_counter,omitempty"`
 	// RewardAccount is the hex reward address pool registrations must name.
 	RewardAccount string `json:"reward_account,omitempty"`
-	// OwnerSigningKey is the cborHex of the owner's Ed25519 signing key.
-	// When empty the owner key is generated in the chip.
-	OwnerSigningKey string `json:"owner_signing_key,omitempty"`
+	// OwnerSigningKey is the cborHex of the owner's Ed25519 signing key,
+	// decoded to bytes. When empty the owner key is generated in the chip.
+	OwnerSigningKey secretHex `json:"owner_signing_key,omitempty"`
 }
 
 // ProvisionResponse returns the profile's generated owner key.
@@ -165,19 +164,26 @@ type FloorResponse struct {
 	OpCertFloor uint64 `json:"opcert_floor"`
 }
 
-// ColdRequest imports a cold signing key into a chosen cold key object.
-// SigningKey is the hex cborHex of a StakePoolSigningKey_ed25519: 5820
-// followed by the 32-byte seed.
+// ColdRequest imports a cold signing key into a chosen cold key object, or
+// generates one in the chip. SigningKey is the hex cborHex of a
+// StakePoolSigningKey_ed25519: 5820 followed by the 32-byte seed, decoded to
+// bytes. Generate asks for a key made inside the chip instead; it is refused
+// together with SigningKey. A generated cold key has no backup: it cannot be
+// read out of the chip, so losing the device loses the pool.
 type ColdRequest struct {
-	ColdKeyID  uint32 `json:"cold_key_id"`
-	SigningKey string `json:"signing_key"`
+	ColdKeyID  uint32    `json:"cold_key_id"`
+	SigningKey secretHex `json:"signing_key,omitempty"`
+	Generate   bool      `json:"generate,omitempty"`
 }
 
-// ColdResponse returns the imported key's public key and pool id, both hex.
+// ColdResponse returns a cold key's public key and pool id, both hex, and
+// its origin: generated in the chip, imported, or unknown for a key with no
+// origin record.
 type ColdResponse struct {
 	ColdKeyID uint32 `json:"cold_key_id"`
 	PublicKey string `json:"public_key"`
 	PoolID    string `json:"pool_id"`
+	Origin    string `json:"origin"`
 }
 
 // IdentityResponse returns the identity public key for pinning in Bursa.
@@ -385,6 +391,7 @@ func (s *Service) provisioningRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /provision/floor", handle(s, s.resetFloor))
 	mux.HandleFunc("POST /provision/reward", handle(s, s.setReward))
 	mux.HandleFunc("POST /provision/cold", handle(s, s.provisionCold))
+	mux.HandleFunc("POST /provision/cold/info", handle(s, s.coldInfo))
 	mux.HandleFunc("POST /provision/host-key", handle(s, s.addHostKey))
 	mux.HandleFunc("POST /provision/host-key/revoke", handle(s, s.revokeHostKey))
 	mux.HandleFunc("POST /provision/identity", handle(s, func(struct{}) (IdentityResponse, error) {
@@ -398,14 +405,12 @@ func handle[Req, Resp any](s *Service, fn func(Req) (Resp, error)) http.HandlerF
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req Req
 
-		// unknown fields are refused, so a misspelled field is not ignored
-		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequest))
-		dec.DisallowUnknownFields()
-
-		if err := dec.Decode(&req); err != nil || dec.Decode(&struct{}{}) != io.EOF {
-			http.Error(w, "malformed request", http.StatusBadRequest)
+		if err := decodeRequest(w, r, &req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+
+		defer clearSecrets(&req)
 
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -754,15 +759,12 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 
 	var ownerSeed []byte
 
-	if req.OwnerSigningKey != "" {
-		key, err := parseSigningKey(req.OwnerSigningKey)
-		defer clear(key)
-
-		if err != nil {
+	if len(req.OwnerSigningKey) > 0 {
+		if err := checkSigningKey(req.OwnerSigningKey); err != nil {
 			return ProvisionResponse{}, err
 		}
 
-		ownerSeed = key[len(coldKeyCBORPrefix):]
+		ownerSeed = req.OwnerSigningKey[len(coldKeyCBORPrefix):]
 	}
 
 	if _, err := profile.Encode(p); err != nil {
@@ -900,16 +902,14 @@ var errMalformedKey = errors.New("malformed signing key: expected cborHex of a 3
 
 var errKeyExists = errors.New("key object already exists with a different key")
 
-// parseSigningKey decodes the cborHex of a 32-byte Ed25519 signing key. The
-// caller clears the returned bytes.
-func parseSigningKey(cborHex string) ([]byte, error) {
-	key, err := hex.DecodeString(cborHex)
-	if err != nil || len(key) != len(coldKeyCBORPrefix)+ed25519.SeedSize || !bytes.HasPrefix(key, coldKeyCBORPrefix) {
-		clear(key)
-		return nil, errMalformedKey
+// checkSigningKey checks the decoded cborHex of a 32-byte Ed25519 signing
+// key.
+func checkSigningKey(key []byte) error {
+	if len(key) != len(coldKeyCBORPrefix)+ed25519.SeedSize || !bytes.HasPrefix(key, coldKeyCBORPrefix) {
+		return errMalformedKey
 	}
 
-	return key, nil
+	return nil
 }
 
 // importKey stores the key of seed in object id. An existing object is never
@@ -953,35 +953,27 @@ func (s *Service) importKey(id uint32, seed []byte) (ed25519.PublicKey, error) {
 	return pub, nil
 }
 
-// provisionCold imports a cold signing key into a free cold key object. The
-// seed is never logged or echoed, and an existing object is never replaced.
+// provisionCold imports a cold signing key into a free cold key object, or
+// generates one in the chip when asked to. The seed is never logged or
+// echoed, and an existing object is never replaced.
 func (s *Service) provisionCold(req ColdRequest) (ColdResponse, error) {
+	if req.Generate && req.SigningKey != nil {
+		return ColdResponse{}, errors.New("generate and signing_key are mutually exclusive")
+	}
+
 	if req.ColdKeyID < coldKeyFirst || req.ColdKeyID > coldKeyLast {
 		return ColdResponse{}, errors.New("cold key id outside the cold key range")
 	}
 
-	key, err := parseSigningKey(req.SigningKey)
-	defer clear(key)
+	if req.Generate {
+		return s.generateCold(req.ColdKeyID)
+	}
 
-	if err != nil {
+	if err := checkSigningKey(req.SigningKey); err != nil {
 		return ColdResponse{}, err
 	}
 
-	pub, err := s.importKey(req.ColdKeyID, key[len(coldKeyCBORPrefix):])
-	if errors.Is(err, errKeyExists) {
-		return ColdResponse{}, errors.New("cold key object already exists with a different key")
-	} else if err != nil {
-		return ColdResponse{}, err
-	}
-
-	h := keyHash(pub)
-	s.logf("imported cold key %#08x pool %x", req.ColdKeyID, h)
-
-	return ColdResponse{
-		ColdKeyID: req.ColdKeyID,
-		PublicKey: hex.EncodeToString(pub),
-		PoolID:    hex.EncodeToString(h[:]),
-	}, nil
+	return s.importCold(req.ColdKeyID, req.SigningKey[len(coldKeyCBORPrefix):])
 }
 
 func (s *Service) provisionIdentity() (IdentityResponse, error) {
