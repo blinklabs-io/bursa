@@ -667,8 +667,7 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 	next := p
 	next.FloorSet, next.OpCertFloor, next.LastIssued = true, floor, issue
 
-	// a record that would not fit is refused before the log entry, so the log
-	// never holds an opcert that was not issued
+	// a record that would not fit is refused before the log entry
 	if _, err = profile.Encode(next); err != nil {
 		return nil, nil, err
 	}
