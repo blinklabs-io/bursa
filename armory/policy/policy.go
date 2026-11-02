@@ -22,8 +22,10 @@ package policy
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 
 	"github.com/blinklabs-io/bursa/armory/profile"
@@ -45,6 +47,10 @@ const (
 type Keys struct {
 	Pool  [28]byte // blake2b-224(cold vkey) = pool id
 	Owner [28]byte // owner stake key hash
+	// Pins, when set, bind pool registrations to the VRF key hash, the
+	// metadata hash and the parameter bounds the operator provisioned. Nil
+	// leaves those fields unchecked.
+	Pins *profile.Pins
 }
 
 // Decision is an allowed signing request.
@@ -68,6 +74,10 @@ var allowedKeys = map[uint64]bool{
 const (
 	keyFee       = 2
 	keyNetworkID = 15
+
+	// hashPrefix is how many bytes of the VRF key and metadata hashes the
+	// registration summary shows.
+	hashPrefix = 4
 
 	// byronAddressType is the first header type without a network nibble.
 	byronAddressType = 8
@@ -216,8 +226,24 @@ func checkCert(p profile.Profile, k Keys, era uint, c common.Certificate) (summa
 			return "", false, false, err
 		}
 
-		summary = fmt.Sprintf("pool-reg pledge=%d cost=%d margin=%s relays=%d leios=%t",
-			c.Pledge, c.Cost, c.Margin.RatString(), len(c.Relays), c.LeiosKey != nil)
+		if k.Pins != nil {
+			if err := checkPins(*k.Pins, c); err != nil {
+				return "", false, false, err
+			}
+		}
+
+		// the hash prefixes let the operator see what the log recorded
+		meta := "none"
+		if c.PoolMetadata != nil {
+			// the ledger leaves the metadata hash length open, so a short
+			// one is shown whole rather than sliced past its end
+			h := c.PoolMetadata.Hash
+			meta = hex.EncodeToString(h[:min(len(h), hashPrefix)])
+		}
+
+		summary = fmt.Sprintf("pool-reg pledge=%d cost=%d margin=%s relays=%d leios=%t vrf=%s meta=%s",
+			c.Pledge, c.Cost, c.Margin.RatString(), len(c.Relays), c.LeiosKey != nil,
+			hex.EncodeToString(c.VrfKeyHash[:hashPrefix]), meta)
 
 		return summary, true, true, nil
 	case *common.PoolRetirementCertificate:
@@ -280,6 +306,40 @@ func checkRewardAccount(p profile.Profile, c *common.PoolRegistrationCertificate
 
 	if !bytes.Equal(got, want) {
 		return errors.New("pool registration reward account is not the profile's reward account")
+	}
+
+	return nil
+}
+
+// checkPins requires a registration to match the pins provisioned for the
+// profile: the VRF key hash and metadata hash exactly, pledge, cost and
+// margin within bounds.
+func checkPins(pins profile.Pins, c *common.PoolRegistrationCertificate) error {
+	if [32]byte(c.VrfKeyHash) != pins.VRFKeyHash {
+		return errors.New("pool registration VRF key hash is not the pinned one")
+	}
+
+	switch {
+	case pins.MetadataHash == nil && c.PoolMetadata != nil:
+		return errors.New("pool registration carries metadata, none is pinned")
+	case pins.MetadataHash != nil && c.PoolMetadata == nil:
+		return errors.New("pool registration has no metadata, a metadata hash is pinned")
+	case pins.MetadataHash != nil && !bytes.Equal(c.PoolMetadata.Hash, pins.MetadataHash[:]):
+		return errors.New("pool registration metadata hash is not the pinned one")
+	}
+
+	if c.Pledge < pins.PledgeMin || c.Pledge > pins.PledgeMax {
+		return fmt.Errorf("pool registration pledge %d outside the pinned bounds", c.Pledge)
+	}
+
+	if c.Cost > pins.CostMax {
+		return fmt.Errorf("pool registration cost %d above the pinned maximum", c.Cost)
+	}
+
+	max := new(big.Rat).SetFrac(new(big.Int).SetUint64(pins.MarginMaxNum), new(big.Int).SetUint64(pins.MarginMaxDen))
+
+	if c.Margin.Rat == nil || c.Margin.Cmp(max) > 0 {
+		return errors.New("pool registration margin above the pinned maximum")
 	}
 
 	return nil
