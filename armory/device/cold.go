@@ -233,9 +233,21 @@ func jsonNames(t reflect.Type, names []string) []string {
 	return names
 }
 
-// writeOrigin records how the cold key id was made.
+// writeOrigin records how the cold key id was made, and fails unless the
+// record reads back as written.
 func (s *Service) writeOrigin(id uint32, origin string) error {
-	if err := s.chip.WriteBinary(coldOriginID(id), []byte(origin)); err != nil {
+	want := []byte(origin)
+
+	err := s.chip.WriteBinary(coldOriginID(id), want)
+	if err == nil {
+		var got []byte
+
+		if got, err = s.chip.ReadBinary(coldOriginID(id)); err == nil && !bytes.Equal(got, want) {
+			err = errors.New("read back differs")
+		}
+	}
+
+	if err != nil {
 		s.logf("write origin %#08x: %v", coldOriginID(id), err)
 		return errDevice
 	}

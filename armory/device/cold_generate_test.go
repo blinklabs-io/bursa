@@ -530,3 +530,39 @@ func TestSecretHexZeroesReplacedKey(t *testing.T) {
 		t.Fatalf("null left %x, want no key", []byte(h))
 	}
 }
+
+// An origin record that reads back different from what was written fails the
+// provision and removes the key the request created, so a retry records it.
+func TestProvisionColdTornOriginRecord(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		req    map[string]any
+		origin string
+	}{
+		"generate": {map[string]any{"cold_key_id": freeColdID, "generate": true}, "generated"},
+		"import":   {map[string]any{"cold_key_id": freeColdID, "signing_key": coldKeyHex(coldSeed)}, "imported"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s, chip, _ := newLoggedService(t)
+			chip.tornWrite = true
+
+			code, _, body := postCold(t, s, "/provision/cold", tc.req)
+			if code == http.StatusOK || !strings.Contains(body, "device error") {
+				t.Fatalf("got %d %q, want a device error", code, body)
+			}
+
+			if ok, _ := chip.Exists(freeColdID); ok {
+				t.Fatal("key left behind with a torn origin record")
+			}
+
+			chip.tornWrite = false
+
+			if code, res, body := postCold(t, s, "/provision/cold", tc.req); code != http.StatusOK || res.Origin != tc.origin {
+				t.Fatalf("retry: %d %s, want origin %s", code, body, tc.origin)
+			}
+		})
+	}
+}
