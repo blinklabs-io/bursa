@@ -90,12 +90,14 @@ func base(net uint8, pay, stake [28]byte) []byte {
 
 func output(addr []byte) []any { return []any{addr, uint64(5_000_000)} }
 
-// baseBody spends one input of the payer back to the payer on testnet.
+// baseBody spends one input of the payer back to the payer on testnet and
+// carries the ttl the policy requires.
 func baseBody() body {
 	return body{
 		0: []any{[]any{make([]byte, 32), uint64(0)}},
 		1: []any{output(base(0, payer, foreign))},
 		2: uint64(200_000),
+		3: uint64(90_000_000),
 	}
 }
 
@@ -171,13 +173,27 @@ func leiosKey() []any {
 // duplicateFee re-encodes baseBody with key 2 appearing twice.
 func duplicateFee() []byte {
 	b := baseBody().cbor()
-	if b[0] != 0xa3 {
+	if b[0] != 0xa4 {
 		panic("unexpected map header")
 	}
 
-	b = append([]byte{0xa4}, b[1:]...)
+	b = append([]byte{0xa5}, b[1:]...)
 
 	b = append(b, encode(uint64(2))...)
+
+	return append(b, encode(uint64(1))...)
+}
+
+// duplicateTTL re-encodes baseBody with key 3 appearing twice.
+func duplicateTTL() []byte {
+	b := baseBody().cbor()
+	if b[0] != 0xa4 {
+		panic("unexpected map header")
+	}
+
+	b = append([]byte{0xa5}, b[1:]...)
+
+	b = append(b, encode(uint64(3))...)
 
 	return append(b, encode(uint64(1))...)
 }
