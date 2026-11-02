@@ -52,6 +52,9 @@ type fakeChip struct {
 	// lostGenerateReply stores a generated key but reports a transport
 	// error, as when the chip's answer is lost after the generation
 	lostGenerateReply bool
+	// failExistsAfterGenerate makes every exist check fail once a key has
+	// been generated, as when the bus drops after the generation
+	failExistsAfterGenerate bool
 	// signs counts signatures made
 	signs int
 	// tornWrite stores only half of a binary write and reports success
@@ -89,6 +92,10 @@ func (c *fakeChip) GenerateEd25519(id uint32, _ bool) error {
 
 	_, priv, _ := ed25519.GenerateKey(nil)
 	c.keys[id] = priv
+
+	if c.failExistsAfterGenerate {
+		c.failExists = true
+	}
 
 	if c.lostGenerateReply {
 		return errors.New("i2c failure after generate")

@@ -400,7 +400,9 @@ binary object at the cold key's object ID plus `0x30`
 (`0x20e50040`-`0x20e5004f`), because the driver reads no SE050 object
 attributes. `POST /provision/cold/info` with `{"cold_key_id": N}` returns the
 same fields for an existing key; a key with no record, such as one provisioned
-before origins were recorded, reports `unknown`. A wipe deletes the record with
+before origins were recorded, reports `unknown`. Repeating the import of such
+a key with its seed records it as `imported`, after which it no longer
+reports `unknown`. A wipe deletes the record with
 the key. The origin is not part of the attested inventory and is not signed:
 it is read from the provisioning firmware, which is not host-key
 authenticated.

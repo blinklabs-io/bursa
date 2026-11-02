@@ -265,7 +265,17 @@ func (s *Service) generateCold(id uint32) (ColdResponse, error) {
 
 		// the object was absent above, so one present now is the key this
 		// call generated and only its answer was lost
-		if ok, xerr := s.chip.Exists(id); xerr != nil || !ok {
+		ok, xerr := s.chip.Exists(id)
+		if xerr != nil {
+			// whatever is there now is this call's, so remove it rather
+			// than leave a key with no origin that blocks a retry
+			s.logf("exist check %#08x: %v", id, xerr)
+			s.discard(id)
+
+			return ColdResponse{}, errDevice
+		}
+
+		if !ok {
 			return ColdResponse{}, errDevice
 		}
 	}

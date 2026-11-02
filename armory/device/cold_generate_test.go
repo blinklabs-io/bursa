@@ -436,6 +436,35 @@ func TestProvisionColdGenerateLostReply(t *testing.T) {
 	}
 }
 
+// A generation whose answer was lost, followed by a failed exist check, may
+// have created the key: it is deleted, so a retry is not refused by a key the
+// device cannot account for.
+func TestProvisionColdGenerateLostReplyUnverified(t *testing.T) {
+	t.Parallel()
+
+	s, chip, _ := newLoggedService(t)
+	chip.lostGenerateReply = true
+	chip.failExistsAfterGenerate = true
+
+	code, _, body := postCold(t, s, "/provision/cold", map[string]any{"cold_key_id": freeColdID, "generate": true})
+	if code == http.StatusOK || !strings.Contains(body, "device error") {
+		t.Fatalf("got %d %q, want a device error", code, body)
+	}
+
+	chip.failExists = false
+	chip.failExistsAfterGenerate = false
+	chip.lostGenerateReply = false
+
+	if ok, _ := chip.Exists(freeColdID); ok {
+		t.Fatal("generated key left behind without an origin record")
+	}
+
+	code, res, body := postCold(t, s, "/provision/cold", map[string]any{"cold_key_id": freeColdID, "generate": true})
+	if code != http.StatusOK || res.Origin != "generated" {
+		t.Fatalf("retry: %d %s, want a generated key", code, body)
+	}
+}
+
 // A key that matches the seed supplied was imported, whatever an earlier
 // record says.
 func TestProvisionColdImportCorrectsStaleOrigin(t *testing.T) {
