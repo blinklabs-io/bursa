@@ -81,6 +81,18 @@ func (c *countingChip) Delete(id uint32) error {
 	return c.Chip.Delete(id)
 }
 
+// readCounter is a request body that counts reads.
+type readCounter struct {
+	io.Reader
+
+	reads atomic.Int64
+}
+
+func (r *readCounter) Read(p []byte) (int, error) {
+	r.reads.Add(1)
+	return r.Reader.Read(p)
+}
+
 // A page in a browser on the host can send a cross-origin POST with a
 // text/plain body, or reach the device under another name by DNS
 // rebinding. Both are refused before the body is read or the chip touched.
@@ -128,7 +140,8 @@ func TestRoutesRefuseForeignRequests(t *testing.T) {
 					cc := &countingChip{Chip: chip}
 					s.chip = cc
 
-					r := jsonRequest(path, strings.NewReader("{}"))
+					body := &readCounter{Reader: strings.NewReader("{}")}
+					r := jsonRequest(path, body)
 					r.Host = tc.host
 					r.Header.Del("Content-Type")
 
@@ -145,6 +158,10 @@ func TestRoutesRefuseForeignRequests(t *testing.T) {
 
 					if n := cc.calls.Load(); n != 0 {
 						t.Errorf("%d chip calls before the request was refused", n)
+					}
+
+					if n := body.reads.Load(); n != 0 {
+						t.Errorf("body read %d times before the request was refused", n)
 					}
 				})
 			}
