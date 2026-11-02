@@ -493,3 +493,75 @@ func TestOpCertNextRepeatIsNotLogged(t *testing.T) {
 		t.Fatalf("verify: %v, %d entries", err, len(log.Entries))
 	}
 }
+
+// failHeads is a head store whose Store fails on demand.
+type failHeads struct {
+	*signlog.MemHeadStore
+	fail bool
+}
+
+func (h *failHeads) Store(head signlog.Head) error {
+	if h.fail {
+		return errors.New("injected head store failure")
+	}
+
+	return h.MemHeadStore.Store(head)
+}
+
+// A reissue whose head update failed was refused, so a retry of it is not a
+// repeat: the signature is released only once the head store holds an entry
+// for it.
+func TestOpCertNextRetryAfterHeadFailureIsLogged(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	_, priv, _ := ed25519.GenerateKey(nil)
+	m := signlog.NewMemMedium(1 + 8*signlog.RecordBlocks)
+	hs := &failHeads{MemHeadStore: signlog.NewMemHeadStore(signlog.Head{})}
+
+	w, err := signlog.Open(m, hs, signlog.NewKeySigner(priv))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.RequireSigningLog()
+	s.SetSigningLog(w, m)
+
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	n := byte(0)
+
+	issue := func(kes []byte) SignResponse {
+		t.Helper()
+
+		n++
+
+		return sign(t, s, SignRequest{
+			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(n),
+			Payload: opCertPayload(kes, 3, 1100), Profile: "otg@preview",
+		})
+	}
+
+	if r := issue(bytes.Repeat([]byte{0x4b}, 32)); r.Error != "" {
+		t.Fatalf("first: %+v", r)
+	}
+
+	kesB := bytes.Repeat([]byte{0x4c}, 32)
+	hs.fail = true
+
+	if r := issue(kesB); r.Error == "" || len(r.Signature) != 0 {
+		t.Fatalf("reissue with a failed head update: %+v", r)
+	}
+
+	hs.fail = false
+
+	r := issue(kesB)
+	if r.Error != "" || len(r.Signature) == 0 {
+		t.Fatalf("retry: %+v", r)
+	}
+
+	if head, _ := hs.Load(); head.Seq < 2 {
+		t.Fatalf("signature released with the head store at entry %d", head.Seq)
+	}
+}

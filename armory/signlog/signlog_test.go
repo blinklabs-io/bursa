@@ -1263,3 +1263,37 @@ func TestWriterLast(t *testing.T) {
 		t.Fatalf("last after reopen: %+v %v", got, ok)
 	}
 }
+
+// An entry whose head update failed is not reported by Last: the caller may
+// not release a signature on it until the head store holds it.
+func TestWriterLastSkipsUnstoredHead(t *testing.T) {
+	t.Parallel()
+
+	f, fm, fh := newFaultFixture(t, 8)
+
+	w, err := Open(fm, fh, f.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.fill(t, w, 1)
+	fh.setFail(true)
+
+	if _, err = w.Append(opcertRecord(5)); !errors.Is(err, errInjected) {
+		t.Fatalf("got %v, want the injected failure", err)
+	}
+
+	if got, ok := w.Last(); ok {
+		t.Fatalf("last reports entry %d before its head was stored", got.Seq)
+	}
+
+	fh.setFail(false)
+
+	if _, err = w.Append(opcertRecord(5)); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := w.Last(); !ok || got.Seq != 3 {
+		t.Fatalf("last after a stored head: %+v %v", got, ok)
+	}
+}

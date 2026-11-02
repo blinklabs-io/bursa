@@ -92,7 +92,8 @@ func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
 	last := headOf(hdr, entries)
 
 	if n := len(entries); n > 0 {
-		w.last = &entries[n-1]
+		e := entries[n-1]
+		w.last = &e
 	}
 
 	switch {
@@ -204,12 +205,13 @@ func (w *Writer) Head() Head {
 }
 
 // Last returns the latest entry the writer has logged, or false when the log
-// holds none.
+// holds none or the head store does not yet hold the latest entry, which an
+// Append that returned an error leaves unconfirmed.
 func (w *Writer) Last() (Entry, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if w.last == nil {
+	if w.last == nil || w.pending != nil {
 		return Entry{}, false
 	}
 
