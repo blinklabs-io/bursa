@@ -56,8 +56,8 @@ habtool -C SRK_1_key.pem -c SRK_1_crt.pem \
 )
 ```
 
-The subshell stops at the first failure, so an existing `hab-keys` directory
-is never written into.
+Run it in a fresh location: the subshell stops at the first failure, so an
+existing `hab-keys` directory is never written into.
 
 `SRK_1_2_3_4_fuse.bin` is the 32-byte hash that would be fused; it is public.
 Back up the SRK private keys and the whole directory offline: a lost key
