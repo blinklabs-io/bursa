@@ -17,8 +17,12 @@ package device
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
+	"time"
 )
 
 const (
@@ -29,10 +33,14 @@ const (
 	maxHostKeys        = 4
 	hostKeysLen        = maxHostKeys * ed25519.PublicKeySize
 
+	// challengeSize is the wire size of a challenge: 8 bytes of issue time
+	// (Unix nanoseconds, big endian), 8 random bytes and a 16-byte MAC over
+	// both under a key generated at boot.
 	challengeSize = 32
-	// maxChallenges is how many unused challenges are kept; issuing more
-	// drops the oldest.
-	maxChallenges = 16
+	challengeTime = 8
+	challengeBody = 16
+	// challengeTTL is how long an issued challenge stays valid.
+	challengeTTL = 60 * time.Second
 )
 
 // ChallengeResponse carries a one-time challenge for an authenticated
@@ -105,22 +113,92 @@ func (s *Service) loadHostKeys(chip Chip) error {
 	return nil
 }
 
-// challenge issues a one-time challenge.
+// clock returns the current time, from the test hook when set.
+func (s *Service) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+
+	return time.Now()
+}
+
+// challengeMAC returns the MAC of a challenge body under the boot key.
+func (s *Service) challengeMAC(body []byte) []byte {
+	m := hmac.New(sha256.New, s.challengeKey)
+	m.Write(body)
+
+	return m.Sum(nil)[:challengeSize-challengeBody]
+}
+
+// challenge issues a one-time challenge. It is stateless: the challenge
+// carries its issue time and a MAC under a key generated at boot, so no
+// number of unauthenticated requests can evict or exhaust a challenge the
+// host holds. Challenges expire after challengeTTL.
 func (s *Service) challenge(struct{}) (ChallengeResponse, error) {
+	if len(s.challengeKey) == 0 {
+		k := make([]byte, 32)
+
+		if _, err := rand.Read(k); err != nil {
+			s.logf("challenge key: %v", err)
+			return ChallengeResponse{}, errDevice
+		}
+
+		s.challengeKey = k
+	}
+
 	c := make([]byte, challengeSize)
 
-	if _, err := rand.Read(c); err != nil {
+	if _, err := rand.Read(c[challengeTime:challengeBody]); err != nil {
 		s.logf("challenge: %v", err)
 		return ChallengeResponse{}, errDevice
 	}
 
-	s.challenges = append(s.challenges, c)
-
-	if len(s.challenges) > maxChallenges {
-		s.challenges = s.challenges[len(s.challenges)-maxChallenges:]
-	}
+	binary.BigEndian.PutUint64(c, uint64(s.clock().UnixNano())) //nolint:gosec // post-epoch time
+	copy(c[challengeBody:], s.challengeMAC(c[:challengeBody]))
 
 	return ChallengeResponse{Version: Protocol, Challenge: c}, nil
+}
+
+// takeChallenge burns challenge ch: it must carry this boot's MAC, be younger
+// than challengeTTL and not issued in the future, and not be used already.
+// The used set grows only through calls made after a host signature verified,
+// and drops entries once they would be refused as expired anyway.
+func (s *Service) takeChallenge(ch []byte) error {
+	errBad := errors.New("unknown or used challenge")
+
+	if len(ch) != challengeSize || len(s.challengeKey) == 0 ||
+		!hmac.Equal(ch[challengeBody:], s.challengeMAC(ch[:challengeBody])) {
+		return errBad
+	}
+
+	now := s.clock()
+	issued := time.Unix(0, int64(binary.BigEndian.Uint64(ch))) //nolint:gosec // bounded by MAC
+
+	if age := now.Sub(issued); age < 0 || age >= challengeTTL {
+		return errBad
+	}
+
+	for k, t := range s.usedChallenges {
+		if now.Sub(t) >= challengeTTL {
+			delete(s.usedChallenges, k)
+		}
+	}
+
+	var key [challengeSize]byte
+
+	copy(key[:], ch)
+
+	if _, used := s.usedChallenges[key]; used {
+		return errBad
+	}
+
+	if s.usedChallenges == nil {
+		s.usedChallenges = map[[challengeSize]byte]time.Time{}
+	}
+
+	s.usedChallenges[key] = issued
+
+	return nil
 }
 
 // authenticate checks a signing request against the registered host keys:
@@ -165,14 +243,7 @@ func (s *Service) authenticateHost(hostKey, sig, challenge, binding []byte) erro
 		return errors.New("host signature does not verify")
 	}
 
-	for i, c := range s.challenges {
-		if bytes.Equal(c, challenge) {
-			s.challenges = append(s.challenges[:i], s.challenges[i+1:]...)
-			return nil
-		}
-	}
-
-	return errors.New("unknown or used challenge")
+	return s.takeChallenge(challenge)
 }
 
 func validHostKey(k []byte) error {

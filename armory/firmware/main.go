@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/usbarmory/tamago/soc/nxp/imx6ul"
 
@@ -124,5 +125,15 @@ func main() {
 		log.Fatalf("listen: %v", err)
 	}
 
-	log.Fatal(http.Serve(l, nil))
+	// A peer that opens connections and never finishes a request must not
+	// hold them. WriteTimeout covers the slowest legitimate request, a
+	// signature plus the signing-log write, with wide margin.
+	srv := &http.Server{
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
+
+	log.Fatal(srv.Serve(l))
 }
