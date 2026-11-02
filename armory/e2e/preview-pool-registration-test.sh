@@ -111,9 +111,13 @@ run rerun
 grep -q 'device runs the provisioning image' "$T/rerun.out" || bad "rerun did not reach the deliberate failure"
 
 [ -s "$T/jq.argv" ] || bad "jq wrapper saw no calls"
-for s in $COLD_SECRET $OWNER_SECRET; do
-	if grep -qaF "$s" "$T/jq.argv"; then bad "signing key $s in jq argv"; fi
-	grep -qaF "$s" "$T/device.stdin" 2> /dev/null || bad "device never received $s"
+# match the bare 32-byte seed, which also covers the 5820-prefixed cborHex;
+# failure messages name the key, never its value
+for k in COLD OWNER; do
+	s=${k}_SECRET
+	s=${!s}
+	if grep -qaF "${s:4}" "$T/jq.argv"; then bad "$k signing key seed in jq argv"; fi
+	grep -qaF "$s" "$T/device.stdin" 2> /dev/null || bad "device never received the $k signing key"
 done
 
 [ "$(stat -c %a "$WORK")" = 700 ] || bad "WORK mode $(stat -c %a "$WORK"), want 700"
