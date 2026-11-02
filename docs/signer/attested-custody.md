@@ -387,7 +387,9 @@ fails startup.
 The provisioning and wipe images authenticate requests with the host keys the
 signing routes use. A host key is registered for the network and chain of the
 image that registers it, and an image trusts only keys of its own network and
-chain. The provisioning and wipe images serve `POST /v1/challenge`.
+chain. The exception is a key registered by an image that did not scope host
+keys: it carries no network or chain, and every image but a mainnet one
+trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
 
 - While no host key of any network or chain is registered, the provisioning
   routes take unsigned requests, so a fresh device can be set up. This is the
@@ -415,9 +417,12 @@ chain. The provisioning and wipe images serve `POST /v1/challenge`.
   `POST /wipe/objects` only lists object IDs.
 
 `armory-pool` signs these requests with its host key. The request JSON is read
-from standard input and the device's answer is printed:
+from standard input and the device's answer is printed. `armory-pool host-key
+-out host.skey` writes a new host key and prints the `/provision/host-key`
+request for its public key:
 
 ```sh
+armory-pool host-key -out host.skey > host-key.pub
 armory-pool -host-key host.skey provision host-key < host-key.pub
 armory-pool -host-key host.skey provision cold < cold-request.json
 armory-pool -host-key host.skey provision profile < profile-request.json
@@ -456,9 +461,10 @@ to sign. A device wipe deletes the head object with the identity key; after a
 new identity is provisioned, the signing firmware formats a zeroed card and
 starts a new log. To start a new log under the same identity, the wipe
 firmware's `POST /wipe/signlog`, confirmed with the device identity public key
-as `identity_public_key`, deletes only the head object. The identity public key
-is public, so once a host key is registered the request must also be signed by
-one, as described under Provisioning and wipe authentication. The old card
+as `identity_public_key`, deletes only the head object. Only the wipe image
+serves it, so the wipe image must be loaded onto the board. The identity
+public key is public, so once a host key is registered the request must also
+be signed by one, as described under Provisioning and wipe authentication. The old card
 is refused once the head is gone, so image it if its entries are wanted, then
 zero it or insert a zeroed card; the signing firmware formats it
 at its next start, with entries numbered from 1 again. The old card's entries
