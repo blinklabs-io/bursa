@@ -18,8 +18,8 @@ package main
 
 import "github.com/blinklabs-io/bursa/armory/se050"
 
-// keyTests runs only in testnet builds; no other build deletes objects at
-// boot.
+// keyTests is the stub for every build but testnet: it logs that the key
+// tests were skipped, because only a testnet build deletes objects at boot.
 func keyTests(r *Report, _ *se050.SE050) bool {
 	r.Logf("key tests skipped (not a testnet build)")
 	return true
