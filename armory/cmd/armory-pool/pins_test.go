@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -31,13 +32,15 @@ func TestPinsRequestPrintsProvisioningBody(t *testing.T) {
 	var out bytes.Buffer
 
 	args := []string{
-		"pins-request", "-profile", "otg@preview", "-vrf-key-hash", vrf, "-metadata-hash", meta,
+		"pins-request", "-profile", profile, "-vrf-key-hash", vrf, "-metadata-hash", meta,
 		"-pledge-min", "100", "-pledge-max", "1000", "-cost-max", "500", "-margin-max", "1/10",
 	}
 
 	if err := run(args, &out); err != nil {
 		t.Fatal(err)
 	}
+
+	printed := bytes.Clone(out.Bytes())
 
 	var req device.PinsRequest
 
@@ -49,7 +52,7 @@ func TestPinsRequestPrintsProvisioningBody(t *testing.T) {
 	}
 
 	want := device.PinsRequest{
-		Profile: "otg@preview", VRFKeyHash: vrf, MetadataHash: meta,
+		Profile: profile, VRFKeyHash: vrf, MetadataHash: meta,
 		PledgeMin: 100, PledgeMax: 1000, CostMax: 500, MarginMaxNum: 1, MarginMaxDen: 10,
 	}
 
@@ -57,25 +60,33 @@ func TestPinsRequestPrintsProvisioningBody(t *testing.T) {
 		t.Errorf("request %+v, want %+v", req, want)
 	}
 
-	// the device accepts the printed request unchanged
+	// the device accepts the printed bytes unchanged
 	r := newRig(t)
+
+	res, err := http.Post(r.srv.URL+"/provision/pins", "application/json", bytes.NewReader(printed))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer res.Body.Close()
 
 	var resp device.PinsResponse
 
-	body, _ := json.Marshal(want)
-	body = bytes.Replace(body, []byte("otg@preview"), []byte(profile), 1)
-	devicePost(t, r.srv, "/provision/pins", json.RawMessage(body), &resp)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("device refused the printed request: %s", res.Status)
+	}
 
-	if resp.Pins.PledgeMax != 1000 {
-		t.Errorf("device response %+v", resp)
+	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil || resp.Pins != want {
+		t.Errorf("device response %+v, %v", resp, err)
 	}
 }
 
 func TestPinsRequestRefusesBadInput(t *testing.T) {
 	t.Parallel()
 
+	vrf := strings.Repeat("11", 32)
 	ok := []string{
-		"pins-request", "-profile", "p", "-vrf-key-hash", "11", "-pledge-max", "5", "-margin-max", "1/10",
+		"pins-request", "-profile", "p", "-vrf-key-hash", vrf, "-pledge-max", "5", "-margin-max", "1/10",
 	}
 
 	if err := run(ok, &bytes.Buffer{}); err != nil {
@@ -83,12 +94,17 @@ func TestPinsRequestRefusesBadInput(t *testing.T) {
 	}
 
 	for name, args := range map[string][]string{
-		"no margin":        {"pins-request", "-profile", "p", "-vrf-key-hash", "11"},
-		"margin above one": {"pins-request", "-profile", "p", "-vrf-key-hash", "11", "-margin-max", "3/2"},
-		"zero denominator": {"pins-request", "-profile", "p", "-vrf-key-hash", "11", "-margin-max", "0/0"},
+		"no margin":        {"pins-request", "-profile", "p", "-vrf-key-hash", vrf},
+		"margin above one": {"pins-request", "-profile", "p", "-vrf-key-hash", vrf, "-margin-max", "3/2"},
+		"zero denominator": {"pins-request", "-profile", "p", "-vrf-key-hash", vrf, "-margin-max", "0/0"},
 		"no vrf":           {"pins-request", "-profile", "p", "-margin-max", "1/2"},
-		"pledge range":     {"pins-request", "-profile", "p", "-vrf-key-hash", "11", "-margin-max", "1/2", "-pledge-min", "9", "-pledge-max", "1"},
+		"pledge range":     {"pins-request", "-profile", "p", "-vrf-key-hash", vrf, "-margin-max", "1/2", "-pledge-min", "9", "-pledge-max", "1"},
 		"extra argument":   append(append([]string{}, ok...), "x"),
+		"short vrf":        {"pins-request", "-profile", "p", "-vrf-key-hash", vrf[2:], "-margin-max", "1/2"},
+		"long vrf":         {"pins-request", "-profile", "p", "-vrf-key-hash", vrf + "11", "-margin-max", "1/2"},
+		"non-hex vrf":      {"pins-request", "-profile", "p", "-vrf-key-hash", strings.Repeat("zz", 32), "-margin-max", "1/2"},
+		"short metadata":   append(append([]string{}, ok...), "-metadata-hash", "22"),
+		"non-hex metadata": append(append([]string{}, ok...), "-metadata-hash", strings.Repeat("g2", 32)),
 	} {
 		if err := run(args, &bytes.Buffer{}); err == nil {
 			t.Errorf("%s: accepted", name)

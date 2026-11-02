@@ -15,6 +15,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -60,6 +61,16 @@ func pinsRequest(args []string, out io.Writer) error {
 		return errors.New("-profile and -vrf-key-hash are required, and -pledge-max must not be below -pledge-min")
 	}
 
+	if err := checkHash32("-vrf-key-hash", *vrf); err != nil {
+		return err
+	}
+
+	if *meta != "" {
+		if err := checkHash32("-metadata-hash", *meta); err != nil {
+			return err
+		}
+	}
+
 	req, err := json.Marshal(device.PinsRequest{
 		Profile: *name, VRFKeyHash: *vrf, MetadataHash: *meta,
 		PledgeMin: *pledgeMin, PledgeMax: *pledgeMax, CostMax: *costMax,
@@ -72,4 +83,14 @@ func pinsRequest(args []string, out io.Writer) error {
 	_, err = fmt.Fprintf(out, "%s\n", req)
 
 	return err
+}
+
+// checkHash32 refuses a hash the device would refuse: anything but 32 bytes
+// of hex.
+func checkHash32(flagName, v string) error {
+	if b, err := hex.DecodeString(v); err != nil || len(b) != 32 {
+		return fmt.Errorf("%s must be 32 bytes of hex", flagName)
+	}
+
+	return nil
 }
