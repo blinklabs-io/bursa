@@ -25,7 +25,8 @@ import (
 )
 
 // Armory object ranges the profile package does not name: the bring-up key
-// tests' transient objects, and the fee wallet keys of early builds.
+// tests' transient objects and the testnet raw signing key, and the fee
+// wallet keys of early builds.
 const (
 	bringupFirst uint32 = 0x20e50001
 	bringupLast  uint32 = 0x20e5000f
