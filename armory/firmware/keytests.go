@@ -18,8 +18,9 @@ package main
 
 import "github.com/blinklabs-io/bursa/armory/se050"
 
-// keyTests is skipped in signing builds, which never delete objects at boot.
+// keyTests runs only in testnet builds; no other build deletes objects at
+// boot.
 func keyTests(r *Report, _ *se050.SE050) bool {
-	r.Logf("key tests skipped (signing build)")
+	r.Logf("key tests skipped (not a testnet build)")
 	return true
 }
