@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -172,7 +173,7 @@ func decodeRequest(w http.ResponseWriter, r *http.Request, req any) error {
 }
 
 // refuseUnknownFields fails when the JSON object body names a field req has
-// no JSON tag for, matching names as encoding/json does. The values are
+// no JSON name for, matching names as encoding/json does. The values are
 // discarded unread, so key material is not copied.
 func refuseUnknownFields(body []byte, req any) error {
 	var keys map[string]ignored
@@ -180,25 +181,56 @@ func refuseUnknownFields(body []byte, req any) error {
 		return err
 	}
 
-	t := reflect.TypeOf(req).Elem()
+	names := jsonNames(reflect.TypeOf(req).Elem(), nil)
 
 	for key := range keys {
-		known := false
-
-		for i := range t.NumField() {
-			name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
-			if strings.EqualFold(name, key) {
-				known = true
-				break
-			}
-		}
-
-		if !known {
+		if !slices.ContainsFunc(names, func(name string) bool { return strings.EqualFold(name, key) }) {
 			return errMalformedRequest
 		}
 	}
 
 	return nil
+}
+
+// jsonNames appends the JSON field names of struct type t to names, as
+// encoding/json decodes them: the fields of an embedded struct without a
+// JSON name are its own, an untagged field goes by its Go name, and
+// unexported and "-" fields are not decoded.
+func jsonNames(t reflect.Type, names []string) []string {
+	for i := range t.NumField() {
+		f := t.Field(i)
+
+		tag := f.Tag.Get("json")
+		if tag == "-" {
+			continue
+		}
+
+		name, _, _ := strings.Cut(tag, ",")
+
+		if f.Anonymous && name == "" {
+			ft := f.Type
+			if ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+
+			if ft.Kind() == reflect.Struct {
+				names = jsonNames(ft, names)
+				continue
+			}
+		}
+
+		if !f.IsExported() {
+			continue
+		}
+
+		if name == "" {
+			name = f.Name
+		}
+
+		names = append(names, name)
+	}
+
+	return names
 }
 
 // writeOrigin records how the cold key id was made.

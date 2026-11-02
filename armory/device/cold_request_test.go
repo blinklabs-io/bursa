@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -97,4 +98,78 @@ func TestKeyRequestsMarshalAsHex(t *testing.T) {
 			t.Fatalf("profile: %d %s", code, raw)
 		}
 	})
+}
+
+type embeddedFields struct {
+	Token    string `json:"token,omitempty"`
+	Untagged string
+	Skipped  string `json:"-"`
+}
+
+type PointerFields struct {
+	Nonce string `json:"nonce,omitempty"`
+}
+
+// embeddingRequest carries key material and embeds structs, as a request
+// with shared authentication fields does.
+type embeddingRequest struct {
+	embeddedFields
+	*PointerFields
+	Named embeddedFields `json:"named"`
+	Key   secretHex      `json:"key,omitempty"`
+}
+
+func (r *embeddingRequest) clearSecrets() { clear(r.Key) }
+
+// The unknown-field check accepts the fields of an embedded struct, as
+// encoding/json decodes them, and still refuses fields the request does not
+// have.
+func TestRequestEmbeddedFields(t *testing.T) {
+	t.Parallel()
+
+	key := `"key":"` + coldKeyHex(coldSeed) + `"`
+
+	for name, tc := range map[string]struct {
+		body string
+		ok   bool
+	}{
+		"embedded field":         {`{"token":"a",` + key + `}`, true},
+		"embedded field case":    {`{"TOKEN":"a",` + key + `}`, true},
+		"embedded untagged":      {`{"Untagged":"a",` + key + `}`, true},
+		"embedded pointer field": {`{"nonce":"a",` + key + `}`, true},
+		"named struct":           {`{"named":{"token":"a"},` + key + `}`, true},
+		"misspelled":             {`{"tokn":"a",` + key + `}`, false},
+		"skipped field":          {`{"Skipped":"a",` + key + `}`, false},
+		"embedded struct name":   {`{"embeddedFields":{},` + key + `}`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s, _ := newTestService(t)
+
+			var got embeddingRequest
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /e", handle(s, func(req embeddingRequest) (struct{}, error) {
+				got = req
+				got.Key = nil
+
+				return struct{}{}, nil
+			}))
+
+			req := httptest.NewRequest(http.MethodPost, "/e", strings.NewReader(tc.body))
+			setDeviceHeaders(req)
+
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if ok := w.Code == http.StatusOK; ok != tc.ok {
+				t.Fatalf("got %d %s, want accepted %v", w.Code, w.Body, tc.ok)
+			}
+
+			if tc.ok && got.Token == "" && got.Untagged == "" && got.Named.Token == "" && (got.PointerFields == nil || got.Nonce == "") {
+				t.Fatalf("decoded %+v, want the field set", got)
+			}
+		})
+	}
 }
