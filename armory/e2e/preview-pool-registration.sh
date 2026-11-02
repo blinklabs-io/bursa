@@ -121,12 +121,12 @@ need_build() {
 	fi
 	[ "$have" = provisioning ] || fail "device runs the ${have:-unknown} image, not the provisioning image"
 	[ -n "${SIGNING_IMX:-}" ] || fail "device runs the provisioning image; set SIGNING_IMX, or load the signing image with the log card in and rerun"
+	(: < /dev/tty) 2> /dev/null || fail "no terminal to wait for the signing log card; load the signing image with the card in and rerun"
 	curl -sf -m 5 --interface "$SOURCE" -X POST "$SIGNER/reset" > /dev/null || true
 	sleep 3
 	# the board now waits in USB recovery mode, which a card in the slot
 	# would have blocked at power-up; the signing image reads the card when
 	# it starts
-	(: < /dev/tty) 2> /dev/null || fail "no terminal to wait for the signing log card; load the signing image with the card in and rerun"
 	printf 'Insert the signing log card into the board, then press Enter: ' > /dev/tty
 	read -r _ < /dev/tty
 	"${ARMORY_BOOT:-armory-boot-usb}" -i "$SIGNING_IMX"
