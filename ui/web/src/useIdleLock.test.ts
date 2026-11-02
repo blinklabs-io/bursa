@@ -1,4 +1,5 @@
-import { renderHook, act } from "@testing-library/react";
+import { createElement, Fragment, useLayoutEffect } from "react";
+import { render, renderHook, act } from "@testing-library/react";
 import { useIdleLock } from "./useIdleLock";
 
 function setVisibilityState(value: "hidden" | "visible"): void {
@@ -195,4 +196,26 @@ test("unmounting clears listeners and timer (no calls after unmount)", () => {
     vi.advanceTimersByTime(5 * 60_000);
   });
   expect(onIdle).not.toHaveBeenCalled();
+});
+
+// Input can arrive after React commits the render that enables the lock (the
+// unlocked wallet is already on screen) but before passive effects run. The
+// sibling's layout effect dispatches inside that window; the listeners must
+// already be attached by then or the activity is silently dropped.
+test("activity in the commit that enables the lock is not dropped", () => {
+  const onActivity = vi.fn();
+  function Lock({ enabled }: { enabled: boolean }) {
+    useIdleLock(1, vi.fn(), enabled, onActivity);
+    return null;
+  }
+  function InputDuringCommit() {
+    useLayoutEffect(() => {
+      window.dispatchEvent(new Event("pointerdown"));
+    }, []);
+    return null;
+  }
+  const { rerender, unmount } = render(createElement(Fragment, null, createElement(Lock, { enabled: false })));
+  rerender(createElement(Fragment, null, createElement(Lock, { enabled: true }), createElement(InputDuringCommit)));
+  expect(onActivity).toHaveBeenCalledTimes(1);
+  unmount();
 });

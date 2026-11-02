@@ -18,7 +18,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"time"
 )
 
@@ -29,6 +31,9 @@ func awaitUI(ctx context.Context, url string, _ *slog.Logger, srvErr <-chan erro
 	if err := waitReachable(ctx, url, 15*time.Second, srvErr); err != nil {
 		return err
 	}
+	// This is the trusted handoff for browser mode. Keep it out of the logger,
+	// which may persist to the wallet log file.
+	_, _ = fmt.Fprintln(os.Stderr, "Open Bursa using this authenticated URL:", url)
 
 	select {
 	case <-ctx.Done():

@@ -31,7 +31,7 @@ func multiAccountVault() *fakeVault {
 }
 
 func multiAcctHandler(v *fakeVault, fw *fakeWallet) http.Handler {
-	return NewHandler(readyStatuser(), v, fw, &fakeSpender{}, &fakeSettings{},
+	return NewHandler(testSessionToken, readyStatuser(), v, fw, &fakeSpender{}, &fakeSettings{},
 		&fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 }
 

@@ -12,6 +12,8 @@ import {
   createSurvey,
   cancelSurvey,
   revealSurvey,
+  resolveHandleExternal,
+  setExternalHandleLookup,
 } from "./client";
 
 function mockFetch(status: number, body: unknown) {
@@ -58,6 +60,24 @@ test("generateMnemonic bypasses browser caches", async () => {
   expect(url).toBe("/wallet/mnemonic/generate");
   expect(init.method).toBe("POST");
   expect(init.cache).toBe("no-store");
+});
+
+test("external Handle lookup uses POST with one-use consent", async () => {
+  const lookup = mockFetch(200, { handle: "chris", address: "addr1external", source: "external" });
+  await resolveHandleExternal("$chris");
+  expect(lastRequest(lookup)).toEqual({
+    url: "/wallet/handle/%24chris/external",
+    method: "POST",
+    body: { consent: true },
+  });
+
+  const setting = mockFetch(200, { enabled: true });
+  await setExternalHandleLookup(true);
+  expect(lastRequest(setting)).toEqual({
+    url: "/wallet/settings/external-handle-lookup",
+    method: "PUT",
+    body: { enabled: true },
+  });
 });
 
 // --- Retry / backoff tests ---------------------------------------------------

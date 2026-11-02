@@ -20,26 +20,34 @@ var _ MappedNullable = &BursaTxInspection{}
 
 // BursaTxInspection struct for BursaTxInspection
 type BursaTxInspection struct {
-	CertificateCount       *int32          `json:"certificate_count,omitempty"`
-	CollateralInputs       []BursaTxInput  `json:"collateral_inputs,omitempty"`
-	CollateralReturn       *BursaTxOutput  `json:"collateral_return,omitempty"`
-	Era                    *string         `json:"era,omitempty"`
-	Fee                    *string         `json:"fee,omitempty"`
-	HasMetadata            *bool           `json:"has_metadata,omitempty"`
-	HasMint                *bool           `json:"has_mint,omitempty"`
-	HasTreasuryDonation    *bool           `json:"has_treasury_donation,omitempty"`
-	Inputs                 []BursaTxInput  `json:"inputs,omitempty"`
-	IsValid                *bool           `json:"is_valid,omitempty"`
-	NativeScripts          *int32          `json:"native_scripts,omitempty"`
-	Outputs                []BursaTxOutput `json:"outputs,omitempty"`
-	ProposalProcedureCount *int32          `json:"proposal_procedure_count,omitempty"`
-	RequiredSigners        *int32          `json:"required_signers,omitempty"`
-	SizeBytes              *int32          `json:"size_bytes,omitempty"`
-	TotalCollateral        *string         `json:"total_collateral,omitempty"`
-	Ttl                    *int32          `json:"ttl,omitempty"`
-	TxId                   *string         `json:"tx_id,omitempty"`
-	ValidityIntervalStart  *int32          `json:"validity_interval_start,omitempty"`
-	VkeyWitnesses          *int32          `json:"vkey_witnesses,omitempty"`
+	CertificateCount *int32 `json:"certificate_count,omitempty"`
+	// CertificateDepositTotal and CertificateRefundTotal contain the sums that are encoded directly in Conway certificates. Legacy stake and pool certificate amounts depend on protocol parameters or ledger state; their counts remain explicit so value-limited signers can fail closed.
+	CertificateDepositTotal         *string         `json:"certificate_deposit_total,omitempty"`
+	CertificateRefundTotal          *string         `json:"certificate_refund_total,omitempty"`
+	CertificateValueEffectsComplete *bool           `json:"certificate_value_effects_complete,omitempty"`
+	CollateralInputs                []BursaTxInput  `json:"collateral_inputs,omitempty"`
+	CollateralReturn                *BursaTxOutput  `json:"collateral_return,omitempty"`
+	Era                             *string         `json:"era,omitempty"`
+	Fee                             *string         `json:"fee,omitempty"`
+	HasMetadata                     *bool           `json:"has_metadata,omitempty"`
+	HasMint                         *bool           `json:"has_mint,omitempty"`
+	HasTreasuryDonation             *bool           `json:"has_treasury_donation,omitempty"`
+	Inputs                          []BursaTxInput  `json:"inputs,omitempty"`
+	IsValid                         *bool           `json:"is_valid,omitempty"`
+	NativeScripts                   *int32          `json:"native_scripts,omitempty"`
+	Outputs                         []BursaTxOutput `json:"outputs,omitempty"`
+	ProposalDepositTotal            *string         `json:"proposal_deposit_total,omitempty"`
+	ProposalProcedureCount          *int32          `json:"proposal_procedure_count,omitempty"`
+	RequiredSigners                 *int32          `json:"required_signers,omitempty"`
+	SizeBytes                       *int32          `json:"size_bytes,omitempty"`
+	TotalCollateral                 *string         `json:"total_collateral,omitempty"`
+	TreasuryDonationLovelace        *string         `json:"treasury_donation_lovelace,omitempty"`
+	Ttl                             *int32          `json:"ttl,omitempty"`
+	TxId                            *string         `json:"tx_id,omitempty"`
+	UnresolvedCertificateDeposits   *int32          `json:"unresolved_certificate_deposits,omitempty"`
+	UnresolvedCertificateRefunds    *int32          `json:"unresolved_certificate_refunds,omitempty"`
+	ValidityIntervalStart           *int32          `json:"validity_interval_start,omitempty"`
+	VkeyWitnesses                   *int32          `json:"vkey_witnesses,omitempty"`
 	// Conway governance and treasury components. These authorize high-impact actions (casting DRep/committee votes, submitting governance proposals, donating to the treasury) that are independent of outputs/certificates/withdrawals, so the policy engine must inspect and gate them explicitly.
 	VotingProcedureCount *int32 `json:"voting_procedure_count,omitempty"`
 	WithdrawalCount      *int32 `json:"withdrawal_count,omitempty"`
@@ -92,6 +100,102 @@ func (o *BursaTxInspection) HasCertificateCount() bool {
 // SetCertificateCount gets a reference to the given int32 and assigns it to the CertificateCount field.
 func (o *BursaTxInspection) SetCertificateCount(v int32) {
 	o.CertificateCount = &v
+}
+
+// GetCertificateDepositTotal returns the CertificateDepositTotal field value if set, zero value otherwise.
+func (o *BursaTxInspection) GetCertificateDepositTotal() string {
+	if o == nil || IsNil(o.CertificateDepositTotal) {
+		var ret string
+		return ret
+	}
+	return *o.CertificateDepositTotal
+}
+
+// GetCertificateDepositTotalOk returns a tuple with the CertificateDepositTotal field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaTxInspection) GetCertificateDepositTotalOk() (*string, bool) {
+	if o == nil || IsNil(o.CertificateDepositTotal) {
+		return nil, false
+	}
+	return o.CertificateDepositTotal, true
+}
+
+// HasCertificateDepositTotal returns a boolean if a field has been set.
+func (o *BursaTxInspection) HasCertificateDepositTotal() bool {
+	if o != nil && !IsNil(o.CertificateDepositTotal) {
+		return true
+	}
+
+	return false
+}
+
+// SetCertificateDepositTotal gets a reference to the given string and assigns it to the CertificateDepositTotal field.
+func (o *BursaTxInspection) SetCertificateDepositTotal(v string) {
+	o.CertificateDepositTotal = &v
+}
+
+// GetCertificateRefundTotal returns the CertificateRefundTotal field value if set, zero value otherwise.
+func (o *BursaTxInspection) GetCertificateRefundTotal() string {
+	if o == nil || IsNil(o.CertificateRefundTotal) {
+		var ret string
+		return ret
+	}
+	return *o.CertificateRefundTotal
+}
+
+// GetCertificateRefundTotalOk returns a tuple with the CertificateRefundTotal field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaTxInspection) GetCertificateRefundTotalOk() (*string, bool) {
+	if o == nil || IsNil(o.CertificateRefundTotal) {
+		return nil, false
+	}
+	return o.CertificateRefundTotal, true
+}
+
+// HasCertificateRefundTotal returns a boolean if a field has been set.
+func (o *BursaTxInspection) HasCertificateRefundTotal() bool {
+	if o != nil && !IsNil(o.CertificateRefundTotal) {
+		return true
+	}
+
+	return false
+}
+
+// SetCertificateRefundTotal gets a reference to the given string and assigns it to the CertificateRefundTotal field.
+func (o *BursaTxInspection) SetCertificateRefundTotal(v string) {
+	o.CertificateRefundTotal = &v
+}
+
+// GetCertificateValueEffectsComplete returns the CertificateValueEffectsComplete field value if set, zero value otherwise.
+func (o *BursaTxInspection) GetCertificateValueEffectsComplete() bool {
+	if o == nil || IsNil(o.CertificateValueEffectsComplete) {
+		var ret bool
+		return ret
+	}
+	return *o.CertificateValueEffectsComplete
+}
+
+// GetCertificateValueEffectsCompleteOk returns a tuple with the CertificateValueEffectsComplete field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaTxInspection) GetCertificateValueEffectsCompleteOk() (*bool, bool) {
+	if o == nil || IsNil(o.CertificateValueEffectsComplete) {
+		return nil, false
+	}
+	return o.CertificateValueEffectsComplete, true
+}
+
+// HasCertificateValueEffectsComplete returns a boolean if a field has been set.
+func (o *BursaTxInspection) HasCertificateValueEffectsComplete() bool {
+	if o != nil && !IsNil(o.CertificateValueEffectsComplete) {
+		return true
+	}
+
+	return false
+}
+
+// SetCertificateValueEffectsComplete gets a reference to the given bool and assigns it to the CertificateValueEffectsComplete field.
+func (o *BursaTxInspection) SetCertificateValueEffectsComplete(v bool) {
+	o.CertificateValueEffectsComplete = &v
 }
 
 // GetCollateralInputs returns the CollateralInputs field value if set, zero value otherwise.
@@ -446,6 +550,38 @@ func (o *BursaTxInspection) SetOutputs(v []BursaTxOutput) {
 	o.Outputs = v
 }
 
+// GetProposalDepositTotal returns the ProposalDepositTotal field value if set, zero value otherwise.
+func (o *BursaTxInspection) GetProposalDepositTotal() string {
+	if o == nil || IsNil(o.ProposalDepositTotal) {
+		var ret string
+		return ret
+	}
+	return *o.ProposalDepositTotal
+}
+
+// GetProposalDepositTotalOk returns a tuple with the ProposalDepositTotal field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaTxInspection) GetProposalDepositTotalOk() (*string, bool) {
+	if o == nil || IsNil(o.ProposalDepositTotal) {
+		return nil, false
+	}
+	return o.ProposalDepositTotal, true
+}
+
+// HasProposalDepositTotal returns a boolean if a field has been set.
+func (o *BursaTxInspection) HasProposalDepositTotal() bool {
+	if o != nil && !IsNil(o.ProposalDepositTotal) {
+		return true
+	}
+
+	return false
+}
+
+// SetProposalDepositTotal gets a reference to the given string and assigns it to the ProposalDepositTotal field.
+func (o *BursaTxInspection) SetProposalDepositTotal(v string) {
+	o.ProposalDepositTotal = &v
+}
+
 // GetProposalProcedureCount returns the ProposalProcedureCount field value if set, zero value otherwise.
 func (o *BursaTxInspection) GetProposalProcedureCount() int32 {
 	if o == nil || IsNil(o.ProposalProcedureCount) {
@@ -574,6 +710,38 @@ func (o *BursaTxInspection) SetTotalCollateral(v string) {
 	o.TotalCollateral = &v
 }
 
+// GetTreasuryDonationLovelace returns the TreasuryDonationLovelace field value if set, zero value otherwise.
+func (o *BursaTxInspection) GetTreasuryDonationLovelace() string {
+	if o == nil || IsNil(o.TreasuryDonationLovelace) {
+		var ret string
+		return ret
+	}
+	return *o.TreasuryDonationLovelace
+}
+
+// GetTreasuryDonationLovelaceOk returns a tuple with the TreasuryDonationLovelace field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaTxInspection) GetTreasuryDonationLovelaceOk() (*string, bool) {
+	if o == nil || IsNil(o.TreasuryDonationLovelace) {
+		return nil, false
+	}
+	return o.TreasuryDonationLovelace, true
+}
+
+// HasTreasuryDonationLovelace returns a boolean if a field has been set.
+func (o *BursaTxInspection) HasTreasuryDonationLovelace() bool {
+	if o != nil && !IsNil(o.TreasuryDonationLovelace) {
+		return true
+	}
+
+	return false
+}
+
+// SetTreasuryDonationLovelace gets a reference to the given string and assigns it to the TreasuryDonationLovelace field.
+func (o *BursaTxInspection) SetTreasuryDonationLovelace(v string) {
+	o.TreasuryDonationLovelace = &v
+}
+
 // GetTtl returns the Ttl field value if set, zero value otherwise.
 func (o *BursaTxInspection) GetTtl() int32 {
 	if o == nil || IsNil(o.Ttl) {
@@ -636,6 +804,70 @@ func (o *BursaTxInspection) HasTxId() bool {
 // SetTxId gets a reference to the given string and assigns it to the TxId field.
 func (o *BursaTxInspection) SetTxId(v string) {
 	o.TxId = &v
+}
+
+// GetUnresolvedCertificateDeposits returns the UnresolvedCertificateDeposits field value if set, zero value otherwise.
+func (o *BursaTxInspection) GetUnresolvedCertificateDeposits() int32 {
+	if o == nil || IsNil(o.UnresolvedCertificateDeposits) {
+		var ret int32
+		return ret
+	}
+	return *o.UnresolvedCertificateDeposits
+}
+
+// GetUnresolvedCertificateDepositsOk returns a tuple with the UnresolvedCertificateDeposits field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaTxInspection) GetUnresolvedCertificateDepositsOk() (*int32, bool) {
+	if o == nil || IsNil(o.UnresolvedCertificateDeposits) {
+		return nil, false
+	}
+	return o.UnresolvedCertificateDeposits, true
+}
+
+// HasUnresolvedCertificateDeposits returns a boolean if a field has been set.
+func (o *BursaTxInspection) HasUnresolvedCertificateDeposits() bool {
+	if o != nil && !IsNil(o.UnresolvedCertificateDeposits) {
+		return true
+	}
+
+	return false
+}
+
+// SetUnresolvedCertificateDeposits gets a reference to the given int32 and assigns it to the UnresolvedCertificateDeposits field.
+func (o *BursaTxInspection) SetUnresolvedCertificateDeposits(v int32) {
+	o.UnresolvedCertificateDeposits = &v
+}
+
+// GetUnresolvedCertificateRefunds returns the UnresolvedCertificateRefunds field value if set, zero value otherwise.
+func (o *BursaTxInspection) GetUnresolvedCertificateRefunds() int32 {
+	if o == nil || IsNil(o.UnresolvedCertificateRefunds) {
+		var ret int32
+		return ret
+	}
+	return *o.UnresolvedCertificateRefunds
+}
+
+// GetUnresolvedCertificateRefundsOk returns a tuple with the UnresolvedCertificateRefunds field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BursaTxInspection) GetUnresolvedCertificateRefundsOk() (*int32, bool) {
+	if o == nil || IsNil(o.UnresolvedCertificateRefunds) {
+		return nil, false
+	}
+	return o.UnresolvedCertificateRefunds, true
+}
+
+// HasUnresolvedCertificateRefunds returns a boolean if a field has been set.
+func (o *BursaTxInspection) HasUnresolvedCertificateRefunds() bool {
+	if o != nil && !IsNil(o.UnresolvedCertificateRefunds) {
+		return true
+	}
+
+	return false
+}
+
+// SetUnresolvedCertificateRefunds gets a reference to the given int32 and assigns it to the UnresolvedCertificateRefunds field.
+func (o *BursaTxInspection) SetUnresolvedCertificateRefunds(v int32) {
+	o.UnresolvedCertificateRefunds = &v
 }
 
 // GetValidityIntervalStart returns the ValidityIntervalStart field value if set, zero value otherwise.
@@ -779,6 +1011,15 @@ func (o BursaTxInspection) ToMap() (map[string]interface{}, error) {
 	if !IsNil(o.CertificateCount) {
 		toSerialize["certificate_count"] = o.CertificateCount
 	}
+	if !IsNil(o.CertificateDepositTotal) {
+		toSerialize["certificate_deposit_total"] = o.CertificateDepositTotal
+	}
+	if !IsNil(o.CertificateRefundTotal) {
+		toSerialize["certificate_refund_total"] = o.CertificateRefundTotal
+	}
+	if !IsNil(o.CertificateValueEffectsComplete) {
+		toSerialize["certificate_value_effects_complete"] = o.CertificateValueEffectsComplete
+	}
 	if !IsNil(o.CollateralInputs) {
 		toSerialize["collateral_inputs"] = o.CollateralInputs
 	}
@@ -812,6 +1053,9 @@ func (o BursaTxInspection) ToMap() (map[string]interface{}, error) {
 	if !IsNil(o.Outputs) {
 		toSerialize["outputs"] = o.Outputs
 	}
+	if !IsNil(o.ProposalDepositTotal) {
+		toSerialize["proposal_deposit_total"] = o.ProposalDepositTotal
+	}
 	if !IsNil(o.ProposalProcedureCount) {
 		toSerialize["proposal_procedure_count"] = o.ProposalProcedureCount
 	}
@@ -824,11 +1068,20 @@ func (o BursaTxInspection) ToMap() (map[string]interface{}, error) {
 	if !IsNil(o.TotalCollateral) {
 		toSerialize["total_collateral"] = o.TotalCollateral
 	}
+	if !IsNil(o.TreasuryDonationLovelace) {
+		toSerialize["treasury_donation_lovelace"] = o.TreasuryDonationLovelace
+	}
 	if !IsNil(o.Ttl) {
 		toSerialize["ttl"] = o.Ttl
 	}
 	if !IsNil(o.TxId) {
 		toSerialize["tx_id"] = o.TxId
+	}
+	if !IsNil(o.UnresolvedCertificateDeposits) {
+		toSerialize["unresolved_certificate_deposits"] = o.UnresolvedCertificateDeposits
+	}
+	if !IsNil(o.UnresolvedCertificateRefunds) {
+		toSerialize["unresolved_certificate_refunds"] = o.UnresolvedCertificateRefunds
 	}
 	if !IsNil(o.ValidityIntervalStart) {
 		toSerialize["validity_interval_start"] = o.ValidityIntervalStart

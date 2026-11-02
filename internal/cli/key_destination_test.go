@@ -39,6 +39,7 @@ func keyDestinationCases() []keyDestinationCase {
 		{"account", func(s, _ string) error { return RunKeyAccount(m, "", "", s, 0) }, "acct_xsk", false},
 		{"payment", func(s, v string) error { return RunKeyPayment(m, "", "", s, v, 0, 0) }, "addr_xsk", true},
 		{"stake", func(s, v string) error { return RunKeyStake(m, "", "", s, v, 0, 0) }, "stake_xsk", true},
+		{"pool-owner", func(s, v string) error { return RunKeyPoolOwner(m, "", "", s, v, 0, 0) }, "stake_sk1", true},
 		{"policy", func(s, v string) error { return RunKeyPolicy(m, "", "", s, v, 0) }, "policy_xsk", true},
 		{"pool-cold", func(s, v string) error { return RunKeyPoolCold(m, "", "", s, v, 0) }, "pool_xsk", true},
 		{"calidus", func(s, v string) error { return RunKeyCalidus(m, "", "", s, v, 0, 0) }, "calidus_xsk", true},

@@ -826,6 +826,9 @@ func TestWalletBackendSigningMethodsErrorWithoutSpendService(t *testing.T) {
 	// they return a "signing service not configured" error rather than
 	// errNotImplemented.  Verify they at least return a non-nil error.
 	ctx := context.Background()
+	if _, err := be.InspectTx(ctx, ""); err == nil {
+		t.Error("InspectTx(nil sp): want error, got nil")
+	}
 	if _, err := be.SignTx(ctx, "", false, ""); err == nil {
 		t.Error("SignTx(nil sp): want error, got nil")
 	}
@@ -1107,15 +1110,21 @@ func (k fakeTestKeystore) Unlock(_ string) ([]byte, error) {
 type fakeSpendChain struct {
 	submitHash lcommon.Blake2b256
 	submitErr  error
+	maxTxSize  int
+	utxoCalls  int
 }
 
 var _ apollobackend.ChainContext = (*fakeSpendChain)(nil)
 
 func (f *fakeSpendChain) ProtocolParams() (apollobackend.ProtocolParameters, error) {
+	maxTxSize := f.maxTxSize
+	if maxTxSize == 0 {
+		maxTxSize = 16384
+	}
 	return apollobackend.ProtocolParameters{
 		MinFeeConstant:    155381,
 		MinFeeCoefficient: 44,
-		MaxTxSize:         16384,
+		MaxTxSize:         maxTxSize,
 		CoinsPerUtxoByte:  "4310",
 	}, nil
 }
@@ -1144,6 +1153,7 @@ func (f *fakeSpendChain) EvaluateTx(_ []byte, _ []lcommon.Utxo) (map[lcommon.Red
 	return nil, nil
 }
 func (f *fakeSpendChain) UtxoByRef(_ lcommon.Blake2b256, _ uint32) (*lcommon.Utxo, error) {
+	f.utxoCalls++
 	return nil, nil
 }
 func (f *fakeSpendChain) ScriptCbor(_ lcommon.Blake2b224) ([]byte, error) {
@@ -1366,6 +1376,101 @@ func TestWalletBackendSignTx(t *testing.T) {
 	if !ed25519.Verify(ed25519.PublicKey(witnesses[0].Vkey), signingTarget.Bytes(), witnesses[0].Signature) {
 		t.Error("witness signature does not verify against blake2b-256 of the original tx body")
 	}
+}
+
+func TestWalletBackendInspectTxRejectsOversizeBeforeInputResolution(t *testing.T) {
+	sc := &fakeSpendChain{maxTxSize: 1}
+	sp := spend.NewService(sc, nil, nil)
+	be := &WalletBackend{sp: sp}
+
+	var txID lcommon.Blake2b256
+	copy(txID[:], bytes32("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"))
+	tx := conway.ConwayTransaction{
+		Body: conway.ConwayTransactionBody{
+			TxInputs: conway.NewConwayTransactionInputSet([]shelley.ShelleyTransactionInput{{
+				TxId: txID, OutputIndex: 0,
+			}}),
+			TxFee: 200000,
+		},
+		WitnessSet: conway.ConwayTransactionWitnessSet{},
+		TxIsValid:  true,
+	}
+	txBytes, err := gocbor.Encode(&tx)
+	if err != nil {
+		t.Fatalf("encode tx: %v", err)
+	}
+	if _, err := be.InspectTx(context.Background(), hex.EncodeToString(txBytes)); err == nil {
+		t.Fatal("InspectTx accepted transaction over live MaxTxSize")
+	}
+	if sc.utxoCalls != 0 {
+		t.Fatalf("UtxoByRef calls = %d, want 0 before size admission", sc.utxoCalls)
+	}
+}
+
+func TestWalletBackendSignTxValidatesAuxiliaryData(t *testing.T) {
+	acct := mustDeriveBackendSigningAccount(t)
+	sp := spend.NewService(
+		&fakeSpendChain{},
+		fakeTestKeystore{mnemonic: backendTestMnemonic},
+		acct,
+	)
+	fc := &fakeConnectorChain{addressErr: chain.ErrNotFound}
+	wl := wallet.NewService(&walletChainBridge{f: fc})
+	if _, err := wl.SetWallet(backendTestMnemonic, "preview", 5); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	be := NewWalletBackend(wl, sp, acct, "preview", fc)
+
+	metadata, err := lcommon.DecodeMetadatumRaw([]byte{0xa1, 0x01, 0x61, 0x61})
+	if err != nil {
+		t.Fatalf("decode metadata fixture: %v", err)
+	}
+	wantHash := lcommon.Blake2b256Hash(metadata.Cbor())
+	wrongHash := lcommon.Blake2b256Hash([]byte("different auxiliary data"))
+	vkeyHash := lcommon.Blake2b224Hash(derivedPaymentVkey(t, 0))
+
+	encode := func(t *testing.T, hash *lcommon.Blake2b256) string {
+		t.Helper()
+		var txID lcommon.Blake2b256
+		txID[0] = 1
+		raw, err := gocbor.Encode(&conway.ConwayTransaction{
+			Body: conway.ConwayTransactionBody{
+				TxInputs: conway.NewConwayTransactionInputSet([]shelley.ShelleyTransactionInput{{
+					TxId: txID,
+				}}),
+				TxFee:             200000,
+				TxRequiredSigners: gocbor.NewSetType([]lcommon.Blake2b224{vkeyHash}, true),
+				TxAuxDataHash:     hash,
+			},
+			WitnessSet: conway.ConwayTransactionWitnessSet{},
+			TxIsValid:  true,
+			TxMetadata: metadata,
+		})
+		if err != nil {
+			t.Fatalf("encode transaction: %v", err)
+		}
+		return hex.EncodeToString(raw)
+	}
+
+	t.Run("matching hash", func(t *testing.T) {
+		if _, err := be.SignTx(context.Background(), encode(t, &wantHash), false, "anypassword"); err != nil {
+			t.Fatalf("SignTx: %v", err)
+		}
+	})
+	t.Run("missing hash", func(t *testing.T) {
+		_, err := be.SignTx(context.Background(), encode(t, nil), false, "anypassword")
+		var target lcommon.MissingTransactionAuxiliaryDataHashError
+		if !errors.As(err, &target) {
+			t.Fatalf("SignTx error = %v, want MissingTransactionAuxiliaryDataHashError", err)
+		}
+	})
+	t.Run("conflicting hash", func(t *testing.T) {
+		_, err := be.SignTx(context.Background(), encode(t, &wrongHash), false, "anypassword")
+		var target lcommon.ConflictingMetadataHashError
+		if !errors.As(err, &target) {
+			t.Fatalf("SignTx error = %v, want ConflictingMetadataHashError", err)
+		}
+	})
 }
 
 func TestWalletBackendSignTxChangeAddressInput(t *testing.T) {

@@ -45,6 +45,17 @@ func CallerFromContext(ctx context.Context) string {
 // Validator parses+validates a bearer token and returns the caller subject.
 type Validator func(token string) (subject string, err error)
 
+var errJWKSURLPolicy = errors.New("jwks_url must use https; plain http is allowed only for loopback addresses")
+
+// checkJWKSURL applies the key transport policy to configured locations and
+// every resolved redirect destination.
+func checkJWKSURL(u *url.URL) error {
+	if u != nil && (u.Scheme == "https" || (u.Scheme == "http" && backend.IsLoopbackHost(u.Hostname()))) {
+		return nil
+	}
+	return errJWKSURLPolicy
+}
+
 // HS256Validator validates HS256 tokens against a shared secret (dev/simple mode).
 // Production deployments should prefer JWKSValidator. issuer and audience are
 // enforced when non-empty, identically to JWKSValidator. Without a configured
@@ -91,12 +102,20 @@ func JWKSValidator(ctx context.Context, jwksURL, issuer, audience string) (Valid
 	if err != nil {
 		return nil, fmt.Errorf("invalid jwks url: %w", err)
 	}
-	if u.Scheme != "https" && !backend.IsLoopbackHost(u.Hostname()) {
-		return nil, errors.New("jwks_url must use https; plain http is allowed only for loopback addresses")
+	if err := checkJWKSURL(u); err != nil {
+		return nil, err
 	}
 
 	noError := false
 	kf, err := keyfunc.NewDefaultOverrideCtx(ctx, []string{jwksURL}, keyfunc.Override{
+		Client: &http.Client{
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return errors.New("jwks fetch: stopped after 10 redirects")
+				}
+				return checkJWKSURL(req.URL)
+			},
+		},
 		NoErrorReturnFirstHTTPReq: &noError,
 	})
 	if err != nil {

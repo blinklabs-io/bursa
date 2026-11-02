@@ -81,8 +81,8 @@ func remap(src map[string]any, dst any) error {
 }
 
 // keyTypeFromEnvelope is a package-local alias for backend.KeyTypeFromEnvelope.
-func keyTypeFromEnvelope(envelopeType string) backend.KeyType {
-	return backend.KeyTypeFromEnvelope(envelopeType)
+func keyTypeFromEnvelope(envelopeType, description string) backend.KeyType {
+	return backend.KeyTypeFromEnvelope(envelopeType, description)
 }
 
 // sopsDecrypt is a seam over sops.Decrypt so wiring tests can inject a fake.
@@ -99,6 +99,10 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 	// success path; an empty config yields an empty, not nil, slice.
 	backends := make([]backend.Backend, 0, len(cfgs))
 	for _, c := range cfgs {
+		// protocol selects the armory sign protocol; no other backend has one
+		if c.Protocol != "" && c.Type != "armory" {
+			return nil, fmt.Errorf("%s backend %q: protocol applies only to armory backends", c.Type, c.Name)
+		}
 		switch c.Type {
 		case "software":
 			b := backend.NewSoftwareBackend(c.Name)
@@ -139,7 +143,7 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 				if err != nil {
 					return nil, fmt.Errorf("load key %q: %w", e.Name(), err)
 				}
-				kt := keyTypeFromEnvelope(lk.Type)
+				kt := keyTypeFromEnvelope(lk.Type, lk.Description)
 				if _, err := b.AddKey(lk, kt); err != nil {
 					return nil, fmt.Errorf("add key %q: %w", e.Name(), err)
 				}
@@ -185,6 +189,12 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 			b, err := build(ctx, c)
 			if err != nil {
 				return nil, fmt.Errorf("%s backend %q: %w", c.Type, c.Name, err)
+			}
+			backends = append(backends, b)
+		case "armory":
+			b, err := buildArmoryBackend(ctx, c)
+			if err != nil {
+				return nil, fmt.Errorf("armory backend %q: %w", c.Name, err)
 			}
 			backends = append(backends, b)
 		default:
@@ -317,6 +327,9 @@ func BuildWatermark(ctx context.Context, c config.SignerWatermarkConfig) (waterm
 				"watermark mode %q enforces and requires durable storage: set signer.watermark.type to \"file\" or \"postgres\", or set mode to \"warn\" or \"off\"",
 				mode,
 			)
+		}
+		if mode == watermark.ModeWarn {
+			return watermark.NewWarningMemWatermark(), mode, nil
 		}
 		return watermark.NewMemWatermark(), mode, nil
 	case "file":

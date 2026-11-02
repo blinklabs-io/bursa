@@ -16,9 +16,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -34,7 +37,6 @@ import (
 	"github.com/blinklabs-io/bursa/internal/version"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 )
 
@@ -84,6 +86,11 @@ func runKesAgent(configFile string) int {
 	cfg, err := config.LoadConfigFile(configFile)
 	if err != nil {
 		logger.Error("failed to load config", "error", err)
+		return 1
+	}
+	metricsSrv, err := newMetricsHTTPServer(cfg.Metrics)
+	if err != nil {
+		logger.Error("invalid metrics listener", "error", err)
 		return 1
 	}
 	logging.ConfigureJSON()
@@ -182,16 +189,48 @@ func runKesAgent(configFile string) int {
 		return 1
 	}
 
+	var attestedLn net.Listener
+	var attestedCfg kesagent.AttestedServiceConfig
+	if kc.AttestedListenAddress != "" {
+		if kc.Mode != kesagent.ModeSign {
+			logger.Error("kes_agent.attested_listen_address requires sign mode")
+			_ = serviceLn.Close()
+			_ = controlLn.Close()
+			return 1
+		}
+		attestedLn, err = listenAttestedKES(
+			kc.AttestedListenAddress,
+			kc.AttestedTLSCertFile,
+			kc.AttestedTLSKeyFile,
+			kc.AttestedClientCAFile,
+		)
+		if err != nil {
+			logger.Error("failed to open attested KES listener", "error", err)
+			_ = serviceLn.Close()
+			_ = controlLn.Close()
+			return 1
+		}
+		attester, err := kesagent.NewHTTPAttester(kc.AttesterAddress)
+		if err != nil || kc.AttestationProvider == "" {
+			if err == nil {
+				err = errors.New("kes_agent.attestation_provider is required")
+			}
+			logger.Error("invalid attested KES configuration", "error", err)
+			_ = attestedLn.Close()
+			_ = serviceLn.Close()
+			_ = controlLn.Close()
+			return 1
+		}
+		attestedCfg = kesagent.AttestedServiceConfig{
+			Provider: kc.AttestationProvider,
+			Attester: attester,
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Optional metrics HTTP endpoint.
-	var metricsSrv *http.Server
-	if cfg.Metrics.ListenPort != 0 {
-		addr := fmt.Sprintf("%s:%d", cfg.Metrics.ListenAddress, cfg.Metrics.ListenPort)
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", promhttp.Handler())
-		metricsSrv = &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	if metricsSrv != nil {
 		go func() {
 			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logger.Error("metrics server exited", "error", err)
@@ -199,9 +238,12 @@ func runKesAgent(configFile string) int {
 		}()
 	}
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() { errCh <- agent.ServeService(ctx, serviceLn) }()
 	go func() { errCh <- agent.ServeControl(ctx, controlLn) }()
+	if attestedLn != nil {
+		go func() { errCh <- agent.ServeAttestedService(ctx, attestedLn, attestedCfg) }()
+	}
 	go agent.Run(ctx)
 
 	logger.Info("starting bursa kes-agent",
@@ -230,6 +272,47 @@ func runKesAgent(configFile string) int {
 	_ = os.Remove(kc.ControlSocket)
 	logger.Info("kes-agent shutdown complete")
 	return exitCode
+}
+
+func listenAttestedKES(
+	address, certFile, keyFile, clientCAFile string,
+) (net.Listener, error) {
+	if certFile == "" || keyFile == "" || clientCAFile == "" {
+		return nil, errors.New(
+			"attested KES listener requires TLS certificate, key, and client CA files",
+		)
+	}
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return nil, fmt.Errorf("read attested KES certificate: %w", err)
+	}
+	keyPEM, err := bursa.ReadSecretKeyFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("read attested KES private key: %w", err)
+	}
+	defer clear(keyPEM)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("load attested KES certificate: %w", err)
+	}
+	caPEM, err := os.ReadFile(clientCAFile)
+	if err != nil {
+		return nil, fmt.Errorf("read attested KES client CA: %w", err)
+	}
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("attested KES client CA contains no certificates")
+	}
+	ln, err := net.Listen("tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	return tls.NewListener(ln, &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ClientCAs:    clientCAs,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		MinVersion:   tls.VersionTLS13,
+	}), nil
 }
 
 // loadColdVKey resolves the pool cold verification key from an inline hex value

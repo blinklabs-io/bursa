@@ -63,7 +63,11 @@ func Handler() http.Handler {
 		}
 		// Root, /index.html, or unknown client-route → SPA entry point. no-cache
 		// so a redeploy's new asset hashes aren't masked by a stale cached index.
+		// Clear-Site-Data evicts wallet NFT images that earlier releases marked
+		// immutable for a year; browsers that ignore the directive keep them
+		// until they expire or the user clears the cache.
 		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Clear-Site-Data", `"cache"`)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(index)
 	})

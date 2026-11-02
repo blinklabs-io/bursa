@@ -102,6 +102,10 @@ func (p *pausingCounterWatermark) CheckAndCommitCounter(ctx context.Context, key
 	return p.counter.CheckAndCommitCounter(ctx, key, scope, counter)
 }
 
+func (p *pausingCounterWatermark) CheckAndRaiseFloor(ctx context.Context, key backend.KeyHash, scope string, value uint64) error {
+	return p.counter.CheckAndRaiseFloor(ctx, key, scope, value)
+}
+
 func newOpCertCoordinator(t *testing.T, k *fakeKey, wm watermark.Watermark, mode watermark.Mode) (*Coordinator, *Metrics) {
 	t.Helper()
 	return newOpCertCoordinatorWithLogger(t, k, wm, mode, nil)

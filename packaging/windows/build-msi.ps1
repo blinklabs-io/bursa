@@ -29,6 +29,8 @@
 #Requires -Version 5.1
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$JsignStorePass = $env:JSIGN_STOREPASS
+$env:JSIGN_STOREPASS = $null
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -125,6 +127,7 @@ $BundleWebView2 = if ($null -ne $env:BUNDLE_WEBVIEW2) { $env:BUNDLE_WEBVIEW2 } e
 $WebView2SetupIn = $env:WEBVIEW2_SETUP
 $WebView2Url = if ($env:WEBVIEW2_URL) { $env:WEBVIEW2_URL } else { 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' }
 $WebView2Sha256 = $env:WEBVIEW2_SHA256
+$WebView2ExpectedSigner = 'Microsoft Corporation'
 
 # Resolved, staged bootstrapper path (empty => not bundled; the .wxs guards on
 # the sentinel "NONE"). Populated by Resolve-WebView2.
@@ -133,7 +136,6 @@ $script:WebView2Setup = ''
 # Signing (jsign) parameters - empty => skip signing with a warning.
 $JsignJar      = $env:JSIGN_JAR
 $JsignKeystore = $env:JSIGN_KEYSTORE
-$JsignStorePass= $env:JSIGN_STOREPASS
 $JsignStoreType= $env:JSIGN_STORETYPE
 $JsignAlias    = $env:JSIGN_ALIAS
 $JsignCertFile = $env:JSIGN_CERTFILE
@@ -230,18 +232,27 @@ function Resolve-WebView2 {
         Write-Log "Verified WebView2 bootstrapper SHA-256"
     }
 
-    # Authenticode gate. The evergreen bootstrapper is unpinned by default (its
-    # hash floats), so - hash or no hash - always require that the staged exe
-    # carries a present, chain-trusted Authenticode signature before bundling
-    # it. This is the integrity guarantee when WEBVIEW2_SHA256 is unset, and a
-    # defense-in-depth check when it is set. Fail the build on anything that is
-    # not 'Valid'.
+    # Always require a valid Authenticode signature. When the live bootstrapper
+    # is not pinned by hash, also require Microsoft's publisher identity so an
+    # unrelated chain-trusted executable cannot reach the elevated installer.
     if (Get-Command Get-AuthenticodeSignature -ErrorAction SilentlyContinue) {
         $wvSig = Get-AuthenticodeSignature -FilePath $dest
         if ($wvSig.Status -ne 'Valid') {
             Die "WebView2 bootstrapper Authenticode signature is not valid (status: $($wvSig.Status)) at $dest; refusing to bundle an unsigned/untrusted bootstrapper."
         }
-        $wvSigner = if ($wvSig.SignerCertificate) { $wvSig.SignerCertificate.Subject } else { '<unknown>' }
+
+        $wvSigner = if ($wvSig.SignerCertificate) {
+            $wvSig.SignerCertificate.GetNameInfo(
+                [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+                $false
+            )
+        } else {
+            '<unknown>'
+        }
+        if ([string]::IsNullOrEmpty($WebView2Sha256) -and
+            -not [string]::Equals($wvSigner, $WebView2ExpectedSigner, [System.StringComparison]::Ordinal)) {
+            Die "WebView2 bootstrapper signer is not $WebView2ExpectedSigner (got: $wvSigner); refusing to bundle an unpinned bootstrapper."
+        }
         Write-Log "Verified WebView2 bootstrapper Authenticode signature (Valid): $wvSigner"
     } else {
         Die "Get-AuthenticodeSignature unavailable - cannot verify the WebView2 bootstrapper signature; refusing to bundle it. Set BUNDLE_WEBVIEW2=0 to skip bundling."
@@ -309,7 +320,7 @@ function Sign-Msi {
 
     $jsignArgs = @(
         '--keystore',    $JsignKeystore,
-        '--storepass',   $JsignStorePass,
+        '--storepass',   'env:JSIGN_STOREPASS',
         '--alg',         $JsignAlg,
         '--tsaurl',      $JsignTsaUrl,
         '--tsmode',      $JsignTsMode,
@@ -323,14 +334,24 @@ function Sign-Msi {
     if (-not [string]::IsNullOrEmpty($JsignCertFile))  { $jsignArgs += @('--certfile', $JsignCertFile) }
     $jsignArgs += $FinalMsi
 
-    if (-not [string]::IsNullOrEmpty($JsignJar)) {
-        & java -jar $JsignJar @jsignArgs
-    } elseif (Get-Command jsign -ErrorAction SilentlyContinue) {
-        & jsign @jsignArgs
-    } else {
+    $useJsignJar = -not [string]::IsNullOrEmpty($JsignJar)
+    if (-not $useJsignJar -and -not (Get-Command jsign -ErrorAction SilentlyContinue)) {
         Die "jsign not found: set JSIGN_JAR to jsign.jar or install a 'jsign' launcher on PATH."
     }
-    if ($LASTEXITCODE -ne 0) { Die 'jsign signing failed' }
+
+    $jsignExitCode = 1
+    try {
+        $env:JSIGN_STOREPASS = $JsignStorePass
+        if ($useJsignJar) {
+            & java -jar $JsignJar @jsignArgs
+        } else {
+            & jsign @jsignArgs
+        }
+        $jsignExitCode = $LASTEXITCODE
+    } finally {
+        $env:JSIGN_STOREPASS = $null
+    }
+    if ($jsignExitCode -ne 0) { Die 'jsign signing failed' }
 
     # Independently confirm the MSI is signed, chain-trusted AND timestamped.
     # (jsign can exit 0 while the timestamp step silently failed.)

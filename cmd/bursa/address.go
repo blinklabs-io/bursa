@@ -22,6 +22,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const networkFlagUsage = "Network name or numeric magic (mainnet, testnet, preprod, preview, sanchonet, dijkstra, musashi, prime-mainnet, prime-testnet, devnet)"
+
 func addressCommand() *cobra.Command {
 	addressCmd := cobra.Command{
 		Use:   "address",
@@ -106,7 +108,7 @@ Examples:
 	cmd.Flags().
 		String("payment-key", "", "Bech32-encoded payment verification key")
 	cmd.Flags().String("stake-key", "", "Bech32-encoded stake verification key")
-	cmd.Flags().String("network", "mainnet", "Network (mainnet or testnet)")
+	cmd.Flags().String("network", "mainnet", networkFlagUsage)
 	cmd.Flags().
 		String("type", "base", "Address type (base, enterprise, reward)")
 
@@ -146,7 +148,7 @@ Examples:
 		String("payment-key", "", "Bech32-encoded payment verification key")
 	cmd.Flags().
 		String("payment-key-file", "", "Path to payment verification key file")
-	cmd.Flags().String("network", "mainnet", "Network (mainnet or testnet)")
+	cmd.Flags().String("network", "mainnet", networkFlagUsage)
 
 	if err := cmd.MarkFlagRequired("network"); err != nil {
 		panic(err)
@@ -157,21 +159,21 @@ Examples:
 }
 
 func addressListCommand() *cobra.Command {
-	var mnemonic, mnemonicFile, password, network string
+	var mnemonicFile, password, network string
 	var account, start, count uint32
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "Enumerate derived addresses for a wallet",
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := cli.RunAddressList(mnemonic, mnemonicFile, password, network, account, start, count); err != nil {
+			if err := cli.RunAddressList("", mnemonicFile, password, network, account, start, count); err != nil {
 				logging.GetLogger().Error("failed to list addresses", "error", err)
 				os.Exit(1)
 			}
 		},
 	}
-	addSecretFlags(cmd, &mnemonic, &mnemonicFile, &password)
-	cmd.Flags().StringVar(&network, "network", "mainnet", "Network (mainnet|preprod|preview|musashi|dijkstra)")
+	addSecretFlags(cmd, &mnemonicFile, &password)
+	cmd.Flags().StringVar(&network, "network", "mainnet", networkFlagUsage)
 	cmd.Flags().Uint32Var(&account, "account", 0, "Account index")
 	cmd.Flags().Uint32Var(&start, "start", 0, "Starting address index")
 	cmd.Flags().Uint32Var(&count, "count", 20, "Number of addresses to derive")

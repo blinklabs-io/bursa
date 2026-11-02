@@ -199,7 +199,13 @@ The summary includes `tx_id`, `fee`, `ttl`, `outputs` (including each
 `has_assets` flag), `certificate_count`, `certificates`, `has_mint`,
 `withdrawal_count`, `voting_procedure_count`, `voters` (paired `kind` and
 optional `drep_id` values), `proposal_procedure_count`, and
-`has_treasury_donation`. The original `voter_kinds` and `drep_ids` arrays remain
+`has_treasury_donation`. Ledger value effects are reported as
+`treasury_donation`, `certificate_deposit_total`, `certificate_refund_total`,
+`proposal_deposit_total`, `unresolved_certificate_deposits`,
+`unresolved_certificate_refunds` (deposits or refunds whose amount the
+transaction does not encode), and `certificate_value_effects_complete`, which
+is false when a certificate type has no known value effect.
+The original `voter_kinds` and `drep_ids` arrays remain
 for existing hook consumers. Bursa denies signing before calling the hook when
 the decoded certificate or voter details do not match their transaction counts.
 
@@ -223,16 +229,31 @@ addition to ordinary outputs and the fee.
 regressions.
 
 - `type: mem` - in-memory, non-durable (lost on restart). Default type, but
-  refused unless `mode` is `warn` or `off`.
+  refused unless `mode` is `warn` or `off`. Warning mode retains the latest
+  65,536 transaction watermark scopes in FIFO order; older scopes are evicted.
+  This bound affects warning records only. Enforced watermarks use a durable,
+  non-evicting store.
 - `type: file` - SQLite file at `path`, durable across restarts (single process).
 - `type: postgres` - durable store shared by every replica; the HA-safe option.
   The connection string is set via `dsn_env` (an env var name, keeping
   credentials out of the config file) in preference to the plaintext `dsn`
-  fallback. Remote connections should use `sslmode=verify-full` with a trusted
-  CA. The database role needs permission to create the two watermark tables on
+  fallback. Remote connections must use `sslmode=verify-full` with a trusted
+  CA; Bursa refuses remote connections that do not verify the server hostname.
+  Unix sockets, `localhost`, and loopback addresses may connect without TLS.
+  The database role needs permission to create the two watermark tables on
   first startup and to read and write them thereafter.
 - `mode: off | warn | enforce` - `enforce` (default) rejects a conflicting sign
   with HTTP 409; `warn` logs and allows; `off` disables the check.
+
+Operational certificates have two counter rules. A request with
+`issue_counter` must be strictly greater than every counter already signed
+for the cold key. A request with `chain_counter` (the pool's on-chain opcert
+counter) is issued at `chain_counter + 1` and records the chain counter as a
+floor: the same value is accepted again, because a pool that rotates KES
+without forging a block in between needs the same issue number, and only a
+lower value is refused. Use `chain_counter` for small pools; a strictly
+increasing counter would otherwise run two ahead of the chain, which nodes
+reject.
 
 ### High availability
 
@@ -264,7 +285,13 @@ Unauthenticated endpoints on the signer's listener:
   with a three-second timeout. It returns 503 while that dependency is
   unreachable and 200 for a healthy store. The in-memory store has no external
   dependency and is always ready after startup.
-- `GET /metrics` - Prometheus exposition.
+
+Prometheus exposition is available at `/metrics` on the dedicated metrics
+listener. The listener accepts only a loopback host, with the port set by
+`metrics.port`, and defaults to
+`127.0.0.1:8081`; set `metrics.port` to zero to disable it. A local collector
+can scrape the endpoint without exposing signer activity on the service
+listener.
 
 Use `/readyz` as the HA load-balancer readiness gate so a replica whose shared
 watermark store is unavailable is removed from rotation. Custody backends are

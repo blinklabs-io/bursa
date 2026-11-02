@@ -40,10 +40,16 @@ func TestKeyFileOutput(t *testing.T) {
 			expectedSKeyType: "StakePoolSigningKey_ed25519",
 		},
 		{
+			name:             "pool owner key",
+			runFunc:          func(skey, vkey string) error { return RunKeyPoolOwner(testMnemonic, "", "", skey, vkey, 0, 0) },
+			expectedVKeyType: "StakeVerificationKeyShelley_ed25519",
+			expectedSKeyType: "StakeSigningKeyShelley_ed25519",
+		},
+		{
 			name:             "policy key",
 			runFunc:          func(skey, vkey string) error { return RunKeyPolicy(testMnemonic, "", "", skey, vkey, 0) },
-			expectedVKeyType: "PolicyVerificationKeyShelley_ed25519",
-			expectedSKeyType: "PolicyExtendedSigningKeyShelley_ed25519_bip32",
+			expectedVKeyType: "PaymentVerificationKeyShelley_ed25519",
+			expectedSKeyType: "PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		},
 		{
 			name:             "drep key",

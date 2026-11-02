@@ -15,9 +15,14 @@
 package survey
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"math"
+	"math/big"
 	"testing"
+
+	"github.com/blinklabs-io/gouroboros/cbor"
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
 func TestRangeJSONPreservesInt64Values(t *testing.T) {
@@ -42,6 +47,38 @@ func TestRangeJSONPreservesInt64Values(t *testing.T) {
 	}
 	if got != rangeValue {
 		t.Fatalf("numeric input = %+v, want %+v", got, rangeValue)
+	}
+}
+
+func TestAnswerJSONDecodesCustomMetadatumCBOR(t *testing.T) {
+	var got Answer
+	if err := json.Unmarshal([]byte(`{"kind":0,"question":2,"custom_cbor":"826178182a"}`), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := lcommon.MetaList{Items: []lcommon.TransactionMetadatum{
+		lcommon.MetaText{Value: "x"},
+		lcommon.MetaInt{Value: big.NewInt(42)},
+	}}
+	gotCBOR, err := cbor.Encode(got.Custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCBOR, err := cbor.Encode(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hex.EncodeToString(gotCBOR) != hex.EncodeToString(wantCBOR) {
+		t.Fatalf("custom metadatum = %x, want %x", gotCBOR, wantCBOR)
+	}
+
+	for _, raw := range []string{
+		`{"kind":0,"question":0}`,
+		`{"kind":0,"question":0,"custom_cbor":"zz"}`,
+		`{"kind":0,"question":0,"custom_cbor":"ff"}`,
+	} {
+		if err := json.Unmarshal([]byte(raw), &got); err == nil {
+			t.Fatalf("Unmarshal(%s) succeeded", raw)
+		}
 	}
 }
 

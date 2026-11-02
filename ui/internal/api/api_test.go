@@ -16,6 +16,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +34,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
+	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
@@ -43,6 +46,8 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
 
+const testSessionToken = "test-control-session-token"
+
 // localReq builds a test request that looks like the SPA's own same-origin call:
 // a loopback Host plus a matching Origin. The mux is wrapped in sameOriginGuard,
 // which rejects non-loopback Hosts and (for state-changing methods) a
@@ -53,6 +58,7 @@ func localReq(method, target string, body io.Reader) *http.Request {
 	r := httptest.NewRequest(method, target, body)
 	r.Host = "127.0.0.1:8090"
 	r.Header.Set("Origin", "http://127.0.0.1:8090")
+	r.Header.Set(sessionHeaderName, testSessionToken)
 	return r
 }
 
@@ -152,7 +158,7 @@ func (f *fakeNFTs) SetEnabled(enabled bool) error {
 }
 
 func nftHandler(st fakeStatuser, nfts NFTs) http.Handler {
-	return NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{},
+	return NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{},
 		&fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview",
 		http.NotFoundHandler(), WithNFTs(nfts))
 }
@@ -209,6 +215,44 @@ func TestNFTImageGatedWhileNodeStarts(t *testing.T) {
 	}
 	if nf.servedUnit != "" {
 		t.Fatalf("ServeImage called for %q while node unavailable", nf.servedUnit)
+	}
+}
+
+func TestNFTImageRequiresSameOriginBrowserContext(t *testing.T) {
+	nf := &fakeNFTs{enabled: true, imageBytes: []byte("PNG")}
+	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, nf)
+
+	for _, tc := range []struct {
+		name          string
+		fetchSite     string
+		wantCode      int
+		wantImageCall bool
+	}{
+		{name: "same-origin image", fetchSite: "same-origin", wantCode: http.StatusOK, wantImageCall: true},
+		{name: "cross-site image", fetchSite: "cross-site", wantCode: http.StatusForbidden},
+		{name: "missing browser context", wantCode: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nf.servedUnit = ""
+			req := httptest.NewRequest(http.MethodGet, "/wallet/nft/policyAtoken/image", nil)
+			req.Host = "127.0.0.1:8090"
+			req.Header.Set(sessionHeaderName, testSessionToken)
+			if tc.fetchSite != "" {
+				req.Header.Set("Sec-Fetch-Site", tc.fetchSite)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if got := nf.servedUnit != ""; got != tc.wantImageCall {
+				t.Fatalf("ServeImage called = %v, want %v", got, tc.wantImageCall)
+			}
+			if !tc.wantImageCall && rec.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("rejected image response must not enter the browser cache")
+			}
+		})
 	}
 }
 
@@ -450,6 +494,13 @@ type fakeSettings struct {
 	setNotificationsErr    error
 	setNotificationsCalled bool
 	setNotificationsWith   bool
+
+	externalHandles          bool
+	setExternalHandlesErr    error
+	setExternalHandlesCalled bool
+
+	recoverCalled bool
+	recoverErr    error
 }
 
 type fakeAutoLockTimer struct {
@@ -524,6 +575,22 @@ func (f *fakeSettings) SetNotifications(enabled bool) error {
 	}
 	f.notifications = enabled
 	return nil
+}
+
+func (f *fakeSettings) ExternalHandleLookup() bool { return f.externalHandles }
+
+func (f *fakeSettings) SetExternalHandleLookup(enabled bool) error {
+	f.setExternalHandlesCalled = true
+	if f.setExternalHandlesErr != nil {
+		return f.setExternalHandlesErr
+	}
+	f.externalHandles = enabled
+	return nil
+}
+
+func (f *fakeSettings) RecoverNode() error {
+	f.recoverCalled = true
+	return f.recoverErr
 }
 
 // fakeContacts is an in-memory Contacts controller for handler tests. It
@@ -666,7 +733,7 @@ func TestGetPoolDirectory(t *testing.T) {
 		{PoolID: "pool1aaa", Hex: "aa", LiveStake: "5000000000", MarginCost: 0.05, LiveSaturation: 0.42},
 		{PoolID: "pool1bbb", Hex: "bb", LiveStake: "9000000000", MarginCost: 0.02, LiveSaturation: 0.90},
 	}}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pools", nil))
@@ -687,7 +754,7 @@ func TestGetPoolDirectorySearchFilter(t *testing.T) {
 		{PoolID: "pool1aaa", Hex: "aa"},
 		{PoolID: "pool1bbb", Hex: "bb"},
 	}}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pools?q=BBB", nil))
@@ -702,7 +769,7 @@ func TestGetPoolDirectorySearchFilter(t *testing.T) {
 
 func TestGetPoolDirectoryEmpty(t *testing.T) {
 	lookup := &fakeLookup{pools: nil}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pools", nil))
@@ -720,7 +787,7 @@ func TestGetPoolDirectoryPageOverflow(t *testing.T) {
 		{PoolID: "pool1aaa", Hex: "aa"},
 		{PoolID: "pool1bbb", Hex: "bb"},
 	}}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	for _, tc := range []struct {
 		name string
@@ -746,7 +813,7 @@ func TestGetPoolDirectoryPageOverflow(t *testing.T) {
 }
 
 func TestGetPoolDirectoryNilLookup(t *testing.T) {
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pools", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -772,7 +839,7 @@ func decodeDRepDirectory(t *testing.T, rec *httptest.ResponseRecorder) drepDirec
 }
 
 func drepDirHandler(lookup NodeLookup) http.Handler {
-	return NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	return NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 }
 
 func TestGetDRepDirectory(t *testing.T) {
@@ -912,7 +979,7 @@ func TestGetDRepDirectoryPageOverflow(t *testing.T) {
 }
 
 func TestGetDRepDirectoryNilLookup(t *testing.T) {
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dreps", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -981,7 +1048,7 @@ func sampleGovActions() []chain.GovernanceAction {
 
 func TestGetGovernanceActions(t *testing.T) {
 	lookup := &fakeLookup{govActions: sampleGovActions()}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/governance-actions", nil))
@@ -999,7 +1066,7 @@ func TestGetGovernanceActions(t *testing.T) {
 
 func TestGetGovernanceActionsSearchFilter(t *testing.T) {
 	lookup := &fakeLookup{govActions: sampleGovActions()}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/governance-actions?q=treasury", nil))
@@ -1014,7 +1081,7 @@ func TestGetGovernanceActionsSearchFilter(t *testing.T) {
 
 func TestGetGovernanceActionsEmpty(t *testing.T) {
 	lookup := &fakeLookup{govActions: nil}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/governance-actions", nil))
@@ -1029,7 +1096,7 @@ func TestGetGovernanceActionsEmpty(t *testing.T) {
 
 func TestGetGovernanceActionsPageOverflow(t *testing.T) {
 	lookup := &fakeLookup{govActions: sampleGovActions()}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	for _, tc := range []struct {
 		name string
@@ -1055,7 +1122,7 @@ func TestGetGovernanceActionsPageOverflow(t *testing.T) {
 }
 
 func TestGetGovernanceActionsNilLookup(t *testing.T) {
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/governance-actions", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -1081,7 +1148,7 @@ func (f *fakeVault) AddHardwareWallet(name, accountXpubBech32, network, vaultPw 
 }
 
 func TestHealthAlwaysOK(t *testing.T) {
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/health", nil))
 	if rec.Code != http.StatusOK {
@@ -1091,7 +1158,7 @@ func TestHealthAlwaysOK(t *testing.T) {
 
 func TestStatusReturnsSnapshot(t *testing.T) {
 	want := supervisor.Status{State: supervisor.StateSyncing, Tip: 42, CaughtUp: true}
-	h := NewHandler(fakeStatuser{s: want}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{s: want}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/status", nil))
 	if rec.Code != http.StatusOK {
@@ -1220,7 +1287,7 @@ func (f *fakeWallet) Rewards(_ context.Context) (wallet.RewardHistory, error) {
 
 func TestVaultStatusReports(t *testing.T) {
 	fv := &fakeVault{exists: true, locked: true, wallets: []vault.WalletMeta{{ID: "a"}, {ID: "b"}}}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/vault/status", nil))
 	if rec.Code != http.StatusOK {
@@ -1241,7 +1308,7 @@ func TestVaultStatusReports(t *testing.T) {
 func TestVaultStatusReportsLegacyKeystore(t *testing.T) {
 	fv := &fakeVault{exists: false, locked: true}
 	legacy := &fakeLegacyKeystore{exists: true}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithLegacyKeystore(legacy))
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithLegacyKeystore(legacy))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/vault/status", nil))
 	if rec.Code != http.StatusOK {
@@ -1258,7 +1325,7 @@ func TestVaultStatusReportsLegacyKeystore(t *testing.T) {
 
 func TestVaultCreateRequiresPassword(t *testing.T) {
 	fv := &fakeVault{}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault", bytes.NewBufferString(`{"password":"short"}`)))
 	if rec.Code != http.StatusBadRequest {
@@ -1271,7 +1338,7 @@ func TestVaultCreateRequiresPassword(t *testing.T) {
 
 func TestVaultCreateOK(t *testing.T) {
 	fv := &fakeVault{}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault", bytes.NewBufferString(`{"password":"valid-vault-password"}`)))
 	if rec.Code != http.StatusOK {
@@ -1284,7 +1351,7 @@ func TestVaultCreateOK(t *testing.T) {
 
 func TestVaultCreateConflict(t *testing.T) {
 	fv := &fakeVault{createErr: vault.ErrVaultExists}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault", bytes.NewBufferString(`{"password":"valid-vault-password"}`)))
 	if rec.Code != http.StatusConflict {
@@ -1301,7 +1368,7 @@ func TestVaultUnlockBindsSoleWalletAndReads(t *testing.T) {
 		wallets: []vault.WalletMeta{{ID: "w1", Name: "main", Network: "preview", Account: sampleAccount("preview")}},
 	}
 	fw := &fakeWallet{balance: wallet.Balance{Lovelace: "1234"}}
-	h := NewHandler(st, fv, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, fv, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/unlock", bytes.NewBufferString(`{"password":"valid-vault-password"}`)))
@@ -1336,7 +1403,7 @@ func TestVaultUnlockLegacyWalletDefaultsToFullType(t *testing.T) {
 		locked:  true,
 		wallets: []vault.WalletMeta{{ID: "legacy", Name: "old", Network: "preview", Account: sampleAccount("preview")}},
 	}
-	h := NewHandler(st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/unlock", bytes.NewBufferString(`{"password":"valid-vault-password"}`)))
@@ -1357,7 +1424,7 @@ func TestVaultUnlockLegacyWalletDefaultsToFullType(t *testing.T) {
 
 func TestVaultUnlockWrongPassword(t *testing.T) {
 	fv := &fakeVault{exists: true, locked: true, unlockErr: fmt.Errorf("%w: bad", vault.ErrWrongPassword)}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/unlock", bytes.NewBufferString(`{"password":"wrong-but-long-pw"}`)))
 	if rec.Code != http.StatusUnauthorized {
@@ -1369,7 +1436,7 @@ func TestVaultLock(t *testing.T) {
 	fv := &fakeVault{exists: true, locked: false}
 	fw := &fakeWallet{set: true}
 	sp := &fakeSpender{set: true}
-	h := NewHandler(fakeStatuser{}, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/lock", nil))
 	if rec.Code != http.StatusOK {
@@ -1388,7 +1455,7 @@ func TestMigrateLegacyKeystoreImportsAndBinds(t *testing.T) {
 	fw := &fakeWallet{}
 	sp := &fakeSpender{}
 	legacy := &fakeLegacyKeystore{exists: true, mnemonic: []byte("abandon abandon about")}
-	h := NewHandler(fakeStatuser{}, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithLegacyKeystore(legacy))
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithLegacyKeystore(legacy))
 
 	body := `{"name":"Imported","vault_password":"valid-vault-password","spend_password":"legacy-spend-password"}`
 	rec := httptest.NewRecorder()
@@ -1427,7 +1494,7 @@ func TestMigrateLegacyKeystoreImportsAndBinds(t *testing.T) {
 func TestMigrateLegacyKeystoreWrongPassword(t *testing.T) {
 	fv := &fakeVault{exists: false, locked: true}
 	legacy := &fakeLegacyKeystore{exists: true, err: keystore.ErrDecryptFailed}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithLegacyKeystore(legacy))
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithLegacyKeystore(legacy))
 
 	body := `{"name":"Imported","vault_password":"valid-vault-password","spend_password":"wrong-password"}`
 	rec := httptest.NewRecorder()
@@ -1443,7 +1510,7 @@ func TestMigrateLegacyKeystoreWrongPassword(t *testing.T) {
 func TestMigrateLegacyKeystoreRequiresSpendPasswordMinLength(t *testing.T) {
 	fv := &fakeVault{exists: false, locked: true}
 	legacy := &fakeLegacyKeystore{exists: true, mnemonic: []byte("abandon abandon about")}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithLegacyKeystore(legacy))
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithLegacyKeystore(legacy))
 
 	body := `{"name":"Imported","vault_password":"valid-vault-password","spend_password":"short"}`
 	rec := httptest.NewRecorder()
@@ -1466,7 +1533,7 @@ func TestAddWalletEnablesReadsAndSpend(t *testing.T) {
 	fv := &fakeVault{exists: true, locked: false}
 	fw := &fakeWallet{balance: wallet.Balance{Lovelace: "1234"}}
 	sp := &fakeSpender{}
-	h := NewHandler(st, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	body := `{"name":"main","mnemonic":"x x x","network":"preview","vault_password":"valid-vault-password","spend_password":"valid-spend-password"}`
@@ -1501,7 +1568,7 @@ func TestWalletRewardsPopulated(t *testing.T) {
 		Provisional: true,
 		Note:        "rewards are provisional",
 	}}
-	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/rewards", nil))
@@ -1525,7 +1592,7 @@ func TestWalletRewardsEmptyAndNoWallet(t *testing.T) {
 
 	// Active wallet with no rewards yet → 200 with an empty list.
 	fw := &fakeWallet{set: true, rewards: wallet.RewardHistory{Rewards: []wallet.RewardEntry{}, Provisional: true}}
-	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/rewards", nil))
 	if rec.Code != http.StatusOK {
@@ -1540,7 +1607,7 @@ func TestWalletRewardsEmptyAndNoWallet(t *testing.T) {
 	}
 
 	// No active wallet → 409 (ErrNoWallet), like the other wallet reads.
-	h = NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h = NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/rewards", nil))
 	if rec.Code != http.StatusConflict {
@@ -1552,7 +1619,7 @@ func TestAddWalletRequiresSpendPassword(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	fv := &fakeVault{exists: true, locked: false}
 	sp := &fakeSpender{}
-	h := NewHandler(st, fv, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, fv, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := `{"name":"main","mnemonic":"x x x","network":"preview","vault_password":"valid-vault-password","spend_password":"short"}`
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet", bytes.NewBufferString(body)))
@@ -1567,7 +1634,7 @@ func TestAddWalletRequiresSpendPassword(t *testing.T) {
 func TestAddWalletRequiresVaultPassword(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	fv := &fakeVault{exists: true, locked: false}
-	h := NewHandler(st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := `{"name":"main","mnemonic":"x x x","network":"preview","spend_password":"valid-spend-password"}`
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet", bytes.NewBufferString(body)))
@@ -1579,7 +1646,7 @@ func TestAddWalletRequiresVaultPassword(t *testing.T) {
 func TestAddWalletNetworkMismatch(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	fv := &fakeVault{exists: true, locked: false}
-	h := NewHandler(st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := `{"name":"main","mnemonic":"x x x","network":"mainnet","vault_password":"valid-vault-password","spend_password":"valid-spend-password"}`
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet", bytes.NewBufferString(body)))
@@ -1591,7 +1658,7 @@ func TestAddWalletNetworkMismatch(t *testing.T) {
 func TestAddWalletDefaultNetworkIsNodeNetwork(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	fv := &fakeVault{exists: true, locked: false}
-	h := NewHandler(st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preprod", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preprod", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := `{"name":"main","mnemonic":"x x x","vault_password":"valid-vault-password","spend_password":"valid-spend-password"}`
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet", bytes.NewBufferString(body)))
@@ -1606,7 +1673,7 @@ func TestAddWalletDefaultNetworkIsNodeNetwork(t *testing.T) {
 func TestAddWalletDuplicateConflict(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	fv := &fakeVault{exists: true, locked: false, addErr: vault.ErrDuplicateWallet}
-	h := NewHandler(st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := `{"name":"main","mnemonic":"x x x","network":"preview","vault_password":"valid-vault-password","spend_password":"valid-spend-password"}`
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet", bytes.NewBufferString(body)))
@@ -1624,7 +1691,7 @@ func TestAddWalletInvalidMnemonicBadRequest(t *testing.T) {
 			bursa.ErrInvalidMnemonic,
 		),
 	}
-	h := NewHandler(st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := `{"name":"main","mnemonic":"not a valid mnemonic","network":"preview","vault_password":"valid-vault-password","spend_password":"valid-spend-password"}`
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet", bytes.NewBufferString(body)))
@@ -1637,7 +1704,7 @@ func TestAddWalletInvalidMnemonicBadRequest(t *testing.T) {
 // mnemonic (24-word / 256-bit BIP39). It does not need a vault or a node —
 // the endpoint is ungated and uses only the bursa core lib.
 func TestGenerateMnemonic(t *testing.T) {
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/mnemonic/generate", nil))
 	if rec.Code != http.StatusOK {
@@ -1678,7 +1745,7 @@ func TestActivateWalletBinds(t *testing.T) {
 	}
 	fw := &fakeWallet{}
 	sp := &fakeSpender{}
-	h := NewHandler(st, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/w2/activate", nil))
 	if rec.Code != http.StatusOK {
@@ -1701,7 +1768,7 @@ func TestActivateWalletBinds(t *testing.T) {
 
 func TestActivateUnknownWallet(t *testing.T) {
 	fv := &fakeVault{exists: true, locked: false}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/nope/activate", nil))
 	if rec.Code != http.StatusNotFound {
@@ -1711,7 +1778,7 @@ func TestActivateUnknownWallet(t *testing.T) {
 
 func TestDeleteWalletRequiresVaultPassword(t *testing.T) {
 	fv := &fakeVault{exists: true, locked: false, wallets: []vault.WalletMeta{{ID: "w1"}}}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodDelete, "/wallet/w1", bytes.NewBufferString(`{}`)))
 	if rec.Code != http.StatusBadRequest {
@@ -1726,7 +1793,7 @@ func TestDeleteWalletOK(t *testing.T) {
 	}
 	fw := &fakeWallet{set: true}
 	sp := &fakeSpender{set: true}
-	h := NewHandler(fakeStatuser{}, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodDelete, "/wallet/w1", bytes.NewBufferString(`{"vault_password":"valid-vault-password"}`)))
 	if rec.Code != http.StatusOK {
@@ -1744,7 +1811,7 @@ func TestDeleteWalletOK(t *testing.T) {
 
 func TestWalletGatedWhileStarting(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/balance", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -1755,7 +1822,7 @@ func TestWalletGatedWhileStarting(t *testing.T) {
 func TestWalletGatedWhileBootstrapping(t *testing.T) {
 	// Mithril bootstrap is not a servable state: reads must be gated (503).
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateBootstrapping}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/balance", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -1779,7 +1846,7 @@ func TestWalletAddressesUseLocalUsageUntilNodeReady(t *testing.T) {
 					Receive: []string{"addr_test1derived"},
 				},
 			}
-			h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+			h := NewHandler(testSessionToken, st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
 			if rec.Code != http.StatusOK {
@@ -1820,7 +1887,7 @@ func TestWalletAddressesIncludeChainUsageWhenReady(t *testing.T) {
 					NextUnused: "addr_test1unused",
 				},
 			}
-			h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+			h := NewHandler(testSessionToken, st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
 			if rec.Code != http.StatusOK {
@@ -1857,7 +1924,7 @@ func TestWalletAddressesDiscardUsageIfNodeLeavesReadyDuringQuery(t *testing.T) {
 			NextUnused: "addr_test1unused",
 		},
 	}
-	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
 	if rec.Code != http.StatusOK {
@@ -1892,7 +1959,7 @@ func TestWalletAddressesDiscardUsageAcrossReadyGeneration(t *testing.T) {
 			NextUnused: "addr_test1unused",
 		},
 	}
-	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
 	if rec.Code != http.StatusOK {
@@ -1909,7 +1976,7 @@ func TestWalletAddressesDiscardUsageAcrossReadyGeneration(t *testing.T) {
 
 func TestWalletAddressesWithoutNodeStillRequireActiveWallet(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateBootstrapping}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/addresses", nil))
 	if rec.Code != http.StatusConflict {
@@ -1922,7 +1989,7 @@ func TestWalletNoActiveWalletConflict(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	for _, path := range []string{"/wallet/balance", "/wallet/addresses", "/wallet/transactions", "/wallet/transactions/tx1", "/wallet/delegation"} {
 		t.Run(path, func(t *testing.T) {
-			h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+			h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, localReq(http.MethodGet, path, nil))
 			if rec.Code != http.StatusConflict {
@@ -1947,7 +2014,7 @@ func TestGetTransactionDetailOK(t *testing.T) {
 			Outputs: []wallet.TxIO{{Address: "addr_other", Lovelace: "3000000"}},
 		},
 	}
-	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/transactions/tx1", nil))
 	if rec.Code != http.StatusOK {
@@ -1970,7 +2037,7 @@ func TestGetTransactionDetailNotFound(t *testing.T) {
 	// pool/DRep lookup convention ("not found by your node").
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	fw := &fakeWallet{set: true, txDetailErr: chain.ErrNotFound}
-	h := NewHandler(st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, fw, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/transactions/unknown", nil))
 	if rec.Code != http.StatusNotFound {
@@ -2405,7 +2472,7 @@ func TestMultiSigRoutesUngatedWhileNodeNotReady(t *testing.T) {
 		witness:  multisig.Witness{WitnessCBOR: "81825820"},
 	}
 	fv := &fakeVault{}
-	h := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/multisig", nil))
@@ -2457,7 +2524,7 @@ func TestMultiSigRoutesGated(t *testing.T) {
 		unsigned: multisig.UnsignedTx{UnsignedTxCBOR: "84a400", RequiredSigners: []string{strings.Repeat("a", 56)}, Threshold: 1},
 		tx:       multisig.TxResult{TxHash: "feedface"},
 	}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/multisig/acct1/balance", nil))
@@ -2486,7 +2553,7 @@ func TestMultiSigRoutesGated(t *testing.T) {
 		t.Fatalf("submit args = id %q tx %q witnesses %v, want acct1/84a400/[81]", ms.gotSubmitID, ms.gotSubmitTxCBOR, ms.gotSubmitWitness)
 	}
 
-	blocked := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	blocked := NewHandler(testSessionToken, fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	for _, tc := range []struct {
 		name   string
 		method string
@@ -2551,7 +2618,7 @@ func TestMultiSigErrorStatusCodes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, tc.ms, "preview", http.NotFoundHandler())
+			h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, tc.ms, "preview", http.NotFoundHandler())
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, localReq(tc.method, tc.path, bytes.NewBufferString(tc.body)))
 			if rec.Code != tc.wantCode {
@@ -2564,7 +2631,7 @@ func TestMultiSigErrorStatusCodes(t *testing.T) {
 func TestSignDataReturnsSignature(t *testing.T) {
 	// Ungated: message signing needs no synced node, only the keystore.
 	sp := &fakeSpender{signSig: "84a1deadbeef", signKey: "a4010103"}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"address":"addr_test1xyz","message":"hello","password":"pw"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/sign-data", body))
@@ -2581,7 +2648,7 @@ func TestSignDataReturnsSignature(t *testing.T) {
 
 func TestSignDataWrongPasswordReturns401(t *testing.T) {
 	sp := &fakeSpender{signErr: fmt.Errorf("%w: bad", spend.ErrWrongPassword)}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"address":"a","message":"m","password":"bad"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/sign-data", body))
@@ -2593,7 +2660,7 @@ func TestSignDataWrongPasswordReturns401(t *testing.T) {
 func TestVerifyDataReturnsResult(t *testing.T) {
 	// Ungated: verification is pure crypto, needs no node and no keystore.
 	sp := &fakeSpender{verifyValid: true, verifyAddr: "addr_test1signed"}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"signature":"84a1","key":"a401","message":"hi","hashed":true,"expected_address":"addr_test1signed"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/verify-data", body))
@@ -2615,7 +2682,7 @@ func TestVerifyDataReturnsResult(t *testing.T) {
 
 func TestVerifyDataInvalidArgsReturns400(t *testing.T) {
 	sp := &fakeSpender{verifyErr: fmt.Errorf("%w: bad hex", spend.ErrInvalidRequest)}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"signature":"zz","key":"a4","message":"hi"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/verify-data", body))
@@ -2626,7 +2693,7 @@ func TestVerifyDataInvalidArgsReturns400(t *testing.T) {
 
 func TestExportUnsignedRequiresReady(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/send/pend1/export-unsigned", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -2640,7 +2707,7 @@ func TestExportUnsignedReturnsTx(t *testing.T) {
 		UnsignedTxCBOR:  "84a400",
 		RequiredSigners: []string{"deadbeef"},
 	}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/send/pend1/export-unsigned", nil))
 	if rec.Code != http.StatusOK {
@@ -2658,7 +2725,7 @@ func TestSignTxUngated(t *testing.T) {
 	// Offline signing must not need a synced node -- only the keystore.
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
 	sp := &fakeSpender{witness: spend.Witness{WitnessCBOR: "81825820"}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","password":"pw","required_signers":["deadbeef"]}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/sign-tx", body))
@@ -2678,7 +2745,7 @@ func TestSignTxUngated(t *testing.T) {
 
 func TestSignTxWrongPasswordReturns401(t *testing.T) {
 	sp := &fakeSpender{signTxErr: fmt.Errorf("%w: bad", spend.ErrWrongPassword)}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","password":"bad","required_signers":["deadbeef"]}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/sign-tx", body))
@@ -2689,7 +2756,7 @@ func TestSignTxWrongPasswordReturns401(t *testing.T) {
 
 func TestSignTxInvalidTxReturns400(t *testing.T) {
 	sp := &fakeSpender{signTxErr: fmt.Errorf("%w: bad cbor", spend.ErrInvalidTx)}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"zz","password":"pw","required_signers":["deadbeef"]}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/sign-tx", body))
@@ -2700,7 +2767,7 @@ func TestSignTxInvalidTxReturns400(t *testing.T) {
 
 func TestSubmitSignedRequiresReady(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","witness_cbor":"81"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/submit-signed", body))
@@ -2712,7 +2779,7 @@ func TestSubmitSignedRequiresReady(t *testing.T) {
 func TestSubmitSignedReturnsTxHash(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{submitResult: spend.TxResult{TxHash: "cafebabe"}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","witness_cbor":"81825820"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/submit-signed", body))
@@ -2730,7 +2797,7 @@ func TestSubmitSignedReturnsTxHash(t *testing.T) {
 func TestSubmitSignedInvalidWitnessReturns400(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{submitErr: fmt.Errorf("%w: bad cbor", spend.ErrInvalidWitness)}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"unsigned_tx_cbor":"84a400","witness_cbor":"zz"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/submit-signed", body))
@@ -2742,7 +2809,7 @@ func TestSubmitSignedInvalidWitnessReturns400(t *testing.T) {
 func TestSpendSendReadyReturnsPreview(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{preview: spend.Preview{PendingID: "pend123", Fee: "170000"}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"to":"addr_test1recv","lovelace":"1000000"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/send", body))
@@ -2761,7 +2828,7 @@ func TestSpendSendReadyReturnsPreview(t *testing.T) {
 func TestSpendSendGatedWhileSyncing(t *testing.T) {
 	// Spending requires a fully synced node (StateReady), unlike reads.
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"to":"addr_test1recv","lovelace":"1000000"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/send", body))
@@ -2773,7 +2840,7 @@ func TestSpendSendGatedWhileSyncing(t *testing.T) {
 func TestSpendSendNoWalletConflict(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{buildErr: spend.ErrNoWallet}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"to":"addr_test1recv","lovelace":"1000000"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/send", body))
@@ -2785,7 +2852,7 @@ func TestSpendSendNoWalletConflict(t *testing.T) {
 func TestSpendConfirmReadyReturnsTxHash(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{result: spend.TxResult{TxHash: "deadbeef"}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"valid-spend-password"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/send/pend123/confirm", body))
@@ -2806,7 +2873,7 @@ func TestSpendConfirmReadyReturnsTxHash(t *testing.T) {
 
 func TestSpendConfirmGatedWhileSyncing(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"valid-spend-password"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/send/pend123/confirm", body))
@@ -2846,7 +2913,7 @@ func TestSpendErrorStatusCodes(t *testing.T) {
 				req = localReq(http.MethodPost, "/wallet/send",
 					bytes.NewBufferString(`{"to":"addr_test1recv","lovelace":"1000000"}`))
 			}
-			h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+			h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)
 			if rec.Code != tc.wantCode {
@@ -2897,6 +2964,20 @@ func TestServeCommittedWriteStatus(t *testing.T) {
 	}
 }
 
+func TestUnlockLimitedStatus(t *testing.T) {
+	err := fmt.Errorf("open vault: %w", keystore.ErrUnlockLimited)
+	rec := httptest.NewRecorder()
+	serve(rec, struct{}{}, err)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("serve status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+	status, code, info := connectorErrorCode("signTx", err)
+	if status != http.StatusTooManyRequests || code != -3 || info != keystore.ErrUnlockLimited.Error() {
+		t.Fatalf("connectorErrorCode = (%d, %d, %q), want (%d, -3, %q)",
+			status, code, info, http.StatusTooManyRequests, keystore.ErrUnlockLimited.Error())
+	}
+}
+
 type historyExpiryResponse struct {
 	Enabled         bool
 	RestartRequired bool
@@ -2929,7 +3010,7 @@ func TestGetHistoryExpiryReturnsState(t *testing.T) {
 	// node query).
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStopped}}
 	set := &fakeSettings{enabled: true, restartRequired: true}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/history-expiry", nil))
 	if rec.Code != http.StatusOK {
@@ -2944,7 +3025,7 @@ func TestGetHistoryExpiryReturnsState(t *testing.T) {
 func TestGetHistoryExpiryDefaultOff(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	set := &fakeSettings{} // default off, no restart needed
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/history-expiry", nil))
 	got := decodeHistoryExpiry(t, rec.Body)
@@ -2957,7 +3038,7 @@ func TestPutHistoryExpiryPersistsAndSignalsRestart(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	// Running node was built with off; flipping to on must signal a restart.
 	set := &fakeSettings{enabled: false, restartRequired: true}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"enabled":true}`)
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/history-expiry", body))
@@ -2979,7 +3060,7 @@ func TestPutHistoryExpiryPersistsAndSignalsRestart(t *testing.T) {
 func TestPutHistoryExpiryInvalidJSON(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	set := &fakeSettings{}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{not json`)
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/history-expiry", body))
@@ -2996,7 +3077,7 @@ func TestPutHistoryExpiryRequiresExplicitEnabled(t *testing.T) {
 		t.Run(bodyJSON, func(t *testing.T) {
 			st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 			set := &fakeSettings{}
-			h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+			h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 			rec := httptest.NewRecorder()
 			body := bytes.NewBufferString(bodyJSON)
 			h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/history-expiry", body))
@@ -3013,12 +3094,60 @@ func TestPutHistoryExpiryRequiresExplicitEnabled(t *testing.T) {
 func TestPutHistoryExpiryPersistError(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	set := &fakeSettings{setErr: errors.New("disk full")}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"enabled":true}`)
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/history-expiry", body))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("PUT history-expiry with persist error = %d, want 500", rec.Code)
+	}
+}
+
+func TestRecoverNodeRequiresDeliberateConfirmation(t *testing.T) {
+	set := &fakeSettings{}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	for _, body := range []string{`{}`, `{"confirmed":false}`} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/settings/node/recover", strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("POST recovery with %s = %d, want 400", body, rec.Code)
+		}
+	}
+	if set.recoverCalled {
+		t.Fatal("RecoverNode called without confirmation")
+	}
+}
+
+func TestRecoverNodeStartsConfirmedRecovery(t *testing.T) {
+	set := &fakeSettings{}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/settings/node/recover", strings.NewReader(`{"confirmed":true}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST recovery = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !set.recoverCalled {
+		t.Fatal("RecoverNode was not called")
+	}
+}
+
+func TestRecoverNodeReportsLifecycleFailure(t *testing.T) {
+	set := &fakeSettings{recoverErr: errors.New("remove node sync data: permission denied")}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/settings/node/recover", strings.NewReader(`{"confirmed":true}`)))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("POST recovery failure = %d, want 500", rec.Code)
+	}
+}
+
+func TestRecoverNodeRejectsNonFailedNode(t *testing.T) {
+	set := &fakeSettings{recoverErr: supervisor.ErrRecoveryUnavailable}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/settings/node/recover", strings.NewReader(`{"confirmed":true}`)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("POST unavailable recovery = %d, want 409", rec.Code)
 	}
 }
 
@@ -3039,7 +3168,7 @@ func decodeAutoLock(t *testing.T, body *bytes.Buffer) int {
 func TestGetAutoLockReturnsPersistedValue(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStopped}}
 	set := &fakeSettings{autoLockMinutes: 30}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/auto-lock", nil))
 	if rec.Code != http.StatusOK {
@@ -3053,7 +3182,7 @@ func TestGetAutoLockReturnsPersistedValue(t *testing.T) {
 func TestPutAutoLockPersists(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	set := &fakeSettings{autoLockMinutes: 15}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"minutes":5}`)
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/auto-lock", body))
@@ -3071,7 +3200,7 @@ func TestPutAutoLockPersists(t *testing.T) {
 func TestPutAutoLockAcceptsOff(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	set := &fakeSettings{autoLockMinutes: 15}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"minutes":0}`)
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/auto-lock", body))
@@ -3086,7 +3215,7 @@ func TestPutAutoLockAcceptsOff(t *testing.T) {
 func TestPutAutoLockInvalidJSON(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	set := &fakeSettings{}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{not json`)
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/auto-lock", body))
@@ -3101,7 +3230,7 @@ func TestPutAutoLockInvalidJSON(t *testing.T) {
 func TestPutAutoLockRequiresExplicitMinutes(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	set := &fakeSettings{}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{}`)
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/auto-lock", body))
@@ -3117,7 +3246,7 @@ func TestPutAutoLockRejectsOutOfSetValue(t *testing.T) {
 	for _, bad := range []int{-1, 2, 60} {
 		st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 		set := &fakeSettings{}
-		h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		rec := httptest.NewRecorder()
 		body := bytes.NewBufferString(fmt.Sprintf(`{"minutes":%d}`, bad))
 		h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/auto-lock", body))
@@ -3133,7 +3262,7 @@ func TestPutAutoLockRejectsOutOfSetValue(t *testing.T) {
 func TestPutAutoLockPersistError(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	set := &fakeSettings{setAutoLockErr: errors.New("disk full")}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"minutes":5}`)
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/auto-lock", body))
@@ -3153,6 +3282,7 @@ func TestAutoLockDeadlineSurvivesStatusReloadAndMobileSuspend(t *testing.T) {
 	sp := &fakeSpender{}
 	set := &fakeSettings{autoLockMinutes: 1}
 	h := NewHandler(
+		testSessionToken,
 		fakeStatuser{}, fv, fw, sp, set, &fakeContacts{}, nil,
 		&fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(),
 		withAutoLockRuntime(clock.runtime()),
@@ -3195,6 +3325,7 @@ func TestVaultActivityReplacesServerAutoLockDeadline(t *testing.T) {
 		wallets: []vault.WalletMeta{{ID: "w1", Account: sampleAccount("preview")}},
 	}
 	h := NewHandler(
+		testSessionToken,
 		fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{},
 		&fakeSettings{autoLockMinutes: 1}, &fakeContacts{}, nil,
 		&fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(),
@@ -3249,6 +3380,7 @@ func TestVaultActivityCannotRenewExpiredDeadline(t *testing.T) {
 	fw := &fakeWallet{}
 	sp := &fakeSpender{}
 	h := NewHandler(
+		testSessionToken,
 		fakeStatuser{}, fv, fw, sp,
 		&fakeSettings{autoLockMinutes: 1}, &fakeContacts{}, nil,
 		&fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(),
@@ -3315,7 +3447,7 @@ func TestContactsListReturnsEntries(t *testing.T) {
 		{ID: "c1", Name: "Alice", Address: "addr_test1alice"},
 		{ID: "c2", Name: "Bob", Address: "addr_test1bob", Note: "friend"},
 	}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/contacts", nil))
 	if rec.Code != http.StatusOK {
@@ -3335,7 +3467,7 @@ func TestContactsListReturnsEntries(t *testing.T) {
 func TestContactsListUngated(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStopped}}
 	cb := &fakeContacts{}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/contacts", nil))
 	if rec.Code != http.StatusOK {
@@ -3345,7 +3477,7 @@ func TestContactsListUngated(t *testing.T) {
 
 func TestContactsCreateGeneratesEntry(t *testing.T) {
 	cb := &fakeContacts{}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"name":"Alice","address":"addr_test1alice","note":"friend"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/contacts", body))
@@ -3366,7 +3498,7 @@ func TestContactsCreateGeneratesEntry(t *testing.T) {
 
 func TestContactsUpdateExistingByID(t *testing.T) {
 	cb := &fakeContacts{entries: []contacts.Entry{{ID: "c1", Name: "Alice", Address: "addr_test1alice"}}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"id":"c1","name":"Alice Updated","address":"addr_test1alice2"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/contacts", body))
@@ -3384,7 +3516,7 @@ func TestContactsUpdateExistingByID(t *testing.T) {
 
 func TestContactsUpsertUnknownIDReturns404(t *testing.T) {
 	cb := &fakeContacts{}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"id":"missing","name":"Ghost","address":"addr_test1ghost"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/contacts", body))
@@ -3395,7 +3527,7 @@ func TestContactsUpsertUnknownIDReturns404(t *testing.T) {
 
 func TestContactsCreateValidationErrorReturns400(t *testing.T) {
 	cb := &fakeContacts{}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"name":"","address":"addr_test1alice"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/contacts", body))
@@ -3407,9 +3539,23 @@ func TestContactsCreateValidationErrorReturns400(t *testing.T) {
 	}
 }
 
+func TestContactsPersistenceUnavailableReturns503(t *testing.T) {
+	cb := &fakeContacts{upsertErr: contacts.ErrPersistenceUnavailable}
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"name":"Alice","address":"addr_test1alice"}`)
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/contacts", body))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("POST while persistence unavailable = %d, want 503 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), contacts.ErrPersistenceUnavailable.Error()) {
+		t.Fatalf("POST error = %s, want persistence failure", rec.Body.String())
+	}
+}
+
 func TestContactsCreateInvalidJSONReturns400(t *testing.T) {
 	cb := &fakeContacts{}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{not json`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/contacts", body))
@@ -3420,7 +3566,7 @@ func TestContactsCreateInvalidJSONReturns400(t *testing.T) {
 
 func TestContactsDeleteOK(t *testing.T) {
 	cb := &fakeContacts{entries: []contacts.Entry{{ID: "c1", Name: "Alice", Address: "addr_test1alice"}}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodDelete, "/wallet/contacts/c1", nil))
 	if rec.Code != http.StatusOK {
@@ -3433,7 +3579,7 @@ func TestContactsDeleteOK(t *testing.T) {
 
 func TestContactsDeleteUnknownReturns404(t *testing.T) {
 	cb := &fakeContacts{}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, cb, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodDelete, "/wallet/contacts/nope", nil))
 	if rec.Code != http.StatusNotFound {
@@ -3458,7 +3604,7 @@ func TestAssetLookupOK(t *testing.T) {
 		Quantity:        "1000000",
 		OnchainMetadata: json.RawMessage(`{"name":"Token","ticker":"TOK","decimals":6}`),
 	}}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/assets/policy123746f6b656e", nil))
 	if rec.Code != http.StatusOK {
@@ -3482,7 +3628,7 @@ func TestAssetLookupOK(t *testing.T) {
 
 func TestAssetLookupNotFound(t *testing.T) {
 	lookup := &fakeLookup{assetErr: chain.ErrNotFound}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/assets/policymissing", nil))
 	if rec.Code != http.StatusNotFound {
@@ -3491,7 +3637,7 @@ func TestAssetLookupNotFound(t *testing.T) {
 }
 
 func TestAssetLookupUnavailableWhenNoLookup(t *testing.T) {
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/assets/policy123746f6b656e", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -3502,7 +3648,7 @@ func TestAssetLookupUnavailableWhenNoLookup(t *testing.T) {
 func TestAssetLookupGatedWhileStarting(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
 	lookup := &fakeLookup{}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/assets/policy123746f6b656e", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -3512,7 +3658,7 @@ func TestAssetLookupGatedWhileStarting(t *testing.T) {
 
 func TestPoolCredentialsReturnsCreds(t *testing.T) {
 	po := &fakePoolOps{creds: poolops.Credentials{PoolID: "pool1abc", Network: "preview"}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"spend-password"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/credentials", body))
@@ -3529,7 +3675,7 @@ func TestPoolCredentialsReturnsCreds(t *testing.T) {
 
 func TestPoolCredentialsRejectsTrailingJSON(t *testing.T) {
 	po := &fakePoolOps{creds: poolops.Credentials{PoolID: "pool1abc", Network: "preview"}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"spend-password"} {"password":"ignored"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/credentials", body))
@@ -3543,7 +3689,7 @@ func TestPoolCredentialsRejectsTrailingJSON(t *testing.T) {
 
 func TestPoolCredentialsNoWalletConflict(t *testing.T) {
 	po := &fakePoolOps{credErr: poolops.ErrNoWallet}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"x"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/credentials", body))
@@ -3554,7 +3700,7 @@ func TestPoolCredentialsNoWalletConflict(t *testing.T) {
 
 func TestPoolCredentialsWrongPassword401(t *testing.T) {
 	po := &fakePoolOps{credErr: fmt.Errorf("%w: bad", poolops.ErrWrongPassword)}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"bad"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/credentials", body))
@@ -3565,7 +3711,7 @@ func TestPoolCredentialsWrongPassword401(t *testing.T) {
 
 func TestPoolKESPeriodGatedWhileStarting(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pool/kes-period", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -3575,7 +3721,7 @@ func TestPoolKESPeriodGatedWhileStarting(t *testing.T) {
 
 func TestPoolKESPeriodReady(t *testing.T) {
 	po := &fakePoolOps{kes: poolops.KESPeriodInfo{CurrentPeriod: 7, SlotsPerKESPeriod: 129600}}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/pool/kes-period", nil))
 	if rec.Code != http.StatusOK {
@@ -3592,7 +3738,7 @@ func TestPoolKESPeriodReady(t *testing.T) {
 
 func TestPoolOpCertIssue(t *testing.T) {
 	po := &fakePoolOps{opcert: poolops.OpCert{IssueNumber: 3, KesPeriod: 7, KesVKeyHex: "abcd"}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"pw","kes_index":0,"issue_number":3,"kes_period":7}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/opcert", body))
@@ -3609,7 +3755,7 @@ func TestPoolOpCertIssue(t *testing.T) {
 
 func TestPoolOpCertRotate(t *testing.T) {
 	po := &fakePoolOps{opcert: poolops.OpCert{IssueNumber: 4, KESIndex: 1}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"pw","new_kes_index":1,"prev_issue_number":3,"kes_period":7}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/opcert/rotate", body))
@@ -3633,7 +3779,7 @@ func TestPoolOpCertPayloadAndAssembleAirGap(t *testing.T) {
 		payload: poolops.OpCertPayload{PayloadHex: "8203", KesVKeyHex: "ab"},
 		opcert:  poolops.OpCert{IssueNumber: 1},
 	}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"kes_vkey_hex":"ab","issue_number":1,"kes_period":2}`)
@@ -3658,7 +3804,7 @@ func TestPoolOpCertPayloadAndAssembleAirGap(t *testing.T) {
 
 func TestPoolAssembleOpCertBadSignature400(t *testing.T) {
 	po := &fakePoolOps{opcertErr: fmt.Errorf("%w: bad sig", poolops.ErrInvalidRequest)}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"cold_vkey_hex":"aa","kes_vkey_hex":"bb","signature_hex":"00","issue_number":1,"kes_period":2}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/opcert/assemble", body))
@@ -3669,7 +3815,7 @@ func TestPoolAssembleOpCertBadSignature400(t *testing.T) {
 
 func TestPoolMetadataBuilder(t *testing.T) {
 	po := &fakePoolOps{metadata: poolops.MetadataResult{JSON: `{"name":"P"}`, HashHex: "deadbeef"}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"name":"P","ticker":"POOL","homepage":"https://x","description":"d"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/metadata", body))
@@ -3684,7 +3830,7 @@ func TestPoolMetadataBuilder(t *testing.T) {
 
 func TestPoolIDFromColdVKey(t *testing.T) {
 	po := &fakePoolOps{poolID: "pool1xyz", poolIDHex: "abcdef1234"}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"cold_vkey_hex":"` + strings.Repeat("ab", 32) + `"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/id", body))
@@ -3705,7 +3851,7 @@ func TestPoolIDFromColdVKey(t *testing.T) {
 
 func TestPoolRegistrationSeedAndAirGap(t *testing.T) {
 	po := &fakePoolOps{cert: poolops.CertResult{PoolID: "pool1reg", CBORHex: "8a03"}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"pw","pledge":1,"cost":1,"margin_num":1,"margin_denom":50}`)
@@ -3730,7 +3876,7 @@ func TestPoolRegistrationSeedAndAirGap(t *testing.T) {
 
 func TestPoolRegistrationAcceptsStringAmounts(t *testing.T) {
 	po := &fakePoolOps{cert: poolops.CertResult{PoolID: "pool1reg", CBORHex: "8a03"}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"pw","pledge":"9007199254740993","cost":"18446744073709551615","margin_num":1,"margin_denom":50}`)
@@ -3745,7 +3891,7 @@ func TestPoolRegistrationAcceptsStringAmounts(t *testing.T) {
 
 func TestPoolRetirementCert(t *testing.T) {
 	po := &fakePoolOps{cert: poolops.CertResult{PoolID: "pool1ret", CBORHex: "8304"}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"pw","epoch":500}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/retirement/cert", body))
@@ -3769,7 +3915,7 @@ func TestPoolRetirementCert(t *testing.T) {
 
 func TestPoolRetirementSubmitGatedWhileSyncing(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"pw","epoch":500}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/retirement/submit", body))
@@ -3780,7 +3926,7 @@ func TestPoolRetirementSubmitGatedWhileSyncing(t *testing.T) {
 
 func TestPoolRetirementSubmitReady(t *testing.T) {
 	po := &fakePoolOps{tx: poolops.TxResult{TxHash: "feedface"}}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"pw","epoch":500}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/retirement/submit", body))
@@ -3794,7 +3940,7 @@ func TestPoolRetirementSubmitReady(t *testing.T) {
 
 func TestPoolRetirementSubmitRejected422(t *testing.T) {
 	po := &fakePoolOps{submitErr: fmt.Errorf("%w: ledger rule X", poolops.ErrSubmitRejected)}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"pw","epoch":500}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/retirement/submit", body))
@@ -3813,7 +3959,7 @@ func TestVaultUnlockAttachesPoolWallet(t *testing.T) {
 		locked:  true,
 		wallets: []vault.WalletMeta{{ID: "w1", Name: "main", Network: "preview", Account: sampleAccount("preview")}},
 	}
-	h := NewHandler(st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/unlock", bytes.NewBufferString(`{"password":"valid-vault-password"}`)))
 	if rec.Code != http.StatusOK {
@@ -3833,7 +3979,7 @@ func TestTPMStatusReturnsProbeResult(t *testing.T) {
 		Enabled:   false,
 		PCRBound:  false,
 	}}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/vault/tpm/status", nil))
 	if rec.Code != http.StatusOK {
@@ -3855,7 +4001,7 @@ func TestTPMStatusReturnsUnavailableWithReason(t *testing.T) {
 		Enabled:   false,
 		PCRBound:  false,
 	}}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/vault/tpm/status", nil))
 	if rec.Code != http.StatusOK {
@@ -3876,7 +4022,7 @@ func TestTPMStatusReturnsEnabledAndPCRBound(t *testing.T) {
 		Enabled:   true,
 		PCRBound:  true,
 	}}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/vault/tpm/status", nil))
 	if rec.Code != http.StatusOK {
@@ -3893,7 +4039,7 @@ func TestTPMStatusReturnsEnabledAndPCRBound(t *testing.T) {
 
 func TestEnableTPMCallsVaultMethodWithPassword(t *testing.T) {
 	fv := &fakeVault{tpmStatus: vault.TPMStatusInfo{Available: true}}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"valid-vault-password","pcrBound":true}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/tpm/enable", body))
@@ -3913,7 +4059,7 @@ func TestEnableTPMCallsVaultMethodWithPassword(t *testing.T) {
 
 func TestEnableTPMWithoutPCRBound(t *testing.T) {
 	fv := &fakeVault{tpmStatus: vault.TPMStatusInfo{Available: true}}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"valid-vault-password"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/tpm/enable", body))
@@ -3930,7 +4076,7 @@ func TestEnableTPMWrongPasswordReturns401(t *testing.T) {
 		tpmStatus:    vault.TPMStatusInfo{Available: true},
 		enableTPMErr: fmt.Errorf("%w: bad", vault.ErrWrongPassword),
 	}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"wrong-but-long-password"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/tpm/enable", body))
@@ -3944,7 +4090,7 @@ func TestEnableTPMUnavailableReturns409(t *testing.T) {
 		tpmStatus:    vault.TPMStatusInfo{Available: false, Reason: "no device"},
 		enableTPMErr: fmt.Errorf("%w: no device", vault.ErrTPMUnavailable),
 	}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"valid-vault-password"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/tpm/enable", body))
@@ -3958,7 +4104,7 @@ func TestEnableTPMRequiresPassword(t *testing.T) {
 	// MinPasswordLen floor (via requirePassword) without touching the vault.
 	for _, body := range []string{`{}`, `{"password":"short"}`} {
 		fv := &fakeVault{tpmStatus: vault.TPMStatusInfo{Available: true}}
-		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/tpm/enable", bytes.NewBufferString(body)))
 		if rec.Code != http.StatusBadRequest {
@@ -3972,7 +4118,7 @@ func TestEnableTPMRequiresPassword(t *testing.T) {
 
 func TestDisableTPMCallsVaultMethodWithPassword(t *testing.T) {
 	fv := &fakeVault{}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"valid-vault-password"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/tpm/disable", body))
@@ -3989,7 +4135,7 @@ func TestDisableTPMCallsVaultMethodWithPassword(t *testing.T) {
 
 func TestDisableTPMWrongPasswordReturns401(t *testing.T) {
 	fv := &fakeVault{disableTPMErr: fmt.Errorf("%w: bad", vault.ErrWrongPassword)}
-	h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"password":"wrong-but-long-password"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/tpm/disable", body))
@@ -4003,7 +4149,7 @@ func TestDisableTPMRequiresPassword(t *testing.T) {
 	// MinPasswordLen floor (via requirePassword) without touching the vault.
 	for _, body := range []string{`{}`, `{"password":"short"}`} {
 		fv := &fakeVault{}
-		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, localReq(http.MethodPost, "/vault/tpm/disable", bytes.NewBufferString(body)))
 		if rec.Code != http.StatusBadRequest {
@@ -4021,7 +4167,7 @@ func TestTPMRoutesRejectTrailingJSON(t *testing.T) {
 	// rejected without touching the vault.
 	for _, route := range []string{"/vault/tpm/enable", "/vault/tpm/disable"} {
 		fv := &fakeVault{tpmStatus: vault.TPMStatusInfo{Available: true}}
-		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		rec := httptest.NewRecorder()
 		body := bytes.NewBufferString(`{"password":"valid-vault-password"}{"junk":true}`)
 		h.ServeHTTP(rec, localReq(http.MethodPost, route, body))
@@ -4045,6 +4191,150 @@ type fakeNodeLookup struct {
 	assetAddrs    []chain.AssetAddress
 	assetErr      error
 	gotAssetUnits []string
+}
+
+type fakeExternalHandleResolver struct {
+	name    string
+	address string
+	err     error
+	calls   int
+	input   string
+	network string
+}
+
+func (f *fakeExternalHandleResolver) Supports(network string) bool { return network == "mainnet" }
+
+func (f *fakeExternalHandleResolver) Resolve(_ context.Context, network, input string) (string, string, error) {
+	f.calls++
+	f.network = network
+	f.input = input
+	return f.name, f.address, f.err
+}
+
+func externalHandleHandler(settings *fakeSettings, lookup NodeLookup, resolver ExternalHandleResolver) http.Handler {
+	return NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, settings,
+		&fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler(),
+		WithExternalHandleResolver(resolver))
+}
+
+func TestExternalHandleLookupSettingDefaultsOffAndToggles(t *testing.T) {
+	settings := &fakeSettings{}
+	h := externalHandleHandler(settings, nil, &fakeExternalHandleResolver{})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/external-handle-lookup", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":false`) {
+		t.Fatalf("default setting = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/external-handle-lookup", strings.NewReader(`{"enabled":true}`)))
+	if rec.Code != http.StatusOK || !settings.externalHandles || !settings.setExternalHandlesCalled {
+		t.Fatalf("enable setting = %d %s settings=%+v", rec.Code, rec.Body.String(), settings)
+	}
+}
+
+func TestExternalHandleLookupUnavailableOffMainnet(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, settings,
+		&fakeContacts{}, &fakeNodeLookup{assetErr: chain.ErrNotFound}, &fakePoolOps{}, nil, &fakeMultiSig{}, "preprod", http.NotFoundHandler(),
+		WithExternalHandleResolver(remote))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/external-handle-lookup", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":true`) || !strings.Contains(rec.Body.String(), `"available":false`) {
+		t.Fatalf("preprod setting = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusServiceUnavailable || remote.calls != 0 {
+		t.Fatalf("preprod lookup = %d %s remote calls=%d", rec.Code, rec.Body.String(), remote.calls)
+	}
+
+	mainnet := externalHandleHandler(settings, nil, remote)
+	rec = httptest.NewRecorder()
+	mainnet.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/external-handle-lookup", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"available":true`) {
+		t.Fatalf("mainnet setting = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExternalHandleLookupRequiresFeatureAndPerNameConsent(t *testing.T) {
+	settings := &fakeSettings{}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	h := externalHandleHandler(settings, &fakeNodeLookup{assetErr: chain.ErrNotFound}, remote)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusForbidden || remote.calls != 0 {
+		t.Fatalf("disabled lookup = %d calls=%d", rec.Code, remote.calls)
+	}
+
+	settings.externalHandles = true
+	for _, body := range []string{`{}`, `{"consent":false}`} {
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest || remote.calls != 0 {
+			t.Fatalf("lookup body %s = %d calls=%d", body, rec.Code, remote.calls)
+		}
+	}
+}
+
+func TestExternalHandleLookupKeepsNodePrimary(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	local := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1local", Quantity: "1"}}}
+	h := externalHandleHandler(settings, local, remote)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusOK || remote.calls != 0 || !strings.Contains(rec.Body.String(), `"address":"addr1local"`) || !strings.Contains(rec.Body.String(), `"source":"node"`) {
+		t.Fatalf("node-primary lookup = %d %s remote calls=%d", rec.Code, rec.Body.String(), remote.calls)
+	}
+}
+
+func TestExternalHandleLookupFallsBackAfterNodeMiss(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	h := externalHandleHandler(settings, &fakeNodeLookup{assetErr: chain.ErrNotFound}, remote)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/$chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusOK || remote.calls != 1 || remote.input != "$chris" || remote.network != "mainnet" || !strings.Contains(rec.Body.String(), `"source":"external"`) {
+		t.Fatalf("fallback = %d %s remote=%+v", rec.Code, rec.Body.String(), remote)
+	}
+}
+
+func TestExternalHandleLookupFailsClosedOnAmbiguousNode(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	local := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{
+		{Address: "addr1a", Quantity: "1"},
+		{Address: "addr1b", Quantity: "1"},
+	}}
+	h := externalHandleHandler(settings, local, remote)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusConflict || remote.calls != 0 {
+		t.Fatalf("ambiguous node = %d %s remote calls=%d", rec.Code, rec.Body.String(), remote.calls)
+	}
+}
+
+func TestExternalHandleLookupDistinguishesMissingAndFailure(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	for _, tc := range []struct {
+		err  error
+		code int
+		body string
+	}{
+		{err: chain.ErrNotFound, code: http.StatusNotFound, body: "handle not found"},
+		{err: handle.ErrRemoteUnavailable, code: http.StatusBadGateway, body: "external handle service unavailable"},
+	} {
+		remote := &fakeExternalHandleResolver{err: tc.err}
+		h := externalHandleHandler(settings, &fakeNodeLookup{assetErr: chain.ErrNotFound}, remote)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+		if rec.Code != tc.code || !strings.Contains(rec.Body.String(), tc.body) {
+			t.Fatalf("remote error %v = %d %s", tc.err, rec.Code, rec.Body.String())
+		}
+	}
 }
 
 func (f *fakeNodeLookup) Pool(_ context.Context, _ string) (chain.PoolInfo, error) {
@@ -4077,7 +4367,7 @@ func (f *fakeNodeLookup) Asset(_ context.Context, _ string) (chain.AssetInfo, er
 }
 
 func TestHandleLookupUnavailableWithoutLookup(t *testing.T) {
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/chris", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -4087,7 +4377,7 @@ func TestHandleLookupUnavailableWithoutLookup(t *testing.T) {
 
 func TestHandleLookupResolvesOnMainnet(t *testing.T) {
 	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/$chris", nil))
 	if rec.Code != http.StatusOK {
@@ -4100,15 +4390,18 @@ func TestHandleLookupResolvesOnMainnet(t *testing.T) {
 	if got.Handle != "chris" || got.Address != "addr1abc" {
 		t.Fatalf("unexpected handle info: %+v", got)
 	}
-	wantUnit := "f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "6368726973"
-	if len(lk.gotAssetUnits) != 1 || lk.gotAssetUnits[0] != wantUnit {
-		t.Fatalf("queried asset unit = %v, want [%s]", lk.gotAssetUnits, wantUnit)
+	wantUnits := []string{
+		"f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "6368726973",
+		"f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "000de1406368726973",
+	}
+	if !slices.Equal(lk.gotAssetUnits, wantUnits) {
+		t.Fatalf("queried asset units = %v, want %v", lk.gotAssetUnits, wantUnits)
 	}
 }
 
 func TestHandleLookupResolvesOnPreview(t *testing.T) {
 	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr_test1abc", Quantity: "1"}}}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/$chris", nil))
 	if rec.Code != http.StatusOK {
@@ -4121,15 +4414,18 @@ func TestHandleLookupResolvesOnPreview(t *testing.T) {
 	if got.Handle != "chris" || got.Address != "addr_test1abc" {
 		t.Fatalf("unexpected handle info: %+v", got)
 	}
-	wantUnit := "f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "6368726973"
-	if len(lk.gotAssetUnits) != 1 || lk.gotAssetUnits[0] != wantUnit {
-		t.Fatalf("queried asset unit = %v, want [%s]", lk.gotAssetUnits, wantUnit)
+	wantUnits := []string{
+		"f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "6368726973",
+		"f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a" + "000de1406368726973",
+	}
+	if !slices.Equal(lk.gotAssetUnits, wantUnits) {
+		t.Fatalf("queried asset units = %v, want %v", lk.gotAssetUnits, wantUnits)
 	}
 }
 
 func TestHandleLookupWithoutDollarSign(t *testing.T) {
-	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc"}}}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/chris", nil))
 	if rec.Code != http.StatusOK {
@@ -4138,8 +4434,8 @@ func TestHandleLookupWithoutDollarSign(t *testing.T) {
 }
 
 func TestHandleLookupNotFoundOnInvalidNetwork(t *testing.T) {
-	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc"}}}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnte", http.NotFoundHandler())
+	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnte", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/$chris", nil))
 	if rec.Code != http.StatusNotFound {
@@ -4152,7 +4448,7 @@ func TestHandleLookupNotFoundOnInvalidNetwork(t *testing.T) {
 
 func TestHandleLookupNotFoundWhenNodeHasNotSeenAsset(t *testing.T) {
 	lk := &fakeNodeLookup{assetErr: chain.ErrNotFound}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/$chris", nil))
 	if rec.Code != http.StatusNotFound {
@@ -4162,18 +4458,34 @@ func TestHandleLookupNotFoundWhenNodeHasNotSeenAsset(t *testing.T) {
 
 func TestHandleLookupBadGatewayOnHardError(t *testing.T) {
 	lk := &fakeNodeLookup{assetErr: errors.New("node exploded")}
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/$chris", nil))
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("GET /wallet/handle/$chris hard error = %d, want 502", rec.Code)
 	}
+	if got := rec.Body.String(); !strings.Contains(got, `"error":"handle lookup failed"`) || strings.Contains(got, "node exploded") {
+		t.Fatalf("hard-error response = %q", got)
+	}
+}
+
+func TestHandleLookupRejectsAmbiguousHolder(t *testing.T) {
+	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{
+		{Address: "addr1first", Quantity: "1"},
+		{Address: "addr1second", Quantity: "1"},
+	}}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/$chris", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("GET /wallet/handle/$chris ambiguous holder = %d, want 409", rec.Code)
+	}
 }
 
 func TestHandleLookupGatedWhileStarting(t *testing.T) {
-	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc"}}}
+	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/$chris", nil))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -4185,7 +4497,7 @@ func TestDexRoutesAbsentWhenQuoterNil(t *testing.T) {
 	// dx is nil unless the node is on mainnet (see NewHandler wiring); the DEX
 	// routes must not be registered at all, so they fall through to the SPA/404
 	// handler rather than e.g. panicking on a nil DexQuoter.
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dex/pools", nil))
@@ -4205,7 +4517,7 @@ func TestDexPoolsReturnsOK(t *testing.T) {
 	dx := &fakeDexQuoter{pools: []dex.Pool{
 		{Protocol: "minswap-v2", PoolID: "pool1", AssetX: "lovelace", AssetY: "deadbeef"},
 	}}
-	h := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, dx, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, dx, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dex/pools", nil))
@@ -4228,7 +4540,7 @@ func TestDexPoolsRequiresReadyNode(t *testing.T) {
 	// cannot yet serve queries must return 503, not reach the DexQuoter.
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
 	dx := &fakeDexQuoter{}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, dx, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, dx, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/dex/pools", nil))
@@ -4242,7 +4554,7 @@ func TestDexQuoteReturnsOK(t *testing.T) {
 		Protocol: "minswap-v2", AssetIn: "lovelace", AssetOut: "deadbeef",
 		AmountIn: "1000000", AmountOut: "500000", Route: "minswap-v2 lovelace→deadbeef",
 	}}
-	h := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, dx, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, dx, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"asset_in":"lovelace","asset_out":"deadbeef","amount_in":"1000000"}`)
@@ -4265,7 +4577,7 @@ func TestDexQuoteReturnsOK(t *testing.T) {
 
 func TestDexQuoteInvalidAmountReturns400(t *testing.T) {
 	dx := &fakeDexQuoter{}
-	h := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, dx, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, dx, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"asset_in":"lovelace","asset_out":"deadbeef","amount_in":"not-a-number"}`)
@@ -4280,7 +4592,7 @@ func TestDexQuoteInvalidAmountReturns400(t *testing.T) {
 
 func TestDexQuoteRejectsTrailingJSON(t *testing.T) {
 	dx := &fakeDexQuoter{}
-	h := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, dx, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, dx, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"asset_in":"lovelace","asset_out":"deadbeef","amount_in":"1000000"}{"junk":true}`)
@@ -4309,7 +4621,7 @@ func TestDexQuoteErrorMapping(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dx := &fakeDexQuoter{quoteErr: tc.err}
-			h := NewHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, dx, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
+			h := NewHandler(testSessionToken, fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, dx, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 			rec := httptest.NewRecorder()
 			body := bytes.NewBufferString(`{"asset_in":"lovelace","asset_out":"deadbeef","amount_in":"1000000"}`)
 			h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/dex/quote", body))
@@ -4328,7 +4640,7 @@ func TestHardwareWalletRoute(t *testing.T) {
 		fv := &fakeVault{exists: true, locked: false}
 		fw := &fakeWallet{}
 		sp := &fakeSpender{}
-		h := NewHandler(st, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, st, fv, fw, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 		body := `{"name":"Ledger","account_xpub":"acct_xvk1test","account_index":7,"network":"preview","vault_password":"valid-vault-password"}`
 		rec := httptest.NewRecorder()
@@ -4362,7 +4674,7 @@ func TestHardwareWalletRoute(t *testing.T) {
 
 	t.Run("hardened account index returns 400", func(t *testing.T) {
 		fv := &fakeVault{exists: true, locked: false}
-		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		rec := httptest.NewRecorder()
 		body := `{"name":"Ledger","account_xpub":"acct_xvk1test","account_index":2147483648,"network":"preview","vault_password":"valid-vault-password"}`
 		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
@@ -4376,7 +4688,7 @@ func TestHardwareWalletRoute(t *testing.T) {
 
 	t.Run("malformed JSON returns 400", func(t *testing.T) {
 		fv := &fakeVault{exists: true, locked: false}
-		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(`{bad json`)))
 		if rec.Code != http.StatusBadRequest {
@@ -4389,7 +4701,7 @@ func TestHardwareWalletRoute(t *testing.T) {
 
 	t.Run("empty xpub returns 400", func(t *testing.T) {
 		fv := &fakeVault{exists: true, locked: false}
-		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		rec := httptest.NewRecorder()
 		body := `{"name":"Ledger","account_xpub":"","network":"preview","vault_password":"valid-vault-password"}`
 		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
@@ -4400,7 +4712,7 @@ func TestHardwareWalletRoute(t *testing.T) {
 
 	t.Run("empty name returns 400", func(t *testing.T) {
 		fv := &fakeVault{exists: true, locked: false}
-		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		rec := httptest.NewRecorder()
 		body := `{"name":"","account_xpub":"acct_xvk1test","network":"preview","vault_password":"valid-vault-password"}`
 		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
@@ -4411,7 +4723,7 @@ func TestHardwareWalletRoute(t *testing.T) {
 
 	t.Run("missing vault_password returns 400", func(t *testing.T) {
 		fv := &fakeVault{exists: true, locked: false}
-		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		rec := httptest.NewRecorder()
 		body := `{"name":"Ledger","account_xpub":"acct_xvk1test","network":"preview"}`
 		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
@@ -4422,7 +4734,7 @@ func TestHardwareWalletRoute(t *testing.T) {
 
 	t.Run("duplicate hardware wallet returns 409", func(t *testing.T) {
 		fv := &fakeVault{exists: true, locked: false, hwErr: vault.ErrDuplicateWallet}
-		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		rec := httptest.NewRecorder()
 		body := `{"name":"Ledger","account_xpub":"acct_xvk1test","network":"preview","vault_password":"valid-vault-password"}`
 		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
@@ -4433,7 +4745,7 @@ func TestHardwareWalletRoute(t *testing.T) {
 
 	t.Run("network mismatch returns 400", func(t *testing.T) {
 		fv := &fakeVault{exists: true, locked: false}
-		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		rec := httptest.NewRecorder()
 		body := `{"name":"Ledger","account_xpub":"acct_xvk1test","network":"mainnet","vault_password":"valid-vault-password"}`
 		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/hardware", bytes.NewBufferString(body)))
@@ -4459,7 +4771,7 @@ func TestHardwareSignRequestRoute(t *testing.T) {
 		RequiredSigners: []string{"aabbccdd"},
 		UnsignedTxCBOR:  "84a4deadbeef",
 	}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/send/pending-123/hardware-sign-request", nil))
@@ -4493,7 +4805,7 @@ func TestSignDataHardwareRequestRoute(t *testing.T) {
 		NetworkID:     0,
 		ProtocolMagic: 2,
 	}}
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	t.Run("resolves paths for an owned address", func(t *testing.T) {
 		rec := httptest.NewRecorder()
@@ -4526,7 +4838,7 @@ func TestSignDataHardwareRequestRoute(t *testing.T) {
 
 	t.Run("foreign address surfaces 400", func(t *testing.T) {
 		spErr := &fakeSpender{hwSignDataReqErr: fmt.Errorf("%w: not owned", spend.ErrInvalidRequest)}
-		hErr := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, spErr, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		hErr := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, spErr, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		rec := httptest.NewRecorder()
 		hErr.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/sign-data/hardware-request?address=addr_test1foreign", nil))
 		if rec.Code != http.StatusBadRequest {
@@ -4541,7 +4853,7 @@ func TestSubmitHardwareRoute(t *testing.T) {
 		unsigned:     spend.UnsignedTx{UnsignedTxCBOR: "84a400deadbeef", RequiredSigners: []string{"aabb"}},
 		submitResult: spend.TxResult{TxHash: "cafebabe"},
 	}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	body := `{"witness_cbor":"81825820"}`
 	rec := httptest.NewRecorder()
@@ -4568,7 +4880,7 @@ func TestSubmitHardwareRoute(t *testing.T) {
 // cross-origin and DNS-rebound Hosts are rejected, and state-changing methods
 // additionally require a present, matching Origin.
 func TestSameOriginGuard(t *testing.T) {
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 
 	const noOrigin = "\x00" // sentinel: do not set an Origin header at all
 
@@ -4607,6 +4919,7 @@ func TestSameOriginGuard(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, tc.target, nil)
 			req.Host = tc.host
+			req.Header.Set(sessionHeaderName, testSessionToken)
 			if tc.origin != noOrigin {
 				req.Header.Set("Origin", tc.origin)
 			}
@@ -4620,6 +4933,118 @@ func TestSameOriginGuard(t *testing.T) {
 	}
 }
 
+func TestSessionGuardRejectsForgedLocalRequests(t *testing.T) {
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"wallet read", http.MethodGet, "/vault/status"},
+		{"diagnostics", http.MethodGet, "/diagnostics"},
+		{"selection", http.MethodPost, "/wallet/account/select"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{"account_index":0}`))
+			req.Host = "127.0.0.1:8090"
+			req.Header.Set("Origin", "http://127.0.0.1:8090")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("%s %s with forgeable local headers = %d, want 401", tc.method, tc.path, rec.Code)
+			}
+		})
+	}
+}
+
+func TestSessionCookieSecureOnlyOverTLS(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		tls    bool
+		secure bool
+	}{
+		{"plain loopback", false, false},
+		{"direct TLS", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := sessionGuard(testSessionToken, http.NotFoundHandler())
+			req := localReq(http.MethodPost, "/session", nil)
+			if tc.tls {
+				req.TLS = &tls.ConnectionState{}
+				req.Header.Set("Origin", "https://127.0.0.1:8090")
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			cookies := rec.Result().Cookies()
+			if len(cookies) != 1 || cookies[0].Secure != tc.secure {
+				t.Fatalf("cookie = %#v, want Secure=%v", cookies, tc.secure)
+			}
+		})
+	}
+}
+
+func TestSessionExchangeSetsAuthenticatedCookie(t *testing.T) {
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+
+	exchange := localReq(http.MethodPost, "/session", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, exchange)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /session = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != sessionCookieName || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
+		t.Fatalf("session cookie = %#v, want one HttpOnly SameSite=Strict cookie", cookies)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/vault/status", nil)
+	req.Host = "127.0.0.1:8090"
+	req.AddCookie(cookies[0])
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /vault/status with session cookie = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSessionGuardRoutePartition(t *testing.T) {
+	for _, tc := range []struct {
+		path       string
+		wantPassed bool
+	}{
+		{"/health", true},
+		{"/assets/app.js", true},
+		{"/connector/pair", true},
+		{"/connector/request", true},
+		{"/connector/self-revoke", true},
+		{"/connector/request/extra", false},
+		{"/connector/events", false},
+		{"/connector/grants", false},
+		{"/connector/decide", false},
+		{"/remote-submission", false},
+		{"/remote-submission/enable", false},
+		{"/wallet/example/activate", false},
+		{"/wallet/account/select", false},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			passed := false
+			h := sessionGuard(testSessionToken, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				passed = true
+			}))
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if passed != tc.wantPassed {
+				t.Fatalf("passed = %v, want %v (status %d)", passed, tc.wantPassed, rec.Code)
+			}
+			if !tc.wantPassed && rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", rec.Code)
+			}
+		})
+	}
+}
+
 // TestSameOriginGuardSkipsConnector verifies the mux-level guard does NOT
 // re-guard the /connector/* routes: they carry their own auth (bearer token /
 // in-handler same-origin) and an extension request legitimately presents a
@@ -4628,7 +5053,7 @@ func TestSameOriginGuard(t *testing.T) {
 // connector handler (202 pending) rather than being rejected 403 by the guard.
 func TestSameOriginGuardSkipsConnector(t *testing.T) {
 	svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
-	h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithConnector(svc))
+	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithConnector(svc))
 
 	req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(`{"extension_id":"chrome-extension://guardtest"}`))
 	req.Host = "127.0.0.1:8090"
@@ -4653,7 +5078,7 @@ func TestNewHandlerRejectsOversizedRequestBodies(t *testing.T) {
 
 	t.Run("regular API", func(t *testing.T) {
 		fv := &fakeVault{}
-		h := NewHandler(fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+		h := NewHandler(testSessionToken, fakeStatuser{}, fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 		body := `{"password":"` + strings.Repeat("x", maxRequestBodyBytes) + `"}`
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, localReq(http.MethodPost, "/vault", strings.NewReader(body)))
@@ -4668,7 +5093,7 @@ func TestNewHandlerRejectsOversizedRequestBodies(t *testing.T) {
 
 	t.Run("connector", func(t *testing.T) {
 		svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
-		h := NewHandler(fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithConnector(svc))
+		h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), WithConnector(svc))
 		body := `{"extension_id":"chrome-extension://` + strings.Repeat("x", maxRequestBodyBytes) + `"}`
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
@@ -4701,7 +5126,7 @@ func TestMultiSigCreateReportsActivationFailure(t *testing.T) {
 	}
 	ms := &fakeMultiSig{accounts: []multisig.Account{acct}, account: acct}
 	fv := &fakeVault{setActiveErr: errors.New("selection storage unavailable")}
-	h := NewHandler(
+	h := NewHandler(testSessionToken,
 		fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}},
 		fv, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{},
 		nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler(),

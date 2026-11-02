@@ -16,12 +16,162 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/blinklabs-io/dingo"
 )
+
+type recoveryNodeFactory struct {
+	starts int
+	err    error
+}
+
+func (f *recoveryNodeFactory) New(_ dingo.Config) (NodeRunner, error) {
+	f.starts++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return fakeNodeRunner{}, nil
+}
+
+func TestRecoverReplacesOnlyNodeDataAndRestarts(t *testing.T) {
+	appDir := t.TempDir()
+	nodeDir := filepath.Join(appDir, "db")
+	if err := os.MkdirAll(nodeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nodeDir, "metadata.sqlite"), []byte("chain"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nodeDir, bootstrapMarker), []byte("ok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	retained := map[string]string{
+		"vault.json":         "encrypted wallet and keys",
+		"settings.json":      "settings",
+		"contacts.json":      "contacts",
+		"keystore.json":      "legacy keys",
+		"logs/wallet.log":    "diagnostics",
+		"nft-cache/item.bin": "cached media",
+	}
+	for name, contents := range retained {
+		path := filepath.Join(appDir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	factory := &recoveryNodeFactory{}
+	s := New(Config{Network: "preview", DataDir: nodeDir, WalletDataDir: appDir})
+	s.nodeFactory = factory
+	s.bootstrapper = &fakeBootstrapper{}
+	s.status.State = StateError
+	t.Cleanup(s.Stop)
+
+	if err := s.Recover(context.Background()); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if factory.starts != 1 {
+		t.Fatalf("node starts = %d, want 1", factory.starts)
+	}
+	if _, err := os.Stat(filepath.Join(nodeDir, "metadata.sqlite")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("node sync data still exists: %v", err)
+	}
+	for name, want := range retained {
+		got, err := os.ReadFile(filepath.Join(appDir, name))
+		if err != nil {
+			t.Fatalf("read retained %s: %v", name, err)
+		}
+		if string(got) != want {
+			t.Fatalf("retained %s = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestRecoverKeepsErrorStateWhenRestartFails(t *testing.T) {
+	appDir := t.TempDir()
+	nodeDir := filepath.Join(appDir, "db")
+	if err := os.MkdirAll(nodeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nodeDir, "metadata.sqlite"), []byte("chain"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	factory := &recoveryNodeFactory{err: errors.New("start failed")}
+	s := New(Config{Network: "preview", DataDir: nodeDir, WalletDataDir: appDir})
+	s.nodeFactory = factory
+	s.status.State = StateError
+
+	err := s.Recover(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "start failed") {
+		t.Fatalf("Recover = %v, want restart failure", err)
+	}
+	if factory.starts != 1 {
+		t.Fatalf("node starts = %d, want 1", factory.starts)
+	}
+	if got := s.Status(); got.State != StateError || !strings.Contains(got.Err, "restart node") {
+		t.Fatalf("status = %+v, want restart error", got)
+	}
+	entries, readErr := os.ReadDir(nodeDir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("node directory has %d entries after clean restart failure", len(entries))
+	}
+}
+
+func TestRecoverDoesNotRestartAfterCleanupFailure(t *testing.T) {
+	appDir := t.TempDir()
+	nodeDir := filepath.Join(appDir, "db")
+	if err := os.MkdirAll(nodeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	factory := &recoveryNodeFactory{}
+	s := New(Config{Network: "preview", DataDir: nodeDir, WalletDataDir: appDir})
+	s.nodeFactory = factory
+	s.status.State = StateError
+	s.removeAll = func(string) error { return errors.New("cleanup failed") }
+
+	err := s.Recover(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "cleanup failed") {
+		t.Fatalf("Recover = %v, want cleanup failure", err)
+	}
+	if factory.starts != 0 {
+		t.Fatalf("node starts = %d, want 0", factory.starts)
+	}
+	if got := s.Status().State; got != StateError {
+		t.Fatalf("state = %q, want error", got)
+	}
+}
+
+func TestRecoverRejectsNodeDirectoryContainingWalletData(t *testing.T) {
+	appDir := t.TempDir()
+	factory := &recoveryNodeFactory{}
+	s := New(Config{Network: "preview", DataDir: appDir, WalletDataDir: appDir})
+	s.nodeFactory = factory
+	s.status.State = StateError
+
+	err := s.Recover(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unsafe node sync directory") {
+		t.Fatalf("Recover = %v, want unsafe-directory error", err)
+	}
+	if factory.starts != 0 {
+		t.Fatalf("node starts = %d, want 0", factory.starts)
+	}
+	if _, statErr := os.Stat(appDir); statErr != nil {
+		t.Fatalf("wallet data directory was removed: %v", statErr)
+	}
+}
 
 // fakeNodeRunner is a no-op NodeRunner for tests: Run blocks until ctx is
 // cancelled (simulating a long-lived node) so Start can complete its goroutine

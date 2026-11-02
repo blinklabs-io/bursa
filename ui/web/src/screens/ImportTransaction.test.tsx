@@ -9,7 +9,11 @@ afterEach(() => {
 
 const vkeySummary: TxSummary = {
   kind: "vkey",
-  outputs: [{ address: "addr_test1xyz", lovelace: "2000000" }],
+  outputs: [{
+    address: "addr_test1xyz",
+    lovelace: "2000000",
+    assets: [{ unit: "policyasset", quantity: "42" }],
+  }],
   fee: "170000",
   existing_signatures: [],
   wallet_can_add: [{ key_hash: "aa".repeat(28), role: "payment" }],
@@ -27,7 +31,29 @@ test("decodes a pasted tx and shows the preview", async () => {
   fireEvent.click(screen.getByRole("button", { name: /decode/i }));
 
   await waitFor(() => expect(screen.getByText(/170000|0.17/)).toBeInTheDocument());
+  expect(screen.getByText("policyasset")).toBeInTheDocument();
+  expect(screen.getByText(/42/)).toBeInTheDocument();
   expect(screen.getByText(/add my signature/i)).toBeInTheDocument();
+});
+
+test("shows unresolved consumed and collateral references for offline review", async () => {
+  vi.spyOn(client, "decodeTx").mockResolvedValue({
+    ...vkeySummary,
+    inputs: [{ tx_hash: "aa".repeat(32), index: 0, resolved: false }],
+    collateral_inputs: [{ tx_hash: "bb".repeat(32), index: 1, resolved: false }],
+    total_collateral: "1000000",
+  });
+
+  render(<ImportTransaction canSubmit={true} />);
+  fireEvent.change(screen.getByLabelText(/transaction cbor/i), {
+    target: { value: "84a4" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /decode/i }));
+
+  await screen.findByText(`${"aa".repeat(32)}#0`);
+  expect(screen.getByText(`${"bb".repeat(32)}#1`)).toBeInTheDocument();
+  expect(screen.getAllByText(/unresolved.*value unavailable/i)).toHaveLength(2);
+  expect(screen.getByText(/collateral if script validation fails/i)).toBeInTheDocument();
 });
 
 test("adds a signature and reveals export + submit", async () => {
@@ -203,4 +229,80 @@ test("multisig: cosign affordance shows and submit stays gated on threshold, the
   expect(screen.getByRole("button", { name: /submit to network/i })).not.toHaveTextContent(
     /need|incomplete|syncing/i,
   );
+});
+
+test("renders imported certificate details", async () => {
+  vi.spyOn(client, "decodeTx").mockResolvedValue({
+    ...vkeySummary,
+    certificates: [
+      {
+        kind: "stake_registration",
+        stake_credential: { type: "key_hash", hash: "11".repeat(28) },
+        deposit_implicit: true,
+      },
+      {
+        kind: "stake_deregistration",
+        stake_credential: { type: "script_hash", hash: "22".repeat(28) },
+        refund_implicit: true,
+      },
+      {
+        kind: "stake_vote_registration_delegation",
+        stake_credential: { type: "key_hash", hash: "11".repeat(28) },
+        pool_id: "33".repeat(28),
+        drep: { type: "abstain" },
+        deposit_lovelace: "2000000",
+      },
+      {
+        kind: "pool_registration",
+        pool_id: "33".repeat(28),
+        reward_account: { type: "script_hash", hash: "44".repeat(28) },
+        pool_owners: ["55".repeat(28), "66".repeat(28)],
+      },
+      { kind: "pool_retirement", pool_id: "33".repeat(28), retirement_epoch: 0 },
+      {
+        kind: "deregistration_drep",
+        drep_credential: { type: "key_hash", hash: "88".repeat(28) },
+        refund_lovelace: "500000000",
+      },
+      {
+        kind: "auth_committee_hot",
+        committee_cold_credential: { type: "key_hash", hash: "99".repeat(28) },
+        committee_hot_credential: { type: "script_hash", hash: "aa".repeat(28) },
+      },
+    ],
+  });
+
+  render(<ImportTransaction canSubmit={true} />);
+
+  fireEvent.change(screen.getByLabelText(/transaction cbor/i), {
+    target: { value: "84a4" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /decode/i }));
+
+  const legacyReg = (await screen.findByText("stake_registration")).closest("li")!;
+  expect(legacyReg).toHaveTextContent(`stake key hash ${"11".repeat(28)}`);
+  expect(legacyReg).toHaveTextContent(/protocol key deposit \(amount not in certificate\)/);
+
+  const legacyDereg = screen.getByText("stake_deregistration").closest("li")!;
+  expect(legacyDereg).toHaveTextContent(`stake script hash ${"22".repeat(28)}`);
+  expect(legacyDereg).toHaveTextContent(/protocol key deposit refund/);
+
+  const combined = screen.getByText("stake_vote_registration_delegation").closest("li")!;
+  expect(combined).toHaveTextContent(`pool ${"33".repeat(28)}`);
+  expect(combined).toHaveTextContent("DRep abstain");
+  expect(combined).toHaveTextContent("2 ADA deposit");
+
+  const poolReg = screen.getByText("pool_registration").closest("li")!;
+  expect(poolReg).toHaveTextContent(`rewards to script hash ${"44".repeat(28)}`);
+  expect(poolReg).toHaveTextContent(`owners ${"55".repeat(28)}, ${"66".repeat(28)}`);
+
+  expect(screen.getByText("pool_retirement").closest("li")!).toHaveTextContent("retires at epoch 0");
+
+  const drepDereg = screen.getByText("deregistration_drep").closest("li")!;
+  expect(drepDereg).toHaveTextContent(`DRep key hash ${"88".repeat(28)}`);
+  expect(drepDereg).toHaveTextContent("500 ADA refund");
+
+  const committee = screen.getByText("auth_committee_hot").closest("li")!;
+  expect(committee).toHaveTextContent(`committee cold key hash ${"99".repeat(28)}`);
+  expect(committee).toHaveTextContent(`committee hot script hash ${"aa".repeat(28)}`);
 });

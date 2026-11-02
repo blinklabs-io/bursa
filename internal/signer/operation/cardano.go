@@ -26,35 +26,34 @@ import (
 )
 
 // Cardano is the subset of the bursa toolkit the coordinator needs. It is an
-// interface so the coordinator can be tested with a fake.
+// interface so the coordinator can be tested with a fake. Every method takes
+// the transaction era (a ledger.TxType value) resolved from the request, so
+// inspection, policy checks, the signed id and assembly all decode one era.
 type Cardano interface {
 	// Inspect decodes a transaction into its structured summary (counts/booleans).
-	Inspect(txCbor []byte) (*bursa.TxInspection, error)
+	Inspect(txCbor []byte, txType uint) (*bursa.TxInspection, error)
 	// Operations decodes the operation TYPES present in a transaction — the
 	// certificate kinds and governance voters — for per-kind policy gating.
-	Operations(txCbor []byte) (policy.TxOps, error)
+	Operations(txCbor []byte, txType uint) (policy.TxOps, error)
 	// TxID returns the 32-byte transaction id (the witness signing message).
-	TxID(txCbor []byte) ([]byte, error)
-	// Assemble merges vkey witnesses into a transaction, preserving the body.
-	Assemble(txCbor []byte, wits []lcommon.VkeyWitness) ([]byte, error)
+	TxID(txCbor []byte, txType uint) ([]byte, error)
+	// Assemble merges vkey witnesses into a transaction of the given era,
+	// preserving the body.
+	Assemble(txCbor []byte, txType uint, wits []lcommon.VkeyWitness) ([]byte, error)
 }
 
 // BursaCardano is the production adapter backed by the bursa toolkit.
 type BursaCardano struct{}
 
-func (BursaCardano) Inspect(txCbor []byte) (*bursa.TxInspection, error) {
-	return bursa.InspectTransaction(txCbor)
+func (BursaCardano) Inspect(txCbor []byte, txType uint) (*bursa.TxInspection, error) {
+	return bursa.InspectTransactionForEra(txCbor, txType)
 }
 
 // Operations decodes the certificate kinds and governance voter identities from
 // a transaction. Certificate kinds are returned in transaction order; voters
 // are sorted (by kind then id) for deterministic output. Voter DRep credential
 // ids are hex-encoded.
-func (BursaCardano) Operations(txCbor []byte) (policy.TxOps, error) {
-	txType, err := ledger.DetermineTransactionType(txCbor)
-	if err != nil {
-		return policy.TxOps{}, fmt.Errorf("failed to determine transaction era: %w", err)
-	}
+func (BursaCardano) Operations(txCbor []byte, txType uint) (policy.TxOps, error) {
 	tx, err := ledger.NewTransactionFromCbor(txType, txCbor)
 	if err != nil {
 		return policy.TxOps{}, fmt.Errorf("failed to decode transaction: %w", err)
@@ -83,8 +82,8 @@ func (BursaCardano) Operations(txCbor []byte) (policy.TxOps, error) {
 	return ops, nil
 }
 
-func (BursaCardano) TxID(txCbor []byte) ([]byte, error) {
-	idHex, err := bursa.TransactionID(txCbor)
+func (BursaCardano) TxID(txCbor []byte, txType uint) ([]byte, error) {
+	idHex, err := bursa.TransactionIDForEra(txCbor, txType)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +97,6 @@ func (BursaCardano) TxID(txCbor []byte) ([]byte, error) {
 	return raw, nil
 }
 
-func (BursaCardano) Assemble(txCbor []byte, wits []lcommon.VkeyWitness) ([]byte, error) {
-	return bursa.AssembleTransaction(txCbor, wits)
+func (BursaCardano) Assemble(txCbor []byte, txType uint, wits []lcommon.VkeyWitness) ([]byte, error) {
+	return bursa.AssembleTransactionForEra(txCbor, txType, wits)
 }

@@ -4,7 +4,6 @@ import {
   buildCreateRequest,
   emptyBuilderDraft,
   emptyBuilderQuestion,
-  answerableHere,
   emptyDraft,
   optionLabels,
   onScale,
@@ -143,9 +142,14 @@ describe("answerFor", () => {
     expect(answerFor(all, 0, draft(all, { ratings: ["5", "4", "1"] })).answer).toBeDefined();
   });
 
-  test("custom questions cannot be answered here", () => {
+  test("custom questions accept exact metadata CBOR", () => {
     const q: SurveyQuestion = { kind: 0, prompt: "", anchor: { uri: "ipfs://x", hash: "00" } };
-    expect(answerFor(q, 0, draft(q, {})).error).toMatch(/another tool/);
+    expect(answerFor(q, 0, draft(q, { customCbor: " 826178182a " })).answer).toEqual({
+      kind: 0,
+      question: 0,
+      custom_cbor: "826178182a",
+    });
+    expect(answerFor(q, 0, draft(q, { customCbor: "not hex" })).error).toMatch(/CBOR.*hex/i);
     expect(answerFor(q, 0, emptyDraft(q))).toEqual({}); // abstaining is fine
   });
 });
@@ -200,6 +204,7 @@ describe("buildCreateRequest", () => {
   test("builds every question type", () => {
     const d = valid();
     d.questions = [
+      { ...emptyBuilderQuestion(0), prompt: "c", customUri: "ipfs://schema", customHash: "ab".repeat(32) },
       { ...emptyBuilderQuestion(2), prompt: "m", optionsText: "a\nb\nc", min: "0", max: "2", required: true },
       { ...emptyBuilderQuestion(3), prompt: "r", optionsText: "a\nb", min: "1", max: "2" },
       { ...emptyBuilderQuestion(4), prompt: "n", rangeMin: "-5", rangeMax: "5", rangeStep: "5" },
@@ -210,6 +215,7 @@ describe("buildCreateRequest", () => {
     const { request, errors } = buildCreateRequest(d, NOW);
     expect(errors).toEqual([]);
     expect(request?.questions).toEqual([
+      { kind: 0, prompt: "c", anchor: { uri: "ipfs://schema", hash: "ab".repeat(32) } },
       { kind: 2, prompt: "m", options: ["a", "b", "c"], min: 0, max: 2, required: true },
       { kind: 3, prompt: "r", options: ["a", "b"], min: 1, max: 2 },
       { kind: 4, prompt: "n", range: { min: "-5", max: "5", step: "5" } },
@@ -312,15 +318,6 @@ test("a survey link round-trips through the hash route", () => {
   expect(surveyIdFromRoute("surveys/")).toBeUndefined();
   expect(surveyIdFromRoute("surveys/%E0%A4%A")).toBeUndefined();
   expect(surveyIdFromRoute("governance")).toBeUndefined();
-});
-
-test("a required custom question makes a survey unanswerable here", () => {
-  const custom: SurveyQuestion = { kind: 0, prompt: "c", anchor: { uri: "ipfs://x", hash: "00".repeat(32) } };
-  const def = (questions: SurveyQuestion[]): SurveyDefinition => ({
-    title: "t", description: "", roles: [4], end_epoch: 9, mode: { sealed: false }, questions,
-  });
-  expect(answerableHere(def([custom]))).toBe(true);
-  expect(answerableHere(def([{ ...custom, required: true }]))).toBe(false);
 });
 
 describe("answers are checked against the question", () => {

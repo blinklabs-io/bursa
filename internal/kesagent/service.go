@@ -240,7 +240,13 @@ func (a *Agent) handleSign(ctx context.Context, conn net.Conn) {
 			return
 		}
 		resp := SignResponse{Type: "sign_response", Period: req.Period}
-		sig, err := a.SignHeader(req.Period, req.Message)
+		var sig []byte
+		var err error
+		if req.Type != "sign_request" {
+			err = errors.New("kesagent: invalid sign request type")
+		} else {
+			sig, err = a.SignHeader(req.Period, req.Message)
+		}
 		if err != nil {
 			resp.Error = err.Error()
 		} else {

@@ -17,6 +17,7 @@ package signer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	sops "github.com/blinklabs-io/bursa/internal/sops"
@@ -51,7 +53,7 @@ func TestKeyTypeFromEnvelope(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.envelopeType, func(t *testing.T) {
-			got := keyTypeFromEnvelope(tc.envelopeType)
+			got := keyTypeFromEnvelope(tc.envelopeType, "")
 			if got != tc.want {
 				t.Errorf("keyTypeFromEnvelope(%q) = %q, want %q", tc.envelopeType, got, tc.want)
 			}
@@ -172,6 +174,49 @@ func TestBuildBackends_SoftwarePlaintextStillWorks(t *testing.T) {
 	keys, _ := backends[0].ListKeys(context.Background())
 	if len(keys) != 1 {
 		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+}
+
+func TestBuildBackends_SoftwarePolicyType(t *testing.T) {
+	root, err := bursa.GetRootKeyFromMnemonic(
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("root key: %v", err)
+	}
+	policy, err := bursa.GetPolicyKey(root, 0)
+	if err != nil {
+		t.Fatalf("policy key: %v", err)
+	}
+	key, err := bursa.GetPolicySKey(policy)
+	if err != nil {
+		t.Fatalf("policy signing key: %v", err)
+	}
+	envelope, err := json.Marshal(key)
+	if err != nil {
+		t.Fatalf("marshal policy key: %v", err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "policy.skey"), envelope, 0o600); err != nil {
+		t.Fatalf("write policy key: %v", err)
+	}
+
+	backends, err := BuildBackends(context.Background(), []config.SignerBackendConfig{
+		{Name: "sw", Type: "software", Path: dir},
+	})
+	if err != nil {
+		t.Fatalf("BuildBackends: %v", err)
+	}
+	keys, err := backends[0].ListKeys(context.Background())
+	if err != nil {
+		t.Fatalf("ListKeys: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+	if keys[0].Type() != backend.KeyTypePolicy {
+		t.Fatalf("expected derived type policy, got %q", keys[0].Type())
 	}
 }
 

@@ -17,6 +17,8 @@ package watermark
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
@@ -88,5 +90,77 @@ func TestMemWatermark_CheckAndCommit(t *testing.T) {
 	}
 	if err := wm.CheckAndCommit(ctx, key, "kes:1", []byte("payload-2")); !errors.Is(err, ErrConflict) {
 		t.Fatalf("expected ErrConflict, got %v", err)
+	}
+}
+
+func TestWarningMemWatermarkBoundsRecords(t *testing.T) {
+	wm := NewWarningMemWatermark()
+	ctx := context.Background()
+	var key backend.KeyHash
+	key[0] = 4
+
+	for i := 0; i <= maxWarningRecords; i++ {
+		if err := wm.Commit(ctx, key, fmt.Sprintf("tx:%08x", i), []byte("payload")); err != nil {
+			t.Fatalf("commit %d: %v", i, err)
+		}
+	}
+	if got := len(wm.records); got != maxWarningRecords {
+		t.Fatalf("retained records = %d, want %d", got, maxWarningRecords)
+	}
+	if err := wm.Check(ctx, key, "tx:00000000", []byte("different")); err != nil {
+		t.Fatalf("oldest record was not evicted: %v", err)
+	}
+	if err := wm.Check(ctx, key, fmt.Sprintf("tx:%08x", maxWarningRecords), []byte("different")); !errors.Is(err, ErrConflict) {
+		t.Fatalf("newest record: got %v, want ErrConflict", err)
+	}
+}
+
+func TestMemWatermarkDoesNotEvictEnforcedRecords(t *testing.T) {
+	wm := NewMemWatermark()
+	ctx := context.Background()
+	var key backend.KeyHash
+	key[0] = 5
+
+	for i := 0; i <= maxWarningRecords; i++ {
+		if err := wm.CheckAndCommit(ctx, key, fmt.Sprintf("scope:%08x", i), []byte("payload")); err != nil {
+			t.Fatalf("commit %d: %v", i, err)
+		}
+	}
+	if err := wm.Check(ctx, key, "scope:00000000", []byte("different")); !errors.Is(err, ErrConflict) {
+		t.Fatalf("oldest enforced record: got %v, want ErrConflict", err)
+	}
+}
+
+func TestWarningMemWatermarkConcurrentBound(t *testing.T) {
+	const (
+		limit     = 64
+		workers   = 8
+		perWorker = 128
+	)
+	wm := newMemWatermark(limit)
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			var key backend.KeyHash
+			key[0] = byte(worker)
+			for i := 0; i < perWorker; i++ {
+				if err := wm.Commit(ctx, key, fmt.Sprintf("tx:%d:%d", worker, i), []byte("payload")); err != nil {
+					t.Errorf("worker %d commit %d: %v", worker, i, err)
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
+
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+	if got, want := len(wm.records), limit; got != want {
+		t.Fatalf("retained records = %d, want %d", got, want)
+	}
+	if got := len(wm.recordOrder); got != limit {
+		t.Fatalf("retention ring entries = %d, want %d", got, limit)
 	}
 }

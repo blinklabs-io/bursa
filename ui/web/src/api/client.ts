@@ -37,6 +37,7 @@ import type {
   DelegationRequest,
   DelegationPreview,
   HandleInfo,
+  ExternalHandleLookupSetting,
   PoolCredentials,
   KESPeriodInfo,
   OpCert,
@@ -218,6 +219,8 @@ export const getHistoryExpiry = () =>
   apiGet<HistoryExpirySetting>("/wallet/settings/history-expiry");
 export const setHistoryExpiry = (enabled: boolean) =>
   apiPut<HistoryExpirySetting>("/wallet/settings/history-expiry", { enabled });
+export const recoverNodeSync = () =>
+  apiPost<{ started: boolean }>("/wallet/settings/node/recover", { confirmed: true });
 export const getAutoLock = () => apiGet<AutoLockSetting>("/wallet/settings/auto-lock");
 export const setAutoLock = (minutes: AutoLockSetting["minutes"]) =>
   apiPut<AutoLockSetting>("/wallet/settings/auto-lock", { minutes });
@@ -250,6 +253,12 @@ export const submitHardware = (id: string, witnessCbor: string) =>
 // '$' or not — the server strips it either way.
 export const resolveHandle = (name: string) =>
   apiGet<HandleInfo>(`/wallet/handle/${encodeURIComponent(name)}`);
+export const resolveHandleExternal = (name: string) =>
+  apiPost<HandleInfo>(`/wallet/handle/${encodeURIComponent(name)}/external`, { consent: true });
+export const getExternalHandleLookup = () =>
+  apiGet<ExternalHandleLookupSetting>("/wallet/settings/external-handle-lookup");
+export const setExternalHandleLookup = (enabled: boolean) =>
+  apiPut<ExternalHandleLookupSetting>("/wallet/settings/external-handle-lookup", { enabled });
 
 // Staking & governance. Pool/DRep lookups verify a pasted ID through the node;
 // buildDelegation returns an itemized preview; confirmDelegation signs + submits

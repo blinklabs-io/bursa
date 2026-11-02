@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/blinklabs-io/bursa/ui/internal/spend"
 )
 
 func TestQueueSubmitApprove(t *testing.T) {
@@ -168,6 +170,80 @@ func TestQueueBoundsPendingRequests(t *testing.T) {
 		}
 		if _, err := q.Submit("https://overflow.example", "enable", nil); !errors.Is(err, ErrQueueFull) {
 			t.Fatalf("excess global Submit error = %v, want ErrQueueFull", err)
+		}
+	})
+}
+
+func TestQueueReservationIsHiddenUntilPublished(t *testing.T) {
+	q := NewQueue(time.Now, func() (string, error) { return "req1", nil }, time.Second)
+	notifications, unsubscribe := q.Subscribe()
+	defer unsubscribe()
+
+	req, err := q.reserve("https://a.io", "signTx", json.RawMessage(`{"tx":"00"}`))
+	if err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	if got := q.Pending(); len(got) != 0 {
+		t.Fatalf("Pending before publish = %+v, want empty", got)
+	}
+	select {
+	case <-notifications:
+		t.Fatal("reservation notified approval clients")
+	default:
+	}
+	if err := q.Decide(req.ID, Decision{Approved: true}); !errors.Is(err, ErrUnknownRequest) {
+		t.Fatalf("Decide reserved request = %v, want ErrUnknownRequest", err)
+	}
+
+	effects := spend.TxSummary{Fee: "170000"}
+	published, err := q.publish(req.ID, &effects)
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if published.Effects == nil || published.Effects.Fee != effects.Fee {
+		t.Fatalf("published effects = %+v, want %+v", published.Effects, effects)
+	}
+	select {
+	case <-notifications:
+	case <-time.After(time.Second):
+		t.Fatal("publish did not notify approval clients")
+	}
+	if got := q.Pending(); len(got) != 1 || got[0].Effects == nil {
+		t.Fatalf("Pending after publish = %+v, want request with effects", got)
+	}
+}
+
+func TestQueueReservationsCountTowardExistingLimits(t *testing.T) {
+	t.Run("per origin", func(t *testing.T) {
+		nextID := 0
+		q := NewQueue(time.Now, func() (string, error) {
+			nextID++
+			return fmt.Sprintf("req%d", nextID), nil
+		}, time.Second)
+		for i := 0; i < maxPendingRequestsPerOrigin; i++ {
+			if _, err := q.reserve("https://a.io", "signTx", nil); err != nil {
+				t.Fatalf("reserve %d: %v", i, err)
+			}
+		}
+		if _, err := q.reserve("https://a.io", "signTx", nil); !errors.Is(err, ErrQueueFull) {
+			t.Fatalf("excess reservation = %v, want ErrQueueFull", err)
+		}
+	})
+
+	t.Run("global", func(t *testing.T) {
+		nextID := 0
+		q := NewQueue(time.Now, func() (string, error) {
+			nextID++
+			return fmt.Sprintf("req%d", nextID), nil
+		}, time.Second)
+		for i := 0; i < maxPendingRequests; i++ {
+			origin := fmt.Sprintf("https://%d.example", i)
+			if _, err := q.reserve(origin, "signTx", nil); err != nil {
+				t.Fatalf("reserve %d: %v", i, err)
+			}
+		}
+		if _, err := q.reserve("https://overflow.example", "signTx", nil); !errors.Is(err, ErrQueueFull) {
+			t.Fatalf("excess reservation = %v, want ErrQueueFull", err)
 		}
 	})
 }

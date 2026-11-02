@@ -12,8 +12,9 @@ info:
     request signing > bearer JWT** (HS256 shared secret or JWKS
     RS256/ES256/EdDSA). All three resolve to a single caller identity; an
     optional caller ACL (`signer.callers`) then restricts that identity to a set
-    of key hashes. The `/healthz`, `/readyz` and `/metrics` endpoints are
-    unauthenticated.
+    of key hashes. The `/healthz` and `/readyz` endpoints are unauthenticated.
+    Prometheus metrics use a separate loopback-only listener and are not part
+    of this API.
 
     An invalid credential rejects the request; only schemes presenting no
     credential fall through to the next configured scheme. The `pkcs11`
@@ -68,6 +69,7 @@ paths:
                 value:
                   type: tx
                   cbor: "84a3008182582000..."
+                  era: babbage
                   signers: ["a1b2c3...e2d1"]
               cip8:
                 value:
@@ -81,6 +83,13 @@ paths:
                   key: "a1b2c3...e2d1"
                   kes_vkey: "0f0e0d...aabb"
                   issue_counter: 3
+                  kes_period: 512
+              opcert-from-chain:
+                value:
+                  type: opcert
+                  key: "a1b2c3...e2d1"
+                  kes_vkey: "0f0e0d...aabb"
+                  chain_counter: 2
                   kes_period: 512
       responses:
         '200':
@@ -233,18 +242,6 @@ paths:
           description: Watermark dependency is healthy or has no external store.
         '503':
           description: Watermark dependency is unavailable.
-  /metrics:
-    get:
-      tags: [ops]
-      summary: Prometheus metrics
-      security: []
-      responses:
-        '200':
-          description: Prometheus text exposition format.
-          content:
-            text/plain:
-              schema:
-                type: string
 components:
   securitySchemes:
     mtlsAuth:
@@ -292,6 +289,13 @@ components:
         cbor:
           type: string
           description: tx - hex CBOR or JSON envelope of the transaction.
+        era:
+          type: string
+          enum: [shelley, allegra, mary, alonzo, babbage, conway, dijkstra]
+          description: |
+            tx - transaction era name. Required for raw CBOR that decodes in
+            multiple eras unless cbor is an era-typed JSON envelope. If both
+            declare an era, they must agree.
         signers:
           type: array
           minItems: 1
@@ -319,7 +323,20 @@ components:
         issue_counter:
           type: integer
           format: int64
-          description: opcert - operational certificate issue counter.
+          description: |
+            opcert - operational certificate issue counter. Must be greater
+            than every counter already signed for the key. Ignored when
+            chain_counter is set.
+        chain_counter:
+          type: integer
+          format: int64
+          description: |
+            opcert - the pool's on-chain opcert counter (the counter of the
+            last block it forged, 0 if none). When set, the signer issues the
+            certificate at chain_counter + 1 and returns that number in
+            issue_counter. The same chain counter may be sent again while the
+            pool has not forged with the new certificate; a lower one than
+            already reported is refused with 409.
         kes_period:
           type: integer
           format: int64
@@ -366,6 +383,10 @@ components:
         key:
           type: string
           description: Hex-encoded cold key hash that signed.
+        issue_counter:
+          type: integer
+          format: int64
+          description: The issue counter the signature covers.
     SignerError:
       type: object
       properties:

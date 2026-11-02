@@ -169,6 +169,13 @@ export interface TxResult {
 export interface HandleInfo {
   handle: string;
   address: string;
+  source?: "node" | "external";
+}
+
+export interface ExternalHandleLookupSetting {
+  enabled: boolean;
+  // False when the service cannot answer for the wallet's network.
+  available?: boolean;
 }
 
 // CIP-8/CIP-30 signData: sign an arbitrary message with a wallet address's key.
@@ -888,11 +895,18 @@ export interface ConnectorState {
   origins: string[];
 }
 
+export interface RemoteSubmissionStatus {
+  available: boolean;
+  enabled: boolean;
+  endpoint?: string;
+}
+
 export interface ConnectorRequest {
   id: string;
   origin: string;
   method: string;
   params?: unknown;
+  effects?: TxSummary;
   created: string; // RFC3339 timestamp
 }
 
@@ -927,10 +941,46 @@ export interface TxSummaryOutput {
   assets?: { unit: string; quantity: string }[];
 }
 
+export interface TxSummaryInput {
+  tx_hash: string;
+  index: number;
+  resolved: boolean;
+  address?: string;
+  lovelace?: string;
+  assets?: { unit: string; quantity: string }[];
+}
+
 export interface TxSummaryMultiSigParticipant {
   key_hash: string;
   label?: string;
   signed: boolean;
+}
+
+export interface TxSummaryCredential {
+  type: "key_hash" | "script_hash";
+  hash: string;
+}
+
+export interface TxSummaryDRep {
+  type: "key_hash" | "script_hash" | "abstain" | "no_confidence" | "unknown";
+  hash?: string;
+}
+
+export interface TxSummaryCertificate {
+  kind: string;
+  stake_credential?: TxSummaryCredential;
+  pool_id?: string;
+  drep?: TxSummaryDRep;
+  drep_credential?: TxSummaryCredential;
+  deposit_lovelace?: string;
+  refund_lovelace?: string;
+  deposit_implicit?: boolean;
+  refund_implicit?: boolean;
+  reward_account?: TxSummaryCredential;
+  pool_owners?: string[];
+  retirement_epoch?: number;
+  committee_cold_credential?: TxSummaryCredential;
+  committee_hot_credential?: TxSummaryCredential;
 }
 
 // multisig.TxInfo
@@ -947,12 +997,27 @@ export interface TxSummaryMultiSig {
 // spend.TxSummary, with the api-layer's optional multisig.TxInfo attached.
 export interface TxSummary {
   kind: "vkey" | "native_multisig";
+  inputs?: TxSummaryInput[];
   outputs: TxSummaryOutput[];
   fee: string;
   ttl?: number;
-  certificates?: string[];
+  validity_start?: number;
+  certificates?: TxSummaryCertificate[];
   withdrawals?: TxSummaryOutput[];
+  mint?: { unit: string; quantity: string }[];
+  auxiliary_data_hash?: string;
+  script_data_hash?: string;
+  collateral_inputs?: TxSummaryInput[];
+  collateral_return?: TxSummaryOutput;
+  total_collateral?: string;
+  reference_inputs?: TxSummaryInput[];
+  voting_count?: number;
+  proposal_count?: number;
+  current_treasury_value?: string;
+  treasury_donation?: string;
+  unsupported_effects?: string[];
   network_id?: number;
+  required_signers?: string[];
   existing_signatures: TxSummarySigner[];
   wallet_can_add: TxSummarySigner[];
   is_complete: boolean;
@@ -1147,8 +1212,9 @@ export interface SurveyAnswerPair {
   value: number | string;
 }
 
-// SurveyAnswer holds the value field its kind uses: choice (single-choice),
-// indices (multi-select, ranking), number (numeric), pairs (points, rating).
+// SurveyAnswer holds the value field its kind uses: custom_cbor (custom),
+// choice (single-choice), indices (multi-select, ranking), number (numeric),
+// pairs (points, rating).
 export interface SurveyAnswer {
   kind: SurveyKind;
   question: number;
@@ -1156,6 +1222,7 @@ export interface SurveyAnswer {
   indices?: number[];
   number?: number | string;
   pairs?: SurveyAnswerPair[];
+  custom_cbor?: string;
 }
 
 export interface SurveyOptionTally {

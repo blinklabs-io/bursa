@@ -110,6 +110,7 @@ signer:
     - name: "primary"
       type: "software"
       path: "/tmp/keys"
+      profile: "pool@preview"
   keys:
     - hash: "00000000000000000000000000000000000000000000000000000001"
       backend: "primary"
@@ -148,6 +149,9 @@ signer:
 	}
 	if len(cfg.Signer.Backends) != 1 || cfg.Signer.Backends[0].Name != "primary" {
 		t.Errorf("backends not loaded: %+v", cfg.Signer.Backends)
+	}
+	if got := cfg.Signer.Backends[0].Profile; got != "pool@preview" {
+		t.Errorf("backend profile: got %q, want pool@preview", got)
 	}
 	if len(cfg.Signer.Keys) != 1 {
 		t.Fatalf("expected 1 key, got %d", len(cfg.Signer.Keys))
@@ -235,6 +239,16 @@ func TestAPIListenAddressDefaultsToLoopback(t *testing.T) {
 		t.Fatalf(
 			"default API listen address: got %q, want 127.0.0.1",
 			cfg.Api.ListenAddress,
+		)
+	}
+}
+
+func TestMetricsListenAddressDefaultsToLoopback(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.Metrics.ListenAddress != "127.0.0.1" {
+		t.Fatalf(
+			"default metrics listen address: got %q, want 127.0.0.1",
+			cfg.Metrics.ListenAddress,
 		)
 	}
 }

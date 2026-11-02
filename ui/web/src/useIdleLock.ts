@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { AUTO_LOCK_CHECK_INTERVAL_MS, isIdleTimeoutElapsed } from "./idle";
 
 // Activity events that reset the idle timer. Pointer and keyboard input cover
@@ -36,7 +36,11 @@ export function useIdleLock(
   const onActivityRef = useRef(onActivity);
   onActivityRef.current = onActivity;
 
-  useEffect(() => {
+  // A layout effect attaches the listeners in the same commit that enables the
+  // lock. A passive effect runs later, and input landing on the freshly
+  // rendered unlocked UI before then would be dropped without reaching the
+  // server.
+  useLayoutEffect(() => {
     if (!enabled || timeoutMinutes <= 0) return;
 
     lastActivity.current = Date.now();

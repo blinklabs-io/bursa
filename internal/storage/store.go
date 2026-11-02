@@ -22,7 +22,6 @@ import (
 
 	"github.com/blinklabs-io/bursa/gcp"
 	"github.com/blinklabs-io/bursa/internal/config"
-	"github.com/blinklabs-io/bursa/internal/sops"
 )
 
 // ErrWalletNotFound identifies a wallet that does not exist in a storage backend.
@@ -34,7 +33,8 @@ var ErrWalletNotFound = errors.New("wallet not found")
 func NewStore(cfg *config.Config) (Store, error) {
 	switch cfg.Storage.Backend {
 	case "file":
-		if !cfg.Storage.AllowUnencryptedWalletStorage && !sops.Configured(cfg) {
+		store := newFileStore(cfg.Storage.Dir, cfg)
+		if !cfg.Storage.AllowUnencryptedWalletStorage && !store.encryptionConfigured() {
 			return nil, errors.New(
 				"file backend requires a SOPS master key or storage.allow_unencrypted_wallet_storage=true; refusing unencrypted wallet storage",
 			)
@@ -44,7 +44,7 @@ func NewStore(cfg *config.Config) (Store, error) {
 				"storage dir is required for file backend",
 			)
 		}
-		return NewFileStore(cfg.Storage.Dir), nil
+		return store, nil
 	case "sqlite":
 		if !cfg.Storage.AllowUnencryptedWalletStorage {
 			return nil, errors.New(

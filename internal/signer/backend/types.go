@@ -95,11 +95,15 @@ func (t KeyType) Valid() bool {
 	}
 }
 
-// KeyTypeFromEnvelope maps a cardano-cli key envelope Type string to the
-// KeyType used by the signer. Only signing-key (.skey) types are expected;
-// unknown types default to payment.
-func KeyTypeFromEnvelope(envelopeType string) KeyType {
+// KeyTypeFromEnvelope maps cardano-cli key envelope metadata to the KeyType
+// used by the signer. Only signing-key (.skey) types are expected; unknown
+// types default to payment. The description distinguishes policy keys, which
+// use payment envelope types for cardano-cli compatibility.
+func KeyTypeFromEnvelope(envelopeType, description string) KeyType {
 	switch {
+	case envelopeType == "PaymentExtendedSigningKeyShelley_ed25519_bip32" &&
+		description == "Policy Extended Signing Key (BIP32)":
+		return KeyTypePolicy
 	case strings.HasPrefix(envelopeType, "Payment"):
 		return KeyTypePayment
 	case strings.HasPrefix(envelopeType, "StakePool"):

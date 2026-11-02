@@ -594,7 +594,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Create a wallet and return details",
+                "description": "Create a wallet and return details. When persistent storage is configured, requires an authenticated wallet storage administrator.",
                 "produces": [
                     "application/json"
                 ],
@@ -604,6 +604,18 @@ const docTemplate = `{
                         "description": "Ok",
                         "schema": {
                             "$ref": "#/definitions/bursa.Wallet"
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Wallet storage administrator access required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     }
                 }
@@ -785,7 +797,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details.",
+                "description": "Restores a wallet using the provided mnemonic seed phrase and optional password and returns wallet details. When persistent storage is configured, requires an authenticated wallet storage administrator.",
                 "consumes": [
                     "application/json"
                 ],
@@ -813,6 +825,18 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Wallet storage administrator access required",
                         "schema": {
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
@@ -1546,6 +1570,16 @@ const docTemplate = `{
                 "certificate_count": {
                     "type": "integer"
                 },
+                "certificate_deposit_total": {
+                    "description": "CertificateDepositTotal and CertificateRefundTotal contain the sums that\nare encoded directly in Conway certificates. Legacy stake and pool\ncertificate amounts depend on protocol parameters or ledger state; their\ncounts remain explicit so value-limited signers can fail closed.",
+                    "type": "string"
+                },
+                "certificate_refund_total": {
+                    "type": "string"
+                },
+                "certificate_value_effects_complete": {
+                    "type": "boolean"
+                },
                 "collateral_inputs": {
                     "type": "array",
                     "items": {
@@ -1588,6 +1622,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/bursa.TxOutput"
                     }
                 },
+                "proposal_deposit_total": {
+                    "type": "string"
+                },
                 "proposal_procedure_count": {
                     "type": "integer"
                 },
@@ -1600,11 +1637,20 @@ const docTemplate = `{
                 "total_collateral": {
                     "type": "string"
                 },
+                "treasury_donation_lovelace": {
+                    "type": "string"
+                },
                 "ttl": {
                     "type": "integer"
                 },
                 "tx_id": {
                     "type": "string"
+                },
+                "unresolved_certificate_deposits": {
+                    "type": "integer"
+                },
+                "unresolved_certificate_refunds": {
+                    "type": "integer"
                 },
                 "validity_interval_start": {
                     "type": "integer"

@@ -141,6 +141,34 @@ func TestPostgres_CounterMonotonicity(t *testing.T) {
 	}
 }
 
+func TestPostgres_RaiseFloor(t *testing.T) {
+	dsn := testPGDSN(t)
+	wm := newTestPG(t, dsn)
+	ctx := context.Background()
+	key := randKey(t)
+	scope := "opcert-chain-floor"
+
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 4); err != nil {
+		t.Fatalf("first raise at 4: %v", err)
+	}
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 4); err != nil {
+		t.Fatalf("equal raise at 4: %v", err)
+	}
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 3); !errors.Is(err, ErrCounterRegression) {
+		t.Fatalf("raise at 3: want ErrCounterRegression, got %v", err)
+	}
+	const big = uint64(1) << 63
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, big); err != nil {
+		t.Fatalf("raise at 2^63: %v", err)
+	}
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, big-1); !errors.Is(err, ErrCounterRegression) {
+		t.Fatalf("raise below 2^63 floor: want ErrCounterRegression, got %v", err)
+	}
+	if v, _, _ := wm.CounterFor(ctx, key, scope); v != big {
+		t.Fatalf("floor = %d, want %d", v, big)
+	}
+}
+
 func TestPostgres_CounterPerKeyIsolation(t *testing.T) {
 	dsn := testPGDSN(t)
 	wm := newTestPG(t, dsn)

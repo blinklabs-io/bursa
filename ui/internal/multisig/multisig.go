@@ -1166,6 +1166,9 @@ func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) 
 	if tx == nil {
 		return CosignResult{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
 	}
+	if err := txwitness.RejectImportedAuxiliaryData(&tx.Body); err != nil {
+		return CosignResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
+	}
 	// Witnesses sign the exact body bytes carried by the imported transaction.
 	// Re-encoding can drift while preserving semantics (mirrors Sign).
 	bodyCbor := tx.Body.Cbor()

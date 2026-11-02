@@ -64,7 +64,7 @@ func TestIntegration_SignRealTx(t *testing.T) {
 		Cardano:   operation.BursaCardano{},
 	})
 
-	res, perr, err := c.SignTx(context.Background(), []byte(hex.EncodeToString(cbor)), []string{h.String()})
+	res, perr, err := c.SignTx(context.Background(), []byte(hex.EncodeToString(cbor)), "", []string{h.String()})
 	if err != nil {
 		t.Fatalf("SignTx: %v", err)
 	}

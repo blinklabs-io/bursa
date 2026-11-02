@@ -106,3 +106,30 @@ func TestStartDebugListenerServesPprofOnLoopback(t *testing.T) {
 		}
 	}
 }
+
+func TestStartDebugListenerRejectsNonLoopbackHost(t *testing.T) {
+	t.Parallel()
+	_, port := startDebugListenerOnFreePort(t, "127.0.0.1")
+	url := "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) +
+		"/debug/pprof/"
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	req.Host = net.JoinHostPort("attacker.example", strconv.Itoa(port))
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET pprof index: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf(
+			"DNS-rebound Host status %d, want %d",
+			resp.StatusCode,
+			http.StatusForbidden,
+		)
+	}
+}

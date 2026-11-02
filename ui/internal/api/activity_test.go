@@ -44,7 +44,7 @@ func (f *fakeActivity) Poll(context.Context) ([]activity.Event, error) {
 }
 
 func activityHandler(st Statuser, act Activity) http.Handler {
-	return NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{},
+	return NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{},
 		&fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview",
 		http.NotFoundHandler(), WithActivity(act))
 }
@@ -74,6 +74,44 @@ func TestActivityEndpointReturnsEvents(t *testing.T) {
 	}
 }
 
+func TestActivityEndpointRequiresSameOriginBrowserContext(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		origin    string
+		fetchSite string
+		wantCode  int
+		wantPolls int
+	}{
+		{name: "matching origin", origin: "http://127.0.0.1:8090", wantCode: http.StatusOK, wantPolls: 1},
+		{name: "same-origin fetch metadata", fetchSite: "same-origin", wantCode: http.StatusOK, wantPolls: 1},
+		{name: "cross-site subresource", fetchSite: "cross-site", wantCode: http.StatusForbidden},
+		{name: "missing browser context", wantCode: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			act := &fakeActivity{events: []activity.Event{{ID: "tx:abc"}}}
+			h := activityHandler(readyStatuser(), act)
+			req := httptest.NewRequest(http.MethodGet, "/wallet/activity", nil)
+			req.Host = "127.0.0.1:8090"
+			req.Header.Set(sessionHeaderName, testSessionToken)
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			if tc.fetchSite != "" {
+				req.Header.Set("Sec-Fetch-Site", tc.fetchSite)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if act.pollCalls != tc.wantPolls {
+				t.Fatalf("Poll calls = %d, want %d", act.pollCalls, tc.wantPolls)
+			}
+		})
+	}
+}
+
 func TestActivityEndpointEmptyIsArrayNotNull(t *testing.T) {
 	h := activityHandler(readyStatuser(), &fakeActivity{events: nil})
 	rec := httptest.NewRecorder()
@@ -97,7 +135,7 @@ func TestActivityEndpointGatedOnNodeState(t *testing.T) {
 }
 
 func TestActivityEndpointNotRegisteredWithoutOption(t *testing.T) {
-	h := NewHandler(readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{},
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{},
 		&fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/activity", nil))
@@ -124,7 +162,7 @@ func decodeNotifications(t *testing.T, body *bytes.Buffer) bool {
 func TestGetNotificationsReturnsPersistedValue(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStopped}}
 	set := &fakeSettings{notifications: true}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/notifications", nil))
 	if rec.Code != http.StatusOK {
@@ -137,7 +175,7 @@ func TestGetNotificationsReturnsPersistedValue(t *testing.T) {
 
 func TestGetNotificationsDefaultsOff(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStopped}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/notifications", nil))
 	if got := decodeNotifications(t, rec.Body); got != false {
@@ -148,7 +186,7 @@ func TestGetNotificationsDefaultsOff(t *testing.T) {
 func TestPutNotificationsPersists(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	set := &fakeSettings{}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, set, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"enabled":true}`)
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/notifications", body))
@@ -165,7 +203,7 @@ func TestPutNotificationsPersists(t *testing.T) {
 
 func TestPutNotificationsMissingEnabled(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
-	h := NewHandler(st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{}`)
 	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/notifications", body))

@@ -66,7 +66,8 @@ signer:
   # policy_hook_timeout_ms: 2000   # env: SIGNER_POLICY_HOOK_TIMEOUT_MS
 
   # --- Anti-double-sign watermark ---
-  # type: "mem" (non-durable; refused unless mode is warn or off), "file" (SQLite; requires path), or
+  # type: "mem" (non-durable; refused unless mode is warn or off; warn retains the latest 65,536 scopes),
+  #       "file" (SQLite; requires path), or
   #       "postgres" (shared store for HA; requires dsn or dsn_env).
   # mode: "off" | "warn" | "enforce" (default enforce).
   watermark:
@@ -79,7 +80,8 @@ signer:
     # config file.
     #   type: "postgres"
     #   dsn_env: "SIGNER_WATERMARK_DSN"   # env var holding the Postgres DSN/URL
-    #   # dsn: "postgres://user:pass@host:5432/bursa"  # plaintext fallback (env: SIGNER_WATERMARK_DSN)
+    #   # Plaintext config fallback (env: SIGNER_WATERMARK_DSN):
+    #   # dsn: "postgres://user:pass@host:5432/bursa?sslmode=verify-full&sslrootcert=/etc/bursa/signer/postgres-ca.pem"
     #   mode: "enforce"
 
   # --- Key-custody backends (one or more) ---
@@ -117,14 +119,26 @@ signer:
     # - name: "nitro"
     #   type: "nitro"
     #   address: "unix:///run/bursa/enclave.sock"
+    #   profile: "pool@mainnet"                 # optional fixed workload profile
     #   root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
     #   pcrs:
     #     0: "<96 hex chars: PCR0 of the EIF>"
     # - name: "gcp-cs"
     #   type: "confidential-space"
     #   address: "https://workload.example.internal:8443"
+    #   profile: "pool@mainnet"                 # optional fixed workload profile
     #   audience: "https://signer.example.internal"
     #   image_digest: "sha256:<64 hex chars>"
+    #   tls_ca_file: "/etc/bursa/confidential-space-ca.pem"
+    #   tls_client_cert_file: "/etc/bursa/confidential-space-client.pem"
+    #   tls_client_key_file: "/etc/bursa/confidential-space-client-key.pem"
+    # - name: "armory"
+    #   type: "armory"
+    #   address: "http://10.0.0.1"
+    #   profile: "pool@preview"                 # required device profile
+    #   identity_public_key: "<64 hex chars>"   # device identity key, pinned
+    #   host_key_file: "/etc/bursa/armory-host.skey"  # optional host key (armory-pool host-key)
+    #   protocol: "negotiate"                   # optional: "1" (default), "negotiate", or "2" (version 2 only; the summary may be empty)
 
     # SOPS-encrypted secrets pulled from GCP Secret Manager and decrypted
     # in-process at boot. Requires the top-level `google.project`.
@@ -158,9 +172,11 @@ signer:
 google:
   project: "my-gcp-project"     # env: GOOGLE_PROJECT
 
-# Optional Prometheus metrics endpoint (also served on the signer's /metrics).
+# Optional Prometheus metrics endpoint on a dedicated loopback listener.
+# Set port to 0 to disable it. Non-loopback addresses and addresses that
+# carry a port are rejected.
 metrics:
-  address: ""                   # env: METRICS_LISTEN_ADDRESS
+  address: "127.0.0.1"          # env: METRICS_LISTEN_ADDRESS
   port: 8081                    # env: METRICS_LISTEN_PORT
 
 logging:

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
+	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
@@ -48,6 +49,10 @@ func (f *fakeConnectorBackend) ChangeAddress(_ context.Context) (string, error) 
 func (f *fakeConnectorBackend) RewardAddresses(_ context.Context) ([]string, error) { return nil, nil }
 func (f *fakeConnectorBackend) Collateral(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
+}
+
+func (f *fakeConnectorBackend) InspectTx(_ context.Context, _ string) (spend.TxSummary, error) {
+	return spend.TxSummary{}, nil
 }
 
 func (f *fakeConnectorBackend) SignTx(_ context.Context, _ string, _ bool, _ string) (string, error) {

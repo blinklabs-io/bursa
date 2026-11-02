@@ -63,7 +63,6 @@ func walletCreateCommand() *cobra.Command {
 }
 
 func walletRestoreCommand() *cobra.Command {
-	var mnemonic string
 	var mnemonicFile string
 	var password string
 	var restoreOutput string
@@ -74,10 +73,9 @@ func walletRestoreCommand() *cobra.Command {
 		Long: `Restores a wallet from an existing mnemonic phrase.
 
 The mnemonic can be provided via (in order of precedence):
-  1. --mnemonic flag (deprecated: visible in the process list)
-  2. MNEMONIC environment variable
-  3. --mnemonic-file flag (path to file containing mnemonic, "-" for standard input)
-  4. Default file "seed.txt" in current directory
+  1. MNEMONIC environment variable
+  2. --mnemonic-file flag (path to file containing mnemonic, "-" for standard input)
+  3. Default file "seed.txt" in current directory
 
 The mnemonic should be a valid BIP-39 mnemonic (typically 24 words).
 An optional password can be provided for additional security.
@@ -93,14 +91,14 @@ Examples:
 				logging.GetLogger().Error("failed to load config", "error", err)
 				os.Exit(1)
 			}
-			if err := cli.RunRestore(cfg, mnemonic, mnemonicFile, password, restoreOutput); err != nil {
+			if err := cli.RunRestore(cfg, "", mnemonicFile, password, restoreOutput); err != nil {
 				logging.GetLogger().Error("failed to restore wallet", "error", err)
 				os.Exit(1)
 			}
 		},
 	}
 
-	addSecretFlags(&walletRestoreCommand, &mnemonic, &mnemonicFile, &password)
+	addSecretFlags(&walletRestoreCommand, &mnemonicFile, &password)
 	walletRestoreCommand.Flags().
 		StringVar(&restoreOutput, "output", "", "Optional path to write key files")
 

@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"math/big"
 	"math/bits"
 	"strings"
 
@@ -127,6 +129,130 @@ func injectVkeyWitnesses(txCbor []byte, newWits []lcommon.VkeyWitness, useTag bo
 // wrapped for the given transaction type. Conway and later require set tags.
 func useTagForTxType(txType uint) bool {
 	return txType >= ledger.TxTypeConway
+}
+
+// MaxEstimatedWitnesses bounds the witness counts EstimateWitnessedTxSize
+// accepts. It is far above anything that fits in a transaction.
+const MaxEstimatedWitnesses = 1 << 16
+
+// EstimateWitnessedTxSize returns the encoded size of txCbor once vkeyCount
+// vkey witnesses and bootstrapCount bootstrap witnesses are added to its
+// witness set. It encodes placeholder witnesses of the real sizes, so the
+// result includes the witness-set map key, the tag-258 set framing used from
+// Conway on, array header growth, and any witnesses already present. The era is
+// inferred from the CBOR; CBOR that is also valid before Conway is treated as
+// Conway, which can only overstate the size. Bootstrap witnesses carry the Byron
+// address attributes of a testnet address with the largest network magic, as in
+// the ledger's estimateMinFeeTx: 144 bytes each, 7 more than a mainnet witness
+// needs. A legacy derivation-path attribute is not counted.
+func EstimateWitnessedTxSize(txCbor []byte, vkeyCount, bootstrapCount uint) (int, error) {
+	if vkeyCount > MaxEstimatedWitnesses || bootstrapCount > MaxEstimatedWitnesses {
+		return 0, fmt.Errorf("witness count exceeds %d", MaxEstimatedWitnesses)
+	}
+	if vkeyCount == 0 && bootstrapCount == 0 {
+		return len(txCbor), nil
+	}
+	txType, err := ledger.DetermineTransactionType(txCbor)
+	if err != nil {
+		return 0, fmt.Errorf("failed to determine transaction era: %w", err)
+	}
+	var arr []cbor.RawMessage
+	if _, err := cbor.Decode(txCbor, &arr); err != nil {
+		return 0, fmt.Errorf("failed to decode transaction array: %w", err)
+	}
+	if len(arr) < 2 {
+		return 0, fmt.Errorf("unexpected transaction shape: %d elements", len(arr))
+	}
+	ws := map[uint64]cbor.RawMessage{}
+	if len(arr[1]) > 0 {
+		if _, err := cbor.Decode(arr[1], &ws); err != nil {
+			return 0, fmt.Errorf("failed to decode witness set: %w", err)
+		}
+	}
+	useTag := useTagForTxType(txType)
+	maxNetworkMagic := uint32(math.MaxUint32)
+	bootstrapAttributes, err := lcommon.ByronAddressAttributes{
+		Network: &maxNetworkMagic,
+	}.MarshalCBOR()
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode placeholder address attributes: %w", err)
+	}
+	for _, add := range []struct {
+		key         uint64
+		count       uint
+		placeholder any
+	}{
+		{
+			key:   0,
+			count: vkeyCount,
+			placeholder: lcommon.VkeyWitness{
+				Vkey:      make([]byte, ed25519.PublicKeySize),
+				Signature: make([]byte, ed25519.SignatureSize),
+			},
+		},
+		{
+			key:   2,
+			count: bootstrapCount,
+			placeholder: lcommon.BootstrapWitness{
+				PublicKey:  make([]byte, ed25519.PublicKeySize),
+				Signature:  make([]byte, ed25519.SignatureSize),
+				ChainCode:  make([]byte, 32),
+				Attributes: bootstrapAttributes,
+			},
+		},
+	} {
+		if add.count == 0 {
+			continue
+		}
+		field, err := appendWitnessPlaceholders(ws[add.key], add.placeholder, add.count, useTag)
+		if err != nil {
+			return 0, err
+		}
+		ws[add.key] = field
+	}
+	wsBytes, err := cbor.Encode(ws)
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode witness set: %w", err)
+	}
+	arr[1] = cbor.RawMessage(wsBytes)
+	out, err := cbor.Encode(arr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode witnessed transaction: %w", err)
+	}
+	return len(out), nil
+}
+
+// appendWitnessPlaceholders appends count copies of placeholder to a
+// witness-set field, keeping its tag-258 form if it already has one.
+func appendWitnessPlaceholders(raw []byte, placeholder any, count uint, useTag bool) ([]byte, error) {
+	var items []cbor.RawMessage
+	if len(raw) > 0 {
+		content := raw
+		var tag cbor.RawTag
+		if _, err := cbor.Decode(raw, &tag); err == nil {
+			if tag.Number != cbor.CborTagSet {
+				return nil, fmt.Errorf("unexpected CBOR tag %d on witnesses", tag.Number)
+			}
+			content = []byte(tag.Content)
+			useTag = true
+		}
+		if _, err := cbor.Decode(content, &items); err != nil {
+			return nil, fmt.Errorf("failed to decode witnesses: %w", err)
+		}
+	}
+	item, err := cbor.Encode(placeholder)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode placeholder witness: %w", err)
+	}
+	for range count {
+		items = append(items, cbor.RawMessage(item))
+	}
+	st := cbor.NewSetType[cbor.RawMessage](items, useTag)
+	out, err := st.MarshalCBOR()
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode witnesses: %w", err)
+	}
+	return out, nil
 }
 
 // ErrSignatureVerification indicates a freshly produced signature failed to
@@ -294,6 +420,12 @@ func TransactionID(txCbor []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to determine transaction era: %w", err)
 	}
+	return TransactionIDForEra(txCbor, txType)
+}
+
+// TransactionIDForEra is TransactionID for a transaction of a known era (a
+// ledger.TxType value).
+func TransactionIDForEra(txCbor []byte, txType uint) (string, error) {
 	tx, err := ledger.NewTransactionFromCbor(txType, txCbor)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode transaction: %w", err)
@@ -333,20 +465,134 @@ type TxInspection struct {
 	CollateralReturn *TxOutput  `json:"collateral_return,omitempty"`
 	TotalCollateral  string     `json:"total_collateral,omitempty"`
 	CertificateCount int        `json:"certificate_count"`
-	WithdrawalCount  int        `json:"withdrawal_count"`
-	HasMint          bool       `json:"has_mint"`
-	HasMetadata      bool       `json:"has_metadata"`
-	RequiredSigners  int        `json:"required_signers"`
-	VkeyWitnesses    int        `json:"vkey_witnesses"`
-	NativeScripts    int        `json:"native_scripts"`
+	// CertificateDepositTotal and CertificateRefundTotal contain the sums that
+	// are encoded directly in Conway certificates. Legacy stake and pool
+	// certificate amounts depend on protocol parameters or ledger state; their
+	// counts remain explicit so value-limited signers can fail closed.
+	CertificateDepositTotal         string `json:"certificate_deposit_total,omitempty"`
+	CertificateRefundTotal          string `json:"certificate_refund_total,omitempty"`
+	UnresolvedCertificateDeposits   int    `json:"unresolved_certificate_deposits,omitempty"`
+	UnresolvedCertificateRefunds    int    `json:"unresolved_certificate_refunds,omitempty"`
+	CertificateValueEffectsComplete bool   `json:"certificate_value_effects_complete"`
+	WithdrawalCount                 int    `json:"withdrawal_count"`
+	HasMint                         bool   `json:"has_mint"`
+	HasMetadata                     bool   `json:"has_metadata"`
+	RequiredSigners                 int    `json:"required_signers"`
+	VkeyWitnesses                   int    `json:"vkey_witnesses"`
+	NativeScripts                   int    `json:"native_scripts"`
 	// Conway governance and treasury components. These authorize
 	// high-impact actions (casting DRep/committee votes, submitting
 	// governance proposals, donating to the treasury) that are independent
 	// of outputs/certificates/withdrawals, so the policy engine must inspect
 	// and gate them explicitly.
-	VotingProcedureCount   int  `json:"voting_procedure_count,omitempty"`
-	ProposalProcedureCount int  `json:"proposal_procedure_count,omitempty"`
-	HasTreasuryDonation    bool `json:"has_treasury_donation,omitempty"`
+	VotingProcedureCount     int    `json:"voting_procedure_count,omitempty"`
+	ProposalProcedureCount   int    `json:"proposal_procedure_count,omitempty"`
+	ProposalDepositTotal     string `json:"proposal_deposit_total,omitempty"`
+	HasTreasuryDonation      bool   `json:"has_treasury_donation,omitempty"`
+	TreasuryDonationLovelace string `json:"treasury_donation_lovelace,omitempty"`
+}
+
+func inspectCertificateValues(certs []lcommon.Certificate) (string, string, int, int, bool) {
+	deposits := new(big.Int)
+	refunds := new(big.Int)
+	unresolvedDeposits := 0
+	unresolvedRefunds := 0
+	hasDeposits := false
+	hasRefunds := false
+	complete := true
+	add := func(total *big.Int, amount *big.Int, unresolved *int, present *bool) {
+		*present = true
+		if amount == nil || amount.Sign() < 0 {
+			*unresolved++
+			return
+		}
+		total.Add(total, amount)
+	}
+	for _, cert := range certs {
+		switch cert := cert.(type) {
+		case *lcommon.StakeRegistrationCertificate,
+			*lcommon.PoolRegistrationCertificate:
+			unresolvedDeposits++
+		case *lcommon.StakeDeregistrationCertificate:
+			unresolvedRefunds++
+		case *lcommon.RegistrationCertificate:
+			if cert == nil {
+				unresolvedDeposits++
+				continue
+			}
+			add(deposits, cert.DepositAmount(), &unresolvedDeposits, &hasDeposits)
+		case *lcommon.StakeRegistrationDelegationCertificate:
+			if cert == nil {
+				unresolvedDeposits++
+				continue
+			}
+			add(deposits, cert.DepositAmount(), &unresolvedDeposits, &hasDeposits)
+		case *lcommon.VoteRegistrationDelegationCertificate:
+			if cert == nil {
+				unresolvedDeposits++
+				continue
+			}
+			add(deposits, cert.DepositAmount(), &unresolvedDeposits, &hasDeposits)
+		case *lcommon.StakeVoteRegistrationDelegationCertificate:
+			if cert == nil {
+				unresolvedDeposits++
+				continue
+			}
+			add(deposits, cert.DepositAmount(), &unresolvedDeposits, &hasDeposits)
+		case *lcommon.RegistrationDrepCertificate:
+			if cert == nil {
+				unresolvedDeposits++
+				continue
+			}
+			add(deposits, cert.DepositAmount(), &unresolvedDeposits, &hasDeposits)
+		case *lcommon.DeregistrationCertificate:
+			if cert == nil {
+				unresolvedRefunds++
+				continue
+			}
+			add(refunds, cert.DepositAmount(), &unresolvedRefunds, &hasRefunds)
+		case *lcommon.DeregistrationDrepCertificate:
+			if cert == nil {
+				unresolvedRefunds++
+				continue
+			}
+			add(refunds, cert.DepositAmount(), &unresolvedRefunds, &hasRefunds)
+		case *lcommon.StakeDelegationCertificate,
+			*lcommon.PoolRetirementCertificate,
+			*lcommon.GenesisKeyDelegationCertificate,
+			*lcommon.MoveInstantaneousRewardsCertificate,
+			*lcommon.VoteDelegationCertificate,
+			*lcommon.StakeVoteDelegationCertificate,
+			*lcommon.AuthCommitteeHotCertificate,
+			*lcommon.ResignCommitteeColdCertificate,
+			*lcommon.UpdateDrepCertificate:
+		default:
+			complete = false
+		}
+	}
+	depositTotal := ""
+	if hasDeposits {
+		depositTotal = deposits.String()
+	}
+	refundTotal := ""
+	if hasRefunds {
+		refundTotal = refunds.String()
+	}
+	return depositTotal, refundTotal, unresolvedDeposits, unresolvedRefunds, complete
+}
+
+func inspectProposalDeposit(proposals []lcommon.ProposalProcedure) (string, bool) {
+	if len(proposals) == 0 {
+		return "", true
+	}
+	total := new(big.Int)
+	for _, proposal := range proposals {
+		if proposal == nil {
+			return "", false
+		}
+		total.Add(total, new(big.Int).SetUint64(proposal.Deposit()))
+	}
+	return total.String(), true
 }
 
 func inspectTxOutput(out lcommon.TransactionOutput) TxOutput {
@@ -569,6 +815,12 @@ func InspectTransaction(txCbor []byte) (*TxInspection, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to determine transaction era: %w", err)
 	}
+	return InspectTransactionForEra(txCbor, txType)
+}
+
+// InspectTransactionForEra is InspectTransaction for a transaction of a known
+// era (a ledger.TxType value).
+func InspectTransactionForEra(txCbor []byte, txType uint) (*TxInspection, error) {
 	tx, err := ledger.NewTransactionFromCbor(txType, txCbor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode transaction: %w", err)
@@ -608,15 +860,28 @@ func InspectTransaction(txCbor []byte) (*TxInspection, error) {
 			insp.TotalCollateral = total.String()
 		}
 	}
-	insp.CertificateCount = len(tx.Certificates())
+	certificates := tx.Certificates()
+	insp.CertificateCount = len(certificates)
+	depositTotal, refundTotal, unresolvedDeposits, unresolvedRefunds, certificateValuesComplete := inspectCertificateValues(certificates)
+	insp.CertificateDepositTotal = depositTotal
+	insp.CertificateRefundTotal = refundTotal
+	insp.UnresolvedCertificateDeposits = unresolvedDeposits
+	insp.UnresolvedCertificateRefunds = unresolvedRefunds
+	insp.CertificateValueEffectsComplete = certificateValuesComplete
 	insp.WithdrawalCount = len(tx.Withdrawals())
 	insp.HasMint = tx.AssetMint() != nil
 	insp.HasMetadata = tx.Metadata() != nil
 	insp.RequiredSigners = len(tx.RequiredSigners())
 	insp.VotingProcedureCount = len(tx.VotingProcedures())
-	insp.ProposalProcedureCount = len(tx.ProposalProcedures())
+	proposals := tx.ProposalProcedures()
+	insp.ProposalProcedureCount = len(proposals)
+	proposalDepositTotal, proposalDepositsComplete := inspectProposalDeposit(proposals)
+	if proposalDepositsComplete {
+		insp.ProposalDepositTotal = proposalDepositTotal
+	}
 	if d := tx.Donation(); d != nil && d.Sign() > 0 {
 		insp.HasTreasuryDonation = true
+		insp.TreasuryDonationLovelace = d.String()
 	}
 	if ws := tx.Witnesses(); ws != nil {
 		insp.VkeyWitnesses = len(ws.Vkey())

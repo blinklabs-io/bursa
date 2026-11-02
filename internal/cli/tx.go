@@ -15,13 +15,21 @@
 package cli
 
 import (
+	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/internal/txbuilder"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
+	"github.com/blinklabs-io/gouroboros/protocol/localtxsubmission"
 )
 
 // readTxFile reads a transaction file and resolves its era from era (the
@@ -145,7 +153,7 @@ func RunTxId(txFile string) error {
 	return nil
 }
 
-func RunTxDecode(txFile, protocolParamsFile string) error {
+func RunTxDecode(txFile, protocolParamsFile string, witnessCount, byronWitnessCount uint) error {
 	txBytes, err := bursa.ReadCborInputFile(txFile)
 	if err != nil {
 		return err
@@ -156,7 +164,8 @@ func RunTxDecode(txFile, protocolParamsFile string) error {
 	}
 	type decodeOut struct {
 		*bursa.TxInspection
-		MinFee *uint64 `json:"min_fee,omitempty"`
+		MinFee     *uint64 `json:"min_fee,omitempty"`
+		MinFeeNote string  `json:"min_fee_note,omitempty"`
 	}
 	out := decodeOut{TxInspection: insp}
 	if protocolParamsFile != "" {
@@ -168,11 +177,23 @@ func RunTxDecode(txFile, protocolParamsFile string) error {
 		if err != nil {
 			return err
 		}
-		fee, err := bursa.MinFee(insp.SizeBytes, params)
+		estimatedSize, err := bursa.EstimateWitnessedTxSize(txBytes, witnessCount, byronWitnessCount)
+		if err != nil {
+			return fmt.Errorf("calculate minimum fee: %w", err)
+		}
+		fee, err := bursa.MinFee(estimatedSize, params)
 		if err != nil {
 			return fmt.Errorf("calculate minimum fee: %w", err)
 		}
 		out.MinFee = &fee
+		out.MinFeeNote = "Minimum fee for the transaction as decoded."
+		if witnessCount > 0 || byronWitnessCount > 0 {
+			out.MinFeeNote = fmt.Sprintf(
+				"Minimum fee for the transaction as decoded, adjusted for %d additional vkey witnesses and %d additional bootstrap witnesses.",
+				witnessCount,
+				byronWitnessCount,
+			)
+		}
 	}
 	enc, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
@@ -180,4 +201,164 @@ func RunTxDecode(txFile, protocolParamsFile string) error {
 	}
 	fmt.Println(string(enc))
 	return nil
+}
+
+// PoolVoteFlags are the tx build flags for a stake pool governance vote.
+type PoolVoteFlags struct {
+	PoolID     string
+	GovAction  string // <tx id hex>#<index>
+	Vote       string // yes, no or abstain
+	AnchorURL  string
+	AnchorHash string
+}
+
+// poolVote validates the vote flags. It returns nil when none is set.
+func (f PoolVoteFlags) poolVote() (*txbuilder.PoolVote, error) {
+	if f == (PoolVoteFlags{}) {
+		return nil, nil
+	}
+	if f.PoolID == "" || f.GovAction == "" || f.Vote == "" {
+		return nil, errors.New(
+			"a vote needs --vote-pool-id, --vote-gov-action and --vote",
+		)
+	}
+	keyHash, err := parsePoolID(f.PoolID)
+	if err != nil {
+		return nil, fmt.Errorf("--vote-pool-id: %w", err)
+	}
+	pv := &txbuilder.PoolVote{}
+	copy(pv.PoolKeyHash[:], keyHash)
+	txID, idx, ok := strings.Cut(f.GovAction, "#")
+	if !ok {
+		return nil, errors.New("--vote-gov-action: expected <tx id>#<index>")
+	}
+	txIDBytes, err := hex.DecodeString(txID)
+	if err != nil || len(txIDBytes) != len(pv.ActionTxId) {
+		return nil, errors.New("--vote-gov-action: tx id must be 32 bytes hex")
+	}
+	copy(pv.ActionTxId[:], txIDBytes)
+	index, err := strconv.ParseUint(idx, 10, 16)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"--vote-gov-action: index must be 0 to %d",
+			lcommon.MaxGovActionIdx,
+		)
+	}
+	pv.ActionIndex = uint32(index)
+	switch strings.ToLower(f.Vote) {
+	case "yes":
+		pv.Vote = lcommon.GovVoteYes
+	case "no":
+		pv.Vote = lcommon.GovVoteNo
+	case "abstain":
+		pv.Vote = lcommon.GovVoteAbstain
+	default:
+		return nil, fmt.Errorf("--vote: %q is not yes, no or abstain", f.Vote)
+	}
+	if (f.AnchorURL == "") != (f.AnchorHash == "") {
+		return nil, errors.New(
+			"--vote-anchor-url and --vote-anchor-hash go together",
+		)
+	}
+	if f.AnchorURL != "" {
+		hash, err := hex.DecodeString(f.AnchorHash)
+		if err != nil {
+			return nil, fmt.Errorf("--vote-anchor-hash: %w", err)
+		}
+		anchor, err := lcommon.NewGovAnchor(f.AnchorURL, hash)
+		if err != nil {
+			return nil, fmt.Errorf("--vote-anchor-url: %w", err)
+		}
+		pv.Anchor = &anchor
+	}
+	return pv, nil
+}
+
+func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []string, witnessCount uint, outFile string, ttlMargin uint64, timeoutSeconds int64, voteFlags PoolVoteFlags) error {
+	if ttlMargin == 0 {
+		return errors.New("--ttl-margin must be at least 1")
+	}
+	vote, err := voteFlags.poolVote()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeoutSeconds > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+		defer cancel()
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+	}
+	chain := txbuilder.NewN2C(socketPath, network)
+	if err := chain.Open(ctx); err != nil {
+		return err
+	}
+	defer chain.Close()
+	built, err := txbuilder.Build(ctx, chain, txbuilder.BuildOptions{
+		ChangeAddress:    changeAddress,
+		CertificateFiles: certificateFiles,
+		WitnessCount:     witnessCount,
+		TTLMargin:        ttlMargin,
+		Vote:             vote,
+	})
+	if err != nil {
+		return err
+	}
+	for _, w := range built.RequiredWitnesses {
+		fmt.Fprintf(os.Stderr, "%s %x\n", w.Role, w.Hash)
+	}
+	out, err := bursa.WriteCborEnvelope(built.TxEnvelopeType, "Unwitnessed Tx", built.TxCBOR, outFile)
+	if err != nil {
+		return err
+	}
+	if outFile == "" {
+		fmt.Print(out)
+	}
+	return nil
+}
+
+func RunTxSubmit(socketPath, network, txFile string, timeoutSeconds int64) error {
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeoutSeconds > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+		defer cancel()
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+	}
+	return submitTx(ctx, txbuilder.NewN2C(socketPath, network), txFile, os.Stdout)
+}
+
+// submitTx submits the transaction in txFile and prints its id. A rejection
+// is returned with the node's reason.
+func submitTx(ctx context.Context, chain txbuilder.Chain, txFile string, w io.Writer) error {
+	txBytes, err := bursa.ReadCborInputFile(txFile)
+	if err != nil {
+		return err
+	}
+	id, err := bursa.TransactionID(txBytes)
+	if err != nil {
+		return err
+	}
+	if err := chain.SubmitTx(ctx, txBytes); err != nil {
+		var rejected localtxsubmission.TransactionRejectedError
+		if errors.As(err, &rejected) {
+			if rejected.Reason != nil {
+				return fmt.Errorf("node rejected transaction %s: %w", id, rejected.Reason)
+			}
+			return fmt.Errorf("node rejected transaction %s: %w", id, err)
+		}
+		// Anything else (a dropped connection, a timeout) leaves the outcome
+		// unknown: the node may have accepted the transaction.
+		return fmt.Errorf(
+			"submitting transaction %s failed; it may have reached the node: %w",
+			id,
+			err,
+		)
+	}
+	_, err = fmt.Fprintln(w, id)
+	return err
 }

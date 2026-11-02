@@ -37,6 +37,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
+	"github.com/blinklabs-io/bursa/ui/internal/remotesubmit"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/survey"
@@ -114,8 +115,8 @@ type Spender interface {
 
 // NodeLookup is the node-backed verification/lookup surface the wallet uses to
 // confirm a pasted pool or DRep ID exists, resolve ADA Handles, and read native
-// asset identity/metadata. The embedded node is the only component that
-// touches the network; *chain.Client satisfies this interface.
+// asset identity/metadata. Handle fallback traffic uses the separate,
+// consent-gated ExternalHandleResolver; *chain.Client satisfies this interface.
 type NodeLookup interface {
 	Pool(ctx context.Context, poolID string) (chain.PoolInfo, error)
 	// Pools returns the node's full stake-pool directory (from
@@ -215,12 +216,15 @@ type Activity interface {
 type handlerOptions struct {
 	legacy          LegacyKeystore
 	connector       *connector.Service
+	approvals       *connector.Service
+	remoteSubmit    *remotesubmit.Service
 	nfts            NFTs
 	diagnostics     Diagnostics
 	migrateScripts  ScriptMigrator
 	activity        Activity
 	surveys         Surveys
 	autoLockRuntime autoLockRuntime
+	externalHandles ExternalHandleResolver
 }
 
 // ScriptMigrator moves saved multi-signature accounts out of the standalone
@@ -250,6 +254,16 @@ func WithConnector(svc *connector.Service) HandlerOption {
 	}
 }
 
+// WithRemoteSubmission enables the local control routes for a separately
+// hosted, TLS-only transaction submission listener. approvals is the shared
+// consent queue used by the wallet UI.
+func WithRemoteSubmission(svc *remotesubmit.Service, approvals *connector.Service) HandlerOption {
+	return func(o *handlerOptions) {
+		o.remoteSubmit = svc
+		o.approvals = approvals
+	}
+}
+
 // WithNFTs enables the optional NFT discovery and media endpoints.
 func WithNFTs(nfts NFTs) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.nfts = nfts }
@@ -276,6 +290,12 @@ func WithActivity(a Activity) HandlerOption {
 // WithSurveys enables the CIP-179 survey routes.
 func WithSurveys(sv Surveys) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.surveys = sv }
+}
+
+// WithExternalHandleResolver enables the fixed-service Handle fallback. The
+// route still requires both the persisted opt-in and per-name consent.
+func WithExternalHandleResolver(resolver ExternalHandleResolver) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.externalHandles = resolver }
 }
 
 // Handler serves the wallet control surface and owns its server-side vault
@@ -318,6 +338,22 @@ type SettingsController interface {
 	Notifications() bool
 	// SetNotifications persists the wallet-activity notification preference.
 	SetNotifications(enabled bool) error
+	// ExternalHandleLookup controls whether the UI may offer the optional
+	// external fallback. Every disclosed name requires separate consent.
+	ExternalHandleLookup() bool
+	SetExternalHandleLookup(enabled bool) error
+	// RecoverNode removes only the embedded node's sync database and starts a
+	// fresh sync. The implementation owns the node lifecycle and data boundary.
+	RecoverNode() error
+}
+
+// ExternalHandleResolver is the narrow external lookup surface. Production
+// uses handle.APIResolver; tests supply a fake without network access.
+type ExternalHandleResolver interface {
+	// Supports reports whether the service can answer for network, so the UI
+	// never asks for consent to a lookup that is refused before it is sent.
+	Supports(network string) bool
+	Resolve(ctx context.Context, network, input string) (name, address string, err error)
 }
 
 // autoLockOptions are the only accepted auto-lock timeouts (minutes; 0 = Off).
@@ -471,6 +507,7 @@ type poolRegistrationAirGapRequest struct {
 type handleInfo struct {
 	Handle  string `json:"handle"`
 	Address string `json:"address"`
+	Source  string `json:"source,omitempty"`
 }
 
 // NFTs is the optional NFT discovery and media surface.
@@ -623,7 +660,8 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 	return v
 }
 
-// NewHandler returns the loopback control-surface mux. network is the network
+// NewHandler returns the authenticated loopback control-surface mux. The
+// non-empty sessionToken protects every control route; network is the network
 // the embedded node runs on; wallet requests must match it (or omit it). vlt is
 // the encrypted multi-wallet store; the API pushes the active wallet onto wl/sp
 // whenever the selection changes. settings exposes user-facing app settings
@@ -635,7 +673,7 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // the native multi-signature surface (may be nil, in which case the multi-sig
 // routes are not registered). spa is the embedded SPA, registered as the
 // catch-all so the specific API routes take precedence on the mux.
-func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cb Contacts, lookup NodeLookup, po PoolOps, dx DexQuoter, ms MultiSig, network string, spa http.Handler, opts ...HandlerOption) *Handler {
+func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cb Contacts, lookup NodeLookup, po PoolOps, dx DexQuoter, ms MultiSig, network string, spa http.Handler, opts ...HandlerOption) *Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -655,11 +693,11 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// diagnostics view must work in every node state — especially while syncing,
 	// bootstrapping, or after an error, which is exactly when a user reaches for
 	// it. It is node-local only (no external calls), so there is no
-	// external-consent gate; the sameOriginGuard wrapping the whole mux still
-	// applies. Like /status, these routes are intentionally not vault-unlock
-	// gated: they expose only node/process telemetry (never key material), and
-	// must work before/without a wallet being unlocked. Registered only when a
-	// Diagnostics provider is supplied.
+	// external-consent gate; the control-session and same-origin guards wrapping
+	// the whole mux still apply. Like /status, these routes are intentionally not
+	// vault-unlock gated: they expose only node/process telemetry (never key
+	// material), and must work before/without a wallet being unlocked. Registered
+	// only when a Diagnostics provider is supplied.
 	if cfg.diagnostics != nil {
 		diag := cfg.diagnostics
 		mux.HandleFunc("GET /diagnostics", func(w http.ResponseWriter, r *http.Request) {
@@ -1205,6 +1243,9 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	if cfg.activity != nil {
 		act := cfg.activity
 		mux.HandleFunc("GET /wallet/activity", gated(st, func(w http.ResponseWriter, r *http.Request) {
+			if !requireSameOriginBrowserContext(w, r) {
+				return
+			}
 			events, err := act.Poll(r.Context())
 			if err != nil {
 				serve(w, struct{}{}, err)
@@ -1392,6 +1433,56 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.Notifications()})
 	})
 
+	// External Handle lookup is a two-part consent: this persisted setting lets
+	// the UI offer the fallback, while every individual name disclosure must
+	// still arrive through the explicit POST route below with consent=true.
+	externalHandlesAvailable := cfg.externalHandles != nil && cfg.externalHandles.Supports(network)
+	mux.HandleFunc("GET /wallet/settings/external-handle-lookup", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.ExternalHandleLookup(), "available": externalHandlesAvailable})
+	})
+	mux.HandleFunc("PUT /wallet/settings/external-handle-lookup", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if req.Enabled == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "enabled is required"})
+			return
+		}
+		if err := settings.SetExternalHandleLookup(*req.Enabled); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.ExternalHandleLookup(), "available": externalHandlesAvailable})
+	})
+
+	// Failed-sync recovery is available only through an explicit confirmed
+	// mutation. The controller enforces the failed-state precondition and owns
+	// the exact node-only deletion boundary.
+	mux.HandleFunc("POST /wallet/settings/node/recover", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Confirmed *bool `json:"confirmed"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if req.Confirmed == nil || !*req.Confirmed {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "confirmation is required"})
+			return
+		}
+		if err := settings.RecoverNode(); err != nil {
+			if errors.Is(err, supervisor.ErrRecoveryUnavailable) {
+				writeJSON(w, http.StatusConflict, errBody(err))
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, errBody(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"started": true})
+	})
+
 	// --- Address book (local-only, no network) -------------------------------
 	// Pure on-device CRUD storage: ungated (no node needed) and never reaches
 	// out to any external service.
@@ -1444,6 +1535,9 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 		serveNFT(w, v, err)
 	}))
 	mux.HandleFunc("GET /wallet/nft/{asset}/image", gated(st, func(w http.ResponseWriter, r *http.Request) {
+		if !requireSameOriginBrowserContext(w, r) {
+			return
+		}
 		if nfts == nil {
 			http.Error(w, "nft media not available", http.StatusServiceUnavailable)
 			return
@@ -1655,15 +1749,55 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// NFT to its current holding address through the node (never an external
 	// service). A leading '$' is optional; handle.Resolve normalizes it. A
 	// name on an unsupported network or with no on-chain holder reports as a
-	// clean not-found (404), never a hard error.
+	// clean not-found (404). Conflicting holders are rejected rather than
+	// selecting a recipient.
 	mux.HandleFunc("GET /wallet/handle/{name}", gated(st, func(w http.ResponseWriter, r *http.Request) {
 		if lookup == nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "handle lookup unavailable"})
 			return
 		}
 		bare, addr, err := handle.Resolve(r.Context(), lookup, network, r.PathValue("name"))
-		serveLookup(w, handleInfo{Handle: bare, Address: addr}, err)
+		serveHandleLookup(w, handleInfo{Handle: bare, Address: addr, Source: "node"}, err)
 	}))
+
+	// The external fallback is POST-only because it discloses the requested
+	// Handle name. It never runs automatically: the feature must be enabled and
+	// the request must carry fresh consent for this exact disclosure. A final
+	// node lookup keeps the embedded node primary; ambiguity never falls through
+	// to a remote answer.
+	mux.HandleFunc("POST /wallet/handle/{name}/external", func(w http.ResponseWriter, r *http.Request) {
+		if !settings.ExternalHandleLookup() {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "external handle lookup is disabled"})
+			return
+		}
+		var req struct {
+			Consent *bool `json:"consent"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if req.Consent == nil || !*req.Consent {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "consent is required"})
+			return
+		}
+		if lookup != nil {
+			bare, addr, err := handle.Resolve(r.Context(), lookup, network, r.PathValue("name"))
+			switch {
+			case err == nil:
+				writeJSON(w, http.StatusOK, handleInfo{Handle: bare, Address: addr, Source: "node"})
+				return
+			case errors.Is(err, handle.ErrAmbiguousHolder):
+				serveHandleLookup(w, handleInfo{}, err)
+				return
+			}
+		}
+		if !externalHandlesAvailable {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "external handle lookup unavailable"})
+			return
+		}
+		bare, addr, err := cfg.externalHandles.Resolve(r.Context(), network, r.PathValue("name"))
+		serveExternalHandleLookup(w, handleInfo{Handle: bare, Address: addr, Source: "external"}, err)
+	})
 
 	// GET /wallet/assets/{unit} reads a native asset's on-chain
 	// identity/metadata (unit = policy ID + hex asset name) through the node,
@@ -1755,6 +1889,11 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 			cfg.connector,
 			withConnectorPairingCodeAuthorizer(authorizePairingCode),
 		)
+	} else if cfg.approvals != nil {
+		registerApprovalRoutes(mux, cfg.approvals)
+	}
+	if cfg.remoteSubmit != nil {
+		registerRemoteSubmission(mux, cfg.remoteSubmit)
 	}
 
 	// SPA catch-all: the specific API routes above take precedence on the mux;
@@ -1765,7 +1904,7 @@ func NewHandler(st Statuser, vlt Vault, wl Wallet, sp Spender, settings Settings
 	// /wallet/* routes register directly on the mux with no per-handler origin
 	// check, so this middleware is the single point that enforces it for them.
 	return &Handler{
-		Handler:  sameOriginGuard(limitRequestBody(mux)),
+		Handler:  sessionGuard(sessionToken, sameOriginGuard(limitRequestBody(mux))),
 		autoLock: autoLock,
 	}
 }
@@ -1822,6 +1961,8 @@ func limitRequestBody(next http.Handler) http.Handler {
 //   - Other methods (GET/HEAD, plus the SPA's navigations and asset loads) use
 //     sameOrigin, which additionally trusts the absent-Origin case that
 //     same-origin browser GETs produce — but only over a loopback Host.
+//     Ownership-dependent or state-consuming GETs require browser fetch
+//     metadata at their route before reading wallet state.
 //
 // It reuses connector.go's sameOrigin/strictSameOrigin/isLoopbackHost verbatim
 // so the SPA's own calls decide identically to the connector's SPA routes: in
@@ -1852,6 +1993,25 @@ func sameOriginGuard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireSameOriginBrowserContext rejects subresource-capable GET requests
+// unless they carry either a matching Origin or browser-controlled same-origin
+// fetch metadata. Callers use it before reading or advancing private wallet
+// state that a cross-site page could otherwise probe or consume.
+func requireSameOriginBrowserContext(w http.ResponseWriter, r *http.Request) bool {
+	allowed := false
+	if r.Header.Get("Origin") != "" {
+		allowed = sameOrigin(r)
+	} else {
+		allowed = isLoopbackHost(r.Host) && r.Header.Get("Sec-Fetch-Site") == "same-origin"
+	}
+	if allowed {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+	return false
 }
 
 // walletList maps vault metadata to the client-facing wallet views, marking the
@@ -1892,6 +2052,32 @@ func serveLookup[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found by your node"})
 	default:
 		writeJSON(w, http.StatusBadGateway, errBody(err))
+	}
+}
+
+func serveHandleLookup(w http.ResponseWriter, v handleInfo, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, chain.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "handle not found by your node"})
+	case errors.Is(err, handle.ErrAmbiguousHolder):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "handle holder is ambiguous"})
+	default:
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "handle lookup failed"})
+	}
+}
+
+func serveExternalHandleLookup(w http.ResponseWriter, v handleInfo, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, chain.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "handle not found"})
+	case errors.Is(err, handle.ErrAmbiguousHolder):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "handle holder is ambiguous"})
+	default:
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "external handle service unavailable"})
 	}
 }
 
@@ -2543,6 +2729,8 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409: TPM not available on this machine
 	case errors.Is(err, vault.ErrCommittedWrite):
 		writeJSON(w, http.StatusServiceUnavailable, errBody(err)) // 503: state committed, durability sync failed
+	case errors.Is(err, keystore.ErrUnlockLimited):
+		writeJSON(w, http.StatusTooManyRequests, errBody(err))
 	case errors.Is(err, vault.ErrWrongPassword), errors.Is(err, spend.ErrWrongPassword),
 		errors.Is(err, poolops.ErrWrongPassword), errors.Is(err, multisig.ErrWrongPassword):
 		writeJSON(w, http.StatusUnauthorized, errBody(err)) // 401
@@ -2557,6 +2745,8 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 	case errors.Is(err, contacts.ErrNotFound),
 		errors.Is(err, spend.ErrUnknownPending), errors.Is(err, multisig.ErrUnknownAccount):
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
+	case errors.Is(err, contacts.ErrPersistenceUnavailable):
+		writeJSON(w, http.StatusServiceUnavailable, errBody(err))
 	case errors.Is(err, spend.ErrExpiredPending):
 		writeJSON(w, http.StatusGone, errBody(err)) // 410
 	case errors.Is(err, spend.ErrInsufficientFunds), errors.Is(err, spend.ErrSubmitRejected),

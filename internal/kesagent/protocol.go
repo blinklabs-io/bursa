@@ -88,12 +88,16 @@ package kesagent
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
+
+	"github.com/blinklabs-io/bursa/internal/kesagent/securemem"
 )
 
 const (
@@ -103,12 +107,10 @@ const (
 	// maxFrameLen caps a single frame payload to guard against abuse.
 	maxFrameLen = 1 << 20 // 1 MiB
 
-	// frameBodyReadTimeout bounds how long a frame body may take to arrive
-	// once its length header has been read. It applies only to the body read
-	// (never the header read, where an idle connection legitimately blocks
-	// between requests), so a client that announces a frame then stalls the
-	// body cannot hold a connection slot and its goroutine indefinitely.
-	frameBodyReadTimeout = 10 * time.Second
+	// frameIOTimeout bounds a complete inbound or outbound frame. Inbound
+	// timing includes idle time before the length header; outbound timing starts
+	// immediately before the header write.
+	frameIOTimeout = 10 * time.Second
 )
 
 // Socket modes for the service socket.
@@ -133,6 +135,75 @@ type KeyPush struct {
 	KESSignKey []byte `json:"kes_sign_key"`
 	KESVKey    []byte `json:"kes_vkey"`
 	OpCert     []byte `json:"opcert"`
+}
+
+// marshalFrame encodes the push as JSON identical to json.Marshal's output,
+// directly into a buffer the caller owns. encoding/json returns its working
+// buffer to a process-wide pool without clearing it, which would leave the
+// base64 signing key in memory that no caller can wipe.
+func (k KeyPush) marshalFrame() ([]byte, error) {
+	typ, err := json.Marshal(k.Type)
+	if err != nil {
+		return nil, err
+	}
+	// Size the buffer for the whole frame: if append outgrew it, the copy would
+	// move the signing key to a new array and leave the old one unwiped.
+	const (
+		maxUintLen = 20
+		fixedLen   = len(`{"type":,"period":,"depth":,"kes_sign_key":,"kes_vkey":,"opcert":}`)
+	)
+	// Bounding every term first keeps the sum from overflowing, and rejects an
+	// oversized push before the signing key is encoded at all.
+	if len(typ) > maxFrameLen || len(k.KESSignKey) > maxFrameLen ||
+		len(k.KESVKey) > maxFrameLen || len(k.OpCert) > maxFrameLen {
+		return nil, errFrameTooLarge
+	}
+	size := fixedLen + len(typ) + 2*maxUintLen +
+		jsonBytesLen(k.KESSignKey) + jsonBytesLen(k.KESVKey) + jsonBytesLen(k.OpCert)
+	if size > maxFrameLen {
+		return nil, errFrameTooLarge
+	}
+	buf := make([]byte, 0, size)
+	buf = append(buf, `{"type":`...)
+	buf = append(buf, typ...)
+	buf = append(buf, `,"period":`...)
+	buf = strconv.AppendUint(buf, k.Period, 10)
+	buf = append(buf, `,"depth":`...)
+	buf = strconv.AppendUint(buf, k.Depth, 10)
+	buf = append(buf, `,"kes_sign_key":`...)
+	buf = appendJSONBytes(buf, k.KESSignKey)
+	buf = append(buf, `,"kes_vkey":`...)
+	buf = appendJSONBytes(buf, k.KESVKey)
+	buf = append(buf, `,"opcert":`...)
+	buf = appendJSONBytes(buf, k.OpCert)
+	return append(buf, '}'), nil
+}
+
+var errFrameTooLarge = fmt.Errorf("frame exceeds %d bytes", maxFrameLen)
+
+// jsonBytesLen is the length appendJSONBytes appends for b.
+func jsonBytesLen(b []byte) int {
+	if b == nil {
+		return len("null")
+	}
+	return 2 + base64.StdEncoding.EncodedLen(len(b))
+}
+
+// appendJSONBytes appends b as encoding/json encodes a []byte: null for nil,
+// otherwise a quoted standard base64 string.
+func appendJSONBytes(buf, b []byte) []byte {
+	if b == nil {
+		return append(buf, "null"...)
+	}
+	buf = append(buf, '"')
+	buf = base64.StdEncoding.AppendEncode(buf, b)
+	return append(buf, '"')
+}
+
+// frameMarshaler is implemented by frames that carry secrets and must not be
+// serialized through encoding/json's pooled buffers.
+type frameMarshaler interface {
+	marshalFrame() ([]byte, error)
 }
 
 // SignRequest is sent by the client in sign mode.
@@ -189,15 +260,35 @@ type AgentInfo struct {
 	FloorInitialized bool   `json:"floor_initialized"` // whether the guard floor is set
 }
 
+type deadlineWriter interface {
+	io.Writer
+	SetWriteDeadline(time.Time) error
+}
+
 // writeFrame writes a single length-prefixed JSON frame.
-func writeFrame(w io.Writer, v any) error {
-	payload, err := json.Marshal(v)
+func writeFrame(w deadlineWriter, v any) (retErr error) {
+	var payload []byte
+	var err error
+	if m, ok := v.(frameMarshaler); ok {
+		payload, err = m.marshalFrame()
+	} else {
+		payload, err = json.Marshal(v)
+	}
 	if err != nil {
 		return fmt.Errorf("kesagent: marshal frame: %w", err)
 	}
+	defer securemem.Wipe(payload)
 	if len(payload) > maxFrameLen {
 		return fmt.Errorf("kesagent: frame too large (%d bytes)", len(payload))
 	}
+	if err := w.SetWriteDeadline(time.Now().Add(frameIOTimeout)); err != nil {
+		return fmt.Errorf("kesagent: set frame write deadline: %w", err)
+	}
+	defer func() {
+		if err := w.SetWriteDeadline(time.Time{}); retErr == nil && err != nil {
+			retErr = fmt.Errorf("kesagent: clear frame write deadline: %w", err)
+		}
+	}()
 	var hdr [4]byte
 	binary.BigEndian.PutUint32(hdr[:], uint32(len(payload))) // #nosec G115 -- bounded by maxFrameLen
 	n, err := w.Write(hdr[:])
@@ -217,8 +308,21 @@ func writeFrame(w io.Writer, v any) error {
 	return nil
 }
 
+type deadlineReader interface {
+	io.Reader
+	SetReadDeadline(time.Time) error
+}
+
 // readFrame reads a single length-prefixed JSON frame into v.
-func readFrame(r io.Reader, v any) error {
+func readFrame(r deadlineReader, v any) (retErr error) {
+	if err := r.SetReadDeadline(time.Now().Add(frameIOTimeout)); err != nil {
+		return fmt.Errorf("kesagent: set frame read deadline: %w", err)
+	}
+	defer func() {
+		if err := r.SetReadDeadline(time.Time{}); retErr == nil && err != nil {
+			retErr = fmt.Errorf("kesagent: clear frame read deadline: %w", err)
+		}
+	}()
 	var hdr [4]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return err // may be io.EOF; callers distinguish
@@ -229,16 +333,6 @@ func readFrame(r io.Reader, v any) error {
 	}
 	if n > maxFrameLen {
 		return fmt.Errorf("kesagent: frame too large (%d bytes)", n)
-	}
-	// A frame body must arrive contiguously once its header has been read, so
-	// bound the body read with a deadline (cleared afterward). This only
-	// affects readers that expose SetReadDeadline (net.Conn); in-memory
-	// readers used in tests are unaffected. The header read above is
-	// deliberately left un-deadlined so idle/long-lived connections may block
-	// there between frames.
-	if d, ok := r.(interface{ SetReadDeadline(time.Time) error }); ok {
-		_ = d.SetReadDeadline(time.Now().Add(frameBodyReadTimeout))
-		defer func() { _ = d.SetReadDeadline(time.Time{}) }()
 	}
 	// Grow the payload buffer as bytes actually arrive rather than
 	// pre-allocating the full advertised length: a client that announces a

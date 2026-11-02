@@ -21,6 +21,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/logging"
@@ -34,6 +35,7 @@ import (
 type SignRequest struct {
 	Type    string   `json:"type"`    // "tx" | "cip8" | "opcert"
 	Cbor    string   `json:"cbor"`    // tx: hex CBOR or JSON envelope
+	Era     string   `json:"era"`     // tx: optional era name; required for ambiguous raw CBOR without an era-typed envelope
 	Signers []string `json:"signers"` // tx: distinct resolved key hashes / addresses, subject to the signer limit
 	Payload string   `json:"payload"` // cip8: hex
 	Address string   `json:"address"` // cip8: bech32
@@ -45,6 +47,10 @@ type SignRequest struct {
 	KesVkey      string `json:"kes_vkey"`      // opcert: hex-encoded 32-byte KES verification key
 	IssueCounter uint64 `json:"issue_counter"` // opcert: operational certificate issue counter
 	KesPeriod    uint64 `json:"kes_period"`    // opcert: KES period
+	// ChainCounter, when set, is the pool's on-chain opcert counter. The signer
+	// then chooses the issue counter (ChainCounter + 1) and IssueCounter is
+	// ignored.
+	ChainCounter *uint64 `json:"chain_counter,omitempty"`
 }
 
 // SignTxResponse is returned for type=tx.
@@ -73,6 +79,8 @@ type SignOpCertResponse struct {
 	Signature string `json:"signature"`
 	ColdVkey  string `json:"cold_vkey"`
 	Key       string `json:"key"`
+	// IssueCounter is the issue counter the signature covers.
+	IssueCounter uint64 `json:"issue_counter"`
 }
 
 // KeyPolicySummary is the effective policy returned on the key-detail
@@ -217,7 +225,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		}
 		// Thread the authenticated caller so the coordinator can apply any
 		// per-caller policy override.
-		res, perr, err := s.coord.SignTx(signer.WithCaller(r.Context(), caller), []byte(req.Cbor), signers)
+		res, perr, err := s.coord.SignTx(signer.WithCaller(r.Context(), caller), []byte(req.Cbor), req.Era, signers)
 		if err != nil {
 			if signer.IsBadRequest(err) {
 				s.audit(r, caller, "tx", "bad_request", "audit_id", auditID, "signer_count", len(req.Signers), "error", err.Error())
@@ -272,13 +280,17 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		if len(res.SignedTx) > 0 {
 			resp.SignedTx = hex.EncodeToString(res.SignedTx)
 		}
-		s.audit(r, caller, "tx", "signed",
+		auditArgs := []any{
 			"audit_id", auditID,
 			"tx_id", res.TxID,
 			"witnesses", len(resp.Witnesses),
 			"signer_errors", len(perr),
 			"signers", req.Signers,
-		)
+		}
+		if len(res.Summaries) > 0 {
+			auditArgs = append(auditArgs, "summary", strings.Join(res.Summaries, "; "))
+		}
+		s.audit(r, caller, "tx", "signed", auditArgs...)
 		writeJSON(w, http.StatusOK, resp)
 	case "cip8":
 		payload, err := hex.DecodeString(req.Payload)
@@ -338,7 +350,15 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		res, code, err := s.coord.SignOpCert(r.Context(), kesVkey, req.IssueCounter, req.KesPeriod, req.Key)
+		var (
+			res  *signer.OpCertResult
+			code signer.ErrorCode
+		)
+		if req.ChainCounter != nil {
+			res, code, err = s.coord.SignOpCertFromChain(r.Context(), kesVkey, *req.ChainCounter, req.KesPeriod, req.Key)
+		} else {
+			res, code, err = s.coord.SignOpCert(r.Context(), kesVkey, req.IssueCounter, req.KesPeriod, req.Key)
+		}
 		if err != nil {
 			st := codeToStatus(code)
 			if st >= 500 {
@@ -361,7 +381,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.audit(r, caller, "opcert", "signed", "audit_id", auditID, "key", req.Key)
-		writeJSON(w, http.StatusOK, SignOpCertResponse{AuditID: auditID, Signature: res.SignatureHex, ColdVkey: res.ColdVKeyHex, Key: res.KeyHex})
+		writeJSON(w, http.StatusOK, SignOpCertResponse{AuditID: auditID, Signature: res.SignatureHex, ColdVkey: res.ColdVKeyHex, Key: res.KeyHex, IssueCounter: res.IssueCounter})
 	default:
 		s.audit(r, caller, req.Type, "bad_request", "audit_id", auditID)
 		writeErr(w, http.StatusBadRequest, "unknown request type")

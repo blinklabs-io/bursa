@@ -5,12 +5,15 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 
 	apollo "github.com/Salvionied/apollo/v2"
 	"github.com/blinklabs-io/gouroboros/cbor"
+	"github.com/blinklabs-io/gouroboros/ledger/babbage"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/blinklabs-io/gouroboros/ledger/conway"
 
@@ -102,6 +105,281 @@ func buildUnsignedSendFixture(t *testing.T) (*Service, *wallet.Account, string) 
 func newBuildOnlyService(t *testing.T) *Service {
 	t.Helper()
 	return NewService(nil, nil, nil)
+}
+
+func mutateConwayBody(t *testing.T, txHex string, mutate func(*conway.ConwayTransactionBody)) string {
+	t.Helper()
+	txBytes, err := hex.DecodeString(txHex)
+	if err != nil {
+		t.Fatalf("decode tx hex: %v", err)
+	}
+	var outer []cbor.RawMessage
+	if _, err := cbor.Decode(txBytes, &outer); err != nil {
+		t.Fatalf("decode tx array: %v", err)
+	}
+	if len(outer) == 0 {
+		t.Fatal("decoded tx array is empty")
+	}
+	body, err := conway.NewConwayTransactionBodyFromCbor(outer[0])
+	if err != nil {
+		t.Fatalf("decode tx body: %v", err)
+	}
+	mutate(body)
+	body.SetCbor(nil)
+	bodyBytes, err := cbor.Encode(body)
+	if err != nil {
+		t.Fatalf("encode tx body: %v", err)
+	}
+	outer[0] = cbor.RawMessage(bodyBytes)
+	newTxBytes, err := cbor.Encode(outer)
+	if err != nil {
+		t.Fatalf("encode tx: %v", err)
+	}
+	return hex.EncodeToString(newTxBytes)
+}
+
+func setTxValidity(t *testing.T, txHex string, valid bool) string {
+	t.Helper()
+	txBytes, err := hex.DecodeString(txHex)
+	if err != nil {
+		t.Fatalf("decode tx hex: %v", err)
+	}
+	var outer []cbor.RawMessage
+	if _, err := cbor.Decode(txBytes, &outer); err != nil {
+		t.Fatalf("decode tx array: %v", err)
+	}
+	if len(outer) < 3 {
+		t.Fatalf("transaction array has %d fields, want at least 3", len(outer))
+	}
+	validCBOR, err := cbor.Encode(valid)
+	if err != nil {
+		t.Fatalf("encode validity: %v", err)
+	}
+	outer[2] = validCBOR
+	newTxBytes, err := cbor.Encode(outer)
+	if err != nil {
+		t.Fatalf("encode tx: %v", err)
+	}
+	return hex.EncodeToString(newTxBytes)
+}
+
+func testDatumOption(t *testing.T) *babbage.BabbageTransactionOutputDatumOption {
+	t.Helper()
+	var hash lcommon.Blake2b256
+	hash[0] = 1
+	datumOptionCBOR, err := cbor.Encode([]any{babbage.DatumOptionTypeHash, hash})
+	if err != nil {
+		t.Fatalf("encode datum option: %v", err)
+	}
+	var datumOption babbage.BabbageTransactionOutputDatumOption
+	if _, err := cbor.Decode(datumOptionCBOR, &datumOption); err != nil {
+		t.Fatalf("decode datum option: %v", err)
+	}
+	return &datumOption
+}
+
+func TestDecodeTx_CollateralEffectsResolvedAndOfflineExplicit(t *testing.T) {
+	svc, _, unsignedCbor := buildUnsignedSendFixture(t)
+	txHex := mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
+		body.TxCollateral = cbor.NewSetType(body.TxInputs.Items(), true)
+		body.TxCollateralReturn = &body.TxOutputs[0]
+		body.TxTotalCollateral = 1_000_000
+	})
+
+	got, err := svc.DecodeTx(context.Background(), txHex)
+	if err != nil {
+		t.Fatalf("DecodeTx: %v", err)
+	}
+	if len(got.CollateralInputs) != 1 || !got.CollateralInputs[0].Resolved {
+		t.Fatalf("collateral inputs = %+v, want one resolved input", got.CollateralInputs)
+	}
+	if got.CollateralInputs[0].TxHash == "" || got.CollateralInputs[0].Address == "" || got.CollateralInputs[0].Lovelace != "5000000" {
+		t.Fatalf("resolved collateral = %+v", got.CollateralInputs[0])
+	}
+	if got.CollateralReturn == nil || got.CollateralReturn.Address == "" || got.CollateralReturn.Lovelace == "" {
+		t.Fatalf("collateral return = %+v", got.CollateralReturn)
+	}
+	if got.TotalCollateral == nil || *got.TotalCollateral != "1000000" {
+		t.Fatalf("total collateral = %v, want 1000000", got.TotalCollateral)
+	}
+
+	offline, err := newBuildOnlyService(t).DecodeTx(context.Background(), txHex)
+	if err != nil {
+		t.Fatalf("offline DecodeTx: %v", err)
+	}
+	if len(offline.CollateralInputs) != 1 || offline.CollateralInputs[0].Resolved || offline.CollateralInputs[0].TxHash == "" {
+		t.Fatalf("offline collateral = %+v, want explicit unresolved ref", offline.CollateralInputs)
+	}
+	if err := offline.ValidateForSigning(); err == nil {
+		t.Fatal("ValidateForSigning accepted unresolved consumed inputs")
+	}
+}
+
+func TestDecodeTx_ReferenceInputsResolvedAndOfflineExplicit(t *testing.T) {
+	svc, _, unsignedCbor := buildUnsignedSendFixture(t)
+	txHex := mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
+		body.TxReferenceInputs = cbor.NewSetType(body.TxInputs.Items(), true)
+	})
+
+	got, err := svc.DecodeTx(context.Background(), txHex)
+	if err != nil {
+		t.Fatalf("DecodeTx: %v", err)
+	}
+	if len(got.ReferenceInputs) != 1 || !got.ReferenceInputs[0].Resolved {
+		t.Fatalf("reference inputs = %+v, want one resolved input", got.ReferenceInputs)
+	}
+	if got.ReferenceInputs[0].TxHash == "" || got.ReferenceInputs[0].Address == "" || got.ReferenceInputs[0].Lovelace != "5000000" {
+		t.Fatalf("resolved reference input = %+v", got.ReferenceInputs[0])
+	}
+
+	offline, err := newBuildOnlyService(t).DecodeTx(context.Background(), txHex)
+	if err != nil {
+		t.Fatalf("offline DecodeTx: %v", err)
+	}
+	if len(offline.ReferenceInputs) != 1 || offline.ReferenceInputs[0].Resolved || offline.ReferenceInputs[0].TxHash == "" {
+		t.Fatalf("offline reference inputs = %+v, want explicit unresolved ref", offline.ReferenceInputs)
+	}
+}
+
+func TestTxSummaryValidateForSigningRequiresCollateralTotal(t *testing.T) {
+	summary := TxSummary{CollateralInputs: []TxSummaryInput{{
+		TxHash:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Resolved: true,
+	}}}
+	if err := summary.ValidateForSigning(); err == nil {
+		t.Fatal("ValidateForSigning accepted collateral without total collateral")
+	}
+}
+
+func TestDecodeTxMarksUnshownExecutionEffectsUnsupported(t *testing.T) {
+	svc, _, unsignedCbor := buildUnsignedSendFixture(t)
+	datumOption := testDatumOption(t)
+	tests := []struct {
+		name string
+		tx   func() string
+		want string
+	}{
+		{
+			name: "invalid transaction collateral path",
+			tx:   func() string { return setTxValidity(t, unsignedCbor, false) },
+			want: "transaction marked invalid (collateral path)",
+		},
+		{
+			name: "output datum",
+			tx: func() string {
+				return mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
+					body.TxOutputs[0].DatumOption = datumOption
+					body.TxOutputs[0].SetCbor(nil)
+				})
+			},
+			want: "output 0 datum",
+		},
+		{
+			name: "output reference script",
+			tx: func() string {
+				return mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
+					body.TxOutputs[0].TxOutScriptRef = &lcommon.ScriptRef{
+						Type:   lcommon.ScriptRefTypePlutusV1,
+						Script: lcommon.PlutusV1Script{0x01},
+					}
+					body.TxOutputs[0].SetCbor(nil)
+				})
+			},
+			want: "output 0 reference script",
+		},
+		{
+			name: "collateral return datum",
+			tx: func() string {
+				return mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
+					collateralReturn := body.TxOutputs[0]
+					collateralReturn.DatumOption = datumOption
+					collateralReturn.SetCbor(nil)
+					body.TxCollateral = cbor.NewSetType(body.TxInputs.Items(), true)
+					body.TxCollateralReturn = &collateralReturn
+					body.TxTotalCollateral = 1_000_000
+				})
+			},
+			want: "collateral return datum",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			summary, err := svc.DecodeTx(context.Background(), tt.tx())
+			if err != nil {
+				t.Fatalf("DecodeTx: %v", err)
+			}
+			if !containsString(summary.UnsupportedEffects, tt.want) {
+				t.Fatalf("unsupported effects = %v, want %q", summary.UnsupportedEffects, tt.want)
+			}
+			if err := summary.ValidateForSigning(); err == nil {
+				t.Fatal("ValidateForSigning accepted an unshown execution effect")
+			}
+		})
+	}
+}
+
+func TestCosignTxValidatesEffectsBeforeUnlock(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*testing.T, string) string
+		offline bool
+	}{
+		{
+			name:    "unresolved input",
+			mutate:  func(_ *testing.T, tx string) string { return tx },
+			offline: true,
+		},
+		{
+			name: "collateral without total",
+			mutate: func(t *testing.T, tx string) string {
+				return mutateConwayBody(t, tx, func(body *conway.ConwayTransactionBody) {
+					body.TxCollateral = cbor.NewSetType(body.TxInputs.Items(), true)
+				})
+			},
+		},
+		{
+			name: "invalid transaction collateral path",
+			mutate: func(t *testing.T, tx string) string {
+				return setTxValidity(t, tx, false)
+			},
+		},
+		{
+			name: "output datum",
+			mutate: func(t *testing.T, tx string) string {
+				return mutateConwayBody(t, tx, func(body *conway.ConwayTransactionBody) {
+					body.TxOutputs[0].DatumOption = testDatumOption(t)
+					body.TxOutputs[0].SetCbor(nil)
+				})
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder, acct, unsignedCbor := buildUnsignedSendFixture(t)
+			keys := &trackingKeystore{mnemonic: testMnemonic}
+			chain := builder.chain
+			if tt.offline {
+				chain = nil
+			}
+			cosigner := NewService(chain, keys, acct)
+			_, err := cosigner.CosignTx(context.Background(), tt.mutate(t, unsignedCbor), testPassword, true)
+			if !errors.Is(err, ErrInvalidTx) {
+				t.Fatalf("CosignTx error = %v, want ErrInvalidTx", err)
+			}
+			if keys.unlockCalls != 0 {
+				t.Fatalf("keystore unlocks = %d, want 0", keys.unlockCalls)
+			}
+		})
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDecodeTx_VkeySummary(t *testing.T) {
@@ -388,5 +666,24 @@ func TestDecodeTx_Malformed(t *testing.T) {
 				t.Errorf("err = %v, want it to wrap ErrInvalidTx", err)
 			}
 		})
+	}
+}
+
+func TestDecodeTx_NoOutputsSerializesEmptyList(t *testing.T) {
+	svc, _, unsignedCbor := buildUnsignedSendFixture(t)
+	txHex := mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
+		body.TxOutputs = nil
+	})
+
+	got, err := svc.DecodeTx(context.Background(), txHex)
+	if err != nil {
+		t.Fatalf("DecodeTx: %v", err)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	if !strings.Contains(string(raw), `"outputs":[]`) {
+		t.Fatalf("summary JSON = %s, want outputs as an empty list", raw)
 	}
 }

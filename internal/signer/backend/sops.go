@@ -112,7 +112,7 @@ func (b *SopsBackend) Load(ctx context.Context) error {
 		// Empty registered type => infer from the envelope.
 		typ := r.typ
 		if typ == "" {
-			typ = KeyTypeFromEnvelope(lk.Type)
+			typ = KeyTypeFromEnvelope(lk.Type, lk.Description)
 		}
 		hash := HashPublicKey(pub)
 		newKeys[hash] = &softwareKey{

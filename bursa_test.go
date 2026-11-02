@@ -1850,6 +1850,88 @@ func TestScriptRoundTrip(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestScriptNOfCardanoCLICompatibility(t *testing.T) {
+	keyHashes := [][]byte{
+		testKeyHash(),
+		bytes.Repeat([]byte{0x02}, 28),
+		bytes.Repeat([]byte{0x03}, 28),
+	}
+	script, err := NewMultiSigScript(2, keyHashes...)
+	require.NoError(t, err)
+
+	data, err := MarshalScript(script, "")
+	require.NoError(t, err)
+	assert.Equal(t, "atLeast", data.Script["type"])
+	assert.Equal(t, int64(2), data.Script["required"])
+	assert.NotContains(t, data.Script, "n")
+
+	scriptJSON := func(scriptType, requiredField string) map[string]any {
+		scripts := make([]any, len(keyHashes))
+		for i, keyHash := range keyHashes {
+			scripts[i] = map[string]any{
+				"type":    "sig",
+				"keyHash": hex.EncodeToString(keyHash),
+			}
+		}
+		return map[string]any{
+			"type":        scriptType,
+			requiredField: float64(2),
+			"scripts":     scripts,
+		}
+	}
+	for _, tt := range []struct {
+		name          string
+		scriptType    string
+		requiredField string
+	}{
+		{name: "cardano-cli atLeast", scriptType: "atLeast", requiredField: "required"},
+		{name: "legacy nOf", scriptType: "nOf", requiredField: "n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			unmarshaled, err := UnmarshalScript(&ScriptData{
+				Type:   "NativeScript",
+				Script: scriptJSON(tt.scriptType, tt.requiredField),
+			})
+			require.NoError(t, err)
+			assert.Equal(t, script.Hash(), unmarshaled.Hash())
+		})
+	}
+}
+
+func TestParseScriptFileCardanoCLIAndEnvelope(t *testing.T) {
+	keyHashes := [][]byte{
+		testKeyHash(),
+		bytes.Repeat([]byte{0x02}, 28),
+	}
+	script, err := NewMultiSigScript(1, keyHashes...)
+	require.NoError(t, err)
+	envelope, err := MarshalScript(script, "mainnet")
+	require.NoError(t, err)
+	envelopeJSON, err := json.Marshal(envelope)
+	require.NoError(t, err)
+	bareJSON, err := json.Marshal(envelope.Script)
+	require.NoError(t, err)
+
+	for _, tt := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "cardano-cli simple script", data: bareJSON},
+		{name: "bursa envelope", data: envelopeJSON},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := ParseScriptFile(tt.data)
+			require.NoError(t, err)
+			unmarshaled, err := UnmarshalScript(parsed)
+			require.NoError(t, err)
+			assert.Equal(t, script.Hash(), unmarshaled.Hash())
+		})
+	}
+
+	_, err = ParseScriptFile([]byte("not json"))
+	assert.Error(t, err)
+}
+
 func TestCIP0011StakingKeys(t *testing.T) {
 	// Test vector from CIP-0011 specification
 	// https://cips.cardano.org/cips/cip11/
@@ -2775,14 +2857,14 @@ func TestCIP1855KeyFileGeneration(t *testing.T) {
 	// Test verification key generation
 	vkey, err := GetPolicyVKey(policyKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "PolicyVerificationKeyShelley_ed25519", vkey.Type)
+	assert.Equal(t, "PaymentVerificationKeyShelley_ed25519", vkey.Type)
 	assert.Equal(t, "Policy Verification Key", vkey.Description)
 	assert.NotEmpty(t, vkey.CborHex)
 
 	// Test signing key generation
 	skey, err := GetPolicySKey(policyKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "PolicyExtendedSigningKeyShelley_ed25519_bip32", skey.Type)
+	assert.Equal(t, "PaymentExtendedSigningKeyShelley_ed25519_bip32", skey.Type)
 	assert.Equal(t, "Policy Extended Signing Key (BIP32)", skey.Description)
 	assert.NotEmpty(t, skey.CborHex)
 
@@ -2791,7 +2873,7 @@ func TestCIP1855KeyFileGeneration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(
 		t,
-		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		extendedSkey.Type,
 	)
 	assert.Equal(
@@ -2995,13 +3077,13 @@ func TestCIP1855PolicyKeyRoundTrip(t *testing.T) {
 	// Verify policy verification key
 	pvkey := keyMap["policy.vkey"]
 	assert.NotNil(t, pvkey, "policy.vkey should be loaded")
-	assert.Equal(t, "PolicyVerificationKeyShelley_ed25519", pvkey.Type)
+	assert.Equal(t, "PaymentVerificationKeyShelley_ed25519", pvkey.Type)
 	assert.Len(t, pvkey.VKey, 32, "Verification key should be 32 bytes")
 
 	// Verify policy signing key
 	pskey := keyMap["policy.skey"]
 	assert.NotNil(t, pskey, "policy.skey should be loaded")
-	assert.Equal(t, "PolicyExtendedSigningKeyShelley_ed25519_bip32", pskey.Type)
+	assert.Equal(t, "PaymentExtendedSigningKeyShelley_ed25519_bip32", pskey.Type)
 	assert.Len(t, pskey.SKey, 96, "Signing key should be 96 bytes")
 	assert.Len(t, pskey.VKey, 32, "Derived verification key should be 32 bytes")
 
@@ -3010,7 +3092,7 @@ func TestCIP1855PolicyKeyRoundTrip(t *testing.T) {
 	assert.NotNil(t, pextSkey, "policyExtended.skey should be loaded")
 	assert.Equal(
 		t,
-		"PolicyExtendedSigningKeyShelley_ed25519_bip32",
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
 		pextSkey.Type,
 	)
 	assert.Len(

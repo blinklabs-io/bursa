@@ -18,6 +18,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/status": "http://127.0.0.1:8090",
+      "/session": "http://127.0.0.1:8090",
       "/health": "http://127.0.0.1:8090",
       "/vault": "http://127.0.0.1:8090",
       "/wallet": "http://127.0.0.1:8090",

@@ -46,24 +46,31 @@ type HookVoter struct {
 // contains no secrets — only the caller, the signing key, and the decoded
 // operation types/amounts/destinations.
 type OperationSummary struct {
-	Type                   string          `json:"type"` // "tx"
-	Caller                 string          `json:"caller"`
-	Key                    string          `json:"key"`
-	TxID                   string          `json:"tx_id"`
-	Fee                    string          `json:"fee,omitempty"`
-	TTL                    uint64          `json:"ttl,omitempty"`
-	Outputs                []HookOutput    `json:"outputs,omitempty"`
-	CertificateCount       int             `json:"certificate_count,omitempty"`
-	Certificates           []string        `json:"certificates,omitempty"`
-	HasMint                bool            `json:"has_mint,omitempty"`
-	WithdrawalCount        int             `json:"withdrawal_count,omitempty"`
-	VotingProcedureCount   int             `json:"voting_procedure_count,omitempty"`
-	Voters                 []HookVoter     `json:"voters,omitempty"`
-	ProposalProcedureCount int             `json:"proposal_procedure_count,omitempty"`
-	HasTreasuryDonation    bool            `json:"has_treasury_donation,omitempty"`
-	CollateralInputs       []bursa.TxInput `json:"collateral_inputs,omitempty"`
-	CollateralReturn       *HookOutput     `json:"collateral_return,omitempty"`
-	TotalCollateral        string          `json:"total_collateral,omitempty"`
+	Type                            string          `json:"type"` // "tx"
+	Caller                          string          `json:"caller"`
+	Key                             string          `json:"key"`
+	TxID                            string          `json:"tx_id"`
+	Fee                             string          `json:"fee,omitempty"`
+	TTL                             uint64          `json:"ttl,omitempty"`
+	Outputs                         []HookOutput    `json:"outputs,omitempty"`
+	CertificateCount                int             `json:"certificate_count,omitempty"`
+	Certificates                    []string        `json:"certificates,omitempty"`
+	HasMint                         bool            `json:"has_mint,omitempty"`
+	WithdrawalCount                 int             `json:"withdrawal_count,omitempty"`
+	VotingProcedureCount            int             `json:"voting_procedure_count,omitempty"`
+	Voters                          []HookVoter     `json:"voters,omitempty"`
+	ProposalProcedureCount          int             `json:"proposal_procedure_count,omitempty"`
+	ProposalDepositTotal            string          `json:"proposal_deposit_total,omitempty"`
+	HasTreasuryDonation             bool            `json:"has_treasury_donation,omitempty"`
+	TreasuryDonation                string          `json:"treasury_donation,omitempty"`
+	CertificateDepositTotal         string          `json:"certificate_deposit_total,omitempty"`
+	CertificateRefundTotal          string          `json:"certificate_refund_total,omitempty"`
+	UnresolvedCertificateDeposits   int             `json:"unresolved_certificate_deposits,omitempty"`
+	UnresolvedCertificateRefunds    int             `json:"unresolved_certificate_refunds,omitempty"`
+	CertificateValueEffectsComplete bool            `json:"certificate_value_effects_complete"`
+	CollateralInputs                []bursa.TxInput `json:"collateral_inputs,omitempty"`
+	CollateralReturn                *HookOutput     `json:"collateral_return,omitempty"`
+	TotalCollateral                 string          `json:"total_collateral,omitempty"`
 	// VoterKinds and DrepIds preserve the original flattened hook fields.
 	VoterKinds []string `json:"voter_kinds,omitempty"`
 	DrepIds    []string `json:"drep_ids,omitempty"`
@@ -109,6 +116,13 @@ func summarizeTx(caller, key string, insp *bursa.TxInspection, ops policy.TxOps)
 		ProposalProcedureCount: insp.ProposalProcedureCount,
 		HasTreasuryDonation:    insp.HasTreasuryDonation,
 	}
+	sum.TreasuryDonation = insp.TreasuryDonationLovelace
+	sum.CertificateDepositTotal = insp.CertificateDepositTotal
+	sum.CertificateRefundTotal = insp.CertificateRefundTotal
+	sum.UnresolvedCertificateDeposits = insp.UnresolvedCertificateDeposits
+	sum.UnresolvedCertificateRefunds = insp.UnresolvedCertificateRefunds
+	sum.CertificateValueEffectsComplete = insp.CertificateValueEffectsComplete
+	sum.ProposalDepositTotal = insp.ProposalDepositTotal
 	for _, o := range insp.Outputs {
 		sum.Outputs = append(sum.Outputs, HookOutput{
 			Address:   o.Address,

@@ -20,6 +20,7 @@ package survey
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -288,6 +289,7 @@ func (a *Answer) UnmarshalJSON(data []byte) error {
 		Indices  []uint64        `json:"indices,omitempty"`
 		Number   json.RawMessage `json:"number,omitempty"`
 		Pairs    []Pair          `json:"pairs,omitempty"`
+		Custom   string          `json:"custom_cbor,omitempty"`
 	}
 	if err := json.Unmarshal(data, &value); err != nil {
 		return err
@@ -301,6 +303,21 @@ func (a *Answer) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("answer number: %w", err)
 		}
 		a.Number = number
+	}
+	if value.Kind == KindCustom {
+		if value.Custom == "" {
+			return errors.New("custom answer needs custom_cbor")
+		}
+		raw, err := hex.DecodeString(value.Custom)
+		if err != nil {
+			return fmt.Errorf("custom answer cbor: %w", err)
+		}
+		a.Custom, err = lcommon.DecodeMetadatumRaw(raw)
+		if err != nil {
+			return fmt.Errorf("custom answer cbor: %w", err)
+		}
+	} else if value.Custom != "" {
+		return errors.New("custom_cbor is only valid for a custom answer")
 	}
 	return nil
 }

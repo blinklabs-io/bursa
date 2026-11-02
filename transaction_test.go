@@ -17,10 +17,13 @@ package bursa
 import (
 	"bytes"
 	"crypto/ed25519"
+	"encoding/hex"
+	"math"
 	"os"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/bip32"
+	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/blinklabs-io/gouroboros/ledger"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
@@ -368,5 +371,200 @@ func TestSignDigest_Extended(t *testing.T) {
 	// Extended-key signatures verify against the 32-byte public key with standard ed25519.
 	if !ed25519.Verify(ed25519.PublicKey(pub), msg, sig) {
 		t.Fatalf("extended signature does not verify against pubkey")
+	}
+}
+
+func testVkeyWitnesses(t *testing.T, n int) []lcommon.VkeyWitness {
+	t.Helper()
+	wits := make([]lcommon.VkeyWitness, 0, n)
+	for range n {
+		pub, priv, err := ed25519.GenerateKey(nil)
+		if err != nil {
+			t.Fatalf("generate key: %v", err)
+		}
+		wits = append(wits, lcommon.VkeyWitness{
+			Vkey:      pub,
+			Signature: ed25519.Sign(priv, []byte("estimate")),
+		})
+	}
+	return wits
+}
+
+func TestEstimateWitnessedTxSize_MatchesAssembledVkeyWitnesses(t *testing.T) {
+	tx := mustTestTx(t)
+	// 24 witnesses grow the array header from one byte to two.
+	for _, n := range []int{1, 4, 24} {
+		got, err := EstimateWitnessedTxSize(tx, uint(n), 0)
+		if err != nil {
+			t.Fatalf("estimate %d: %v", n, err)
+		}
+		signed, err := AssembleTransactionForEra(tx, ledger.TxTypeConway, testVkeyWitnesses(t, n))
+		if err != nil {
+			t.Fatalf("assemble %d: %v", n, err)
+		}
+		if got != len(signed) {
+			t.Errorf("%d witnesses: estimate %d, signed size %d", n, got, len(signed))
+		}
+	}
+}
+
+func TestEstimateWitnessedTxSize_ExistingVkeyWitnesses(t *testing.T) {
+	base, err := AssembleTransactionForEra(mustTestTx(t), ledger.TxTypeConway, testVkeyWitnesses(t, 2))
+	if err != nil {
+		t.Fatalf("assemble base: %v", err)
+	}
+	got, err := EstimateWitnessedTxSize(base, 3, 0)
+	if err != nil {
+		t.Fatalf("estimate: %v", err)
+	}
+	signed, err := AssembleTransactionForEra(base, ledger.TxTypeConway, testVkeyWitnesses(t, 3))
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if got != len(signed) {
+		t.Errorf("estimate %d, signed size %d", got, len(signed))
+	}
+}
+
+func TestEstimateWitnessedTxSize_SetFraming(t *testing.T) {
+	tx := mustTestTx(t)
+	// Conway adds the witness-set map key (1 byte), the tag-258 set tag (3)
+	// and the array header (1) once, plus 101 bytes per vkey witness and 144
+	// per bootstrap witness with testnet maxBound address attributes.
+	for _, tc := range []struct {
+		name            string
+		vkey, bootstrap uint
+		added           int
+	}{
+		{name: "vkey", vkey: 4, added: 5 + 4*101},
+		{name: "bootstrap", bootstrap: 2, added: 5 + 2*144},
+		{name: "both", vkey: 1, bootstrap: 1, added: 5 + 101 + 5 + 144},
+	} {
+		got, err := EstimateWitnessedTxSize(tx, tc.vkey, tc.bootstrap)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got-len(tx) != tc.added {
+			t.Errorf("%s: added %d bytes, want %d", tc.name, got-len(tx), tc.added)
+		}
+	}
+}
+
+func TestEstimateWitnessedTxSize_CoversPreConwayEncoding(t *testing.T) {
+	// Valid as Alonzo, Babbage and Conway; the estimate assumes Conway framing.
+	tx, err := hex.DecodeString("84a3008001800200a0f5f6")
+	if err != nil {
+		t.Fatalf("decode hex: %v", err)
+	}
+	got, err := EstimateWitnessedTxSize(tx, 4, 0)
+	if err != nil {
+		t.Fatalf("estimate: %v", err)
+	}
+	signed, err := AssembleTransactionForEra(tx, ledger.TxTypeBabbage, testVkeyWitnesses(t, 4))
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if got < len(signed) {
+		t.Errorf("estimate %d below Babbage signed size %d", got, len(signed))
+	}
+}
+
+func TestEstimateWitnessedTxSize_RejectsExcessiveCount(t *testing.T) {
+	if _, err := EstimateWitnessedTxSize(mustTestTx(t), MaxEstimatedWitnesses+1, 0); err == nil {
+		t.Fatal("expected an error for an excessive witness count")
+	}
+}
+
+// withBootstrapWitnesses returns txCbor with a tag-258 witness-set key 2
+// holding n bootstrap witnesses signed by fresh keys and carrying the given
+// serialized Byron address attributes.
+func withBootstrapWitnesses(t *testing.T, txCbor []byte, n int, attributes []byte) []byte {
+	t.Helper()
+	var arr []cbor.RawMessage
+	if _, err := cbor.Decode(txCbor, &arr); err != nil {
+		t.Fatalf("decode transaction: %v", err)
+	}
+	if len(arr) < 2 {
+		t.Fatalf("unexpected transaction shape: %d elements", len(arr))
+	}
+	ws := map[uint64]cbor.RawMessage{}
+	if _, err := cbor.Decode(arr[1], &ws); err != nil {
+		t.Fatalf("decode witness set: %v", err)
+	}
+	wits := make([]lcommon.BootstrapWitness, 0, n)
+	for i := range n {
+		pub, priv, err := ed25519.GenerateKey(nil)
+		if err != nil {
+			t.Fatalf("generate key: %v", err)
+		}
+		wits = append(wits, lcommon.BootstrapWitness{
+			PublicKey:  pub,
+			Signature:  ed25519.Sign(priv, []byte("estimate")),
+			ChainCode:  bytes.Repeat([]byte{byte(i + 1)}, 32),
+			Attributes: attributes,
+		})
+	}
+	set := cbor.NewSetType[lcommon.BootstrapWitness](wits, true)
+	field, err := set.MarshalCBOR()
+	if err != nil {
+		t.Fatalf("encode bootstrap witnesses: %v", err)
+	}
+	ws[2] = cbor.RawMessage(field)
+	wsBytes, err := cbor.Encode(ws)
+	if err != nil {
+		t.Fatalf("encode witness set: %v", err)
+	}
+	arr[1] = cbor.RawMessage(wsBytes)
+	out, err := cbor.Encode(arr)
+	if err != nil {
+		t.Fatalf("encode transaction: %v", err)
+	}
+	return out
+}
+
+func TestEstimateWitnessedTxSize_BootstrapAddressAttributes(t *testing.T) {
+	tx := mustTestTx(t)
+	magic := func(m uint32) *uint32 { return &m }
+	for _, tc := range []struct {
+		name    string
+		network *uint32
+		exact   bool
+	}{
+		{name: "mainnet"},
+		{name: "testnet magic 1", network: magic(1)},
+		{name: "testnet magic 2", network: magic(2)},
+		{name: "testnet magic 1097911063", network: magic(1097911063)},
+		// The ledger reference estimator sizes testnet maxBound magic.
+		{name: "testnet magic maxBound", network: magic(math.MaxUint32), exact: true},
+	} {
+		attributes, err := lcommon.ByronAddressAttributes{Network: tc.network}.MarshalCBOR()
+		if err != nil {
+			t.Fatalf("%s: encode attributes: %v", tc.name, err)
+		}
+		// {2: bytes(CBOR uint32 0xffffffff)}: 8 bytes, 9 as a byte string,
+		// so a bootstrap witness is 144 bytes.
+		if tc.exact && hex.EncodeToString(attributes) != "a102451affffffff" {
+			t.Fatalf("%s: attributes %x", tc.name, attributes)
+		}
+		for _, n := range []int{1, 3} {
+			signed := withBootstrapWitnesses(t, tx, n, attributes)
+			parsed, err := ledger.NewTransactionFromCbor(ledger.TxTypeConway, signed)
+			if err != nil {
+				t.Fatalf("%s: parse signed transaction: %v", tc.name, err)
+			}
+			if got := len(parsed.Witnesses().Bootstrap()); got != n {
+				t.Fatalf("%s: parsed %d bootstrap witnesses, want %d", tc.name, got, n)
+			}
+			got, err := EstimateWitnessedTxSize(tx, 0, uint(n))
+			if err != nil {
+				t.Fatalf("%s: estimate: %v", tc.name, err)
+			}
+			if got < len(signed) {
+				t.Errorf("%s, %d witnesses: estimate %d below signed size %d", tc.name, n, got, len(signed))
+			}
+			if tc.exact && (got != len(signed) || got-len(tx) != 5+n*144) {
+				t.Errorf("%s, %d witnesses: estimate %d, signed size %d", tc.name, n, got, len(signed))
+			}
+		}
 	}
 }
