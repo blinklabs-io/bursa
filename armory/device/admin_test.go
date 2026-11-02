@@ -22,6 +22,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -127,6 +128,21 @@ func requestFor(t *testing.T, s *Service, route string) any {
 	return nil
 }
 
+// chipState is a copy of every object on c and its contents, to tell a
+// replaced or rewritten object from an untouched one.
+func chipState(c *fakeChip) map[uint32]string {
+	state := map[uint32]string{}
+	for id, k := range c.keys {
+		state[id] = "key:" + hex.EncodeToString(k)
+	}
+
+	for id, b := range c.bins {
+		state[id] = "bin:" + hex.EncodeToString(b)
+	}
+
+	return state
+}
+
 func handlerFor(s *Service, route string) http.Handler {
 	if strings.HasPrefix(route, "/wipe/") {
 		return s.WipeHandler()
@@ -146,7 +162,7 @@ func TestAdminRoutesRefuseUnsignedWithHostKey(t *testing.T) {
 
 			s, chip := newHostAuthService(t)
 			req := requestFor(t, s, route)
-			before := objectIDs(chip)
+			before := chipState(chip)
 
 			code, body := rawPost(handlerFor(s, route), route, jsonOf(t, req))
 			if code == http.StatusOK {
@@ -157,8 +173,8 @@ func TestAdminRoutesRefuseUnsignedWithHostKey(t *testing.T) {
 				t.Fatalf("refused for another reason: %s", body)
 			}
 
-			if got := objectIDs(chip); len(got) != len(before) {
-				t.Fatalf("objects %d -> %d", len(before), len(got))
+			if got := chipState(chip); !reflect.DeepEqual(got, before) {
+				t.Fatal("chip changed")
 			}
 		})
 	}
@@ -383,21 +399,37 @@ func TestWipeDeviceUnsignedWithHostKey(t *testing.T) {
 }
 
 // An unreadable host key list refuses every authenticated route, even though
-// it holds no key to check a signature against.
+// it holds no key to check a signature against, and leaves the chip as it was.
 func TestAdminRefusesUnreadableHostKeys(t *testing.T) {
 	t.Parallel()
 
-	s, chip := newTestService(t)
-	chip.bins[hostKeysID] = []byte("torn")
+	for route := range adminRequests {
+		t.Run(route, func(t *testing.T) {
+			t.Parallel()
 
-	s2 := New(s.mu, t.Logf)
-	if err := s2.SetChip(chip); err != nil {
-		t.Fatal(err)
-	}
+			s, chip := newHostAuthService(t)
+			req := requestFor(t, s, route)
+			chip.bins[hostKeysID] = []byte("torn")
+			before := chipState(chip)
 
-	code, body := rawPost(s2.ProvisioningHandler(), RouteProvisionHostKey, jsonOf(t, HostKeyRequest{PublicKey: hostPub(testHostKey)}))
-	if code == http.StatusOK {
-		t.Fatalf("host key added over an unreadable list: %s", body)
+			s2 := New(&sync.Mutex{}, t.Logf)
+			if err := s2.SetChip(chip); err != nil {
+				t.Fatal(err)
+			}
+
+			code, body := postAs(t, handlerFor(s2, route), route, req, testHostKey)
+			if code == http.StatusOK {
+				t.Fatalf("accepted over an unreadable host key list: %s", body)
+			}
+
+			if !strings.Contains(string(body), errHostKeysBad.Error()) {
+				t.Fatalf("refused for another reason: %s", body)
+			}
+
+			if got := chipState(chip); !reflect.DeepEqual(got, before) {
+				t.Fatal("chip changed")
+			}
+		})
 	}
 }
 
