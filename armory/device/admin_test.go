@@ -427,3 +427,38 @@ func TestProvisioningOpen(t *testing.T) {
 		t.Fatal("open over an unreadable host key list")
 	}
 }
+
+// The binding a host key signs is fixed across releases: armory-pool and the
+// device image ship separately, so the canonical request JSON and the digest
+// over it must not change shape.
+func TestAdminBindingVector(t *testing.T) {
+	t.Parallel()
+
+	chain := uint64(7)
+	req := &ProvisionRequest{
+		HostAuth: HostAuth{Challenge: []byte{9}, HostKey: []byte{9}, HostSignature: []byte{9}},
+		Name:     "otg@preview", Slot: 1, ColdKeyID: 538247424, ChainCounter: &chain, RewardAccount: "e0",
+	}
+
+	canonical, err := canonicalRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const want = `{"name":"otg@preview","network_id":0,"slot":1,"cold_key_id":538247424,"chain_counter":7,"reward_account":"e0"}`
+	if string(canonical) != want {
+		t.Fatalf("canonical request = %s", canonical)
+	}
+
+	if len(req.HostSignature) != 1 {
+		t.Fatal("canonicalRequest did not restore the authentication fields")
+	}
+
+	got := hex.EncodeToString(AdminBinding(RouteProvisionProfile, canonical, bytes.Repeat([]byte{3}, 32)))
+	if got != adminBindingVector {
+		t.Fatalf("AdminBinding = %s", got)
+	}
+}
+
+// adminBindingVector was computed independently of AdminBinding.
+const adminBindingVector = "c73665362e27aa398646a9469c18a09656072edacc0df51b7e2e7f86490dae35"
