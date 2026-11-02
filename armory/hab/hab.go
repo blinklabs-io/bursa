@@ -96,11 +96,14 @@ var ErrStatus = errors.New("hab: report_status failed")
 // warning or failure status passes: report_status returns one when the event
 // log holds such events, and the configuration and state are still valid.
 func CheckStatus(status uint32, config, state uint8) error {
-	_, okStatus := statusNames[uint8(status)]
+	okStatus := false
+	if status <= 0xff {
+		_, okStatus = statusNames[uint8(status)]
+	}
 	_, okConfig := configNames[config]
 	_, okState := stateNames[state]
 
-	if status > 0xff || !okStatus || !okConfig || !okState {
+	if !okStatus || !okConfig || !okState {
 		return fmt.Errorf("%w: status 0x%02x, config 0x%02x, state 0x%02x",
 			ErrStatus, status, config, state)
 	}
