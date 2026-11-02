@@ -70,16 +70,19 @@ make imx HAB_SDP=1 HAB_KEYS=...                               # armory-signed-sd
 ```
 
 The Makefile reads `CSF_1_*`, `IMG_1_*` and `SRK_1_2_3_4_table.bin` from
-`HAB_KEYS`; `HAB_SRK_INDEX` selects another SRK key (default 1). The default
+`HAB_KEYS`. `HAB_SRK_INDEX=<n>` (1 to 4, default 1) signs with SRK key n and
+reads `CSF_<n>_*` and `IMG_<n>_*` instead, which must be certificates issued
+by `SRK_<n>`, as the last key command does for SRK 1. The default
 signature is for the internal flash and memory cards; `HAB_SDP=1` signs for
 loading over USB in recovery mode, which clears the DCD pointer. Without
 `HAB_KEYS` the build is unchanged.
 
-A `TESTNET=1` image serves an unfiltered `/sign` endpoint that signs with the
-first cold key slot. Signing it with a boot key makes it runnable on any board
-fused to that key, so the Makefile refuses unless `HAB_ALLOW_TESTNET=1` is
-given, and then warns. Use that only with a throwaway key on a board holding
-no keys that matter.
+A `TESTNET=1` image adds the bring-up key tests and an unfiltered `/sign`
+endpoint. Signing it with a boot key makes it runnable on any board fused to
+that key, so the Makefile refuses unless `HAB_ALLOW_TESTNET=1` is
+given, and then warns and writes `armory-testnet-signed.imx`, a name the
+signed signing image never takes. Use that only with a throwaway key on a
+board holding no keys that matter.
 
 ### Flashing image
 
