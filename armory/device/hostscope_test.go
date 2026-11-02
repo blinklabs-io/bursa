@@ -227,3 +227,51 @@ func TestWipeProfileRefusesOtherNetwork(t *testing.T) {
 		t.Errorf("objects %d -> %d", before, got)
 	}
 }
+
+// TestOtherScopeHostKeyStillRequiresAuth checks an image whose own scope has
+// no host key still refuses an unauthenticated request while another scope
+// has one: a device with a registered host key refuses requests without it.
+func TestOtherScopeHostKeyStillRequiresAuth(t *testing.T) {
+	t.Parallel()
+
+	chip := newFakeChip()
+
+	mainnet := imageOn(t, chip, 1, "")
+	if _, err := mainnet.addHostKey(HostKeyRequest{PublicKey: hostPub(scopeKey(7))}); err != nil {
+		t.Fatal(err)
+	}
+
+	testnet := imageOn(t, chip, 0, "")
+	if err := testnet.authenticateHost(nil, nil, nil, []byte("binding")); !errors.Is(err, errHostKeyUnknown) {
+		t.Fatalf("testnet image accepted an unauthenticated request: %v", err)
+	}
+
+	// the testnet image registers its own key and authenticates with it
+	k := scopeKey(8)
+	if _, err := testnet.addHostKey(HostKeyRequest{PublicKey: hostPub(k)}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := authAs(t, testnet, k); err != nil {
+		t.Fatalf("testnet image refuses its own host key: %v", err)
+	}
+}
+
+// TestUnknownHostKeyScopeRefusesSigning checks a scoped list with an unknown
+// scope kind is unreadable, so signing is refused rather than the entry being
+// trusted.
+func TestUnknownHostKeyScopeRefusesSigning(t *testing.T) {
+	t.Parallel()
+
+	chip := newFakeChip()
+	k := scopeKey(9)
+
+	list := make([]byte, hostListSize)
+	copy(list, hostPub(k))
+	list[ed25519.PublicKeySize] = 2
+	chip.bins[hostKeysID] = list
+
+	if err := authAs(t, imageOn(t, chip, 0, ""), k); !errors.Is(err, errHostKeysBad) {
+		t.Fatalf("unknown scope kind accepted: %v", err)
+	}
+}

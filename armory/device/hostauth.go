@@ -224,8 +224,8 @@ func (s *Service) authenticate(req SignRequest) error {
 
 // authenticateHost checks that hostKey is registered, that sig is its
 // signature over binding, and that challenge is outstanding, burning it. With
-// no host key registered it refuses when host authentication is required and
-// accepts otherwise.
+// no host key registered for any network or chain it refuses when host
+// authentication is required and accepts otherwise.
 func (s *Service) authenticateHost(hostKey, sig, challenge, binding []byte) error {
 	if s.hostKeysBad {
 		return errHostKeysBad
@@ -236,7 +236,11 @@ func (s *Service) authenticateHost(hostKey, sig, challenge, binding []byte) erro
 			return errHostAuthMissing
 		}
 
-		return nil
+		// a key of another network or chain still means the device
+		// refuses unauthenticated requests
+		if len(s.hostEntries) == 0 {
+			return nil
+		}
 	}
 
 	registered := false
