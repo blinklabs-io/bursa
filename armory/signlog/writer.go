@@ -15,6 +15,7 @@
 package signlog
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"sync"
@@ -92,7 +93,7 @@ func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
 	last := headOf(hdr, entries)
 
 	if n := len(entries); n > 0 {
-		e := entries[n-1]
+		e := cloneEntry(entries[n-1])
 		w.last = &e
 	}
 
@@ -215,7 +216,16 @@ func (w *Writer) Last() (Entry, bool) {
 		return Entry{}, false
 	}
 
-	return *w.last, true
+	return cloneEntry(*w.last), true
+}
+
+// cloneEntry copies e so the copy shares no byte slice with it.
+func cloneEntry(e Entry) Entry {
+	e.BodyHash = bytes.Clone(e.BodyHash)
+	e.KESKeyHash = bytes.Clone(e.KESKeyHash)
+	e.Signature = bytes.Clone(e.Signature)
+
+	return e
 }
 
 // Check confirms, without writing, that the head store holds the writer's
@@ -286,7 +296,8 @@ func (w *Writer) Append(rec Record) (Entry, error) {
 	}
 
 	next := Head{Seq: e.Seq, Hash: e.Hash}
-	w.head, w.pending, w.last = next, &next, &e
+	last := cloneEntry(e)
+	w.head, w.pending, w.last = next, &next, &last
 
 	if err = w.heads.Store(next); err != nil {
 		return Entry{}, fmt.Errorf("signlog: store head: %w", err)

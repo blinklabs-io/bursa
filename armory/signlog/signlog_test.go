@@ -1361,3 +1361,47 @@ func TestWriterCheck(t *testing.T) {
 		t.Fatalf("unstored head: got %v, want ErrHeadStore", err)
 	}
 }
+
+// Last hands out copies: changing the entry Append or Last returned does not
+// change what Last reports next, after an append or a reopen.
+func TestWriterLastIsACopy(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 8)
+	w := f.open(t)
+
+	appended, err := w.Append(opcertRecord(5))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want, _ := w.Last()
+	want.KESKeyHash, want.Signature = bytes.Clone(want.KESKeyHash), bytes.Clone(want.Signature)
+
+	scribble := func(e Entry) {
+		for _, b := range [][]byte{e.KESKeyHash, e.BodyHash, e.Signature} {
+			for i := range b {
+				b[i] ^= 0xff
+			}
+		}
+	}
+
+	check := func(w *Writer, when string) {
+		t.Helper()
+
+		got, ok := w.Last()
+		if !ok || !bytes.Equal(got.KESKeyHash, want.KESKeyHash) || !bytes.Equal(got.Signature, want.Signature) {
+			t.Fatalf("%s: last changed to %+v", when, got)
+		}
+
+		scribble(got)
+	}
+
+	scribble(appended)
+	check(w, "after changing the appended entry")
+	check(w, "after changing a returned entry")
+
+	r := f.open(t)
+	check(r, "after reopen")
+	check(r, "after changing a returned entry on reopen")
+}
