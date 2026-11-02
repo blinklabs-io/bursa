@@ -205,7 +205,7 @@ func (s *Service) wipeDevice(req WipeDeviceRequest) (WipeResponse, error) {
 		return WipeResponse{}, err
 	}
 
-	s.profiles = map[string]profile.Profile{}
+	s.profiles, s.badSlots = map[string]profile.Profile{}, nil
 	s.hostKeys, s.hostEntries, s.hostKeysBad = nil, nil, false
 	s.logf("wipe: device wiped, %d objects deleted", len(deleted))
 
