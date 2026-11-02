@@ -404,9 +404,16 @@ checks the card against it at boot and before every write, so an older copy of
 the card, a blank card or a truncated log is refused. The entry is written and
 the card read back before the signature leaves the device.
 
+One request is not recorded again: an `opcert-next` whose profile, issue
+counter, KES key hash and KES period match the latest entry is signed again
+without a new entry, since that entry already records it. The device checks
+the card against the head before signing such a repeat, as it does before a
+write.
+
 With no card, an unreadable card, a card that does not match the head, a full
 card or a failed write, the device refuses to sign and says why in the
 response and in the startup report; inventory and health are still served. A
+full card still serves a repeat of its latest entry, which writes nothing. A
 card that is full stays full: the device never overwrites an entry. The log is
 opened once at startup, so a card inserted later takes effect after a restart.
 

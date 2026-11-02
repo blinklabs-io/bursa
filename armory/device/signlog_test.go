@@ -644,3 +644,44 @@ func TestOpCertNextRepeatChecksLog(t *testing.T) {
 		})
 	}
 }
+
+// A full card still answers a repeat of its latest entry, which writes
+// nothing, and refuses a new opcert.
+func TestOpCertNextRepeatOnFullLog(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	_, priv, _ := ed25519.GenerateKey(nil)
+	m := signlog.NewMemMedium(1 + signlog.RecordBlocks)
+
+	w, err := signlog.Open(m, signlog.NewMemHeadStore(signlog.Head{}), signlog.NewKeySigner(priv))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.RequireSigningLog()
+	s.SetSigningLog(w, m)
+
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	req := func(n byte, period uint64) SignRequest {
+		return SignRequest{
+			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(n),
+			Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 3, period), Profile: "otg@preview",
+		}
+	}
+
+	first := sign(t, s, req(1, 1100))
+	if first.Error != "" || len(first.Signature) == 0 {
+		t.Fatalf("first: %+v", first)
+	}
+
+	if r := sign(t, s, req(2, 1100)); r.Error != "" || !bytes.Equal(r.Signature, first.Signature) {
+		t.Fatalf("repeat on a full log: %+v", r)
+	}
+
+	if r := sign(t, s, req(3, 1101)); !strings.Contains(r.Error, "full") || r.Signature != nil {
+		t.Fatalf("new opcert on a full log: %+v", r)
+	}
+}
