@@ -81,6 +81,9 @@ func main() {
 	// held in reset
 	holdBluetooth(report)
 
+	// before the network and USB stack start: read the boot ROM's HAB status
+	reportHAB(report)
+
 	if err := startNetwork(); err != nil {
 		log.Fatalf("network: %v", err)
 	}
