@@ -210,14 +210,13 @@ func checkRaw(p profile.Profile, body []byte) (r rawFields, err error) {
 		return r, errors.New("policy: body has no ttl")
 	}
 
-	if err = cbor.Unmarshal(raw, &r.ttl); err != nil {
+	if r.ttl, err = decodeUint(raw); err != nil {
 		return r, fmt.Errorf("policy: ttl: %w", err)
 	}
 
 	if raw, ok = m[keyValidityStart]; ok {
-		var start uint64
-
-		if err = cbor.Unmarshal(raw, &start); err != nil {
+		start, err := decodeUint(raw)
+		if err != nil {
 			return r, fmt.Errorf("policy: validity start: %w", err)
 		}
 
@@ -225,14 +224,30 @@ func checkRaw(p profile.Profile, body []byte) (r rawFields, err error) {
 	}
 
 	if raw, ok = m[keyNetworkID]; ok {
-		var id uint64
-
-		if err = cbor.Unmarshal(raw, &id); err != nil || id != uint64(p.NetworkID) {
+		id, err := decodeUint(raw)
+		if err != nil || id != uint64(p.NetworkID) {
 			return r, errors.New("policy: network id does not match profile")
 		}
 	}
 
 	return r, nil
+}
+
+// decodeUint decodes a CBOR unsigned integer. cbor.Unmarshal leaves a plain
+// uint64 unchanged for null and undefined, so it decodes through a pointer
+// and refuses nil.
+func decodeUint(raw cbor.RawMessage) (uint64, error) {
+	var v *uint64
+
+	if err := cbor.Unmarshal(raw, &v); err != nil {
+		return 0, err
+	}
+
+	if v == nil {
+		return 0, errors.New("not an unsigned integer")
+	}
+
+	return *v, nil
 }
 
 // checkCert allows only certificates for this pool and its owner. It reports

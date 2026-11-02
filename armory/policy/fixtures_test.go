@@ -184,6 +184,20 @@ func duplicateFee() []byte {
 	return append(b, encode(uint64(1))...)
 }
 
+// duplicateTTL re-encodes baseBody with key 3 appearing twice.
+func duplicateTTL() []byte {
+	b := baseBody().cbor()
+	if b[0] != 0xa4 {
+		panic("unexpected map header")
+	}
+
+	b = append([]byte{0xa5}, b[1:]...)
+
+	b = append(b, encode(uint64(3))...)
+
+	return append(b, encode(uint64(1))...)
+}
+
 func indefiniteBody() []byte {
 	b := baseBody().cbor()
 	b = append([]byte{0xbf}, b[1:]...)
