@@ -1240,3 +1240,26 @@ func TestFormatIgnoresBlocksBeyondSlots(t *testing.T) {
 		t.Fatalf("verify: %v", err)
 	}
 }
+
+func TestWriterLast(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 8)
+	w := f.open(t)
+
+	if _, ok := w.Last(); ok {
+		t.Fatal("empty log has a last entry")
+	}
+
+	f.fill(t, w, 3)
+
+	got, ok := w.Last()
+	if !ok || got.Seq != 3 || got.Hash != w.Head().Hash {
+		t.Fatalf("last after append: %+v %v", got, ok)
+	}
+
+	got, ok = f.open(t).Last()
+	if !ok || got.Seq != 3 || got.Hash != w.Head().Hash {
+		t.Fatalf("last after reopen: %+v %v", got, ok)
+	}
+}

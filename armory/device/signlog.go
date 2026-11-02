@@ -15,6 +15,7 @@
 package device
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 
@@ -28,6 +29,8 @@ import (
 type SigningLog interface {
 	Append(signlog.Record) (signlog.Entry, error)
 	Head() signlog.Head
+	// Last is the latest entry, false when the log holds none.
+	Last() (signlog.Entry, bool)
 }
 
 // MaxLogBlocks bounds the blocks one signing log read returns.
@@ -134,6 +137,23 @@ func (s *Service) appendLog(rec signlog.Record) error {
 	}
 
 	return nil
+}
+
+// lastOpCertRepeat reports whether the latest log entry already records this
+// opcert-next for the profile, the same issue counter, KES key hash and KES
+// period. The signature is deterministic, so a repeat is signed again without
+// a new record. Only the latest entry is compared, so the answer holds across a
+// restart; any other signing in between makes the next request a new record.
+func (s *Service) lastOpCertRepeat(rec signlog.Record) bool {
+	if s.log == nil {
+		return false
+	}
+
+	e, ok := s.log.Last()
+
+	return ok && e.Profile == rec.Profile && e.Role == rec.Role && e.Purpose == rec.Purpose &&
+		e.IssueCounter == rec.IssueCounter && e.KESPeriod == rec.KESPeriod &&
+		bytes.Equal(e.KESKeyHash, rec.KESKeyHash)
 }
 
 // signLogRead serves a range of the log medium. Reads and appends share the

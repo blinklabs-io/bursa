@@ -28,6 +28,8 @@ type Writer struct {
 	id     Identity
 	hdr    Header
 	head   Head
+	// last is the latest entry, when there is one
+	last *Entry
 	// pending is a head that reached the medium but not yet the head store
 	pending *Head
 }
@@ -88,6 +90,10 @@ func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
 
 	w.hdr = hdr
 	last := headOf(hdr, entries)
+
+	if n := len(entries); n > 0 {
+		w.last = &entries[n-1]
+	}
 
 	switch {
 	case head == (Head{}):
@@ -197,6 +203,19 @@ func (w *Writer) Head() Head {
 	return w.head
 }
 
+// Last returns the latest entry the writer has logged, or false when the log
+// holds none.
+func (w *Writer) Last() (Entry, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.last == nil {
+		return Entry{}, false
+	}
+
+	return *w.last, true
+}
+
 // Append logs rec and returns the entry. The entry is on the medium, synced,
 // and the head store updated before it returns; only then may the caller
 // release the signature. On any error nothing may be released. A medium
@@ -251,7 +270,7 @@ func (w *Writer) Append(rec Record) (Entry, error) {
 	}
 
 	next := Head{Seq: e.Seq, Hash: e.Hash}
-	w.head, w.pending = next, &next
+	w.head, w.pending, w.last = next, &next, &e
 
 	if err = w.heads.Store(next); err != nil {
 		return Entry{}, fmt.Errorf("signlog: store head: %w", err)

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/armory/profile"
@@ -52,6 +53,14 @@ func (l *fakeLog) Append(rec signlog.Record) (signlog.Entry, error) {
 }
 
 func (l *fakeLog) Head() signlog.Head { return l.head }
+
+func (l *fakeLog) Last() (signlog.Entry, bool) {
+	if len(l.records) == 0 {
+		return signlog.Entry{}, false
+	}
+
+	return signlog.Entry{Record: l.records[len(l.records)-1], Seq: uint64(len(l.records))}, true
+}
 
 // loggedService is a provisioned service with a fake signing log installed.
 func loggedService(t *testing.T) (*Service, *fakeChip, *fakeLog, ProvisionResponse) {
@@ -384,5 +393,103 @@ func TestRecordRaw(t *testing.T) {
 
 	if err := s2.RecordRaw(msg); err == nil || !strings.Contains(err.Error(), "signing log") {
 		t.Fatalf("no log: %v", err)
+	}
+}
+
+// An exact repeat of the last issued opcert-next (same counter, KES key and
+// period) is signed again without a new log record, so repeating a request
+// cannot fill the card. A different KES key at the same counter is a
+// supported rotation and is logged.
+func TestOpCertNextRepeatIsNotLogged(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	id := signlog.NewKeySigner(priv)
+	m := signlog.NewMemMedium(1 + 3*signlog.RecordBlocks)
+	hs := signlog.NewMemHeadStore(signlog.Head{})
+
+	w, err := signlog.Open(m, hs, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.RequireSigningLog()
+	s.SetSigningLog(w, m)
+
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	kesA := bytes.Repeat([]byte{0x4b}, 32)
+	kesB := bytes.Repeat([]byte{0x4c}, 32)
+	n := byte(0)
+
+	issue := func(svc *Service, kes []byte, chain, period uint64) SignResponse {
+		t.Helper()
+
+		n++
+
+		return sign(t, svc, SignRequest{
+			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(n),
+			Payload: opCertPayload(kes, chain, period), Profile: "otg@preview",
+		})
+	}
+
+	first := issue(s, kesA, 3, 1100)
+	if first.Error != "" || len(first.Signature) == 0 {
+		t.Fatalf("first: %+v", first)
+	}
+
+	for range 5 {
+		r := issue(s, kesA, 3, 1100)
+		if r.Error != "" || !bytes.Equal(r.Signature, first.Signature) || r.IssueCounter == nil || *r.IssueCounter != 4 {
+			t.Fatalf("repeat: %+v", r)
+		}
+	}
+
+	if got := w.Head().Seq; got != 1 {
+		t.Fatalf("head at entry %d after 5 repeats, want 1", got)
+	}
+
+	// a restart reopens the log and reloads the profile; the repeat is still
+	// recognised
+	w2, err := signlog.Open(m, hs, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := New(&sync.Mutex{}, t.Logf)
+	if err = s2.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	s2.RequireSigningLog()
+	s2.SetSigningLog(w2, m)
+
+	if r := issue(s2, kesA, 3, 1100); r.Error != "" || !bytes.Equal(r.Signature, first.Signature) {
+		t.Fatalf("repeat after restart: %+v", r)
+	}
+
+	if got := w2.Head().Seq; got != 1 {
+		t.Fatalf("head at entry %d after a repeat across a restart, want 1", got)
+	}
+
+	// a different period, or a different KES key at the same counter, is not
+	// a repeat
+	if r := issue(s2, kesA, 3, 1101); r.Error != "" || r.IssueCounter == nil || *r.IssueCounter != 4 {
+		t.Fatalf("new period: %+v", r)
+	}
+
+	if r := issue(s2, kesB, 3, 1101); r.Error != "" || r.IssueCounter == nil || *r.IssueCounter != 4 {
+		t.Fatalf("new KES key: %+v", r)
+	}
+
+	if got := w2.Head().Seq; got != 3 {
+		t.Fatalf("head at entry %d, want 3", got)
+	}
+
+	log, err := signlog.Verify(m, pub)
+	if err != nil || len(log.Entries) != 3 {
+		t.Fatalf("verify: %v, %d entries", err, len(log.Entries))
 	}
 }
