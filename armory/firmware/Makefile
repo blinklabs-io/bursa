@@ -97,6 +97,9 @@ $(error refusing to HAB-sign a TESTNET=1 image: it serves an unfiltered /sign en
 endif
 $(warning WARNING: HAB-signing a TESTNET=1 image; it serves an unfiltered /sign endpoint. Never run it on a board that holds mainnet profiles)
 endif
+ifneq ($(words $(HAB_SRK_INDEX)),1)
+$(error HAB_SRK_INDEX must be 1, 2, 3 or 4)
+endif
 ifeq ($(filter 1 2 3 4,$(HAB_SRK_INDEX)),)
 $(error HAB_SRK_INDEX must be 1, 2, 3 or 4)
 endif

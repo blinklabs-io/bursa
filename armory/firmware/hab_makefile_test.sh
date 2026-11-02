@@ -52,8 +52,8 @@ out=$(dry imx HAB_KEYS=/keys HAB_SRK_INDEX=2)
 has "$out" ' -x 2'; check "HAB_SRK_INDEX=2 signs with SRK key 2" $?
 has "$out" '/keys/CSF_2_key.pem'; check "HAB_SRK_INDEX=2 reads CSF_2 keys" $?
 has "$out" '/keys/IMG_2_key.pem'; check "HAB_SRK_INDEX=2 reads IMG_2 keys" $?
-for i in 0 5 x; do
-	out=$(dry imx HAB_KEYS=/keys HAB_SRK_INDEX=$i); rc=$?
+for i in 0 5 x "" "5 1" "1 1"; do
+	out=$(dry imx HAB_KEYS=/keys "HAB_SRK_INDEX=$i"); rc=$?
 	[ $rc -ne 0 ] && has "$out" HAB_SRK_INDEX; check "HAB_SRK_INDEX=$i is refused" $?
 done
 
@@ -69,6 +69,6 @@ has "$out" 'armory-signed.imx'; [ $? -ne 0 ]; check "signed TESTNET=1 image does
 out=$(dry imx TESTNET=1 HAB_KEYS=/keys HAB_ALLOW_TESTNET=1 HAB_SDP=1)
 has "$out" 'armory-testnet-signed-sdp.imx'; check "signed TESTNET=1 HAB_SDP=1 image is named armory-testnet-signed-sdp.imx" $?
 out=$(dry imx TESTNET=1); rc=$?
-[ $rc -eq 0 ]; check "unsigned TESTNET=1 build is unaffected" $?
+[ $rc -eq 0 ] && ! has "$out" habtool; check "unsigned TESTNET=1 build is unaffected" $?
 
 exit $fail
