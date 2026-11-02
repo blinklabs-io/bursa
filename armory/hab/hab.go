@@ -45,8 +45,12 @@ const (
 	StatusAny = 0x00
 
 	// StatusSuccess is the status report_event and report_status return
-	// on success.
+	// on success. report_status also returns StatusWarning or
+	// StatusFailure when the event log holds warning or failure events,
+	// and still writes the configuration and state.
 	StatusSuccess = 0xf0
+	StatusWarning = 0x69
+	StatusFailure = 0x33
 
 	// eventHeaderLen is the length of an event record header.
 	eventHeaderLen = 4
@@ -104,6 +108,12 @@ func name(names map[uint8]string, v uint8) string {
 	return fmt.Sprintf("unknown 0x%02x", v)
 }
 
+var statusNames = map[uint8]string{
+	StatusSuccess: "success",
+	StatusWarning: "warning",
+	StatusFailure: "failure",
+}
+
 var configNames = map[uint8]string{
 	0x33: "return",
 	0xf0: "open",
@@ -121,6 +131,11 @@ var stateNames = map[uint8]string{
 	0xf0: "none",
 }
 
+// StatusName names a HAB status value.
+func StatusName(status uint8) string {
+	return name(statusNames, status)
+}
+
 // ConfigName names a HAB configuration value.
 func ConfigName(config uint8) string {
 	return name(configNames, config)
@@ -131,10 +146,10 @@ func StateName(state uint8) string {
 	return name(stateNames, state)
 }
 
-// Report formats the report lines for the configuration, the state and the
-// event records read from the ROM, oldest first. more means events beyond
-// those given exist.
-func Report(config, state uint8, events [][]byte, more bool) []string {
+// Report formats the report lines for the report_status result, the
+// configuration, the state and the event records read from the ROM, oldest
+// first. more means events beyond those given exist.
+func Report(status, config, state uint8, events [][]byte, more bool) []string {
 	count := "no events"
 
 	switch len(events) {
@@ -150,8 +165,8 @@ func Report(config, state uint8, events [][]byte, more bool) []string {
 	}
 
 	lines := make([]string, 0, 1+len(events))
-	lines = append(lines, fmt.Sprintf("hab: config %s, state %s, %s",
-		ConfigName(config), StateName(state), count))
+	lines = append(lines, fmt.Sprintf("hab: status %s, config %s, state %s, %s",
+		StatusName(status), ConfigName(config), StateName(state), count))
 
 	for i, ev := range events {
 		lines = append(lines, formatEvent(i, ev))

@@ -77,7 +77,7 @@ func addr(p *uint32) uint32 {
 // nothing. The ROM is unmapped (and not executable) in the runtime's
 // translation table, so the first megabyte is mapped for the calls and the
 // original entry restored after.
-func habStatus() (config, state uint8, events [][]byte, more bool, err error) {
+func habStatus() (status, config, state uint8, events [][]byte, more bool, err error) {
 	table := habTTBR0() &^ 0x3fff
 	saved := habRead32(table)
 
@@ -106,7 +106,9 @@ func habStatus() (config, state uint8, events [][]byte, more bool, err error) {
 		return
 	}
 
-	romCall(reportStatus, addr(&habConfigState[0]), addr(&habConfigState[1]), 0, 0)
+	// a warning or failure status still reports the configuration and
+	// state; the status is reported with them
+	status = uint8(romCall(reportStatus, addr(&habConfigState[0]), addr(&habConfigState[1]), 0, 0))
 	config, state = uint8(habConfigState[0]), uint8(habConfigState[1])
 
 	events, more = hab.ReadEvents(func(index uint32) ([]byte, bool) {
@@ -126,14 +128,14 @@ func habStatus() (config, state uint8, events [][]byte, more bool, err error) {
 // board whose fuses are not burnt the ROM runs an image whatever its
 // signature, and the events are the only sign of whether it verified.
 func reportHAB(r *Report) {
-	config, state, events, more, err := habStatus()
+	status, config, state, events, more, err := habStatus()
 
 	if err != nil {
 		r.Logf("%v", err)
 		return
 	}
 
-	for _, line := range hab.Report(config, state, events, more) {
+	for _, line := range hab.Report(status, config, state, events, more) {
 		r.Logf("%s", line)
 	}
 }

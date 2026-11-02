@@ -91,6 +91,19 @@ func TestNames(t *testing.T) {
 			t.Errorf("StateName(%#02x) = %q, want %q", v, got, want)
 		}
 	}
+
+	statuses := map[uint8]string{
+		0xf0: "success",
+		0x69: "warning",
+		0x33: "failure",
+		0x00: "unknown 0x00",
+	}
+
+	for v, want := range statuses {
+		if got := StatusName(v); got != want {
+			t.Errorf("StatusName(%#02x) = %q, want %q", v, got, want)
+		}
+	}
 }
 
 func TestReport(t *testing.T) {
@@ -103,6 +116,7 @@ func TestReport(t *testing.T) {
 
 	tests := []struct {
 		name   string
+		status uint8
 		config uint8
 		state  uint8
 		events [][]byte
@@ -111,56 +125,56 @@ func TestReport(t *testing.T) {
 	}{
 		{
 			name:   "open unfused, no events",
-			config: 0xf0, state: 0x66,
-			want: []string{"hab: config open, state non-secure, no events"},
+			status: 0xf0, config: 0xf0, state: 0x66,
+			want: []string{"hab: status success, config open, state non-secure, no events"},
 		},
 		{
 			name:   "closed and trusted",
-			config: 0xcc, state: 0x99,
-			want: []string{"hab: config closed, state trusted, no events"},
+			status: 0xf0, config: 0xcc, state: 0x99,
+			want: []string{"hab: status success, config closed, state trusted, no events"},
 		},
 		{
 			name:   "one event",
-			config: 0xf0, state: 0x66,
+			status: 0x33, config: 0xf0, state: 0x66,
 			events: [][]byte{ev1},
 			want: []string{
-				"hab: config open, state non-secure, 1 event",
+				"hab: status failure, config open, state non-secure, 1 event",
 				"hab: event 0: status 0x33 reason 0x0c context 0xa0 engine 0x00: db000842330ca000",
 			},
 		},
 		{
 			name:   "two events with data",
-			config: 0xf0, state: 0x66,
+			status: 0x33, config: 0xf0, state: 0x66,
 			events: [][]byte{ev1, ev2},
 			want: []string{
-				"hab: config open, state non-secure, 2 events",
+				"hab: status failure, config open, state non-secure, 2 events",
 				"hab: event 0: status 0x33 reason 0x0c context 0xa0 engine 0x00: db000842330ca000",
 				"hab: event 1: status 0x33 reason 0x1e context 0xc0 engine 0x1b: db000c42331ec01bdeadbeef",
 			},
 		},
 		{
 			name:   "events beyond the cap",
-			config: 0xf0, state: 0x66,
+			status: 0x33, config: 0xf0, state: 0x66,
 			events: [][]byte{ev1},
 			more:   true,
 			want: []string{
-				"hab: config open, state non-secure, 1 event, more not shown",
+				"hab: status failure, config open, state non-secure, 1 event, more not shown",
 				"hab: event 0: status 0x33 reason 0x0c context 0xa0 engine 0x00: db000842330ca000",
 			},
 		},
 		{
 			name:   "truncated record",
-			config: 0xf0, state: 0x66,
+			status: 0x33, config: 0xf0, state: 0x66,
 			events: [][]byte{{0xdb, 0x00, 0x08}},
 			want: []string{
-				"hab: config open, state non-secure, 1 event",
+				"hab: status failure, config open, state non-secure, 1 event",
 				"hab: event 0: short record: db0008",
 			},
 		},
 		{
-			name:   "unknown config and state",
-			config: 0x00, state: 0x01,
-			want: []string{"hab: config unknown 0x00, state unknown 0x01, no events"},
+			name:   "unknown status, config and state",
+			status: 0x01, config: 0x00, state: 0x01,
+			want: []string{"hab: status unknown 0x01, config unknown 0x00, state unknown 0x01, no events"},
 		},
 	}
 
@@ -168,7 +182,7 @@ func TestReport(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := Report(tc.config, tc.state, tc.events, tc.more)
+			got := Report(tc.status, tc.config, tc.state, tc.events, tc.more)
 
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("Report() =\n%q\nwant\n%q", got, tc.want)
