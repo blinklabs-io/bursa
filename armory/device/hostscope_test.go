@@ -101,6 +101,15 @@ func TestHostKeyIsScopedToImageNetwork(t *testing.T) {
 		t.Fatalf("mainnet image trusts a testnet host key: %v", err)
 	}
 
+	if _, err := mainnet.revokeHostKey(HostKeyRequest{PublicKey: hostPub(testnetKey)}); !errors.Is(err, errHostKeyUnknown) {
+		t.Fatalf("mainnet image revoked a testnet host key: %v", err)
+	}
+
+	resp, err := mainnet.addHostKey(HostKeyRequest{PublicKey: hostPub(mainnetKey)})
+	if err != nil || !listed(resp, mainnetKey) || listed(resp, testnetKey) {
+		t.Fatalf("mainnet image list: %v %v", resp, err)
+	}
+
 	// the testnet image sees only its own key and cannot revoke the other
 	testnet = imageOn(t, chip, 0, "")
 
@@ -116,7 +125,7 @@ func TestHostKeyIsScopedToImageNetwork(t *testing.T) {
 		t.Fatalf("testnet image revoked a mainnet host key: %v", err)
 	}
 
-	resp, err := testnet.addHostKey(HostKeyRequest{PublicKey: hostPub(testnetKey)})
+	resp, err = testnet.addHostKey(HostKeyRequest{PublicKey: hostPub(testnetKey)})
 	if err != nil || listed(resp, mainnetKey) {
 		t.Fatalf("testnet image lists a mainnet host key: %v %v", resp, err)
 	}
