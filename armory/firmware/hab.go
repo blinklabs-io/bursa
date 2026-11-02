@@ -112,8 +112,14 @@ func habStatus() (status, config, state uint8, events [][]byte, more bool, err e
 
 	// a warning or failure status still reports the configuration and
 	// state; the status is reported with them
-	status = uint8(romCall(reportStatus, addr(&habConfigState[0]), addr(&habConfigState[1]), 0, 0))
+	ret := romCall(reportStatus, addr(&habConfigState[0]), addr(&habConfigState[1]), 0, 0)
 	config, state = uint8(habConfigState[0]), uint8(habConfigState[1])
+
+	if err = hab.CheckStatus(ret, config, state); err != nil {
+		return
+	}
+
+	status = uint8(ret)
 
 	events, more = hab.ReadEvents(func(index uint32) ([]byte, bool) {
 		habEventLen = hab.MaxEventLen

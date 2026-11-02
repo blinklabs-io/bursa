@@ -106,6 +106,42 @@ func TestNames(t *testing.T) {
 	}
 }
 
+func TestCheckStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status uint32
+		config uint8
+		state  uint8
+		ok     bool
+	}{
+		{"success, open, non-secure", 0xf0, 0xf0, 0x66, true},
+		{"warning, open, non-secure", 0x69, 0xf0, 0x66, true},
+		{"failure, closed, fail-soft", 0x33, 0xcc, 0xcc, true},
+		{"status not a HAB status", 0x00, 0xf0, 0x66, false},
+		{"status with upper bits set", 0x1f0, 0xf0, 0x66, false},
+		{"configuration never written", 0x33, 0x00, 0x66, false},
+		{"state never written", 0x33, 0xf0, 0x00, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := CheckStatus(tc.status, tc.config, tc.state)
+
+			if tc.ok && err != nil {
+				t.Fatalf("CheckStatus(%#x, %#x, %#x) = %v, want nil", tc.status, tc.config, tc.state, err)
+			}
+
+			if !tc.ok && !errors.Is(err, ErrStatus) {
+				t.Fatalf("CheckStatus(%#x, %#x, %#x) = %v, want ErrStatus", tc.status, tc.config, tc.state, err)
+			}
+		})
+	}
+}
+
 func TestReport(t *testing.T) {
 	t.Parallel()
 

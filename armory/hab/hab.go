@@ -86,6 +86,28 @@ func CheckRVT(hdr []byte) error {
 	return nil
 }
 
+// ErrStatus means report_status returned a value that is not a HAB status,
+// or left the configuration or state at a value HAB does not define, so the
+// reading is not reported.
+var ErrStatus = errors.New("hab: report_status failed")
+
+// CheckStatus reports whether status, the full word report_status returned,
+// and the configuration and state it wrote are values HAB defines. A
+// warning or failure status passes: report_status returns one when the event
+// log holds such events, and the configuration and state are still valid.
+func CheckStatus(status uint32, config, state uint8) error {
+	_, okStatus := statusNames[uint8(status)]
+	_, okConfig := configNames[config]
+	_, okState := stateNames[state]
+
+	if status > 0xff || !okStatus || !okConfig || !okState {
+		return fmt.Errorf("%w: status 0x%02x, config 0x%02x, state 0x%02x",
+			ErrStatus, status, config, state)
+	}
+
+	return nil
+}
+
 // CheckEntry reports whether ptr, an ARM or Thumb function pointer read from
 // the vector table, lies in the boot ROM past the table and is aligned for
 // its instruction set (a word for ARM, a halfword for Thumb), so an erased or
