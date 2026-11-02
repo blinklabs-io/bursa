@@ -55,8 +55,10 @@ const (
 	ROMEnd = 0x20000
 
 	// MaxEvents and MaxEventLen bound what the firmware reads and reports.
+	// MaxEventLen matches the buffer U-Boot reads events into: report_event
+	// fails on a record larger than the buffer, which ends the log.
 	MaxEvents   = 8
-	MaxEventLen = 64
+	MaxEventLen = 128
 )
 
 // ErrNoRVT means the bytes at the vector table address are not a HAB
@@ -142,8 +144,9 @@ func Report(config, state uint8, events [][]byte, more bool) []string {
 		count += ", more not shown"
 	}
 
-	lines := []string{fmt.Sprintf("hab: config %s, state %s, %s",
-		ConfigName(config), StateName(state), count)}
+	lines := make([]string, 0, 1+len(events))
+	lines = append(lines, fmt.Sprintf("hab: config %s, state %s, %s",
+		ConfigName(config), StateName(state), count))
 
 	for i, ev := range events {
 		lines = append(lines, formatEvent(i, ev))
@@ -163,4 +166,30 @@ func formatEvent(index int, ev []byte) string {
 
 	return fmt.Sprintf("hab: event %d: status 0x%02x reason 0x%02x context 0x%02x engine 0x%02x: %x",
 		index, b[0], b[1], b[2], b[3], ev)
+}
+
+// ReadEvents reads the ROM's event log through read, which calls
+// report_event for an index and returns the record and whether the ROM
+// reported success. The record may share a buffer across calls. Reading stops
+// at the first failure, which ends the log; at most MaxEvents records are
+// kept, each cut to MaxEventLen, and more reports whether another exists.
+func ReadEvents(read func(index uint32) (record []byte, ok bool)) (events [][]byte, more bool) {
+	for i := uint32(0); i <= MaxEvents; i++ {
+		record, ok := read(i)
+
+		if !ok {
+			break
+		}
+
+		// one past the cap tells whether more exist
+		if i == MaxEvents {
+			more = true
+			break
+		}
+
+		record = record[:min(len(record), MaxEventLen)]
+		events = append(events, append([]byte(nil), record...))
+	}
+
+	return events, more
 }

@@ -205,3 +205,81 @@ func TestCheckEntry(t *testing.T) {
 		})
 	}
 }
+
+// romLog stands in for report_event: it returns the records in order, then
+// fails, and writes every record into one buffer as the ROM does.
+type romLog struct {
+	records [][]byte
+	buf     [MaxEventLen + 16]byte
+	calls   []uint32
+}
+
+func (l *romLog) read(index uint32) ([]byte, bool) {
+	l.calls = append(l.calls, index)
+
+	if int(index) >= len(l.records) {
+		return nil, false
+	}
+
+	n := copy(l.buf[:], l.records[index])
+
+	return l.buf[:n], true
+}
+
+func records(n int) [][]byte {
+	out := make([][]byte, n)
+
+	for i := range out {
+		out[i] = []byte{0xdb, 0x00, 0x08, 0x42, 0x33, byte(i), 0xa0, 0x00}
+	}
+
+	return out
+}
+
+func TestReadEvents(t *testing.T) {
+	t.Parallel()
+
+	long := make([]byte, MaxEventLen+8)
+	for i := range long {
+		long[i] = byte(i)
+	}
+
+	tests := []struct {
+		name    string
+		records [][]byte
+		want    [][]byte
+		more    bool
+		calls   int
+	}{
+		{"empty log", nil, nil, false, 1},
+		{"two records", records(2), records(2), false, 3},
+		{"exactly the cap", records(MaxEvents), records(MaxEvents), false, MaxEvents + 1},
+		{"one past the cap", records(MaxEvents + 1), records(MaxEvents), true, MaxEvents + 1},
+		{"far past the cap", records(3 * MaxEvents), records(MaxEvents), true, MaxEvents + 1},
+		{"record longer than the cap", [][]byte{long}, [][]byte{long[:MaxEventLen]}, false, 2},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			l := &romLog{records: tc.records}
+
+			got, more := ReadEvents(l.read)
+
+			if !reflect.DeepEqual(got, tc.want) || more != tc.more {
+				t.Fatalf("ReadEvents() = %x, %v, want %x, %v", got, more, tc.want, tc.more)
+			}
+
+			if len(l.calls) != tc.calls {
+				t.Fatalf("report_event called for %v, want %d calls", l.calls, tc.calls)
+			}
+
+			for i, idx := range l.calls {
+				if idx != uint32(i) {
+					t.Fatalf("report_event called for %v, want indexes from 0", l.calls)
+				}
+			}
+		})
+	}
+}

@@ -33,6 +33,10 @@ TEXT ·habCall(SB),NOSPLIT,$8-24
 	WORD	$0xe38670c0 // orr r7, r6, #0xc0 (mask IRQ, FIQ)
 	WORD	$0xe121f007 // msr CPSR_c, r7
 
+	// complete the translation table change before the first ROM fetch
+	WORD	$0xf57ff04f // dsb sy
+	WORD	$0xf57ff06f // isb sy
+
 	WORD	$0xe12fff34 // blx r4 (ARM or Thumb by bit 0)
 
 	WORD	$0xe121f006 // msr CPSR_c, r6

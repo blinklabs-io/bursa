@@ -60,6 +60,14 @@ func habStackGuard() byte {
 	return pad[len(pad)-1] + pad[0]
 }
 
+// romCall grows the stack and calls the ROM with nothing in between that
+// could let the runtime shrink it again.
+func romCall(fn, r0, r1, r2, r3 uint32) uint32 {
+	habStackGuard()
+
+	return habCall(fn, r0, r1, r2, r3)
+}
+
 func addr(p *uint32) uint32 {
 	return uint32(uintptr(unsafe.Pointer(p)))
 }
@@ -98,27 +106,18 @@ func habStatus() (config, state uint8, events [][]byte, more bool, err error) {
 		return
 	}
 
-	habStackGuard()
-
-	habCall(reportStatus, addr(&habConfigState[0]), addr(&habConfigState[1]), 0, 0)
+	romCall(reportStatus, addr(&habConfigState[0]), addr(&habConfigState[1]), 0, 0)
 	config, state = uint8(habConfigState[0]), uint8(habConfigState[1])
 
-	// one past the cap tells whether more exist
-	for i := uint32(0); i <= hab.MaxEvents; i++ {
+	events, more = hab.ReadEvents(func(index uint32) ([]byte, bool) {
 		habEventLen = hab.MaxEventLen
 
-		if habCall(reportEvent, hab.StatusAny, i, addr(&habEventBuf[0]), addr(&habEventLen)) != hab.StatusSuccess {
-			break
+		if romCall(reportEvent, hab.StatusAny, index, addr(&habEventBuf[0]), addr(&habEventLen)) != hab.StatusSuccess {
+			return nil, false
 		}
 
-		if i == hab.MaxEvents {
-			more = true
-			break
-		}
-
-		n := min(habEventLen, hab.MaxEventLen)
-		events = append(events, append([]byte(nil), habEvent()[:n]...))
-	}
+		return habEvent()[:min(habEventLen, hab.MaxEventLen)], true
+	})
 
 	return
 }
