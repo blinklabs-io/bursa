@@ -3,7 +3,7 @@ module github.com/blinklabs-io/bursa
 go 1.26.10
 
 require (
-	cloud.google.com/go/kms v1.32.0
+	cloud.google.com/go/kms v1.36.1
 	cloud.google.com/go/secretmanager v1.23.0
 	cloud.google.com/go/storage v1.63.1
 	filippo.io/age v1.3.2
