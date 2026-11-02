@@ -95,12 +95,16 @@ device_build() {
 # log_open waits for the signing image to finish starting and checks that
 # it opened its signing log.
 log_open() {
-	local report="" line
+	local report="" r line got=""
 	for _ in $(seq 1 30); do
-		report=$(curl -sf -m 5 --interface "$SOURCE" "$SIGNER/" || true)
-		grep -q '^RESULT:' <<< "$report" && break
+		if r=$(curl -sf -m 5 --interface "$SOURCE" "$SIGNER/"); then
+			got=1 report=$r
+			grep -q '^RESULT:' <<< "$report" && break
+		fi
 		sleep 2
 	done
+	[ -n "$got" ] || fail "the signing image did not answer at $SIGNER"
+	grep -q '^RESULT:' <<< "$report" || fail "the signing image did not finish starting"
 	line=$(grep -m 1 '^signing log:' <<< "$report" || true)
 	case $line in
 	"signing log: open"*) return 0 ;;
