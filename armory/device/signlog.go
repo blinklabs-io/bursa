@@ -204,7 +204,7 @@ func (s *Service) RecordRaw(msg []byte) error {
 	hash := blake2b.Sum256(msg)
 
 	return s.appendLog(signlog.Record{
-		Role: "cold", Purpose: signlog.PurposeRaw, BodyHash: hash[:],
+		Role: rawSignRole, Purpose: signlog.PurposeRaw, BodyHash: hash[:],
 		Summary: "unfiltered testnet signing",
 	})
 }
