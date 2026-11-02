@@ -29,9 +29,8 @@ import (
 
 var ownerSeed = bytes.Repeat([]byte{0x51}, 32)
 
-// ownerBody is req as the JSON object a host sends, carrying ownerKey as its
-// owner_signing_key. The request's own key field is decode-only, so the body
-// is built from the wire form.
+// ownerBody is req as the JSON object a host sends, carrying ownerKey, which
+// may be malformed, as its owner_signing_key.
 func ownerBody(t *testing.T, req ProvisionRequest, ownerKey string) map[string]any {
 	t.Helper()
 

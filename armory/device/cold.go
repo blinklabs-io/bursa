@@ -57,9 +57,24 @@ type ColdInfoRequest struct {
 }
 
 // secretHex is a hex string decoded to bytes, so key material can be zeroed:
-// a Go string cannot be. It is decode-only; hosts send the same hex string as
-// before.
+// a Go string cannot be. It decodes from and marshals to the same hex string
+// hosts send.
 type secretHex []byte
+
+// MarshalJSON encodes the key as its hex string, so the exported requests
+// marshal to the JSON the device decodes.
+func (h secretHex) MarshalJSON() ([]byte, error) {
+	if h == nil {
+		return []byte("null"), nil
+	}
+
+	b := make([]byte, hex.EncodedLen(len(h))+2)
+	b[0] = '"'
+	hex.Encode(b[1:], h)
+	b[len(b)-1] = '"'
+
+	return b, nil
+}
 
 // UnmarshalJSON decodes the string straight from the request bytes, without
 // a string copy of the key. A key decoded earlier into h, as from a repeated
