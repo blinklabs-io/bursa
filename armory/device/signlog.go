@@ -15,6 +15,7 @@
 package device
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 
@@ -28,6 +29,11 @@ import (
 type SigningLog interface {
 	Append(signlog.Record) (signlog.Entry, error)
 	Head() signlog.Head
+	// Last is the latest entry, false when the log holds none.
+	Last() (signlog.Entry, bool)
+	// Check confirms the medium and the head store still match the log,
+	// without writing.
+	Check() error
 }
 
 // MaxLogBlocks bounds the blocks one signing log read returns.
@@ -68,6 +74,7 @@ var (
 	errLogUnavailable = errors.New("signing log unavailable")
 	errLogFull        = errors.New("signing log is full; the device refuses to sign")
 	errLogWrite       = errors.New("signing log write failed; the device refuses to sign")
+	errLogCheck       = errors.New("signing log check failed; the device refuses to sign")
 )
 
 // RequireSigningLog makes the service refuse every signing request until
@@ -134,6 +141,43 @@ func (s *Service) appendLog(rec signlog.Record) error {
 	}
 
 	return nil
+}
+
+// checkLog confirms, without writing, that the log a repeat is answered from
+// is still the card and head it was written to. Any error refuses the request.
+func (s *Service) checkLog() error {
+	if err := s.logReady(); err != nil {
+		return err
+	}
+
+	if s.log == nil {
+		return nil
+	}
+
+	if err := s.log.Check(); err != nil {
+		s.logf("signing log: check: %v", err)
+
+		return errLogCheck
+	}
+
+	return nil
+}
+
+// lastOpCertRepeat reports whether the latest log entry already records this
+// opcert-next for the profile, the same issue counter, KES key hash and KES
+// period. The signature is deterministic, so a repeat is signed again without
+// a new record. Only the latest entry is compared, so the answer holds across a
+// restart; any other signing in between makes the next request a new record.
+func (s *Service) lastOpCertRepeat(rec signlog.Record) bool {
+	if s.log == nil {
+		return false
+	}
+
+	e, ok := s.log.Last()
+
+	return ok && e.Profile == rec.Profile && e.Role == rec.Role && e.Purpose == rec.Purpose &&
+		e.IssueCounter == rec.IssueCounter && e.KESPeriod == rec.KESPeriod &&
+		bytes.Equal(e.KESKeyHash, rec.KESKeyHash)
 }
 
 // signLogRead serves a range of the log medium. Reads and appends share the
@@ -204,7 +248,7 @@ func (s *Service) RecordRaw(msg []byte) error {
 	hash := blake2b.Sum256(msg)
 
 	return s.appendLog(signlog.Record{
-		Role: "cold", Purpose: signlog.PurposeRaw, BodyHash: hash[:],
+		Role: rawSignRole, Purpose: signlog.PurposeRaw, BodyHash: hash[:],
 		Summary: "unfiltered testnet signing",
 	})
 }

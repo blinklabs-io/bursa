@@ -334,6 +334,15 @@ The USB armory Mk II holds the pool cold key and the owner stake key in its
 SE050 secure element, one profile per pool and network. Its signing firmware
 serves this protocol at `/v1/inventory` and `/v1/sign`.
 
+For `opcert-next`, the profile record also holds the last counter the device
+issued, and a chain counter above it is refused: the ledger only holds
+counters the device issued. A record written before this counter existed has
+none until its next `opcert-next`. `POST /provision/floor` on the provisioning
+firmware sets the floor to the operator's chain counter and clears the last
+issued counter. Firmware without this counter refuses a record that carries
+it, so a profile that has issued an opcert is unreadable to such firmware
+until a floor reset clears the counter.
+
 The evidence is the device identity key's Ed25519 signature over the inventory
 binding. The signer accepts the inventory only when that signature verifies
 under `identity_public_key`. This proves the inventory came from a device
@@ -395,9 +404,16 @@ checks the card against it at boot and before every write, so an older copy of
 the card, a blank card or a truncated log is refused. The entry is written and
 the card read back before the signature leaves the device.
 
+One request is not recorded again: an `opcert-next` whose profile, issue
+counter, KES key hash and KES period match the latest entry is signed again
+without a new entry, since that entry already records it. The device checks
+the card against the head before signing such a repeat, as it does before a
+write.
+
 With no card, an unreadable card, a card that does not match the head, a full
 card or a failed write, the device refuses to sign and says why in the
 response and in the startup report; inventory and health are still served. A
+full card still serves a repeat of its latest entry, which writes nothing. A
 card that is full stays full: the device never overwrites an entry. The log is
 opened once at startup, so a card inserted later takes effect after a restart.
 

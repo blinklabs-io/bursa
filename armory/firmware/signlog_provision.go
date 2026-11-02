@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build provision
+//go:build provision || wipe
 
 package main
 
@@ -22,13 +22,14 @@ import (
 	"github.com/blinklabs-io/bursa/armory/device"
 )
 
-// The provisioning image does not sign, so it neither opens nor requires the
-// signing log: the signing image formats a blank card on its first start,
-// when the head object in the SE050 is not yet set.
+// The provisioning and wipe images do not sign, so they neither open nor
+// require the signing log, and never format a card: the signing image formats
+// a blank card on its first start, when the head object in the SE050 is not
+// yet set.
 func requireSigningLog(*device.Service) {}
 
 func openSigningLog(r *Report, _ sync.Locker, _ *device.Service, _ *chip) bool {
-	r.Logf("signing log: not used by the provisioning image")
+	r.Logf("signing log: not used by this image")
 
 	return true
 }
