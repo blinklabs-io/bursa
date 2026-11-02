@@ -458,8 +458,9 @@ starts a new log. To start a new log under the same identity, the wipe
 firmware's `POST /wipe/signlog`, confirmed with the device identity public key
 as `identity_public_key`, deletes only the head object. The identity public key
 is public, so once a host key is registered the request must also be signed by
-one, as described under Provisioning and wipe authentication. The old card is refused once the head is gone, so image it if its entries are
-wanted, then zero it or insert a zeroed card; the signing firmware formats it
+one, as described under Provisioning and wipe authentication. The old card
+is refused once the head is gone, so image it if its entries are wanted, then
+zero it or insert a zeroed card; the signing firmware formats it
 at its next start, with entries numbered from 1 again. The old card's entries
 stay verifiable from its image with `signlog-verify -identity HEX -image FILE`.
 

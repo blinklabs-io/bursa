@@ -129,8 +129,9 @@ func (s *Service) setHostEntries(entries []hostEntry) {
 }
 
 // loadHostKeys reads the host key list from chip. A missing object means no
-// host key is registered; an unreadable one refuses signing until the list
-// is written again.
+// host key is registered; an unreadable one refuses signing and every
+// authenticated provisioning and wipe request until a restart reads a valid
+// list or a device wipe resets it.
 func (s *Service) loadHostKeys(chip Chip) error {
 	s.setHostEntries(nil)
 	s.hostKeysBad = false
@@ -325,10 +326,11 @@ func (s *Service) revokeHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 }
 
 // writeHostKeys writes entries and serves them once the write reads back; an
-// empty list deletes the object. Writing a list replaces an unreadable one;
-// a failed write leaves the stored list unknown, so signing is refused until
-// a write reads back. The list is always written in the scoped format, with
-// legacy entries kept legacy.
+// empty list deletes the object. A failed write leaves the stored list
+// unknown, so signing and every authenticated provisioning and wipe request
+// are refused until a restart reads a valid list or a device wipe resets it.
+// The list is always written in the scoped format, with legacy entries kept
+// legacy.
 func (s *Service) writeHostKeys(entries []hostEntry) (HostKeyResponse, error) {
 	var err error
 
