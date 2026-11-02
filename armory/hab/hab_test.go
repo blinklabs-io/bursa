@@ -187,6 +187,8 @@ func TestCheckEntry(t *testing.T) {
 	}{
 		{"ARM function in ROM", 0x00001000, true},
 		{"Thumb function in ROM", 0x00001001, true},
+		{"Thumb function at a halfword", 0x00001003, true},
+		{"ARM function at a halfword", 0x00001002, false},
 		{"last ROM word", 0x0001fffc, true},
 		{"erased", 0xffffffff, false},
 		{"zero", 0, false},

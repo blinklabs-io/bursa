@@ -83,9 +83,14 @@ func CheckRVT(hdr []byte) error {
 }
 
 // CheckEntry reports whether ptr, an ARM or Thumb function pointer read from
-// the vector table, lies in the boot ROM past the table, so an erased or
+// the vector table, lies in the boot ROM past the table and is aligned for
+// its instruction set (a word for ARM, a halfword for Thumb), so an erased or
 // corrupt entry is never jumped to.
 func CheckEntry(ptr uint32) bool {
+	if ptr&1 == 0 && ptr&3 != 0 {
+		return false
+	}
+
 	addr := ptr &^ 1 // the Thumb bit
 
 	return addr >= RVTBase+RVTMinLen && addr < ROMEnd
