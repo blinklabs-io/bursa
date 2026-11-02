@@ -659,8 +659,16 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 
 	chain := binary.BigEndian.Uint64(payload[32:40])
 
-	issue, floor, err := nextOpCert(p.OpCertFloor, p.FloorSet, chain)
+	issue, floor, err := nextOpCert(p.OpCertFloor, p.FloorSet, p.LastIssued, chain)
 	if err != nil {
+		return nil, nil, err
+	}
+
+	next := p
+	next.FloorSet, next.OpCertFloor, next.LastIssued = true, floor, issue
+
+	// a record that would not fit is refused before the log entry
+	if _, err = profile.Encode(next); err != nil {
 		return nil, nil, err
 	}
 
@@ -677,11 +685,10 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 		return nil, nil, err
 	}
 
-	// the floor is persisted before any signature leaves the device
-	if !p.FloorSet || floor != p.OpCertFloor {
-		p.FloorSet, p.OpCertFloor = true, floor
-
-		if err = s.writeProfile(p); err != nil {
+	// the floor and the issued counter are persisted together before any
+	// signature leaves the device
+	if next != p {
+		if err = s.writeProfile(next); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -836,15 +843,19 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 }
 
 // resetFloor sets the floor to the reported on-chain counter, lower or
-// higher. A floor set too low only lets the device issue a counter the chain
-// rejects, so this needs no more trust than opcert-next itself.
+// higher, and clears the last issued counter, so the bound it gives
+// opcert-next stays off until the next opcert-next sets it again. A floor one
+// below the on-chain counter lets the device issue the on-chain counter, which
+// the ledger accepts; a floor above it makes the device refuse every counter
+// the ledger accepts. The operator's report is trusted either way, as the
+// reset is a provisioning action.
 func (s *Service) resetFloor(req FloorRequest) (FloorResponse, error) {
 	p, err := s.profileFor(req.Profile)
 	if err != nil {
 		return FloorResponse{}, err
 	}
 
-	p.FloorSet, p.OpCertFloor = true, req.ChainCounter
+	p.FloorSet, p.OpCertFloor, p.LastIssued = true, req.ChainCounter, 0
 
 	if err := s.writeProfile(p); err != nil {
 		return FloorResponse{}, err

@@ -334,6 +334,15 @@ The USB armory Mk II holds the pool cold key and the owner stake key in its
 SE050 secure element, one profile per pool and network. Its signing firmware
 serves this protocol at `/v1/inventory` and `/v1/sign`.
 
+For `opcert-next`, the profile record also holds the last counter the device
+issued, and a chain counter above it is refused: the ledger only holds
+counters the device issued. A record written before this counter existed has
+none until its next `opcert-next`. `POST /provision/floor` on the provisioning
+firmware sets the floor to the operator's chain counter and clears the last
+issued counter. Firmware without this counter refuses a record that carries
+it, so a profile that has issued an opcert is unreadable to such firmware
+until a floor reset clears the counter.
+
 The evidence is the device identity key's Ed25519 signature over the inventory
 binding. The signer accepts the inventory only when that signature verifies
 under `identity_public_key`. This proves the inventory came from a device
