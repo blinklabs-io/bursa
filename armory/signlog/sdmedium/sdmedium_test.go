@@ -48,6 +48,8 @@ type fakeCard struct {
 	writes    int
 	// largest is the largest transfer in bytes
 	largest int
+	// readBytes is the total bytes read
+	readBytes int
 }
 
 func newFakeCard(blocks int) *fakeCard {
@@ -71,6 +73,7 @@ func (c *fakeCard) Geometry() (int, uint64) {
 func (c *fakeCard) ReadBlocks(lba int, buf []byte) error {
 	c.reads++
 	c.largest = max(c.largest, len(buf))
+	c.readBytes += len(buf)
 
 	if c.failReads {
 		return errors.New("read failed")
@@ -363,6 +366,11 @@ func TestFormatSplitsTransfers(t *testing.T) {
 
 	if want := MaxTransferBlocks * signlog.BlockSize; c.largest > want {
 		t.Fatalf("largest transfer %d bytes, want at most %d", c.largest, want)
+	}
+
+	// the blank check read every record slot
+	if want := (1 + 300*signlog.RecordBlocks) * signlog.BlockSize; c.readBytes < want {
+		t.Fatalf("read %d bytes, want at least %d", c.readBytes, want)
 	}
 }
 
