@@ -139,6 +139,35 @@ func TestOpCertIsLoggedBeforeSignature(t *testing.T) {
 	}
 }
 
+// An opcert-next whose updated record would not fit in RecordSize is refused
+// before the log entry, so the log never records an opcert that was not issued.
+func TestOpCertNextRecordTooLargeNotLogged(t *testing.T) {
+	t.Parallel()
+
+	s, chip, l, _ := loggedService(t)
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	rec, _ := chip.ReadBinary(profile.Profile{Slot: 0}.RecordID())
+	signs := chip.signs
+
+	// a 20-digit floor and a 20-digit issued counter overflow the record
+	r := sign(t, s, SignRequest{
+		Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(1),
+		Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), ^uint64(0)-1, 1100), Profile: "otg@preview",
+	})
+
+	if r.Error == "" || r.Signature != nil || r.IssueCounter != nil {
+		t.Fatalf("released %+v", r)
+	}
+
+	if l.appendsAttempt != 0 || chip.signs != signs {
+		t.Fatalf("%d log appends and %d signatures for a refused opcert", l.appendsAttempt, chip.signs-signs)
+	}
+
+	if after, _ := chip.ReadBinary(profile.Profile{Slot: 0}.RecordID()); !bytes.Equal(after, rec) {
+		t.Fatalf("refusal changed the record: %q", after)
+	}
+}
+
 // Any Append failure, including a full medium, refuses the request: no
 // signature, no binding signature, no chip signing and no opcert floor move.
 func TestAppendFailureRefusesSigning(t *testing.T) {

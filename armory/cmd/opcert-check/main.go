@@ -18,7 +18,10 @@
 // the chain counter one below the certificate's issue number, so the device
 // must choose that issue number and reproduce the cold signature byte for
 // byte (Ed25519 is deterministic). Like any opcert-next request it raises
-// the profile's floor to that chain counter; POST /provision/floor resets it.
+// the profile's floor to that chain counter and records the issue number as
+// the last issued counter, and it is refused when the chain counter is above
+// a last issued counter already recorded. POST /provision/floor resets the
+// floor and clears the last issued counter.
 //
 // With -host-key it authenticates the request with a host signing key
 // registered on the device, as armory-pool -host-key does; a device with
