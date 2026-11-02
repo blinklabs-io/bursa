@@ -200,7 +200,7 @@ func (s *Service) wipeDevice(req WipeDeviceRequest) (WipeResponse, error) {
 	}
 
 	s.profiles = map[string]profile.Profile{}
-	s.hostKeys, s.hostKeysBad = nil, false
+	s.hostKeys, s.hostEntries, s.hostKeysBad = nil, nil, false
 	s.logf("wipe: device wiped, %d objects deleted", len(deleted))
 
 	return WipeResponse{Deleted: hexIDs(deleted)}, nil
@@ -232,9 +232,10 @@ func (s *Service) wipeProfile(req WipeProfileRequest) (WipeResponse, error) {
 		return WipeResponse{}, err
 	}
 
-	p, ok := s.profiles[req.Profile]
-	if !ok {
-		return WipeResponse{}, errUnknown
+	// an image removes only the profiles of the network and chain it serves
+	p, err := s.profileFor(req.Profile)
+	if err != nil {
+		return WipeResponse{}, err
 	}
 
 	// an unreadable, misplaced or duplicate record may name the same cold
