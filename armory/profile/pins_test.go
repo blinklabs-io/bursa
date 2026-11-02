@@ -25,6 +25,7 @@ func testPins() Pins {
 	return Pins{
 		VRFKeyHash: [32]byte{0x11}, MetadataHash: &meta,
 		PledgeMin: 1, PledgeMax: 500, CostMax: 170, MarginMaxNum: 1, MarginMaxDen: 10,
+		RelaysDigest: [RelaysDigestSize]byte{0x55, 19: 0x66},
 	}
 }
 
@@ -46,7 +47,7 @@ func TestPinsRoundTrip(t *testing.T) {
 		}
 
 		again, _ := EncodePins(got)
-		if !bytes.Equal(again, b) || (got.MetadataHash == nil) != (p.MetadataHash == nil) {
+		if !bytes.Equal(again, b) || (got.MetadataHash == nil) != (p.MetadataHash == nil) || got.RelaysDigest != p.RelaysDigest {
 			t.Errorf("%s: round trip changed the pins", name)
 		}
 	}
@@ -66,6 +67,9 @@ func TestPinsLayout(t *testing.T) {
 	want = append(want, make([]byte, 31)...)
 	want = append(want, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0xf4, 0, 0, 0, 0, 0, 0, 0, 170,
 		0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 10)
+	want = append(want, 0x55)
+	want = append(want, make([]byte, 18)...)
+	want = append(want, 0x66)
 	want = append(want, make([]byte, PinsSize-len(want))...)
 
 	if !bytes.Equal(b, want) {
@@ -86,6 +90,7 @@ func TestPinsRejected(t *testing.T) {
 		"unknown flag":     mut(func(b []byte) []byte { b[1] = 3; return b }),
 		"metadata no flag": mut(func(b []byte) []byte { b[1] = 0; return b }),
 		"padding":          mut(func(b []byte) []byte { b[PinsSize-1] = 1; return b }),
+		"first padding":    mut(func(b []byte) []byte { b[126] = 1; return b }),
 		"pledge range":     mut(func(b []byte) []byte { b[66] = 1; return b }),
 		"zero denominator": mut(func(b []byte) []byte { b[105] = 0; b[104] = 0; return b }),
 	} {

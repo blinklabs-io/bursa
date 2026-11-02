@@ -16,12 +16,15 @@ package policy
 
 import (
 	"bytes"
+	"net"
 	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/armory/profile"
 	"github.com/blinklabs-io/gouroboros/ledger"
+	"github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/fxamacker/cbor/v2"
+	"golang.org/x/crypto/blake2b"
 )
 
 // pinnedVRF is the VRF key hash the fixture registration names.
@@ -32,18 +35,39 @@ func pinnedMeta() *[32]byte {
 	return &h
 }
 
+const metaURL = "https://example.test/p.json"
+
+func hostRelay(host string, port uint32) common.PoolRelay {
+	return common.PoolRelay{Type: common.PoolRelayTypeSingleHostName, Port: &port, Hostname: &host}
+}
+
+// mustDigest is RelaysDigest for fixtures that always encode.
+func mustDigest(relays []common.PoolRelay, url *string) [profile.RelaysDigestSize]byte {
+	d, err := RelaysDigest(relays, url)
+	if err != nil {
+		panic(err)
+	}
+
+	return d
+}
+
 // testPins accept the fixture registration, which has pledge 500_000_000,
-// cost 170_000_000, margin 1/100 and no metadata.
+// cost 170_000_000, margin 1/100, the relay relay.example:3001 and no
+// metadata.
 func testPins() *profile.Pins {
 	return &profile.Pins{
 		VRFKeyHash: pinnedVRF,
 		PledgeMin:  500_000_000, PledgeMax: 600_000_000,
 		CostMax:      170_000_000,
 		MarginMaxNum: 1, MarginMaxDen: 100,
+		RelaysDigest: mustDigest([]common.PoolRelay{hostRelay("relay.example", 3001)}, nil),
 	}
 }
 
-func metadata(h [32]byte) []any { return []any{"https://example.test/p.json", h[:]} }
+func metadata(h [32]byte) []any { return []any{metaURL, h[:]} }
+
+// relayCBOR is a single-host-name relay as a registration carries it.
+func relayCBOR(host string, port uint64) []any { return []any{uint64(1), port, host} }
 
 // regWith returns the fixture registration with field i replaced.
 func regWith(i int, v any) []any {
@@ -56,7 +80,7 @@ func regWith(i int, v any) []any {
 // Certificate array positions: type, operator, vrf, pledge, cost, margin,
 // reward, owners, relays, metadata.
 const (
-	fVRF, fPledge, fCost, fMargin, fMeta = 2, 3, 4, 5, 9
+	fVRF, fPledge, fCost, fMargin, fRelays, fMeta = 2, 3, 4, 5, 8, 9
 )
 
 func margin(n, d uint64) cbor.Tag { return cbor.Tag{Number: 30, Content: []uint64{n, d}} }
@@ -67,8 +91,13 @@ func TestEvaluatePoolPins(t *testing.T) {
 	conway := uint(ledger.TxTypeConway)
 	otherVRF := bytes.Repeat([]byte{0x77}, 32)
 
+	url := metaURL
 	withMeta := testPins()
 	withMeta.MetadataHash = pinnedMeta()
+	withMeta.RelaysDigest = mustDigest([]common.PoolRelay{hostRelay("relay.example", 3001)}, &url)
+
+	twoRelays := testPins()
+	twoRelays.RelaysDigest = mustDigest([]common.PoolRelay{hostRelay("a.example", 1), hostRelay("b.example", 2)}, nil)
 
 	type tc struct {
 		name  string
@@ -94,6 +123,13 @@ func TestEvaluatePoolPins(t *testing.T) {
 		{"margin at maximum", testPins(), regWith(fMargin, margin(2, 200)), true, ""},
 		{"margin above maximum", testPins(), regWith(fMargin, margin(2, 199)), false, "margin"},
 		{"no pins", nil, regWith(fVRF, otherVRF), true, ""},
+		{"other relay host", testPins(), regWith(fRelays, []any{relayCBOR("evil.example", 3001)}), false, "relays"},
+		{"other relay port", testPins(), regWith(fRelays, []any{relayCBOR("relay.example", 3002)}), false, "relays"},
+		{"relay added", testPins(), regWith(fRelays, []any{relayCBOR("relay.example", 3001), relayCBOR("evil.example", 1)}), false, "relays"},
+		{"relays removed", testPins(), regWith(fRelays, []any{}), false, "relays"},
+		{"pinned relays in order", twoRelays, regWith(fRelays, []any{relayCBOR("a.example", 1), relayCBOR("b.example", 2)}), true, ""},
+		{"pinned relays reordered", twoRelays, regWith(fRelays, []any{relayCBOR("b.example", 2), relayCBOR("a.example", 1)}), false, "relays"},
+		{"other metadata URL", withMeta, regWith(fMeta, []any{"https://evil.example/p.json", pinnedMeta()[:]}), false, "metadata URL"},
 	}
 
 	for _, c := range cases {
@@ -213,5 +249,46 @@ func TestEvaluateMetadataHashLength(t *testing.T) {
 				t.Fatalf("refused by another rule: %v (want %q)", err, c.want)
 			}
 		})
+	}
+}
+
+// TestRelaysDigest pins the digest encoding: blake2b-160 of the CBOR array
+// [relays, url], with no relays and a nil list alike, and address relays
+// encoded the same whether built from parsed text or decoded from a
+// registration.
+func TestRelaysDigest(t *testing.T) {
+	t.Parallel()
+
+	url := metaURL
+	enc, _ := cbor.Marshal([]any{[]any{relayCBOR("relay.example", 3001)}, url})
+	want, _ := blake2b.New(profile.RelaysDigestSize, nil)
+	want.Write(enc)
+
+	if got := mustDigest([]common.PoolRelay{hostRelay("relay.example", 3001)}, &url); !bytes.Equal(got[:], want.Sum(nil)) {
+		t.Errorf("digest %x, want %x", got, want.Sum(nil))
+	}
+
+	if mustDigest(nil, nil) != mustDigest([]common.PoolRelay{}, nil) {
+		t.Error("a nil relay list and an empty one differ")
+	}
+
+	if mustDigest(nil, nil) == mustDigest(nil, new(string)) {
+		t.Error("no metadata and an empty metadata URL collide")
+	}
+
+	// an address relay decoded from a registration matches one built from text
+	reg := regWith(fRelays, []any{[]any{uint64(0), uint64(3001), []byte{1, 2, 3, 4}, net.ParseIP("2001:db8::1").To16()}})
+
+	var cert common.PoolRegistrationCertificate
+	if err := cert.UnmarshalCBOR(encode(reg)); err != nil {
+		t.Fatal(err)
+	}
+
+	port := uint32(3001)
+	v4, v6 := net.ParseIP("1.2.3.4"), net.ParseIP("2001:db8::1")
+	built := common.PoolRelay{Type: common.PoolRelayTypeSingleHostAddress, Port: &port, Ipv4: &v4, Ipv6: &v6}
+
+	if mustDigest(cert.Relays, nil) != mustDigest([]common.PoolRelay{built}, nil) {
+		t.Error("decoded and built address relays digest differently")
 	}
 }

@@ -23,10 +23,11 @@ import (
 )
 
 // PinsRequest sets or replaces the registration pins of a profile: the VRF
-// key hash and metadata hash its pool registrations must name, and bounds for
-// pledge, cost and margin. Hashes are 32 bytes in hex. An empty MetadataHash
-// pins the absence of metadata. Bounds are inclusive; the margin bound is
-// MarginMaxNum/MarginMaxDen.
+// key hash and metadata hash its pool registrations must name, the digest of
+// their relays and metadata URL (policy.RelaysDigest), and bounds for pledge,
+// cost and margin. Hashes are 32 bytes in hex, the relays digest 20. An empty
+// MetadataHash pins the absence of metadata. Bounds are inclusive; the margin
+// bound is MarginMaxNum/MarginMaxDen.
 type PinsRequest struct {
 	Profile      string `json:"profile"`
 	VRFKeyHash   string `json:"vrf_key_hash"`
@@ -36,6 +37,7 @@ type PinsRequest struct {
 	CostMax      uint64 `json:"cost_max"`
 	MarginMaxNum uint64 `json:"margin_max_num"`
 	MarginMaxDen uint64 `json:"margin_max_den"`
+	RelaysDigest string `json:"relays_digest"`
 }
 
 // PinsResponse confirms the stored pins.
@@ -44,17 +46,16 @@ type PinsResponse struct {
 	Pins    PinsRequest `json:"pins"`
 }
 
-func parseHash32(name, v string) ([32]byte, error) {
-	var h [32]byte
-
+// parseHex fills dst from v, which must be exactly len(dst) bytes of hex.
+func parseHex(name, v string, dst []byte) error {
 	b, err := hex.DecodeString(v)
-	if err != nil || len(b) != len(h) {
-		return h, fmt.Errorf("%s must be 32 bytes of hex", name)
+	if err != nil || len(b) != len(dst) {
+		return fmt.Errorf("%s must be %d bytes of hex", name, len(dst))
 	}
 
-	copy(h[:], b)
+	copy(dst, b)
 
-	return h, nil
+	return nil
 }
 
 // pinsFor returns the registration pins stored for p. A profile with no pins
@@ -122,17 +123,20 @@ func (s *Service) setPins(req PinsRequest) (PinsResponse, error) {
 
 	var pins profile.Pins
 
-	if pins.VRFKeyHash, err = parseHash32("vrf_key_hash", req.VRFKeyHash); err != nil {
+	if err = parseHex("vrf_key_hash", req.VRFKeyHash, pins.VRFKeyHash[:]); err != nil {
+		return PinsResponse{}, err
+	}
+
+	if err = parseHex("relays_digest", req.RelaysDigest, pins.RelaysDigest[:]); err != nil {
 		return PinsResponse{}, err
 	}
 
 	if req.MetadataHash != "" {
-		h, err := parseHash32("metadata_hash", req.MetadataHash)
-		if err != nil {
+		pins.MetadataHash = new([32]byte)
+
+		if err = parseHex("metadata_hash", req.MetadataHash, pins.MetadataHash[:]); err != nil {
 			return PinsResponse{}, err
 		}
-
-		pins.MetadataHash = &h
 	}
 
 	pins.PledgeMin, pins.PledgeMax, pins.CostMax = req.PledgeMin, req.PledgeMax, req.CostMax
@@ -153,8 +157,8 @@ func (s *Service) setPins(req PinsRequest) (PinsResponse, error) {
 		meta = hex.EncodeToString(pins.MetadataHash[:])
 	}
 
-	s.logf("registration pins %q set: vrf %s metadata %s pledge %d-%d cost <=%d margin <=%d/%d",
-		p.Name, hex.EncodeToString(pins.VRFKeyHash[:]), meta,
+	s.logf("registration pins %q set: vrf %s metadata %s relays %s pledge %d-%d cost <=%d margin <=%d/%d",
+		p.Name, hex.EncodeToString(pins.VRFKeyHash[:]), meta, hex.EncodeToString(pins.RelaysDigest[:]),
 		pins.PledgeMin, pins.PledgeMax, pins.CostMax, pins.MarginMaxNum, pins.MarginMaxDen)
 
 	req.Profile = p.Name

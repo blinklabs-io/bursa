@@ -16,12 +16,17 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/armory/device"
+	"github.com/blinklabs-io/bursa/armory/policy"
+	"github.com/blinklabs-io/gouroboros/ledger/common"
+	fxcbor "github.com/fxamacker/cbor/v2"
 )
 
 func TestPinsRequestPrintsProvisioningBody(t *testing.T) {
@@ -34,6 +39,8 @@ func TestPinsRequestPrintsProvisioningBody(t *testing.T) {
 	args := []string{
 		"pins-request", "-profile", profile, "-vrf-key-hash", vrf, "-metadata-hash", meta,
 		"-pledge-min", "100", "-pledge-max", "1000", "-cost-max", "500", "-margin-max", "1/10",
+		"-metadata-url", "https://example.test/p.json",
+		"-relay", "1.2.3.4,[2001:db8::1]:3001", "-relay", "relay.example:3002", "-relay", "srv:_cardano._tcp.example",
 	}
 
 	if err := run(args, &out); err != nil {
@@ -51,9 +58,18 @@ func TestPinsRequestPrintsProvisioningBody(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// the digest is the one the device computes from a registration naming
+	// those relays and that URL
+	digest := registrationDigest(t, []any{
+		[]any{uint64(0), uint64(3001), []byte{1, 2, 3, 4}, net.ParseIP("2001:db8::1").To16()},
+		[]any{uint64(1), uint64(3002), "relay.example"},
+		[]any{uint64(2), "_cardano._tcp.example"},
+	}, "https://example.test/p.json")
+
 	want := device.PinsRequest{
 		Profile: profile, VRFKeyHash: vrf, MetadataHash: meta,
 		PledgeMin: 100, PledgeMax: 1000, CostMax: 500, MarginMaxNum: 1, MarginMaxDen: 10,
+		RelaysDigest: digest,
 	}
 
 	if req != want {
@@ -81,6 +97,34 @@ func TestPinsRequestPrintsProvisioningBody(t *testing.T) {
 	}
 }
 
+// registrationDigest decodes a pool registration carrying relays and a
+// metadata URL, as the device does, and returns its relays digest in hex.
+func registrationDigest(t *testing.T, relays []any, url string) string {
+	t.Helper()
+
+	reward := append([]byte{0xe0}, make([]byte, 28)...)
+	raw, err := fxcbor.Marshal([]any{
+		uint64(3), make([]byte, 28), make([]byte, 32), uint64(1), uint64(1),
+		fxcbor.Tag{Number: 30, Content: []uint64{1, 100}},
+		reward, []any{make([]byte, 28)}, relays, []any{url, make([]byte, 32)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var cert common.PoolRegistrationCertificate
+	if err := cert.UnmarshalCBOR(raw); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := policy.RelaysDigest(cert.Relays, &cert.PoolMetadata.Url)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return hex.EncodeToString(d[:])
+}
+
 func TestPinsRequestRefusesBadInput(t *testing.T) {
 	t.Parallel()
 
@@ -89,8 +133,12 @@ func TestPinsRequestRefusesBadInput(t *testing.T) {
 		"pins-request", "-profile", "p", "-vrf-key-hash", vrf, "-pledge-max", "5", "-margin-max", "1/10",
 	}
 
-	if err := run(ok, &bytes.Buffer{}); err != nil {
-		t.Fatalf("valid request refused: %v", err)
+	withMeta := append(append([]string{}, ok...), "-metadata-hash", strings.Repeat("22", 32), "-metadata-url", "https://example.test/p.json")
+
+	for _, args := range [][]string{ok, withMeta, append(append([]string{}, ok...), "-relay", "[::1]:1", "-relay", "srv:x.example")} {
+		if err := run(args, &bytes.Buffer{}); err != nil {
+			t.Fatalf("valid request %q refused: %v", args, err)
+		}
 	}
 
 	for name, args := range map[string][]string{
@@ -103,8 +151,16 @@ func TestPinsRequestRefusesBadInput(t *testing.T) {
 		"short vrf":        {"pins-request", "-profile", "p", "-vrf-key-hash", vrf[2:], "-margin-max", "1/2"},
 		"long vrf":         {"pins-request", "-profile", "p", "-vrf-key-hash", vrf + "11", "-margin-max", "1/2"},
 		"non-hex vrf":      {"pins-request", "-profile", "p", "-vrf-key-hash", strings.Repeat("zz", 32), "-margin-max", "1/2"},
-		"short metadata":   append(append([]string{}, ok...), "-metadata-hash", "22"),
-		"non-hex metadata": append(append([]string{}, ok...), "-metadata-hash", strings.Repeat("g2", 32)),
+		"short metadata":   append(append([]string{}, ok...), "-metadata-hash", "22", "-metadata-url", "u"),
+		"non-hex metadata": append(append([]string{}, ok...), "-metadata-hash", strings.Repeat("g2", 32), "-metadata-url", "u"),
+		"metadata no url":  append(append([]string{}, ok...), "-metadata-hash", strings.Repeat("22", 32)),
+		"url no metadata":  append(append([]string{}, ok...), "-metadata-url", "u"),
+		"relay no port":    append(append([]string{}, ok...), "-relay", "relay.example"),
+		"relay bad port":   append(append([]string{}, ok...), "-relay", "relay.example:65536"),
+		"bare ipv6 relay":  append(append([]string{}, ok...), "-relay", "::1:3001"),
+		"two ipv4 relay":   append(append([]string{}, ok...), "-relay", "1.2.3.4,5.6.7.8:1"),
+		"bracketed ipv4":   append(append([]string{}, ok...), "-relay", "[1.2.3.4]:1"),
+		"empty srv relay":  append(append([]string{}, ok...), "-relay", "srv:"),
 	} {
 		if err := run(args, &bytes.Buffer{}); err == nil {
 			t.Errorf("%s: accepted", name)

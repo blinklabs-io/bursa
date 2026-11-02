@@ -24,6 +24,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/blinklabs-io/bursa/armory/policy"
 	"github.com/blinklabs-io/bursa/armory/profile"
 	"github.com/fxamacker/cbor/v2"
 )
@@ -61,11 +62,25 @@ func pinnedSetup(t *testing.T) (*Service, *fakeChip, ed25519.PublicKey, [28]byte
 	return s, chip, cold, keyHash(cold), keyHash(resp.OwnerPublicKey)
 }
 
+// setPinsReq pins the poolRegCert registration with metadata: no relays and
+// its metadata URL.
 func setPinsReq() PinsRequest {
+	url := "https://example.test/p.json"
+	d, _ := policy.RelaysDigest(nil, &url)
+
 	return PinsRequest{
 		Profile: "otg@preview", VRFKeyHash: pinVRF, MetadataHash: pinMeta,
 		PledgeMin: 100, PledgeMax: 1000, CostMax: 500, MarginMaxNum: 1, MarginMaxDen: 10,
+		RelaysDigest: hex.EncodeToString(d[:]),
 	}
+}
+
+// with returns c with field i replaced.
+func with(c []any, i int, v any) []any {
+	c = append([]any(nil), c...)
+	c[i] = v
+
+	return c
 }
 
 func signReg(t *testing.T, s *Service, cold []byte, n byte, cert []any) SignResponse {
@@ -128,6 +143,9 @@ func TestProvisionPinsRefused(t *testing.T) {
 		"pledge range":     func(r *PinsRequest) { r.PledgeMin = 2000 },
 		"zero denominator": func(r *PinsRequest) { r.MarginMaxDen = 0 },
 		"margin above one": func(r *PinsRequest) { r.MarginMaxNum = 11; r.MarginMaxDen = 10 },
+		"no relays digest": func(r *PinsRequest) { r.RelaysDigest = "" },
+		"short relays":     func(r *PinsRequest) { r.RelaysDigest = r.RelaysDigest[2:] },
+		"32-byte relays":   func(r *PinsRequest) { r.RelaysDigest = pinVRF },
 	} {
 		req := setPinsReq()
 		mutate(&req)
@@ -165,7 +183,7 @@ func TestPinsGatePoolRegistration(t *testing.T) {
 
 	other := byte(0x23)
 
-	for _, c := range []struct {
+	for i, c := range []struct {
 		name  string
 		cert  []any
 		allow bool
@@ -177,8 +195,10 @@ func TestPinsGatePoolRegistration(t *testing.T) {
 		{"no metadata", poolRegCert(pool, owner, 0x11, 500, 400, nil), false, "metadata"},
 		{"pledge", poolRegCert(pool, owner, 0x11, 1001, 400, &meta), false, "pledge"},
 		{"cost", poolRegCert(pool, owner, 0x11, 500, 501, &meta), false, "cost"},
+		{"relay added", with(poolRegCert(pool, owner, 0x11, 500, 400, &meta), 8, []any{[]any{uint64(1), uint64(3001), "evil.example"}}), false, "relays"},
+		{"other metadata URL", with(poolRegCert(pool, owner, 0x11, 500, 400, &meta), 9, []any{"https://evil.example/p.json", bytes.Repeat([]byte{meta}, 32)}), false, "metadata URL"},
 	} {
-		r := signReg(t, s, cold, byte(len(c.name)+10), c.cert)
+		r := signReg(t, s, cold, byte(i+10), c.cert)
 
 		switch {
 		case c.allow && r.Error != "":

@@ -312,8 +312,8 @@ func checkRewardAccount(p profile.Profile, c *common.PoolRegistrationCertificate
 }
 
 // checkPins requires a registration to match the pins provisioned for the
-// profile: the VRF key hash and metadata hash exactly, pledge, cost and
-// margin within bounds.
+// profile: the VRF key hash, metadata hash, relays and metadata URL exactly,
+// pledge, cost and margin within bounds.
 func checkPins(pins profile.Pins, c *common.PoolRegistrationCertificate) error {
 	if [32]byte(c.VrfKeyHash) != pins.VRFKeyHash {
 		return errors.New("pool registration VRF key hash is not the pinned one")
@@ -326,6 +326,20 @@ func checkPins(pins profile.Pins, c *common.PoolRegistrationCertificate) error {
 		return errors.New("pool registration has no metadata, a metadata hash is pinned")
 	case pins.MetadataHash != nil && !bytes.Equal(c.PoolMetadata.Hash, pins.MetadataHash[:]):
 		return errors.New("pool registration metadata hash is not the pinned one")
+	}
+
+	var url *string
+	if c.PoolMetadata != nil {
+		url = &c.PoolMetadata.Url
+	}
+
+	d, err := RelaysDigest(c.Relays, url)
+	if err != nil {
+		return fmt.Errorf("pool registration relays: %w", err)
+	}
+
+	if d != pins.RelaysDigest {
+		return errors.New("pool registration relays or metadata URL are not the pinned ones")
 	}
 
 	if c.Pledge < pins.PledgeMin || c.Pledge > pins.PledgeMax {
@@ -343,4 +357,32 @@ func checkPins(pins profile.Pins, c *common.PoolRegistrationCertificate) error {
 	}
 
 	return nil
+}
+
+// RelaysDigest returns the digest that pins a pool registration's relays and
+// metadata URL: blake2b-160 of the CBOR array [relays, url], each relay in
+// its ledger encoding and in registration order, url null without metadata.
+// The device and armory-pool both compute it here from decoded values, so a
+// registration matches however its builder laid out the bytes.
+func RelaysDigest(relays []common.PoolRelay, metadataURL *string) ([profile.RelaysDigestSize]byte, error) {
+	var d [profile.RelaysDigestSize]byte
+
+	if relays == nil {
+		relays = []common.PoolRelay{}
+	}
+
+	b, err := cbor.Marshal([]any{relays, metadataURL})
+	if err != nil {
+		return d, err
+	}
+
+	h, err := blake2b.New(profile.RelaysDigestSize, nil)
+	if err != nil {
+		return d, err
+	}
+
+	h.Write(b)
+	copy(d[:], h.Sum(nil))
+
+	return d, nil
 }

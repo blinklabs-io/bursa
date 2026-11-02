@@ -359,13 +359,19 @@ Inventory and challenge replies stay at version 1.
 
 Without pins the policy checks a registration's operator, owner and reward
 account only. A host that can request signatures could then register another
-VRF key or set pledge, cost and margin freely. `POST /provision/pins`, served
-only by the provisioning firmware like `/provision/reward` and not
-host-key authenticated, pins a profile's registrations:
+VRF key, other relays or another metadata URL, or set pledge, cost and margin
+freely. `POST /provision/pins`, served only by the provisioning firmware like
+`/provision/reward` and not host-key authenticated, pins a profile's
+registrations:
 
 - `vrf_key_hash` and `metadata_hash` (32 bytes, hex) must match exactly. An
   empty `metadata_hash` pins the absence of metadata: a registration that
   carries any is refused.
+- `relays_digest` (20 bytes, hex) must match the registration's relays, in
+  order, and its metadata URL: blake2b-160 of the CBOR array `[relays, url]`,
+  each relay in its ledger encoding and `url` null without metadata
+  (`policy.RelaysDigest`). Adding, removing, reordering or changing a relay, or
+  changing the URL, is refused.
 - `pledge_min` / `pledge_max` (inclusive), `cost_max` (inclusive) and
   `margin_max_num` / `margin_max_den` (margin at most the fraction, at most 1).
 
@@ -379,7 +385,10 @@ again. `/wipe/profile` and `/wipe/device` delete the pins object.
 
 The startup report lists `registration pins set`, `none` or `unreadable` for
 each profile. Inventory replies are unchanged, so the signer's strict decoding
-still accepts them. `armory-pool pins-request` prints the request body.
+still accepts them. `armory-pool pins-request` prints the request body; it
+takes each relay as `-relay`, in registration order (`HOST:PORT`,
+`IPV4:PORT`, `[IPV6]:PORT`, `IPV4,[IPV6]:PORT` or `srv:NAME`), and the
+metadata URL as `-metadata-url`, and computes `relays_digest` from them.
 
 The signer sends version 1 unless the backend sets `protocol`:
 

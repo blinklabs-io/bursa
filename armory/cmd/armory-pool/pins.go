@@ -21,10 +21,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 	"strings"
 
 	"github.com/blinklabs-io/bursa/armory/device"
+	"github.com/blinklabs-io/bursa/armory/policy"
+	"github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
 // pinsRequest parses the `pins-request` flags and prints the
@@ -39,6 +42,18 @@ func pinsRequest(args []string, out io.Writer) error {
 	pledgeMax := fs.Uint64("pledge-max", 0, "highest pledge, in lovelace")
 	costMax := fs.Uint64("cost-max", 0, "highest fixed cost, in lovelace")
 	marginMax := fs.String("margin-max", "", "highest margin as N/D, e.g. 1/10")
+	metaURL := fs.String("metadata-url", "", "pool metadata URL; required with -metadata-hash")
+
+	var relays []common.PoolRelay
+
+	fs.Func("relay", "a registration relay, repeated in registration order: HOST:PORT, IPV4:PORT, [IPV6]:PORT, IPV4,[IPV6]:PORT or srv:NAME", func(v string) error {
+		r, err := parseRelay(v)
+		if err == nil {
+			relays = append(relays, r)
+		}
+
+		return err
+	})
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -65,16 +80,31 @@ func pinsRequest(args []string, out io.Writer) error {
 		return err
 	}
 
+	var url *string
+
 	if *meta != "" {
 		if err := checkHash32("-metadata-hash", *meta); err != nil {
 			return err
 		}
+
+		if *metaURL == "" {
+			return errors.New("-metadata-url is required with -metadata-hash")
+		}
+
+		url = metaURL
+	} else if *metaURL != "" {
+		return errors.New("-metadata-url needs -metadata-hash")
+	}
+
+	digest, err := policy.RelaysDigest(relays, url)
+	if err != nil {
+		return fmt.Errorf("relays: %w", err)
 	}
 
 	req, err := json.Marshal(device.PinsRequest{
 		Profile: *name, VRFKeyHash: *vrf, MetadataHash: *meta,
 		PledgeMin: *pledgeMin, PledgeMax: *pledgeMax, CostMax: *costMax,
-		MarginMaxNum: n, MarginMaxDen: d,
+		MarginMaxNum: n, MarginMaxDen: d, RelaysDigest: hex.EncodeToString(digest[:]),
 	})
 	if err != nil {
 		return err
@@ -93,4 +123,57 @@ func checkHash32(flagName, v string) error {
 	}
 
 	return nil
+}
+
+// parseRelay reads one -relay value: srv:NAME is a multi-host (DNS SRV)
+// relay; otherwise the value ends in :PORT and names either one host or one
+// or two addresses (an IPv4 and an IPv6, comma separated, IPv6 in brackets).
+func parseRelay(v string) (common.PoolRelay, error) {
+	bad := fmt.Errorf("relay %q: want HOST:PORT, IPV4:PORT, [IPV6]:PORT, IPV4,[IPV6]:PORT or srv:NAME", v)
+
+	if srv, ok := strings.CutPrefix(v, "srv:"); ok {
+		if srv == "" {
+			return common.PoolRelay{}, bad
+		}
+
+		return common.PoolRelay{Type: common.PoolRelayTypeMultiHostName, Hostname: &srv}, nil
+	}
+
+	i := strings.LastIndexByte(v, ':')
+	if i <= 0 {
+		return common.PoolRelay{}, bad
+	}
+
+	port64, err := strconv.ParseUint(v[i+1:], 10, 16)
+	if err != nil {
+		return common.PoolRelay{}, bad
+	}
+
+	port := uint32(port64)
+	host := v[:i]
+
+	if !strings.ContainsAny(host, ",[]") && net.ParseIP(host) == nil {
+		return common.PoolRelay{Type: common.PoolRelayTypeSingleHostName, Port: &port, Hostname: &host}, nil
+	}
+
+	r := common.PoolRelay{Type: common.PoolRelayTypeSingleHostAddress, Port: &port}
+
+	for _, a := range strings.Split(host, ",") {
+		v6, bracketed := strings.CutPrefix(a, "[")
+		v6, closed := strings.CutSuffix(v6, "]")
+		ip := net.ParseIP(v6)
+
+		switch {
+		case ip == nil || bracketed != closed:
+			return common.PoolRelay{}, bad
+		case ip.To4() != nil && !bracketed && r.Ipv4 == nil:
+			r.Ipv4 = &ip
+		case ip.To4() == nil && bracketed && r.Ipv6 == nil:
+			r.Ipv6 = &ip
+		default:
+			return common.PoolRelay{}, bad
+		}
+	}
+
+	return r, nil
 }

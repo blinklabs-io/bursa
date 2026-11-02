@@ -24,7 +24,7 @@
 //	armory-pool -identity HEX -profile NAME opcert -kes-vkey F -kes-period N -chain-counter N|none -out F
 //	armory-pool -identity HEX signlog [-head-seq N -head-hash HEX]
 //	armory-pool reward-hex stake_test1...
-//	armory-pool pins-request -profile NAME -vrf-key-hash HEX [-metadata-hash HEX] -pledge-min N -pledge-max N -cost-max N -margin-max N/D
+//	armory-pool pins-request -profile NAME -vrf-key-hash HEX [-metadata-hash HEX -metadata-url URL] [-relay R ...] -pledge-min N -pledge-max N -cost-max N -margin-max N/D
 //	armory-pool address -stake-vkey F [-payment-vkey F] [-type base|reward] [-network preview]
 package main
 

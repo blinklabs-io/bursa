@@ -37,14 +37,22 @@ const pinsBase uint32 = 0x20e50500
 // pinsFlagMetadata marks an encoded Pins that pins a metadata hash.
 const pinsFlagMetadata = 1
 
+// RelaysDigestSize is the size of the digest that pins a registration's
+// relays and metadata URL.
+const RelaysDigestSize = 20
+
+// pinsUsed is how many bytes of an encoded Pins carry fields; the rest is
+// zero padding.
+const pinsUsed = 126
+
 // PinsID returns the binary object holding this profile's registration pins.
 // The object is separate from the profile record, which has no room left,
 // and absent for a profile whose registrations are not pinned.
 func (p Profile) PinsID() uint32 { return pinsBase + uint32(p.Slot) }
 
 // Pins are the pool registration parameters a profile's registrations must
-// match: the VRF key hash and pool metadata hash exactly, and pledge, cost
-// and margin within bounds.
+// match: the VRF key hash, pool metadata hash, relays and metadata URL
+// exactly, and pledge, cost and margin within bounds.
 type Pins struct {
 	// VRFKeyHash is the VRF key hash every registration must name.
 	VRFKeyHash [32]byte
@@ -57,6 +65,9 @@ type Pins struct {
 	CostMax uint64
 	// MarginMaxNum / MarginMaxDen bound the margin, inclusive.
 	MarginMaxNum, MarginMaxDen uint64
+	// RelaysDigest pins the relays, in order, and the metadata URL every
+	// registration must carry: policy.RelaysDigest of them.
+	RelaysDigest [RelaysDigestSize]byte
 }
 
 func (p Pins) validate() error {
@@ -74,8 +85,8 @@ func (p Pins) validate() error {
 
 // EncodePins serializes pins to exactly PinsSize bytes: version, flags, VRF
 // key hash, metadata hash (zero when not pinned), pledge minimum and maximum,
-// cost maximum, margin maximum numerator and denominator (big endian), then
-// zero padding.
+// cost maximum, margin maximum numerator and denominator (big endian), relays
+// digest, then zero padding.
 func EncodePins(p Pins) ([]byte, error) {
 	if err := p.validate(); err != nil {
 		return nil, err
@@ -95,6 +106,8 @@ func EncodePins(p Pins) ([]byte, error) {
 		binary.BigEndian.PutUint64(b[66+8*i:], v)
 	}
 
+	copy(b[106:pinsUsed], p.RelaysDigest[:])
+
 	return b, nil
 }
 
@@ -113,7 +126,7 @@ func DecodePins(b []byte) (p Pins, err error) {
 		return Pins{}, errors.New("pins: unknown flags")
 	}
 
-	if !bytes.Equal(b[106:], make([]byte, PinsSize-106)) {
+	if !bytes.Equal(b[pinsUsed:], make([]byte, PinsSize-pinsUsed)) {
 		return Pins{}, errors.New("pins: non-zero padding")
 	}
 
@@ -131,6 +144,7 @@ func DecodePins(b []byte) (p Pins, err error) {
 	p.CostMax = binary.BigEndian.Uint64(b[82:])
 	p.MarginMaxNum = binary.BigEndian.Uint64(b[90:])
 	p.MarginMaxDen = binary.BigEndian.Uint64(b[98:])
+	copy(p.RelaysDigest[:], b[106:pinsUsed])
 
 	if err = p.validate(); err != nil {
 		return Pins{}, err
