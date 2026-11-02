@@ -677,11 +677,22 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 	kesHash := blake2b.Sum256(payload[:32])
 	period := binary.BigEndian.Uint64(payload[40:])
 
-	if err = s.appendLog(signlog.Record{
+	rec := signlog.Record{
 		Profile: p.Name, Role: "pool", Purpose: signlog.PurposeOpCertNext,
 		Summary:      fmt.Sprintf("chain %d issue %d period %d", chain, issue, period),
 		IssueCounter: issue, KESPeriod: period, KESKeyHash: kesHash[:],
-	}); err != nil {
+	}
+
+	// the counter was already issued and the latest entry records this exact
+	// request: signing it again adds nothing to account for, once the card
+	// and head are confirmed to still hold that entry
+	if p.LastIssued == issue && s.lastOpCertRepeat(rec) {
+		err = s.checkLog()
+	} else {
+		err = s.appendLog(rec)
+	}
+
+	if err != nil {
 		return nil, nil, err
 	}
 
