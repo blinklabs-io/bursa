@@ -275,3 +275,25 @@ func TestUnknownHostKeyScopeRefusesSigning(t *testing.T) {
 		t.Fatalf("unknown scope kind accepted: %v", err)
 	}
 }
+
+// TestUnknownHostKeyScopeInEmptySlotRefusesSigning checks an unknown scope
+// kind is refused in a slot with no key too, so a list from an unknown format
+// fails closed.
+func TestUnknownHostKeyScopeInEmptySlotRefusesSigning(t *testing.T) {
+	t.Parallel()
+
+	chip := newFakeChip()
+	k := scopeKey(9)
+	tag := chainTag("")
+
+	list := make([]byte, hostListSize)
+	copy(list, hostPub(k))
+	list[ed25519.PublicKeySize] = scopeImage
+	copy(list[ed25519.PublicKeySize+2:], tag[:])
+	list[hostEntrySize+ed25519.PublicKeySize] = 2
+	chip.bins[hostKeysID] = list
+
+	if err := authAs(t, imageOn(t, chip, 0, ""), k); !errors.Is(err, errHostKeysBad) {
+		t.Fatalf("unknown scope kind in an empty slot accepted: %v", err)
+	}
+}

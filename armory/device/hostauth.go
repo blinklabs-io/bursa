@@ -158,12 +158,10 @@ func (s *Service) loadHostKeys(chip Chip) error {
 
 	for i := 0; i < len(b); i += size {
 		k := b[i : i+ed25519.PublicKeySize]
-		if bytes.Equal(k, zero) {
-			continue
-		}
-
 		e := hostEntry{key: bytes.Clone(k), kind: scopeLegacy}
 
+		// the scope kind is checked in every slot, used or not, so a list in
+		// an unknown format is refused
 		if size == hostEntrySize {
 			meta := b[i+ed25519.PublicKeySize : i+size]
 			if meta[0] != scopeLegacy && meta[0] != scopeImage {
@@ -175,6 +173,10 @@ func (s *Service) loadHostKeys(chip Chip) error {
 
 			e.kind, e.network = meta[0], meta[1]
 			copy(e.chain[:], meta[2:])
+		}
+
+		if bytes.Equal(k, zero) {
+			continue
 		}
 
 		entries = append(entries, e)
