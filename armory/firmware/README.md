@@ -135,8 +135,7 @@ where the byte `0xd4` (the CSF header tag) starts the CSF.
 An unfused board is in the open configuration: the boot ROM runs a bad or
 unsigned image anyway and records HAB events, so a signature failure does not
 show as a refusal to boot. The events are read with the HAB `hab_status`
-report (as in U-Boot's `hab_status` command). Neither TamaGo nor this
-firmware reads them yet, so that reading, and the bring-up report that
-includes it, is follow-up work. Until it exists, signed images are checked on
-an unfused board only by their structure; the first test that the boot ROM
-accepts them needs a board and the HAB event report.
+report (as in U-Boot's `hab_status` command). The firmware reads them at
+boot, before the network and USB stack start, and adds the HAB status and
+its events to the bring-up report served at `/`. On an unfused board, that
+report is how to check that the boot ROM accepted a signed image.
