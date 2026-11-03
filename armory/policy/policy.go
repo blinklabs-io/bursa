@@ -66,8 +66,10 @@ var allowedKeys = map[uint64]bool{
 }
 
 const (
-	keyFee       = 2
-	keyNetworkID = 15
+	keyFee           = 2
+	keyTTL           = 3
+	keyValidityStart = 8
+	keyNetworkID     = 15
 
 	// byronAddressType is the first header type without a network nibble.
 	byronAddressType = 8
@@ -86,7 +88,7 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 		return Decision{}, fmt.Errorf("policy: unsupported era %d", era)
 	}
 
-	fee, err := checkRaw(p, body)
+	raw, err := checkRaw(p, body)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -110,7 +112,7 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 		}
 	}
 
-	summary := []string{fmt.Sprintf("fee=%d", fee)}
+	summary := []string{raw.String()}
 	var poolCert, ownerCert, voted bool
 
 	// The ledger applies certificates in order, so a second registration
@@ -158,41 +160,94 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 	}, nil
 }
 
+// rawFields are the scalar body fields checkRaw reads and the operator sees.
+type rawFields struct {
+	fee uint64
+	ttl uint64
+	// start is the validity start slot, when the body has one.
+	start *uint64
+}
+
+func (r rawFields) String() string {
+	s := fmt.Sprintf("fee=%d ttl=%d", r.fee, r.ttl)
+
+	if r.start != nil {
+		s += fmt.Sprintf(" valid-from=%d", *r.start)
+	}
+
+	return s
+}
+
 // checkRaw applies the rules gouroboros decoding would hide: exact key set,
-// no duplicate keys, definite lengths, a present fee and the network id. A
-// fee is required because a Dijkstra sub-transaction body has none.
-func checkRaw(p profile.Profile, body []byte) (fee uint64, err error) {
+// no duplicate keys, definite lengths, a present fee and ttl, and the network
+// id. A fee is required because a Dijkstra sub-transaction body has none. A
+// ttl is required because the device has no trusted clock and cannot bound
+// how far ahead it is; without one a signed body stays valid forever.
+func checkRaw(p profile.Profile, body []byte) (r rawFields, err error) {
 	var m map[uint64]cbor.RawMessage
 
 	if err = rawDecoder.Unmarshal(body, &m); err != nil {
-		return 0, fmt.Errorf("policy: body map: %w", err)
+		return r, fmt.Errorf("policy: body map: %w", err)
 	}
 
 	for key := range m {
 		if !allowedKeys[key] {
-			return 0, fmt.Errorf("policy: body key %d not allowed", key)
+			return r, fmt.Errorf("policy: body key %d not allowed", key)
 		}
 	}
 
 	raw, ok := m[keyFee]
 
 	if !ok {
-		return 0, errors.New("policy: body has no fee")
+		return r, errors.New("policy: body has no fee")
 	}
 
-	if err = cbor.Unmarshal(raw, &fee); err != nil {
-		return 0, fmt.Errorf("policy: fee: %w", err)
+	if err = cbor.Unmarshal(raw, &r.fee); err != nil {
+		return r, fmt.Errorf("policy: fee: %w", err)
+	}
+
+	if raw, ok = m[keyTTL]; !ok {
+		return r, errors.New("policy: body has no ttl")
+	}
+
+	if r.ttl, err = decodeUint(raw); err != nil {
+		return r, fmt.Errorf("policy: ttl: %w", err)
+	}
+
+	if raw, ok = m[keyValidityStart]; ok {
+		start, err := decodeUint(raw)
+		if err != nil {
+			return r, fmt.Errorf("policy: validity start: %w", err)
+		}
+
+		r.start = &start
 	}
 
 	if raw, ok = m[keyNetworkID]; ok {
-		var id uint64
-
-		if err = cbor.Unmarshal(raw, &id); err != nil || id != uint64(p.NetworkID) {
-			return 0, errors.New("policy: network id does not match profile")
+		id, err := decodeUint(raw)
+		if err != nil || id != uint64(p.NetworkID) {
+			return r, errors.New("policy: network id does not match profile")
 		}
 	}
 
-	return fee, nil
+	return r, nil
+}
+
+// decodeUint decodes a CBOR unsigned integer. cbor.Unmarshal leaves a plain
+// uint64 unchanged for null and undefined, so it decodes through a pointer
+// and refuses nil.
+func decodeUint(raw cbor.RawMessage) (uint64, error) {
+	var v *uint64
+
+	if err := cbor.Unmarshal(raw, &v); err != nil {
+		return 0, err
+	}
+
+	if v == nil {
+		return 0, errors.New("not an unsigned integer")
+	}
+
+	return *v, nil
 }
 
 // checkCert allows only certificates for this pool and its owner. It reports

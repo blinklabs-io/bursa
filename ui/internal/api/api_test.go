@@ -2214,6 +2214,7 @@ type fakePoolOps struct {
 	regErr           error
 	retireErr        error
 	submitErr        error
+	regSubmitErr     error
 
 	creds     poolops.Credentials
 	kes       poolops.KESPeriodInfo
@@ -2224,6 +2225,10 @@ type fakePoolOps struct {
 	tx        poolops.TxResult
 	poolID    string
 	poolIDHex string
+
+	regTx             poolops.RegistrationTxResult
+	regSubmitPassword string
+	regSubmitParams   poolops.RegistrationParams
 
 	credPassword     string
 	issuePassword    string
@@ -2329,6 +2334,12 @@ func (f *fakePoolOps) SubmitRetirement(_ context.Context, password string, epoch
 	f.submitPassword = password
 	f.submitEpoch = epoch
 	return f.tx, f.submitErr
+}
+
+func (f *fakePoolOps) SubmitRegistration(_ context.Context, password string, p poolops.RegistrationParams) (poolops.RegistrationTxResult, error) {
+	f.regSubmitPassword = password
+	f.regSubmitParams = p
+	return f.regTx, f.regSubmitErr
 }
 
 // fakeDexQuoter implements api.DexQuoter for tests. It records the arguments
@@ -3946,6 +3957,48 @@ func TestPoolRetirementSubmitRejected422(t *testing.T) {
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/retirement/submit", body))
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("retirement submit rejected = %d, want 422", rec.Code)
+	}
+}
+
+func TestPoolRegistrationSubmitGatedWhileSyncing(t *testing.T) {
+	t.Parallel()
+	po := &fakePoolOps{}
+	h := NewHandler(testSessionToken, fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"pw","pledge":1,"cost":2,"margin_num":1,"margin_denom":100}`)
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/registration/submit", body))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("registration submit while syncing = %d, want 503", rec.Code)
+	}
+	if po.regSubmitPassword != "" {
+		t.Fatal("registration was submitted while the node was syncing")
+	}
+}
+
+func TestPoolRegistrationSubmitReady(t *testing.T) {
+	t.Parallel()
+	po := &fakePoolOps{regTx: poolops.RegistrationTxResult{TxHash: "feedface", Update: true}}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"pw","pledge":1000000,"cost":340000000,"margin_num":1,"margin_denom":100}`)
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/registration/submit", body))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tx_hash":"feedface"`) || !strings.Contains(rec.Body.String(), `"update":true`) {
+		t.Fatalf("registration submit ready = %d body %s", rec.Code, rec.Body.String())
+	}
+	if po.regSubmitPassword != "pw" || po.regSubmitParams.Pledge != 1000000 || po.regSubmitParams.Cost != 340000000 || po.regSubmitParams.MarginDenom != 100 {
+		t.Fatalf("submit args = password %q params %+v", po.regSubmitPassword, po.regSubmitParams)
+	}
+}
+
+func TestPoolRegistrationSubmitRejected422(t *testing.T) {
+	t.Parallel()
+	po := &fakePoolOps{regSubmitErr: fmt.Errorf("%w: ledger rule X", poolops.ErrSubmitRejected)}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"pw","pledge":1,"cost":2,"margin_num":1,"margin_denom":100}`)
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/registration/submit", body))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("registration submit rejected = %d, want 422", rec.Code)
 	}
 }
 

@@ -44,7 +44,11 @@ func adminServer(t *testing.T) *httptest.Server {
 	mux.Handle("/wipe/", svc.WipeHandler())
 	mux.Handle("/", svc.Handler())
 
-	srv := httptest.NewServer(mux)
+	// the device answers only to its own address, not the loopback one
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Host = device.Address
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(srv.Close)
 
 	return srv

@@ -19,6 +19,8 @@ package main
 import (
 	"fmt"
 	"net/http"
+
+	"github.com/blinklabs-io/bursa/armory/device"
 )
 
 // maxSignable bounds signing requests; an operational certificate body is
@@ -31,10 +33,32 @@ const testnetSign = "testnet bring-up build: unauthenticated /sign is served; ne
 
 func init() {
 	http.HandleFunc("/sign", (&legacy).sign)
-	http.HandleFunc("/pubkey", (&legacy).publicKey)
+	http.HandleFunc("/pubkey", (&legacy).rawPublicKey)
 }
 
-// sign returns a cold key signature over the hex request body.
+// rawPublicKey returns the public key of the key /sign signs with, which is
+// not the cold key.
+func (s *signer) rawPublicKey(w http.ResponseWriter, _ *http.Request) {
+	s.Lock()
+	defer s.Unlock()
+
+	if s.se == nil {
+		http.Error(w, errNotOpen.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	pub, err := device.RawPublicKey(s.se)
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("read public key: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Fprintf(w, "%x\n", []byte(pub))
+}
+
+// sign returns a signature over the hex request body made with the bring-up
+// raw signing key, never a cold key.
 //
 // TESTNET ONLY: this endpoint is unauthenticated, anything that can reach
 // the USB network can obtain signatures.
@@ -65,7 +89,7 @@ func (s *signer) sign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sig, err := s.se.SignEd25519(coldKeyID, msg)
+	sig, err := device.SignRaw(s.se, msg)
 
 	if err != nil {
 		http.Error(w, fmt.Sprintf("sign: %v", err), http.StatusInternalServerError)

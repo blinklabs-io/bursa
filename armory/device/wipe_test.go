@@ -39,7 +39,7 @@ func wipePost(t *testing.T, s *Service, path string, req any) (int, []byte) {
 	}
 
 	w := httptest.NewRecorder()
-	s.WipeHandler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, bytes.NewReader(b)))
+	s.WipeHandler().ServeHTTP(w, jsonRequest(path, bytes.NewReader(b)))
 
 	return w.Code, w.Body.Bytes()
 }

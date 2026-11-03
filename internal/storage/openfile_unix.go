@@ -25,6 +25,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const inspectWalletPathsByName = true
+
 // openWalletFileForRead walks the wallet path from stable directory
 // descriptors so replacing the wallet directory cannot redirect the read.
 func openWalletFileForRead(baseDir, name string) (*os.File, error) {
@@ -45,6 +47,33 @@ func openWalletFileForRead(baseDir, name string) (*os.File, error) {
 		return nil, err
 	}
 	return os.NewFile(uintptr(fd), "wallet.json"), nil
+}
+
+func ensureWalletDirectory(path string) error {
+	return os.MkdirAll(path, 0o700)
+}
+
+func readWalletDirectory(baseDir string) ([]os.DirEntry, error) {
+	return os.ReadDir(baseDir)
+}
+
+func writeWalletFile(baseDir, name string, data []byte) error {
+	if err := ensureWalletDirectory(baseDir); err != nil {
+		return err
+	}
+	walletDir := filepath.Join(baseDir, "wallet-"+name)
+	if err := ensureWalletDirectory(walletDir); err != nil {
+		return err
+	}
+	return bursa.WriteSecretKeyFile(filepath.Join(walletDir, "wallet.json"), data)
+}
+
+func deleteWallet(baseDir, name string) error {
+	walletDir := filepath.Join(baseDir, "wallet-"+name)
+	if _, err := os.Lstat(walletDir); err != nil {
+		return err
+	}
+	return os.RemoveAll(walletDir)
 }
 
 // checkWalletFileMode rejects a wallet file other users can access. Saves

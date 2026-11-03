@@ -15,6 +15,8 @@
 package profile
 
 import (
+	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
@@ -188,6 +190,67 @@ func TestNameRules(t *testing.T) {
 	}
 
 	if _, err := Encode(Profile{Name: "otg@prime-mainnet_2.x"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// record_v1.bin is a record as the encoder wrote it before LastIssued
+// existed. It must keep decoding, with the field unset, and re-encode to the
+// same bytes so an untouched record is not rewritten differently.
+func TestDecodeRecordWithoutIssued(t *testing.T) {
+	t.Parallel()
+
+	b, err := os.ReadFile("testdata/record_v1.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Decode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := Profile{
+		Name: "otg@preview", ColdKeyID: 0x20e50010, FloorSet: true, OpCertFloor: 7,
+		RewardAccount: "e0" + strings.Repeat("ab", 28),
+	}
+
+	if got != want || got.LastIssued != 0 {
+		t.Fatalf("decoded %+v, want %+v", got, want)
+	}
+
+	if enc, err := Encode(got); err != nil || !bytes.Equal(enc, b) {
+		t.Fatalf("re-encode differs: %q, %v", enc, err)
+	}
+}
+
+func TestLastIssuedRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	want := testProfile()
+	want.LastIssued = 4
+
+	b, err := Encode(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Contains(b, []byte(`"issued":4`)) {
+		t.Fatalf("issued counter not in record: %q", b)
+	}
+
+	if got, err := Decode(b); err != nil || got != want {
+		t.Fatalf("round trip %+v, %v", got, err)
+	}
+
+	// the record limit holds for the longest name and reward address with
+	// four-digit counters
+	large := Profile{
+		Name: strings.Repeat("n", MaxNameLen), NetworkID: 1, Slot: MaxSlot, ColdKeyID: ^uint32(0),
+		FloorSet: true, OpCertFloor: 9998, LastIssued: 9999, RewardAccount: "f1" + strings.Repeat("ff", 28),
+	}
+
+	if _, err := Encode(large); err != nil {
 		t.Fatal(err)
 	}
 }

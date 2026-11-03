@@ -32,7 +32,7 @@ import (
 
 func rawPost(h http.Handler, path string, body []byte) (int, []byte) {
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)))
+	h.ServeHTTP(w, jsonRequest(path, bytes.NewReader(body)))
 
 	return w.Code, w.Body.Bytes()
 }
