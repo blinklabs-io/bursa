@@ -130,7 +130,7 @@ need_build() {
 	[ "$have" = provisioning ] || fail "device runs the ${have:-unknown} image, not the provisioning image"
 	[ -n "${SIGNING_IMX:-}" ] || fail "device runs the provisioning image; set SIGNING_IMX, or load the signing image with the log card in and rerun"
 	(: < /dev/tty) 2> /dev/null || fail "no terminal to wait for the signing log card; load the signing image with the card in and rerun"
-	curl -sf -m 5 --interface "$SOURCE" -X POST "$SIGNER/reset" > /dev/null || true
+	curl -sf -m 5 --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/reset" > /dev/null || true
 	sleep 3
 	# the board now waits in USB recovery mode, which a card in the slot
 	# would have blocked at power-up; the signing image reads the card when
@@ -256,7 +256,7 @@ need_build provisioning
 # the key is read from a file: an argument would show in the process list
 jq -n --argjson id "$COLD_KEY_ID" --slurpfile key pool-cold.skey \
 	'{cold_key_id: $id, signing_key: $key[0].cborHex}' |
-	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/cold" --data-binary @- > cold.json.new
+	curl -sf --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/provision/cold" --data-binary @- > cold.json.new
 cat cold.json.new
 mv cold.json.new cold.json
 fi
@@ -288,7 +288,7 @@ need_build provisioning
 jq -n --arg name "$PROFILE" --argjson slot "$SLOT" --argjson id "$COLD_KEY_ID" --arg reward "$REWARD_HEX" \
 	--slurpfile owner owner.skey \
 	'{name: $name, network_id: 0, slot: $slot, cold_key_id: $id, reward_account: $reward, owner_signing_key: $owner[0].cborHex}' |
-	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/profile" --data-binary @- > profile.json.new
+	curl -sf --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/provision/profile" --data-binary @- > profile.json.new
 cat profile.json.new
 mv profile.json.new profile.json
 fi
@@ -312,7 +312,7 @@ if jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json > /dev/null 
 	pass "host key registered in an earlier run"
 else
 need_build provisioning
-curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/host-key" --data-binary @host-key.pub > host-key.json.new
+curl -sf --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/provision/host-key" --data-binary @host-key.pub > host-key.json.new
 mv host-key.json.new host-key.json
 fi
 check "host key registered" jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json

@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	deviceIP  = "10.0.0.1/24"
+	deviceIP  = device.Address + "/24"
 	hostIP    = "10.0.0.2"
 	deviceMAC = "1a:55:89:a2:69:41"
 	hostMAC   = "1a:55:89:a2:69:42"
@@ -141,6 +141,8 @@ func main() {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    maxHeaderBytes,
+		// the legacy routes are not JSON handlers, so the whole mux is guarded
+		Handler: device.Guard(device.Address, http.DefaultServeMux),
 	}
 
 	// open connections are capped too: past the cap, Accept waits for one

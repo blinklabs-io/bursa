@@ -112,6 +112,8 @@ func (c *client) do(method, path, body string) (string, error) {
 		return "", err
 	}
 
+	req.Header.Set("Content-Type", "application/json")
+
 	res, err := c.http.Do(req)
 	if err != nil {
 		return "", err

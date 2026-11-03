@@ -403,6 +403,11 @@ func (s *Service) provisioningRoutes(mux *http.ServeMux) {
 // writes its JSON result. Errors returned by fn go to the client as text.
 func handle[Req, Resp any](s *Service, fn func(Req) (Resp, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// before the body is read or the chip touched
+		if !allowed(w, r, Address) {
+			return
+		}
+
 		var req Req
 
 		// unknown fields are refused, so a misspelled field is not ignored
