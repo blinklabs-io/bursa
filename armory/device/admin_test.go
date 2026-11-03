@@ -109,6 +109,8 @@ func requestFor(t *testing.T, s *Service, route string) any {
 		return RewardRequest{Profile: "otg@preview", RewardAccount: strings.Repeat("e0", 29)}
 	case RouteProvisionCold:
 		return cold
+	case RouteProvisionColdInfo:
+		return ColdInfoRequest{ColdKeyID: testColdID}
 	case RouteProvisionIdentity:
 		return IdentityRequest{}
 	case RouteProvisionHostKey:

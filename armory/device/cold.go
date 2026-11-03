@@ -54,6 +54,7 @@ var errMalformedRequest = errors.New("malformed request")
 // ColdInfoRequest asks for an existing cold key's public key, pool id and
 // origin.
 type ColdInfoRequest struct {
+	HostAuth
 	ColdKeyID uint32 `json:"cold_key_id"`
 }
 

@@ -413,9 +413,10 @@ before origins were recorded, reports `unknown`. Repeating the import of such
 a key with its seed records it as `imported`, after which it no longer
 reports `unknown`. A wipe deletes the record with
 the key. The origin is not part of the attested inventory and is not signed:
-it is read from the provisioning firmware, which is not host-key
-authenticated. A reported `generated` is therefore not proof that the key
-cannot be exported, and tools must not present it as such.
+it is read from the provisioning firmware, whose replies the device does not
+sign; host-key authentication covers the request, not the reply. A reported
+`generated` is therefore not proof that the key cannot be exported, and tools
+must not present it as such.
 
 A generated cold key has no backup. Its private key cannot leave the SE050, so
 losing, wiping or breaking the device loses the pool: its id, registration and
@@ -439,13 +440,13 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   routes take unsigned requests, so a fresh device can be set up. This is the
   only time `POST /provision/host-key` adds a key unsigned.
 - Once any host key is registered, `/provision/profile`, `/provision/floor`,
-  `/provision/reward`, `/provision/cold`, `/provision/identity`,
-  `/provision/host-key`, `/provision/host-key/revoke`, `/wipe/profile` and
-  `/wipe/signlog` need `challenge`, `host_key` and `host_signature` fields
-  from a host key of the image's network and chain. A key of another network
-  or chain does not qualify, and does not let the image's first key in
-  unsigned. The firmware's unsigned `POST /provision` cold key import is
-  refused too; use a signed `/provision/cold`.
+  `/provision/reward`, `/provision/cold`, `/provision/cold/info`,
+  `/provision/identity`, `/provision/host-key`, `/provision/host-key/revoke`,
+  `/wipe/profile` and `/wipe/signlog` need `challenge`, `host_key` and
+  `host_signature` fields from a host key of the image's network and chain. A
+  key of another network or chain does not qualify, and does not let the
+  image's first key in unsigned. The firmware's unsigned `POST /provision`
+  cold key import is refused too; use a signed `/provision/cold`.
 - The signature is an Ed25519 signature over `AdminBinding`: the domain
   `bursa-armory-admin/1`, the route, the request as the device's Go types
   encode it with the three fields empty and each private key (`signing_key`
@@ -478,11 +479,12 @@ armory-pool -host-key host.skey wipe signlog < wipe-request.json
 armory-pool wipe device < wipe-request.json
 ```
 
-`provision` takes `profile`, `floor`, `reward`, `cold`, `identity`, `host-key`
-or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile` or
-`signlog`. Without `-host-key` a request is sent unsigned, which the device
-accepts only in the bootstrap state, and always for `wipe device` and `wipe
-objects`. Register the first host key before the other provisioning steps.
+`provision` takes `profile`, `floor`, `reward`, `cold`, `cold/info`,
+`identity`, `host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`,
+`profile` or `signlog`. Without `-host-key` a request is sent unsigned, which
+the device accepts only in the bootstrap state, and always for `wipe device`
+and `wipe objects`. Register the first host key before the other provisioning
+steps.
 
 ### Signing log
 

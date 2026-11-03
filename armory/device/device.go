@@ -411,7 +411,7 @@ func (s *Service) provisioningRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+RouteProvisionFloor, handleAdmin(s, RouteProvisionFloor, s.resetFloor))
 	mux.HandleFunc("POST "+RouteProvisionReward, handleAdmin(s, RouteProvisionReward, s.setReward))
 	mux.HandleFunc("POST "+RouteProvisionCold, handleAdmin(s, RouteProvisionCold, s.provisionCold))
-	mux.HandleFunc("POST /provision/cold/info", handle(s, s.coldInfo))
+	mux.HandleFunc("POST "+RouteProvisionColdInfo, handleAdmin(s, RouteProvisionColdInfo, s.coldInfo))
 	mux.HandleFunc("POST "+RouteProvisionHostKey, handleAdmin(s, RouteProvisionHostKey, s.addHostKey))
 	mux.HandleFunc("POST "+RouteProvisionHostRevoke, handleAdmin(s, RouteProvisionHostRevoke, s.revokeHostKey))
 	mux.HandleFunc("POST "+RouteProvisionIdentity, handleAdmin(s, RouteProvisionIdentity, func(IdentityRequest) (IdentityResponse, error) {

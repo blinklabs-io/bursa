@@ -137,3 +137,32 @@ func TestColdOriginWriters(t *testing.T) {
 		t.Errorf("origin objects written by %v, want only %v", writers, want)
 	}
 }
+
+// Once a host key is registered, /provision/cold/info refuses an unsigned
+// request like every other provisioning route.
+func TestColdInfoRefusesUnsignedWithHostKey(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newHostAuthService(t)
+
+	code, body := rawPost(s.ProvisioningHandler(), "/provision/cold/info", jsonOf(t, ColdInfoRequest{ColdKeyID: testColdID}))
+	if code == http.StatusOK {
+		t.Fatalf("unsigned cold info request accepted: %s", body)
+	}
+
+	if !strings.Contains(string(body), errHostKeyUnknown.Error()) {
+		t.Fatalf("refused for another reason: %s", body)
+	}
+}
+
+// A cold info request signed by the registered host key is answered.
+func TestColdInfoAcceptsSignedWithHostKey(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newHostAuthService(t)
+
+	code, body := postAs(t, s.ProvisioningHandler(), "/provision/cold/info", ColdInfoRequest{ColdKeyID: testColdID}, testHostKey)
+	if code != http.StatusOK {
+		t.Fatalf("signed cold info request refused: %d %s", code, body)
+	}
+}

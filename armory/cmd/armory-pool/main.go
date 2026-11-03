@@ -23,7 +23,7 @@
 //	armory-pool -identity HEX -profile NAME witness -role pool|stake -tx-file F -out W
 //	armory-pool -identity HEX -profile NAME opcert -kes-vkey F -kes-period N -chain-counter N|none -out F
 //	armory-pool -identity HEX signlog [-head-seq N -head-hash HEX]
-//	armory-pool [-host-key F] provision profile|floor|reward|cold|identity|host-key|host-key/revoke < request.json
+//	armory-pool [-host-key F] provision profile|floor|reward|cold|cold/info|identity|host-key|host-key/revoke < request.json
 //	armory-pool [-host-key F] wipe objects|device|profile|signlog < request.json
 //	armory-pool reward-hex stake_test1...
 //	armory-pool address -stake-vkey F [-payment-vkey F] [-type base|reward] [-network preview]
