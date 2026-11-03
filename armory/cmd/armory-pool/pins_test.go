@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -72,7 +73,7 @@ func TestPinsRequestPrintsProvisioningBody(t *testing.T) {
 		RelaysDigest: digest,
 	}
 
-	if req != want {
+	if !reflect.DeepEqual(req, want) {
 		t.Errorf("request %+v, want %+v", req, want)
 	}
 
@@ -92,7 +93,7 @@ func TestPinsRequestPrintsProvisioningBody(t *testing.T) {
 		t.Fatalf("device refused the printed request: %s", res.Status)
 	}
 
-	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil || resp.Pins != want {
+	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil || !reflect.DeepEqual(resp.Pins, want) {
 		t.Errorf("device response %+v, %v", resp, err)
 	}
 }

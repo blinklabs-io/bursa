@@ -370,8 +370,8 @@ Inventory and challenge replies stay at version 1.
 Without pins the policy checks a registration's operator, owner and reward
 account only. A host that can request signatures could then register another
 VRF key, other relays or another metadata URL, or set pledge, cost and margin
-freely. `POST /provision/pins`, served only by the provisioning firmware like
-`/provision/reward` and not host-key authenticated, pins a profile's
+freely. `POST /provision/pins`, served only by the provisioning firmware and
+host-key authenticated like `/provision/reward`, pins a profile's
 registrations:
 
 - `vrf_key_hash` and `metadata_hash` (32 bytes, hex) must match exactly. An
@@ -399,6 +399,7 @@ still accepts them. `armory-pool pins-request` prints the request body; it
 takes each relay as `-relay`, in registration order (`HOST:PORT`,
 `IPV4:PORT`, `[IPV6]:PORT`, `IPV4,[IPV6]:PORT` or `srv:NAME`), and the
 metadata URL as `-metadata-url`, and computes `relays_digest` from them.
+Send it with `armory-pool -host-key host.skey provision pins`.
 
 The signer sends version 1 unless the backend sets `protocol`:
 
@@ -442,8 +443,9 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   routes take unsigned requests, so a fresh device can be set up. This is the
   only time `POST /provision/host-key` adds a key unsigned.
 - Once any host key is registered, `/provision/profile`, `/provision/floor`,
-  `/provision/reward`, `/provision/cold`, `/provision/identity`,
-  `/provision/host-key`, `/provision/host-key/revoke`, `/wipe/profile` and
+  `/provision/reward`, `/provision/pins`, `/provision/cold`,
+  `/provision/identity`, `/provision/host-key`, `/provision/host-key/revoke`,
+  `/wipe/profile` and
   `/wipe/signlog` need `challenge`, `host_key` and `host_signature` fields
   from a host key of the image's network and chain. A key of another network
   or chain does not qualify, and does not let the image's first key in
@@ -481,8 +483,8 @@ armory-pool -host-key host.skey wipe signlog < wipe-request.json
 armory-pool wipe device < wipe-request.json
 ```
 
-`provision` takes `profile`, `floor`, `reward`, `cold`, `identity`, `host-key`
-or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile` or
+`provision` takes `profile`, `floor`, `reward`, `pins`, `cold`, `identity`,
+`host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile` or
 `signlog`. Without `-host-key` a request is sent unsigned, which the device
 accepts only in the bootstrap state, and always for `wipe device` and `wipe
 objects`. Register the first host key before the other provisioning steps.

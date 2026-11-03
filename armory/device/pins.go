@@ -29,6 +29,7 @@ import (
 // MetadataHash pins the absence of metadata. Bounds are inclusive; the margin
 // bound is MarginMaxNum/MarginMaxDen.
 type PinsRequest struct {
+	HostAuth
 	Profile      string `json:"profile"`
 	VRFKeyHash   string `json:"vrf_key_hash"`
 	MetadataHash string `json:"metadata_hash,omitempty"`
@@ -162,6 +163,9 @@ func (s *Service) setPins(req PinsRequest) (PinsResponse, error) {
 		pins.PledgeMin, pins.PledgeMax, pins.CostMax, pins.MarginMaxNum, pins.MarginMaxDen)
 
 	req.Profile = p.Name
+
+	// echo the pins, not the request's authentication
+	req.HostAuth = HostAuth{}
 
 	return PinsResponse{Profile: p.Name, Pins: req}, nil
 }

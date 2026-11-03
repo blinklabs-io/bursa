@@ -322,3 +322,43 @@ func TestStartupReportShowsPinned(t *testing.T) {
 		t.Errorf("startup report does not show the profile is unpinned:\n%s", log.String())
 	}
 }
+
+// Once a host key is registered, /provision/pins refuses an unsigned request
+// like every other provisioning route: otherwise any process on the host
+// could re-pin the VRF key, relays and bounds the policy enforces.
+func TestPinsRefuseUnsignedWithHostKey(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newHostAuthService(t)
+	before := chipState(chip)
+
+	code, body := rawPost(s.ProvisioningHandler(), "/provision/pins", jsonOf(t, setPinsReq()))
+	if code == http.StatusOK {
+		t.Fatalf("unsigned pins request accepted: %s", body)
+	}
+
+	if !strings.Contains(string(body), errHostKeyUnknown.Error()) {
+		t.Fatalf("refused for another reason: %s", body)
+	}
+
+	if got := chipState(chip); fmt.Sprint(got) != fmt.Sprint(before) {
+		t.Fatal("chip changed")
+	}
+}
+
+// A pins request signed by the registered host key is accepted.
+func TestPinsAcceptSignedWithHostKey(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newHostAuthService(t)
+
+	code, body := postAs(t, s.ProvisioningHandler(), "/provision/pins", setPinsReq(), testHostKey)
+	if code != http.StatusOK {
+		t.Fatalf("signed pins request refused: %d %s", code, body)
+	}
+
+	// the reply echoes the pins, not the request's authentication
+	if bytes.Contains(body, []byte("host_signature")) || bytes.Contains(body, []byte("challenge")) {
+		t.Errorf("reply echoes host authentication: %s", body)
+	}
+}
