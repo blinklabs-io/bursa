@@ -25,7 +25,8 @@ import (
 )
 
 // Armory object ranges the profile package does not name: the bring-up key
-// tests' transient objects, and the fee wallet keys of early builds.
+// tests' transient objects and the testnet raw signing key, and the fee
+// wallet keys of early builds.
 const (
 	bringupFirst uint32 = 0x20e50001
 	bringupLast  uint32 = 0x20e5000f
@@ -45,6 +46,7 @@ type WipeDeviceRequest struct {
 // WipeProfileRequest confirms the removal of one profile, as
 // WipeDeviceRequest.
 type WipeProfileRequest struct {
+	HostAuth
 	IdentityPublicKey string `json:"identity_public_key"`
 	Profile           string `json:"profile"`
 }
@@ -56,21 +58,26 @@ type WipeResponse struct {
 	Deleted []string `json:"deleted,omitempty"`
 }
 
-// WipeHandler serves only the wipe endpoints, for the wipe firmware. Neither
-// the signing nor the provisioning firmware serves them. As with the
-// provisioning endpoints, requests are not host-key authenticated: the wipe
-// image must be loaded onto the board, and the identity public key only
-// confirms which device is meant. A wipe that fails reports no partial list;
-// the request is sent again, and /wipe/objects lists what remains.
+// WipeHandler serves only the wipe endpoints and the challenge endpoint, for
+// the wipe firmware. Neither the signing nor the provisioning firmware serves
+// them. Once a host key is registered, /wipe/profile and /wipe/signlog need a
+// request signed by a host key of this build's network and chain, as the
+// provisioning endpoints do, and the identity public key only confirms which
+// device is meant. /wipe/device is confirmed by the identity public key
+// alone, which is public: it is the way out when every host key is lost, and
+// it deletes everything the armory holds. /wipe/objects only lists object
+// IDs. A wipe that fails reports no partial list; the request is sent again,
+// and /wipe/objects lists what remains.
 func (s *Service) WipeHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/challenge", handle(s, s.challenge))
 	mux.HandleFunc("POST /wipe/objects", handle(s, func(struct{}) (WipeResponse, error) {
 		ids, err := s.armoryObjects()
 		return WipeResponse{Objects: hexIDs(ids)}, err
 	}))
 	mux.HandleFunc("POST /wipe/device", handle(s, s.wipeDevice))
-	mux.HandleFunc("POST /wipe/profile", handle(s, s.wipeProfile))
-	mux.HandleFunc("POST /wipe/signlog", handle(s, s.wipeSignLog))
+	mux.HandleFunc("POST "+RouteWipeProfile, handleAdmin(s, RouteWipeProfile, s.wipeProfile))
+	mux.HandleFunc("POST "+RouteWipeSignLog, handleAdmin(s, RouteWipeSignLog, s.wipeSignLog))
 
 	return mux
 }
@@ -199,8 +206,8 @@ func (s *Service) wipeDevice(req WipeDeviceRequest) (WipeResponse, error) {
 		return WipeResponse{}, err
 	}
 
-	s.profiles = map[string]profile.Profile{}
-	s.hostKeys, s.hostKeysBad = nil, false
+	s.profiles, s.badSlots = map[string]profile.Profile{}, nil
+	s.hostKeys, s.hostEntries, s.hostKeysBad = nil, nil, false
 	s.logf("wipe: device wiped, %d objects deleted", len(deleted))
 
 	return WipeResponse{Deleted: hexIDs(deleted)}, nil
@@ -209,7 +216,7 @@ func (s *Service) wipeDevice(req WipeDeviceRequest) (WipeResponse, error) {
 // wipeSignLog deletes only the signing log head, so the signing firmware
 // starts a new log on a zeroed card under the same identity key. Every entry
 // on the old card stays verifiable with signlog-verify -image.
-func (s *Service) wipeSignLog(req WipeDeviceRequest) (WipeResponse, error) {
+func (s *Service) wipeSignLog(req WipeSignLogRequest) (WipeResponse, error) {
 	if err := s.confirm(req.IdentityPublicKey); err != nil {
 		return WipeResponse{}, err
 	}
@@ -232,9 +239,10 @@ func (s *Service) wipeProfile(req WipeProfileRequest) (WipeResponse, error) {
 		return WipeResponse{}, err
 	}
 
-	p, ok := s.profiles[req.Profile]
-	if !ok {
-		return WipeResponse{}, errUnknown
+	// an image removes only the profiles of the network and chain it serves
+	p, err := s.profileFor(req.Profile)
+	if err != nil {
+		return WipeResponse{}, err
 	}
 
 	// an unreadable, misplaced or duplicate record may name the same cold

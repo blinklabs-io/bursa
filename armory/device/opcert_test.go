@@ -20,6 +20,7 @@ func TestNextOpCert(t *testing.T) {
 	for _, c := range []struct {
 		floor    uint64
 		floorSet bool
+		last     uint64
 		chain    uint64
 		issue    uint64
 		newFloor uint64
@@ -31,8 +32,17 @@ func TestNextOpCert(t *testing.T) {
 		{floor: 4, floorSet: true, chain: 5, issue: 6, newFloor: 5},
 		{floor: 5, floorSet: true, chain: 4, fail: true},
 		{floor: 0, floorSet: true, chain: ^uint64(0), fail: true},
+		// the pool forged with the last issued counter
+		{floor: 4, floorSet: true, last: 5, chain: 5, issue: 6, newFloor: 5},
+		// the pool did not forge, so the issued counter is reissued
+		{floor: 4, floorSet: true, last: 5, chain: 4, issue: 5, newFloor: 4},
+		// above what the device issued: the ledger cannot have that counter
+		{floor: 4, floorSet: true, last: 5, chain: 6, fail: true},
+		{floor: 4, floorSet: true, last: 5, chain: 100, fail: true},
+		// unset on a record from before the field: no bound
+		{floor: 4, floorSet: true, last: 0, chain: 100, issue: 101, newFloor: 100},
 	} {
-		issue, newFloor, err := nextOpCert(c.floor, c.floorSet, c.chain)
+		issue, newFloor, err := nextOpCert(c.floor, c.floorSet, c.last, c.chain)
 
 		if c.fail {
 			if err == nil {

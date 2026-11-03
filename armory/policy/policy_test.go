@@ -20,6 +20,7 @@ import (
 
 	"github.com/blinklabs-io/bursa/armory/profile"
 	"github.com/blinklabs-io/gouroboros/ledger"
+	"github.com/fxamacker/cbor/v2"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -88,6 +89,22 @@ func TestEvaluate(t *testing.T) {
 		{"mint", RoleCold, conway, baseBody().with(9, map[string]uint64{}).with(4, certs(retire(k.Pool))).cbor(), false},
 		{"proposal procedure", RoleCold, conway, baseBody().with(20, []any{}).with(4, certs(retire(k.Pool))).cbor(), false},
 		{"donation", RoleCold, conway, baseBody().with(22, uint64(1)).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"no ttl", RoleCold, conway, baseBody().without(3).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"no ttl under dijkstra", RoleCold, dijkstra, baseBody().without(3).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"validity start without ttl", RoleCold, conway,
+			baseBody().without(3).with(8, uint64(1)).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"ttl with validity start", RoleCold, conway,
+			baseBody().with(8, uint64(1)).with(4, certs(retire(k.Pool))).cbor(), true},
+		{"null ttl", RoleCold, conway, baseBody().with(3, nil).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"undefined ttl", RoleCold, conway,
+			baseBody().with(3, cbor.RawMessage{0xf7}).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"text ttl", RoleCold, conway, baseBody().with(3, "90000000").with(4, certs(retire(k.Pool))).cbor(), false},
+		{"negative ttl", RoleCold, conway, baseBody().with(3, int64(-1)).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"duplicate ttl key", RoleCold, conway, duplicateTTL(), false},
+		{"null validity start", RoleCold, conway, baseBody().with(8, nil).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"null fee", RoleCold, conway, baseBody().with(2, nil).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"null fee under dijkstra", RoleCold, dijkstra, baseBody().with(2, nil).with(4, certs(retire(k.Pool))).cbor(), false},
+		{"null network id", RoleCold, conway, baseBody().with(15, nil).with(4, certs(retire(k.Pool))).cbor(), false},
 		{"no fee key", RoleCold, dijkstra, baseBody().without(2).with(4, certs(retire(k.Pool))).cbor(), false},
 		{"key 23", RoleCold, dijkstra, baseBody().with(23, []any{}).with(4, certs(retire(k.Pool))).cbor(), false},
 		{"unknown key 99", RoleCold, conway, baseBody().with(99, uint64(1)).cbor(), false},
@@ -142,6 +159,34 @@ func TestEvaluateSummary(t *testing.T) {
 		if !strings.Contains(d.Summary, want) {
 			t.Errorf("summary %q lacks %q", d.Summary, want)
 		}
+	}
+}
+
+func TestEvaluateSummaryValidity(t *testing.T) {
+	t.Parallel()
+
+	retirement := baseBody().with(4, certs(retire(testKeys.Pool)))
+
+	d, err := Evaluate(testProfile, testKeys, RoleCold, uint(ledger.TxTypeConway), retirement.cbor())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.HasPrefix(d.Summary, "fee=200000 ttl=90000000 ") {
+		t.Errorf("summary %q does not start with the fee and ttl", d.Summary)
+	}
+
+	if strings.Contains(d.Summary, "valid-from") {
+		t.Errorf("summary %q names a validity start the body lacks", d.Summary)
+	}
+
+	d, err = Evaluate(testProfile, testKeys, RoleCold, uint(ledger.TxTypeConway), retirement.with(8, uint64(80_000_000)).cbor())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.HasPrefix(d.Summary, "fee=200000 ttl=90000000 valid-from=80000000 ") {
+		t.Errorf("summary %q does not start with the fee, ttl and validity start", d.Summary)
 	}
 }
 

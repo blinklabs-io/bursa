@@ -39,7 +39,7 @@ func wipePost(t *testing.T, s *Service, path string, req any) (int, []byte) {
 	}
 
 	w := httptest.NewRecorder()
-	s.WipeHandler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, bytes.NewReader(b)))
+	s.WipeHandler().ServeHTTP(w, jsonRequest(path, bytes.NewReader(b)))
 
 	return w.Code, w.Body.Bytes()
 }
@@ -535,4 +535,28 @@ func TestWipeSignLogDeletesOnlyTheHead(t *testing.T) {
 	if code != http.StatusOK || strings.Contains(string(body), "0x20e50022") {
 		t.Errorf("retry: %d %s", code, body)
 	}
+}
+
+// TestWipeDeviceClearsBadRecords checks a device wipe that deletes an
+// unreadable profile record also lifts the provisioning refusal it caused,
+// so the same service provisions again without a restart.
+func TestWipeDeviceClearsBadRecords(t *testing.T) {
+	s, chip := newTestService(t)
+	id := identityHex(t, s)
+	chip.bins[profile.Profile{Slot: 0}.RecordID()] = []byte("{torn")
+
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := wipePost(t, s, "/wipe/device", WipeDeviceRequest{IdentityPublicKey: id}); code != http.StatusOK {
+		t.Fatalf("wipe device: %d %s", code, body)
+	}
+
+	cold := ColdRequest{ColdKeyID: testColdID, SigningKey: "5820" + strings.Repeat("11", 32)}
+	if code, body := post(t, s, RouteProvisionCold, cold); code != http.StatusOK {
+		t.Fatalf("cold key after device wipe: %d %s", code, body)
+	}
+
+	provisionTestProfile(t, s)
 }

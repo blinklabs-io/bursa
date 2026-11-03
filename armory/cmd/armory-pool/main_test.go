@@ -149,7 +149,12 @@ func newRig(t *testing.T) *rig {
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(svc.Handler())
+	// the device answers only to its own address, not the loopback one
+	dev := svc.Handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Host = device.Address
+		dev.ServeHTTP(w, r)
+	}))
 	t.Cleanup(srv.Close)
 
 	var id device.IdentityResponse
@@ -186,6 +191,7 @@ func conwayBody(certs ...[]any) []byte {
 		0: []any{[]any{make([]byte, 32), uint64(0)}},
 		1: []any{[]any{payer, uint64(5_000_000)}},
 		2: uint64(200_000),
+		3: uint64(90_000_000),
 		4: certs,
 	})
 	if err != nil {
