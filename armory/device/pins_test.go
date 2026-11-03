@@ -362,3 +362,39 @@ func TestPinsAcceptSignedWithHostKey(t *testing.T) {
 		t.Errorf("reply echoes host authentication: %s", body)
 	}
 }
+
+// A record naming a slot other than its own is still served, but its pins
+// object is the claimed slot's: /provision/pins is refused while such a
+// record exists, as provisioning is, so it cannot replace another profile's
+// pins.
+func TestPinsRefusedWhileRecordMisplaced(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	plant(chip, freeColdID)
+	storeRecord(t, chip, profile.Profile{Name: "other@preview", Slot: 1, ColdKeyID: freeColdID})
+
+	moved := profile.Profile{Name: "moved@preview", Slot: 1, ColdKeyID: testColdID}
+
+	rec, err := profile.Encode(moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chip.bins[profile.Profile{Slot: 0}.RecordID()] = rec
+
+	if err = s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	req := setPinsReq()
+	req.Profile = moved.Name
+
+	if code, body := post(t, s, "/provision/pins", req); code == http.StatusOK {
+		t.Fatalf("pins accepted while a record names another slot: %s", body)
+	}
+
+	if _, ok := chip.bins[moved.PinsID()]; ok {
+		t.Error("pins written to the claimed slot")
+	}
+}

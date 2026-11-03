@@ -122,6 +122,13 @@ func (s *Service) setPins(req PinsRequest) (PinsResponse, error) {
 		return PinsResponse{}, err
 	}
 
+	// a misplaced record's pins object is another slot's, so pins are
+	// refused while any record is unreadable or inconsistent, as provisioning
+	// is
+	if len(s.badSlots) > 0 {
+		return PinsResponse{}, errors.New("a profile record is unreadable or inconsistent; pins are refused until it is repaired")
+	}
+
 	var pins profile.Pins
 
 	if err = parseHex("vrf_key_hash", req.VRFKeyHash, pins.VRFKeyHash[:]); err != nil {
