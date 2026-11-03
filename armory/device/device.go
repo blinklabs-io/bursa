@@ -199,8 +199,11 @@ type Service struct {
 	// and profile wipes stay refused while any exist, as one of them may own
 	// any cold key
 	badSlots map[uint8]bool
-	// hostKeys authenticate signing requests; hostKeysBad refuses signing
-	// while the stored list is unreadable
+	// hostEntries is the stored host key list. hostKeys are the keys of it
+	// this build trusts, manages and lists, in order: those of its own
+	// network and chain, and legacy unscoped ones on a testnet build.
+	// hostKeysBad refuses signing while the stored list is unreadable
+	hostEntries     []hostEntry
 	hostKeys        [][]byte
 	hostKeysBad     bool
 	requireHostAuth bool
