@@ -44,6 +44,7 @@ func main() {
 		hashCommand(),
 		apiCommand(),
 		signerCommand(),
+		nitroCommand(),
 		confidentialSpaceCommand(),
 		kesAgentCommand(),
 		scriptCommand(),

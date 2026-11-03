@@ -19,6 +19,7 @@ Operator documentation for the two bursa signing daemons:
 |------|----------|
 | [`runbook.md`](runbook.md) | Deploy, TLS, auth, backends, watermark, health, metrics |
 | [`attested-custody.md`](attested-custody.md) | Attested TEE key custody: protocol, AWS Nitro and GCP Confidential Space backends, trust boundaries |
+| [`nitro-custody.md`](nitro-custody.md) | AWS Nitro enclave workload, host proxy, KMS recipient policy, reproducible EIF and PCR rotation |
 | [`security.md`](security.md) | Threat model, custody guarantees, dev-only file backend |
 | [`kes-agent.md`](kes-agent.md) | KES agent daemon operation |
 | [`embedded-block-production.md`](embedded-block-production.md) | Dingo custody split, supported backends, rotation and failures |

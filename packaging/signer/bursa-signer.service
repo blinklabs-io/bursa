@@ -39,8 +39,8 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
-# HTTP API + TLS + JWKS fetch + Vault: IP sockets only.
-RestrictAddressFamilies=AF_INET AF_INET6
+# HTTP API + TLS + JWKS fetch + Vault, plus attested signer Unix sockets.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
