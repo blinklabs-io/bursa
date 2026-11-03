@@ -438,6 +438,23 @@ A device with a registered host key refuses requests without it. The file
 must not be readable by group or others, and an unreadable or malformed file
 fails startup.
 
+### Cold key provisioning
+
+The provisioning firmware's `POST /provision/cold` imports a cold key into a
+free cold key object (`0x20e50010`-`0x20e5001f`):
+`{"cold_key_id": N, "signing_key": "<cborHex>"}`, the cardano-cli `cborHex`
+(`5820` and the 32-byte seed). An existing object is never replaced; repeating
+the request with the same key confirms the earlier import.
+
+The device never generates a cold key. A key made inside the SE050 cannot be
+exported or backed up, so a lost or broken device would lose the pool for
+good. A cold key is always created off the device, kept in a backup, and
+imported, so the pool can move to a replacement device.
+
+The device zeroes the request buffer and the decoded key once the request is
+done. Copies held by the host and the transport, and by the host tool that
+sent it, are outside that.
+
 ### Provisioning and wipe authentication
 
 The provisioning and wipe images authenticate requests with the host keys the

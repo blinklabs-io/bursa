@@ -164,7 +164,7 @@ func newRig(t *testing.T) *rig {
 	var cold device.ColdResponse
 
 	devicePost(t, srv, "/provision/cold", device.ColdRequest{
-		ColdKeyID: coldID, SigningKey: "5820" + strings.Repeat("42", 32),
+		ColdKeyID: coldID, SigningKey: append([]byte{0x58, 0x20}, bytes.Repeat([]byte{0x42}, 32)...),
 	}, &cold)
 
 	chain := uint64(3)

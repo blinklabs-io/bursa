@@ -553,7 +553,7 @@ func TestWipeDeviceClearsBadRecords(t *testing.T) {
 		t.Fatalf("wipe device: %d %s", code, body)
 	}
 
-	cold := ColdRequest{ColdKeyID: testColdID, SigningKey: "5820" + strings.Repeat("11", 32)}
+	cold := ColdRequest{ColdKeyID: testColdID, SigningKey: hexKey("5820" + strings.Repeat("11", 32))}
 	if code, body := post(t, s, RouteProvisionCold, cold); code != http.StatusOK {
 		t.Fatalf("cold key after device wipe: %d %s", code, body)
 	}

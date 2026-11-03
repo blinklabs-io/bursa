@@ -94,7 +94,7 @@ func requestFor(t *testing.T, s *Service, route string) any {
 
 	id := hex.EncodeToString(ident.PublicKey)
 	chain := uint64(1)
-	cold := ColdRequest{ColdKeyID: testColdID + 1, SigningKey: "5820" + strings.Repeat("11", 32)}
+	cold := ColdRequest{ColdKeyID: testColdID + 1, SigningKey: secretHex(append([]byte{0x58, 0x20}, bytes.Repeat([]byte{0x11}, 32)...))}
 
 	switch route {
 	case RouteProvisionProfile:

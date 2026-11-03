@@ -194,7 +194,7 @@ func newRig(t *testing.T, registered ed25519.PrivateKey) *rig {
 	var cold device.ColdResponse
 
 	devicePost(t, srv, "/provision/cold", device.ColdRequest{
-		ColdKeyID: coldID, SigningKey: "5820" + hex.EncodeToString(coldSeed),
+		ColdKeyID: coldID, SigningKey: append([]byte{0x58, 0x20}, coldSeed...),
 	}, &cold)
 
 	chain := chainCtr

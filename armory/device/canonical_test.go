@@ -24,6 +24,16 @@ import (
 	"testing"
 )
 
+// hexKey decodes a test key's cborHex, as secretHex does a request's.
+func hexKey(cborHex string) secretHex {
+	b, err := hex.DecodeString(cborHex)
+	if err != nil {
+		panic(err)
+	}
+
+	return b
+}
+
 // The canonical request binds a private key by the SHA-256 of its decoded
 // bytes and never carries the key, so encoding/json never sees it.
 func TestCanonicalRequestBindsKeyByDigest(t *testing.T) {
@@ -40,8 +50,8 @@ func TestCanonicalRequestBindsKeyByDigest(t *testing.T) {
 	digest := hex.EncodeToString(sum[:])
 
 	for name, req := range map[string]hostAuthed{
-		"cold import":     &ColdRequest{ColdKeyID: testColdID + 1, SigningKey: cborHex},
-		"owner provision": &ProvisionRequest{Name: "otg@preview", OwnerSigningKey: cborHex},
+		"cold import":     &ColdRequest{ColdKeyID: testColdID + 1, SigningKey: hexKey(cborHex)},
+		"owner provision": &ProvisionRequest{Name: "otg@preview", OwnerSigningKey: hexKey(cborHex)},
 	} {
 		canonical, err := canonicalRequest(req)
 		if err != nil {
@@ -56,7 +66,7 @@ func TestCanonicalRequestBindsKeyByDigest(t *testing.T) {
 			t.Errorf("%s: canonical request lacks the key digest: %s", name, canonical)
 		}
 
-		var got string
+		var got secretHex
 
 		switch r := req.(type) {
 		case *ColdRequest:
@@ -65,7 +75,7 @@ func TestCanonicalRequestBindsKeyByDigest(t *testing.T) {
 			got = r.OwnerSigningKey
 		}
 
-		if got != cborHex {
+		if !bytes.Equal(got, raw) {
 			t.Errorf("%s: canonicalRequest did not restore the key", name)
 		}
 	}
@@ -83,10 +93,10 @@ func TestAdminSignatureBindsKey(t *testing.T) {
 		mk    func(key string) any
 	}{
 		"cold import": {RouteProvisionCold, func(k string) any {
-			return ColdRequest{ColdKeyID: testColdID + 1, SigningKey: k}
+			return ColdRequest{ColdKeyID: testColdID + 1, SigningKey: hexKey(k)}
 		}},
 		"owner provision": {RouteProvisionProfile, func(k string) any {
-			return ProvisionRequest{Name: "otg@preview", OwnerSigningKey: k}
+			return ProvisionRequest{Name: "otg@preview", OwnerSigningKey: hexKey(k)}
 		}},
 	}
 
