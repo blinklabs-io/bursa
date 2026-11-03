@@ -150,6 +150,9 @@ need_build() {
 }
 
 q() { "$BURSA" query "$@" --socket-path "$SOCKET" --network $NET; }
+# provision sends a provisioning request from stdin, signed by the host key once
+# one is registered.
+provision() { "$ARMORY_POOL" -signer "$SIGNER" -source "$SOURCE" ${HOST_KEY:+-host-key "$HOST_KEY"} provision "$@"; }
 armory() { "$ARMORY_POOL" -signer "$SIGNER" -source "$SOURCE" -identity "$IDENTITY" -profile "$PROFILE" ${HOST_KEY:+-host-key "$HOST_KEY"} "$@"; }
 
 # submit builds, witnesses, assembles and submits one transaction.
@@ -246,6 +249,25 @@ if [ ! -s profile.json ] && [ ! -s owner.vkey ]; then
 pass "owner key derived"
 fi
 
+# once a host key is registered the device takes provisioning requests only
+# signed by it, so the host key goes in first
+if [ -n "${HOST_KEY:-}" ]; then
+step "Register host key $HOST_KEY"
+if [ ! -s "$HOST_KEY" ]; then
+	"$ARMORY_POOL" host-key -out "$HOST_KEY" > host-key.pub
+fi
+[ -s host-key.pub ] || fail "host-key.pub missing: it holds the request printed when $HOST_KEY was created"
+HOST_PUB=$(jq -er .public_key host-key.pub) || fail "host-key.pub is not the host-key request armory-pool host-key prints"
+if jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json > /dev/null 2>&1; then
+	pass "host key registered in an earlier run"
+else
+need_build provisioning
+provision host-key < host-key.pub > host-key.json.new
+mv host-key.json.new host-key.json
+fi
+check "host key registered" jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json
+fi
+
 step "Import the cold key into object $COLD_KEY_ID"
 if jq -e '.pool_id | length == 56' cold.json > /dev/null 2>&1; then
 	pass "cold key imported in an earlier run"
@@ -256,7 +278,7 @@ need_build provisioning
 # the key is read from a file: an argument would show in the process list
 jq -n --argjson id "$COLD_KEY_ID" --slurpfile key pool-cold.skey \
 	'{cold_key_id: $id, signing_key: $key[0].cborHex}' |
-	curl -sf --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/provision/cold" --data-binary @- > cold.json.new
+	provision cold > cold.json.new
 cat cold.json.new
 mv cold.json.new cold.json
 fi
@@ -288,7 +310,7 @@ need_build provisioning
 jq -n --arg name "$PROFILE" --argjson slot "$SLOT" --argjson id "$COLD_KEY_ID" --arg reward "$REWARD_HEX" \
 	--slurpfile owner owner.skey \
 	'{name: $name, network_id: 0, slot: $slot, cold_key_id: $id, reward_account: $reward, owner_signing_key: $owner[0].cborHex}' |
-	curl -sf --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/provision/profile" --data-binary @- > profile.json.new
+	provision profile > profile.json.new
 cat profile.json.new
 mv profile.json.new profile.json
 fi
@@ -299,23 +321,6 @@ check "device owner key matches owner.vkey" \
 rm -f owner.skey
 else
 echo "owner key generated on the device in an earlier run"
-fi
-
-if [ -n "${HOST_KEY:-}" ]; then
-step "Register host key $HOST_KEY"
-if [ ! -s "$HOST_KEY" ]; then
-	"$ARMORY_POOL" host-key -out "$HOST_KEY" > host-key.pub
-fi
-[ -s host-key.pub ] || fail "host-key.pub missing: it holds the request printed when $HOST_KEY was created"
-HOST_PUB=$(jq -er .public_key host-key.pub) || fail "host-key.pub is not the host-key request armory-pool host-key prints"
-if jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json > /dev/null 2>&1; then
-	pass "host key registered in an earlier run"
-else
-need_build provisioning
-curl -sf --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/provision/host-key" --data-binary @host-key.pub > host-key.json.new
-mv host-key.json.new host-key.json
-fi
-check "host key registered" jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json
 fi
 
 step "Device inventory"

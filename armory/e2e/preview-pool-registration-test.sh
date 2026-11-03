@@ -62,25 +62,23 @@ case "\$1 \$2" in
 esac
 STUB
 
-cat > "$T/bin/armory-pool" <<'STUB'
-#!/usr/bin/env bash
-case $1 in
-address) echo stake_test1stub ;;
-reward-hex) echo e0aa ;;
-*) echo "unexpected armory-pool $*" >&2; exit 99 ;;
-esac
-STUB
-
 # the device runs the provisioning image and never switches to signing, so the
 # script fails at "Device inventory"; STUB_FAIL_COLD=1 fails the cold key import
 # first, before pool-cold.skey is removed
-cat > "$T/bin/curl" <<STUB
+cat > "$T/bin/armory-pool" <<STUB
 #!/usr/bin/env bash
 case "\$*" in
-*provision/cold*) [ "\${STUB_FAIL_COLD:-}" = 1 ] && exit 22; cat >> "$T/device.stdin"; printf '{"pool_id":"$POOL_ID","public_key":"$PUB_HEX"}' ;;
-*provision/profile*) cat >> "$T/device.stdin"; printf '{"owner_key_hash":"$POOL_ID","owner_public_key":"$PUB_B64"}' ;;
-*) echo "provisioning build" ;;
+"address "*) echo stake_test1stub ;;
+"reward-hex "*) echo e0aa ;;
+*" provision cold") [ "\${STUB_FAIL_COLD:-}" = 1 ] && exit 1; cat >> "$T/device.stdin"; printf '{"pool_id":"$POOL_ID","public_key":"$PUB_HEX"}' ;;
+*" provision profile") cat >> "$T/device.stdin"; printf '{"owner_key_hash":"$POOL_ID","owner_public_key":"$PUB_B64"}' ;;
+*) echo "unexpected armory-pool \$*" >&2; exit 99 ;;
 esac
+STUB
+
+cat > "$T/bin/curl" <<STUB
+#!/usr/bin/env bash
+echo "provisioning build"
 STUB
 chmod +x "$T/bin/"*
 
