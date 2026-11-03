@@ -67,7 +67,10 @@ func createWindowsSecretKeyFile(path string) (*os.File, error) {
 	}
 	handle, err := windows.CreateFile(
 		windows.StringToUTF16Ptr(path),
-		windows.GENERIC_WRITE|windows.READ_CONTROL|windows.WRITE_DAC,
+		windows.GENERIC_WRITE|windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER,
+		// No sharing: another opener must not observe a partially written key.
+		// Opens requesting only security access are not share-checked, so
+		// ownership adoption still works while this handle is open.
 		0,
 		securityAttributes,
 		windows.CREATE_NEW,

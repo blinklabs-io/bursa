@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/blinklabs-io/bursa/armory/policy"
 	"github.com/blinklabs-io/bursa/armory/profile"
@@ -119,6 +120,7 @@ type SignResponse struct {
 // ProvisionRequest creates a profile. ChainCounter, when set, is the pool's
 // current on-chain opcert counter and initialises the floor.
 type ProvisionRequest struct {
+	HostAuth
 	Name         string  `json:"name"`
 	NetworkID    uint8   `json:"network_id"`
 	Slot         uint8   `json:"slot"`
@@ -140,6 +142,7 @@ type ProvisionResponse struct {
 // RewardRequest changes the reward account a profile's pool registrations
 // must name.
 type RewardRequest struct {
+	HostAuth
 	Profile       string `json:"profile"`
 	RewardAccount string `json:"reward_account"`
 }
@@ -154,6 +157,7 @@ type RewardResponse struct {
 // on-chain counter, for example after a rollback or a host that reported a
 // counter too high.
 type FloorRequest struct {
+	HostAuth
 	Profile      string `json:"profile"`
 	ChainCounter uint64 `json:"chain_counter"`
 }
@@ -171,6 +175,7 @@ type FloorResponse struct {
 // together with SigningKey. A generated cold key has no backup: it cannot be
 // read out of the chip, so losing the device loses the pool.
 type ColdRequest struct {
+	HostAuth
 	ColdKeyID  uint32    `json:"cold_key_id"`
 	SigningKey secretHex `json:"signing_key,omitempty"`
 	Generate   bool      `json:"generate,omitempty"`
@@ -205,12 +210,21 @@ type Service struct {
 	// and profile wipes stay refused while any exist, as one of them may own
 	// any cold key
 	badSlots map[uint8]bool
-	// hostKeys authenticate signing requests; hostKeysBad refuses signing
-	// while the stored list is unreadable
+	// hostEntries is the stored host key list. hostKeys are the keys of it
+	// this build trusts, manages and lists, in order: those of its own
+	// network and chain, and legacy unscoped ones on a testnet build.
+	// hostKeysBad refuses signing while the stored list is unreadable
+	hostEntries     []hostEntry
 	hostKeys        [][]byte
 	hostKeysBad     bool
 	requireHostAuth bool
-	challenges      [][]byte
+	// challengeKey MACs issued challenges; usedChallenges holds burned ones
+	// until they would expire, and usedOrder queues them for expiry
+	challengeKey   []byte
+	usedChallenges map[[challengeSize]byte]struct{}
+	usedOrder      []usedChallenge
+	// now replaces time.Now in tests
+	now func() time.Time
 	// network, when fixed, is the only network id whose profiles this
 	// build provisions and serves; chain, when set, is the only profile name
 	// suffix ("name@chain") it accepts
@@ -372,9 +386,14 @@ func (s *Service) SigningHandler() http.Handler {
 }
 
 // ProvisioningHandler serves only the provisioning endpoints, for the
-// provisioning firmware.
+// provisioning firmware, and the challenge endpoint their host
+// authentication needs. Once a host key is registered every provisioning
+// endpoint requires a request signed by a host key of this build's network and
+// chain; before that the endpoints take unsigned requests, so a fresh device
+// can be set up.
 func (s *Service) ProvisioningHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/challenge", handle(s, s.challenge))
 	s.provisioningRoutes(mux)
 
 	return mux
@@ -388,14 +407,14 @@ func (s *Service) signingRoutes(mux *http.ServeMux) {
 }
 
 func (s *Service) provisioningRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /provision/profile", handle(s, s.provisionProfile))
-	mux.HandleFunc("POST /provision/floor", handle(s, s.resetFloor))
-	mux.HandleFunc("POST /provision/reward", handle(s, s.setReward))
-	mux.HandleFunc("POST /provision/cold", handle(s, s.provisionCold))
+	mux.HandleFunc("POST "+RouteProvisionProfile, handleAdmin(s, RouteProvisionProfile, s.provisionProfile))
+	mux.HandleFunc("POST "+RouteProvisionFloor, handleAdmin(s, RouteProvisionFloor, s.resetFloor))
+	mux.HandleFunc("POST "+RouteProvisionReward, handleAdmin(s, RouteProvisionReward, s.setReward))
+	mux.HandleFunc("POST "+RouteProvisionCold, handleAdmin(s, RouteProvisionCold, s.provisionCold))
 	mux.HandleFunc("POST /provision/cold/info", handle(s, s.coldInfo))
-	mux.HandleFunc("POST /provision/host-key", handle(s, s.addHostKey))
-	mux.HandleFunc("POST /provision/host-key/revoke", handle(s, s.revokeHostKey))
-	mux.HandleFunc("POST /provision/identity", handle(s, func(struct{}) (IdentityResponse, error) {
+	mux.HandleFunc("POST "+RouteProvisionHostKey, handleAdmin(s, RouteProvisionHostKey, s.addHostKey))
+	mux.HandleFunc("POST "+RouteProvisionHostRevoke, handleAdmin(s, RouteProvisionHostRevoke, s.revokeHostKey))
+	mux.HandleFunc("POST "+RouteProvisionIdentity, handleAdmin(s, RouteProvisionIdentity, func(IdentityRequest) (IdentityResponse, error) {
 		return s.provisionIdentity()
 	}))
 }
@@ -404,6 +423,11 @@ func (s *Service) provisioningRoutes(mux *http.ServeMux) {
 // writes its JSON result. Errors returned by fn go to the client as text.
 func handle[Req, Resp any](s *Service, fn func(Req) (Resp, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// before the body is read or the chip touched
+		if !allowed(w, r, Address) {
+			return
+		}
+
 		var req Req
 
 		if err := decodeRequest(w, r, &req); err != nil {
@@ -665,8 +689,16 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 
 	chain := binary.BigEndian.Uint64(payload[32:40])
 
-	issue, floor, err := nextOpCert(p.OpCertFloor, p.FloorSet, chain)
+	issue, floor, err := nextOpCert(p.OpCertFloor, p.FloorSet, p.LastIssued, chain)
 	if err != nil {
+		return nil, nil, err
+	}
+
+	next := p
+	next.FloorSet, next.OpCertFloor, next.LastIssued = true, floor, issue
+
+	// a record that would not fit is refused before the log entry
+	if _, err = profile.Encode(next); err != nil {
 		return nil, nil, err
 	}
 
@@ -675,19 +707,29 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 	kesHash := blake2b.Sum256(payload[:32])
 	period := binary.BigEndian.Uint64(payload[40:])
 
-	if err = s.appendLog(signlog.Record{
+	rec := signlog.Record{
 		Profile: p.Name, Role: "pool", Purpose: signlog.PurposeOpCertNext,
 		Summary:      fmt.Sprintf("chain %d issue %d period %d", chain, issue, period),
 		IssueCounter: issue, KESPeriod: period, KESKeyHash: kesHash[:],
-	}); err != nil {
+	}
+
+	// the counter was already issued and the latest entry records this exact
+	// request: signing it again adds nothing to account for, once the card
+	// and head are confirmed to still hold that entry
+	if p.LastIssued == issue && s.lastOpCertRepeat(rec) {
+		err = s.checkLog()
+	} else {
+		err = s.appendLog(rec)
+	}
+
+	if err != nil {
 		return nil, nil, err
 	}
 
-	// the floor is persisted before any signature leaves the device
-	if !p.FloorSet || floor != p.OpCertFloor {
-		p.FloorSet, p.OpCertFloor = true, floor
-
-		if err = s.writeProfile(p); err != nil {
+	// the floor and the issued counter are persisted together before any
+	// signature leaves the device
+	if next != p {
+		if err = s.writeProfile(next); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -839,15 +881,19 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 }
 
 // resetFloor sets the floor to the reported on-chain counter, lower or
-// higher. A floor set too low only lets the device issue a counter the chain
-// rejects, so this needs no more trust than opcert-next itself.
+// higher, and clears the last issued counter, so the bound it gives
+// opcert-next stays off until the next opcert-next sets it again. A floor one
+// below the on-chain counter lets the device issue the on-chain counter, which
+// the ledger accepts; a floor above it makes the device refuse every counter
+// the ledger accepts. The operator's report is trusted either way, as the
+// reset is a provisioning action.
 func (s *Service) resetFloor(req FloorRequest) (FloorResponse, error) {
 	p, err := s.profileFor(req.Profile)
 	if err != nil {
 		return FloorResponse{}, err
 	}
 
-	p.FloorSet, p.OpCertFloor = true, req.ChainCounter
+	p.FloorSet, p.OpCertFloor, p.LastIssued = true, req.ChainCounter, 0
 
 	if err := s.writeProfile(p); err != nil {
 		return FloorResponse{}, err

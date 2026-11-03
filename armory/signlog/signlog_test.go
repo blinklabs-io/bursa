@@ -1240,3 +1240,168 @@ func TestFormatIgnoresBlocksBeyondSlots(t *testing.T) {
 		t.Fatalf("verify: %v", err)
 	}
 }
+
+func TestWriterLast(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 8)
+	w := f.open(t)
+
+	if _, ok := w.Last(); ok {
+		t.Fatal("empty log has a last entry")
+	}
+
+	f.fill(t, w, 3)
+
+	got, ok := w.Last()
+	if !ok || got.Seq != 3 || got.Hash != w.Head().Hash {
+		t.Fatalf("last after append: %+v %v", got, ok)
+	}
+
+	got, ok = f.open(t).Last()
+	if !ok || got.Seq != 3 || got.Hash != w.Head().Hash {
+		t.Fatalf("last after reopen: %+v %v", got, ok)
+	}
+}
+
+// An entry whose head update failed is not reported by Last: the caller may
+// not release a signature on it until the head store holds it.
+func TestWriterLastSkipsUnstoredHead(t *testing.T) {
+	t.Parallel()
+
+	f, fm, fh := newFaultFixture(t, 8)
+
+	w, err := Open(fm, fh, f.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.fill(t, w, 1)
+	fh.setFail(true)
+
+	if _, err = w.Append(opcertRecord(5)); !errors.Is(err, errInjected) {
+		t.Fatalf("got %v, want the injected failure", err)
+	}
+
+	if got, ok := w.Last(); ok {
+		t.Fatalf("last reports entry %d before its head was stored", got.Seq)
+	}
+
+	fh.setFail(false)
+
+	if _, err = w.Append(opcertRecord(5)); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := w.Last(); !ok || got.Seq != 3 {
+		t.Fatalf("last after a stored head: %+v %v", got, ok)
+	}
+}
+
+// Check fails without writing when the card no longer holds the head, the
+// head store moved, or the latest head is not yet stored.
+func TestWriterCheck(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 8)
+	w := f.open(t)
+
+	if err := w.Check(); err != nil {
+		t.Fatalf("empty log: %v", err)
+	}
+
+	f.fill(t, w, 2)
+
+	if err := w.Check(); err != nil {
+		t.Fatalf("after append: %v", err)
+	}
+
+	img := f.medium.Image()
+
+	f.mutate(t, func(b []byte) { clear(b[slotOffset(2) : slotOffset(2)+RecordSize]) })
+
+	if err := w.Check(); err == nil {
+		t.Fatal("check passed with the latest entry gone")
+	}
+
+	f.mutate(t, func(b []byte) { copy(b, img) })
+
+	if err := w.Check(); err != nil {
+		t.Fatalf("restored card: %v", err)
+	}
+
+	if err := f.heads.Store(Head{Seq: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := w.Check(); !errors.Is(err, ErrHeadStore) {
+		t.Fatalf("moved head: got %v, want ErrHeadStore", err)
+	}
+
+	if !bytes.Equal(f.medium.Image(), img) {
+		t.Fatal("check wrote to the medium")
+	}
+
+	g, _, fh := newFaultFixture(t, 8)
+
+	w, err := Open(g.medium, fh, g.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fh.setFail(true)
+
+	if _, err = w.Append(opcertRecord(5)); !errors.Is(err, errInjected) {
+		t.Fatalf("got %v, want the injected failure", err)
+	}
+
+	fh.setFail(false)
+
+	if err = w.Check(); !errors.Is(err, ErrHeadStore) {
+		t.Fatalf("unstored head: got %v, want ErrHeadStore", err)
+	}
+}
+
+// Last hands out copies: changing the entry Append or Last returned does not
+// change what Last reports next, after an append or a reopen.
+func TestWriterLastIsACopy(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 8)
+	w := f.open(t)
+
+	appended, err := w.Append(opcertRecord(5))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want, _ := w.Last()
+	want.KESKeyHash, want.Signature = bytes.Clone(want.KESKeyHash), bytes.Clone(want.Signature)
+
+	scribble := func(e Entry) {
+		for _, b := range [][]byte{e.KESKeyHash, e.BodyHash, e.Signature} {
+			for i := range b {
+				b[i] ^= 0xff
+			}
+		}
+	}
+
+	check := func(w *Writer, when string) {
+		t.Helper()
+
+		got, ok := w.Last()
+		if !ok || !bytes.Equal(got.KESKeyHash, want.KESKeyHash) || !bytes.Equal(got.Signature, want.Signature) {
+			t.Fatalf("%s: last changed to %+v", when, got)
+		}
+
+		scribble(got)
+	}
+
+	scribble(appended)
+	check(w, "after changing the appended entry")
+	check(w, "after changing a returned entry")
+
+	r := f.open(t)
+	check(r, "after reopen")
+	check(r, "after changing a returned entry on reopen")
+}

@@ -23,6 +23,8 @@
 //	armory-pool -identity HEX -profile NAME witness -role pool|stake -tx-file F -out W
 //	armory-pool -identity HEX -profile NAME opcert -kes-vkey F -kes-period N -chain-counter N|none -out F
 //	armory-pool -identity HEX signlog [-head-seq N -head-hash HEX]
+//	armory-pool [-host-key F] provision profile|floor|reward|cold|identity|host-key|host-key/revoke < request.json
+//	armory-pool [-host-key F] wipe objects|device|profile|signlog < request.json
 //	armory-pool reward-hex stake_test1...
 //	armory-pool address -stake-vkey F [-payment-vkey F] [-type base|reward] [-network preview]
 package main
@@ -348,6 +350,10 @@ func address(paymentFile, stakeFile, typ, network string, out io.Writer) error {
 }
 
 func run(args []string, stdout io.Writer) error {
+	return runIO(args, os.Stdin, stdout)
+}
+
+func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 	fs := flag.NewFlagSet("armory-pool", flag.ContinueOnError)
 	base := fs.String("signer", "http://10.0.0.1", "armory-signer URL")
 	source := fs.String("source", "10.0.0.2", "local source address on the USB network")
@@ -360,7 +366,7 @@ func run(args []string, stdout io.Writer) error {
 	}
 
 	if fs.NArg() == 0 {
-		return errors.New("subcommand required: keys, witness, opcert, signlog, reward-hex, address, host-key")
+		return errors.New("subcommand required: keys, witness, opcert, signlog, provision, wipe, reward-hex, address, host-key")
 	}
 
 	sub, rest := fs.Arg(0), fs.Args()[1:]
@@ -491,6 +497,18 @@ func run(args []string, stdout io.Writer) error {
 		}
 
 		return newHostKey(*out, stdout)
+	case "provision", "wipe":
+		hk := sf.String("host-key", *hostKeyFile, "host signing key file authenticating the request")
+
+		if err := sf.Parse(rest); err != nil {
+			return err
+		}
+
+		if sf.NArg() != 1 {
+			return fmt.Errorf("usage: %s [-host-key FILE] <route> < request.json", sub)
+		}
+
+		return adminRequest(newClient(*base, *source), "/"+sub+"/"+sf.Arg(0), *hk, stdin, stdout)
 	case "reward-hex":
 		if len(rest) != 1 {
 			return errors.New("usage: reward-hex <stake_test1...>")

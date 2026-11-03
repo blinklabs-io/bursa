@@ -68,6 +68,13 @@ type Profile struct {
 	FloorSet bool `json:"floor_set"`
 	// OpCertFloor is the highest on-chain opcert counter ever reported.
 	OpCertFloor uint64 `json:"opcert_floor"`
+	// LastIssued is the last opcert counter the device signed, 0 until the
+	// first opcert-next after the floor was set: an issued counter is always
+	// at least 1. Records written before the field existed decode with it
+	// unset. The key is short and omitted when unset because a record is
+	// limited to one APDU (RecordSize); a record that no longer fits fails to
+	// encode rather than being truncated.
+	LastIssued uint64 `json:"issued,omitempty"`
 	// RewardAccount is the hex reward address every pool registration must
 	// name. It is the operator's choice, set at provisioning, so a host
 	// cannot redirect pool rewards inside a transaction. Empty refuses

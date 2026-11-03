@@ -334,6 +334,15 @@ The USB armory Mk II holds the pool cold key and the owner stake key in its
 SE050 secure element, one profile per pool and network. Its signing firmware
 serves this protocol at `/v1/inventory` and `/v1/sign`.
 
+For `opcert-next`, the profile record also holds the last counter the device
+issued, and a chain counter above it is refused: the ledger only holds
+counters the device issued. A record written before this counter existed has
+none until its next `opcert-next`. `POST /provision/floor` on the provisioning
+firmware sets the floor to the operator's chain counter and clears the last
+issued counter. Firmware without this counter refuses a record that carries
+it, so a profile that has issued an opcert is unreadable to such firmware
+until a floor reset clears the counter.
+
 The evidence is the device identity key's Ed25519 signature over the inventory
 binding. The signer accepts the inventory only when that signature verifies
 under `identity_public_key`. This proves the inventory came from a device
@@ -417,6 +426,64 @@ An imported key travels in the request body, and the device zeroes the request
 buffer and the decoded key once the request is done. Copies held by the host
 and the transport, and by the host tool that sent it, are outside that.
 
+### Provisioning and wipe authentication
+
+The provisioning and wipe images authenticate requests with the host keys the
+signing routes use. A host key is registered for the network and chain of the
+image that registers it, and an image trusts only keys of its own network and
+chain. The exception is a key registered by an image that did not scope host
+keys: it carries no network or chain, and every image but a mainnet one
+trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
+
+- While no host key of any network or chain is registered, the provisioning
+  routes take unsigned requests, so a fresh device can be set up. This is the
+  only time `POST /provision/host-key` adds a key unsigned.
+- Once any host key is registered, `/provision/profile`, `/provision/floor`,
+  `/provision/reward`, `/provision/cold`, `/provision/identity`,
+  `/provision/host-key`, `/provision/host-key/revoke`, `/wipe/profile` and
+  `/wipe/signlog` need `challenge`, `host_key` and `host_signature` fields
+  from a host key of the image's network and chain. A key of another network
+  or chain does not qualify, and does not let the image's first key in
+  unsigned. The firmware's unsigned `POST /provision` cold key import is
+  refused too; use a signed `/provision/cold`.
+- The signature is an Ed25519 signature over `AdminBinding`: the domain
+  `bursa-armory-admin/1`, the route, the request as the device's Go types
+  encode it with the three fields empty and each private key (`signing_key`
+  of `/provision/cold`, `owner_signing_key` of `/provision/profile`) replaced
+  by the hex SHA-256 of its decoded bytes, and the challenge, each
+  length-prefixed as in the request binding. The signature thus binds the
+  exact key while the key never passes through the JSON encoder used for the
+  binding. The challenge is one-time.
+- A host key list the device cannot read refuses every authenticated route,
+  because no key is left to check a signature against.
+- `POST /wipe/device` stays confirmed by the identity public key alone and
+  unsigned. It is the recovery path when every host key is lost or the host key
+  list is unreadable, and the only one: it destroys everything the armory
+  holds (keys, profiles, host keys, the signing log head and the identity
+  key), after which the device is in the bootstrap state again. Anyone who can
+  boot the wipe image and knows the identity public key can do this.
+  `POST /wipe/objects` only lists object IDs.
+
+`armory-pool` signs these requests with its host key. The request JSON is read
+from standard input and the device's answer is printed. `armory-pool host-key
+-out host.skey` writes a new host key and prints the `/provision/host-key`
+request for its public key:
+
+```sh
+armory-pool host-key -out host.skey > host-key.pub
+armory-pool -host-key host.skey provision host-key < host-key.pub
+armory-pool -host-key host.skey provision cold < cold-request.json
+armory-pool -host-key host.skey provision profile < profile-request.json
+armory-pool -host-key host.skey wipe signlog < wipe-request.json
+armory-pool wipe device < wipe-request.json
+```
+
+`provision` takes `profile`, `floor`, `reward`, `cold`, `identity`, `host-key`
+or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile` or
+`signlog`. Without `-host-key` a request is sent unsigned, which the device
+accepts only in the bootstrap state, and always for `wipe device` and `wipe
+objects`. Register the first host key before the other provisioning steps.
+
 ### Signing log
 
 The signing firmware records every signature and opcert it issues in a log on
@@ -430,9 +497,16 @@ checks the card against it at boot and before every write, so an older copy of
 the card, a blank card or a truncated log is refused. The entry is written and
 the card read back before the signature leaves the device.
 
+One request is not recorded again: an `opcert-next` whose profile, issue
+counter, KES key hash and KES period match the latest entry is signed again
+without a new entry, since that entry already records it. The device checks
+the card against the head before signing such a repeat, as it does before a
+write.
+
 With no card, an unreadable card, a card that does not match the head, a full
 card or a failed write, the device refuses to sign and says why in the
 response and in the startup report; inventory and health are still served. A
+full card still serves a repeat of its latest entry, which writes nothing. A
 card that is full stays full: the device never overwrites an entry. The log is
 opened once at startup, so a card inserted later takes effect after a restart.
 
@@ -442,11 +516,12 @@ to sign. A device wipe deletes the head object with the identity key; after a
 new identity is provisioned, the signing firmware formats a zeroed card and
 starts a new log. To start a new log under the same identity, the wipe
 firmware's `POST /wipe/signlog`, confirmed with the device identity public key
-as `identity_public_key`, deletes only the head object. Like the other wipe
-endpoints it is not host-key authenticated: the identity key only confirms
-which device is meant, and the wipe image must be loaded onto the board. The
-old card is refused once the head is gone, so image it if its entries are
-wanted, then zero it or insert a zeroed card; the signing firmware formats it
+as `identity_public_key`, deletes only the head object. Only the wipe image
+serves it, so the wipe image must be loaded onto the board. The identity
+public key is public, so once a host key is registered the request must also
+be signed by one, as described under Provisioning and wipe authentication. The old card
+is refused once the head is gone, so image it if its entries are wanted, then
+zero it or insert a zeroed card; the signing firmware formats it
 at its next start, with entries numbered from 1 again. The old card's entries
 stay verifiable from its image with `signlog-verify -identity HEX -image FILE`.
 

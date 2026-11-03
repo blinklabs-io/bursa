@@ -28,7 +28,7 @@ var provisioningPaths = []string{
 
 func serve(h http.Handler, path, body string) int {
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
+	h.ServeHTTP(w, jsonRequest(path, strings.NewReader(body)))
 
 	return w.Code
 }

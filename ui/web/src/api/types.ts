@@ -163,6 +163,13 @@ export interface TxResult {
   tx_hash: string;
 }
 
+// POST /wallet/pool/registration/submit: update is true when the pool was
+// already registered (no deposit locked).
+export interface PoolRegistrationTxResult {
+  tx_hash: string;
+  update: boolean;
+}
+
 // ADA Handle ($name) resolution: GET /wallet/handle/{name} resolves the
 // on-chain handle NFT to its current holding (payment) address through the
 // node. Handle is the bare name (no leading '$').
