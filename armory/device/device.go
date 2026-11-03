@@ -168,28 +168,20 @@ type FloorResponse struct {
 	OpCertFloor uint64 `json:"opcert_floor"`
 }
 
-// ColdRequest imports a cold signing key into a chosen cold key object, or
-// generates one in the chip. SigningKey is the hex cborHex of a
-// StakePoolSigningKey_ed25519: 5820 followed by the 32-byte seed, decoded to
-// bytes. Generate asks for a key made inside the chip instead; it is refused
-// together with SigningKey. A generated cold key has no backup: it cannot be
-// read out of the chip, so losing the device loses the pool.
+// ColdRequest imports a cold signing key into a chosen cold key object.
+// SigningKey is the hex cborHex of a StakePoolSigningKey_ed25519: 5820
+// followed by the 32-byte seed, decoded to bytes so it can be cleared.
 type ColdRequest struct {
 	HostAuth
 	ColdKeyID  uint32    `json:"cold_key_id"`
-	SigningKey secretHex `json:"signing_key,omitempty"`
-	Generate   bool      `json:"generate,omitempty"`
+	SigningKey secretHex `json:"signing_key"`
 }
 
-// ColdResponse returns a cold key's public key and pool id, both hex, and
-// its origin: generated in the chip, imported, or unknown for a key with no
-// origin record. The origin is an unsigned record, not proof that the key
-// never left the chip.
+// ColdResponse returns the imported key's public key and pool id, both hex.
 type ColdResponse struct {
 	ColdKeyID uint32 `json:"cold_key_id"`
 	PublicKey string `json:"public_key"`
 	PoolID    string `json:"pool_id"`
-	Origin    string `json:"origin"`
 }
 
 // IdentityResponse returns the identity public key for pinning in Bursa.
@@ -411,7 +403,6 @@ func (s *Service) provisioningRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+RouteProvisionFloor, handleAdmin(s, RouteProvisionFloor, s.resetFloor))
 	mux.HandleFunc("POST "+RouteProvisionReward, handleAdmin(s, RouteProvisionReward, s.setReward))
 	mux.HandleFunc("POST "+RouteProvisionCold, handleAdmin(s, RouteProvisionCold, s.provisionCold))
-	mux.HandleFunc("POST "+RouteProvisionColdInfo, handleAdmin(s, RouteProvisionColdInfo, s.coldInfo))
 	mux.HandleFunc("POST "+RouteProvisionHostKey, handleAdmin(s, RouteProvisionHostKey, s.addHostKey))
 	mux.HandleFunc("POST "+RouteProvisionHostRevoke, handleAdmin(s, RouteProvisionHostRevoke, s.revokeHostKey))
 	mux.HandleFunc("POST "+RouteProvisionIdentity, handleAdmin(s, RouteProvisionIdentity, func(IdentityRequest) (IdentityResponse, error) {
@@ -1000,20 +991,11 @@ func (s *Service) importKey(id uint32, seed []byte) (ed25519.PublicKey, error) {
 	return pub, nil
 }
 
-// provisionCold imports a cold signing key into a free cold key object, or
-// generates one in the chip when asked to. The seed is never logged or
-// echoed, and an existing object is never replaced.
+// provisionCold imports a cold signing key into a free cold key object. The
+// seed is never logged or echoed, and an existing object is never replaced.
 func (s *Service) provisionCold(req ColdRequest) (ColdResponse, error) {
-	if req.Generate && req.SigningKey != nil {
-		return ColdResponse{}, errors.New("generate and signing_key are mutually exclusive")
-	}
-
 	if req.ColdKeyID < coldKeyFirst || req.ColdKeyID > coldKeyLast {
 		return ColdResponse{}, errors.New("cold key id outside the cold key range")
-	}
-
-	if req.Generate {
-		return s.generateCold(req.ColdKeyID)
 	}
 
 	if err := checkSigningKey(req.SigningKey); err != nil {

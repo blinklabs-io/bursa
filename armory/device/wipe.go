@@ -96,7 +96,6 @@ func armoryIDs() []uint32 {
 
 	add(bringupFirst, bringupLast)
 	add(coldKeyFirst, coldKeyLast)
-	add(coldOriginFirst, coldOriginLast)
 	ids = append(ids, hostKeysID)
 
 	for slot := uint8(0); slot <= profile.MaxSlot; slot++ {
@@ -267,7 +266,7 @@ func (s *Service) wipeProfile(req WipeProfileRequest) (WipeResponse, error) {
 	}
 
 	if !shared {
-		ids = append(ids, p.ColdKeyID, coldOriginID(p.ColdKeyID))
+		ids = append(ids, p.ColdKeyID)
 	}
 
 	deleted, err := s.remove(append(ids, p.RecordID()))

@@ -37,7 +37,6 @@ const (
 	RouteProvisionFloor      = "/provision/floor"
 	RouteProvisionReward     = "/provision/reward"
 	RouteProvisionCold       = "/provision/cold"
-	RouteProvisionColdInfo   = "/provision/cold/info"
 	RouteProvisionIdentity   = "/provision/identity"
 	RouteProvisionHostKey    = "/provision/host-key"
 	RouteProvisionHostRevoke = "/provision/host-key/revoke"
@@ -79,7 +78,6 @@ var adminRequests = map[string]func() hostAuthed{
 	RouteProvisionFloor:      func() hostAuthed { return &FloorRequest{} },
 	RouteProvisionReward:     func() hostAuthed { return &RewardRequest{} },
 	RouteProvisionCold:       func() hostAuthed { return &ColdRequest{} },
-	RouteProvisionColdInfo:   func() hostAuthed { return &ColdInfoRequest{} },
 	RouteProvisionIdentity:   func() hostAuthed { return &IdentityRequest{} },
 	RouteProvisionHostKey:    func() hostAuthed { return &HostKeyRequest{} },
 	RouteProvisionHostRevoke: func() hostAuthed { return &HostKeyRequest{} },

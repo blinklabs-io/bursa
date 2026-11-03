@@ -26,37 +26,7 @@ import (
 	"strings"
 )
 
-// Cold key origins, as reported in ColdResponse.
-const (
-	originGenerated = "generated"
-	originImported  = "imported"
-	// originUnknown is a cold key with no origin record, such as one
-	// provisioned before origins were recorded.
-	originUnknown = "unknown"
-)
-
-// The origin of each cold key is recorded at creation in a binary object at
-// the cold key's object ID plus coldOriginOffset (0x20e50040-0x20e5004f),
-// above the identity key, host key list and signing log head
-// (0x20e50020-0x20e50022) and below the owner keys (0x20e50100). The SE050
-// object origin attribute is not used: the driver in armory/se050 reads no
-// object attributes.
-const (
-	coldOriginOffset uint32 = 0x30
-	coldOriginFirst         = coldKeyFirst + coldOriginOffset
-	coldOriginLast          = coldKeyLast + coldOriginOffset
-)
-
-func coldOriginID(id uint32) uint32 { return id + coldOriginOffset }
-
 var errMalformedRequest = errors.New("malformed request")
-
-// ColdInfoRequest asks for an existing cold key's public key, pool id and
-// origin.
-type ColdInfoRequest struct {
-	HostAuth
-	ColdKeyID uint32 `json:"cold_key_id"`
-}
 
 // secretHex is a hex string decoded to bytes, so key material can be zeroed:
 // a Go string cannot be. It decodes from and marshals to the same hex string
@@ -283,139 +253,19 @@ func jsonNames(t reflect.Type, names []string) []string {
 	return names
 }
 
-// writeOrigin records how the cold key id was made, and fails unless the
-// record reads back as written.
-func (s *Service) writeOrigin(id uint32, origin string) error {
-	want := []byte(origin)
-
-	err := s.chip.WriteBinary(coldOriginID(id), want)
-	if err == nil {
-		var got []byte
-
-		if got, err = s.chip.ReadBinary(coldOriginID(id)); err == nil && !bytes.Equal(got, want) {
-			err = errors.New("read back differs")
-		}
-	}
-
-	if err != nil {
-		s.logf("write origin %#08x: %v", coldOriginID(id), err)
-		return errDevice
-	}
-
-	return nil
-}
-
-// readOrigin returns the recorded origin of the cold key id, originUnknown
-// when none is recorded.
-func (s *Service) readOrigin(id uint32) (string, error) {
-	ok, err := s.chip.Exists(coldOriginID(id))
-	if err != nil {
-		s.logf("exist check %#08x: %v", coldOriginID(id), err)
-		return "", errDevice
-	}
-
-	if !ok {
-		return originUnknown, nil
-	}
-
-	b, err := s.chip.ReadBinary(coldOriginID(id))
-	if err != nil {
-		s.logf("read origin %#08x: %v", coldOriginID(id), err)
-		return "", errDevice
-	}
-
-	switch o := string(b); o {
-	case originGenerated, originImported:
-		return o, nil
-	}
-
-	return originUnknown, nil
-}
-
-// discard deletes a key this request just created and could not describe, so
-// the device never holds a cold key it cannot account for.
-func (s *Service) discard(id uint32) {
-	if err := s.chip.Delete(id); err != nil {
-		s.logf("delete %#08x after a failed provision: %v", id, err)
-	}
-}
-
-func coldResponse(id uint32, pub []byte, origin string) ColdResponse {
+func coldResponse(id uint32, pub []byte) ColdResponse {
 	h := keyHash(pub)
 
 	return ColdResponse{
 		ColdKeyID: id,
 		PublicKey: hex.EncodeToString(pub),
 		PoolID:    hex.EncodeToString(h[:]),
-		Origin:    origin,
 	}
-}
-
-// generateCold creates a cold key inside the chip and records that it was
-// generated there. An existing object is never replaced.
-//
-// A generated cold key has NO backup. Its private key cannot leave the chip,
-// so losing, wiping or breaking the device loses the pool: the pool id, its
-// registration and its stake cannot be moved to another key. Import a key
-// instead when the pool must survive the device.
-func (s *Service) generateCold(id uint32) (ColdResponse, error) {
-	ok, err := s.chip.Exists(id)
-	if err != nil {
-		s.logf("exist check %#08x: %v", id, err)
-		return ColdResponse{}, errDevice
-	}
-
-	if ok {
-		return ColdResponse{}, errors.New("cold key object already exists")
-	}
-
-	if err = s.chip.GenerateEd25519(id, false); err != nil {
-		s.logf("generate %#08x: %v", id, err)
-
-		// the object was absent above, so one present now is the key this
-		// call generated and only its answer was lost
-		ok, xerr := s.chip.Exists(id)
-		if xerr != nil {
-			// whatever is there now is this call's, so remove it rather
-			// than leave a key with no origin that blocks a retry
-			s.logf("exist check %#08x: %v", id, xerr)
-			s.discard(id)
-
-			return ColdResponse{}, errDevice
-		}
-
-		if !ok {
-			return ColdResponse{}, errDevice
-		}
-	}
-
-	pub, err := s.publicKey(id)
-	if err == nil {
-		err = s.writeOrigin(id, originGenerated)
-	}
-
-	if err != nil {
-		s.discard(id)
-		return ColdResponse{}, err
-	}
-
-	res := coldResponse(id, pub, originGenerated)
-	s.logf("generated cold key %#08x pool %s: no backup exists, losing the device loses the pool", id, res.PoolID)
-
-	return res, nil
 }
 
 // importCold stores the seed in cold key object id. An existing object
-// holding the same key confirms an earlier import whose answer was lost. A
-// key that matches the seed supplied was imported, whatever an earlier record
-// says: a generated key's seed is not known to anyone.
+// holding the same key confirms an earlier import whose answer was lost.
 func (s *Service) importCold(id uint32, seed []byte) (ColdResponse, error) {
-	existed, err := s.chip.Exists(id)
-	if err != nil {
-		s.logf("exist check %#08x: %v", id, err)
-		return ColdResponse{}, errDevice
-	}
-
 	pub, err := s.importKey(id, seed)
 	if errors.Is(err, errKeyExists) {
 		return ColdResponse{}, errors.New("cold key object already exists with a different key")
@@ -423,45 +273,8 @@ func (s *Service) importCold(id uint32, seed []byte) (ColdResponse, error) {
 		return ColdResponse{}, err
 	}
 
-	if err = s.writeOrigin(id, originImported); err != nil {
-		if !existed {
-			s.discard(id)
-		}
-
-		return ColdResponse{}, err
-	}
-
-	res := coldResponse(id, pub, originImported)
+	res := coldResponse(id, pub)
 	s.logf("imported cold key %#08x pool %s", id, res.PoolID)
 
 	return res, nil
-}
-
-// coldInfo describes an existing cold key.
-func (s *Service) coldInfo(req ColdInfoRequest) (ColdResponse, error) {
-	if req.ColdKeyID < coldKeyFirst || req.ColdKeyID > coldKeyLast {
-		return ColdResponse{}, errors.New("cold key id outside the cold key range")
-	}
-
-	ok, err := s.chip.Exists(req.ColdKeyID)
-	if err != nil {
-		s.logf("exist check %#08x: %v", req.ColdKeyID, err)
-		return ColdResponse{}, errDevice
-	}
-
-	if !ok {
-		return ColdResponse{}, errors.New("cold key not provisioned")
-	}
-
-	pub, err := s.publicKey(req.ColdKeyID)
-	if err != nil {
-		return ColdResponse{}, err
-	}
-
-	origin, err := s.readOrigin(req.ColdKeyID)
-	if err != nil {
-		return ColdResponse{}, err
-	}
-
-	return coldResponse(req.ColdKeyID, pub, origin), nil
 }

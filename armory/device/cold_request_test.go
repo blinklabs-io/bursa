@@ -72,15 +72,6 @@ func TestKeyRequestsMarshalAsHex(t *testing.T) {
 		})
 	}
 
-	t.Run("no key", func(t *testing.T) {
-		t.Parallel()
-
-		b, err := json.Marshal(ColdRequest{ColdKeyID: freeColdID, Generate: true})
-		if err != nil || strings.Contains(string(b), "signing_key") {
-			t.Fatalf("marshalled %s, %v, want no signing_key", b, err)
-		}
-	})
-
 	t.Run("served", func(t *testing.T) {
 		t.Parallel()
 

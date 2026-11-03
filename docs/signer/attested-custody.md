@@ -393,39 +393,20 @@ fails startup.
 
 ### Cold key provisioning
 
-The provisioning firmware's `POST /provision/cold` puts a cold key in a free
-cold key object (`0x20e50010`-`0x20e5001f`) in one of two ways. An existing
-object is never replaced.
+The provisioning firmware's `POST /provision/cold` imports a cold key into a
+free cold key object (`0x20e50010`-`0x20e5001f`):
+`{"cold_key_id": N, "signing_key": "<cborHex>"}`, the cardano-cli `cborHex`
+(`5820` and the 32-byte seed). An existing object is never replaced; repeating
+the request with the same key confirms the earlier import.
 
-- Import: `{"cold_key_id": N, "signing_key": "<cborHex>"}` stores the key given
-  as the cardano-cli `cborHex` (`5820` and the 32-byte seed). Repeating the
-  request with the same key confirms the earlier import.
-- Generate: `{"cold_key_id": N, "generate": true}`, with no `signing_key`,
-  creates the key inside the SE050. A request with both is refused.
+The device never generates a cold key. A key made inside the SE050 cannot be
+exported or backed up, so a lost or broken device would lose the pool for
+good. A cold key is always created off the device, kept in a backup, and
+imported, so the pool can move to a replacement device.
 
-Both return `public_key`, `pool_id` and `origin`, which is `generated` or
-`imported`. The origin is recorded on the device when the key is created, in a
-binary object at the cold key's object ID plus `0x30`
-(`0x20e50040`-`0x20e5004f`), because the driver reads no SE050 object
-attributes. `POST /provision/cold/info` with `{"cold_key_id": N}` returns the
-same fields for an existing key; a key with no record, such as one provisioned
-before origins were recorded, reports `unknown`. Repeating the import of such
-a key with its seed records it as `imported`, after which it no longer
-reports `unknown`. A wipe deletes the record with
-the key. The origin is not part of the attested inventory and is not signed:
-it is read from the provisioning firmware, whose replies the device does not
-sign; host-key authentication covers the request, not the reply. A reported
-`generated` is therefore not proof that the key cannot be exported, and tools
-must not present it as such.
-
-A generated cold key has no backup. Its private key cannot leave the SE050, so
-losing, wiping or breaking the device loses the pool: its id, registration and
-stake cannot move to another key. Import a key held elsewhere when the pool
-must outlive the device.
-
-An imported key travels in the request body, and the device zeroes the request
-buffer and the decoded key once the request is done. Copies held by the host
-and the transport, and by the host tool that sent it, are outside that.
+The device zeroes the request buffer and the decoded key once the request is
+done. Copies held by the host and the transport, and by the host tool that
+sent it, are outside that.
 
 ### Provisioning and wipe authentication
 
@@ -440,13 +421,13 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   routes take unsigned requests, so a fresh device can be set up. This is the
   only time `POST /provision/host-key` adds a key unsigned.
 - Once any host key is registered, `/provision/profile`, `/provision/floor`,
-  `/provision/reward`, `/provision/cold`, `/provision/cold/info`,
-  `/provision/identity`, `/provision/host-key`, `/provision/host-key/revoke`,
-  `/wipe/profile` and `/wipe/signlog` need `challenge`, `host_key` and
-  `host_signature` fields from a host key of the image's network and chain. A
-  key of another network or chain does not qualify, and does not let the
-  image's first key in unsigned. The firmware's unsigned `POST /provision`
-  cold key import is refused too; use a signed `/provision/cold`.
+  `/provision/reward`, `/provision/cold`, `/provision/identity`,
+  `/provision/host-key`, `/provision/host-key/revoke`, `/wipe/profile` and
+  `/wipe/signlog` need `challenge`, `host_key` and `host_signature` fields
+  from a host key of the image's network and chain. A key of another network
+  or chain does not qualify, and does not let the image's first key in
+  unsigned. The firmware's unsigned `POST /provision` cold key import is
+  refused too; use a signed `/provision/cold`.
 - The signature is an Ed25519 signature over `AdminBinding`: the domain
   `bursa-armory-admin/1`, the route, the request as the device's Go types
   encode it with the three fields empty and each private key (`signing_key`
@@ -479,12 +460,11 @@ armory-pool -host-key host.skey wipe signlog < wipe-request.json
 armory-pool wipe device < wipe-request.json
 ```
 
-`provision` takes `profile`, `floor`, `reward`, `cold`, `cold/info`,
-`identity`, `host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`,
-`profile` or `signlog`. Without `-host-key` a request is sent unsigned, which
-the device accepts only in the bootstrap state, and always for `wipe device`
-and `wipe objects`. Register the first host key before the other provisioning
-steps.
+`provision` takes `profile`, `floor`, `reward`, `cold`, `identity`, `host-key`
+or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile` or
+`signlog`. Without `-host-key` a request is sent unsigned, which the device
+accepts only in the bootstrap state, and always for `wipe device` and `wipe
+objects`. Register the first host key before the other provisioning steps.
 
 ### Signing log
 
