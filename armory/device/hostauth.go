@@ -459,6 +459,13 @@ func (s *Service) writeHostKeys(entries []hostEntry) (HostKeyResponse, error) {
 		return HostKeyResponse{}, errDevice
 	}
 
+	// a request signed while no host key existed was not checked, so its
+	// challenge was not burned; a new challenge key voids every challenge
+	// issued before the first host key, so none of them can replay
+	if len(s.hostEntries) == 0 && len(entries) > 0 {
+		s.challengeKey, s.usedChallenges, s.usedOrder = nil, nil, nil
+	}
+
 	s.setHostEntries(entries)
 	s.hostKeysBad = false
 

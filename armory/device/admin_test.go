@@ -299,6 +299,49 @@ func TestFirstHostKeyUnsigned(t *testing.T) {
 	}
 }
 
+// A request signed while no host key exists is not checked, so its challenge
+// is not burned; registering the first host key must still void that
+// challenge, or the request replays once its key is registered.
+func TestFirstHostKeyVoidsBootstrapChallenges(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newTestService(t)
+	h := s.ProvisioningHandler()
+	provisionTestProfile(t, s)
+
+	code, b := rawPost(h, "/v1/challenge", []byte("{}"))
+	if code != http.StatusOK {
+		t.Fatalf("challenge: %d %s", code, b)
+	}
+
+	var ch ChallengeResponse
+	if err := json.Unmarshal(b, &ch); err != nil {
+		t.Fatal(err)
+	}
+
+	signed, err := SignAdminRequest(RouteProvisionFloor, jsonOf(t, FloorRequest{Profile: "otg@preview"}), testHostKey, ch.Challenge)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := rawPost(h, RouteProvisionFloor, signed); code != http.StatusOK {
+		t.Fatalf("signed floor with no host key: %d %s", code, body)
+	}
+
+	if code, body := rawPost(h, RouteProvisionHostKey, jsonOf(t, HostKeyRequest{PublicKey: hostPub(testHostKey)})); code != http.StatusOK {
+		t.Fatalf("first host key: %d %s", code, body)
+	}
+
+	code, body := rawPost(h, RouteProvisionFloor, signed)
+	if code == http.StatusOK || !strings.Contains(string(body), "unknown or used challenge") {
+		t.Fatalf("bootstrap request replayed after the first host key: %d %s", code, body)
+	}
+
+	if code, body := postAs(t, h, RouteProvisionFloor, FloorRequest{Profile: "otg@preview"}, testHostKey); code != http.StatusOK {
+		t.Fatalf("fresh signed floor: %d %s", code, body)
+	}
+}
+
 // A key registered for another network is not a key of this image's scope:
 // it neither authenticates a request nor lets the image's first key in
 // unsigned.
