@@ -23,9 +23,10 @@
 //	armory-pool -identity HEX -profile NAME witness -role pool|stake -tx-file F -out W
 //	armory-pool -identity HEX -profile NAME opcert -kes-vkey F -kes-period N -chain-counter N|none -out F
 //	armory-pool -identity HEX signlog [-head-seq N -head-hash HEX]
-//	armory-pool [-host-key F] provision profile|floor|reward|cold|identity|host-key|host-key/revoke < request.json
+//	armory-pool [-host-key F] provision profile|floor|reward|pins|cold|identity|host-key|host-key/revoke < request.json
 //	armory-pool [-host-key F] wipe objects|device|profile|signlog < request.json
 //	armory-pool reward-hex stake_test1...
+//	armory-pool pins-request -profile NAME -vrf-key-hash HEX [-metadata-hash HEX -metadata-url URL] [-relay R ...] [-unpinned-relays] -pledge-min N -pledge-max N -cost-max N -margin-max N/D
 //	armory-pool address -stake-vkey F [-payment-vkey F] [-type base|reward] [-network preview]
 package main
 
@@ -366,7 +367,7 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 	}
 
 	if fs.NArg() == 0 {
-		return errors.New("subcommand required: keys, witness, opcert, signlog, provision, wipe, reward-hex, address, host-key")
+		return errors.New("subcommand required: keys, witness, opcert, signlog, provision, wipe, reward-hex, pins-request, address, host-key")
 	}
 
 	sub, rest := fs.Arg(0), fs.Args()[1:]
@@ -522,6 +523,8 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 		fmt.Fprintln(stdout, h)
 
 		return nil
+	case "pins-request":
+		return pinsRequest(rest, stdout)
 	case "address":
 		payment := sf.String("payment-vkey", "", "payment verification key envelope")
 		stake := sf.String("stake-vkey", "", "stake verification key envelope")
