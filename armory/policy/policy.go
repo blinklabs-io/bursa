@@ -367,13 +367,40 @@ func checkRewardAccount(p profile.Profile, c *common.PoolRegistrationCertificate
 }
 
 // checkPins requires a registration to match the pins provisioned for the
-// profile: the VRF key hash, metadata hash, relays and metadata URL exactly,
-// pledge, cost and margin within bounds.
+// profile: the VRF key hash exactly, pledge, cost and margin within bounds,
+// and, when the pins pin relays, the metadata hash, relays and metadata URL
+// exactly.
 func checkPins(pins profile.Pins, c *common.PoolRegistrationCertificate) error {
 	if [32]byte(c.VrfKeyHash) != pins.VRFKeyHash {
 		return errors.New("pool registration VRF key hash is not the pinned one")
 	}
 
+	if pins.PinRelays {
+		if err := checkPinnedRelays(pins, c); err != nil {
+			return err
+		}
+	}
+
+	if c.Pledge < pins.PledgeMin || c.Pledge > pins.PledgeMax {
+		return fmt.Errorf("pool registration pledge %d outside the pinned bounds", c.Pledge)
+	}
+
+	if c.Cost > pins.CostMax {
+		return fmt.Errorf("pool registration cost %d above the pinned maximum", c.Cost)
+	}
+
+	max := new(big.Rat).SetFrac(new(big.Int).SetUint64(pins.MarginMaxNum), new(big.Int).SetUint64(pins.MarginMaxDen))
+
+	if c.Margin.Rat == nil || c.Margin.Cmp(max) > 0 {
+		return errors.New("pool registration margin above the pinned maximum")
+	}
+
+	return nil
+}
+
+// checkPinnedRelays requires a registration's metadata hash, or its absence,
+// relays, in order, and metadata URL to be the pinned ones.
+func checkPinnedRelays(pins profile.Pins, c *common.PoolRegistrationCertificate) error {
 	switch {
 	case pins.MetadataHash == nil && c.PoolMetadata != nil:
 		return errors.New("pool registration carries metadata, none is pinned")
@@ -395,20 +422,6 @@ func checkPins(pins profile.Pins, c *common.PoolRegistrationCertificate) error {
 
 	if d != pins.RelaysDigest {
 		return errors.New("pool registration relays or metadata URL are not the pinned ones")
-	}
-
-	if c.Pledge < pins.PledgeMin || c.Pledge > pins.PledgeMax {
-		return fmt.Errorf("pool registration pledge %d outside the pinned bounds", c.Pledge)
-	}
-
-	if c.Cost > pins.CostMax {
-		return fmt.Errorf("pool registration cost %d above the pinned maximum", c.Cost)
-	}
-
-	max := new(big.Rat).SetFrac(new(big.Int).SetUint64(pins.MarginMaxNum), new(big.Int).SetUint64(pins.MarginMaxDen))
-
-	if c.Margin.Rat == nil || c.Margin.Cmp(max) > 0 {
-		return errors.New("pool registration margin above the pinned maximum")
 	}
 
 	return nil

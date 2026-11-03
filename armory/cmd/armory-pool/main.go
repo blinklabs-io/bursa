@@ -26,7 +26,7 @@
 //	armory-pool [-host-key F] provision profile|floor|reward|pins|cold|identity|host-key|host-key/revoke < request.json
 //	armory-pool [-host-key F] wipe objects|device|profile|signlog < request.json
 //	armory-pool reward-hex stake_test1...
-//	armory-pool pins-request -profile NAME -vrf-key-hash HEX [-metadata-hash HEX -metadata-url URL] [-relay R ...] -pledge-min N -pledge-max N -cost-max N -margin-max N/D
+//	armory-pool pins-request -profile NAME -vrf-key-hash HEX [-metadata-hash HEX -metadata-url URL] [-relay R ...] [-unpinned-relays] -pledge-min N -pledge-max N -cost-max N -margin-max N/D
 //	armory-pool address -stake-vkey F [-payment-vkey F] [-type base|reward] [-network preview]
 package main
 

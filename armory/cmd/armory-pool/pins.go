@@ -43,6 +43,7 @@ func pinsRequest(args []string, out io.Writer) error {
 	costMax := fs.Uint64("cost-max", 0, "highest fixed cost, in lovelace")
 	marginMax := fs.String("margin-max", "", "highest margin as N/D, e.g. 1/10")
 	metaURL := fs.String("metadata-url", "", "pool metadata URL; required with -metadata-hash")
+	unpinned := fs.Bool("unpinned-relays", false, "leave the relays and metadata unpinned, so registrations may change them; refused with -relay or -metadata-*")
 
 	var relays []common.PoolRelay
 
@@ -80,6 +81,18 @@ func pinsRequest(args []string, out io.Writer) error {
 		return err
 	}
 
+	if *unpinned {
+		if len(relays) > 0 || *meta != "" || *metaURL != "" {
+			return errors.New("-unpinned-relays leaves relays and metadata unpinned: drop -relay, -metadata-hash and -metadata-url")
+		}
+
+		return printPins(out, device.PinsRequest{
+			Profile: *name, VRFKeyHash: *vrf,
+			PledgeMin: *pledgeMin, PledgeMax: *pledgeMax, CostMax: *costMax,
+			MarginMaxNum: n, MarginMaxDen: d,
+		})
+	}
+
 	var url *string
 
 	if *meta != "" {
@@ -101,16 +114,21 @@ func pinsRequest(args []string, out io.Writer) error {
 		return fmt.Errorf("relays: %w", err)
 	}
 
-	req, err := json.Marshal(device.PinsRequest{
+	return printPins(out, device.PinsRequest{
 		Profile: *name, VRFKeyHash: *vrf, MetadataHash: *meta,
 		PledgeMin: *pledgeMin, PledgeMax: *pledgeMax, CostMax: *costMax,
 		MarginMaxNum: n, MarginMaxDen: d, RelaysDigest: hex.EncodeToString(digest[:]),
 	})
+}
+
+// printPins writes the /provision/pins request body for req.
+func printPins(out io.Writer, req device.PinsRequest) error {
+	b, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
 
-	_, err = fmt.Fprintf(out, "%s\n", req)
+	_, err = fmt.Fprintf(out, "%s\n", b)
 
 	return err
 }

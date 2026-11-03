@@ -37,6 +37,10 @@ const pinsBase uint32 = 0x20e50500
 // pinsFlagMetadata marks an encoded Pins that pins a metadata hash.
 const pinsFlagMetadata = 1
 
+// pinsFlagRelays marks an encoded Pins that pins the relays, the metadata
+// URL and the metadata hash or its absence.
+const pinsFlagRelays = 2
+
 // RelaysDigestSize is the size of the digest that pins a registration's
 // relays and metadata URL.
 const RelaysDigestSize = 20
@@ -51,13 +55,18 @@ const pinsUsed = 126
 func (p Profile) PinsID() uint32 { return pinsBase + uint32(p.Slot) }
 
 // Pins are the pool registration parameters a profile's registrations must
-// match: the VRF key hash, pool metadata hash, relays and metadata URL
-// exactly, and pledge, cost and margin within bounds.
+// match: the VRF key hash exactly and pledge, cost and margin within bounds,
+// and, when PinRelays is set, the relays, metadata URL and metadata hash
+// exactly.
 type Pins struct {
 	// VRFKeyHash is the VRF key hash every registration must name.
 	VRFKeyHash [32]byte
+	// PinRelays pins MetadataHash and RelaysDigest. Without it registrations
+	// may change their relays and metadata, so they can be updated without
+	// provisioning new pins, and both fields must be empty.
+	PinRelays bool
 	// MetadataHash is the pool metadata hash every registration must name.
-	// Nil pins the absence of metadata.
+	// Nil pins the absence of metadata, when PinRelays is set.
 	MetadataHash *[32]byte
 	// PledgeMin and PledgeMax bound the pledge, inclusive.
 	PledgeMin, PledgeMax uint64
@@ -78,13 +87,16 @@ func (p Pins) validate() error {
 		return errors.New("pins: margin maximum has a zero denominator")
 	case p.MarginMaxNum > p.MarginMaxDen:
 		return errors.New("pins: margin maximum above 1")
+	case !p.PinRelays && (p.MetadataHash != nil || p.RelaysDigest != [RelaysDigestSize]byte{}):
+		return errors.New("pins: metadata or relays digest without pinned relays")
 	}
 
 	return nil
 }
 
-// EncodePins serializes pins to exactly PinsSize bytes: version, flags, VRF
-// key hash, metadata hash (zero when not pinned), pledge minimum and maximum,
+// EncodePins serializes pins to exactly PinsSize bytes: version, flags
+// (pinsFlagMetadata, pinsFlagRelays), VRF key hash, metadata hash (zero when
+// not pinned), pledge minimum and maximum,
 // cost maximum, margin maximum numerator and denominator (big endian), relays
 // digest, then zero padding.
 func EncodePins(p Pins) ([]byte, error) {
@@ -97,8 +109,12 @@ func EncodePins(p Pins) ([]byte, error) {
 
 	copy(b[2:34], p.VRFKeyHash[:])
 
+	if p.PinRelays {
+		b[1] |= pinsFlagRelays
+	}
+
 	if p.MetadataHash != nil {
-		b[1] = pinsFlagMetadata
+		b[1] |= pinsFlagMetadata
 		copy(b[34:66], p.MetadataHash[:])
 	}
 
@@ -112,7 +128,8 @@ func EncodePins(p Pins) ([]byte, error) {
 }
 
 // DecodePins parses a pins object, rejecting another version, unknown flags,
-// a stray metadata hash, non-zero padding and a wrong size.
+// a stray metadata hash, a metadata hash or relays digest without pinned
+// relays, non-zero padding and a wrong size.
 func DecodePins(b []byte) (p Pins, err error) {
 	if len(b) != PinsSize {
 		return Pins{}, fmt.Errorf("pins: object is %d bytes, want %d", len(b), PinsSize)
@@ -122,7 +139,7 @@ func DecodePins(b []byte) (p Pins, err error) {
 		return Pins{}, fmt.Errorf("pins: unsupported version %d", b[0])
 	}
 
-	if b[1]&^pinsFlagMetadata != 0 {
+	if b[1]&^(pinsFlagMetadata|pinsFlagRelays) != 0 {
 		return Pins{}, errors.New("pins: unknown flags")
 	}
 
@@ -131,6 +148,7 @@ func DecodePins(b []byte) (p Pins, err error) {
 	}
 
 	copy(p.VRFKeyHash[:], b[2:34])
+	p.PinRelays = b[1]&pinsFlagRelays != 0
 
 	if b[1]&pinsFlagMetadata != 0 {
 		p.MetadataHash = new([32]byte)

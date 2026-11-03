@@ -57,6 +57,7 @@ func mustDigest(relays []common.PoolRelay, url *string) [profile.RelaysDigestSiz
 func testPins() *profile.Pins {
 	return &profile.Pins{
 		VRFKeyHash: pinnedVRF,
+		PinRelays:  true,
 		PledgeMin:  500_000_000, PledgeMax: 600_000_000,
 		CostMax:      170_000_000,
 		MarginMaxNum: 1, MarginMaxDen: 100,
@@ -99,6 +100,10 @@ func TestEvaluatePoolPins(t *testing.T) {
 	twoRelays := testPins()
 	twoRelays.RelaysDigest = mustDigest([]common.PoolRelay{hostRelay("a.example", 1), hostRelay("b.example", 2)}, nil)
 
+	// relays and metadata unpinned: only the VRF key and the bounds hold
+	free := testPins()
+	free.PinRelays, free.RelaysDigest = false, [profile.RelaysDigestSize]byte{}
+
 	type tc struct {
 		name  string
 		pins  *profile.Pins
@@ -130,6 +135,12 @@ func TestEvaluatePoolPins(t *testing.T) {
 		{"pinned relays in order", twoRelays, regWith(fRelays, []any{relayCBOR("a.example", 1), relayCBOR("b.example", 2)}), true, ""},
 		{"pinned relays reordered", twoRelays, regWith(fRelays, []any{relayCBOR("b.example", 2), relayCBOR("a.example", 1)}), false, "relays"},
 		{"other metadata URL", withMeta, regWith(fMeta, []any{"https://evil.example/p.json", pinnedMeta()[:]}), false, "metadata URL"},
+		{"unpinned relays changed", free, regWith(fRelays, []any{relayCBOR("new.example", 6000)}), true, ""},
+		{"unpinned relays removed", free, regWith(fRelays, []any{}), true, ""},
+		{"unpinned metadata added", free, regWith(fMeta, metadata([32]byte{0x44})), true, ""},
+		{"unpinned relays, other VRF key", free, regWith(fVRF, otherVRF), false, "VRF key hash"},
+		{"unpinned relays, pledge above maximum", free, regWith(fPledge, uint64(600_000_001)), false, "pledge"},
+		{"unpinned relays, cost above maximum", free, regWith(fCost, uint64(170_000_001)), false, "cost"},
 	}
 
 	for _, c := range cases {

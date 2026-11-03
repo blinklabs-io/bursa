@@ -23,7 +23,7 @@ func testPins() Pins {
 	meta := [32]byte{0x33}
 
 	return Pins{
-		VRFKeyHash: [32]byte{0x11}, MetadataHash: &meta,
+		VRFKeyHash: [32]byte{0x11}, PinRelays: true, MetadataHash: &meta,
 		PledgeMin: 1, PledgeMax: 500, CostMax: 170, MarginMaxNum: 1, MarginMaxDen: 10,
 		RelaysDigest: [RelaysDigestSize]byte{0x55, 19: 0x66},
 	}
@@ -33,8 +33,9 @@ func TestPinsRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	for name, p := range map[string]Pins{
-		"metadata":    testPins(),
-		"no metadata": {VRFKeyHash: [32]byte{9}, PledgeMax: 1, MarginMaxNum: 0, MarginMaxDen: 1},
+		"metadata":                     testPins(),
+		"no metadata":                  {VRFKeyHash: [32]byte{9}, PinRelays: true, PledgeMax: 1, MarginMaxNum: 0, MarginMaxDen: 1},
+		"relays and metadata unpinned": {VRFKeyHash: [32]byte{9}, PledgeMax: 1, MarginMaxNum: 0, MarginMaxDen: 1},
 	} {
 		b, err := EncodePins(p)
 		if err != nil || len(b) != PinsSize {
@@ -47,7 +48,7 @@ func TestPinsRoundTrip(t *testing.T) {
 		}
 
 		again, _ := EncodePins(got)
-		if !bytes.Equal(again, b) || (got.MetadataHash == nil) != (p.MetadataHash == nil) || got.RelaysDigest != p.RelaysDigest {
+		if !bytes.Equal(again, b) || (got.MetadataHash == nil) != (p.MetadataHash == nil) || got.RelaysDigest != p.RelaysDigest || got.PinRelays != p.PinRelays {
 			t.Errorf("%s: round trip changed the pins", name)
 		}
 	}
@@ -62,7 +63,7 @@ func TestPinsLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := append([]byte{1, 1, 0x11}, make([]byte, 31)...)
+	want := append([]byte{1, 3, 0x11}, make([]byte, 31)...)
 	want = append(want, 0x33)
 	want = append(want, make([]byte, 31)...)
 	want = append(want, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0xf4, 0, 0, 0, 0, 0, 0, 0, 170,
@@ -87,8 +88,16 @@ func TestPinsRejected(t *testing.T) {
 		"short":            good[:PinsSize-1],
 		"long":             append(bytes.Clone(good), 0),
 		"version":          mut(func(b []byte) []byte { b[0] = 2; return b }),
-		"unknown flag":     mut(func(b []byte) []byte { b[1] = 3; return b }),
-		"metadata no flag": mut(func(b []byte) []byte { b[1] = 0; return b }),
+		"unknown flag":     mut(func(b []byte) []byte { b[1] = 7; return b }),
+		"metadata no flag": mut(func(b []byte) []byte { b[1] = 2; return b }),
+		// relays unpinned, but the metadata flag or the digest still set
+		"metadata flag without relays": mut(func(b []byte) []byte { b[1] = 1; return b }),
+		"digest without relays": mut(func(b []byte) []byte {
+			b[1] = 0
+			clear(b[34:66])
+
+			return b
+		}),
 		"padding":          mut(func(b []byte) []byte { b[PinsSize-1] = 1; return b }),
 		"first padding":    mut(func(b []byte) []byte { b[126] = 1; return b }),
 		"pledge range":     mut(func(b []byte) []byte { b[66] = 1; return b }),
@@ -100,9 +109,11 @@ func TestPinsRejected(t *testing.T) {
 	}
 
 	for name, p := range map[string]Pins{
-		"pledge":      {PledgeMin: 2, PledgeMax: 1, MarginMaxDen: 1},
-		"denominator": {MarginMaxDen: 0},
-		"margin":      {MarginMaxNum: 2, MarginMaxDen: 1},
+		"pledge":                    {PledgeMin: 2, PledgeMax: 1, MarginMaxDen: 1},
+		"denominator":               {MarginMaxDen: 0},
+		"margin":                    {MarginMaxNum: 2, MarginMaxDen: 1},
+		"metadata, relays unpinned": {MetadataHash: new([32]byte), MarginMaxDen: 1},
+		"digest, relays unpinned":   {RelaysDigest: [RelaysDigestSize]byte{1}, MarginMaxDen: 1},
 	} {
 		if _, err := EncodePins(p); err == nil {
 			t.Errorf("%s: encoded", name)

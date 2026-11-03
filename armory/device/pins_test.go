@@ -136,16 +136,16 @@ func TestProvisionPinsRefused(t *testing.T) {
 	s, chip, _, _, _ := pinnedSetup(t)
 
 	for name, mutate := range map[string]func(*PinsRequest){
-		"unknown profile":  func(r *PinsRequest) { r.Profile = "nope" },
-		"short vrf":        func(r *PinsRequest) { r.VRFKeyHash = "11" },
-		"vrf not hex":      func(r *PinsRequest) { r.VRFKeyHash = strings.Repeat("zz", 32) },
-		"short metadata":   func(r *PinsRequest) { r.MetadataHash = "22" },
-		"pledge range":     func(r *PinsRequest) { r.PledgeMin = 2000 },
-		"zero denominator": func(r *PinsRequest) { r.MarginMaxDen = 0 },
-		"margin above one": func(r *PinsRequest) { r.MarginMaxNum = 11; r.MarginMaxDen = 10 },
-		"no relays digest": func(r *PinsRequest) { r.RelaysDigest = "" },
-		"short relays":     func(r *PinsRequest) { r.RelaysDigest = r.RelaysDigest[2:] },
-		"32-byte relays":   func(r *PinsRequest) { r.RelaysDigest = pinVRF },
+		"unknown profile":         func(r *PinsRequest) { r.Profile = "nope" },
+		"short vrf":               func(r *PinsRequest) { r.VRFKeyHash = "11" },
+		"vrf not hex":             func(r *PinsRequest) { r.VRFKeyHash = strings.Repeat("zz", 32) },
+		"short metadata":          func(r *PinsRequest) { r.MetadataHash = "22" },
+		"pledge range":            func(r *PinsRequest) { r.PledgeMin = 2000 },
+		"zero denominator":        func(r *PinsRequest) { r.MarginMaxDen = 0 },
+		"margin above one":        func(r *PinsRequest) { r.MarginMaxNum = 11; r.MarginMaxDen = 10 },
+		"metadata without relays": func(r *PinsRequest) { r.RelaysDigest = "" },
+		"short relays":            func(r *PinsRequest) { r.RelaysDigest = r.RelaysDigest[2:] },
+		"32-byte relays":          func(r *PinsRequest) { r.RelaysDigest = pinVRF },
 	} {
 		req := setPinsReq()
 		mutate(&req)
@@ -307,8 +307,20 @@ func TestStartupReportShowsPinned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(log.String(), "registration pins set") {
-		t.Errorf("startup report does not show the profile is pinned:\n%s", log.String())
+	if !strings.Contains(log.String(), "registration pins set, relays and metadata not pinned") {
+		t.Errorf("startup report does not show the profile is pinned without its relays:\n%s", log.String())
+	}
+
+	pins, _ = profile.EncodePins(profile.Pins{PinRelays: true, MarginMaxDen: 1})
+	chip.bins[(profile.Profile{Slot: 0}).PinsID()] = pins
+	log.Reset()
+
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(log.String(), "registration pins set") || strings.Contains(log.String(), "not pinned") {
+		t.Errorf("startup report does not show the profile is pinned with its relays:\n%s", log.String())
 	}
 
 	delete(chip.bins, (profile.Profile{Slot: 0}).PinsID())
@@ -396,5 +408,29 @@ func TestPinsRefusedWhileRecordMisplaced(t *testing.T) {
 
 	if _, ok := chip.bins[moved.PinsID()]; ok {
 		t.Error("pins written to the claimed slot")
+	}
+}
+
+// An empty relays digest leaves the relays and metadata unpinned: the pins
+// are stored without them, so registrations may change both.
+func TestProvisionPinsUnpinnedRelays(t *testing.T) {
+	t.Parallel()
+
+	s, chip, _, _, _ := pinnedSetup(t)
+
+	req := setPinsReq()
+	req.MetadataHash, req.RelaysDigest = "", ""
+
+	if code, body := post(t, s, "/provision/pins", req); code != http.StatusOK {
+		t.Fatalf("unpinned relays refused: %d %s", code, body)
+	}
+
+	pins, err := profile.DecodePins(chip.bins[s.profiles["otg@preview"].PinsID()])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if pins.PinRelays || pins.MetadataHash != nil || pins.RelaysDigest != [profile.RelaysDigestSize]byte{} {
+		t.Errorf("stored pins %+v, want relays and metadata unpinned", pins)
 	}
 }

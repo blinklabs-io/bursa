@@ -26,8 +26,10 @@ import (
 // key hash and metadata hash its pool registrations must name, the digest of
 // their relays and metadata URL (policy.RelaysDigest), and bounds for pledge,
 // cost and margin. Hashes are 32 bytes in hex, the relays digest 20. An empty
-// MetadataHash pins the absence of metadata. Bounds are inclusive; the margin
-// bound is MarginMaxNum/MarginMaxDen.
+// RelaysDigest leaves the relays, metadata URL and metadata hash unpinned, so
+// registrations may change them; MetadataHash must then be empty too. With a
+// RelaysDigest, an empty MetadataHash pins the absence of metadata. Bounds
+// are inclusive; the margin bound is MarginMaxNum/MarginMaxDen.
 type PinsRequest struct {
 	HostAuth
 	Profile      string `json:"profile"`
@@ -89,8 +91,9 @@ func (s *Service) pinsFor(p profile.Profile) (*profile.Pins, error) {
 	return &pins, nil
 }
 
-// pinsState describes a profile's pins for the startup report: "set", "none",
-// or "unreadable" for an object that cannot be decoded, which refuses signing.
+// pinsState describes a profile's pins for the startup report: "set", "set,
+// relays and metadata not pinned", "none", or "unreadable" for an object that
+// cannot be decoded, which refuses signing.
 func pinsState(chip Chip, p profile.Profile) string {
 	ok, err := chip.Exists(p.PinsID())
 	if err != nil {
@@ -101,13 +104,19 @@ func pinsState(chip Chip, p profile.Profile) string {
 		return "none"
 	}
 
+	var pins profile.Pins
+
 	b, err := chip.ReadBinary(p.PinsID())
 	if err == nil {
-		_, err = profile.DecodePins(b)
+		pins, err = profile.DecodePins(b)
 	}
 
 	if err != nil {
 		return "unreadable"
+	}
+
+	if !pins.PinRelays {
+		return "set, relays and metadata not pinned"
 	}
 
 	return "set"
@@ -135,8 +144,18 @@ func (s *Service) setPins(req PinsRequest) (PinsResponse, error) {
 		return PinsResponse{}, err
 	}
 
-	if err = parseHex("relays_digest", req.RelaysDigest, pins.RelaysDigest[:]); err != nil {
-		return PinsResponse{}, err
+	// relays and metadata are pinned together, by the relays digest: without
+	// one, registrations may change both
+	pins.PinRelays = req.RelaysDigest != ""
+
+	if !pins.PinRelays && req.MetadataHash != "" {
+		return PinsResponse{}, errors.New("metadata_hash needs relays_digest: metadata is pinned only with the relays")
+	}
+
+	if pins.PinRelays {
+		if err = parseHex("relays_digest", req.RelaysDigest, pins.RelaysDigest[:]); err != nil {
+			return PinsResponse{}, err
+		}
 	}
 
 	if req.MetadataHash != "" {
@@ -160,13 +179,19 @@ func (s *Service) setPins(req PinsRequest) (PinsResponse, error) {
 		return PinsResponse{}, errDevice
 	}
 
-	meta := "none"
+	meta, relays := "none", "not pinned"
 	if pins.MetadataHash != nil {
 		meta = hex.EncodeToString(pins.MetadataHash[:])
 	}
 
+	if pins.PinRelays {
+		relays = hex.EncodeToString(pins.RelaysDigest[:])
+	} else {
+		meta = "not pinned"
+	}
+
 	s.logf("registration pins %q set: vrf %s metadata %s relays %s pledge %d-%d cost <=%d margin <=%d/%d",
-		p.Name, hex.EncodeToString(pins.VRFKeyHash[:]), meta, hex.EncodeToString(pins.RelaysDigest[:]),
+		p.Name, hex.EncodeToString(pins.VRFKeyHash[:]), meta, relays,
 		pins.PledgeMin, pins.PledgeMax, pins.CostMax, pins.MarginMaxNum, pins.MarginMaxDen)
 
 	req.Profile = p.Name

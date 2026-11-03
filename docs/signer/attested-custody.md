@@ -374,14 +374,20 @@ freely. `POST /provision/pins`, served only by the provisioning firmware and
 host-key authenticated like `/provision/reward`, pins a profile's
 registrations:
 
-- `vrf_key_hash` and `metadata_hash` (32 bytes, hex) must match exactly. An
-  empty `metadata_hash` pins the absence of metadata: a registration that
-  carries any is refused.
+- `vrf_key_hash` (32 bytes, hex) must match exactly.
+- `metadata_hash` (32 bytes, hex) must match exactly. With `relays_digest`
+  set, an empty `metadata_hash` pins the absence of metadata: a registration
+  that carries any is refused.
 - `relays_digest` (20 bytes, hex) must match the registration's relays, in
   order, and its metadata URL: blake2b-160 of the CBOR array `[relays, url]`,
   each relay in its ledger encoding and `url` null without metadata
   (`policy.RelaysDigest`). Adding, removing, reordering or changing a relay, or
-  changing the URL, is refused.
+  changing the URL, is refused. An empty `relays_digest` leaves the relays,
+  the metadata URL and the metadata hash unpinned, so registrations may change
+  them without new pins, for example when a relay moves; `metadata_hash` must
+  then be empty too. A host that can request signatures can then point the
+  registration at other relays or other metadata, but not change the VRF key,
+  pledge, cost or margin.
 - `pledge_min` / `pledge_max` (inclusive), `cost_max` (inclusive) and
   `margin_max_num` / `margin_max_den` (margin at most the fraction, at most 1).
 
@@ -393,13 +399,15 @@ working. The pins apply to pool registrations only. An unreadable pins object
 refuses `tx-body` signing for the profile until the pins are provisioned
 again. `/wipe/profile` and `/wipe/device` delete the pins object.
 
-The startup report lists `registration pins set`, `none` or `unreadable` for
-each profile. Inventory replies are unchanged, so the signer's strict decoding
+The startup report lists `registration pins set`, `set, relays and metadata
+not pinned`, `none` or `unreadable` for each profile. Inventory replies are unchanged, so the signer's strict decoding
 still accepts them. `armory-pool pins-request` prints the request body; it
 takes each relay as `-relay`, in registration order (`HOST:PORT`,
 `IPV4:PORT`, `[IPV6]:PORT`, `IPV4,[IPV6]:PORT` or `srv:NAME`), and the
 metadata URL as `-metadata-url`, and computes `relays_digest` from them.
-Send it with `armory-pool -host-key host.skey provision pins`.
+`-unpinned-relays` leaves the relays and metadata unpinned instead and is
+refused with `-relay` or `-metadata-*`. Send the body with
+`armory-pool -host-key host.skey provision pins`.
 
 The signer sends version 1 unless the backend sets `protocol`:
 

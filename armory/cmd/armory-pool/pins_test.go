@@ -168,3 +168,55 @@ func TestPinsRequestRefusesBadInput(t *testing.T) {
 		}
 	}
 }
+
+// -unpinned-relays prints pins without relays or metadata, which the device
+// stores as such, and refuses relays or metadata given with it.
+func TestPinsRequestUnpinnedRelays(t *testing.T) {
+	t.Parallel()
+
+	vrf := strings.Repeat("11", 32)
+	base := []string{
+		"pins-request", "-profile", profile, "-vrf-key-hash", vrf, "-unpinned-relays",
+		"-pledge-max", "1000", "-cost-max", "500", "-margin-max", "1/10",
+	}
+
+	var out bytes.Buffer
+
+	if err := run(base, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	printed := bytes.Clone(out.Bytes())
+
+	var req device.PinsRequest
+	if err := json.Unmarshal(printed, &req); err != nil {
+		t.Fatal(err)
+	}
+
+	if req.RelaysDigest != "" || req.MetadataHash != "" {
+		t.Fatalf("request %s pins relays or metadata", printed)
+	}
+
+	r := newRig(t)
+
+	res, err := http.Post(r.srv.URL+"/provision/pins", "application/json", bytes.NewReader(printed))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("device refused the printed request: %s", res.Status)
+	}
+
+	for name, extra := range map[string][]string{
+		"relay":         {"-relay", "relay.example:3001"},
+		"metadata hash": {"-metadata-hash", strings.Repeat("22", 32), "-metadata-url", "https://example.test/p.json"},
+		"metadata url":  {"-metadata-url", "https://example.test/p.json"},
+	} {
+		if err := run(append(append([]string{}, base...), extra...), &bytes.Buffer{}); err == nil {
+			t.Errorf("%s with -unpinned-relays accepted", name)
+		}
+	}
+}
