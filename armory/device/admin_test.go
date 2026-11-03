@@ -231,14 +231,35 @@ func TestAdminSignatureBinding(t *testing.T) {
 
 	floor := FloorRequest{Profile: "otg@preview", ChainCounter: 9}
 
-	// another route
-	body, _ := signed(RouteProvisionFloor, floor)
-	if code, _ := rawPost(h, RouteProvisionReward, body); code == http.StatusOK {
-		t.Error("signature for /provision/floor accepted by /provision/reward")
+	// another route: a floor request signed for /provision/reward, in a body
+	// the floor decoder takes, so the route is the only difference
+	code, b := rawPost(h, "/v1/challenge", []byte("{}"))
+	if code != http.StatusOK {
+		t.Fatalf("challenge: %d", code)
+	}
+
+	var ch ChallengeResponse
+	if err := json.Unmarshal(b, &ch); err != nil {
+		t.Fatal(err)
+	}
+
+	canonical, err := canonicalRequest(&FloorRequest{Profile: "otg@preview"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cross := FloorRequest{Profile: "otg@preview", HostAuth: HostAuth{
+		Challenge:     ch.Challenge,
+		HostKey:       testHostKey.Public().(ed25519.PublicKey),
+		HostSignature: ed25519.Sign(testHostKey, AdminBinding(RouteProvisionReward, canonical, ch.Challenge)),
+	}}
+
+	if code, b := rawPost(h, RouteProvisionFloor, jsonOf(t, cross)); !strings.Contains(string(b), "host signature does not verify") {
+		t.Errorf("signature for /provision/reward on /provision/floor: %d %s", code, b)
 	}
 
 	// another body
-	body, _ = signed(RouteProvisionFloor, floor)
+	body, _ := signed(RouteProvisionFloor, floor)
 
 	var tampered FloorRequest
 	if err := json.Unmarshal(body, &tampered); err != nil {
