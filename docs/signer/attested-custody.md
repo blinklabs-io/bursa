@@ -357,10 +357,57 @@ also refuses a response produced for another profile.
 The firmware also answers sign requests at version `bursa-attested-signer/2`,
 which `armory-pool witness` sends for `tx-body`. The reply echoes that version
 and adds `summary`, the signing policy's description of the body (for a pool
-registration: pledge, cost, margin, relays). Its binding appends the summary as
-one more length-prefixed field after the signature, present even when empty. A
+registration: pledge, cost, margin, relays, the first four bytes of the VRF
+key hash as `vrf=`, and up to the first four bytes of the metadata hash as
+`meta=`, a shorter hash whole and `meta=none` without metadata). Its binding
+appends the summary as one more length-prefixed field after the signature,
+present even when empty. A
 version-1 request gets the version-1 reply and binding, without `summary`.
 Inventory and challenge replies stay at version 1.
+
+### Pool registration pins
+
+Without pins the policy checks a registration's operator, owner and reward
+account only. A host that can request signatures could then register another
+VRF key, other relays or another metadata URL, or set pledge, cost and margin
+freely. `POST /provision/pins`, served only by the provisioning firmware and
+host-key authenticated like `/provision/reward`, pins a profile's
+registrations:
+
+- `vrf_key_hash` (32 bytes, hex) must match exactly.
+- `metadata_hash` (32 bytes, hex) must match exactly. With `relays_digest`
+  set, an empty `metadata_hash` pins the absence of metadata: a registration
+  that carries any is refused.
+- `relays_digest` (20 bytes, hex) must match the registration's relays, in
+  order, and its metadata URL: blake2b-160 of the CBOR array `[relays, url]`,
+  each relay in its ledger encoding and `url` null without metadata
+  (`policy.RelaysDigest`). Adding, removing, reordering or changing a relay, or
+  changing the URL, is refused. An empty `relays_digest` leaves the relays,
+  the metadata URL and the metadata hash unpinned, so registrations may change
+  them without new pins, for example when a relay moves; `metadata_hash` must
+  then be empty too. A host that can request signatures can then point the
+  registration at other relays or other metadata, but not change the VRF key,
+  pledge, cost or margin.
+- `pledge_min` / `pledge_max` (inclusive), `cost_max` (inclusive) and
+  `margin_max_num` / `margin_max_den` (margin at most the fraction, at most 1).
+
+The pins are a separate 128-byte binary object per profile, `0x20e50500` plus
+the profile slot, with its own versioned layout (`profile.EncodePins`); the
+profile record is unchanged. A second request replaces the pins. A profile
+without a pins object keeps the unpinned checks, so existing devices keep
+working. The pins apply to pool registrations only. An unreadable pins object
+refuses `tx-body` signing for the profile until the pins are provisioned
+again. `/wipe/profile` and `/wipe/device` delete the pins object.
+
+The startup report lists `registration pins set`, `set, relays and metadata
+not pinned`, `none` or `unreadable` for each profile. Inventory replies are unchanged, so the signer's strict decoding
+still accepts them. `armory-pool pins-request` prints the request body; it
+takes each relay as `-relay`, in registration order (`HOST:PORT`,
+`IPV4:PORT`, `[IPV6]:PORT`, `IPV4,[IPV6]:PORT` or `srv:NAME`), and the
+metadata URL as `-metadata-url`, and computes `relays_digest` from them.
+`-unpinned-relays` leaves the relays and metadata unpinned instead and is
+refused with `-relay` or `-metadata-*`. Send the body with
+`armory-pool -host-key host.skey provision pins`.
 
 The signer sends version 1 unless the backend sets `protocol`:
 
@@ -421,8 +468,9 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   routes take unsigned requests, so a fresh device can be set up. This is the
   only time `POST /provision/host-key` adds a key unsigned.
 - Once any host key is registered, `/provision/profile`, `/provision/floor`,
-  `/provision/reward`, `/provision/cold`, `/provision/identity`,
-  `/provision/host-key`, `/provision/host-key/revoke`, `/wipe/profile` and
+  `/provision/reward`, `/provision/pins`, `/provision/cold`,
+  `/provision/identity`, `/provision/host-key`, `/provision/host-key/revoke`,
+  `/wipe/profile` and
   `/wipe/signlog` need `challenge`, `host_key` and `host_signature` fields
   from a host key of the image's network and chain. A key of another network
   or chain does not qualify, and does not let the image's first key in
@@ -460,8 +508,8 @@ armory-pool -host-key host.skey wipe signlog < wipe-request.json
 armory-pool wipe device < wipe-request.json
 ```
 
-`provision` takes `profile`, `floor`, `reward`, `cold`, `identity`, `host-key`
-or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile` or
+`provision` takes `profile`, `floor`, `reward`, `pins`, `cold`, `identity`,
+`host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile` or
 `signlog`. Without `-host-key` a request is sent unsigned, which the device
 accepts only in the bootstrap state, and always for `wipe device` and `wipe
 objects`. Register the first host key before the other provisioning steps.

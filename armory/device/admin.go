@@ -36,6 +36,7 @@ const (
 	RouteProvisionProfile    = "/provision/profile"
 	RouteProvisionFloor      = "/provision/floor"
 	RouteProvisionReward     = "/provision/reward"
+	RouteProvisionPins       = "/provision/pins"
 	RouteProvisionCold       = "/provision/cold"
 	RouteProvisionIdentity   = "/provision/identity"
 	RouteProvisionHostKey    = "/provision/host-key"
@@ -77,6 +78,7 @@ var adminRequests = map[string]func() hostAuthed{
 	RouteProvisionProfile:    func() hostAuthed { return &ProvisionRequest{} },
 	RouteProvisionFloor:      func() hostAuthed { return &FloorRequest{} },
 	RouteProvisionReward:     func() hostAuthed { return &RewardRequest{} },
+	RouteProvisionPins:       func() hostAuthed { return &PinsRequest{} },
 	RouteProvisionCold:       func() hostAuthed { return &ColdRequest{} },
 	RouteProvisionIdentity:   func() hostAuthed { return &IdentityRequest{} },
 	RouteProvisionHostKey:    func() hostAuthed { return &HostKeyRequest{} },

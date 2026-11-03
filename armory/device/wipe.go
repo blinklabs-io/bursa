@@ -105,7 +105,7 @@ func armoryIDs() []uint32 {
 	add(feeKeyFirst, feeKeyLast)
 
 	for slot := uint8(0); slot <= profile.MaxSlot; slot++ {
-		ids = append(ids, profile.Profile{Slot: slot}.RecordID())
+		ids = append(ids, profile.Profile{Slot: slot}.PinsID(), profile.Profile{Slot: slot}.RecordID())
 	}
 
 	// the signing log head is chained to the identity key, so it goes with it
@@ -269,7 +269,7 @@ func (s *Service) wipeProfile(req WipeProfileRequest) (WipeResponse, error) {
 		ids = append(ids, p.ColdKeyID)
 	}
 
-	deleted, err := s.remove(append(ids, p.RecordID()))
+	deleted, err := s.remove(append(ids, p.PinsID(), p.RecordID()))
 	if err != nil {
 		return WipeResponse{}, err
 	}

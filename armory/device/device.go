@@ -340,7 +340,8 @@ func (s *Service) SetChip(chip Chip) error {
 
 		slots[p.Name] = slot
 		profiles[p.Name] = p
-		s.logf("profile %q slot %d floor %d (set %v)", p.Name, p.Slot, p.OpCertFloor, p.FloorSet)
+		s.logf("profile %q slot %d floor %d (set %v) registration pins %s",
+			p.Name, p.Slot, p.OpCertFloor, p.FloorSet, pinsState(chip, p))
 
 		if err := s.serves(p.NetworkID, p.Name); err != nil {
 			s.logf("not served by this build: %v", err)
@@ -402,6 +403,7 @@ func (s *Service) provisioningRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+RouteProvisionProfile, handleAdmin(s, RouteProvisionProfile, s.provisionProfile))
 	mux.HandleFunc("POST "+RouteProvisionFloor, handleAdmin(s, RouteProvisionFloor, s.resetFloor))
 	mux.HandleFunc("POST "+RouteProvisionReward, handleAdmin(s, RouteProvisionReward, s.setReward))
+	mux.HandleFunc("POST "+RouteProvisionPins, handleAdmin(s, RouteProvisionPins, s.setPins))
 	mux.HandleFunc("POST "+RouteProvisionCold, handleAdmin(s, RouteProvisionCold, s.provisionCold))
 	mux.HandleFunc("POST "+RouteProvisionHostKey, handleAdmin(s, RouteProvisionHostKey, s.addHostKey))
 	mux.HandleFunc("POST "+RouteProvisionHostRevoke, handleAdmin(s, RouteProvisionHostRevoke, s.revokeHostKey))
@@ -647,7 +649,12 @@ func (s *Service) signTxBody(p profile.Profile, k profileKeys, role policy.Role,
 		return nil, "", errors.New("tx-body requires an era")
 	}
 
-	keys := policy.Keys{Pool: keyHash(k.cold), Owner: keyHash(k.owner)}
+	pins, err := s.pinsFor(p)
+	if err != nil {
+		return nil, "", err
+	}
+
+	keys := policy.Keys{Pool: keyHash(k.cold), Owner: keyHash(k.owner), Pins: pins}
 
 	d, err := policy.Evaluate(p, keys, role, *req.Era, req.Payload)
 	if err != nil {

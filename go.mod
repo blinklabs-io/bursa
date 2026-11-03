@@ -11,7 +11,7 @@ require (
 	github.com/MicahParks/keyfunc/v3 v3.8.2
 	github.com/aws/aws-sdk-go-v2 v1.47.5
 	github.com/aws/aws-sdk-go-v2/config v1.33.12
-	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.1
+	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.8
 	github.com/blinklabs-io/go-bip39 v0.2.1
 	github.com/blinklabs-io/gouroboros v0.215.0
 	github.com/blinklabs-io/plutigo v0.10.1

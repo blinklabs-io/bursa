@@ -23,7 +23,7 @@ import (
 
 var provisioningPaths = []string{
 	"/provision/identity", "/provision/cold", "/provision/profile",
-	"/provision/reward", "/provision/floor",
+	"/provision/reward", "/provision/pins", "/provision/floor",
 }
 
 func serve(h http.Handler, path, body string) int {

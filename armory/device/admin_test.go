@@ -107,6 +107,8 @@ func requestFor(t *testing.T, s *Service, route string) any {
 		return FloorRequest{Profile: "otg@preview", ChainCounter: 0}
 	case RouteProvisionReward:
 		return RewardRequest{Profile: "otg@preview", RewardAccount: strings.Repeat("e0", 29)}
+	case RouteProvisionPins:
+		return setPinsReq()
 	case RouteProvisionCold:
 		return cold
 	case RouteProvisionIdentity:
