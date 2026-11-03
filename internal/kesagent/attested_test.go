@@ -126,7 +126,10 @@ func TestAttestedServiceBindsStateAndSignsOnlyHeaders(t *testing.T) {
 func TestAttestedServiceFailsClosedWhenProviderFails(t *testing.T) {
 	t.Parallel()
 	a, _, _ := newHeaderAgent(t)
-	server, client := net.Pipe()
+	// A loopback socket rather than net.Pipe: once either end of a net.Pipe
+	// closes, SetReadDeadline fails on the other, so readFrame would report a
+	// fully delivered refusal as an error depending on when the server closes.
+	server, client := tcpConnPair(t)
 	go func() {
 		a.serveAttestedConn(
 			t.Context(),
@@ -138,10 +141,6 @@ func TestAttestedServiceFailsClosedWhenProviderFails(t *testing.T) {
 				},
 			},
 		)
-		// Let net.Pipe's peer clear its frame deadline after reading the refusal.
-		// A real socket can clear a deadline after the peer half closes, while
-		// net.Pipe reports the close immediately.
-		time.Sleep(20 * time.Millisecond)
 		_ = server.Close()
 	}()
 	_ = client.SetDeadline(time.Now().Add(2 * time.Second))
@@ -322,4 +321,36 @@ func TestHTTPAttesterRequiresEchoedBinding(t *testing.T) {
 	if _, err := NewHTTPAttester("http://192.0.2.1/attest"); err == nil {
 		t.Fatal("accepted cleartext non-loopback attester")
 	}
+}
+
+func tcpConnPair(t *testing.T) (net.Conn, net.Conn) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	accepted := make(chan net.Conn, 1)
+	acceptErr := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			acceptErr <- err
+			return
+		}
+		accepted <- conn
+	}()
+	client, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	select {
+	case server := <-accepted:
+		t.Cleanup(func() { _ = server.Close() })
+		return server, client
+	case err := <-acceptErr:
+		t.Fatalf("accept: %v", err)
+	}
+	return nil, nil
 }

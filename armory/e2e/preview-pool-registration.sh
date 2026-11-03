@@ -25,7 +25,10 @@
 # The device must run the provisioning image (make imx PROVISION=1) for the
 # cold key and profile steps, and the signing image for the rest. With
 # SIGNING_IMX set, the script resets the provisioning image and loads the
-# signing image itself; going back needs the board unplugged.
+# signing image itself; going back needs the board unplugged. The signing
+# image refuses to sign without its log card, and USB recovery mode needs the
+# slot empty, so the script waits for the card to be inserted after the reset,
+# before it loads the signing image.
 #
 # Required environment:
 #   SOCKET        node-to-client socket of a synced Preview node that answers
@@ -41,13 +44,17 @@
 #   SOURCE (10.0.0.2), PROFILE (e2e<slot>@preview), WORK (new temp dir),
 #   PLEDGE (1000000000), COST (170000000), MARGIN (0.02),
 #   RETIRE (0; 1 retires the pool at the next epoch),
-#   OPCERT_CHECK (path to opcert-check; when set, the opcert is re-verified)
+#   OPCERT_CHECK (path to opcert-check; when set, the opcert is re-verified,
+#   authenticated with HOST_KEY if set),
 #   SIGNING_IMX (signing image to load after provisioning),
 #   HOST_KEY (host signing key file; created if missing, registered on the
 #   device and used to authenticate every signing request),
 #   ARMORY_BOOT (armory-boot-usb)
 
 set -euo pipefail
+
+# everything the script creates, keys included, is private to this user
+umask 077
 
 BURSA=${BURSA:-bursa}
 ARMORY_POOL=${ARMORY_POOL:-armory-pool}
@@ -76,6 +83,7 @@ BURSA=$(abs "$BURSA")
 ARMORY_POOL=$(abs "$ARMORY_POOL")
 if [ -n "${OPCERT_CHECK:-}" ]; then OPCERT_CHECK=$(abs "$OPCERT_CHECK"); fi
 mkdir -p "$WORK"
+chmod 700 "$WORK"
 WORK=$(realpath "$WORK")
 
 step() { printf '\n== %s\n' "$*"; }
@@ -88,27 +96,63 @@ device_build() {
 	curl -sf -m 5 --interface "$SOURCE" "$SIGNER/" | grep -oE '(signing|provisioning) build' | head -n 1 | cut -d' ' -f1
 }
 
+# log_open waits for the signing image to finish starting and checks that
+# it opened its signing log.
+log_open() {
+	local report="" r line got=""
+	for _ in $(seq 1 30); do
+		if r=$(curl -sf -m 5 --interface "$SOURCE" "$SIGNER/"); then
+			got=1 report=$r
+			grep -q '^RESULT:' <<< "$report" && break
+		fi
+		sleep 2
+	done
+	[ -n "$got" ] || fail "the signing image did not answer at $SIGNER"
+	grep -q '^RESULT:' <<< "$report" || fail "the signing image did not finish starting"
+	line=$(grep -m 1 '^signing log:' <<< "$report" || true)
+	case $line in
+	"signing log: open"*) return 0 ;;
+	esac
+	fail "the signing image has no signing log (${line:-no signing log line}); insert the log card in USB recovery mode, before the signing image starts"
+}
+
 # need_build makes sure the device runs the provisioning or signing image.
 need_build() {
 	local want=$1 have
 	have=$(device_build || true)
-	[ "$have" = "$want" ] && return 0
+	if [ "$have" = "$want" ]; then
+		[ "$want" = signing ] && log_open
+		return 0
+	fi
 	if [ "$want" = provisioning ]; then
 		fail "device runs the ${have:-unknown} image; unplug it, load the provisioning image and rerun"
 	fi
 	[ "$have" = provisioning ] || fail "device runs the ${have:-unknown} image, not the provisioning image"
-	[ -n "${SIGNING_IMX:-}" ] || fail "device runs the provisioning image; set SIGNING_IMX or load the signing image and rerun"
-	curl -sf -m 5 --interface "$SOURCE" -X POST "$SIGNER/reset" > /dev/null || true
+	[ -n "${SIGNING_IMX:-}" ] || fail "device runs the provisioning image; set SIGNING_IMX, or load the signing image with the log card in and rerun"
+	(: < /dev/tty) 2> /dev/null || fail "no terminal to wait for the signing log card; load the signing image with the card in and rerun"
+	curl -sf -m 5 --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/reset" > /dev/null || true
 	sleep 3
+	# the board now waits in USB recovery mode, which a card in the slot
+	# would have blocked at power-up; the signing image reads the card when
+	# it starts
+	printf 'Insert the signing log card into the board, then press Enter: ' > /dev/tty
+	read -r _ < /dev/tty
 	"${ARMORY_BOOT:-armory-boot-usb}" -i "$SIGNING_IMX"
 	for _ in $(seq 1 60); do
-		[ "$(device_build || true)" = signing ] && { pass "signing image loaded"; return 0; }
+		if [ "$(device_build || true)" = signing ]; then
+			log_open
+			pass "signing image loaded with its signing log"
+			return 0
+		fi
 		sleep 2
 	done
 	fail "device did not come back with the signing image"
 }
 
 q() { "$BURSA" query "$@" --socket-path "$SOCKET" --network $NET; }
+# provision sends a provisioning request from stdin, signed by the host key once
+# one is registered.
+provision() { "$ARMORY_POOL" -signer "$SIGNER" -source "$SOURCE" ${HOST_KEY:+-host-key "$HOST_KEY"} provision "$@"; }
 armory() { "$ARMORY_POOL" -signer "$SIGNER" -source "$SOURCE" -identity "$IDENTITY" -profile "$PROFILE" ${HOST_KEY:+-host-key "$HOST_KEY"} "$@"; }
 
 # submit builds, witnesses, assembles and submits one transaction.
@@ -164,6 +208,13 @@ wait_for() {
 echo "work directory: $WORK"
 cd "$WORK"
 
+# pool-cold.skey and owner.skey are derived from pool/seed.txt again when a
+# rerun needs them, so no exit path leaves them behind. The seed, vrf.skey,
+# kes.skey and reward.skey stay: a rerun needs them and the seed is the only
+# record of a pool whose cold key is already on the device. They live in $WORK,
+# which is mode 0700.
+trap 'rm -f pool-cold.skey owner.skey' EXIT
+
 step "Preflight"
 q tip | tee tip.json
 check "node is in Conway" jq -e '.era | ascii_downcase == "conway"' tip.json
@@ -198,14 +249,36 @@ if [ ! -s profile.json ] && [ ! -s owner.vkey ]; then
 pass "owner key derived"
 fi
 
+# once a host key is registered the device takes provisioning requests only
+# signed by it, so the host key goes in first
+if [ -n "${HOST_KEY:-}" ]; then
+step "Register host key $HOST_KEY"
+if [ ! -s "$HOST_KEY" ]; then
+	"$ARMORY_POOL" host-key -out "$HOST_KEY" > host-key.pub
+fi
+[ -s host-key.pub ] || fail "host-key.pub missing: it holds the request printed when $HOST_KEY was created"
+HOST_PUB=$(jq -er .public_key host-key.pub) || fail "host-key.pub is not the host-key request armory-pool host-key prints"
+if jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json > /dev/null 2>&1; then
+	pass "host key registered in an earlier run"
+else
+need_build provisioning
+provision host-key < host-key.pub > host-key.json.new
+mv host-key.json.new host-key.json
+fi
+check "host key registered" jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json
+fi
+
 step "Import the cold key into object $COLD_KEY_ID"
 if jq -e '.pool_id | length == 56' cold.json > /dev/null 2>&1; then
 	pass "cold key imported in an earlier run"
 else
 need_build provisioning
-jq -n --argjson id "$COLD_KEY_ID" --arg key "$(jq -r .cborHex pool-cold.skey)" \
-	'{cold_key_id: $id, signing_key: $key}' |
-	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/cold" --data-binary @- > cold.json.new
+[ -s pool-cold.skey ] || "$BURSA" key pool-cold --mnemonic-file pool/seed.txt \
+	--signing-key-file pool-cold.skey --verification-key-file pool-cold.vkey
+# the key is read from a file: an argument would show in the process list
+jq -n --argjson id "$COLD_KEY_ID" --slurpfile key pool-cold.skey \
+	'{cold_key_id: $id, signing_key: $key[0].cborHex}' |
+	provision cold > cold.json.new
 cat cold.json.new
 mv cold.json.new cold.json
 fi
@@ -230,12 +303,14 @@ step "Provision profile $PROFILE in slot $SLOT"
 if jq -e '.owner_key_hash | length == 56' profile.json > /dev/null 2>&1; then
 	pass "profile provisioned in an earlier run"
 else
-[ -s owner.skey ] || fail "owner.skey missing: derive it again from pool/seed.txt"
+[ -s owner.vkey ] || fail "owner.vkey missing: the owner key was generated on the device"
 need_build provisioning
+[ -s owner.skey ] || "$BURSA" key pool-owner --mnemonic-file pool/seed.txt \
+	--signing-key-file owner.skey --verification-key-file owner.vkey
 jq -n --arg name "$PROFILE" --argjson slot "$SLOT" --argjson id "$COLD_KEY_ID" --arg reward "$REWARD_HEX" \
-	--arg owner "$(jq -r .cborHex owner.skey)" \
-	'{name: $name, network_id: 0, slot: $slot, cold_key_id: $id, reward_account: $reward, owner_signing_key: $owner}' |
-	curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/profile" --data-binary @- > profile.json.new
+	--slurpfile owner owner.skey \
+	'{name: $name, network_id: 0, slot: $slot, cold_key_id: $id, reward_account: $reward, owner_signing_key: $owner[0].cborHex}' |
+	provision profile > profile.json.new
 cat profile.json.new
 mv profile.json.new profile.json
 fi
@@ -246,23 +321,6 @@ check "device owner key matches owner.vkey" \
 rm -f owner.skey
 else
 echo "owner key generated on the device in an earlier run"
-fi
-
-if [ -n "${HOST_KEY:-}" ]; then
-step "Register host key $HOST_KEY"
-if [ ! -s "$HOST_KEY" ]; then
-	"$ARMORY_POOL" host-key -out "$HOST_KEY" > host-key.pub
-fi
-[ -s host-key.pub ] || fail "host-key.pub missing: it holds the request printed when $HOST_KEY was created"
-HOST_PUB=$(jq -er .public_key host-key.pub) || fail "host-key.pub is not the host-key request armory-pool host-key prints"
-if jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json > /dev/null 2>&1; then
-	pass "host key registered in an earlier run"
-else
-need_build provisioning
-curl -sf --interface "$SOURCE" -X POST "$SIGNER/provision/host-key" --data-binary @host-key.pub > host-key.json.new
-mv host-key.json.new host-key.json
-fi
-check "host key registered" jq -e --arg k "$HOST_PUB" '.host_keys | index($k)' host-key.json
 fi
 
 step "Device inventory"
@@ -338,7 +396,7 @@ check "issue counter is the on-chain counter plus one" grep -qx "issue counter $
 check "opcert written" test -s node.cert
 if [ -n "${OPCERT_CHECK:-}" ]; then
 	"$OPCERT_CHECK" -vkey "$(jq -r .cborHex pool-cold.vkey)" -cert "$(jq -r .cborHex node.cert)" \
-		-pool "$POOL_HEX" -profile "$PROFILE" -signer "$SIGNER" -source "$SOURCE"
+		-pool "$POOL_HEX" -profile "$PROFILE" -signer "$SIGNER" -source "$SOURCE" ${HOST_KEY:+-host-key "$HOST_KEY"}
 	pass "opcert-check reproduced the certificate"
 fi
 

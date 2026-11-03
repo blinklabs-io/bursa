@@ -12,14 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !unix
+//go:build provision || wipe
 
-package storage
+package main
 
-// syncDirectory is a no-op off unix. Windows has no directory-flush primitive:
-// os.Open yields a GENERIC_READ handle and FlushFileBuffers needs
-// GENERIC_WRITE, so the call fails rather than adding durability. The root
-// package settled this the same way in directory_sync_unsupported.go.
-func syncDirectory(string) error {
-	return nil
+import (
+	"sync"
+
+	"github.com/blinklabs-io/bursa/armory/device"
+)
+
+// The provisioning and wipe images do not sign, so they neither open nor
+// require the signing log, and never format a card: the signing image formats
+// a blank card on its first start, when the head object in the SE050 is not
+// yet set.
+func requireSigningLog(*device.Service) {}
+
+func openSigningLog(r *Report, _ sync.Locker, _ *device.Service, _ *chip) bool {
+	r.Logf("signing log: not used by this image")
+
+	return true
 }

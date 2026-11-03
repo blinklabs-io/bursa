@@ -18,10 +18,9 @@
 # built with `-tags webview`) packaged inside a Bursa.app bundle installed to
 # /Applications.
 #
-# The script is fully parameterized via environment variables. Signing,
-# notarization, and stapling are SKIPPED with a clear warning when the relevant
-# credentials are not provided, so it produces an UNSIGNED pkg locally and a
-# signed + notarized pkg in CI.
+# The script is fully parameterized via environment variables. An unsigned
+# local package needs no credentials. A signed package requires NOTARY_PROFILE
+# and is notarized and stapled before the build succeeds.
 #
 # NOTE: the webview build needs CGO + the system WebKit (WKWebView) and CANNOT
 # be cross-compiled, so this must run on a NATIVE macOS host of the target
@@ -68,17 +67,10 @@ esac
 # Signing / notarization identities (empty => skip the corresponding step).
 #   SIGNING_IDENTITY    "Developer ID Application: ..."  - signs the binary + .app
 #   INSTALLER_IDENTITY  "Developer ID Installer: ..."    - signs the .pkg
-#   TEAM_ID             Apple Developer Team ID (10 chars)
-#   NOTARY_PROFILE      `notarytool store-credentials` keychain profile name
-# Apple ID fallback (used only when NOTARY_PROFILE is unset):
-#   APPLE_ID            Apple ID email
-#   APPLE_APP_PASSWORD  app-specific password for that Apple ID
+#   NOTARY_PROFILE      required keychain profile for a signed package
 SIGNING_IDENTITY="${SIGNING_IDENTITY:-}"
 INSTALLER_IDENTITY="${INSTALLER_IDENTITY:-}"
-TEAM_ID="${TEAM_ID:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
-APPLE_ID="${APPLE_ID:-}"
-APPLE_APP_PASSWORD="${APPLE_APP_PASSWORD:-}"
 
 # Bundle identity constants, shared with verify-pkg.sh.
 # shellcheck source=packaging/macos/identity.sh
@@ -329,22 +321,14 @@ notarize_pkg() {
         return 0
     fi
 
-    # Build notarytool auth arguments from whichever credential set is present.
-    local -a notary_auth=()
-    if [ -n "${NOTARY_PROFILE}" ]; then
-        notary_auth=(--keychain-profile "${NOTARY_PROFILE}")
-    elif [ -n "${APPLE_ID}" ] && [ -n "${APPLE_APP_PASSWORD}" ] && [ -n "${TEAM_ID}" ]; then
-        notary_auth=(--apple-id "${APPLE_ID}" \
-                     --password "${APPLE_APP_PASSWORD}" \
-                     --team-id "${TEAM_ID}")
-    else
-        warn "No notarization credentials (NOTARY_PROFILE, or APPLE_ID + \
-APPLE_APP_PASSWORD + TEAM_ID) - SKIPPING notarization and stapling."
-        return 0
+    if [ -z "${NOTARY_PROFILE}" ]; then
+        echo "ERROR: NOTARY_PROFILE is required to notarize a signed package." >&2
+        return 1
     fi
 
     log "Submitting to Apple notarization service (notarytool, --wait)"
-    xcrun notarytool submit "${FINAL_PKG}" "${notary_auth[@]}" --wait
+    xcrun notarytool submit "${FINAL_PKG}" \
+        --keychain-profile "${NOTARY_PROFILE}" --wait
 
     log "Stapling notarization ticket"
     xcrun stapler staple "${FINAL_PKG}"

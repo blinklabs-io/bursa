@@ -243,6 +243,16 @@ func TestAPIListenAddressDefaultsToLoopback(t *testing.T) {
 	}
 }
 
+func TestMetricsListenAddressDefaultsToLoopback(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.Metrics.ListenAddress != "127.0.0.1" {
+		t.Fatalf(
+			"default metrics listen address: got %q, want 127.0.0.1",
+			cfg.Metrics.ListenAddress,
+		)
+	}
+}
+
 func TestAPIListenAddressOverrides(t *testing.T) {
 	t.Run("config file", func(t *testing.T) {
 		oldAddress, hadAddress := os.LookupEnv("API_LISTEN_ADDRESS")

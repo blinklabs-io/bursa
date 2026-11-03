@@ -274,12 +274,12 @@ func verifyInventory(identity ed25519.PublicKey, nonce []byte, inv device.Invent
 	return keys, nil
 }
 
-// verifySignResponse checks the protocol version, nonce echo, refusal and the
-// key's binding signature over the request. The caller verifies the signature
-// over the message it expects.
+// verifySignResponse checks the protocol version echo, nonce echo, refusal and
+// the key's binding signature over the request. The caller verifies the
+// signature over the message it expects.
 func verifySignResponse(req device.SignRequest, resp device.SignResponse, pub ed25519.PublicKey) error {
-	if resp.Version != device.Protocol {
-		return fmt.Errorf("response version %q, want %q", resp.Version, device.Protocol)
+	if resp.Version != req.Version {
+		return fmt.Errorf("response version %q, want %q", resp.Version, req.Version)
 	}
 
 	if !bytes.Equal(resp.Nonce, req.Nonce) {
@@ -294,7 +294,7 @@ func verifySignResponse(req device.SignRequest, resp device.SignResponse, pub ed
 		return errors.New("response has no signature")
 	}
 
-	if !ed25519.Verify(pub, device.ResponseBinding(req, resp.Signature), resp.BindingSignature) {
+	if !ed25519.Verify(pub, device.ResponseBinding(req, resp.Signature, resp.Summary), resp.BindingSignature) {
 		return errors.New("binding signature does not verify under the device key")
 	}
 
@@ -306,12 +306,14 @@ func hexHash(pub []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// txBodyRequest builds the tx-body request for body signed by role's key.
+// txBodyRequest builds the tx-body request for body signed by role's key. It
+// asks for the device's summary, which needs firmware that answers
+// device.ProtocolSummary.
 func txBodyRequest(profile, role string, pub ed25519.PublicKey, nonce, body []byte) device.SignRequest {
 	era := conwayEra
 
 	return device.SignRequest{
-		Version: device.Protocol, Purpose: "tx-body", KeyHash: hexHash(pub), Role: role,
+		Version: device.ProtocolSummary, Purpose: "tx-body", KeyHash: hexHash(pub), Role: role,
 		Nonce: nonce, Payload: body, Profile: profile, Era: &era,
 	}
 }

@@ -341,11 +341,21 @@ backends:
     profile: "pool@preview"                     # required: the device profile holding the keys
     identity_public_key: "<64 hex>"             # the device identity key, pinned
     host_key_file: "/etc/bursa/armory-host.skey" # optional: authenticates signing requests
+    protocol: "negotiate"                       # optional: "1" (default), "negotiate", or "2"
 ```
 
 The USB armory Mk II holds the pool cold key and the owner stake key in its
 SE050 secure element, one profile per pool and network. Its signing firmware
 serves this protocol at `/v1/inventory` and `/v1/sign`.
+
+For `opcert-next`, the profile record also holds the last counter the device
+issued, and a chain counter above it is refused: the ledger only holds
+counters the device issued. A record written before this counter existed has
+none until its next `opcert-next`. `POST /provision/floor` on the provisioning
+firmware sets the floor to the operator's chain counter and clears the last
+issued counter. Firmware without this counter refuses a record that carries
+it, so a profile that has issued an opcert is unreadable to such firmware
+until a floor reset clears the counter.
 
 The evidence is the device identity key's Ed25519 signature over the inventory
 binding. The signer accepts the inventory only when that signature verifies
@@ -358,6 +368,80 @@ Record the identity key when the device is provisioned; the device's legacy
 Profiled responses carry the second signature described above, so the signer
 also refuses a response produced for another profile.
 
+The firmware also answers sign requests at version `bursa-attested-signer/2`,
+which `armory-pool witness` sends for `tx-body`. The reply echoes that version
+and adds `summary`, the signing policy's description of the body (for a pool
+registration: pledge, cost, margin, relays, the first four bytes of the VRF
+key hash as `vrf=`, and up to the first four bytes of the metadata hash as
+`meta=`, a shorter hash whole and `meta=none` without metadata). Its binding
+appends the summary as one more length-prefixed field after the signature,
+present even when empty. A
+version-1 request gets the version-1 reply and binding, without `summary`.
+Inventory and challenge replies stay at version 1.
+
+### Pool registration pins
+
+Without pins the policy checks a registration's operator, owner and reward
+account only. A host that can request signatures could then register another
+VRF key, other relays or another metadata URL, or set pledge, cost and margin
+freely. `POST /provision/pins`, served only by the provisioning firmware and
+host-key authenticated like `/provision/reward`, pins a profile's
+registrations:
+
+- `vrf_key_hash` (32 bytes, hex) must match exactly.
+- `metadata_hash` (32 bytes, hex) must match exactly. With `relays_digest`
+  set, an empty `metadata_hash` pins the absence of metadata: a registration
+  that carries any is refused.
+- `relays_digest` (20 bytes, hex) must match the registration's relays, in
+  order, and its metadata URL: blake2b-160 of the CBOR array `[relays, url]`,
+  each relay in its ledger encoding and `url` null without metadata
+  (`policy.RelaysDigest`). Adding, removing, reordering or changing a relay, or
+  changing the URL, is refused. An empty `relays_digest` leaves the relays,
+  the metadata URL and the metadata hash unpinned, so registrations may change
+  them without new pins, for example when a relay moves; `metadata_hash` must
+  then be empty too. A host that can request signatures can then point the
+  registration at other relays or other metadata, but not change the VRF key,
+  pledge, cost or margin.
+- `pledge_min` / `pledge_max` (inclusive), `cost_max` (inclusive) and
+  `margin_max_num` / `margin_max_den` (margin at most the fraction, at most 1).
+
+The pins are a separate 128-byte binary object per profile, `0x20e50500` plus
+the profile slot, with its own versioned layout (`profile.EncodePins`); the
+profile record is unchanged. A second request replaces the pins. A profile
+without a pins object keeps the unpinned checks, so existing devices keep
+working. The pins apply to pool registrations only. An unreadable pins object
+refuses `tx-body` signing for the profile until the pins are provisioned
+again. `/wipe/profile` and `/wipe/device` delete the pins object.
+
+The startup report lists `registration pins set`, `set, relays and metadata
+not pinned`, `none` or `unreadable` for each profile. Inventory replies are unchanged, so the signer's strict decoding
+still accepts them. `armory-pool pins-request` prints the request body; it
+takes each relay as `-relay`, in registration order (`HOST:PORT`,
+`IPV4:PORT`, `[IPV6]:PORT`, `IPV4,[IPV6]:PORT` or `srv:NAME`), and the
+metadata URL as `-metadata-url`, and computes `relays_digest` from them.
+`-unpinned-relays` leaves the relays and metadata unpinned instead and is
+refused with `-relay` or `-metadata-*`. Send the body with
+`armory-pool -host-key host.skey provision pins`.
+
+The signer sends version 1 unless the backend sets `protocol`:
+
+- `"1"` or unset: version 1 only. The reply carries no summary.
+- `"negotiate"`: `tx-body` requests go out at version 2 and the signer verifies
+  the summary under the key's binding signature. If the device answers
+  `unsupported protocol version` (version 1 firmware), the signer repeats the
+  request at version 1 with a new nonce (and, with `host_key_file`, a new
+  challenge), and keeps sending version 1 until it restarts or a request fails
+  to reach the device.
+- `"2"`: as `negotiate`, but a device that does not support version 2 is an
+  error.
+
+A reply at any version other than the one requested is refused. The
+unsupported-version answer is not signed, so a party on the path to the device
+can forge it and keep a `negotiate` signer on version 1; that loses the summary
+and no signature check. Use `"2"` where the summary is required. The signer
+writes the summary in the `summary` field of the `sign request` audit line for
+a signed transaction; it is not part of the API response.
+
 `host_key_file` holds a host signing key written by `armory-pool host-key`
 and registered on the device. With it set, the signer fetches a one-time
 challenge from `/v1/challenge` before each signature and adds `challenge`,
@@ -367,6 +451,166 @@ request fields and the challenge, length-prefixed as in the response binding.
 A device with a registered host key refuses requests without it. The file
 must not be readable by group or others, and an unreadable or malformed file
 fails startup.
+
+### Cold key provisioning
+
+The provisioning firmware's `POST /provision/cold` imports a cold key into a
+free cold key object (`0x20e50010`-`0x20e5001f`):
+`{"cold_key_id": N, "signing_key": "<cborHex>"}`, the cardano-cli `cborHex`
+(`5820` and the 32-byte seed). An existing object is never replaced; repeating
+the request with the same key confirms the earlier import.
+
+The device never generates a cold key. A key made inside the SE050 cannot be
+exported or backed up, so a lost or broken device would lose the pool for
+good. A cold key is always created off the device, kept in a backup, and
+imported, so the pool can move to a replacement device.
+
+The device zeroes the request buffer and the decoded key once the request is
+done. Copies held by the host and the transport, and by the host tool that
+sent it, are outside that.
+
+### Provisioning and wipe authentication
+
+The provisioning and wipe images authenticate requests with the host keys the
+signing routes use. A host key is registered for the network and chain of the
+image that registers it, and an image trusts only keys of its own network and
+chain. The exception is a key registered by an image that did not scope host
+keys: it carries no network or chain, and every image but a mainnet one
+trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
+
+- While no host key of any network or chain is registered, the provisioning
+  routes take unsigned requests, so a fresh device can be set up. This is the
+  only time `POST /provision/host-key` adds a key unsigned.
+- Once any host key is registered, `/provision/profile`, `/provision/floor`,
+  `/provision/reward`, `/provision/pins`, `/provision/cold`,
+  `/provision/identity`, `/provision/host-key`, `/provision/host-key/revoke`,
+  `/wipe/profile` and
+  `/wipe/signlog` need `challenge`, `host_key` and `host_signature` fields
+  from a host key of the image's network and chain. A key of another network
+  or chain does not qualify, and does not let the image's first key in
+  unsigned. The firmware's unsigned `POST /provision` cold key import is
+  refused too; use a signed `/provision/cold`.
+- The signature is an Ed25519 signature over `AdminBinding`: the domain
+  `bursa-armory-admin/1`, the route, the request as the device's Go types
+  encode it with the three fields empty and each private key (`signing_key`
+  of `/provision/cold`, `owner_signing_key` of `/provision/profile`) replaced
+  by the hex SHA-256 of its decoded bytes, and the challenge, each
+  length-prefixed as in the request binding. The signature thus binds the
+  exact key while the key never passes through the JSON encoder used for the
+  binding. The challenge is one-time.
+- A host key list the device cannot read refuses every authenticated route,
+  because no key is left to check a signature against.
+- `POST /wipe/device` stays confirmed by the identity public key alone and
+  unsigned. It is the recovery path when every host key is lost or the host key
+  list is unreadable, and the only one: it destroys everything the armory
+  holds (keys, profiles, host keys, the signing log head and the identity
+  key), after which the device is in the bootstrap state again. Anyone who can
+  boot the wipe image and knows the identity public key can do this.
+  `POST /wipe/objects` only lists object IDs.
+
+`armory-pool` signs these requests with its host key. The request JSON is read
+from standard input and the device's answer is printed. `armory-pool host-key
+-out host.skey` writes a new host key and prints the `/provision/host-key`
+request for its public key:
+
+```sh
+armory-pool host-key -out host.skey > host-key.pub
+armory-pool -host-key host.skey provision host-key < host-key.pub
+armory-pool -host-key host.skey provision cold < cold-request.json
+armory-pool -host-key host.skey provision profile < profile-request.json
+armory-pool -host-key host.skey wipe signlog < wipe-request.json
+armory-pool wipe device < wipe-request.json
+```
+
+`provision` takes `profile`, `floor`, `reward`, `pins`, `cold`, `identity`,
+`host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile` or
+`signlog`. Without `-host-key` a request is sent unsigned, which the device
+accepts only in the bootstrap state, and always for `wipe device` and `wipe
+objects`. Register the first host key before the other provisioning steps.
+
+### Signing log
+
+The signing firmware records every signature and opcert it issues in a log on
+a microSD card in the device, and refuses to sign when it cannot. An entry
+holds the profile, role and purpose, the body hash (or the issue counter, KES
+period and KES key hash for an opcert) and the parameter summary the device
+computed, cut to 1024 bytes with a flag when it was cut. Entries are chained
+by hash and each is signed by the device identity key. The SE050 keeps the
+number and hash of the latest entry (object `0x20e50022`), and the device
+checks the card against it at boot and before every write, so an older copy of
+the card, a blank card or a truncated log is refused. The entry is written and
+the card read back before the signature leaves the device.
+
+One request is not recorded again: an `opcert-next` whose profile, issue
+counter, KES key hash and KES period match the latest entry is signed again
+without a new entry, since that entry already records it. The device checks
+the card against the head before signing such a repeat, as it does before a
+write.
+
+With no card, an unreadable card, a card that does not match the head, a full
+card or a failed write, the device refuses to sign and says why in the
+response and in the startup report; inventory and health are still served. A
+full card still serves a repeat of its latest entry, which writes nothing. A
+card that is full stays full: the device never overwrites an entry. The log is
+opened once at startup, so a card inserted later takes effect after a restart.
+
+The signing and provisioning firmware never reset the head object, so a lost,
+failed or full card, or an unreadable head object, leaves the device refusing
+to sign. A device wipe deletes the head object with the identity key; after a
+new identity is provisioned, the signing firmware formats a zeroed card and
+starts a new log. To start a new log under the same identity, the wipe
+firmware's `POST /wipe/signlog`, confirmed with the device identity public key
+as `identity_public_key`, deletes only the head object. Only the wipe image
+serves it, so the wipe image must be loaded onto the board. The identity
+public key is public, so once a host key is registered the request must also
+be signed by one, as described under Provisioning and wipe authentication. The old card
+is refused once the head is gone, so image it if its entries are wanted, then
+zero it or insert a zeroed card; the signing firmware formats it
+at its next start, with entries numbered from 1 again. The old card's entries
+stay verifiable from its image with `signlog-verify -identity HEX -image FILE`.
+
+The first start with an all-zero card and an unset head object formats the
+card for the device identity key; it holds up to 32768 entries. A new card
+usually carries a partition table, which is refused, so write zeros over the
+whole card first, for example with
+`dd if=/dev/zero of=/dev/sdX bs=4M conv=fsync`, where `/dev/sdX` is the
+card's whole device (check it with `lsblk`; `dd` overwrites whatever it is
+given). Erasing it is not enough, since some cards read erased blocks as
+`0xff`. A card formatted for another identity is refused. A card with data
+after the last entry, beyond one incomplete final record, is refused at
+startup as it is by `signlog-verify`.
+
+Read the log from the device with `armory-pool -identity HEX signlog`, which
+verifies every signature and the chain under the pinned identity key and
+prints one line per entry. The host sends a fresh nonce and refuses the read
+unless the pinned device identity attests the current head and card size for
+that nonce. The signed head anchors the subsequently verified log blocks, so a
+party on the HTTP path cannot substitute an older valid prefix. `-head-seq N
+-head-hash HEX` additionally pins the latest entry the operator expects. The
+endpoint, `POST /v1/signlog`, needs the same host key authentication as a
+signing request, and serves only the header, the entries and the slot after the
+latest one. A card removed from the device is checked with `signlog-verify
+-identity HEX -image FILE`.
+
+### Bluetooth module
+
+The board carries a u-blox ANNA-B112 Bluetooth LE module. Left alone it runs
+its factory software and advertises as `ANNA-B1-<id>`. Every firmware image
+(signing, provisioning, wipe and the testnet build) drives the module's
+active-low reset line (BT_RESET, GPIO1_IO09) low as its first step, before
+bring-up and the network, and holds it there for as long as the firmware runs.
+The firmware then reads the pad back; the startup report shows
+`bluetooth: module held in reset` when it reads low. If it reads high, the
+report says so and the result is `RESULT: FAIL`; the firmware keeps running.
+
+The limits:
+
+- The module can advertise from power-on until the firmware reaches that step,
+  and whenever the board runs other firmware or a bootloader.
+- The hold depends on the firmware. Other firmware on the board can release the
+  module, and the board boots unsigned images.
+- Holding the module in reset is not removal. For a mainnet device, physically
+  removing the module is the stronger control.
 
 ## KES agent in a protected workload
 

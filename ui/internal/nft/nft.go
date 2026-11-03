@@ -482,8 +482,11 @@ func (s *Service) ServeImage(ctx context.Context, w http.ResponseWriter, unit st
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// Content-addressed: immutable, cache aggressively in the browser too.
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	// Content-addressed, but whether it is served depends on the active
+	// wallet's holdings and media consent. A stored copy would be replayed
+	// from the browser cache to any same-site page without reaching those
+	// checks; the server-side cache keeps repeat loads cheap.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }

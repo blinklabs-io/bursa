@@ -70,12 +70,15 @@ signer:
     dsn_env: BURSA_SIGNER_WATERMARK_POSTGRES_DSN
 ```
 
-Set the named environment variable to a pgx/libpq connection string. Remote
-connections should require server identity verification, for example:
+Set the named environment variable to a pgx/libpq connection string. Bursa
+requires remote connections to verify the server hostname, for example:
 
 ```text
 postgres://bursa@postgres.example/bursa?sslmode=verify-full&sslrootcert=/etc/bursa/postgres-ca.pem
 ```
+
+Unix sockets, `localhost`, and loopback addresses may connect without TLS for
+local development.
 
 Supply the password through the process environment or another pgx-supported
 credential mechanism; do not store credentials in the YAML file. The database
@@ -188,7 +191,9 @@ API listeners also require TLS.
 
 The Bursa container listens on loopback by default. A Kubernetes Service must
 set `API_LISTEN_ADDRESS` to the pod address (normally `0.0.0.0`) and preserve
-the API and metrics container/Service ports of `8080` and `8081`. When Google
+the API container/Service port of `8080`. Metrics are served only on the
+dedicated loopback listener, which defaults to `127.0.0.1:8081`; scrape it with
+a collector in the same pod. When Google
 Secret Manager persistence is enabled, the deployment must inject
 `GOOGLE_PROJECT`, `GCP_KMS_RESOURCE_ID`, and `GCP_SECRET_PREFIX`, provide
 `API_JWT_SECRET` or `API_JWKS_URL`, provide at least one

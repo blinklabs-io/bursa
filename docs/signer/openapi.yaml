@@ -12,8 +12,9 @@ info:
     request signing > bearer JWT** (HS256 shared secret or JWKS
     RS256/ES256/EdDSA). All three resolve to a single caller identity; an
     optional caller ACL (`signer.callers`) then restricts that identity to a set
-    of key hashes. The `/healthz`, `/readyz` and `/metrics` endpoints are
-    unauthenticated.
+    of key hashes. The `/healthz` and `/readyz` endpoints are unauthenticated.
+    Prometheus metrics use a separate loopback-only listener and are not part
+    of this API.
 
     An invalid credential rejects the request; only schemes presenting no
     credential fall through to the next configured scheme. The `pkcs11`
@@ -241,18 +242,6 @@ paths:
           description: Watermark dependency is healthy or has no external store.
         '503':
           description: Watermark dependency is unavailable.
-  /metrics:
-    get:
-      tags: [ops]
-      summary: Prometheus metrics
-      security: []
-      responses:
-        '200':
-          description: Prometheus text exposition format.
-          content:
-            text/plain:
-              schema:
-                type: string
 components:
   securitySchemes:
     mtlsAuth:

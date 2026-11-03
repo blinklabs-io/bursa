@@ -4,8 +4,9 @@ import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
 import { DownloadButton } from "../components/DownloadButton";
-import { signTx, submitSigned } from "../api/client";
-import type { WitnessResult, TxResult } from "../api/types";
+import { TransactionEffects } from "../components/TransactionEffects";
+import { decodeTx, signTx, submitSigned } from "../api/client";
+import type { TxSummary, WitnessResult, TxResult } from "../api/types";
 import { errorMessage } from "../errorMessage";
 
 type Tab = "sign" | "submit";
@@ -29,6 +30,8 @@ function SignTab({ setBusy }: ActionTabProps) {
   const [unsignedCbor, setUnsignedCbor] = useState("");
   const [requiredSigners, setRequiredSigners] = useState("");
   const [password, setPassword] = useState("");
+  const [summary, setSummary] = useState<TxSummary | null>(null);
+  const [reviewedCbor, setReviewedCbor] = useState("");
   const [result, setResult] = useState<WitnessResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -38,6 +41,33 @@ function SignTab({ setBusy }: ActionTabProps) {
     setError(null);
   }
 
+  function clearReview() {
+    clearResult();
+    setSummary(null);
+    setReviewedCbor("");
+    setPassword("");
+  }
+
+  async function handleReview() {
+    setError(null);
+    setResult(null);
+    setLoading(true);
+    setBusy(true);
+    const txCbor = unsignedCbor.trim();
+    try {
+      const decoded = await decodeTx(txCbor);
+      setSummary(decoded);
+      setReviewedCbor(txCbor);
+    } catch (e) {
+      setSummary(null);
+      setReviewedCbor("");
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+      setBusy(false);
+    }
+  }
+
   async function handleSign() {
     setError(null);
     setResult(null);
@@ -45,7 +75,7 @@ function SignTab({ setBusy }: ActionTabProps) {
     setBusy(true);
     try {
       const res = await signTx({
-        unsigned_tx_cbor: unsignedCbor.trim(),
+        unsigned_tx_cbor: reviewedCbor,
         password,
         required_signers: parseRequiredSigners(requiredSigners),
       });
@@ -59,6 +89,7 @@ function SignTab({ setBusy }: ActionTabProps) {
   }
 
   const parsedRequiredSigners = parseRequiredSigners(requiredSigners);
+  const unsupportedEffects = summary?.unsupported_effects?.length ?? 0;
 
   return (
     <div className="sign-form">
@@ -76,7 +107,7 @@ function SignTab({ setBusy }: ActionTabProps) {
         value={unsignedCbor}
         onChange={(e) => {
           setUnsignedCbor(e.target.value);
-          clearResult();
+          clearReview();
         }}
         placeholder="hex…"
         aria-label="Unsigned transaction"
@@ -98,18 +129,32 @@ function SignTab({ setBusy }: ActionTabProps) {
         disabled={loading}
       />
 
-      <label htmlFor="offline-password">Spending password</label>
-      <Input
-        id="offline-password"
-        type="password"
-        value={password}
-        onChange={(e) => {
-          setPassword(e.target.value);
-          clearResult();
-        }}
-        aria-label="Spending password"
-        disabled={loading}
-      />
+      <Button onClick={handleReview} disabled={loading || !unsignedCbor.trim()}>
+        {loading && !summary ? "Reviewing…" : "Review transaction"}
+      </Button>
+
+      {summary ? <TransactionEffects summary={summary} /> : null}
+
+      {unsupportedEffects > 0 ? (
+        <p className="error-text">Signing is unavailable because full transaction effects cannot be shown.</p>
+      ) : null}
+
+      {summary ? (
+        <>
+          <label htmlFor="offline-password">Spending password</label>
+          <Input
+            id="offline-password"
+            type="password"
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              clearResult();
+            }}
+            aria-label="Spending password"
+            disabled={loading}
+          />
+        </>
+      ) : null}
 
       {error && (
         <p role="alert" className="error-text">
@@ -119,7 +164,13 @@ function SignTab({ setBusy }: ActionTabProps) {
 
       <Button
         onClick={handleSign}
-        disabled={loading || !unsignedCbor.trim() || parsedRequiredSigners.length === 0 || !password}
+        disabled={
+          loading ||
+          !reviewedCbor ||
+          unsupportedEffects > 0 ||
+          parsedRequiredSigners.length === 0 ||
+          !password
+        }
       >
         {loading ? "Signing…" : "Sign transaction"}
       </Button>

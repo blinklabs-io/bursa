@@ -21,6 +21,7 @@ import type {
   SurveyDetail,
   SurveyStatus,
   SurveySummary,
+  ExternalHandleLookupSetting,
 } from "./types";
 import {
   getStatus,
@@ -43,6 +44,8 @@ import {
   getNotifications,
   setNotifications,
   getActivity,
+  getExternalHandleLookup,
+  setExternalHandleLookup,
   getDiagnostics,
   getGovernanceActions,
   getSurveys,
@@ -234,6 +237,62 @@ export function useNftMedia(): NftMediaState {
   }, []);
 
   return { enabled, available, loading, saving, error, setEnabled: set };
+}
+
+export interface ExternalHandleLookupState {
+  enabled: boolean;
+  loading: boolean;
+  saving: boolean;
+  error: Error | null;
+  setEnabled: (next: boolean) => Promise<void>;
+}
+
+// useExternalHandleLookup owns the persisted feature opt-in. This setting only
+// allows Send to offer a fallback; it never approves disclosure of a name.
+export function useExternalHandleLookup(): ExternalHandleLookupState {
+  const [enabled, setEnabledState] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getExternalHandleLookup()
+      .then((setting: ExternalHandleLookupSetting) => {
+        if (!cancelled) setEnabledState(setting.enabled);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const set = useCallback(async (next: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const setting = await setExternalHandleLookup(next);
+      setEnabledState(setting.enabled);
+    } catch (err) {
+      setError(err as Error);
+      // A save can fail after the new value is already on disk (the directory
+      // sync runs after the rename), so show what the server now holds. The
+      // re-read stays inside `saving` so no second save can race it.
+      try {
+        const current = await getExternalHandleLookup();
+        setEnabledState(current.enabled);
+      } catch {
+        // Keep the save error when the server state cannot be read.
+      }
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  return { enabled, loading, saving, error, setEnabled: set };
 }
 
 // useAssetMetadata looks up on-chain metadata for a set of native-asset units

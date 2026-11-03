@@ -9,29 +9,53 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
 
 // fakeBackend implements Backend with canned values.
 type fakeBackend struct {
-	networkID int
-	balance   string
-	utxos     []string
-	signedTx  string
-	submitID  string
-	signSig   string
-	signKey   string
-	usedAddrs []string
+	networkID      int
+	balance        string
+	utxos          []string
+	signedTx       string
+	submitID       string
+	signSig        string
+	signKey        string
+	usedAddrs      []string
+	inspectSummary spend.TxSummary
+	inspectErr     error
 
 	// recorded call args
 	signTxCalled    bool
 	signTxPassword  string
 	signTxTx        string
 	signTxPartial   bool
+	inspectTx       string
 	usedPaginate    *Paginate
 	signDataCalled  bool
 	signDataAddr    string
 	signDataPayload string
+}
+
+type blockingInspectBackend struct {
+	*fakeBackend
+	started chan string
+	release <-chan struct{}
+}
+
+func (b *blockingInspectBackend) InspectTx(ctx context.Context, txHex string) (spend.TxSummary, error) {
+	select {
+	case b.started <- txHex:
+	case <-ctx.Done():
+		return spend.TxSummary{}, ctx.Err()
+	}
+	select {
+	case <-b.release:
+		return b.inspectSummary, nil
+	case <-ctx.Done():
+		return spend.TxSummary{}, ctx.Err()
+	}
 }
 
 type blockingBalanceBackend struct {
@@ -88,6 +112,11 @@ func (b *fakeBackend) ChangeAddress(_ context.Context) (string, error) { return 
 func (b *fakeBackend) RewardAddresses(_ context.Context) ([]string, error) { return nil, nil }
 
 func (b *fakeBackend) Collateral(_ context.Context, _ string) ([]string, error) { return nil, nil }
+
+func (b *fakeBackend) InspectTx(_ context.Context, txHex string) (spend.TxSummary, error) {
+	b.inspectTx = txHex
+	return b.inspectSummary, b.inspectErr
+}
 
 func (b *fakeBackend) SignTx(_ context.Context, txHex string, partialSign bool, password string) (string, error) {
 	b.signTxCalled = true
@@ -192,7 +221,19 @@ func TestServiceEnableThenRead(t *testing.T) {
 
 // TestServiceSignTxApprove verifies signTx calls Backend.SignTx with the approved password.
 func TestServiceSignTxApprove(t *testing.T) {
-	be := &fakeBackend{signedTx: "deadbeef"}
+	totalCollateral := "1000000"
+	be := &fakeBackend{
+		signedTx: "deadbeef",
+		inspectSummary: spend.TxSummary{
+			Outputs: []spend.TxSummaryOutput{{Address: "addr_test1approval", Lovelace: "2000000"}},
+			Fee:     "170000",
+			CollateralInputs: []spend.TxSummaryInput{{
+				TxHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				Index:  1, Resolved: true, Address: "addr_test1collateral", Lovelace: "3000000",
+			}},
+			TotalCollateral: &totalCollateral,
+		},
+	}
 	s := NewService(t.TempDir(), be, func() {})
 	bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")
@@ -205,10 +246,54 @@ func TestServiceSignTxApprove(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"tx":          "cafebabe",
-		"partialSign": false,
+		"partialSign": true,
 	})
-	go decideWhenPending(s, Decision{Approved: true, Password: "secret"})
-	out, err := s.Handle(ctx(t), "https://b.io", "signTx", params)
+	type handleResult struct {
+		out json.RawMessage
+		err error
+	}
+	result := make(chan handleResult, 1)
+	handleCtx := ctx(t)
+	go func() {
+		out, err := s.Handle(handleCtx, "https://b.io", "signTx", params)
+		result <- handleResult{out: out, err: err}
+	}()
+
+	var pending Request
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		requests := s.Pending()
+		if len(requests) > 0 {
+			pending = requests[0]
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if pending.ID == "" {
+		t.Fatal("signTx request did not reach the approval queue")
+	}
+	if pending.Effects == nil || pending.Effects.Fee != "170000" ||
+		len(pending.Effects.Outputs) != 1 || pending.Effects.Outputs[0].Address != "addr_test1approval" ||
+		len(pending.Effects.CollateralInputs) != 1 || pending.Effects.CollateralInputs[0].Address != "addr_test1collateral" ||
+		pending.Effects.TotalCollateral == nil || *pending.Effects.TotalCollateral != totalCollateral {
+		t.Fatalf("queued effects = %+v, want inspector summary", pending.Effects)
+	}
+	wire, err := json.Marshal(pending)
+	if err != nil {
+		t.Fatalf("marshal pending request: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(wire, &fields); err != nil {
+		t.Fatalf("unmarshal pending request: %v", err)
+	}
+	if _, ok := fields["effects"]; !ok {
+		t.Fatalf("pending request JSON has no effects field: %s", wire)
+	}
+	if err := s.Decide(pending.ID, Decision{Approved: true, Password: "secret"}); err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	got := <-result
+	out, err := got.out, got.err
 	if err != nil {
 		t.Fatalf("signTx approved: %v", err)
 	}
@@ -218,11 +303,108 @@ func TestServiceSignTxApprove(t *testing.T) {
 	if !be.signTxCalled || be.signTxPassword != "secret" || be.signTxTx != "cafebabe" {
 		t.Fatalf("signTx backend call wrong: called=%v pw=%q tx=%q", be.signTxCalled, be.signTxPassword, be.signTxTx)
 	}
+	if be.inspectTx != "cafebabe" || be.signTxTx != be.inspectTx || !be.signTxPartial {
+		t.Fatalf("inspect/sign binding wrong: inspected=%q signed=%q partial=%v", be.inspectTx, be.signTxTx, be.signTxPartial)
+	}
+}
+
+func TestServiceSignTxInspectionFailureDoesNotPromptOrSign(t *testing.T) {
+	be := &fakeBackend{inspectErr: errors.New("decode failed")}
+	prompts := 0
+	s := NewService(t.TempDir(), be, func() { prompts++ })
+	bindTestIdentity(s)
+	_, _ = s.ConfirmPairForTest("ext")
+
+	go decideWhenPending(s, Decision{Approved: true})
+	if _, err := s.Handle(ctx(t), "https://decode.example", "enable", nil); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	prompts = 0
+
+	params := json.RawMessage(`{"tx":"cafebabe","partialSign":false}`)
+	if _, err := s.Handle(ctx(t), "https://decode.example", "signTx", params); !errors.Is(err, ErrInvalidParams) {
+		t.Fatalf("signTx inspection error = %v, want ErrInvalidParams", err)
+	}
+	if prompts != 0 {
+		t.Fatalf("inspection failure prompted %d times, want 0", prompts)
+	}
+	if len(s.Pending()) != 0 {
+		t.Fatalf("inspection failure queued request: %+v", s.Pending())
+	}
+	if be.signTxCalled {
+		t.Fatal("inspection failure reached SignTx")
+	}
+}
+
+func TestServiceSignTxInspectionUsesQueueAdmission(t *testing.T) {
+	origin := "https://bounded.example"
+	release := make(chan struct{})
+	be := &blockingInspectBackend{
+		fakeBackend: &fakeBackend{inspectSummary: spend.TxSummary{Fee: "170000"}},
+		started:     make(chan string, maxPendingRequestsPerOrigin),
+		release:     release,
+	}
+	s := NewService(t.TempDir(), be, func() {})
+	identity := bindTestIdentity(s)
+	if err := s.grants.Grant(origin, identity); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+
+	results := make(chan error, maxPendingRequestsPerOrigin)
+	for i := 0; i < maxPendingRequestsPerOrigin; i++ {
+		params := json.RawMessage(fmt.Sprintf(`{"tx":"%02x","partialSign":false}`, i))
+		handleCtx := ctx(t)
+		go func(handleCtx context.Context, params json.RawMessage) {
+			_, err := s.Handle(handleCtx, origin, "signTx", params)
+			results <- err
+		}(handleCtx, params)
+	}
+	for i := 0; i < maxPendingRequestsPerOrigin; i++ {
+		select {
+		case <-be.started:
+		case <-time.After(time.Second):
+			t.Fatalf("only %d inspections reached the backend", i)
+		}
+	}
+	if got := s.Pending(); len(got) != 0 {
+		t.Fatalf("requests visible while inspection is blocked: %+v", got)
+	}
+
+	overflow := json.RawMessage(`{"tx":"ff","partialSign":false}`)
+	if _, err := s.Handle(ctx(t), origin, "signTx", overflow); !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("overflow signTx error = %v, want ErrQueueFull", err)
+	}
+	if got := len(be.started); got != 0 {
+		t.Fatalf("overflow request reached inspector; started channel has %d unexpected entries", got)
+	}
+
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for len(s.Pending()) != maxPendingRequestsPerOrigin && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	pending := s.Pending()
+	if len(pending) != maxPendingRequestsPerOrigin {
+		t.Fatalf("published requests = %d, want %d", len(pending), maxPendingRequestsPerOrigin)
+	}
+	for _, req := range pending {
+		if req.Effects == nil {
+			t.Fatalf("published request %s has no verified effects", req.ID)
+		}
+		if err := s.Decide(req.ID, Decision{Approved: false}); err != nil {
+			t.Fatalf("reject %s: %v", req.ID, err)
+		}
+	}
+	for i := 0; i < maxPendingRequestsPerOrigin; i++ {
+		if err := <-results; !errors.Is(err, ErrUserDeclined) {
+			t.Fatalf("signTx result %d = %v, want ErrUserDeclined", i, err)
+		}
+	}
 }
 
 // TestServiceSignTxReject verifies signTx returns ErrUserDeclined on reject.
 func TestServiceSignTxReject(t *testing.T) {
-	be := &fakeBackend{signedTx: "deadbeef"}
+	be := &fakeBackend{signedTx: "deadbeef", inspectSummary: spend.TxSummary{Fee: "1"}}
 	s := NewService(t.TempDir(), be, func() {})
 	bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")

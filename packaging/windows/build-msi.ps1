@@ -29,6 +29,8 @@
 #Requires -Version 5.1
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$JsignStorePass = $env:JSIGN_STOREPASS
+$env:JSIGN_STOREPASS = $null
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -134,7 +136,6 @@ $script:WebView2Setup = ''
 # Signing (jsign) parameters - empty => skip signing with a warning.
 $JsignJar      = $env:JSIGN_JAR
 $JsignKeystore = $env:JSIGN_KEYSTORE
-$JsignStorePass= $env:JSIGN_STOREPASS
 $JsignStoreType= $env:JSIGN_STORETYPE
 $JsignAlias    = $env:JSIGN_ALIAS
 $JsignCertFile = $env:JSIGN_CERTFILE
@@ -319,7 +320,7 @@ function Sign-Msi {
 
     $jsignArgs = @(
         '--keystore',    $JsignKeystore,
-        '--storepass',   $JsignStorePass,
+        '--storepass',   'env:JSIGN_STOREPASS',
         '--alg',         $JsignAlg,
         '--tsaurl',      $JsignTsaUrl,
         '--tsmode',      $JsignTsMode,
@@ -333,14 +334,24 @@ function Sign-Msi {
     if (-not [string]::IsNullOrEmpty($JsignCertFile))  { $jsignArgs += @('--certfile', $JsignCertFile) }
     $jsignArgs += $FinalMsi
 
-    if (-not [string]::IsNullOrEmpty($JsignJar)) {
-        & java -jar $JsignJar @jsignArgs
-    } elseif (Get-Command jsign -ErrorAction SilentlyContinue) {
-        & jsign @jsignArgs
-    } else {
+    $useJsignJar = -not [string]::IsNullOrEmpty($JsignJar)
+    if (-not $useJsignJar -and -not (Get-Command jsign -ErrorAction SilentlyContinue)) {
         Die "jsign not found: set JSIGN_JAR to jsign.jar or install a 'jsign' launcher on PATH."
     }
-    if ($LASTEXITCODE -ne 0) { Die 'jsign signing failed' }
+
+    $jsignExitCode = 1
+    try {
+        $env:JSIGN_STOREPASS = $JsignStorePass
+        if ($useJsignJar) {
+            & java -jar $JsignJar @jsignArgs
+        } else {
+            & jsign @jsignArgs
+        }
+        $jsignExitCode = $LASTEXITCODE
+    } finally {
+        $env:JSIGN_STOREPASS = $null
+    }
+    if ($jsignExitCode -ne 0) { Die 'jsign signing failed' }
 
     # Independently confirm the MSI is signed, chain-trusted AND timestamped.
     # (jsign can exit 0 while the timestamp step silently failed.)

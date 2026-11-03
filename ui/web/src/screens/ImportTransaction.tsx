@@ -5,9 +5,9 @@ import { Button } from "../components/Button";
 import { CopyButton } from "../components/CopyButton";
 import { DownloadButton } from "../components/DownloadButton";
 import { MultiSigProgress } from "../components/MultiSigProgress";
+import { TransactionEffects } from "../components/TransactionEffects";
 import { decodeTx, cosignTx, submitTx, ApiError } from "../api/client";
 import type { TxSummary, CosignResult, TxResult } from "../api/types";
-import { formatAda } from "../format";
 
 function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message;
@@ -161,103 +161,7 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
 
       {summary && (
         <div className="import-preview">
-          <dl className="preview-summary">
-            <div className="dl-row">
-              <dt>Fee</dt>
-              <dd>{formatAda(summary.fee)} ADA</dd>
-            </div>
-            {summary.ttl ? (
-              <div className="dl-row">
-                <dt>TTL (slot)</dt>
-                <dd>{summary.ttl}</dd>
-              </div>
-            ) : null}
-            {summary.network_id != null ? (
-              <div className="dl-row">
-                <dt>Network</dt>
-                <dd>{summary.network_id === 1 ? "mainnet (1)" : `testnet (${summary.network_id})`}</dd>
-              </div>
-            ) : null}
-          </dl>
-
-          {summary.certificates?.length ? (
-            <>
-              <p className="field-label">Certificates</p>
-              <ul className="signer-list">
-                {summary.certificates.map((cert, i) => (
-                  <li key={i}>
-                    <strong>{cert.kind}</strong>
-                    {cert.stake_credential ? (
-                      <> · stake {cert.stake_credential.type.replace("_", " ")} <code className="tx-hash">{cert.stake_credential.hash}</code></>
-                    ) : null}
-                    {cert.pool_id ? (
-                      <> · pool <code className="tx-hash">{cert.pool_id}</code></>
-                    ) : null}
-                    {cert.drep ? (
-                      <> · DRep {cert.drep.type.replace("_", " ")}{cert.drep.hash ? <> <code className="tx-hash">{cert.drep.hash}</code></> : null}</>
-                    ) : null}
-                    {cert.drep_credential ? (
-                      <> · DRep {cert.drep_credential.type.replace("_", " ")} <code className="tx-hash">{cert.drep_credential.hash}</code></>
-                    ) : null}
-                    {cert.deposit_lovelace != null ? (
-                      <> · {formatAda(cert.deposit_lovelace)} ADA deposit</>
-                    ) : null}
-                    {cert.refund_lovelace != null ? (
-                      <> · {formatAda(cert.refund_lovelace)} ADA refund</>
-                    ) : null}
-                    {cert.deposit_implicit ? (
-                      <> · protocol key deposit (amount not in certificate)</>
-                    ) : null}
-                    {cert.refund_implicit ? (
-                      <> · protocol key deposit refund (amount not in certificate)</>
-                    ) : null}
-                    {cert.reward_account ? (
-                      <> · rewards to {cert.reward_account.type.replace("_", " ")} <code className="tx-hash">{cert.reward_account.hash}</code></>
-                    ) : null}
-                    {cert.pool_owners?.length ? (
-                      <> · owners {cert.pool_owners.map((owner, j) => (
-                        <span key={j}>{j > 0 ? ", " : null}<code className="tx-hash">{owner}</code></span>
-                      ))}</>
-                    ) : null}
-                    {cert.retirement_epoch != null ? (
-                      <> · retires at epoch {cert.retirement_epoch}</>
-                    ) : null}
-                    {cert.committee_cold_credential ? (
-                      <> · committee cold {cert.committee_cold_credential.type.replace("_", " ")} <code className="tx-hash">{cert.committee_cold_credential.hash}</code></>
-                    ) : null}
-                    {cert.committee_hot_credential ? (
-                      <> · committee hot {cert.committee_hot_credential.type.replace("_", " ")} <code className="tx-hash">{cert.committee_hot_credential.hash}</code></>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : null}
-
-          <p className="field-label">Outputs</p>
-          <ul className="signer-list">
-            {summary.outputs.map((o, i) => (
-              <li key={i}>
-                <code className="tx-hash">{o.address}</code> — {formatAda(o.lovelace)} ADA
-              </li>
-            ))}
-          </ul>
-
-          {summary.withdrawals?.length ? (
-            <>
-              {/* Reward withdrawals move funds out of this wallet's staking
-                  rewards just like outputs move funds out of its UTxOs, so they
-                  MUST be shown before the user cosigns or submits. */}
-              <p className="field-label">Reward withdrawals</p>
-              <ul className="signer-list">
-                {summary.withdrawals.map((wd, i) => (
-                  <li key={i}>
-                    <code className="tx-hash">{wd.address}</code> — {formatAda(wd.lovelace)} ADA
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : null}
+          <TransactionEffects summary={summary} />
 
           {ms?.is_multisig ? (
             <MultiSigProgress

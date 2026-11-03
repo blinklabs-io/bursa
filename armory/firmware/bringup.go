@@ -48,6 +48,9 @@ type Report struct {
 	sync.Mutex
 	lines []string
 	done  bool
+
+	// failed makes the result FAIL whatever bring-up reports
+	failed bool
 }
 
 func (r *Report) Logf(format string, args ...any) {
@@ -75,7 +78,18 @@ func (r *Report) String() string {
 	return s
 }
 
+// fail marks the run failed before bring-up reports its result.
+func (r *Report) fail() {
+	r.Lock()
+	r.failed = true
+	r.Unlock()
+}
+
 func (r *Report) finish(pass bool) {
+	r.Lock()
+	pass = pass && !r.failed
+	r.Unlock()
+
 	if pass {
 		r.Logf("RESULT: PASS")
 	} else {
@@ -285,8 +299,17 @@ func runBringup(r *Report, s *signer, svc *device.Service) {
 	// endpoints only get the session once bring-up is done with it
 	s.set(se)
 
-	if err := svc.SetChip(&chip{se: se, log: r.Logf}); err != nil {
+	c := &chip{se: se, log: r.Logf}
+
+	if err := svc.SetChip(c); err != nil {
 		r.Logf("profiles: %v", err)
+		pass = false
+	}
+
+	// the signing log needs the chip, so it opens after it; until it does
+	// the signing image refuses to sign
+	// a device that will refuse to sign must not report PASS
+	if !openSigningLog(r, s, svc, c) {
 		pass = false
 	}
 

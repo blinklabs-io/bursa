@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/blinklabs-io/bursa"
@@ -57,6 +58,9 @@ type TxResult struct {
 	TxID      string   `json:"tx_id"`
 	Witnesses [][]byte `json:"-"` // CBOR per signer; hex-encoded by the API layer
 	SignedTx  []byte   `json:"-"`
+	// Summaries are the custody boundary's descriptions of the signed body,
+	// one per distinct text, for the audit log. The API does not return them.
+	Summaries []string `json:"-"`
 }
 
 // CIP8Result is the outcome of a data-signing request.
@@ -239,8 +243,9 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 	scope := "tx:" + hex.EncodeToString(txid)
 
 	var (
-		wits []lcommon.VkeyWitness
-		errs []SignerError
+		wits      []lcommon.VkeyWitness
+		errs      []SignerError
+		summaries []string
 	)
 	for i, s := range signers {
 		hash := resolvedSigners[i]
@@ -318,7 +323,7 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 			}
 		}
 		signStart := time.Now()
-		sig, err := backend.SignTxFor(ctx, ref, txBody, txType, txid)
+		sig, summary, err := backend.SignTxFor(ctx, ref, txBody, txType, txid)
 		// Attempt latency, including failures — not successful-sign latency.
 		c.deps.Metrics.observeSignDuration(ref.Backend(), time.Since(signStart).Seconds())
 		if err != nil {
@@ -360,11 +365,18 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 			}
 		}
 		wits = append(wits, lcommon.VkeyWitness{Vkey: pub, Signature: sig})
-		c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "signed")
+		logArgs := []any{"type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "signed"}
+		if summary != "" {
+			logArgs = append(logArgs, "summary", summary)
+			if !slices.Contains(summaries, summary) {
+				summaries = append(summaries, summary)
+			}
+		}
+		c.deps.Logger.Info("sign", logArgs...)
 		c.deps.Metrics.observe("tx", "signed")
 	}
 
-	res := &TxResult{TxID: insp.TxId}
+	res := &TxResult{TxID: insp.TxId, Summaries: summaries}
 	for _, w := range wits {
 		enc, err := bursa.EncodeWitness(w)
 		if err != nil {

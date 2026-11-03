@@ -614,7 +614,7 @@ func TestBuildBackendsArmoryHostKey(t *testing.T) {
 			} else {
 				hash := blake2b.Sum256(req.Payload)
 				resp.Signature = ed25519.Sign(poolPriv, hash[:])
-				resp.BindingSignature = ed25519.Sign(poolPriv, backend.AttestedResponseBinding(req, resp.Signature))
+				resp.BindingSignature = ed25519.Sign(poolPriv, backend.AttestedResponseBinding(req, resp.Signature, ""))
 			}
 			_ = json.NewEncoder(w).Encode(resp)
 		}
@@ -635,7 +635,7 @@ func TestBuildBackendsArmoryHostKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := []byte{0xa0}
-	if _, err := backend.SignTxFor(t.Context(), ref, body, 6, nil); err != nil {
+	if _, _, err := backend.SignTxFor(t.Context(), ref, body, 6, nil); err != nil {
 		t.Fatalf("authenticated sign: %v", err)
 	}
 	if len(challenges) != 1 {

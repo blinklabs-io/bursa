@@ -74,6 +74,44 @@ func TestActivityEndpointReturnsEvents(t *testing.T) {
 	}
 }
 
+func TestActivityEndpointRequiresSameOriginBrowserContext(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		origin    string
+		fetchSite string
+		wantCode  int
+		wantPolls int
+	}{
+		{name: "matching origin", origin: "http://127.0.0.1:8090", wantCode: http.StatusOK, wantPolls: 1},
+		{name: "same-origin fetch metadata", fetchSite: "same-origin", wantCode: http.StatusOK, wantPolls: 1},
+		{name: "cross-site subresource", fetchSite: "cross-site", wantCode: http.StatusForbidden},
+		{name: "missing browser context", wantCode: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			act := &fakeActivity{events: []activity.Event{{ID: "tx:abc"}}}
+			h := activityHandler(readyStatuser(), act)
+			req := httptest.NewRequest(http.MethodGet, "/wallet/activity", nil)
+			req.Host = "127.0.0.1:8090"
+			req.Header.Set(sessionHeaderName, testSessionToken)
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			if tc.fetchSite != "" {
+				req.Header.Set("Sec-Fetch-Site", tc.fetchSite)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if act.pollCalls != tc.wantPolls {
+				t.Fatalf("Poll calls = %d, want %d", act.pollCalls, tc.wantPolls)
+			}
+		})
+	}
+}
+
 func TestActivityEndpointEmptyIsArrayNotNull(t *testing.T) {
 	h := activityHandler(readyStatuser(), &fakeActivity{events: nil})
 	rec := httptest.NewRecorder()

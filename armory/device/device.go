@@ -26,13 +26,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/blinklabs-io/bursa/armory/policy"
 	"github.com/blinklabs-io/bursa/armory/profile"
+	"github.com/blinklabs-io/bursa/armory/signlog"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -109,12 +110,17 @@ type SignResponse struct {
 	Signature        []byte  `json:"signature,omitempty"`
 	BindingSignature []byte  `json:"binding_signature,omitempty"`
 	IssueCounter     *uint64 `json:"issue_counter,omitempty"`
-	Error            string  `json:"error,omitempty"`
+	// Summary describes a signed transaction body, as the signing policy saw
+	// it. It is returned only for a ProtocolSummary request and is covered by
+	// BindingSignature.
+	Summary string `json:"summary,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // ProvisionRequest creates a profile. ChainCounter, when set, is the pool's
 // current on-chain opcert counter and initialises the floor.
 type ProvisionRequest struct {
+	HostAuth
 	Name         string  `json:"name"`
 	NetworkID    uint8   `json:"network_id"`
 	Slot         uint8   `json:"slot"`
@@ -122,9 +128,9 @@ type ProvisionRequest struct {
 	ChainCounter *uint64 `json:"chain_counter,omitempty"`
 	// RewardAccount is the hex reward address pool registrations must name.
 	RewardAccount string `json:"reward_account,omitempty"`
-	// OwnerSigningKey is the cborHex of the owner's Ed25519 signing key.
-	// When empty the owner key is generated in the chip.
-	OwnerSigningKey string `json:"owner_signing_key,omitempty"`
+	// OwnerSigningKey is the cborHex of the owner's Ed25519 signing key,
+	// decoded to bytes. When empty the owner key is generated in the chip.
+	OwnerSigningKey secretHex `json:"owner_signing_key,omitempty"`
 }
 
 // ProvisionResponse returns the profile's generated owner key.
@@ -136,6 +142,7 @@ type ProvisionResponse struct {
 // RewardRequest changes the reward account a profile's pool registrations
 // must name.
 type RewardRequest struct {
+	HostAuth
 	Profile       string `json:"profile"`
 	RewardAccount string `json:"reward_account"`
 }
@@ -150,6 +157,7 @@ type RewardResponse struct {
 // on-chain counter, for example after a rollback or a host that reported a
 // counter too high.
 type FloorRequest struct {
+	HostAuth
 	Profile      string `json:"profile"`
 	ChainCounter uint64 `json:"chain_counter"`
 }
@@ -162,10 +170,11 @@ type FloorResponse struct {
 
 // ColdRequest imports a cold signing key into a chosen cold key object.
 // SigningKey is the hex cborHex of a StakePoolSigningKey_ed25519: 5820
-// followed by the 32-byte seed.
+// followed by the 32-byte seed, decoded to bytes so it can be cleared.
 type ColdRequest struct {
-	ColdKeyID  uint32 `json:"cold_key_id"`
-	SigningKey string `json:"signing_key"`
+	HostAuth
+	ColdKeyID  uint32    `json:"cold_key_id"`
+	SigningKey secretHex `json:"signing_key"`
 }
 
 // ColdResponse returns the imported key's public key and pool id, both hex.
@@ -188,21 +197,38 @@ type Service struct {
 	chip     Chip
 	profiles map[string]profile.Profile
 	nonces   nonceRing
-	// badSlots hold records that could not be read; provisioning stays
-	// refused while any exist, as one of them may own any cold key
+	// badSlots hold records that could not be read, that name a slot other
+	// than their own, or that share a name with another record; provisioning
+	// and profile wipes stay refused while any exist, as one of them may own
+	// any cold key
 	badSlots map[uint8]bool
-	// hostKeys authenticate signing requests; hostKeysBad refuses signing
-	// while the stored list is unreadable
+	// hostEntries is the stored host key list. hostKeys are the keys of it
+	// this build trusts, manages and lists, in order: those of its own
+	// network and chain, and legacy unscoped ones on a testnet build.
+	// hostKeysBad refuses signing while the stored list is unreadable
+	hostEntries     []hostEntry
 	hostKeys        [][]byte
 	hostKeysBad     bool
 	requireHostAuth bool
-	challenges      [][]byte
+	// challengeKey MACs issued challenges; usedChallenges holds burned ones
+	// until they would expire, and usedOrder queues them for expiry
+	challengeKey   []byte
+	usedChallenges map[[challengeSize]byte]struct{}
+	usedOrder      []usedChallenge
+	// now replaces time.Now in tests
+	now func() time.Time
 	// network, when fixed, is the only network id whose profiles this
 	// build provisions and serves; chain, when set, is the only profile name
 	// suffix ("name@chain") it accepts
 	network      uint8
 	networkFixed bool
 	chain        string
+	// log records every signature before it is released; logRequired
+	// refuses signing while it is not installed
+	log         SigningLog
+	logMedium   signlog.Medium
+	logErr      error
+	logRequired bool
 }
 
 // New returns a service with no chip; it answers 503 until SetChip.
@@ -274,6 +300,8 @@ func (s *Service) SetChip(chip Chip) error {
 
 	profiles := map[string]profile.Profile{}
 	bad := map[uint8]bool{}
+	// slots maps each name to the slot its record was read from
+	slots := map[string]uint8{}
 
 	for slot := uint8(0); slot <= profile.MaxSlot; slot++ {
 		id := profile.Profile{Slot: slot}.RecordID()
@@ -298,8 +326,22 @@ func (s *Service) SetChip(chip Chip) error {
 			continue
 		}
 
+		// such records are still served as before; they only block
+		// provisioning and profile wipes, which need ownership established
+		if p.Slot != slot {
+			s.logf("profile slot %d: record names slot %d", slot, p.Slot)
+			bad[slot] = true
+		}
+
+		if prev, dup := slots[p.Name]; dup {
+			s.logf("profile slot %d: name %q also in slot %d", slot, p.Name, prev)
+			bad[prev], bad[slot] = true, true
+		}
+
+		slots[p.Name] = slot
 		profiles[p.Name] = p
-		s.logf("profile %q slot %d floor %d (set %v)", p.Name, p.Slot, p.OpCertFloor, p.FloorSet)
+		s.logf("profile %q slot %d floor %d (set %v) registration pins %s",
+			p.Name, p.Slot, p.OpCertFloor, p.FloorSet, pinsState(chip, p))
 
 		if err := s.serves(p.NetworkID, p.Name); err != nil {
 			s.logf("not served by this build: %v", err)
@@ -337,9 +379,14 @@ func (s *Service) SigningHandler() http.Handler {
 }
 
 // ProvisioningHandler serves only the provisioning endpoints, for the
-// provisioning firmware.
+// provisioning firmware, and the challenge endpoint their host
+// authentication needs. Once a host key is registered every provisioning
+// endpoint requires a request signed by a host key of this build's network and
+// chain; before that the endpoints take unsigned requests, so a fresh device
+// can be set up.
 func (s *Service) ProvisioningHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/challenge", handle(s, s.challenge))
 	s.provisioningRoutes(mux)
 
 	return mux
@@ -349,16 +396,18 @@ func (s *Service) signingRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/inventory", handle(s, s.inventory))
 	mux.HandleFunc("POST /v1/challenge", handle(s, s.challenge))
 	mux.HandleFunc("POST /v1/sign", handle(s, s.sign))
+	mux.HandleFunc("POST /v1/signlog", handle(s, s.signLogRead))
 }
 
 func (s *Service) provisioningRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /provision/profile", handle(s, s.provisionProfile))
-	mux.HandleFunc("POST /provision/floor", handle(s, s.resetFloor))
-	mux.HandleFunc("POST /provision/reward", handle(s, s.setReward))
-	mux.HandleFunc("POST /provision/cold", handle(s, s.provisionCold))
-	mux.HandleFunc("POST /provision/host-key", handle(s, s.addHostKey))
-	mux.HandleFunc("POST /provision/host-key/revoke", handle(s, s.revokeHostKey))
-	mux.HandleFunc("POST /provision/identity", handle(s, func(struct{}) (IdentityResponse, error) {
+	mux.HandleFunc("POST "+RouteProvisionProfile, handleAdmin(s, RouteProvisionProfile, s.provisionProfile))
+	mux.HandleFunc("POST "+RouteProvisionFloor, handleAdmin(s, RouteProvisionFloor, s.resetFloor))
+	mux.HandleFunc("POST "+RouteProvisionReward, handleAdmin(s, RouteProvisionReward, s.setReward))
+	mux.HandleFunc("POST "+RouteProvisionPins, handleAdmin(s, RouteProvisionPins, s.setPins))
+	mux.HandleFunc("POST "+RouteProvisionCold, handleAdmin(s, RouteProvisionCold, s.provisionCold))
+	mux.HandleFunc("POST "+RouteProvisionHostKey, handleAdmin(s, RouteProvisionHostKey, s.addHostKey))
+	mux.HandleFunc("POST "+RouteProvisionHostRevoke, handleAdmin(s, RouteProvisionHostRevoke, s.revokeHostKey))
+	mux.HandleFunc("POST "+RouteProvisionIdentity, handleAdmin(s, RouteProvisionIdentity, func(IdentityRequest) (IdentityResponse, error) {
 		return s.provisionIdentity()
 	}))
 }
@@ -367,16 +416,19 @@ func (s *Service) provisioningRoutes(mux *http.ServeMux) {
 // writes its JSON result. Errors returned by fn go to the client as text.
 func handle[Req, Resp any](s *Service, fn func(Req) (Resp, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req Req
-
-		// unknown fields are refused, so a misspelled field is not ignored
-		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequest))
-		dec.DisallowUnknownFields()
-
-		if err := dec.Decode(&req); err != nil || dec.Decode(&struct{}{}) != io.EOF {
-			http.Error(w, "malformed request", http.StatusBadRequest)
+		// before the body is read or the chip touched
+		if !allowed(w, r, Address) {
 			return
 		}
+
+		var req Req
+
+		if err := decodeRequest(w, r, &req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		defer clearSecrets(&req)
 
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -475,20 +527,29 @@ func (s *Service) inventory(req InventoryRequest) (Inventory, error) {
 // returned only with the same key's signature over the complete request.
 func (s *Service) sign(req SignRequest) (SignResponse, error) {
 	resp := SignResponse{Version: Protocol, Nonce: req.Nonce}
+	if req.Version == ProtocolSummary {
+		resp.Version = ProtocolSummary
+	}
 
-	var (
-		id    uint32
-		sig   []byte
-		issue *uint64
-	)
+	var out signed
 
 	err := s.authenticate(req)
 	if err == nil {
-		id, sig, issue, err = s.signRequest(req)
+		err = s.logReady()
 	}
 
 	if err == nil {
-		resp.BindingSignature, err = s.chip.SignEd25519(id, ResponseBinding(req, sig))
+		out, err = s.signRequest(req)
+	}
+
+	// the summary is returned only when the request negotiated it, so a
+	// version-1 reply is unchanged
+	if req.Version != ProtocolSummary {
+		out.summary = ""
+	}
+
+	if err == nil {
+		resp.BindingSignature, err = s.chip.SignEd25519(out.id, ResponseBinding(req, out.sig, out.summary))
 		if err != nil {
 			s.logf("sign binding: %v", err)
 			err = errDevice
@@ -502,34 +563,44 @@ func (s *Service) sign(req SignRequest) (SignResponse, error) {
 		return resp, nil
 	}
 
-	resp.Signature = sig
-	resp.IssueCounter = issue
+	resp.Signature = out.sig
+	resp.IssueCounter = out.issue
+	resp.Summary = out.summary
 
 	return resp, nil
 }
 
+// signed is what signRequest produced: the selected key's object ID, its
+// signature, the opcert issue counter and the transaction body summary.
+type signed struct {
+	id      uint32
+	sig     []byte
+	issue   *uint64
+	summary string
+}
+
 // signRequest returns the selected key's object ID with its signature.
-func (s *Service) signRequest(req SignRequest) (uint32, []byte, *uint64, error) {
-	if req.Version != Protocol {
-		return 0, nil, nil, errors.New("unsupported protocol version")
+func (s *Service) signRequest(req SignRequest) (signed, error) {
+	if req.Version != Protocol && req.Version != ProtocolSummary {
+		return signed{}, errors.New("unsupported protocol version")
 	}
 
 	if len(req.Nonce) == 0 || len(req.Nonce) > maxNonce {
-		return 0, nil, nil, errors.New("invalid nonce")
+		return signed{}, errors.New("invalid nonce")
 	}
 
 	if !s.nonces.add(req.Nonce) {
-		return 0, nil, nil, errors.New("nonce replayed")
+		return signed{}, errors.New("nonce replayed")
 	}
 
 	p, err := s.profileFor(req.Profile)
 	if err != nil {
-		return 0, nil, nil, err
+		return signed{}, err
 	}
 
 	k, err := s.keys(p)
 	if err != nil {
-		return 0, nil, nil, err
+		return signed{}, err
 	}
 
 	var (
@@ -544,56 +615,69 @@ func (s *Service) signRequest(req SignRequest) (uint32, []byte, *uint64, error) 
 	case "stake":
 		role, id, pub = policy.RoleOwner, p.OwnerKeyID(), k.owner
 	default:
-		return 0, nil, nil, errors.New("unknown role")
+		return signed{}, errors.New("unknown role")
 	}
 
 	h := keyHash(pub)
 
 	if want, err := hex.DecodeString(req.KeyHash); err != nil || !bytes.Equal(want, h[:]) {
-		return 0, nil, nil, errors.New("key hash does not match the profile key for this role")
+		return signed{}, errors.New("key hash does not match the profile key for this role")
 	}
 
 	switch req.Purpose {
 	case "tx-body":
-		sig, err := s.signTxBody(p, k, role, id, req)
-		return id, sig, nil, err
+		sig, summary, err := s.signTxBody(p, k, role, id, req)
+		return signed{id: id, sig: sig, summary: summary}, err
 	case "opcert-next":
 		if role != policy.RoleCold {
-			return 0, nil, nil, errors.New("opcert-next requires the pool key")
+			return signed{}, errors.New("opcert-next requires the pool key")
 		}
 
 		sig, issue, err := s.signOpCertNext(p, req.Payload)
-		return id, sig, issue, err
+		return signed{id: id, sig: sig, issue: issue}, err
 	}
 
-	return 0, nil, nil, errUnsupported
+	return signed{}, errUnsupported
 }
 
-func (s *Service) signTxBody(p profile.Profile, k profileKeys, role policy.Role, id uint32, req SignRequest) ([]byte, error) {
+func (s *Service) signTxBody(p profile.Profile, k profileKeys, role policy.Role, id uint32, req SignRequest) ([]byte, string, error) {
 	if len(req.Payload) == 0 || len(req.Payload) > maxTxBody {
-		return nil, errors.New("invalid body size")
+		return nil, "", errors.New("invalid body size")
 	}
 
 	if req.Era == nil {
-		return nil, errors.New("tx-body requires an era")
+		return nil, "", errors.New("tx-body requires an era")
 	}
 
-	keys := policy.Keys{Pool: keyHash(k.cold), Owner: keyHash(k.owner)}
+	pins, err := s.pinsFor(p)
+	if err != nil {
+		return nil, "", err
+	}
+
+	keys := policy.Keys{Pool: keyHash(k.cold), Owner: keyHash(k.owner), Pins: pins}
 
 	d, err := policy.Evaluate(p, keys, role, *req.Era, req.Payload)
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+
+	// the entry is on the card and the head advanced before the chip signs
+	if err = s.appendLog(signlog.Record{
+		Profile: p.Name, Role: req.Role, Purpose: signlog.PurposeTxBody,
+		BodyHash: d.BodyHash[:], Summary: d.Summary,
+	}); err != nil {
+		return nil, "", err
 	}
 
 	sig, err := s.chip.SignEd25519(id, d.BodyHash[:])
 	if err != nil {
 		s.logf("sign: %v", err)
-		return nil, errDevice
+		return nil, "", errDevice
 	}
 
 	s.logf("tx-body %q %s body %x: %s", p.Name, req.Role, d.BodyHash, d.Summary)
 
-	return sig, nil
+	return sig, d.Summary, nil
 }
 
 func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *uint64, error) {
@@ -603,16 +687,47 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 
 	chain := binary.BigEndian.Uint64(payload[32:40])
 
-	issue, floor, err := nextOpCert(p.OpCertFloor, p.FloorSet, chain)
+	issue, floor, err := nextOpCert(p.OpCertFloor, p.FloorSet, p.LastIssued, chain)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// the floor is persisted before any signature leaves the device
-	if !p.FloorSet || floor != p.OpCertFloor {
-		p.FloorSet, p.OpCertFloor = true, floor
+	next := p
+	next.FloorSet, next.OpCertFloor, next.LastIssued = true, floor, issue
 
-		if err = s.writeProfile(p); err != nil {
+	// a record that would not fit is refused before the log entry
+	if _, err = profile.Encode(next); err != nil {
+		return nil, nil, err
+	}
+
+	// the entry is logged before the floor moves, so a refusal leaves the
+	// counter where it was
+	kesHash := blake2b.Sum256(payload[:32])
+	period := binary.BigEndian.Uint64(payload[40:])
+
+	rec := signlog.Record{
+		Profile: p.Name, Role: "pool", Purpose: signlog.PurposeOpCertNext,
+		Summary:      fmt.Sprintf("chain %d issue %d period %d", chain, issue, period),
+		IssueCounter: issue, KESPeriod: period, KESKeyHash: kesHash[:],
+	}
+
+	// the counter was already issued and the latest entry records this exact
+	// request: signing it again adds nothing to account for, once the card
+	// and head are confirmed to still hold that entry
+	if p.LastIssued == issue && s.lastOpCertRepeat(rec) {
+		err = s.checkLog()
+	} else {
+		err = s.appendLog(rec)
+	}
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// the floor and the issued counter are persisted together before any
+	// signature leaves the device
+	if next != p {
+		if err = s.writeProfile(next); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -685,15 +800,12 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 
 	var ownerSeed []byte
 
-	if req.OwnerSigningKey != "" {
-		key, err := parseSigningKey(req.OwnerSigningKey)
-		defer clear(key)
-
-		if err != nil {
+	if len(req.OwnerSigningKey) > 0 {
+		if err := checkSigningKey(req.OwnerSigningKey); err != nil {
 			return ProvisionResponse{}, err
 		}
 
-		ownerSeed = key[len(coldKeyCBORPrefix):]
+		ownerSeed = req.OwnerSigningKey[len(coldKeyCBORPrefix):]
 	}
 
 	if _, err := profile.Encode(p); err != nil {
@@ -701,7 +813,7 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 	}
 
 	if len(s.badSlots) > 0 {
-		return ProvisionResponse{}, errors.New("a profile record is unreadable; provisioning is refused until it is repaired")
+		return ProvisionResponse{}, errors.New("a profile record is unreadable or inconsistent; provisioning is refused until it is repaired")
 	}
 
 	if p.ColdKeyID < coldKeyFirst || p.ColdKeyID > coldKeyLast {
@@ -767,15 +879,19 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 }
 
 // resetFloor sets the floor to the reported on-chain counter, lower or
-// higher. A floor set too low only lets the device issue a counter the chain
-// rejects, so this needs no more trust than opcert-next itself.
+// higher, and clears the last issued counter, so the bound it gives
+// opcert-next stays off until the next opcert-next sets it again. A floor one
+// below the on-chain counter lets the device issue the on-chain counter, which
+// the ledger accepts; a floor above it makes the device refuse every counter
+// the ledger accepts. The operator's report is trusted either way, as the
+// reset is a provisioning action.
 func (s *Service) resetFloor(req FloorRequest) (FloorResponse, error) {
 	p, err := s.profileFor(req.Profile)
 	if err != nil {
 		return FloorResponse{}, err
 	}
 
-	p.FloorSet, p.OpCertFloor = true, req.ChainCounter
+	p.FloorSet, p.OpCertFloor, p.LastIssued = true, req.ChainCounter, 0
 
 	if err := s.writeProfile(p); err != nil {
 		return FloorResponse{}, err
@@ -831,16 +947,14 @@ var errMalformedKey = errors.New("malformed signing key: expected cborHex of a 3
 
 var errKeyExists = errors.New("key object already exists with a different key")
 
-// parseSigningKey decodes the cborHex of a 32-byte Ed25519 signing key. The
-// caller clears the returned bytes.
-func parseSigningKey(cborHex string) ([]byte, error) {
-	key, err := hex.DecodeString(cborHex)
-	if err != nil || len(key) != len(coldKeyCBORPrefix)+ed25519.SeedSize || !bytes.HasPrefix(key, coldKeyCBORPrefix) {
-		clear(key)
-		return nil, errMalformedKey
+// checkSigningKey checks the decoded cborHex of a 32-byte Ed25519 signing
+// key.
+func checkSigningKey(key []byte) error {
+	if len(key) != len(coldKeyCBORPrefix)+ed25519.SeedSize || !bytes.HasPrefix(key, coldKeyCBORPrefix) {
+		return errMalformedKey
 	}
 
-	return key, nil
+	return nil
 }
 
 // importKey stores the key of seed in object id. An existing object is never
@@ -891,28 +1005,11 @@ func (s *Service) provisionCold(req ColdRequest) (ColdResponse, error) {
 		return ColdResponse{}, errors.New("cold key id outside the cold key range")
 	}
 
-	key, err := parseSigningKey(req.SigningKey)
-	defer clear(key)
-
-	if err != nil {
+	if err := checkSigningKey(req.SigningKey); err != nil {
 		return ColdResponse{}, err
 	}
 
-	pub, err := s.importKey(req.ColdKeyID, key[len(coldKeyCBORPrefix):])
-	if errors.Is(err, errKeyExists) {
-		return ColdResponse{}, errors.New("cold key object already exists with a different key")
-	} else if err != nil {
-		return ColdResponse{}, err
-	}
-
-	h := keyHash(pub)
-	s.logf("imported cold key %#08x pool %x", req.ColdKeyID, h)
-
-	return ColdResponse{
-		ColdKeyID: req.ColdKeyID,
-		PublicKey: hex.EncodeToString(pub),
-		PoolID:    hex.EncodeToString(h[:]),
-	}, nil
+	return s.importCold(req.ColdKeyID, req.SigningKey[len(coldKeyCBORPrefix):])
 }
 
 func (s *Service) provisionIdentity() (IdentityResponse, error) {

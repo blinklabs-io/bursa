@@ -16,6 +16,7 @@ package watermark
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -47,12 +49,21 @@ type PostgresWatermark struct {
 // NewPostgresWatermark connects to Postgres at dsn (a libpq/pgx connection
 // string or URL), creates the watermark tables if they do not exist, and
 // returns a ready store. The dsn must be sourced from the environment by the
-// caller; it commonly contains credentials and is never logged.
+// caller; it commonly contains credentials and is never logged. Remote targets
+// require hostname-verified TLS; Unix sockets, localhost, and loopback addresses
+// are allowed without TLS.
 func NewPostgresWatermark(ctx context.Context, dsn string) (*PostgresWatermark, error) {
 	if dsn == "" {
 		return nil, errors.New("postgres watermark: empty dsn")
 	}
-	pool, err := pgxpool.New(ctx, dsn)
+	poolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres watermark dsn: %w", err)
+	}
+	if err := validatePostgresWatermarkConfig(poolConfig.ConnConfig); err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("open postgres watermark pool: %w", err)
 	}
@@ -64,15 +75,39 @@ func NewPostgresWatermark(ctx context.Context, dsn string) (*PostgresWatermark, 
 	return s, nil
 }
 
-// NewPostgresWatermarkFromPool wraps an existing pool. It is used by tests that
-// need two independent pools (simulating separate replicas) against the same
-// database. The schema is initialized on the provided pool.
-func NewPostgresWatermarkFromPool(ctx context.Context, pool *pgxpool.Pool) (*PostgresWatermark, error) {
-	s := &PostgresWatermark{pool: pool}
-	if err := s.initSchema(ctx); err != nil {
-		return nil, err
+func validatePostgresWatermarkConfig(config *pgx.ConnConfig) error {
+	if config == nil {
+		return errors.New("postgres watermark: nil connection config")
 	}
-	return s, nil
+	if err := validatePostgresWatermarkTarget(config.Host, config.Port, config.TLSConfig); err != nil {
+		return err
+	}
+	for _, fallback := range config.Fallbacks {
+		if fallback == nil {
+			return errors.New("postgres watermark: nil fallback connection config")
+		}
+		if err := validatePostgresWatermarkTarget(fallback.Host, fallback.Port, fallback.TLSConfig); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePostgresWatermarkTarget(host string, port uint16, tlsConfig *tls.Config) error {
+	network, _ := pgconn.NetworkAddress(host, port)
+	if network == "unix" {
+		return nil
+	}
+	if backend.IsLoopbackHost(host) {
+		return nil
+	}
+	if tlsConfig == nil || tlsConfig.InsecureSkipVerify || tlsConfig.ServerName == "" {
+		return fmt.Errorf(
+			"postgres watermark: remote host %q requires hostname-verified TLS (sslmode=verify-full)",
+			host,
+		)
+	}
+	return nil
 }
 
 func (s *PostgresWatermark) initSchema(ctx context.Context) error {

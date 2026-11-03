@@ -17,22 +17,43 @@ package device
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
+	"time"
 )
 
-const (
-	// hostKeysID holds the registered host public keys: maxHostKeys slots of
-	// 32 bytes, an all-zero slot unused. The fixed size means a rewrite never
-	// deletes and recreates the object.
-	hostKeysID  uint32 = 0x20e50021
-	maxHostKeys        = 4
-	hostKeysLen        = maxHostKeys * ed25519.PublicKeySize
+// hostKeysID holds the registered host public keys: maxHostKeys slots, an
+// all-zero key marking one unused. The fixed size means a rewrite never
+// deletes and recreates the object.
+const hostKeysID uint32 = 0x20e50021
 
+const (
+	maxHostKeys = 4
+	// hostKeysLen is the size of the unscoped list older images wrote. The
+	// current list has hostEntrySize bytes per slot, so the size tells the
+	// formats apart.
+	hostKeysLen = maxHostKeys * ed25519.PublicKeySize
+
+	// A scoped slot is the key, a scope kind, the network id and the first
+	// bytes of the SHA-256 of the chain label (zero without a label).
+	chainTagSize  = 8
+	hostEntrySize = ed25519.PublicKeySize + 2 + chainTagSize
+	hostListSize  = maxHostKeys * hostEntrySize
+
+	scopeLegacy byte = 0 // written by an image that did not scope keys
+	scopeImage  byte = 1 // trusted by images of one network and chain
+
+	// challengeSize is the wire size of a challenge: 8 bytes of issue time
+	// (Unix nanoseconds, big endian), 8 random bytes and a 16-byte MAC over
+	// both under a key generated at boot.
 	challengeSize = 32
-	// maxChallenges is how many unused challenges are kept; issuing more
-	// drops the oldest.
-	maxChallenges = 16
+	challengeTime = 8
+	challengeBody = 16
+	// challengeTTL is how long an issued challenge stays valid.
+	challengeTTL = 60 * time.Second
 )
 
 // ChallengeResponse carries a one-time challenge for an authenticated
@@ -44,6 +65,7 @@ type ChallengeResponse struct {
 
 // HostKeyRequest adds or revokes a host public key.
 type HostKeyRequest struct {
+	HostAuth
 	PublicKey []byte `json:"public_key"`
 }
 
@@ -54,7 +76,7 @@ type HostKeyResponse struct {
 
 var (
 	errHostKeyUnknown  = errors.New("host key not registered")
-	errHostKeysBad     = errors.New("host key list unreadable; register the host keys again")
+	errHostKeysBad     = errors.New("host key list unreadable; wipe the device to reset it")
 	errHostAuthMissing = errors.New("signing requires host authentication")
 )
 
@@ -67,11 +89,59 @@ func (s *Service) RequireHostAuth() {
 	s.requireHostAuth = true
 }
 
+// hostEntry is one stored host key with the scope it was registered for.
+type hostEntry struct {
+	key     []byte
+	kind    byte
+	network uint8
+	chain   [chainTagSize]byte
+}
+
+func chainTag(chain string) (tag [chainTagSize]byte) {
+	if chain != "" {
+		sum := sha256.Sum256([]byte(chain))
+		copy(tag[:], sum[:])
+	}
+
+	return tag
+}
+
+// scopeEntry is the entry for key registered by this build.
+func (s *Service) scopeEntry(key []byte) hostEntry {
+	return hostEntry{key: bytes.Clone(key), kind: scopeImage, network: s.network, chain: chainTag(s.chain)}
+}
+
+// trusts reports whether this build trusts, lists and may revoke e. A build
+// serves the keys of its own network and chain. Legacy keys carry no scope
+// and are served by every build but a mainnet one: the only devices holding
+// them are testnet devices, and a mainnet build cannot tell which network
+// they were registered for.
+func (s *Service) trusts(e hostEntry) bool {
+	if e.kind == scopeLegacy {
+		return !s.networkFixed || s.network != 1
+	}
+
+	return e.network == s.network && e.chain == chainTag(s.chain)
+}
+
+// setHostEntries stores entries and derives the keys this build serves.
+func (s *Service) setHostEntries(entries []hostEntry) {
+	s.hostEntries, s.hostKeys = entries, nil
+
+	for _, e := range entries {
+		if s.trusts(e) {
+			s.hostKeys = append(s.hostKeys, e.key)
+		}
+	}
+}
+
 // loadHostKeys reads the host key list from chip. A missing object means no
-// host key is registered; an unreadable one refuses signing until the list
-// is written again.
+// host key is registered; an unreadable one refuses signing and every
+// authenticated provisioning and wipe request until a restart reads a valid
+// list or a device wipe resets it.
 func (s *Service) loadHostKeys(chip Chip) error {
-	s.hostKeys, s.hostKeysBad = nil, false
+	s.setHostEntries(nil)
+	s.hostKeysBad = false
 
 	ok, err := chip.Exists(hostKeysID)
 	if err != nil || !ok {
@@ -79,7 +149,7 @@ func (s *Service) loadHostKeys(chip Chip) error {
 	}
 
 	b, err := chip.ReadBinary(hostKeysID)
-	if err != nil || len(b) != hostKeysLen {
+	if err != nil || (len(b) != hostKeysLen && len(b) != hostListSize) {
 		s.logf("host key list: unreadable (%d bytes, %v)", len(b), err)
 		s.hostKeysBad = true
 
@@ -87,17 +157,49 @@ func (s *Service) loadHostKeys(chip Chip) error {
 	}
 
 	zero := make([]byte, ed25519.PublicKeySize)
+	size := ed25519.PublicKeySize
 
-	for i := 0; i < hostKeysLen; i += ed25519.PublicKeySize {
-		if k := b[i : i+ed25519.PublicKeySize]; !bytes.Equal(k, zero) {
-			s.hostKeys = append(s.hostKeys, bytes.Clone(k))
-			s.logf("host key %x", keyHash(k))
+	if len(b) == hostListSize {
+		size = hostEntrySize
+	}
+
+	var entries []hostEntry
+
+	for i := 0; i < len(b); i += size {
+		k := b[i : i+ed25519.PublicKeySize]
+		e := hostEntry{key: bytes.Clone(k), kind: scopeLegacy}
+
+		// the scope kind is checked in every slot, used or not, so a list in
+		// an unknown format is refused
+		if size == hostEntrySize {
+			meta := b[i+ed25519.PublicKeySize : i+size]
+			if meta[0] != scopeLegacy && meta[0] != scopeImage {
+				s.logf("host key list: unknown scope %d", meta[0])
+				s.hostKeysBad = true
+
+				return nil
+			}
+
+			e.kind, e.network = meta[0], meta[1]
+			copy(e.chain[:], meta[2:])
 		}
+
+		if bytes.Equal(k, zero) {
+			continue
+		}
+
+		entries = append(entries, e)
+	}
+
+	s.setHostEntries(entries)
+
+	for _, k := range s.hostKeys {
+		s.logf("host key %x", keyHash(k))
 	}
 
 	// revoking the last key deletes the object, so a present list with no
 	// key is not a valid empty list
-	if len(s.hostKeys) == 0 {
+	if len(entries) == 0 {
 		s.logf("host key list: present but empty")
 		s.hostKeysBad = true
 	}
@@ -105,22 +207,118 @@ func (s *Service) loadHostKeys(chip Chip) error {
 	return nil
 }
 
-// challenge issues a one-time challenge.
+// clock returns the current time, from the test hook when set.
+func (s *Service) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+
+	return time.Now()
+}
+
+// challengeMAC returns the MAC of a challenge body under the boot key.
+func (s *Service) challengeMAC(body []byte) []byte {
+	m := hmac.New(sha256.New, s.challengeKey)
+	m.Write(body)
+
+	return m.Sum(nil)[:challengeSize-challengeBody]
+}
+
+// challenge issues a one-time challenge. It is stateless: the challenge
+// carries its issue time and a MAC under a key generated at boot, so no
+// number of unauthenticated requests can evict or exhaust a challenge the
+// host holds. Challenges expire after challengeTTL. Each request also forgets
+// used challenges that have expired.
 func (s *Service) challenge(struct{}) (ChallengeResponse, error) {
+	if len(s.challengeKey) == 0 {
+		k := make([]byte, 32)
+
+		if _, err := rand.Read(k); err != nil {
+			s.logf("challenge key: %v", err)
+			return ChallengeResponse{}, errDevice
+		}
+
+		s.challengeKey = k
+	}
+
 	c := make([]byte, challengeSize)
 
-	if _, err := rand.Read(c); err != nil {
+	if _, err := rand.Read(c[challengeTime:challengeBody]); err != nil {
 		s.logf("challenge: %v", err)
 		return ChallengeResponse{}, errDevice
 	}
 
-	s.challenges = append(s.challenges, c)
+	now := s.clock()
+	s.purgeUsed(now)
 
-	if len(s.challenges) > maxChallenges {
-		s.challenges = s.challenges[len(s.challenges)-maxChallenges:]
-	}
+	binary.BigEndian.PutUint64(c, uint64(now.UnixNano())) //nolint:gosec // post-epoch time
+	copy(c[challengeBody:], s.challengeMAC(c[:challengeBody]))
 
 	return ChallengeResponse{Version: Protocol, Challenge: c}, nil
+}
+
+// takeChallenge burns challenge ch: it must carry this boot's MAC, be younger
+// than challengeTTL and not issued in the future, and not be used already.
+// The used set grows only through calls made after a host signature verified,
+// and drops entries once they would be refused as expired anyway.
+func (s *Service) takeChallenge(ch []byte) error {
+	errBad := errors.New("unknown or used challenge")
+
+	if len(ch) != challengeSize || len(s.challengeKey) == 0 ||
+		!hmac.Equal(ch[challengeBody:], s.challengeMAC(ch[:challengeBody])) {
+		return errBad
+	}
+
+	now := s.clock()
+	issued := time.Unix(0, int64(binary.BigEndian.Uint64(ch))) //nolint:gosec // bounded by MAC
+
+	if age := now.Sub(issued); age < 0 || age >= challengeTTL {
+		return errBad
+	}
+
+	s.purgeUsed(now)
+
+	var key [challengeSize]byte
+
+	copy(key[:], ch)
+
+	if _, used := s.usedChallenges[key]; used {
+		return errBad
+	}
+
+	if s.usedChallenges == nil {
+		s.usedChallenges = map[[challengeSize]byte]struct{}{}
+	}
+
+	s.usedChallenges[key] = struct{}{}
+	s.usedOrder = append(s.usedOrder, usedChallenge{expires: now.Add(challengeTTL), key: key})
+
+	return nil
+}
+
+// usedChallenge is a burned challenge and when it may be forgotten.
+type usedChallenge struct {
+	expires time.Time
+	key     [challengeSize]byte
+}
+
+// purgeUsed forgets used challenges that have expired. The queue is in use
+// order and each entry expires challengeTTL after its use, never before its
+// issue time plus challengeTTL, so the front expires first and the purge
+// visits only the entries it drops.
+func (s *Service) purgeUsed(now time.Time) {
+	n := 0
+
+	for n < len(s.usedOrder) && !now.Before(s.usedOrder[n].expires) {
+		delete(s.usedChallenges, s.usedOrder[n].key)
+		n++
+	}
+
+	if n == len(s.usedOrder) {
+		s.usedOrder = nil
+	} else {
+		s.usedOrder = s.usedOrder[n:]
+	}
 }
 
 // authenticate checks a signing request against the registered host keys:
@@ -128,6 +326,14 @@ func (s *Service) challenge(struct{}) (ChallengeResponse, error) {
 // the challenge is outstanding. The challenge is burned only after the
 // signature verifies, so a forged request cannot use up a real one.
 func (s *Service) authenticate(req SignRequest) error {
+	return s.authenticateHost(req.HostKey, req.HostSignature, req.Challenge, RequestBinding(req))
+}
+
+// authenticateHost checks that hostKey is registered, that sig is its
+// signature over binding, and that challenge is outstanding, burning it. With
+// no host key registered for any network or chain it refuses when host
+// authentication is required and accepts otherwise.
+func (s *Service) authenticateHost(hostKey, sig, challenge, binding []byte) error {
 	if s.hostKeysBad {
 		return errHostKeysBad
 	}
@@ -137,13 +343,17 @@ func (s *Service) authenticate(req SignRequest) error {
 			return errHostAuthMissing
 		}
 
-		return nil
+		// a key of another network or chain still means the device
+		// refuses unauthenticated requests
+		if len(s.hostEntries) == 0 {
+			return nil
+		}
 	}
 
 	registered := false
 
 	for _, k := range s.hostKeys {
-		if bytes.Equal(k, req.HostKey) {
+		if bytes.Equal(k, hostKey) {
 			registered = true
 			break
 		}
@@ -153,19 +363,11 @@ func (s *Service) authenticate(req SignRequest) error {
 		return errHostKeyUnknown
 	}
 
-	if len(req.HostSignature) != ed25519.SignatureSize ||
-		!ed25519.Verify(req.HostKey, RequestBinding(req), req.HostSignature) {
+	if len(sig) != ed25519.SignatureSize || !ed25519.Verify(hostKey, binding, sig) {
 		return errors.New("host signature does not verify")
 	}
 
-	for i, c := range s.challenges {
-		if bytes.Equal(c, req.Challenge) {
-			s.challenges = append(s.challenges[:i], s.challenges[i+1:]...)
-			return nil
-		}
-	}
-
-	return errors.New("unknown or used challenge")
+	return s.takeChallenge(challenge)
 }
 
 func validHostKey(k []byte) error {
@@ -176,7 +378,9 @@ func validHostKey(k []byte) error {
 	return nil
 }
 
-// addHostKey registers a host key. Registering a key twice is not an error.
+// addHostKey registers a host key for this build's network and chain.
+// Registering a key twice is not an error. The slots are shared by every
+// network, so keys of other scopes count toward the limit.
 func (s *Service) addHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 	if err := validHostKey(req.PublicKey); err != nil {
 		return HostKeyResponse{}, err
@@ -188,44 +392,54 @@ func (s *Service) addHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 		}
 	}
 
-	if len(s.hostKeys) >= maxHostKeys {
+	if len(s.hostEntries) >= maxHostKeys {
 		return HostKeyResponse{}, errors.New("host key list is full; revoke a key first")
 	}
 
-	return s.writeHostKeys(append(append([][]byte(nil), s.hostKeys...), bytes.Clone(req.PublicKey)))
+	return s.writeHostKeys(append(append([]hostEntry(nil), s.hostEntries...), s.scopeEntry(req.PublicKey)))
 }
 
-// revokeHostKey removes a registered host key.
+// revokeHostKey removes a registered host key this build trusts; keys of
+// other networks and chains are not visible to it.
 func (s *Service) revokeHostKey(req HostKeyRequest) (HostKeyResponse, error) {
-	keys := [][]byte{}
+	entries := []hostEntry{}
+	found := false
 
-	for _, k := range s.hostKeys {
-		if !bytes.Equal(k, req.PublicKey) {
-			keys = append(keys, k)
+	for _, e := range s.hostEntries {
+		if s.trusts(e) && bytes.Equal(e.key, req.PublicKey) {
+			found = true
+			continue
 		}
+
+		entries = append(entries, e)
 	}
 
-	if len(keys) == len(s.hostKeys) {
+	if !found {
 		return HostKeyResponse{}, errHostKeyUnknown
 	}
 
-	return s.writeHostKeys(keys)
+	return s.writeHostKeys(entries)
 }
 
-// writeHostKeys writes keys and serves them once the write reads back; an
-// empty list deletes the object. Writing a list replaces an unreadable one;
-// a failed write leaves the stored list unknown, so signing is refused until
-// a write reads back.
-func (s *Service) writeHostKeys(keys [][]byte) (HostKeyResponse, error) {
+// writeHostKeys writes entries and serves them once the write reads back; an
+// empty list deletes the object. A failed write leaves the stored list
+// unknown, so signing and every authenticated provisioning and wipe request
+// are refused until a restart reads a valid list or a device wipe resets it.
+// The list is always written in the scoped format, with legacy entries kept
+// legacy.
+func (s *Service) writeHostKeys(entries []hostEntry) (HostKeyResponse, error) {
 	var err error
 
-	if len(keys) == 0 {
+	if len(entries) == 0 {
 		err = s.deleteHostKeys()
 	} else {
-		b := make([]byte, hostKeysLen)
+		b := make([]byte, hostListSize)
 
-		for i, k := range keys {
-			copy(b[i*ed25519.PublicKeySize:], k)
+		for i, e := range entries {
+			slot := b[i*hostEntrySize:]
+			copy(slot, e.key)
+			slot[ed25519.PublicKeySize], slot[ed25519.PublicKeySize+1] = e.kind, e.network
+			copy(slot[ed25519.PublicKeySize+2:], e.chain[:])
 		}
 
 		if err = s.chip.WriteBinary(hostKeysID, b); err == nil {
@@ -239,18 +453,27 @@ func (s *Service) writeHostKeys(keys [][]byte) (HostKeyResponse, error) {
 
 	if err != nil {
 		s.logf("write host keys: %v", err)
-		s.hostKeys, s.hostKeysBad = nil, true
+		s.setHostEntries(nil)
+		s.hostKeysBad = true
 
 		return HostKeyResponse{}, errDevice
 	}
 
-	s.hostKeys, s.hostKeysBad = keys, false
+	// a request signed while no host key existed was not checked, so its
+	// challenge was not burned; a new challenge key voids every challenge
+	// issued before the first host key, so none of them can replay
+	if len(s.hostEntries) == 0 && len(entries) > 0 {
+		s.challengeKey, s.usedChallenges, s.usedOrder = nil, nil, nil
+	}
 
-	for _, k := range keys {
+	s.setHostEntries(entries)
+	s.hostKeysBad = false
+
+	for _, k := range s.hostKeys {
 		s.logf("host key %x", keyHash(k))
 	}
 
-	return HostKeyResponse{HostKeys: keys}, nil
+	return HostKeyResponse{HostKeys: append([][]byte{}, s.hostKeys...)}, nil
 }
 
 // deleteHostKeys removes the key list object and checks it is gone, so a

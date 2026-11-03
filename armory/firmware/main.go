@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/usbarmory/tamago/soc/nxp/imx6ul"
 
@@ -33,10 +34,16 @@ import (
 )
 
 const (
-	deviceIP  = "10.0.0.1/24"
+	deviceIP  = device.Address + "/24"
 	hostIP    = "10.0.0.2"
 	deviceMAC = "1a:55:89:a2:69:41"
 	hostMAC   = "1a:55:89:a2:69:42"
+
+	// maxConns caps open HTTP connections; a host client keeps one or two
+	// alive between requests
+	maxConns = 8
+	// maxHeaderBytes caps request headers; the default is 1 MiB
+	maxHeaderBytes = 8 << 10
 )
 
 func startNetwork() (err error) {
@@ -77,6 +84,13 @@ func main() {
 
 	report := &Report{}
 
+	// first, before bring-up and the network: the module advertises until
+	// held in reset
+	holdBluetooth(report)
+
+	// before the network and USB stack start: read the boot ROM's HAB status
+	reportHAB(report)
+
 	if err := startNetwork(); err != nil {
 		log.Fatalf("network: %v", err)
 	}
@@ -86,11 +100,13 @@ func main() {
 	s := &legacy
 	s.Mutex = mu
 	svc := device.New(mu, report.Logf)
+	s.record = svc.RecordRaw
 	if network != 0 && chain == "" {
 		log.Fatal("a mainnet build needs a chain label")
 	}
 
 	svc.SetNetwork(network, chain)
+	requireSigningLog(svc)
 	report.Logf("%s", buildMode)
 
 	if chain == "" {
@@ -118,5 +134,22 @@ func main() {
 		log.Fatalf("listen: %v", err)
 	}
 
-	log.Fatal(http.Serve(l, nil))
+	// A peer that opens connections and never finishes a request must not
+	// hold them. WriteTimeout covers the slowest legitimate request, a
+	// signature plus the signing-log write, with wide margin. The endpoints
+	// take small JSON bodies, so headers are capped well below the default.
+	srv := &http.Server{
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    maxHeaderBytes,
+		// the legacy routes are not JSON handlers, so the whole mux is guarded
+		Handler: device.Guard(device.Address, http.DefaultServeMux),
+	}
+
+	// open connections are capped too: past the cap, Accept waits for one
+	// to close (each is bounded by the timeouts above), so many sockets
+	// cannot exhaust the device
+	log.Fatal(srv.Serve(device.ConnLimitListener(l, maxConns)))
 }

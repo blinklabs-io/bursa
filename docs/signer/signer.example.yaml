@@ -80,7 +80,8 @@ signer:
     # config file.
     #   type: "postgres"
     #   dsn_env: "SIGNER_WATERMARK_DSN"   # env var holding the Postgres DSN/URL
-    #   # dsn: "postgres://user:pass@host:5432/bursa"  # plaintext fallback (env: SIGNER_WATERMARK_DSN)
+    #   # Plaintext config fallback (env: SIGNER_WATERMARK_DSN):
+    #   # dsn: "postgres://user:pass@host:5432/bursa?sslmode=verify-full&sslrootcert=/etc/bursa/signer/postgres-ca.pem"
     #   mode: "enforce"
 
   # --- Key-custody backends (one or more) ---
@@ -137,6 +138,7 @@ signer:
     #   profile: "pool@preview"                 # required device profile
     #   identity_public_key: "<64 hex chars>"   # device identity key, pinned
     #   host_key_file: "/etc/bursa/armory-host.skey"  # optional host key (armory-pool host-key)
+    #   protocol: "negotiate"                   # optional: "1" (default), "negotiate", or "2" (version 2 only; the summary may be empty)
 
     # SOPS-encrypted secrets pulled from GCP Secret Manager and decrypted
     # in-process at boot. Requires the top-level `google.project`.
@@ -170,9 +172,11 @@ signer:
 google:
   project: "my-gcp-project"     # env: GOOGLE_PROJECT
 
-# Optional Prometheus metrics endpoint (also served on the signer's /metrics).
+# Optional Prometheus metrics endpoint on a dedicated loopback listener.
+# Set port to 0 to disable it. Non-loopback addresses and addresses that
+# carry a port are rejected.
 metrics:
-  address: ""                   # env: METRICS_LISTEN_ADDRESS
+  address: "127.0.0.1"          # env: METRICS_LISTEN_ADDRESS
   port: 8081                    # env: METRICS_LISTEN_PORT
 
 logging:

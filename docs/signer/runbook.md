@@ -237,8 +237,10 @@ regressions.
 - `type: postgres` - durable store shared by every replica; the HA-safe option.
   The connection string is set via `dsn_env` (an env var name, keeping
   credentials out of the config file) in preference to the plaintext `dsn`
-  fallback. Remote connections should use `sslmode=verify-full` with a trusted
-  CA. The database role needs permission to create the two watermark tables on
+  fallback. Remote connections must use `sslmode=verify-full` with a trusted
+  CA; Bursa refuses remote connections that do not verify the server hostname.
+  Unix sockets, `localhost`, and loopback addresses may connect without TLS.
+  The database role needs permission to create the two watermark tables on
   first startup and to read and write them thereafter.
 - `mode: off | warn | enforce` - `enforce` (default) rejects a conflicting sign
   with HTTP 409; `warn` logs and allows; `off` disables the check.
@@ -283,7 +285,13 @@ Unauthenticated endpoints on the signer's listener:
   with a three-second timeout. It returns 503 while that dependency is
   unreachable and 200 for a healthy store. The in-memory store has no external
   dependency and is always ready after startup.
-- `GET /metrics` - Prometheus exposition.
+
+Prometheus exposition is available at `/metrics` on the dedicated metrics
+listener. The listener accepts only a loopback host, with the port set by
+`metrics.port`, and defaults to
+`127.0.0.1:8081`; set `metrics.port` to zero to disable it. A local collector
+can scrape the endpoint without exposing signer activity on the service
+listener.
 
 Use `/readyz` as the HA load-balancer readiness gate so a replica whose shared
 watermark store is unavailable is removed from rotation. Custody backends are

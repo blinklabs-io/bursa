@@ -34,6 +34,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
+	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
@@ -214,6 +215,44 @@ func TestNFTImageGatedWhileNodeStarts(t *testing.T) {
 	}
 	if nf.servedUnit != "" {
 		t.Fatalf("ServeImage called for %q while node unavailable", nf.servedUnit)
+	}
+}
+
+func TestNFTImageRequiresSameOriginBrowserContext(t *testing.T) {
+	nf := &fakeNFTs{enabled: true, imageBytes: []byte("PNG")}
+	h := nftHandler(fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}, nf)
+
+	for _, tc := range []struct {
+		name          string
+		fetchSite     string
+		wantCode      int
+		wantImageCall bool
+	}{
+		{name: "same-origin image", fetchSite: "same-origin", wantCode: http.StatusOK, wantImageCall: true},
+		{name: "cross-site image", fetchSite: "cross-site", wantCode: http.StatusForbidden},
+		{name: "missing browser context", wantCode: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nf.servedUnit = ""
+			req := httptest.NewRequest(http.MethodGet, "/wallet/nft/policyAtoken/image", nil)
+			req.Host = "127.0.0.1:8090"
+			req.Header.Set(sessionHeaderName, testSessionToken)
+			if tc.fetchSite != "" {
+				req.Header.Set("Sec-Fetch-Site", tc.fetchSite)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if got := nf.servedUnit != ""; got != tc.wantImageCall {
+				t.Fatalf("ServeImage called = %v, want %v", got, tc.wantImageCall)
+			}
+			if !tc.wantImageCall && rec.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("rejected image response must not enter the browser cache")
+			}
+		})
 	}
 }
 
@@ -456,6 +495,10 @@ type fakeSettings struct {
 	setNotificationsCalled bool
 	setNotificationsWith   bool
 
+	externalHandles          bool
+	setExternalHandlesErr    error
+	setExternalHandlesCalled bool
+
 	recoverCalled bool
 	recoverErr    error
 }
@@ -531,6 +574,17 @@ func (f *fakeSettings) SetNotifications(enabled bool) error {
 		return f.setNotificationsErr
 	}
 	f.notifications = enabled
+	return nil
+}
+
+func (f *fakeSettings) ExternalHandleLookup() bool { return f.externalHandles }
+
+func (f *fakeSettings) SetExternalHandleLookup(enabled bool) error {
+	f.setExternalHandlesCalled = true
+	if f.setExternalHandlesErr != nil {
+		return f.setExternalHandlesErr
+	}
+	f.externalHandles = enabled
 	return nil
 }
 
@@ -2160,6 +2214,7 @@ type fakePoolOps struct {
 	regErr           error
 	retireErr        error
 	submitErr        error
+	regSubmitErr     error
 
 	creds     poolops.Credentials
 	kes       poolops.KESPeriodInfo
@@ -2170,6 +2225,10 @@ type fakePoolOps struct {
 	tx        poolops.TxResult
 	poolID    string
 	poolIDHex string
+
+	regTx             poolops.RegistrationTxResult
+	regSubmitPassword string
+	regSubmitParams   poolops.RegistrationParams
 
 	credPassword     string
 	issuePassword    string
@@ -2275,6 +2334,12 @@ func (f *fakePoolOps) SubmitRetirement(_ context.Context, password string, epoch
 	f.submitPassword = password
 	f.submitEpoch = epoch
 	return f.tx, f.submitErr
+}
+
+func (f *fakePoolOps) SubmitRegistration(_ context.Context, password string, p poolops.RegistrationParams) (poolops.RegistrationTxResult, error) {
+	f.regSubmitPassword = password
+	f.regSubmitParams = p
+	return f.regTx, f.regSubmitErr
 }
 
 // fakeDexQuoter implements api.DexQuoter for tests. It records the arguments
@@ -2907,6 +2972,20 @@ func TestServeCommittedWriteStatus(t *testing.T) {
 	serve(rec, struct{}{}, vault.ErrCommittedWrite)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestUnlockLimitedStatus(t *testing.T) {
+	err := fmt.Errorf("open vault: %w", keystore.ErrUnlockLimited)
+	rec := httptest.NewRecorder()
+	serve(rec, struct{}{}, err)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("serve status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+	status, code, info := connectorErrorCode("signTx", err)
+	if status != http.StatusTooManyRequests || code != -3 || info != keystore.ErrUnlockLimited.Error() {
+		t.Fatalf("connectorErrorCode = (%d, %d, %q), want (%d, -3, %q)",
+			status, code, info, http.StatusTooManyRequests, keystore.ErrUnlockLimited.Error())
 	}
 }
 
@@ -3881,6 +3960,48 @@ func TestPoolRetirementSubmitRejected422(t *testing.T) {
 	}
 }
 
+func TestPoolRegistrationSubmitGatedWhileSyncing(t *testing.T) {
+	t.Parallel()
+	po := &fakePoolOps{}
+	h := NewHandler(testSessionToken, fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"pw","pledge":1,"cost":2,"margin_num":1,"margin_denom":100}`)
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/registration/submit", body))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("registration submit while syncing = %d, want 503", rec.Code)
+	}
+	if po.regSubmitPassword != "" {
+		t.Fatal("registration was submitted while the node was syncing")
+	}
+}
+
+func TestPoolRegistrationSubmitReady(t *testing.T) {
+	t.Parallel()
+	po := &fakePoolOps{regTx: poolops.RegistrationTxResult{TxHash: "feedface", Update: true}}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"pw","pledge":1000000,"cost":340000000,"margin_num":1,"margin_denom":100}`)
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/registration/submit", body))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tx_hash":"feedface"`) || !strings.Contains(rec.Body.String(), `"update":true`) {
+		t.Fatalf("registration submit ready = %d body %s", rec.Code, rec.Body.String())
+	}
+	if po.regSubmitPassword != "pw" || po.regSubmitParams.Pledge != 1000000 || po.regSubmitParams.Cost != 340000000 || po.regSubmitParams.MarginDenom != 100 {
+		t.Fatalf("submit args = password %q params %+v", po.regSubmitPassword, po.regSubmitParams)
+	}
+}
+
+func TestPoolRegistrationSubmitRejected422(t *testing.T) {
+	t.Parallel()
+	po := &fakePoolOps{regSubmitErr: fmt.Errorf("%w: ledger rule X", poolops.ErrSubmitRejected)}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, po, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	rec := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"password":"pw","pledge":1,"cost":2,"margin_num":1,"margin_denom":100}`)
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/pool/registration/submit", body))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("registration submit rejected = %d, want 422", rec.Code)
+	}
+}
+
 func TestVaultUnlockAttachesPoolWallet(t *testing.T) {
 	// Unlocking the vault must also bind the active wallet to the pool-ops service
 	// so credential/cert builders know which seed to derive from.
@@ -4125,6 +4246,150 @@ type fakeNodeLookup struct {
 	gotAssetUnits []string
 }
 
+type fakeExternalHandleResolver struct {
+	name    string
+	address string
+	err     error
+	calls   int
+	input   string
+	network string
+}
+
+func (f *fakeExternalHandleResolver) Supports(network string) bool { return network == "mainnet" }
+
+func (f *fakeExternalHandleResolver) Resolve(_ context.Context, network, input string) (string, string, error) {
+	f.calls++
+	f.network = network
+	f.input = input
+	return f.name, f.address, f.err
+}
+
+func externalHandleHandler(settings *fakeSettings, lookup NodeLookup, resolver ExternalHandleResolver) http.Handler {
+	return NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, settings,
+		&fakeContacts{}, lookup, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler(),
+		WithExternalHandleResolver(resolver))
+}
+
+func TestExternalHandleLookupSettingDefaultsOffAndToggles(t *testing.T) {
+	settings := &fakeSettings{}
+	h := externalHandleHandler(settings, nil, &fakeExternalHandleResolver{})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/external-handle-lookup", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":false`) {
+		t.Fatalf("default setting = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPut, "/wallet/settings/external-handle-lookup", strings.NewReader(`{"enabled":true}`)))
+	if rec.Code != http.StatusOK || !settings.externalHandles || !settings.setExternalHandlesCalled {
+		t.Fatalf("enable setting = %d %s settings=%+v", rec.Code, rec.Body.String(), settings)
+	}
+}
+
+func TestExternalHandleLookupUnavailableOffMainnet(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, settings,
+		&fakeContacts{}, &fakeNodeLookup{assetErr: chain.ErrNotFound}, &fakePoolOps{}, nil, &fakeMultiSig{}, "preprod", http.NotFoundHandler(),
+		WithExternalHandleResolver(remote))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/external-handle-lookup", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":true`) || !strings.Contains(rec.Body.String(), `"available":false`) {
+		t.Fatalf("preprod setting = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusServiceUnavailable || remote.calls != 0 {
+		t.Fatalf("preprod lookup = %d %s remote calls=%d", rec.Code, rec.Body.String(), remote.calls)
+	}
+
+	mainnet := externalHandleHandler(settings, nil, remote)
+	rec = httptest.NewRecorder()
+	mainnet.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/settings/external-handle-lookup", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"available":true`) {
+		t.Fatalf("mainnet setting = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExternalHandleLookupRequiresFeatureAndPerNameConsent(t *testing.T) {
+	settings := &fakeSettings{}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	h := externalHandleHandler(settings, &fakeNodeLookup{assetErr: chain.ErrNotFound}, remote)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusForbidden || remote.calls != 0 {
+		t.Fatalf("disabled lookup = %d calls=%d", rec.Code, remote.calls)
+	}
+
+	settings.externalHandles = true
+	for _, body := range []string{`{}`, `{"consent":false}`} {
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest || remote.calls != 0 {
+			t.Fatalf("lookup body %s = %d calls=%d", body, rec.Code, remote.calls)
+		}
+	}
+}
+
+func TestExternalHandleLookupKeepsNodePrimary(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	local := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1local", Quantity: "1"}}}
+	h := externalHandleHandler(settings, local, remote)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusOK || remote.calls != 0 || !strings.Contains(rec.Body.String(), `"address":"addr1local"`) || !strings.Contains(rec.Body.String(), `"source":"node"`) {
+		t.Fatalf("node-primary lookup = %d %s remote calls=%d", rec.Code, rec.Body.String(), remote.calls)
+	}
+}
+
+func TestExternalHandleLookupFallsBackAfterNodeMiss(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	h := externalHandleHandler(settings, &fakeNodeLookup{assetErr: chain.ErrNotFound}, remote)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/$chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusOK || remote.calls != 1 || remote.input != "$chris" || remote.network != "mainnet" || !strings.Contains(rec.Body.String(), `"source":"external"`) {
+		t.Fatalf("fallback = %d %s remote=%+v", rec.Code, rec.Body.String(), remote)
+	}
+}
+
+func TestExternalHandleLookupFailsClosedOnAmbiguousNode(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	remote := &fakeExternalHandleResolver{name: "chris", address: "addr1external"}
+	local := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{
+		{Address: "addr1a", Quantity: "1"},
+		{Address: "addr1b", Quantity: "1"},
+	}}
+	h := externalHandleHandler(settings, local, remote)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+	if rec.Code != http.StatusConflict || remote.calls != 0 {
+		t.Fatalf("ambiguous node = %d %s remote calls=%d", rec.Code, rec.Body.String(), remote.calls)
+	}
+}
+
+func TestExternalHandleLookupDistinguishesMissingAndFailure(t *testing.T) {
+	settings := &fakeSettings{externalHandles: true}
+	for _, tc := range []struct {
+		err  error
+		code int
+		body string
+	}{
+		{err: chain.ErrNotFound, code: http.StatusNotFound, body: "handle not found"},
+		{err: handle.ErrRemoteUnavailable, code: http.StatusBadGateway, body: "external handle service unavailable"},
+	} {
+		remote := &fakeExternalHandleResolver{err: tc.err}
+		h := externalHandleHandler(settings, &fakeNodeLookup{assetErr: chain.ErrNotFound}, remote)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/handle/chris/external", strings.NewReader(`{"consent":true}`)))
+		if rec.Code != tc.code || !strings.Contains(rec.Body.String(), tc.body) {
+			t.Fatalf("remote error %v = %d %s", tc.err, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func (f *fakeNodeLookup) Pool(_ context.Context, _ string) (chain.PoolInfo, error) {
 	return f.pool, f.poolErr
 }
@@ -4222,7 +4487,7 @@ func TestHandleLookupWithoutDollarSign(t *testing.T) {
 }
 
 func TestHandleLookupNotFoundOnInvalidNetwork(t *testing.T) {
-	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc"}}}
+	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
 	h := NewHandler(testSessionToken, readyStatuser(), &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnte", http.NotFoundHandler())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localReq(http.MethodGet, "/wallet/handle/$chris", nil))
@@ -4271,7 +4536,7 @@ func TestHandleLookupRejectsAmbiguousHolder(t *testing.T) {
 }
 
 func TestHandleLookupGatedWhileStarting(t *testing.T) {
-	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc"}}}
+	lk := &fakeNodeLookup{assetAddrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateStarting}}
 	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, lk, &fakePoolOps{}, nil, &fakeMultiSig{}, "mainnet", http.NotFoundHandler())
 	rec := httptest.NewRecorder()

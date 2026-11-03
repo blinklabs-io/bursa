@@ -43,6 +43,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/diagnostics"
+	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
@@ -405,6 +406,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		genesisAdapter{c: poolGenesis},
 		tipAdapter{sup: sup},
 	)
+	poolSvc.SetPoolRegistry(poolRegistryAdapter{c: poolGenesis})
 
 	// DEX swap quotes read pool UTxOs from the node's loopback Blockfrost
 	// endpoint and compute prices/quotes locally. The service returns a clean
@@ -583,6 +585,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		api.WithScriptMigration(migrateScripts),
 		api.WithActivity(activitySvc),
 		api.WithSurveys(surveySvc),
+		api.WithExternalHandleResolver(handle.NewAPIResolver()),
 	}
 	if cfg.ConnectorEnabled {
 		handlerOpts = append(handlerOpts, api.WithConnector(connectorSvc))
@@ -785,6 +788,14 @@ func (c *settingsController) SetNotifications(enabled bool) error {
 	return c.store.SetNotifications(enabled)
 }
 
+func (c *settingsController) ExternalHandleLookup() bool {
+	return c.store.ExternalHandleLookup()
+}
+
+func (c *settingsController) SetExternalHandleLookup(enabled bool) error {
+	return c.store.SetExternalHandleLookup(enabled)
+}
+
 func (c *settingsController) RecoverNode() error {
 	return c.sup.Recover(c.ctx)
 }
@@ -825,6 +836,23 @@ func (g genesisAdapter) Genesis(ctx context.Context) (poolops.Genesis, error) {
 		MaxKESEvolutions:  gen.MaxKESEvolutions,
 		EpochLength:       gen.EpochLength,
 	}, nil
+}
+
+// poolRegistryAdapter tells the SPO toolkit whether the node already knows a
+// pool, so registration submits lock the pool deposit only for a new pool. It
+// reads the node directly rather than the cached pool list, which can miss a
+// pool registered within the cache lifetime and so add a deposit to an update.
+type poolRegistryAdapter struct{ c *chain.Client }
+
+func (p poolRegistryAdapter) PoolRegistered(ctx context.Context, poolID string) (bool, error) {
+	_, err := p.c.PoolUncached(ctx, poolID)
+	if errors.Is(err, chain.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // tipAdapter exposes the supervisor's current tip slot to the SPO toolkit.

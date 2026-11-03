@@ -29,11 +29,32 @@ import (
 
 var ownerSeed = bytes.Repeat([]byte{0x51}, 32)
 
-func ownerProfileRequest(seed []byte) ProvisionRequest {
-	return ProvisionRequest{
-		Name: "otg@preview", Slot: 0, ColdKeyID: testColdID,
-		RewardAccount: testReward, OwnerSigningKey: coldKeyHex(seed),
+// ownerBody is req as the JSON object a host sends, carrying ownerKey, which
+// may be malformed, as its owner_signing_key.
+func ownerBody(t *testing.T, req ProvisionRequest, ownerKey string) map[string]any {
+	t.Helper()
+
+	b, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
 	}
+
+	var body map[string]any
+	if err = json.Unmarshal(b, &body); err != nil {
+		t.Fatal(err)
+	}
+
+	body["owner_signing_key"] = ownerKey
+
+	return body
+}
+
+func ownerProfileRequest(t *testing.T, seed []byte) map[string]any {
+	t.Helper()
+
+	return ownerBody(t, ProvisionRequest{
+		Name: "otg@preview", Slot: 0, ColdKeyID: testColdID, RewardAccount: testReward,
+	}, coldKeyHex(seed))
 }
 
 func TestProvisionProfileImportsOwnerKey(t *testing.T) {
@@ -41,7 +62,7 @@ func TestProvisionProfileImportsOwnerKey(t *testing.T) {
 
 	s, chip, logs := newLoggedService(t)
 
-	code, body := post(t, s, "/provision/profile", ownerProfileRequest(ownerSeed))
+	code, body := post(t, s, "/provision/profile", ownerProfileRequest(t, ownerSeed))
 	if code != http.StatusOK {
 		t.Fatalf("provision: %d %s", code, body)
 	}
@@ -83,7 +104,7 @@ func TestProvisionProfileOwnerKeyNeverOverwrites(t *testing.T) {
 		s, chip := newTestService(t)
 		_ = chip.ImportEd25519(p.OwnerKeyID(), ownerSeed, false)
 
-		if code, body := post(t, s, "/provision/profile", ownerProfileRequest(ownerSeed)); code != http.StatusOK {
+		if code, body := post(t, s, "/provision/profile", ownerProfileRequest(t, ownerSeed)); code != http.StatusOK {
 			t.Fatalf("provision: %d %s", code, body)
 		}
 	})
@@ -95,7 +116,7 @@ func TestProvisionProfileOwnerKeyNeverOverwrites(t *testing.T) {
 		_ = chip.GenerateEd25519(p.OwnerKeyID(), false)
 		before, _ := chip.PublicKeyEd25519(p.OwnerKeyID())
 
-		code, body := post(t, s, "/provision/profile", ownerProfileRequest(ownerSeed))
+		code, body := post(t, s, "/provision/profile", ownerProfileRequest(t, ownerSeed))
 		if code == http.StatusOK || !strings.Contains(string(body), "owner key object already exists with a different key") {
 			t.Fatalf("got %d %s, want the different owner key refused", code, body)
 		}
@@ -125,8 +146,8 @@ func TestProvisionProfileMalformedOwnerKey(t *testing.T) {
 			t.Parallel()
 
 			s, chip := newTestService(t)
-			req := ownerProfileRequest(ownerSeed)
-			req.OwnerSigningKey = key
+			req := ownerProfileRequest(t, ownerSeed)
+			req["owner_signing_key"] = key
 
 			if code, _ := post(t, s, "/provision/profile", req); code == http.StatusOK {
 				t.Fatal("provisioned with a malformed owner key")
@@ -147,7 +168,7 @@ func TestProvisionProfileOwnerLostImportReply(t *testing.T) {
 	s, chip := newTestService(t)
 	chip.lostImportReply = true
 
-	code, body := post(t, s, "/provision/profile", ownerProfileRequest(ownerSeed))
+	code, body := post(t, s, "/provision/profile", ownerProfileRequest(t, ownerSeed))
 	if code != http.StatusOK {
 		t.Fatalf("got %d %s, want the stored owner key confirmed", code, body)
 	}
@@ -179,8 +200,7 @@ func TestProvisionProfileRefusalImportsNoOwnerKey(t *testing.T) {
 			provisionTestProfile(t, s)
 			_ = chip.ImportEd25519(0x20e50011, coldSeed, false)
 
-			req.OwnerSigningKey = coldKeyHex(ownerSeed)
-			if code, _ := post(t, s, "/provision/profile", req); code == http.StatusOK {
+			if code, _ := post(t, s, "/provision/profile", ownerBody(t, req, coldKeyHex(ownerSeed))); code == http.StatusOK {
 				t.Fatal("provisioned")
 			}
 
@@ -201,7 +221,7 @@ func TestProvisionProfileOwnerImportFails(t *testing.T) {
 	s, chip := newTestService(t)
 	chip.failImport = true
 
-	if code, _ := post(t, s, "/provision/profile", ownerProfileRequest(ownerSeed)); code == http.StatusOK {
+	if code, _ := post(t, s, "/provision/profile", ownerProfileRequest(t, ownerSeed)); code == http.StatusOK {
 		t.Fatal("provisioned after a failed import")
 	}
 
@@ -227,7 +247,7 @@ func TestRequestStrictJSON(t *testing.T) {
 
 			s, chip := newTestService(t)
 			w := httptest.NewRecorder()
-			s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/provision/profile", strings.NewReader(body)))
+			s.Handler().ServeHTTP(w, jsonRequest("/provision/profile", strings.NewReader(body)))
 
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("got %d %s, want 400", w.Code, w.Body)

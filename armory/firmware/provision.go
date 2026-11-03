@@ -43,6 +43,12 @@ var legacy signer
 type signer struct {
 	*sync.Mutex
 	se *se050.SE050
+	// record logs a signature before it is made; /sign in testnet builds
+	// signs only when it returns nil
+	record func(msg []byte) error
+	// importOpen, when set, is checked with the lock held before
+	// /provision imports a key; the import is refused unless it returns nil
+	importOpen func() error
 }
 
 func (s *signer) set(se *se050.SE050) {
@@ -88,6 +94,13 @@ func (s *signer) provision(w http.ResponseWriter, r *http.Request) {
 	if s.se == nil {
 		http.Error(w, errNotOpen.Error(), http.StatusServiceUnavailable)
 		return
+	}
+
+	if s.importOpen != nil {
+		if err = s.importOpen(); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
 	}
 
 	exists, err := s.se.Exists(coldKeyID)

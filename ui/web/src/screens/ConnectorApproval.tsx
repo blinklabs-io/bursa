@@ -24,6 +24,7 @@ import { Card } from "../components/Card";
 import { Button } from "../components/Button";
 import { Input } from "../components/Input";
 import { StatusPill } from "../components/StatusPill";
+import { TransactionEffects } from "../components/TransactionEffects";
 import { ApiError } from "../api/client";
 import { subscribePending, decide } from "../api/connector";
 import { notifyPending } from "../connectorNotify";
@@ -219,7 +220,7 @@ export function ConnectorApproval() {
     if (!current) return;
     // Refuse to approve a request that was substituted in and not yet
     // re-reviewed, even if a click somehow raced ahead of the disabled state.
-    if (approved && needsReReview) return;
+    if (approved && (needsReReview || (current.method === "signTx" && !current.effects))) return;
     setBusy(true);
     setError(null);
     try {
@@ -241,10 +242,9 @@ export function ConnectorApproval() {
   }
 
   const requiresPassword = needsPassword(current.method);
-  // signTx/signData carry raw CBOR/hex that Bursa cannot yet decode into a
-  // human-readable summary, so consent here is not fully informed. Flag the
-  // payload prominently so the raw bytes are not mistaken for a reviewed action.
-  const isRawSigning = current.method === "signTx" || current.method === "signData";
+  const missingEffects = current.method === "signTx" && !current.effects;
+  // signData carries raw hex without a human-readable interpretation.
+  const isRawSigning = current.method === "signData";
 
   return (
     <div
@@ -266,7 +266,7 @@ export function ConnectorApproval() {
       <div
         ref={dialogRef}
         tabIndex={-1}
-        style={{ width: "100%", maxWidth: "420px" }}
+        style={{ width: "100%", maxWidth: "640px", maxHeight: "calc(100vh - 2rem)", overflowY: "auto" }}
       >
         <Card
           title={current.method === "remoteSubmitTx" ? "Remote Submission Request" : "dApp Request"}
@@ -289,6 +289,14 @@ export function ConnectorApproval() {
             </dd>
             <dt>Action</dt>
             <dd>{methodSummary(current)}</dd>
+            {current.method === "signTx" && current.effects && (
+              <>
+                <dt>Effects</dt>
+                <dd>
+                  <TransactionEffects summary={current.effects} showSigningState />
+                </dd>
+              </>
+            )}
             {current.params !== undefined && (
               <>
                 <dt>Params</dt>
@@ -306,10 +314,10 @@ export function ConnectorApproval() {
                         fontSize: "0.8em",
                       }}
                     >
-                      ⚠ Contents unverified — raw {current.method === "signTx" ? "transaction" : "data payload"}.
-                      Bursa cannot decode what is shown below, so it may not reflect what you expect
-                      (e.g. how much it sends or where). Only approve if you trust {current.origin} and
-                      understand exactly what you are signing.
+                      ⚠ Contents unverified — raw data payload.
+                      Bursa cannot decode what is shown below, so it may not reflect what you expect.
+                      Only approve if you trust {current.origin} and understand exactly what you are
+                      signing.
                     </p>
                   )}
                   <pre
@@ -333,6 +341,15 @@ export function ConnectorApproval() {
               </>
             )}
           </dl>
+
+          {missingEffects && (
+            <p
+              role="alert"
+              style={{ color: "var(--error, #c00)", fontSize: "0.85em", marginBottom: "0.75rem" }}
+            >
+              Transaction effects are unavailable. Reject this request.
+            </p>
+          )}
 
           {requiresPassword && (
             <div style={{ marginBottom: "1rem" }}>
@@ -395,7 +412,7 @@ export function ConnectorApproval() {
             </Button>
             <Button
               variant="primary"
-              disabled={busy || needsReReview || (requiresPassword && !password)}
+              disabled={busy || needsReReview || missingEffects || (requiresPassword && !password)}
               onClick={() => void handleDecide(true)}
             >
               {busy ? "Processing…" : "Approve"}

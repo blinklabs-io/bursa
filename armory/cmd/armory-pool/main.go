@@ -22,7 +22,11 @@
 //	armory-pool -identity HEX -profile NAME keys -out-dir DIR [-network preview]
 //	armory-pool -identity HEX -profile NAME witness -role pool|stake -tx-file F -out W
 //	armory-pool -identity HEX -profile NAME opcert -kes-vkey F -kes-period N -chain-counter N|none -out F
+//	armory-pool -identity HEX signlog [-head-seq N -head-hash HEX]
+//	armory-pool [-host-key F] provision profile|floor|reward|pins|cold|identity|host-key|host-key/revoke < request.json
+//	armory-pool [-host-key F] wipe objects|device|profile|signlog < request.json
 //	armory-pool reward-hex stake_test1...
+//	armory-pool pins-request -profile NAME -vrf-key-hash HEX [-metadata-hash HEX -metadata-url URL] [-relay R ...] [-unpinned-relays] -pledge-min N -pledge-max N -cost-max N -margin-max N/D
 //	armory-pool address -stake-vkey F [-payment-vkey F] [-type base|reward] [-network preview]
 package main
 
@@ -45,6 +49,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa/armory/device"
+	"github.com/blinklabs-io/bursa/armory/signlog"
 )
 
 type client struct {
@@ -182,7 +187,7 @@ func (s *session) keys(outDir, network string, out io.Writer) error {
 	return nil
 }
 
-func (s *session) witness(role, txFile, outFile string) error {
+func (s *session) witness(role, txFile, outFile string, out io.Writer) error {
 	if role != "pool" && role != "stake" {
 		return fmt.Errorf("unknown role %q (pool or stake)", role)
 	}
@@ -226,7 +231,17 @@ func (s *session) witness(role, txFile, outFile string) error {
 		return err
 	}
 
-	return os.WriteFile(outFile, marshalEnvelope(witnessType, witnessDesc, wit), 0o600)
+	if err = os.WriteFile(outFile, marshalEnvelope(witnessType, witnessDesc, wit), 0o600); err != nil {
+		return err
+	}
+
+	// the request negotiated device.ProtocolSummary, so the summary is covered
+	// by the binding signature checked above
+	if resp.Summary != "" {
+		_, err = fmt.Fprintf(out, "device signed: %s\n", resp.Summary)
+	}
+
+	return err
 }
 
 func (s *session) opcert(kesFile string, period uint64, chainArg, outFile string, out io.Writer) error {
@@ -336,6 +351,10 @@ func address(paymentFile, stakeFile, typ, network string, out io.Writer) error {
 }
 
 func run(args []string, stdout io.Writer) error {
+	return runIO(args, os.Stdin, stdout)
+}
+
+func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 	fs := flag.NewFlagSet("armory-pool", flag.ContinueOnError)
 	base := fs.String("signer", "http://10.0.0.1", "armory-signer URL")
 	source := fs.String("source", "10.0.0.2", "local source address on the USB network")
@@ -348,11 +367,13 @@ func run(args []string, stdout io.Writer) error {
 	}
 
 	if fs.NArg() == 0 {
-		return errors.New("subcommand required: keys, witness, opcert, reward-hex, address, host-key")
+		return errors.New("subcommand required: keys, witness, opcert, signlog, provision, wipe, reward-hex, pins-request, address, host-key")
 	}
 
 	sub, rest := fs.Arg(0), fs.Args()[1:]
 	sf := flag.NewFlagSet(sub, flag.ContinueOnError)
+
+	profileOptional := false
 
 	connect := func() (*session, error) {
 		id, err := hex.DecodeString(*identityHex)
@@ -360,7 +381,7 @@ func run(args []string, stdout io.Writer) error {
 			return nil, errors.New("-identity must be the 32-byte identity public key in hex")
 		}
 
-		if *profileName == "" {
+		if *profileName == "" && !profileOptional {
 			return nil, errors.New("-profile is required")
 		}
 
@@ -412,7 +433,7 @@ func run(args []string, stdout io.Writer) error {
 			return err
 		}
 
-		return s.witness(*role, *txFile, *out)
+		return s.witness(*role, *txFile, *out, stdout)
 	case "opcert":
 		kes := sf.String("kes-vkey", "", "KES verification key envelope")
 		period := sf.Uint64("kes-period", 0, "KES period")
@@ -433,6 +454,38 @@ func run(args []string, stdout io.Writer) error {
 		}
 
 		return s.opcert(*kes, *period, *chain, *out, stdout)
+	case "signlog":
+		seq := sf.Int64("head-seq", -1, "expected number of the latest entry")
+		hash := sf.String("head-hash", "", "expected hash of the latest entry (hex)")
+
+		if err := sf.Parse(rest); err != nil {
+			return err
+		}
+
+		// parsing stops at the first argument; flags after it would be ignored
+		if sf.NArg() > 0 {
+			return fmt.Errorf("unexpected argument %q", sf.Arg(0))
+		}
+
+		var wantHash []byte
+
+		if *seq != -1 || *hash != "" {
+			var err error
+
+			if wantHash, err = hex.DecodeString(*hash); err != nil || len(wantHash) != signlog.HashSize || *seq < 0 {
+				return errors.New("-head-seq and a 32-byte hex -head-hash must be given together")
+			}
+		}
+
+		// the log is the device's, not a profile's
+		profileOptional = true
+
+		s, err := connect()
+		if err != nil {
+			return err
+		}
+
+		return s.signLog(*seq, wantHash, stdout)
 	case "host-key":
 		out := sf.String("out", "", "host signing key file to create")
 
@@ -445,6 +498,18 @@ func run(args []string, stdout io.Writer) error {
 		}
 
 		return newHostKey(*out, stdout)
+	case "provision", "wipe":
+		hk := sf.String("host-key", *hostKeyFile, "host signing key file authenticating the request")
+
+		if err := sf.Parse(rest); err != nil {
+			return err
+		}
+
+		if sf.NArg() != 1 {
+			return fmt.Errorf("usage: %s [-host-key FILE] <route> < request.json", sub)
+		}
+
+		return adminRequest(newClient(*base, *source), "/"+sub+"/"+sf.Arg(0), *hk, stdin, stdout)
 	case "reward-hex":
 		if len(rest) != 1 {
 			return errors.New("usage: reward-hex <stake_test1...>")
@@ -458,6 +523,8 @@ func run(args []string, stdout io.Writer) error {
 		fmt.Fprintln(stdout, h)
 
 		return nil
+	case "pins-request":
+		return pinsRequest(rest, stdout)
 	case "address":
 		payment := sf.String("payment-vkey", "", "payment verification key envelope")
 		stake := sf.String("stake-vkey", "", "stake verification key envelope")

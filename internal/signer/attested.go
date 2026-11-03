@@ -180,7 +180,11 @@ func loadAttestedBackend(ctx context.Context, c config.SignerBackendConfig, veri
 }
 
 func loadAttestedEnclave(ctx context.Context, c config.SignerBackendConfig, enclave backend.Enclave, verifier backend.AttestationVerifier) (backend.Backend, error) {
-	b := backend.NewProfiledAttestedBackend(c.Name, c.Profile, enclave, verifier)
+	mode, err := backend.ParseAttestedProtocolMode(c.Protocol)
+	if err != nil {
+		return nil, err
+	}
+	b := backend.NewProfiledAttestedBackend(c.Name, c.Profile, enclave, verifier).WithProtocolMode(mode)
 	loadCtx, cancel := context.WithTimeout(ctx, attestedLoadTimeout)
 	defer cancel()
 	if err := b.Load(loadCtx); err != nil {

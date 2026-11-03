@@ -517,7 +517,7 @@ func TestServeImageStatusCodes(t *testing.T) {
 		t.Fatalf("ServeImage disabled = %d, want 403", rec.Code)
 	}
 
-	// Enabled → 200 with bytes + immutable cache header.
+	// Enabled → 200 with bytes + a Cache-Control header.
 	if err := s.SetEnabled(true); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
@@ -528,6 +528,28 @@ func TestServeImageStatusCodes(t *testing.T) {
 	}
 	if cc := rec.Header().Get("Cache-Control"); cc == "" {
 		t.Fatal("ServeImage missing Cache-Control header")
+	}
+}
+
+// The image route answers only for assets the active wallet holds and only
+// while media consent is on, so a stored copy would let any same-site page
+// replay it from the browser cache without reaching those checks.
+func TestServeImageSuccessIsNotStored(t *testing.T) {
+	cid := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+	fc := &fakeChain{infos: map[string]chain.AssetInfo{
+		"u": {OnchainMetadata: ipfsMeta("T", "ipfs://"+cid)},
+	}}
+	s, _ := newTestService(t, fc, staticUnits("u"), &fakeFetcher{data: validTestPNG()})
+	if err := s.SetEnabled(true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	s.ServeImage(context.Background(), rec, "u")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ServeImage = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
 	}
 }
 

@@ -1495,6 +1495,39 @@ func TestSignTxRejectsSidecarMismatchBeforeUnlock(t *testing.T) {
 	}
 }
 
+func TestSignTxRejectsUnresolvedEffectsBeforeUnlock(t *testing.T) {
+	acct := mustDeriveConfirmAccount(t)
+	online := NewService(
+		newFakeChain(5_000_000, acct.ReceiveAddresses[0]),
+		fakeKeystore{mnemonic: testMnemonic},
+		acct,
+	)
+	pending, err := online.Build(context.Background(), SendRequest{
+		To:       acct.ReceiveAddresses[2],
+		Lovelace: "1000000",
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	unsigned, err := online.ExportUnsigned(pending.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+
+	keys := &trackingKeystore{mnemonic: testMnemonic}
+	offline := NewService(nil, keys, acct)
+	if _, err := offline.SignTx(
+		unsigned.UnsignedTxCBOR,
+		"pw",
+		unsigned.RequiredSigners,
+	); !errors.Is(err, ErrInvalidTx) {
+		t.Fatalf("SignTx error = %v, want ErrInvalidTx", err)
+	}
+	if keys.unlockCalls != 0 {
+		t.Fatalf("keystore unlocks = %d, want 0", keys.unlockCalls)
+	}
+}
+
 func TestSignTxHashesOriginalBodyCbor(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	fc := newFakeChain(5_000_000, acct.ReceiveAddresses[0])

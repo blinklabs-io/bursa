@@ -37,7 +37,6 @@ import (
 	"github.com/blinklabs-io/bursa/internal/version"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 )
 
@@ -87,6 +86,11 @@ func runKesAgent(configFile string) int {
 	cfg, err := config.LoadConfigFile(configFile)
 	if err != nil {
 		logger.Error("failed to load config", "error", err)
+		return 1
+	}
+	metricsSrv, err := newMetricsHTTPServer(cfg.Metrics)
+	if err != nil {
+		logger.Error("invalid metrics listener", "error", err)
 		return 1
 	}
 	logging.ConfigureJSON()
@@ -226,13 +230,7 @@ func runKesAgent(configFile string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Optional metrics HTTP endpoint.
-	var metricsSrv *http.Server
-	if cfg.Metrics.ListenPort != 0 {
-		addr := fmt.Sprintf("%s:%d", cfg.Metrics.ListenAddress, cfg.Metrics.ListenPort)
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", promhttp.Handler())
-		metricsSrv = &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	if metricsSrv != nil {
 		go func() {
 			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logger.Error("metrics server exited", "error", err)
