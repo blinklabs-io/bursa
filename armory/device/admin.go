@@ -204,6 +204,9 @@ func handleAdmin[Req any, P interface {
 	return handle(s, func(req Req) (Resp, error) {
 		var zero Resp
 
+		// the caller is known only while this request runs
+		defer func() { s.caller = caller{} }()
+
 		if err := s.authorizeAdmin(route, P(&req)); err != nil {
 			return zero, err
 		}
@@ -228,6 +231,10 @@ func (s *Service) UnsignedProvisioningLocked() error {
 		return errNoChip
 	case s.hostKeysBad:
 		return errHostKeysBad
+	case s.multi():
+		// a multi image authenticates every request, so there is no
+		// unsigned import; the first key of a scope is its way in
+		return errProvisioningClosed
 	case len(s.hostEntries) > 0:
 		return errProvisioningClosed
 	}
@@ -239,6 +246,12 @@ func (s *Service) UnsignedProvisioningLocked() error {
 func (s *Service) authorizeAdmin(route string, req hostAuthed) error {
 	if s.hostKeysBad {
 		return errHostKeysBad
+	}
+
+	s.caller = caller{}
+
+	if s.multi() {
+		return s.authorizeMulti(route, req)
 	}
 
 	// no host key of any scope: the bootstrap state

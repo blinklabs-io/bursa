@@ -223,6 +223,13 @@ type Service struct {
 	network      uint8
 	networkFixed bool
 	chain        string
+	// scopes, when set by SetScopes, is the set of scopes a multi image
+	// serves; firstHostKeyOpen lets its provisioning image take a scope's
+	// first host key unsigned
+	scopes           []Scope
+	firstHostKeyOpen bool
+	// caller is the host key scope of the admin request being served
+	caller caller
 	// log records every signature before it is released; logRequired
 	// refuses signing while it is not installed
 	log         SigningLog
@@ -261,6 +268,11 @@ func (s *Service) SetNetwork(id uint8, chain string) {
 func (s *Service) serves(network uint8, name string) error {
 	if !s.networkFixed {
 		return nil
+	}
+
+	if s.multi() {
+		_, err := s.scopeOf(network, name)
+		return err
 	}
 
 	if network != s.network {
@@ -820,6 +832,25 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 		return ProvisionResponse{}, errors.New("cold key id outside the cold key range")
 	}
 
+	if s.multi() {
+		sc, err := s.scopeOf(p.NetworkID, p.Name)
+		if err != nil {
+			return ProvisionResponse{}, err
+		}
+
+		// the cold key of the slot and an imported owner key must not be
+		// keys of a profile of another scope
+		if err = s.keyScopeConflict(sc, p.ColdKeyID, s.coldSlotKey(p.ColdKeyID)); err != nil {
+			return ProvisionResponse{}, err
+		}
+
+		if ownerSeed != nil {
+			if err = s.keyScopeConflict(sc, 0, seedPublic(ownerSeed)); err != nil {
+				return ProvisionResponse{}, err
+			}
+		}
+	}
+
 	for _, other := range s.profiles {
 		switch {
 		case other.Name == p.Name:
@@ -1009,7 +1040,21 @@ func (s *Service) provisionCold(req ColdRequest) (ColdResponse, error) {
 		return ColdResponse{}, err
 	}
 
-	return s.importCold(req.ColdKeyID, req.SigningKey[len(coldKeyCBORPrefix):])
+	seed := req.SigningKey[len(coldKeyCBORPrefix):]
+
+	// a multi image keeps a key to one scope: the one of the host key that
+	// asked, so its public key may not belong to a profile of another
+	if s.multi() {
+		if !s.caller.known {
+			return ColdResponse{}, errHostAuthMissing
+		}
+
+		if err := s.keyScopeConflict(s.caller.scope, req.ColdKeyID, seedPublic(seed)); err != nil {
+			return ColdResponse{}, err
+		}
+	}
+
+	return s.importCold(req.ColdKeyID, seed)
 }
 
 func (s *Service) provisionIdentity() (IdentityResponse, error) {
