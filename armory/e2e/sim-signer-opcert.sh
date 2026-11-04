@@ -36,7 +36,7 @@ umask 077
 W=$(mktemp -d)
 pids=()
 cleanup() {
-	for p in "${pids[@]}"; do kill "$p" 2> /dev/null || true; done
+	for p in ${pids[@]+"${pids[@]}"}; do kill "$p" 2> /dev/null || true; done
 	wait 2> /dev/null || true
 	rm -rf "$W"
 }
@@ -180,7 +180,7 @@ KES=$(openssl rand -hex 32)
 sign() {
 	local cert=()
 	[ "$1" = none ] || cert=(--cert "$W/pki/$1.crt" --key "$W/pki/$1.key")
-	curl -s -o "$W/resp.json" -w '%{http_code}' --cacert "$W/pki/ca.crt" "${cert[@]}" \
+	curl -s -o "$W/resp.json" -w '%{http_code}' --cacert "$W/pki/ca.crt" ${cert[@]+"${cert[@]}"} \
 		-H 'Content-Type: application/json' \
 		-d "{\"type\":\"opcert\",\"key\":\"$POOL\",\"kes_vkey\":\"$KES\",\"chain_counter\":$2,\"kes_period\":$PERIOD}" \
 		"$U/v1/sign"
