@@ -31,8 +31,9 @@ WIPE ?= 0
 #            one. The first key of a scope is added unsigned, only by the
 #            PROVISION=1 image, and only for a scope without a key; the
 #            signing and wipe images never take an unsigned request.
-#            /provision/identity, /wipe/signlog and listing or revoking
-#            keys of another scope need a key of a mainnet scope. A device
+#            /provision/identity, /wipe/signlog, the signing log read and
+#            listing or revoking keys of another scope need a key of a
+#            mainnet scope. A device
 #            that ran a testnet image keeps its profiles and its testnet
 #            host key on this image.
 NETWORK ?= testnet

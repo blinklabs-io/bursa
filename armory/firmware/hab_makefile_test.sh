@@ -99,7 +99,7 @@ out=$(dry all NETWORK=multi CHAIN=prime); rc=$?
 [ $rc -ne 0 ]; check "NETWORK=multi CHAIN=prime is refused" $?
 has "$out" 'CHAIN does not apply to NETWORK=multi'; check "NETWORK=multi CHAIN=prime names the CHAIN refusal" $?
 out=$(dry all NETWORK=both); rc=$?
-[ $rc -ne 0 ]; has "$out" 'testnet, mainnet or multi'; check "an unknown NETWORK is refused" $?
+[ $rc -ne 0 ] && has "$out" 'testnet, mainnet or multi'; check "an unknown NETWORK is refused" $?
 # the existing single-scope images keep their names and tags
 out=$(dry all); has "$out" "-o armory\$"; check "NETWORK default still builds armory" $?
 has "$out" 'multi'; [ $? -ne 0 ]; check "the default image has no multi tag" $?

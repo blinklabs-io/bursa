@@ -530,9 +530,10 @@ are unchanged. `TESTNET=1` is refused with it.
   profile, and a cardano-mainnet key never for a prime-mainnet one. A key
   registered by an image that did not scope host keys is a testnet key. A
   new testnet profile may not take a name ending `@cardano-mainnet` or
-  `@prime-mainnet`. No
-  request in a multi image is accepted without a host key, testnet profiles
-  included, except the first key of a scope.
+  `@prime-mainnet`. Every profile request and every device-wide request
+  needs a host key, testnet profiles included. The exceptions are the first
+  key of a scope, `/v1/challenge`, and the wipe image's `/wipe/device` and
+  `/wipe/objects`.
 - First key per scope. Only the provisioning image (`PROVISION=1`) accepts an
   unsigned `POST /provision/host-key`, and only when the request's `scope`
   (`testnet`, `cardano-mainnet` or `prime-mainnet`) is one of the image's and
@@ -556,8 +557,9 @@ are unchanged. `TESTNET=1` is refused with it.
   profile of that scope. The image keeps that scope in memory, not on the
   chip, so after a restart the cold key is imported again (the same key is
   accepted into its own object) before a profile takes it.
-- Not changed: `/wipe/device` and `/wipe/objects`, which stay confirmed by the
-  identity public key alone as the recovery path when every host key is lost.
+- Not changed: `/wipe/device`, which stays confirmed by the identity public
+  key alone as the recovery path when every host key is lost, and
+  `/wipe/objects`, which only lists object IDs and needs no confirmation.
   The unsigned firmware `/provision` cold key import is closed in a multi
   image: import cold keys with a signed `/provision/cold`.
 - Moving a testnet device. Flashing the multi image over a device that ran a
@@ -582,7 +584,9 @@ armory-pool wipe device < wipe-request.json
 For a multi image, `armory-pool host-key -scope prime-mainnet -out prime.key`
 prints a request that names the scope, and `-host-key-dir DIR` picks
 `DIR/<scope>.key` by the profile a request or `-profile` names (a name ending
-`@<chain>-mainnet` is that chain's scope, any other is testnet). Requests that
+`@cardano-mainnet` or `@prime-mainnet` is that scope, any other is testnet).
+A scope's first key is added unsigned, so send that request without
+`-host-key` or `-host-key-dir`. Requests that
 name no profile, such as `provision cold`, `provision identity`, `wipe
 signlog` and `signlog`, need `-scope`. `opcert-check -host-key` takes the key
 of the profile's scope. `signlog-verify` and `opcert-check` read no network or
