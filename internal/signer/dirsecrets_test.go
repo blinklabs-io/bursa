@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -201,7 +202,24 @@ func TestBuildBackends_SopsPathAndPrefix(t *testing.T) {
 	_, err := BuildBackends(context.Background(), []config.SignerBackendConfig{
 		{Name: "cold", Type: "sops", Path: t.TempDir(), SecretPrefix: "signer-"},
 	})
-	if err == nil {
-		t.Fatal("expected error when both path and secret_prefix are set")
+	if !errors.Is(err, errSopsSourceConflict) {
+		t.Fatalf("expected the path/secret_prefix conflict, got %v", err)
+	}
+}
+
+// TestDirSecretSource_ListFailsOnDanglingLink keeps a broken key file fatal
+// rather than silently dropping that key.
+func TestDirSecretSource_ListFailsOnDanglingLink(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.json"), []byte("a"))
+	if err := os.Symlink("absent.target", filepath.Join(dir, "b.json")); err != nil {
+		t.Fatal(err)
+	}
+	src, err := NewDirSecretSource(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.List(context.Background()); err == nil {
+		t.Fatal("expected List to fail on a dangling secret link")
 	}
 }

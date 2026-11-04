@@ -66,7 +66,10 @@ func validName(name string) bool {
 		strings.HasSuffix(name, dirSecretExt)
 }
 
-// List returns the names of the secrets in the directory, sorted.
+// List returns the names of the secrets in the directory, sorted. An entry
+// that looks like a secret but cannot be stat'ed, such as a dangling symlink,
+// fails the whole listing: skipping it would boot a signer that silently lacks
+// a configured key.
 func (s *DirSecretSource) List(_ context.Context) ([]string, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -95,7 +98,7 @@ func (s *DirSecretSource) Get(_ context.Context, name string) ([]byte, error) {
 	if !validName(name) {
 		return nil, fmt.Errorf("invalid secret name %q", name)
 	}
-	f, err := os.Open(filepath.Join(s.dir, name))
+	f, err := openDirSecret(filepath.Join(s.dir, name))
 	if err != nil {
 		return nil, fmt.Errorf("open secret %q: %w", name, err)
 	}
