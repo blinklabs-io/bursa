@@ -237,6 +237,10 @@ type Service struct {
 	firstHostKeyOpen bool
 	// caller is the host key scope of the admin request being served
 	caller caller
+	// coldImports is the scope of the host key that imported each cold key
+	// object since the image started; a multi image lets a profile take only
+	// a cold key of its own scope. It is not stored, so a restart forgets it.
+	coldImports map[uint32]Scope
 	// log records every signature before it is released; logRequired
 	// refuses signing while it is not installed
 	log         SigningLog
@@ -895,6 +899,19 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 		return ProvisionResponse{}, errors.New("cold key not provisioned")
 	}
 
+	// no profile names the cold key yet, so its scope is that of the key
+	// that imported it, known only while the image runs
+	if s.multi() {
+		want, err := s.scopeOf(p.NetworkID, p.Name)
+		if err != nil {
+			return ProvisionResponse{}, err
+		}
+
+		if got, ok := s.coldImports[p.ColdKeyID]; !ok || got != want {
+			return ProvisionResponse{}, errColdScope
+		}
+	}
+
 	var (
 		owner ed25519.PublicKey
 		err   error
@@ -1071,7 +1088,16 @@ func (s *Service) provisionCold(req ColdRequest) (ColdResponse, error) {
 		}
 	}
 
-	return s.importCold(req.ColdKeyID, seed)
+	res, err := s.importCold(req.ColdKeyID, seed)
+	if err == nil && s.multi() {
+		if s.coldImports == nil {
+			s.coldImports = map[uint32]Scope{}
+		}
+
+		s.coldImports[req.ColdKeyID] = s.caller.scope
+	}
+
+	return res, err
 }
 
 func (s *Service) provisionIdentity() (IdentityResponse, error) {

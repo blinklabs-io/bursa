@@ -128,6 +128,9 @@ var (
 	errAddScopeMismatch = errors.New("host key is not of the scope it adds a key for")
 	// errMainnetName refuses a testnet profile named as a mainnet scope's
 	errMainnetName = errors.New("a testnet profile may not end with the label of a mainnet scope")
+	// errColdScope refuses a profile on a cold key that a key of its scope
+	// has not imported since the image started
+	errColdScope = errors.New("cold key was not imported by a host key of this profile's scope since the device started; import it again")
 )
 
 // caller is who an admin request has been authenticated as, for the handler
@@ -410,8 +413,8 @@ func (s *Service) revokeHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error
 }
 
 // keyScopeConflict refuses pub, or a cold key slot, that belongs to a profile
-// of a scope other than sc. A cold key object no profile names carries no
-// scope until a profile takes it, and is checked then.
+// of a scope other than sc. A cold key object no profile names belongs to the
+// scope that imported it, which provisionProfile checks.
 func (s *Service) keyScopeConflict(sc Scope, slot uint32, pub ed25519.PublicKey) error {
 	for _, other := range s.profiles {
 		if got, err := s.scopeOf(other.NetworkID, other.Name); err == nil && got == sc {

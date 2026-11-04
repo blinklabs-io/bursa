@@ -40,7 +40,10 @@ no unfiltered `/sign`. The single-scope images build as before.
   keys of other scopes and revoking one need a key of a mainnet scope. A key
   revokes keys of its own scope.
 - A cold key, or an imported owner key, that belongs to a profile of another
-  scope is refused; two slots of one scope may hold the same key.
+  scope is refused; two slots of one scope may hold the same key. A profile
+  takes only a cold key imported by a key of its scope since the image
+  started; after a restart, import the cold key again before provisioning the
+  profile.
 - A device that ran a testnet image keeps its profiles and host key: flash the
   multi image, then add the mainnet scopes' first keys with the provisioning
   image.

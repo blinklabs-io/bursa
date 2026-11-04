@@ -551,8 +551,11 @@ are unchanged. `TESTNET=1` is refused with it.
 - One key, one scope. A cold key import or an imported owner key whose public
   key already belongs to a profile of another scope is refused, as is a cold
   key slot a profile of another scope names. Two slots of one scope may hold
-  the same key. A cold key object that no profile names has no scope until a
-  profile takes it, and is checked then.
+  the same key. A cold key object that no profile names belongs to the scope
+  of the host key that imported it: `/provision/profile` takes it only for a
+  profile of that scope. The image keeps that scope in memory, not on the
+  chip, so after a restart the cold key is imported again (the same key is
+  accepted into its own object) before a profile takes it.
 - Not changed: `/wipe/device` and `/wipe/objects`, which stay confirmed by the
   identity public key alone as the recovery path when every host key is lost.
   The unsigned firmware `/provision` cold key import is closed in a multi

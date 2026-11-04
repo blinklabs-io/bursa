@@ -398,6 +398,44 @@ func TestMultiProvisionProfileNeedsKeyOfProfileScope(t *testing.T) {
 	}
 }
 
+// A cold key no profile names belongs to the scope that imported it: a
+// profile of another scope may not take it, and after a restart, which
+// forgets the importing scope, a profile takes it only once a key of its own
+// scope has imported the same key again.
+func TestMultiColdKeyKeepsImportScope(t *testing.T) {
+	t.Parallel()
+
+	chip, _ := seedMulti(t)
+	h := multiImage(t, chip, true).Handler()
+	counter := uint64(1)
+	slot := testColdID + 8
+
+	code, body := postAs(t, h, RouteProvisionCold, coldReq(slot, 0x55), multiKeyPrime)
+	mustOK(t, "prime cold key", code, body)
+
+	code, body = postAs(t, h, RouteProvisionProfile, ProvisionRequest{
+		Name: "taken@preview", Slot: 8, ColdKeyID: slot, ChainCounter: &counter,
+	}, multiKeyTestnet)
+	refused(t, "testnet profile on a prime-imported cold key", code, body, errColdScope)
+
+	code, body = postAs(t, h, RouteProvisionCold, coldReq(slot, 0x56), multiKeyTestnet)
+	if code == http.StatusOK {
+		t.Fatalf("testnet key replaced the prime cold key: %s", body)
+	}
+
+	prime := ProvisionRequest{Name: "late@prime-mainnet", NetworkID: 1, Slot: 8, ColdKeyID: slot, ChainCounter: &counter}
+
+	h = multiImage(t, chip, true).Handler()
+	code, body = postAs(t, h, RouteProvisionProfile, prime, multiKeyPrime)
+	refused(t, "prime profile on a cold key imported before the restart", code, body, errColdScope)
+
+	code, body = postAs(t, h, RouteProvisionCold, coldReq(slot, 0x55), multiKeyPrime)
+	mustOK(t, "prime imports the same cold key again", code, body)
+
+	code, body = postAs(t, h, RouteProvisionProfile, prime, multiKeyPrime)
+	mustOK(t, "prime profile on its re-imported cold key", code, body)
+}
+
 // A testnet profile may not take the name of a mainnet scope's profile: the
 // name would be refused to that scope, and a host picking its key by the name
 // would pick the mainnet one.
