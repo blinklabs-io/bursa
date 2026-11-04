@@ -37,7 +37,7 @@ cold private key can remain remote: issue the certificate through
 | Vault Transit | Yes; key stays in Vault | No | No |
 | PKCS#11 | Yes; key stays in the token | No | No |
 | Nitro / Confidential Space | Yes; key stays in the attested workload | No | No |
-| SOPS + Secret Manager | Yes; key is decrypted into the signer process | No | No |
+| SOPS (Secret Manager or directory) | Yes; key is decrypted into the signer process | No | No |
 | Software / file | Yes; development use | No | No |
 | KES agent `sign` | No | Yes; key stays in the agent | No |
 | KES agent `serve-key` | No | Yes; key is sent to Dingo | No |

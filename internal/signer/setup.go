@@ -160,6 +160,9 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 				return nil, fmt.Errorf("sops backend %q: list secrets: %w", c.Name, err)
 			}
 			if len(names) == 0 {
+				if c.Path != "" {
+					return nil, fmt.Errorf("sops backend %q: no *%s secrets found in %q", c.Name, dirSecretExt, c.Path)
+				}
 				return nil, fmt.Errorf("sops backend %q: no secrets found with prefix %q", c.Name, c.SecretPrefix)
 			}
 			for _, n := range names {

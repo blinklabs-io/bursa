@@ -146,6 +146,14 @@ signer:
       type: "sops"
       secret_prefix: "signer-key-"
 
+    # The same backend reading SOPS-encrypted *.json key files from a local
+    # directory (for example a mounted Kubernetes Secret) instead of GCP.
+    # Set path or secret_prefix, not both. Decryption uses the standard SOPS
+    # key sources, e.g. an age identity in SOPS_AGE_KEY_FILE.
+    # - name: "sops-dir"
+    #   type: "sops"
+    #   path: "/etc/bursa/signer/sops-keys"
+
     # Software/file backend: plaintext (or passphrase-encrypted) *.skey files
     # loaded into process memory. DEVELOPMENT ONLY (see allow_insecure_file_backend).
     # - name: "local-dev"
