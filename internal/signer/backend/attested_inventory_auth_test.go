@@ -191,7 +191,7 @@ func TestHostKeyEnclaveInventoryMalformedChallenge(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = e.Inventory(t.Context(), bytes.Repeat([]byte{4}, 32))
-	if !errors.Is(err, ErrAttestedProtocol) || !strings.Contains(err.Error(), "HTTP 400") {
+	if err == nil || !errors.Is(err, ErrAttestedProtocol) || !strings.Contains(err.Error(), "HTTP 400") {
 		t.Fatalf("err = %v, want the refusal and %v", err, ErrAttestedProtocol)
 	}
 }
